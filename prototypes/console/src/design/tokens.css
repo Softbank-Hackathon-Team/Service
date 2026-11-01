@@ -1,0 +1,129 @@
+/*
+ * Figma "Iron Design System"의 변수를 그대로 옮긴 토큰.
+ * 이름은 Figma 변수의 WEB 코드 문법과 같다. color/bg/canvas -> --color-bg-canvas
+ * 컴포넌트에서는 primitive가 아니라 의미 토큰(color, space, radius)만 쓴다.
+ */
+:root {
+  /* Primitives */
+  --primitive-iron-0: #ffffff;
+  --primitive-iron-50: #fafaf8;
+  --primitive-iron-100: #f0efec;
+  --primitive-iron-150: #f2f2f0;
+  --primitive-iron-200: #e1e0d9;
+  --primitive-iron-300: #c9c8c0;
+  --primitive-iron-400: #8a8981;
+  --primitive-iron-500: #6f6e68;
+  --primitive-iron-550: #62615c;
+  --primitive-iron-600: #52514e;
+  --primitive-iron-700: #3a3936;
+  --primitive-iron-800: #24231f;
+  --primitive-iron-900: #141412;
+  --primitive-iron-950: #0b0b0b;
+  --primitive-green-50: #eaf6ee;
+  --primitive-green-200: #b7e0c4;
+  --primitive-green-600: #1e7b45;
+  --primitive-green-800: #125a31;
+  --primitive-red-50: #fcecea;
+  --primitive-red-200: #f5bdb6;
+  --primitive-red-600: #c4281c;
+  --primitive-red-800: #8f1a11;
+  --primitive-amber-50: #fdf3dc;
+  --primitive-amber-200: #f3d48a;
+  --primitive-amber-600: #a36a00;
+  --primitive-amber-800: #6f4700;
+  --primitive-blue-50: #e8f0fa;
+  --primitive-blue-200: #b4cdeb;
+  --primitive-blue-600: #1c5cab;
+  --primitive-blue-800: #123f78;
+  --primitive-petrol-50: #e3f1f2;
+  --primitive-petrol-200: #a9d3d6;
+  --primitive-petrol-600: #0e6e78;
+  --primitive-petrol-800: #0a4e58;
+  --primitive-citron-400: #ddf247;
+  --primitive-mist-100: #dcebec;
+
+  /* Background */
+  --color-bg-canvas: var(--primitive-iron-150);
+  --color-bg-surface: var(--primitive-iron-0);
+  --color-bg-subtle: var(--primitive-iron-100);
+  --color-bg-hover: var(--primitive-iron-100);
+  --color-bg-selected: var(--primitive-iron-200);
+  --color-bg-inverse: var(--primitive-iron-900);
+  --color-bg-accent: var(--primitive-citron-400);
+  --color-bg-action-primary: var(--primitive-iron-900);
+  --color-bg-action-primary-hover: var(--primitive-iron-700);
+  --color-bg-action-danger: var(--primitive-red-600);
+  --color-bg-action-danger-hover: var(--primitive-red-800);
+  --color-bg-action-disabled: var(--primitive-iron-200);
+  --color-bg-tone-neutral: var(--primitive-iron-100);
+  --color-bg-tone-success: var(--primitive-green-50);
+  --color-bg-tone-warning: var(--primitive-amber-50);
+  --color-bg-tone-danger: var(--primitive-red-50);
+  --color-bg-tone-info: var(--primitive-blue-50);
+  --color-bg-tone-target: var(--primitive-petrol-50);
+  --color-bg-status-pass: var(--primitive-green-50);
+  --color-bg-status-fail: var(--primitive-red-600);
+  --color-bg-status-unknown: var(--primitive-amber-50);
+  --color-bg-status-na: var(--primitive-iron-100);
+  --color-bg-status-attested: var(--primitive-blue-50);
+
+  /* Foreground */
+  --color-fg-primary: var(--primitive-iron-950);
+  --color-fg-secondary: var(--primitive-iron-600);
+  --color-fg-tertiary: var(--primitive-iron-550);
+  --color-fg-disabled: var(--primitive-iron-550);
+  --color-fg-on-action: var(--primitive-iron-0);
+  --color-fg-on-hero: var(--primitive-iron-0);
+  --color-fg-on-hero-muted: var(--primitive-mist-100);
+  --color-fg-on-accent: var(--primitive-iron-950);
+  --color-fg-tone-success: var(--primitive-green-800);
+  --color-fg-tone-warning: var(--primitive-amber-800);
+  --color-fg-tone-danger: var(--primitive-red-800);
+  --color-fg-tone-info: var(--primitive-blue-800);
+  --color-fg-tone-target: var(--primitive-petrol-800);
+
+  /* Border */
+  --color-border-default: var(--primitive-iron-200);
+  --color-border-strong: var(--primitive-iron-400);
+  --color-border-focus: var(--primitive-iron-950);
+  --color-border-inverse: var(--primitive-iron-700);
+
+  /* Data, signal */
+  --color-data-source: var(--primitive-iron-400);
+  --color-data-target: var(--primitive-petrol-600);
+  --color-data-track: var(--primitive-iron-100);
+  --color-signal-pass: var(--primitive-green-600);
+  --color-signal-fail: var(--primitive-red-600);
+  --color-signal-warning: var(--primitive-amber-600);
+  --color-signal-info: var(--primitive-blue-600);
+  --color-signal-neutral: var(--primitive-iron-400);
+
+  /* 주인공 타일의 색이 곧 이전 상태다. */
+  --hero-run: linear-gradient(127deg, #083a48, #0b5f6b);
+  --hero-stop: linear-gradient(127deg, #7a1410, #b3261a);
+  --hero-done: linear-gradient(127deg, #0c4a2c, #146b41);
+
+  /* Layout */
+  --space-2: 2px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-20: 20px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-40: 40px;
+  --space-48: 48px;
+  --radius-sm: 8px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-xl: 32px;
+  --radius-full: 999px;
+  --size-control-s: 36px;
+  --size-control-m: 44px;
+  --size-bar: 52px;
+
+  /* Type */
+  --font-sans: 'IBM Plex Sans KR', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+}
