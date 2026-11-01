@@ -1,6 +1,7 @@
 /*
  * 색은 아래 Primitives의 17색만 쓴다.
  * 성공, 주의, 위험 색은 HTML처럼 옅은 배경 위 글자 색으로만 쓰고 면을 칠하지 않는다.
+ * 예외는 경고 화면의 큰 카드 하나로, 위험 색을 칠한다.
  * 컴포넌트에서는 primitive가 아니라 의미 토큰(color, space, radius)만 쓴다.
  */
 :root {
@@ -30,6 +31,7 @@
   --color-bg-hover: var(--primitive-subtle);
   --color-bg-selected: var(--primitive-line);
   --color-bg-inverse: var(--primitive-ink);
+  --color-bg-alert: var(--primitive-danger);
   --color-bg-accent: var(--primitive-accent-soft);
   --color-bg-action-primary: var(--primitive-accent);
   --color-bg-action-primary-hover: var(--primitive-accent-hover);
@@ -55,6 +57,8 @@
   --color-fg-disabled: var(--primitive-muted);
   --color-fg-on-action: var(--primitive-surface);
   --color-fg-on-accent: var(--primitive-accent);
+  --color-fg-on-alert: var(--primitive-surface);
+  --color-fg-on-alert-muted: var(--primitive-danger-soft);
   --color-fg-tone-success: var(--primitive-success);
   --color-fg-tone-warning: var(--primitive-warning);
   --color-fg-tone-danger: var(--primitive-danger);

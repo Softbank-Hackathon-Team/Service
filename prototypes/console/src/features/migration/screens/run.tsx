@@ -160,7 +160,7 @@ export function FixScreen({ flow }: ScreenProps) {
       }
     >
       <Hero
-        tone={merged ? 'run' : 'stop'}
+        tone="run"
         meta={merged ? '수정 반영됨' : '에이전트 수정안 · PR #12'}
         step="!"
         title={merged ? '이어서\n옮길 수 있습니다' : '수정안:\n이 한 줄을 고칩니다'}
@@ -275,7 +275,9 @@ export function RollingBackScreen({ flow }: ScreenProps) {
     >
       <Hero tone="stop" meta={rollbackCause === 'manual' ? '수동 롤백' : '자동 롤백'} step="←" title={cause.title} foot={cause.detail}>
         <code className={`${s.causeCode} t-code-md`}>{cause.code}</code>
-        <TrafficBar source={source} target={target} targetPercent={rollbackStep > 2 ? 0 : traffic} />
+        <div className={s.heroInset}>
+          <TrafficBar source={source} target={target} targetPercent={rollbackStep > 2 ? 0 : traffic} />
+        </div>
       </Hero>
       <ChecklistTile title="롤백 다섯 단계" items={progressItems(ROLLBACK_STEPS, rollbackStep)} />
     </ScreenLayout>

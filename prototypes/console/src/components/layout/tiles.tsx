@@ -36,7 +36,7 @@ type HeroProps = {
   children?: ReactNode;
 };
 
-/** 화면의 주인공. 카드는 칠하지 않고 머리줄의 글자와 원 색으로만 상태를 알린다. */
+/** 화면의 주인공. 경고(stop)만 카드를 빨갛게 칠하고, 나머지는 머리줄의 글자와 원 색으로만 상태를 알린다. */
 export function Hero({ area = 'hero', tone, meta, step, title, foot, children }: HeroProps) {
   return (
     <section className={`${s.hero} ${s[tone] ?? ''}`} style={areaStyle(area)}>

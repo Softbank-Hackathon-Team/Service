@@ -43,8 +43,14 @@
   justify-content: space-between;
   color: var(--color-fg-secondary);
 }
-.stop .heroMeta {
-  color: var(--color-fg-tone-danger);
+.stop {
+  background: var(--color-bg-alert);
+  color: var(--color-fg-on-alert);
+}
+.stop .heroMeta,
+.stop .heroFoot {
+  border-color: var(--color-fg-on-alert-muted);
+  color: var(--color-fg-on-alert-muted);
 }
 .done .heroMeta {
   color: var(--color-fg-tone-success);
@@ -59,7 +65,7 @@
   color: var(--color-fg-primary);
 }
 .stop .heroStep {
-  background: var(--color-bg-tone-danger);
+  background: var(--color-bg-surface);
   color: var(--color-fg-tone-danger);
 }
 .done .heroStep {
