@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "tool": {
+      "type": "string",
+      "enum": [
+        "prowler",
+        "kyverno",
+        "trivy",
+        "guardduty",
+        "scc",
+        "falco",
+        "agent_script",
+        "audit_verify"
+      ]
+    },
+    "toolCheckId": {
+      "type": "string"
+    },
+    "controlId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "resource": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "fail",
+        "unknown"
+      ]
+    },
+    "severity": {
+      "type": "string",
+      "enum": [
+        "info",
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ]
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "posture",
+        "threat"
+      ]
+    },
+    "observedAt": {
+      "type": "string"
+    },
+    "evidence": {
+      "type": "string",
+      "maxLength": 2000
+    }
+  },
+  "required": [
+    "tool",
+    "toolCheckId",
+    "controlId",
+    "resource",
+    "status",
+    "severity",
+    "kind",
+    "observedAt",
+    "evidence"
+  ],
+  "additionalProperties": false
+}
