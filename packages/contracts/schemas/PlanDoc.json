@@ -1,0 +1,154 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "planId": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+    },
+    "migrationId": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+    },
+    "adapterVersion": {
+      "type": "string"
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "enum": [
+              "provision",
+              "deploy",
+              "sync",
+              "shift",
+              "cutover",
+              "cleanup"
+            ]
+          },
+          "owner": {
+            "type": "string",
+            "enum": [
+              "terraform",
+              "argocd",
+              "agent",
+              "worker"
+            ]
+          },
+          "estSec": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "gate": {
+            "type": "string"
+          },
+          "weights": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          },
+          "holdSec": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "rollback": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "owner"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "precheck": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "block",
+              "warn",
+              "info"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "fix": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "level",
+          "message"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "rollbackCriteria": {
+      "type": "object",
+      "properties": {
+        "errorRatePct": {
+          "type": "number"
+        },
+        "p95Multiplier": {
+          "type": "number"
+        },
+        "windowSec": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "errorRatePct",
+        "p95Multiplier",
+        "windowSec"
+      ],
+      "additionalProperties": false
+    },
+    "tfPlanHash": {
+      "type": "string"
+    },
+    "helmValuesHash": {
+      "type": "string"
+    },
+    "planHash": {
+      "type": "string"
+    },
+    "expiresAt": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "planId",
+    "migrationId",
+    "adapterVersion",
+    "steps",
+    "precheck",
+    "rollbackCriteria",
+    "tfPlanHash",
+    "helmValuesHash",
+    "planHash",
+    "expiresAt"
+  ],
+  "additionalProperties": false
+}
