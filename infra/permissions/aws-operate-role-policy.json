@@ -1,0 +1,86 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AppModule",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:CreateSecurityGroup",
+        "ec2:CreateTags",
+        "ec2:DeleteSecurityGroup",
+        "ec2:DescribeSecurityGroupRules",
+        "ec2:DescribeSecurityGroups",
+        "ec2:RevokeSecurityGroupEgress",
+        "eks:CreatePodIdentityAssociation",
+        "eks:DeletePodIdentityAssociation",
+        "eks:DescribeCluster",
+        "eks:DescribePodIdentityAssociation",
+        "rds:AddTagsToResource",
+        "rds:CreateDBInstance",
+        "rds:CreateDBParameterGroup",
+        "rds:CreateDBSubnetGroup",
+        "rds:DeleteDBInstance",
+        "rds:DeleteDBParameterGroup",
+        "rds:DeleteDBSubnetGroup",
+        "rds:DescribeDBInstances",
+        "rds:DescribeDBParameterGroups",
+        "rds:DescribeDBParameters",
+        "rds:DescribeDBSubnetGroups",
+        "rds:ListTagsForResource",
+        "rds:ModifyDBInstance",
+        "rds:ModifyDBParameterGroup",
+        "secretsmanager:CreateSecret",
+        "secretsmanager:DeleteSecret",
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetResourcePolicy",
+        "secretsmanager:TagResource"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "ap-northeast-2"
+        }
+      }
+    },
+    {
+      "Sid": "AppRolesWithBoundary",
+      "Effect": "Allow",
+      "Action": [
+        "iam:CreateRole",
+        "iam:PutRolePolicy"
+      ],
+      "Resource": "arn:aws:iam::*:role/app-*",
+      "Condition": {
+        "StringEquals": {
+          "iam:PermissionsBoundary": "arn:aws:iam::${aws:PrincipalAccount}:policy/platform-app-boundary"
+        }
+      }
+    },
+    {
+      "Sid": "AppRolesOnly",
+      "Effect": "Allow",
+      "Action": [
+        "iam:DeleteRole",
+        "iam:DeleteRolePolicy",
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListRolePolicies",
+        "iam:TagRole"
+      ],
+      "Resource": "arn:aws:iam::*:role/app-*"
+    },
+    {
+      "Sid": "PassOnlyAppRoles",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::*:role/app-*",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "pods.eks.amazonaws.com"
+        }
+      }
+    }
+  ]
+}

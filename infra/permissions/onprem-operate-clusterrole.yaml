@@ -1,0 +1,50 @@
+# 클러스터 전체: 네임스페이스 관리만 (그룹 platform:operate에 ClusterRoleBinding)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: platform-operate-namespaces
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["create", "delete", "get", "patch"]
+---
+# 앱 자원: 정의만. 앱 네임스페이스의 RoleBinding(Kyverno가 생성)으로만 묶는다. ClusterRoleBinding 금지
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: platform-operate-app
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["create", "delete", "get", "list", "patch"]
+  - apiGroups: [""]
+    resources: ["resourcequotas"]
+    verbs: ["create", "delete", "get", "patch"]
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["create", "delete", "get", "patch"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["create", "delete", "get", "list", "patch"]
+  - apiGroups: ["external-secrets.io"]
+    resources: ["externalsecrets"]
+    verbs: ["create", "delete", "get", "patch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["create", "delete", "get", "patch"]
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["clusters"]
+    verbs: ["create", "delete", "get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: platform-operate-namespaces
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: platform-operate-namespaces
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: platform:operate
