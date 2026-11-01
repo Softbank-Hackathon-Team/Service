@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>이전 증적 리포트</title>
+<style>
+:root{--bg:#fff;--fg:#1a1a1a;--muted:#666;--line:#ddd;--ok:#1a7f37;--bad:#cf222e;--tile:#f5f5f5}
+@media (prefers-color-scheme:dark){:root{--bg:#141414;--fg:#eee;--muted:#999;--line:#333;--ok:#3fb950;--bad:#f85149;--tile:#1f1f1f}}
+body{background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,sans-serif;margin:0 auto;max-width:960px;padding:16px}
+h1{font-size:22px;margin:0 0 4px}h2{font-size:17px;margin:28px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}
+.muted{color:var(--muted)}code{font-size:13px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:16px 0}
+.tile{background:var(--tile);border-radius:8px;padding:12px}.tile .v{font-size:22px;font-weight:600}.tile .l{color:var(--muted);font-size:13px}
+.tile.bad .v{color:var(--bad)}.ok{color:var(--ok)}.bad{color:var(--bad)}
+.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;white-space:nowrap}
+</style></head><body>
+<h1>이전 증적 리포트</h1>
+<div class="muted">aws(report-aws) → gcp(report-gcp) · <code>49c3152c-0045-48fa-8b64-352fe25505e2</code> · 지문 <code>46312132121986c1</code></div>
+<div class="tiles">
+<div class="tile"><div class="v">completed</div><div class="l">현재 상태</div></div>
+<div class="tile"><div class="v">850 ms</div><div class="l">컷오버 멈춤</div></div>
+<div class="tile"><div class="v">120 ms</div><div class="l">최대 복제 지연</div></div>
+<div class="tile"><div class="v">8.13 초</div><div class="l">총 소요</div></div>
+<div class="tile"><div class="v">일치 539줄</div><div class="l">감사 체인</div></div>
+</div>
+<p class="ok">통과 (감사 539줄의 지문을 다시 계산해 모두 일치)</p>
+<h2>측정값</h2><div class="scroll"><table><thead><tr><th>이름</th><th>값</th><th>단위</th><th>환경</th><th>시각</th></tr></thead><tbody><tr><td>replication_lag_ms</td><td>120</td><td>ms</td><td>target</td><td>2026-10-31T16:29:16.582Z</td></tr><tr><td>cutover_pause_ms</td><td>850</td><td>ms</td><td>target</td><td>2026-10-31T16:29:18.085Z</td></tr></tbody></table></div>
+<p>트래픽 판정 3번 · 가중치 10→50→100% · 나쁨 0번 · 최대 오류율 0% · 최대 p95 80ms</p>
+<h2>상태 전이</h2><div class="scroll"><table><thead><tr><th>seq</th><th>시각</th><th>전이</th><th>누가</th><th>앞 상태 머문 ms</th></tr></thead><tbody><tr><td>588</td><td>2026-10-31T16:29:13.486Z</td><td>draft → importing</td><td>user:dev</td><td>-</td></tr><tr><td>591</td><td>2026-10-31T16:29:13.884Z</td><td>importing → spec_review</td><td>worker</td><td>398</td></tr><tr><td>592</td><td>2026-10-31T16:29:13.941Z</td><td>spec_review → prechecking</td><td>user:dev</td><td>57</td></tr><tr><td>594</td><td>2026-10-31T16:29:14.582Z</td><td>prechecking → planning</td><td>worker</td><td>641</td></tr><tr><td>596</td><td>2026-10-31T16:29:15.092Z</td><td>planning → awaiting_approval</td><td>worker</td><td>510</td></tr><tr><td>599</td><td>2026-10-31T16:29:15.117Z</td><td>awaiting_approval → approved</td><td>user:dev</td><td>25</td></tr><tr><td>600</td><td>2026-10-31T16:29:15.141Z</td><td>approved → provisioning</td><td>user:dev</td><td>24</td></tr><tr><td>604</td><td>2026-10-31T16:29:15.587Z</td><td>provisioning → deploying</td><td>worker</td><td>446</td></tr><tr><td>609</td><td>2026-10-31T16:29:16.085Z</td><td>deploying → syncing</td><td>worker</td><td>498</td></tr><tr><td>613</td><td>2026-10-31T16:29:16.584Z</td><td>syncing → shifting</td><td>worker</td><td>499</td></tr><tr><td>623</td><td>2026-10-31T16:29:17.485Z</td><td>shifting → cutover</td><td>worker</td><td>901</td></tr><tr><td>625</td><td>2026-10-31T16:29:18.085Z</td><td>cutover → rollback_window</td><td>worker</td><td>600</td></tr><tr><td>627</td><td>2026-10-31T16:29:21.389Z</td><td>rollback_window → cleanup</td><td>worker</td><td>3304</td></tr><tr><td>630</td><td>2026-10-31T16:29:21.611Z</td><td>cleanup → completed</td><td>worker</td><td>222</td></tr></tbody></table></div>
+<h2>승인</h2><div class="scroll"><table><thead><tr><th>계획</th><th>결정</th><th>누가</th><th>시각</th><th>지문</th></tr></thead><tbody><tr><td>1bf3466b</td><td>approve</td><td>user:dev</td><td>2026-10-31T16:29:15.117Z</td><td>일치</td></tr></tbody></table></div>
+<h2>사전 점검</h2><div class="scroll"><table><thead><tr><th>id</th><th>수준</th><th>내용</th></tr></thead><tbody><tr><td>PC-01</td><td>info</td><td>STUB: 출발·도착 환경 연결 확인됨</td></tr><tr><td>PC-02</td><td>info</td><td>STUB: 실행 역할 권한 확인됨</td></tr></tbody></table></div>
+<h2>비용 비교 (월, USD)</h2><p class="muted">없음</p>
+<h2>거부·오류</h2><div class="scroll"><p class="muted">없음</p></div>
+<h2>비어 있는 것</h2><ul><li>비용 추정 없음</li><li>일부 단계 결과가 STUB(가짜 구현) 값</li></ul>
+<p class="muted">생성 2026-10-31T16:29:21.742Z</p>
+</body></html>
