@@ -86,6 +86,8 @@ const ICONS = {
 
 export type IconName = keyof typeof ICONS;
 
+export const ICON_NAMES = Object.keys(ICONS) as IconName[];
+
 export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
   return (
     <svg

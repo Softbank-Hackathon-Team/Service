@@ -1,4 +1,5 @@
 import type { ComponentType } from 'react';
+import { DesignSystemPage } from '../features/design-system/DesignSystemPage';
 import type { ScreenId } from '../features/migration/flow';
 import { CancelledScreen, DoneScreen, FailedScreen, LogScreen, RolledBackScreen } from '../features/migration/screens/finish';
 import { AgentScreen, DashboardScreen, EnvironmentsScreen, LoginScreen, SettingsScreen } from '../features/migration/screens/overview';
@@ -21,7 +22,7 @@ import type { ScreenProps } from '../features/migration/screens/shared';
 import { useMigrationFlow } from '../features/migration/useMigrationFlow';
 import { PrototypeMenu } from './PrototypeMenu';
 
-const SCREEN_VIEWS: Record<ScreenId, ComponentType<ScreenProps>> = {
+const SCREEN_VIEWS: Record<Exclude<ScreenId, 'designSystem'>, ComponentType<ScreenProps>> = {
   login: LoginScreen,
   dashboard: DashboardScreen,
   environments: EnvironmentsScreen,
@@ -59,6 +60,7 @@ const SCREEN_VIEWS: Record<ScreenId, ComponentType<ScreenProps>> = {
 
 export function App() {
   const flow = useMigrationFlow();
+  if (flow.screen === 'designSystem') return <DesignSystemPage onExit={() => flow.go('dashboard')} />;
   const Screen = SCREEN_VIEWS[flow.screen];
   return (
     <>

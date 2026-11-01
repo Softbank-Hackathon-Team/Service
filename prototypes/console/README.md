@@ -38,6 +38,7 @@ src/
   components/
     layout/    3층 뼈대(ConsoleLayout), 벤토 타일(Tile, Hero, StatTile)
     ui/        상태 없는 부품(ActionPill, Checklist, SecurityDot, TrafficBar, Logo 등)
+  features/design-system/  토큰과 컴포넌트를 모아 보는 페이지
   features/migration/
     flow.ts              화면 목록, 상태 타입, 진행 단계와 롤백 가능 여부 계산
     useMigrationFlow.ts  상태와 화면 이동. 지금은 타이머로 진행을 흉내 냅니다.
@@ -48,7 +49,7 @@ src/
 
 ## 디자인 작업 방식
 
-디자인의 원본은 이 코드입니다. Figma는 업데이트하지 않습니다. 화면과 부품을 여기서 바로 만들어 눌러 보고, 확정한 토큰과 컴포넌트를 `apps/web`에서 가져다 쓰며 서로 계속 맞춥니다.
+디자인의 원본은 이 코드입니다. Figma는 업데이트하지 않습니다. `#/designSystem`(프로토타입 메뉴의 디자인 시스템)에서 토큰과 컴포넌트를 한눈에 봅니다. 콘솔이 쓰는 코드를 그대로 불러오므로 따로 맞출 필요가 없습니다. 화면과 부품을 여기서 바로 만들어 눌러 보고, 확정한 토큰과 컴포넌트를 `apps/web`에서 가져다 쓰며 서로 계속 맞춥니다.
 
 ## 본 제품으로 옮길 때
 

@@ -65,6 +65,10 @@ export const SCREEN_GROUPS = [
       { id: 'agent', label: '에이전트' },
     ],
   },
+  {
+    title: '디자인',
+    screens: [{ id: 'designSystem', label: '디자인 시스템' }],
+  },
 ] as const;
 
 export type ScreenId = (typeof SCREEN_GROUPS)[number]['screens'][number]['id'];
@@ -93,10 +97,11 @@ const OUTSIDE_MIGRATION: ScreenId[] = [
   'guardrails',
   'log',
   'agent',
+  'designSystem',
 ];
 
 export const navOf = (screen: ScreenId): NavTab | null =>
-  screen === 'settings' || screen === 'login' ? null : (NAV_OF[screen] ?? 'migration');
+  screen === 'settings' || screen === 'login' || screen === 'designSystem' ? null : (NAV_OF[screen] ?? 'migration');
 
 export const isMigrationScreen = (screen: ScreenId) => !OUTSIDE_MIGRATION.includes(screen);
 
