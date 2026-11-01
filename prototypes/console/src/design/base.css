@@ -14,6 +14,11 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Pretendard JP의 한자는 기본이 일본어 모양이다. 한국어 화면에서는 한국 모양을 쓴다. */
+:lang(ko) {
+  font-feature-settings: 'ss05';
+}
+
 h1,
 h2,
 h3,

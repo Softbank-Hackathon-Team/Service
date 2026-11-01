@@ -54,6 +54,7 @@ src/
 | `features/migration/screens/` | `mock.ts`를 `packages/contracts`의 타입으로 | `flow.ts`의 `presetFor` |
 
 - `components/`는 `features/`를 가져오지 않습니다. 이 방향을 지키면 부품만 따로 옮길 수 있습니다.
+- 글꼴은 Pretendard JP 가변 다이나믹 서브셋을 `src/design/fonts/`에 그대로 넣었습니다. 한 글꼴로 한글, 라틴, 가나, 한자를 모두 표시하고 페이지에서 쓰는 글자만 받습니다. 코드와 해시만 IBM Plex Mono입니다.
 - 스타일은 CSS Modules와 CSS 변수만 씁니다. 색과 간격은 `design/tokens.css`의 의미 토큰을 씁니다. 임시 로고만 예외입니다.
 
 ## 벤토가 움직이는 방식

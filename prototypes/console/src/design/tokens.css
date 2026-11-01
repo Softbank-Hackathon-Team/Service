@@ -125,6 +125,6 @@
   --size-bar: 52px;
 
   /* Type */
-  --font-sans: 'IBM Plex Sans KR', system-ui, sans-serif;
-  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --font-sans: 'Pretendard JP Variable', -apple-system, BlinkMacSystemFont, system-ui, 'Apple SD Gothic Neo', 'Hiragino Sans', 'Noto Sans KR', 'Noto Sans JP', 'Malgun Gothic', 'Yu Gothic', sans-serif;
+  --font-mono: 'IBM Plex Mono', 'Pretendard JP Variable', ui-monospace, monospace;
 }
