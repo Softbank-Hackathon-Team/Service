@@ -1,0 +1,76 @@
+{
+  "source": "stub",
+  "runId": null,
+  "status": "finished",
+  "model": "stub-scripted",
+  "createdAt": null,
+  "finishedAt": null,
+  "reason": "finish 호출",
+  "usage": {
+    "input": 9600,
+    "output": 640
+  },
+  "steps": [
+    {
+      "seq": 1,
+      "tool": "sandbox_get",
+      "ok": true,
+      "note": "Deployment"
+    },
+    {
+      "seq": 2,
+      "tool": "sandbox_get",
+      "ok": true,
+      "note": "Pod"
+    },
+    {
+      "seq": 3,
+      "tool": "sandbox_logs",
+      "ok": true,
+      "note": "web"
+    },
+    {
+      "seq": 4,
+      "tool": "repo_read",
+      "ok": true,
+      "note": "deploy/web.yaml"
+    },
+    {
+      "seq": 5,
+      "tool": "repo_edit",
+      "ok": true,
+      "note": "deploy/web.yaml"
+    },
+    {
+      "seq": 6,
+      "tool": "sandbox_apply",
+      "ok": true,
+      "note": "deploy/web.yaml"
+    },
+    {
+      "seq": 7,
+      "tool": "run_check",
+      "ok": true,
+      "note": "check_ok"
+    },
+    {
+      "seq": 8,
+      "tool": "finish",
+      "ok": true,
+      "note": "proposed"
+    }
+  ],
+  "outcome": "proposed",
+  "title": "web 메모리 상한 128Mi→512Mi",
+  "rationale": "OOMKilled 로 재시작. 상한을 올린 뒤 샌드박스 60초 재시작 0 (대본)",
+  "checked": [
+    "샌드박스 60초 재시작 0"
+  ],
+  "notDone": [
+    "운영 부하에서의 메모리 사용량"
+  ],
+  "gate": {
+    "ok": true,
+    "violations": []
+  }
+}

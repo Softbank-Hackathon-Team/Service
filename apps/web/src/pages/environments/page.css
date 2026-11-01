@@ -1,0 +1,60 @@
+/* Z86: 환경 보기. DESIGN-SYSTEM.md 토큰만 (새 색·라운드·그림자·pill 없음) */
+@import "../pages.css";
+.pg-env { display: flex; flex-direction: column; gap: var(--s4); min-width: 0; }
+.pg-env > .card { overflow-x: auto; }
+.pg-env .foot { margin-top: var(--s2); }
+.pg-env .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+/* 환경 고르기: 칸을 선으로만 나눈 한 줄. 고른 칸은 윗선 굵게 */
+.pg-env .env-pick { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); border: 1px solid var(--color-line); }
+.pg-env .env-pick button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: var(--s2) var(--s3); text-align: left;
+  border: 0; border-right: 1px solid var(--color-line); border-top: 2px solid transparent; border-radius: 0; background: var(--color-surface); color: var(--color-fg); cursor: pointer; font: inherit; }
+.pg-env .env-pick button:last-child { border-right: 0; }
+.pg-env .env-pick button:hover { background: var(--color-surface-2); }
+.pg-env .env-pick button.on { border-top-color: var(--color-fg); background: var(--color-surface-2); }
+.pg-env .env-pick .nm { font-weight: 600; font-size: 14px; }
+
+/* 읽기 상태 한 줄: 모양 + 글자 + 왼쪽 선 색 */
+.pg-env .env-status { display: grid; grid-template-columns: 16px 1fr; gap: var(--s2); padding: var(--s2) var(--s3); margin-bottom: var(--s3);
+  border-left: 3px solid var(--color-line-strong); background: var(--color-surface-2); }
+.pg-env .env-status .mk { font-family: var(--font-mono); }
+.pg-env .env-status.st-ok { border-left-color: var(--color-ok); } .pg-env .env-status.st-ok .mk { color: var(--color-ok); }
+.pg-env .env-status.st-partial { border-left-color: var(--color-wait); } .pg-env .env-status.st-partial .mk { color: var(--color-wait); }
+.pg-env .env-status.st-unavailable { border-left-color: var(--color-bad); } .pg-env .env-status.st-unavailable .mk { color: var(--color-bad); }
+
+.pg-env .env-tbl td code { font-size: 12px; }
+.pg-env .env-tbl tr.g-zero td, .pg-env .env-tbl tr.off td { color: var(--color-fg-muted); }
+.pg-env .env-tbl tr.sel td { background: var(--color-surface-2); }
+.pg-env .env-tbl tr.sel td:first-child { border-left: 2px solid var(--color-line-strong); }
+.pg-env .env-tbl tr.sub td { background: var(--color-surface-2); padding: var(--s2) var(--s3); }
+.pg-env .env-tbl.apps button.link { margin-left: var(--s2); border: 0; background: none; padding: 0; color: var(--color-fg); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; font: inherit; font-size: 12px; }
+.pg-env .fp-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: max-content 1fr max-content max-content; gap: 4px var(--s3); align-items: center; }
+.pg-env .fp-list li { display: contents; }
+
+/* 자원 단계 칩: 모양 글자 + 색 + 글자 (Z83 tone 과 같은 4색, 끝난 것은 조용히) */
+.pg-env .chip.fp { white-space: nowrap; }
+.pg-env .fp-ok { color: var(--color-ok); border-color: color-mix(in srgb, var(--color-ok) 40%, transparent); background: color-mix(in srgb, var(--color-ok) 12%, transparent); }
+.pg-env .fp-run { color: var(--color-run); border-color: color-mix(in srgb, var(--color-run) 40%, transparent); background: color-mix(in srgb, var(--color-run) 12%, transparent); }
+.pg-env .fp-wait { color: var(--color-wait); border-color: color-mix(in srgb, var(--color-wait) 40%, transparent); background: color-mix(in srgb, var(--color-wait) 12%, transparent); }
+.pg-env .fp-bad { color: var(--color-bad); border-color: color-mix(in srgb, var(--color-bad) 40%, transparent); background: color-mix(in srgb, var(--color-bad) 12%, transparent); }
+.pg-env .fp-off { color: var(--color-fg-muted); border: 1px dashed var(--color-line-strong); background: transparent; }
+
+/* 단계 띠: 윗선 레일 (Z83 Stepper 와 같은 말투) */
+.pg-env .steps { list-style: none; margin: 0 0 var(--s3); padding: 0; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--s2); }
+.pg-env .steps li { display: flex; flex-direction: column; gap: 2px; padding-top: var(--s2); border-top: 3px solid var(--color-line); }
+.pg-env .steps li .lb { font-weight: 600; }
+.pg-env .steps li.st-done { border-top-color: var(--color-ok); }
+.pg-env .steps li.st-doing { border-top: 5px solid var(--color-run); }
+.pg-env .steps li.st-doing .lb { color: var(--color-run); }
+.pg-env .steps li.st-undone { border-top-color: var(--color-wait); }
+.pg-env .steps li.st-todo { opacity: .75; }
+@media (max-width: 900px) { .pg-env .steps { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+.pg-env .ss { white-space: nowrap; }
+.pg-env .ss-done { color: var(--color-ok); } .pg-env .ss-doing { color: var(--color-run); font-weight: 600; }
+.pg-env .ss-undone { color: var(--color-wait); } .pg-env .ss-skipped, .pg-env .ss-todo { color: var(--color-fg-muted); }
+
+.pg-env .diff-wrap { overflow-x: auto; }
+.pg-env .env-tbl.diff th[colspan] { border-bottom: 1px solid var(--color-line-strong); color: var(--color-fg); font-weight: 600; }
+.pg-env .env-tbl.diff td:nth-child(4), .pg-env .env-tbl.diff th:nth-child(3) { border-right: 1px solid var(--color-line-strong); }
+.pg-env .now { display: flex; flex-direction: column; gap: 2px; }

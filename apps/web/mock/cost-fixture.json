@@ -1,0 +1,290 @@
+{
+  "migrationId": "00000000-0000-4000-8000-000000000000",
+  "source": {
+    "id": "22222222-2222-4222-8222-222222222222",
+    "provider": "aws",
+    "name": "dev-aws"
+  },
+  "target": {
+    "id": "33333333-3333-4333-8333-333333333333",
+    "provider": "gcp",
+    "name": "dev-gcp"
+  },
+  "origin": "preview",
+  "storedId": null,
+  "planId": null,
+  "specFrom": "demo",
+  "estimate": {
+    "priceAsOf": "2026-10-31T16:37:08.532Z",
+    "priceStale": false,
+    "peakRps": 10,
+    "requiredVcpu": 0.6,
+    "load": {
+      "baseVcpu": 0.5,
+      "vcpuPerRps": 0.01,
+      "utilTarget": 0.6,
+      "minNodes": 2,
+      "maxNodes": 20,
+      "source": "preset"
+    },
+    "profile": "startup",
+    "envs": [
+      {
+        "provider": "aws",
+        "feasible": true,
+        "nodeSku": "t3.medium",
+        "nodes": 2,
+        "monthlyUsd": 233.3,
+        "monthlyUsdNoCredit": 233.3,
+        "creditUsd": 0,
+        "parts": {
+          "cluster": 73,
+          "db": 81.8,
+          "storage": 2.6,
+          "fixed": 0,
+          "nodes": 75.9
+        },
+        "unknown": [],
+        "unverified": [],
+        "candidatesEvaluated": 7
+      },
+      {
+        "provider": "gcp",
+        "feasible": true,
+        "nodeSku": "e2-medium",
+        "nodes": 2,
+        "monthlyUsd": 146.9,
+        "monthlyUsdNoCredit": 219.9,
+        "creditUsd": 73,
+        "parts": {
+          "cluster": 0,
+          "db": 80.7,
+          "storage": 3.4,
+          "fixed": 0,
+          "nodes": 62.8
+        },
+        "unknown": [],
+        "unverified": [
+          "db",
+          "storage"
+        ],
+        "candidatesEvaluated": 3
+      },
+      {
+        "provider": "onprem",
+        "feasible": true,
+        "nodeSku": "k3s-vm-2c8g",
+        "nodes": 2,
+        "monthlyUsd": 250,
+        "monthlyUsdNoCredit": 250,
+        "creditUsd": 0,
+        "parts": {
+          "cluster": 0,
+          "db": 0,
+          "storage": 0,
+          "fixed": 250,
+          "nodes": 0
+        },
+        "unknown": [],
+        "unverified": [
+          "fixed",
+          "node"
+        ],
+        "candidatesEvaluated": 1
+      },
+      {
+        "provider": "azure_mock",
+        "feasible": true,
+        "nodeSku": "Standard_B2s",
+        "nodes": 2,
+        "monthlyUsd": 146,
+        "monthlyUsdNoCredit": 146,
+        "creditUsd": 0,
+        "parts": {
+          "cluster": 0,
+          "db": 70,
+          "storage": 3,
+          "fixed": 0,
+          "nodes": 73
+        },
+        "unknown": [],
+        "unverified": [
+          "cluster",
+          "db",
+          "node",
+          "storage"
+        ],
+        "candidatesEvaluated": 1
+      }
+    ],
+    "cheapest": "azure_mock",
+    "savings": {
+      "from": "aws",
+      "to": "azure_mock",
+      "monthlyUsd": 87.3,
+      "creditPortionUsd": 0
+    },
+    "recommendations": [
+      {
+        "rank": 1,
+        "provider": "azure_mock",
+        "security": "basic",
+        "monthlyUsd": 146,
+        "score": 0.469,
+        "scoreParts": {
+          "cost": 0.254,
+          "risk": 0.09,
+          "time": 0.125
+        }
+      },
+      {
+        "rank": 2,
+        "provider": "gcp",
+        "security": "basic",
+        "monthlyUsd": 146.9,
+        "score": 0.47,
+        "scoreParts": {
+          "cost": 0.255,
+          "risk": 0.09,
+          "time": 0.125
+        }
+      },
+      {
+        "rank": 3,
+        "provider": "aws",
+        "security": "basic",
+        "monthlyUsd": 233.3,
+        "score": 0.621,
+        "scoreParts": {
+          "cost": 0.406,
+          "risk": 0.09,
+          "time": 0.125
+        }
+      },
+      {
+        "rank": 4,
+        "provider": "onprem",
+        "security": "basic",
+        "monthlyUsd": 250,
+        "score": 0.65,
+        "scoreParts": {
+          "cost": 0.435,
+          "risk": 0.09,
+          "time": 0.125
+        }
+      },
+      {
+        "rank": 5,
+        "provider": "azure_mock",
+        "security": "hardened",
+        "monthlyUsd": 246,
+        "score": 0.693,
+        "scoreParts": {
+          "cost": 0.428,
+          "risk": 0.015,
+          "time": 0.25
+        }
+      },
+      {
+        "rank": 6,
+        "provider": "gcp",
+        "security": "hardened",
+        "monthlyUsd": 257.7,
+        "score": 0.713,
+        "scoreParts": {
+          "cost": 0.448,
+          "risk": 0.015,
+          "time": 0.25
+        }
+      },
+      {
+        "rank": 7,
+        "provider": "onprem",
+        "security": "hardened",
+        "monthlyUsd": 280,
+        "score": 0.752,
+        "scoreParts": {
+          "cost": 0.487,
+          "risk": 0.015,
+          "time": 0.25
+        }
+      },
+      {
+        "rank": 8,
+        "provider": "aws",
+        "security": "hardened",
+        "monthlyUsd": 345.1,
+        "score": 0.865,
+        "scoreParts": {
+          "cost": 0.6,
+          "risk": 0.015,
+          "time": 0.25
+        }
+      }
+    ],
+    "breakpoints": [
+      {
+        "fromRps": 0,
+        "cheapest": "azure_mock",
+        "nodes": 2
+      },
+      {
+        "fromRps": 431,
+        "cheapest": "onprem",
+        "nodes": 5
+      },
+      {
+        "fromRps": 911,
+        "cheapest": "azure_mock",
+        "nodes": 9
+      },
+      {
+        "fromRps": 1871,
+        "cheapest": "gcp",
+        "nodes": 17
+      }
+    ]
+  },
+  "pair": {
+    "from": "aws",
+    "to": "gcp",
+    "sourceMonthlyUsd": 233.3,
+    "targetMonthlyUsd": 146.9,
+    "monthlyUsd": 86.4,
+    "creditPortionUsd": 73
+  },
+  "priceSources": [
+    {
+      "vendor": "aws",
+      "origin": "live",
+      "fetchedAt": "2026-10-31T16:37:08.532Z",
+      "urls": [
+        "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+        "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEKS/current/ap-northeast-2/index.csv",
+        "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+        "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSELB/current/ap-northeast-2/index.csv"
+      ]
+    },
+    {
+      "vendor": "gcp",
+      "origin": "seed",
+      "fetchedAt": "2026-10-31T00:00:00Z",
+      "urls": []
+    },
+    {
+      "vendor": "onprem",
+      "origin": "live",
+      "fetchedAt": "2026-10-31T16:37:30.502Z",
+      "urls": [
+        "assumption:onprem"
+      ]
+    },
+    {
+      "vendor": "azure_mock",
+      "origin": "sample",
+      "fetchedAt": "2026-10-31T00:00:00Z",
+      "urls": []
+    }
+  ],
+  "createdAt": "2026-10-31T16:50:00.000Z"
+}
