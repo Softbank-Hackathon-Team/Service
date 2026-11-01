@@ -1,0 +1,5 @@
+{
+ "PriceList": [
+  "{\"product\": {\"sku\": \"CCC111\", \"attributes\": {\"servicecode\": \"AmazonRDS\", \"volumeApiName\": \"gp3\", \"deploymentOption\": \"Single-AZ\", \"regionCode\": \"ap-northeast-2\"}}, \"terms\": {\"OnDemand\": {\"CCC111.JRTCKXETXF\": {\"priceDimensions\": {\"CCC111.JRTCKXETXF.6YS6EN2CT7\": {\"unit\": \"GB-Mo\", \"beginRange\": \"0\", \"endRange\": \"Inf\", \"pricePerUnit\": {\"USD\": \"0.1310000000\"}}}}}}}"
+ ]
+}

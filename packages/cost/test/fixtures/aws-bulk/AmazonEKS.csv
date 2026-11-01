@@ -1,0 +1,8 @@
+"FormatVersion","v1.0"
+"Disclaimer","This pricing list is for informational purposes only. All prices are subject to the additional terms included in the pricing pages on http://aws.amazon.com. All Free Tier prices are also subject to the terms included at https://aws.amazon.com/free/"
+"Publication Date","2026-10-27T19:16:39Z"
+"Version","20261027191639"
+"OfferCode","AmazonEKS"
+"SKU","OfferTermCode","RateCode","TermType","PriceDescription","EffectiveDate","StartingRange","EndingRange","Unit","PricePerUnit","Currency","Product Family","serviceCode","Location","Location Type","Tenancy","usageType","operation","CapabilityType","CPUType","EKSCapabilityUnits","EKSProductType","InstanceType","MemoryType","Region Code","serviceName","StorageType","TierType"
+"8HAE52ZNS3QC3Q8Q","JRTCKXETXF","8HAE52ZNS3QC3Q8Q.JRTCKXETXF.6YS6EN2CT7","OnDemand","Amazon EKS cluster usage in Asia Pacific (Seoul)","2026-10-01","0","Inf","Hours","0.1000000000","USD","Compute","AmazonEKS","Asia Pacific (Seoul)","AWS Region",,"APN2-AmazonEKS-Hours:perCluster","CreateOperation",,,,,,,"ap-northeast-2","Amazon Elastic Container Service for Kubernetes",,"HAStandard"
+"K3WJP6WSDPSYNRMK","JRTCKXETXF","K3WJP6WSDPSYNRMK.JRTCKXETXF.6YS6EN2CT7","OnDemand","Amazon EKS local cluster usage on AWS Outposts","2026-10-01","0","Inf","hours","0.1000000000","USD","Compute","AmazonEKS","Asia Pacific (Seoul)","AWS Outposts",,"APN2-AmazonEKS-Local-Outposts-Hours:perCluster","CreateOperation",,,,,,,"ap-northeast-2","Amazon Elastic Container Service for Kubernetes",,"HAStandard"

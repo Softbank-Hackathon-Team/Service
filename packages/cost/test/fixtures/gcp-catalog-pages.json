@@ -1,0 +1,44 @@
+{
+  "_note": "손으로 만든 Cloud Billing Catalog 응답 모양. 단가는 테스트용 숫자이고 실제 서울 가격이 아니다. description 문구는 【추정】(키가 생기면 실제 응답으로 교체)",
+  "compute": { "skus": [
+    { "skuId": "TEST-E2-CORE", "description": "E2 Instance Core running in Seoul",
+      "category": { "resourceFamily": "Compute", "resourceGroup": "CPU", "usageType": "OnDemand" },
+      "serviceRegions": ["asia-northeast3"],
+      "pricingInfo": [{ "pricingExpression": { "usageUnit": "h", "tieredRates": [
+        { "startUsageAmount": 0, "unitPrice": { "currencyCode": "USD", "units": "0", "nanos": 28000000 } } ] } }] },
+    { "skuId": "TEST-E2-RAM", "description": "E2 Instance Ram running in Seoul",
+      "category": { "resourceFamily": "Compute", "resourceGroup": "RAM", "usageType": "OnDemand" },
+      "serviceRegions": ["asia-northeast3"],
+      "pricingInfo": [{ "pricingExpression": { "usageUnit": "GiBy.h", "tieredRates": [
+        { "startUsageAmount": 0, "unitPrice": { "currencyCode": "USD", "units": "0", "nanos": 3750000 } } ] } }] },
+    { "skuId": "TEST-E2-CORE-SPOT", "description": "Spot Preemptible E2 Instance Core running in Seoul",
+      "category": { "resourceFamily": "Compute", "resourceGroup": "CPU", "usageType": "Preemptible" },
+      "serviceRegions": ["asia-northeast3"],
+      "pricingInfo": [{ "pricingExpression": { "usageUnit": "h", "tieredRates": [
+        { "startUsageAmount": 0, "unitPrice": { "currencyCode": "USD", "units": "0", "nanos": 9000000 } } ] } }] },
+    { "skuId": "TEST-E2-CORE-IOWA", "description": "E2 Instance Core running in Americas",
+      "category": { "resourceFamily": "Compute", "resourceGroup": "CPU", "usageType": "OnDemand" },
+      "serviceRegions": ["us-central1"],
+      "pricingInfo": [{ "pricingExpression": { "usageUnit": "h", "tieredRates": [
+        { "startUsageAmount": 0, "unitPrice": { "currencyCode": "USD", "units": "0", "nanos": 21811000 } } ] } }] }
+  ], "nextPageToken": "" },
+  "gke": { "skus": [
+    { "skuId": "TEST-GKE-ZONAL", "description": "Zonal Kubernetes Clusters",
+      "category": { "resourceFamily": "Compute", "resourceGroup": "Kubernetes", "usageType": "OnDemand" },
+      "serviceRegions": ["global"],
+      "pricingInfo": [{ "pricingExpression": { "usageUnit": "h", "tieredRates": [
+        { "startUsageAmount": 0, "unitPrice": { "currencyCode": "USD", "units": "0", "nanos": 100000000 } } ] } }] }
+  ] },
+  "cloudsql": { "skus": [
+    { "skuId": "TEST-SQL-CPU", "description": "Cloud SQL for PostgreSQL: Zonal - vCPU in Seoul",
+      "category": { "resourceFamily": "ApplicationServices", "resourceGroup": "SQLGen2InstancesCPU", "usageType": "OnDemand" },
+      "serviceRegions": ["asia-northeast3"],
+      "pricingInfo": [{ "pricingExpression": { "usageUnit": "h", "tieredRates": [
+        { "startUsageAmount": 0, "unitPrice": { "currencyCode": "USD", "units": "0", "nanos": 50000000 } } ] } }] },
+    { "skuId": "TEST-SQL-RAM", "description": "Cloud SQL for PostgreSQL: Zonal - RAM in Seoul",
+      "category": { "resourceFamily": "ApplicationServices", "resourceGroup": "SQLGen2InstancesRAM", "usageType": "OnDemand" },
+      "serviceRegions": ["asia-northeast3"],
+      "pricingInfo": [{ "pricingExpression": { "usageUnit": "GiBy.h", "tieredRates": [
+        { "startUsageAmount": 0, "unitPrice": { "currencyCode": "USD", "units": "0", "nanos": 8500000 } } ] } }] }
+  ] }
+}

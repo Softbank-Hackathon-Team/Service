@@ -1,0 +1,129 @@
+{
+ "skus": [
+  {
+   "skuId": "1111-2222",
+   "description": "E2 Medium Instance running in Seoul",
+   "category": {
+    "resourceFamily": "Compute",
+    "resourceGroup": "CPU",
+    "usageType": "OnDemand"
+   },
+   "serviceRegions": [
+    "asia-northeast3"
+   ],
+   "pricingInfo": [
+    {
+     "pricingExpression": {
+      "usageUnit": "h",
+      "tieredRates": [
+       {
+        "startUsageAmount": 0,
+        "unitPrice": {
+         "currencyCode": "USD",
+         "units": "0",
+         "nanos": 43000000
+        }
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "skuId": "1111-3333",
+   "description": "E2 Medium Instance running in Seoul (Preemptible)",
+   "category": {
+    "resourceFamily": "Compute",
+    "resourceGroup": "CPU",
+    "usageType": "Preemptible"
+   },
+   "serviceRegions": [
+    "asia-northeast3"
+   ],
+   "pricingInfo": [
+    {
+     "pricingExpression": {
+      "usageUnit": "h",
+      "tieredRates": [
+       {
+        "startUsageAmount": 0,
+        "unitPrice": {
+         "currencyCode": "USD",
+         "units": "0",
+         "nanos": 13000000
+        }
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "skuId": "4444-5555",
+   "description": "Cloud SQL for PostgreSQL: Zonal - Standard storage (SSD) in Seoul",
+   "category": {
+    "resourceFamily": "Storage",
+    "resourceGroup": "SSD",
+    "usageType": "OnDemand"
+   },
+   "serviceRegions": [
+    "asia-northeast3"
+   ],
+   "pricingInfo": [
+    {
+     "pricingExpression": {
+      "usageUnit": "GiBy.mo",
+      "tieredRates": [
+       {
+        "startUsageAmount": 0,
+        "unitPrice": {
+         "currencyCode": "USD",
+         "units": "0",
+         "nanos": 0
+        }
+       },
+       {
+        "startUsageAmount": 10,
+        "unitPrice": {
+         "currencyCode": "USD",
+         "units": "0",
+         "nanos": 221000000
+        }
+       }
+      ]
+     }
+    }
+   ]
+  },
+  {
+   "skuId": "6666-7777",
+   "description": "E2 Medium Instance running in Iowa",
+   "category": {
+    "resourceFamily": "Compute",
+    "resourceGroup": "CPU",
+    "usageType": "OnDemand"
+   },
+   "serviceRegions": [
+    "us-central1"
+   ],
+   "pricingInfo": [
+    {
+     "pricingExpression": {
+      "usageUnit": "h",
+      "tieredRates": [
+       {
+        "startUsageAmount": 0,
+        "unitPrice": {
+         "currencyCode": "USD",
+         "units": "0",
+         "nanos": 33500000
+        }
+       }
+      ]
+     }
+    }
+   ]
+  }
+ ],
+ "nextPageToken": ""
+}
