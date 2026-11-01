@@ -74,7 +74,7 @@ export function DashboardScreen({ flow }: ScreenProps) {
           )}
         </div>
       </Hero>
-      <Tile area="migrations" compact scroll>
+      <Tile area="migrations" scroll>
         <TileHeader title="이전 목록" />
         <ul className={s.plainList}>
           {started && (
@@ -102,7 +102,7 @@ export function DashboardScreen({ flow }: ScreenProps) {
           ))}
         </ul>
       </Tile>
-      <Tile area="envs" compact spread>
+      <Tile area="envs" spread>
         <TileHeader title="환경" action={<TileLink label="모두 보기" onClick={() => flow.go('environments')} />} />
         <ul className={s.plainList}>
           {ENVS.map((env) => (
@@ -113,7 +113,7 @@ export function DashboardScreen({ flow }: ScreenProps) {
           ))}
         </ul>
       </Tile>
-      <StatTile area="threats" icon="alert" value={`${active}`} unit="건" label="확인하지 않은 위협" compact />
+      <StatTile area="threats" icon="alert" value={`${active}`} unit="건" label="확인하지 않은 위협" />
     </ScreenLayout>
   );
 }
@@ -145,7 +145,7 @@ export function EnvironmentsScreen({ flow }: ScreenProps) {
         const app = ENV_APP[env];
         const isConnected = connected[env];
         return (
-          <Tile key={env} area={`env${index}`} compact spread>
+          <Tile key={env} area={`env${index}`} spread>
             <TileHeader title={env} action={<Badge tone={isConnected ? 'success' : 'neutral'}>{isConnected ? '연결됨' : '연결 안 됨'}</Badge>} />
             <p className={s.summaryValue}>
               <span className="t-metric-xl">{trafficOf(env)}</span>
@@ -205,7 +205,7 @@ export function SettingsScreen({ flow }: ScreenProps) {
   };
   return (
     <ScreenLayout flow={flow} layout={SETTINGS}>
-      <Tile area="members" compact scroll>
+      <Tile area="members" scroll>
         <TileHeader title="멤버" action={<Badge>역할 없음</Badge>} />
         <ul className={s.plainList}>
           {members.map((member) => (
@@ -225,7 +225,7 @@ export function SettingsScreen({ flow }: ScreenProps) {
           ))}
         </ul>
       </Tile>
-      <Tile area="invite" compact spread>
+      <Tile area="invite" spread>
         <TileHeader title="멤버 초대" />
         <p className="t-body-md c-secondary">회사 멤버면 승인까지 모두 할 수 있습니다. 제거하면 즉시 접속이 끊깁니다.</p>
         <input
@@ -272,11 +272,11 @@ export function AgentScreen({ flow }: ScreenProps) {
           <textarea className={s.textarea} rows={3} maxLength={2000} placeholder="예: 메모리 부족으로 재시작이 반복됩니다" />
         </label>
       </Hero>
-      <Tile area="timeline" compact scroll>
+      <Tile area="timeline" scroll>
         <TileHeader title="에이전트가 한 일" action={running ? <Badge tone="info">실행 중</Badge> : undefined} />
         <Timeline items={AGENT_TIMELINE} />
       </Tile>
-      <Tile area="runs" compact scroll>
+      <Tile area="runs" scroll>
         <TileHeader title="최근 실행" />
         <ul className={s.plainList}>
           {AGENT_RUNS.map((run) => (
@@ -290,7 +290,7 @@ export function AgentScreen({ flow }: ScreenProps) {
           ))}
         </ul>
       </Tile>
-      <Tile area="limits" compact spread>
+      <Tile area="limits" spread>
         <TileHeader title="한도" />
         <ul className={s.plainList}>
           {AGENT_LIMITS.map(([name, value]) => (

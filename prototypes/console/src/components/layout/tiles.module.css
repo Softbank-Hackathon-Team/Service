@@ -1,97 +1,55 @@
-.tile {
+.tile,
+.hero {
   display: flex;
   flex-direction: column;
-  gap: var(--space-12);
   min-width: 0;
   min-height: 0;
-  padding: var(--space-32);
+  padding: var(--space-24);
+  border: 1px solid var(--color-border-default);
   border-radius: var(--radius-xl);
-}
-.surface {
   background: var(--color-bg-surface);
 }
-.inverse {
-  background: var(--color-bg-inverse);
-  border: 1px solid var(--color-border-inverse);
-  color: var(--color-fg-on-hero);
+.tile {
+  gap: var(--space-12);
 }
 .spread {
   justify-content: space-between;
-}
-.compact {
-  padding: var(--space-24);
 }
 .scroll {
   overflow: auto;
 }
 
 .hero {
-  position: relative;
-  display: flex;
-  flex-direction: column;
   gap: var(--space-24);
-  min-width: 0;
-  min-height: 0;
-  padding: var(--space-40);
-  overflow: hidden;
-  border-radius: var(--radius-xl);
-  color: var(--color-fg-on-hero);
-}
-.run {
-  background: var(--hero-run);
-}
-.stop {
-  background: var(--hero-stop);
-}
-.done {
-  background: var(--hero-done);
-}
-.decorLarge,
-.decorSmall {
-  position: absolute;
-  border: 1.5px solid rgb(169 180 245 / 55%);
-  border-radius: var(--radius-full);
-  background: rgb(255 255 255 / 3%);
-  box-shadow: 0 0 24px rgb(169 180 245 / 18%);
-  pointer-events: none;
-}
-.decorLarge {
-  top: -35%;
-  left: 42%;
-  width: 110%;
-  aspect-ratio: 1;
-}
-.decorSmall {
-  top: 35%;
-  left: 62%;
-  width: 70%;
-  aspect-ratio: 1;
-}
-.heroMeta,
-.heroContent,
-.heroFoot {
-  position: relative;
 }
 .heroMeta {
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
+.heroEyebrow {
+  letter-spacing: 0.4px;
+}
+.run .heroEyebrow {
+  color: var(--color-fg-accent);
+}
+.stop {
+  border-color: var(--color-border-danger);
+}
+.stop .heroEyebrow {
+  color: var(--color-fg-tone-danger);
+}
+.done .heroEyebrow {
+  color: var(--color-fg-tone-success);
+}
 .heroStep {
-  display: grid;
-  place-items: center;
-  width: var(--size-control-m);
-  height: var(--size-control-m);
-  border-radius: var(--radius-full);
-  background: var(--color-bg-surface);
-  color: var(--color-fg-primary);
+  color: var(--color-fg-tertiary);
 }
 .heroContent {
   display: flex;
   flex: 1;
   flex-direction: column;
-  justify-content: center;
-  gap: var(--space-24);
+  gap: var(--space-16);
   min-height: 0;
 }
 .heroTitle {
@@ -99,15 +57,16 @@
 }
 .heroFoot {
   padding-top: var(--space-16);
-  border-top: 1px solid rgb(255 255 255 / 50%);
+  border-top: 1px solid var(--color-border-default);
+  color: var(--color-fg-secondary);
 }
 
 .statIcon {
   display: grid;
   place-items: center;
-  width: var(--size-control-m);
-  height: var(--size-control-m);
-  border-radius: var(--radius-full);
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
   background: var(--color-bg-subtle);
   color: var(--color-fg-secondary);
 }
@@ -127,24 +86,20 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-4) var(--space-8) var(--space-4) var(--space-12);
+  padding: var(--space-4) var(--space-8);
   border: 0;
-  border-radius: var(--radius-full);
-  background: var(--color-bg-subtle);
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--color-fg-secondary);
   white-space: nowrap;
   cursor: pointer;
 }
 .tileLink:hover {
-  background: var(--color-bg-selected);
+  background: var(--color-bg-subtle);
 }
 
 @media (max-width: 1099px) {
   .hero {
-    min-height: 420px;
-    padding: var(--space-24);
-  }
-  .tile {
-    padding: var(--space-24);
+    min-height: 320px;
   }
 }

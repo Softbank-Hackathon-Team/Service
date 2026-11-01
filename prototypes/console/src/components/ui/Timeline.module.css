@@ -14,39 +14,39 @@
 .item:not(:last-child)::before {
   content: '';
   position: absolute;
-  top: 32px;
+  top: 28px;
   bottom: 0;
-  left: 15px;
-  width: 2px;
+  left: 13px;
+  width: 1px;
   background: var(--color-border-default);
 }
 .mark {
   display: grid;
   place-items: center;
   flex: none;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-full);
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
 }
 .tool {
   background: var(--color-bg-subtle);
   color: var(--color-fg-secondary);
 }
 .denied {
-  background: var(--color-signal-fail);
-  color: var(--color-fg-on-action);
+  background: var(--color-bg-tone-danger);
+  color: var(--color-fg-tone-danger);
 }
 .guardrail {
-  background: var(--color-signal-warning);
-  color: var(--color-fg-on-action);
+  background: var(--color-bg-tone-warning);
+  color: var(--color-fg-tone-warning);
 }
 .human {
   background: var(--color-bg-status-attested);
   color: var(--color-fg-tone-info);
 }
 .system {
-  background: var(--color-bg-inverse);
-  color: var(--color-fg-on-action);
+  background: var(--color-bg-subtle);
+  color: var(--color-fg-secondary);
 }
 .body {
   flex: 1;

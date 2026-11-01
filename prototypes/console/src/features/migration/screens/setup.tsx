@@ -105,7 +105,7 @@ export function ConnectFailedScreen({ flow }: ScreenProps) {
       <Hero tone="stop" meta={`${source} 연결`} step="!" title={'권한을 빌릴 수\n없습니다'} foot="아무것도 바꾸지 않았습니다">
         <code className={`${s.causeCode} t-code-md`}>{CONNECT_FAILURES[0][0]}</code>
       </Hero>
-      <Tile area="reasons" compact>
+      <Tile area="reasons">
         <TileHeader title="실패 이유 코드" />
         <ul className={s.plainList}>
           {CONNECT_FAILURES.map(([code, label], index) => (
@@ -158,7 +158,7 @@ export function ReadScreen({ flow }: ScreenProps) {
           ))}
         </div>
       </Tile>
-      <Tile area="security" compact>
+      <Tile area="security">
         <div className={s.securityRow}>
           <div className={s.summary}>
             <TileHeader title="지금 보안 상태" />
@@ -278,7 +278,7 @@ export function SpecScreen({ flow }: ScreenProps) {
         </div>
       </Hero>
       <ChecklistTile title="사람이 할 일" items={prepSteps('spec')} />
-      <Tile area="read" compact>
+      <Tile area="read">
         <TileHeader title="운영 중인 앱에서 읽은 값" />
         <ul className={s.plainList}>
           {SPEC_READ.map(({ name, value, confidence }) => (
@@ -292,7 +292,7 @@ export function SpecScreen({ flow }: ScreenProps) {
           ))}
         </ul>
       </Tile>
-      <Tile area="coverage" compact spread>
+      <Tile area="coverage" spread>
         <TileHeader title="찾은 자원" action={<Badge tone="warning">발견 {FINDINGS.length}</Badge>} />
         <p className={s.summaryValue}>
           <span className="t-metric-xl">{COVERAGE.movable}</span>
@@ -329,7 +329,7 @@ export function PrecheckScreen({ flow }: ScreenProps) {
       sub="하나라도 막히면 여기서 멈춥니다. 고객 환경에는 아직 아무것도 생기지 않았습니다."
       actions={<ActionPill label="자동으로 진행 중" icon="refresh" disabled />}
     >
-      <Tile area="items" tone="inverse" compact>
+      <Tile area="items">
         <h3 className="t-h3" style={{ marginBottom: 'var(--space-8)' }}>
           점검 항목 20개
         </h3>
@@ -421,7 +421,7 @@ export function ApproveScreen({ flow }: ScreenProps) {
           ))}
         </div>
       </Hero>
-      <Tile area="steps" tone="inverse" compact scroll>
+      <Tile area="steps" scroll>
         <h3 className="t-h3">단계와 넘어갈 조건</h3>
         <ol className={s.planSteps}>
           {PLAN_STEPS.map(({ name, gate }, index) => (
@@ -434,7 +434,7 @@ export function ApproveScreen({ flow }: ScreenProps) {
           ))}
         </ol>
       </Tile>
-      <Tile area="cost" compact spread>
+      <Tile area="cost" spread>
         <TileHeader title="월 비용" action={<TileLink label="자세히" onClick={() => flow.go('cost')} />} />
         <div className={s.costCompare}>
           <div className={s.change}>
@@ -449,7 +449,7 @@ export function ApproveScreen({ flow }: ScreenProps) {
         </div>
         <p className="t-body-sm c-secondary">결정은 사용자가 합니다. 값은 가정값입니다.</p>
       </Tile>
-      <Tile area="extras" compact scroll>
+      <Tile area="extras" scroll>
         <TileHeader title="같이 승인하는 것" action={<Badge tone="warning">경고 1</Badge>} />
         <ul className={s.plainList}>
           <li className={s.stackedRow}>
@@ -499,7 +499,7 @@ export function RejectedScreen({ flow }: ScreenProps) {
       }
     >
       <Hero tone="stop" meta="거절" step="×" title={'고객 환경에는\n아무것도 안 바꿨습니다'} foot="거절한 사람과 이유를 감사 기록에 남깁니다" />
-      <Tile area="reason" compact>
+      <Tile area="reason">
         <TileHeader title="거절 이유 (선택)" />
         <textarea className={s.textarea} rows={5} placeholder="왜 거절하는지 한 줄로 적어 주세요" />
       </Tile>
@@ -525,7 +525,7 @@ export function StaleScreen({ flow }: ScreenProps) {
       <Hero tone="stop" meta="낡은 계획" step="!" title={'승인 2시간이\n지났습니다'} foot="본 것과 다른 내용이 실행되지 않도록 막았습니다">
         <code className={`${s.causeCode} t-code-md`}>{hashOf(flow)}</code>
       </Hero>
-      <Tile area="reason" compact>
+      <Tile area="reason">
         <TileHeader title="다시 확인하는 것" />
         <ul className={s.plainList}>
           <li className="t-body-md">사전 점검 20개</li>
@@ -590,7 +590,7 @@ export function CostScreen({ flow }: ScreenProps) {
       barLeft={<BarPill label={routeLabel(flow)} />}
       barRight={<BarPill label="계획서로" icon="rollback" onClick={() => flow.go('approve')} />}
     >
-      <Tile area="table" compact>
+      <Tile area="table">
         <TileHeader title="항목별 월 비용 (가정값)" />
         <table className={s.costTable}>
           <thead>
@@ -625,14 +625,14 @@ export function CostScreen({ flow }: ScreenProps) {
           </tfoot>
         </table>
       </Tile>
-      <Tile area="growth" compact spread>
+      <Tile area="growth" spread>
         <TileHeader title="성장 시나리오" />
         <div className={s.optionRow}>
           <OptionPill label="지금 트래픽" selected={growth === 1} onClick={() => flow.patch({ growth: 1 })} />
           <OptionPill label="3배로 성장" selected={growth === 3} onClick={() => flow.patch({ growth: 3 })} />
         </div>
       </Tile>
-      <Tile area="profile" compact spread>
+      <Tile area="profile" spread>
         <TileHeader title="보안 수준" />
         <div className={s.optionRow}>
           <OptionPill label="기본" selected={profile === 'basic'} onClick={() => flow.patch({ profile: 'basic' })} />

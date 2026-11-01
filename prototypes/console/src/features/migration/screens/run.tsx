@@ -54,11 +54,11 @@ export function RunningScreen({ flow }: ScreenProps) {
         title={runningTitle(state)}
         foot="오류율이 1%를 넘거나 응답 시간이 2배를 넘으면 자동으로 되돌립니다"
       >
-        <TrafficBar source={source} target={target} targetPercent={traffic} surface="hero" />
+        <TrafficBar source={source} target={target} targetPercent={traffic} />
       </Hero>
       <ChecklistTile title="진행 단계" items={migrationSteps('running', state)} />
-      <StatTile area="failed" icon="check" value={metricsAvailable ? '0' : '없음'} unit={metricsAvailable ? '건' : undefined} label={metricsAvailable ? '실패 요청' : '숫자 없음: 지표가 아직 안 옴'} compact />
-      <StatTile area="latency" icon="migrate" value={metricsAvailable ? '1.2' : '없음'} unit={metricsAvailable ? '배' : undefined} label={metricsAvailable ? '응답 시간 p95, 출발 대비' : '숫자 없음: 표본 부족'} compact />
+      <StatTile area="failed" icon="check" value={metricsAvailable ? '0' : '없음'} unit={metricsAvailable ? '건' : undefined} label={metricsAvailable ? '실패 요청' : '숫자 없음: 지표가 아직 안 옴'} />
+      <StatTile area="latency" icon="migrate" value={metricsAvailable ? '1.2' : '없음'} unit={metricsAvailable ? '배' : undefined} label={metricsAvailable ? '응답 시간 p95, 출발 대비' : '숫자 없음: 표본 부족'} />
       <SecurityTile flow={flow} title="도착지 보안" />
     </ScreenLayout>
   );
@@ -66,7 +66,7 @@ export function RunningScreen({ flow }: ScreenProps) {
 
 const PAUSED: BentoLayout = {
   columns: '880fr 492fr',
-  rows: '470fr 170fr',
+  rows: '500fr 170fr',
   areas: ['hero steps', 'hero traffic'],
 };
 
@@ -102,7 +102,7 @@ export function PausedScreen({ flow }: ScreenProps) {
         <code className={`${s.causeCode} t-code-md`}>tcp/5432 → 0.0.0.0/0</code>
       </Hero>
       <ChecklistTile title="진행 단계" items={migrationSteps('paused', flow.state)} />
-      <Tile area="traffic" compact spread>
+      <Tile area="traffic" spread>
         <TileHeader title="지금 트래픽" />
         <TrafficBar source={source} target={target} targetPercent={traffic} />
         <p className="t-body-md c-secondary">실패 요청 0건, 사용자 영향 없음</p>
@@ -172,15 +172,15 @@ export function FixScreen({ flow }: ScreenProps) {
           <span>+ cidr: 10.20.0.0/16</span>
         </code>
       </Hero>
-      <Tile area="timeline" compact scroll>
+      <Tile area="timeline" scroll>
         <TileHeader title="에이전트가 한 일" />
         <Timeline items={merged ? [...AGENT_TIMELINE, MERGE_ENTRY] : AGENT_TIMELINE} />
       </Tile>
-      <Tile area="checked" compact spread>
+      <Tile area="checked" spread>
         <TileHeader title="확인한 것" action={<Badge tone="success">{CHECKED.length}개</Badge>} />
         <Bullets icon="check" items={CHECKED} />
       </Tile>
-      <Tile area="unchecked" compact spread>
+      <Tile area="unchecked" spread>
         <TileHeader title="확인하지 못한 것" action={<Badge tone="warning">{UNCHECKED.length}개</Badge>} />
         <Bullets icon="help" items={UNCHECKED} />
       </Tile>
@@ -220,8 +220,8 @@ export function RollbackWindowScreen({ flow }: ScreenProps) {
         </p>
       </Hero>
       <ChecklistTile title="진행 단계" items={migrationSteps('window', flow.state, '시간 끝나면')} />
-      <StatTile area="failed" icon="check" value="0" unit="건" label="실패 요청" compact />
-      <StatTile area="latency" icon="migrate" value="1.1" unit="배" label="응답 시간 p95, 출발 대비" compact />
+      <StatTile area="failed" icon="check" value="0" unit="건" label="실패 요청" />
+      <StatTile area="latency" icon="migrate" value="1.1" unit="배" label="응답 시간 p95, 출발 대비" />
     </ScreenLayout>
   );
 }
@@ -251,7 +251,7 @@ export function CleanupScreen({ flow }: ScreenProps) {
       actions={<ActionPill label="자동으로 진행 중" icon="refresh" disabled />}
     >
       <Hero tone="done" meta="정리" step="09" title={`${source}의 임시 자원을\n지우고 있습니다`} foot="남은 줄이 0개여야 완료합니다" />
-      <Tile area="steps" tone="inverse" compact>
+      <Tile area="steps">
         <h3 className="t-h3" style={{ marginBottom: 'var(--space-8)' }}>
           정리 단계
         </h3>
@@ -276,9 +276,9 @@ export function RollingBackScreen({ flow }: ScreenProps) {
     >
       <Hero tone="stop" meta={rollbackCause === 'manual' ? '수동 롤백' : '자동 롤백'} step="←" title={cause.title} foot={cause.detail}>
         <code className={`${s.causeCode} t-code-md`}>{cause.code}</code>
-        <TrafficBar source={source} target={target} targetPercent={rollbackStep > 2 ? 0 : traffic} surface="hero" />
+        <TrafficBar source={source} target={target} targetPercent={rollbackStep > 2 ? 0 : traffic} />
       </Hero>
-      <Tile area="steps" tone="inverse" compact>
+      <Tile area="steps">
         <h3 className="t-h3" style={{ marginBottom: 'var(--space-8)' }}>
           롤백 다섯 단계
         </h3>

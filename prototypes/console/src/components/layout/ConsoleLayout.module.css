@@ -1,10 +1,8 @@
 .root {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: var(--space-24);
   height: 100dvh;
   min-height: 760px;
-  padding: var(--space-24);
 }
 
 .topBar {
@@ -12,6 +10,10 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-12);
+  min-height: var(--size-bar);
+  padding: 0 var(--space-24);
+  border-bottom: 1px solid var(--color-border-default);
+  background: var(--color-bg-surface);
   view-transition-name: top-bar;
 }
 .barGroup {
@@ -20,13 +22,15 @@
   gap: var(--space-12);
   min-width: 0;
 }
+
 .bento {
   display: grid;
   grid-template-columns: var(--bento-columns);
   grid-template-rows: var(--bento-rows);
   grid-template-areas: var(--bento-areas);
-  gap: var(--space-20);
+  gap: var(--space-16);
   min-height: 0;
+  padding: var(--space-24) var(--space-24) var(--space-16);
 }
 
 .band {
@@ -34,6 +38,7 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-24);
+  padding: var(--space-8) var(--space-24) var(--space-24);
   view-transition-name: action-band;
 }
 .headline {
@@ -46,7 +51,7 @@
   display: flex;
   align-items: center;
   flex: none;
-  gap: var(--space-12);
+  gap: var(--space-8);
 }
 
 /* 콘솔은 데스크톱 기준이다. 좁은 화면에서는 타일을 한 줄로 쌓아 내용이 잘리지 않게만 한다. */
@@ -54,11 +59,10 @@
   .root {
     height: auto;
     min-height: 100dvh;
-    padding: var(--space-16);
-    gap: var(--space-16);
   }
   .topBar {
     flex-wrap: wrap;
+    padding: var(--space-12) var(--space-16);
   }
   .barGroup {
     flex-wrap: wrap;
@@ -67,10 +71,12 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-12);
+    padding: var(--space-16);
   }
   .band {
     flex-direction: column;
     align-items: stretch;
+    padding: 0 var(--space-16) var(--space-16);
   }
   .actions {
     flex-wrap: wrap;

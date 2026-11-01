@@ -46,7 +46,7 @@ export function SecurityScreen({ flow }: ScreenProps) {
       layout={selected ? MATRIX_WITH_CELL : MATRIX}
       barLeft={<SectionTabs flow={flow} />}
     >
-      <Tile area="compare" compact>
+      <Tile area="compare">
         <div className={s.matrixHead}>
           <h1 className="t-h1">통제 {rows.length}개 × 환경 {ENVS.length}개</h1>
           <span className={s.compareResult}>
@@ -58,7 +58,7 @@ export function SecurityScreen({ flow }: ScreenProps) {
           </span>
         </div>
       </Tile>
-      <Tile area="panel" compact>
+      <Tile area="panel">
         <div className={s.matrixWrap}>
           <table className={s.matrix}>
             <thead>
@@ -103,7 +103,7 @@ export function SecurityScreen({ flow }: ScreenProps) {
         </div>
       </Tile>
       {selected && cell && selectedStatus && (
-        <Tile area="evidence" compact scroll>
+        <Tile area="evidence" scroll>
           <TileHeader title={`${selected.id} · ${cell.env}`} action={<BarPillClose onClick={() => setCell(null)} />} />
           <h2 className="t-h2">{selected.name}</h2>
           <div className={s.evidenceStatus}>
@@ -165,7 +165,7 @@ export function ThreatsScreen({ flow }: ScreenProps) {
   const active = THREATS.filter((threat) => !acknowledged[threat.id]).length;
   return (
     <ScreenLayout flow={flow} layout={THREATS_LAYOUT} barLeft={<SectionTabs flow={flow} />}>
-      <Tile area="list" compact scroll>
+      <Tile area="list" scroll>
         <TileHeader title="세 환경의 위협 알림" />
         <ul className={s.plainList}>
           {THREATS.map((threat) => {
@@ -181,7 +181,7 @@ export function ThreatsScreen({ flow }: ScreenProps) {
                 <Badge tone={threat.severity === '높음' ? 'danger' : 'warning'}>{threat.severity}</Badge>
                 <button
                   type="button"
-                  className={`${s.fieldConfirm} ${done ? s.fieldConfirmed : s.threatConfirm} t-label-md`}
+                  className={`${s.fieldConfirm} ${done ? s.fieldConfirmed : ""} t-label-md`}
                   disabled={done}
                   onClick={() => flow.acknowledge(threat.id)}
                 >
@@ -192,8 +192,8 @@ export function ThreatsScreen({ flow }: ScreenProps) {
           })}
         </ul>
       </Tile>
-      <StatTile area="active" icon="alert" value={`${active}`} unit="건" label="확인하지 않은 위협" compact />
-      <Tile area="eyes" compact spread>
+      <StatTile area="active" icon="alert" value={`${active}`} unit="건" label="확인하지 않은 위협" />
+      <Tile area="eyes" spread>
         <TileHeader title="환경마다 눈이 다릅니다" />
         <p className="t-body-sm c-secondary">목적은 같고 탐지 범위가 다릅니다. VIO-04 칸에서 범위를 볼 수 있습니다.</p>
       </Tile>
@@ -212,7 +212,7 @@ export function GuardrailsScreen({ flow }: ScreenProps) {
   return (
     <ScreenLayout flow={flow} layout={GUARDRAILS} barLeft={<SectionTabs flow={flow} />} barRight={<BarPill label={routeLabel(flow)} />}>
       {GUARDRAIL_STAGES.map((stage, index) => (
-        <Tile key={stage.name} area={`stage${index}`} compact>
+        <Tile key={stage.name} area={`stage${index}`}>
           <TileHeader
             title={`${index + 1}. ${stage.name}`}
             action={
@@ -236,9 +236,9 @@ export function GuardrailsScreen({ flow }: ScreenProps) {
           </ul>
         </Tile>
       ))}
-      <StatTile area="detect" icon="alert" value="8" unit="초" label="탐지" compact />
-      <StatTile area="restore" icon="pause" value="-" label="사람이 되돌림" compact />
-      <Tile area="exposure" compact spread>
+      <StatTile area="detect" icon="alert" value="8" unit="초" label="탐지" />
+      <StatTile area="restore" icon="pause" value="-" label="사람이 되돌림" />
+      <Tile area="exposure" spread>
         <TileHeader title="걸리면 하는 일" />
         <p className="t-body-md c-secondary">이전을 멈추고 알립니다. 되돌리는 것은 사람이 합니다.</p>
       </Tile>

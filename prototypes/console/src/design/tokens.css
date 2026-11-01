@@ -1,108 +1,58 @@
 /*
- * Figma "Iron Design System"의 변수를 그대로 옮긴 토큰.
- * 이름은 Figma 변수의 WEB 코드 문법과 같다. color/bg/canvas -> --color-bg-canvas
- * 색은 인디고, 바이올렛, 페리윙클 톤이다. 통과는 초록 대신 청록을 쓴다.
- * 컴포넌트에서는 primitive가 아니라 의미 토큰(color, space, radius)만 쓴다.
+ * Kross 디자인 시스템(design-system.html)의 값을 옮긴 토큰.
+ * 중립적인 표면, 하나의 액션 컬러, 의미가 있는 상태색만 쓴다.
+ * 컴포넌트에서는 이 의미 토큰만 쓴다.
  */
 :root {
-  /* Primitives */
-  --primitive-iron-0: #ffffff;
-  --primitive-iron-50: #fafafd;
-  --primitive-iron-100: #efeff6;
-  --primitive-iron-150: #f2f2f8;
-  --primitive-iron-200: #e2e2ee;
-  --primitive-iron-300: #c9c9dc;
-  --primitive-iron-400: #8c8ba8;
-  --primitive-iron-500: #6e6c8a;
-  --primitive-iron-550: #5d5b78;
-  --primitive-iron-600: #4c4a66;
-  --primitive-iron-700: #332f52;
-  --primitive-iron-800: #1f1d3d;
-  --primitive-iron-900: #14143a;
-  --primitive-iron-950: #0b0c2a;
-  --primitive-teal-50: #e4f2f6;
-  --primitive-teal-200: #a9d8e3;
-  --primitive-teal-600: #17788c;
-  --primitive-teal-800: #0f5c6e;
-  --primitive-red-50: #fbe9ee;
-  --primitive-red-200: #f3b9c8;
-  --primitive-red-600: #b3274a;
-  --primitive-red-800: #8e1f3c;
-  --primitive-amber-50: #fbf1dc;
-  --primitive-amber-200: #efd18d;
-  --primitive-amber-600: #a36a00;
-  --primitive-amber-800: #7a4a06;
-  --primitive-blue-50: #e9ecfb;
-  --primitive-blue-200: #c2c9f3;
-  --primitive-blue-600: #4f5bd5;
-  --primitive-blue-800: #2f3a9e;
-  --primitive-violet-50: #eeebfa;
-  --primitive-violet-200: #cfc7f0;
-  --primitive-violet-600: #6657c4;
-  --primitive-violet-800: #463a96;
-  --primitive-periwinkle-300: #a9b4f5;
-  --primitive-mist-100: #e1e4f7;
-
   /* Background */
-  --color-bg-canvas: var(--primitive-iron-150);
-  --color-bg-surface: var(--primitive-iron-0);
-  --color-bg-subtle: var(--primitive-iron-100);
-  --color-bg-hover: var(--primitive-iron-100);
-  --color-bg-selected: var(--primitive-iron-200);
-  --color-bg-inverse: var(--primitive-iron-900);
-  --color-bg-accent: var(--primitive-periwinkle-300);
-  --color-bg-action-primary: var(--primitive-iron-900);
-  --color-bg-action-primary-hover: var(--primitive-iron-700);
-  --color-bg-action-danger: var(--primitive-red-600);
-  --color-bg-action-danger-hover: var(--primitive-red-800);
-  --color-bg-action-disabled: var(--primitive-iron-200);
-  --color-bg-tone-neutral: var(--primitive-iron-100);
-  --color-bg-tone-success: var(--primitive-teal-50);
-  --color-bg-tone-warning: var(--primitive-amber-50);
-  --color-bg-tone-danger: var(--primitive-red-50);
-  --color-bg-tone-info: var(--primitive-blue-50);
-  --color-bg-tone-target: var(--primitive-violet-50);
-  --color-bg-status-pass: var(--primitive-teal-50);
-  --color-bg-status-fail: var(--primitive-red-600);
-  --color-bg-status-unknown: var(--primitive-amber-50);
-  --color-bg-status-na: var(--primitive-iron-100);
-  --color-bg-status-attested: var(--primitive-blue-50);
+  --color-bg-canvas: #f6f7f9;
+  --color-bg-surface: #ffffff;
+  --color-bg-subtle: #f0f2f5;
+  --color-bg-hover: #f0f2f5;
+  --color-bg-selected: #edf2ff;
+  --color-bg-target: #f8faff;
+  --color-bg-action-primary: #365fce;
+  --color-bg-action-primary-hover: #294dab;
+  --color-bg-action-disabled: #f0f2f5;
+  --color-bg-tone-neutral: #f0f2f5;
+  --color-bg-tone-success: #edf7f1;
+  --color-bg-tone-warning: #fbf5e8;
+  --color-bg-tone-danger: #fcf0ef;
+  --color-bg-tone-info: #edf2ff;
+  --color-bg-status-pass: #edf7f1;
+  --color-bg-status-fail: #fcf0ef;
+  --color-bg-status-unknown: #fbf5e8;
+  --color-bg-status-na: #f0f2f5;
+  --color-bg-status-attested: #edf2ff;
 
   /* Foreground */
-  --color-fg-primary: var(--primitive-iron-950);
-  --color-fg-secondary: var(--primitive-iron-600);
-  --color-fg-tertiary: var(--primitive-iron-550);
-  --color-fg-disabled: var(--primitive-iron-550);
-  --color-fg-on-action: var(--primitive-iron-0);
-  --color-fg-on-hero: var(--primitive-iron-0);
-  --color-fg-on-hero-muted: var(--primitive-mist-100);
-  --color-fg-on-accent: var(--primitive-iron-950);
-  --color-fg-tone-success: var(--primitive-teal-800);
-  --color-fg-tone-warning: var(--primitive-amber-800);
-  --color-fg-tone-danger: var(--primitive-red-800);
-  --color-fg-tone-info: var(--primitive-blue-800);
-  --color-fg-tone-target: var(--primitive-violet-800);
+  --color-fg-primary: #202631;
+  --color-fg-secondary: #616b7a;
+  --color-fg-tertiary: #747e8c;
+  --color-fg-disabled: #939ba7;
+  --color-fg-accent: #365fce;
+  --color-fg-on-action: #ffffff;
+  --color-fg-tone-success: #287455;
+  --color-fg-tone-warning: #946512;
+  --color-fg-tone-danger: #b34646;
+  --color-fg-tone-info: #365fce;
 
   /* Border */
-  --color-border-default: var(--primitive-iron-200);
-  --color-border-strong: var(--primitive-iron-400);
-  --color-border-focus: var(--primitive-iron-950);
-  --color-border-inverse: var(--primitive-iron-700);
+  --color-border-default: #e3e7ed;
+  --color-border-strong: #ccd3dd;
+  --color-border-focus: #a7baf0;
+  --color-border-danger: #e7c8c5;
+  --color-border-target: #cbd7f5;
 
   /* Data, signal */
-  --color-data-source: var(--primitive-iron-400);
-  --color-data-target: var(--primitive-blue-600);
-  --color-data-track: var(--primitive-iron-100);
-  --color-signal-pass: var(--primitive-teal-600);
-  --color-signal-fail: var(--primitive-red-600);
-  --color-signal-warning: var(--primitive-amber-600);
-  --color-signal-info: var(--primitive-blue-600);
-  --color-signal-neutral: var(--primitive-iron-400);
-
-  /* 주인공 타일의 색이 곧 이전 상태다. */
-  --hero-run: linear-gradient(127deg, #4b4566 0%, #26233f 38%, #0b0c2a 68%, #1c2a4d 100%);
-  --hero-stop: linear-gradient(127deg, #4a1c33 0%, #8e1f3c 60%, #b3274a 100%);
-  --hero-done: linear-gradient(127deg, #1b2748 0%, #2e4468 55%, #57708f 100%);
+  --color-data-source: #ccd3dd;
+  --color-data-target: #365fce;
+  --color-data-track: #f0f2f5;
+  --color-signal-pass: #287455;
+  --color-signal-fail: #b34646;
+  --color-signal-warning: #946512;
+  --color-signal-info: #365fce;
+  --color-signal-neutral: #ccd3dd;
 
   /* Layout */
   --space-2: 2px;
@@ -110,21 +60,15 @@
   --space-8: 8px;
   --space-12: 12px;
   --space-16: 16px;
-  --space-20: 20px;
   --space-24: 24px;
   --space-32: 32px;
-  --space-40: 40px;
-  --space-48: 48px;
-  --radius-sm: 8px;
-  --radius-md: 16px;
-  --radius-lg: 24px;
-  --radius-xl: 32px;
+  --radius-sm: 7px;
+  --radius-md: 8px;
+  --radius-xl: 12px;
   --radius-full: 999px;
-  --size-control-s: 36px;
-  --size-control-m: 44px;
-  --size-bar: 52px;
+  --size-control: 38px;
+  --size-bar: 64px;
 
   /* Type */
   --font-sans: 'Pretendard JP Variable', -apple-system, BlinkMacSystemFont, system-ui, 'Apple SD Gothic Neo', 'Hiragino Sans', 'Noto Sans KR', 'Noto Sans JP', 'Malgun Gothic', 'Yu Gothic', sans-serif;
-  --font-mono: 'IBM Plex Mono', 'Pretendard JP Variable', ui-monospace, monospace;
 }

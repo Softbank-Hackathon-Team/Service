@@ -5,19 +5,19 @@ import s from './controls.module.css';
 type ActionPillProps = {
   label: string;
   icon?: IconName;
-  tone?: 'tile' | 'danger';
+  tone?: 'primary' | 'danger';
   disabled?: boolean;
   onClick?: () => void;
 };
 
-/** 화면에 하나뿐인 지금 할 행동. 항상 오른쪽 아래에 둔다. */
-export function ActionPill({ label, icon = 'arrow-right', tone = 'tile', disabled, onClick }: ActionPillProps) {
+/** 화면에 하나뿐인 주요 동작. 항상 오른쪽 아래에 둔다. */
+export function ActionPill({ label, icon = 'arrow-right', tone = 'primary', disabled, onClick }: ActionPillProps) {
+  const after = icon === 'arrow-right';
   return (
-    <button type="button" className={`${s.action} ${s[tone]} t-h2`} disabled={disabled} onClick={onClick}>
-      <span className={s.disc}>
-        <Icon name={icon} size={24} />
-      </span>
+    <button type="button" className={`${s.action} ${s[tone]} t-label-md`} disabled={disabled} onClick={onClick}>
+      {!after && <Icon name={icon} />}
       {label}
+      {after && <Icon name={icon} />}
     </button>
   );
 }
@@ -50,9 +50,7 @@ export function BarPill({ label, icon, tone = 'default', onClick }: BarPillProps
 export function AccountPill({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <button type="button" className={`${s.account} t-label-md`} onClick={onClick}>
-      <span className={s.accountDisc}>
-        <Icon name="user-check" />
-      </span>
+      <Icon name="user-check" />
       {label}
     </button>
   );

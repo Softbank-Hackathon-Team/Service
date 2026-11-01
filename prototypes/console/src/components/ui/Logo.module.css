@@ -2,17 +2,29 @@
   display: inline-flex;
   align-items: center;
   flex: none;
-  gap: var(--space-12);
-  height: var(--size-bar);
+  gap: var(--space-8);
 }
 .mark {
-  width: 40px;
-  height: 40px;
+  display: grid;
+  place-items: center;
+  width: 27px;
+  height: 27px;
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-action-primary);
+  color: var(--color-fg-on-action);
+  font-size: 20px;
+  line-height: 1;
 }
 .name {
-  font-size: 20px;
-  line-height: 24px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+  font-size: 22px;
+  line-height: 1;
+  font-weight: 750;
+  letter-spacing: -1px;
+}
+.sub {
+  margin-left: var(--space-4);
+  color: var(--color-fg-tertiary);
+  font-size: 12px;
+  letter-spacing: 0;
   white-space: nowrap;
 }

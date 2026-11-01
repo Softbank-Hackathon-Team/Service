@@ -45,7 +45,7 @@ export function useSecurity(flow: MigrationFlow) {
 export function SecurityTile({ flow, title, area = 'security' }: ScreenProps & { title: string; area?: string }) {
   const { columns, dots } = useSecurity(flow);
   return (
-    <Tile area={area} compact spread>
+    <Tile area={area} spread>
       <TileHeader title={title} action={<TileLink label="펼치기" onClick={() => flow.go('security')} />} />
       <SecurityDotMap columns={columns} rows={dots} />
       <SecurityLegend />
@@ -55,7 +55,7 @@ export function SecurityTile({ flow, title, area = 'security' }: ScreenProps & {
 
 export function ChecklistTile({ area = 'steps', title, items }: { area?: string; title: string; items: ChecklistEntry[] }) {
   return (
-    <Tile area={area} tone="inverse" compact>
+    <Tile area={area} scroll>
       <h3 className="t-h3" style={{ marginBottom: 'var(--space-8)' }}>
         {title}
       </h3>

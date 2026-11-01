@@ -21,6 +21,10 @@ npm run dev
 - `npm run typecheck`: 타입 검사
 - `npm run build`: `dist/`에 정적 파일 생성. 해시 라우팅이라 어떤 정적 호스팅에서도 열립니다.
 
+## 디자인 시스템
+
+기준은 이 폴더의 `design-system.html`입니다. 더블클릭하면 브라우저로 열립니다. 중립적인 표면, 하나의 액션 컬러, 의미가 있는 상태색을 쓰고, 벤더는 같은 중립색으로 표시합니다. `src/design/tokens.css`가 이 값을 옮긴 것입니다. 벤토 배치와 화면 전환은 프로토타입에서 유지한 구조입니다.
+
 ## 화면 이동
 
 - 큰 버튼을 누르면 실제 흐름대로 진행합니다: 로그인 → 대시보드 → 출발 연결 → 읽기와 도착 고르기 → 명세 확정 → 사전 점검 → 계획 승인 → 실행 시작 → 이전 → 롤백 대기 → 정리 → 완료.
@@ -54,8 +58,8 @@ src/
 | `features/migration/screens/` | `mock.ts`를 `packages/contracts`의 타입으로 | `flow.ts`의 `presetFor` |
 
 - `components/`는 `features/`를 가져오지 않습니다. 이 방향을 지키면 부품만 따로 옮길 수 있습니다.
-- 글꼴은 Pretendard JP 가변 다이나믹 서브셋을 `src/design/fonts/`에 그대로 넣었습니다. 한 글꼴로 한글, 라틴, 가나, 한자를 모두 표시하고 페이지에서 쓰는 글자만 받습니다. 코드와 해시만 IBM Plex Mono입니다.
-- 스타일은 CSS Modules와 CSS 변수만 씁니다. 색과 간격은 `design/tokens.css`의 의미 토큰을 씁니다. 임시 로고만 예외입니다.
+- 글꼴은 Pretendard JP 가변 다이나믹 서브셋을 `src/design/fonts/`에 그대로 넣었습니다. 한 글꼴로 한글, 라틴, 가나, 한자를 모두 표시하고 페이지에서 쓰는 글자만 받습니다. 코드와 해시도 같은 글꼴에 고정폭 숫자를 씁니다.
+- 스타일은 CSS Modules와 CSS 변수만 씁니다. 색과 간격은 `design/tokens.css`의 의미 토큰을 씁니다.
 
 ## 벤토가 움직이는 방식
 

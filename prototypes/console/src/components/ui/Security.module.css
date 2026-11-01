@@ -17,8 +17,8 @@
   width: 16px;
   height: 16px;
   border-radius: 5px;
-  background: var(--color-signal-fail);
-  color: var(--color-fg-on-action);
+  background: var(--color-bg-tone-danger);
+  color: var(--color-fg-tone-danger);
 }
 .unknownMark {
   width: 12px;
@@ -74,7 +74,7 @@
   align-items: center;
   gap: var(--space-8);
   height: 100%;
-  min-height: 40px;
+  min-height: 36px;
   padding: 0 var(--space-12);
   border-radius: var(--radius-sm);
   white-space: nowrap;
@@ -85,7 +85,7 @@
 }
 .cell-fail {
   background: var(--color-bg-status-fail);
-  color: var(--color-fg-on-action);
+  color: var(--color-fg-tone-danger);
 }
 .cell-unknown {
   background: var(--color-bg-status-unknown);
