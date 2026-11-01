@@ -140,8 +140,8 @@ export type MigrationState = {
   autoplay: boolean;
 };
 
-// DRAFT(ai): 화면에는 가이드의 데모 값 2분을 보여 준다. 코드 기본값(3초, 데모 20초), 요구사항(5분)과 다르다.
-export const ROLLBACK_WINDOW_SECONDS = 2 * 60;
+// DRAFT(ai): 프로토타입은 15분을 보여 주고, 리소스 회수 버튼으로 바로 끝낼 수 있다. 코드 기본값(3초, 데모 20초), 요구사항(5분)과 다르다.
+export const ROLLBACK_WINDOW_SECONDS = 15 * 60;
 export const OBSERVE_SECONDS = 30;
 
 export const initialState: MigrationState = {

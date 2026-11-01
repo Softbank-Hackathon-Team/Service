@@ -42,7 +42,7 @@
 }
 .danger {
   background: var(--color-bg-action-danger);
-  color: var(--color-fg-on-action);
+  color: var(--color-fg-tone-danger);
 }
 .danger:not(:disabled):hover {
   background: var(--color-bg-action-danger-hover);
@@ -113,8 +113,8 @@
 }
 .navCurrent,
 .navCurrent:hover {
-  background: var(--color-bg-inverse);
-  color: var(--color-fg-on-action);
+  background: var(--color-bg-accent);
+  color: var(--color-fg-on-accent);
 }
 .accountDisc {
   display: grid;

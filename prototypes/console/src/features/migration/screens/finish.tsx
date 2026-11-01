@@ -54,7 +54,7 @@ export function DoneScreen({ flow }: ScreenProps) {
         title={`${source}에서 ${target}로\n멈추지 않고 옮겼습니다`}
         foot="누가 무엇을 승인했고 무엇이 실행됐는지 리포트로 남습니다"
       >
-        <TrafficBar source={source} target={target} targetPercent={100} surface="hero" />
+        <TrafficBar source={source} target={target} targetPercent={100} />
       </Hero>
       <StatTile area="failed" icon="check" value="0" unit="건" label="실패 요청" compact />
       <StatTile area="writes" icon="pause" value="3.2" unit="초" label="쓰기 멈춤" compact />
@@ -100,7 +100,7 @@ export function RolledBackScreen({ flow }: ScreenProps) {
       }
     >
       <Hero tone="run" meta="롤백 완료" step="←" title={`트래픽을 모두\n${source}로 되돌렸습니다`}>
-        <TrafficBar source={source} target={target} targetPercent={0} surface="hero" />
+        <TrafficBar source={source} target={target} targetPercent={0} />
       </Hero>
       <Tile area="reason" compact>
         <TileHeader title={rollbackCause === 'manual' ? '원인 메모 (선택)' : '원인 한 줄 (필수)'} />

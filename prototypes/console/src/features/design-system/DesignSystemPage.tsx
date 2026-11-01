@@ -184,17 +184,6 @@ export function DesignSystemPage({ onExit }: { onExit: () => void }) {
               </div>
             </div>
           ))}
-          <div className={s.group}>
-            <h3 className="t-h3">주인공 타일의 색. 색이 곧 이전 상태입니다.</h3>
-            <div className={s.swatches}>
-              {matching('--hero-').map((name) => (
-                <button key={name} type="button" className={s.swatch} onClick={() => copy(`var(${name})`)}>
-                  <span className={s.chip} style={{ background: `var(${name})` }} />
-                  <span className="t-code-sm">{name.replace('--', '')}</span>
-                </button>
-              ))}
-            </div>
-          </div>
         </Section>
 
         <Section id="type" title="글자" source="src/design/base.css">
@@ -292,11 +281,11 @@ export function DesignSystemPage({ onExit }: { onExit: () => void }) {
 
         <Section id="tiles" title="타일" source="src/components/layout/tiles.tsx">
           <p className="t-body-sm c-secondary">
-            벤토의 한 칸입니다. area 이름이 같으면 화면이 바뀔 때 같은 타일로 이어져 움직입니다.
+            벤토의 한 칸입니다. 카드는 모두 흰색이고 상태는 머리줄의 글자와 원 색으로만 알립니다. area 이름이 같으면 화면이 바뀔 때 같은 타일로 이어져 움직입니다.
           </p>
           <div className={s.heroes}>
             <Hero area="ds-hero-run" tone="run" meta="진행" step="07" title={'트래픽을\n옮기는 중'} foot="tone=run">
-              <TrafficBar source="AWS" target="GCP" targetPercent={50} surface="hero" />
+              <TrafficBar source="AWS" target="GCP" targetPercent={50} />
             </Hero>
             <Hero area="ds-hero-stop" tone="stop" meta="멈춤" step="!" title={'이전을\n멈췄습니다'} foot="tone=stop" />
             <Hero area="ds-hero-done" tone="done" meta="완료" step="10" title={'멈추지 않고\n옮겼습니다'} foot="tone=done" />
@@ -307,8 +296,8 @@ export function DesignSystemPage({ onExit }: { onExit: () => void }) {
               <TileHeader title="Tile과 TileHeader" action={<TileLink label="TileLink" onClick={noop} />} />
               <p className="t-body-md c-secondary">기본 타일입니다. spread는 내용을 위아래로 벌립니다.</p>
             </Tile>
-            <Tile area="ds-tile-inverse" tone="inverse">
-              <h3 className="t-h3">tone=inverse</h3>
+            <Tile area="ds-tile-checklist">
+              <TileHeader title="Checklist" />
               <Checklist
                 items={[
                   { status: 'done', label: '끝남', detail: '12:01' },

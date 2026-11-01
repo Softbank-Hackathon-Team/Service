@@ -6,7 +6,6 @@ const areaStyle = (area: string) => ({ gridArea: area, viewTransitionName: `tile
 
 type TileProps = {
   area: string;
-  tone?: 'surface' | 'inverse';
   spread?: boolean;
   compact?: boolean;
   scroll?: boolean;
@@ -14,8 +13,8 @@ type TileProps = {
 };
 
 /** 벤토의 한 칸. area 이름이 같으면 화면이 바뀔 때 같은 타일로 이어져 움직인다. */
-export function Tile({ area, tone = 'surface', spread, compact, scroll, children }: TileProps) {
-  const className = [s.tile, s[tone], spread && s.spread, compact && s.compact, scroll && s.scroll]
+export function Tile({ area, spread, compact, scroll, children }: TileProps) {
+  const className = [s.tile, s.surface, spread && s.spread, compact && s.compact, scroll && s.scroll]
     .filter(Boolean)
     .join(' ');
   return (
@@ -37,12 +36,10 @@ type HeroProps = {
   children?: ReactNode;
 };
 
-/** 화면의 주인공. 색이 곧 이전 상태다(진행 페트롤, 멈춤 빨강, 완료 초록). */
+/** 화면의 주인공. 카드는 칠하지 않고 머리줄의 글자와 원 색으로만 상태를 알린다. */
 export function Hero({ area = 'hero', tone, meta, step, title, foot, children }: HeroProps) {
   return (
-    <section className={`${s.hero} ${s[tone]}`} style={areaStyle(area)}>
-      <span className={s.decorLarge} aria-hidden="true" />
-      <span className={s.decorSmall} aria-hidden="true" />
+    <section className={`${s.hero} ${s[tone] ?? ''}`} style={areaStyle(area)}>
       <div className={s.heroMeta}>
         <span className="t-label-md">{meta}</span>
         <span className={`${s.heroStep} t-label-md`}>{step}</span>

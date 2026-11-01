@@ -7,10 +7,9 @@
   display: flex;
   align-items: center;
   gap: var(--space-12);
-  color: var(--color-fg-on-hero);
 }
 .muted {
-  color: var(--color-fg-on-hero-muted);
+  color: var(--color-fg-tertiary);
 }
 .marker {
   display: grid;
@@ -24,7 +23,7 @@
   min-width: 0;
 }
 .detail {
-  color: var(--color-fg-on-hero-muted);
+  color: var(--color-fg-secondary);
   white-space: nowrap;
 }
 .disc {
@@ -33,17 +32,18 @@
   width: 20px;
   height: 20px;
   border-radius: var(--radius-full);
-  color: var(--color-fg-on-hero);
 }
 .done {
   background: var(--color-bg-accent);
   color: var(--color-fg-on-accent);
 }
 .paused {
-  background: var(--color-signal-warning);
+  background: var(--color-bg-tone-warning);
+  color: var(--color-fg-tone-warning);
 }
 .failed {
-  background: var(--color-signal-fail);
+  background: var(--color-bg-tone-danger);
+  color: var(--color-fg-tone-danger);
 }
 .pendingRing {
   width: 20px;
@@ -54,9 +54,9 @@
 .spinner {
   width: 20px;
   height: 20px;
-  border: 2px solid var(--color-border-inverse);
-  border-top-color: var(--color-bg-accent);
-  border-right-color: var(--color-bg-accent);
+  border: 2px solid var(--color-border-default);
+  border-top-color: var(--color-signal-info);
+  border-right-color: var(--color-signal-info);
   border-radius: var(--radius-full);
   animation: spin 900ms linear infinite;
 }
