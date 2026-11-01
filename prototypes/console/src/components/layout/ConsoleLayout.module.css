@@ -1,0 +1,78 @@
+.root {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: var(--space-24);
+  height: 100dvh;
+  min-height: 760px;
+  padding: var(--space-24);
+}
+
+.topBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  view-transition-name: top-bar;
+}
+.barGroup {
+  display: flex;
+  align-items: center;
+  gap: var(--space-12);
+  min-width: 0;
+}
+.bento {
+  display: grid;
+  grid-template-columns: var(--bento-columns);
+  grid-template-rows: var(--bento-rows);
+  grid-template-areas: var(--bento-areas);
+  gap: var(--space-20);
+  min-height: 0;
+}
+
+.band {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-24);
+  view-transition-name: action-band;
+}
+.headline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.actions {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: var(--space-12);
+}
+
+/* 콘솔은 데스크톱 기준이다. 좁은 화면에서는 타일을 한 줄로 쌓아 내용이 잘리지 않게만 한다. */
+@media (max-width: 1099px) {
+  .root {
+    height: auto;
+    min-height: 100dvh;
+    padding: var(--space-16);
+    gap: var(--space-16);
+  }
+  .topBar {
+    flex-wrap: wrap;
+  }
+  .barGroup {
+    flex-wrap: wrap;
+  }
+  .bento {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-12);
+  }
+  .band {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .actions {
+    flex-wrap: wrap;
+  }
+}

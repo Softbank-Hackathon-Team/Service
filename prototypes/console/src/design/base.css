@@ -1,0 +1,167 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  background: var(--color-bg-canvas);
+  color: var(--color-fg-primary);
+  font-family: var(--font-sans);
+  word-break: keep-all;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Pretendard JP의 한자는 기본이 일본어 모양이다. 한국어 화면에서는 한국 모양을 쓴다. */
+:lang(ko) {
+  font-feature-settings: 'ss05';
+}
+
+h1,
+h2,
+h3,
+p,
+ul,
+ol,
+dl,
+dd {
+  margin: 0;
+  padding: 0;
+}
+
+ul,
+ol {
+  list-style: none;
+}
+
+button,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+
+/* Display와 Metric/2XL만 좁은 화면에서 줄어든다. */
+.t-display {
+  font-size: clamp(32px, 3.34vw, 48px);
+  line-height: 1.167;
+  font-weight: 700;
+}
+.t-metric-2xl {
+  font-size: clamp(52px, 5vw, 72px);
+  line-height: 1.11;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.t-metric-xl {
+  font-size: 44px;
+  line-height: 52px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.t-metric-lg {
+  font-size: 32px;
+  line-height: 40px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.t-h1 {
+  font-size: 28px;
+  line-height: 36px;
+  font-weight: 700;
+}
+.t-h2 {
+  font-size: 22px;
+  line-height: 30px;
+  font-weight: 600;
+}
+.t-h3 {
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+}
+.t-body-md {
+  font-size: 14px;
+  line-height: 20px;
+}
+.t-body-sm {
+  font-size: 13px;
+  line-height: 18px;
+}
+.t-label-md {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+}
+.t-label-sm {
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 500;
+}
+.t-caption {
+  font-size: 12px;
+  line-height: 16px;
+}
+.t-code-md {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 18px;
+}
+.t-code-sm {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.c-secondary {
+  color: var(--color-fg-secondary);
+}
+.c-tertiary {
+  color: var(--color-fg-tertiary);
+}
+.c-warning {
+  color: var(--color-fg-tone-warning);
+}
+.c-danger {
+  color: var(--color-fg-tone-danger);
+}
+.c-success {
+  color: var(--color-fg-tone-success);
+}
+
+/* 벤토 타일이 다음 화면의 자리로 움직인다. 이름은 Tile의 area에서 온다. */
+::view-transition-group(*) {
+  animation-duration: 420ms;
+  animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+::view-transition-image-pair(*) {
+  overflow: clip;
+}
+::view-transition-old(*),
+::view-transition-new(*) {
+  width: 100%;
+  height: 100%;
+  object-fit: none;
+  object-position: top left;
+  animation-duration: 260ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
