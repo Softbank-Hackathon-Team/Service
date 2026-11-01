@@ -1,0 +1,24 @@
+# EKS: 워커 실행 역할(access entry 그룹 platform:operate)이 할 수 있는 k8s 동작 = 앱 네임스페이스 관리만.
+# infra/modules/aws/app 의 kubernetes_namespace_v1 이 쓰는 권한과 같다. 부트스트랩 때 한 번 kubectl apply.
+# DRAFT(ai): 좁게 채택. 넓게(AmazonEKSAdminPolicy access policy 연결)는 비상용 대안
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: platform-operate-namespaces
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "create", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: platform-operate-namespaces
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: platform-operate-namespaces
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: platform:operate

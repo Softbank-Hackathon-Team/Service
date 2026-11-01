@@ -1,0 +1,6 @@
+title: platform-operate-iam
+description: app- 접두어 SA·시크릿의 IAM 정책만 (조건부 바인딩 필수, 자동 생성)
+stage: GA
+includedPermissions:
+- iam.serviceAccounts.setIamPolicy
+- secretmanager.secrets.setIamPolicy

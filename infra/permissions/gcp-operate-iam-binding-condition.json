@@ -1,0 +1,5 @@
+{
+  "title": "only-app-prefixed",
+  "description": "플랫폼이 만든 app- 접두어 서비스 계정·시크릿에만",
+  "expression": "(resource.type == \"iam.googleapis.com/ServiceAccount\" && resource.name.extract(\"serviceAccounts/{name}@\").startsWith(\"app-\")) || (resource.type == \"secretmanager.googleapis.com/Secret\" && resource.name.extract(\"/secrets/{name}\").startsWith(\"app-\"))"
+}

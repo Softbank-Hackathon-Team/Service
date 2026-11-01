@@ -1,0 +1,9 @@
+# Z52 (모의 심사 Q8): 원격 상태 저장 예시. 지금은 쓰지 않는다 (결선까지 맥 로컬 tfstate, decisions 참고)
+# 쓰려면: 이 파일을 backend.tf 로 복사 → 버킷 만들기(asia-northeast3, 객체 버전 관리 켜기) → terraform init -migrate-state -backend-config=bucket=...
+# GCS 백엔드는 잠금이 기본으로 된다(.tflock 객체). 버킷 이름은 init 때 준다
+terraform {
+  backend "gcs" {
+    prefix = "service/gcp-env"
+    # bucket = "<init 때 -backend-config=bucket=...>"
+  }
+}

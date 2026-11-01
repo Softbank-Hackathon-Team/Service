@@ -1,0 +1,13 @@
+# Z52 (모의 심사 Q8): 원격 상태 저장 예시. 지금은 쓰지 않는다 (결선까지 맥 로컬 tfstate, decisions 참고)
+# 쓰려면: 이 파일을 backend.tf 로 복사 → 버킷 만들기(버전 관리 켜기) → terraform init -migrate-state -backend-config=...
+# - use_lockfile = true: S3 파일로 잠금 (Terraform 1.10+). DynamoDB 잠금(dynamodb_table)은 폐기 예정이라 안 쓴다
+# - 버킷 이름·프로필은 여기 적지 않고 init 때 -backend-config 로 준다 (부분 설정). 비밀값 없음
+terraform {
+  backend "s3" {
+    key          = "service/aws-env/terraform.tfstate"
+    region       = "ap-northeast-2"
+    encrypt      = true
+    use_lockfile = true
+    # bucket = "<init 때 -backend-config=bucket=...>"
+  }
+}
