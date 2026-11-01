@@ -1,0 +1,66 @@
+# 태그(v*)를 밀면 이미지 4개를 GHCR 에 올린다.
+#   이름: ghcr.io/<소유자 소문자>/svc-<app>:<태그>  (+ sha-<짧은 커밋>)
+#   예)   git tag v0.1.0 && git push origin v0.1.0
+# 권한: 이 워크플로의 GITHUB_TOKEN 에 packages:write 만 준다(따로 비밀값 없음).
+name: build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [api, worker, agent-worker, web]
+        # Z75-17: 서버 앱 3개는 Dockerfile 하나의 단계(target), web 만 따로
+        include:
+          - { app: api, file: deploy/docker/Dockerfile, target: api }
+          - { app: worker, file: deploy/docker/Dockerfile, target: worker }
+          - { app: agent-worker, file: deploy/docker/Dockerfile, target: agent-worker }
+          - { app: web, file: apps/web/Dockerfile, target: "" }
+    steps:
+      - uses: actions/checkout@v7
+      - name: image name (GHCR 는 소문자만)
+        id: name
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/svc-${{ matrix.app }}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.name.outputs.image }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-
+      - name: build + push
+        id: push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          target: ${{ matrix.target }}
+          # DRAFT(ai): amd64 만. EKS/GKE 노드를 arm(Graviton 등)으로 고르면 linux/arm64 추가
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: true
+          sbom: true
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+      - name: digest (gitops 값에는 태그 대신 이 다이제스트를 쓴다)
+        run: echo "${{ steps.name.outputs.image }}@${{ steps.push.outputs.digest }}" | tee -a "$GITHUB_STEP_SUMMARY"

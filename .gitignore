@@ -1,0 +1,67 @@
+.omc/
+.DS_Store
+documents/
+
+# --- 스켈레톤 세팅에서 추가 ---
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform/
+.claude/settings.local.json
+*.tsbuildinfo
+.skeleton-import.zip
+.dev-logs/
+e2e-results/
+playwright-report/
+apps/agent-worker/scripts/bench-out/
+apps/agent-worker/test/eval/out/
+apps/agent-worker/scripts/remediate-out/
+.merge-*.tgz
+tools/measure/out/
+.agent-key*.env
+.secrets/
+
+# --- Z106 업로드 전 비밀값 스캔 보강 (on-int5-11) ---
+# 로컬 Claude Code 권한·세션 파일 (allow 목록에 로컬 경로가 들어 있음)
+.claude/
+# 통합·검증 실행 잔재
+.int-logs/
+e2e-fail/
+test-results/
+apps/web/e2e-results/
+tmp-flood/
+tmp-kill/
+measurements/
+# 자격 증명 모양 파일 (어느 폴더든)
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+*-sa-key.json
+*service-account*.json
+credentials*.json
+db-secret.json
+kubeconfig*
+*.kubeconfig
+# terraform 실행 산출 (작업 폴더는 ~/.svc-tf 지만 혹시 레포 안에서 돌렸을 때)
+terraform.tfstate.d/
+crash.log
+crash.*.log
+outputs.json
+# 포장·전달용 묶음
+*.tgz
+*.tar.gz
+*.b64
+*.zip
+# 로그 일반
+*.log
+npm-debug.log*

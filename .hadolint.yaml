@@ -1,0 +1,5 @@
+# hadolint 설정 (CI 와 로컬 공통)
+ignored:
+  # 베이스 이미지 태그를 ARG 기본값(NODE_IMAGE, NGINX_IMAGE)으로 고정했다.
+  # hadolint 는 FROM ${ARG} 안의 태그를 못 읽어서 "태그 없음"으로 오판한다.
+  - DL3006
