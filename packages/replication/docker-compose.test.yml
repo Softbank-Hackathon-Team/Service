@@ -1,0 +1,16 @@
+# 복제 통합 테스트용 Postgres 두 대. 출발(src) = RDS 자리, 도착(dst) = Cloud SQL / CloudNativePG 자리.
+# 둘 다 wal_level=logical (RDS는 파라미터 그룹 rds.logical_replication=1, Cloud SQL은 플래그 cloudsql.logical_decoding=on 이 같은 역할)
+name: svc-replication-test
+services:
+  src:
+    image: postgres:16
+    command: ["postgres", "-c", "wal_level=logical", "-c", "max_replication_slots=10", "-c", "max_wal_senders=10"]
+    environment: { POSTGRES_PASSWORD: postgres, POSTGRES_DB: app }
+    ports: ["55432:5432"]
+    healthcheck: { test: ["CMD", "pg_isready", "-U", "postgres", "-d", "app"], interval: 1s, timeout: 3s, retries: 30 }
+  dst:
+    image: postgres:16
+    command: ["postgres", "-c", "wal_level=logical", "-c", "max_replication_slots=10", "-c", "max_wal_senders=10"]
+    environment: { POSTGRES_PASSWORD: postgres, POSTGRES_DB: app }
+    ports: ["55433:5432"]
+    healthcheck: { test: ["CMD", "pg_isready", "-U", "postgres", "-d", "app"], interval: 1s, timeout: 3s, retries: 30 }

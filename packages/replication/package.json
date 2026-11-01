@@ -1,0 +1,29 @@
+{
+  "name": "@svc/replication",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test test/*.test.ts",
+    "db:up": "docker compose -f docker-compose.test.yml up -d --wait",
+    "db:down": "docker compose -f docker-compose.test.yml down -v",
+    "test:it": "node --import tsx --test --test-concurrency=1 test/*.it.ts",
+    "measure": "tsx scripts/measure.ts",
+    "demo:seed": "tsx scripts/demo-seed.ts",
+    "measure:cloud": "tsx scripts/measure-cloud.ts"
+  },
+  "dependencies": {
+    "pg": "8.23.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "@types/pg": "8.15.6",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  }
+}
