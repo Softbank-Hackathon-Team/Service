@@ -13,7 +13,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  padding: var(--space-12) var(--space-16);
+  padding: var(--space-12) var(--space-20);
   border-radius: var(--radius-md);
   background: var(--color-bg-subtle);
 }
@@ -44,7 +44,7 @@
 .heroList {
   display: flex;
   flex-direction: column;
-  gap: var(--space-8);
+  gap: var(--space-12);
 }
 .heroRow {
   display: flex;
@@ -52,29 +52,34 @@
   justify-content: space-between;
   gap: var(--space-16);
   width: 100%;
-  padding: var(--space-12) var(--space-16);
-  border: 1px solid var(--color-border-default);
-  border-radius: var(--radius-md);
-  background: var(--color-bg-surface);
-  color: var(--color-fg-primary);
+  padding: var(--space-16) var(--space-24);
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: rgb(255 255 255 / 12%);
+  color: var(--color-fg-on-hero);
   text-align: left;
 }
 button.heroRow:not(:disabled) {
   cursor: pointer;
 }
 button.heroRow:not(:disabled):hover {
-  background: var(--color-bg-subtle);
+  background: rgb(255 255 255 / 20%);
 }
 .heroRowSelected,
 button.heroRowSelected:not(:disabled):hover {
-  border-color: var(--color-border-target);
-  background: var(--color-bg-selected);
-  color: var(--color-fg-accent);
+  background: var(--color-bg-accent);
+  color: var(--color-fg-on-accent);
+}
+.heroRowMock {
+  border: 1px dashed rgb(255 255 255 / 50%);
+  background: transparent;
+  color: var(--color-fg-on-hero-muted);
+  cursor: not-allowed;
 }
 .heroRowName {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-8);
+  gap: var(--space-12);
 }
 
 .fieldText {
@@ -83,7 +88,6 @@ button.heroRowSelected:not(:disabled):hover {
   flex: 1;
   gap: var(--space-2);
   min-width: 0;
-  color: var(--color-fg-secondary);
 }
 .fieldSelect {
   align-self: flex-start;
@@ -91,34 +95,32 @@ button.heroRowSelected:not(:disabled):hover {
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--color-fg-primary);
-  font-size: 14px;
-  line-height: 1.6;
+  color: inherit;
+  font-size: 16px;
+  line-height: 24px;
   font-weight: 600;
   cursor: pointer;
+}
+.fieldSelect option {
+  color: var(--color-fg-primary);
 }
 .fieldConfirm {
   display: inline-flex;
   align-items: center;
   flex: none;
   gap: var(--space-8);
-  min-height: var(--size-control);
-  padding: var(--space-8) 15px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
+  height: var(--size-control-s);
+  padding: 0 var(--space-16);
+  border: 0;
+  border-radius: var(--radius-full);
   background: var(--color-bg-surface);
   color: var(--color-fg-primary);
   white-space: nowrap;
   cursor: pointer;
 }
-.fieldConfirm:hover {
-  background: var(--color-bg-subtle);
-}
-.fieldConfirmed,
-.fieldConfirmed:hover {
-  border-color: var(--color-border-target);
-  background: var(--color-bg-selected);
-  color: var(--color-fg-accent);
+.fieldConfirmed {
+  background: var(--color-bg-accent);
+  color: var(--color-fg-on-accent);
 }
 
 .changes {
@@ -132,21 +134,21 @@ button.heroRowSelected:not(:disabled):hover {
 
 .causeCode {
   align-self: flex-start;
-  padding: var(--space-8) var(--space-12);
-  border-radius: var(--radius-sm);
-  background: var(--color-bg-subtle);
+  padding: var(--space-12) var(--space-20);
+  border-radius: var(--radius-md);
+  background: rgb(0 0 0 / 28%);
 }
 .diff {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  padding: var(--space-12) var(--space-16);
+  padding: var(--space-16) var(--space-20);
   border-radius: var(--radius-md);
-  background: var(--color-bg-subtle);
+  background: rgb(0 0 0 / 28%);
   overflow-wrap: anywhere;
 }
 .diffRemoved {
-  color: var(--color-fg-tone-danger);
+  opacity: 0.72;
   text-decoration: line-through;
 }
 
@@ -218,7 +220,7 @@ button.heroRowSelected:not(:disabled):hover {
   padding: 0 var(--space-12) var(--space-4);
 }
 .matrix td {
-  height: 36px;
+  height: 44px;
   padding: 0;
 }
 .ruleName {
@@ -284,13 +286,12 @@ button.heroRowSelected:not(:disabled):hover {
 .textarea,
 .textInput {
   width: 100%;
-  padding: var(--space-8) var(--space-12);
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
-  font-size: 12px;
+  padding: var(--space-12) var(--space-16);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
   background: var(--color-bg-surface);
   color: var(--color-fg-primary);
-  font-family: inherit;
+  font: inherit;
   resize: vertical;
 }
 .confirmRow {
@@ -325,8 +326,8 @@ button.heroRowSelected:not(:disabled):hover {
 .closeButton {
   padding: var(--space-4) var(--space-12);
   border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-subtle);
   color: var(--color-fg-secondary);
   white-space: nowrap;
   cursor: pointer;
@@ -341,6 +342,9 @@ button.heroRowSelected:not(:disabled):hover {
 }
 .threatRow > :first-child {
   flex: 1;
+}
+.threatConfirm {
+  background: var(--color-bg-subtle);
 }
 
 .listButton,

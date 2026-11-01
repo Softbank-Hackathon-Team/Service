@@ -6,14 +6,16 @@ const areaStyle = (area: string) => ({ gridArea: area, viewTransitionName: `tile
 
 type TileProps = {
   area: string;
+  tone?: 'surface' | 'inverse';
   spread?: boolean;
+  compact?: boolean;
   scroll?: boolean;
   children: ReactNode;
 };
 
 /** 벤토의 한 칸. area 이름이 같으면 화면이 바뀔 때 같은 타일로 이어져 움직인다. */
-export function Tile({ area, spread, scroll, children }: TileProps) {
-  const className = [s.tile, spread && s.spread, scroll && s.scroll]
+export function Tile({ area, tone = 'surface', spread, compact, scroll, children }: TileProps) {
+  const className = [s.tile, s[tone], spread && s.spread, compact && s.compact, scroll && s.scroll]
     .filter(Boolean)
     .join(' ');
   return (
@@ -35,13 +37,15 @@ type HeroProps = {
   children?: ReactNode;
 };
 
-/** 화면의 주인공. 표면은 다른 타일과 같고, 상태는 작은 머리글의 색으로만 표시한다. */
+/** 화면의 주인공. 색이 곧 이전 상태다(진행 페트롤, 멈춤 빨강, 완료 초록). */
 export function Hero({ area = 'hero', tone, meta, step, title, foot, children }: HeroProps) {
   return (
     <section className={`${s.hero} ${s[tone]}`} style={areaStyle(area)}>
+      <span className={s.decorLarge} aria-hidden="true" />
+      <span className={s.decorSmall} aria-hidden="true" />
       <div className={s.heroMeta}>
-        <span className={`${s.heroEyebrow} t-label-sm`}>{meta}</span>
-        <span className={`${s.heroStep} t-code-sm`}>{step}</span>
+        <span className="t-label-md">{meta}</span>
+        <span className={`${s.heroStep} t-label-md`}>{step}</span>
       </div>
       <div className={s.heroContent}>
         <h2 className={`${s.heroTitle} t-display`}>{title}</h2>
@@ -58,13 +62,14 @@ type StatTileProps = {
   value: string;
   unit?: string;
   label: string;
+  compact?: boolean;
 };
 
-export function StatTile({ area, icon, value, unit, label, }: StatTileProps) {
+export function StatTile({ area, icon, value, unit, label, compact }: StatTileProps) {
   return (
-    <Tile area={area} spread>
+    <Tile area={area} spread compact={compact}>
       <span className={s.statIcon}>
-        <Icon name={icon} />
+        <Icon name={icon} size={20} />
       </span>
       <div>
         <p className={s.statValue}>

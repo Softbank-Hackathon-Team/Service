@@ -1,121 +1,140 @@
-.action,
-.bar {
+.action {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: var(--space-8);
-  min-height: var(--size-control);
-  padding: var(--space-8) 15px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  gap: var(--space-16);
+  padding: var(--space-12) var(--space-32) var(--space-12) var(--space-12);
+  border: 0;
+  border-radius: var(--radius-full);
   white-space: nowrap;
-}
-.action {
   cursor: pointer;
-  transition: background-color 150ms, border-color 150ms;
+  transition: background-color 160ms ease;
 }
 .action:disabled {
-  border-color: transparent;
   background: var(--color-bg-action-disabled);
   color: var(--color-fg-disabled);
   cursor: not-allowed;
 }
-.primary {
+.disc {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-full);
+  transition: transform 160ms ease;
+}
+.action:not(:disabled):hover .disc {
+  transform: translateX(2px);
+}
+.action:disabled .disc {
+  background: var(--color-bg-surface);
+  color: var(--color-fg-disabled);
+}
+.tile {
   background: var(--color-bg-action-primary);
   color: var(--color-fg-on-action);
 }
-.primary:not(:disabled):hover {
+.tile:not(:disabled):hover {
   background: var(--color-bg-action-primary-hover);
 }
+.tile .disc {
+  background: var(--color-bg-accent);
+  color: var(--color-fg-on-accent);
+}
 .danger {
-  border-color: var(--color-border-danger);
-  background: var(--color-bg-surface);
-  color: var(--color-fg-tone-danger);
+  background: var(--color-bg-action-danger);
+  color: var(--color-fg-on-action);
 }
 .danger:not(:disabled):hover {
-  background: var(--color-bg-tone-danger);
+  background: var(--color-bg-action-danger-hover);
+}
+.danger .disc {
+  background: var(--color-bg-surface);
+  color: var(--color-fg-tone-danger);
 }
 
 .bar {
-  padding: 0;
-  color: var(--color-fg-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  height: var(--size-bar);
+  padding: 0 var(--space-24);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-surface);
+  white-space: nowrap;
 }
 .barButton {
-  padding: var(--space-8) 15px;
-  border-color: var(--color-border-strong);
-  background: var(--color-bg-surface);
-  color: var(--color-fg-primary);
   cursor: pointer;
-  transition: background-color 150ms;
+  transition: background-color 160ms ease;
 }
 .barButton:hover {
-  background: var(--color-bg-subtle);
+  background: var(--color-bg-selected);
 }
 .barDanger {
-  border-color: var(--color-border-danger);
   color: var(--color-fg-tone-danger);
-}
-.barDanger:hover {
-  background: var(--color-bg-tone-danger);
 }
 
 .account {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-8);
-  min-height: var(--size-control);
-  padding: var(--space-8) var(--space-12);
+  gap: var(--space-12);
+  height: var(--size-bar);
+  padding: 0 var(--space-24) 0 6px;
   border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-fg-secondary);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-inverse);
+  color: var(--color-fg-on-action);
   white-space: nowrap;
   cursor: pointer;
-}
-.account:hover {
-  background: var(--color-bg-subtle);
 }
 
 .nav {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
+  height: var(--size-bar);
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-surface);
 }
 .navItem {
-  padding: var(--space-8) var(--space-12);
+  height: 40px;
+  padding: 0 var(--space-16);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-full);
   background: transparent;
   color: var(--color-fg-secondary);
   white-space: nowrap;
   cursor: pointer;
-  transition: background-color 150ms;
+  transition: background-color 160ms ease;
 }
-.navItem:hover,
-.navCurrent {
+.navItem:hover {
   background: var(--color-bg-selected);
-  color: var(--color-fg-accent);
+}
+.navCurrent,
+.navCurrent:hover {
+  background: var(--color-bg-inverse);
+  color: var(--color-fg-on-action);
+}
+.accountDisc {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-surface);
+  color: var(--color-fg-primary);
 }
 
 .badge {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-8);
-  padding: 3px 9px;
-  border-radius: 5px;
+  padding: var(--space-4) var(--space-12);
+  border-radius: var(--radius-full);
   white-space: nowrap;
 }
-.badge-success::before,
-.badge-warning::before,
-.badge-danger::before {
-  content: '';
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-full);
-  background: currentColor;
-}
 .badge-neutral {
-  background: var(--color-bg-tone-neutral);
+  background: var(--color-bg-selected);
   color: var(--color-fg-secondary);
 }
 .badge-warning {
@@ -139,12 +158,16 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-8);
+  height: var(--size-bar);
+  padding: 0 var(--space-20);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-surface);
   color: var(--color-fg-secondary);
   white-space: nowrap;
 }
 .liveDot {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
   border-radius: var(--radius-full);
   background: var(--color-signal-pass);
   animation: pulse 1.8s ease-in-out infinite;
@@ -159,21 +182,19 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-8);
-  min-height: var(--size-control);
-  padding: var(--space-8) 15px;
-  border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
-  background: var(--color-bg-surface);
+  padding: var(--space-16) var(--space-24);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-subtle);
   white-space: nowrap;
   cursor: pointer;
-  transition: background-color 150ms, border-color 150ms;
+  transition: background-color 160ms ease;
 }
 .option:hover {
-  background: var(--color-bg-subtle);
+  background: var(--color-bg-selected);
 }
 .optionSelected,
 .optionSelected:hover {
-  border-color: var(--color-border-target);
-  background: var(--color-bg-selected);
-  color: var(--color-fg-accent);
+  background: var(--color-bg-accent);
+  color: var(--color-fg-on-accent);
 }

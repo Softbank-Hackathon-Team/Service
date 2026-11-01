@@ -1,60 +1,62 @@
 .list {
   display: flex;
   flex-direction: column;
+  gap: var(--space-16);
 }
 .item {
   display: flex;
   align-items: center;
-  gap: var(--space-8);
-  padding: var(--space-12) 0;
-  border-bottom: 1px solid var(--color-border-default);
-}
-.item:last-child {
-  border-bottom: 0;
+  gap: var(--space-12);
+  color: var(--color-fg-on-hero);
 }
 .muted {
-  color: var(--color-fg-tertiary);
+  color: var(--color-fg-on-hero-muted);
 }
 .marker {
   display: grid;
   place-items: center;
   flex: none;
-  width: 16px;
-  height: 16px;
+  width: 24px;
+  height: 24px;
 }
 .label {
   flex: 1;
   min-width: 0;
 }
 .detail {
-  color: var(--color-fg-secondary);
+  color: var(--color-fg-on-hero-muted);
   white-space: nowrap;
 }
 .disc {
   display: grid;
   place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-full);
+  color: var(--color-fg-on-hero);
 }
 .done {
-  color: var(--color-fg-tone-success);
+  background: var(--color-bg-accent);
+  color: var(--color-fg-on-accent);
 }
 .paused {
-  color: var(--color-fg-tone-warning);
+  background: var(--color-signal-warning);
 }
 .failed {
-  color: var(--color-fg-tone-danger);
+  background: var(--color-signal-fail);
 }
 .pendingRing {
-  width: 12px;
-  height: 12px;
-  border: 1px solid var(--color-border-strong);
+  width: 20px;
+  height: 20px;
+  border: 2px dashed var(--color-border-strong);
   border-radius: var(--radius-full);
 }
 .spinner {
-  width: 12px;
-  height: 12px;
-  border: 2px solid var(--color-border-default);
-  border-top-color: var(--color-fg-accent);
-  border-right-color: var(--color-fg-accent);
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--color-border-inverse);
+  border-top-color: var(--color-bg-accent);
+  border-right-color: var(--color-bg-accent);
   border-radius: var(--radius-full);
   animation: spin 900ms linear infinite;
 }

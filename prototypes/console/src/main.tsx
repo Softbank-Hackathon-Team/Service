@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './design/fonts/pretendard-jp/pretendardvariable-jp-dynamic-subset.css';
+import '@fontsource/ibm-plex-mono/400.css';
 import './design/tokens.css';
 import './design/base.css';
 import { App } from './app/App';

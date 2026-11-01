@@ -23,7 +23,7 @@ function Marker({ status }: { status: ChecklistStatus }) {
   const icon = status === 'done' ? 'check' : status === 'failed' ? 'x' : 'pause';
   return (
     <span className={`${s.disc} ${s[status]}`}>
-      <Icon name={icon} size={14} />
+      <Icon name={icon} size={12} />
     </span>
   );
 }
@@ -36,7 +36,7 @@ export function Checklist({ items }: { items: ChecklistEntry[] }) {
           <span className={s.marker} role="img" aria-label={STATUS_LABEL[item.status]}>
             <Marker status={item.status} />
           </span>
-          <span className={`${s.label} t-body-sm`}>{item.label}</span>
+          <span className={`${s.label} t-body-md`}>{item.label}</span>
           {item.detail && <span className={`${s.detail} t-caption`}>{item.detail}</span>}
         </li>
       ))}

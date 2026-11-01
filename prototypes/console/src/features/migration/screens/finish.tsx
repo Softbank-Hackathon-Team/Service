@@ -54,20 +54,20 @@ export function DoneScreen({ flow }: ScreenProps) {
         title={`${source}에서 ${target}로\n멈추지 않고 옮겼습니다`}
         foot="누가 무엇을 승인했고 무엇이 실행됐는지 리포트로 남습니다"
       >
-        <TrafficBar source={source} target={target} targetPercent={100} />
+        <TrafficBar source={source} target={target} targetPercent={100} surface="hero" />
       </Hero>
-      <StatTile area="failed" icon="check" value="0" unit="건" label="실패 요청" />
-      <StatTile area="writes" icon="pause" value="3.2" unit="초" label="쓰기 멈춤" />
-      <StatTile area="loss" icon="shield" value="0" unit="건" label="데이터 손실" />
-      <StatTile area="temp" icon="server" value="0" unit="개" label="남은 임시 자원" />
-      <StatTile area="lease" icon="lock" value="회수" label="빌린 변경 권한" />
+      <StatTile area="failed" icon="check" value="0" unit="건" label="실패 요청" compact />
+      <StatTile area="writes" icon="pause" value="3.2" unit="초" label="쓰기 멈춤" compact />
+      <StatTile area="loss" icon="shield" value="0" unit="건" label="데이터 손실" compact />
+      <StatTile area="temp" icon="server" value="0" unit="개" label="남은 임시 자원" compact />
+      <StatTile area="lease" icon="lock" value="회수" label="빌린 변경 권한" compact />
       <StatTile
         area="security"
         icon="matrix"
         value={`${okCount(rows, target)}`}
         unit={`/ ${rows.length}`}
         label={`보안 통과, 이전 전 ${okCount(rows, source)}`}
-       
+        compact
       />
     </ScreenLayout>
   );
@@ -100,9 +100,9 @@ export function RolledBackScreen({ flow }: ScreenProps) {
       }
     >
       <Hero tone="run" meta="롤백 완료" step="←" title={`트래픽을 모두\n${source}로 되돌렸습니다`}>
-        <TrafficBar source={source} target={target} targetPercent={0} />
+        <TrafficBar source={source} target={target} targetPercent={0} surface="hero" />
       </Hero>
-      <Tile area="reason">
+      <Tile area="reason" compact>
         <TileHeader title={rollbackCause === 'manual' ? '원인 메모 (선택)' : '원인 한 줄 (필수)'} />
         <textarea
           className={s.textarea}
@@ -112,8 +112,8 @@ export function RolledBackScreen({ flow }: ScreenProps) {
           placeholder="원인을 적기 전에는 자동 롤백 뒤 다시 시작할 수 없습니다"
         />
       </Tile>
-      <StatTile area="failed" icon="check" value="0" unit="건" label="되돌리는 동안 실패한 요청" />
-      <StatTile area="loss" icon="shield" value="0" unit="건" label="데이터 손실" />
+      <StatTile area="failed" icon="check" value="0" unit="건" label="되돌리는 동안 실패한 요청" compact />
+      <StatTile area="loss" icon="shield" value="0" unit="건" label="데이터 손실" compact />
     </ScreenLayout>
   );
 }
@@ -143,7 +143,7 @@ export function FailedScreen({ flow }: ScreenProps) {
       <Hero tone="stop" meta={`${FAILED_INFO.at}에서 실패`} step="!" title={'작업이\n끝나지 못했습니다'} foot={FAILED_INFO.detail}>
         <code className={`${s.causeCode} t-code-md`}>{FAILED_INFO.code}</code>
       </Hero>
-      <Tile area="left" spread>
+      <Tile area="left" compact spread>
         <TileHeader title="남아 있을 수 있는 자원" action={<Badge tone="warning">{FAILED_INFO.leftovers.length}개</Badge>} />
         <ul className={s.plainList}>
           {FAILED_INFO.leftovers.map((item) => (
@@ -191,13 +191,13 @@ const LOG: BentoLayout = {
 export function LogScreen({ flow }: ScreenProps) {
   return (
     <ScreenLayout flow={flow} layout={LOG} barLeft={<BarPill label={routeLabel(flow)} />}>
-      <Tile area="log" scroll>
+      <Tile area="log" compact scroll>
         <TileHeader title="이번 이전의 기록. 거부된 호출도 지우지 않습니다." />
         <div className={s.logList}>
           <Timeline items={RUN_LOG} />
         </div>
       </Tile>
-      <Tile area="chain" spread>
+      <Tile area="chain" compact spread>
         <TileHeader title="기록 무결성" action={<Badge tone="success">끊김 없음</Badge>} />
         <p className={s.summaryValue}>
           <span className="t-metric-xl">{RUN_LOG.length}</span>
@@ -205,7 +205,7 @@ export function LogScreen({ flow }: ScreenProps) {
         </p>
         <p className="t-body-sm c-secondary">중간에 지우거나 고치면 다시 계산할 때 드러납니다.</p>
       </Tile>
-      <Tile area="report" spread>
+      <Tile area="report" compact spread>
         <TileHeader title="증적 리포트" />
         <p className="t-body-sm c-secondary">승인 지문과 타임라인을 한 문서로 묶습니다.</p>
         <div className={s.optionRow}>
