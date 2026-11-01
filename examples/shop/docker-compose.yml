@@ -1,0 +1,127 @@
+name: shop-sample
+
+services:
+  db:
+    image: postgres:16
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_replication_slots=10
+      - -c
+      - max_wal_senders=10
+      - -c
+      - max_connections=200
+    environment:
+      POSTGRES_DB: shop
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${PG_SUPERUSER_PASSWORD:?.env 에 PG_SUPERUSER_PASSWORD 를 넣는다}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?.env 에 APP_DB_PASSWORD 를 넣는다}
+      SEED_SCALE: ${SEED_SCALE:-1}
+    volumes:
+      - ./db:/docker-entrypoint-initdb.d:ro
+      - ./seed:/seed:ro
+      - ./break:/break:ro
+      - shop-db:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${DB_PORT:-55432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d shop"]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+
+  # Z31: 앱 ↔ DB 사이 붙잡기 프록시 (PgBouncer PAUSE/RESUME 흉내). 앱의 DB 주소는 이것이다.
+  # 컷오버 때 워커가 제어 포트(6480)로 pause → resume(target) 을 부른다. 앱은 다시 배포하지 않는다
+  # 워커 쪽 .env: APP_LINK_URLS=http://127.0.0.1:6480 (토큰을 쓰면 APP_LINK_TOKEN = 여기 DBPROXY_TOKEN 과 같은 값)
+  # 프록시를 빼고 예전처럼 직접 붙이려면: APP_DB_HOST=db APP_DB_PORT=5432 docker compose up -d app
+  dbproxy:
+    image: node:22-alpine
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    working_dir: /dbproxy
+    volumes:
+      - ../../packages/dbproxy/src:/dbproxy:ro
+    environment:
+      DBPROXY_UPSTREAMS: source=db:5432,target=target:5432
+      # 컷오버 뒤 GitOps 값 database.activeWriter 가 이 칸이다. 프록시를 다시 띄워도 도착을 보게 하려면 target
+      DBPROXY_ACTIVE: ${DBPROXY_ACTIVE:-source}
+      DBPROXY_CONTROL_HOST: 0.0.0.0
+      DBPROXY_TOKEN: ${DBPROXY_TOKEN:-}
+      # Z38 P-1: 0.0.0.0 + 토큰 없음은 데모에서만. 토큰을 넣으면 이 줄은 무시됨
+      DBPROXY_INSECURE_NO_TOKEN: ${DBPROXY_INSECURE_NO_TOKEN:-1}
+      NODE_NO_WARNINGS: "1"
+    command: ["node", "proxy.ts"]
+    ports:
+      - "127.0.0.1:${DBPROXY_PORT:-56432}:6432"
+      - "127.0.0.1:${DBPROXY_CONTROL_PORT:-6480}:6480"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:6480/healthz >/dev/null"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  app:
+    build: ./app
+    image: shop-sample-app:1.0.0
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      dbproxy:
+        condition: service_healthy
+    environment:
+      DB_HOST: ${APP_DB_HOST:-dbproxy}
+      DB_PORT: ${APP_DB_PORT:-6432}
+      DB_NAME: shop
+      DB_USER: app
+      DB_PASSWORD: ${APP_DB_PASSWORD}
+      DB_SSLMODE: disable
+      APP_VERSION: 1.0.0
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
+
+  load:
+    image: node:22-alpine
+    profiles: ["load"]
+    depends_on:
+      - app
+    working_dir: /load
+    volumes:
+      - ./load:/load
+    environment:
+      TARGET_URL: http://app:8080
+      RATE: ${RATE:-50}
+      CONCURRENCY: ${CONCURRENCY:-8}
+      DURATION_SEC: ${DURATION_SEC:-30}
+      RETRIES: ${RETRIES:-3}
+      RETRY_DELAY_MS: ${RETRY_DELAY_MS:-100}
+    command: ["node", "writer.mjs"]
+
+  target:
+    image: postgres:16
+    profiles: ["target"]
+    command: ["postgres", "-c", "wal_level=logical", "-c", "max_replication_slots=10", "-c", "max_wal_senders=10"]
+    environment:
+      POSTGRES_DB: shop
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${PG_SUPERUSER_PASSWORD}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD}
+    volumes:
+      - ./db/01-roles.sh:/docker-entrypoint-initdb.d/01-roles.sh:ro
+      - ./db/02-schema.sql:/docker-entrypoint-initdb.d/02-schema.sql:ro
+      - shop-target:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:${TARGET_DB_PORT:-55433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d shop"]
+      interval: 2s
+      timeout: 2s
+      retries: 60
+
+volumes:
+  shop-db:
+  shop-target:

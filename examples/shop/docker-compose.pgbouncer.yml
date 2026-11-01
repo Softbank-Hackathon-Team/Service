@@ -1,0 +1,66 @@
+# Z64: 진짜 PgBouncer 로 앱 DB 연결 옮기기 (Z31 흉내 프록시 대신). 기본 compose 위에 겹쳐 쓴다:
+#   docker compose -f docker-compose.yml -f docker-compose.pgbouncer.yml --profile target --profile pgbouncer up -d --build --wait db target pgbouncer pgbctl app
+# 워커 .env: APP_LINK_URLS=http://127.0.0.1:6481 (흉내 프록시 6480 과 겹치지 않게)
+# .env 에 PGB_ADMIN_PASSWORD 추가 (APP_DB_PASSWORD 는 이미 있음)
+services:
+  pgbouncer:
+    profiles: ["pgbouncer"]
+    build: ./pgbouncer
+    image: shop-pgbouncer:1.0.0
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD}
+      PGB_ADMIN_PASSWORD: ${PGB_ADMIN_PASSWORD:?.env 에 PGB_ADMIN_PASSWORD 를 넣는다}
+      SOURCE_HOST: db
+      TARGET_HOST: target
+      DBPROXY_ACTIVE: ${DBPROXY_ACTIVE:-source}
+    volumes:
+      - pgb-dyn:/etc/pgbouncer/dyn
+    ports:
+      - "127.0.0.1:${PGBOUNCER_PORT:-56433}:6432"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "</dev/tcp/127.0.0.1/6432"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  pgbctl:
+    profiles: ["pgbouncer"]
+    build:
+      context: ../../packages/dbproxy
+      dockerfile: ../../examples/shop/pgbouncer/control.Dockerfile
+    image: shop-pgbctl:1.0.0
+    restart: unless-stopped
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+    environment:
+      PGB_ADMIN_URL: postgres://pgb_admin:${PGB_ADMIN_PASSWORD}@pgbouncer:6432/pgbouncer
+      PGB_DB: shop
+      PGB_DB_FILE: /etc/pgbouncer/dyn/databases.ini
+      DBPROXY_UPSTREAMS: source=db:5432,target=target:5432
+      DBPROXY_ACTIVE: ${DBPROXY_ACTIVE:-source}
+      DBPROXY_CONTROL_HOST: 0.0.0.0
+      DBPROXY_TOKEN: ${DBPROXY_TOKEN:-}
+      # Z38 P-1: 0.0.0.0 + 토큰 없음은 데모에서만. 토큰을 넣으면 이 줄은 무시됨
+      DBPROXY_INSECURE_NO_TOKEN: ${DBPROXY_INSECURE_NO_TOKEN:-1}
+    volumes:
+      - pgb-dyn:/etc/pgbouncer/dyn
+    ports:
+      - "127.0.0.1:${PGBCTL_PORT:-6481}:6480"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:6480/healthz >/dev/null"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  app:
+    environment:
+      DB_HOST: ${APP_DB_HOST:-pgbouncer}
+      DB_PORT: ${APP_DB_PORT:-6432}
+
+volumes:
+  pgb-dyn:

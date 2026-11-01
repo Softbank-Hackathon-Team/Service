@@ -1,0 +1,64 @@
+{
+  "app": {
+    "name": "shop"
+  },
+  "image": {
+    "ref": "registry.local:5000/platform/tenant-demo/shop-sample-app@sha256:17536626a1131e5a85cc4ed2650f3d12fb3a9bf27b413dc3984bf3914e263b17"
+  },
+  "replicas": 2,
+  "resources": {
+    "requests": {
+      "cpu": "250m",
+      "memory": "512Mi"
+    },
+    "limits": {
+      "memory": "512Mi"
+    }
+  },
+  "port": 8080,
+  "probes": {
+    "readiness": "/healthz",
+    "liveness": "/healthz"
+  },
+  "env": [
+    {
+      "name": "APP_VERSION",
+      "value": "1.0.0"
+    },
+    {
+      "name": "DB_SSLMODE",
+      "value": "require"
+    }
+  ],
+  "serviceAccount": {
+    "name": "shop",
+    "annotations": {}
+  },
+  "externalSecrets": {
+    "store": {
+      "kind": "ClusterSecretStore",
+      "name": "vault"
+    },
+    "refs": []
+  },
+  "database": {
+    "mode": "cnpg",
+    "instances": 1,
+    "majorVersion": "16",
+    "storageGb": 20,
+    "host": "shop-db-rw",
+    "port": 5432,
+    "name": "shop",
+    "passwordSecret": "shop-db-app"
+  },
+  "ingress": {
+    "mode": "cloudflared",
+    "className": "",
+    "hostname": "shop.example.com",
+    "tunnelTokenSecret": "cloudflared-token"
+  },
+  "labels": {
+    "managed-by": "platform",
+    "tenant": "tenant-demo"
+  }
+}

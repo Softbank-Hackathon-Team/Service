@@ -1,0 +1,1 @@
+{ "envId": "env-gcp-seoul", "provider": "gcp", "region": "asia-northeast3", "tenantId": "tenant-demo", "migrationId": "mig-shop-demo", "clusterName": "platform-gke-seoul" }

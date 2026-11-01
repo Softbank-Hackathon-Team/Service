@@ -1,0 +1,1 @@
+{ "envId": "env-onprem-k3s", "provider": "onprem", "region": "local", "tenantId": "tenant-demo", "migrationId": "mig-shop-demo", "registryHost": "registry.local:5000" }
