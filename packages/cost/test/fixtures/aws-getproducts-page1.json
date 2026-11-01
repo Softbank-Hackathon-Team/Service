@@ -1,0 +1,8 @@
+{
+ "PriceList": [
+  "{\"product\": {\"sku\": \"AAA111\", \"attributes\": {\"servicecode\": \"AmazonEC2\", \"instanceType\": \"t3.medium\", \"operatingSystem\": \"Linux\", \"tenancy\": \"Shared\", \"preInstalledSw\": \"NA\", \"capacitystatus\": \"Used\", \"regionCode\": \"ap-northeast-2\"}}, \"terms\": {\"OnDemand\": {\"AAA111.JRTCKXETXF\": {\"priceDimensions\": {\"AAA111.JRTCKXETXF.6YS6EN2CT7\": {\"unit\": \"Hrs\", \"beginRange\": \"0\", \"endRange\": \"Inf\", \"pricePerUnit\": {\"USD\": \"0.0520000000\"}}}}}}}",
+  "{\"product\": {\"sku\": \"AAA222\", \"attributes\": {\"servicecode\": \"AmazonEC2\", \"instanceType\": \"t3.medium\", \"operatingSystem\": \"Windows\", \"tenancy\": \"Shared\", \"preInstalledSw\": \"NA\", \"capacitystatus\": \"Used\", \"regionCode\": \"ap-northeast-2\"}}, \"terms\": {\"OnDemand\": {\"AAA222.JRTCKXETXF\": {\"priceDimensions\": {\"AAA222.JRTCKXETXF.6YS6EN2CT7\": {\"unit\": \"Hrs\", \"beginRange\": \"0\", \"endRange\": \"Inf\", \"pricePerUnit\": {\"USD\": \"0.0704000000\"}}}}}}}",
+  "{\"product\": {\"sku\": \"BBB111\", \"attributes\": {\"servicecode\": \"AmazonEKS\", \"usagetype\": \"APN2-AmazonEKS-Hours:perCluster\", \"regionCode\": \"ap-northeast-2\"}}, \"terms\": {\"OnDemand\": {\"BBB111.JRTCKXETXF\": {\"priceDimensions\": {\"BBB111.JRTCKXETXF.6YS6EN2CT7\": {\"unit\": \"Hrs\", \"beginRange\": \"0\", \"endRange\": \"Inf\", \"pricePerUnit\": {\"USD\": \"0.1000000000\"}}}}}}}"
+ ],
+ "NextToken": "page2"
+}

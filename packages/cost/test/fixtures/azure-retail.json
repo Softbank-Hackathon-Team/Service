@@ -1,0 +1,44 @@
+{
+ "Items": [
+  {
+   "currencyCode": "USD",
+   "retailPrice": 0.0496,
+   "unitPrice": 0.0496,
+   "tierMinimumUnits": 0,
+   "armRegionName": "koreacentral",
+   "serviceName": "Virtual Machines",
+   "productName": "Virtual Machines BS Series",
+   "skuName": "B2s",
+   "meterName": "B2s",
+   "unitOfMeasure": "1 Hour",
+   "type": "Consumption"
+  },
+  {
+   "currencyCode": "USD",
+   "retailPrice": 0.0912,
+   "unitPrice": 0.0912,
+   "tierMinimumUnits": 0,
+   "armRegionName": "koreacentral",
+   "serviceName": "Virtual Machines",
+   "productName": "Virtual Machines BS Series Windows",
+   "skuName": "B2s",
+   "meterName": "B2s",
+   "unitOfMeasure": "1 Hour",
+   "type": "Consumption"
+  },
+  {
+   "currencyCode": "USD",
+   "retailPrice": 0.03,
+   "unitPrice": 0.03,
+   "tierMinimumUnits": 0,
+   "armRegionName": "koreacentral",
+   "serviceName": "Virtual Machines",
+   "productName": "Virtual Machines BS Series",
+   "skuName": "B2s",
+   "meterName": "B2s Spot",
+   "unitOfMeasure": "1 Hour",
+   "type": "DevTestConsumption"
+  }
+ ],
+ "NextPageLink": null
+}
