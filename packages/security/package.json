@@ -1,0 +1,21 @@
+{
+  "name": "@svc/security",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@svc/contracts": "*",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@svc/core": "*"
+  }
+}
