@@ -1,0 +1,59 @@
+import { z } from "zod";
+import { Finding } from "./results.js";
+
+// Z92: 온프레 Agent → 플랫폼 보고 (POST /api/v1/agent/reports). api ↔ agent 경계라 contracts 로 옮겼다 (예전 packages/agent/src/onprem/report.ts)
+// 회사·환경은 본문이 아니라 Agent 키(agent_keys 표)로 정한다. 본문에 tenantId 를 넣으면 strict 가 막는다
+const Common = { agentVersion: z.string().max(40), sentAt: z.iso.datetime({ offset: true }) };
+
+export const AgentReport = z.discriminatedUnion("kind", [
+  // Kyverno 정책 보고서(PolicyReport)·Falco 경보·점검 스크립트 결과를 Finding 모양으로
+  z.object({ kind: z.literal("security"), ...Common, findings: z.array(Finding).max(500) }).strict(),
+  // GitOps: 온프레의 "배포 끝" 기준은 Agent 의 "넣었음" 보고다
+  z.object({
+    kind: z.literal("deploy"), ...Common,
+    migrationId: z.uuid(), bundleHash: z.string().max(200),
+    status: z.enum(["applied", "failed"]),
+    resources: z.array(z.string().max(300)).max(200),
+    reason: z.string().max(2000).optional(),
+  }).strict(),
+  // 살아 있음 + CloudNativePG 상태 (컷오버 전 복제 지연 확인용)
+  z.object({
+    kind: z.literal("heartbeat"), ...Common,
+    k3sVersion: z.string().max(100),
+    cnpg: z.object({
+      cluster: z.string().max(100), ready: z.boolean(),
+      replicationLagBytes: z.number().int().nonnegative().nullable(),
+    }).strict().nullable(),
+  }).strict(),
+]);
+export type AgentReport = z.infer<typeof AgentReport>;
+export type AgentReportKind = AgentReport["kind"];
+
+// 받음 응답 (201)
+export const AgentReportAccepted = z.object({
+  id: z.uuid(),
+  kind: z.enum(["security", "deploy", "heartbeat"]),
+  envId: z.uuid(),
+  receivedAt: z.string(),
+}).strict();
+export type AgentReportAccepted = z.infer<typeof AgentReportAccepted>;
+
+// 화면·운영자가 보는 받은 보고 (GET /api/v1/environments/:id/agent-reports)
+export const AgentReportView = z.object({
+  id: z.uuid(),
+  kind: z.enum(["security", "deploy", "heartbeat"]),
+  keyId: z.string(),
+  sentAt: z.string(),
+  receivedAt: z.string(),
+  migrationId: z.uuid().nullable(),
+  report: AgentReport,
+}).strict();
+export const AgentReportList = z.object({
+  envId: z.uuid(),
+  // 마지막 heartbeat 받은 시각. 한 번도 안 왔으면 null
+  lastHeartbeatAt: z.string().nullable(),
+  // 마지막 heartbeat 가 AGENT_STALE_SEC(기본 120초)보다 오래됐으면 true
+  stale: z.boolean(),
+  items: z.array(AgentReportView),
+}).strict();
+export type AgentReportList = z.infer<typeof AgentReportList>;

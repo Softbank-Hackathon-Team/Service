@@ -1,0 +1,474 @@
+{
+  "vendor": "gcp",
+  "region": "asia-northeast3",
+  "fetchedAt": "2026-11-01T09:23:00.906Z",
+  "sources": [
+    {
+      "url": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "publishedAt": "Thu Oct 29 10:27:32 2026",
+      "note": "공식 Billing Catalog에서 생성한 2차 자료"
+    },
+    {
+      "url": "https://cloud.google.com/sql/pricing",
+      "note": "공식 페이지의 지역 선택을 Seoul (asia-northeast3)로 바꾼 뒤 표의 값을 그대로 옮김. 가격은 페이지 안 스크립트로 바뀌어 HTTP 응답만으로는 서울 값을 얻을 수 없다."
+    },
+    {
+      "url": "https://cloud.google.com/vpc/network-pricing",
+      "note": "공식 페이지의 지역 선택을 Seoul (asia-northeast3)로 바꾼 뒤 표의 값을 그대로 옮김. 가격은 페이지 안 스크립트로 바뀌어 HTTP 응답만으로는 서울 값을 얻을 수 없다."
+    },
+    {
+      "url": "https://cloud.google.com/kubernetes-engine/pricing",
+      "note": "페이지 본문"
+    }
+  ],
+  "missing": [],
+  "lines": [
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "item": "node",
+      "sku": "e2-medium",
+      "unit": "hour",
+      "usd": 0.04298286,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 4,
+        "family": "burstable",
+        "burstable": true,
+        "sustainedVcpu": 1
+      },
+      "commit1yHourly": 0.027079,
+      "evidence": "public-secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "sourceDetail": "pricing.yml compute.instance.e2-medium.cost.asia-northeast3",
+      "fetchedAt": "2026-11-01T09:23:00.906Z",
+      "publishedAt": "Thu Oct 29 10:27:32 2026"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "item": "node",
+      "sku": "e2-standard-2",
+      "unit": "hour",
+      "usd": 0.08596572,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8,
+        "family": "general"
+      },
+      "commit1yHourly": 0.054158,
+      "evidence": "public-secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "sourceDetail": "pricing.yml compute.instance.e2-standard-2.cost.asia-northeast3",
+      "fetchedAt": "2026-11-01T09:23:00.906Z",
+      "publishedAt": "Thu Oct 29 10:27:32 2026"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "item": "node",
+      "sku": "e2-standard-4",
+      "unit": "hour",
+      "usd": 0.17193144,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16,
+        "family": "general"
+      },
+      "commit1yHourly": 0.108317,
+      "evidence": "public-secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "sourceDetail": "pricing.yml compute.instance.e2-standard-4.cost.asia-northeast3",
+      "fetchedAt": "2026-11-01T09:23:00.906Z",
+      "publishedAt": "Thu Oct 29 10:27:32 2026"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "item": "node",
+      "sku": "e2-standard-8",
+      "unit": "hour",
+      "usd": 0.34386288,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32,
+        "family": "general"
+      },
+      "commit1yHourly": 0.216634,
+      "evidence": "public-secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "sourceDetail": "pricing.yml compute.instance.e2-standard-8.cost.asia-northeast3",
+      "fetchedAt": "2026-11-01T09:23:00.906Z",
+      "publishedAt": "Thu Oct 29 10:27:32 2026"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "item": "node",
+      "sku": "e2-standard-16",
+      "unit": "hour",
+      "usd": 0.68772576,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 64,
+        "family": "general"
+      },
+      "commit1yHourly": 0.433267,
+      "evidence": "public-secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "sourceDetail": "pricing.yml compute.instance.e2-standard-16.cost.asia-northeast3",
+      "fetchedAt": "2026-11-01T09:23:00.906Z",
+      "publishedAt": "Thu Oct 29 10:27:32 2026"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "item": "node",
+      "sku": "e2-highcpu-2",
+      "unit": "hour",
+      "usd": 0.06353106,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 2,
+        "family": "compute"
+      },
+      "commit1yHourly": 0.040025,
+      "evidence": "public-secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "sourceDetail": "pricing.yml compute.instance.e2-highcpu-2.cost.asia-northeast3",
+      "fetchedAt": "2026-11-01T09:23:00.906Z",
+      "publishedAt": "Thu Oct 29 10:27:32 2026"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "item": "node",
+      "sku": "e2-highcpu-4",
+      "unit": "hour",
+      "usd": 0.12706212,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 4,
+        "family": "compute"
+      },
+      "commit1yHourly": 0.080049,
+      "evidence": "public-secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "sourceDetail": "pricing.yml compute.instance.e2-highcpu-4.cost.asia-northeast3",
+      "fetchedAt": "2026-11-01T09:23:00.906Z",
+      "publishedAt": "Thu Oct 29 10:27:32 2026"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "item": "node",
+      "sku": "e2-highcpu-8",
+      "unit": "hour",
+      "usd": 0.25412424,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 8,
+        "family": "compute"
+      },
+      "commit1yHourly": 0.160098,
+      "evidence": "public-secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "sourceDetail": "pricing.yml compute.instance.e2-highcpu-8.cost.asia-northeast3",
+      "fetchedAt": "2026-11-01T09:23:00.906Z",
+      "publishedAt": "Thu Oct 29 10:27:32 2026"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "item": "node",
+      "sku": "e2-highcpu-16",
+      "unit": "hour",
+      "usd": 0.50824848,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 16,
+        "family": "compute"
+      },
+      "commit1yHourly": 0.320197,
+      "evidence": "public-secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "sourceDetail": "pricing.yml compute.instance.e2-highcpu-16.cost.asia-northeast3",
+      "fetchedAt": "2026-11-01T09:23:00.906Z",
+      "publishedAt": "Thu Oct 29 10:27:32 2026"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "item": "node",
+      "sku": "e2-highmem-2",
+      "unit": "hour",
+      "usd": 0.1158786,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 16,
+        "family": "memory"
+      },
+      "commit1yHourly": 0.073004,
+      "evidence": "public-secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "sourceDetail": "pricing.yml compute.instance.e2-highmem-2.cost.asia-northeast3",
+      "fetchedAt": "2026-11-01T09:23:00.906Z",
+      "publishedAt": "Thu Oct 29 10:27:32 2026"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "item": "node",
+      "sku": "e2-highmem-4",
+      "unit": "hour",
+      "usd": 0.2317572,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 32,
+        "family": "memory"
+      },
+      "commit1yHourly": 0.146007,
+      "evidence": "public-secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "sourceDetail": "pricing.yml compute.instance.e2-highmem-4.cost.asia-northeast3",
+      "fetchedAt": "2026-11-01T09:23:00.906Z",
+      "publishedAt": "Thu Oct 29 10:27:32 2026"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "item": "node",
+      "sku": "n2-standard-2",
+      "unit": "hour",
+      "usd": 0.124718,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8,
+        "family": "general-n2"
+      },
+      "commit1yHourly": 0.078574,
+      "evidence": "public-secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "sourceDetail": "pricing.yml compute.instance.n2-standard-2.cost.asia-northeast3",
+      "fetchedAt": "2026-11-01T09:23:00.906Z",
+      "publishedAt": "Thu Oct 29 10:27:32 2026"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "item": "node",
+      "sku": "n2-standard-4",
+      "unit": "hour",
+      "usd": 0.249436,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16,
+        "family": "general-n2"
+      },
+      "commit1yHourly": 0.157148,
+      "evidence": "public-secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "sourceDetail": "pricing.yml compute.instance.n2-standard-4.cost.asia-northeast3",
+      "fetchedAt": "2026-11-01T09:23:00.906Z",
+      "publishedAt": "Thu Oct 29 10:27:32 2026"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "item": "node",
+      "sku": "n2-standard-8",
+      "unit": "hour",
+      "usd": 0.498872,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32,
+        "family": "general-n2"
+      },
+      "commit1yHourly": 0.314296,
+      "evidence": "public-secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "sourceDetail": "pricing.yml compute.instance.n2-standard-8.cost.asia-northeast3",
+      "fetchedAt": "2026-11-01T09:23:00.906Z",
+      "publishedAt": "Thu Oct 29 10:27:32 2026"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "item": "disk",
+      "sku": "pd-balanced",
+      "unit": "gb_month",
+      "usd": 0.13,
+      "evidence": "public-secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "sourceDetail": "pricing.yml compute.storage.balanced.cost.asia-northeast3",
+      "fetchedAt": "2026-11-01T09:23:00.906Z",
+      "publishedAt": "Thu Oct 29 10:27:32 2026"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "item": "nat",
+      "sku": "nat-hour",
+      "unit": "hour",
+      "usd": 0.0448,
+      "evidence": "public-secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "sourceDetail": "pricing.yml compute.network.nat.gateway.cost.asia-northeast3",
+      "fetchedAt": "2026-11-01T09:23:00.906Z",
+      "publishedAt": "Thu Oct 29 10:27:32 2026"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "item": "nat",
+      "sku": "nat-data",
+      "unit": "gb",
+      "usd": 0.045,
+      "evidence": "public-secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "sourceDetail": "pricing.yml compute.network.nat.data.cost.asia-northeast3",
+      "fetchedAt": "2026-11-01T09:23:00.906Z",
+      "publishedAt": "Thu Oct 29 10:27:32 2026"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "evidence": "public",
+      "fetchedAt": "2026-11-01T00:00:00.000Z",
+      "item": "cluster",
+      "sku": "gke-management",
+      "unit": "hour",
+      "usd": 0.1,
+      "sourceUrl": "https://cloud.google.com/kubernetes-engine/pricing",
+      "sourceDetail": "클러스터 관리비 $0.10/시간. 결제 계정당 월 $74.40 크레딧(존 Standard 또는 Autopilot 클러스터 1개)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "evidence": "public",
+      "fetchedAt": "2026-11-01T00:00:00.000Z",
+      "item": "db",
+      "sku": "cloudsql-custom-2-8",
+      "unit": "hour",
+      "usd": 0.1802,
+      "commit1yHourly": 0.13515,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8,
+        "family": "general"
+      },
+      "sourceUrl": "https://cloud.google.com/sql/pricing",
+      "sourceDetail": "MySQL and PostgreSQL pricing > Enterprise edition - General Purpose machine series: 2 x 0.0537 + 8 x 0.0091"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "evidence": "public",
+      "fetchedAt": "2026-11-01T00:00:00.000Z",
+      "item": "db",
+      "sku": "cloudsql-custom-2-4",
+      "unit": "hour",
+      "usd": 0.1438,
+      "commit1yHourly": 0.10785,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 4,
+        "family": "general"
+      },
+      "sourceUrl": "https://cloud.google.com/sql/pricing",
+      "sourceDetail": "MySQL and PostgreSQL pricing > Enterprise edition - General Purpose machine series: 2 x 0.0537 + 4 x 0.0091"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "evidence": "public",
+      "fetchedAt": "2026-11-01T00:00:00.000Z",
+      "item": "db",
+      "sku": "cloudsql-custom-4-16",
+      "unit": "hour",
+      "usd": 0.3604,
+      "commit1yHourly": 0.2703,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16,
+        "family": "general"
+      },
+      "sourceUrl": "https://cloud.google.com/sql/pricing",
+      "sourceDetail": "MySQL and PostgreSQL pricing > Enterprise edition - General Purpose machine series: 4 x 0.0537 + 16 x 0.0091"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "evidence": "public",
+      "fetchedAt": "2026-11-01T00:00:00.000Z",
+      "item": "db",
+      "sku": "cloudsql-custom-8-32",
+      "unit": "hour",
+      "usd": 0.7208,
+      "commit1yHourly": 0.5406,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32,
+        "family": "general"
+      },
+      "sourceUrl": "https://cloud.google.com/sql/pricing",
+      "sourceDetail": "MySQL and PostgreSQL pricing > Enterprise edition - General Purpose machine series: 8 x 0.0537 + 32 x 0.0091"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "evidence": "public",
+      "fetchedAt": "2026-11-01T00:00:00.000Z",
+      "item": "db",
+      "sku": "cloudsql-custom-16-64",
+      "unit": "hour",
+      "usd": 1.4416,
+      "commit1yHourly": 1.0812,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 64,
+        "family": "general"
+      },
+      "sourceUrl": "https://cloud.google.com/sql/pricing",
+      "sourceDetail": "MySQL and PostgreSQL pricing > Enterprise edition - General Purpose machine series: 16 x 0.0537 + 64 x 0.0091"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "evidence": "public",
+      "fetchedAt": "2026-11-01T00:00:00.000Z",
+      "item": "storage",
+      "sku": "cloudsql-ssd",
+      "unit": "gb_month",
+      "usd": 0.221,
+      "sourceUrl": "https://cloud.google.com/sql/pricing",
+      "sourceDetail": "SSD storage capacity 0.00030274/GiB-hour x 730"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "evidence": "public",
+      "fetchedAt": "2026-11-01T00:00:00.000Z",
+      "item": "egress",
+      "sku": "internet-out",
+      "unit": "gb",
+      "usd": 0.19,
+      "tierFromGB": 0,
+      "sourceUrl": "https://cloud.google.com/vpc/network-pricing",
+      "sourceDetail": "Premium Tier Network (data transfer out) TO Australia, Indonesia, Korea, South America, Saudi Arabia (GiB 단위 표기)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "evidence": "public",
+      "fetchedAt": "2026-11-01T00:00:00.000Z",
+      "item": "egress",
+      "sku": "internet-out",
+      "unit": "gb",
+      "usd": 0.15,
+      "tierFromGB": 10240,
+      "sourceUrl": "https://cloud.google.com/vpc/network-pricing",
+      "sourceDetail": "Premium Tier Network (data transfer out) TO Australia, Indonesia, Korea, South America, Saudi Arabia (GiB 단위 표기)"
+    }
+  ]
+}

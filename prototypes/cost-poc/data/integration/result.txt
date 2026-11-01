@@ -1,0 +1,16 @@
+not ok 1 - Z49 비용 기억: 결과가 매번 계산한 것과 같다 (출발 aws·gcp·onprem)
+ok 2 - Z49 비용 기억: 받은 값을 고쳐도 기억한 값은 안 바뀐다
+ok 3 - Z49 비용 기억: TTL 이 지나면 다시 계산, ttlMs=0 이면 기억 안 함
+ok 4 - Z49 비용 기억: 100개 넘으면 오래된 것부터 버린다
+ok 5 - pairDelta: 출발 aws → 도착 gcp 차이와 크레딧 몫 (샘플 가격, PoC 숫자)
+ok 6 - pairDelta: 도착이 더 비싸면 음수, 계산 불가 환경이면 null
+ok 7 - buildCostView: 저장된 추정이 있으면 그대로(stored), 모양이 깨지면 미리보기로
+ok 8 - 경로: 200 + 계약 모양, 회사 번호를 읽기 함수에 넘긴다
+ok 9 - 경로 거부: 헤더 없음 401, 잘못된 번호 400, 없는(남의) 이전 404
+ok 10 - POST /cost/estimate: 어댑터를 끼워도 응답 스키마를 통과한다
+ok 11 - POST /cost/estimate: 잘못된 본문은 400
+ok 12 - GET /migrations/:id/cost: 어댑터를 끼워도 MigrationCostView를 통과한다
+ok 13 - 저장된 추정에 모르는 칸이 있으면 조용히 미리보기로 내려간다 (지금 동작)
+# tests 13
+# pass 12
+# fail 1

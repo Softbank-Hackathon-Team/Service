@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "precheckBlockers": {
+      "type": "number"
+    },
+    "planHash": {
+      "type": "string"
+    },
+    "staleReason": {
+      "type": "string",
+      "enum": [
+        "expired",
+        "env_changed"
+      ]
+    },
+    "applyOk": {
+      "type": "boolean"
+    },
+    "argoHealthy": {
+      "type": "boolean"
+    },
+    "securityParity": {
+      "type": "boolean"
+    },
+    "replicationLagBytes": {
+      "type": "number"
+    },
+    "rowCountMatch": {
+      "type": "boolean"
+    },
+    "markerRoundTripMs": {
+      "type": "number"
+    },
+    "snapshotDone": {
+      "type": "boolean"
+    },
+    "weightPct": {
+      "type": "number"
+    },
+    "observedSec": {
+      "type": "number"
+    },
+    "targetLogsSeen": {
+      "type": "boolean"
+    },
+    "cutoverStepsOk": {
+      "type": "boolean"
+    },
+    "revertOk": {
+      "type": "boolean"
+    },
+    "cleanupApproved": {
+      "type": "boolean"
+    },
+    "tempResources": {
+      "type": "number"
+    },
+    "operateRoleRevoked": {
+      "type": "boolean"
+    },
+    "guardrailRule": {
+      "type": "string"
+    },
+    "ruleCleared": {
+      "type": "boolean"
+    },
+    "sourceWeight100": {
+      "type": "boolean"
+    },
+    "sourceHealthy": {
+      "type": "boolean"
+    },
+    "manualCleanupConfirmed": {
+      "type": "boolean"
+    },
+    "reason": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

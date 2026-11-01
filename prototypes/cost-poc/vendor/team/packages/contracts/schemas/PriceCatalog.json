@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "asOf": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "vendor": {
+            "type": "string",
+            "enum": [
+              "aws",
+              "gcp",
+              "onprem",
+              "azure_mock"
+            ]
+          },
+          "region": {
+            "type": "string"
+          },
+          "item": {
+            "type": "string",
+            "enum": [
+              "cluster",
+              "cluster_credit",
+              "node",
+              "db",
+              "storage",
+              "fixed"
+            ]
+          },
+          "sku": {
+            "type": "string"
+          },
+          "unit": {
+            "type": "string",
+            "enum": [
+              "hour",
+              "month",
+              "gb_month"
+            ]
+          },
+          "usd": {
+            "type": "number",
+            "minimum": 0
+          },
+          "tierFrom": {
+            "default": 0,
+            "type": "number",
+            "minimum": 0
+          },
+          "attrs": {
+            "default": {},
+            "type": "object",
+            "properties": {
+              "vcpu": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "memGiB": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "capVcpu": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              }
+            },
+            "additionalProperties": false
+          },
+          "evidence": {
+            "type": "string",
+            "enum": [
+              "fact",
+              "unverified",
+              "assumed",
+              "mock"
+            ]
+          },
+          "source": {
+            "type": "string"
+          },
+          "fetchedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          }
+        },
+        "required": [
+          "vendor",
+          "region",
+          "item",
+          "sku",
+          "unit",
+          "usd",
+          "tierFrom",
+          "attrs",
+          "evidence",
+          "source",
+          "fetchedAt"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "asOf",
+    "rows"
+  ],
+  "additionalProperties": false
+}

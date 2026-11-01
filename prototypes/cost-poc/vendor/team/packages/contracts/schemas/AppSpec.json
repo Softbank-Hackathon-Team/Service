@@ -1,0 +1,165 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "const": "1"
+    },
+    "app": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{1,30}$"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "service": {
+      "type": "object",
+      "properties": {
+        "image": {
+          "type": "string",
+          "pattern": "@sha256:[a-f0-9]{64}$"
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "healthPath": {
+          "type": "string",
+          "format": "starts_with",
+          "pattern": "^\\/.*"
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        },
+        "cpu": {
+          "type": "string",
+          "enum": [
+            "1",
+            "250m",
+            "500m"
+          ]
+        },
+        "memory": {
+          "type": "string",
+          "enum": [
+            "512Mi",
+            "1Gi",
+            "2Gi"
+          ]
+        },
+        "env": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string",
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "name",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "secretRefs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "key": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "key"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "image",
+        "port",
+        "healthPath",
+        "replicas",
+        "cpu",
+        "memory",
+        "env",
+        "secretRefs"
+      ],
+      "additionalProperties": false
+    },
+    "database": {
+      "type": "object",
+      "properties": {
+        "engine": {
+          "type": "string",
+          "const": "postgres"
+        },
+        "majorVersion": {
+          "type": "string",
+          "enum": [
+            "15",
+            "16",
+            "17"
+          ]
+        },
+        "storageGb": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 100
+        }
+      },
+      "required": [
+        "engine",
+        "majorVersion",
+        "storageGb"
+      ],
+      "additionalProperties": false
+    },
+    "ingress": {
+      "type": "object",
+      "properties": {
+        "hostname": {
+          "type": "string"
+        },
+        "entry": {
+          "type": "string",
+          "const": "cloudflare-lb"
+        }
+      },
+      "required": [
+        "hostname",
+        "entry"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "app",
+    "service",
+    "ingress"
+  ],
+  "additionalProperties": false
+}
