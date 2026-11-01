@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.app.name }}
+  labels: {{- include "app.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  {{- /* Z59: 값이 없으면 쿠버네티스 기본 600초. 있으면 그 초 뒤 진행이 멈춘 배포를 Argo CD가 Degraded 로 본다 (데모용 짧게) */}}
+  {{- with .Values.progressDeadlineSeconds }}
+  progressDeadlineSeconds: {{ . }}
+  {{- end }}
+  selector:
+    matchLabels: { app.kubernetes.io/name: {{ .Values.app.name }} }
+  template:
+    metadata:
+      labels: {{- include "app.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      containers:
+        - name: app
+          image: {{ .Values.image.ref | quote }}
+          ports: [{ name: http, containerPort: {{ .Values.port }} }]
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          readinessProbe: { httpGet: { path: {{ .Values.probes.readiness | quote }}, port: http } }
+          livenessProbe: { httpGet: { path: {{ .Values.probes.liveness | quote }}, port: http }, initialDelaySeconds: 10 }
+          env:
+            {{- range .Values.env }}
+            - { name: {{ .name | quote }}, value: {{ .value | quote }} }
+            {{- end }}
+            {{- range .Values.externalSecrets.refs }}
+            - name: {{ .name | quote }}
+              valueFrom: { secretKeyRef: { name: {{ $.Values.app.name }}-secrets, key: {{ .name | quote }} } }
+            {{- end }}
+            {{- /* Z66: mode 없는 database(activeWriter 만 등) 는 DB 없음으로 본다 */}}
+            {{- with .Values.database }}{{- if .mode }}
+            - { name: DB_HOST, value: {{ .host | quote }} }
+            - { name: DB_PORT, value: {{ .port | quote }} }
+            - { name: DB_NAME, value: {{ .name | replace "-" "_" | quote }} }
+            - { name: DB_USER, value: "app" }
+            - name: DB_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ $.Values.app.name }}-db-app, key: password } }
+            {{- end }}{{- end }}

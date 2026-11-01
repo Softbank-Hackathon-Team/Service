@@ -1,0 +1,112 @@
+# syntax=docker/dockerfile:1.7
+# 서버 앱 3개(api · worker · agent-worker) 운영 이미지를 한 파일로 만든다 (Z75-17). 빌드 문맥 = Service 루트
+#   docker build -f deploy/docker/Dockerfile --target api          -t svc-api:dev .
+#   docker build -f deploy/docker/Dockerfile --target worker       -t svc-worker:dev .
+#   docker build -f deploy/docker/Dockerfile --target agent-worker -t svc-agent-worker:dev .
+# 단계: manifests(package.json만) → deps(npm ci, 셋이 같이 씀) → src → build-<앱>(esbuild 묶음) → <앱>(묶음 파일만)
+# 이미지는 여전히 3개다. 앱마다 필요한 것만 담는다(api: 권한 파일·차트, worker: git·권한 파일, agent-worker: 묶음만)
+# 예전엔 apps/<앱>/Dockerfile 3개에 같은 앞 단계 35줄이 세 번 있었다. 앞 단계를 고치면 세 곳을 같이 고쳐야 했다
+# DRAFT(ai): 런타임에 node_modules 없음. 외부 패키지까지 main.mjs 하나에 묶는다(deploy/docker/bundle.mjs)
+ARG NODE_IMAGE=node:22.23.4-alpine3.24
+# worker 의 git. 바탕(alpine 3.24)과 같은 alpine 판으로 만든 공식 git 이미지에서 꺼내 온다 (apk 저장소에 안 닿아도 빌드된다)
+ARG GIT_IMAGE=alpine/git:v2.54.0
+
+FROM ${NODE_IMAGE} AS manifests
+WORKDIR /src
+COPY . .
+# 워크스페이스 package.json 만 남긴다 → 소스가 바뀌어도 npm ci 층은 캐시에서 재사용
+# hadolint ignore=SC2016
+RUN mkdir -p /out && cp package.json package-lock.json /out/ \
+ && find . -name package.json -not -path "*/node_modules/*" -not -path "./package.json" \
+      -exec sh -c 'for f; do mkdir -p "/out/${f%/*}" && cp "$f" "/out/$f"; done' _ {} +
+
+FROM ${NODE_IMAGE} AS deps
+WORKDIR /src
+COPY --from=manifests /out/ ./
+# 회사망처럼 TLS 를 가로채는 프록시 뒤라면 CA 를 비밀 마운트로 준다(없으면 건너뜀)
+#   docker build --secret id=extra_ca,src=/경로/ca.crt ...
+RUN --mount=type=cache,target=/root/.npm \
+    --mount=type=secret,id=extra_ca,required=false \
+    if [ -f /run/secrets/extra_ca ]; then export NODE_EXTRA_CA_CERTS=/run/secrets/extra_ca; fi \
+ && npm ci --no-audit --no-fund --ignore-scripts
+
+# 묶음에 들어가는 원본. 앱별 build 단계는 자기 앱 폴더만 복사해서, 다른 앱 원본이 바뀌어도 이 앱 묶음은 캐시를 쓴다
+FROM deps AS src
+COPY tsconfig.base.json tsconfig.json ./
+COPY packages ./packages
+COPY deploy/docker ./deploy/docker
+
+FROM src AS build-api
+COPY apps/api ./apps/api
+# 문서 화면(/api/v1/docs/ui)용 명세. 이 층에서 코드로 만들고 bundle.mjs 가 dist/api/docs/ 로 복사한다 (Z51, Z75-02)
+COPY tools/openapi ./tools/openapi
+RUN npx tsx tools/openapi/gen-openapi.ts \
+ && node deploy/docker/bundle.mjs api
+
+FROM src AS build-worker
+COPY apps/worker ./apps/worker
+RUN node deploy/docker/bundle.mjs worker
+
+FROM src AS build-agent-worker
+COPY apps/agent-worker ./apps/agent-worker
+RUN node deploy/docker/bundle.mjs agent-worker
+
+# git 과 git 이 쓰는 공유 라이브러리만 /out 에 모은다 (ldd 로 찾은 것 + 심볼릭 링크의 실제 파일)
+FROM ${GIT_IMAGE} AS git
+# hadolint ignore=SC2016,DL4006
+RUN set -e; mkdir -p /out; \
+    files="/usr/bin/git $(find /usr/libexec/git-core -type f)"; \
+    libs=$(for f in $files; do ldd "$f" 2>/dev/null || true; done | awk '/=>/ {print $3}' | sort -u); \
+    for l in $libs; do echo "$l"; readlink -f "$l"; done | sort -u > /tmp/libs; \
+    tar -cf - /usr/bin/git /usr/libexec/git-core /usr/share/git-core $(cat /tmp/libs) 2>/dev/null | tar -xf - -C /out
+
+# 세 이미지 공통 바탕
+FROM ${NODE_IMAGE} AS runtime
+ENV NODE_ENV=production
+WORKDIR /app
+STOPSIGNAL SIGTERM
+CMD ["node", "--enable-source-maps", "main.mjs"]
+
+FROM runtime AS api
+ENV API_PORT=3000
+# Z47: 컨테이너 안에서는 모든 주소에 붙어야 web·healthcheck 가 닿는다 (코드 기본값은 localhost)
+ENV API_HOST=0.0.0.0
+# Z66(3차): 보안 표가 읽는 최소 권한 파일·앱 차트. 묶음 파일 하나에는 안 들어가서 따로 복사.
+#   없으면 apps/api/src/security/load.ts 가 못 읽어 "정적" 근거·LP-AWS-BOUNDARY 가 비고 prod e2e 2건 실패
+COPY infra/permissions /app/infra/permissions
+COPY gitops/charts /app/gitops/charts
+ENV PERMISSIONS_DIR=/app/infra/permissions
+ENV CHART_DIR=/app/gitops/charts/app
+# 파일 주인은 root(읽기만 가능) → 앱이 자기 코드를 못 바꾼다
+COPY --from=build-api /src/dist/api/ ./
+# 이미지에 들어 있는 node 사용자(uid 1000). 루트로 돌지 않는다
+USER node
+EXPOSE 3000
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
+  CMD ["node", "healthcheck.mjs", "http://127.0.0.1:3000/healthz"]
+
+FROM runtime AS worker
+# gitops 배포(N2)는 git 명령을 부른다. helm 은 gitops 레포 render 도구가 필요할 때만 (TODO(human): helm 바이너리 넣을지)
+# Z75: apk add 대신 git 단계에서 복사(패키지 서버가 막힌 곳에서도 빌드됨). 바탕에 이미 있는 라이브러리(libz·libssl 등)는 덮어쓰지 않는다.
+#      층에 임시 파일이 안 남게 bind 로 붙인다. WITH_GIT=0 은 git 없이 만드는 검증용(4차 apps/worker/Dockerfile 과 같은 뜻, 기본 1)
+ARG WITH_GIT=1
+# hadolint ignore=SC2044
+RUN --mount=type=bind,from=git,source=/out,target=/g set -e; [ "$WITH_GIT" = "1" ] || exit 0; cd /g; \
+    for f in $(find . -type f -o -type l); do \
+      [ -e "/$f" ] || [ -L "/$f" ] || { mkdir -p "/${f%/*}"; cp -a "$f" "/$f"; }; \
+    done; git --version; \
+    # R7-3: https(push·clone)는 git-remote-https 가 libcurl 사슬을 따로 읽는다. 빠진 라이브러리가 있으면 빌드에서 멈춘다
+    ! ldd /usr/libexec/git-core/git-remote-https 2>&1 | grep -q "not found"
+# 최소 권한 파일(J2): 묶음 파일 하나에는 안 들어가서 따로 복사. 없으면 실행 역할 발급이 전부 거부된다
+COPY infra/permissions /app/infra/permissions
+ENV PERMISSIONS_DIR=/app/infra/permissions
+COPY --from=build-worker /src/dist/worker/ ./
+USER node
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
+  CMD ["node", "healthcheck.mjs", "db"]
+
+FROM runtime AS agent-worker
+COPY --from=build-agent-worker /src/dist/agent-worker/ ./
+USER node
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
+  CMD ["node", "healthcheck.mjs", "db"]
