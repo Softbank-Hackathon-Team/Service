@@ -1,0 +1,46 @@
+# DRAFT(ai) 점검·수정 데모용 앱: 시작하자마자 메모리 200Mi 를 잡는다 → 상한 128Mi 면 OOMKilled 로 계속 재시작.
+# 상한을 512Mi 로 올리면 멈추지 않는다. PSS restricted 를 통과하는 securityContext 를 갖춘다.
+# 이미지는 Docker Hub 의 공식 python (맥에서 처음 한 번 내려받음, 약 20MB 압축) 【추정】
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  labels:
+    app: web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: web
+          image: docker.io/library/python:3.12-alpine
+          command: ["python", "-c"]
+          args:
+            - "import time; print('start: allocating 200Mi', flush=True); b = b'x' * (200 * 1024 * 1024); print('allocated, serving', flush=True); time.sleep(86400)"
+          env:
+            - name: APP_MODE
+              value: "demo"
+          resources:
+            requests:
+              cpu: 50m
+              memory: "64Mi"
+            limits:
+              cpu: 500m
+              memory: "128Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
