@@ -49,8 +49,10 @@
 .decorLarge,
 .decorSmall {
   position: absolute;
+  border: 1.5px solid rgb(169 180 245 / 55%);
   border-radius: var(--radius-full);
-  background: rgb(255 255 255 / 5%);
+  background: rgb(255 255 255 / 3%);
+  box-shadow: 0 0 24px rgb(169 180 245 / 18%);
   pointer-events: none;
 }
 .decorLarge {

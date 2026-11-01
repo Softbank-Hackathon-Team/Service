@@ -84,11 +84,11 @@ export function PausedScreen({ flow }: ScreenProps) {
         </>
       }
       headline="이전을 멈췄습니다"
-      sub="에이전트가 샌드박스에서 수정안을 만들고, 합치는 것은 사람이 합니다."
+      sub="에이전트는 원인을 찾아 수정안까지 제안합니다. 적용은 사람이 합니다."
       actions={
         <>
           <BarPill label="롤백" icon="rollback" tone="danger" onClick={() => flow.rollback()} />
-          <ActionPill label="에이전트에게 맡기기" icon="bot" onClick={() => flow.go('fix', { merge: 'open' })} />
+          <ActionPill label="에이전트 수정안 받기" icon="bot" onClick={() => flow.go('fix', { merge: 'open' })} />
         </>
       }
     >
@@ -118,7 +118,7 @@ const FIX: BentoLayout = {
 };
 
 const CHECKED = ['5432 포트가 내부망에만 열림', '앱에서 DB 연결 테스트 통과', '보안 표 재검사 통과'];
-const UNCHECKED = ['운영 부하에서의 연결 수', '온프레 방화벽 규칙', '샌드박스 밖 네트워크 경로'];
+const UNCHECKED = ['운영 부하에서의 연결 수', '클라우드 방화벽 규칙 (에이전트 권한 밖)', '샌드박스 밖 네트워크 경로'];
 
 function Bullets({ icon, items }: { icon: 'check' | 'help'; items: string[] }) {
   return (
@@ -142,8 +142,8 @@ export function FixScreen({ flow }: ScreenProps) {
       layout={FIX}
       barLeft={<BarPill label={routeLabel(flow)} />}
       barRight={<LiveIndicator />}
-      headline={merged ? '합친 것을 확인했습니다' : '수정안을 합쳐 주세요'}
-      sub={merged ? '이제 멈췄던 자리에서 이어 갑니다.' : 'GitHub에서 합치면 자동으로 알아차립니다.'}
+      headline={merged ? '합친 것을 확인했습니다' : '에이전트가 수정안을 제안했습니다'}
+      sub={merged ? '이제 멈췄던 자리에서 이어 갑니다.' : '클라우드에서 연 방화벽은 사람이 되돌리고, 이 PR은 사람이 합칩니다.'}
       actions={
         <>
           <BarPill label="롤백" icon="rollback" tone="danger" onClick={() => flow.rollback()} />
@@ -164,8 +164,8 @@ export function FixScreen({ flow }: ScreenProps) {
         tone={merged ? 'run' : 'stop'}
         meta={merged ? '수정 반영됨' : '에이전트 수정안 · PR #12'}
         step="!"
-        title={merged ? '이어서\n옮길 수 있습니다' : '이 한 줄을\n고칩니다'}
-        foot="에이전트는 샌드박스에서만 실행했습니다"
+        title={merged ? '이어서\n옮길 수 있습니다' : '수정안:\n이 한 줄을 고칩니다'}
+        foot="에이전트는 샌드박스에서만 실행했고, 운영 환경은 읽지 않았습니다"
       >
         <code className={`${s.diff} t-code-md`}>
           <span className={s.diffRemoved}>- cidr: 0.0.0.0/0</span>
