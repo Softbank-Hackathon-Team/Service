@@ -1,0 +1,18 @@
+{
+  "name": "@svc/agent-worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --env-file=../../deploy/dev/agent-worker.defaults.env --env-file=../../.env src/main.ts",
+    "start": "tsx --env-file=../../deploy/dev/agent-worker.defaults.env --env-file=../../.env src/main.ts",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "MOCK_IAC=1 MOCK_ARGO=1 FAKE_LLM=1 MOCK_PRECHECK=1 DEV_AUTH=1 AUTH_SCRYPT_N=16384 MOCK_SEED=1 node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@svc/agent": "*",
+    "@svc/contracts": "*",
+    "@svc/core": "*",
+    "@svc/adapters": "*"
+  }
+}
