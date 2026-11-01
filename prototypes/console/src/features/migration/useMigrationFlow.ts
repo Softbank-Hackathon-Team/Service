@@ -14,11 +14,11 @@ import {
   type ScreenId,
 } from './flow';
 
-// 진행을 보여 주려고 기다리는 시간은 어디서든 1초를 넘기지 않는다.
+/** 볼 것 없이 스피너만 도는 대기는 1초를 넘기지 않는다. */
 const WAIT_MS = 800;
-const CHECKLIST_TOTAL_MS = 600;
-/** 체크리스트 화면은 항목이 몇 개든 화면 전체가 1초 안에 끝난다. */
-const checklistTick = (items: unknown[]) => CHECKLIST_TOTAL_MS / (items.length + 1);
+/** 이전 단계와 체크리스트 항목은 눈으로 따라갈 수 있게 천천히 넘어간다. */
+const STAGE_MS = 1500;
+const CHECKLIST_ITEM_MS = 800;
 
 const parseHash = (): ScreenId => {
   const id = window.location.hash.replace('#/', '');
@@ -117,7 +117,7 @@ export function useMigrationFlow() {
         case 'cutover':
           return go('window', { windowSeconds: ROLLBACK_WINDOW_SECONDS });
       }
-    }, WAIT_MS);
+    }, STAGE_MS);
     return () => window.clearTimeout(timer);
   }, [onRunning, state.autoplay, state.stage, state.traffic, state.observeSeconds, state.guardrailCleared, patch, go]);
 
@@ -139,7 +139,7 @@ export function useMigrationFlow() {
     const timer = window.setTimeout(() => {
       if (state.precheckStep < PRECHECK_ITEMS.length) patch({ precheckStep: state.precheckStep + 1 });
       else go('approve');
-    }, checklistTick(PRECHECK_ITEMS));
+    }, CHECKLIST_ITEM_MS);
     return () => window.clearTimeout(timer);
   }, [screen, state.autoplay, state.precheckStep, patch, go]);
 
@@ -148,7 +148,7 @@ export function useMigrationFlow() {
     const timer = window.setTimeout(() => {
       if (state.rollbackStep < ROLLBACK_STEPS.length) patch({ rollbackStep: state.rollbackStep + 1 });
       else go('rolledBack', { traffic: 0 });
-    }, checklistTick(ROLLBACK_STEPS));
+    }, CHECKLIST_ITEM_MS);
     return () => window.clearTimeout(timer);
   }, [screen, state.autoplay, state.rollbackStep, patch, go]);
 
@@ -157,7 +157,7 @@ export function useMigrationFlow() {
     const timer = window.setTimeout(() => {
       if (state.cleanupStep < CLEANUP_STEPS.length) patch({ cleanupStep: state.cleanupStep + 1 });
       else go('done');
-    }, checklistTick(CLEANUP_STEPS));
+    }, CHECKLIST_ITEM_MS);
     return () => window.clearTimeout(timer);
   }, [screen, state.autoplay, state.cleanupStep, patch, go]);
 
