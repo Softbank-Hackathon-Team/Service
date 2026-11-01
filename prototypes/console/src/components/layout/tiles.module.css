@@ -10,11 +10,6 @@
 .surface {
   background: var(--color-bg-surface);
 }
-.inverse {
-  background: var(--color-bg-inverse);
-  border: 1px solid var(--color-border-inverse);
-  color: var(--color-fg-on-hero);
-}
 .spread {
   justify-content: space-between;
 }
@@ -35,37 +30,7 @@
   padding: var(--space-40);
   overflow: hidden;
   border-radius: var(--radius-xl);
-  color: var(--color-fg-on-hero);
-}
-.run {
-  background: var(--hero-run);
-}
-.stop {
-  background: var(--hero-stop);
-}
-.done {
-  background: var(--hero-done);
-}
-.decorLarge,
-.decorSmall {
-  position: absolute;
-  border: 1.5px solid rgb(169 180 245 / 55%);
-  border-radius: var(--radius-full);
-  background: rgb(255 255 255 / 3%);
-  box-shadow: 0 0 24px rgb(169 180 245 / 18%);
-  pointer-events: none;
-}
-.decorLarge {
-  top: -35%;
-  left: 42%;
-  width: 110%;
-  aspect-ratio: 1;
-}
-.decorSmall {
-  top: 35%;
-  left: 62%;
-  width: 70%;
-  aspect-ratio: 1;
+  background: var(--color-bg-surface);
 }
 .heroMeta,
 .heroContent,
@@ -76,6 +41,13 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  color: var(--color-fg-secondary);
+}
+.stop .heroMeta {
+  color: var(--color-fg-tone-danger);
+}
+.done .heroMeta {
+  color: var(--color-fg-tone-success);
 }
 .heroStep {
   display: grid;
@@ -83,8 +55,16 @@
   width: var(--size-control-m);
   height: var(--size-control-m);
   border-radius: var(--radius-full);
-  background: var(--color-bg-surface);
+  background: var(--color-bg-subtle);
   color: var(--color-fg-primary);
+}
+.stop .heroStep {
+  background: var(--color-bg-tone-danger);
+  color: var(--color-fg-tone-danger);
+}
+.done .heroStep {
+  background: var(--color-bg-tone-success);
+  color: var(--color-fg-tone-success);
 }
 .heroContent {
   display: flex;
@@ -99,7 +79,8 @@
 }
 .heroFoot {
   padding-top: var(--space-16);
-  border-top: 1px solid rgb(255 255 255 / 50%);
+  border-top: 1px solid var(--color-border-default);
+  color: var(--color-fg-secondary);
 }
 
 .statIcon {

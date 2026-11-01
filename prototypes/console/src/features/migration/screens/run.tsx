@@ -1,6 +1,5 @@
 import type { BentoLayout } from '../../../components/layout/ConsoleLayout';
 import { Hero, StatTile, Tile, TileHeader } from '../../../components/layout/tiles';
-import { Checklist } from '../../../components/ui/Checklist';
 import { ActionPill, Badge, BarPill, LiveIndicator } from '../../../components/ui/controls';
 import { Icon } from '../../../components/ui/Icon';
 import { Timeline } from '../../../components/ui/Timeline';
@@ -54,7 +53,7 @@ export function RunningScreen({ flow }: ScreenProps) {
         title={runningTitle(state)}
         foot="오류율이 1%를 넘거나 응답 시간이 2배를 넘으면 자동으로 되돌립니다"
       >
-        <TrafficBar source={source} target={target} targetPercent={traffic} surface="hero" />
+        <TrafficBar source={source} target={target} targetPercent={traffic} />
       </Hero>
       <ChecklistTile title="진행 단계" items={migrationSteps('running', state)} />
       <StatTile area="failed" icon="check" value={metricsAvailable ? '0' : '없음'} unit={metricsAvailable ? '건' : undefined} label={metricsAvailable ? '실패 요청' : '숫자 없음: 지표가 아직 안 옴'} compact />
@@ -205,8 +204,13 @@ export function RollbackWindowScreen({ flow }: ScreenProps) {
       barLeft={<BarPill label={routeLabel(flow)} />}
       barRight={<LiveIndicator />}
       headline="이상이 있으면 되돌리세요"
-      sub={`시간이 끝나면 자동으로 ${source}의 임시 자원을 지우고 빌린 권한을 돌려줍니다.`}
-      actions={<ActionPill label="롤백" icon="rollback" tone="danger" disabled={expired} onClick={() => flow.rollback()} />}
+      sub={`시간이 끝나면 자동으로 ${source}의 임시 자원을 지우고 빌린 권한을 돌려줍니다. 리소스 회수를 누르면 바로 시작하며, 되돌릴 수 없습니다.`}
+      actions={
+        <>
+          <BarPill label="롤백" icon="rollback" tone="danger" onClick={expired ? undefined : () => flow.rollback()} />
+          <ActionPill label="리소스 회수" icon="server" onClick={flow.reclaimResources} />
+        </>
+      }
     >
       <Hero
         tone="run"
@@ -251,12 +255,7 @@ export function CleanupScreen({ flow }: ScreenProps) {
       actions={<ActionPill label="자동으로 진행 중" icon="refresh" disabled />}
     >
       <Hero tone="done" meta="정리" step="09" title={`${source}의 임시 자원을\n지우고 있습니다`} foot="남은 줄이 0개여야 완료합니다" />
-      <Tile area="steps" tone="inverse" compact>
-        <h3 className="t-h3" style={{ marginBottom: 'var(--space-8)' }}>
-          정리 단계
-        </h3>
-        <Checklist items={progressItems(CLEANUP_STEPS, cleanupStep)} />
-      </Tile>
+      <ChecklistTile title="정리 단계" items={progressItems(CLEANUP_STEPS, cleanupStep)} />
     </ScreenLayout>
   );
 }
@@ -276,14 +275,9 @@ export function RollingBackScreen({ flow }: ScreenProps) {
     >
       <Hero tone="stop" meta={rollbackCause === 'manual' ? '수동 롤백' : '자동 롤백'} step="←" title={cause.title} foot={cause.detail}>
         <code className={`${s.causeCode} t-code-md`}>{cause.code}</code>
-        <TrafficBar source={source} target={target} targetPercent={rollbackStep > 2 ? 0 : traffic} surface="hero" />
+        <TrafficBar source={source} target={target} targetPercent={rollbackStep > 2 ? 0 : traffic} />
       </Hero>
-      <Tile area="steps" tone="inverse" compact>
-        <h3 className="t-h3" style={{ marginBottom: 'var(--space-8)' }}>
-          롤백 다섯 단계
-        </h3>
-        <Checklist items={progressItems(ROLLBACK_STEPS, rollbackStep)} />
-      </Tile>
+      <ChecklistTile title="롤백 다섯 단계" items={progressItems(ROLLBACK_STEPS, rollbackStep)} />
     </ScreenLayout>
   );
 }

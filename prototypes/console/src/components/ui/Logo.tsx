@@ -8,13 +8,7 @@ export function Logo() {
   return (
     <span className={s.root}>
       <svg className={s.mark} viewBox="0 0 40 40" role="img" aria-label={`${PRODUCT_NAME} 로고`}>
-        <defs>
-          <linearGradient id="kross-mark" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0" stopColor="#26233F" />
-            <stop offset="1" stopColor="#5A67D8" />
-          </linearGradient>
-        </defs>
-        <rect width="40" height="40" rx="11" fill="url(#kross-mark)" />
+        <rect width="40" height="40" rx="11" fill="#365FCE" />
         <path d="M12 10v20" stroke="#fff" strokeWidth="4" strokeLinecap="round" />
         <path d="M28 10 17.5 20 28 30" fill="none" stroke="#fff" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
       </svg>

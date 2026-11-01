@@ -94,7 +94,7 @@ export const PLAN_STEPS: { name: string; gate: string }[] = [
   { name: 'DB 복제', gate: '지연 1초 이하 3번 연속' },
   { name: '트래픽 이동', gate: '10·50·100%, 판정 3번 이상' },
   { name: 'DB 전환', gate: '100%에서 30초 문제 없음' },
-  { name: '롤백 대기', gate: '2분' },
+  { name: '롤백 대기', gate: '15분' },
   { name: '정리', gate: '임시 자원 0개, 권한 회수' },
 ];
 

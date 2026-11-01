@@ -1,6 +1,6 @@
 import type { BentoLayout } from '../../../components/layout/ConsoleLayout';
 import { Hero, StatTile, Tile, TileHeader, TileLink } from '../../../components/layout/tiles';
-import { Checklist, type ChecklistEntry } from '../../../components/ui/Checklist';
+import type { ChecklistEntry } from '../../../components/ui/Checklist';
 import { ActionPill, Badge, BarPill, OptionPill } from '../../../components/ui/controls';
 import { Icon } from '../../../components/ui/Icon';
 import { SecurityDotMap, SecurityLegend } from '../../../components/ui/Security';
@@ -329,12 +329,7 @@ export function PrecheckScreen({ flow }: ScreenProps) {
       sub="하나라도 막히면 여기서 멈춥니다. 고객 환경에는 아직 아무것도 생기지 않았습니다."
       actions={<ActionPill label="자동으로 진행 중" icon="refresh" disabled />}
     >
-      <Tile area="items" tone="inverse" compact>
-        <h3 className="t-h3" style={{ marginBottom: 'var(--space-8)' }}>
-          점검 항목 20개
-        </h3>
-        <Checklist items={items} />
-      </Tile>
+      <ChecklistTile area="items" title="점검 항목 20개" items={items} />
       <Hero tone="run" meta="사전 점검" step="04" title={`${target}에서\n이 앱을 돌릴 수 있나요?`} foot="막힘, 경고, 참고 세 등급으로 나눕니다">
         <p className="t-metric-2xl">
           {Math.min(precheckStep, PRECHECK_ITEMS.length)} / {PRECHECK_ITEMS.length}
@@ -421,15 +416,15 @@ export function ApproveScreen({ flow }: ScreenProps) {
           ))}
         </div>
       </Hero>
-      <Tile area="steps" tone="inverse" compact scroll>
-        <h3 className="t-h3">단계와 넘어갈 조건</h3>
+      <Tile area="steps" compact scroll>
+        <TileHeader title="단계와 넘어갈 조건" />
         <ol className={s.planSteps}>
           {PLAN_STEPS.map(({ name, gate }, index) => (
             <li key={name} className={s.planStep}>
               <span className="t-label-md">
                 {index + 1}. {name}
               </span>
-              <span className="t-caption">{gate}</span>
+              <span className="t-caption c-secondary">{gate}</span>
             </li>
           ))}
         </ol>

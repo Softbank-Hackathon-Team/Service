@@ -14,11 +14,11 @@ import {
   type ScreenId,
 } from './flow';
 
-const TRAFFIC_TICK_MS = 2600;
-const MERGE_DETECT_MS = 1400;
-const CONNECT_MS = 1400;
-const AGENT_RUN_MS = 2600;
-const STEP_TICK_MS = 700;
+// 진행을 보여 주려고 기다리는 시간은 어디서든 1초를 넘기지 않는다.
+const WAIT_MS = 800;
+const CHECKLIST_TOTAL_MS = 600;
+/** 체크리스트 화면은 항목이 몇 개든 화면 전체가 1초 안에 끝난다. */
+const checklistTick = (items: unknown[]) => CHECKLIST_TOTAL_MS / (items.length + 1);
 
 const parseHash = (): ScreenId => {
   const id = window.location.hash.replace('#/', '');
@@ -117,7 +117,7 @@ export function useMigrationFlow() {
         case 'cutover':
           return go('window', { windowSeconds: ROLLBACK_WINDOW_SECONDS });
       }
-    }, TRAFFIC_TICK_MS);
+    }, WAIT_MS);
     return () => window.clearTimeout(timer);
   }, [onRunning, state.autoplay, state.stage, state.traffic, state.observeSeconds, state.guardrailCleared, patch, go]);
 
@@ -139,7 +139,7 @@ export function useMigrationFlow() {
     const timer = window.setTimeout(() => {
       if (state.precheckStep < PRECHECK_ITEMS.length) patch({ precheckStep: state.precheckStep + 1 });
       else go('approve');
-    }, STEP_TICK_MS);
+    }, checklistTick(PRECHECK_ITEMS));
     return () => window.clearTimeout(timer);
   }, [screen, state.autoplay, state.precheckStep, patch, go]);
 
@@ -148,7 +148,7 @@ export function useMigrationFlow() {
     const timer = window.setTimeout(() => {
       if (state.rollbackStep < ROLLBACK_STEPS.length) patch({ rollbackStep: state.rollbackStep + 1 });
       else go('rolledBack', { traffic: 0 });
-    }, STEP_TICK_MS);
+    }, checklistTick(ROLLBACK_STEPS));
     return () => window.clearTimeout(timer);
   }, [screen, state.autoplay, state.rollbackStep, patch, go]);
 
@@ -157,13 +157,13 @@ export function useMigrationFlow() {
     const timer = window.setTimeout(() => {
       if (state.cleanupStep < CLEANUP_STEPS.length) patch({ cleanupStep: state.cleanupStep + 1 });
       else go('done');
-    }, STEP_TICK_MS);
+    }, checklistTick(CLEANUP_STEPS));
     return () => window.clearTimeout(timer);
   }, [screen, state.autoplay, state.cleanupStep, patch, go]);
 
   useEffect(() => {
     if (state.merge !== 'detecting') return;
-    const timer = window.setTimeout(() => withTransition(() => patch({ merge: 'merged' })), MERGE_DETECT_MS);
+    const timer = window.setTimeout(() => withTransition(() => patch({ merge: 'merged' })), WAIT_MS);
     return () => window.clearTimeout(timer);
   }, [state.merge, patch]);
 
@@ -173,13 +173,13 @@ export function useMigrationFlow() {
     const timer = window.setTimeout(() => {
       setState((prev) => ({ ...prev, connecting: null, connected: { ...prev.connected, [env]: true } }));
       if (screenRef.current === 'connect') go('read');
-    }, CONNECT_MS);
+    }, WAIT_MS);
     return () => window.clearTimeout(timer);
   }, [state.connecting, go]);
 
   useEffect(() => {
     if (state.agentRun !== 'running') return;
-    const timer = window.setTimeout(() => patch({ agentRun: 'done' }), AGENT_RUN_MS);
+    const timer = window.setTimeout(() => patch({ agentRun: 'done' }), WAIT_MS);
     return () => window.clearTimeout(timer);
   }, [state.agentRun, patch]);
 
@@ -218,6 +218,8 @@ export function useMigrationFlow() {
       mergeFix: () => patch({ merge: 'detecting' }),
       rollback: (cause: RollbackCause = 'manual') =>
         go(cause === 'manual' ? 'rollingBack' : 'autoRollback', { rollbackCause: cause, rollbackStep: 0, autoplay: true }),
+      /** 대기 시간을 기다리지 않고 바로 정리로 넘어간다. 되돌릴 수 없다. */
+      reclaimResources: () => go('cleanup', { cleanupStep: 0, autoplay: true }),
       attest: (key: string) => setState((prev) => ({ ...prev, attested: { ...prev.attested, [key]: true } })),
       acknowledge: (id: string) => setState((prev) => ({ ...prev, acknowledged: { ...prev.acknowledged, [id]: true } })),
     }),

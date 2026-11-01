@@ -55,10 +55,8 @@ export function SecurityTile({ flow, title, area = 'security' }: ScreenProps & {
 
 export function ChecklistTile({ area = 'steps', title, items }: { area?: string; title: string; items: ChecklistEntry[] }) {
   return (
-    <Tile area={area} tone="inverse" compact>
-      <h3 className="t-h3" style={{ marginBottom: 'var(--space-8)' }}>
-        {title}
-      </h3>
+    <Tile area={area} compact>
+      <TileHeader title={title} />
       <Checklist items={items} />
     </Tile>
   );

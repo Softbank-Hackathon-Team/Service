@@ -25,9 +25,3 @@
 .target {
   background: var(--color-data-target);
 }
-.onHero .source {
-  background: rgb(255 255 255 / 55%);
-}
-.onHero .target {
-  background: var(--color-bg-accent);
-}
