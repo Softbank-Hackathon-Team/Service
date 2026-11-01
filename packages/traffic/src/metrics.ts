@@ -1,0 +1,76 @@
+import type { Window } from "./rule.js";
+import type { FetchLike } from "./providers/http.js";
+
+// 두 Ingress의 최근 30초 지표를 읽는 쪽. 진짜는 중앙 Prometheus 질의다.
+export interface MetricsSource {
+  window(migrationId: string, targetPct: number): Promise<Window>;
+}
+
+// DRAFT(ai): 계약 문서 미정 2번 추천안. 두 클러스터에서 같은 이름을 쓰고 관측 표시 셋(env, tenant, migration)을 붙인다
+export const METRIC_NAMES = {
+  requests: "svc_ingress_requests_total",                 // 표시: env, tenant, migration, code
+  latency: "svc_ingress_request_duration_seconds_bucket", // 표시: env, tenant, migration, le
+} as const;
+
+// 순수 함수: 한 쪽(source|target)의 30초 창 PromQL 세 줄. 매개변수는 따옴표 안에 넣기 전에 걸러 낸다
+export function promQueries(migrationId: string, side: "source" | "target", windowSec = 30) {
+  if (!/^[0-9a-f-]{36}$/i.test(migrationId)) throw new Error("migrationId 형식이 아니다 (PromQL 주입 방지)");
+  const sel = `migration="${migrationId}",env="${side}"`;
+  const w = `${windowSec}s`;
+  return {
+    total: `sum(increase(${METRIC_NAMES.requests}{${sel}}[${w}]))`,
+    err5xx: `sum(increase(${METRIC_NAMES.requests}{${sel},code=~"5.."}[${w}]))`,
+    p95: `histogram_quantile(0.95, sum by (le) (rate(${METRIC_NAMES.latency}{${sel}}[${w}])))`,
+  };
+}
+
+// Prometheus HTTP API (/api/v1/query) 로 창 하나를 읽는다.
+// p95 는 Prometheus 가 계산한 값을 p95Ms 로 넘긴다 (원래 지연 목록은 안 가져온다)
+// DRAFT(ai): 출발 쪽 표본이 모자랄 때 쓰는 기준 p95 는 전환 직전 10초 값을 부르는 쪽이 넣는다 (baselineP95Ms)
+export function prometheusMetrics(o: { baseUrl: string; fetch?: FetchLike; baselineP95Ms: number; windowSec?: number;
+  authHeader?: () => Promise<string | undefined> }): MetricsSource {
+  const f = o.fetch ?? (globalThis.fetch as unknown as FetchLike);
+  async function scalar(q: string): Promise<number> {
+    const url = `${o.baseUrl.replace(/\/$/, "")}/api/v1/query?query=${encodeURIComponent(q)}`;
+    const auth = await o.authHeader?.();
+    const res = await f(url, { method: "GET", headers: auth ? { authorization: auth } : {} });
+    const body = await res.json() as { status?: string; data?: { result?: Array<{ value?: [number, string] }> } };
+    if (res.status >= 400 || body.status !== "success") throw new Error(`Prometheus 질의 실패 HTTP ${res.status}`);
+    const v = body.data?.result?.[0]?.value?.[1];
+    const n = v === undefined ? 0 : Number(v);
+    return Number.isFinite(n) ? n : NaN;   // 표본 0 이면 histogram_quantile 이 NaN
+  }
+  async function side(id: string, s: "source" | "target") {
+    const q = promQueries(id, s, o.windowSec);
+    const [total, err, p95s] = await Promise.all([scalar(q.total), scalar(q.err5xx), scalar(q.p95)]);
+    return { n: Math.round(total), err5xx: Math.round(err), latenciesMs: [], p95Ms: p95s * 1000 };
+  }
+  return {
+    async window(id) {
+      const [target, source] = await Promise.all([side(id, "target"), side(id, "source")]);
+      return { target, source, baselineP95Ms: o.baselineP95Ms };
+    },
+  };
+}
+
+// STUB: 가짜 지표. 시나리오별로 결정적인 숫자를 만든다 (랜덤 없음, 시험이 흔들리지 않게)
+// clean = 정상, err = 도착 5xx 10%, slow = 도착 p95 3배, down = 도착 전부 5xx, failAt = 그 비율부터 나빠짐
+export function stubMetrics(scenario: "clean" | "err" | "slow" | "down", o: { rps?: number; failAt?: number } = {}): MetricsSource {
+  const rps = o.rps ?? 50;
+  const failAt = o.failAt ?? 0;
+  return {
+    async window(_id, pct) {
+      const total = rps * 30;
+      const tn = Math.round(total * pct / 100), sn = total - tn;
+      const bad = pct >= failAt ? scenario : "clean";
+      const lat = (n: number, ms: number) => Array.from({ length: n }, (_, i) => ms + (i % 20));
+      const tErr = bad === "err" ? Math.round(tn * 0.1) : bad === "down" ? tn : 0;
+      const tMs = bad === "slow" ? 360 : 120;
+      return {
+        target: { n: tn, err5xx: tErr, latenciesMs: lat(tn, tMs) },
+        source: { n: sn, err5xx: 0, latenciesMs: lat(sn, 120) },
+        baselineP95Ms: 139,
+      };
+    },
+  };
+}
