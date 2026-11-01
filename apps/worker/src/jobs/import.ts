@@ -1,0 +1,73 @@
+import { AppSpec, MigrationJob, type Provider } from "@svc/contracts";
+import { withTenant, advance } from "@svc/core";
+import { adapterFor, inventoryForAudit, isAdapterError } from "@svc/adapters";
+import { failedAttempts, recordAttemptFailure } from "./_step.js";
+import { envNumber } from "@svc/contracts";
+
+// Z38-4: import 는 runStep 을 안 지나서 잠금도 청소 대상도 아니다. 재시도(retryLimit 3)를 다 쓰면 importing 에 영원히 남았다.
+//   (Z19 의 "마지막 시도 실패 → failed/paused" 도 runStep 안에만 있어 여기는 못 덮는다)
+// DRAFT(ai): 첫 시도 + 재시도 3 = 4번째 실패면 importing → failed(IMPORT_FAILED). 명세 모양 오류(Zod)는 다시 해도 같으니 바로 failed
+// Z88: 어댑터 오류 코드 → 실패 사유
+const SOURCE_FAILURE = { SOURCE_UNAVAILABLE: "IMPORT_SOURCE_UNAVAILABLE", SOURCE_INCOMPLETE: "IMPORT_SOURCE_INCOMPLETE" } as const;
+export const IMPORT_MAX_ATTEMPTS = envNumber(process.env.IMPORT_MAX_ATTEMPTS, 4);
+
+// 가져오기: 출발 환경을 읽어 공통 명세(spec v1)를 만든다
+// M10: runStep과 같은 3구간. ① 재확인(짧은 트랜잭션) → ② discover(트랜잭션 밖, 진짜 클라우드 API면 수 초~수십 초)
+//      → ③ 행 잠금 + 상태 다시 확인 + 저장 + advance (한 트랜잭션). 예전엔 discover를 트랜잭션 안에서 불러
+//      풀 연결(10개)을 쥔 채 "idle in transaction"이 됐다
+export async function handleImport(raw: unknown) {
+  const job = MigrationJob.parse(raw); // 큐 내용은 믿지 않는다: 모양부터
+  try {
+    await importOnce(job);
+  } catch (e) {
+    const msg = ((e as Error)?.message ?? String(e)).slice(0, 500);
+    const zod = (e as { name?: string })?.name === "ZodError";   // worker 는 zod 를 직접 의존하지 않는다
+    // Z88: 출발 환경 못 읽음·재료 없음은 다시 해도 같다 (자격·클러스터를 사람이 고쳐야 함) → 바로 failed + 이유 그대로
+    const source = isAdapterError(e) && (e.code === "SOURCE_UNAVAILABLE" || e.code === "SOURCE_INCOMPLETE") ? (e.code as keyof typeof SOURCE_FAILURE) : null;
+    const permanent = zod || source !== null;
+    const code = source ? SOURCE_FAILURE[source] : permanent ? "IMPORT_SPEC_INVALID" : "IMPORT_FAILED";
+    const attempts = (await failedAttempts(job, "import")) + 1;
+    if (!permanent && attempts < IMPORT_MAX_ATTEMPTS) {
+      await recordAttemptFailure(job, "import", { attempts, max: IMPORT_MAX_ATTEMPTS, error: msg });
+      throw e;   // pg-boss 재시도
+    }
+    await withTenant(job.tenantId, (tx) => advance(tx, { id: job.migrationId, tenantId: job.tenantId }, "importing", "failed", {
+      mode: "ifStill", failureCode: code,
+      audit: { actor: "worker", action: "migration.failed", target: job.migrationId, result: "error",
+               detail: { requestId: job.requestId, error: msg, attempts, permanent } },
+    }));
+  }
+}
+
+async function importOnce(job: MigrationJob) {
+  // ① 재확인: DB에서 다시 읽는다 (회사 벽 안에서)
+  const row = await withTenant(job.tenantId, async (tx) => {
+    const m = await tx.query(
+      `SELECT m.status, e.provider FROM migrations m
+         JOIN environments e ON e.id = m.source_env_id WHERE m.id=$1`, [job.migrationId]);
+    const r = m.rows[0] as { status: string; provider: string } | undefined;
+    return r && r.status === "importing" ? r : null;   // 두 번 온 작업이면 아무것도 안 함
+  });
+  if (!row) return;
+
+  // ② 바깥 호출 (트랜잭션 밖)
+  const a = adapterFor(row.provider as Provider);
+  const inv = await a.discover({ accountId: "dev", expiresAt: "" }, { kind: "container", selector: "*" });
+  const { spec, fieldMeta } = a.normalize(inv);
+  AppSpec.parse(spec); // T02 조건: 명세 Zod 통과
+
+  // ③ 저장 + 상태 한 칸. 행을 먼저 잠그고 상태를 다시 본다 (② 동안 취소·두 번째 작업이 지나갔을 수 있다)
+  await withTenant(job.tenantId, async (tx) => {
+    const now = await tx.query("SELECT status FROM migrations WHERE id=$1 FOR UPDATE", [job.migrationId]);
+    if (now.rows[0]?.status !== "importing") return;
+    await tx.query(
+      `INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta)
+       VALUES ($1,$2,1,$3,$4)`, [job.tenantId, job.migrationId, spec, fieldMeta]);
+    await advance(tx, { id: job.migrationId, tenantId: job.tenantId }, "importing", "spec_review", {
+      mode: "ifStill",
+      // Z88: 읽은 출발 자원 목록(종류·이름·버전만, 환경변수는 이름만)을 감사에 남긴다 → provisioning(Z89)이 "이미 있음" 판단에 쓴다
+      audit: { actor: "worker", action: "migration.spec_review", target: job.migrationId, result: "ok",
+               detail: { sourceInventory: inventoryForAudit(inv) } },
+    });
+  });
+}
