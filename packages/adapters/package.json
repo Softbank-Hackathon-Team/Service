@@ -1,0 +1,16 @@
+{
+  "name": "@svc/adapters",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@svc/contracts": "*"
+  },
+  "scripts": {
+    "gen:digests": "tsx scripts/gen-module-digests.ts"
+  }
+}
