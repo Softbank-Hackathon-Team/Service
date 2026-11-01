@@ -1,0 +1,222 @@
+import { execFile } from "node:child_process";
+import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { promisify } from "node:util";
+import type { HelmValues } from "@svc/contracts";
+import { APP_NS_PREFIX, bundlePath, commitMessage, fenceDoc, resourceId, type BundleRef, type PlanFile } from "./bundle.js";
+
+const run = promisify(execFile);
+
+export class GitopsError extends Error {
+  constructor(readonly code: string, message: string) { super(message); }
+}
+
+export interface GitopsConfig {
+  dir: string;                 // gitops 레포 작업 복사본
+  url?: string;                // 있으면 dir에 없을 때 clone 한다 (GITOPS_REPO_URL)
+  token?: string;              // 쓰기 토큰 (GITOPS_WRITE_TOKEN). 명령줄·로그·감사에 안 남게 환경변수로만 git에 넘긴다
+  branch: string;
+  push: boolean;               // origin이 있고 push를 켰을 때만
+  author: { name: string; email: string };
+  maxPushTries: number;
+}
+
+// .env 이름 (계정 세팅에서 정함): GITOPS_REPO_URL, GITOPS_WRITE_TOKEN(워커), GITOPS_READ_TOKEN(Argo CD 몫, 워커는 안 씀).
+// GITOPS_REPO_DIR = 로컬 시험용 작업 복사본. URL과 같이 주면 그 자리에 clone 한다.
+// 둘 다 없으면 null → deploy 작업은 예전 STUB 길로 간다 (smoke 유지)
+export function configFromEnv(env = process.env): GitopsConfig | null {
+  // GITOPS_DISABLE=1 이면 설정이 있어도 STUB (test:db 가 이걸로 gitops 길을 끈다)
+  if (env.GITOPS_DISABLE === "1" || (!env.GITOPS_REPO_DIR && !env.GITOPS_REPO_URL)) return null;
+  return {
+    dir: env.GITOPS_REPO_DIR ?? join(tmpdir(), "platform-gitops"),
+    url: env.GITOPS_REPO_URL,
+    token: env.GITOPS_WRITE_TOKEN,
+    branch: env.GITOPS_BRANCH ?? "main",
+    // DECISION(통합, 10/31): push 기본 꺼짐. 1일 때만 원격에 올린다 (.env 그대로 smoke·시험을 돌려도 실제 레포가 안 바뀌게)
+    push: env.GITOPS_PUSH === "1",
+    author: { name: env.GITOPS_AUTHOR_NAME ?? "platform-worker", email: env.GITOPS_AUTHOR_EMAIL ?? "worker@platform.invalid" },
+    maxPushTries: 3,
+  };
+}
+
+// Z38 REVIEW-6 R6-2: 워커 이미지를 WITH_GIT=0 (git 없음, 검증 VM 전용)으로 굽고 GitOps 를 켜면
+//   deploy·shift·rollback 이 처음 git 을 부를 때마다 ENOENT 로 실패한다 (롤백까지 막힘). 뜰 때 한 번 보고 알린다.
+//   GitOps 가 꺼져 있으면(설정 없음·GITOPS_DISABLE=1) 아무것도 안 본다 → VM prod compose(설정 없음)는 그대로 뜬다
+export async function gitopsPreflight(env: NodeJS.ProcessEnv = process.env,
+  exec: (cmd: string, args: string[], o: { env: NodeJS.ProcessEnv }) => Promise<unknown> = run): Promise<string | null> {
+  if (!configFromEnv(env)) return null;
+  try { await exec("git", ["--version"], { env: childEnv(env) }); return null; }
+  catch (e) {
+    return `GitOps 가 켜져 있는데 git 을 실행할 수 없다 (${(e as NodeJS.ErrnoException).code ?? (e as Error).message}). ` +
+      "WITH_GIT=0 으로 만든 워커 이미지면 WITH_GIT=1 로 다시 빌드하거나, GitOps 를 끈다 (GITOPS_DISABLE=1)";
+  }
+}
+
+export interface CommitResult { commit: string; bundleSha256: string; resources: string[]; changed: boolean }
+
+// Z38-6: 자식 프로세스(git·npm·gitops 레포의 render/validate 스크립트)에는 워커 환경변수를 통째로 넘기지 않는다.
+//   예전엔 process.env 그대로 → ANTHROPIC_API_KEY·CLOUDFLARE_API_TOKEN·GITOPS_WRITE_TOKEN·REPL_*_URL(DB 비밀번호)이
+//   gitops 레포 코드와 npm install 의 설치 스크립트(의존성 패키지 코드)에 다 보였다
+// DRAFT(ai): 실행에 필요한 것만 (경로·로캘·프록시·인증서·ssh 에이전트·GIT_ 접두어)
+// Z57 고침: GIT_CONFIG_KEY_0·GIT_CONFIG_VALUE_0 처럼 숫자가 붙은 이름도 넘긴다. 예전 GIT_[A-Z_]+ 는 GIT_CONFIG_COUNT 만 넘기고
+//   KEY_0/VALUE_0 을 빼서 git 이 "missing config key GIT_CONFIG_KEY_0" 으로 모든 명령에 실패했다 (그런 환경변수가 있는 호스트·CI)
+const PASS_ENV = /^(PATH|HOME|USER|LOGNAME|SHELL|TMPDIR|TMP|TEMP|LANG|LC_[A-Z]+|TZ|SSH_AUTH_SOCK|https?_proxy|HTTPS?_PROXY|no_proxy|NO_PROXY|NODE_EXTRA_CA_CERTS|SSL_CERT_FILE|SSL_CERT_DIR|GIT_[A-Z0-9_]+|HELM_[A-Z_]+|NODE_OPTIONS|SystemRoot|APPDATA)$/;
+export function childEnv(src: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(src).filter(([k, v]) => v !== undefined && PASS_ENV.test(k)));
+}
+// Z47-08 와 같은 수정이 겹쳐 하나로 합침(Z57): 허용 목록(Z38) + helm·node 변수(Z47) + 설치 스크립트 끄기 해제 스위치(Z47)
+export const toolEnv = childEnv;
+
+// 한 프로세스 안에서는 레포 작업을 한 줄로 세운다 (git index는 동시에 못 쓴다)
+let chain: Promise<unknown> = Promise.resolve();
+function serial<T>(f: () => Promise<T>): Promise<T> {
+  const next = chain.then(f, f);
+  chain = next.catch(() => undefined);
+  return next;
+}
+
+export class GitopsRepo {
+  constructor(readonly cfg: GitopsConfig) {}
+
+  // 토큰은 GIT_CONFIG_* 환경변수로만 넘긴다 (argv에 넣으면 실패 메시지에 그대로 찍힌다)
+  private gitEnv(): NodeJS.ProcessEnv {
+    if (!this.cfg.token) return childEnv();
+    const basic = Buffer.from(`x-access-token:${this.cfg.token}`).toString("base64");
+    return { ...childEnv(), GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_COUNT: "1",
+             GIT_CONFIG_KEY_0: "http.extraHeader", GIT_CONFIG_VALUE_0: `Authorization: Basic ${basic}` };
+  }
+  private scrub(msg: string): string {
+    const t = this.cfg.token;
+    return t ? msg.split(t).join("***").split(Buffer.from(`x-access-token:${t}`).toString("base64")).join("***") : msg;
+  }
+  private async git(...args: string[]) {
+    try {
+      const { stdout } = await run("git", ["-C", this.cfg.dir,
+        "-c", `user.name=${this.cfg.author.name}`, "-c", `user.email=${this.cfg.author.email}`, ...args], { env: this.gitEnv() });
+      return stdout.trim();
+    } catch (e) {
+      throw new GitopsError("GITOPS_GIT_FAILED", this.scrub((e as Error).message).split("\n").slice(0, 3).join(" | "));
+    }
+  }
+
+  // URL 모드: 작업 복사본이 없으면 clone, 검증 도구 의존성이 없으면 설치
+  private async ensureCheckout() {
+    const exists = (p: string) => access(p).then(() => true, () => false);
+    if (!(await exists(join(this.cfg.dir, ".git")))) {
+      if (!this.cfg.url) throw new GitopsError("GITOPS_NO_CHECKOUT", `작업 복사본이 없다: ${this.cfg.dir}`);
+      await mkdir(dirname(this.cfg.dir), { recursive: true });
+      try {
+        await run("git", ["clone", "-q", "--branch", this.cfg.branch, this.cfg.url, this.cfg.dir], { env: this.gitEnv() });
+      } catch (e) {
+        throw new GitopsError("GITOPS_GIT_FAILED", this.scrub((e as Error).message).split("\n")[0]!);
+      }
+    }
+    if (!(await exists(join(this.cfg.dir, "tools", "node_modules")))) {
+      // Z38-6: 의존성 설치 스크립트는 돌리지 않는다(--ignore-scripts). 검증 도구는 순수 JS 라 필요 없다 【추정】
+      //   필요하면 GITOPS_NPM_SCRIPTS=1 (Z47-08)
+      const scripts = process.env.GITOPS_NPM_SCRIPTS === "1" ? [] : ["--ignore-scripts"];
+      await run("npm", ["install", "--prefix", "tools", "--no-audit", "--no-fund", ...scripts],
+        { cwd: this.cfg.dir, env: childEnv() });
+    }
+  }
+  private async hasRemote() {
+    try { await this.git("remote", "get-url", "origin"); return this.cfg.push; } catch { return false; }
+  }
+  private async tool(script: string, ...args: string[]) {
+    try {
+      const { stdout } = await run("node", [join("tools", script), ...args], { cwd: this.cfg.dir, maxBuffer: 8 << 20, env: childEnv() });
+      return stdout;
+    } catch (e) {
+      const x = e as { stdout?: string; stderr?: string; message: string };
+      const lines = `${x.stdout ?? ""}\n${x.stderr ?? ""}`.split("\n").filter((l) => /FAIL|Error|error/.test(l)).slice(0, 5);
+      throw new GitopsError(script === "validate.mjs" ? "GITOPS_VALIDATE_FAILED" : "GITOPS_RENDER_FAILED",
+        lines.join(" | ") || x.message);
+    }
+  }
+
+  async chartVersion(): Promise<string> {
+    await serial(() => this.ensureCheckout());
+    const y = await readFile(join(this.cfg.dir, "charts", "app", "Chart.yaml"), "utf8");
+    return y.match(/^version: (\S+)$/m)?.[1] ?? "0.0.0";
+  }
+
+  async readValues(b: BundleRef): Promise<HelmValues> {
+    return JSON.parse(await readFile(join(this.cfg.dir, bundlePath(b), "values.yaml"), "utf8")) as HelmValues;
+  }
+  async readPlan(b: BundleRef): Promise<PlanFile> {
+    return JSON.parse(await readFile(join(this.cfg.dir, bundlePath(b), "plan.json"), "utf8")) as PlanFile;
+  }
+
+  // 계약 3절 1~7번. values.yaml은 JSON으로 쓴다 (JSON은 그대로 YAML이라 helm·검증 도구가 읽는다)
+  commitBundle(kind: "deploy" | "traffic", b: BundleRef, values: HelmValues, plan: PlanFile, title: string): Promise<CommitResult> {
+    return serial(async () => {
+      await this.ensureCheckout();
+      const remote = await this.hasRemote();
+      if (remote) await this.git("pull", "--ff-only", "origin", this.cfg.branch);
+      const rel = bundlePath(b);
+      const abs = join(this.cfg.dir, rel);
+      await mkdir(abs, { recursive: true });
+      await writeFile(join(abs, "values.yaml"), JSON.stringify(values, null, 2) + "\n");
+      await writeFile(join(abs, "plan.json"), JSON.stringify(plan, null, 2) + "\n");
+      if (plan.target.cluster) await this.ensureFence(b.tenant, plan.target.cluster);
+      await this.tool("render.mjs", rel);
+      await this.tool("validate.mjs");
+      const written = await this.readPlan(b);
+      await this.git("add", "-A", "--", rel, `tenants/${b.tenant}/argocd`);
+      let changed = true;
+      try { await this.git("diff", "--cached", "--quiet"); changed = false; } catch { /* 바뀐 게 있다 */ }
+      if (changed) await this.git("commit", "-q", "-m", commitMessage(kind, b, written, title));
+      if (remote) await this.pushWithRetry();
+      const commit = await this.git("rev-parse", "HEAD");
+      return { commit, bundleSha256: written.bundleSha256, resources: await this.resources(b), changed };
+    });
+  }
+
+  // 울타리가 없으면 만들고, 이 클러스터가 목적지에 없으면 더한다. 사람이 YAML로 쓴 울타리는 건드리지 않는다
+  private async ensureFence(tenant: string, cluster: string) {
+    const p = join(this.cfg.dir, "tenants", tenant, "argocd", "appproject.yaml");
+    const text = await readFile(p, "utf8").catch(() => null);
+    const root = await readFile(join(this.cfg.dir, "platform", "project-platform-root.yaml"), "utf8");
+    const repoUrl = root.match(/sourceRepos:\s*\n\s*- (\S+)/)?.[1] ?? this.cfg.url ?? "";
+    let clusters: string[] = [];
+    if (text !== null) {
+      let doc: { spec?: { destinations?: Array<{ name: string; namespace?: string }> } };
+      try { doc = JSON.parse(text); } catch {
+        if (new RegExp(`name: ${cluster}$`, "m").test(text)) return;
+        throw new GitopsError("GITOPS_FENCE_MANUAL", `${tenant} 울타리가 사람이 쓴 YAML이라 목적지 ${cluster}를 더하지 못한다`);
+      }
+      clusters = (doc.spec?.destinations ?? []).map((d) => d.name);
+      // Z66: 옛 구역 규칙(<회사>-*)으로 만든 울타리는 클러스터가 이미 있어도 app-* 로 다시 쓴다 (안 그러면 validate 가 막는다)
+      const current = (doc.spec?.destinations ?? []).every((d) => d.namespace === `${APP_NS_PREFIX}*`);
+      if (clusters.includes(cluster) && current) return;
+    }
+    await mkdir(dirname(p), { recursive: true });
+    await writeFile(p, JSON.stringify(fenceDoc(tenant, repoUrl, [...clusters, cluster]), null, 2) + "\n");
+  }
+
+  private async pushWithRetry() {
+    for (let i = 1; ; i++) {
+      try { await this.git("push", "-q", "origin", `HEAD:${this.cfg.branch}`); return; } catch (e) {
+        if (i >= this.cfg.maxPushTries) throw new GitopsError("GITOPS_PUSH_FAILED", (e as Error).message);
+        // 앞섬 충돌: 묶음 폴더는 env lock으로 한 이전만 쓰니, 남의 커밋 위로 다시 올리면 된다
+        // Z59: 단, 회사 울타리(tenants/<t>/argocd/appproject.yaml)는 같은 회사의 다른 환경 이전과 같이 고친다 → 되감기 충돌이 날 수 있다.
+        // 충돌이면 되감기를 취소하고 원격 상태로 되돌린 뒤 실패로 알린다 (작업 복사본이 rebase 중으로 남으면 다음 커밋이 전부 막힌다).
+        // deploy 는 paused 로 멈추고, 재개하면 최신 울타리 위에서 다시 렌더한다
+        try { await this.git("pull", "-q", "--rebase", "origin", this.cfg.branch); }
+        catch (re) {
+          await this.git("rebase", "--abort").catch(() => undefined);
+          await this.git("reset", "-q", "--hard", `origin/${this.cfg.branch}`).catch(() => undefined);
+          throw new GitopsError("GITOPS_PUSH_CONFLICT", (re as Error).message);
+        }
+      }
+    }
+  }
+
+  private async resources(b: BundleRef): Promise<string[]> {
+    const md = join(this.cfg.dir, bundlePath(b), "manifests");
+    const names = (await readdir(md)).filter((n) => n.endsWith(".yaml")).sort();
+    const ids = await Promise.all(names.map(async (n) => resourceId(await readFile(join(md, n), "utf8"))));
+    return ids.filter((x): x is string => !!x);
+  }
+}
