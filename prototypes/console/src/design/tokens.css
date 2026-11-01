@@ -1,6 +1,5 @@
 /*
- * Figma "Iron Design System"의 변수를 그대로 옮긴 토큰.
- * 이름은 Figma 변수의 WEB 코드 문법과 같다. color/bg/canvas -> --color-bg-canvas
+ * 디자인의 원본이다. 제품과 프로토타입은 이 값을 가져다 쓴다.
  * 색은 인디고, 바이올렛, 페리윙클 톤이다. 통과는 초록 대신 청록을 쓴다.
  * 컴포넌트에서는 primitive가 아니라 의미 토큰(color, space, radius)만 쓴다.
  */

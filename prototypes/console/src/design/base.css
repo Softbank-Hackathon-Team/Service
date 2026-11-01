@@ -47,7 +47,7 @@ select {
   outline-offset: 2px;
 }
 
-/* Figma 텍스트 스타일과 같은 이름. Display와 Metric/2XL만 좁은 화면에서 줄어든다. */
+/* Display와 Metric/2XL만 좁은 화면에서 줄어든다. */
 .t-display {
   font-size: clamp(32px, 3.34vw, 48px);
   line-height: 1.167;

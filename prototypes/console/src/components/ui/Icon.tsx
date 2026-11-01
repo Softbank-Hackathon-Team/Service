@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-// 경로는 Lucide(ISC)에서 가져왔다. Figma의 Icon/* 컴포넌트와 이름이 같다.
+// 경로는 Lucide(ISC)에서 가져왔다.
 const ICONS = {
   check: <path d="M20 6 9 17l-5-5" />,
   x: <path d="M18 6 6 18M6 6l12 12" />,
