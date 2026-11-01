@@ -1,0 +1,26 @@
+@import "../pages.css";
+.pg-mon .pg-health-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); border: 1px solid var(--color-line); }
+.pg-mon .pg-health { display: grid; grid-template-columns: 16px 1fr; column-gap: var(--s2); row-gap: 2px; padding: var(--s3); border-right: 1px solid var(--color-line); }
+.pg-mon .pg-health:last-child { border-right: 0; }
+.pg-mon .pg-health > :not(.mk) { grid-column: 2; }
+.pg-mon .pg-health .mk { grid-row: 1; font-family: var(--font-mono); color: var(--color-fg-muted); }
+.pg-mon .pg-health .name { grid-row: 1; font-weight: 600; font-size: 14px; }
+.pg-mon .pg-health.up .mk { color: var(--color-ok); }
+.pg-mon .pg-health.down { border-top: 2px solid var(--color-bad); }
+.pg-mon .pg-health.down .mk, .pg-mon .pg-health.down .name { color: var(--color-bad); }
+.pg-mon .pg-dist { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+.pg-mon .pg-dist .row { display: grid; grid-template-columns: 120px 1fr 40px; gap: var(--s2); align-items: center; }
+.pg-mon .pg-dist .num { text-align: right; }
+.pg-mon .pg-dist .track { height: 8px; background: var(--color-surface-2); }
+.pg-mon .pg-dist .fill { display: block; height: 100%; }
+.pg-mon .fill.tone-run { background: var(--color-run); } .pg-mon .fill.tone-wait { background: var(--color-wait); }
+.pg-mon .fill.tone-bad { background: var(--color-bad); } .pg-mon .fill.tone-done, .pg-mon .fill.tone-ok { background: var(--color-ok); }
+.pg-mon .pg-run { display: flex; gap: var(--s2); align-items: stretch; margin-bottom: var(--s2); }
+.pg-mon .pg-run textarea { flex: 1; font: inherit; font-size: 13px; padding: var(--s2); border: 1px solid var(--color-line); border-radius: var(--radius); background: var(--color-surface); color: var(--color-fg); resize: vertical; }
+.pg-mon .pg-panels { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: var(--s4); }
+.pg-mon .pg-panels ul { margin: 0; padding-left: var(--s4); font-size: 13px; display: flex; flex-direction: column; gap: 2px; }
+.pg-mon .pg-panels a, .pg-mon a { color: var(--color-fg); text-underline-offset: 3px; }
+.pg-mon .pg-embed { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: var(--s2); margin-bottom: var(--s3); }
+.pg-mon .pg-embed iframe { width: 100%; height: 200px; border: 1px solid var(--color-line); background: var(--color-surface); }
+.pg-mon td.ok { color: var(--color-ok); }
+@media (max-width: 700px) { .pg-mon .pg-run { flex-direction: column; } }

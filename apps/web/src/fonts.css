@@ -1,0 +1,31 @@
+/* Z83: 자체 호스팅 폰트 (public/fonts, SIL OFL 1.1 — public/fonts/LICENSE-OFL.txt)
+   IBM Plex Sans KR 400·600: KS X 1001 한글 2,350자 + 라틴 부분집합 (fontTools subset)
+   IBM Plex Mono 400·500: 라틴 부분집합. 숫자·번호·지문·코드 전용 */
+@font-face {
+  font-family: "IBM Plex Sans KR";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(/fonts/plex-sans-kr-Regular.woff2) format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Sans KR";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url(/fonts/plex-sans-kr-SemiBold.woff2) format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(/fonts/plex-mono-Regular.woff2) format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url(/fonts/plex-mono-Medium.woff2) format("woff2");
+}

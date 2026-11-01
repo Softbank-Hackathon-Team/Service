@@ -1,0 +1,5 @@
+@import "../pages.css";
+.pg-sec .pg-actions { display: inline-flex; gap: var(--s2); }
+.pg-sec td.ok { color: var(--color-ok); } .pg-sec td.bad { color: var(--color-bad); }
+.pg-sec .kv { margin-bottom: var(--s3); grid-template-columns: 96px 1fr; }
+.pg-sec ul.small { margin: 0; padding-left: var(--s4); }

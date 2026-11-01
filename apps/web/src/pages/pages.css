@@ -1,0 +1,19 @@
+/* Z85: 비용·모니터링·보안감사 페이지 공통. DESIGN-SYSTEM.md 토큰만 쓴다(새 색·라운드·그림자 없음) */
+.pg-cost, .pg-mon, .pg-sec { display: flex; flex-direction: column; gap: var(--s4); min-width: 0; }
+:is(.pg-cost, .pg-mon, .pg-sec) h3 { font-size: 13px; font-weight: 600; margin: var(--s4) 0 var(--s2); }
+:is(.pg-cost, .pg-mon, .pg-sec) .num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+:is(.pg-cost, .pg-mon, .pg-sec) .wait { color: var(--color-wait); }
+:is(.pg-cost, .pg-mon, .pg-sec) .chk { display: inline-flex; align-items: center; gap: var(--s1); }
+:is(.pg-cost, .pg-mon, .pg-sec) .tbl tr.sel td { background: var(--color-surface-2); }
+:is(.pg-cost, .pg-mon, .pg-sec) .tbl tr.sel td:first-child { border-left: 2px solid var(--color-line-strong); }
+:is(.pg-cost, .pg-mon, .pg-sec) .tbl { margin-top: var(--s2); }
+:is(.pg-cost, .pg-mon, .pg-sec) > .card { overflow-x: auto; }
+
+/* 숫자 칸 줄: 길이 3~4개, 선으로만 나눔 */
+.pg-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); border: 1px solid var(--color-line); margin-bottom: var(--s3); }
+.pg-kpis > div { display: flex; flex-direction: column; gap: var(--s1); padding: var(--s2) var(--s3); border-right: 1px solid var(--color-line); }
+.pg-kpis > div:last-child { border-right: 0; }
+.pg-kpis .k { font-size: 12px; color: var(--color-fg-muted); }
+.pg-kpis .v { font-size: 20px; font-weight: 600; line-height: 1.2; }
+.pg-kpis .k-run .k { color: var(--color-run); } .pg-kpis .k-wait .k { color: var(--color-wait); }
+.pg-kpis .k-bad .k { color: var(--color-bad); } .pg-kpis .k-ok .k, .pg-kpis .k-done .k { color: var(--color-ok); }
