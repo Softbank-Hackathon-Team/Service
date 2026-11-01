@@ -1,0 +1,46 @@
+# method	path	area	summary  (출처: 요구사항·기능 명세 v4 API 표. 사람이 고친다)
+GET	/auth/login	입력층	외부 OIDC(GitHub OAuth) 로그인 시작 (경로 이름 추정)
+GET	/auth/callback	입력층	OIDC 콜백 (경로 이름 추정)
+POST	/auth/logout	입력층	세션 종료 (경로 이름 추정)
+POST	/tenants	입력층	회사(테넌트) 만들기 (경로 이름 추정)
+POST	/members	입력층	멤버 초대(이메일 또는 GitHub 로그인)
+DELETE	/members/:id	입력층	멤버 제거
+POST	/environments	입력층	관리 대상 환경 등록(draft)
+GET	/environments	입력층	자기 회사 환경 목록 + 연결 상태 + 마지막 검증 시각
+POST	/environments/:id/connection-link	입력층	원클릭 연결 링크 발급
+POST	/environments/:id/verify	입력층	연결 검증
+POST	/environments/:id/agent-token	입력층	온프레 Agent 일회용 등록 토큰(10분) + 설치 명령 한 줄 발급 (경로 이름 추정)
+POST	/agent/register	입력층	Agent가 일회용 토큰으로 등록하고 장기 Agent 키를 받음 (경로 이름 추정)
+GET	/events	입력층	SSE
+POST	/tokens	입력층	CLI 개인 토큰 발급(범위 지정, 30일, 해시 저장) (경로 이름 추정)
+POST	/migrations	가져오기·명세	이전 생성 + 가져오기 시작
+GET	/migrations	가져오기·명세	자기 회사 이전 목록(상태·version·출발·도착)
+GET	/migrations/:id	가져오기·명세	이전 상세: 상태, version, 현재 명세(spec + field_meta), plan 요약, 단계 타임스탬프, lease 상태
+PATCH	/specs/:id	가져오기·명세	명세 칸 수정
+POST	/migrations/:id/plan	이전	명세 확정, 사전 점검, 계획 생성
+GET	/plans/:id	이전	계획 내용: 단계, 사전 점검 결과, Terraform plan 요약, 정책 게이트, 예외 티켓, 임시 자원 선언, planHash
+POST	/plans/:id/approvals	이전	계획 승인·거절
+POST	/migrations/:id/start	이전	Terraform 실행 시작
+POST	/migrations/:id/resume	이전	가드레일로 멈춘 이전을 멈추기 전 상태로 재개
+POST	/migrations/:id/rollback	이전	수동 롤백
+POST	/migrations/:id/cancel	이전	취소
+POST	/migrations/:id/force-unlock	이전	tfstate 잔류 잠금 강제 해제
+GET	/security/matrix	보안	보안 매트릭스 요약표(통제 × 환경)
+GET	/security/cells/:env/:control	보안	칸 근거: finding 50건 + 조용한 소스(결과 안 낸 도구) + 연결된 가드레일 + 이 환경의 눈이 못 보는 것
+GET	/security/threats	보안	활성 위협 목록(GuardDuty·SCC·Falco)
+POST	/security/threats/:key/ack	보안	위협 확인(ack)
+POST	/security/attestations	보안	도구가 못 보는 통제를 사람이 확인·기록(24시간 시효)
+GET	/migrations/:id/equivalence	보안	이전 전후 보안 동등성(출발 열 vs 도착 열)
+GET	/migrations/:id/guardrails	보안	가드레일 패널: 구간별 규칙 상태·발동·원복 시각·초
+GET	/audit-events	보안	감사 타임라인 + 체인 무결 표시
+GET	/audit-events/verify	보안	회사 감사 체인을 처음부터 재검증(30분 타이머와 같은 함수)
+POST	/agent/reports	보안	온프레 Agent 보고 수신(Falco 경보·PolicyReport·kube-bench·스크립트·audit log)
+POST	/agent-runs	에이전트	에이전트 실행 요청 (경로 이름 추정)
+GET	/agent-runs/:id	에이전트	실행 상세 + 타임라인(단계·도구·입력·결과 지문·거부 규칙·ms) + PR 링크 (경로 이름 추정)
+POST	/agent-runs/:id/cancel	에이전트	실행 취소 (경로 이름 추정)
+GET	/migrations/:id/measurements	운영	이전 측정표(자동 생성) (경로 이름 추정)
+GET	/ops/active-migrations	운영	진행 중 이전 수
+GET	/healthz	운영	프로세스 살아 있음(k8s liveness)
+GET	/readyz	운영	api: DB + LISTEN 연결 / worker: DB (k8s readiness)
+POST	/cost-estimates	비용 (2단계)	비용 예측 만들기 (경로 이름 추정)
+GET	/cost-estimates/:id	비용 (2단계)	환경별 월 비용, 단가 출처와 시각, 모르는 칸, 추천 프로필과 이유 (경로 이름 추정)

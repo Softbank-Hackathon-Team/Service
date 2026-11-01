@@ -1,0 +1,24 @@
+# 작업 Z4(CI 파일) 에 붙일 job 하나 (Z9 제안). .github/workflows/ci.yml 의 jobs: 아래에 넣는다
+# Postgres 16 서비스 컨테이너를 띄우고 tools/db-lint.sh 를 돌린다. 약 30초 (LINT_SPLIT=all 기준, 로컬 측정 29s)
+  db-lint:   # ubuntu-24.04 기본 postgresql-client = 16 (pg_dump 가 서버보다 낮으면 D4 가 깨진다)
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: platform_owner
+          POSTGRES_PASSWORD: owner_pw
+          POSTGRES_DB: platform
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U platform_owner -d platform"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: psql client
+        run: sudo apt-get update -q && sudo apt-get install -y -q postgresql-client
+      - name: db lint
+        env:
+          LINT_ADMIN_URL: postgres://platform_owner:owner_pw@localhost:5432/postgres
+          LINT_SPLIT: all
+        run: sh tools/db-lint.sh

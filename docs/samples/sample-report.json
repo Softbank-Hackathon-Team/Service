@@ -1,0 +1,233 @@
+{
+  "reportVersion": 1,
+  "generatedAt": "2026-10-31T16:29:21.666Z",
+  "migration": {
+    "id": "49c3152c-0045-48fa-8b64-352fe25505e2",
+    "status": "completed",
+    "source": {
+      "id": "f090123f-fc5d-4a77-a38d-f9ed4391eda8",
+      "provider": "aws",
+      "name": "report-aws"
+    },
+    "target": {
+      "id": "a15d14b0-d4db-4337-8797-15108a6f61d6",
+      "provider": "gcp",
+      "name": "report-gcp"
+    },
+    "failureCode": null
+  },
+  "summary": {
+    "startedAt": "2026-10-31T16:29:13.486Z",
+    "endedAt": "2026-10-31T16:29:21.611Z",
+    "totalMs": 8125,
+    "transitions": 14,
+    "reachedCutover": true,
+    "rolledBack": false,
+    "deniedOrError": 0
+  },
+  "integrity": {
+    "ok": true,
+    "checked": 539,
+    "firstSeq": 1,
+    "lastSeq": 630,
+    "brokenAtSeq": null,
+    "reason": null,
+    "partial": false
+  },
+  "timeline": [
+    {
+      "seq": 588,
+      "at": "2026-10-31T16:29:13.486Z",
+      "from": "draft",
+      "to": "importing",
+      "actor": "user:dev",
+      "action": "migration.importing",
+      "durationMs": null
+    },
+    {
+      "seq": 591,
+      "at": "2026-10-31T16:29:13.884Z",
+      "from": "importing",
+      "to": "spec_review",
+      "actor": "worker",
+      "action": "migration.spec_review",
+      "durationMs": 398
+    },
+    {
+      "seq": 592,
+      "at": "2026-10-31T16:29:13.941Z",
+      "from": "spec_review",
+      "to": "prechecking",
+      "actor": "user:dev",
+      "action": "migration.prechecking",
+      "durationMs": 57
+    },
+    {
+      "seq": 594,
+      "at": "2026-10-31T16:29:14.582Z",
+      "from": "prechecking",
+      "to": "planning",
+      "actor": "worker",
+      "action": "precheck.planning",
+      "durationMs": 641
+    },
+    {
+      "seq": 596,
+      "at": "2026-10-31T16:29:15.092Z",
+      "from": "planning",
+      "to": "awaiting_approval",
+      "actor": "worker",
+      "action": "plan.awaiting_approval",
+      "durationMs": 510
+    },
+    {
+      "seq": 599,
+      "at": "2026-10-31T16:29:15.117Z",
+      "from": "awaiting_approval",
+      "to": "approved",
+      "actor": "user:dev",
+      "action": "plan.approved",
+      "durationMs": 25
+    },
+    {
+      "seq": 600,
+      "at": "2026-10-31T16:29:15.141Z",
+      "from": "approved",
+      "to": "provisioning",
+      "actor": "user:dev",
+      "action": "migration.provisioning",
+      "durationMs": 24
+    },
+    {
+      "seq": 604,
+      "at": "2026-10-31T16:29:15.587Z",
+      "from": "provisioning",
+      "to": "deploying",
+      "actor": "worker",
+      "action": "apply.deploying",
+      "durationMs": 446
+    },
+    {
+      "seq": 609,
+      "at": "2026-10-31T16:29:16.085Z",
+      "from": "deploying",
+      "to": "syncing",
+      "actor": "worker",
+      "action": "deploy.syncing",
+      "durationMs": 498
+    },
+    {
+      "seq": 613,
+      "at": "2026-10-31T16:29:16.584Z",
+      "from": "syncing",
+      "to": "shifting",
+      "actor": "worker",
+      "action": "sync.shifting",
+      "durationMs": 499
+    },
+    {
+      "seq": 623,
+      "at": "2026-10-31T16:29:17.485Z",
+      "from": "shifting",
+      "to": "cutover",
+      "actor": "worker",
+      "action": "shift.cutover",
+      "durationMs": 901
+    },
+    {
+      "seq": 625,
+      "at": "2026-10-31T16:29:18.085Z",
+      "from": "cutover",
+      "to": "rollback_window",
+      "actor": "worker",
+      "action": "cutover.rollback_window",
+      "durationMs": 600
+    },
+    {
+      "seq": 627,
+      "at": "2026-10-31T16:29:21.389Z",
+      "from": "rollback_window",
+      "to": "cleanup",
+      "actor": "worker",
+      "action": "cleanup.cleanup",
+      "durationMs": 3304
+    },
+    {
+      "seq": 630,
+      "at": "2026-10-31T16:29:21.611Z",
+      "from": "cleanup",
+      "to": "completed",
+      "actor": "worker",
+      "action": "cleanup.completed",
+      "durationMs": 222
+    }
+  ],
+  "approvals": [
+    {
+      "planId": "1bf3466b-d6d6-4d79-b2af-be36ee06cc5f",
+      "decision": "approve",
+      "approvedBy": "user:dev",
+      "at": "2026-10-31T16:29:15.117Z",
+      "approvedPlanHash": "23bb22a672a9d551dfb02912b99ed65b160fae433a2c93567f38d18ce7d07e9c",
+      "storedPlanHash": "23bb22a672a9d551dfb02912b99ed65b160fae433a2c93567f38d18ce7d07e9c",
+      "hashMatches": true
+    }
+  ],
+  "precheck": [
+    {
+      "id": "PC-01",
+      "level": "info",
+      "message": "STUB: 출발·도착 환경 연결 확인됨"
+    },
+    {
+      "id": "PC-02",
+      "level": "info",
+      "message": "STUB: 실행 역할 권한 확인됨"
+    }
+  ],
+  "measurements": [
+    {
+      "migrationId": "49c3152c-0045-48fa-8b64-352fe25505e2",
+      "name": "replication_lag_ms",
+      "value": 120,
+      "unit": "ms",
+      "env": "target",
+      "at": "2026-10-31T16:29:16.582Z"
+    },
+    {
+      "migrationId": "49c3152c-0045-48fa-8b64-352fe25505e2",
+      "name": "cutover_pause_ms",
+      "value": 850,
+      "unit": "ms",
+      "env": "target",
+      "at": "2026-10-31T16:29:18.085Z"
+    }
+  ],
+  "traffic": {
+    "judgements": 3,
+    "steps": [
+      10,
+      50,
+      100
+    ],
+    "bad": 0,
+    "maxTargetErrorRatePct": 0,
+    "maxTargetP95Ms": 80
+  },
+  "deploy": {
+    "bundleHash": "stub-49c3152c",
+    "status": "synced_healthy",
+    "resources": [
+      "Deployment/app/web",
+      "Deployment/app/api",
+      "Service/app/web"
+    ]
+  },
+  "cost": null,
+  "incidents": [],
+  "gaps": [
+    "비용 추정 없음",
+    "일부 단계 결과가 STUB(가짜 구현) 값"
+  ],
+  "reportHash": "46312132121986c10c75de68a55753392d7c05f68230d2d8078539ec494c0ccc"
+}
