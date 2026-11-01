@@ -1,0 +1,1 @@
+{ "envId": "env-aws-seoul", "provider": "aws", "region": "ap-northeast-2", "tenantId": "tenant-demo", "migrationId": "mig-shop-demo", "clusterName": "platform-eks-seoul" }

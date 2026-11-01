@@ -1,0 +1,63 @@
+{
+  "app": {
+    "name": "shop"
+  },
+  "image": {
+    "ref": "asia-northeast3-docker.pkg.dev/<env:projectId>/platform/tenant-demo/shop-sample-app@sha256:17536626a1131e5a85cc4ed2650f3d12fb3a9bf27b413dc3984bf3914e263b17"
+  },
+  "replicas": 2,
+  "resources": {
+    "requests": {
+      "cpu": "250m",
+      "memory": "512Mi"
+    },
+    "limits": {
+      "memory": "512Mi"
+    }
+  },
+  "port": 8080,
+  "probes": {
+    "readiness": "/healthz",
+    "liveness": "/healthz"
+  },
+  "env": [
+    {
+      "name": "APP_VERSION",
+      "value": "1.0.0"
+    },
+    {
+      "name": "DB_SSLMODE",
+      "value": "require"
+    }
+  ],
+  "serviceAccount": {
+    "name": "shop",
+    "annotations": {
+      "iam.gke.io/gcp-service-account": "<tf-output:app_gsa_email>"
+    }
+  },
+  "externalSecrets": {
+    "store": {
+      "kind": "ClusterSecretStore",
+      "name": "gcp-secret-manager"
+    },
+    "refs": []
+  },
+  "database": {
+    "mode": "external",
+    "host": "<tf-output:db_private_ip>",
+    "port": 5432,
+    "name": "shop",
+    "passwordSecret": "<tf-output:db_password_secret_id>"
+  },
+  "ingress": {
+    "mode": "cloudflared",
+    "className": "gce",
+    "hostname": "shop.example.com",
+    "tunnelTokenSecret": "cloudflared-token"
+  },
+  "labels": {
+    "managed-by": "platform",
+    "tenant": "tenant-demo"
+  }
+}

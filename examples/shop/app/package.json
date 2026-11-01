@@ -1,0 +1,17 @@
+{
+  "name": "shop-sample-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "DRAFT(ai): 이관 대상 3티어 샘플 앱 (웹 + API + Postgres)",
+  "type": "module",
+  "main": "src/server.mjs",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "verify": "node src/verify.mjs",
+    "checksum": "node src/checksum.mjs"
+  },
+  "dependencies": {
+    "pg": "8.23.1"
+  }
+}

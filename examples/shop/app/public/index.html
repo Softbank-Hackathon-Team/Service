@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shop 주문 관리</title>
+<style>
+  :root { --bg:#f7f7f5; --fg:#1d1d1b; --muted:#6b6b66; --card:#fff; --line:#e3e3df; --accent:#2f6fde; --ok:#1f8a4c; --bad:#c23b2f; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#171716; --fg:#ececea; --muted:#9a9a94; --card:#222220; --line:#34342f; --accent:#7aa5f0; --ok:#52c27f; --bad:#ef7a6f; } }
+  body { margin:0; font:15px/1.5 system-ui, sans-serif; background:var(--bg); color:var(--fg); }
+  main { max-width:960px; margin:0 auto; padding:16px; }
+  h1 { font-size:20px; margin:8px 0 4px; }
+  .sub { color:var(--muted); font-size:13px; margin-bottom:16px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:10px; margin-bottom:16px; }
+  .tile { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+  .tile b { display:block; font-size:22px; font-variant-numeric:tabular-nums; }
+  .tile span { color:var(--muted); font-size:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:12px; margin-bottom:16px; overflow-x:auto; }
+  table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+  th, td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { color:var(--muted); font-weight:500; font-size:12px; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:6px; padding:8px 14px; font:inherit; cursor:pointer; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); }
+  code { font-size:12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Shop 주문 관리</h1>
+  <div class="sub">이관 대상 샘플 앱 · <span id="dbinfo">DB 확인 중…</span></div>
+  <div class="grid">
+    <div class="tile"><b id="orders">-</b><span>주문</span></div>
+    <div class="tile"><b id="items">-</b><span>주문 항목</span></div>
+    <div class="tile"><b id="customers">-</b><span>고객</span></div>
+    <div class="tile"><b id="rate">-</b><span>최근 10초 주문</span></div>
+    <div class="tile"><b id="health" class="ok">-</b><span>API 상태</span></div>
+  </div>
+  <div class="card">
+    <button id="new">주문 1건 넣기</button> <span id="msg"></span>
+  </div>
+  <div class="card">
+    <table>
+      <thead><tr><th>번호</th><th>고객</th><th>상태</th><th>금액(원)</th><th>시각</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => Number(n).toLocaleString("ko-KR");
+async function j(path, opt) { const r = await fetch(path, opt); if (!r.ok) throw new Error(r.status); return r.json(); }
+async function refresh() {
+  try {
+    const [s, o, i] = await Promise.all([j("/api/v1/stats"), j("/api/v1/orders?limit=15"), j("/api/v1/info")]);
+    $("orders").textContent = fmt(s.orders); $("items").textContent = fmt(s.order_items);
+    $("customers").textContent = fmt(s.customers); $("rate").textContent = fmt(s.orders_last_10s);
+    $("health").textContent = "정상"; $("health").className = "ok";
+    $("dbinfo").innerHTML = "pod <code>" + i.pod + "</code> · DB <code>" + i.db.host + " (" + (i.db.serverAddr || "socket") + ", PG " + i.db.version + ", wal_level=" + i.db.walLevel + ")</code>";
+    $("rows").innerHTML = o.items.map((x) => "<tr><td>" + x.id + "</td><td>" + x.customer + "</td><td>" + x.status + "</td><td>" + fmt(x.total_krw) + "</td><td>" + new Date(x.created_at).toLocaleTimeString("ko-KR") + "</td></tr>").join("");
+  } catch (e) { $("health").textContent = "오류"; $("health").className = "bad"; }
+}
+$("new").onclick = async () => {
+  const body = { clientRef: crypto.randomUUID(), customerId: 1 + Math.floor(Math.random() * 20000), items: [{ productId: 1 + Math.floor(Math.random() * 1000), qty: 1 }] };
+  try { const r = await j("/api/v1/orders", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); $("msg").textContent = "주문 " + r.id + " 생성"; }
+  catch (e) { $("msg").textContent = "실패 " + e.message; }
+  refresh();
+};
+refresh(); setInterval(refresh, 2000);
+</script>
+</body>
+</html>
