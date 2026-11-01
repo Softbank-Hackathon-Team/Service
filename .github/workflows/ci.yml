@@ -1,0 +1,291 @@
+# 모든 PR·main 푸시에서 도는 검사. 하나라도 빨간불이면 병합하지 않는다.
+#   check   : 타입 검사 + 단위 시험 + 웹 빌드 (DB 없음)
+#   test-db : Postgres 를 띄워 마이그레이션 적용 → DB 시험 → api·worker 띄우고 smoke(끝에서 끝까지)
+#   e2e     : (Z53 추가) test-db 와 같은 준비 + 화면 Playwright 시험
+#   gitops  : 앱 Helm 차트를 렌더해서 kubeconform 으로 쿠버네티스 스키마 검사
+#   docker  : hadolint + 이미지 4개 빌드(푸시 안 함)
+#
+# Z53 제안 (원본 int5 1차 .github/workflows/ci.yml 기준, push 안 함). 바뀐 곳은 "Z53" 으로 표시
+#   1) 시험 결과를 JUnit XML 로도 남기고 실패하면 로그·XML 을 아티팩트로 올린다 (재현 단서 보존)
+#   2) 마이그레이션은 psql 반복 대신 로컬과 같은 tools/db-migrate.sh (migrate.applied 기록·지문 검사까지 같게)
+#   3) e2e(Playwright) 작업 추가. 브라우저는 캐시, 리포트는 항상 올린다
+#   4) flaky 사냥: 매일 1번(schedule) test + test:db 를 3번 돌려 간헐 실패를 기록. 자동 재시도는 안 넣는다(가린다)
+#   5) smoke 에 TRAFFIC_OBSERVE_SEC=0.5 (int5 2차부터 필요, 그 전 버전은 무시하는 변수)
+#   (걸린 시험 한도 --test-timeout 은 NODE_OPTIONS 에 못 넣어 package.json 쪽 제안 → CHANGES.md)
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+  # Z53: flaky 사냥 (UTC 18:00 = KST 03:00). 이 이벤트일 때는 flake-hunt 작업만 돈다
+  schedule:
+    - cron: "0 18 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22.23.4"
+  HELM_VERSION: "v3.19.0"
+  KUBECONFORM_VERSION: "v0.7.0"
+  # Z53: node:test 리포터. 화면엔 spec, 파일엔 junit. 명령 뒤에 붙이면 node 가 무시하므로 NODE_OPTIONS 로 준다(로컬 확인)
+  TEST_REPORT_OPTS: >-
+    --test-reporter=spec --test-reporter-destination=stdout
+    --test-reporter=junit --test-reporter-destination=test-results/junit.xml
+
+jobs:
+  check:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      # Z75: 올린 docs/openapi.* 가 코드와 같은지. npm test 의 pretest 가 다시 만들기 전에 본다
+      - run: npm run openapi:check
+      - run: mkdir -p test-results && npm test
+        env:
+          NODE_OPTIONS: ${{ env.TEST_REPORT_OPTS }}
+      - name: web typecheck + build (루트 tsconfig 에서 빠져 있어 따로)
+        run: npm run build -w @svc/web
+      # Z53: 실패하면 어떤 시험이 깨졌는지 XML 로 남긴다 (Actions 화면에서 내려받기)
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: unit-junit
+          path: test-results/
+          retention-days: 7
+
+  test-db:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      db:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: platform_owner
+          POSTGRES_PASSWORD: owner_pw
+          POSTGRES_DB: platform
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U platform_owner -d platform"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      PGPASSWORD: owner_pw
+      # Z53: 워커가 읽는 값이라 작업(job) 단위로. 100% 관찰 30초 → 0.5초 (int5 2차 Z20 M7 결정과 같게)
+      TRAFFIC_OBSERVE_SEC: "0.5"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      # 서비스 컨테이너는 checkout 전에 떠서 db/migrations 를 initdb 폴더로 못 붙인다 → 실행기로 순서대로 적용
+      # Z53: psql 반복 대신 로컬(docker compose migrate)과 같은 tools/db-migrate.sh. 기록 표·지문 검사까지 같은 길
+      - name: apply db/migrations
+        run: sh tools/db-migrate.sh
+        env:
+          DB_ADMIN_URL: postgres://platform_owner:owner_pw@127.0.0.1:5432/platform
+      - run: cp .env.example .env
+      - run: mkdir -p test-results && npm run test:db
+        env:
+          NODE_OPTIONS: ${{ env.TEST_REPORT_OPTS }}
+      - name: start api + worker (background)
+        run: |
+          mkdir -p .ci-logs
+          nohup npm run start -w @svc/worker > .ci-logs/worker.log 2>&1 &
+          nohup npm run start -w @svc/api > .ci-logs/api.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:3000/readyz && exit 0
+            sleep 1
+          done
+          echo "api not ready"; exit 1
+      - run: npm run smoke
+      - name: logs (실패했을 때만)
+        if: failure()
+        run: tail -n 100 .ci-logs/*.log || true
+      # Z53: 화면 tail 100줄로는 모자랄 때가 많다 → 전체 로그 + junit 을 아티팩트로
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: test-db-logs
+          path: |
+            test-results/
+            .ci-logs/
+          retention-days: 7
+
+  # Z53: 화면 끝에서 끝까지. playwright.config.ts 가 vite 를 스스로 띄우고, global-setup 이 API·DB 를 확인한다
+  e2e:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      TRAFFIC_OBSERVE_SEC: "0.5"   # 워커가 읽는다
+    services:
+      db:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: platform_owner
+          POSTGRES_PASSWORD: owner_pw
+          POSTGRES_DB: platform
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U platform_owner -d platform"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: apply db/migrations
+        run: sh tools/db-migrate.sh
+        env:
+          DB_ADMIN_URL: postgres://platform_owner:owner_pw@127.0.0.1:5432/platform
+      - run: cp .env.example .env
+      # 브라우저 내려받기는 잠금 파일(=Playwright 버전)이 같으면 캐시에서. OS 패키지는 캐시가 안 되니 install-deps 는 매번
+      - uses: actions/cache@v4
+        id: pw-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx -w @svc/web playwright install --with-deps chromium
+      - if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx -w @svc/web playwright install-deps chromium
+      - name: start api + worker (background)
+        run: |
+          mkdir -p .ci-logs
+          nohup npm run start -w @svc/worker > .ci-logs/worker.log 2>&1 &
+          nohup npm run start -w @svc/api > .ci-logs/api.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:3000/readyz && exit 0
+            sleep 1
+          done
+          echo "api not ready"; exit 1
+      - run: npm run test:e2e
+        env:
+          CI: "1"
+      # 성공해도 리포트는 올린다. 실패면 trace·스크린샷이 같이 들어 있다
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: e2e-report
+          path: |
+            apps/web/e2e-report/
+            apps/web/e2e-results/
+            .ci-logs/
+          retention-days: 7
+
+  # Z53: flaky 사냥. 매일 1번 + 수동. 같은 커밋에서 test·test:db 를 3번 돌리고, 하나라도 실패하면 빨간불 + 회차별 junit 보관
+  #      PR 경로에 안 넣는 이유: 3배 시간(약 4분 → 12분). 자동 재시도는 일부러 안 둔다(간헐 실패를 숨긴다)
+  flake-hunt:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      db:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: platform_owner
+          POSTGRES_PASSWORD: owner_pw
+          POSTGRES_DB: platform
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U platform_owner -d platform"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: sh tools/db-migrate.sh
+        env:
+          DB_ADMIN_URL: postgres://platform_owner:owner_pw@127.0.0.1:5432/platform
+      - run: cp .env.example .env
+      - name: test + test:db ×3 (회차별 junit)
+        run: |
+          mkdir -p test-results
+          fails=0
+          for i in 1 2 3; do
+            NODE_OPTIONS="--test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=test-results/unit-$i.xml" npm test || fails=$((fails+1))
+            NODE_OPTIONS="--test-reporter=spec --test-reporter-destination=stdout --test-reporter=junit --test-reporter-destination=test-results/db-$i.xml" npm run test:db || fails=$((fails+1))
+          done
+          echo "실패 회차 수: $fails / 6" | tee -a "$GITHUB_STEP_SUMMARY"
+          test "$fails" = 0
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: flake-hunt-junit
+          path: test-results/
+          retention-days: 14
+
+  gitops:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v5
+        with:
+          version: ${{ env.HELM_VERSION }}
+      - name: install kubeconform
+        run: |
+          curl -fsSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | tar xz -C /usr/local/bin kubeconform
+          kubeconform -v
+      - name: helm lint + template + kubeconform
+        run: bash deploy/ci/check-gitops.sh
+
+  docker:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [api, worker, agent-worker, web]
+        # Z75-17: 서버 앱 3개는 Dockerfile 하나의 단계(target), web 만 따로
+        include:
+          - { app: api, file: deploy/docker/Dockerfile, target: api }
+          - { app: worker, file: deploy/docker/Dockerfile, target: worker }
+          - { app: agent-worker, file: deploy/docker/Dockerfile, target: agent-worker }
+          - { app: web, file: apps/web/Dockerfile, target: "" }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: ${{ matrix.file }}
+          config: .hadolint.yaml
+      - uses: docker/setup-buildx-action@v4
+      - name: build (push 안 함)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          target: ${{ matrix.target }}
+          push: false
+          load: true
+          tags: svc-${{ matrix.app }}:ci
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+      - name: 비루트 사용자로 도는지 확인
+        run: |
+          u=$(docker run --rm --entrypoint id svc-${{ matrix.app }}:ci -u)
+          echo "uid=$u"; test "$u" != "0"

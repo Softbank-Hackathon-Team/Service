@@ -1,0 +1,30 @@
+# 이미지 빌드에 보낼 필요 없는 것(빌드 문맥을 작게, 비밀값은 절대 안 들어가게)
+**/node_modules
+**/dist
+**/coverage
+**/*.tsbuildinfo
+.git
+.github
+.DS_Store
+**/.DS_Store
+.env
+.env.*
+!.env.example
+**/*.tfstate
+**/*.tfstate.*
+**/*.tfvars
+**/.terraform
+.claude
+.omc
+documents
+docs
+# docs/openapi.* 는 보내지 않는다. api 이미지가 빌드 중에 코드로 만든다 (Z75, deploy/docker/Dockerfile)
+infra
+# 워커·api 이미지가 최소 권한 파일을 복사한다 (deploy/docker/Dockerfile 의 worker·api 단계)
+!infra/permissions
+gitops
+# api 이미지가 보안 표용 앱 차트를 복사한다 (deploy/docker/Dockerfile 의 api 단계, Z66 3차)
+!gitops/charts
+*.zip
+*.tgz
+.secrets
