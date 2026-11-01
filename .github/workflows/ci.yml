@@ -1,4 +1,6 @@
-# 모든 PR·main 푸시에서 도는 검사. 하나라도 빨간불이면 병합하지 않는다.
+# main 푸시(=PR 머지 뒤)에서 도는 무거운 검사. PR 에서는 pr.yml 의 가벼운 검사만 돈다.
+#   이유: 기능 단위 PR 이 서로 의존해서 PR 하나만으로는 타입 검사·시험이 통과할 수 없다.
+#   PR 에서 이 검사를 보고 싶으면 Actions 화면에서 ci 를 브랜치 지정해 수동 실행(workflow_dispatch)한다.
 #   check   : 타입 검사 + 단위 시험 + 웹 빌드 (DB 없음)
 #   test-db : Postgres 를 띄워 마이그레이션 적용 → DB 시험 → api·worker 띄우고 smoke(끝에서 끝까지)
 #   e2e     : (Z53 추가) test-db 와 같은 준비 + 화면 Playwright 시험
@@ -15,7 +17,6 @@
 name: ci
 
 on:
-  pull_request:
   push:
     branches: [main]
   workflow_dispatch:
