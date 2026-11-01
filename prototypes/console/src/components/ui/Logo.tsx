@@ -4,9 +4,6 @@ import s from './Logo.module.css';
 export function Logo() {
   return (
     <span className={s.root}>
-      <span className={s.mark} aria-hidden="true">
-        ↗
-      </span>
       <span className={s.name}>kross</span>
       <span className={s.sub}>AI Console</span>
     </span>

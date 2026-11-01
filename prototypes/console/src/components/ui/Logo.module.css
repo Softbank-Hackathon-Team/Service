@@ -4,17 +4,6 @@
   flex: none;
   gap: var(--space-8);
 }
-.mark {
-  display: grid;
-  place-items: center;
-  width: 27px;
-  height: 27px;
-  border-radius: var(--radius-sm);
-  background: var(--color-bg-action-primary);
-  color: var(--color-fg-on-action);
-  font-size: 20px;
-  line-height: 1;
-}
 .name {
   font-size: 22px;
   line-height: 1;
