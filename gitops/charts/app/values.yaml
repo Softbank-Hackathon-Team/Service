@@ -1,0 +1,14 @@
+# 기본값은 렌더 확인용. 실제 값은 어댑터 toHelmValues() 결과가 덮어쓴다
+app: { name: demo-app }
+image: { ref: "registry/demo@sha256:0000000000000000000000000000000000000000000000000000000000000000" }
+replicas: 1
+resources: { requests: { cpu: 250m, memory: 512Mi }, limits: { memory: 512Mi } }
+port: 8080
+probes: { readiness: /healthz, liveness: /healthz }
+env: []
+serviceAccount: { name: demo-app, annotations: {} }
+externalSecrets: { store: { kind: ClusterSecretStore, name: none }, refs: [] }
+database: null
+ingress: { mode: cloudflared, className: "", hostname: demo.example.com, tunnelTokenSecret: cloudflared-token }
+labels: { managed-by: platform }
+traffic: null

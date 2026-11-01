@@ -1,0 +1,32 @@
+# DRAFT(ai) 데모 전용: 클러스터 밖(맥의 워커, 맥 docker 의 출발 DB)이 CNPG Postgres 에 붙는 길.
+# - NodePort 30432 → 01-cluster-up.sh 가 맥 localhost:55434 로 이어 둔다
+# - 기본 차단 네트워크 정책(app-floor)에 5432 구멍 하나를 낸다. 역방향 복제(rev)에서 옛 출발 DB 가 여기로 붙는다
+# TODO(human): 본선 실제 온프레에선 NodePort 대신 cloudflared TCP 터널 또는 사설망. 허용 대역(ipBlock)을 좁힐 것
+apiVersion: v1
+kind: Service
+metadata:
+  name: shop-db-external
+  namespace: app-shop
+  labels: { managed-by: platform, app: shop }
+spec:
+  type: NodePort
+  selector:
+    cnpg.io/cluster: shop-db
+    cnpg.io/instanceRole: primary
+  ports:
+    - { name: postgres, port: 5432, targetPort: 5432, nodePort: 30432 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-db-from-outside-demo
+  namespace: app-shop
+spec:
+  podSelector:
+    matchLabels: { cnpg.io/cluster: shop-db }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - ipBlock: { cidr: 0.0.0.0/0 }
+      ports:
+        - { protocol: TCP, port: 5432 }

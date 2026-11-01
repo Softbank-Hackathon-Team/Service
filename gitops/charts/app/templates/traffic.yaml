@@ -1,0 +1,13 @@
+{{- /* DRAFT(ai): 트래픽 가중치 기록. 실제로 나누는 건 Cloudflare LB 풀 가중치(packages/traffic). 이 ConfigMap은 "지금 승인 범위 안의 몇 % 단계인가"를 Git과 클러스터에 같이 남긴다 */}}
+{{- with .Values.traffic }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $.Values.app.name }}-traffic
+  labels: {{- include "app.labels" $ | nindent 4 }}
+  annotations:
+    platform/traffic-role: {{ .role | quote }}
+data:
+  weightPct: {{ .weightPct | quote }}
+  approvedSteps: {{ .approvedSteps | join "," | quote }}
+{{- end }}

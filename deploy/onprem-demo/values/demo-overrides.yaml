@@ -1,0 +1,10 @@
+# DRAFT(ai): 로컬 데모 전용 덧씌우기. 어댑터가 만든 onprem.values.json 위에 얹는다
+# 1) Cloudflare 터널 토큰이 아직 없으니 들어오는 길은 끈다 (kubectl port-forward로 확인)
+#    TODO(human): Cloudflare 계정 세팅 뒤 mode: cloudflared 로 돌리고 cloudflared-token Secret 만들기
+ingress:
+  mode: none
+# 2) DB 이전 데모용: 복제 계정·superuser Secret 켜기 (chart-patch/cnpg.yaml 이 읽는 값)
+database:
+  replication:
+    enabled: true
+    role: repl

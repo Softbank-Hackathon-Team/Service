@@ -1,0 +1,47 @@
+{{- /* 온프레: CloudNativePG가 Postgres를 클러스터 안에 만든다. 접속 서비스 <app>-db-rw, 비밀번호 Secret <app>-db-app
+       DRAFT(ai) O 스레드: database.replication.enabled=true 면 DB 이전(@svc/replication)에 필요한 것을 켠다.
+         - enableSuperuserAccess: 도착(구독) 쪽은 CREATE SUBSCRIPTION에 superuser가 필요 → Secret <app>-db-superuser
+         - managed.roles: REPLICATION 속성 계정 (출발로 쓸 때, 또는 역방향 rev 구독이 이 DB에 붙을 때)
+           비밀번호는 Secret <app>-db-repl (kubernetes.io/basic-auth). 값은 차트에 없다. 스크립트/ESO가 만든다
+         - max_replication_slots / max_wal_senders: fwd·rev 슬롯 2개 + 여유
+       TODO(human): superuser 대신 PG16 pg_create_subscription 역할로 줄일지 (최소 권한) */}}
+{{- /* Z66: database 가 null 이거나 mode 가 없으면(예: Z31 activeWriter 만 든 객체) DB 칸을 안 그린다 */}}
+{{- with .Values.database }}{{- if .mode }}
+{{- if eq .mode "cnpg" }}
+{{- $repl := (.replication | default dict) }}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ $.Values.app.name }}-db
+  labels: {{- include "app.labels" $ | nindent 4 }}
+spec:
+  instances: {{ .instances }}
+  imageName: {{ printf "ghcr.io/cloudnative-pg/postgresql:%s" (toString .majorVersion) | quote }}
+  storage: { size: {{ printf "%dGi" (int .storageGb) | quote }} }
+  # O 스레드 수정: 네임스페이스에 ResourceQuota(requests.cpu/memory)가 있으면 요청량 없는 파드는 거부된다
+  # (컨테이너에서 확인: "failed quota: platform-quota: must specify requests.cpu").
+  # CNPG 인스턴스·initdb 잡 파드가 이 값을 쓴다. 어댑터 할당량의 DB 몫(1000m / 2048Mi) 안에 들어가게 잡음
+  resources:
+    {{- toYaml (.resources | default (dict "requests" (dict "cpu" "500m" "memory" "1Gi") "limits" (dict "memory" "1Gi"))) | nindent 4 }}
+  bootstrap:
+    initdb: { database: {{ .name | replace "-" "_" | quote }}, owner: app }
+  postgresql:
+    parameters:
+      wal_level: logical
+      {{- if $repl.enabled }}
+      max_replication_slots: "10"
+      max_wal_senders: "10"
+      {{- end }}
+  {{- if $repl.enabled }}
+  enableSuperuserAccess: true
+  managed:
+    roles:
+      - name: {{ $repl.role | default "repl" | quote }}
+        ensure: present
+        login: true
+        replication: true
+        inRoles: [pg_read_all_data]
+        passwordSecret: { name: {{ printf "%s-db-repl" $.Values.app.name | quote }} }
+  {{- end }}
+{{- end }}
+{{- end }}{{- end }}

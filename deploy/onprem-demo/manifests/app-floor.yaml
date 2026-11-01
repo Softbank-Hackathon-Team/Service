@@ -1,0 +1,37 @@
+# DRAFT(ai): infra/modules/onprem/app (Terraform) 가 만드는 "앱 바닥"과 같은 내용을 kubectl 로 만드는 판.
+# Terraform 없이 데모할 때만 쓴다. 값은 adapter toTerraform() 결과(onprem.tfvars.json)와 맞춰 둠:
+#   k8s_namespace=app-shop, quota_cpu_m=1500, quota_memory_mi=3072, db_enabled=true, db_storage_gb=1
+# 원본이 바뀌면 이 파일도 같이 바꿀 것 (TODO(human): 둘 중 하나만 남길지 결정)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: app-shop
+  labels: { managed-by: platform, app: shop }
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: platform-quota
+  namespace: app-shop
+spec:
+  hard:
+    requests.cpu: 1500m
+    requests.memory: 3072Mi
+    requests.storage: 2Gi
+    persistentvolumeclaims: "4"
+---
+# 같은 네임스페이스 + CNPG 오퍼레이터만 들어옴
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: app-shop
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: {}
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: cnpg-system }

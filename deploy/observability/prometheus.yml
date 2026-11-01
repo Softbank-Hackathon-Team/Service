@@ -1,0 +1,12 @@
+# 15초마다 api·worker 의 /metrics 를 긁는다
+# DRAFT(ai): 간격 15초. 컷오버 한 번(1초 안팎)은 히스토그램 누적으로 남으니 놓치지 않는다
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+scrape_configs:
+  - job_name: api
+    static_configs:
+      - targets: ["host.docker.internal:9464"]
+  - job_name: worker
+    static_configs:
+      - targets: ["host.docker.internal:9465"]

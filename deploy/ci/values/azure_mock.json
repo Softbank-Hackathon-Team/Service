@@ -1,0 +1,64 @@
+{
+  "app": {
+    "name": "shop-api"
+  },
+  "image": {
+    "ref": "<env:acrHost>/platform/t1/shop-api@sha256:abababababababababababababababababababababababababababababababab"
+  },
+  "replicas": 2,
+  "resources": {
+    "requests": {
+      "cpu": "500m",
+      "memory": "1Gi"
+    },
+    "limits": {
+      "memory": "1Gi"
+    }
+  },
+  "port": 8080,
+  "probes": {
+    "readiness": "/healthz",
+    "liveness": "/healthz"
+  },
+  "env": [
+    {
+      "name": "LOG_LEVEL",
+      "value": "info"
+    }
+  ],
+  "serviceAccount": {
+    "name": "shop-api",
+    "annotations": {
+      "azure.workload.identity/client-id": "<tf-output:app_identity_client_id>"
+    }
+  },
+  "externalSecrets": {
+    "store": {
+      "kind": "ClusterSecretStore",
+      "name": "azure-key-vault"
+    },
+    "refs": [
+      {
+        "name": "DATABASE_PASSWORD",
+        "key": "password"
+      }
+    ]
+  },
+  "database": {
+    "mode": "external",
+    "host": "<tf-output:db_fqdn>",
+    "port": 5432,
+    "name": "shop-api",
+    "passwordSecret": "db-password"
+  },
+  "ingress": {
+    "mode": "cloudflared",
+    "className": "",
+    "hostname": "shop.example.com",
+    "tunnelTokenSecret": "cloudflared-token"
+  },
+  "labels": {
+    "managed-by": "platform",
+    "tenant": "t1"
+  }
+}

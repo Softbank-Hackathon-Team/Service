@@ -1,0 +1,52 @@
+# Z70 DRAFT(ai): Cloudflare LB 실제 분배 재기용 오리진. 응답마다 x-served-by 헤더로 "어느 클러스터가 받았나"를 돌려준다.
+# DB 없는 nginx 하나 (shop 앱은 DB 가 있어야 떠서, LB 만 볼 때는 이것). scripts/cf-check.ts --probe 가 헤더를 센다.
+# __SERVED_BY__ 는 deploy/cloud-demo/apply-served-by.sh 가 <클라우드>-<구역> 으로 바꾼다 (예: aws-app-demo)
+# Z70-3: 80(http) 과 443(자체 서명 TLS) 둘 다 연다. 구역 SSL 모드가 Full 이면 Cloudflare 는 오리진 443 으로 붙는다 → 80 만 있으면 522 (맥 C 1회차).
+#   인증서는 apply-served-by.sh up 이 만든 Secret served-by-tls (7일, CN=served-by). Full(strict) 구역에서는 자체 서명이라 526 이 난다
+# 공개 주소 = Service type LoadBalancer (EKS 는 ELB, GKE 는 공인 IP). 다 쓰면 delete-served-by 로 먼저 지운다 (destroy 전에)
+apiVersion: v1
+kind: Namespace
+metadata: { name: app-demo, labels: { managed-by: platform } }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: served-by-nginx, namespace: app-demo }
+data:
+  default.conf.template: |
+    server {
+      listen 8080;
+      listen 8443 ssl;
+      ssl_certificate /etc/nginx/tls/tls.crt;
+      ssl_certificate_key /etc/nginx/tls/tls.key;
+      add_header x-served-by "${SERVED_BY}" always;
+      add_header cache-control "no-store" always;
+      location = /healthz { default_type application/json; return 200 '{"ok":true,"servedBy":"${SERVED_BY}"}'; }
+      location / { default_type text/plain; return 200 "served by ${SERVED_BY}\n"; }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: served-by, namespace: app-demo, labels: { app.kubernetes.io/name: served-by } }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app.kubernetes.io/name: served-by } }
+  template:
+    metadata: { labels: { app.kubernetes.io/name: served-by } }
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports: [{ name: http, containerPort: 8080 }, { name: https, containerPort: 8443 }]
+          env: [{ name: SERVED_BY, value: "__SERVED_BY__" }]
+          readinessProbe: { httpGet: { path: /healthz, port: http } }
+          resources: { requests: { cpu: 50m, memory: 32Mi }, limits: { memory: 64Mi } }
+          volumeMounts: [{ name: tpl, mountPath: /etc/nginx/templates }, { name: tls, mountPath: /etc/nginx/tls, readOnly: true }]
+      volumes: [{ name: tpl, configMap: { name: served-by-nginx } }, { name: tls, secret: { secretName: served-by-tls } }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: served-by, namespace: app-demo }
+spec:
+  type: LoadBalancer
+  selector: { app.kubernetes.io/name: served-by }
+  ports: [{ name: http, port: 80, targetPort: http }, { name: https, port: 443, targetPort: https }]

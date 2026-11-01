@@ -1,0 +1,123 @@
+# 운영 모양 실행: 직접 빌드한(또는 GHCR 에서 받은) 이미지 4개 + Postgres 1개
+#   이미지 받기:  IMAGE_TAG=v0.1.0 docker compose -f docker-compose.prod.yml up -d --wait
+#   로컬 빌드본:  IMAGE_PREFIX= IMAGE_TAG=dev docker compose -f docker-compose.prod.yml up -d --wait
+# 개발용 docker-compose.yml(db 만 띄움)과 프로젝트 이름·볼륨·포트가 겹치지 않게 했다.
+# DRAFT(ai): 비밀번호 기본값은 개발용과 같다. app_user 비밀번호는 db/migrations/0001 에 박혀 있어서
+#            여기서만 바꾸면 접속이 깨진다 → TODO(human): 마이그레이션에서 비밀번호를 빼고 따로 설정
+name: svc-prod
+
+x-app: &app
+  restart: unless-stopped
+  init: true                      # PID 1 신호 처리(api 는 SIGTERM 처리기가 없다)
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  environment: &app-env
+    DATABASE_URL: postgres://app_user:${APP_DB_PASSWORD:-app_pw}@db:5432/platform
+    NODE_OPTIONS: --max-old-space-size=256
+    # z75-20 잠금 시간 (Z38 R8-5: 안 넘기면 맥 .env 에 적어도 컨테이너엔 안 들어감). 비우면 90·60·30. api·worker 같은 값
+    ENVLOCK_WORKER_SEC: ${ENVLOCK_WORKER_SEC:-}
+    ENVLOCK_SELF_FENCE_SEC: ${ENVLOCK_SELF_FENCE_SEC:-}
+    ENVLOCK_HEARTBEAT_SEC: ${ENVLOCK_HEARTBEAT_SEC:-}
+    # Z88: 1 이면 가져오기가 데모 원본(시험·e2e 전용). 기본 0 = 진짜 읽기 (컨테이너엔 aws·gcloud·kubectl 이 없어 IMPORT_SOURCE_UNAVAILABLE)
+    MOCK_SEED: ${MOCK_SEED:-0}
+    # z75-68: 데모 표시. 1 이면 시험 전용 스위치(MOCK_*·FAKE_LLM·DEV_AUTH)가 켜져 있을 때 서비스가 뜨지 않는다
+    DEMO_MODE: ${DEMO_MODE:-}
+    # z75-64 실제 LLM 지출 상한 (회사·회차 누적 달러). api 는 화면 표시·409, agent-worker 는 호출 막기. 회차 비우면 오늘 날짜(UTC)
+    LLM_BUDGET_USD: ${LLM_BUDGET_USD:-2}
+    LLM_BUDGET_GLOBAL_USD: ${LLM_BUDGET_GLOBAL_USD:-10}
+    LLM_BUDGET_ROUND: ${LLM_BUDGET_ROUND:-}
+  depends_on:
+    db: { condition: service_healthy }
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: platform_owner
+      POSTGRES_PASSWORD: ${OWNER_DB_PASSWORD:-owner_pw}
+      POSTGRES_DB: platform
+    command: ["postgres", "-c", "wal_level=logical"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U platform_owner -d platform"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  api:
+    <<: *app
+    image: ${IMAGE_PREFIX-ghcr.io/softbank-hackathon-team/}svc-api:${IMAGE_TAG:-latest}
+    build: { context: ., dockerfile: deploy/docker/Dockerfile, target: api }   # docker compose -f docker-compose.prod.yml build
+    environment:
+      <<: *app-env
+      API_PORT: "3000"
+      # 이미지 기본은 production(= 개발용 x-dev-tenant 헤더 인증 꺼짐). 운영 모양 e2e 가 개발 헤더로 돌아서 여기서만 development.
+      # Z93: 진짜 로그인이 붙었다. 개발 헤더는 API_DEV_AUTH=1 을 줄 때만(verify-round prod-e2e). 그래서 포트를 127.0.0.1 에만 연다.
+      # TODO(human): 운영 e2e 를 로그인으로 바꾸면 NODE_ENV 를 production 으로, API_DEV_AUTH 줄은 지운다
+      NODE_ENV: ${API_NODE_ENV:-development}
+      DEV_AUTH: ${API_DEV_AUTH:-0}
+      # Z90: 화면에 AI 상태(실제/키 없음/가짜)를 보여 주려고 키 "있음" 표시만 넘긴다 (키 값은 API 에 안 들어감)
+      AGENT_LLM_KEY_SET: ${ANTHROPIC_API_KEY:+1}
+      AGENT_MODEL: ${AGENT_MODEL:-}
+      FAKE_LLM: ${FAKE_LLM:-}
+      JWT_SECRET: ${JWT_SECRET:-}
+    ports:
+      - "127.0.0.1:${API_HOST_PORT:-3300}:3000"   # smoke 용. 밖에는 web(8080)만 연다
+
+  worker:
+    <<: *app
+    image: ${IMAGE_PREFIX-ghcr.io/softbank-hackathon-team/}svc-worker:${IMAGE_TAG:-latest}
+    build: { context: ., dockerfile: deploy/docker/Dockerfile, target: worker }   # docker compose -f docker-compose.prod.yml build
+    # Z81-07 (PROPOSALS P2): docker stop 기본 10초 뒤 SIGKILL. 워커는 쥔 작업을 pg-boss stop 기본 30초까지 기다리고(z81-03 강제 기한 35초) 끝낸다.
+    #   10초면 shift(관찰 30초) 같은 작업이 중간에 죽어 생존 신호 끊김 → 다른 워커 재시도로 넘어갔다. 쉬는 워커는 바로 끝나서 down 이 느려지지 않는다
+    stop_grace_period: 40s
+    environment:
+      <<: *app-env
+      STUB_DELAY_MS: ${STUB_DELAY_MS:-0}   # Z81-04 (Z38 R8-31): 예전엔 빈 값 → 0ms 였다. 빈 값이 이제 기본 200ms 라 0 을 직접 적어 운영 스택 시간을 그대로 둔다
+      TRAFFIC_OBSERVE_SEC: ${TRAFFIC_OBSERVE_SEC:-30}   # 기본 30초. 데모·smoke 만 .env 값으로 줄인다
+      # Z89: 도착 자원·배포 흉내는 시험(prod-e2e)만. 비우면 진짜 terraform·GitOps (이 이미지엔 terraform 이 없어 TF_BIN_MISSING)
+      MOCK_IAC: ${MOCK_IAC:-}
+      MOCK_ARGO: ${MOCK_ARGO:-}
+      MOCK_PRECHECK: ${MOCK_PRECHECK:-}   # Z97: 사전 점검 실조회 흉내는 시험(prod-e2e)만
+      TRAFFIC_SHARE_CHECK: ${TRAFFIC_SHARE_CHECK:-1}   # z75-38 몫 도달 검사 스위치 (0 이면 끔, Z38b-4 · z75-53 과 같은 값)
+
+  agent-worker:
+    <<: *app
+    image: ${IMAGE_PREFIX-ghcr.io/softbank-hackathon-team/}svc-agent-worker:${IMAGE_TAG:-latest}
+    build: { context: ., dockerfile: deploy/docker/Dockerfile, target: agent-worker }   # docker compose -f docker-compose.prod.yml build
+    environment:
+      <<: *app-env
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AGENT_MODEL: ${AGENT_MODEL:-}
+      AGENT_LLM_EFFORT: ${AGENT_LLM_EFFORT:-medium}
+      # Z90: 기본 = 실제 Claude API (Z71 의 mock·scripted 기본 삭제). 가짜는 FAKE_LLM=1 시험 전용, 키가 없으면 실행이 LLM_KEY_MISSING 으로 실패
+      FAKE_LLM: ${FAKE_LLM:-}
+      # z75-59: 실제 API 응답 캐시 (회사별). 0 이면 끔. 기한 초 (기본 86400)
+      AGENT_LLM_CACHE: ${AGENT_LLM_CACHE:-1}
+      AGENT_LLM_CACHE_TTL_SEC: ${AGENT_LLM_CACHE_TTL_SEC:-86400}
+
+  web:
+    image: ${IMAGE_PREFIX-ghcr.io/softbank-hackathon-team/}svc-web:${IMAGE_TAG:-latest}
+    build: { context: ., dockerfile: apps/web/Dockerfile }   # docker compose -f docker-compose.prod.yml build
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /etc/nginx/conf.d:uid=101,gid=101   # 템플릿이 여기에 default.conf 를 쓴다
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      API_UPSTREAM: http://api:3000
+      API_PREFIX: /api/v1
+    ports:
+      - "127.0.0.1:${WEB_HOST_PORT:-8080}:8080"   # 개발 헤더 인증이 켜져 있어 밖에 열지 않는다
+    depends_on:
+      api: { condition: service_healthy }
+
+volumes:
+  pgdata:
