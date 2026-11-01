@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "bundleHash": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "synced_healthy",
+        "applied",
+        "failed"
+      ]
+    },
+    "resources": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "reason": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "bundleHash",
+    "status",
+    "resources"
+  ],
+  "additionalProperties": false
+}

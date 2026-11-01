@@ -1,0 +1,336 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "spec": {
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "string",
+          "const": "1"
+        },
+        "app": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]{1,30}$"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "additionalProperties": false
+        },
+        "service": {
+          "type": "object",
+          "properties": {
+            "image": {
+              "type": "string",
+              "pattern": "@sha256:[a-f0-9]{64}$"
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "healthPath": {
+              "type": "string",
+              "format": "starts_with",
+              "pattern": "^\\/.*"
+            },
+            "replicas": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10
+            },
+            "cpu": {
+              "type": "string",
+              "enum": [
+                "1",
+                "250m",
+                "500m"
+              ]
+            },
+            "memory": {
+              "type": "string",
+              "enum": [
+                "512Mi",
+                "1Gi",
+                "2Gi"
+              ]
+            },
+            "env": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string",
+                    "maxLength": 256
+                  }
+                },
+                "required": [
+                  "name",
+                  "value"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "secretRefs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "key"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "image",
+            "port",
+            "healthPath",
+            "replicas",
+            "cpu",
+            "memory",
+            "env",
+            "secretRefs"
+          ],
+          "additionalProperties": false
+        },
+        "database": {
+          "type": "object",
+          "properties": {
+            "engine": {
+              "type": "string",
+              "const": "postgres"
+            },
+            "majorVersion": {
+              "type": "string",
+              "enum": [
+                "15",
+                "16",
+                "17"
+              ]
+            },
+            "storageGb": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 100
+            }
+          },
+          "required": [
+            "engine",
+            "majorVersion",
+            "storageGb"
+          ],
+          "additionalProperties": false
+        },
+        "ingress": {
+          "type": "object",
+          "properties": {
+            "hostname": {
+              "type": "string"
+            },
+            "entry": {
+              "type": "string",
+              "const": "cloudflare-lb"
+            }
+          },
+          "required": [
+            "hostname",
+            "entry"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "app",
+        "service",
+        "ingress"
+      ],
+      "additionalProperties": false
+    },
+    "from": {
+      "type": "string",
+      "enum": [
+        "aws",
+        "gcp",
+        "onprem",
+        "azure_mock"
+      ]
+    },
+    "targets": {
+      "default": [
+        "aws",
+        "gcp",
+        "onprem"
+      ],
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "aws",
+          "gcp",
+          "onprem",
+          "azure_mock"
+        ]
+      }
+    },
+    "region": {
+      "default": "ap-northeast-2",
+      "type": "string"
+    },
+    "traffic": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "peakRps": {
+              "type": "number",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "peakRps"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "mau": {
+              "type": "number",
+              "minimum": 0
+            },
+            "dauRatio": {
+              "default": 0.2,
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1
+            },
+            "reqPerUserDay": {
+              "default": 50,
+              "type": "number",
+              "minimum": 0
+            },
+            "peakFactor": {
+              "default": 3,
+              "type": "number",
+              "minimum": 1
+            }
+          },
+          "required": [
+            "mau",
+            "dauRatio",
+            "reqPerUserDay",
+            "peakFactor"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "profile": {
+      "default": "startup",
+      "type": "string",
+      "enum": [
+        "startup",
+        "finance"
+      ]
+    },
+    "applyCredits": {
+      "default": true,
+      "type": "boolean"
+    },
+    "load": {
+      "default": {
+        "baseVcpu": 0.5,
+        "vcpuPerRps": 0.01,
+        "utilTarget": 0.6,
+        "minNodes": 2,
+        "maxNodes": 20,
+        "source": "preset"
+      },
+      "type": "object",
+      "properties": {
+        "baseVcpu": {
+          "default": 0.5,
+          "type": "number",
+          "minimum": 0
+        },
+        "vcpuPerRps": {
+          "default": 0.01,
+          "type": "number",
+          "minimum": 0
+        },
+        "utilTarget": {
+          "default": 0.6,
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "minNodes": {
+          "default": 2,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "maxNodes": {
+          "default": 20,
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "source": {
+          "default": "preset",
+          "type": "string",
+          "enum": [
+            "preset",
+            "measured"
+          ]
+        }
+      },
+      "required": [
+        "baseVcpu",
+        "vcpuPerRps",
+        "utilTarget",
+        "minNodes",
+        "maxNodes",
+        "source"
+      ],
+      "additionalProperties": false
+    },
+    "nodeSkus": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "spec",
+    "targets",
+    "region",
+    "traffic",
+    "profile",
+    "applyCredits",
+    "load"
+  ],
+  "additionalProperties": false
+}

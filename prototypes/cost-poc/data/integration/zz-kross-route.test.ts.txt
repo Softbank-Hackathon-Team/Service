@@ -1,0 +1,49 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import Fastify from "fastify";
+import { serializerCompiler, validatorCompiler } from "fastify-type-provider-zod";
+import { errorsPlugin } from "../src/plugins/errors.js";
+import { authPlugin } from "../src/plugins/auth.js";
+import { costRoutes } from "../src/routes/cost.js";
+import { buildCostView, DEMO_SPEC, MigrationCostView, migrationCostRoutes } from "../src/routes/migration-cost.js";
+
+const T = "11111111-1111-4111-8111-111111111111";
+const M = "44444444-4444-4444-8444-444444444444";
+const SRC = { id: "22222222-2222-4222-8222-222222222222", provider: "aws" as const, name: "dev-aws" };
+const DST = { id: "33333333-3333-4333-8333-333333333333", provider: "gcp" as const, name: "dev-gcp" };
+const app = async () => {
+  const a = Fastify(); a.setValidatorCompiler(validatorCompiler); a.setSerializerCompiler(serializerCompiler);
+  await a.register(errorsPlugin); await a.register(authPlugin);
+  await a.register(costRoutes);
+  await a.register(migrationCostRoutes, { load: async () => ({ migrationId: M, source: SRC, target: DST, stored: null, spec: DEMO_SPEC }) });
+  return a;
+};
+const body = JSON.parse(readFileSync(new URL("../../../docs/demo/cost-request.json", import.meta.url), "utf8"));
+
+test("POST /cost/estimate: 어댑터를 끼워도 응답 스키마를 통과한다", async () => {
+  const a = await app();
+  const r = await a.inject({ method: "POST", url: "/cost/estimate", headers: { "x-dev-tenant": T }, payload: body });
+  assert.equal(r.statusCode, 200, r.body);
+  const j = r.json();
+  assert.equal(j.envs.find((e: { provider: string }) => e.provider === "aws").monthlyUsd, 233.3);
+});
+test("POST /cost/estimate: 잘못된 본문은 400", async () => {
+  const a = await app();
+  const r = await a.inject({ method: "POST", url: "/cost/estimate", headers: { "x-dev-tenant": T }, payload: { ...body, traffic: { peakRps: -1 } } });
+  assert.equal(r.statusCode, 400);
+});
+test("GET /migrations/:id/cost: 어댑터를 끼워도 MigrationCostView를 통과한다", async () => {
+  const a = await app();
+  const r = await a.inject({ method: "GET", url: `/migrations/${M}/cost`, headers: { "x-dev-tenant": T } });
+  assert.equal(r.statusCode, 200, r.body);
+  const v = MigrationCostView.parse(r.json());
+  assert.equal(v.origin, "preview");
+  assert.equal(v.pair.from, "aws");
+});
+test("저장된 추정에 모르는 칸이 있으면 조용히 미리보기로 내려간다 (지금 동작)", () => {
+  const good = buildCostView({ migrationId: M, source: SRC, target: DST, stored: null, spec: DEMO_SPEC });
+  const v = buildCostView({ migrationId: M, source: SRC, target: DST, spec: DEMO_SPEC,
+    stored: { id: "55555555-5555-4555-8555-555555555555", planId: null, estimate: { ...good.estimate, crossovers: [] }, priceSources: [], createdAt: "2026-11-01T00:00:00.000Z" } });
+  assert.equal(v.origin, "preview");
+});

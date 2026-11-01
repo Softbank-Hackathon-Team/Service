@@ -1,0 +1,111 @@
+{
+  "vendor": "gcp",
+  "region": "asia-northeast3",
+  "fetchedAt": "2026-10-31T00:00:00Z",
+  "origin": "seed",
+  "note": "API 호출 실패(GCP_BILLING_API_KEY 없음 → 캐시 사용). 샘플 가격표 값을 그대로 옮김. 【미확인】",
+  "sources": [],
+  "missing": [],
+  "rows": [
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "item": "cluster",
+      "sku": "gke-management",
+      "unit": "hour",
+      "usd": 0.1,
+      "tierFrom": 0,
+      "attrs": {},
+      "evidence": "fact",
+      "source": "GKE 가격 페이지",
+      "fetchedAt": "2026-10-31T00:00:00Z"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "item": "cluster_credit",
+      "sku": "gke-free-tier",
+      "unit": "month",
+      "usd": 74.4,
+      "tierFrom": 0,
+      "attrs": {},
+      "evidence": "fact",
+      "source": "GKE 가격 페이지 (결제 계정당 존 클러스터 1개)",
+      "fetchedAt": "2026-10-31T00:00:00Z"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "item": "node",
+      "sku": "e2-medium",
+      "unit": "hour",
+      "usd": 0.043,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 4
+      },
+      "evidence": "fact",
+      "source": "gcloud-compute.com",
+      "fetchedAt": "2026-10-31T00:00:00Z"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "item": "node",
+      "sku": "e2-standard-2",
+      "unit": "hour",
+      "usd": 0.0862,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8
+      },
+      "evidence": "assumed",
+      "source": "추정값, Billing Catalog API로 확인 필요",
+      "fetchedAt": "2026-10-31T00:00:00Z"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "item": "node",
+      "sku": "e2-standard-4",
+      "unit": "hour",
+      "usd": 0.1724,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16
+      },
+      "evidence": "assumed",
+      "source": "추정값, Billing Catalog API로 확인 필요",
+      "fetchedAt": "2026-10-31T00:00:00Z"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "item": "db",
+      "sku": "cloudsql-pg-2vcpu-4gb",
+      "unit": "month",
+      "usd": 80.738,
+      "tierFrom": 0,
+      "attrs": {},
+      "evidence": "unverified",
+      "source": "Cloud SQL 아이오와 단가 (0.0413x2 + 0.007x4) x 730, 서울 값 아님",
+      "fetchedAt": "2026-10-31T00:00:00Z"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "item": "storage",
+      "sku": "cloudsql-ssd",
+      "unit": "gb_month",
+      "usd": 0.17,
+      "tierFrom": 0,
+      "attrs": {},
+      "evidence": "unverified",
+      "source": "Cloud SQL SSD 아이오와 단가, 서울 값 아님",
+      "fetchedAt": "2026-10-31T00:00:00Z"
+    }
+  ]
+}

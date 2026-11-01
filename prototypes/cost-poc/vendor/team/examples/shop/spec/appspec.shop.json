@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "1",
+  "app": { "name": "shop" },
+  "service": {
+    "image": "ghcr.io/demo/shop-sample-app@sha256:17536626a1131e5a85cc4ed2650f3d12fb3a9bf27b413dc3984bf3914e263b17",
+    "port": 8080,
+    "healthPath": "/healthz",
+    "replicas": 2,
+    "cpu": "250m",
+    "memory": "512Mi",
+    "env": [
+      { "name": "APP_VERSION", "value": "1.0.0" },
+      { "name": "DB_SSLMODE", "value": "require" }
+    ],
+    "secretRefs": []
+  },
+  "database": { "engine": "postgres", "majorVersion": "16", "storageGb": 20 },
+  "ingress": { "hostname": "shop.example.com", "entry": "cloudflare-lb" }
+}

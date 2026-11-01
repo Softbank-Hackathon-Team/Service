@@ -1,0 +1,88 @@
+{
+  "vendor": "onprem",
+  "region": "local",
+  "fetchedAt": "2026-11-01T08:48:30.556Z",
+  "sources": [
+    {
+      "url": "assumption:onprem",
+      "note": "서버 감가·운영 인력은 가정"
+    },
+    {
+      "url": "https://en.sedaily.com/finance/2026/06/05/korea-minister-signals-cut-in-industrial-electricity-rates",
+      "note": "산업용 전기요금 약 182원/kWh"
+    },
+    {
+      "url": "https://mgrid.org/2025/10/01/uptime-institute-data-center-pue-stagnation-2025-liquid-cooling/",
+      "note": "Uptime 2025 PUE 평균 1.54 (2차 보도)"
+    },
+    {
+      "url": "https://tilnote.io/pages/6ad7925d19114ceafa1fa5fe",
+      "note": "국내 IDC 상면·회선 가격 (블로그 1건, 공식 견적 아님)"
+    },
+    {
+      "url": "https://www.dell.com/en-sg/work/shop/cty/pdp/spd/poweredge-r7625",
+      "note": "서버 구성가 상한 참고"
+    }
+  ],
+  "missing": [],
+  "lines": [
+    {
+      "vendor": "onprem",
+      "region": "local",
+      "evidence": "assumed",
+      "fetchedAt": "2026-11-01T08:48:30.556Z",
+      "sourceUrl": "assumption:onprem",
+      "item": "node",
+      "sku": "server-32c64t-256g",
+      "unit": "hour",
+      "usd": 0.545178,
+      "attrs": {
+        "vcpu": 64,
+        "memGiB": 256,
+        "family": "server",
+        "note": "감가 0.342466 + 전기 0.0686 + 상면 0.134112"
+      },
+      "sourceDetail": "가정: 서버 $15000 / 60개월, 350W x PUE 1.54 x 182원, 2U x 70000원"
+    },
+    {
+      "vendor": "onprem",
+      "region": "local",
+      "evidence": "assumed",
+      "fetchedAt": "2026-11-01T08:48:30.556Z",
+      "sourceUrl": "assumption:onprem",
+      "item": "cluster",
+      "sku": "ops-and-line",
+      "unit": "hour",
+      "usd": 2.554523,
+      "attrs": {
+        "note": "회선 0.957946 + 운영 1.596577"
+      },
+      "sourceDetail": "가정: 회선 1Gbps 1000000원/월, 운영 0.25명 x 80000000원/년"
+    },
+    {
+      "vendor": "onprem",
+      "region": "local",
+      "evidence": "assumed",
+      "fetchedAt": "2026-11-01T08:48:30.556Z",
+      "sourceUrl": "assumption:onprem",
+      "item": "storage",
+      "sku": "local-nvme",
+      "unit": "gb_month",
+      "usd": 0,
+      "sourceDetail": "가정: 서버 안 NVMe. 비용은 서버 감가에 포함, 용량 한도는 범위 밖"
+    },
+    {
+      "vendor": "onprem",
+      "region": "local",
+      "evidence": "assumed",
+      "fetchedAt": "2026-11-01T08:48:30.556Z",
+      "sourceUrl": "assumption:onprem",
+      "item": "egress",
+      "sku": "committed-line",
+      "unit": "gb",
+      "usd": 0,
+      "tierFromGB": 0,
+      "sourceDetail": "가정: 고정 회선 안. 1Gbps 한도 초과는 불가로 처리"
+    }
+  ]
+}
