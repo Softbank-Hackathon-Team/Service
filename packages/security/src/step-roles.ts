@@ -36,6 +36,8 @@ export const STEP_ROLES = {
   precheck: [{ side: "source", purpose: "observe" }, { side: "target", purpose: "observe" }],
   plan: [{ side: "target", purpose: "operate", stage: "plan" }],
   apply: [{ side: "target", purpose: "operate", stage: "apply" }],
+  // VDEPLOYNONK8S: ECS·Cloud Run·VM 도착의 배포 확인은 도착 관찰 역할을 빌려 읽는다(상태 읽기만). 안 빌리면 워커 자기 자격으로 조회하게 된다
+  deploy: [{ side: "target", purpose: "observe" }],
   cleanup: [{ side: "source", purpose: "operate", stage: "destroy" }],
   rollback: [{ side: "target", purpose: "operate", stage: "destroy" }],
 } as const satisfies Record<string, ReadonlyArray<{ side: "source" | "target"; purpose: "observe" | "operate"; stage?: Stage }>>;

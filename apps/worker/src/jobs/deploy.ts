@@ -1,7 +1,8 @@
 import { AppSpec, DeployResult, MigrationJob, QUEUES, type AppSpecV2, type InfraReady, type PlanDoc, type Provider } from "@svc/contracts";
-import { asFailureCode, latestAcceptedSpec, latestAcceptedSpecV2 } from "@svc/core";
-import { checkTerraformRuntime, factsFromEnv, iacMockEnabled, specV2ForPlan, terraformRuntimeOf, type RuntimeHealthDeps, type TerraformRuntime } from "@svc/adapters";
+import { asFailureCode, latestAcceptedSpec, latestAcceptedSpecV2, scrubString } from "@svc/core";
+import { checkTerraformRuntime, envFor, factsFromEnv, iacMockEnabled, specV2ForPlan, terraformRuntimeOf, type RuntimeHealthDeps, type TerraformRuntime } from "@svc/adapters";
 import { nextJob, runStep, stubWait, stubFailIfAsked, type StepOutcome } from "./_step.js";
+import { withStepRoles, type StepRoles } from "./_roles.js";
 import { loadInfraReady, loadPlanById } from "./plan-store.js";
 import { configFromEnv, deployToGitops, GitopsError, GitopsRepo } from "../gitops/index.js";
 import { argoWatcherFromEnv } from "../gitops/argo-watch.js";
@@ -48,7 +49,11 @@ export async function handleDeploy(raw: unknown) {
       return { infra, plan, spec: AppSpec.parse(spec), env: e.rows[0] };
     },
     work: async (j, m, l): Promise<StepOutcome> => {
-      if (l.runtime && l.specV2 && l.env) return deployTerraformRuntime(j, l as Loaded & { runtime: TerraformRuntime; specV2: AppSpecV2; env: NonNullable<Loaded["env"]> });
+      if (l.runtime && l.specV2 && l.env) {
+        const nl = l as Loaded & { runtime: TerraformRuntime; specV2: AppSpecV2; env: NonNullable<Loaded["env"]> };
+        // VDEPLOYNONK8S 고침: 건강 조회는 도착 관찰 역할을 빌려서 한다(진짜 발급기면 그 자격 env, 워커 자기 자격은 지움). 단계가 끝나면 돌려준다
+        return withStepRoles("deploy", j, m, (roles) => deployTerraformRuntime(j, nl, roles));
+      }
       let result: DeployResult;
       let gitops: Record<string, unknown> | undefined;
       // Z77: 클러스터 없이 RDS 만 만든 이전(env 모듈 create_eks=false, 맥 B 회차)은 올릴 곳이 없다 → GitOps 가 켜져 있어도 STUB
@@ -126,16 +131,16 @@ async function terraformRuntimeLoad(tx: Tx, infra: InfraReady, m: { id: string; 
 /** DEPLOYNONK8S: Terraform 이 앱까지 띄운 도착 → gitops·Argo 건너뜀, apply 출력 + 건강 확인으로 DeployResult.
  *  흉내 길(MOCK_IAC=1)은 출력만 본다. 진짜 길은 읽기 CLI (프로세스·실행 역할 env 의 자격, 코드엔 없음).
  *  못 뜨면 paused (paused → deploying 재개 가능, 트래픽 0%·컷오버 전이라 출발이 그대로 주인) */
-async function deployTerraformRuntime(j: MigrationJob, l: Loaded & { runtime: TerraformRuntime; specV2: AppSpecV2; env: NonNullable<Loaded["env"]> }): Promise<StepOutcome> {
+async function deployTerraformRuntime(j: MigrationJob, l: Loaded & { runtime: TerraformRuntime; specV2: AppSpecV2; env: NonNullable<Loaded["env"]> }, roles?: Pick<StepRoles, "awsEnv">): Promise<StepOutcome> {
   await stubFailIfAsked(j, "deploy");
   const gitops = { skipped: "terraform_runtime", runtime: l.runtime };
   const facts = factsFromEnv(process.env);
   const h = await checkTerraformRuntime({
     provider: l.env.provider, runtime: l.runtime, spec: l.specV2, tfOutputs: l.infra.tfOutputs ?? {},
     live: !iacMockEnabled(), projectId: facts.projectId ?? null,   // region = 계획과 같은 "default" 규칙 (checkTerraformRuntime)
-  }, runtimeHealthDeps);
+  }, { ...runtimeHealthDeps, ...(roles?.awsEnv?.target && !runtimeHealthDeps.env ? { env: envFor(roles.awsEnv.target) } : {}) });
   if (!h.ok)
-    return { to: "paused", failureCode: h.code, detail: { deploy: { error: h.code, reason: h.reason, resources: h.resources, attempts: h.attempts }, gitops } };
+    return { to: "paused", failureCode: h.code, detail: { deploy: { error: h.code, reason: scrubString(h.reason), resources: h.resources, attempts: h.attempts }, gitops } };
   const result = DeployResult.parse({ bundleHash: `tf-${l.infra.planId.slice(0, 8)}`, status: "synced_healthy", resources: h.resources });
   return {
     to: "syncing", detail: { deploy: result, gitops: { ...gitops, checked: h.checked, attempts: h.attempts } },
