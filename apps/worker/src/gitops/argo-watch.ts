@@ -19,17 +19,51 @@ export interface ArgoAppStatus {
   health?: { status?: string; message?: string };
   operationState?: { phase?: string; message?: string; syncResult?: { revision?: string } };
   conditions?: Array<{ type?: string; message?: string }>;
+  // ARGODEG: Application 이 관리하는 자원별 상태. Degraded 자원의 health.message 가 사유가 된다
+  resources?: Array<{ kind?: string; name?: string; namespace?: string; status?: string; health?: { status?: string; message?: string } }>;
+}
+
+// ARGODEG DRAFT(ai): Argo 가 Application health.message 를 비워 두는 일이 많다(맥 실측 Z103) → 사유가 'ARGO_DEGRADED: ' 로 빔.
+//   채우는 순서: ① Application health.message ② Application conditions(…Error 우선, 없으면 아무 조건) ③ resources[] 중 Degraded·Missing 자원의 health.message
+//   ④ (k8s 길만) 그 Deployment 의 status.conditions(Available·Progressing)와 Pod 대기 이유(ImagePullBackOff 등) ⑤ 다 비면 고정 문구
+export const DEGRADED_UNKNOWN = "이유를 못 읽음(Argo 메시지 없음)";
+
+/** 사유 글에서 비밀값·이미지 자격 문구를 가린다 (화면·감사·로그에 그대로 나가므로) */
+export function scrubReason(t: string): string {
+  return t
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s/@:]+:[^\s/@]+@/gi, (m) => `${m.split("://")[0]}://***@`)                       // URL 안 user:pass@
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+\/=-]{8,}/g, "$1 ***")                                                       // Authorization 값
+    .replace(/\b(password|passwd|pwd|secret|token|apikey|api[_-]key|access[_-]?key|authorization|credentials?)\b(\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s,;]+)/gi, "$1=***") // 키=값
+    .replace(/\b(AKIA|ASIA)[A-Z0-9]{12,}\b/g, "***")                                                                         // AWS 접근 키 ID
+    .replace(/\bey[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}\b/g, "***")                                       // JWT
+    .replace(/\b\d{12}(?=\.dkr\.ecr|[:/])/g, "••••")                                                                         // ECR·ARN 의 계정 번호
+    .replace(/\b\d{12}\b/g, (m) => `••••${m.slice(-4)}`)
+    .replace(/(imagePullSecrets?|pull secret|docker-?registry)[^.;\n]*/gi, "$1 ***");                                         // 이미지 자격 문구
+}
+const clip = (t: string) => scrubReason(t.replace(/\s+/g, " ").trim()).slice(0, 200);
+
+/** Application 상태만으로 만든 Degraded 사유 (순수). 못 찾으면 빈 문자열 */
+export function degradedDetail(s: ArgoAppStatus): string {
+  const m = s.health?.message?.trim();
+  if (m) return clip(m);
+  const conds = (s.conditions ?? []).filter((c) => c.message?.trim());
+  const c = conds.find((x) => /Error$/.test(x.type ?? "")) ?? conds[0];
+  if (c) return clip(`${c.type ?? "Condition"}: ${c.message}`);
+  const bad = (s.resources ?? []).filter((r) => (r.health?.status === "Degraded" || r.health?.status === "Missing") && r.health.message?.trim());
+  if (bad.length) { const r = bad[0]!; return clip(`${r.kind ?? "?"}/${r.name ?? "?"}: ${r.health!.message}`); }
+  return "";
 }
 
 /** 한 번 읽은 상태 → 끝/계속. 순수 함수 (시험 대상) */
-export function judgeArgo(s: ArgoAppStatus, commit: string): { done: boolean; ok: boolean; reason?: string } {
+export function judgeArgo(s: ArgoAppStatus, commit: string): { done: boolean; ok: boolean; reason?: string; emptyDetail?: boolean } {
   const mine = s.sync?.revision === commit;
   const op = s.operationState;
   if (op && (op.phase === "Failed" || op.phase === "Error") && (op.syncResult?.revision ?? commit) === commit) {
     return { done: true, ok: false, reason: `ARGO_SYNC_FAILED: ${(op.message ?? "").slice(0, 200)}` };
   }
   if (mine && s.health?.status === "Degraded") {
-    return { done: true, ok: false, reason: `ARGO_DEGRADED: ${(s.health.message ?? "").slice(0, 200)}` };
+    const d = degradedDetail(s);
+    return { done: true, ok: false, reason: `ARGO_DEGRADED: ${d || DEGRADED_UNKNOWN}`, ...(d ? {} : { emptyDetail: true }) };
   }
   if (mine && s.sync?.status === "Synced" && s.health?.status === "Healthy") return { done: true, ok: true };
   return { done: false, ok: false };
@@ -42,7 +76,8 @@ export type ArgoRead =
   | { kind: "auth"; detail: string }
   | { kind: "error"; detail: string };
 
-export interface ArgoReader { source: "rest" | "k8s"; read(name: string, first: boolean): Promise<ArgoRead> }
+/** diagnose: Application 만으로 사유를 못 얻었을 때 한 번 더 읽는 길(k8s 길만). 못 읽으면 빈 문자열 */
+export interface ArgoReader { source: "rest" | "k8s"; read(name: string, first: boolean): Promise<ArgoRead>; diagnose?(status: ArgoAppStatus): Promise<string> }
 
 export function restReader(url: string, token: string, fetchImpl: typeof fetch, reqTimeoutMs: number): ArgoReader {
   const base = url.replace(/\/+$/, "");
@@ -78,9 +113,38 @@ const realKubectl: KubectlRun = (args, timeoutMs) => new Promise((res) => {
   });
 });
 
+interface DeploymentJson {
+  spec?: { selector?: { matchLabels?: Record<string, string> } };
+  status?: { conditions?: Array<{ type?: string; status?: string; reason?: string; message?: string }> };
+}
+interface PodsJson { items?: Array<{ status?: { containerStatuses?: Array<{ state?: { waiting?: { reason?: string; message?: string } } }> } }> }
+
 export function k8sReader(namespace: string, context: string | undefined, run: KubectlRun, reqTimeoutMs: number): ArgoReader {
   return {
     source: "k8s",
+    // ARGODEG ④: Degraded Deployment 의 conditions(Available·Progressing 중 문제 있는 것) + Pod 대기 이유(ImagePullBackOff·CrashLoopBackOff 등). 한 Deployment 만 (첫 Degraded)
+    async diagnose(status) {
+      const ctx = context ? ["--context", context] : [];
+      const dep = (status.resources ?? []).find((r) => r.kind === "Deployment" && r.health?.status !== "Healthy" && r.name);
+      if (!dep) return "";
+      const ns = dep.namespace ?? namespace, parts: string[] = [];
+      const d = await run([...ctx, "get", "deployment", dep.name!, "-n", ns, "-o", "json"], reqTimeoutMs);
+      let dj: DeploymentJson | null = null;
+      if (d.code === 0) { try { dj = JSON.parse(d.stdout) as DeploymentJson; } catch { dj = null; } }
+      const bad = (dj?.status?.conditions ?? []).filter((c) => (c.type === "Available" && c.status !== "True") || (c.type === "Progressing" && (c.status === "False" || /Deadline/.test(c.reason ?? ""))));
+      for (const c of bad) if (c.message?.trim()) parts.push(`${c.type}: ${c.message}`);
+      const sel = Object.entries(dj?.spec?.selector?.matchLabels ?? {}).map(([k, v]) => `${k}=${v}`).join(",");
+      if (sel) {
+        const p = await run([...ctx, "get", "pods", "-n", ns, "-l", sel, "-o", "json"], reqTimeoutMs);
+        if (p.code === 0) {
+          try {
+            const w = ((JSON.parse(p.stdout) as PodsJson).items ?? []).flatMap((x) => x.status?.containerStatuses ?? []).map((c) => c.state?.waiting).find((x) => x?.reason && x.reason !== "ContainerCreating" && x.reason !== "PodInitializing");
+            if (w) parts.push(`Pod: ${w.reason}${w.message ? ` (${w.message})` : ""}`);
+          } catch { /* 읽기 실패는 사유 없음으로 */ }
+        }
+      }
+      return parts.length ? clip(`Deployment/${dep.name}: ${parts.join("; ")}`) : "";
+    },
     async read(name, first) {
       const ctx = context ? ["--context", context] : [];
       // Z94b (Z103 지적): CR 읽기만으로는 refresh 가 안 걸려 새 커밋이 Argo git 주기(기본 약 180초) 뒤에야 보일 수 있다.
@@ -154,6 +218,11 @@ export function argoWatcherFromEnv(env: NodeJS.ProcessEnv = process.env, d: Argo
         if (r.kind === "ok") {
           errs = 0; missing = false;
           const j = judgeArgo(r.status, c.commit);
+          if (j.done && !j.ok && j.emptyDetail && reader.diagnose) {
+            // ARGODEG ④: Application 에 사유가 없으면 Deployment·Pod 를 한 번 더 읽는다. 실패하면 고정 문구 그대로
+            const extra = await reader.diagnose(r.status).catch(() => "");
+            if (extra) j.reason = `ARGO_DEGRADED: ${extra}`;
+          }
           last = `${r.status.sync?.status ?? "?"}/${r.status.health?.status ?? "?"} @${(r.status.sync?.revision ?? "").slice(0, 8)}`;
           const cond = r.status.conditions?.find((x) => /Error$/.test(x.type ?? ""));
           if (cond) last += ` ${cond.type}: ${(cond.message ?? "").slice(0, 80)}`;
