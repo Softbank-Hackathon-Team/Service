@@ -99,3 +99,48 @@ run "reject_long_sa_name" {
   }
   expect_failures = [var.identity_json]
 }
+
+# --- A5 종류: cache·objectStore·queue (정상)
+run "plan_a5_kinds" {
+  command = plan
+  variables {
+    cache_json        = jsonencode([{ id = "sessions", name = "shop-sessions-ab12", ha = null }])
+    object_store_json = jsonencode([{ id = "uploads", name = "shop-uploads-ab12", versioning = true }])
+    queue_json        = jsonencode([{ id = "jobs", name = "shop-jobs-ab12", ordered = false }])
+  }
+  assert {
+    condition     = length(module.cache) == 1 && length(module.object_store) == 1 && length(module.queue) == 1
+    error_message = "for_each 키(IR id) 별로 하나씩이어야 함"
+  }
+  assert {
+    condition     = contains(keys(output.link_outputs), "sessions") && output.link_outputs["uploads"].name == "shop-uploads-ab12" && output.link_outputs["jobs"].name != ""
+    error_message = "link_outputs 키가 LINK_OUTPUTS(cache host·port·url / objectStore name·url / queue url·name)와 달라짐"
+  }
+}
+
+# 기본 빈 배열이면 안 만든다 (기존 동작 그대로)
+run "plan_a5_default_empty" {
+  command = plan
+  assert {
+    condition     = length(module.cache) + length(module.object_store) + length(module.queue) == 0
+    error_message = "기본값에선 A5 종류가 없어야 함"
+  }
+}
+
+# 거부: 같은 IR id 두 번
+run "reject_a5_duplicate_id" {
+  command = plan
+  variables {
+    queue_json = jsonencode([{ id = "jobs", name = "a-jobs" }, { id = "jobs", name = "b-jobs" }])
+  }
+  expect_failures = [var.queue_json]
+}
+
+# 거부: 버킷 이름 규칙 위반 (대문자)
+run "reject_bad_bucket_name" {
+  command = plan
+  variables {
+    object_store_json = jsonencode([{ id = "uploads", name = "Bad_Name" }])
+  }
+  expect_failures = [var.object_store_json]
+}
