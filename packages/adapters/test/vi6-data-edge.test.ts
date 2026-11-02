@@ -306,6 +306,10 @@ test("discover GCP v2: 버킷 IAM 정책 읽기 실패 → allUsersBinding null(
   const it = itemsOf(raw);
   assert.equal(it.find((i) => i.kind === "gcs.bucket")!.allUsersBinding, null);
   assert.equal(it.find((i) => i.kind === "pubsub.topic")!.subscription, null);
-  const r = normalizeV2({ provider: "gcp", coverage: {}, items: it } as RawInventory).result;
+  // BOUNDARY: 서비스가 env 로 버킷 b 를 가리켜야 경계 안 (안 가리키면 outOfBoundary)
+  const api = { kind: "k8s.deployment", imageDigest: "sha256:" + "ab".repeat(32), metadata: { name: "api", namespace: "shop", labels: { app: "api" } },
+    spec: { replicas: 1, selector: { matchLabels: { app: "api" } }, template: { metadata: { labels: { app: "api" } }, spec: { containers: [{
+      name: "api", image: "ghcr.io/demo/api:1.0", env: [{ name: "BUCKET", value: "b" }] }] } } } };
+  const r = normalizeV2({ provider: "gcp", coverage: {}, items: [...it, api] } as RawInventory).result;
   assert.equal(comp(r, "b")!.props.public, null);
 });

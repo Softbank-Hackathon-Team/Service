@@ -320,11 +320,21 @@ export const UnmappedV2 = z.object({
 }).strict();
 export type UnmappedV2 = z.infer<typeof UnmappedV2>;
 
+// BOUNDARY DRAFT(ai): 앱 경계 밖 자원 (계정에 있지만 이 앱의 서비스·잡이 근거 있는 의존성으로 닿지 않음). 이름·종류만, 값 없음.
+//   unmapped(이 앱 것인데 못 옮김)와 다르다: 이전 대상이 아니라 화면·보고에서 "경계 밖 N개" 로만 센다
+export const OutOfBoundaryV2 = z.object({
+  resource: z.string().max(300),                        // "<원본 종류>:<이름>"
+  kind: z.enum(COMPONENT_KINDS_V2),
+  reason: z.string().max(300),
+}).strict();
+export type OutOfBoundaryV2 = z.infer<typeof OutOfBoundaryV2>;
+
 // 가져오기 결과 v2 한 벌 (spec_versions.spec_v2 한 칸)
 export const ImportResultV2 = z.object({
   spec: AppSpecV2,
   fieldMeta: FieldMetaV2,
   unmapped: z.array(UnmappedV2),
+  outOfBoundary: z.array(OutOfBoundaryV2).optional(),   // BOUNDARY: 경계 밖 (없으면 옛 판 = 경계 단계 전)
   ids: z.record(z.string(), Id),                        // 벤더 고유 키 → id. 재가져오기 때 같은 id 유지
   environment: z.array(z.unknown()).optional(),         // 근거·환경 종류로 읽은 항목 (매퍼 몫)
 }).strict();
