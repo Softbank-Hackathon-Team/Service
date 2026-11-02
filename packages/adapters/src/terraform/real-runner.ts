@@ -37,6 +37,17 @@ export const DEFAULT_MODULE_ROOT = join(REPO_ROOT, "infra/modules");
 
 // Azure 는 Mock 실행기만 (진짜 apply 안 함, 결정 그대로)
 export const REAL_MODULE_DIR: Partial<Record<Provider, string>> = { aws: "aws/app", gcp: "gcp/app", onprem: "onprem/app" };
+// DRAFT(ai): v2 = 고정 루트 + 종류 모듈 (설계 27번 3.2). infra/modules/<환경>/{root,kinds/*} 를 작업 폴더 안 root/·kinds/ 로 복사하고 -chdir=root 로 돈다.
+//   state·tfvars·outputs.json·db-secret.json 은 v1 처럼 작업 폴더 바로 아래 (루트의 backend "local" path = "../terraform.tfstate").
+//   루트는 kinds 폴더를 항상 참조하므로(없으면 init 실패) 있는 kinds 폴더는 전부 복사한다. 켜짐 여부는 종류 목록 변수가 비었는지로 표현.
+export const REAL_MODULE_BASE_V2: Partial<Record<Provider, string>> = { aws: "aws", gcp: "gcp", onprem: "onprem" };
+export type TfLayout = "v1" | "v2";
+export const V2_ROOT_DIR = "root";
+/** 작업 폴더가 v2 모양인지 (root/main.tf 가 있으면 v2). destroy·list 가 어느 모양이든 같은 폴더에서 찾게 */
+export const isV2WorkDir = (dir: string) => existsSync(join(dir, V2_ROOT_DIR, "main.tf"));
+// terraform 전역 옵션 (v2 만 -chdir). 경로 인자는 root/ 기준이라 한 칸 위(../)로 쓴다
+const chdirArgs = (layout: TfLayout) => (layout === "v2" ? [`-chdir=${V2_ROOT_DIR}`] : []);
+const up = (layout: TfLayout, f: string) => (layout === "v2" ? `../${f}` : f);
 
 // ---- 자리표시 채우기 ----
 // "<env:vpcId>" → TF_FACT_VPC_ID. 환경 표(environments)에 칸이 없는 env 모듈 출력·계정 사실을 환경변수로 받는다.
@@ -176,14 +187,29 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
   const timeoutMs = envNumber(env.TF_APPLY_TIMEOUT_SEC, 2700) * 1000;
   const cenv = childEnv(env);
 
-  function prepare(provider: Provider, migrationId: string, tenant?: string): string {
-    const rel = REAL_MODULE_DIR[provider];
-    if (!rel) throw new Error(`no real terraform module for ${provider}`);
-    const src = join(moduleRoot, rel);
+  // *.tf 만 복사 (tests/ 는 terraform test 용, .terraform 은 각자 init). state·tfplan 은 작업 폴더에 남는다
+  const copyTf = (src: string, dst: string) => {
+    mkdirSync(dst, { recursive: true });
+    for (const f of readdirSync(src)) if (f.endsWith(".tf")) cpSync(join(src, f), join(dst, f));
+  };
+
+  function prepare(provider: Provider, migrationId: string, tenant?: string, layout: TfLayout = "v1"): string {
     const dir = workDirOf(workRoot, migrationId, tenant);
     mkdirSync(dir, { recursive: true });
-    // *.tf 만 복사 (tests/ 는 terraform test 용, .terraform 은 각자 init). state·tfplan 은 이 폴더에 남는다
-    for (const f of readdirSync(src)) if (f.endsWith(".tf")) cpSync(join(src, f), join(dir, f));
+    if (layout === "v2") {
+      const base = REAL_MODULE_BASE_V2[provider];
+      if (!base) throw new Error(`no real terraform module for ${provider}`);
+      const src = join(moduleRoot, base);
+      if (!existsSync(join(src, V2_ROOT_DIR, "main.tf"))) throw new Error(`no v2 root for ${provider}: ${join(base, V2_ROOT_DIR)}`);
+      copyTf(join(src, V2_ROOT_DIR), join(dir, V2_ROOT_DIR));
+      const kindsSrc = join(src, "kinds");
+      if (existsSync(kindsSrc)) for (const k of readdirSync(kindsSrc, { withFileTypes: true }).filter((e) => e.isDirectory()).sort((a, b) => a.name.localeCompare(b.name)))
+        copyTf(join(kindsSrc, k.name), join(dir, "kinds", k.name));
+    } else {
+      const rel = REAL_MODULE_DIR[provider];
+      if (!rel) throw new Error(`no real terraform module for ${provider}`);
+      copyTf(join(moduleRoot, rel), dir);
+    }
     writeFileSync(join(dir, "provider.txt"), provider);
     if (tenant) writeFileSync(join(dir, "tenant.txt"), tenant);
     return dir;
@@ -237,28 +263,29 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
       try { return { ok: true, version: (JSON.parse(r.stdout) as { terraform_version?: string }).terraform_version }; }
       catch { return { ok: true, version: r.stdout.split("\n")[0]?.trim() }; }
     },
-    async apply(provider: Provider, migrationId: string, vars: TfVars, signal?: AbortSignal, tenant?: string): Promise<RealApplyResult> {
+    async apply(provider: Provider, migrationId: string, vars: TfVars, signal?: AbortSignal, tenant?: string, layout: TfLayout = "v1"): Promise<RealApplyResult> {
       const t0 = performance.now();
       const steps: RealStep[] = []; const log: string[] = [];
-      const dir = prepare(provider, migrationId, tenant);
+      const dir = prepare(provider, migrationId, tenant, layout);
+      const G = chdirArgs(layout); const vf = `-var-file=${up(layout, "terraform.tfvars.json")}`; const planFile = up(layout, "tfplan");
       writeFileSync(join(dir, "terraform.tfvars.json"), JSON.stringify(vars, null, 2));
       const fail = (s: RealStep["step"]): RealApplyResult =>
         ({ ok: false, tfOutputs: {}, workDir: dir, steps, elapsedMs: round(performance.now() - t0), log, failedStep: s });
-      if ((await run("init", ["init", "-input=false", "-no-color"], dir, steps, log, signal)).code !== 0) return fail("init");
-      if ((await run("plan", ["plan", "-input=false", "-no-color", lockTimeout, "-var-file=terraform.tfvars.json", "-out=tfplan"], dir, steps, log, signal)).code !== 0) return fail("plan");
-      if ((await run("apply", ["apply", "-input=false", "-no-color", lockTimeout, "-auto-approve", "tfplan"], dir, steps, log, signal)).code !== 0) {
+      if ((await run("init", [...G, "init", "-input=false", "-no-color"], dir, steps, log, signal)).code !== 0) return fail("init");
+      if ((await run("plan", [...G, "plan", "-input=false", "-no-color", lockTimeout, vf, `-out=${planFile}`], dir, steps, log, signal)).code !== 0) return fail("plan");
+      if ((await run("apply", [...G, "apply", "-input=false", "-no-color", lockTimeout, "-auto-approve", planFile], dir, steps, log, signal)).code !== 0) {
         // Z89: apply 가 중간에 실패하면 일부 자원(VPC 보안 그룹·시크릿 그릇 등)이 이미 생겼을 수 있다 → 같은 state 로 바로 destroy.
         //   잠금을 잃어 멈춘 경우(signal abort)는 다른 워커가 이어받을 수 있으니 지우지 않는다.
         //   대안 "사람이 tf:real destroy": 버림(Z70 방식). 데모 중 잊으면 RDS 가 밤새 남는다(작업 뒤 자원 0 규칙)
         const r = fail("apply");
         if (destroyOnFail && !signal?.aborted) {
-          const d = await run("destroy", ["destroy", "-input=false", "-no-color", lockTimeout, "-auto-approve", "-var-file=terraform.tfvars.json"], dir, steps, log);
+          const d = await run("destroy", [...G, "destroy", "-input=false", "-no-color", lockTimeout, "-auto-approve", vf], dir, steps, log);
           r.destroyedAfterFail = { ok: d.code === 0, ms: round(d.ms) };
           r.elapsedMs = round(performance.now() - t0);
         }
         return r;
       }
-      const or = await run("output", ["output", "-json", "-no-color"], dir, steps, log, signal, true);
+      const or = await run("output", [...G, "output", "-json", "-no-color"], dir, steps, log, signal, true);
       if (or.code !== 0) return fail("output");
       const tfOutputs = parseOutputs(or.stdout);
       // Z77: Cloud SQL 서버 CA(공개 정보)는 파일로 빼고 경로만 남긴다 → REPL_TARGET_CA_FILE={tf:db_ca_file}
@@ -272,12 +299,13 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
       return { ok: true, tfOutputs, workDir: dir, steps, elapsedMs: round(performance.now() - t0), log, secretFetched };
     },
     /** init + plan 만 (자원 안 만듦). tools/tf-real.ts plan 이 쓴다. 작업 폴더 이름은 planOnlyId(provider) */
-    async planOnly(provider: Provider, vars: TfVars, signal?: AbortSignal) {
+    async planOnly(provider: Provider, vars: TfVars, signal?: AbortSignal, layout: TfLayout = "v1") {
       const steps: RealStep[] = []; const log: string[] = [];
-      const dir = prepare(provider, planOnlyId(provider));
+      const dir = prepare(provider, planOnlyId(provider), undefined, layout);
+      const G = chdirArgs(layout);
       writeFileSync(join(dir, "terraform.tfvars.json"), JSON.stringify(vars, null, 2));
-      if ((await run("init", ["init", "-input=false", "-no-color"], dir, steps, log, signal)).code !== 0) return { ok: false, steps, log, workDir: dir };
-      const r = await run("plan", ["plan", "-input=false", "-no-color", "-var-file=terraform.tfvars.json"], dir, steps, log, signal);
+      if ((await run("init", [...G, "init", "-input=false", "-no-color"], dir, steps, log, signal)).code !== 0) return { ok: false, steps, log, workDir: dir };
+      const r = await run("plan", [...G, "plan", "-input=false", "-no-color", `-var-file=${up(layout, "terraform.tfvars.json")}`], dir, steps, log, signal);
       const summary = r.stdout.match(/Plan: .*$/m)?.[0];
       return { ok: r.code === 0, steps, log, workDir: dir, summary };
     },
@@ -288,9 +316,11 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
       const found = findWorkDir(workRoot, migrationId);
       if (!found) return { ok: true, skipped: "no_work_dir", workDir: workDirOf(workRoot, migrationId), steps, log, elapsedMs: 0 };
       const dir = found;
-      if ((await run("init", ["init", "-input=false", "-no-color"], dir, steps, log, signal)).code !== 0)
+      const layout: TfLayout = isV2WorkDir(dir) ? "v2" : "v1";   // 작업 폴더 모양대로 (이전 도중 깃발이 바뀌어도 만든 모양으로 지움)
+      const G = chdirArgs(layout);
+      if ((await run("init", [...G, "init", "-input=false", "-no-color"], dir, steps, log, signal)).code !== 0)
         return { ok: false, workDir: dir, steps, log, elapsedMs: round(performance.now() - t0) };
-      const r = await run("destroy", ["destroy", "-input=false", "-no-color", lockTimeout, "-auto-approve", "-var-file=terraform.tfvars.json"], dir, steps, log, signal);
+      const r = await run("destroy", [...G, "destroy", "-input=false", "-no-color", lockTimeout, "-auto-approve", `-var-file=${up(layout, "terraform.tfvars.json")}`], dir, steps, log, signal);
       return { ok: r.code === 0, workDir: dir, steps, log, elapsedMs: round(performance.now() - t0) };
     },
     /** 작업 폴더 목록 (state 가 남은 것 = 클라우드 자원이 남았을 수 있는 것) */

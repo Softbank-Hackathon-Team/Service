@@ -21,7 +21,7 @@ export { unexpectedPlanTypes, type Purpose } from "./common/actions.js";
 export { DEMO_INVENTORY, DEMO_INVENTORY_V2, DEMO_SPEC } from "./common/fixtures.js";
 export type { Target, TargetExtras } from "./common/target.js";
 export { realTerraformEnabled, iacMockEnabled, findWorkDir, readImported, type ImportedInfra, TENANT_DIR_RE, createRealTerraformRunner, fillTfVars, factsFromEnv, factEnvName, parseOutputs, childEnv,
-  workRootOf, workDirOf, PLAN_ONLY_ID, planOnlyId, spawnExec, REAL_MODULE_DIR, DEFAULT_MODULE_ROOT, type Exec, type ExecResult, type RealApplyResult, type RealTerraformRunner } from "./terraform/real-runner.js";
+  workRootOf, workDirOf, PLAN_ONLY_ID, planOnlyId, spawnExec, REAL_MODULE_DIR, REAL_MODULE_BASE_V2, V2_ROOT_DIR, isV2WorkDir, type TfLayout, DEFAULT_MODULE_ROOT, type Exec, type ExecResult, type RealApplyResult, type RealTerraformRunner } from "./terraform/real-runner.js";
 export { dbNetworkFromEnv, withDbNetwork, cidrProblem, DbNetworkError, type DbNetworkSummary } from "./terraform/db-network.js";
 // Z86: 환경 실자원 읽기(읽기 전용 CLI) + 클라우드 서비스 대응표
 export { readInventory, cachedInventory, clearInventoryCache, inventoryToStatus, itemState, type CloudInventory, type InventoryGroup, type InventoryItem, type InventoryDeps } from "./inventory.js";
