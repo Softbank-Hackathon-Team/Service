@@ -118,6 +118,31 @@ variable "service_json" {
   }
 }
 
+# JOBMOD: 관리형 컨테이너 예약 잡 (EventBridge Scheduler → ECS RunTask). 항목 모양 = tf-kinds.ts JobTfVars. 비면 아무것도 안 만듦 (기존 계획 그대로)
+variable "job_json" {
+  type    = string
+  default = "[]"
+  validation {
+    condition     = can(jsondecode(var.job_json)) && length(distinct([for x in jsondecode(var.job_json) : x.id])) == length(jsondecode(var.job_json))
+    error_message = "job_json: id 가 겹침."
+  }
+  validation {
+    condition     = can(jsondecode(var.job_json)) && alltrue([for x in jsondecode(var.job_json) : startswith(x.name, "app-") && length(x.name) <= 58])
+    error_message = "job_json: name 은 app- 로 시작, 58자 이하 (역할 이름이 이름에서 파생)."
+  }
+  # 모듈 안 검증과 같은 규칙을 루트에도 (계획 전에 거부, mock 시험으로 고정): cron 5필드, 요일 간격 금지, 날짜·요일 동시 지정 금지
+  validation {
+    condition = can(jsondecode(var.job_json)) && alltrue([for x in jsondecode(var.job_json) : length(split(" ", trimspace(x.schedule))) == 5 &&
+    !strcontains(element(split(" ", trimspace(x.schedule)), 4), "/")])
+    error_message = "job_json: schedule 은 cron 5필드, 요일 칸의 간격(/) 은 아직 못 옮김."
+  }
+  validation {
+    condition = can(jsondecode(var.job_json)) && alltrue([for x in jsondecode(var.job_json) : length(split(" ", trimspace(x.schedule))) != 5 ||
+    contains(["*", "?"], element(split(" ", trimspace(x.schedule)), 2)) || contains(["*", "?"], element(split(" ", trimspace(x.schedule)), 4))])
+    error_message = "job_json: 날짜 칸과 요일 칸을 둘 다 정한 schedule 은 못 옮김 (cron 은 '또는', EventBridge 는 한쪽이 ? )."
+  }
+}
+
 provider "aws" {
   region = var.region
   # 잘못된 계정에 만드는 사고 방지
@@ -140,7 +165,7 @@ locals {
   queue_dl     = { for id, x in local.queue_all : id => x if contains(local.queue_dl_ids, id) }
   queue        = { for id, x in local.queue_all : id => x if !contains(local.queue_dl_ids, id) }
   # TA5fix: link_outputs 는 IR id 로 합치므로 종류가 달라도 id 가 겹치면 안 된다 (VTA5h: 예전엔 조용히 덮어씀)
-  link_ids = concat(keys(local.postgres), keys(local.cache), keys(local.object_store), keys(local.queue_all), keys(local.service))
+  link_ids = concat(keys(local.postgres), keys(local.cache), keys(local.object_store), keys(local.queue_all), keys(local.service), keys(local.job))
   # 클러스터 없이는 k8s 쪽 종류(namespace·identity)를 안 만든다
   namespace = local.cluster == 1 ? { for n in jsondecode(var.namespace_json) : n.name => n } : {}
   identity  = local.cluster == 1 ? { for i in jsondecode(var.identity_json) : i.id => i } : {}
@@ -167,7 +192,9 @@ locals {
 
   # --- TA13: 관리형 컨테이너 (ECS) ---
   service = { for x in jsondecode(var.service_json) : x.id => x }
-  svc_on  = length(local.service) > 0 ? 1 : 0
+  # JOBMOD: 예약 잡도 ECS 를 쓴다 → 서비스 또는 잡이 있으면 ECS 공용 자원(클러스터·보안 그룹)을 만든다
+  job    = { for x in jsondecode(var.job_json) : x.id => x }
+  svc_on = length(local.service) + length(local.job) > 0 ? 1 : 0
   # DRAFT(ai): env 층엔 ECS 클러스터가 없다 → 앱 루트가 클러스터·보안 그룹·Service Connect 이름 공간을 만든다 (이전마다 해시)
   svc_base = "app-${var.app_name}-${substr(sha1("${var.tenant_id}/${var.app_name}"), 0, 6)}"
   # 비밀 그릇 = 서비스들이 쓰는 이름 합집합 (k8s 신원 모듈과 같은 platform/<tenant>/<app>/<이름>, Builder 가 전체 이름을 넘김)
@@ -185,6 +212,12 @@ locals {
       "${id}.url"  = x.port == null || x.port == 80 ? "http://${id}" : "http://${id}:${x.port}"
     }]...),
   )
+  # JOBMOD: 잡 env 값이 <tf-output:link.<id>.<출력>> 한 덩어리면 같은 apply 의 값으로 풀고, 나머지는 그대로. 못 푼 자리표시가 남으면 계획에서 멈춤 (job_env 검사)
+  job_env_rows = { for id, x in local.job : id => [for e in jsondecode(x.env_json) : {
+    name  = e.name
+    value = try(local.link_values[regex("^<tf-output:link\\.([a-z][a-z0-9-]*\\.[a-z]+)>$", e.value)[0]], e.value)
+  }] }
+  job_cfg = { for id, x in local.job : id => merge(x, { env_json = jsonencode(local.job_env_rows[id]) }) }
   service_cfg = { for id, x in local.service : id => merge(x, {
     env_json = jsonencode([for e in jsondecode(x.env_json) : { name = e.name, value = join("", [for p in e.parts : p.ref == null ? p.lit : local.link_values[p.ref]]) }])
   }) }
@@ -321,12 +354,34 @@ module "service" {
   tags                          = { managed-by = "platform", tenant = var.tenant_id, app = var.app_name }
 }
 
+# JOBMOD: ECS 예약 잡 (잡이 있을 때만). 클러스터·서브넷·보안 그룹은 서비스와 같은 것을 씀
+module "job" {
+  source             = "../kinds/job"
+  for_each           = local.job_cfg
+  cfg                = each.value
+  cluster_arn        = aws_ecs_cluster.svc[0].arn
+  subnet_ids         = jsondecode(var.db_subnet_ids_json)
+  security_group_ids = [aws_security_group.svc[0].id]
+  region             = var.region
+  boundary_arn       = var.app_role_boundary_arn
+  tags               = { managed-by = "platform", tenant = var.tenant_id, app = var.app_name }
+}
+
+resource "terraform_data" "job_env" {
+  lifecycle {
+    precondition {
+      condition     = alltrue(flatten([for id, rows in local.job_env_rows : [for e in rows : !strcontains(e.value, "<tf-output:")]]))
+      error_message = "job_json: env 에 못 푼 <tf-output:…> 자리표시가 남음 (한 덩어리 link 자리표시만 지원, 대상 id·출력 이름 확인). TODO(human): 조각 목록(parts) 지원"
+    }
+  }
+}
+
 # TA5fix: 종류 간 같은 IR id 거부 (link_outputs 가 조용히 덮어쓰지 않게). 계획 단계에서 멈춤
 resource "terraform_data" "kind_ids" {
   lifecycle {
     precondition {
       condition     = length(distinct(local.link_ids)) == length(local.link_ids)
-      error_message = "postgres·cache·objectStore·queue·service 사이에 같은 IR id 가 있음 (IR id 는 전역 유일)."
+      error_message = "postgres·cache·objectStore·queue·service·job 사이에 같은 IR id 가 있음 (IR id 는 전역 유일)."
     }
   }
 }
@@ -361,3 +416,11 @@ output "service_names" {
   value = { for id, m in module.service : id => m.service_name }
 }
 output "ecs_cluster_name" { value = local.svc_on == 1 ? aws_ecs_cluster.svc[0].name : "" }
+
+# JOBMOD: 예약 잡 (IR id → 스케줄 이름 / ECS 가 못 옮긴 칸). 없으면 빈 값
+output "job_names" {
+  value = { for id, m in module.job : id => m.schedule_name }
+}
+output "job_unmapped_fields" {
+  value = { for id, m in module.job : id => m.unmapped_fields }
+}

@@ -119,6 +119,20 @@ variable "service_json" {
   }
 }
 
+# JOBMOD: 관리형 컨테이너 예약 잡 (Cloud Scheduler → Cloud Run job). 항목 모양 = tf-kinds.ts JobTfVars. 비면 아무것도 안 만듦
+variable "job_json" {
+  type    = string
+  default = "[]"
+  validation {
+    condition     = can(jsondecode(var.job_json)) && length(distinct([for x in jsondecode(var.job_json) : x.id])) == length(jsondecode(var.job_json))
+    error_message = "job_json: id 가 겹침."
+  }
+  validation {
+    condition     = can(jsondecode(var.job_json)) && alltrue([for x in jsondecode(var.job_json) : startswith(x.name, "app-") && can(regex("^[a-z]([-a-z0-9]{0,47}[a-z0-9])?$", x.name))])
+    error_message = "job_json: name 은 app- 로 시작하는 소문자·숫자·-, 49자 이하 (SA·스케줄러 이름이 이름에서 파생)."
+  }
+}
+
 provider "google" {
   project = var.project_id
   region  = var.region
@@ -138,7 +152,7 @@ locals {
   queue_dl     = { for id, x in local.queue_all : id => x if contains(local.queue_dl_ids, id) }
   queue        = { for id, x in local.queue_all : id => x if !contains(local.queue_dl_ids, id) }
   # TA5fix: link_outputs 는 IR id 로 합치므로 종류가 달라도 id 가 겹치면 안 된다 (VTA5h: 예전엔 조용히 덮어씀)
-  link_ids  = concat(keys(local.postgres), keys(local.cache), keys(local.object_store), keys(local.queue_all), keys(local.service))
+  link_ids  = concat(keys(local.postgres), keys(local.cache), keys(local.object_store), keys(local.queue_all), keys(local.service), keys(local.job))
   namespace = local.cluster == 1 ? { for n in jsondecode(var.namespace_json) : n.name => n } : {}
   identity  = local.cluster == 1 ? { for i in jsondecode(var.identity_json) : i.id => i } : {}
 
@@ -161,7 +175,10 @@ locals {
 
   # --- TA13: 관리형 컨테이너 (Cloud Run) ---
   service = { for x in jsondecode(var.service_json) : x.id => x }
+  job     = { for x in jsondecode(var.job_json) : x.id => x }
   svc_on  = length(local.service) > 0 ? 1 : 0
+  # JOBMOD: 잡만 있어도 Direct VPC egress·프로젝트 번호가 필요하지는 않지만 서비스와 같은 규칙으로 DB 사설 길을 쓴다
+  job_on = length(local.job) > 0 ? 1 : 0
   # 비밀 그릇 = 서비스들이 쓰는 secret id 합집합 (Builder 가 키마다 하나: app-<앱>-<비밀>-<키>. Cloud Run 은 JSON 키를 못 고름)
   svc_secret_ids = toset(flatten([for x in local.service : [for s in jsondecode(x.secrets_json) : s.secret]]))
   # Cloud Run 주소는 결정적: https://<서비스>-<프로젝트 번호>.<리전>.run.app (모듈 출력 uri 를 쓰면 같은 for_each 안에서 순환)
@@ -178,6 +195,12 @@ locals {
       "${id}.url"  = "https://${x.name}-${local.project_number}.${var.region}.run.app"
     }]...),
   )
+  # JOBMOD: 잡 env 값이 <tf-output:link.<id>.<출력>> 한 덩어리면 같은 apply 의 값으로 풀고, 나머지는 그대로. 못 푼 자리표시가 남으면 계획에서 멈춤
+  job_env_rows = { for id, x in local.job : id => [for e in jsondecode(x.env_json) : {
+    name  = e.name
+    value = try(local.link_values[regex("^<tf-output:link\\.([a-z][a-z0-9-]*\\.[a-z]+)>$", e.value)[0]], e.value)
+  }] }
+  job_cfg = { for id, x in local.job : id => merge(x, { env_json = jsonencode(local.job_env_rows[id]) }) }
   service_cfg = { for id, x in local.service : id => merge(x, {
     env_json = jsonencode([for e in jsondecode(x.env_json) : { name = e.name, value = join("", [for p in e.parts : p.ref == null ? p.lit : local.link_values[p.ref]]) }])
   }) }
@@ -292,12 +315,33 @@ module "service" {
   secret_ids = { for n, x in google_secret_manager_secret.svc : n => x.secret_id }
 }
 
+# JOBMOD: Cloud Run job + Cloud Scheduler (잡이 있을 때만)
+module "job" {
+  source     = "../kinds/job"
+  for_each   = local.job_cfg
+  cfg        = each.value
+  project_id = var.project_id
+  region     = var.region
+  network    = var.network_id
+  subnetwork = local.svc_subnetwork
+  labels     = local.labels
+}
+
+resource "terraform_data" "job_env" {
+  lifecycle {
+    precondition {
+      condition     = alltrue(flatten([for id, rows in local.job_env_rows : [for e in rows : !strcontains(e.value, "<tf-output:")]]))
+      error_message = "job_json: env 에 못 푼 <tf-output:…> 자리표시가 남음 (한 덩어리 link 자리표시만 지원, 대상 id·출력 이름 확인). TODO(human): 조각 목록(parts) 지원"
+    }
+  }
+}
+
 # TA5fix: 종류 간 같은 IR id 거부 (link_outputs 가 조용히 덮어쓰지 않게). 계획 단계에서 멈춤
 resource "terraform_data" "kind_ids" {
   lifecycle {
     precondition {
       condition     = length(distinct(local.link_ids)) == length(local.link_ids)
-      error_message = "postgres·cache·objectStore·queue·service 사이에 같은 IR id 가 있음 (IR id 는 전역 유일)."
+      error_message = "postgres·cache·objectStore·queue·service·job 사이에 같은 IR id 가 있음 (IR id 는 전역 유일)."
     }
   }
 }
@@ -333,4 +377,12 @@ output "service_names" {
 }
 output "service_urls" {
   value = { for id, m in module.service : id => m.uri }
+}
+
+# JOBMOD: 예약 잡 (IR id → Cloud Run job 이름 / Cloud Run 이 못 옮긴 칸). 없으면 빈 값
+output "job_names" {
+  value = { for id, m in module.job : id => m.job_name }
+}
+output "job_unmapped_fields" {
+  value = { for id, m in module.job : id => m.unmapped_fields }
 }
