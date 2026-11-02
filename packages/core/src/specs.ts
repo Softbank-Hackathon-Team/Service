@@ -50,6 +50,10 @@ export function applySpecPatch(base: { spec: unknown; fieldMeta: SpecMeta | null
   for (const c of ops.changes ?? []) {
     setAt(spec, c.path, structuredClone(c.value));
     fieldMeta[c.path] = { source: "human", confidence: 1, needs_review: false };
+    // VPA3 버그 수정: 칸 전체(예: service.env)를 사람이 다시 썼으면 그 아래 칸 표시(service.env.<이름>)도 사람이 본 것으로.
+    //   안 그러면 지운 환경변수의 검토 표시가 남아 T04 가 영원히 막힌다. DRAFT(ai): 아래 칸 표시는 지우지 않고 human 으로 덮는다
+    for (const k of Object.keys(fieldMeta))
+      if (k.startsWith(`${c.path}.`)) fieldMeta[k] = { source: "human", confidence: 1, needs_review: false };
     if (!changed.includes(c.path)) changed.push(c.path);
   }
   for (const p of ops.confirm ?? []) {

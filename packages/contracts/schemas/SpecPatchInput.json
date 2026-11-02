@@ -44,21 +44,29 @@
       "maxItems": 20,
       "type": "array",
       "items": {
-        "type": "string",
-        "enum": [
-          "schemaVersion",
-          "app.name",
-          "service.image",
-          "service.port",
-          "service.healthPath",
-          "service.replicas",
-          "service.cpu",
-          "service.memory",
-          "service.env",
-          "service.secretRefs",
-          "database",
-          "ingress.hostname",
-          "ingress.entry"
+        "anyOf": [
+          {
+            "type": "string",
+            "enum": [
+              "schemaVersion",
+              "app.name",
+              "service.image",
+              "service.port",
+              "service.healthPath",
+              "service.replicas",
+              "service.cpu",
+              "service.memory",
+              "service.env",
+              "service.secretRefs",
+              "database",
+              "ingress.hostname",
+              "ingress.entry"
+            ]
+          },
+          {
+            "type": "string",
+            "pattern": "^service\\.env\\.[A-Za-z_][A-Za-z0-9_]{0,127}$"
+          }
         ]
       }
     },

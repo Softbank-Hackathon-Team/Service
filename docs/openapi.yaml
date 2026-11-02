@@ -5117,6 +5117,9 @@ components:
         - "items"
         - "recorded"
       additionalProperties: false
+    SpecEnvFieldPath:
+      type: "string"
+      pattern: "^service\\.env\\.[A-Za-z_][A-Za-z0-9_]{0,127}$"
     SpecFieldPath:
       type: "string"
       enum:
@@ -5157,7 +5160,9 @@ components:
           maxItems: 20
           type: "array"
           items:
-            $ref: "#/components/schemas/SpecFieldPath"
+            anyOf:
+              - $ref: "#/components/schemas/SpecFieldPath"
+              - $ref: "#/components/schemas/SpecEnvFieldPath"
         acceptDraft:
           type: "integer"
           minimum: 1

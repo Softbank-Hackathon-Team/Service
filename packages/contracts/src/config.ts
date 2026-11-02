@@ -39,6 +39,7 @@ const COMMON: Record<string, Rule> = {
   BOSS_SUPERVISE_SEC: { check: num({ min: 1 }) },
   ROLLBACK_WINDOW_SEC: { check: num({ min: 0 }) },
   REPL_MAX_MARKER_RTT_MS: { check: num({ min: 0 }) },
+  SPEC_MIN_CONFIDENCE: { check: num({ min: 0, max: 1 }) },   // DRAFT(ai): 0 = 꺼짐(기본)
   SHUTDOWN_HARD_TIMEOUT_MS: { check: num({ min: 0 }) },
 };
 export const CONFIG_RULES = {

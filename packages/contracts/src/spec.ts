@@ -83,13 +83,17 @@ export const SpecFieldPath = z.enum([
   "service.cpu", "service.memory", "service.env", "service.secretRefs", "database", "ingress.hostname", "ingress.entry",
 ]);
 export type SpecFieldPath = z.infer<typeof SpecFieldPath>;
+// service.env.<이름> (환경변수 칸 하나). 이름 모양은 POSIX 환경변수 이름
+export const SpecEnvFieldPath = z.string().regex(/^service\.env\.[A-Za-z_][A-Za-z0-9_]{0,127}$/);
 export const SpecPatchInput = z.object({
   baseVersion: z.number().int().min(1),
   // DRAFT(ai) VPA2b: 값 바꾸기 항목은 value 키가 꼭 있어야 한다. 빠지면 400 (예전엔 칸이 조용히 지워졌다).
   //   지우기는 명시적 null 로만 말하고, null 이 그 칸의 모양에 안 맞으면(지금은 nullable 칸 없음) 라우트의 모양 검사가 400 으로 막는다
   changes: z.array(z.object({ path: SpecFieldPath, value: z.unknown() }).strict()
     .refine((c) => "value" in c, { message: "value 가 있어야 한다 (지우려면 명시적 null)", path: ["value"] })).max(20).optional(),
-  confirm: z.array(SpecFieldPath).max(20).optional(),
+  // VPA3 버그 수정: 가져오기는 평문 비밀 환경변수를 칸 하나씩 service.env.<이름> 키로 검토 필요 표시한다(adapters normalize.ts).
+  //   예전엔 confirm 이 그 키를 400 으로 막아 검토 칸이 영원히 남고 T04(POST /plan)가 409 로 막혔다 → 그 모양 키도 받는다
+  confirm: z.array(z.union([SpecFieldPath, SpecEnvFieldPath])).max(20).optional(),
   acceptDraft: z.number().int().min(1).optional(),
 }).strict().refine((b) => (b.changes?.length ?? 0) + (b.confirm?.length ?? 0) > 0 || b.acceptDraft !== undefined,
   { message: "changes, confirm, acceptDraft 중 하나는 있어야 한다" });
