@@ -519,6 +519,146 @@
             "description": "INTERNAL"
           }
         }
+      },
+      "post": {
+        "operationId": "postEnvironments",
+        "tags": [
+          "environments"
+        ],
+        "summary": "/api/v1/environments",
+        "description": "코드: apps/api/src/routes/environments.ts",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateEnvironmentBody"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devTenant": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DevTenant"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentView"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400",
+            "description": "BAD_REQUEST (Zod 검증 실패)"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401",
+            "description": "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403",
+            "description": "TUNNEL_READ_ONLY (개발 헤더 인증 + Cloudflare 터널로 온 쓰기, Z47)"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409",
+            "description": "ApiError"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429",
+            "description": "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500",
+            "description": "INTERNAL"
+          }
+        }
+      }
+    },
+    "/api/v1/environments/{id}": {
+      "delete": {
+        "operationId": "deleteEnvironmentsById",
+        "tags": [
+          "environments"
+        ],
+        "summary": "/api/v1/environments/{id}",
+        "description": "코드: apps/api/src/routes/environments.ts",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devTenant": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/DevTenant"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "null"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400",
+            "description": "BAD_REQUEST (Zod 검증 실패)"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401",
+            "description": "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403",
+            "description": "TUNNEL_READ_ONLY (개발 헤더 인증 + Cloudflare 터널로 온 쓰기, Z47)"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404",
+            "description": "ApiError"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409",
+            "description": "ApiError"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429",
+            "description": "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500",
+            "description": "INTERNAL"
+          }
+        }
       }
     },
     "/api/v1/environments/{id}/agent-reports": {
@@ -606,6 +746,87 @@
           "500": {
             "$ref": "#/components/responses/E500",
             "description": "INTERNAL"
+          }
+        }
+      }
+    },
+    "/api/v1/environments/{id}/connection-link": {
+      "post": {
+        "operationId": "postEnvironmentsByIdConnectionlink",
+        "tags": [
+          "environments"
+        ],
+        "summary": "/api/v1/environments/{id}/connection-link",
+        "description": "코드: apps/api/src/routes/environments.ts",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devTenant": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/DevTenant"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionLink"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400",
+            "description": "BAD_REQUEST (Zod 검증 실패)"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401",
+            "description": "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403",
+            "description": "TUNNEL_READ_ONLY (개발 헤더 인증 + Cloudflare 터널로 온 쓰기, Z47)"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404",
+            "description": "ApiError"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409",
+            "description": "ApiError"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429",
+            "description": "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500",
+            "description": "INTERNAL"
+          },
+          "501": {
+            "$ref": "#/components/responses/E501",
+            "description": "ApiError"
+          },
+          "503": {
+            "$ref": "#/components/responses/E503",
+            "description": "ApiError"
           }
         }
       }
@@ -1146,6 +1367,109 @@
           "409": {
             "$ref": "#/components/responses/E409",
             "description": "AZURE_MOCK_DISABLED (AZURE_MOCK=0인데 azure_mock 환경, adapters RunnerUnavailable)"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429",
+            "description": "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500",
+            "description": "INTERNAL"
+          }
+        }
+      }
+    },
+    "/api/v1/environments/{id}/verify": {
+      "post": {
+        "operationId": "postEnvironmentsByIdVerify",
+        "tags": [
+          "environments"
+        ],
+        "summary": "/api/v1/environments/{id}/verify",
+        "description": "코드: apps/api/src/routes/environments.ts",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyBody"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devTenant": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/DevTenant"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "envId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "status": {
+                      "type": "string",
+                      "const": "verifying"
+                    },
+                    "queued": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "envId",
+                    "status",
+                    "queued"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400",
+            "description": "BAD_REQUEST (Zod 검증 실패)"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401",
+            "description": "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403",
+            "description": "TUNNEL_READ_ONLY (개발 헤더 인증 + Cloudflare 터널로 온 쓰기, Z47)"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404",
+            "description": "ApiError"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409",
+            "description": "ApiError"
           },
           "429": {
             "$ref": "#/components/responses/E429",
@@ -5419,6 +5743,40 @@
         ],
         "additionalProperties": false
       },
+      "ConnectionLink": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/ConnectionLinkKind"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "command": {
+            "type": "string"
+          },
+          "externalId": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "expiresAt"
+        ],
+        "additionalProperties": false
+      },
+      "ConnectionLinkKind": {
+        "type": "string",
+        "enum": [
+          "aws_quick_create",
+          "gcp_cloud_shell",
+          "onprem_install"
+        ]
+      },
       "ConnectionStatus": {
         "type": "string",
         "enum": [
@@ -5553,6 +5911,32 @@
           "db",
           "storage",
           "fixed"
+        ],
+        "additionalProperties": false
+      },
+      "CreateEnvironmentBody": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "$ref": "#/components/schemas/Provider"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "region": {
+            "type": "string",
+            "maxLength": 32
+          },
+          "clusterName": {
+            "type": "string",
+            "maxLength": 100
+          }
+        },
+        "required": [
+          "provider",
+          "name"
         ],
         "additionalProperties": false
       },
@@ -7930,6 +8314,18 @@
           "reobserve",
           "stepStartedAt",
           "observedAt"
+        ],
+        "additionalProperties": false
+      },
+      "VerifyBody": {
+        "type": "object",
+        "properties": {
+          "accountId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "accountId"
         ],
         "additionalProperties": false
       },

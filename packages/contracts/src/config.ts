@@ -29,6 +29,12 @@ const pgUrl: Check = (v) => {
   catch { return "주소 모양이 아님"; }
 };
 
+// 입력층 L2: CloudFormation 빠른 생성 링크의 templateURL 은 https 주소여야 한다 (S3 주소만 되는 건 AWS 쪽 규칙)
+const httpsUrl: Check = (v) => {
+  try { return new URL(v.trim()).protocol === "https:" ? null : "https:// 주소가 아님"; }
+  catch { return "주소 모양이 아님"; }
+};
+
 // 이름 → 검사. required 가 아니면 비어 있어도 된다 (비면 코드 기본값)
 interface Rule { check?: Check; required?: true }
 const COMMON: Record<string, Rule> = {
@@ -51,6 +57,9 @@ export const CONFIG_RULES = {
     RATE_LIMIT_WRITE_PER_MIN: { check: num({ min: 0 }) },
     COST_CACHE_TTL_MS: { check: num({ min: 0 }) },
     REPORT_CHAIN_LIMIT: { check: num({ int: true, min: 1 }) },
+    // 입력층 L2: AWS 연결 링크. 비면 링크 발급이 503 CONNECT_NOT_CONFIGURED (서버는 뜬다)
+    CONNECT_TEMPLATE_URL: { check: httpsUrl },
+    PLATFORM_PRINCIPAL_ARN: { check: (v) => (/^arn:aws:iam::\d{12}:role\/[\w+=,.@\/-]+$/.test(v.trim()) ? null : "IAM 역할 ARN 모양이 아님") },
   },
   worker: {
     ...COMMON,
