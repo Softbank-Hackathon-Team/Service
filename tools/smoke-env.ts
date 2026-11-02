@@ -41,9 +41,13 @@ export function smokeConfirmBody(view: { version: number; needsReview?: string[]
 // VSMOKE: 가져오기가 사람 확인 칸(needs_review)을 남기면 POST /plan 이 409 GUARD_FAILED("N field(s) need review").
 //   aws 데모가 ECS(v2, I9)가 된 뒤 IMPORT_IR=v2 회차는 ECS 예약값 → 요청량(0.9) 같은 칸이 생긴다. 화면이 하듯 그 키를 그대로 confirm 한다
 //   (값은 안 바꾸고 "봤다"만). AI 초안 판이면 acceptDraft 로 먼저 받아들인다. 확인 칸이 없으면 아무 요청도 안 보낸다(깃발 꺼짐 회차 그대로)
-export interface SmokeSpecView { version: number; source: "accepted" | "ai_draft"; needsReview: string[]; needsReviewV2?: string[] }
+export interface SmokeSpecView { version: number; source: "accepted" | "ai_draft"; needsReview: string[]; needsReviewV2?: string[]; spec?: { app?: { name?: string } } }
 export function smokeReviewBody(v: SmokeSpecView): Record<string, unknown> | null {
-  const keys = v.needsReviewV2 ?? v.needsReview;
+  const keys = [...(v.needsReviewV2 ?? v.needsReview)];
+  // E2EKINDS: v2 판인데 v2 칸은 다 풀리고 v1 칸(service.cpu·memory)만 남으면 가드(spec_versions.needs_review)가 여전히 409.
+  //   smokeConfirmBody 와 같은 규칙으로 components.<app.name>.resources 를 confirm 한다 (k8s 출발 gcp 데모에서 걸림)
+  const app = v.spec?.app?.name;
+  if (v.needsReviewV2 !== undefined && v.needsReview.length && app && !keys.includes(`components.${app}.resources`)) keys.push(`components.${app}.resources`);
   if (!keys.length && v.source !== "ai_draft") return null;
   return { baseVersion: v.version, ...(v.source === "ai_draft" ? { acceptDraft: v.version } : {}),
     ...(keys.length ? { confirm: keys.slice(0, 20) } : {}) };
