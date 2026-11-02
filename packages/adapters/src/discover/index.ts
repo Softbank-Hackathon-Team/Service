@@ -71,6 +71,11 @@ async function withTempKube<T>(f: (path: string) => Promise<T>): Promise<T> {
 const cliReason = (e: unknown, bin: string) =>
   e instanceof CliError && e.missing ? `${bin} 명령이 없음` : (e as Error).message.slice(0, 200);
 
+// VNEW DRAFT(ai): 클러스터는 있는데 앱 Deployment 가 없을 때(빈 클러스터·시스템 것만), v2 에서 다른 출발 갈래(ECS·VM·Cloud Run)에 앱이 있으면
+//   그 갈래만으로 계속한다 (예전엔 클러스터가 있다는 이유만으로 SOURCE_INCOMPLETE 로 멈춰 Cloud Run·ECS 앱을 못 가져왔다). 다른 오류(권한·연결)는 그대로 던진다
+const EMPTY_APP = (note: string) => ({ items: [] as Obj[], namespace: "", counts: {} as Record<string, number>, notes: [note] });
+const noAppInCluster = (e: unknown) => (e as { code?: string } | null)?.code === "SOURCE_INCOMPLETE";
+
 // ── AWS ───────────────────────────────────────────────────────────────
 export async function discoverAws(d: CliDeps = {}, opts: DiscoverOpts = {}): Promise<RawInventory> {
   const env = d.env ?? process.env, region = awsRegion(env), r = ["--region", region, "--output", "json"];
@@ -97,7 +102,11 @@ export async function discoverAws(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
     try { await runText(d, "aws", ["eks", "update-kubeconfig", "--name", cl.name, "--kubeconfig", kc, "--region", region]); }
     catch (e) { throw sourceFail(e, `EKS ${cl.name} kubeconfig 만들기 실패 (${cliReason(e, "aws")})`); }
     try { return await readApp(d, ["--kubeconfig", kc], opts); }
-    catch (e) { if (e instanceof CliError) throw sourceFail(e, `EKS ${cl.name} 쿠버네티스 API 읽기 실패 (access entry 확인): ${e.message.slice(0, 160)}`); throw e; }
+    catch (e) {
+      if (e instanceof CliError) throw sourceFail(e, `EKS ${cl.name} 쿠버네티스 API 읽기 실패 (access entry 확인): ${e.message.slice(0, 160)}`);
+      if (opts.ir === "v2" && (hasEcs || hasVm) && noAppInCluster(e)) return EMPTY_APP(`EKS ${cl.name} 에 앱 Deployment 없음 → ${hasEcs ? "ECS" : "VM"} 만 가져옴`);
+      throw e;
+    }
   });
 
   // I4: 앱 신원의 IAM 정책 (v2 + 옵션 켬). 못 읽어도 앱·DB 는 계속 (notes 에 이유)
@@ -157,15 +166,21 @@ export async function discoverGcp(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
   //   DRAFT(ai): 따로 깃발 없음 — 가져오기 v2(IMPORT_IR=v2) 면 켜짐 (ECS 와 같음)
   const run = opts.ir === "v2" ? await readCloudRun(d, project, env).catch((e) => ({ items: [] as Obj[], counts: {}, notes: [`Cloud Run 못 읽음: ${cliReason(e, "gcloud")}`] })) : null;
   const hasRun = (run?.items ?? []).some((i) => i.kind === "cloudrun.service");
-  // VMIMPORT×CRIMPORT: GKE·VM·Cloud Run 서비스 셋 다 없을 때만 멈춘다
-  if (!cl && !(vm?.items ?? []).length && !hasRun) throw incomplete(env.IMPORT_GCP_GKE_CLUSTER ? `GKE 클러스터 ${env.IMPORT_GCP_GKE_CLUSTER} 없음` : `프로젝트 ${project} 에 GKE 클러스터 없음${vm ? ` (VM 도 없음${vm.notes.length ? `: ${vm.notes[0]}` : ""})` : ""}${run ? " (Cloud Run 서비스도 없음)" : ""}`);
+  const hasVm = (vm?.items ?? []).length > 0;
+  // VMIMPORT×CRIMPORT: GKE·VM·Cloud Run 서비스 셋 다 없을 때만 멈춘다. VNEW: Cloud Run 을 못 읽은 경우 이유도 붙인다 (없음과 못 읽음 구별)
+  const runWhy = run?.notes.find((n) => n.startsWith("Cloud Run 못 읽음"));
+  if (!cl && !hasVm && !hasRun) throw incomplete(env.IMPORT_GCP_GKE_CLUSTER ? `GKE 클러스터 ${env.IMPORT_GCP_GKE_CLUSTER} 없음` : `프로젝트 ${project} 에 GKE 클러스터 없음${vm ? ` (VM 도 없음${vm.notes.length ? `: ${vm.notes[0]}` : ""})` : ""}${run ? ` (Cloud Run 서비스도 없음${runWhy ? `: ${runWhy.slice(0, 200)}` : ""})` : ""}`);
   const name = cl ? String(cl.name) : "", loc = cl ? String(cl.location ?? cl.zone ?? "") : "";
 
   const app = !cl ? { items: [] as Obj[], namespace: "", counts: {} as Record<string, number>, notes: [] as string[] } : await withTempKube(async (kc) => {
     try { await runText(d, "gcloud", ["container", "clusters", "get-credentials", name, "--location", loc, "--project", project], { KUBECONFIG: kc }); }
     catch (e) { throw sourceFail(e, `GKE ${name} kubeconfig 만들기 실패 (${cliReason(e, "gcloud")})`); }
     try { return await readApp(d, ["--kubeconfig", kc], opts); }
-    catch (e) { if (e instanceof CliError) throw sourceFail(e, `GKE ${name} 쿠버네티스 API 읽기 실패: ${e.message.slice(0, 160)}`); throw e; }
+    catch (e) {
+      if (e instanceof CliError) throw sourceFail(e, `GKE ${name} 쿠버네티스 API 읽기 실패: ${e.message.slice(0, 160)}`);
+      if (opts.ir === "v2" && (hasRun || hasVm) && noAppInCluster(e)) return EMPTY_APP(`GKE ${name} 에 앱 Deployment 없음 → ${[hasRun ? "Cloud Run" : "", hasVm ? "VM" : ""].filter(Boolean).join("·")} 만 가져옴`);
+      throw e;
+    }
   });
 
   const sqls = arr(await side("Cloud SQL", async () => arr(await runJson(d, "gcloud", ["sql", "instances", "list", ...p])), notes))
