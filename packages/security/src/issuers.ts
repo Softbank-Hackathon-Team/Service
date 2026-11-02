@@ -78,7 +78,8 @@ export function awsStsIssuer(o: { sts: StsApi; mock?: boolean }): ProviderIssuer
       return {
         material: { kind: "aws", accessKeyId: c.AccessKeyId, secretAccessKey: c.SecretAccessKey, sessionToken: c.SessionToken },
         expiresAt: c.Expiration, ttlSec: input.DurationSeconds,
-        detail: { assumedRoleArn: r.AssumedRoleUser?.Arn ?? null, sessionName: input.RoleSessionName, sessionPolicyChars: input.Policy?.length ?? 0 },
+        // SECAUDIT: 빌린 역할 ARN 안 계정 ID 는 감사·장부에 안 남긴다 (역할 이름·세션 이름만)
+        detail: { assumedRoleArn: maskArnAccount(r.AssumedRoleUser?.Arn ?? null), sessionName: input.RoleSessionName, sessionPolicyChars: input.Policy?.length ?? 0 },
       };
     },
     // 고객 역할을 건드리지 않는다. 보관함 삭제 + 만료 대기 (위 설명)
@@ -168,4 +169,9 @@ export function mockIssuer(provider: Provider): ProviderIssuer & { revoked: stri
     },
     async revoke(ctx) { revoked.push(ctx.roleRef); return { hardRevoked: ctx.hard, detail: { method: ctx.hard ? "mock_hard" : "drop_and_expire" } }; },
   };
+}
+
+/** SECAUDIT: arn:aws:sts::123456789012:assumed-role/x/y → arn:aws:sts::<account>:assumed-role/x/y */
+export function maskArnAccount(arn: string | null): string | null {
+  return arn === null ? null : arn.replace(/^(arn:aws[a-z-]*:[a-z0-9-]*:[a-z0-9-]*:)\d{12}(?=:)/, "$1<account>");
 }

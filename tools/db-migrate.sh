@@ -100,6 +100,7 @@ marker_sql() {
     0028) echo "to_regclass('public.personal_tokens') IS NOT NULL" ;;
     0025) echo "EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agent_runs_kind_check' AND pg_get_constraintdef(oid) LIKE '%failure_analysis%')" ;;
     0027) echo "to_regclass('public.agent_enroll_tokens') IS NOT NULL" ;;
+    0033) echo "to_regclass('public.infra_ready') IS NOT NULL" ;;
     *) echo "" ;;
   esac
 }

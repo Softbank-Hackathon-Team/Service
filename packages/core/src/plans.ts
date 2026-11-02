@@ -63,15 +63,24 @@ export async function loadLatestApproval(tx: Tx, migrationId: string):
 }
 
 // 자원 생성 → 배포로 넘길 때 "도착 자원 준비됨" (계약 InfraReady)
+// SECAUDIT: 출력 값(DB 주소·ARN)은 infra_ready 표(0031)에만. 감사에는 출력 이름 목록만 남긴다 (감사는 못 지우고 화면·보고서·LLM 으로 퍼짐)
 export async function saveInfraReady(tx: Tx, v: InfraReady) {
-  await writeAudit(tx, v.tenantId, { actor: "worker", action: "infra.ready", target: v.migrationId,
-    result: "ok", detail: { infraReady: InfraReady.parse(v) } });
+  const r = InfraReady.parse(v);
+  await tx.query(`INSERT INTO infra_ready (tenant_id, migration_id, plan_id, tf_outputs, helm_values_key) VALUES ($1, $2, $3, $4, $5)`,
+    [r.tenantId, r.migrationId, r.planId, r.tfOutputs, r.helmValuesKey]);
+  await writeAudit(tx, r.tenantId, { actor: "worker", action: "infra.ready", target: r.migrationId,
+    result: "ok", detail: { planId: r.planId, outputs: Object.keys(r.tfOutputs).sort() } });
 }
 
 export async function loadInfraReady(tx: Tx, migrationId: string): Promise<InfraReady | null> {
+  const t = await tx.query(
+    `SELECT tenant_id AS "tenantId", migration_id AS "migrationId", plan_id AS "planId", tf_outputs AS "tfOutputs", helm_values_key AS "helmValuesKey"
+       FROM infra_ready WHERE migration_id = $1 ORDER BY id DESC LIMIT 1`, [migrationId]);
+  if (t.rows[0]) return InfraReady.parse(t.rows[0]);
+  // 0031 전에 쓴 옛 줄 (감사 detail.infraReady). 새로 쓰지는 않는다
   const q = await tx.query(
     `SELECT detail->'infraReady' AS v FROM audit_events
-      WHERE action = 'infra.ready' AND target = $1 ORDER BY seq DESC LIMIT 1`, [migrationId]);
+      WHERE action = 'infra.ready' AND target = $1 AND detail ? 'infraReady' ORDER BY seq DESC LIMIT 1`, [migrationId]);
   const raw = q.rows[0]?.v;
   return raw ? InfraReady.parse(raw) : null;
 }
