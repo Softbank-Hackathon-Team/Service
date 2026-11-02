@@ -170,3 +170,80 @@ test("PREVIDS 경계: 앞 판 ids 모양이 틀려도(손상) 가져오기는 �
   assert.equal(v.length, 2);
   assert.deepEqual(v[1]!.ids, v[0]!.ids);
 });
+
+// PREVIDS2: 다시 가져올 때 사람이 손댄 칸 유지
+const HUMAN_RES = { request: { cpuMilli: 200, memMiB: 256 } };
+const CK = "components.shop-cleanup.resources", PK = "components.shop-cleanup.probes";
+/** 사람이 PATCH 한 것처럼 가장 새 판 위에 새 판을 쌓는다: resources 를 바꾸고(source human), probes 는 확인만(needs_review false) */
+async function humanPatch(id: string) {
+  const [last] = (await owner.query("SELECT version, spec, field_meta, spec_v2 FROM spec_versions WHERE migration_id=$1 ORDER BY version DESC LIMIT 1", [id])).rows as Array<{ version: number; spec: any; field_meta: any; spec_v2: any }>;
+  const v2 = structuredClone(last!.spec_v2);
+  v2.spec.components.find((c: { id: string }) => c.id === "shop-cleanup").props.resources = HUMAN_RES;
+  v2.fieldMeta[CK] = { source: "human", confidence: 1, needs_review: false };
+  v2.fieldMeta[PK] = { ...v2.fieldMeta[PK], needs_review: false };
+  await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta, spec_v2) VALUES ($1,$2,$3,$4,$5,$6)`,
+    [T, id, last!.version + 1, last!.spec, last!.field_meta, v2]);
+  await owner.query("UPDATE migrations SET status='importing' WHERE id=$1", [id]);
+}
+const lastV2 = async (id: string) => ((await owner.query("SELECT version, spec_v2 FROM spec_versions WHERE migration_id=$1 ORDER BY version DESC LIMIT 1", [id])).rows[0]) as { version: number; spec_v2: any };
+const resOf = (v2: any) => v2.spec.components.find((c: { id: string }) => c.id === "shop-cleanup").props.resources;
+const NOTE = "출발 값이 바뀜, 앞서 사람이 정한 값 있음";
+
+test("PREVIDS2 첫 가져오기: 아무 영향 없음 (표시는 가져온 그대로, 사람 표시 없음)", { skip }, async () => {
+  process.env.IMPORT_IR = "v2";
+  const id = await seed("onprem");
+  await imp.handleImport(job(id));
+  const { spec_v2 } = await lastV2(id);
+  assert.deepEqual(resOf(spec_v2), {});
+  assert.equal(spec_v2.fieldMeta[CK].needs_review, true);
+  assert.notEqual(spec_v2.fieldMeta[CK].source, "human");
+  assert.ok(!JSON.stringify(spec_v2.fieldMeta).includes(NOTE));
+  const a = await owner.query("SELECT detail FROM audit_events WHERE target=$1 AND action='migration.spec_review'", [id]);
+  assert.ok(!String(a.rows[0]?.detail?.note ?? "").includes("앞 판 사람 수정"));
+});
+
+test("PREVIDS2 유지: 출발 값이 그대로면 사람이 고친 값·표시와 확인한 칸이 새 판에도 그대로", { skip }, async () => {
+  process.env.IMPORT_IR = "v2";
+  const id = await seed("onprem");
+  await imp.handleImport(job(id));
+  await humanPatch(id);
+  await imp.handleImport(job(id));
+  assert.equal((await row(id)).status, "spec_review");
+  const { version, spec_v2 } = await lastV2(id);
+  assert.equal(version, 3);
+  assert.deepEqual(resOf(spec_v2), HUMAN_RES);
+  assert.deepEqual(spec_v2.fieldMeta[CK], { source: "human", confidence: 1, needs_review: false });
+  assert.equal(spec_v2.fieldMeta[PK].needs_review, false, "확인한 칸은 확인 상태로");
+  assert.match(spec_v2.fieldMeta[PK].source, /probes/, "확인만 한 칸은 출처 그대로");
+  // 고치지도 확인하지도 않은 칸은 가져온 그대로(다시 검토 표시 유지)
+  const first = (await owner.query("SELECT spec_v2 FROM spec_versions WHERE migration_id=$1 AND version=1", [id])).rows[0].spec_v2;
+  for (const k of Object.keys(first.fieldMeta).filter((x) => x !== CK && x !== PK)) assert.deepEqual(spec_v2.fieldMeta[k], first.fieldMeta[k], `손대지 않은 칸은 가져온 그대로: ${k}`);
+  assert.deepEqual(Object.keys(spec_v2.fieldMeta).sort(), Object.keys(first.fieldMeta).sort());
+});
+
+test("PREVIDS2 달라짐: 출발 값이 바뀌었으면 새 값 + needs_review=true + 메모 (사람 값은 버림), 값이 안 바뀐 확인 칸은 유지", { skip }, async () => {
+  process.env.IMPORT_IR = "v2";
+  const id = await seed("onprem");
+  await imp.handleImport(job(id));
+  await humanPatch(id);
+  const src = adapters.DEMO_INVENTORY_V2.onprem!;
+  const orig = src.items;
+  src.items = (orig as Array<any>).map((i) => i.kind !== "k8s.cronjob" ? i : (() => {
+    const c = JSON.parse(JSON.stringify(i));
+    c.spec.jobTemplate.spec.template.spec.containers[0].resources = { requests: { cpu: "500m", memory: "512Mi" }, limits: { cpu: "500m", memory: "512Mi" } };
+    return c;
+  })());
+  try { await imp.handleImport(job(id)); } finally { src.items = orig; }
+  const st = await row(id);
+  const why = await owner.query("SELECT detail FROM audit_events WHERE target=$1 AND action='migration.failed'", [id]);
+  assert.equal(st.status, "spec_review", `${st.failure_code} ${JSON.stringify(why.rows[0]?.detail?.error)}`);
+  const { spec_v2 } = await lastV2(id);
+  assert.notDeepEqual(resOf(spec_v2), HUMAN_RES);
+  assert.notDeepEqual(resOf(spec_v2), {});
+  assert.equal(spec_v2.fieldMeta[CK].needs_review, true);
+  assert.notEqual(spec_v2.fieldMeta[CK].source, "human");
+  assert.ok(String(spec_v2.fieldMeta[CK].rationale).includes(NOTE));
+  assert.equal(spec_v2.fieldMeta[PK].needs_review, false, "출발 값이 안 바뀐 확인 칸(probes)은 확인 유지");
+  const a = await owner.query("SELECT detail FROM audit_events WHERE target=$1 AND action='migration.spec_review' ORDER BY at DESC LIMIT 1", [id]);
+  assert.match(String(a.rows[0]?.detail?.note), /유지 1칸, 출발 값 바뀌어 다시 검토 1칸/);
+});
