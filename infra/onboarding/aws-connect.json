@@ -1,0 +1,319 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "플랫폼 연결: 관찰 역할(svc-observe)·실행 역할(svc-operate)과 EKS 접근 항목을 만든다 (자동 생성, 직접 고치지 않음)",
+  "Parameters": {
+    "ExternalId": {
+      "Type": "String",
+      "MinLength": 32,
+      "AllowedPattern": "^[A-Za-z0-9+=,.@:/-]+$",
+      "Description": "플랫폼이 알려 준 값 그대로. 역할을 빌릴 때 같이 내야 하는 비밀 아닌 확인값"
+    },
+    "PlatformPrincipalArn": {
+      "Type": "String",
+      "AllowedPattern": "^arn:aws:iam::\\d{12}:role/.+$",
+      "ConstraintDescription": "플랫폼 워커 역할 ARN(arn:aws:iam::<12자리>:role/...)만. 사용자·:root는 거부",
+      "Description": "역할을 빌릴 수 있는 플랫폼 쪽 역할 하나"
+    },
+    "EksClusterName": {
+      "Type": "String",
+      "MinLength": 1,
+      "Description": "이전 대상 EKS 클러스터 이름"
+    },
+    "CreateBoundaryPolicy": {
+      "Type": "String",
+      "Default": "true",
+      "AllowedValues": [
+        "true",
+        "false"
+      ],
+      "Description": "같은 계정에 platform-app-boundary 정책이 이미 있으면 false (이름 충돌 방지)"
+    }
+  },
+  "Conditions": {
+    "CreateBoundary": {
+      "Fn::Equals": [
+        {
+          "Ref": "CreateBoundaryPolicy"
+        },
+        "true"
+      ]
+    }
+  },
+  "Resources": {
+    "BoundaryPolicy": {
+      "Type": "AWS::IAM::ManagedPolicy",
+      "Condition": "CreateBoundary",
+      "Properties": {
+        "ManagedPolicyName": "platform-app-boundary",
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "OwnSecretsOnly",
+              "Effect": "Allow",
+              "Action": [
+                "secretsmanager:DescribeSecret",
+                "secretsmanager:GetSecretValue"
+              ],
+              "Resource": [
+                "arn:aws:secretsmanager:ap-northeast-2:*:secret:platform/*",
+                "arn:aws:secretsmanager:ap-northeast-2:*:secret:rds!*"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "OperatePolicy": {
+      "Type": "AWS::IAM::ManagedPolicy",
+      "Properties": {
+        "ManagedPolicyName": "svc-operate-policy",
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "AppModule",
+              "Effect": "Allow",
+              "Action": [
+                "ec2:AuthorizeSecurityGroupIngress",
+                "ec2:CreateSecurityGroup",
+                "ec2:CreateTags",
+                "ec2:DeleteSecurityGroup",
+                "ec2:DescribeSecurityGroupRules",
+                "ec2:DescribeSecurityGroups",
+                "ec2:RevokeSecurityGroupEgress",
+                "eks:CreatePodIdentityAssociation",
+                "eks:DeletePodIdentityAssociation",
+                "eks:DescribeCluster",
+                "eks:DescribePodIdentityAssociation",
+                "rds:AddTagsToResource",
+                "rds:CreateDBInstance",
+                "rds:CreateDBParameterGroup",
+                "rds:CreateDBSubnetGroup",
+                "rds:DeleteDBInstance",
+                "rds:DeleteDBParameterGroup",
+                "rds:DeleteDBSubnetGroup",
+                "rds:DescribeDBInstances",
+                "rds:DescribeDBParameterGroups",
+                "rds:DescribeDBParameters",
+                "rds:DescribeDBSubnetGroups",
+                "rds:ListTagsForResource",
+                "rds:ModifyDBInstance",
+                "rds:ModifyDBParameterGroup",
+                "secretsmanager:CreateSecret",
+                "secretsmanager:DeleteSecret",
+                "secretsmanager:DescribeSecret",
+                "secretsmanager:GetResourcePolicy",
+                "secretsmanager:TagResource"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestedRegion": "ap-northeast-2"
+                }
+              }
+            },
+            {
+              "Sid": "AppRolesWithBoundary",
+              "Effect": "Allow",
+              "Action": [
+                "iam:CreateRole",
+                "iam:PutRolePolicy"
+              ],
+              "Resource": "arn:aws:iam::*:role/app-*",
+              "Condition": {
+                "StringEquals": {
+                  "iam:PermissionsBoundary": "arn:aws:iam::${aws:PrincipalAccount}:policy/platform-app-boundary"
+                }
+              }
+            },
+            {
+              "Sid": "AppRolesOnly",
+              "Effect": "Allow",
+              "Action": [
+                "iam:DeleteRole",
+                "iam:DeleteRolePolicy",
+                "iam:GetRole",
+                "iam:GetRolePolicy",
+                "iam:ListAttachedRolePolicies",
+                "iam:ListRolePolicies",
+                "iam:TagRole"
+              ],
+              "Resource": "arn:aws:iam::*:role/app-*"
+            },
+            {
+              "Sid": "PassOnlyAppRoles",
+              "Effect": "Allow",
+              "Action": "iam:PassRole",
+              "Resource": "arn:aws:iam::*:role/app-*",
+              "Condition": {
+                "StringEquals": {
+                  "iam:PassedToService": "pods.eks.amazonaws.com"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "ObserveRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": "svc-observe",
+        "MaxSessionDuration": 3600,
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Ref": "PlatformPrincipalArn"
+                }
+              },
+              "Action": [
+                "sts:AssumeRole",
+                "sts:TagSession",
+                "sts:SetSourceIdentity"
+              ],
+              "Condition": {
+                "StringEquals": {
+                  "sts:ExternalId": {
+                    "Ref": "ExternalId"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/job-function/ViewOnlyAccess"
+        ],
+        "Policies": [
+          {
+            "PolicyName": "observe-extra",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "guardduty:ListDetectors",
+                    "guardduty:GetDetector",
+                    "guardduty:ListFindings",
+                    "guardduty:GetFindings",
+                    "guardduty:GetFindingsStatistics",
+                    "eks:DescribeCluster",
+                    "eks:ListPodIdentityAssociations",
+                    "eks:DescribePodIdentityAssociation",
+                    "iam:GetRole",
+                    "iam:ListRolePolicies",
+                    "iam:GetRolePolicy",
+                    "iam:ListAttachedRolePolicies",
+                    "iam:GetPolicy",
+                    "iam:GetPolicyVersion"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "OperateRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": "svc-operate",
+        "MaxSessionDuration": 3600,
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Ref": "PlatformPrincipalArn"
+                }
+              },
+              "Action": [
+                "sts:AssumeRole",
+                "sts:TagSession",
+                "sts:SetSourceIdentity"
+              ],
+              "Condition": {
+                "StringEquals": {
+                  "sts:ExternalId": {
+                    "Ref": "ExternalId"
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "ManagedPolicyArns": [
+          {
+            "Ref": "OperatePolicy"
+          }
+        ]
+      }
+    },
+    "ObserveAccess": {
+      "Type": "AWS::EKS::AccessEntry",
+      "Properties": {
+        "ClusterName": {
+          "Ref": "EksClusterName"
+        },
+        "PrincipalArn": {
+          "Fn::GetAtt": [
+            "ObserveRole",
+            "Arn"
+          ]
+        },
+        "AccessPolicies": [
+          {
+            "PolicyArn": "arn:aws:eks::aws:cluster-access-policy/AmazonEKSViewPolicy",
+            "AccessScope": {
+              "Type": "cluster"
+            }
+          }
+        ]
+      }
+    },
+    "OperateAccess": {
+      "Type": "AWS::EKS::AccessEntry",
+      "Properties": {
+        "ClusterName": {
+          "Ref": "EksClusterName"
+        },
+        "PrincipalArn": {
+          "Fn::GetAtt": [
+            "OperateRole",
+            "Arn"
+          ]
+        },
+        "KubernetesGroups": [
+          "platform:operate"
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "ObserveRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "ObserveRole",
+          "Arn"
+        ]
+      }
+    },
+    "OperateRoleArn": {
+      "Value": {
+        "Fn::GetAtt": [
+          "OperateRole",
+          "Arn"
+        ]
+      }
+    }
+  }
+}
