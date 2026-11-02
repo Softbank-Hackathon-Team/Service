@@ -3,6 +3,7 @@ import type { BentoLayout } from '../../components/layout/ConsoleLayout';
 import { ActionRow, FoldTile, Hero, Stack } from '../../components/layout/tiles';
 import { ActionPill, BarPill } from '../../components/ui/controls';
 import { api } from '../../lib/api';
+import { anyMigration } from '../../lib/events';
 import { errorText } from '../../lib/errors';
 import { usePoll } from '../../lib/usePoll';
 import { MigrationRow } from '../dashboard/DashboardPage';
@@ -18,7 +19,7 @@ const BUCKETS: { id: MigrationBucket; label: string }[] = [
 ];
 
 export function MigrationsPage() {
-  const migrations = usePoll(api.listMigrations, 3_000, []);
+  const migrations = usePoll(api.listMigrations, 3_000, [], { signal: anyMigration });
   const envs = usePoll(api.listEnvironments, null, []);
   const groups = groupMigrations(migrations.data ?? [], Number.POSITIVE_INFINITY);
   const envName = (id: string) => envs.data?.find((env) => env.id === id)?.name ?? id.slice(0, 8);
