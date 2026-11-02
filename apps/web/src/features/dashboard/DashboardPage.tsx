@@ -6,6 +6,7 @@ import { ActionRow, FoldTile, Hero, Stack } from '../../components/layout/tiles'
 import { ActionPill, Badge, BarPill } from '../../components/ui/controls';
 import { Icon } from '../../components/ui/Icon';
 import { api } from '../../lib/api';
+import { anyMigration } from '../../lib/events';
 import { isApiDown } from '../../lib/http';
 import { CONN_LABEL, LABEL, PROVIDER_SHORT, progressPct } from '../../lib/status';
 import type { EnvironmentView, MigrationView } from '../../lib/types';
@@ -105,7 +106,7 @@ export function MigrationRow({ migration, envName }: { migration: MigrationView;
 
 export function DashboardPage() {
   const envs = usePoll(api.listEnvironments, 10_000, []);
-  const migrations = usePoll(api.listMigrations, 3_000, []);
+  const migrations = usePoll(api.listMigrations, 3_000, [], { signal: anyMigration });
   const list = realEnvs(envs.data ?? []);
   const key = list.filter((env) => env.connectionStatus === 'connected').map((env) => env.id).join(',');
   const observed = usePoll(
