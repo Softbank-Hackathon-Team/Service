@@ -140,7 +140,21 @@ if [ -f .env ]; then
   if [ -n "$bad" ]; then fail env-refs ".env 값 안에 풀리지 않는 참조:$bad → 그 자리에 실제 값을 바로 적는다(URL 이면 URL 인코딩). demo-day(sed)·node --env-file 은 \${…} 를 풀지 않는다. Jeong 손, 값은 채팅 금지"
   else ok env-refs ".env 안 \${…} 참조 없음"; fi
 fi
-[ "$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://localhost:8080/ 2>/dev/null)" = 200 ] && ok web-8080 "발표 화면 200" || fail web-8080 "8080 응답 없음 (docker compose -f docker-compose.prod.yml up -d --wait). up 마지막 preflight 단계가 FAIL 이 됨"
+# WEBUP: 발표 화면은 up 끝에 demo-day 가 web 컨테이너만 호스트 api(3000)에 붙여 다시 띄운다(--pull never).
+#   그래서 지금 8080 이 떠 있을 필요는 없고, (1) web 이미지가 이 맥에 있고 (2) 컨테이너에서 호스트 127.0.0.1 에 닿아야 한다
+webimg=$(docker compose -f docker-compose.prod.yml config --images web 2>/dev/null | head -n 1)
+if [ -z "$webimg" ]; then fail web-image "docker compose -f docker-compose.prod.yml config 실패 (docker 켜짐?)"
+elif ! docker image inspect "$webimg" >/dev/null 2>&1; then fail web-image "web 이미지 $webimg 없음 → 같은 IMAGE_PREFIX·IMAGE_TAG 로 docker compose -f docker-compose.prod.yml build web"
+else
+  ok web-image "$webimg 있음"
+  pport=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1])')
+  python3 -m http.server "$pport" --bind 127.0.0.1 --directory "$WORK" >/dev/null 2>&1 & ppid=$!
+  sleep 1
+  if tmo 30 docker run --rm --add-host host.docker.internal:host-gateway --entrypoint wget "$webimg" -q -T 5 -O /dev/null "http://host.docker.internal:$pport/" >/dev/null 2>&1; then ok web-host "컨테이너 → 호스트 127.0.0.1 닿음 (8080 화면이 이 회차 api 3000 을 씀)"
+  else fail web-host "컨테이너에서 host.docker.internal:127.0.0.1 포트에 못 닿음 → 8080 화면이 실회차 이전을 못 보여 줌"; fi
+  kill "$ppid" 2>/dev/null; wait "$ppid" 2>/dev/null
+fi
+if curl -s -m 2 -o /dev/null http://localhost:3300/healthz; then warn web-prod-api "svc-prod api(3300)가 떠 있음. up 끝에 demo-day 가 멈춘다(화면은 3000 에 붙음)"; fi
 curl -s -m 5 -o /dev/null https://checkip.amazonaws.com && ok checkip "공인 IP 조회 됨 (중계기 SSH 허용)" || fail checkip "checkip.amazonaws.com 안 됨"
 curl -s -m 5 -o /dev/null https://truststore.pki.rds.amazonaws.com/ap-northeast-2/ap-northeast-2-bundle.pem && ok rds-ca "RDS CA 받기 됨" || fail rds-ca "RDS CA 주소 안 됨"
 

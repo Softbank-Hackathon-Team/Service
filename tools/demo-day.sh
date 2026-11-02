@@ -355,7 +355,8 @@ u_workers() {
   if curl -sf -m 2 http://localhost:3000/readyz >/dev/null 2>&1; then echo "localhost:3000 에 이미 API 가 떠 있다(옛 회차?). 끄고 다시: bash tools/demo-day.sh down 또는 lsof -ti :3000"; return 1; fi
   ( set -a; . "$ENVF"; set +a; MOCK_IAC= GITOPS_DISABLE=1 \
     nohup npm run dev:worker > "$DEMO_DAY_LOG_DIR/worker.log" 2>&1 & echo $! > "$STATE/worker.pid" )
-  ( nohup npm run dev:api > "$DEMO_DAY_LOG_DIR/api.log" 2>&1 & echo $! > "$STATE/api.pid" )
+  # WEBUP: 발표 화면(8080 컨테이너)이 host.docker.internal 로 붙으므로 IPv4 루프백에 확실히 연다 ("localhost" 는 맥에서 ::1 만 될 수 있음)
+  ( API_HOST=127.0.0.1 nohup npm run dev:api > "$DEMO_DAY_LOG_DIR/api.log" 2>&1 & echo $! > "$STATE/api.pid" )
   # z75-43: 워커 유효 설정 줄(Z81 z81-10)을 10초 안에 본다. .env 에 PROM_URL 이 있으면 코드가 관찰을 최소 30초로 올린다(guards.ts)
   local obs out rc
   obs=$(with_env sh -c 'echo "${TRAFFIC_OBSERVE_SEC:-4}"')
@@ -399,8 +400,24 @@ u_rds() {
   echo "RDS 상태: ${st:-(없음)}"
   echo "$st" | grep -q available
 }
+# WEBUP: 발표 화면 8080(svc-prod web)을 이 회차 api(호스트 3000 = 호스트 DB 5432)에 붙인다.
+#   예전엔 svc-prod 묶음의 api(3300)·자기 DB 에 붙어 실회차 이전이 화면에 안 보였다. svc-prod api·워커는 멈춘다(같은 화면에 두 DB 가 섞이지 않게)
+WEB_UPSTREAM=http://host.docker.internal:3000
+u_web() {
+  local id up code
+  [ "$DRY" = 1 ] && { echo "DRY: svc-prod api·worker·agent-worker 멈춤, WEB_API_UPSTREAM=$WEB_UPSTREAM 로 web 만 다시 띄움, 8080/api/readyz 200 확인" >> "$PROGRESS"; return 0; }
+  docker compose -f docker-compose.prod.yml stop api worker agent-worker >/dev/null 2>&1 || true
+  WEB_API_UPSTREAM=$WEB_UPSTREAM run docker compose -f docker-compose.prod.yml up -d --no-deps --pull never --wait web || { echo "web 컨테이너 못 띄움 (이미지가 없으면: IMAGE_PREFIX= IMAGE_TAG=dev docker compose -f docker-compose.prod.yml build web)"; return 1; }
+  id=$(docker compose -f docker-compose.prod.yml ps -q web 2>/dev/null)
+  up=$(docker inspect "$id" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null | sed -n 's/^API_UPSTREAM=//p')
+  [ "$up" = "$WEB_UPSTREAM" ] || { echo "web 의 API_UPSTREAM 이 '$up' (기대 $WEB_UPSTREAM)"; return 1; }
+  code=$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://localhost:8080/api/readyz)
+  [ "$code" = 200 ] || { echo "8080/api/readyz → $code (화면이 호스트 api 3000 에 못 닿음)"; return 1; }
+  echo "발표 화면 8080 → 호스트 api 3000 (같은 DB) OK"
+}
 u_preflight() {
   local rc=0
+  u_web || rc=1
   if grep -q '"demo:preflight"' package.json; then run with_env npm run -s demo:preflight || rc=1; else echo "SKIP (demo:preflight 없음, 6차 z75-22 부터)"; fi
   # z75-38: 발표 화면은 운영 빌드 8080 하나만. 8080 이 안 뜨면 실패, 개발 화면 5173 이 같이 떠 있으면 잘못 띄울 수 있으니 경고
   if [ "$DRY" = 1 ]; then echo "DRY: 8080 응답 200 확인, 5173 떠 있으면 경고" >> "$PROGRESS"; return $rc; fi
