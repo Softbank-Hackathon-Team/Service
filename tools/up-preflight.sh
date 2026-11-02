@@ -124,7 +124,14 @@ tmo 60 bash tools/cloud-precheck.sh > "$WORK/pre.out" 2>&1 && ok cloud-precheck 
 
 # 8. 데모 B 준비물: 출발 DB(k3d CNPG → 맥 포트), REPL_SOURCE_URL, 발표 화면 8080
 src=${REPL_SOURCE_URL:-$(sed -n 's/^REPL_SOURCE_URL=//p' .env 2>/dev/null | tail -n 1)}
-[ -n "$src" ] && ok repl-source "REPL_SOURCE_URL 있음" || fail repl-source ".env 에 REPL_SOURCE_URL 없음 (B3 단계 실패)"
+if [ -z "$src" ]; then fail repl-source ".env 에 REPL_SOURCE_URL 없음 (B3 단계 실패)"
+# demo-day 는 .env 값을 글자 그대로 읽는다(sed). ${X} 꼴이 남아 있으면 비밀번호 자리에 그 글자가 들어가 복제 접속이 실패한다 (11/2 맥: compose 가 SRC_PW 경고)
+elif printf '%s' "$src" | grep -q '\$'; then
+  v=$(printf '%s' "$src" | grep -o '\${\{0,1\}[A-Za-z_][A-Za-z0-9_]*' | tr -d '${' | sort -u | tr '\n' ' ')
+  miss=""; for x in $v; do eval "[ -n \"\${$x:-}\" ]" || miss="$miss $x"; done
+  if [ -z "$miss" ]; then warn repl-source "REPL_SOURCE_URL 이 변수(${v% })를 씀. 지금 셸엔 있지만 demo-day 는 글자 그대로 읽으니 .env 에 실제 값으로 적기"
+  else fail repl-source "REPL_SOURCE_URL 안에 풀리지 않는 변수:$miss (.env 에 실제 값으로 적는다. 값은 채팅에 붙이지 않는다)"; fi
+else ok repl-source "REPL_SOURCE_URL 있음 (변수 없음)"; fi
 (exec 3<>"/dev/tcp/127.0.0.1/$LPORT") 2>/dev/null && ok source-db "맥 $LPORT 열림 (터널 뒤 출발 DB)" || fail source-db "맥 $LPORT 닫힘: k3d 출발 클러스터(CNPG)가 안 떠 있음"
 [ "$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://localhost:8080/ 2>/dev/null)" = 200 ] && ok web-8080 "발표 화면 200" || fail web-8080 "8080 응답 없음 (docker compose -f docker-compose.prod.yml up -d --wait). up 마지막 preflight 단계가 FAIL 이 됨"
 curl -s -m 5 -o /dev/null https://checkip.amazonaws.com && ok checkip "공인 IP 조회 됨 (중계기 SSH 허용)" || fail checkip "checkip.amazonaws.com 안 됨"

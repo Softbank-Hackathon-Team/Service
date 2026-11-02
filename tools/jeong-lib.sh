@@ -9,6 +9,11 @@
 #   - 부탁: 맥 스레드가 Jeong 에게 줄을 보내기 직전에 `date +%s > ~/.svc-tf/demo-day/jeong-request-<이름>` 을 남기면 대기 초가 찍힌다
 #   - 비밀값을 찍지 않는다. 클라우드 명령의 출력은 로그 파일에만
 JSTATE=${DEMO_DAY_STATE:-$HOME/.svc-tf/demo-day}
+# UPREV: gke-gcloud-auth-plugin 이 gcloud SDK bin 에만 있고 PATH 에 없을 때(맥 실측 /usr/local/share/google-cloud-sdk/bin) PATH 앞에 더함. 뒤로 띄우는 것도 물려받음
+if ! command -v gke-gcloud-auth-plugin >/dev/null 2>&1 && command -v gcloud >/dev/null 2>&1; then
+  _sdk=$(gcloud info --format='value(installation.sdk_root)' 2>/dev/null)
+  [ -n "$_sdk" ] && [ -x "$_sdk/bin/gke-gcloud-auth-plugin" ] && export PATH="$_sdk/bin:$PATH"
+fi
 JPROG="$JSTATE/jeong-progress.log"
 j_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 # UPREV-A: 경로가 상대면 지금 폴더 기준 절대 경로로 (진행 파일에 적힌 log= 를 맥 스레드가 어디서든 읽도록)
