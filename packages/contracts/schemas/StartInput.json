@@ -7,8 +7,5 @@
       "minLength": 1
     }
   },
-  "required": [
-    "planHash"
-  ],
   "additionalProperties": false
 }

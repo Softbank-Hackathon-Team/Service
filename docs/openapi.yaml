@@ -5645,8 +5645,6 @@ components:
         planHash:
           type: "string"
           minLength: 1
-      required:
-        - "planHash"
       additionalProperties: false
     StateDuration:
       type: "object"

@@ -146,3 +146,26 @@ test("거부: 남의 회사 계획 승인·시작 → 404", { skip }, async () =
   assert.equal((await start(m.id, { planHash: m.planHash }, other)).statusCode, 404);
   assert.equal(await status(m.id), "awaiting_approval");
 });
+
+// SMOKEFIX: smoke·화면은 본문 없는 POST 에 "{}" 를 싣는다. 깃발 off 면 202, on 이면 409 (400 아님)
+test("SMOKEFIX: 깃발 off + 본문 {} → 202 provisioning (smoke 와 같은 모양)", { skip }, async () => {
+  delete process.env.PLAN_ACKS;
+  const m = await seed();
+  assert.equal((await approve(m.planId, { decision: "approve", planHash: m.planHash })).statusCode, 200);
+  const s = await start(m.id, {});
+  assert.equal(s.statusCode, 202, s.body);
+  assert.equal(await status(m.id), "provisioning");
+});
+
+test("SMOKEFIX 거부: 깃발 on + 본문 {} → 409 PLAN_HASH_MISMATCH(planHash required), 상태 그대로 / 모르는 칸은 400", { skip }, async () => {
+  process.env.PLAN_ACKS = "1";
+  const m = await seed();
+  assert.equal((await approve(m.planId, { decision: "approve", planHash: m.planHash, acks: ACKS.map((a) => a.id) })).statusCode, 200);
+  const bad = await start(m.id, {});
+  assert.equal(bad.statusCode, 409, bad.body);
+  assert.equal(bad.json().code, "PLAN_HASH_MISMATCH");
+  assert.match(bad.json().message, /planHash required/);
+  assert.equal(await status(m.id), "approved");
+  assert.equal((await start(m.id, { planHash: m.planHash, extra: 1 })).statusCode, 400);
+  delete process.env.PLAN_ACKS;
+});

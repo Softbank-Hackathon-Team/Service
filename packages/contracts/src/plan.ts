@@ -80,7 +80,9 @@ export type ApprovalInput = z.infer<typeof ApprovalInput>;
 
 // PA4: 실행 시작 본문. 깃발 PLAN_ACKS=1 이면 planHash 가 승인 기록의 지문과 같아야 한다 (비용 드는 apply 직전 두 번째 게이트)
 //   깃발 off 면 본문 없이 보내도 된다 (지금 화면·smoke 그대로)
+// SMOKEFIX: smoke·화면은 본문 없는 POST 에 "{}" 를 싣는다 → planHash 필수면 400 이 났다. 그래서 칸은 선택.
+//   깃발 on 일 때 "없음"은 라우트가 409 PLAN_HASH_MISMATCH("planHash required")로 막는다 (26번 A4 기준 409)
 export const StartInput = z.object({
-  planHash: z.string().min(1),
+  planHash: z.string().min(1).optional(),
 }).strict();
 export type StartInput = z.infer<typeof StartInput>;
