@@ -30,7 +30,8 @@ export function cloudSqlTierFor(c: { cpuMilli: number | null; memMiB: number | n
 
 // TA12 DRAFT(ai): 데이터 자원 — Memorystore(redis·valkey, 클러스터 모드는 모듈이 아직 안 함 → capability 없음)·Cloud Storage·Pub/Sub
 // A8: 출발 IAM 권한 → 도착 신원 권한 (target/grants.ts). 대응표 밖은 assertGrants·precheck 가 막음
-const CAPS = [...K8S_RENDER_CAPS, "kind.postgres.15", "kind.postgres.16", "kind.postgres.17", "kind.cache.redis", "kind.cache.valkey", "kind.objectStore", "kind.queue", "render.grants", "posture.permissions", "kind.queue.dlqMixedOrder", "kind.cache.auth"];
+// TA12c: link.* = 데이터 자원 링크의 의도 요약 (실제 권한은 grants 로 그림)
+const CAPS = [...K8S_RENDER_CAPS, "kind.postgres.15", "kind.postgres.16", "kind.postgres.17", "kind.cache.redis", "kind.cache.valkey", "kind.objectStore", "kind.queue", "render.grants", "posture.permissions", "kind.queue.dlqMixedOrder", "kind.cache.auth", "link.read", "link.write", "link.readwrite", "link.admin"];
 
 export function resourceTypesV2(spec: AppSpecV2): string[] {
   const t = new Set(["data.google_client_config", "data.google_container_cluster", "kubernetes_namespace_v1"]);

@@ -32,6 +32,9 @@ export function awsGrantPlan(spec: AppSpecV2): GrantPlan<AwsGrantStatement> {
   const by = new Map<string, AwsGrantStatement[]>(), unsupported: string[] = [], warnings: string[] = [];
   const push = (identity: string, s: AwsGrantStatement) => by.set(identity, [...(by.get(identity) ?? []), s]);
   for (const l of spec.links) {
+    // TA12c DRAFT(ai): 의도(read·write·readwrite·admin)만 있고 권한 원문이 없는 데이터 링크 — 막지 않고(출발 IAM 을 못 읽은 흔한 경우), 접근 권한은 안 그리고 경고만 남김. 넓게 주지 않음
+    if (typeof l.to === "string" && !l.grants?.length && ["read", "write", "readwrite", "admin"].includes(l.intent) && kindOf(spec, l.to))
+      warnings.push(`${l.from}→${l.to}: ${l.intent} 의도만 있고 권한 원문이 없어 접근 권한은 안 그림 (네트워크·허용 신원만)`);
     if (!l.grants?.length || typeof l.to !== "string") continue;
     const kind = kindOf(spec, l.to), ident = identityOf(spec, l.from);
     if (!kind || !ident) { unsupported.push(`권한 렌더 미지원: ${l.from}→${l.to} grants 대상이 데이터 자원·신원이 아님`); continue; }
@@ -106,6 +109,8 @@ export function gcpGrantPlan(spec: AppSpecV2): GrantPlan<GcpGrantBinding> {
     m.set(`${b.kind}/${b.target}/${b.scope}/${b.role}`, { ...b, level });
   };
   for (const l of spec.links) {
+    if (typeof l.to === "string" && !l.grants?.length && ["read", "write", "readwrite", "admin"].includes(l.intent) && kindOf(spec, l.to))
+      warnings.push(`${l.from}→${l.to}: ${l.intent} 의도만 있고 권한 원문이 없어 접근 권한은 안 그림 (네트워크·허용 신원만)`);
     if (!l.grants?.length || typeof l.to !== "string") continue;
     const kind = kindOf(spec, l.to), ident = identityOf(spec, l.from);
     if (!kind || !ident) { unsupported.push(`권한 렌더 미지원: ${l.from}→${l.to} grants 대상이 데이터 자원·신원이 아님`); continue; }
