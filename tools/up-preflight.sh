@@ -132,7 +132,7 @@ else
     TF_VAR_expected_account_id=$acct tmo 300 terraform -chdir="$TFA" plan -input=false -lock=false -no-color -detailed-exitcode -var create_eks=true > "$WORK/plan-a.out" 2>&1; pr=$?
     case $pr in 0|2) ok plan:aws/env "plan 통과 ($(grep -m1 -E '^Plan:|No changes' "$WORK/plan-a.out"))" ;; *) fail plan:aws/env "$(grep -m3 -E 'Error' -A2 "$WORK/plan-a.out" | tr '\n' ' ' | head -c 400)" ;; esac
   else fail plan:aws/env "aws 인증이 없어 못 함"; fi
-  tmo 300 terraform -chdir="$TFG" plan -input=false -lock=false -no-color -detailed-exitcode -var "project_id=$GCP_PROJECT" > "$WORK/plan-g.out" 2>&1; pr=$?
+  tmo 300 terraform -chdir="$TFG" plan -input=false -lock=false -no-color -detailed-exitcode -var "project_id=$GCP_PROJECT" -var "zone=$GCP_ZONE" -var "name=${CLUSTER_NAME:-platform-target}" > "$WORK/plan-g.out" 2>&1; pr=$?
   case $pr in 0|2) ok plan:gcp/env "plan 통과 ($(grep -m1 -E '^Plan:|No changes' "$WORK/plan-g.out"))" ;; *) fail plan:gcp/env "$(grep -m3 -E 'Error' -A2 "$WORK/plan-g.out" | tr '\n' ' ' | head -c 400)" ;; esac
   # 중계기는 aws/env 의 VPC 가 있어야 plan 이 된다(data "aws_vpc") → validate 와 변수 대조까지만
   warn plan:aws/demo-relay "VPC 가 생긴 뒤에만 plan 가능 → validate·필수 변수 대조로 대신"

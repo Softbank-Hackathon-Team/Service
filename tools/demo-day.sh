@@ -63,6 +63,8 @@ case "$CMD" in up|down) ;; -h|--help|"") sed -n '2,32p' "$0"; [ -n "$CMD" ]; exi
 
 export AWS_PROFILE=${AWS_PROFILE:-finals}
 export AWS_REGION=${AWS_REGION:-ap-northeast-2}
+# UPREV-A: AWS CLI 는 AWS_REGION 이 아니라 AWS_DEFAULT_REGION 을 읽는다(프로필 리전이 서울이 아니면 rds·elb 조회가 엉뚱한 리전을 본다 → ELB 0 오판)
+export AWS_DEFAULT_REGION=$AWS_REGION
 GCP_PROJECT=${GCP_PROJECT:-finals-demo}
 GCP_ZONE=${GCP_ZONE:-asia-northeast3-a}
 CLUSTER_NAME=${CLUSTER_NAME:-platform-target}
@@ -86,6 +88,8 @@ mkdir -p "$DEMO_DAY_LOG_DIR" || exit 1
 PROGRESS="$DEMO_DAY_LOG_DIR/progress.log"
 [ "$DRY" = 1 ] && STATE="$DEMO_DAY_LOG_DIR/state"
 ENVF="$STATE/demo-day.env"
+# UPREV-A: 중계기 ssh 는 회차마다 새 호스트 키라, 맥 ~/.ssh/known_hosts 에 같은 IP 의 옛 키가 있으면 "키 바뀜" 으로 거절된다 → 이 상태 폴더의 known_hosts 만 쓰고 up 시작 때 지운다
+RELAY_SSH_OPTS="-o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$STATE/known_hosts"
 
 # 뒤로 보내기: 같은 인자로 자기 자신을 nohup 으로 다시 부른다
 if [ "$FG" = 0 ] && [ -z "${DEMO_DAY_CHILD:-}" ]; then
@@ -95,8 +99,6 @@ if [ "$FG" = 0 ] && [ -z "${DEMO_DAY_CHILD:-}" ]; then
 fi
 
 now_s() { date +%s; }
-# UPREV: 중계기 호스트 키는 회차 전용 known_hosts 에만 (예전 중계기와 IP 가 겹치면 accept-new 가 '키 바뀜' 으로 거부함 → up 시작 때 지움)
-SSH_OPTS="-o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$STATE/known_hosts"
 BGPIDS=""
 APPLIED=0   # apply 를 하나라도 시작했나 (멈출 때 자동 down 여부)
 iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
@@ -143,6 +145,15 @@ par() {
 }
 tfout() { if [ "$DRY" = 1 ]; then echo "<dry:$2>"; else terraform -chdir="$1" output -raw "$2"; fi; }
 tfjson() { if [ "$DRY" = 1 ]; then echo '["<dry:'"$2"'>"]'; else terraform -chdir="$1" output -json "$2"; fi; }
+# UPREV-A: 모듈 폴더에 terraform 상태가 있는가. 한 번도 init/apply 안 된 폴더(앞 단계에서 멈춘 up)나 이미 비워진 상태는 destroy 를 건너뛴다
+#   (안 그러면 init 없는 destroy 가 실패해 down 이 "자원이 없는데도" FAIL). 상태 조회 자체가 실패하면 "있다" 로 보고 destroy 를 시도한다
+tf_has_state() {
+  local d=$1 out
+  [ "$DRY" = 1 ] && return 0
+  if [ ! -d "$d/.terraform" ] && [ ! -f "$d/terraform.tfstate" ]; then echo "$d: init·상태 흔적 없음 → destroy 생략"; return 1; fi
+  if out=$(terraform -chdir="$d" state list 2>/dev/null) && [ -z "$out" ]; then echo "$d: 상태에 자원 0 → destroy 생략"; return 1; fi
+  return 0
+}
 finish() {
   local total=$(( $(now_s) - T_ALL )) v=PASS
   [ -z "$FAILED" ] || v=FAIL
@@ -172,14 +183,10 @@ abort() {
 }
 # UPREV: 지난 회차의 워커·API·터널이 살아 있으면 새 API 가 3000 을 못 잡고, readyz 는 예전 API 가 대답해 거짓 통과한다 → 먼저 끈다
 u_stale() {
-  local f n=0
-  for f in worker api tunnel; do
-    [ -f "$STATE/$f.pid" ] || continue
-    kill -0 "$(cat "$STATE/$f.pid")" 2>/dev/null && { killtree "$(cat "$STATE/$f.pid")"; n=$((n + 1)); }
-    rm -f "$STATE/$f.pid"
-  done
-  rm -f "$STATE/relay_ip" "$STATE/known_hosts"
-  echo "지난 회차 프로세스 ${n}개 끔, relay_ip·known_hosts 지움"
+  # 워커·API·터널·smoke 는 UPREV-A d_procs (pid 재사용 대비: 우리 프로세스일 때만 끔)
+  d_procs
+  [ "$DRY" = 1 ] || rm -f "$STATE/relay_ip" "$STATE/known_hosts" "$ENVF"
+  echo "지난 회차 프로세스 정리, relay_ip·known_hosts·demo-day.env 지움"
   if [ "$DRY" = 0 ] && command -v lsof >/dev/null 2>&1 && lsof -ti tcp:3000 -sTCP:LISTEN >/dev/null 2>&1; then
     echo "3000 포트를 다른 프로세스가 쓰고 있다 (예전 dev:api?). 끄고 다시: lsof -ti tcp:3000 -sTCP:LISTEN"; return 1
   fi
@@ -188,7 +195,7 @@ u_stale() {
 # ---------------- up ----------------
 u_tools() {
   local t miss=""
-  for t in terraform aws gcloud kubectl jq curl ssh npm; do command -v "$t" >/dev/null 2>&1 || miss="$miss $t"; done
+  for t in terraform aws gcloud kubectl jq curl ssh npm python3 pgrep; do command -v "$t" >/dev/null 2>&1 || miss="$miss $t"; done
   if [ "$DRY" = 1 ]; then echo "dry-run: 없는 도구${miss:- 0개}${miss:+:$miss} (dry-run 은 막지 않음). 사전 점검 tools/cloud-precheck.sh 는 맥에서만"; return 0; fi
   [ -z "$miss" ] || { echo "없는 도구:$miss"; return 1; }
   [ -f "$HOME/.ssh/id_ed25519.pub" ] || { echo "~/.ssh/id_ed25519.pub 없음 (Z77 B2 첫 줄로 만든다)"; return 1; }
@@ -196,7 +203,7 @@ u_tools() {
   #   PASS 가 아니면 여기서 멈춰 apply 를 하나도 시작하지 않는다 (DEMO_DAY_RESUME=1 이면 남은 state·자원은 WARN)
   run bash "${UP_PREFLIGHT:-tools/up-preflight.sh}"
 }
-u_gke() { run terraform -chdir="$TFG" init -input=false && run terraform -chdir="$TFG" apply -input=false -auto-approve -var "project_id=$GCP_PROJECT"; }
+u_gke() { run terraform -chdir="$TFG" init -input=false && run terraform -chdir="$TFG" apply -input=false -auto-approve -var "project_id=$GCP_PROJECT" -var "zone=$GCP_ZONE" -var "name=$CLUSTER_NAME"; }
 u_eks() { aws_account_var && run terraform -chdir="$TFA" init -input=false && run terraform -chdir="$TFA" apply -input=false -auto-approve -var create_eks=true; }
 u_kubeconfig() {
   run gcloud container clusters get-credentials "$CLUSTER_NAME" --zone "$GCP_ZONE" --project "$GCP_PROJECT" &&
@@ -230,19 +237,23 @@ u_facts() {
 u_relay() {
   local sub myip ip
   if [ "$DRY" = 1 ]; then myip="<dry:myip>"; sub="<dry:subnet>"; else
-    myip=$(curl -s -m 10 https://checkip.amazonaws.com | tr -d '[:space:]')
-    case "$myip" in *[!0-9.]*|"") echo "내 공인 IP 를 못 받음 (checkip)"; return 1 ;; esac
-    sub=$(echo "$TF_FACT_DB_PUBLIC_SUBNET_IDS_JSON" | jq -r '.[0]')
+    # UPREV-A: 파이프 뒤 rc 는 tr 의 것이라 curl 실패가 가려졌다 → 값 모양을 직접 본다 (빈 값이면 ["/32"] 로 terraform 이 늦게 거절)
+    myip=$(curl -fsS -m 10 https://checkip.amazonaws.com 2>/dev/null | tr -d '[:space:]')
+    case "$myip" in *[!0-9.]*|"") echo "맥 공인 IP 를 못 받음 (checkip.amazonaws.com)"; return 1 ;; esac
+    sub=$(echo "$TF_FACT_DB_PUBLIC_SUBNET_IDS_JSON" | jq -r '.[0] // empty')
+    [ -n "$sub" ] || { echo "공개 서브넷 ID 가 없음 (aws/env 출력 public_subnet_ids 비었음)"; return 1; }
+    [ -n "${TF_FACT_VPC_ID:-}" ] || { echo "vpc_id 가 없음 (b1-facts 먼저)"; return 1; }
   fi
   MYIP=$myip
   run terraform -chdir="$TFR" init -input=false &&
   run terraform -chdir="$TFR" apply -input=false -auto-approve -var "vpc_id=$TF_FACT_VPC_ID" -var "public_subnet_id=$sub" \
     -var "ssh_public_key=$(cat "$HOME/.ssh/id_ed25519.pub" 2>/dev/null)" -var "ssh_cidrs_json=[\"$myip/32\"]" || return 1
-  RELAY_IP=$(tfout "$TFR" public_ip); RELAY_PRIV=$(tfout "$TFR" private_ip)
+  RELAY_IP=$(tfout "$TFR" public_ip) && RELAY_PRIV=$(tfout "$TFR" private_ip) || { echo "중계기 출력(public_ip·private_ip)을 못 읽음"; return 1; }
+  [ -n "$RELAY_IP" ] && [ -n "$RELAY_PRIV" ] || { echo "중계기 IP 가 비었다"; return 1; }
   [ "$DRY" = 1 ] && { echo "DRY: 터널은 사람 터미널에서 bash tools/demo-tunnel.sh → tunnel-ok 기다림 (최대 ${TUNNEL_WAIT_SEC}초)" >> "$PROGRESS"; return 0; }
   mkdir -p "$STATE" && chmod 700 "$STATE" && echo "$RELAY_IP" > "$STATE/relay_ip"
   # 중계기가 SSH 를 받을 때까지 최대 120초
-  for i in $(seq 1 24); do ssh $SSH_OPTS "ec2-user@$RELAY_IP" true 2>/dev/null && break; sleep 5; done
+  for i in $(seq 1 24); do ssh $RELAY_SSH_OPTS -o ConnectTimeout=5 "ec2-user@$RELAY_IP" true 2>/dev/null && break; sleep 5; done
   # 역방향 터널은 맥 RC 가 열지 않는다 (Z38 R8-39: 맥 분류기가 막는 명령이라 사람이 직접 친다). 열릴 때까지 기다린다
   # z75-46: Jeong 이 tools/jeong-up.sh 로 이 스크립트를 부른 경우(DEMO_DAY_JEONG=1)엔 이미 사람 터미널에서 도는 것이라 여기서 바로 연다
   if [ "${DEMO_DAY_JEONG:-0}" = 1 ]; then
@@ -257,7 +268,7 @@ u_relay() {
 tunnel_wait() {
   local i
   for i in $(seq 1 $(( ($1 + 4) / 5 ))); do
-    ssh $SSH_OPTS "ec2-user@$RELAY_IP" 'timeout 3 bash -c "</dev/tcp/127.0.0.1/5432" && echo tunnel-ok' 2>/dev/null | grep -q tunnel-ok && { echo tunnel-ok; return 0; }
+    ssh $RELAY_SSH_OPTS -o ConnectTimeout=5 "ec2-user@$RELAY_IP" 'timeout 3 bash -c "</dev/tcp/127.0.0.1/5432" && echo tunnel-ok' 2>/dev/null | grep -q tunnel-ok && { echo tunnel-ok; return 0; }
     sleep 5
   done
   echo "터널이 ${1}초 안에 안 열림"; return 1
@@ -315,6 +326,7 @@ u_rds_start() {
     SMOKE_TARGET_ENV_ID="${SMOKE_TARGET_ENV_ID:-22222222-2222-4222-8222-222222222222}" \
     SMOKE_TIMEOUT_MS=1200000 ROLLBACK_WINDOW_SEC=3 npm run -s smoke > "$DEMO_DAY_LOG_DIR/rds-smoke.log" 2>&1 &
   RDS_PID=$!
+  echo "$RDS_PID" > "$STATE/smoke.pid"   # UPREV-A: down·다음 up 이 남은 smoke 를 끌 수 있게
   echo "smoke 뒤에서 시작 (pid $RDS_PID, 로그 rds-smoke.log)"
 }
 u_rds_wait() {
@@ -333,6 +345,8 @@ u_rds_wait() {
 u_workers() {
   local i
   if [ "$DRY" = 1 ]; then echo "DRY: MOCK_IAC= GITOPS_DISABLE=1 nohup npm run dev:worker / dev:api &" >> "$PROGRESS"; return 0; fi
+  # UPREV-A: 3000 에 이미 API 가 있으면 새 API 는 못 뜨는데 아래 readyz 검사는 옛 API 로 통과해 버린다 → 먼저 막는다
+  if curl -sf -m 2 http://localhost:3000/readyz >/dev/null 2>&1; then echo "localhost:3000 에 이미 API 가 떠 있다(옛 회차?). 끄고 다시: bash tools/demo-day.sh down 또는 lsof -ti :3000"; return 1; fi
   ( set -a; . "$ENVF"; set +a; MOCK_IAC= GITOPS_DISABLE=1 \
     nohup npm run dev:worker > "$DEMO_DAY_LOG_DIR/worker.log" 2>&1 & echo $! > "$STATE/worker.pid" )
   ( nohup npm run dev:api > "$DEMO_DAY_LOG_DIR/api.log" 2>&1 & echo $! > "$STATE/api.pid" )
@@ -459,11 +473,14 @@ d_elb_zero() {
 }
 # npm run 은 아래에 sh·tsx·node 를 띄운다. 맨 위 pid 만 끄면 워커가 살아남아 작업을 계속 집는다. 자식부터 끈다
 killtree() { local c; for c in $(pgrep -P "$1" 2>/dev/null); do killtree "$c"; done; kill "$1" 2>/dev/null; return 0; }
+# UPREV-A: pid 파일의 pid 가 재사용돼 남의 프로세스일 수 있다(맥 pid 는 돈다) → 우리가 띄운 종류(npm·node·tsx·터널·ssh)일 때만 끈다
+proc_ours() { local c; c=$(ps -p "$1" -o command= 2>/dev/null) || return 1; case "$c" in *npm*|*node*|*tsx*|*demo-tunnel*|*ssh*) return 0 ;; esac; return 1; }
 d_procs() {
-  local f
-  for f in worker api tunnel; do
+  local f pid
+  for f in worker api tunnel smoke; do
     [ -f "$STATE/$f.pid" ] || continue
-    run killtree "$(cat "$STATE/$f.pid")"
+    pid=$(cat "$STATE/$f.pid")
+    if [ -n "$pid" ] && proc_ours "$pid"; then run killtree "$pid"; else echo "$f pid ${pid:-?} 는 이미 끝났거나 우리 프로세스가 아님 → 건너뜀"; fi
     [ "$DRY" = 1 ] || rm -f "$STATE/$f.pid"
   done
   return 0
@@ -475,23 +492,24 @@ d_migration_tf() {
   for id in $ids; do npm run -s tf:real -- destroy "$id" || rc=1; done
   return $rc
 }
-d_relay() { [ -d "$TFR/.terraform" ] || [ "$DRY" = 1 ] || { echo "중계기 init 흔적 없음 → 생략"; return 0; }
+d_relay() { tf_has_state "$TFR" || return 0
   # Z38 R8-27: 모듈의 data "aws_vpc" 가 destroy 때도 vpc_id 를 읽는다 → 아직 살아 있는 env 의 진짜 값을 넘긴다 (나머지는 쓰지 않는 자리값)
   local vpc
   vpc=$(tfout "$TFA" vpc_id) && [ -n "$vpc" ] || { echo "aws/env 출력 vpc_id 없음 → 중계기 destroy 를 못 함 (env 보다 먼저 지워야 한다)"; return 1; }
   run terraform -chdir="$TFR" destroy -input=false -auto-approve -var "vpc_id=$vpc" -var public_subnet_id=x -var ssh_public_key=x -var 'ssh_cidrs_json=["127.0.0.1/32"]'; }
-d_eks() { aws_account_var && run terraform -chdir="$TFA" destroy -input=false -auto-approve -var create_eks=true; }
+d_eks() { tf_has_state "$TFA" || return 0; aws_account_var && run terraform -chdir="$TFA" destroy -input=false -auto-approve -var create_eks=true; }
 # UPREV: GCP PSA 피어링이 남으면 연결·주소·네트워크 destroy 가 code 9 로 실패한다 (11/2 맥: platform-target-psa 주소 남음).
 #   ① 피어링을 gcloud 로 먼저 지움(없으면 지나감) ② state 에 연결이 남아 있으면 state 에서만 뺌(클라우드엔 영향 없음, 예전 state 는 ABANDON 이 아님)
 #   ③ destroy, 실패하면 30초 쉬고 최대 3번 (피어링 지우기가 늦게 반영되는 경우)
 d_gke() {
   local net=${GCP_NETWORK:-$CLUSTER_NAME} i
+  tf_has_state "$TFG" || return 0
   run gcloud compute networks peerings delete servicenetworking-googleapis-com --network "$net" --project "$GCP_PROJECT" --quiet 2>&1 | tail -1 || true
   if [ "$DRY" = 1 ] || terraform -chdir="$TFG" state list 2>/dev/null | grep -qx 'google_service_networking_connection.psa'; then
     run terraform -chdir="$TFG" state rm google_service_networking_connection.psa
   fi
   for i in 1 2 3; do
-    run terraform -chdir="$TFG" destroy -input=false -auto-approve -var "project_id=$GCP_PROJECT" && return 0
+    run terraform -chdir="$TFG" destroy -input=false -auto-approve -var "project_id=$GCP_PROJECT" -var "zone=$GCP_ZONE" -var "name=$CLUSTER_NAME" && return 0
     echo "gcp/env destroy ${i}번째 실패 → 30초 뒤 다시"; sleep 30
     run gcloud compute networks peerings delete servicenetworking-googleapis-com --network "$net" --project "$GCP_PROJECT" --quiet 2>&1 | tail -1 || true
   done

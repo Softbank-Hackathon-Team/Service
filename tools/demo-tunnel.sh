@@ -24,7 +24,8 @@ while :; do
   n=$((n + 1))
   IP=$(relay_ip)
   echo "$(date -u +%H:%M:%SZ) 터널 연결 ${n}번째 (중계기 ${IP%.*.*}.x.x)"
-  ssh -N -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes \
+  # UPREV-A: 호스트 키는 이 상태 폴더 전용 known_hosts 에만 (회차마다 새 중계기라 맥 known_hosts 의 같은 IP 옛 키와 부딪히지 않게. demo-day up 이 시작 때 지움)
+  ssh -N -o BatchMode=yes -o UserKnownHostsFile="$STATE/known_hosts" -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes \
     -R "0.0.0.0:5432:localhost:$LPORT" "ec2-user@$IP"
   echo "$(date -u +%H:%M:%SZ) 끊김 (끝 코드 $?), 2초 뒤 다시"
   sleep 2
