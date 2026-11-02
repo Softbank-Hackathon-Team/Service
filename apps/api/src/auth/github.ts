@@ -21,8 +21,8 @@ export function githubSettings(env: NodeJS.ProcessEnv = process.env): GithubSett
   return {
     enabled: clientId !== "" && clientSecret !== "", clientId, clientSecret,
     redirectUri: (env.GITHUB_REDIRECT_URI ?? "").trim() || null,
-    // 열린 리다이렉트 방지: "/" 로 시작하고 "//"·"/\" 가 아닌 같은 출처 경로만
-    postLoginUrl: /^\/(?![/\\])/.test(post) ? post : "/",
+    // 열린 리다이렉트 방지: "/" 로 시작하고 "//"·"/\" 가 아닌 같은 출처 경로만. VGHLOGIN: 탭·줄바꿈 같은 제어문자·공백이 있으면 브라우저가 지워서 "/\t/evil" 이 "//evil" 이 되므로 거부
+    postLoginUrl: /^\/(?![/\\])[^\x00-\x20\x7f]*$/.test(post) ? post : "/",
     signupTenantId: UUID.test(tenant) ? tenant : null,
     signupDomains: (env.GITHUB_SIGNUP_EMAIL_DOMAINS ?? "").split(",").map((d) => d.trim().toLowerCase().replace(/^@/, "")).filter(Boolean),
   };
@@ -50,6 +50,8 @@ export function realGithubClient(f: typeof fetch = fetch, env: NodeJS.ProcessEnv
     let res: Response;
     try { res = await f(url, { ...init, signal: AbortSignal.timeout(TIMEOUT_MS) }); }
     catch { throw new GithubError("unavailable"); }
+    // VGHLOGIN: GitHub 한도 초과(403 + x-ratelimit-remaining: 0, 429)는 code 가 틀린 게 아니라 일시 불통이다
+    if (res.status === 429 || (res.status === 403 && res.headers?.get?.("x-ratelimit-remaining") === "0")) throw new GithubError("unavailable");
     if (res.status === 401 || res.status === 403) throw new GithubError("code_invalid");
     if (!res.ok) throw new GithubError("unavailable");
     try { return await res.json(); } catch { throw new GithubError("unavailable"); }

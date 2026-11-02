@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { withTenant, DomainError } from "@svc/core";
 import { ApiError, type GithubLoginError } from "@svc/contracts";
 import { errors } from "./responses.js";
+import { rateLimitOptsFromEnv } from "../plugins/rate-limit.js";
 import { jwtSecret } from "../auth/jwt.js";
 import { authSettings } from "../auth/settings.js";
 import { isHttps, readCookie, setRefreshCookie } from "../auth/http.js";
@@ -62,7 +63,9 @@ export async function registerGithub(app: FastifyInstance) {
     return reply.code(302).header("location", u.toString()).send(null);
   });
 
-  r.get("/auth/github/callback", { schema: { querystring: Q, response: E } }, async (req, reply) => {
+  // VGHLOGIN: 이 길은 로그인 전이라 전역 한도(IP 당 분당 읽기 3000)만 걸렸다. 서명 쿠키가 상태 없이 10분 재사용되므로 한 IP 가 쿠키 하나로
+  //   GitHub 토큰 교환을 분당 수천 번 부르게 할 수 있다 → callback 만 IP 당 분당 30번으로 따로 조인다 (정상 로그인은 사람이 한 번). RATE_LIMIT=0 이면 같이 꺼짐
+  r.get("/auth/github/callback", { config: { rateLimit: { max: () => Math.min(30, rateLimitOptsFromEnv().readMax), timeWindow: "1 minute" } }, schema: { querystring: Q, response: E } }, async (req, reply) => {
     const s = githubSettings();
     if (!s.enabled) fail(404, "GITHUB_LOGIN_DISABLED", "GitHub login is not enabled");
     const secret = jwtSecret();
