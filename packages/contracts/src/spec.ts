@@ -89,7 +89,7 @@ export type SpecFieldPath = z.infer<typeof SpecFieldPath>;
 export const SpecEnvFieldPath = z.string().regex(/^service\.env\.[A-Za-z_][A-Za-z0-9_]{0,127}$/);
 // DRAFT(ai) PA2v2: v2 값 바꾸기 경로 = 리소스 props 의 맨 위 칸 하나(components.<id>.<칸>) 또는 links·entry 통째.
 //   더 깊은 칸(예: env 한 줄)은 그 칸 통째로 바꾼다 (v1 의 service.env 와 같은 방식). 모양 검사는 라우트가 AppSpecV2 + checkV2 로
-export const SpecV2FieldPath = z.string().regex(/^(components\.[a-z][a-z0-9-]{0,39}\.[A-Za-z][A-Za-z0-9]{0,39}|links|entry)$/);
+export const SpecV2FieldPath = z.string().regex(/^(components\.[a-z][a-z0-9-]{0,39}\.[A-Za-z][A-Za-z0-9]{0,39}|links|entry|posture)$/);
 // v2 확인 경로 = spec_v2.fieldMeta 키 그대로 (components.<id>.<칸>[.env.<이름>], links.<a>-><b>, entry.<host>.routes[i]…, check.reviews[i])
 export const SpecV2ConfirmPath = z.string().regex(/^(components|links|entry|check)(\.|$)\S{0,300}$/);
 export const SpecPatchInput = z.object({

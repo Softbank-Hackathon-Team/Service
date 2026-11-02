@@ -8825,7 +8825,7 @@ components:
       pattern: "^(components|links|entry|check)(\\.|$)\\S{0,300}$"
     SpecV2FieldPath:
       type: "string"
-      pattern: "^(components\\.[a-z][a-z0-9-]{0,39}\\.[A-Za-z][A-Za-z0-9]{0,39}|links|entry)$"
+      pattern: "^(components\\.[a-z][a-z0-9-]{0,39}\\.[A-Za-z][A-Za-z0-9]{0,39}|links|entry|posture)$"
     StartInput:
       type: "object"
       properties:

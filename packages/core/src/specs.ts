@@ -129,7 +129,9 @@ export function applySpecV2Patch(base: { spec: unknown; fieldMeta: SpecMeta | nu
         .find((x) => !!x && typeof x === "object" && (x as { id?: unknown }).id === m[1]) as { props?: Record<string, unknown> } | undefined;
       if (!comp) throw new DomainError(400, "SPEC_PATCH_INVALID", `${c.path}: no component ${m[1]}`);
       comp.props = { ...(comp.props ?? {}), [m[2]!]: structuredClone(c.value) };
-    } else if (c.path === "links" || c.path === "entry") {
+    } else if (c.path === "links" || c.path === "entry" || c.path === "posture") {
+      // E2EDATA2 DRAFT(ai): posture 통째 바꾸기. 출발 방화벽을 못 읽은 데이터 자원(ingress "unknown")은 precheck 가 사람이 정하라며 막는데,
+      //   posture 를 고칠 길이 없어 영원히 spec_review 에 갇혔다. 모양은 AppSpecV2 검사(부르는 쪽)가 막는다
       spec[c.path] = structuredClone(c.value);
     } else {
       throw new DomainError(400, "SPEC_PATCH_INVALID", `${c.path}: not a v2 path`);
