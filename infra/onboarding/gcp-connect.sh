@@ -73,7 +73,11 @@ sync_role_permissions() { # 역할ID 원하는권한(쉼표)
   if [ -z "${missing}" ]; then echo "= 역할 ${id} 권한 최신"
   else
     echo "~ 역할 ${id} 에 빠진 읽기 권한 추가: ${missing}"
-    run gcloud iam roles update "${id}" --project="${PROJECT_ID}" --add-permissions="${missing}"
+    # VOBSROLE3: 추가가 거절돼도(iam.roles.update 없음·지원 안 하는 권한) 연결의 나머지 단계는 계속한다. 예전엔 set -e 로 여기서 멈춰
+    #   예전 스크립트로 반쯤 만든 고객이 다시 실행하면 바인딩·tokenCreator 를 못 만들었다(갱신 전보다 나빠짐). 빠진 권한은 플랫폼 연결 확인이 다시 알려 준다
+    if ! run gcloud iam roles update "${id}" --project="${PROJECT_ID}" --add-permissions="${missing}"; then
+      echo "! 역할 ${id} 권한 추가 실패 — 연결은 계속한다. 프로젝트 소유자가 이 스크립트를 다시 실행하거나 콘솔에서 위 권한을 역할에 더할 것" >&2
+    fi
   fi
 }
 # 프로젝트 바인딩: 같은 주체·역할(조건 바인딩이면 조건 있는 것)이 이미 있으면 건너뜀

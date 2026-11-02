@@ -129,7 +129,11 @@ export async function handleVerifyConnection(data: unknown, deps: VerifyDeps = {
     const next = nextAfterPeriodic(cur, env.verify_failures, r.ok, !r.ok && r.reason === "ROLE_NOT_FOUND");
     await advanceConnection(tx, tenantId, envId, next.status, {
       from: [cur], failures: next.failures, ...(r.ok ? { touchVerified: true } : { failureReason: r.reason }), audit });
-    if (r.ok) await tx.query("UPDATE environments SET verify_detail = $2 WHERE id = $1",
+    // VOBSROLE3: 주기 재확인은 선택 권한을 찌르지 않으니 모른다 → 지난 사용자 확인이 남긴 빠진 권한·할 일은 그대로 둔다
+    //   (예전엔 통째로 덮어써서 고객이 아무것도 안 고쳤는데 다음 주기 확인 뒤 알림이 사라졌다). 지우는 건 다음 사용자 확인만
+    if (r.ok) await tx.query(
+      `UPDATE environments SET verify_detail = $2::jsonb || jsonb_strip_nulls(jsonb_build_object(
+         'missingPermissions', verify_detail->'missingPermissions', 'needsHuman', verify_detail->'needsHuman')) WHERE id = $1`,
       [envId, JSON.stringify({ clusters: r.clusters, checkedAt: new Date().toISOString() })]);
     return { status: next.status, ...(r.ok ? {} : { reason: r.reason }) };
   });
