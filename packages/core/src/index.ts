@@ -17,3 +17,4 @@ export * from "./obs/index.js";
 export * from "./shutdown.js";
 export * from "./config-check.js";
 export * from "./effective-config.js";
+export * from "./connection.js";
