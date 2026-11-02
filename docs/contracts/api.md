@@ -212,7 +212,7 @@ contracts의 화면용 모양 `MigrationView`는 열 칸이다. 지금 응답에
 | GET | `/migrations/:id/plan` | - | 명세 목록에 없는 경로 | 있음 |
 | POST | `/migrations/:id/replan` | - | 다시 계획하기: failed(provisioning 이하)·stale·rejected → planning | 있음 |
 | POST | `/migrations/:id/spec/reopen` | - | 거절 뒤 명세부터 다시 고치기: rejected → spec_review | 있음 |
-| GET | `/auth/config` | 입력층 | 로그인 화면을 띄울지(devAuth·loginRequired). 인증 불필요 | 있음 |
+| GET | `/auth/config` | 입력층 | 로그인 화면을 띄울지(devAuth·loginRequired·github.enabled). 인증 불필요 | 있음 |
 | POST | `/auth/login` | 입력층 | 이메일+비밀번호 로그인 → Bearer 접근 토큰(15분) + HttpOnly 쿠키 svc_refresh | 있음 |
 | POST | `/auth/refresh` | 입력층 | 쿠키로 접근 토큰 갱신 (리프레시 토큰은 쓰면 바로 무효) | 있음 |
 | GET | `/auth/me` | 입력층 | 내 정보 (사람 로그인 전용, 개인 토큰으로는 불가) | 있음 |

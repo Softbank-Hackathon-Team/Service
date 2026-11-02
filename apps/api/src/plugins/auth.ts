@@ -23,9 +23,9 @@ export const isAgentPath = (url: string) => url.startsWith("/agent/") || url.sta
 //   2) 그게 없고 DEV_AUTH=1(시험 전용, 운영에서는 절대 안 켜짐)이면 예전 개발용 x-dev-tenant 헤더
 //   3) 둘 다 아니면 401 UNAUTHENTICATED
 // 로그인·갱신·로그아웃·설정 경로(/auth/login 등)는 자기가 인증을 처리하므로 여기서 건너뛴다 (routes/auth.ts)
-// 예전 주석의 "GitHub OAuth" 대신 이메일+비밀번호로 했다: 외부 앱 등록·콜백 주소가 필요 없어 데모 기기 어디서나 돈다
-//   DRAFT(ai) Z93: OAuth(SSO)는 결선 뒤. 붙이면 /auth/login 대신 콜백 경로가 같은 세션 표(auth_sessions)에 줄을 넣으면 된다
-export const isPublicAuthPath = (url: string) => /^\/api\/v1\/auth\/(login|refresh|logout|config)(\?|$)/.test(url);
+// 이메일+비밀번호가 기본이고(외부 앱 등록이 필요 없어 데모 기기 어디서나 돈다), GHLOGIN 으로 GitHub OAuth 를 더했다:
+//   /auth/github/start·callback 이 같은 세션 표(auth_sessions)에 줄을 넣고 같은 svc_refresh 쿠키를 준다
+export const isPublicAuthPath = (url: string) => /^\/api\/v1\/auth\/(login|refresh|logout|config|github\/(start|callback))(\?|$)/.test(url);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 export const isViaCloudflare = (req: FastifyRequest) =>

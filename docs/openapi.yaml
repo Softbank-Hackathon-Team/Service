@@ -155,6 +155,116 @@ paths:
         "500":
           $ref: "#/components/responses/E500"
           description: "INTERNAL"
+  "/api/v1/auth/github/callback":
+    get:
+      operationId: "getAuthGithubCallback"
+      tags:
+        - "auth"
+      summary: "/api/v1/auth/github/callback"
+      description: "코드: apps/api/src/routes/auth.ts"
+      security:
+        - bearerAuth: []
+        - devTenant: []
+      parameters:
+        - name: "code"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+            maxLength: 512
+        - name: "state"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+            maxLength: 200
+        - name: "error"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+            maxLength: 100
+        - $ref: "#/components/parameters/DevTenant"
+      responses:
+        "302":
+          description: "OK"
+          content:
+            "application/json":
+              schema:
+                type: "null"
+        "400":
+          $ref: "#/components/responses/E400"
+          description: "BAD_REQUEST (Zod 검증 실패)"
+        "401":
+          $ref: "#/components/responses/E401"
+          description: "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+        "403":
+          $ref: "#/components/responses/E403"
+          description: "TUNNEL_READ_ONLY (개발 헤더 인증 + Cloudflare 터널로 온 쓰기, Z47)"
+        "404":
+          $ref: "#/components/responses/E404"
+          description: "ApiError"
+        "409":
+          $ref: "#/components/responses/E409"
+          description: "ApiError"
+        "429":
+          $ref: "#/components/responses/E429"
+          description: "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+        "500":
+          $ref: "#/components/responses/E500"
+          description: "INTERNAL"
+        "502":
+          $ref: "#/components/responses/E502"
+          description: "ApiError"
+        "503":
+          $ref: "#/components/responses/E503"
+          description: "ApiError"
+  "/api/v1/auth/github/start":
+    get:
+      operationId: "getAuthGithubStart"
+      tags:
+        - "auth"
+      summary: "/api/v1/auth/github/start"
+      description: "코드: apps/api/src/routes/auth.ts"
+      security:
+        - bearerAuth: []
+        - devTenant: []
+      parameters:
+        - $ref: "#/components/parameters/DevTenant"
+      responses:
+        "302":
+          description: "OK"
+          content:
+            "application/json":
+              schema:
+                type: "null"
+        "400":
+          $ref: "#/components/responses/E400"
+          description: "BAD_REQUEST (Zod 검증 실패)"
+        "401":
+          $ref: "#/components/responses/E401"
+          description: "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+        "403":
+          $ref: "#/components/responses/E403"
+          description: "TUNNEL_READ_ONLY (개발 헤더 인증 + Cloudflare 터널로 온 쓰기, Z47)"
+        "404":
+          $ref: "#/components/responses/E404"
+          description: "ApiError"
+        "409":
+          $ref: "#/components/responses/E409"
+          description: "ApiError"
+        "429":
+          $ref: "#/components/responses/E429"
+          description: "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+        "500":
+          $ref: "#/components/responses/E500"
+          description: "INTERNAL"
+        "502":
+          $ref: "#/components/responses/E502"
+          description: "ApiError"
+        "503":
+          $ref: "#/components/responses/E503"
+          description: "ApiError"
   "/api/v1/auth/login":
     post:
       operationId: "postAuthLogin"
@@ -4030,9 +4140,12 @@ components:
           type: "boolean"
         loginRequired:
           type: "boolean"
+        github:
+          $ref: "#/components/schemas/GithubConfig"
       required:
         - "devAuth"
         - "loginRequired"
+        - "github"
       additionalProperties: false
     AuthTokenResponse:
       type: "object"
@@ -7563,6 +7676,14 @@ components:
         - "kind"
         - "observedAt"
         - "evidence"
+      additionalProperties: false
+    GithubConfig:
+      type: "object"
+      properties:
+        enabled:
+          type: "boolean"
+      required:
+        - "enabled"
       additionalProperties: false
     ImageV2:
       type: "object"

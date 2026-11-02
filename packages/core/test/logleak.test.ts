@@ -25,6 +25,10 @@ test("worker 로거: 비밀 이름 칸은 깊이 상관없이, 문자열 속 비
   assert.match(o.url, /a=1$/);                      // 비밀 아닌 쿼리는 남는다
 });
 
+test("GHLOGIN: OAuth 콜백 주소의 code·state 쿼리도 가린다", () => {
+  assert.equal(scrubString("GET /api/v1/auth/github/callback?code=abc123&state=xyz789&x=1"), "GET /api/v1/auth/github/callback?code=[redacted]&state=[redacted]&x=1");
+});
+
 test("거부 쪽: 비밀이 아닌 값·숫자 칸은 그대로 (input_tokens, token_count, tenant_id, 일반 문자열)", () => {
   const ls: string[] = [];
   const log = createLogger("worker", {}, { write: (l) => ls.push(l) });

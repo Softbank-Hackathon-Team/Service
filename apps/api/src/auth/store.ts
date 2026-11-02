@@ -15,6 +15,12 @@ export async function findLoginUser(email: string): Promise<LoginRow | undefined
   const q = await pool.query("SELECT * FROM auth_login_lookup($1)", [email]);
   return q.rows[0];
 }
+// GHLOGIN: GitHub 계정 번호 → 사용자 한 명 (0034 auth_github_lookup). 없으면 undefined
+export interface GithubLoginRow { user_id: string; tenant_id: string; email: string; display_name: string | null; disabled: boolean }
+export async function findGithubUser(githubId: string): Promise<GithubLoginRow | undefined> {
+  const q = await pool.query("SELECT * FROM auth_github_lookup($1)", [githubId]);
+  return q.rows[0];
+}
 export async function findSession(id: string): Promise<SessionRow | undefined> {
   const q = await pool.query("SELECT * FROM auth_session_lookup($1)", [id]);
   return q.rows[0];
