@@ -117,13 +117,16 @@ test("경계 밖으로 빠진 자원: IMPORT_APP 이 바뀌어 사람이 고친 
       assert.ok(!b.spec_v2.spec.components.some((c: { id: string }) => c.id === "shop-api"), "shop-api 는 이제 묶음 밖");
       assert.ok(!JSON.stringify(b.spec_v2).includes(`"min":${HUMAN.min}`), "사람 값이 다른 자원으로 새면 안 됨");
       assert.ok(!Object.keys(b.spec_v2.fieldMeta).some((k) => k.startsWith("components.shop-api.")), "빠진 자원의 칸 표시도 안 남음");
+      const d = (await owner.query("SELECT detail FROM audit_events WHERE target=$1 AND action='migration.spec_review' ORDER BY seq DESC LIMIT 1", [id])).rows[0].detail;
+      assert.ok(d.carry.dropped.includes("shop-api.replicas"), "대상 없어 못 옮긴 사람 값은 이름으로 감사에 남음: " + JSON.stringify(d.carry));
+      assert.match(d.note, /대상 없어 보류 [1-9]/);
+      assert.ok(!JSON.stringify(d.carry).includes('"min"'), "값은 안 담김");
     });
   } finally { delete process.env.IMPORT_APP; }
 });
 
-// 설계 어긋남(안 고침): 경계 밖으로 한 번 빠졌다 돌아오면 앞 판 하나(history[0])만 보므로 그 전에 고친 값이 사라진다.
-//   todo 로 남겨 둠: 고치면 이 시험이 통과한다
-test("경계 밖에 한 판 있다가 돌아와도 사람이 고친 값 유지", { skip, todo: "carry 는 가장 새 판 하나만 본다 (PREVIDS2 한계). 판 병합 묶음 필요" }, async () => {
+// PREVIDS3: 판 창(최근 10판)으로 고침 — 예전엔 todo(앞 판 하나만 봐서 사라짐)
+test("경계 밖에 한 판 있다가 돌아와도 사람이 고친 값 유지", { skip }, async () => {
   process.env.IMPORT_IR = "v2";
   try {
     await withLabels(async () => {
@@ -137,16 +140,25 @@ test("경계 밖에 한 판 있다가 돌아와도 사람이 고친 값 유지",
   } finally { delete process.env.IMPORT_APP; }
 });
 
-// 설계 어긋남(안 고침): 사람이 links·entry·posture 를 고친 것(PATCH changes path)은 components.* 키가 아니라 유지되지 않는다 (carry.ts 머리말: components 밖 키는 그대로)
-test("사람이 고친 posture 도 재가져오기 뒤 유지", { skip, todo: "carry 는 components.<id>.<칸> 만 다룬다. links·entry·posture 사람 수정은 재가져오기 때 사라짐" }, async () => {
+// PREVIDS3: links·entry·posture 도 유지 — 예전엔 todo
+test("사람이 고친 posture·links 도 재가져오기 뒤 유지 (두 번 연속 멱등)", { skip }, async () => {
   process.env.IMPORT_IR = "v2";
   const id = await seed();
   await imp.handleImport(job(id));
   const cur = await last(id);
-  const posture = { ...cur.spec_v2.spec.posture, network: cur.spec_v2.spec.posture.network.map((x: any) => ({ ...x, public: false })) };
-  await patchLikeUi(id, [{ path: "posture", value: posture }]);
+  const posture = { ...cur.spec_v2.spec.posture, network: [...cur.spec_v2.spec.posture.network.filter((x: any) => !(x.scope === "component" && x.subject === "shop-api")), { scope: "component", subject: "shop-api", mode: "mirror", ingress: [{ from: "10.0.0.0/16" }], public: false }] };
+  const links = [...cur.spec_v2.spec.links, { from: "shop-web", to: "shop-worker", intent: "call" }];
+  await patchLikeUi(id, [{ path: "posture", value: posture }, { path: "links", value: links }]);
   await reimport(id);
-  assert.deepEqual((await last(id)).spec_v2.spec.posture, posture);
+  const a = await last(id);
+  assert.deepEqual(a.spec_v2.spec.posture, posture);
+  assert.deepEqual(a.spec_v2.spec.links, links);
+  assert.equal(a.spec_v2.fieldMeta.posture.source, "human");
+  const d = (await owner.query("SELECT detail FROM audit_events WHERE target=$1 AND action='migration.spec_review' ORDER BY seq DESC LIMIT 1", [id])).rows[0].detail;
+  assert.ok(d.carry.kept.includes("posture") && d.carry.kept.includes("links"), JSON.stringify(d.carry));
+  await reimport(id);
+  const b = await last(id);
+  assert.deepEqual(b.spec_v2.spec, a.spec_v2.spec); assert.deepEqual(b.spec_v2.fieldMeta, a.spec_v2.fieldMeta);
 });
 
 test("남의 회사: 다른 회사 이름으로 부른 재가져오기는 앞 판을 읽지도 바꾸지도 않는다", { skip }, async () => {
@@ -159,4 +171,18 @@ test("남의 회사: 다른 회사 이름으로 부른 재가져오기는 앞 �
   await imp.handleImport(job(id, OTHER));   // RLS: 남의 회사 문맥에선 이전이 안 보임 → 아무것도 안 함
   assert.deepEqual(await versions(id), before);
   assert.equal((await status(id)).status, "importing");
+});
+
+test("PREVIDS3 합친 명세가 구조 검증을 못 통과하면(사람이 지운 링크를 부품 env 가 아직 가리킴) 가져오기를 막지 않고 합치기를 건너뛴다", { skip }, async () => {
+  process.env.IMPORT_IR = "v2";
+  const id = await seed();
+  await imp.handleImport(job(id));
+  const first = await last(id);
+  await patchLikeUi(id, [{ path: "links", value: first.spec_v2.spec.links.slice(1) }]);   // env 는 그대로 → 합치면 checkV2 오류
+  await reimport(id);
+  const a = await last(id);
+  assert.deepEqual(a.spec_v2.spec.links, first.spec_v2.spec.links, "새로 읽은 값 그대로");
+  const d = (await owner.query("SELECT detail FROM audit_events WHERE target=$1 AND action='migration.spec_review' ORDER BY seq DESC LIMIT 1", [id])).rows[0].detail;
+  assert.match(d.note, /건너뜀/);
+  assert.ok(d.carry.dropped.some((x: string) => x === "links"), JSON.stringify(d.carry));
 });

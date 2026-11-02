@@ -11,7 +11,7 @@ test("첫 가져오기(앞 판 없음): 입력 그대로", () => {
   const f = fresh();
   const { result, report } = carryHumanEdits(f, []);
   assert.deepEqual(result, f);
-  assert.deepEqual(report, { kept: [], flagged: [] });
+  assert.deepEqual(report, { kept: [], flagged: [], dropped: [] });
 });
 
 test("사람 수정 + 출발 같음 → 사람 값·표시 유지. 입력(fresh)은 안 바뀜", () => {
@@ -49,7 +49,8 @@ test("경계: 앞 판에 있던 자원이 새 판에 없으면(id 다름) 아무
   for (const k of Object.keys(f.fieldMeta)) if (k.startsWith("components.shop-cleanup.")) delete f.fieldMeta[k];
   const { result, report } = carryHumanEdits(f, [prev, fresh()]);
   assert.deepEqual(result, f);
-  assert.deepEqual(report, { kept: [], flagged: [] });
+  // PREVIDS3: 대상이 없어 못 옮긴 사람 값은 조용히 사라지지 않고 report.dropped 에 이름으로 남는다 (이전엔 보고 없음 — 시험 기대 변경)
+  assert.deepEqual(report, { kept: [], flagged: [], dropped: ["shop-cleanup.resources"] });
 });
 
 test("확인만 한 칸: 출발 같으면 확인 유지, 바뀌면 다시 검토. 아무것도 안 한 칸은 그대로", () => {

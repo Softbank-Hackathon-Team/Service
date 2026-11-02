@@ -22,12 +22,12 @@ test("입력(fresh·history)을 바꾸지 않는다, 같은 입력이면 결과�
   assert.deepEqual(x.report.kept, ["shop-api.replicas"]);
 });
 
-test("새 판에 그 자원이 없으면(경계 밖) 던지지 않고 아무것도 안 하며 보고에도 안 나온다", () => {
+test("새 판에 그 자원이 없으면(경계 밖) 던지지 않고 아무것도 안 하며 보고(dropped)에 이름으로 남는다", () => {
   const f = fresh(); f.spec.components = f.spec.components.filter((c) => c.id !== "shop-api");
   for (const k of Object.keys(f.fieldMeta)) if (k.startsWith("components.shop-api.")) delete f.fieldMeta[k];
   const { result, report } = carryHumanEdits(f, [humanPrev(), fresh()]);
   assert.deepEqual(result, f);
-  assert.deepEqual(report, { kept: [], flagged: [] });
+  assert.deepEqual(report, { kept: [], flagged: [], dropped: ["shop-api.replicas"] });   // PREVIDS3: 이름만 보고
 });
 
 test("거친 앞 판: 칸 이름이 constructor·__proto__ 여도 던지지 않고 프로토타입이 오염되지 않는다", () => {
