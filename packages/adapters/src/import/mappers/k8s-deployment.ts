@@ -1,4 +1,5 @@
 import { K8S_RAW_KINDS, type RawK8sContainer, type RawK8sDeployment, type RawK8sPodSpec, type RawK8sProbe } from "../raw-k8s.js";
+import { appLabelsOf } from "../app-group.js";
 import type { KindMapper, MappedComponent, MetaTuple, RawItem } from "../types.js";
 
 // DRAFT(ai): k8s Deployment → service 리소스. 설계 20번 4.2장·6.1장, PoC KIND_MAPPERS["k8s.deployment"].
@@ -116,7 +117,8 @@ export const k8sDeploymentMapper: KindMapper = {
     const replicas = it.spec.replicas ?? 1;
     return {
       name: it.metadata.name, ...(ns ? { ns } : {}), kind: "service",
-      native: { type: K8S_RAW_KINDS.deployment, name: it.metadata.name, ...(ns ? { namespace: ns } : {}), labels: it.spec.template.metadata?.labels ?? {} },
+      native: { type: K8S_RAW_KINDS.deployment, name: it.metadata.name, ...(ns ? { namespace: ns } : {}), labels: it.spec.template.metadata?.labels ?? {},
+        ...(appLabelsOf(it.metadata.labels) ? { appLabels: appLabelsOf(it.metadata.labels) } : {}) },
       props: { runtime: "k8s", origin: { runtime: "k8s", product: "k8s" }, ...w.props, ...(ports.length ? { ports } : {}), replicas: { min: replicas, max: replicas } },
       meta: {
         ...w.meta,

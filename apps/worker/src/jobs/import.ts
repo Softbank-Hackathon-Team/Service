@@ -204,7 +204,8 @@ async function importV2(p: Provider, sess: ObserveSession, previous: Record<stri
     const { spec, fieldMeta } = a.normalize(inv1);
     return { inv: inv1, spec, fieldMeta, result: null, note: "원본에 k8s·ECS 워크로드 없음 → v1 경로 (spec_v2 없음)" };
   }
-  const { result, projectionEnv } = normalizeV2(inv, { previousIds: previous });
+  // PARTOF: 앱 묶음 값 = IMPORT_APP(projectV1 mainApp 과 같은 값). 없으면 라벨이 가장 많은 묶음 + 검토 표시
+  const { result, projectionEnv } = normalizeV2(inv, { previousIds: previous, partOf: process.env.IMPORT_APP?.trim() || undefined });
   const { errors, reviews } = checkV2(result.spec);
   if (errors.length) throw new AdapterError("SPEC_V2_INVALID", `공통 명세 v2 검증 실패: ${errors.slice(0, 5).join("; ")}${errors.length > 5 ? ` 외 ${errors.length - 5}개` : ""}`);
   // DRAFT(ai): reviews 는 막지 않고 fieldMeta 에 "check.reviews[i]" 키로 검토 표시 (화면이 needs_review 로 센다)

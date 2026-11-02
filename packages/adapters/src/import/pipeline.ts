@@ -5,6 +5,7 @@ import { maskPlainSecrets, rewriteEnv } from "./env-rewrite.js";
 import { attachEndpoints, buildEntry, fillProjection, mergeRoutes } from "./entry.js";
 import { buildPosture } from "./posture.js";
 import { applyBoundary } from "./boundary.js";
+import { selectAppGroup } from "./app-group.js";
 import { K8S_RAW_KINDS, type RawK8sHpa, type RawK8sIngress, type RawK8sNetworkPolicy, type RawK8sService } from "./raw-k8s.js";
 import { k8sDeploymentMapper } from "./mappers/k8s-deployment.js";
 import { k8sCronJobMapper } from "./mappers/k8s-cronjob.js";
@@ -120,6 +121,10 @@ export function normalizeV2(raw: RawInventory, opts: NormalizeV2Options = {}): N
     }
   }
 
+  // 3b) PARTOF: 앱 묶음 라벨(part-of 등)이 있으면 그 묶음 워크로드만. 데이터 자원 경계(5b)는 남은 워크로드 기준
+  const grouped = selectAppGroup(components, fieldMeta, opts.partOf);
+  components = grouped.components;
+
   // 4) 평문 비밀 → 명세에서 뺌 (의존성 추론 전에: 비밀 값이 근거가 되지 않게)
   const masked = maskPlainSecrets(components, fieldMeta, unmapped);
 
@@ -154,7 +159,8 @@ export function normalizeV2(raw: RawInventory, opts: NormalizeV2Options = {}): N
     },
     fieldMeta: Object.fromEntries(Object.entries(fieldMeta).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))),
     unmapped: unmapped.sort((a, b) => (a.resource < b.resource ? -1 : a.resource > b.resource ? 1 : a.reason < b.reason ? -1 : a.reason > b.reason ? 1 : 0)),
-    ...(bounded.outOfBoundary.length ? { outOfBoundary: bounded.outOfBoundary } : {}),
+    ...(grouped.outOfBoundary.length + bounded.outOfBoundary.length
+      ? { outOfBoundary: [...grouped.outOfBoundary, ...bounded.outOfBoundary].sort((a, b) => (a.resource < b.resource ? -1 : a.resource > b.resource ? 1 : 0)) } : {}),
     ids,
     environment: environment.sort(),
   };
