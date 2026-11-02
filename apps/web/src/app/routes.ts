@@ -1,7 +1,7 @@
-export type Page = 'dashboard' | 'environments' | 'migrations' | 'security' | 'audit' | 'agent' | 'settings';
+export type Page = 'dashboard' | 'environments' | 'migrations' | 'security' | 'audit' | 'agent' | 'settings' | 'designSystem';
 
 export type Route =
-  | { page: 'dashboard' | 'settings' }
+  | { page: 'dashboard' | 'settings' | 'designSystem' }
   | { page: 'environments' | 'security' | 'audit' | 'agent'; id: string | null }
   | { page: 'migrations'; view: 'list' }
   | { page: 'migrations'; view: 'new' }
@@ -24,6 +24,7 @@ export function parseRoute(hash: string): Route {
   const pick = PICK_PAGES.find((page) => page === first);
   if (pick) return { page: pick, id: second ?? null };
   if (first === 'settings') return { page: 'settings' };
+  if (first === 'design-system') return { page: 'designSystem' };
   if (first !== 'migrations') return { page: 'dashboard' };
   if (!second) return { page: 'migrations', view: 'list' };
   if (second === 'new') return { page: 'migrations', view: 'new' };

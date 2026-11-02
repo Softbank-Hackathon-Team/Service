@@ -3,6 +3,7 @@ import { AgentPage } from '../features/agent/AgentPage';
 import { AuditPage } from '../features/audit/AuditPage';
 import { CostPage } from '../features/cost/CostPage';
 import { DashboardPage } from '../features/dashboard/DashboardPage';
+import { DesignSystemPage } from '../features/design-system/DesignSystemPage';
 import { EnvironmentsPage } from '../features/environments/EnvironmentsPage';
 import { LoginPage } from '../features/login/LoginPage';
 import { MigrationPage } from '../features/migration/MigrationPage';
@@ -12,7 +13,7 @@ import { SecurityPage } from '../features/security/SecurityPage';
 import { SettingsPage } from '../features/settings/SettingsPage';
 import { auth } from '../lib/api';
 import type { AuthState } from '../lib/auth';
-import { parseRoute } from './routes';
+import { go, parseRoute } from './routes';
 import { withTransition } from './transition';
 
 type View = 'checking' | 'login' | 'console';
@@ -62,6 +63,8 @@ export function App() {
       return <AgentPage id={route.id} />;
     case 'settings':
       return <SettingsPage user={state.user} />;
+    case 'designSystem':
+      return <DesignSystemPage onExit={() => go('')} />;
     case 'migrations':
       if (route.view === 'list') return <MigrationsPage />;
       if (route.view === 'new') return <NewMigrationPage />;

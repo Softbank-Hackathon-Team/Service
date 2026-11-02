@@ -14,6 +14,7 @@ test("주소 해석: 모든 화면으로 간다", () => {
   assert.deepEqual(parseRoute("#/audit"), { page: "audit", id: null });
   assert.deepEqual(parseRoute("#/agent/m1"), { page: "agent", id: "m1" });
   assert.deepEqual(parseRoute("#/settings"), { page: "settings" });
+  assert.deepEqual(parseRoute("#/design-system"), { page: "designSystem" });
   assert.deepEqual(parseRoute("#/migrations"), { page: "migrations", view: "list" });
   assert.deepEqual(parseRoute("#/migrations/new"), { page: "migrations", view: "new" });
   assert.deepEqual(parseRoute("#/migrations/m1"), { page: "migrations", view: "detail", id: "m1" });
