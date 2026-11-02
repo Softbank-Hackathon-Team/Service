@@ -17,7 +17,7 @@
     "dev:worker": "npm run dev -w @svc/worker",
     "typecheck": "tsc -p tsconfig.json",
     "pretest": "npm run -s openapi",
-    "test": "TRAFFIC_OBSERVE_SEC=30 PLAN_ACKS= TENANT_MAX_ACTIVE= SPEC_MIN_CONFIDENCE= REAL_STS= VERIFY_CRON= API_REAPER= ROLLBACK_WINDOW_SEC= MOCK_SEED=1 FAKE_LLM=1 MOCK_PRECHECK=1 DEV_AUTH=1 AUTH_SCRYPT_N=16384 MOCK_IAC=1 MOCK_ARGO=1 node --import tsx --test --test-timeout=60000 packages/*/test/*.test.ts apps/*/test/*.test.ts",
+    "test": "DATABASE_URL= OWNER_DATABASE_URL= TRAFFIC_OBSERVE_SEC=30 PLAN_ACKS= TENANT_MAX_ACTIVE= SPEC_MIN_CONFIDENCE= REAL_STS= VERIFY_CRON= API_REAPER= ROLLBACK_WINDOW_SEC= MOCK_SEED=1 FAKE_LLM=1 MOCK_PRECHECK=1 DEV_AUTH=1 AUTH_SCRYPT_N=16384 MOCK_IAC=1 MOCK_ARGO=1 node --import tsx --test --test-timeout=60000 packages/*/test/*.test.ts apps/*/test/*.test.ts",
     "schemas": "tsx packages/contracts/scripts/export-json-schema.ts",
     "test:db:serial": "TEST_DB_CONCURRENCY=1 npm run test:db",
     "test:db": "TRAFFIC_OBSERVE_SEC=30 PLAN_ACKS= TENANT_MAX_ACTIVE= SPEC_MIN_CONFIDENCE= REAL_STS= VERIFY_CRON= API_REAPER= ROLLBACK_WINDOW_SEC= MOCK_SEED=1 FAKE_LLM=1 MOCK_PRECHECK=1 DEV_AUTH=1 AUTH_SCRYPT_N=16384 MOCK_IAC=1 MOCK_ARGO=1 GITOPS_DISABLE=1 GITOPS_REPO_URL= GITOPS_REPO_DIR= GITOPS_PUSH=0 PROM_URL= TEST_DB_ISOLATE=1 sh -c 'node --env-file=.env tools/test/db-test-db.mjs setup || exit 1; node --env-file=.env --import tsx --import ./tools/test/db-isolate.mjs --test --test-concurrency=${TEST_DB_CONCURRENCY:-4} --test-timeout=120000 apps/*/test/*.it.ts packages/*/test/*.db.test.ts apps/*/test/*.db.test.ts; s=$?; node --env-file=.env tools/test/db-test-db.mjs cleanup; exit $s'",
