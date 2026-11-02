@@ -8,6 +8,7 @@ import {
 } from "../common/cli.js";
 import { DEMO_INVENTORY, DEMO_INVENTORY_V2 } from "../common/fixtures.js";
 import { readK8sApp, readK8sNamespace } from "./k8s.js";
+import { appIdentities, readAwsIam } from "./aws-iam.js";
 
 // Z88: 출발 환경 진짜 읽기 (데모 원본 STUB 대체). 결과는 normalize 가 아는 원본 모양 + 둘레 자원 목록.
 //   AWS  : sts → eks list/describe-cluster → kubeconfig(임시 파일) → kubectl 앱 읽기 · rds describe-db-instances
@@ -23,7 +24,8 @@ import { readK8sApp, readK8sNamespace } from "./k8s.js";
 type Obj = Record<string, unknown>;
 
 /** I2: 가져오기 옵션. ir 를 안 주면 지금 동작(v1) 그대로. adapters 는 IMPORT_IR 환경변수를 읽지 않는다 (호출하는 쪽이 옵션으로만 넘김) */
-export interface DiscoverOpts { ir?: "v1" | "v2"; namespace?: string }
+/** I4: iam = true 면 (v2 + AWS 만) 앱 신원의 IAM 정책도 읽는다 (aws.iamPolicy). 기본 꺼짐 = 지금 그대로 */
+export interface DiscoverOpts { ir?: "v1" | "v2"; namespace?: string; iam?: boolean }
 
 /** v1 = 앱 Deployment 하나(readK8sApp), v2 = 네임스페이스 전체(readK8sNamespace). 같은 모양 {items, namespace, counts, notes} 로 맞춘다 */
 async function readApp(d: CliDeps, kube: string[], opts: DiscoverOpts): Promise<{ items: Obj[]; namespace: string; counts: Record<string, number>; notes: string[] }> {
@@ -85,6 +87,11 @@ export async function discoverAws(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
     catch (e) { if (e instanceof CliError) throw unavailable(`EKS ${cl.name} 쿠버네티스 API 읽기 실패 (access entry 확인): ${e.message.slice(0, 160)}`); throw e; }
   });
 
+  // I4: 앱 신원의 IAM 정책 (v2 + 옵션 켬). 못 읽어도 앱·DB 는 계속 (notes 에 이유)
+  const iam = opts.ir === "v2" && opts.iam
+    ? await side("IAM", async () => (await readAwsIam(d, r, cl.name, appIdentities(app.items), notes)) as unknown as Obj[], notes)
+    : [];
+
   const dbs = arr(get(await runJson(d, "aws", ["rds", "describe-db-instances", ...r]), "DBInstances")).filter((x) => x.Engine === "postgres");
   const db = pick(dbs, env.IMPORT_AWS_DB_ID, (x) => String(x.DBInstanceIdentifier), "RDS Postgres", notes);
   if (env.IMPORT_AWS_DB_ID && !db) notes.push(`RDS ${env.IMPORT_AWS_DB_ID} 없음 → DB 없이 명세를 만든다`);
@@ -106,7 +113,7 @@ export async function discoverAws(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
       AllocatedStorage: db.AllocatedStorage, DBInstanceClass: db.DBInstanceClass, Endpoint: get(db, "Endpoint", "Address") ?? null,
       ...(opts.ir === "v2" ? { MultiAZ: db.MultiAZ ?? null, PubliclyAccessible: db.PubliclyAccessible ?? null, MaxAllocatedStorage: db.MaxAllocatedStorage ?? null, DBInstanceArn: db.DBInstanceArn ?? null } : {}) }] : []),
     { kind: "eks.cluster", name: cl.name, version: get(desc, "version") ?? null, vpcId },
-    ...vpcs, ...lbs, ...repos, ...secrets,
+    ...vpcs, ...lbs, ...repos, ...secrets, ...iam,
     ...[...notes, ...app.notes].map(note),
   ];
   return { provider: "aws", items, coverage: coverage(items, app.counts) };

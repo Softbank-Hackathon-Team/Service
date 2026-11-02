@@ -10,6 +10,7 @@ import { k8sCronJobMapper } from "./mappers/k8s-cronjob.js";
 import { rdsMapper } from "./mappers/rds.js";
 import { cloudSqlMapper } from "./mappers/cloudsql.js";
 import { cnpgMapper } from "./mappers/cnpg.js";
+import type { RawAwsIamPolicy } from "./mappers/iam-grants.js";
 import type { KindMapper, MappedComponent, NormalizeV2Options, NormalizeV2Output, ProjectionEnv, RawItem } from "./types.js";
 
 // DRAFT(ai): 원본(RawInventory) → 공통 명세 v2 (설계 20번 5.1~5.5장, 24번 I3a). 순수 함수, 네트워크·환경변수 안 읽음.
@@ -89,13 +90,17 @@ export function normalizeV2(raw: RawInventory, opts: NormalizeV2Options = {}): N
   const masked = maskPlainSecrets(components, fieldMeta, unmapped);
 
   // 5) 의존성 + env 다시 쓰기
-  const { links, meta, envHits } = inferLinks(components, masked);
+  // I4: 앱 신원의 IAM 정책 (discover 가 IAM 읽기를 켰을 때만 원본에 있음. 없으면 지금 그대로)
+  const iamPolicies = evidence<RawAwsIamPolicy>("aws.iamPolicy").filter((p) => typeof p.roleName === "string" && typeof p.serviceAccount === "string");
+  const { links, meta, envHits, permissions, unmapped: iamUnmapped } = inferLinks(components, masked, iamPolicies);
+  unmapped.push(...iamUnmapped);
   Object.assign(fieldMeta, meta);
   rewriteEnv(components, envHits, fieldMeta);
 
   // 6) 라우팅, 7) 보안 기준선
   const entry = buildEntry(components, svcObjs, ingresses, fieldMeta, unmapped);
   const posture = buildPosture(components, policies);
+  posture.permissions.push(...permissions);
   fillProjection(components, svcObjs, ingresses);
 
   const firstService = components.find((c) => c.kind === "service") ?? components[0];

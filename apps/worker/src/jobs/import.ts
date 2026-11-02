@@ -143,7 +143,8 @@ async function saveImport(job: MigrationJob, inv: RawInventory, spec: unknown, f
 //   checkV2 errors(구조 오류)만 막는다. reviews(벤더 주소·사설 IP 남음)는 spec_v2.fieldMeta 검토 표시만
 type V2Import = { inv: RawInventory; spec: unknown; fieldMeta: FieldMeta; result: ImportResultV2 | null; note?: string };
 async function importV2(p: Provider, sess: ObserveSession): Promise<V2Import> {
-  const inv = await discoverForImport(p, { ir: "v2" }, sess.cliEnv ? { env: envFor(sess.cliEnv) } : {});
+  // I4: 깃발 IMPORT_AWS_IAM=1 이면 앱 신원의 IAM 정책도 읽어 grants·기준선을 채운다 (기본 꺼짐 = 지금 그대로)
+  const inv = await discoverForImport(p, { ir: "v2", iam: process.env.IMPORT_AWS_IAM === "1" }, sess.cliEnv ? { env: envFor(sess.cliEnv) } : {});
   const k8s = (inv.items as Array<{ kind?: string }>).some((i) => i.kind === "k8s.deployment" || i.kind === "k8s.cronjob");
   if (!k8s) {
     const a = adapterFor(p);

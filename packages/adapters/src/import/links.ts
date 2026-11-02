@@ -1,13 +1,19 @@
-import type { FieldMetaV2, LinkV2 } from "@svc/contracts";
+import type { FieldMetaV2, LinkV2, UnmappedV2 } from "@svc/contracts";
 import type { MappedComponent } from "./types.js";
+import { iamGrants, type PermissionV2, type RawAwsIamPolicy } from "./mappers/iam-grants.js";
 
 // DRAFT(ai): 의존성 추론 (설계 20번 4.3(가)·5.3장, PoC inferLinks 의 k8s·DB 부분).
 //   신뢰도: env 주소 = 1 (맨 이름이면 0.9), 비밀 이름 = 0.9, 이름 추측 = 0.6.
-//   IAM 정책(grants)·S3·SQS·캐시는 다음 묶음(I4·I6) 몫이라 여기서는 안 본다.
+//   I4: 앱 신원(Pod Identity·IRSA)의 IAM 정책 → grants 원문 + 기준선 (규칙 2, mappers/iam-grants.ts). 신뢰도 1 (조건 있으면 0.9).
+//   S3·SQS·캐시 매퍼는 I6 몫.
 
 type Intent = LinkV2["intent"];
 export interface EnvHit { from: string; env: string; target: MappedComponent; address: string; confidence: 1 | 0.9 }
-export interface LinksOut { links: LinkV2[]; meta: FieldMetaV2; envHits: EnvHit[] }
+export interface LinksOut {
+  links: LinkV2[]; meta: FieldMetaV2; envHits: EnvHit[];
+  /** I4: IAM 정책 중 의존성으로 못 옮긴 문장 (posture.permissions) · 붙일 곳을 못 찾은 정책 */
+  permissions: PermissionV2[]; unmapped: UnmappedV2[];
+}
 
 /** 값에서 "주소 조각"을 뽑는다: 값 전체, URL 호스트, 호스트:포트의 호스트, 쉼표·공백 조각. 부분 문자열은 안 본다 */
 export const tokensOf = (v: string): Set<string> => {
@@ -44,18 +50,22 @@ const defaultIntent = (k: string): Intent | null => (k === "postgres" || k === "
 /** 명세에서 뺀 평문 비밀 env (값은 여기서 의존성 근거로만 쓰고 어디에도 안 남긴다) */
 export interface MaskedEvidence { from: string; env: string; value: string }
 
-export function inferLinks(components: MappedComponent[], masked: MaskedEvidence[] = []): LinksOut {
-  const links = new Map<string, { from: string; to: string; intent: Intent | null; confidence: number }>();
+type Grant = NonNullable<LinkV2["grants"]>[number];
+
+export function inferLinks(components: MappedComponent[], masked: MaskedEvidence[] = [], iamPolicies: RawAwsIamPolicy[] = []): LinksOut {
+  const links = new Map<string, { from: string; to: string; intent: Intent | null; confidence: number; grants: Grant[] }>();
   const meta: FieldMetaV2 = {};
   const envHits: EnvHit[] = [];
-  const add = (from: string, to: string, intent: Intent | null, source: string, confidence: 1 | 0.9 | 0.6, rationale?: string) => {
+  const add = (from: string, to: string, intent: Intent | null, source: string, confidence: 1 | 0.9 | 0.6, rationale?: string, grant?: Grant) => {
     const k = `${from}->${to}`;
     const prev = links.get(k);
-    const next = { from, to, intent: prev ? merge(prev.intent, intent) : intent, confidence: Math.max(prev?.confidence ?? 0, confidence) };
+    const next = { from, to, intent: prev ? merge(prev.intent, intent) : intent, confidence: Math.max(prev?.confidence ?? 0, confidence),
+      grants: [...(prev?.grants ?? []), ...(grant ? [grant] : [])] };
     links.set(k, next);
     const pm = meta[`links.${k}`];
     const why = [...new Set([pm?.rationale, rationale].filter((x): x is string => Boolean(x)).flatMap((x) => x.split(" / ")))].join(" / ");
-    meta[`links.${k}`] = { source: pm ? `${pm.source} + ${source}` : source, confidence: next.confidence as 1 | 0.9 | 0.6,
+    const src = pm ? (pm.source.split(" + ").includes(source) ? pm.source : `${pm.source} + ${source}`) : source;
+    meta[`links.${k}`] = { source: src, confidence: next.confidence as 1 | 0.9 | 0.6,
       needs_review: next.confidence < 1, ...(why ? { rationale: why } : {}) };
   };
   const workloads = components.filter((c) => c.kind === "service" || c.kind === "job");
@@ -108,6 +118,9 @@ export function inferLinks(components: MappedComponent[], masked: MaskedEvidence
       add(m.from, t.id!, defaultIntent(t.kind), `env:${m.env}`, 0.9, "비밀로 뺀 연결 문자열의 호스트가 대상 주소와 같음 (값은 안 남김)");
     }
   }
+  // 규칙 2 (I4): 앱 신원의 IAM 정책 → grants 원문. "*" 만으로 덮인 대상은 위에서 이미 이어진 의존성에만 붙는다
+  const iam = iamGrants(components, iamPolicies, (from, to) => links.has(`${from}->${to}`));
+  for (const a of iam.adds) add(a.from, a.to, a.intent, a.source, a.confidence, a.rationale, a.grant);
   // 규칙 4: 근거 있는 연결이 하나도 없는 대상만, 이름 앞부분이 같은 서비스와 추측(검토 필요). 근거 목록을 먼저 고정 → 순서 무관
   const evidenced = new Set([...links.values()].map((l) => l.to));
   for (const t of targets) {
@@ -131,8 +144,13 @@ export function inferLinks(components: MappedComponent[], masked: MaskedEvidence
     const mm = meta[`links.${k}`]!;
     meta[`links.${k}`] = { ...mm, needs_review: true, rationale: [mm.rationale, "읽기·쓰기 근거 없음 → 넓게 둠"].filter(Boolean).join(" / ") };
   }
+  // DRAFT(ai): grants 는 링크당 50개까지(계약 상한). 넘으면 조용히 자르지 않고 검토 표시 + 몇 개가 잘렸는지 근거에 남긴다 (I4fix)
+  for (const [k, l] of links) if (l.grants.length > 50) {
+    const mm = meta[`links.${k}`]!;
+    meta[`links.${k}`] = { ...mm, needs_review: true, rationale: [mm.rationale, `grants ${l.grants.length}개 중 50개만 담김 → 나머지 ${l.grants.length - 50}개는 사람이 확인`].filter(Boolean).join(" / ") };
+  }
   const key = (l: { from: string; to: string }) => `${l.from}\0${l.to}`;
   const sorted: LinkV2[] = [...links.values()].sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0))
-    .map((l) => ({ from: l.from, to: l.to, intent: l.intent ?? "readwrite" }));
-  return { links: sorted, meta, envHits };
+    .map((l) => ({ from: l.from, to: l.to, intent: l.intent ?? "readwrite", ...(l.grants.length ? { grants: l.grants.slice(0, 50) } : {}) }));
+  return { links: sorted, meta, envHits, permissions: iam.permissions, unmapped: iam.unmapped };
 }

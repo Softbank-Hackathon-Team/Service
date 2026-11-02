@@ -294,7 +294,11 @@ export async function readK8sNamespace(d: CliDeps, kube: string[], opts: K8sName
     spec: defined({ podSelector: get(o, "spec", "podSelector") as Obj | undefined, policyTypes: get(o, "spec", "policyTypes") as string[] | undefined,
       ingress: get(o, "spec", "ingress") as unknown[] | undefined, egress: get(o, "spec", "egress") as unknown[] | undefined }),
   } as RawK8sItem);
-  for (const o of sas) items.push({ kind: "k8s.serviceAccount", metadata: metaOf(o) });
+  for (const o of sas) {
+    // I4: IRSA 역할 주소 (주석 eks.amazonaws.com/role-arn). 있을 때만 칸을 더한다 (없으면 예전 모양 그대로)
+    const irsa = str(get(o, "metadata", "annotations", "eks.amazonaws.com/role-arn"));
+    items.push({ kind: "k8s.serviceAccount", metadata: metaOf(o), ...(irsa ? { irsaRoleArn: irsa } : {}) } as RawK8sItem);
+  }
   for (const o of cms) items.push({
     kind: "k8s.configMapKeys", metadata: metaOf(o),
     keys: [...Object.keys((get(o, "data") as Obj | undefined) ?? {}), ...Object.keys((get(o, "binaryData") as Obj | undefined) ?? {})].sort(),
