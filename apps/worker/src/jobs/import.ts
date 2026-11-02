@@ -1,6 +1,6 @@
-import { AppSpec, MigrationJob, type Provider } from "@svc/contracts";
+import { AppSpec, ImportResultV2, MigrationJob, checkV2, type FieldMeta, type Provider, type RawInventory } from "@svc/contracts";
 import { withTenant, advance } from "@svc/core";
-import { adapterFor, inventoryForAudit, isAdapterError } from "@svc/adapters";
+import { AdapterError, adapterFor, discoverForImport, inventoryForAudit, isAdapterError, normalizeV2, projectV1 } from "@svc/adapters";
 import { failedAttempts, recordAttemptFailure } from "./_step.js";
 import { envNumber } from "@svc/contracts";
 
@@ -24,7 +24,9 @@ export async function handleImport(raw: unknown) {
     const zod = (e as { name?: string })?.name === "ZodError";   // worker 는 zod 를 직접 의존하지 않는다
     // Z88: 출발 환경 못 읽음·재료 없음은 다시 해도 같다 (자격·클러스터를 사람이 고쳐야 함) → 바로 failed + 이유 그대로
     const source = isAdapterError(e) && (e.code === "SOURCE_UNAVAILABLE" || e.code === "SOURCE_INCOMPLETE") ? (e.code as keyof typeof SOURCE_FAILURE) : null;
-    const permanent = zod || source !== null;
+    // I3b: 공통 명세 v2 구조 오류(checkV2 errors)도 다시 해도 같다 → 바로 failed(IMPORT_SPEC_INVALID)
+    const v2invalid = isAdapterError(e) && e.code === "SPEC_V2_INVALID";
+    const permanent = zod || v2invalid || source !== null;
     const code = source ? SOURCE_FAILURE[source] : permanent ? "IMPORT_SPEC_INVALID" : "IMPORT_FAILED";
     const attempts = (await failedAttempts(job, "import")) + 1;
     if (!permanent && attempts < IMPORT_MAX_ATTEMPTS) {
@@ -51,23 +53,57 @@ async function importOnce(job: MigrationJob) {
   if (!row) return;
 
   // ② 바깥 호출 (트랜잭션 밖)
-  const a = adapterFor(row.provider as Provider);
-  const inv = await a.discover({ accountId: "dev", expiresAt: "" }, { kind: "container", selector: "*" });
-  const { spec, fieldMeta } = a.normalize(inv);
+  // I3b: 깃발은 여기서 매번 읽는다(R16: 시험이 한 프로세스에서 켰다 껐다). adapters 는 환경변수를 안 읽고 옵션으로만 받는다
+  const ir = process.env.IMPORT_IR === "v2" ? "v2" : "v1";
+  const v2 = ir === "v2" ? await importV2(row.provider as Provider) : null;
+  let inv: RawInventory, spec: unknown, fieldMeta: FieldMeta;
+  if (v2) ({ inv, spec, fieldMeta } = v2);
+  else {
+    const a = adapterFor(row.provider as Provider);
+    inv = await a.discover({ accountId: "dev", expiresAt: "" }, { kind: "container", selector: "*" });
+    ({ spec, fieldMeta } = a.normalize(inv));
+  }
   AppSpec.parse(spec); // T02 조건: 명세 Zod 통과
 
   // ③ 저장 + 상태 한 칸. 행을 먼저 잠그고 상태를 다시 본다 (② 동안 취소·두 번째 작업이 지나갔을 수 있다)
   await withTenant(job.tenantId, async (tx) => {
     const now = await tx.query("SELECT status FROM migrations WHERE id=$1 FOR UPDATE", [job.migrationId]);
     if (now.rows[0]?.status !== "importing") return;
-    await tx.query(
+    // 깃발 off(또는 v2 에서 되돌아감) INSERT 는 지금과 글자 하나 안 바꾼다 (0023 적용 전 DB 에서도 동작)
+    if (v2?.result) await tx.query(
+      `INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta, spec_v2)
+       VALUES ($1,$2,1,$3,$4,$5)`, [job.tenantId, job.migrationId, spec, fieldMeta, v2.result]);
+    else await tx.query(
       `INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta)
        VALUES ($1,$2,1,$3,$4)`, [job.tenantId, job.migrationId, spec, fieldMeta]);
     await advance(tx, { id: job.migrationId, tenantId: job.tenantId }, "importing", "spec_review", {
       mode: "ifStill",
       // Z88: 읽은 출발 자원 목록(종류·이름·버전만, 환경변수는 이름만)을 감사에 남긴다 → provisioning(Z89)이 "이미 있음" 판단에 쓴다
       audit: { actor: "worker", action: "migration.spec_review", target: job.migrationId, result: "ok",
-               detail: { sourceInventory: inventoryForAudit(inv) } },
+               detail: { sourceInventory: inventoryForAudit(inv), ...(ir === "v2" ? { ir: v2?.result ? "v2" : "v1-fallback", ...(v2?.note ? { note: v2.note } : {}) } : {}) } },
     });
   });
+}
+
+// I3b: 공통 명세 v2 가져오기 (설계 24번 2장). discover(v2) → normalizeV2 → checkV2 → projectV1.
+//   원본에 k8s 워크로드가 하나도 없으면(사실상 MOCK aws 의 ECS 원본) v1 경로로 되돌아간다: v1 discover 를 다시 부르고 spec_v2 는 NULL
+//   checkV2 errors(구조 오류)만 막는다. reviews(벤더 주소·사설 IP 남음)는 spec_v2.fieldMeta 검토 표시만
+type V2Import = { inv: RawInventory; spec: unknown; fieldMeta: FieldMeta; result: ImportResultV2 | null; note?: string };
+async function importV2(p: Provider): Promise<V2Import> {
+  const inv = await discoverForImport(p, { ir: "v2" });
+  const k8s = (inv.items as Array<{ kind?: string }>).some((i) => i.kind === "k8s.deployment" || i.kind === "k8s.cronjob");
+  if (!k8s) {
+    const a = adapterFor(p);
+    const inv1 = await a.discover({ accountId: "dev", expiresAt: "" }, { kind: "container", selector: "*" });
+    const { spec, fieldMeta } = a.normalize(inv1);
+    return { inv: inv1, spec, fieldMeta, result: null, note: "원본에 k8s 워크로드 없음 → v1 경로 (spec_v2 없음)" };
+  }
+  const { result, projectionEnv } = normalizeV2(inv);
+  const { errors, reviews } = checkV2(result.spec);
+  if (errors.length) throw new AdapterError("SPEC_V2_INVALID", `공통 명세 v2 검증 실패: ${errors.slice(0, 5).join("; ")}${errors.length > 5 ? ` 외 ${errors.length - 5}개` : ""}`);
+  // DRAFT(ai): reviews 는 막지 않고 fieldMeta 에 "check.reviews[i]" 키로 검토 표시 (화면이 needs_review 로 센다)
+  reviews.forEach((r, i) => { result.fieldMeta[`check.reviews[${i}]`] = { source: "checkV2", confidence: 0.6, needs_review: true, rationale: r }; });
+  const stored = ImportResultV2.parse(result);   // 저장 전 모양 확인 (ZodError → 영구 실패)
+  const { spec, fieldMeta } = projectV1(stored, projectionEnv, { mainApp: process.env.IMPORT_APP || undefined });
+  return { inv, spec, fieldMeta, result: stored };
 }

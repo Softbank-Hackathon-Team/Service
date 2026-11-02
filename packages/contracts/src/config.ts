@@ -71,6 +71,7 @@ export const CONFIG_RULES = {
     CRED_RENEW_SEC: { check: num({ min: 0 }) },
     STUB_DELAY_MS: { check: num({ min: 0 }) },
     IMPORT_MAX_ATTEMPTS: { check: num({ int: true, min: 1 }) },
+    IMPORT_IR: { check: oneOf("v1", "v2") },                    // I3b: 가져오기 공통 명세 판. v2 = spec_v2 도 저장(v1 은 그대로). 기본 v1
     MAX_CUTOVER_ATTEMPTS: { check: num({ int: true, min: 1 }) },
     ROLLBACK_MAX_ATTEMPTS: { check: num({ int: true, min: 1 }) },
     REPL_MAX_CATCHUP_MS: { check: num({ min: 0 }) },

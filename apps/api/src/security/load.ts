@@ -76,11 +76,13 @@ export async function loadSecurityDb(tx: Tx, migrationId: string) {
   // 감사 줄·체인은 증적 리포트와 같은 읽기를 쓴다 (같은 숫자가 나오게)
   const rep = await loadReportInput(tx, migrationId);
 
-  const specs = await tx.query("SELECT version, spec FROM spec_versions WHERE migration_id = $1", [migrationId]);
+  // I3b: spec_v2(공통 명세 v2)도 훑는다. to_jsonb 로 읽어 0023 전 DB 에서도 돈다(칸이 없으면 NULL)
+  const specs = await tx.query("SELECT version, spec, to_jsonb(sv) -> 'spec_v2' AS spec_v2 FROM spec_versions sv WHERE migration_id = $1", [migrationId]);
   const plans = await tx.query("SELECT id, plan_doc FROM plans WHERE migration_id = $1", [migrationId]);
   const secrets = scanSecrets([
     ...rep.events.map((e) => ({ where: `audit#${e.seq}`, value: e.detail })),
     ...specs.rows.map((s) => ({ where: `spec v${s.version}`, value: s.spec })),
+    ...specs.rows.filter((s) => s.spec_v2 != null).map((s) => ({ where: `spec_v2 v${s.version}`, value: s.spec_v2 })),
     ...plans.rows.map((p) => ({ where: `plan ${String(p.id).slice(0, 8)}`, value: p.plan_doc })),
   ]);
 

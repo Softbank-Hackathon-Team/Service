@@ -103,6 +103,7 @@ flowchart LR
 | `DB_DISPOSABLE` | `1`이면 DB 삭제 보호·마지막 스냅샷을 끔 (그날 파기하는 데모 DB만) | 삭제 보호가 켜져 destroy가 막힘 |
 | `ONPREM_KUBE_CONTEXT`, `ONPREM_REGISTRY_HOST` | 온프레 kubectl 컨텍스트·레지스트리 | 온프레 읽기·배포 실패 |
 | `IMPORT_AWS_EKS_CLUSTER`, `IMPORT_AWS_DB_ID`, `IMPORT_GCP_GKE_CLUSTER`, `IMPORT_GCP_SQL_INSTANCE`, `IMPORT_APP`, `IMPORT_NAMESPACE` | 출발 환경에 후보가 여럿일 때 고르는 이름 | 하나뿐이면 자동 |
+| `IMPORT_IR` | 가져오기 공통 명세 판 `v1`·`v2`. `v2`면 네임스페이스 전체를 읽어 `spec_versions.spec_v2`도 저장 (v1 `spec`은 그대로) | `v1` (지금 동작) |
 
 ### 3-3. GitOps·Argo CD
 
