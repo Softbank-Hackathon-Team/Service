@@ -80,9 +80,14 @@ info() {
 aws_q() { aws --region "$REGION" --output text "$@"; }
 
 # REALECS: ECS 서비스·태스크는 클러스터마다 조회 (클러스터가 0 이면 비어 있음). 조회 실패는 count 가 실패 줄로 센다
+# VNEW: 예전엔 $(…) 안 list-clusters 실패·파이프 뒤 list-services 실패가 끝 코드에 안 남아 "0" 으로 셌다 → 단계마다 실패를 돌려준다
 # shellcheck disable=SC2329
 ecs_each() { # $1 = list-services | list-tasks, $2 = 결과 키
-  for c in $(aws_q ecs list-clusters --query 'clusterArns[]' | tr '\t' '\n'); do aws_q ecs "$1" --cluster "$c" --query "$2[]" | tr '\t' '\n'; done
+  cs=$(aws_q ecs list-clusters --query 'clusterArns[]') || return 1
+  for c in $(printf '%s\n' "$cs" | tr '\t' '\n' | grep -v '^None$'); do
+    aws_q ecs "$1" --cluster "$c" --query "$2[]" || return 1
+    echo
+  done
 }
 
 # R7-4: 태그 조회(get-resources)는 지운 지 얼마 안 된 자원의 ARN 을 한동안 그대로 돌려준다 (맥 실측: 인스턴스·NAT·ENI·서브넷·EKS 가
