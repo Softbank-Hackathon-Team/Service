@@ -208,9 +208,12 @@ resource "aws_db_instance" "db" {
 
 # --- 시크릿: "빈 그릇"만. 값은 worker가 복사 (Terraform state에 비밀 0)
 resource "aws_secretsmanager_secret" "s" {
-  for_each                = local.secret_names
-  name                    = "platform/${var.tenant_id}/${var.app_name}/${each.key}"
-  recovery_window_in_days = 7
+  for_each = local.secret_names
+  name     = "platform/${var.tenant_id}/${var.app_name}/${each.key}"
+  # GATE DRAFT(ai): 그날 파기하는 데모 DB(DB_DISPOSABLE=1 → db_deletion_protection=false)면 비밀도 복구 창 없이 바로 지운다.
+  #   복구 창 7일 동안은 같은 이름을 다시 못 만들어(scheduled for deletion) 다음 회차 apply 가 실패한다 (11/2 맥: 삭제 예약 비밀 2개).
+  #   보호 DB(기본)는 예전처럼 7일. 옛 회차가 남긴 예약 비밀은 demo-day 의 secrets_purge 가 지운다
+  recovery_window_in_days = var.db_deletion_protection ? 7 : 0
 }
 
 # --- 앱 신원: EKS Pod Identity. 이 앱 시크릿 + DB 마스터 비밀번호만 읽기
