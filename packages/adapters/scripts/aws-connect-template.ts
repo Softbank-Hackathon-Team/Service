@@ -3,6 +3,7 @@
 // DRAFT(ai): 생성기 안에 두되 파일을 분리했다. 단독으로 실행·시험할 수 있게(의존성 0)
 
 import { AWS_DATA_READ_ACTIONS } from "../src/discover/data.js";
+import { AWS_COMMAND_ACTIONS, actionsOfCommands } from "../src/common/observe-permissions.js";
 
 type Json = Record<string, unknown>;
 
@@ -17,15 +18,18 @@ export const OPERATE_K8S_GROUP = "platform:operate";
 // 역할 ARN만 허용(사용자·:root 거부)
 export const PRINCIPAL_PATTERN = "^arn:aws:iam::\\d{12}:role/.+$";
 
-// DRAFT(ai): 관찰 인라인 = GuardDuty 읽기 5 + EKS 읽기 3 + IAM 근거 읽기 6 + 데이터 자원 메타데이터 읽기 12. 쓰기 동작 0, 객체·메시지 내용 읽기 0
+// DRAFT(ai): 관찰 인라인 = GuardDuty 읽기 5 + EKS 읽기 3 + IAM 근거 읽기 6 + 데이터 자원 메타데이터 읽기 12 + 그 밖 모든 읽기 명령의 권한(표 원본 observe-permissions.ts). 쓰기 동작 0, 객체·메시지 내용 읽기 0
 // TODO(human): ecr:BatchGetImage 등 이미지 저장소 읽기는 ViewOnlyAccess에 없을 수 있음(미확인). 샌드박스 이미지 복사 때 추가
-export const OBSERVE_EXTRA_ACTIONS = [
+export const OBSERVE_EXTRA_ACTIONS: string[] = [...new Set([
   "guardduty:ListDetectors", "guardduty:GetDetector", "guardduty:ListFindings", "guardduty:GetFindings", "guardduty:GetFindingsStatistics",
   "eks:DescribeCluster", "eks:ListPodIdentityAssociations", "eks:DescribePodIdentityAssociation",
   "iam:GetRole", "iam:ListRolePolicies", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:GetPolicy", "iam:GetPolicyVersion",
   // OBSROLE: 데이터 자원(S3·SQS·ElastiCache) 메타데이터 읽기 12. 객체·메시지·버킷 정책 본문은 못 읽음. 목록 원본 = adapters/src/discover/data.ts
   ...AWS_DATA_READ_ACTIONS,
-];
+  // OBSROLE2: 플랫폼이 관찰 역할로 부르는 나머지 모든 읽기 명령의 권한 (표 원본 = adapters/src/common/observe-permissions.ts).
+  //   ViewOnlyAccess 에 들어 있는지는 【미확인】이라 인라인에 직접 적는다 (중복은 무해). 시험이 소스의 모든 명령과 대조
+  ...actionsOfCommands("aws", Object.keys(AWS_COMMAND_ACTIONS)),
+])];
 
 // 두 역할 공통 신뢰 정책. TagSession·SetSourceIdentity가 없으면 발급기의 AssumeRole(Tags·SourceIdentity 항상 포함)이 AccessDenied
 const trust = (): Json => ({

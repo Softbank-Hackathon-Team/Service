@@ -301,7 +301,19 @@
                     "sqs:ListQueues",
                     "sqs:GetQueueAttributes",
                     "elasticache:DescribeReplicationGroups",
-                    "elasticache:DescribeCacheClusters"
+                    "elasticache:DescribeCacheClusters",
+                    "eks:ListClusters",
+                    "rds:DescribeDBInstances",
+                    "rds:DescribeDBParameters",
+                    "rds:DescribeDBEngineVersions",
+                    "ec2:DescribeVpcs",
+                    "ec2:DescribeSecurityGroups",
+                    "ec2:DescribeRegions",
+                    "ec2:DescribeAddresses",
+                    "elasticloadbalancing:DescribeLoadBalancers",
+                    "ecr:DescribeRepositories",
+                    "secretsmanager:ListSecrets",
+                    "servicequotas:GetServiceQuota"
                   ],
                   "Resource": "*"
                 }

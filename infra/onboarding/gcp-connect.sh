@@ -86,6 +86,8 @@ ensure_sa svc-operate
 OBSERVE_PERMS="container.clusters.list,container.clusters.get,sql.instances.list,sql.instances.get,iam.serviceAccounts.get,iam.serviceAccounts.list,resourcemanager.projects.get"
 # OBSROLE: 데이터 자원(Cloud Storage·Pub/Sub·Memorystore) 메타데이터 읽기. 객체 내용(storage.objects.*)·메시지는 못 읽음. 목록 원본 = packages/adapters/src/discover/data.ts
 OBSERVE_PERMS="${OBSERVE_PERMS},storage.buckets.list,storage.buckets.getIamPolicy,pubsub.topics.list,pubsub.subscriptions.list,redis.instances.list"
+# OBSROLE2: 그 밖에 플랫폼이 관찰 SA 로 부르는 모든 gcloud 읽기 명령의 권한 (표 원본 = packages/adapters/src/common/observe-permissions.ts, 시험이 소스의 모든 명령과 대조). 비밀값(secretmanager.versions.access)은 없음
+OBSERVE_PERMS="${OBSERVE_PERMS},resourcemanager.projects.getIamPolicy,serviceusage.services.list,compute.networks.list,compute.forwardingRules.list,compute.globalForwardingRules.list,compute.firewalls.list,compute.regions.get,artifactregistry.repositories.list,secretmanager.secrets.list"
 ensure_role platform_observe --title="platform-observe" --description="platform read-only inventory" --permissions="${OBSERVE_PERMS}" --stage=GA
 ensure_role platform_operate --file="${ROLE_DIR}/gcp-operate-custom-role.yaml"
 ensure_role platform_operate_iam --file="${ROLE_DIR}/gcp-operate-iam-custom-role.yaml"
