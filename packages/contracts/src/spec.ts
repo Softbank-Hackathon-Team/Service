@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AppSpecV2, FieldMetaV2 } from "./spec-v2.js";
+import { AppSpecV2, FieldMetaV2, OutOfBoundaryV2 } from "./spec-v2.js";
 import { ImportAccuracy } from "./import-accuracy.js";
 
 // 공통 명세(IR). 클라우드 이름 없이 앱을 적는다.
@@ -117,5 +117,7 @@ export const MigrationSpecViewV2 = MigrationSpecView.extend({
   fieldMetaV2: FieldMetaV2.optional(),
   /** ACCVIEW: 가져오기 정확도 % (가져오기 감사 detail.accuracy). 가져오기 v2 판에만 있고 없으면 키 자체가 없음 */
   accuracy: ImportAccuracy.optional(),
+  /** BOUNDVIEW: 앱 경계 밖이라 명세에 안 넣은 자원 (spec_v2.outOfBoundary 그대로: 이름·종류·이유만, 값 없음). v2 판에 그 칸이 있을 때만(빈 배열도 그대로), 옛 판·v1 판엔 키 없음 */
+  outOfBoundary: z.array(OutOfBoundaryV2).optional(),
 }).strict();
 export type MigrationSpecViewV2 = z.infer<typeof MigrationSpecViewV2>;

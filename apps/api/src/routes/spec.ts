@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
-import { AppSpec, AppSpecV2, FieldMetaV2, ImportAccuracy, ImportResultV2, type FieldMeta, MigrationSpecViewV2, SpecPatchInput, SpecV2ConfirmPath, SpecV2FieldPath, checkV2 } from "@svc/contracts";
+import { z } from "zod";
+import { AppSpec, AppSpecV2, FieldMetaV2, ImportAccuracy, OutOfBoundaryV2, ImportResultV2, type FieldMeta, MigrationSpecViewV2, SpecPatchInput, SpecV2ConfirmPath, SpecV2FieldPath, checkV2 } from "@svc/contracts";
 import { rebuildFromV2 } from "@svc/adapters";
 import { BadRequest, DomainError, SPEC_DRAFT_KEY, applySpecPatch, applySpecV2Patch, notifyMigration, saveSpecRevision, withTenant, writeAudit,
          type SpecMeta, type Tx } from "@svc/core";
@@ -28,14 +29,16 @@ export function toSpecView(migrationId: string, row: Row): MigrationSpecViewV2 {
   // I8apifix DRAFT(ai): spec_v2 가 NULL 이 아닌데 객체도 아니면(JSON 스칼라) v1 판처럼 200 이 아니라 깨진 v2 와 같은 409 (0031 CHECK 가 새로 들어오는 것은 막음)
   if (row.specV2 != null && typeof row.specV2 !== "object")
     throw new DomainError(409, "SPEC_INVALID", `spec version ${row.version} spec_v2 does not match AppSpecV2`);
-  const v2 = row.specV2 && typeof row.specV2 === "object" ? (row.specV2 as { spec?: unknown; fieldMeta?: unknown }) : undefined;
+  const v2 = row.specV2 && typeof row.specV2 === "object" ? (row.specV2 as { spec?: unknown; fieldMeta?: unknown; outOfBoundary?: unknown }) : undefined;
   // I8api: v2 칸이 AppSpecV2·FieldMetaV2 모양이 아니면 409 SPEC_INVALID (응답 직렬화 500 대신, 가짜 값으로 안 채움)
   const v2spec = v2 ? AppSpecV2.safeParse(v2.spec) : undefined;
   const v2meta = v2 ? FieldMetaV2.safeParse(v2.fieldMeta ?? {}) : undefined;
   if (v2 && (!v2spec?.success || !v2meta?.success)) throw new DomainError(409, "SPEC_INVALID", `spec version ${row.version} spec_v2 does not match AppSpecV2`);
+  // BOUNDVIEW DRAFT(ai): 경계 밖 목록은 판에 있을 때만 싣는다. 모양이 안 맞으면 키를 뺀다(ACCVIEW 와 같은 규칙: 화면이 안 깨지게, 명세 본체는 막지 않음)
+  const oob = v2 && v2.outOfBoundary !== undefined ? z.array(OutOfBoundaryV2).safeParse(v2.outOfBoundary) : undefined;
   return { migrationId, version: row.version, createdAt: row.createdAt, source: row.draft ? "ai_draft" : "accepted",
            complete: full.success, spec: part.data, needsReview, ...(v2 && v2spec?.success && v2meta?.success
-             ? { needsReviewV2: reviewKeys(v2.fieldMeta), specV2: v2spec.data, fieldMetaV2: v2meta.data } : {}) };
+             ? { needsReviewV2: reviewKeys(v2.fieldMeta), specV2: v2spec.data, fieldMetaV2: v2meta.data, ...(oob?.success ? { outOfBoundary: oob.data } : {}) } : {}) };
 }
 
 // 화면이 GET 으로 보는 판 = 받아들인 최신 판, 없으면 AI 초안 최신 판 (PATCH 의 baseVersion 도 이 판과 비교)
