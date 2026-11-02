@@ -112,11 +112,17 @@ export const JobTfVars = z.object({
 export type JobTfVars = z.infer<typeof JobTfVars>;
 
 // I9: 관리형 컨테이너 서비스 (ECS Fargate 서비스 · Cloud Run 서비스). kinds/service-ecs · kinds/service-cloudrun 이 받는 cfg.
-//   DRAFT(ai): 아직 루트에 안 붙임 (Builder 가 runtime.managedContainer 를 capability 로 막음) → TF_KIND_VARS 7종에 안 넣는다.
-//   루트 연결(렌더) 때 TF_KIND_VARS·TF_VAR_KINDS 에 "service" 로 더한다. 칸은 JobTfVars 와 같은 규칙(이미지는 도착 주소+digest, env 는 확정값+자리표시)
+//   TA13: 루트(aws/root·gcp/root)의 service_json 으로 붙음 → TF_KIND_VARS·TF_VAR_KINDS 에 "service". onprem·azure 는 capability 없음(거부)
+//   DRAFT(ai): env 값은 Builder 가 확정 못 함(DB 주소·Cloud Run 주소는 같은 apply 안에서 생김) → 조각(parts) 목록으로 넘기고 루트가 합쳐서
+//   모듈에는 [{name, value}] 로 넘긴다. ref = "<IR id>.<출력>" (LINK_OUTPUTS 이름). 비밀 값은 안 옴 (도착 저장소 이름만)
+export const ServiceEnvPart = z.object({ lit: z.string().nullable(), ref: z.string().regex(/^[a-z][a-z0-9-]{0,39}\.(host|port|url|name|user)$/).nullable() }).strict()
+  .refine((p) => (p.lit === null) !== (p.ref === null), "lit·ref 중 하나만");
+export const ServiceEnvVar = z.object({ name: z.string().min(1), parts: z.array(ServiceEnvPart) }).strict();
+export const ServiceSecretVar = z.object({ name: z.string().min(1), secret: z.string().min(1), key: z.string().min(1) }).strict();
 export const ServiceTfVars = z.object({
   id: TfId,
   name: z.string(),                  // 도착 서비스 이름 (ECS 255자·Cloud Run 49자 이하, 이전마다 해시)
+  role_name: z.string(),             // TA13: 모듈이 만드는 실행 신원 이름 (aws IAM 역할 app- 64자 / gcp SA account_id app- 30자)
   image: z.string(),
   command_json: z.string().nullable(),
   args_json: z.string().nullable(),
@@ -127,9 +133,9 @@ export const ServiceTfVars = z.object({
   max_instances: z.number().int(),
   target_cpu_pct: z.number().int().nullable(), // null = 자동 확장 정책 없음 (min=max 고정)
   health_path: z.string().nullable(),          // HTTP 확인 경로 (readiness http)
-  env_json: z.string(),                        // [{name, value}] 확정값 + <tf-output:…> 자리표시
-  secrets_json: z.string(),                    // [{name, secret, key}] 도착 비밀 저장소 이름 (값 아님)
-  identity: TfId,                              // 실행 역할을 가진 identity 인스턴스 id
+  env_json: z.string(),                        // 루트 입력: ServiceEnvVar[] (조각) → 루트가 합쳐 모듈엔 [{name, value}]
+  secrets_json: z.string(),                    // ServiceSecretVar[]: secret = 도착 비밀 저장소 이름 (값 아님)
+  identity: TfId,                              // 출발 신원(serviceAccount) 묶음 id (화면·대조용. 역할은 서비스마다 role_name)
   public: z.boolean(),                         // 입구(entry)가 이 서비스로 오나. false 면 내부 전용
 }).strict();
 export type ServiceTfVars = z.infer<typeof ServiceTfVars>;
@@ -143,8 +149,9 @@ export const TF_KIND_VARS = {
   objectStore: ObjectStoreTfVars,
   queue: QueueTfVars,
   job: JobTfVars,
+  service: ServiceTfVars,
 } as const;
-export const TF_VAR_KINDS = ["postgres", "namespace", "identity", "cache", "objectStore", "queue", "job"] as const;
+export const TF_VAR_KINDS = ["postgres", "namespace", "identity", "cache", "objectStore", "queue", "job", "service"] as const;
 export type TfVarKind = (typeof TF_VAR_KINDS)[number];
 
 // 모듈 내부 출력: 비밀 이름만. link_outputs 에는 안 섞음

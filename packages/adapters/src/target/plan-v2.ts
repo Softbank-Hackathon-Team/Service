@@ -4,6 +4,7 @@ import { postgresOf, v2Blockers, workloadsOf, identitiesOf } from "./shared.js";
 import { targetBuilderFor } from "./index.js";
 import { azureShapeBlockers } from "./azure-mock.js";
 import { grantBlockers, grantWarnings } from "./grants.js";
+import { managedWarnings } from "./managed.js";
 
 // TA3 DRAFT(ai): 계획·적용 연결용 순수 조각 (설계 27번 3.5·3.6). DB·네트워크 없음. 워커(plan·precheck·apply·deploy)가 부른다
 
@@ -60,6 +61,8 @@ export function v2PrecheckItems(provider: Provider, row: SpecV2Source): Precheck
   b.unsupported.forEach((m, n) => out.push({ id: `PC-V2-UNSUP-${n + 1}`, level: "block", message: `FAIL ${m}`, fix: "도착을 바꾸거나 그 칸을 명세에서 뺀다 (사람 승인)" }));
   b.needsHuman.forEach((m, n) => out.push({ id: `PC-V2-HUMAN-${n + 1}`, level: "block", message: `FAIL 사람 확인 필요 — ${m}`, fix: "명세 검토에서 정한다" }));
   grantWarnings(provider, r.spec).forEach((m, n) => out.push({ id: `PC-V2-GRANTS-${n + 1}`, level: "warn", message: `WARN 권한 — ${m}` }));
+  if (provider === "aws" || provider === "gcp")
+    managedWarnings(provider, r.spec).forEach((m, n) => out.push({ id: `PC-V2-MANAGED-${n + 1}`, level: "warn", message: `WARN 관리형 — ${m}` }));
   return out.map((i) => PrecheckItem.parse(i));
 }
 
@@ -76,6 +79,8 @@ export function flattenTfOutputsV2(out: TfOutputs): TfOutputs {
     if (links && typeof links === "object") for (const [k, v] of Object.entries(links as Record<string, unknown>)) put(`link.${id}.${k}`, v);
   for (const [id, v] of Object.entries(obj(out.identity_gsa_emails) ?? {})) put(`identity.${id}.gsa_email`, v);
   for (const [id, v] of Object.entries(obj(out.identity_role_arns) ?? {})) put(`identity.${id}.role_arn`, v);
+  // TA13: 관리형 서비스 이름 (aws·gcp 루트 출력 service_names)
+  for (const [id, v] of Object.entries(obj(out.service_names) ?? {})) put(`service.${id}.name`, v);
   return res;
 }
 

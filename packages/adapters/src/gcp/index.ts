@@ -63,6 +63,14 @@ export const PERMS: PermTable = {
     read: ["iam.serviceAccounts.getIamPolicy"],
     write: ["iam.serviceAccounts.setIamPolicy"],
     remove: ["iam.serviceAccounts.setIamPolicy"] },
+  // TA13 DRAFT(ai): 관리형 컨테이너(Cloud Run) 도착. TODO(human): 커스텀 역할 천장(gcp-operate-custom-role.yaml)엔 아직 안 넣음 —
+  //   SA 를 서비스에 붙이는 iam.serviceAccounts.actAs 가 permissions-lint 금지 목록이라 보안 승인 몫
+  "data.google_project": { read: ["resourcemanager.projects.get"], write: [], remove: [] },
+  google_cloud_run_v2_service: {
+    read: ["run.services.get"], write: ["run.services.create", "run.services.update", "run.operations.get", "iam.serviceAccounts.actAs"],
+    remove: ["run.services.delete"] },
+  google_cloud_run_v2_service_iam_member: {
+    read: ["run.services.getIamPolicy"], write: ["run.services.setIamPolicy"], remove: ["run.services.setIamPolicy"] },
 };
 
 export function resourceTypes(spec: AppSpec): string[] {

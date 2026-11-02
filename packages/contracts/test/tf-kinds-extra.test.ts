@@ -46,7 +46,9 @@ test("열거형 거부: 큐 model·잡 정책·캐시 엔진·ModuleKind·목적
   assert.throws(() => QueueTfVars.parse({ ...queue(), dead_letter_to: "Bad_ID" }));
   assert.ok(QueueTfVars.safeParse({ ...queue(), dead_letter_to: "dlq" }).success);
   assert.throws(() => CacheTfVars.parse({ id: "c", name: "c", engine: "memcache", version: null, memory_mib: null, cluster_mode: null, shards: null, tls: null, auth: null, ha: null, allow_from_json: "[]" }));
-  assert.equal(ModuleKind.safeParse("service").success, false);   // service 는 Terraform 종류 아님(차트/ECS 는 A7)
+  // TA13: service 는 관리형 컨테이너(ECS·Cloud Run) 종류 모듈 (k8s 서비스는 여전히 Helm 값)
+  assert.equal(ModuleKind.safeParse("service").success, true);
+  assert.equal(ModuleKind.safeParse("deployment").success, false);
   assert.equal(TargetPurpose.safeParse("plan").success && !TargetPurpose.safeParse("deploy").success, true);
 });
 

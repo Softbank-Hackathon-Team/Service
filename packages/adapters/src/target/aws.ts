@@ -5,11 +5,12 @@ import { envRef, regionOf, tenantOf, type Target } from "../common/target.js";
 import { awsAdapter, BOUNDARY_NAME, PERMS } from "../aws/index.js";
 import {
   asV1Name, assertRenderable, connectIdentities, identitiesOf, identityName, instancesOf, K8S_RENDER_CAPS, kindJson,
-  postgresOf, postureOfComponent, refV2, secretNamesOf, workloadsOf,
+  managedServicesOf, postgresOf, postureOfComponent, refV2, secretNamesOf, workloadsOf,
 } from "./shared.js";
 import { assertGrants, grantsJsonFor } from "./grants.js";
 import { buildWorkloadValues, cloudPostgresValues } from "./cloud.js";
 import { cacheVars, cachesOf, dataTypesOf, objectStoreVars, objectStoresOf, queueVars, queuesOf } from "./data.js";
+import { managedServiceJson, managedWorkloadValues } from "./managed.js";
 
 // DRAFT(ai): AWS 도착 Builder v2 (설계 27번 A1). 루트 = infra/modules/aws/root, 종류 = kinds/{postgres,identity,namespace}.
 // DECISION(team): AWS 도착 컴퓨트 = EKS (GKE·k3s와 같은 Helm 차트 재사용) (Jeong 2026-10-31) — v1 주석 그대로 따름
@@ -29,13 +30,23 @@ export function rdsClassFor(c: { cpuMilli: number | null; memMiB: number | null 
 // A8: 출발 IAM 권한 → 도착 신원 권한 (target/grants.ts). 대응표 밖은 assertGrants·precheck 가 막음
 const CAPS = [...K8S_RENDER_CAPS, "kind.postgres.15", "kind.postgres.16", "kind.postgres.17", "kind.cache.redis", "kind.cache.valkey", "kind.cache.cluster", "kind.objectStore", "kind.queue", "render.grants", "posture.permissions",
   // TA12c: 데이터 자원 링크의 의도 요약(read·write·readwrite·admin). 실제 권한은 grants → grants_json(A8)로 그림, 의도는 요약일 뿐
-  "link.read", "link.write", "link.readwrite", "link.admin"];
+  "link.read", "link.write", "link.readwrite", "link.admin",
+  // TA13: 관리형 컨테이너 → ECS Fargate (root service_json + kinds/service-ecs). 못 그리는 칸은 managedBlockers
+  "runtime.managedContainer"];
 
 export function resourceTypesV2(spec: AppSpecV2): string[] {
   const t = new Set(["data.aws_eks_cluster", "data.aws_eks_cluster_auth", "kubernetes_namespace_v1"]);
-  const ids = identitiesOf(spec);
+  // TA13: 관리형 (= root ECS 공용 자원 + kinds/service-ecs)
+  const managed = managedServicesOf(spec);
+  if (managed.length) {
+    ["data.aws_caller_identity", "aws_ecs_cluster", "aws_service_discovery_http_namespace", "aws_security_group", "aws_cloudwatch_log_group",
+      "aws_iam_role", "aws_iam_role_policy", "aws_ecs_task_definition", "aws_ecs_service"].forEach((x) => t.add(x));
+    if (managed.some((m) => secretNamesOf(m).length)) t.add("aws_secretsmanager_secret");
+    if (managed.some((m) => m.props.scale && m.props.replicas.max > m.props.replicas.min)) ["aws_appautoscaling_target", "aws_appautoscaling_policy"].forEach((x) => t.add(x));
+  }
+  const ids = managed.length ? [] : identitiesOf(spec);
   if (ids.length) ["aws_iam_role", "aws_iam_role_policy", "aws_eks_pod_identity_association"].forEach((x) => t.add(x));
-  if (workloadsOf(spec).some((w) => secretNamesOf(w).length)) t.add("aws_secretsmanager_secret");
+  if (!managed.length && workloadsOf(spec).some((w) => secretNamesOf(w).length)) t.add("aws_secretsmanager_secret");
   if (postgresOf(spec).length) ["aws_db_instance", "aws_db_parameter_group", "aws_db_subnet_group", "aws_security_group"].forEach((x) => t.add(x));
   dataTypesOf("aws", spec).forEach((x) => t.add(x));
   return [...t].sort();
@@ -50,7 +61,9 @@ export const awsTarget: TargetBuilder = {
   toTerraformV2(spec: AppSpecV2, t: Target): TfRootCall {
     assertRenderable(spec, CAPS);
     assertGrants("aws", spec);
-    const ids = identitiesOf(spec);
+    // TA13: 관리형 서비스가 있으면(섞임은 managedBlockers 가 막음) k8s 신원·네임스페이스 없이 service_json 만
+    const managed = managedServicesOf(spec).length > 0;
+    const ids = managed ? [] : identitiesOf(spec);
     const byId = new Map(workloadsOf(spec).map((w) => [w.id, w]));
     const postgres = postgresOf(spec).map((c) => {
       const pos = postureOfComponent(spec, c.id);
@@ -89,7 +102,8 @@ export const awsTarget: TargetBuilder = {
       ...cachesOf(spec).map((c) => ({ kind: "cache" as const, id: c.id })),
       ...objectStoresOf(spec).map((c) => ({ kind: "objectStore" as const, id: c.id })),
       ...queuesOf(spec).map((c) => ({ kind: "queue" as const, id: c.id })),
-      { kind: "namespace" as const, id: ns },
+      ...managedServicesOf(spec).map((c) => ({ kind: "service" as const, id: c.id })),
+      ...(managed ? [] : [{ kind: "namespace" as const, id: ns }]),
     ]);
     const acct = t.accountId ?? envRef("accountId");
     return {
@@ -107,11 +121,13 @@ export const awsTarget: TargetBuilder = {
         app_role_boundary_arn: `arn:aws:iam::${acct}:policy/${BOUNDARY_NAME}`,
         postgres_json: kindJson("postgres", postgres),
         // DRAFT(ai): aws·gcp 는 v1 처럼 할당량 없음 (null = 안 만듦). 온프레만 계산
-        namespace_json: kindJson("namespace", [{ name: ns, quota_cpu_m: null, quota_memory_mi: null }]),
+        namespace_json: kindJson("namespace", managed ? [] : [{ name: ns, quota_cpu_m: null, quota_memory_mi: null }]),
         identity_json: kindJson("identity", identity),
         cache_json: cacheVars(spec, t),
         object_store_json: objectStoreVars(spec, t),
         queue_json: queueVars(spec, t),
+        // 관리형이 없으면 키 자체를 안 둔다 (기존 계획 지문 그대로)
+        ...(managed ? { service_json: managedServiceJson("aws", spec, t, (src) => awsAdapter.imageRef(src, t)) } : {}),
       },
       instances,
     };
@@ -119,6 +135,8 @@ export const awsTarget: TargetBuilder = {
   toWorkloadValues(spec: AppSpecV2, out: TfOutputs, t: Target) {
     assertRenderable(spec, CAPS);
     assertGrants("aws", spec);
+    if (managedServicesOf(spec).length)
+      return managedWorkloadValues("aws", spec, out, t, cloudPostgresValues(spec, out, "db_master_secret_arn", { passwordProperty: "password" }));
     return buildWorkloadValues(spec, out, t, {
       imageRef: (src) => awsAdapter.imageRef(src, t),
       secretStore: { kind: "ClusterSecretStore", name: "aws-secrets-manager" },
