@@ -163,6 +163,7 @@ resource "aws_db_instance" "replica" {
 }
 
 output "address" { value = aws_db_instance.db.address }
+output "arn" { value = aws_db_instance.db.arn } # A8: 옮긴 IAM 권한의 Resource (root grants.tf)
 output "port" { value = 5432 }
 output "db_name" { value = local.db_name }
 output "user" { value = "app" }

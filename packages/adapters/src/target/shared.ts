@@ -79,13 +79,13 @@ export function requirementsV2(spec: AppSpecV2): Capability[] {
   if (pg.length > 1) r.add("kind.postgres.multi");   // 지금 복제 코드는 DB 하나 (3.2)
   for (const l of spec.links) {
     r.add(typeof l.to === "string" ? `link.${l.intent}` : "unmapped" in l.to ? "link.unmapped" : "link.external");
-    if (l.grants?.length) r.add("render.grants");    // A8 전까지 막음
+    if (l.grants?.length) r.add("render.grants");    // A8: Builder 가 target/grants.ts 로 그림. 대응표 밖은 grantBlockers 가 막음
   }
   if (spec.entry) {
     r.add("entry.ingress");
     if (spec.entry.hosts.some((h) => h.tls?.mode === "passthrough")) r.add("entry.tlsPassthrough");
   }
-  if (spec.posture.permissions.length) r.add("posture.permissions");   // A8 전까지 막음 (3.3)
+  if (spec.posture.permissions.length) r.add("posture.permissions");   // A8: 위와 같음 (3.3)
   for (const n of spec.posture.network) {
     if (n.scope === "namespace") r.add(n.default === "allow-all" ? "posture.allowAll" : "posture.networkPolicy");
     else r.add("posture.component");

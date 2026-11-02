@@ -45,14 +45,16 @@ test("정상: 값 — Key Vault 저장소, SA 는 앱 이름(연합 자격 규�
   assert.deepEqual(azureMockPlanV2(s, T), azureMockPlanV2(v2(), T));
 });
 
-test("거부: 신원 2개·DB 2개·cache·permissions 는 UNSUPPORTED_V2 (v1 통짜 모듈이 못 담음)", () => {
+test("거부: 신원 2개·DB 2개·cache 는 UNSUPPORTED_V2 (v1 통짜 모듈이 못 담음). permissions 는 A8 부터 가짜로 받음", () => {
   const two = v2();
   two.components.push({ ...structuredClone(two.components[0]!), id: "worker", props: { ...structuredClone((two.components[0] as any).props), serviceAccount: "worker" } } as never);
   const db2 = v2(); db2.components.push({ id: "db2", kind: "postgres", props: { majorVersion: "16", storageGb: 20 } });
   const cache = v2(); cache.components.push({ id: "c", kind: "cache", props: { engine: "memcached", memoryMiB: 256, tls: true, auth: true } });
   const perm = v2(); perm.posture.permissions.push({ subject: "shop", source: "iam:x", effect: "Allow", actions: ["*"], resources: ["*"], mode: "mirror" });
-  for (const [name, s] of [["신원 2", two], ["DB 2", db2], ["cache", cache], ["permissions", perm]] as const) {
+  for (const [name, s] of [["신원 2", two], ["DB 2", db2], ["cache", cache]] as const) {
     for (const f of [() => b.toTerraformV2(s, T), () => b.toWorkloadValues(s, {}, T), () => azureMockPlanV2(s, T)])
       assert.throws(f, (e: unknown) => e instanceof AdapterError && e.code === UNSUPPORTED_V2, name);
   }
+  // A8: 권한은 가짜 (그리는 값 없음) → 막지 않고, 변수도 권한 없는 판과 같음
+  assert.deepEqual(b.toTerraformV2(perm, T).vars, b.toTerraformV2(v2(), T).vars);
 });

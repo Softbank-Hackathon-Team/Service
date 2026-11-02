@@ -184,14 +184,12 @@ test("3티어 (gcp·onprem): GSA 표시는 신원별, 온프레 DB 는 CNPG 주�
   assert.deepEqual(parseJson(otf.vars.namespace_json)[0], { name: "app-shop", quota_cpu_m: null, quota_memory_mi: null }, "잡 요청량이 없으면 할당량을 지어내지 않음 (null = 안 만듦)");
 });
 
-test("거부: capability 밖 종류(cache)·permissions·as-declared 네트워크·빌드 이미지는 UNSUPPORTED_V2", () => {
+test("거부: capability 밖 종류(cache)·as-declared 네트워크·빌드 이미지는 UNSUPPORTED_V2 (permissions·grants 는 A8 부터 그림 → a8-grants.test.ts)", () => {
   const cases: Array<[string, (s: AppSpecV2) => void, string]> = [
     ["cache", (s) => { s.components.push(ComponentV2.parse({ id: "cache", kind: "cache", props: { engine: "memcached", memoryMiB: 512, tls: true, auth: true } })); }, "kind.cache.memcached"],
-    ["permissions", (s) => { s.posture.permissions.push({ subject: "api", source: "iam:r", effect: "Allow", actions: ["s3:*"], resources: ["*"], mode: "mirror" }); }, "posture.permissions"],
     ["netpol", (s) => { s.posture.network[0] = { scope: "namespace", namespace: "shop", mode: "mirror", policies: ["deny"], default: "as-declared" }; }, "posture.networkPolicy"],
     ["build", (s) => { (s.components[0]!.props as any).image = { source: "build", repository: "x", digest: null }; }, "image.build"],
     ["2 db", (s) => { s.components.push(ComponentV2.parse({ id: "db2", kind: "postgres", props: { majorVersion: "16", storageGb: 20 } })); }, "kind.postgres.multi"],
-    ["grants", (s) => { s.links[0] = { ...s.links[0]!, grants: [{ effect: "Allow", actions: ["x"], resources: ["y"] }] }; }, "render.grants"],
   ];
   for (const p of ["aws", "gcp", "onprem"] as const) for (const [name, mut, cap] of cases) {
     const s = TIER3(); mut(s);

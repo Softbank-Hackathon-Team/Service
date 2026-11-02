@@ -40,6 +40,9 @@ export const IdentityTfVars = z.object({
   name: z.string(),                  // boundedName({ prefix: "app-", max: aws 64 / gcp 30 }) — 실행 역할 이름 규칙
   service_account: z.string(),       // k8s SA 이름 (IR serviceAccount 그대로)
   secret_names_json: z.string(),
+  // A8 DRAFT(ai): 출발 IAM 권한을 도착 모양으로 바꾼 목록(JSON). aws = 문장(effect·actions·star·targets{kind,id,paths}),
+  //   gcp = 자원 단위 바인딩(kind·target·role·scope). 자원은 IR id → root 가 모듈 출력(ARN·이름)으로 채움. 없으면 칸 없음
+  grants_json: z.string().optional(),
 }).strict();
 export type IdentityTfVars = z.infer<typeof IdentityTfVars>;
 

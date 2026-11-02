@@ -17,8 +17,8 @@ import { buildWorkloadValues } from "./cloud.js";
 
 // 이 Builder 가 그릴 수 있는 것. "mock" 은 화면 배지(실자원 아님)
 // TA12 STUB: 데이터 자원은 Mock 이라 "모양만" 그린다 (Azure Cache·Storage·Service Bus 이름·ARM id 를 결정적으로). 진짜 모듈 없음 — Azure 는 어댑터 모양과 Mock 만 (CLAUDE.md 0-1)
-const CAPS = [...K8S_RENDER_CAPS, "kind.postgres.15", "kind.postgres.16", "kind.postgres.17", "mock",
-  "kind.cache.redis", "kind.cache.valkey", "kind.cache.cluster", "kind.objectStore", "kind.queue"];
+// A8: 권한은 가짜 (역할 할당 모양만, resourceTypesV2). precheck warn
+const CAPS = [...K8S_RENDER_CAPS, "kind.postgres.15", "kind.postgres.16", "kind.postgres.17", "mock", "kind.cache.redis", "kind.cache.valkey", "kind.cache.cluster", "kind.objectStore", "kind.queue", "render.grants", "posture.permissions"];
 
 // v1 통짜 모듈이 담지 못하는 모양 → UNSUPPORTED_V2 (capability 표 밖과 같은 오류)
 // E2E-v5: precheck(v2PrecheckItems)도 같은 검사를 불러 계획 단계 failed 대신 block(명세 검토로 되돌림)으로 먼저 알린다

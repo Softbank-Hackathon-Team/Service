@@ -3,6 +3,7 @@ import { AdapterError } from "../common/errors.js";
 import { postgresOf, v2Blockers, workloadsOf, identitiesOf } from "./shared.js";
 import { targetBuilderFor } from "./index.js";
 import { azureShapeBlockers } from "./azure-mock.js";
+import { grantBlockers, grantWarnings } from "./grants.js";
 
 // TA3 DRAFT(ai): 계획·적용 연결용 순수 조각 (설계 27번 3.5·3.6). DB·네트워크 없음. 워커(plan·precheck·apply·deploy)가 부른다
 
@@ -51,11 +52,14 @@ export function v2PrecheckItems(provider: Provider, row: SpecV2Source): Precheck
   const b = v2Blockers(r.spec, targetBuilderFor(provider).capabilities());
   // E2E-v5: capability 표로 못 거르는 Builder 모양 제한 (azure_mock 신원 1개). 빼면 계획 단계에서 UNSUPPORTED_V2 로 failed 가 됨
   if (provider === "azure_mock") b.unsupported.push(...azureShapeBlockers(r.spec));
+  // A8: 출발 IAM 권한(grants·posture.permissions) 중 도착에서 못 그리는 것 — Builder(assertGrants)와 같은 목록
+  b.unsupported.push(...grantBlockers(provider, r.spec));
   const out: PrecheckItem[] = [
     { id: "PC-V2-SOURCE", level: "info", message: `PASS v2 명세 출처 — ${r.source} (리소스 ${r.spec.components.length}개)` },
   ];
   b.unsupported.forEach((m, n) => out.push({ id: `PC-V2-UNSUP-${n + 1}`, level: "block", message: `FAIL ${m}`, fix: "도착을 바꾸거나 그 칸을 명세에서 뺀다 (사람 승인)" }));
   b.needsHuman.forEach((m, n) => out.push({ id: `PC-V2-HUMAN-${n + 1}`, level: "block", message: `FAIL 사람 확인 필요 — ${m}`, fix: "명세 검토에서 정한다" }));
+  grantWarnings(provider, r.spec).forEach((m, n) => out.push({ id: `PC-V2-GRANTS-${n + 1}`, level: "warn", message: `WARN 권한 — ${m}` }));
   return out.map((i) => PrecheckItem.parse(i));
 }
 
