@@ -128,6 +128,9 @@ export function applySpecV2Patch(base: { spec: unknown; fieldMeta: SpecMeta | nu
       const comp = (Array.isArray(spec.components) ? spec.components : [])
         .find((x) => !!x && typeof x === "object" && (x as { id?: unknown }).id === m[1]) as { props?: Record<string, unknown> } | undefined;
       if (!comp) throw new DomainError(400, "SPEC_PATCH_INVALID", `${c.path}: no component ${m[1]}`);
+      // RUNTIMEMAP DRAFT(ai): origin(출발 원래 실행 모양)은 가져오기가 정한 사실이라 사람이 못 고친다. 고칠 수 있으면 runtime 을 바꾼 뒤 origin 도 맞춰
+      //   checkV2 의 runtime_change 승인 줄을 없앨 수 있다 (N8: 도착 실행 방식 = 출발과 같은 종류, 바꾸려면 runtime 을 바꾸고 승인)
+      if (m[2] === "origin") throw new DomainError(400, "SPEC_PATCH_INVALID", `${c.path}: origin 은 가져오기가 정한 값이라 고칠 수 없음 (도착 실행 방식을 바꾸려면 runtime 을 고침)`);
       comp.props = { ...(comp.props ?? {}), [m[2]!]: structuredClone(c.value) };
     } else if (c.path === "links" || c.path === "entry" || c.path === "posture") {
       // E2EDATA2 DRAFT(ai): posture 통째 바꾸기. 출발 방화벽을 못 읽은 데이터 자원(ingress "unknown")은 precheck 가 사람이 정하라며 막는데,

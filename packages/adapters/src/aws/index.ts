@@ -113,7 +113,7 @@ export const PERMS: PermTable = {
     write: ["application-autoscaling:PutScalingPolicy"], remove: ["application-autoscaling:DeleteScalingPolicy"] },
 };
 
-// DECISION(team): AWS 도착 컴퓨트 = EKS (GKE·k3s와 같은 Helm 차트 재사용) (Jeong 2026-10-31)
+// DECISION(team): 도착 컴퓨트는 출발과 같은 종류 — 출발이 쿠버네티스면 쿠버네티스(AWS=EKS, GKE·k3s와 같은 Helm 차트), 출발이 ECS(관리형 컨테이너)면 ECS(GCP 도착이면 Cloud Run) (2026-10-31 EKS 결정, 2026-11-02 ECS 추가)
 export function resourceTypes(spec: AppSpec): string[] {
   const t = ["data.aws_eks_cluster", "data.aws_eks_cluster_auth", "kubernetes_namespace_v1", "aws_iam_role", "aws_iam_role_policy", "aws_eks_pod_identity_association"];
   if (spec.service.secretRefs.length) t.push("aws_secretsmanager_secret");

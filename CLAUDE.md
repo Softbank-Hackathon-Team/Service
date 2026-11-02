@@ -56,7 +56,7 @@ AI가 쓴 내용이 팀 결정처럼 굳어지는 걸 막기 위한 규칙이다
 이전 한 번의 정상 흐름: 연결(1) → 가져오기·명세(3) → 계획·승인(4) → 자원 생성(3, Terraform) → 배포(6) → DB 복제·트래픽 이동(4, 5) → 컷오버(4) → 롤백 가능 창 → 정리.
 그동안 보안(7)은 계속 감시하고, 에이전트(8)는 샌드박스 안에서만 움직인다.
 
-설계 근거 문서(읽기 전용 참고, 고치지 않는다): `documents/` 폴더 (api-orchestrator-v1.md, 01-input-layer-flows.md, 12-fastify-lifecycle-and-zod.md, HANDOFF.md, 아키텍처 그림).
+설계 근거 문서(읽기 전용 참고, 고치지 않는다): 레포 밖 팀 공유 폴더의 `notes/architecture/` (api-orchestrator-v1.md, 01-input-layer-flows.md, 12-fastify-lifecycle-and-zod.md, HANDOFF.md, 아키텍처 그림). 레포에는 `documents/` 폴더가 없다.
 
 ## 3. 스택
 
@@ -142,7 +142,7 @@ npm run smoke                 # (터미널 3) 이전 하나를 만들어 상태�
 - **실제 클라우드 자원을 만들거나 지우지 않는다.** `terraform apply` / `destroy`, `aws ... create-*`, `gcloud ... create`, 실제 클러스터에 `kubectl apply`, `helm install` 금지. `terraform init -backend=false`, `terraform validate`, `terraform fmt`, `helm template`, `helm lint`까지만 된다.
 - **비밀값을 커밋하지 않는다.** API 키, 클라우드 자격 증명, DB 비밀번호, `.env`, `*.tfstate`, `*.tfvars`(예시 파일 제외)는 저장소에 넣지 않는다. 예시는 `.env.example`에 가짜 값으로만. 로그·테스트 스냅숏에도 비밀값을 남기지 않는다.
 - **git commit / push / PR 생성은 사람이 시킬 때만** 한다. `main`에 직접 push 하지 않는다. 브랜치에서 PR로만.
-- `documents/` 폴더의 설계 문서는 고치지 않는다(참고용).
+- 팀 공유 폴더 `notes/architecture/`의 설계 문서는 고치지 않는다(참고용).
 - 새 외부 의존성(npm 패키지)을 넣을 때는 PR 설명에 이유와 대안 하나를 쓴다. 같은 일을 하는 패키지를 두 개 넣지 않는다.
 - 코드·문서에 사람 이름, 담당자, 개발 일정을 적지 않는다. 영역 이름으로만 쓴다.
 - 테스트를 끄거나 건너뛰어서 통과시키지 않는다.

@@ -13,7 +13,7 @@ import { cacheVars, cachesOf, dataTypesOf, objectStoreVars, objectStoresOf, queu
 import { managedJobJson, managedServiceJson, managedWorkloadValues } from "./managed.js";
 
 // DRAFT(ai): AWS 도착 Builder v2 (설계 27번 A1). 루트 = infra/modules/aws/root, 종류 = kinds/{postgres,identity,namespace}.
-// DECISION(team): AWS 도착 컴퓨트 = EKS (GKE·k3s와 같은 Helm 차트 재사용) (Jeong 2026-10-31) — v1 주석 그대로 따름
+// DECISION(team): 도착 컴퓨트는 출발과 같은 종류 — 출발이 쿠버네티스면 쿠버네티스(AWS=EKS, GKE·k3s와 같은 Helm 차트), 출발이 ECS(관리형 컨테이너)면 ECS(GCP 도착이면 Cloud Run) (2026-10-31 EKS 결정, 2026-11-02 ECS 추가)
 
 // DRAFT(ai): H-A6 기본 — IR compute 에서 가장 가까운(이상) 등급. compute 가 없으면 null → 모듈 기본(db.t4g.micro, v1 과 같음)
 const RDS_CLASSES: Array<[string, number, number]> = [
