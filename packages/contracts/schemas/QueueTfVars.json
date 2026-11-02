@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,39}$"
+    },
+    "name": {
+      "type": "string"
+    },
+    "model": {
+      "type": "string",
+      "enum": [
+        "queue",
+        "topic"
+      ]
+    },
+    "ordered": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "retention_sec": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "ack_timeout_sec": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "dead_letter_to": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "dead_letter_max_receive": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "allow_from_json": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "model",
+    "ordered",
+    "retention_sec",
+    "ack_timeout_sec",
+    "dead_letter_to",
+    "dead_letter_max_receive",
+    "allow_from_json"
+  ],
+  "additionalProperties": false
+}

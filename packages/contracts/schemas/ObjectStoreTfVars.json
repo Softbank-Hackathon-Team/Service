@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,39}$"
+    },
+    "name": {
+      "type": "string"
+    },
+    "versioning": {
+      "type": "boolean"
+    },
+    "public": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "size_gb": {
+      "anyOf": [
+        {
+          "type": "number",
+          "minimum": 0
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "lifecycle_json": {
+      "type": "string"
+    },
+    "cors_json": {
+      "type": "string"
+    },
+    "allow_from_json": {
+      "type": "string"
+    },
+    "force_destroy": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "versioning",
+    "public",
+    "size_gb",
+    "lifecycle_json",
+    "cors_json",
+    "allow_from_json",
+    "force_destroy"
+  ],
+  "additionalProperties": false
+}

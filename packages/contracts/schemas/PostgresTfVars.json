@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,39}$"
+    },
+    "name": {
+      "type": "string"
+    },
+    "major_version": {
+      "type": "string"
+    },
+    "storage_gb": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "storage_max_gb": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "instance_class": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "ha": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "read_replicas": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "parameters_json": {
+      "type": "string"
+    },
+    "logical_replication": {
+      "type": "boolean",
+      "const": true
+    },
+    "allow_from_json": {
+      "type": "string"
+    },
+    "public": {
+      "type": "boolean"
+    },
+    "peer_cidrs_json": {
+      "type": "string"
+    },
+    "public_subnet_ids_json": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "deletion_protection": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "major_version",
+    "storage_gb",
+    "storage_max_gb",
+    "instance_class",
+    "ha",
+    "read_replicas",
+    "parameters_json",
+    "logical_replication",
+    "allow_from_json",
+    "public",
+    "peer_cidrs_json",
+    "public_subnet_ids_json",
+    "deletion_protection"
+  ],
+  "additionalProperties": false
+}
