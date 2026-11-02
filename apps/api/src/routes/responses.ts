@@ -30,6 +30,8 @@ export const ApprovalResult = z.object({
 
 // 비상 버튼: from = 누르기 직전 상태
 export const RollbackResult = z.object({ id: z.uuid(), from: MigrationStatus, status: z.literal("rolling_back") }).strict();
+// 리소스 회수: 상태는 그대로이고 워커의 cleanup 작업이 옮긴다
+export const ReclaimResult = z.object({ id: z.uuid(), status: z.literal("rollback_window"), windowEndsAt: z.string() });
 export const CancelResult = z.object({ id: z.uuid(), from: MigrationStatus, status: z.literal("cancelled") }).strict();
 
 // GET /environments/:id/status = adapters RunnerStatus (packages/adapters/src/common/runner.ts 인터페이스를 Zod로 옮겨 적음)
@@ -86,7 +88,7 @@ export function errors<const C extends readonly ErrCode[]>(...codes: C) {
 
 // 이름을 붙여 문서(components/schemas)에 올릴 것. 생성기가 이 표를 읽는다
 export const NAMED_RESPONSES = {
-  Accepted, MigrationListItem, MigrationList, EnvironmentList, ApprovalResult, RollbackResult, CancelResult,
+  Accepted, MigrationListItem, MigrationList, EnvironmentList, ApprovalResult, RollbackResult, ReclaimResult, CancelResult,
   EnvironmentStatus, RunnerResource, Timeline, TimelineItem, StateDuration,
 } as const;
 

@@ -185,6 +185,7 @@ contracts의 화면용 모양 `MigrationView`는 열 칸이다. 지금 응답에
 | GET | `/plans/:id` | 이전 | 계획 내용: 단계, 사전 점검 결과, Terraform plan 요약, 정책 게이트, 예외 티켓, 임시 자원 선언, planHash | 있음 |
 | POST | `/plans/:id/approvals` | 이전 | 계획 승인·거절 | 있음 |
 | POST | `/migrations/:id/start` | 이전 | Terraform 실행 시작 | 있음 |
+| POST | `/migrations/:id/reclaim` | 이전 | 롤백 대기를 일찍 끝내고 정리로 넘긴다 | 없음 |
 | POST | `/migrations/:id/resume` | 이전 | 가드레일로 멈춘 이전을 멈추기 전 상태로 재개 | 없음 |
 | POST | `/migrations/:id/rollback` | 이전 | 수동 롤백 | 없음 |
 | POST | `/migrations/:id/cancel` | 이전 | 취소 | 없음 |

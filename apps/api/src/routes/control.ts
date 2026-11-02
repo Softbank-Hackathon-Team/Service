@@ -2,13 +2,14 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { QUEUES, VALID, type MigrationStatus, type QueueName } from "@svc/contracts";
-import { advance, boss, asBossDb, reclaimEnvLocks, NotFound, DomainError, type Tx } from "@svc/core";
-import { RollbackResult, CancelResult, errors } from "./responses.js";
+import { advance, boss, asBossDb, reclaimEnvLocks, writeAudit, NotFound, DomainError, type Tx } from "@svc/core";
+import { RollbackResult, ReclaimResult, CancelResult, errors } from "./responses.js";
 import { IdParam, auditOk, found, nextJob } from "./kit.js";
 
 // 사람이 누르는 비상 버튼 둘 (상태 머신 표 기준)
 //   POST /migrations/:id/rollback   지금 상태 → rolling_back (+ rollback 작업). 출발로 되돌린다
 //   POST /migrations/:id/cancel     지금 상태 → cancelled. 아직 아무것도 안 만든 단계이거나, failed에서 수동 정리를 확인한 뒤
+//   POST /migrations/:id/reclaim    rollback_window 를 일찍 끝낸다. 상태는 워커의 cleanup 작업이 옮긴다 (라우트는 advance 없음)
 //   POST /migrations/:id/resume     paused → 멈추기 전 단계(paused_from) + 그 단계 작업 다시 넣기 (Z12-3, Z36)
 // 상태를 바꾸는 POST 하나 = advance() 한 번. 끝 상태가 되면 advance()가 환경 잠금을 푼다
 
@@ -58,6 +59,31 @@ export async function controlRoutes(app: FastifyInstance) {
         audit: auditOk(req, "migration.rolling_back", id, { from, reason: req.body?.reason }),
       });
       return { status: 202, body: { id, from, status: "rolling_back" } };
+    });
+  });
+
+  // 리소스 회수. 창 끝 시각을 지금으로 당기면 이 뒤의 롤백은 가드가 막고, cleanup 작업의 창 검사는 통과한다.
+  // cutover 가 넣어 둔 cleanup 작업이 같은 키로 기다리고 있어 새로 넣지 못하므로 그 작업의 시작 시각을 당긴다.
+  r.post("/migrations/:id/reclaim", { schema: { params: IdParam, body: ReasonBody.nullish(),
+    response: { 202: ReclaimResult, ...errors(400, 401, 403, 404, 409, 500) } } }, async (req, reply) => {
+    const id = req.params.id;
+    return req.idempotent(reply, async (tx) => {
+      const from = await statusOf(tx, id);
+      if (from !== "rollback_window") throw new DomainError(409, "INVALID_TRANSITION", `${from} → cleanup not allowed`);
+      const ended = await tx.query<{ at: string }>(
+        `UPDATE migrations SET rollback_window_ends_at = LEAST(rollback_window_ends_at, now()), updated_at = now()
+          WHERE id = $1 RETURNING to_char(rollback_window_ends_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS at`, [id]);
+      const singletonKey = `${QUEUES.cleanup}:${id}`;
+      const woken = await tx.query(
+        `UPDATE pgboss.job SET start_after = now() WHERE name = $1 AND singleton_key = $2 AND state IN ('created', 'retry')`,
+        [QUEUES.cleanup, singletonKey]);
+      if (woken.rowCount === 0) {
+        await boss.send(QUEUES.cleanup, { tenantId: req.tenantId, requestId: req.id, migrationId: id },
+          { singletonKey, db: asBossDb(tx) });
+      }
+      await writeAudit(tx, req.tenantId, { actor: req.actor, action: "migration.reclaim_requested", target: id, result: "ok",
+        detail: { reason: req.body?.reason, jobWoken: (woken.rowCount ?? 0) > 0 } });
+      return { status: 202, body: { id, status: "rollback_window" as const, windowEndsAt: ended.rows[0]!.at } };
     });
   });
 
