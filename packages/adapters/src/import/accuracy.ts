@@ -63,7 +63,9 @@ export function measureImportAccuracy(input: MeasureInput): ImportAccuracy {
     fields.push({ component, field, result, ...(detail ? { detail: detail.slice(0, 300) } : {}) });
   const cmp = (component: string, field: string, ok: boolean, detail: string) => add(component, field, ok ? "match" : "mismatch", ok ? undefined : detail);
 
-  const idOf = (kind: string, ns: string | undefined, name: string): string | null => {
+  // VACCURACY 고침: 벤더 고유 ID(ARN·selfLink)가 있는 자원은 ids 열쇠가 그 값이다 (normalizeV2 nativeKey = native.uid ?? …)
+  const idOf = (kind: string, ns: string | undefined, name: string, uid?: string | null): string | null => {
+    if (uid && result.ids[uid]) return result.ids[uid]!;
     const keys = Object.keys(result.ids);
     const exact = `${kind}//${ns ?? ""}/${name}`;
     const k = keys.includes(exact) ? exact : keys.find((x) => x.startsWith(`${kind}/`) && x.endsWith(`/${ns ?? ""}/${name}`)) ?? keys.find((x) => x.startsWith(`${kind}/`) && x.endsWith(`/${name}`));
@@ -137,7 +139,7 @@ export function measureImportAccuracy(input: MeasureInput): ImportAccuracy {
     // 관리형 Postgres: 원본 버전·용량을 따로 다시 읽어 명세 값과 맞춘다 (매퍼가 나중에 바뀌어도 잡힘)
     const db = dbReading(it);
     if (!db) continue;
-    const id = idOf(it.kind, db.ns, db.name);
+    const id = idOf(it.kind, db.ns, db.name, db.uid);
     const comp = id ? comps.get(id) : undefined;
     if (!id || !comp || comp.kind !== "postgres") continue;
     const p = comp.props as Obj;
@@ -157,13 +159,13 @@ export function measureImportAccuracy(input: MeasureInput): ImportAccuracy {
   };
 }
 
-function dbReading(it: Obj): { ns?: string; name: string; major: string | null; storageGb: number | null } | null {
+function dbReading(it: Obj): { ns?: string; uid?: string | null; name: string; major: string | null; storageGb: number | null } | null {
   const gb = (v: unknown) => { const n = typeof v === "string" ? Number(v) : v; return typeof n === "number" && Number.isInteger(n) && n >= 1 ? n : null; };
   if (it.kind === DB_RAW_KINDS.rds) {
-    return { name: String(it.DBInstanceIdentifier ?? ""), major: String(it.EngineVersion ?? "").match(/^(\d{1,2})/)?.[1] ?? null, storageGb: gb(it.AllocatedStorage) };
+    return { uid: it.DBInstanceArn ?? null, name: String(it.DBInstanceIdentifier ?? ""), major: String(it.EngineVersion ?? "").match(/^(\d{1,2})/)?.[1] ?? null, storageGb: gb(it.AllocatedStorage) };
   }
   if (it.kind === DB_RAW_KINDS.cloudsql) {
-    return { name: String(it.name ?? ""), major: String(it.databaseVersion ?? "").match(/POSTGRES_(\d+)/)?.[1] ?? null, storageGb: gb(it.settings?.dataDiskSizeGb) };
+    return { uid: it.selfLink ?? null, name: String(it.name ?? ""), major: String(it.databaseVersion ?? "").match(/POSTGRES_(\d+)/)?.[1] ?? null, storageGb: gb(it.settings?.dataDiskSizeGb) };
   }
   if (it.kind === DB_RAW_KINDS.cnpg) {
     const sp = it.spec ?? {};

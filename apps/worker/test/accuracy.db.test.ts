@@ -63,6 +63,24 @@ test("거부: v1 길(깃발 끔)이면 accuracy 칸이 없다 (기존 감사 모
   } finally { process.env.IMPORT_IR = "v2"; }
 });
 
+test("VACCURACY 다시 가져오기: 감사가 두 줄 쌓이고 둘 다 정확도가 붙으며, 판 id 는 PREVIDS 로 유지돼도 100%", { skip }, async () => {
+  const id = await seed(T, "gcp", "aws");
+  await imp.handleImport(job(T, id));
+  await owner.query("UPDATE migrations SET status='importing' WHERE id=$1", [id]);
+  await imp.handleImport({ ...job(T, id), requestId: `r-acc2-${id.slice(0, 8)}` });
+  const rows = (await owner.query("SELECT detail FROM audit_events WHERE target=$1 AND action='migration.spec_review' ORDER BY seq", [id])).rows;
+  assert.equal(rows.length, 2);
+  for (const r of rows) assert.equal(ImportAccuracy.parse(r.detail.accuracy).percent, 100);
+});
+
+test("VACCURACY 도착이 azure_mock(렌더 거부 가능)이어도 가져오기는 안 막히고 숫자가 붙는다 (render 또는 spec 기준)", { skip }, async () => {
+  const id = await seed(T, "gcp", "azure_mock");
+  await imp.handleImport(job(T, id));
+  assert.equal((await owner.query("SELECT status FROM migrations WHERE id=$1", [id])).rows[0].status, "spec_review");
+  const a = ImportAccuracy.parse((await detail(id)).accuracy);
+  assert.ok(a.basis === "render" || a.basis === "spec"); assert.equal(a.percent, 100);
+});
+
 test("다른 회사: 남의 회사 이전의 감사는 내 회사 문맥에서 안 보인다 (RLS)", { skip }, async () => {
   const id = await seed(T, "gcp", "aws");
   await imp.handleImport(job(T, id));
