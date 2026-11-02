@@ -55,3 +55,45 @@ export const DEMO_INVENTORY: Record<Provider, RawInventory> = {
   ] },
   azure_mock: { provider: "azure_mock", coverage: {}, items: [] },
 };
+
+// I2: 공통 명세 v2 용 데모 원본 (gcp·onprem 만. aws 는 ECS 데모를 그대로 쓴다). 3티어 = web·api·worker Deployment + Service + Ingress + HPA 1 + CronJob 1 + DB
+const tier = (ns: string, name: string, env: Array<Record<string, unknown>> = [], port = 8080) => ({
+  kind: "k8s.deployment", imageDigest: DIGEST, metadata: { name, namespace: ns, labels: { app: name } },
+  spec: { replicas: 2, selector: { matchLabels: { app: name } }, template: { metadata: { labels: { app: name } }, spec: { serviceAccountName: name, containers: [{
+    name, image: `ghcr.io/demo/${name}:1.4.2`, ports: [{ containerPort: port }],
+    resources: { requests: { cpu: "300m", memory: "768Mi" } }, readinessProbe: { httpGet: { path: "/healthz", port } }, env,
+  }] } } },
+});
+const tierSvc = (ns: string, name: string) => ({
+  kind: "k8s.service", metadata: { name, namespace: ns },
+  spec: { selector: { app: name }, ports: [{ name: "http", port: 80, targetPort: 8080 }] },
+});
+const k8sItemsV2 = (ns: string, dbHost: string) => [
+  tier(ns, "shop-web", [{ name: "API_URL", value: `http://shop-api.${ns}.svc` }]),
+  tier(ns, "shop-api", [
+    { name: "DB_HOST", value: dbHost },
+    { name: "DATABASE_PASSWORD", valueFrom: { secretKeyRef: { name: "shop-db", key: "password" } } },
+  ]),
+  tier(ns, "shop-worker", [{ name: "DB_HOST", value: dbHost }]),
+  tierSvc(ns, "shop-web"), tierSvc(ns, "shop-api"),
+  { kind: "k8s.ingress", metadata: { name: "shop", namespace: ns }, spec: { rules: [{ host: "shop.example.com", http: { paths: [
+    { path: "/api", pathType: "Prefix", backend: { service: { name: "shop-api" } } },
+    { path: "/", pathType: "Prefix", backend: { service: { name: "shop-web" } } }] } }] } },
+  { kind: "k8s.hpa", metadata: { name: "shop-api", namespace: ns }, spec: { scaleTargetRef: { kind: "Deployment", name: "shop-api" }, minReplicas: 2, maxReplicas: 6,
+    metrics: [{ type: "Resource", resource: { name: "cpu", target: { type: "Utilization", averageUtilization: 70 } } }] } },
+  { kind: "k8s.cronjob", imageDigest: DIGEST, metadata: { name: "shop-cleanup", namespace: ns }, spec: { schedule: "0 3 * * *", concurrencyPolicy: "Forbid",
+    jobTemplate: { spec: { backoffLimit: 2, template: { spec: { restartPolicy: "OnFailure", serviceAccountName: "shop-worker", containers: [{
+      name: "cleanup", image: "ghcr.io/demo/shop-worker:1.4.2", command: ["node", "cleanup.js"], env: [{ name: "DB_HOST", value: dbHost }] }] } } } } } },
+];
+
+export const DEMO_INVENTORY_V2: Partial<Record<Provider, RawInventory>> = {
+  gcp: { provider: "gcp", coverage: { "k8s.deployment": 3, "k8s.service": 2, "k8s.ingress": 1, "k8s.hpa": 1, "k8s.cronjob": 1, "cloudsql.instance": 1 }, items: [
+    ...k8sItemsV2("shop", "10.20.0.5"),
+    { kind: "cloudsql.instance", name: "shop-db", databaseVersion: "POSTGRES_16", settings: { dataDiskSizeGb: "20", availabilityType: "ZONAL" },
+      ipAddresses: [{ type: "PRIVATE", ipAddress: "10.20.0.5" }] },
+  ] },
+  onprem: { provider: "onprem", coverage: { "k8s.deployment": 3, "k8s.service": 2, "k8s.ingress": 1, "k8s.hpa": 1, "k8s.cronjob": 1, "cnpg.cluster": 1 }, items: [
+    ...k8sItemsV2("shop", "shop-db-rw.shop.svc"),
+    { kind: "cnpg.cluster", metadata: { name: "shop-db", namespace: "shop" }, spec: { imageName: "ghcr.io/cloudnative-pg/postgresql:16.4", storage: { size: "20Gi" }, instances: 1 } },
+  ] },
+};

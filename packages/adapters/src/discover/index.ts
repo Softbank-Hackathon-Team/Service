@@ -4,9 +4,10 @@ import { join } from "node:path";
 import type { Provider, RawInventory } from "@svc/contracts";
 import {
   arr, awsRegion, CliError, gcpProject, get, onpremContext, runJson, runText, str, unavailable, incomplete, type CliDeps,
-  maskAccount,
+  maskAccount, mockSeed,
 } from "../common/cli.js";
-import { readK8sApp } from "./k8s.js";
+import { DEMO_INVENTORY, DEMO_INVENTORY_V2 } from "../common/fixtures.js";
+import { readK8sApp, readK8sNamespace } from "./k8s.js";
 
 // Z88: 출발 환경 진짜 읽기 (데모 원본 STUB 대체). 결과는 normalize 가 아는 원본 모양 + 둘레 자원 목록.
 //   AWS  : sts → eks list/describe-cluster → kubeconfig(임시 파일) → kubectl 앱 읽기 · rds describe-db-instances
@@ -20,6 +21,19 @@ import { readK8sApp } from "./k8s.js";
 // 둘레 자원(VPC·LB·레지스트리·시크릿) 하나가 실패해도 앱·DB 를 읽었으면 계속한다 (notes 에 이유). 앱을 못 읽으면 멈춘다.
 
 type Obj = Record<string, unknown>;
+
+/** I2: 가져오기 옵션. ir 를 안 주면 지금 동작(v1) 그대로. adapters 는 IMPORT_IR 환경변수를 읽지 않는다 (호출하는 쪽이 옵션으로만 넘김) */
+export interface DiscoverOpts { ir?: "v1" | "v2"; namespace?: string }
+
+/** v1 = 앱 Deployment 하나(readK8sApp), v2 = 네임스페이스 전체(readK8sNamespace). 같은 모양 {items, namespace, counts, notes} 로 맞춘다 */
+async function readApp(d: CliDeps, kube: string[], opts: DiscoverOpts): Promise<{ items: Obj[]; namespace: string; counts: Record<string, number>; notes: string[] }> {
+  if (opts.ir === "v2") {
+    const r = await readK8sNamespace(d, kube, { namespace: opts.namespace });
+    return { items: r.items as unknown as Obj[], namespace: r.namespace, counts: r.counts, notes: r.notes };
+  }
+  const r = await readK8sApp(d, kube);
+  return { items: [{ ...r.item }], namespace: r.namespace, counts: r.counts, notes: r.notes };
+}
 const note = (text: string) => ({ kind: "import.note", text });
 const peri = (kind: string, items: Obj[]) => items.map((o) => ({ kind, ...o }));
 
@@ -50,7 +64,7 @@ const cliReason = (e: unknown, bin: string) =>
   e instanceof CliError && e.missing ? `${bin} 명령이 없음` : (e as Error).message.slice(0, 200);
 
 // ── AWS ───────────────────────────────────────────────────────────────
-export async function discoverAws(d: CliDeps = {}): Promise<RawInventory> {
+export async function discoverAws(d: CliDeps = {}, opts: DiscoverOpts = {}): Promise<RawInventory> {
   const env = d.env ?? process.env, region = awsRegion(env), r = ["--region", region, "--output", "json"];
   let account: string | null;
   try { account = str(get(await runJson(d, "aws", ["sts", "get-caller-identity", "--output", "json"]), "Account")); }
@@ -67,7 +81,7 @@ export async function discoverAws(d: CliDeps = {}): Promise<RawInventory> {
   const app = await withTempKube(async (kc) => {
     try { await runText(d, "aws", ["eks", "update-kubeconfig", "--name", cl.name, "--kubeconfig", kc, "--region", region]); }
     catch (e) { throw unavailable(`EKS ${cl.name} kubeconfig 만들기 실패 (${cliReason(e, "aws")})`); }
-    try { return await readK8sApp(d, ["--kubeconfig", kc]); }
+    try { return await readApp(d, ["--kubeconfig", kc], opts); }
     catch (e) { if (e instanceof CliError) throw unavailable(`EKS ${cl.name} 쿠버네티스 API 읽기 실패 (access entry 확인): ${e.message.slice(0, 160)}`); throw e; }
   });
 
@@ -87,9 +101,10 @@ export async function discoverAws(d: CliDeps = {}): Promise<RawInventory> {
   ]);
 
   const items: Obj[] = [
-    { ...app.item },
+    ...app.items,
     ...(db ? [{ kind: "rds.dbInstance", DBInstanceIdentifier: db.DBInstanceIdentifier, Engine: db.Engine, EngineVersion: db.EngineVersion,
-      AllocatedStorage: db.AllocatedStorage, DBInstanceClass: db.DBInstanceClass, Endpoint: get(db, "Endpoint", "Address") ?? null }] : []),
+      AllocatedStorage: db.AllocatedStorage, DBInstanceClass: db.DBInstanceClass, Endpoint: get(db, "Endpoint", "Address") ?? null,
+      ...(opts.ir === "v2" ? { MultiAZ: db.MultiAZ ?? null, PubliclyAccessible: db.PubliclyAccessible ?? null, MaxAllocatedStorage: db.MaxAllocatedStorage ?? null, DBInstanceArn: db.DBInstanceArn ?? null } : {}) }] : []),
     { kind: "eks.cluster", name: cl.name, version: get(desc, "version") ?? null, vpcId },
     ...vpcs, ...lbs, ...repos, ...secrets,
     ...[...notes, ...app.notes].map(note),
@@ -98,7 +113,7 @@ export async function discoverAws(d: CliDeps = {}): Promise<RawInventory> {
 }
 
 // ── GCP ───────────────────────────────────────────────────────────────
-export async function discoverGcp(d: CliDeps = {}): Promise<RawInventory> {
+export async function discoverGcp(d: CliDeps = {}, opts: DiscoverOpts = {}): Promise<RawInventory> {
   const env = d.env ?? process.env;
   const project = await gcpProject(d);
   if (!project) throw unavailable("GCP 프로젝트가 정해지지 않음 (GCP_PROJECT)");
@@ -115,7 +130,7 @@ export async function discoverGcp(d: CliDeps = {}): Promise<RawInventory> {
   const app = await withTempKube(async (kc) => {
     try { await runText(d, "gcloud", ["container", "clusters", "get-credentials", name, "--location", loc, "--project", project], { KUBECONFIG: kc }); }
     catch (e) { throw unavailable(`GKE ${name} kubeconfig 만들기 실패 (${cliReason(e, "gcloud")})`); }
-    try { return await readK8sApp(d, ["--kubeconfig", kc]); }
+    try { return await readApp(d, ["--kubeconfig", kc], opts); }
     catch (e) { if (e instanceof CliError) throw unavailable(`GKE ${name} 쿠버네티스 API 읽기 실패: ${e.message.slice(0, 160)}`); throw e; }
   });
 
@@ -131,9 +146,13 @@ export async function discoverGcp(d: CliDeps = {}): Promise<RawInventory> {
   ]);
 
   const items: Obj[] = [
-    { ...app.item },
+    ...app.items,
     ...(db ? [{ kind: "cloudsql.instance", name: db.name, databaseVersion: db.databaseVersion,
-      settings: { dataDiskSizeGb: String(get(db, "settings", "dataDiskSizeGb") ?? "10"), tier: get(db, "settings", "tier") ?? null }, region: db.region ?? null }] : []),
+      settings: { dataDiskSizeGb: get(db, "settings", "dataDiskSizeGb") == null && opts.ir === "v2" ? null : String(get(db, "settings", "dataDiskSizeGb") ?? "10"),   // v2: 못 읽은 값을 지어내지 않는다
+        tier: get(db, "settings", "tier") ?? null,
+        ...(opts.ir === "v2" ? { availabilityType: get(db, "settings", "availabilityType") ?? null, ipConfiguration: get(db, "settings", "ipConfiguration") ?? null } : {}) },
+      region: db.region ?? null,
+      ...(opts.ir === "v2" ? { ipAddresses: arr(db.ipAddresses).map((a) => ({ type: a.type ?? null, ipAddress: a.ipAddress ?? null })), selfLink: db.selfLink ?? null } : {}) }] : []),
     { kind: "gke.cluster", name, location: loc, version: cl.currentMasterVersion ?? null },
     ...nets, ...fwd, ...repos, ...secrets,
     ...[...notes, ...app.notes].map(note),
@@ -142,14 +161,14 @@ export async function discoverGcp(d: CliDeps = {}): Promise<RawInventory> {
 }
 
 // ── 온프레 (k3s·k3d + CNPG) ──────────────────────────────────────────
-export async function discoverOnprem(d: CliDeps = {}): Promise<RawInventory> {
+export async function discoverOnprem(d: CliDeps = {}, opts: DiscoverOpts = {}): Promise<RawInventory> {
   const env = d.env ?? process.env, ctx = onpremContext(env), k = ["--context", ctx];
   let nodes: Obj[];
   try { nodes = arr(get(await runJson(d, "kubectl", ["get", "nodes", ...k, "--request-timeout=10s", "-o", "json"]), "items")); }
   catch (e) { throw unavailable(`온프레 클러스터(context ${ctx})에 닿지 않음 (${cliReason(e, "kubectl")})`); }
   const notes: string[] = [`온프레 context ${ctx} · 노드 ${nodes.length}개`];
   let app;
-  try { app = await readK8sApp(d, k); }
+  try { app = await readApp(d, k, opts); }
   catch (e) { if (e instanceof CliError) throw unavailable(`온프레 쿠버네티스 API 읽기 실패: ${e.message.slice(0, 160)}`); throw e; }
 
   let cnpg: Obj[] = [];
@@ -164,10 +183,10 @@ export async function discoverOnprem(d: CliDeps = {}): Promise<RawInventory> {
     : pick(sameNs.length ? sameNs : cnpg, undefined, nm, "CNPG 클러스터", notes);
 
   const items: Obj[] = [
-    { ...app.item },
+    ...app.items,
     ...(db ? [{ kind: "cnpg.cluster", metadata: { name: get(db, "metadata", "name"), namespace: get(db, "metadata", "namespace") },
       spec: { imageName: str(get(db, "spec", "imageName")) ?? str(get(db, "status", "image")) ?? undefined,
-              storage: { size: str(get(db, "spec", "storage", "size")) ?? "1Gi" }, instances: get(db, "spec", "instances") ?? null } }] : []),
+              storage: { size: str(get(db, "spec", "storage", "size")) ?? (opts.ir === "v2" ? null : "1Gi") }, instances: get(db, "spec", "instances") ?? null } }] : []),
     ...nodes.map((n) => ({ kind: "k8s.node", name: get(n, "metadata", "name"), version: get(n, "status", "nodeInfo", "kubeletVersion") ?? null,
       cpu: get(n, "status", "allocatable", "cpu") ?? null, memory: get(n, "status", "allocatable", "memory") ?? null })),
     ...[...notes, ...app.notes].map(note),
@@ -175,22 +194,35 @@ export async function discoverOnprem(d: CliDeps = {}): Promise<RawInventory> {
   return { provider: "onprem", items, coverage: coverage(items, app.counts) };
 }
 
-/** 감사·화면에 남길 판: 환경변수는 이름만 (평문 값은 비밀일 수 있다, Z38b). 원본은 바꾸지 않는다 */
+/** 감사·화면에 남길 판: 환경변수는 이름만 (평문 값은 비밀일 수 있다, Z38b). 원본은 바꾸지 않는다.
+ *  I2: env 가 있는 모든 워크로드(deployment·cronjob)의 containers·initContainers 에 적용하고, 값이 박힐 수 있는 command·args 도 지운다 */
 export function inventoryForAudit(inv: RawInventory): RawInventory {
+  const scrub = (pod: unknown) => {
+    for (const key of ["containers", "initContainers"])
+      for (const c of arr(get(pod, key))) {
+        if (Array.isArray(c.env)) c.env = arr(c.env).map((e) => ({ name: e.name }));
+        delete c.args; delete c.command;
+      }
+  };
   const items = inv.items.map((raw) => {
     const i = raw as Obj;
-    if (i.kind !== "k8s.deployment") return i;
+    if (i.kind !== "k8s.deployment" && i.kind !== "k8s.cronjob") return i;
     const copy = JSON.parse(JSON.stringify(i)) as Obj;
-    for (const c of arr(get(copy, "spec", "template", "spec", "containers")))
-      if (Array.isArray(c.env)) c.env = arr(c.env).map((e) => ({ name: e.name }));
+    scrub(i.kind === "k8s.cronjob" ? get(copy, "spec", "jobTemplate", "spec", "template", "spec") : get(copy, "spec", "template", "spec"));
     return copy;
   });
   return { provider: inv.provider, coverage: inv.coverage, items };
 }
 
-export async function discoverSource(p: Provider, d: CliDeps = {}): Promise<RawInventory> {
-  if (p === "aws") return discoverAws(d);
-  if (p === "gcp") return discoverGcp(d);
-  if (p === "onprem") return discoverOnprem(d);
+export async function discoverSource(p: Provider, d: CliDeps = {}, opts: DiscoverOpts = {}): Promise<RawInventory> {
+  if (p === "aws") return discoverAws(d, opts);
+  if (p === "gcp") return discoverGcp(d, opts);
+  if (p === "onprem") return discoverOnprem(d, opts);
   throw unavailable("Azure 는 Mock 실행기만 있어 출발 환경으로 읽을 실자원이 없음 (결정: 진짜 Azure 안 만듦)");
+}
+
+/** 가져오기 진입점. MOCK_SEED=1 이면 데모 원본(v2 면 DEMO_INVENTORY_V2[p], 없으면 DEMO_INVENTORY[p]), 아니면 진짜 읽기 */
+export async function discoverForImport(p: Provider, opts: DiscoverOpts = {}, d: CliDeps = {}): Promise<RawInventory> {
+  if (mockSeed(d.env ?? process.env)) return (opts.ir === "v2" ? DEMO_INVENTORY_V2[p] : undefined) ?? DEMO_INVENTORY[p];
+  return discoverSource(p, d, opts);
 }
