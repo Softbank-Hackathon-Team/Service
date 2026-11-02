@@ -7,12 +7,15 @@ import { ActionPill, Badge, BarPill } from '../../components/ui/controls';
 import { Icon } from '../../components/ui/Icon';
 import { api } from '../../lib/api';
 import { errorText } from '../../lib/errors';
+import { stopReasonOf } from '../../lib/failure';
 import { is404, or404 } from '../../lib/http';
 import { LABEL } from '../../lib/status';
 import { lastPrecheckBounce } from '../../lib/timelineDetail';
 import type { MigrationView, PrecheckItem } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
+import { costCaveats, costSummary } from '../cost/model';
 import { pollMs, screenOf, specRows, stepGate, stepName, usd, type MigrationScreen } from './model';
+import { LeftoverFold, StopFold } from './EvidenceFolds';
 import { DoneScreen, CleanupScreen, PausedScreen, RolledBackScreen, RollingBackScreen, RunningScreen, WindowScreen } from './RunScreens';
 import { ConfirmPill, Frame, useAction, type ScreenProps } from './shared';
 import s from '../common/page.module.css';
@@ -136,12 +139,15 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
         )}
       </Hero>
       <Stack area="side">
-        <FoldTile title="월 비용" summary={cost.data?.origin === 'stored' ? '추정' : '미리보기'}>
+        <FoldTile title="월 비용" summary={cost.data ? costSummary(cost.data) : '읽는 중'}>
           <div className={s.costLine}>
             <span className="t-metric-lg">{usd(pair?.sourceMonthlyUsd)}</span>
             <Icon name="arrow-right" />
             <span className="t-metric-lg">{usd(pair?.targetMonthlyUsd)}</span>
           </div>
+          {cost.data && costCaveats(cost.data).map((line) => (
+            <p key={line} className={`${s.note} t-body-sm c-warning`}>{line}</p>
+          ))}
           <p className={`${s.note} t-body-sm c-secondary`}>공개 가격표로 낸 추정입니다. 청구서가 아닙니다.</p>
           <div className={s.note}>
             <BarPill label="비용 자세히" icon="chevron" onClick={() => go(`migrations/${migration.id}/cost`)} />
@@ -244,23 +250,29 @@ function StoppedScreen({ migration, route, onChanged, kind }: ScreenProps & { ki
 function FailedScreen({ migration, route, onChanged }: ScreenProps) {
   const { busy, error, run } = useAction(onChanged);
   const [cleaned, setCleaned] = useState(false);
+  const reason = stopReasonOf(migration.failureCode, migration.status);
   return (
     <Frame migration={migration} route={route}>
       <Hero
         tone="stop"
         meta={migration.failedAtStatus ? `${LABEL[migration.failedAtStatus]}에서 실패` : '실패'}
-        title={'작업이\n끝나지 못했습니다'}
+        title={reason?.title ?? '작업이\n끝나지 못했습니다'}
+        foot="남은 자원을 직접 정리한 뒤 이 이전을 끝냅니다"
       >
-        {migration.failureCode && <code className={`${s.code} t-code-md`}>{migration.failureCode}</code>}
+        {reason && (
+          <div className={s.heroPanel}>
+            <span className="t-body-md">{reason.hint}</span>
+          </div>
+        )}
       </Hero>
       <Stack area="side">
-        <FoldTile title="끝내기 전에">
-          <p className={`${s.note} t-body-sm c-secondary`}>만들다 남은 자원이 있을 수 있습니다. 직접 정리한 뒤 끝내 주세요.</p>
+        <LeftoverFold migration={migration} title="끝내기 전에">
           <label className={`${s.check} t-body-md`}>
             <input type="checkbox" checked={cleaned} onChange={(event) => setCleaned(event.target.checked)} />
             남은 자원을 정리했습니다
           </label>
-        </FoldTile>
+        </LeftoverFold>
+        {reason && <StopFold migration={migration} reason={reason} into="failed" hint={false} defaultOpen={false} />}
         <ActionRow notice={error}>
           <ActionPill label={busy ? '보내는 중' : '이 이전 끝내기'} icon="x" disabled={busy || !cleaned} onClick={() => void run(() => api.cancel(migration.id, true))} />
         </ActionRow>
@@ -273,6 +285,9 @@ function CancelledScreen({ migration, route }: ScreenProps) {
   return (
     <Frame migration={migration} route={route}>
       <Hero tone="run" meta="취소" title={'이 이전은\n여기서 끝났습니다'} foot="환경 잠금을 풀었습니다" />
+      <Stack area="side">
+        <LeftoverFold migration={migration} title="도착에 남은 자원" hideWhenNone />
+      </Stack>
     </Frame>
   );
 }

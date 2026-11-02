@@ -1,5 +1,5 @@
 import type { SecurityStatus } from '../../components/ui/Security';
-import type { CellState, MatrixRow, SecurityRegression, SecurityView } from '../../lib/security-types';
+import type { CellState, LedgerRow, MatrixRow, SecurityRegression, SecurityView } from '../../lib/security-types';
 import type { AgentReportList } from '../../lib/types';
 
 const CELL: Record<CellState, SecurityStatus> = { pass: 'pass', fail: 'fail', unknown: 'unknown', not_applicable: 'na', attested: 'attested' };
@@ -32,22 +32,41 @@ export function securityHeadline(view: Pick<SecurityView, 'summary'> | null, reg
   return { stop: false, title: '통제가\n모두 지켜졌습니다' };
 }
 
-export type Threat = { key: string; title: string; severity: string; at: string };
+export type Threat = { key: string; title: string; severity: string; evidence: string; at: string };
 
-/** 위협 패널의 근거. 지금은 온프레 Agent가 보낸 보안 보고 중 실패한 항목이다. */
+/**
+ * 위협 패널의 근거. 온프레 Agent가 보낸 보안 보고 중 지금 일어나는 위협(kind: threat, Falco 경보 등)의 실패 항목이다.
+ * 설정 위반(kind: posture, Kyverno 정책 보고 등)은 위협이 아니라 통제 쪽 근거라 여기서 뺀다.
+ */
 export function threatsFrom(reports: (AgentReportList | null)[]): Threat[] {
   return reports.flatMap((list) =>
     (list?.items ?? []).flatMap((item) =>
       item.report.kind === 'security'
         ? item.report.findings
-            .filter((finding) => finding.status === 'fail')
+            .filter((finding) => finding.kind === 'threat' && finding.status === 'fail')
             .map((finding, index) => ({
               key: `${item.id}-${index}`,
-              title: finding.resource ?? finding.toolCheckId ?? '보안 항목',
-              severity: finding.severity ?? 'unknown',
+              title: finding.resource || finding.toolCheckId || '보안 항목',
+              severity: finding.severity,
+              evidence: finding.evidence,
               at: item.receivedAt,
             }))
         : [],
     ),
   );
+}
+
+export type LedgerSummary = { total: number; live: number; closed: number; stale: number };
+
+/** 임시 권한 장부를 센다. live = 지금 쓸 수 있는 것, stale = 만료 시각이 지났는데 회수 처리가 안 된 것. */
+export function ledgerSummary(rows: Pick<LedgerRow, 'status' | 'expiredButActive'>[]): LedgerSummary {
+  const stale = rows.filter((row) => row.expiredButActive).length;
+  const live = rows.filter((row) => (row.status === 'active' || row.status === 'revoke_requested') && !row.expiredButActive).length;
+  return { total: rows.length, live, closed: rows.length - live - stale, stale };
+}
+
+/** 장부 줄 순서: 예외(만료됐는데 남음) → 지금 살아 있음 → 끝난 것, 같으면 최근 발급 먼저. */
+export function ledgerOrder<T extends Pick<LedgerRow, 'status' | 'expiredButActive' | 'issuedAt'>>(rows: T[]): T[] {
+  const rank = (row: T) => (row.expiredButActive ? 0 : row.status === 'active' || row.status === 'revoke_requested' ? 1 : 2);
+  return [...rows].sort((a, b) => rank(a) - rank(b) || b.issuedAt.localeCompare(a.issuedAt));
 }

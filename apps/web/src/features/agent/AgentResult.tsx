@@ -5,6 +5,7 @@ import { api } from '../../lib/api';
 import { or404 } from '../../lib/http';
 import { usePoll } from '../../lib/usePoll';
 import { useAction } from '../migration/shared';
+import { agentBlock } from './model';
 import s from '../common/page.module.css';
 
 export const OUTCOME: Record<NonNullable<RemediateReview['outcome']>, { label: string; tone: 'success' | 'neutral' | 'warning' }> = {
@@ -14,7 +15,8 @@ export const OUTCOME: Record<NonNullable<RemediateReview['outcome']>, { label: s
 };
 
 export function llmNote(llm: AgentLlm | undefined) {
-  if (llm?.state === 'key_missing') return 'AI 키가 없어 점검을 돌릴 수 없습니다.';
+  const block = agentBlock(llm);
+  if (block) return block.note;
   if (llm?.state === 'fake') return '시험용 가짜 AI 결과입니다.';
   return null;
 }
@@ -73,7 +75,8 @@ export function AgentFold({ migrationId }: { migrationId: string }) {
   const view = review.data ?? null;
   const result = view?.remediate ?? null;
   const running = isRunning(result);
-  const blocked = view?.llm?.state === 'key_missing';
+  const block = agentBlock(view?.llm);
+  const blocked = block !== null;
   return (
     <FoldTile title="에이전트 수정안" summary={agentSummary(result)}>
       <div className={s.agent}>
@@ -81,7 +84,7 @@ export function AgentFold({ migrationId }: { migrationId: string }) {
         {error && <p className="t-body-sm c-danger">{error}</p>}
         <div>
           <BarPill
-            label={busy || running ? '점검 중' : result ? '다시 점검' : '수정안 받기'}
+            label={block ? block.button : busy || running ? '점검 중' : result ? '다시 점검' : '수정안 받기'}
             icon="bot"
             onClick={busy || running || blocked ? undefined : () => void run(() => api.agentRun(migrationId))}
           />

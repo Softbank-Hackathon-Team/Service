@@ -60,6 +60,7 @@ export const api = {
   cancel: (id: string, manualCleanupConfirmed?: boolean) =>
     post<{ status: 'cancelled' }>(`/migrations/${id}/cancel`, manualCleanupConfirmed ? { manualCleanupConfirmed } : {}),
   rollback: (id: string) => post<{ status: 'rolling_back' }>(`/migrations/${id}/rollback`, {}),
+  // 서버 main 에는 아직 이 경로가 없다 (리소스 회수, README "서버에 없어서" 참고). 목업만 응답한다
   reclaim: (id: string) => post<{ status: 'rollback_window' }>(`/migrations/${id}/reclaim`, {}),
   resume: (id: string, ruleCleared?: boolean) =>
     post<ResumeResult>(`/migrations/${id}/resume`, ruleCleared ? { ruleCleared } : {}),

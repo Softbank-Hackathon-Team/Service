@@ -1,0 +1,28 @@
+import type { AgentLlm, AgentLlmSpend } from '../../lib/agent-review-types';
+
+// AI 점검을 지금 돌릴 수 없는 이유 (서버 apps/api/src/routes/agent-review.ts 와 같은 규칙).
+//   key_missing → 409 LLM_KEY_MISSING, spend.exceeded → 409 LLM_BUDGET_EXCEEDED. 둘 다 큐에 넣기 전에 서버가 막는다
+export type AgentBlock = { title: string; button: string; note: string };
+
+export function agentBlock(llm: AgentLlm | undefined): AgentBlock | null {
+  if (llm?.state === 'key_missing') return { title: 'AI 키가 없어\n돌릴 수 없습니다', button: 'AI 키가 없습니다', note: 'AI 키가 없어 점검을 돌릴 수 없습니다.' };
+  if (llm?.spend?.exceeded) return { title: 'AI 지출 상한에\n닿았습니다', button: 'AI 지출 상한에 닿았습니다', note: '이번 회차 AI 지출이 상한에 닿아 점검을 돌릴 수 없습니다.' };
+  return null;
+}
+
+const dollars = (usd: number) => `$${usd < 1 ? usd.toFixed(2) : usd.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
+
+/** 카드 머리줄 오른쪽: 이번 회차 이 회사 지출 / 상한 */
+export const spendText = (spend: Pick<AgentLlmSpend, 'usd' | 'budgetUsd'>) => `${dollars(spend.usd)} / ${dollars(spend.budgetUsd)}`;
+
+/** 지출 카드의 줄. 모든 회사 합(전체 상한)은 서버가 줄 때만 쓴다. */
+export function spendRows(spend: AgentLlmSpend): { name: string; value: string }[] {
+  return [
+    { name: '회차', value: spend.round },
+    { name: 'AI 호출', value: `${spend.calls.toLocaleString('en-US')}번` },
+    { name: '이 회사 지출', value: spendText(spend) },
+    ...(spend.totalUsd !== undefined && spend.globalUsd !== undefined
+      ? [{ name: '모든 회사 합', value: `${dollars(spend.totalUsd)} / ${dollars(spend.globalUsd)}` }]
+      : []),
+  ];
+}

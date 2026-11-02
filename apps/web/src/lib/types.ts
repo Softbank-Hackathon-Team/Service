@@ -176,18 +176,35 @@ export interface EvidenceReport {
     approvedPlanHash: string; storedPlanHash: string | null; hashMatches: boolean }[];
   incidents: { seq: number; at: string; actor: string; action: string; result: "denied" | "error"; note: string }[];
   measurements: { name: string; value: number; unit: string; env: string; at: string }[];
+  // 트래픽 판정 요약 (apps/api/src/report/schema.ts TrafficSummary). 전환을 한 번도 안 했으면 null
+  traffic: TrafficSummary | null;
   gaps: string[];
   reportHash: string;
 }
+export interface TrafficSummary {
+  judgements: number; steps: number[]; bad: number;
+  maxTargetErrorRatePct: number | null; maxTargetP95Ms: number | null;
+}
 
 // ---- GET /environments/:id/inventory 의 앱 칸, GET /environments/:id/agent-reports ----
+// 자원 상태 (apps/api/src/routes/env-inventory.ts FootprintState): left = 남아 있음(정리 확인 필요), unknown = 모름
+export type FootprintState = "planned" | "creating" | "running" | "standby" | "stopping" | "stopped" | "removed" | "left" | "none" | "unknown";
+// 값의 출처: runner·terraform = 실제로 만듦, stub = 만든 척, adapter = 어댑터 설계표(만들었는지 모름), discovered·audit = 원본·감사 기록
+export type FootprintEvidence = "runner" | "terraform" | "stub" | "adapter" | "discovered" | "audit";
+export interface FootprintResource { category: string; type: string; label: string; state: FootprintState; evidence: FootprintEvidence }
 export interface EnvApp {
   migrationId: string; role: "source" | "target"; peer: { envId: string; name: string; provider: Provider };
   migrationStatus: MigrationStatus; stage: "before" | "changing" | "after" | "undone"; trafficPct: number | null;
-  spec: { app: string } | null; resources: { label: string; state: string }[];
+  spec: { app: string } | null; resources: FootprintResource[];
+}
+// 보안 도구 결과 한 줄 (contracts results.ts Finding). kind: posture = 설정 위반, threat = 지금 일어나는 위협
+export interface Finding {
+  tool: string; toolCheckId: string; controlId: string | null; resource: string;
+  status: "pass" | "fail" | "unknown"; severity: "info" | "low" | "medium" | "high" | "critical";
+  kind: "posture" | "threat"; observedAt: string; evidence: string;
 }
 export type AgentReportBody =
-  | { kind: "security"; findings: { severity?: string; status?: string; resource?: string; toolCheckId?: string }[] }
+  | { kind: "security"; findings: Finding[] }
   | { kind: "deploy"; status: "applied" | "failed"; resources: string[]; reason?: string }
   | { kind: "heartbeat"; k3sVersion: string; cnpg: { cluster: string; ready: boolean; replicationLagBytes: number | null } | null };
 export interface AgentReportList {

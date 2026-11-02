@@ -4,12 +4,15 @@ import { ActionPill, BarPill } from '../../components/ui/controls';
 import { TrafficBar } from '../../components/ui/TrafficBar';
 import { api } from '../../lib/api';
 import { errorText } from '../../lib/errors';
+import { stopReasonOf } from '../../lib/failure';
 import { or404 } from '../../lib/http';
+import { LIVE_REASON } from '../../lib/liveTraffic';
 import { isTerminal, LABEL } from '../../lib/status';
 import { latestMeasurements, MEASURE_LABEL } from '../../lib/timelineDetail';
 import { usePoll } from '../../lib/usePoll';
 import { AgentFold } from '../agent/AgentResult';
-import { canRollback, formatClock, runTitle, trafficPercent } from './model';
+import { LeftoverFold, StopFold, TrafficReportFold } from './EvidenceFolds';
+import { canRollback, formatClock, runTitle, shiftNote, trafficPercent } from './model';
 import { ConfirmPill, Frame, useAction, type ScreenProps } from './shared';
 import s from '../common/page.module.css';
 
@@ -21,10 +24,10 @@ const routeEnds = (route: string) => {
 function useTraffic({ id, status }: ScreenProps['migration']) {
   const active = status === 'shifting';
   const shift = usePoll(() => or404(api.trafficShift(id)), isTerminal(status) ? null : active ? 1000 : 5000, [id, active]);
-  return trafficPercent(status, shift.data ?? null);
+  return { percent: trafficPercent(status, shift.data ?? null), note: shiftNote(status, shift.data ?? null) };
 }
 
-/** 앱 앞 프록시가 직접 센 값. 없으면 없다고만 적는다. */
+/** 앱 앞 프록시가 직접 센 값. 없으면 없다고만 적는다. 컷오버 동안 붙잡았다 보낸 요청은 끊김 없이 넘겼다는 근거라 따로 적는다. */
 function LiveFold({ migration }: Pick<ScreenProps, 'migration'>) {
   const live = usePoll(() => api.liveTraffic(migration.id), isTerminal(migration.status) ? null : 1000, [migration.id]);
   const view = live.data;
@@ -33,22 +36,34 @@ function LiveFold({ migration }: Pick<ScreenProps, 'migration'>) {
   return (
     <FoldTile title="가동 중 앱" summary={available ? (failed ? `실패 ${view.fail}건` : '실패 없음') : '숫자 없음'}>
       {available ? (
-        <ul className={s.stats}>
-          <li>
-            <span className="t-metric-lg">{view.total.toLocaleString('en-US')}</span>
-            <span className="t-caption c-tertiary">요청</span>
-          </li>
-          <li>
-            <span className={`t-metric-lg ${failed ? 'c-danger' : ''}`}>{view.fail.toLocaleString('en-US')}</span>
-            <span className="t-caption c-tertiary">실패</span>
-          </li>
-          <li>
-            <span className="t-metric-lg">{view.p95Ms ?? '–'}</span>
-            <span className="t-caption c-tertiary">p95 ms</span>
-          </li>
-        </ul>
+        <>
+          <ul className={s.stats}>
+            <li>
+              <span className="t-metric-lg">{view.total.toLocaleString('en-US')}</span>
+              <span className="t-caption c-tertiary">요청</span>
+            </li>
+            <li>
+              <span className={`t-metric-lg ${failed ? 'c-danger' : ''}`}>{view.fail.toLocaleString('en-US')}</span>
+              <span className="t-caption c-tertiary">실패</span>
+            </li>
+            <li>
+              <span className="t-metric-lg">{view.p95Ms ?? '–'}</span>
+              <span className="t-caption c-tertiary">p95 ms</span>
+            </li>
+          </ul>
+          {view.held > 0 && (
+            <ul className={s.rows}>
+              <li className={s.row}>
+                <span className="t-label-md">컷오버 때 잠깐 붙잡은 요청</span>
+                <span className={`${s.rowValue} t-code-sm c-secondary`}>
+                  {view.held.toLocaleString('en-US')}건 · 최대 {Math.round(view.maxHoldMs)}ms
+                </span>
+              </li>
+            </ul>
+          )}
+        </>
       ) : (
-        <p className={`${s.note} t-body-sm c-tertiary`}>앱 요청 숫자를 읽지 못했습니다.</p>
+        <p className={`${s.note} t-body-sm c-tertiary`}>{view?.reason ? LIVE_REASON[view.reason] : '앱 요청 숫자를 읽지 못했습니다.'}</p>
       )}
     </FoldTile>
   );
@@ -110,12 +125,13 @@ function RollbackPill({ migration, busy, onConfirm }: Pick<ScreenProps, 'migrati
 
 export function RunningScreen({ migration, route, onChanged }: ScreenProps) {
   const { source, target } = routeEnds(route);
-  const percent = useTraffic(migration);
+  const traffic = useTraffic(migration);
   const { busy, error, run } = useAction(onChanged);
   return (
     <Frame migration={migration} route={route}>
       <Hero tone="run" meta={LABEL[migration.status]} title={runTitle(migration.status)}>
-        <TrafficBar source={source} target={target} targetPercent={percent} />
+        <TrafficBar source={source} target={target} targetPercent={traffic.percent} />
+        {traffic.note && <p className="t-body-md c-secondary">{traffic.note}</p>}
       </Hero>
       <Stack area="side">
         <LiveFold migration={migration} />
@@ -182,24 +198,26 @@ export function WindowScreen({ migration, route, onChanged }: ScreenProps) {
 
 export function PausedScreen({ migration, route, onChanged }: ScreenProps) {
   const { source, target } = routeEnds(route);
-  const percent = useTraffic(migration);
+  const { percent } = useTraffic(migration);
   const { busy, error, run } = useAction(onChanged);
   const [cleared, setCleared] = useState(false);
+  // 서버 규칙(apps/api control.ts): 실패 코드 없이 멈춘 경우만 재개에 "원인이 풀렸다" 확인이 필요하다
   const byRule = !migration.failureCode;
+  const reason = stopReasonOf(migration.failureCode, migration.status);
   return (
     <Frame migration={migration} route={route}>
       <Hero
         tone="stop"
         meta={migration.pausedFrom ? `${LABEL[migration.pausedFrom]}에서 멈춤` : '멈춤'}
-        title={byRule ? '가드레일이\n이전을 멈췄습니다' : '작업이\n멈췄습니다'}
+        title={reason?.title ?? '작업이\n멈췄습니다'}
         foot="지금 트래픽 비율을 그대로 유지합니다"
       >
-        {migration.failureCode && <code className={`${s.code} t-code-md`}>{migration.failureCode}</code>}
         <div className={s.heroPanel}>
           <TrafficBar source={source} target={target} targetPercent={percent} />
         </div>
       </Hero>
       <Stack area="side">
+        {reason && <StopFold migration={migration} reason={reason} into="paused" />}
         <AgentFold migrationId={migration.id} />
         <LiveFold migration={migration} />
         <TimelineFold migration={migration} />
@@ -229,16 +247,22 @@ export function PausedScreen({ migration, route, onChanged }: ScreenProps) {
 
 export function RollingBackScreen({ migration, route }: ScreenProps) {
   const { source, target } = routeEnds(route);
-  const percent = useTraffic(migration);
+  const { percent } = useTraffic(migration);
+  const reason = stopReasonOf(migration.failureCode, migration.status);
   return (
     <Frame migration={migration} route={route}>
-      <Hero tone="stop" meta="롤백" title={`${source}로\n되돌리고 있습니다`} foot="도착 환경은 원인 조사를 위해 지우지 않습니다">
-        {migration.failureCode && <code className={`${s.code} t-code-md`}>{migration.failureCode}</code>}
+      <Hero
+        tone="stop"
+        meta={reason ? `자동 롤백 · ${reason.label}` : '롤백'}
+        title={`${source}로\n되돌리고 있습니다`}
+        foot="도착 환경은 원인 조사를 위해 지우지 않습니다"
+      >
         <div className={s.heroPanel}>
           <TrafficBar source={source} target={target} targetPercent={percent} />
         </div>
       </Hero>
       <Stack area="side">
+        {reason && <StopFold migration={migration} reason={reason} into="rolling_back" />}
         <LiveFold migration={migration} />
         <MeasureFold migration={migration} />
         <TimelineFold migration={migration} />
@@ -266,11 +290,14 @@ function useReport(id: string) {
 export function RolledBackScreen({ migration, route }: ScreenProps) {
   const { source } = routeEnds(route);
   const report = useReport(migration.id);
+  const reason = stopReasonOf(migration.failureCode, migration.status);
   return (
     <Frame migration={migration} route={route}>
-      <Hero tone="run" meta="롤백 완료" title={`트래픽을 모두\n${source}로 되돌렸습니다`} foot="도착 환경은 남겨 두었습니다" />
+      <Hero tone="run" meta={reason ? `자동 롤백 완료 · ${reason.label}` : '롤백 완료'} title={`트래픽을 모두\n${source}로 되돌렸습니다`} foot="도착 환경은 남겨 두었습니다" />
       <Stack area="side">
-        <MeasureFold migration={migration} />
+        <LeftoverFold migration={migration} title="도착에 남은 자원" />
+        {reason && <StopFold migration={migration} reason={reason} into="rolling_back" defaultOpen={false} />}
+        <TrafficReportFold migration={migration} />
         <TimelineFold migration={migration} />
         <ActionRow notice={report.error}>
           <ActionPill label="증적 리포트" icon="download" onClick={() => void report.open()} />
@@ -300,6 +327,7 @@ export function DoneScreen({ migration, route }: ScreenProps) {
       <Hero tone="done" meta="완료" title={`멈추지 않고\n${target}로 옮겼습니다`} foot="누가 요청하고 승인했는지 모두 기록했습니다" />
       <Stack area="side">
         <LiveFold migration={migration} />
+        <TrafficReportFold migration={migration} />
         <MeasureFold migration={migration} />
         <TimelineFold migration={migration} />
         <ActionRow notice={report.error}>

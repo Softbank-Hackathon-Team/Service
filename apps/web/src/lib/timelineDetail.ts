@@ -58,6 +58,37 @@ export function lastPrecheckBounce(items: TimelineItem[]): { at: string; items: 
   return null;
 }
 
+// 트래픽 판정 한 번 (contracts results.ts TrafficJudgement). 워커 shift 가 멈추거나 되돌릴 때 detail.lastJudgement 로 남긴다
+export interface Judgement {
+  stepPct: number; samples: number;
+  targetErrorRatePct: number; sourceErrorRatePct: number;
+  targetP95Ms: number; sourceP95Ms: number;
+  verdict: string;
+}
+const num = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
+function judgementOf(x: unknown): Judgement | null {
+  if (!isObj(x)) return null;
+  const keys = ["stepPct", "samples", "targetErrorRatePct", "sourceErrorRatePct", "targetP95Ms", "sourceP95Ms"] as const;
+  if (!keys.every((k) => num(x[k]))) return null;
+  return {
+    stepPct: x.stepPct as number, samples: x.samples as number,
+    targetErrorRatePct: x.targetErrorRatePct as number, sourceErrorRatePct: x.sourceErrorRatePct as number,
+    targetP95Ms: x.targetP95Ms as number, sourceP95Ms: x.sourceP95Ms as number,
+    verdict: str(x.verdict) ?? "",
+  };
+}
+
+/** 이 상태로 들어온 마지막 전이에 남은 근거: 트래픽 판정, 가드레일 규칙 번호 (packages/core advance: detail.evidence). 전이가 없으면 null */
+export function stopEvidence(items: TimelineItem[], into: string): { at: string; judgement: Judgement | null; rule: string | null } | null {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i]!;
+    if (it.kind !== "transition" || it.to !== into) continue;
+    const evidence = isObj(it.detail.evidence) ? it.detail.evidence : {};
+    return { at: it.at, judgement: judgementOf(it.detail.lastJudgement), rule: str(evidence.guardrailRule) };
+  }
+  return null;
+}
+
 // 가장 최근 측정값(이름별 1개). 복제 지연·컷오버 멈춤 같은 숫자를 상세·모니터링에서 바로 보이게
 export function latestMeasurements(items: TimelineItem[]): { name: string; value: number; unit: string; at: string }[] {
   const seen = new Map<string, { name: string; value: number; unit: string; at: string }>();

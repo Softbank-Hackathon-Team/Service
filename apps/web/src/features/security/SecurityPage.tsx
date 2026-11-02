@@ -5,14 +5,14 @@ import { ActionPill, Badge } from '../../components/ui/controls';
 import { SecurityDot, SecurityLegend } from '../../components/ui/Security';
 import { api } from '../../lib/api';
 import { or404 } from '../../lib/http';
-import type { LiveCheckState, RegressionChange, SecArea, SecState } from '../../lib/security-types';
+import type { LedgerRow, LiveCheckState, RegressionChange, SecArea, SecState } from '../../lib/security-types';
 import { isTerminal } from '../../lib/status';
 import type { MigrationView } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
 import { useAction } from '../migration/shared';
 import { ShellLayout } from '../shell/ShellLayout';
 import { useChosenMigration } from '../shell/useChosenMigration';
-import { controlRows, securityHeadline, threatsFrom } from './model';
+import { controlRows, ledgerOrder, ledgerSummary, securityHeadline, threatsFrom } from './model';
 import s from '../common/page.module.css';
 
 const LAYOUT: BentoLayout = { columns: ['fill', 'side', 'side'], areas: 'hero matrix side' };
@@ -28,6 +28,40 @@ const CHANGE: Record<RegressionChange, { label: string; tone: 'success' | 'dange
   worse: { label: '나빠짐', tone: 'danger' }, better: { label: '좋아짐', tone: 'success' }, same: { label: '같음', tone: 'neutral' }, unknown: { label: '비교 불가', tone: 'neutral' },
 };
 const ORDER: RegressionChange[] = ['worse', 'unknown', 'better', 'same'];
+const SEVERITY: Record<string, string> = { critical: '치명', high: '높음', medium: '중간', low: '낮음', info: '참고' };
+const PURPOSE: Record<LedgerRow['purpose'], string> = { observe: '관찰', operate: '실행' };
+const LEDGER_STATUS: Record<LedgerRow['status'], string> = { active: '쓰는 중', revoke_requested: '회수 요청', revoked: '회수됨', expired: '만료됨' };
+
+const minutes = (sec: number) => (sec % 60 === 0 ? `${sec / 60}분` : `${sec}초`);
+
+/**
+ * 임시 권한 장부. 고객 환경은 키가 아니라 단계마다 빌린 임시 역할로만 만진다는 약속의 근거다.
+ * 만료 시각이 지났는데 회수 처리가 안 된 줄은 예외라 맨 위에 두고 카드를 펼친다.
+ */
+function LedgerFold({ rows, reading }: { rows: LedgerRow[] | null; reading: boolean }) {
+  const count = rows ? ledgerSummary(rows) : null;
+  const summary = !count ? (reading ? '읽는 중' : '장부 없음') : count.stale > 0 ? `만료됐는데 남음 ${count.stale}` : `쓰는 중 ${count.live} · 끝남 ${count.closed}`;
+  return (
+    <FoldTile key={`ledger-${(count?.stale ?? 0) > 0}`} title="임시 권한" summary={summary} defaultOpen={(count?.stale ?? 0) > 0}>
+      {rows && rows.length > 0 ? (
+        <ul className={s.rows}>
+          {ledgerOrder(rows).map((row) => (
+            <li key={row.credentialRef} className={s.row}>
+              <span className="t-label-md">
+                {PURPOSE[row.purpose]} 역할{(row.step ?? row.stage) ? ` · ${row.step ?? row.stage}` : ''}
+              </span>
+              <span className={`${s.rowValue} t-caption ${row.expiredButActive ? 'c-warning' : 'c-tertiary'}`}>
+                {row.expiredButActive ? '만료됐는데 남음' : LEDGER_STATUS[row.status]} · {minutes(row.ttlSec)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className={`${s.note} t-body-sm c-tertiary`}>{rows ? '아직 빌린 임시 권한이 없습니다.' : '서버에 임시 권한 장부가 아직 없습니다.'}</p>
+      )}
+    </FoldTile>
+  );
+}
 
 function SecurityBody({ migration }: { migration: MigrationView }) {
   const live = !isTerminal(migration.status);
@@ -122,8 +156,8 @@ function SecurityBody({ migration }: { migration: MigrationView }) {
             <ul className={s.rows}>
               {threats.map((threat) => (
                 <li key={threat.key} className={s.row}>
-                  <span className="t-body-sm">{threat.title}</span>
-                  <Badge tone={/high|critical/i.test(threat.severity) ? 'danger' : 'warning'}>{threat.severity}</Badge>
+                  <span className="t-body-sm" title={threat.evidence || undefined}>{threat.title}</span>
+                  <Badge tone={/high|critical/i.test(threat.severity) ? 'danger' : 'warning'}>{SEVERITY[threat.severity] ?? threat.severity}</Badge>
                 </li>
               ))}
             </ul>
@@ -131,6 +165,7 @@ function SecurityBody({ migration }: { migration: MigrationView }) {
             <p className={`${s.note} t-body-sm c-tertiary`}>Agent가 보낸 위협 보고가 없습니다.</p>
           )}
         </FoldTile>
+        <LedgerFold rows={data?.ledger ?? null} reading={reading} />
         <FoldTile title="실제 점검" summary={data?.live ? `${data.live.length}개 환경` : '꺼짐'} defaultOpen={false}>
           <div className={s.agent}>
             {data?.live?.map((side) => (
