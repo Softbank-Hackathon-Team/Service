@@ -18,10 +18,7 @@ import { withTransition } from './transition';
 
 type View = 'checking' | 'login' | 'console';
 
-const viewOf = ({ mode, needLogin, user }: AuthState): View => {
-  if (mode === 'unknown') return 'checking';
-  return mode === 'jwt' && (needLogin || !user) ? 'login' : 'console';
-};
+const viewOf = ({ ready, user }: AuthState): View => (!ready ? 'checking' : user ? 'console' : 'login');
 
 export function App() {
   const [state, setState] = useState(auth.get);
@@ -62,7 +59,7 @@ export function App() {
     case 'agent':
       return <AgentPage id={route.id} />;
     case 'settings':
-      return <SettingsPage user={state.user} />;
+      return <SettingsPage user={state.user!} />;
     case 'designSystem':
       return <DesignSystemPage onExit={() => go('')} />;
     case 'migrations':

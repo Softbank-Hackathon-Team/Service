@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { AuthError, createAuth, EARLY_REFRESH_SEC } from "../src/lib/auth";
-import { createClient, HttpError } from "../legacy/src/http";
+import { createClient, HttpError } from "../src/lib/http";
 
 // Z96: 로그인 상태(auth.ts)와 http.ts 의 Bearer·401 처리를 브라우저 없이 확인한다
 
@@ -24,35 +24,12 @@ function server(routes: Record<string, Reply[]>) {
   return { f, calls, n: (key: string) => calls.filter((c) => `${c.init.method ?? "GET"} ${c.url}` === key).length };
 }
 
-test("옛 서버(/auth/config 404) → dev 모드, refresh 안 보냄", async () => {
-  const s = server({});
+test("쿠키 없음 → 로그인 화면, 로그인 성공 → 토큰·사용자", async () => {
+  const s = server({ "POST /api/auth/refresh": [{ status: 401 }], "POST /api/auth/login": [{ status: 200, body: tok(1) }] });
   const a = createAuth({ base: "/api", fetch: s.f });
   const st = await a.bootstrap();
-  assert.equal(st.mode, "dev");
-  assert.equal(s.n("POST /api/auth/refresh"), 0);
-  assert.equal(await a.accessToken(), null);
-});
-
-test("devAuth 서버 + 쿠키 없음 → dev 모드(로그인 없이 계속), 로그인 버튼으로 jwt 화면", async () => {
-  const s = server({ "GET /api/auth/config": [{ status: 200, body: { devAuth: true, loginRequired: false } }],
-    "POST /api/auth/refresh": [{ status: 401, body: { code: "REFRESH_INVALID" } }] });
-  const a = createAuth({ base: "/api", fetch: s.f });
-  const st = await a.bootstrap();
-  assert.equal(st.mode, "dev"); assert.equal(st.devAuth, true);
-  a.askLogin();
-  assert.equal(a.get().needLogin, true);
-  a.continueDev();
-  assert.equal(a.get().mode, "dev");
-});
-
-test("로그인 필수 + 쿠키 없음 → 로그인 화면, 로그인 성공 → 토큰·사용자", async () => {
-  const s = server({ "GET /api/auth/config": [{ status: 200, body: { devAuth: false, loginRequired: true } }],
-    "POST /api/auth/refresh": [{ status: 401 }], "POST /api/auth/login": [{ status: 200, body: tok(1) }] });
-  const a = createAuth({ base: "/api", fetch: s.f });
-  const st = await a.bootstrap();
-  assert.equal(st.mode, "jwt"); assert.equal(st.needLogin, true); assert.equal(st.notice, null);
+  assert.equal(st.ready, true); assert.equal(st.user, null); assert.equal(st.notice, null);
   await a.login("demo@dev-company.test", "pw");
-  assert.equal(a.get().needLogin, false);
   assert.equal(a.get().user?.tenantId, USER.tenantId);
   assert.equal(await a.accessToken(), "t1");
   const login = s.calls.find((c) => c.url === "/api/auth/login")!;
@@ -61,29 +38,26 @@ test("로그인 필수 + 쿠키 없음 → 로그인 화면, 로그인 성공 �
 });
 
 test("쿠키 살아 있음 → 로그인 화면 없이 들어감. 새로 고침 = bootstrap 한 번만", async () => {
-  const s = server({ "GET /api/auth/config": [{ status: 200, body: { devAuth: false, loginRequired: true } }],
-    "POST /api/auth/refresh": [{ status: 200, body: tok(1) }] });
+  const s = server({ "POST /api/auth/refresh": [{ status: 200, body: tok(1) }] });
   const a = createAuth({ base: "/api", fetch: s.f });
   await Promise.all([a.bootstrap(), a.bootstrap()]); // StrictMode 두 번
   assert.equal(s.n("POST /api/auth/refresh"), 1);
-  assert.equal(a.get().needLogin, false);
+  assert.equal(a.get().user?.id, USER.id);
 });
 
 test("로그인 실패 401 → 한국어 문구, 429 → 기다리라는 문구", async () => {
-  const s = server({ "GET /api/auth/config": [{ status: 200, body: { devAuth: false, loginRequired: true } }],
-    "POST /api/auth/refresh": [{ status: 401 }],
+  const s = server({ "POST /api/auth/refresh": [{ status: 401 }],
     "POST /api/auth/login": [{ status: 401, body: { code: "INVALID_CREDENTIALS" } }, { status: 429, body: { code: "TOO_MANY_ATTEMPTS" } }] });
   const a = createAuth({ base: "/api", fetch: s.f });
   await a.bootstrap();
   await assert.rejects(a.login("x@y.z", "no"), (e: unknown) => e instanceof AuthError && e.code === "INVALID_CREDENTIALS" && /맞지 않습니다/.test(e.message));
   await assert.rejects(a.login("x@y.z", "no"), (e: unknown) => e instanceof AuthError && e.status === 429 && /잠시 뒤/.test(e.message));
-  assert.equal(a.get().needLogin, true);
+  assert.equal(a.get().user, null);
 });
 
 test("만료 30초 전이면 요청 전에 미리 refresh", async () => {
   let t = 0;
-  const s = server({ "GET /api/auth/config": [{ status: 200, body: { devAuth: false, loginRequired: true } }],
-    "POST /api/auth/refresh": [{ status: 200, body: tok(1, 900) }, { status: 200, body: tok(2, 900) }] });
+  const s = server({ "POST /api/auth/refresh": [{ status: 200, body: tok(1, 900) }, { status: 200, body: tok(2, 900) }] });
   const a = createAuth({ base: "/api", fetch: s.f, now: () => t });
   await a.bootstrap();
   assert.equal(await a.accessToken(), "t1");
@@ -93,12 +67,11 @@ test("만료 30초 전이면 요청 전에 미리 refresh", async () => {
 });
 
 test("http: 토큰이 있으면 Bearer 만, x-dev-tenant 안 보냄. 401 → refresh 한 번 → 같은 키로 다시", async () => {
-  const s = server({ "GET /api/auth/config": [{ status: 200, body: { devAuth: false, loginRequired: true } }],
-    "POST /api/auth/refresh": [{ status: 200, body: tok(1) }, { status: 200, body: tok(2) }],
+  const s = server({ "POST /api/auth/refresh": [{ status: 200, body: tok(1) }, { status: 200, body: tok(2) }],
     "POST /api/migrations": [{ status: 401, body: { code: "UNAUTHENTICATED" } }, { status: 201, body: { id: "m1" } }] });
   const a = createAuth({ base: "/api", fetch: s.f });
   await a.bootstrap();
-  const c = createClient({ base: "/api", tenant: () => "dev-tenant", fetch: s.f, token: () => a.accessToken(), onUnauthorized: () => a.onUnauthorized(), newKey: () => "k1" });
+  const c = createClient({ base: "/api", fetch: s.f, token: () => a.accessToken(), onUnauthorized: () => a.onUnauthorized(), newKey: () => "k1" });
   assert.deepEqual(await c.post("/migrations", { a: 1 }), { id: "m1" });
   const sent = s.calls.filter((x) => x.url === "/api/migrations");
   assert.equal(sent.length, 2);
@@ -109,44 +82,48 @@ test("http: 토큰이 있으면 Bearer 만, x-dev-tenant 안 보냄. 401 → ref
 });
 
 test("http: refresh 도 실패하면 401 을 던지고 로그인 화면(세션 끝 안내)", async () => {
-  const s = server({ "GET /api/auth/config": [{ status: 200, body: { devAuth: false, loginRequired: true } }],
-    "POST /api/auth/refresh": [{ status: 200, body: tok(1) }, { status: 401, body: { code: "REFRESH_INVALID" } }],
+  const s = server({ "POST /api/auth/refresh": [{ status: 200, body: tok(1) }, { status: 401, body: { code: "REFRESH_INVALID" } }],
     "GET /api/migrations": [{ status: 401 }] });
   const a = createAuth({ base: "/api", fetch: s.f });
   await a.bootstrap();
-  const c = createClient({ base: "/api", tenant: () => "x", fetch: s.f, token: () => a.accessToken(), onUnauthorized: () => a.onUnauthorized() });
+  const c = createClient({ base: "/api", fetch: s.f, token: () => a.accessToken(), onUnauthorized: () => a.onUnauthorized() });
   await assert.rejects(c.get("/migrations"), (e: unknown) => e instanceof HttpError && e.status === 401);
-  assert.equal(a.get().needLogin, true);
+  assert.equal(a.get().user, null);
   assert.match(a.get().notice ?? "", /다시 로그인/);
   assert.equal(s.calls.filter((x) => x.url === "/api/migrations").length, 1);
 });
 
-test("dev 모드: 예전처럼 x-dev-tenant, Authorization 없음", async () => {
-  const s = server({ "GET /api/healthz": [{ status: 200, body: { ok: true } }] });
+test("http: 토큰이 없으면 회사 헤더 없이 보낸다", async () => {
+  const s = server({ "POST /api/auth/refresh": [{ status: 401 }], "GET /api/healthz": [{ status: 200, body: { ok: true } }] });
   const a = createAuth({ base: "/api", fetch: s.f });
   await a.bootstrap();
-  const c = createClient({ base: "/api", tenant: () => "tenant-1", fetch: s.f, token: () => a.accessToken(), onUnauthorized: () => a.onUnauthorized() });
+  const c = createClient({ base: "/api", fetch: s.f, token: () => a.accessToken(), onUnauthorized: () => a.onUnauthorized() });
   await c.get("/healthz");
   const h = s.calls.at(-1)!.init.headers as Record<string, string>;
-  assert.equal(h["x-dev-tenant"], "tenant-1"); assert.equal(h.authorization, undefined);
+  assert.equal(h["x-dev-tenant"], undefined); assert.equal(h.authorization, undefined);
 });
 
 test("로그아웃 → 서버에 logout, 토큰 지움, 로그인 화면", async () => {
-  const s = server({ "GET /api/auth/config": [{ status: 200, body: { devAuth: false, loginRequired: true } }],
-    "POST /api/auth/refresh": [{ status: 200, body: tok(1) }], "POST /api/auth/logout": [{ status: 204 }] });
+  const s = server({ "POST /api/auth/refresh": [{ status: 200, body: tok(1) }], "POST /api/auth/logout": [{ status: 204 }] });
   const a = createAuth({ base: "/api", fetch: s.f });
   await a.bootstrap();
   await a.logout();
   assert.equal(s.n("POST /api/auth/logout"), 1);
-  assert.equal(a.get().needLogin, true); assert.equal(a.get().user, null);
+  assert.equal(a.get().user, null);
 });
 
-test("config 401(옛 모의 API)·네트워크 오류 → dev. dev 인데 보호 경로 401 → 로그인 화면", async () => {
-  const s = server({ "GET /api/auth/config": [{ status: 401 }] });
-  const a = createAuth({ base: "/api", fetch: s.f });
-  assert.equal((await a.bootstrap()).mode, "dev");
+test("서버에 닿지 못해도 로그인 화면이 나온다. 쓰던 중이면 세션을 유지한다", async () => {
+  const down = createAuth({ base: "/api", fetch: (async () => { throw new TypeError("net"); }) as unknown as typeof fetch });
+  const st = await down.bootstrap();
+  assert.equal(st.ready, true); assert.equal(st.user, null);
+
+  let up = true;
+  const a = createAuth({ base: "/api", fetch: (async () => {
+    if (!up) throw new TypeError("net");
+    return new Response(JSON.stringify(tok(1)), { status: 200 });
+  }) as unknown as typeof fetch });
+  await a.bootstrap();
+  up = false;
   assert.equal(await a.onUnauthorized(), false);
-  assert.equal(a.get().mode, "jwt"); assert.equal(a.get().needLogin, true);
-  const b = createAuth({ base: "/api", fetch: (async () => { throw new TypeError("net"); }) as unknown as typeof fetch });
-  assert.equal((await b.bootstrap()).mode, "dev");
+  assert.equal(a.get().user?.id, USER.id);
 });
