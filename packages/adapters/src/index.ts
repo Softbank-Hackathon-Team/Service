@@ -63,3 +63,4 @@ export { ECS_RAW_KIND, type RawEcsService, type RawEcsContainer } from "./import
 export { readEc2, EC2_OBSERVE_ACTIONS } from "./import/readers/aws-ec2.js";
 export { readGce, GCE_OBSERVE_PERMISSIONS } from "./import/readers/gcp-gce.js";
 export { VM_RAW_KIND, type RawVmGroup, type RawVmIngress } from "./import/raw-vm.js";
+export { measureImportAccuracy, type MeasureInput } from "./import/accuracy.js";   // ALIGN-v2 IR-10: 가져오기 정확도 %

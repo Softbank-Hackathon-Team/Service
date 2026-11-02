@@ -1,6 +1,6 @@
 import { AppSpec, ImportResultV2, MigrationJob, checkV2, type FieldMeta, type ObserveSession, type Provider, type RawInventory } from "@svc/contracts";
 import { withTenant, advance, scrubString } from "@svc/core";
-import { AWS_DATA_READ_ACTIONS, GCP_DATA_READ_PERMISSIONS, actionsOfCommands, AdapterError, CLOUDRUN_OBSERVE_PERMISSIONS, adapterFor, discoverForImport, ECS_OBSERVE_ACTIONS, EC2_OBSERVE_ACTIONS, GCE_OBSERVE_PERMISSIONS, envFor, inventoryForAudit, isAdapterError, normalizeV2, projectV1 } from "@svc/adapters";
+import { AWS_DATA_READ_ACTIONS, measureImportAccuracy, targetBuilderFor, GCP_DATA_READ_PERMISSIONS, actionsOfCommands, AdapterError, CLOUDRUN_OBSERVE_PERMISSIONS, adapterFor, discoverForImport, ECS_OBSERVE_ACTIONS, EC2_OBSERVE_ACTIONS, GCE_OBSERVE_PERMISSIONS, envFor, inventoryForAudit, isAdapterError, normalizeV2, projectV1 } from "@svc/adapters";
 import { StsCliError, TempRoleDenied } from "@svc/security";
 import { tempRoles } from "../platform.js";
 import { failedAttempts, recordAttemptFailure } from "./_step.js";
@@ -155,6 +155,7 @@ async function saveImport(job: MigrationJob, inv: RawInventory, spec: unknown, f
   await withTenant(job.tenantId, async (tx) => {
     const now = await tx.query("SELECT status FROM migrations WHERE id=$1 FOR UPDATE", [job.migrationId]);
     if (now.rows[0]?.status !== "importing") return;
+    const accuracy = v2?.result ? await accuracyOf(tx, job, inv, v2.result) : null;
     // 깃발 off(또는 v2 에서 되돌아감) INSERT 는 지금과 글자 하나 안 바꾼다 (0023 적용 전 DB 에서도 동작)
     if (v2?.result) await tx.query(
       `INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta, spec_v2)
@@ -166,9 +167,26 @@ async function saveImport(job: MigrationJob, inv: RawInventory, spec: unknown, f
       mode: "ifStill",
       // Z88: 읽은 출발 자원 목록(종류·이름·버전만, 환경변수는 이름만)을 감사에 남긴다 → provisioning(Z89)이 "이미 있음" 판단에 쓴다
       audit: { actor: "worker", action: "migration.spec_review", target: job.migrationId, result: "ok",
-               detail: { sourceInventory: inventoryForAudit(inv), ...(ir === "v2" ? { ir: v2?.result ? "v2" : "v1-fallback", ...(v2?.note ? { note: v2.note } : {}) } : {}) } },
+               detail: { sourceInventory: inventoryForAudit(inv), ...(ir === "v2" ? { ir: v2?.result ? "v2" : "v1-fallback", ...(v2?.note ? { note: v2.note } : {}) } : {}), ...(accuracy ? { accuracy } : {}) } },
     });
   });
+}
+
+// ALIGN-v2 IR-10: 가져오기 정확도 %. 도착 환경 종류로 Helm 값을 렌더해 원본과 맞춰 본다 (순수 계산, 네트워크 없음).
+//   DRAFT(ai): 렌더가 거부하면(UNSUPPORTED_V2 등) 공통 명세 값과 비교(basis=spec). 숫자를 못 내도 가져오기는 막지 않는다 (null)
+async function accuracyOf(tx: { query: (sql: string, p?: unknown[]) => Promise<{ rows: unknown[] }> }, job: MigrationJob, inv: RawInventory, result: ImportResultV2) {
+  try {
+    let rendered: { workloads?: unknown[] } | undefined;
+    try {
+      const t = (await tx.query(`SELECT e.id, e.provider, e.region FROM migrations m JOIN environments e ON e.id = m.target_env_id WHERE m.id=$1`, [job.migrationId])).rows[0] as
+        { id: string; provider: Provider; region: string | null } | undefined;
+      if (t) rendered = targetBuilderFor(t.provider).toWorkloadValues(result.spec, {}, { envId: t.id, provider: t.provider, region: t.region || "default", tenantId: job.tenantId, migrationId: job.migrationId }) as { workloads?: unknown[] };
+    } catch { rendered = undefined; }
+    return measureImportAccuracy({ inventory: inv, result, rendered });
+  } catch (e) {
+    console.error("import accuracy", scrubString((e as Error).message));
+    return null;
+  }
 }
 
 // I3b: 공통 명세 v2 가져오기 (설계 24번 2장). discover(v2) → normalizeV2 → checkV2 → projectV1.

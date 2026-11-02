@@ -22,3 +22,4 @@ export * from "./tokens.js";
 export * from "./tf-kinds.js";     // 도착 Terraform 종류별 변수 (A0)
 export * from "./target.js";       // 도착 쪽 계약 TargetBuilder (A0)
 export * from "./github-login.js";   // GHLOGIN: GitHub OAuth 로그인 계약
+export * from "./import-accuracy.js"; // 가져오기 정확도 % (ALIGN-v2 IR-10)
