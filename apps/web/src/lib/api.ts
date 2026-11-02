@@ -26,12 +26,8 @@ export const API_BASE: string = import.meta.env.VITE_API_BASE ?? '/api';
 
 export const auth = createAuth({ base: API_BASE });
 
-// 로그인하면 회사는 토큰이 정한다. 이 번호는 개발 서버의 x-dev-tenant 로만 쓰인다.
-const DEV_TENANT = '11111111-1111-4111-8111-111111111111';
-
 const { get, post, headers } = createClient({
   base: API_BASE,
-  tenant: () => DEV_TENANT,
   token: () => auth.accessToken(),
   onUnauthorized: () => auth.onUnauthorized(),
 });

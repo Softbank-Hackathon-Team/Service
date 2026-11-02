@@ -1,7 +1,7 @@
 import type { ApiError } from "./types";
 
 // 화면의 HTTP 요청은 전부 여기 한 곳을 지난다 (작업 Z46).
-//   - 로그인 토큰(Authorization: Bearer, Z96) 또는 개발용 회사 번호 헤더(x-dev-tenant)
+//   - 로그인 토큰(Authorization: Bearer)
 //   - POST 마다 Idempotency-Key 하나 (버튼 한 번 = 키 하나)
 //   - 응답 본문 읽기 + 오류를 HttpError 하나로
 //   - GET 만 짧게 다시 시도 (아래 RETRY)
@@ -23,12 +23,11 @@ export type RetryPolicy = typeof RETRY;
 
 export interface ClientOptions {
   base: string;                 // 예: "/api"
-  tenant: () => string;         // 요청 순간의 회사 번호
   fetch?: typeof fetch;         // 시험용
   retry?: RetryPolicy;
   sleep?: (ms: number) => Promise<void>;
   newKey?: () => string;        // 시험용 Idempotency-Key 생성기
-  // Z96: 로그인 토큰. 있으면 Authorization: Bearer 를 붙이고 x-dev-tenant 는 안 보낸다(회사는 토큰이 정한다)
+  // 로그인 토큰. 회사는 토큰이 정한다
   token?: () => Promise<string | null>;
   // Z96: 401 을 맞으면 한 번 부른다(refresh). true 면 같은 요청(같은 멱등 키)을 한 번 더 보낸다
   onUnauthorized?: () => Promise<boolean>;
@@ -56,7 +55,7 @@ export function createClient(o: ClientOptions) {
 
   async function once<T>(method: Method, path: string, body: unknown, key: string | null): Promise<T> {
     const bearer = o.token ? await o.token() : null;
-    const headers: Record<string, string> = bearer ? { authorization: `Bearer ${bearer}` } : { "x-dev-tenant": o.tenant() };
+    const headers: Record<string, string> = bearer ? { authorization: `Bearer ${bearer}` } : {};
     if (body !== undefined) headers["content-type"] = "application/json";
     if (key) headers["idempotency-key"] = key;
     const res = await doFetch(`${o.base}${path}`, {
@@ -98,7 +97,7 @@ export function createClient(o: ClientOptions) {
   // Z96: fetch 를 직접 써야 하는 곳(리포트 HTML)용 머리말
   async function headersFor(): Promise<Record<string, string>> {
     const bearer = o.token ? await o.token() : null;
-    return bearer ? { authorization: `Bearer ${bearer}` } : { "x-dev-tenant": o.tenant() };
+    return bearer ? { authorization: `Bearer ${bearer}` } : {};
   }
 
   return {

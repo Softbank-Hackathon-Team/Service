@@ -27,14 +27,14 @@ function ProbeRow({ name, state }: { name: string; state: { data: number | null;
   );
 }
 
-export function SettingsPage({ user }: { user: AuthUser | null }) {
+export function SettingsPage({ user }: { user: AuthUser }) {
   const health = useLatency(api.health, 5_000);
   const ready = useLatency(api.ready, 10_000);
-  const name = user ? (user.displayName ?? user.email) : '개발 모드';
+  const name = user.displayName ?? user.email;
   return (
     <ShellLayout layout={LAYOUT}>
-      <Hero tone="run" meta={user?.tenantName ?? '회사'} title={`${name}\n계정입니다`} foot="회사 멤버면 승인까지 모두 할 수 있습니다">
-        {user && <p className="t-body-md c-secondary">{user.email}</p>}
+      <Hero tone="run" meta={user.tenantName ?? '회사'} title={`${name}\n계정입니다`} foot="회사 멤버면 승인까지 모두 할 수 있습니다">
+        <p className="t-body-md c-secondary">{user.email}</p>
       </Hero>
       <Stack area="side">
         <FoldTile title="서비스 상태" summary="자동 확인">
@@ -50,11 +50,9 @@ export function SettingsPage({ user }: { user: AuthUser | null }) {
             <li className={s.row}><a className={`${s.link} t-label-md`} href={`${API_BASE}/docs/openapi.yaml`} target="_blank" rel="noopener">openapi.yaml</a></li>
           </ul>
         </FoldTile>
-        {user && (
-          <ActionRow>
-            <ActionPill label="로그아웃" icon="rollback" onClick={() => void auth.logout()} />
-          </ActionRow>
-        )}
+        <ActionRow>
+          <ActionPill label="로그아웃" icon="rollback" onClick={() => void auth.logout()} />
+        </ActionRow>
       </Stack>
     </ShellLayout>
   );
