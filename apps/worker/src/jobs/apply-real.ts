@@ -1,7 +1,7 @@
 import type { AppSpec, PlanDoc, Provider, TfOutputs } from "@svc/contracts";
 import { existsSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { adapterFor, createRealTerraformRunner, readImported, workRootOf, dbNetworkFromEnv, DbNetworkError, factEnvName, factsFromEnv, fillTfVars, withDbNetwork, type RealTerraformRunner } from "@svc/adapters";
+import { adapterFor, createRealTerraformRunner, envFor, readImported, workRootOf, dbNetworkFromEnv, DbNetworkError, factEnvName, factsFromEnv, fillTfVars, withDbNetwork, type RealTerraformRunner } from "@svc/adapters";
 import { appLinkFromEnv } from "@svc/dbproxy";
 import { tenantSlug } from "../gitops/bundle.js";
 import { stableHash } from "./_step.js";
@@ -30,6 +30,8 @@ export interface RealApplyDeps {
   runner?: Pick<RealTerraformRunner, "apply">;
   fetch?: typeof fetch;
   signal?: AbortSignal;
+  // L5b: 빌린 자격 env (borrowedAwsCreds().env). 있으면 실행기 env 에서 워커 자기 자격(AWS_PROFILE·키)을 지우고 이것만 덮는다
+  credEnv?: Record<string, string>;
 }
 
 export async function realApply(i: RealApplyInput, d: RealApplyDeps = {}): Promise<RealApplyOutcome> {
@@ -66,7 +68,7 @@ export async function realApply(i: RealApplyInput, d: RealApplyDeps = {}): Promi
     return { ok: false, failureCode: "TF_FACTS_MISSING", detail: { ...base, missing: filled.missing.map(factEnvName) } };
 
   // ③ 실행
-  const runner = d.runner ?? createRealTerraformRunner({ env });
+  const runner = d.runner ?? createRealTerraformRunner({ env: d.credEnv ? envFor(d.credEnv, env) : env });
   // Z89 (Z62 주제 57): 가져오기가 이미 찾은 도착 자원이면 만들지 않고 그 출력으로 넘어간다 ("이미 있음")
   const imported = readImported(workRootOf(env), i.migrationId, tenantSlug(i.tenantId));
   if (imported) {

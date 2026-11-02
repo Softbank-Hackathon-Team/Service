@@ -45,7 +45,7 @@ export async function handleApply(raw: unknown) {
       // Z38-3: 재확인 실패는 바로 failed (provisioning → failed 는 다시 계획 가능, 잠금 해제). 역할을 빌리기 전에 끝낸다
       ? { to: "failed" as const, failureCode: "APPLY_RECHECK_FAILED",
           detail: { planId: j.planId, recheck: (loaded as ApplyRecheckFailed).recheckFailed } }
-      : withStepRoles("apply", j, m, async () => {
+      : withStepRoles("apply", j, m, async (roles) => {
       const { provider, spec, plan, accountId } = loaded as ApplyLoaded;
       let tfOutputs: TfOutputs;
       let mockDetail: Record<string, unknown> | undefined;
@@ -73,9 +73,11 @@ export async function handleApply(raw: unknown) {
         // Z89: 기본 = 진짜 terraform (Z70 의 스위치 둘 대신 MOCK_IAC=1 이 아니면 항상). 잠금을 잃으면 ctx.signal → terraform 에 SIGINT
         // 명세가 없으면 만들 것을 모른다 → 흉내로 넘어가지 않고 재확인 실패
         if (!spec) return { to: "failed", failureCode: "APPLY_RECHECK_FAILED", detail: { planId: j.planId, provider, recheck: "SPEC_MISSING" } };
-        // STUB(Z39): 빌린 임시 역할 자격은 아직 terraform 에 안 넘긴다 (Mock 발급기). 맥에서는 AWS_PROFILE·gcloud 로그인으로 돈다
+        // L5b: 진짜 발급기(REAL_STS=1 + external_id)로 빌린 AWS 실행 자격이 있으면 terraform 에 그것만 넘긴다 (맥 프로필 지움).
+        //   STUB: 가짜 발급기·GCP·온프레는 지금처럼 프로세스 자격(AWS_PROFILE·gcloud 로그인)으로 돈다
         const r = await realApply({ migrationId: j.migrationId, tenantId: j.tenantId, envId: m.targetEnvId,
-                                    provider, accountId, spec, plan }, { signal: ctx.signal });
+                                    provider, accountId, spec, plan },
+                                  { signal: ctx.signal, ...(roles.awsEnv?.target ? { credEnv: roles.awsEnv.target } : {}) });
         if (!r.ok) return { to: "failed", failureCode: r.failureCode, detail: r.detail };
         tfOutputs = r.tfOutputs;
         realDetail = r.detail;

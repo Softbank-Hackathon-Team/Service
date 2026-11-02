@@ -46,3 +46,5 @@ export { targetBuilderFor, awsTarget, gcpTarget, onpremTarget, azureMockTarget, 
 // TA10: Azure Mock 도착 Builder v2 (capability 표 + mock plan)
 export { azureMockPlanV2, azureMockOutputsV2, azureResourceTypesV2, type AzureMockPlanV2 } from "./target/index.js";
 export { verifyGcpObserve, gcpEnvFor, gcpReasonOf, type VerifyGcpInput, type VerifyGcpResult } from "./verify/gcp.js";   // L7i
+// L5b: 빌린 AWS 실행 자격 → terraform 자식 프로세스 (credential_process 임시 파일)
+export { borrowedAwsCreds, type BorrowedAwsCreds, type AwsSessionKeys } from "./terraform/borrowed-aws.js";
