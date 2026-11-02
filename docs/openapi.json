@@ -3622,6 +3622,10 @@
                     "specKnown": {
                       "type": "boolean"
                     },
+                    "irVersion": {
+                      "type": "string",
+                      "const": "2"
+                    },
                     "rows": {
                       "type": "array",
                       "items": {
@@ -3638,7 +3642,10 @@
                               "secret",
                               "identity",
                               "network",
-                              "storage"
+                              "storage",
+                              "cache",
+                              "queue",
+                              "boundary"
                             ]
                           },
                           "label": {
@@ -3750,6 +3757,34 @@
                             "type": [
                               "string",
                               "null"
+                            ]
+                          },
+                          "runtimeChange": {
+                            "anyOf": [
+                              {
+                                "type": "object",
+                                "properties": {
+                                  "from": {
+                                    "type": "string"
+                                  },
+                                  "to": {
+                                    "type": "string",
+                                    "enum": [
+                                      "k8s",
+                                      "managedContainer",
+                                      "vm"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "from",
+                                  "to"
+                                ],
+                                "additionalProperties": false
+                              },
+                              {
+                                "type": "null"
+                              }
                             ]
                           }
                         },

@@ -2431,6 +2431,9 @@ paths:
                     additionalProperties: false
                   specKnown:
                     type: "boolean"
+                  irVersion:
+                    type: "string"
+                    const: "2"
                   rows:
                     type: "array"
                     items:
@@ -2448,6 +2451,9 @@ paths:
                             - "identity"
                             - "network"
                             - "storage"
+                            - "cache"
+                            - "queue"
+                            - "boundary"
                         label:
                           type: "string"
                         source:
@@ -2520,6 +2526,23 @@ paths:
                           type:
                             - "string"
                             - "null"
+                        runtimeChange:
+                          anyOf:
+                            - type: "object"
+                              properties:
+                                from:
+                                  type: "string"
+                                to:
+                                  type: "string"
+                                  enum:
+                                    - "k8s"
+                                    - "managedContainer"
+                                    - "vm"
+                              required:
+                                - "from"
+                                - "to"
+                              additionalProperties: false
+                            - type: "null"
                       required:
                         - "category"
                         - "label"

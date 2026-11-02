@@ -3,7 +3,7 @@ import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { AppSpec, AppSpecV2, MigrationStatus, Provider, type MigrationStatus as Status } from "@svc/contracts";
 import { SPEC_DRAFT_KEY, withTenant } from "@svc/core";
-import { aws, azure, cachedInventory, chooseRunner, gcp, onprem, resourceTypesV2For, serviceMap, stubStatus, type RunnerStatus } from "@svc/adapters";
+import { aws, azure, cachedInventory, chooseRunner, gcp, onprem, resourceTypesV2For, serviceMap, serviceMapV2, stubStatus, type RunnerStatus } from "@svc/adapters";
 import { EnvironmentStatus, errors } from "./responses.js";
 import { IdParam, found, isoUtc } from "./kit.js";
 
@@ -92,6 +92,7 @@ export interface MigrationRow {
   // TA11: 최신 계획서 irVersion(없으면 null = v1) + 같은 판의 spec_v2->'spec'(칸이 없거나 NULL 이면 null). 둘 다 선택 칸 → 예전 호출 그대로
   planIrVersion?: string | null;
   specV2?: unknown;
+  outOfBoundary?: unknown;                         // MAPV2: 같은 판 spec_v2->'outOfBoundary' (없으면 null)
 }
 
 const TYPES: Record<Provider, (s: AppSpec) => string[]> = {
@@ -282,8 +283,10 @@ export function buildEnvResources(env: { id: string; name: string; provider: Pro
 
 const APP_LIMIT = 20;
 
+// MAPV2: v2 판은 캐시·큐·경계 밖 줄도 낸다 (v1 판은 InventoryCategory 9개 그대로)
+export const PlanCategory = z.enum([...InventoryCategory.options, "cache", "queue", "boundary"]);
 export const PlanResourceRow = z.object({
-  category: InventoryCategory, label: z.string(),
+  category: PlanCategory, label: z.string(),
   source: z.object({ service: z.string(), detail: z.string().nullable() }).strict().nullable(),
   target: z.object({ service: z.string(), detail: z.string().nullable(), tfTypes: z.array(z.string()) }).strict().nullable(),
   method: z.enum(["redeploy", "logical_replication", "traffic_shift", "create_new", "image_copy", "reuse_existing", "out_of_scope"]),
@@ -291,10 +294,13 @@ export const PlanResourceRow = z.object({
   step: z.enum(["provision", "deploy", "sync", "shift", "cutover", "cleanup"]).nullable(),
   stepState: z.enum(["todo", "doing", "done", "skipped", "undone"]),
   afterSource: z.string().nullable(),
+  // MAPV2: v2 판에서 사람이 도착 실행 방식을 출발과 다르게 바꾼 앱 줄만 채워진다 ("실행 방식 바뀜" 표시). v1 판엔 키가 없다
+  runtimeChange: z.object({ from: z.string(), to: z.enum(["k8s", "managedContainer", "vm"]) }).strict().nullable().optional(),
 }).strict();
 const EnvRef = z.object({ envId: z.uuid(), name: z.string(), provider: Provider }).strict();
 export const PlanResources = z.object({
   migrationId: z.uuid(), status: MigrationStatus, source: EnvRef, target: EnvRef, specKnown: z.boolean(),
+  irVersion: z.literal("2").optional(),                       // MAPV2: 줄이 v2 명세로 만들어졌을 때만 "2" (v1 판엔 키가 없다)
   rows: z.array(PlanResourceRow),
 }).strict();
 
@@ -310,6 +316,19 @@ export function stepStateOf(step: string | null, m: Pick<MigrationRow, "status" 
 }
 
 export function buildPlanResources(m: MigrationRow): z.infer<typeof PlanResources> {
+  // MAPV2: 가장 새 받아들인 판에 spec_v2 가 있고 모양이 맞으면 v2 로 읽는다 (실행 방식 ECS·Cloud Run·VM 이름). 아니면 v1 그대로
+  const v2 = AppSpecV2.safeParse(m.specV2);
+  if (v2.success) {
+    const oob = Array.isArray(m.outOfBoundary) ? m.outOfBoundary.length : 0;
+    return {
+      migrationId: m.id, status: m.status,
+      source: { envId: m.sourceEnvId, name: m.sourceName, provider: m.sourceProvider },
+      target: { envId: m.targetEnvId, name: m.targetName, provider: m.targetProvider },
+      specKnown: true, irVersion: "2" as const,
+      rows: serviceMapV2(m.sourceProvider, m.targetProvider, v2.data, { outOfBoundary: oob })
+        .map((r) => ({ ...r, stepState: r.method === "out_of_scope" ? "skipped" as const : stepStateOf(r.step, m) })),
+    };
+  }
   const sp = AppSpec.safeParse(m.spec);
   return {
     migrationId: m.id, status: m.status,
@@ -332,6 +351,8 @@ const MIGRATION_SQL = (where: string, limit: string) =>
           -- TA11: to_jsonb(s) 로 읽어 spec_v2 칸(0023)이 아직 없는 DB 에서도 NULL. 계획서 irVersion 은 PlanDoc 칸(A3)이 없으면 NULL
           (SELECT to_jsonb(s)->'spec_v2'->'spec' FROM spec_versions s WHERE s.migration_id = m.id AND NOT (s.field_meta ? $2)
             ORDER BY s.version DESC LIMIT 1) AS "specV2",
+          (SELECT to_jsonb(s)->'spec_v2'->'outOfBoundary' FROM spec_versions s WHERE s.migration_id = m.id AND NOT (s.field_meta ? $2)
+            ORDER BY s.version DESC LIMIT 1) AS "outOfBoundary",
           (SELECT p.plan_doc->>'irVersion' FROM plans p WHERE p.migration_id = m.id ORDER BY p.created_at DESC LIMIT 1) AS "planIrVersion",
           (SELECT CASE WHEN a.detail ? 'terraform' THEN 'terraform' WHEN a.detail ? 'runner' THEN 'runner' ELSE 'stub' END
              FROM audit_events a WHERE a.target = m.id::text AND a.detail->>'from' = 'provisioning' AND a.detail->>'to' = 'deploying'
