@@ -103,8 +103,10 @@ export const SpecPatchInput = z.object({
   //   예전엔 confirm 이 그 키를 400 으로 막아 검토 칸이 영원히 남고 T04(POST /plan)가 409 로 막혔다 → 그 모양 키도 받는다
   confirm: z.array(z.union([SpecFieldPath, SpecEnvFieldPath, SpecV2ConfirmPath])).max(20).optional(),
   acceptDraft: z.number().int().min(1).optional(),
-}).strict().refine((b) => (b.changes?.length ?? 0) + (b.confirm?.length ?? 0) > 0 || b.acceptDraft !== undefined,
-  { message: "changes, confirm, acceptDraft 중 하나는 있어야 한다" });
+  /** BOUNDPULL: 경계 밖 목록(GET spec 의 outOfBoundary)의 resource 이름. 그 자원을 명세 안으로 끌어온다 (v2 판만, 데이터 자원만) */
+  include: z.array(z.string().min(1).max(300)).max(50).optional(),
+}).strict().refine((b) => (b.changes?.length ?? 0) + (b.confirm?.length ?? 0) + (b.include?.length ?? 0) > 0 || b.acceptDraft !== undefined,
+  { message: "changes, confirm, include, acceptDraft 중 하나는 있어야 한다" });
 export type SpecPatchInput = z.infer<typeof SpecPatchInput>;
 
 // PA2v2: 명세 보기 + v2 검토 칸. 판에 spec_v2 가 있을 때만 needsReviewV2 가 붙는다 (v1 판 응답은 지금과 글자 그대로)

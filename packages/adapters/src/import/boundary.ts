@@ -1,4 +1,4 @@
-import type { FieldMetaV2, LinkV2, OutOfBoundaryV2 } from "@svc/contracts";
+import type { BoundaryPoolItem, FieldMetaV2, LinkV2, OutOfBoundaryV2 } from "@svc/contracts";
 import type { MappedComponent } from "./types.js";
 
 // BOUNDARY DRAFT(ai): 앱 경계 (설계 20번 5.1장). 계정 전체를 읽은 데이터 자원(버킷·큐·캐시·DB) 중
@@ -16,6 +16,8 @@ export interface BoundaryOut {
   components: MappedComponent[];
   links: LinkV2[];
   outOfBoundary: OutOfBoundaryV2[];
+  /** BOUNDPULL: 경계 밖으로 뺀 데이터 자원의 매퍼 결과 (키 = outOfBoundary.resource). 사람이 PATCH include 로 끌어올 재료 */
+  pool: Record<string, BoundaryPoolItem>;
 }
 
 /** components·links·fieldMeta(링크 근거) → 경계 안 components·links, 경계 밖 목록. fieldMeta 는 제자리에서 고친다 */
@@ -26,7 +28,7 @@ export function applyBoundary(components: MappedComponent[], links: LinkV2[], fi
     for (const c of data)
       fieldMeta[`components.${c.id}.boundary`] = { source: "boundary:no-workload", confidence: 0.6, needs_review: true,
         rationale: "서비스·잡을 하나도 못 읽어 앱 경계를 정할 근거가 없음 → 읽은 데이터 자원을 전부 둠. 이 앱 것인지 사람 확인 필요" };
-    return { components, links, outOfBoundary: [] };
+    return { components, links, outOfBoundary: [], pool: {} };
   }
   const wl = new Set(workloads.map((c) => c.id!));
   // 데이터 자원 id → [근거 출처, 신뢰도] (가장 센 것)
@@ -62,6 +64,16 @@ export function applyBoundary(components: MappedComponent[], links: LinkV2[], fi
   const keep = (c: MappedComponent) => isWorkload(c) || why.has(c.id!);
   const out = data.filter((c) => !keep(c));
   const gone = new Set(out.map((c) => c.id!));
+  // BOUNDPULL: 지우기 전에 경계 밖 자원의 fieldMeta 를 재료로 챙긴다
+  const pool: Record<string, BoundaryPoolItem> = {};
+  for (const c of out) {
+    const pre = `components.${c.id}.`;
+    pool[`${c.native.type}:${c.native.name}`] = {
+      component: { id: c.id!, kind: c.kind, props: c.props } as unknown as BoundaryPoolItem["component"],
+      fieldMeta: Object.fromEntries(Object.entries(fieldMeta).filter(([k]) => k.startsWith(pre)).sort((a, b) => (a[0] < b[0] ? -1 : 1))),
+      ...(c.kind === "postgres" ? { nativeType: c.native.type } : {}),
+    };
+  }
   for (const k of Object.keys(fieldMeta)) {
     const [head, id, rest] = k.split(".", 3) as [string, string?, string?];
     if (head === "components" && id && rest !== undefined && gone.has(id)) delete fieldMeta[k];
@@ -73,6 +85,7 @@ export function applyBoundary(components: MappedComponent[], links: LinkV2[], fi
   for (const [id, w] of why)
     fieldMeta[`components.${id}.boundary`] = { source: w.source, confidence: w.confidence, needs_review: w.confidence < 1, ...(w.rationale ? { rationale: w.rationale } : {}) };
   return {
+    pool,
     components: components.filter(keep),
     links: links.filter((l) => !(typeof l.to === "string" && gone.has(l.to)) && !gone.has(l.from)),
     outOfBoundary: out.map((c) => ({ resource: `${c.native.type}:${c.native.name}`, kind: c.kind,

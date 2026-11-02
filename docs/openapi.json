@@ -13417,6 +13417,15 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 9007199254740991
+          },
+          "include": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            }
           }
         },
         "required": [

@@ -107,3 +107,66 @@ test("남의 회사: 다른 회사로 부른 작업은 경계를 계산해도 �
   assert.equal((await ver2(id)).length, 0);
   assert.equal((await row(id)).status, "importing");
 });
+
+// ---- BOUNDPULL: 사람이 끌어온 자원은 재가져오기 뒤에도 경계 안 ----
+function withOrphanBucket(drop = false): () => void {
+  const src = adapters.DEMO_INVENTORY_V2.onprem!;
+  const orig = src.items;
+  src.items = drop ? orig : [...orig, { kind: "s3.bucket", Name: "orphan-bucket", Arn: "arn:aws:s3:::orphan-bucket" } as never];
+  return () => { src.items = orig; };
+}
+async function pullAsPatchDoes(id: string, name: string) {
+  const { applyInclude } = adapters;
+  const [v] = await ver2(id);
+  const inc = applyInclude(v!.spec_v2, [name]);
+  await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta, spec_v2)
+    SELECT tenant_id, migration_id, 2, spec, field_meta, $2::jsonb FROM spec_versions WHERE migration_id=$1 AND version=1`, [id, JSON.stringify(inc.result)]);
+}
+const reimport = async (id: string) => { await owner.query("UPDATE migrations SET status='importing' WHERE id=$1", [id]); await imp.handleImport(job(id)); };
+
+test("BOUNDPULL: 끌어온 버킷은 재가져오기(판 3)에도 구성요소로 남고 경계 밖 목록에 다시 안 나온다, 사람이 안 끌어온 건 계속 밖", { skip }, async () => {
+  process.env.IMPORT_IR = "v2";
+  const restore = withOrphanBucket();
+  const id = await seed("onprem");
+  try {
+    await imp.handleImport(job(id));
+    const [v1] = await ver2(id);
+    assert.ok(v1!.spec_v2.outOfBoundary.some((o: { resource: string }) => o.resource === "s3.bucket:orphan-bucket"));
+    assert.ok("s3.bucket:orphan-bucket" in v1!.spec_v2.boundaryPool);
+    await pullAsPatchDoes(id, "s3.bucket:orphan-bucket");
+    await reimport(id);
+  } finally { restore(); }
+  const v = await ver2(id);
+  assert.equal(v.length, 3);
+  const last = v[2]!.spec_v2;
+  assert.ok(last.spec.components.some((c: { id: string }) => c.id === "orphan-bucket"));
+  assert.ok(!last.outOfBoundary.some((o: { resource: string }) => o.resource === "s3.bucket:orphan-bucket"));
+  assert.deepEqual(last.included, ["s3.bucket:orphan-bucket"]);
+  assert.equal(last.fieldMeta["components.orphan-bucket.boundary"].source, "human");
+  assert.equal(last.fieldMeta["components.orphan-bucket.boundary"].needs_review, true);
+  assert.equal(v[2]!.spec_v2.ids && Object.values(last.ids).includes("orphan-bucket"), true);
+});
+
+test("BOUNDPULL 제어 사례: 끌어오지 않았으면 재가져오기 뒤에도 경계 밖 (같은 원본)", { skip }, async () => {
+  process.env.IMPORT_IR = "v2";
+  const restore = withOrphanBucket();
+  const id = await seed("onprem");
+  try { await imp.handleImport(job(id)); await reimport(id); } finally { restore(); }
+  const v = await ver2(id);
+  const last = v[v.length - 1]!.spec_v2;
+  assert.ok(!last.spec.components.some((c: { id: string }) => c.id === "orphan-bucket"));
+  assert.ok(last.outOfBoundary.some((o: { resource: string }) => o.resource === "s3.bucket:orphan-bucket"));
+  assert.equal(last.included, undefined);
+});
+
+test("BOUNDPULL: 끌어온 자원이 원본에서 사라지면 재가져오기는 에러 없이 그 자원만 빠진다 (included 도 비움)", { skip }, async () => {
+  process.env.IMPORT_IR = "v2";
+  const restore1 = withOrphanBucket();
+  const id = await seed("onprem");
+  try { await imp.handleImport(job(id)); await pullAsPatchDoes(id, "s3.bucket:orphan-bucket"); } finally { restore1(); }
+  await reimport(id);   // 원본에 버킷이 없음
+  assert.equal((await row(id)).status, "spec_review");
+  const last = (await ver2(id)).at(-1)!.spec_v2;
+  assert.ok(!last.spec.components.some((c: { id: string }) => c.id === "orphan-bucket"));
+  assert.equal(last.included, undefined);
+});

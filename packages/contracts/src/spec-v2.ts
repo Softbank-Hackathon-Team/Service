@@ -329,12 +329,23 @@ export const OutOfBoundaryV2 = z.object({
 }).strict();
 export type OutOfBoundaryV2 = z.infer<typeof OutOfBoundaryV2>;
 
+// BOUNDPULL DRAFT(ai): 경계 밖 데이터 자원을 사람이 끌어올 때(PATCH include) 쓰는 재료. 원본(인벤토리)은 저장하지 않으므로
+//   가져오기 때 경계 밖으로 뺀 데이터 자원의 매퍼 결과(구성요소 + 그 fieldMeta)를 판 안에 둔다. 키 = outOfBoundary.resource. API 보기(GET spec)에는 안 나감
+export const BoundaryPoolItem = z.object({
+  component: ComponentV2,
+  fieldMeta: FieldMetaV2,                               // "components.<id>.<칸>" 키만
+  nativeType: z.string().max(100).optional(),           // postgres 의 원본 종류 (v1 투영 재료)
+}).strict();
+export type BoundaryPoolItem = z.infer<typeof BoundaryPoolItem>;
+
 // 가져오기 결과 v2 한 벌 (spec_versions.spec_v2 한 칸)
 export const ImportResultV2 = z.object({
   spec: AppSpecV2,
   fieldMeta: FieldMetaV2,
   unmapped: z.array(UnmappedV2),
   outOfBoundary: z.array(OutOfBoundaryV2).optional(),   // BOUNDARY: 경계 밖 (없으면 옛 판 = 경계 단계 전)
+  boundaryPool: z.record(z.string().max(300), BoundaryPoolItem).optional(),   // BOUNDPULL: 경계 밖 데이터 자원을 끌어올 재료 (워크로드는 없음)
+  included: z.array(z.string().max(300)).max(200).optional(),                  // BOUNDPULL: 사람이 끌어온 자원("<원본종류>:<이름>"). 재가져오기 때도 경계 안 유지
   ids: z.record(z.string(), Id),                        // 벤더 고유 키 → id. 재가져오기 때 같은 id 유지
   environment: z.array(z.unknown()).optional(),         // 근거·환경 종류로 읽은 항목 (매퍼 몫)
 }).strict();
