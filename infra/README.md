@@ -11,6 +11,7 @@ packages/adapters  toTerraform(spec, target) ──► infra/modules/<환경>/ap
 | 폴더 | 무엇을 만드나 | 누가 돌리나 |
 |---|---|---|
 | `modules/aws/env` | VPC(공개2·사설2) + NAT 1 + EKS + Pod Identity 애드온 + ECR `platform` | 사람, 로컬 세션, 한 번 |
+| `modules/aws/platform` | 플랫폼 자체 저장소: 이미지 ECR 4개(`svc-*`, 태그 변경 금지·올릴 때 스캔·최근 10개) + 플랫폼 DB(RDS Postgres 16, 사설, 비밀번호는 RDS가 Secrets Manager에 관리) + 증거 버킷(S3, 퍼블릭 차단·버전 관리·TLS 강제). VPC·EKS는 받기만 하고, 증거 쓰기 권한은 워커 역할 쪽에서 `evidence_bucket_arn`으로 붙인다 | 사람, 한 번 |
 | `modules/aws/app` | RDS Postgres(논리 복제 켬, 비밀번호는 RDS가 Secrets Manager에 관리) + 보안 그룹 + 시크릿 그릇 + 앱 IAM 역할(Pod Identity) | worker, 승인된 plan만 |
 | `modules/gcp/env` | VPC + Cloud SQL 사설 연결(PSA) + Cloud NAT + GKE(Workload Identity) + Artifact Registry | 사람, 한 번 |
 | `modules/gcp/app` | Cloud SQL Postgres(사설 IP, logical_decoding) + DB 사용자·비밀번호 시크릿 + 시크릿 그릇 + 앱 SA(Workload Identity) | worker |
