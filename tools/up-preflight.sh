@@ -133,6 +133,13 @@ elif printf '%s' "$src" | grep -q '\$'; then
   else fail repl-source "REPL_SOURCE_URL 안에 풀리지 않는 변수:$miss (.env 에 실제 값으로 적는다. 값은 채팅에 붙이지 않는다)"; fi
 else ok repl-source "REPL_SOURCE_URL 있음 (변수 없음)"; fi
 (exec 3<>"/dev/tcp/127.0.0.1/$LPORT") 2>/dev/null && ok source-db "맥 $LPORT 열림 (터널 뒤 출발 DB)" || fail source-db "맥 $LPORT 닫힘: k3d 출발 클러스터(CNPG)가 안 떠 있음"
+# .env 값 안의 ${X} 참조: compose 는 .env 와 셸에서만 푼다. 없으면 빈 글자가 된다(11/2 맥 SRC_PW 경고). 이름만 찍고 값은 안 찍는다
+if [ -f .env ]; then
+  refs=$(grep -v '^[[:space:]]*#' .env | sed -n 's/^[A-Za-z_][A-Za-z0-9_]*=//p' | grep -o '\${\{0,1\}[A-Za-z_][A-Za-z0-9_]*' | tr -d '${' | sort -u)
+  bad=""; for x in $refs; do grep -q "^${x}=." .env || eval "[ -n \"\${$x:-}\" ]" || bad="$bad $x"; done
+  if [ -n "$bad" ]; then fail env-refs ".env 값이 참조하는데 정의 안 된 변수:$bad → .env 에 '이름=값' 줄을 더한다(Jeong 손, 값은 채팅 금지)"
+  else ok env-refs ".env 안 \${…} 참조 ${refs:+전부 정의됨}${refs:-없음}"; fi
+fi
 [ "$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://localhost:8080/ 2>/dev/null)" = 200 ] && ok web-8080 "발표 화면 200" || fail web-8080 "8080 응답 없음 (docker compose -f docker-compose.prod.yml up -d --wait). up 마지막 preflight 단계가 FAIL 이 됨"
 curl -s -m 5 -o /dev/null https://checkip.amazonaws.com && ok checkip "공인 IP 조회 됨 (중계기 SSH 허용)" || fail checkip "checkip.amazonaws.com 안 됨"
 curl -s -m 5 -o /dev/null https://truststore.pki.rds.amazonaws.com/ap-northeast-2/ap-northeast-2-bundle.pem && ok rds-ca "RDS CA 받기 됨" || fail rds-ca "RDS CA 주소 안 됨"
