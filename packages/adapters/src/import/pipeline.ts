@@ -2,7 +2,7 @@ import type { FieldMetaV2, ImportResultV2, RawInventory, UnmappedV2 } from "@svc
 import { assignIds, slug } from "./ids.js";
 import { inferLinks } from "./links.js";
 import { maskPlainSecrets, rewriteEnv } from "./env-rewrite.js";
-import { attachEndpoints, buildEntry, fillProjection } from "./entry.js";
+import { attachEndpoints, buildEntry, fillProjection, mergeRoutes } from "./entry.js";
 import { buildPosture } from "./posture.js";
 import { K8S_RAW_KINDS, type RawK8sHpa, type RawK8sIngress, type RawK8sNetworkPolicy, type RawK8sService } from "./raw-k8s.js";
 import { k8sDeploymentMapper } from "./mappers/k8s-deployment.js";
@@ -17,6 +17,7 @@ import { elasticacheMapper } from "./mappers/elasticache.js";
 import { gcsMapper } from "./mappers/gcs.js";
 import { pubsubMapper } from "./mappers/pubsub.js";
 import { memorystoreMapper } from "./mappers/memorystore.js";
+import { ecsServiceMapper } from "./mappers/ecs-service.js";
 import type { KindMapper, MappedComponent, NormalizeV2Options, NormalizeV2Output, ProjectionEnv, RawItem } from "./types.js";
 
 // DRAFT(ai): 원본(RawInventory) → 공통 명세 v2 (설계 20번 5.1~5.5장, 24번 I3a). 순수 함수, 네트워크·환경변수 안 읽음.
@@ -24,14 +25,16 @@ import type { KindMapper, MappedComponent, NormalizeV2Options, NormalizeV2Output
 //   6) 라우팅  7) 보안 기준선. 같은 원본이면 글자 하나까지 같은 결과(목록 정렬).
 //   검증(checkV2)·저장은 부르는 쪽(import.ts, I3b) 몫.
 
+// I9: ECS 서비스 매퍼 (관리형 컨테이너 출발 갈래)
 export const KIND_MAPPERS: KindMapper[] = [k8sDeploymentMapper, k8sCronJobMapper, rdsMapper, cloudSqlMapper, cnpgMapper,
-  s3Mapper, sqsMapper, elasticacheMapper, gcsMapper, pubsubMapper, memorystoreMapper];   // I6: 객체 저장소·큐·캐시
+  s3Mapper, sqsMapper, elasticacheMapper, gcsMapper, pubsubMapper, memorystoreMapper,   // I6: 객체 저장소·큐·캐시
+  ecsServiceMapper];
 const MAPPER_BY_TYPE = new Map(KIND_MAPPERS.flatMap((m) => m.nativeTypes.map((t) => [t, m] as const)));
 
 // 앱 리소스는 아니지만 아는 것: 근거(다른 리소스에 접힘) / 환경(도착에서 env 층이 다시 만듦)
 // R5: serviceAccount·configMapKeys 는 근거·환경 종류로 등록 (unmapped C 로 안 셈)
 export const EVIDENCE_TYPES = new Set<string>([K8S_RAW_KINDS.service, K8S_RAW_KINDS.ingress, K8S_RAW_KINDS.hpa, K8S_RAW_KINDS.networkPolicy, K8S_RAW_KINDS.serviceAccount, K8S_RAW_KINDS.configMapKeys, "aws.iamPolicy"]);
-export const ENVIRONMENT_TYPES = new Set<string>(["eks.cluster", "gke.cluster", "k8s.node", "aws.vpc", "gcp.network", "aws.ecr", "gcp.artifactRepo", "aws.alb", "gcp.forwardingRule", "aws.secret", "gcp.secret", "import.note"]);
+export const ENVIRONMENT_TYPES = new Set<string>(["eks.cluster", "gke.cluster", "k8s.node", "aws.vpc", "gcp.network", "aws.ecr", "gcp.artifactRepo", "aws.alb", "gcp.forwardingRule", "aws.secret", "gcp.secret", "import.note", "ecs.cluster"]);
 
 const resName = (it: RawItem): string => {
   const md = it.metadata as { name?: string } | undefined;
@@ -116,7 +119,8 @@ export function normalizeV2(raw: RawInventory, opts: NormalizeV2Options = {}): N
   rewriteEnv(components, envHits, fieldMeta);
 
   // 6) 라우팅, 7) 보안 기준선
-  const entry = buildEntry(components, svcObjs, ingresses, fieldMeta, unmapped);
+  // I9: ECS ALB 규칙은 k8s Ingress 뒤에 합친다 (k8s 만이면 그대로)
+  const entry = mergeRoutes(buildEntry(components, svcObjs, ingresses, fieldMeta, unmapped), components, fieldMeta);
   const posture = buildPosture(components, policies);
   posture.permissions.push(...permissions);
   fillProjection(components, svcObjs, ingresses);

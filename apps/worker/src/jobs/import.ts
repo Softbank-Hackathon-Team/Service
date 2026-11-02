@@ -1,6 +1,6 @@
 import { AppSpec, ImportResultV2, MigrationJob, checkV2, type FieldMeta, type ObserveSession, type Provider, type RawInventory } from "@svc/contracts";
 import { withTenant, advance } from "@svc/core";
-import { AWS_DATA_READ_ACTIONS, AdapterError, adapterFor, discoverForImport, envFor, inventoryForAudit, isAdapterError, normalizeV2, projectV1 } from "@svc/adapters";
+import { AWS_DATA_READ_ACTIONS, AdapterError, adapterFor, discoverForImport, ECS_OBSERVE_ACTIONS, envFor, inventoryForAudit, isAdapterError, normalizeV2, projectV1 } from "@svc/adapters";
 import { StsCliError, TempRoleDenied } from "@svc/security";
 import { tempRoles } from "../platform.js";
 import { failedAttempts, recordAttemptFailure } from "./_step.js";
@@ -92,8 +92,9 @@ export const IMPORT_OBSERVE_ACTIONS = ["sts:GetCallerIdentity", "eks:ListCluster
   "ec2:DescribeVpcs", "elasticloadbalancing:DescribeLoadBalancers", "ecr:DescribeRepositories", "secretsmanager:ListSecrets"];
 // OBSROLE: 깃발 IMPORT_IR=v2 일 때만 데이터 자원 읽기(S3·SQS·ElastiCache) 동작을 더해 요청한다 (깃발 off = 지금 목록 그대로).
 //   목록 원본은 adapters discover/data.ts (고객 관찰 역할 템플릿도 같은 목록을 가져감)
+//   I9: v2 는 ECS·ALB 규칙·Auto Scaling 읽기(adapters import/readers/aws-ecs.ts)도 더한다
 export const importObserveActions = (): string[] =>
-  process.env.IMPORT_IR?.trim() === "v2" ? [...IMPORT_OBSERVE_ACTIONS, ...AWS_DATA_READ_ACTIONS] : IMPORT_OBSERVE_ACTIONS;
+  process.env.IMPORT_IR?.trim() === "v2" ? [...IMPORT_OBSERVE_ACTIONS, ...AWS_DATA_READ_ACTIONS, ...ECS_OBSERVE_ACTIONS] : IMPORT_OBSERVE_ACTIONS;
 async function borrowObserve(job: MigrationJob, row: { source_env_id: string; provider: string; account_id: string | null; region: string | null }) {
   const roles = tempRoles();
   let ref: string;
@@ -151,12 +152,13 @@ type V2Import = { inv: RawInventory; spec: unknown; fieldMeta: FieldMeta; result
 async function importV2(p: Provider, sess: ObserveSession): Promise<V2Import> {
   // I4: 깃발 IMPORT_AWS_IAM=1 이면 앱 신원의 IAM 정책도 읽어 grants·기준선을 채운다 (기본 꺼짐 = 지금 그대로)
   const inv = await discoverForImport(p, { ir: "v2", iam: process.env.IMPORT_AWS_IAM === "1" }, sess.cliEnv ? { env: envFor(sess.cliEnv) } : {});
-  const k8s = (inv.items as Array<{ kind?: string }>).some((i) => i.kind === "k8s.deployment" || i.kind === "k8s.cronjob");
+  // I9: ECS 서비스도 v2 워크로드 (관리형 컨테이너 갈래). 워크로드가 하나도 없을 때만 v1 경로로 되돌아간다
+  const k8s = (inv.items as Array<{ kind?: string }>).some((i) => i.kind === "k8s.deployment" || i.kind === "k8s.cronjob" || i.kind === "ecs.service");
   if (!k8s) {
     const a = adapterFor(p);
     const inv1 = await a.discover(sess, { kind: "container", selector: "*" });
     const { spec, fieldMeta } = a.normalize(inv1);
-    return { inv: inv1, spec, fieldMeta, result: null, note: "원본에 k8s 워크로드 없음 → v1 경로 (spec_v2 없음)" };
+    return { inv: inv1, spec, fieldMeta, result: null, note: "원본에 k8s·ECS 워크로드 없음 → v1 경로 (spec_v2 없음)" };
   }
   const { result, projectionEnv } = normalizeV2(inv);
   const { errors, reviews } = checkV2(result.spec);

@@ -51,3 +51,7 @@ export { borrowedAwsCreds, type BorrowedAwsCreds, type AwsSessionKeys } from "./
 export { azureMockPlanV2, azureMockOutputsV2, azureResourceTypesV2, type AzureMockPlanV2 } from "./target/index.js";
 // TA3: 계획·적용 연결 (PLAN_IR=v2) — v2 명세 출처 고르기·precheck 대조·출력 펼치기·흉내 출력
 export { resolveSpecV2, specV2OrThrow, specV2ForPlan, v2PrecheckItems, flattenTfOutputsV2, stubTfOutputsV2, NEEDS_HUMAN, type SpecV2Source, type ResolvedSpecV2 } from "./target/plan-v2.js";
+// I9: ECS 출발 갈래 (Reader·매퍼). 원본 모양·관찰 권한 목록
+export { readEcs, ECS_OBSERVE_ACTIONS, type EcsRead } from "./import/readers/aws-ecs.js";
+export { ecsServiceMapper, secretRefOf, roleNameOf } from "./import/mappers/ecs-service.js";
+export { ECS_RAW_KIND, type RawEcsService, type RawEcsContainer } from "./import/raw-ecs.js";

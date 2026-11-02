@@ -59,8 +59,12 @@ test("정상: 출발 gcp + IMPORT_IR=v2 → spec(v1)·spec_v2 둘 다 저장, sp
 
 test("되돌아감: 출발 aws(ECS 데모 원본) + IMPORT_IR=v2 → v1 경로, spec_v2 NULL", { skip }, async () => {
   process.env.IMPORT_IR = "v2";
+  // I9: aws v2 데모가 ECS 3티어가 됐다 → 워크로드 없는 원본(DB 만)일 때 되돌아가는지로 본다
+  const src = adapters.DEMO_INVENTORY_V2.aws!;
+  const orig = src.items;
+  src.items = orig.filter((i) => (i as { kind: string }).kind !== "ecs.service");
   const id = await seed("aws");
-  await imp.handleImport(job(id));
+  try { await imp.handleImport(job(id)); } finally { src.items = orig; }
   assert.equal((await row(id)).status, "spec_review");
   const [v] = await ver(id);
   assert.equal(v!.spec_v2, null);

@@ -11,6 +11,7 @@ import { readK8sApp, readK8sNamespace } from "./k8s.js";
 import { appIdentities, readAwsIam } from "./aws-iam.js";
 import { readAwsData, readGcpData } from "./data.js";
 import { DATA_RAW_KINDS } from "../import/raw-data.js";
+import { readEcs } from "../import/readers/aws-ecs.js";
 
 // Z88: 출발 환경 진짜 읽기 (데모 원본 STUB 대체). 결과는 normalize 가 아는 원본 모양 + 둘레 자원 목록.
 //   AWS  : sts → eks list/describe-cluster → kubeconfig(임시 파일) → kubectl 앱 읽기 · rds describe-db-instances
@@ -78,11 +79,14 @@ export async function discoverAws(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
   const clusters = arr(get(await runJson(d, "aws", ["eks", "list-clusters", ...r]).catch((e) => { throw sourceFail(e, cliReason(e, "aws")); }), "clusters"))
     .map((n) => ({ name: String(n) }));
   const cl = pick(clusters, env.IMPORT_AWS_EKS_CLUSTER, (x) => x.name, "EKS 클러스터", notes);
-  if (!cl) throw incomplete(env.IMPORT_AWS_EKS_CLUSTER ? `EKS 클러스터 ${env.IMPORT_AWS_EKS_CLUSTER} 없음` : `리전 ${region} 에 EKS 클러스터 없음`);
-  const desc = get(await runJson(d, "aws", ["eks", "describe-cluster", "--name", cl.name, ...r]), "cluster") as Obj | undefined;
+  // I9: v2 는 ECS 서비스도 읽는다 (관리형 컨테이너 갈래). EKS 가 없어도 ECS 서비스가 있으면 계속. v1 은 지금 그대로(EKS 필수)
+  const ecs = opts.ir === "v2" ? await readEcs(d, region, env).catch((e) => ({ items: [] as Obj[], counts: {}, notes: [`ECS 못 읽음: ${cliReason(e, "aws")}`] })) : null;
+  const hasEcs = (ecs?.items ?? []).some((i) => i.kind === "ecs.service");
+  if (!cl && !hasEcs) throw incomplete(env.IMPORT_AWS_EKS_CLUSTER ? `EKS 클러스터 ${env.IMPORT_AWS_EKS_CLUSTER} 없음` : `리전 ${region} 에 EKS 클러스터 없음${ecs ? " (ECS 서비스도 없음)" : ""}`);
+  const desc = cl ? get(await runJson(d, "aws", ["eks", "describe-cluster", "--name", cl.name, ...r]), "cluster") as Obj | undefined : undefined;
   const vpcId = str(get(desc, "resourcesVpcConfig", "vpcId"));
 
-  const app = await withTempKube(async (kc) => {
+  const app = !cl ? { items: [] as Obj[], namespace: "", counts: {} as Record<string, number>, notes: [] as string[] } : await withTempKube(async (kc) => {
     try { await runText(d, "aws", ["eks", "update-kubeconfig", "--name", cl.name, "--kubeconfig", kc, "--region", region]); }
     catch (e) { throw sourceFail(e, `EKS ${cl.name} kubeconfig 만들기 실패 (${cliReason(e, "aws")})`); }
     try { return await readApp(d, ["--kubeconfig", kc], opts); }
@@ -90,7 +94,8 @@ export async function discoverAws(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
   });
 
   // I4: 앱 신원의 IAM 정책 (v2 + 옵션 켬). 못 읽어도 앱·DB 는 계속 (notes 에 이유)
-  const iam = opts.ir === "v2" && opts.iam
+  // I9: EKS 없이 ECS 만 읽은 경우는 아직 안 읽음 (ECS 작업 역할 → grants 는 TODO: 다음 묶음)
+  const iam = opts.ir === "v2" && opts.iam && cl
     ? await side("IAM", async () => (await readAwsIam(d, r, cl.name, appIdentities(app.items), notes)) as unknown as Obj[], notes)
     : [];
 
@@ -117,11 +122,12 @@ export async function discoverAws(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
     ...(db ? [{ kind: "rds.dbInstance", DBInstanceIdentifier: db.DBInstanceIdentifier, Engine: db.Engine, EngineVersion: db.EngineVersion,
       AllocatedStorage: db.AllocatedStorage, DBInstanceClass: db.DBInstanceClass, Endpoint: get(db, "Endpoint", "Address") ?? null,
       ...(opts.ir === "v2" ? { MultiAZ: db.MultiAZ ?? null, PubliclyAccessible: db.PubliclyAccessible ?? null, MaxAllocatedStorage: db.MaxAllocatedStorage ?? null, DBInstanceArn: db.DBInstanceArn ?? null } : {}) }] : []),
-    { kind: "eks.cluster", name: cl.name, version: get(desc, "version") ?? null, vpcId },
+    ...(cl ? [{ kind: "eks.cluster", name: cl.name, version: get(desc, "version") ?? null, vpcId }] : []),
+    ...(ecs?.items ?? []),
     ...vpcs, ...lbs, ...repos, ...secrets, ...iam,
-    ...[...notes, ...app.notes].map(note),
+    ...[...notes, ...app.notes, ...(ecs?.notes ?? [])].map(note),
   ];
-  return { provider: "aws", items, coverage: coverage(items, app.counts) };
+  return { provider: "aws", items, coverage: coverage(items, { ...app.counts, ...(ecs?.counts ?? {}) }) };
 }
 
 // ── GCP ───────────────────────────────────────────────────────────────
@@ -226,6 +232,15 @@ export function inventoryForAudit(inv: RawInventory): RawInventory {
   };
   const items = inv.items.map((raw) => {
     const i = raw as Obj;
+    // I9: ECS 작업 정의 환경변수도 이름만 (평문 비밀일 수 있음), 시작 명령 지움. secrets 는 ARN 이라 그대로
+    if (i.kind === "ecs.service") {
+      const copy = JSON.parse(JSON.stringify(i)) as Obj;
+      for (const c of arr(get(copy, "taskDefinition", "containerDefinitions"))) {
+        if (Array.isArray(c.environment)) c.environment = arr(c.environment).map((e) => ({ name: e.name }));
+        delete c.command; delete c.entryPoint;
+      }
+      return copy;
+    }
     // I3bfix DRAFT(ai): Cloud SQL 등의 주소(ipAddresses·ipAddress)는 감사 표에 종류(type)만 남기고 값은 가린다 (사설 IP 노출 방지).
     //   가져오기 매퍼는 이 사본이 아니라 원본 inv 를 읽으므로 명세·id 에는 영향이 없다
     if (i.kind !== "k8s.deployment" && i.kind !== "k8s.cronjob") {
@@ -253,7 +268,7 @@ export async function discoverSource(p: Provider, d: CliDeps = {}, opts: Discove
   throw unavailable("Azure 는 Mock 실행기만 있어 출발 환경으로 읽을 실자원이 없음 (결정: 진짜 Azure 안 만듦)");
 }
 
-/** 가져오기 진입점. MOCK_SEED=1 이면 데모 원본(v2 면 DEMO_INVENTORY_V2[p], 없으면 DEMO_INVENTORY[p]), 아니면 진짜 읽기 */
+/** 가져오기 진입점. MOCK_SEED=1 이면 데모 원본(v2 면 DEMO_INVENTORY_V2[p], 없으면 DEMO_INVENTORY[p]), 아니면 진짜 읽기. I9: aws 도 v2 데모(ECS 3티어) */
 export async function discoverForImport(p: Provider, opts: DiscoverOpts = {}, d: CliDeps = {}): Promise<RawInventory> {
   if (mockSeed(d.env ?? process.env)) return (opts.ir === "v2" ? DEMO_INVENTORY_V2[p] : undefined) ?? DEMO_INVENTORY[p];
   return discoverSource(p, d, opts);

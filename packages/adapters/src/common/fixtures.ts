@@ -56,7 +56,7 @@ export const DEMO_INVENTORY: Record<Provider, RawInventory> = {
   azure_mock: { provider: "azure_mock", coverage: {}, items: [] },
 };
 
-// I2: 공통 명세 v2 용 데모 원본 (gcp·onprem 만. aws 는 ECS 데모를 그대로 쓴다). 3티어 = web·api·worker Deployment + Service + Ingress + HPA 1 + CronJob 1 + DB
+// I2: 공통 명세 v2 용 데모 원본 (I9 부터 aws 도 ECS v2 데모). 3티어 = web·api·worker Deployment + Service + Ingress + HPA 1 + CronJob 1 + DB
 const tier = (ns: string, name: string, env: Array<Record<string, unknown>> = [], port = 8080) => ({
   kind: "k8s.deployment", imageDigest: DIGEST, metadata: { name, namespace: ns, labels: { app: name } },
   spec: { replicas: 2, selector: { matchLabels: { app: name } }, template: { metadata: { labels: { app: name } }, spec: { serviceAccountName: name, containers: [{
@@ -86,7 +86,34 @@ const k8sItemsV2 = (ns: string, dbHost: string) => [
       name: "cleanup", image: "ghcr.io/demo/shop-worker:1.4.2", command: ["node", "cleanup.js"], env: [{ name: "DB_HOST", value: dbHost }] }] } } } } } },
 ];
 
+// I9: aws 데모 v2 = ECS(Fargate) 3티어. web·api·worker 서비스 + ALB 규칙 + Service Connect + Auto Scaling 1 + RDS
+//   주 서비스(shop-api)는 v1 데모(DEMO_INVENTORY.aws)와 같은 값 → v1 투영이 지금 v1 명세와 같다
+const ECR = "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com";
+const RDS_HOST = "shop-db.c1abcdefgh.ap-northeast-2.rds.amazonaws.com";
+const ecsSvc = (name: string, env: Array<{ name: string; value: string }>, extra: Record<string, unknown> = {}, secrets: Array<{ name: string; valueFrom: string }> = []) => ({
+  kind: "ecs.service", serviceName: name, clusterName: "shop", launchType: "FARGATE", desiredCount: 2, imageDigest: DIGEST,
+  serviceArn: `arn:aws:ecs:ap-northeast-2:123456789012:service/shop/${name}`,
+  taskDefinition: { family: name, cpu: "512", memory: "1024", taskRoleArn: `arn:aws:iam::123456789012:role/${name}-task`, containerDefinitions: [{
+    name, image: `${ECR}/${name}:1.4.2`, essential: true, portMappings: [{ containerPort: 8080, protocol: "tcp", name: "http" }],
+    environment: env, secrets,
+  }] },
+  serviceConnect: { namespace: "shop.local", aliases: [{ dnsName: `${name}.shop.local`, port: 8080 }] },
+  loadBalancers: [{ containerName: name, containerPort: 8080, healthCheckPath: "/healthz" }],
+  ...extra,
+});
+const AWS_V2_ITEMS = [
+  ecsSvc("shop-web", [{ name: "API_URL", value: "http://shop-api.shop.local:8080" }], { routes: [{ host: "shop.example.com", path: "/*", priority: 20 }] }),
+  ecsSvc("shop-api", [{ name: "LOG_LEVEL", value: "info" }, { name: "DB_HOST", value: RDS_HOST }],
+    { routes: [{ host: "shop.example.com", path: "/api/*", priority: 10 }], autoscaling: { min: 2, max: 6, targetCpuPct: 70 } },
+    [{ name: "DATABASE_PASSWORD", valueFrom: "arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:shop-db:password" }]),
+  { ...ecsSvc("shop-worker", [{ name: "DB_HOST", value: RDS_HOST }]), loadBalancers: [], serviceConnect: null, desiredCount: 1 },
+  { kind: "rds.dbInstance", DBInstanceIdentifier: "shop-db", Engine: "postgres", EngineVersion: "16.4", AllocatedStorage: 20,
+    Endpoint: RDS_HOST, MultiAZ: false, PubliclyAccessible: false, DBInstanceArn: "arn:aws:rds:ap-northeast-2:123456789012:db:shop-db" },
+  { kind: "ecs.cluster", name: "shop" },
+];
+
 export const DEMO_INVENTORY_V2: Partial<Record<Provider, RawInventory>> = {
+  aws: { provider: "aws", coverage: { "ecs.service": 3, "rds.dbInstance": 1, "ecs.cluster": 1 }, items: AWS_V2_ITEMS },
   gcp: { provider: "gcp", coverage: { "k8s.deployment": 3, "k8s.service": 2, "k8s.ingress": 1, "k8s.hpa": 1, "k8s.cronjob": 1, "cloudsql.instance": 1 }, items: [
     ...k8sItemsV2("shop", "10.20.0.5"),
     { kind: "cloudsql.instance", name: "shop-db", databaseVersion: "POSTGRES_16", settings: { dataDiskSizeGb: "20", availabilityType: "ZONAL" },

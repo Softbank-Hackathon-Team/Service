@@ -154,7 +154,9 @@ test("discover ir=v2: Cloud SQL ipAddresses 를 담고 디스크 크기 기본�
 test("discoverForImport: MOCK_SEED 면 v2 는 DEMO_INVENTORY_V2(없으면 v1 데모), 켜지 않으면 진짜 읽기", async () => {
   const env = { MOCK_SEED: "1" };
   assert.equal(await discoverForImport("gcp", { ir: "v2" }, { env }), DEMO_INVENTORY_V2.gcp);
-  assert.equal(await discoverForImport("aws", { ir: "v2" }, { env }), DEMO_INVENTORY.aws, "aws 는 V2 데모 없음 → ECS 데모");
+  // I9: aws 도 V2 데모(ECS 3티어)가 생겼다. azure_mock 은 여전히 V2 데모 없음 → v1 데모
+  assert.equal(await discoverForImport("aws", { ir: "v2" }, { env }), DEMO_INVENTORY_V2.aws, "aws V2 데모 = ECS 3티어");
+  assert.equal(await discoverForImport("azure_mock", { ir: "v2" }, { env }), DEMO_INVENTORY.azure_mock, "V2 데모 없음 → v1 데모");
   assert.equal(await discoverForImport("gcp", {}, { env }), DEMO_INVENTORY.gcp, "ir 없으면 기존 데모");
   const kinds = (DEMO_INVENTORY_V2.onprem?.items ?? []).map((i) => (i as { kind: string }).kind);
   for (const k of ["k8s.deployment", "k8s.service", "k8s.ingress", "k8s.hpa", "k8s.cronjob", "cnpg.cluster"]) assert.ok(kinds.includes(k), k);

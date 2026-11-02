@@ -96,7 +96,10 @@ export function requirementsV2(spec: AppSpecV2): Capability[] {
 // capability 밖(unsupported) + 사람이 봐야 하는 것(needsHuman). precheck(A3)가 그대로 쓴다
 export function v2Blockers(spec: AppSpecV2, caps: Capability[]): { unsupported: string[]; needsHuman: string[] } {
   const have = new Set(caps);
-  const unsupported = requirementsV2(spec).filter((x) => !have.has(x)).map((x) => `도착 렌더 미지원: ${x}`);
+  // I9: 관리형 컨테이너(ECS·Cloud Run) 렌더는 아직 없음 → 막고, 어느 서비스인지·어떻게 풀지 적는다 (모듈은 kinds/service-ecs·service-cloudrun 카탈로그만)
+  const hint = (x: Capability) => x !== "runtime.managedContainer" ? "" :
+    ` (서비스 ${spec.components.filter((c) => c.kind === "service" && c.props.runtime === "managedContainer").map((c) => c.id).sort().join(",")} — 명세 검토에서 runtime 을 k8s 로 바꾸면 EKS·GKE·k3s 로 옮김, 실행 방식 바뀜 승인)`;
+  const unsupported = requirementsV2(spec).filter((x) => !have.has(x)).map((x) => `도착 렌더 미지원: ${x}${hint(x)}`);
   const needsHuman: string[] = [];
   for (const c of spec.components) {
     if (c.kind === "postgres") {

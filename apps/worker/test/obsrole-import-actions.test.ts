@@ -1,7 +1,7 @@
 // OBSROLE: 가져오기가 관찰 역할을 빌릴 때 요청하는 동작 목록 — 깃발 off 는 지금 그대로, v2 는 데이터 읽기가 더해지고 최소 권한 검사를 통과한다
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AWS_DATA_READ_ACTIONS } from "@svc/adapters";
+import { AWS_DATA_READ_ACTIONS, ECS_OBSERVE_ACTIONS } from "@svc/adapters";
 import { checkLeastPrivilege } from "@svc/security";
 import { IMPORT_OBSERVE_ACTIONS, importObserveActions } from "../src/jobs/import.js";
 
@@ -23,7 +23,8 @@ test("깃발 없음·v1·빈 값은 지금 목록 그대로 (S3·SQS·캐시 동
 test("IMPORT_IR=v2(앞뒤 공백 허용) 이면 데이터 읽기 12개가 더해지고, 최소 권한 검사(와일드카드·쓰기 금지)를 통과", () => {
   for (const v of ["v2", " v2 "]) {
     const a = withFlag(v, importObserveActions);
-    assert.deepEqual(a, [...IMPORT_OBSERVE_ACTIONS, ...AWS_DATA_READ_ACTIONS]);
+    // I9: ECS 출발 읽기(목록·설명만)도 더해진다
+    assert.deepEqual(a, [...IMPORT_OBSERVE_ACTIONS, ...AWS_DATA_READ_ACTIONS, ...ECS_OBSERVE_ACTIONS]);
     assert.equal(new Set(a).size, a.length);
     assert.doesNotThrow(() => checkLeastPrivilege(req(a)));
   }

@@ -90,7 +90,8 @@ export function inferLinks(components: MappedComponent[], masked: MaskedEvidence
         if (o === s || o.kind !== "service") continue;
         const ns = o.native.namespace;
         const names = [o.native.name, ...(o.svcNames ?? [])];
-        const full = ns ? names.flatMap((x) => [`${x}.${ns}.svc.cluster.local`, `${x}.${ns}.svc`, `${x}.${ns}`]) : [];
+        // I9: k8s 밖 서비스(ECS Service Connect)는 매퍼가 넘긴 이름(aliases)이 주소. k8s 서비스는 aliases 가 없어 그대로
+        const full = [...(ns ? names.flatMap((x) => [`${x}.${ns}.svc.cluster.local`, `${x}.${ns}.svc`, `${x}.${ns}`]) : []), ...addressesOf(o).map((a) => a.toLowerCase())];
         const short = ns === s.native.namespace ? names : [];
         const hit = full.find((x) => toks.has(x)) ?? short.find((x) => toks.has(x));
         if (!hit) continue;

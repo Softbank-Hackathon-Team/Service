@@ -39,6 +39,8 @@ export interface MappedComponent {
   native: NativeRef;
   /** 데이터 리소스의 출발 방화벽 (posture.network component 줄 재료) */
   network?: { ingress: Array<{ from: string; port?: number }> | "unknown"; public: boolean | null };
+  /** I9: k8s Ingress 밖 라우팅 재료 (ECS 의 ALB 규칙). pipeline 이 entry 로 합친다 */
+  routes?: Array<{ host: string; path: string | null; port: number }>;
   /** v1 투영 재료 (서비스만) */
   projection?: ProjectionSource;
   /** I6: 큐의 DLQ 가 가리키는 다른 큐(ARN·토픽 이름). 파이프라인이 id 가 정해진 뒤 props.deadLetter.to 로 바꾼다 (저장 안 함) */

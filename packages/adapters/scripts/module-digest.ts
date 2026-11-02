@@ -14,7 +14,7 @@ export function moduleDigest(dir: string): string {
 // v2: 고정 루트 + 종류 모듈은 폴더마다 따로 지문 (계획 지문엔 루트 + 켜진 모듈만 들어감). 새 폴더를 만들면 여기 손으로 추가 (시험이 빠진 폴더를 잡음)
 export const MODULES = [
   "aws/app", "gcp/app", "onprem/app", "azure/app",
-  "aws/root", "aws/kinds/cache", "aws/kinds/identity", "aws/kinds/namespace", "aws/kinds/object-store", "aws/kinds/postgres", "aws/kinds/queue",
-  "gcp/root", "gcp/kinds/cache", "gcp/kinds/identity", "gcp/kinds/namespace", "gcp/kinds/object-store", "gcp/kinds/postgres", "gcp/kinds/queue",
+  "aws/root", "aws/kinds/cache", "aws/kinds/identity", "aws/kinds/namespace", "aws/kinds/object-store", "aws/kinds/postgres", "aws/kinds/queue", "aws/kinds/service-ecs",
+  "gcp/root", "gcp/kinds/cache", "gcp/kinds/identity", "gcp/kinds/namespace", "gcp/kinds/object-store", "gcp/kinds/postgres", "gcp/kinds/queue", "gcp/kinds/service-cloudrun",
   "onprem/root", "onprem/kinds/namespace", "onprem/kinds/netpol",
 ] as const;
