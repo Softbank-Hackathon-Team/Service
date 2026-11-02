@@ -8,6 +8,7 @@ import { azureMockTarget } from "./azure-mock.js";
 const TARGETS: Record<Provider, TargetBuilder> = { aws: awsTarget, gcp: gcpTarget, onprem: onpremTarget, azure_mock: azureMockTarget };
 export const targetBuilderFor = (p: Provider) => TARGETS[p];
 export { awsTarget, gcpTarget, onpremTarget, azureMockTarget };
+export { mockPlanV2 as azureMockPlanV2, mockOutputsV2 as azureMockOutputsV2, resourceTypesV2 as azureResourceTypesV2, type AzureMockPlanV2 } from "./azure-mock.js";
 export { rdsClassFor } from "./aws.js";
 export { cloudSqlTierFor } from "./gcp.js";
 export { requirementsV2, v2Blockers, V2_FIELD_COVERAGE, K8S_RENDER_CAPS, UNSUPPORTED_V2, LINK_OUTPUT_UNKNOWN, identitiesOf, type FieldRule, type IdentityPlan } from "./shared.js";

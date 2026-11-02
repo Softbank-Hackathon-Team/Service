@@ -90,11 +90,11 @@ test("신원: 서비스 계정이 같은 두 서비스는 도착 신원 하나, 
   }
 });
 
-test("거부: azure_mock 은 두 렌더 모두 UNSUPPORTED_V2, capability 는 mock 하나", () => {
+test("azure_mock: TA10 뒤 두 렌더가 mock 결과를 내고 capability 에 mock 포함", () => {
   const b = targetBuilderFor("azure_mock");
-  assert.deepEqual(b.capabilities(), ["mock"]);
+  assert.ok(b.capabilities().includes("mock"));
   for (const f of [() => b.toTerraformV2(mk(), T("azure_mock")), () => b.toWorkloadValues(mk(), {}, T("azure_mock"))])
-    assert.throws(f, (e: unknown) => e instanceof AdapterError && e.code === UNSUPPORTED_V2);
+    assert.doesNotThrow(f);
 });
 
 test("비밀: 값(env value)이 아닌 비밀 참조만 나가고, Terraform 변수에 비밀 값이 없다", () => {
