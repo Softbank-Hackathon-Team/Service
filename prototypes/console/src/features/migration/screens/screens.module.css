@@ -14,7 +14,7 @@
   flex-direction: column;
   gap: var(--space-2);
   padding: var(--space-12) var(--space-20);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-inner);
   background: var(--color-bg-subtle);
 }
 
@@ -54,7 +54,7 @@
   width: 100%;
   padding: var(--space-16) var(--space-24);
   border: 0;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-card);
   background: var(--color-bg-subtle);
   color: var(--color-fg-primary);
   text-align: left;
@@ -135,14 +135,14 @@ button.heroRowSelected:not(:disabled):hover {
 .causeCode {
   align-self: flex-start;
   padding: var(--space-12) var(--space-20);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-inner);
   background: var(--color-bg-subtle);
   color: var(--color-fg-primary);
 }
 /* 빨간 카드 위에서 막대 색이 묻히지 않게 흰 바탕에 올린다. */
 .heroInset {
   padding: var(--space-16) var(--space-20);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-inner);
   background: var(--color-bg-surface);
   color: var(--color-fg-primary);
 }
@@ -151,7 +151,7 @@ button.heroRowSelected:not(:disabled):hover {
   flex-direction: column;
   gap: var(--space-4);
   padding: var(--space-16) var(--space-20);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-inner);
   background: var(--color-bg-subtle);
   overflow-wrap: anywhere;
 }
@@ -239,7 +239,7 @@ button.heroRowSelected:not(:disabled):hover {
   display: inline-block;
   padding: 0 var(--space-8);
   border: 1px dashed var(--color-border-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-inner);
 }
 
 .plainList {
@@ -296,7 +296,7 @@ button.heroRowSelected:not(:disabled):hover {
   width: 100%;
   padding: var(--space-12) var(--space-16);
   border: 1px solid var(--color-border-default);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-inner);
   background: var(--color-bg-surface);
   color: var(--color-fg-primary);
   font: inherit;
@@ -320,7 +320,7 @@ button.heroRowSelected:not(:disabled):hover {
   height: 100%;
   padding: 0;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-inner);
   background: transparent;
   text-align: left;
   cursor: pointer;
@@ -364,7 +364,7 @@ button.heroRowSelected:not(:disabled):hover {
   width: 100%;
   padding: var(--space-12) var(--space-16);
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-inner);
   background: var(--color-bg-subtle);
   color: inherit;
   text-align: left;
@@ -374,6 +374,11 @@ button.heroRowSelected:not(:disabled):hover {
 }
 .listButton:hover {
   background: var(--color-bg-selected);
+}
+/* 목록 줄은 회색 바탕이라 흐린 글자가 4.5:1 에 못 미친다. 한 단계 진하게 */
+.listButton :global(.c-tertiary),
+.listStatic :global(.c-tertiary) {
+  color: var(--color-fg-secondary);
 }
 .listStatic > :first-child {
   flex: 1;

@@ -433,12 +433,12 @@ export function ApproveScreen({ flow }: ScreenProps) {
         <TileHeader title="월 비용" action={<TileLink label="자세히" onClick={() => flow.go('cost')} />} />
         <div className={s.costCompare}>
           <div className={s.change}>
-            <span className="t-metric-xl">${sourceCost}</span>
+            <span className="t-metric-lg">${sourceCost}</span>
             <span className="t-body-md c-secondary">{source}</span>
           </div>
           <Icon name="arrow-right" size={24} />
           <div className={s.change}>
-            <span className="t-metric-xl">${targetCost}</span>
+            <span className="t-metric-lg">${targetCost}</span>
             <span className="t-body-md c-secondary">{target}</span>
           </div>
         </div>
