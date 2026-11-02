@@ -175,6 +175,8 @@ contracts의 화면용 모양 `MigrationView`는 열 칸이다. 지금 응답에
 | POST | `/environments/:id/verify` | 입력층 | 연결 검증 | 있음 |
 | POST | `/environments/:id/agent-token` | 입력층 | 온프레 Agent 일회용 등록 토큰(10분) + 설치 명령 한 줄 발급 (경로 이름 추정) | 없음 |
 | POST | `/agent/register` | 입력층 | Agent가 일회용 토큰으로 등록하고 장기 Agent 키를 받음 (경로 이름 추정) | 없음 |
+| POST | `/environments/:id/agent-token` | 입력층 | 온프레 Agent 일회용 등록 토큰(10분) + 설치 명령 한 줄 발급 | 있음 |
+| POST | `/agent/register` | 입력층 | Agent가 일회용 토큰으로 등록하고 장기 Agent 키를 받음 | 있음 |
 | GET | `/events` | 입력층 | SSE | 없음 |
 | POST | `/tokens` | 입력층 | CLI 개인 토큰 발급(범위 지정, 30일, 해시 저장) (경로 이름 추정) | 있음 |
 | POST | `/migrations` | 가져오기·명세 | 이전 생성 + 가져오기 시작 | 있음 |

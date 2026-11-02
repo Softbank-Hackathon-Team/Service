@@ -78,7 +78,9 @@ test("일정 등록: 기본 cron 으로 등록되고, off 면 지워진다 (두 
   assert.equal(await has(), false);
 });
 
-test("설정 검사: VERIFY_CRON 은 5칸 cron 또는 off 만", { skip }, async () => {
+// TESTENV: DB 없이도 도는 시험이라 before() 가 안 불러 준 경우 여기서 불러온다 (예전엔 npm test 에서 sweep 이 undefined)
+test("설정 검사: VERIFY_CRON 은 5칸 cron 또는 off 만", async () => {
+  sweep ??= await import("../src/jobs/verify-sweep.js");
   const bad = (v: string) => configProblems("worker", { DATABASE_URL: "postgres://x/y", VERIFY_CRON: v }).filter((p) => p.startsWith("VERIFY_CRON"));
   for (const ok of ["off", "0 * * * *", "* * * * *", "*/5 * * * *"]) assert.deepEqual(bad(ok), [], ok);
   for (const no of ["bad", "1 2 3", "0 * * * * *", "every hour"]) assert.equal(bad(no).length, 1, no);

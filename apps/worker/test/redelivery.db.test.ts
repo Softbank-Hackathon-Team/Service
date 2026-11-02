@@ -11,9 +11,9 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
 // Z32 8th-c: z75-38 뒤 shift 는 10%·50% 단계마다도 최소 관찰(TRAFFIC_OBSERVE_SEC, 기본 30초)을 채운다 → 이 파일의 shift 2회가 30초씩이라
-//   파일 전체가 --test-timeout 60초를 넘겼다(int5-8·9 npm test). 시험은 관찰 길이가 아니라 전이·잠금을 보므로 값이 없을 때만 1초로 준다.
+//   파일 전체가 --test-timeout 60초를 넘겼다(int5-8·9 npm test). 시험은 관찰 길이가 아니라 전이·잠금을 보므로 1초로 준다 (TESTENV: .env 값과 상관없이 늘. 예전 ||= 는 .env 30 이면 시간 초과).
 //   주의: @svc/core 를 아래 before() 에서 동적으로 불러오기 전에 정해야 한다(OBSERVE_MIN_SEC 는 불러올 때 한 번 읽음)
-process.env.TRAFFIC_OBSERVE_SEC ||= "1";
+process.env.TRAFFIC_OBSERVE_SEC = "1";
 // Z32 8th-d (맥 9차): .env 에 PROM_URL 이 있으면 guards.observeMinSec 가 30초로 올리고(진짜 지표 = 압축 금지) 판정도 진짜 Prometheus 1초 간격이 된다.
 //   이 시험은 가짜 지표로 전이만 본다 → 비운다. 빈 값은 node --env-file 이 덮지 않는다(값이 이미 있으면 .env 를 안 씀)
 process.env.PROM_URL = "";
