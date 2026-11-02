@@ -2,6 +2,7 @@ import { boss, startBoss, startMetricsServer, onShutdown, assertConfig, logEffec
 import { buildApp } from "./app.js";
 import { envNumber } from "@svc/contracts";
 import { jwtSecretProblem } from "./auth/jwt.js";
+import { startApiReaper } from "./reaper.js";
 
 // Z93: 운영(NODE_ENV=production·AUTH_MODE=real)인데 JWT_SECRET 이 없거나 짧으면 뜨지 않는다 (조용히 로그인만 안 되는 것보다 낫다)
 const secretProblem = jwtSecretProblem();
@@ -16,6 +17,7 @@ logEffectiveConfig("api");
 const { app, metrics } = await buildApp();
 
 await startBoss(); // api도 작업을 "넣기" 때문에 큐가 필요하다
+await startApiReaper(); // API_REAPER=1 일 때만: 워커가 다 죽어도 청소 담당이 돈다 (reaper.ts)
 const METRICS_PORT = envNumber(process.env.METRICS_PORT, 9464);
 if (METRICS_PORT > 0) await startMetricsServer(metrics, METRICS_PORT);
 // Z47: 개발 기본은 내 컴퓨터 안(localhost = 127.0.0.1 과 ::1 둘 다)만. 예전 0.0.0.0 은 행사장 와이파이의 다른 기기가

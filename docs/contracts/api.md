@@ -14,7 +14,7 @@
 - 오래 걸리는 일은 바로 202(접수함)로 답하고 번호만 돌려준다. 진행 상황은 다시 읽어서 본다.
 - 오류 응답은 언제나 같은 모양이다. `{status, code, message, requestId}` 네 칸이다.
 - 요청 본문은 Zod로 검사한다. 모르는 칸이 있으면 거부한다(strict).
-- 지금 코드에 있는 경로는 4개다. 명세에 적은 경로는 45개다.
+- 지금 코드에 있는 경로 전체 목록은 `docs/openapi.yaml`이 원본이다(모두 `/api/v1` 아래). 명세에 적은 경로는 45개다. 이 문서의 표는 뼈대 시점 기준이라 4절 표의 "코드" 칸만 현행화했다.
 
 ---
 
@@ -159,36 +159,36 @@ contracts의 화면용 모양 `MigrationView`는 열 칸이다. 지금 응답에
 요구사항·기능 명세 v4에 적은 API 45개와 지금 코드를 맞대 본 표다. 목록 원본은 `tools/planned-routes.tsv`다. "경로 이름 추정"이 붙은 줄은 설계 문서에도 아직 이름이 없는 경로다.
 
 <!-- GEN:planned -->
-명세 목록 45개 중 코드에 있는 것 8개.
+명세 목록 45개 중 코드에 있는 것 (표의 "있음" 줄 중 명세 목록에 없는 경로 3줄 제외).
 
 | 방법 | 경로 | 영역 | 하는 일 | 코드 |
 |---|---|---|---|---|
-| GET | `/auth/login` | 입력층 | 외부 OIDC(GitHub OAuth) 로그인 시작 (경로 이름 추정) | 없음 |
+| GET | `/auth/login` | 입력층 | 외부 OIDC(GitHub OAuth) 로그인 시작 (경로 이름 추정) | 있음 (코드는 POST) |
 | GET | `/auth/callback` | 입력층 | OIDC 콜백 (경로 이름 추정) | 없음 |
-| POST | `/auth/logout` | 입력층 | 세션 종료 (경로 이름 추정) | 없음 |
+| POST | `/auth/logout` | 입력층 | 세션 종료 (경로 이름 추정) | 있음 |
 | POST | `/tenants` | 입력층 | 회사(테넌트) 만들기 (경로 이름 추정) | 없음 |
 | POST | `/members` | 입력층 | 멤버 초대(이메일 또는 GitHub 로그인) | 없음 |
 | DELETE | `/members/:id` | 입력층 | 멤버 제거 | 없음 |
-| POST | `/environments` | 입력층 | 관리 대상 환경 등록(draft) | 없음 |
-| GET | `/environments` | 입력층 | 자기 회사 환경 목록 + 연결 상태 + 마지막 검증 시각 | 없음 |
-| POST | `/environments/:id/connection-link` | 입력층 | 원클릭 연결 링크 발급 | 없음 |
-| POST | `/environments/:id/verify` | 입력층 | 연결 검증 | 없음 |
+| POST | `/environments` | 입력층 | 관리 대상 환경 등록(draft) | 있음 |
+| GET | `/environments` | 입력층 | 자기 회사 환경 목록 + 연결 상태 + 마지막 검증 시각 | 있음 |
+| POST | `/environments/:id/connection-link` | 입력층 | 원클릭 연결 링크 발급 | 있음 |
+| POST | `/environments/:id/verify` | 입력층 | 연결 검증 | 있음 |
 | POST | `/environments/:id/agent-token` | 입력층 | 온프레 Agent 일회용 등록 토큰(10분) + 설치 명령 한 줄 발급 (경로 이름 추정) | 없음 |
 | POST | `/agent/register` | 입력층 | Agent가 일회용 토큰으로 등록하고 장기 Agent 키를 받음 (경로 이름 추정) | 없음 |
 | GET | `/events` | 입력층 | SSE | 없음 |
-| POST | `/tokens` | 입력층 | CLI 개인 토큰 발급(범위 지정, 30일, 해시 저장) (경로 이름 추정) | 없음 |
+| POST | `/tokens` | 입력층 | CLI 개인 토큰 발급(범위 지정, 30일, 해시 저장) (경로 이름 추정) | 있음 |
 | POST | `/migrations` | 가져오기·명세 | 이전 생성 + 가져오기 시작 | 있음 |
-| GET | `/migrations` | 가져오기·명세 | 자기 회사 이전 목록(상태·version·출발·도착) | 없음 |
+| GET | `/migrations` | 가져오기·명세 | 자기 회사 이전 목록(상태·version·출발·도착) | 있음 |
 | GET | `/migrations/:id` | 가져오기·명세 | 이전 상세: 상태, version, 현재 명세(spec + field_meta), plan 요약, 단계 타임스탬프, lease 상태 | 있음 |
-| PATCH | `/specs/:id` | 가져오기·명세 | 명세 칸 수정 | 없음 |
+| PATCH | `/specs/:id` | 가져오기·명세 | 명세 칸 수정 | 없음 (같은 일을 하는 `PATCH /migrations/:id/spec` 이 있음) |
 | POST | `/migrations/:id/plan` | 이전 | 명세 확정, 사전 점검, 계획 생성 | 있음 |
 | GET | `/plans/:id` | 이전 | 계획 내용: 단계, 사전 점검 결과, Terraform plan 요약, 정책 게이트, 예외 티켓, 임시 자원 선언, planHash | 있음 |
 | POST | `/plans/:id/approvals` | 이전 | 계획 승인·거절 | 있음 |
 | POST | `/migrations/:id/start` | 이전 | Terraform 실행 시작 | 있음 |
-| POST | `/migrations/:id/reclaim` | 이전 | 롤백 대기를 일찍 끝내고 정리로 넘긴다 | 없음 |
-| POST | `/migrations/:id/resume` | 이전 | 가드레일로 멈춘 이전을 멈추기 전 상태로 재개 | 없음 |
-| POST | `/migrations/:id/rollback` | 이전 | 수동 롤백 | 없음 |
-| POST | `/migrations/:id/cancel` | 이전 | 취소 | 없음 |
+| POST | `/migrations/:id/reclaim` | 이전 | 롤백 대기를 일찍 끝내고 정리로 넘긴다 | 있음 |
+| POST | `/migrations/:id/resume` | 이전 | 가드레일로 멈춘 이전을 멈추기 전 상태로 재개 | 있음 |
+| POST | `/migrations/:id/rollback` | 이전 | 수동 롤백 | 있음 |
+| POST | `/migrations/:id/cancel` | 이전 | 취소 | 있음 |
 | POST | `/migrations/:id/force-unlock` | 이전 | tfstate 잔류 잠금 강제 해제 | 없음 |
 | GET | `/security/matrix` | 보안 | 보안 매트릭스 요약표(통제 × 환경) | 없음 |
 | GET | `/security/cells/:env/:control` | 보안 | 칸 근거: finding 50건 + 조용한 소스(결과 안 낸 도구) + 연결된 가드레일 + 이 환경의 눈이 못 보는 것 | 없음 |
@@ -199,7 +199,7 @@ contracts의 화면용 모양 `MigrationView`는 열 칸이다. 지금 응답에
 | GET | `/migrations/:id/guardrails` | 보안 | 가드레일 패널: 구간별 규칙 상태·발동·원복 시각·초 | 없음 |
 | GET | `/audit-events` | 보안 | 감사 타임라인 + 체인 무결 표시 | 없음 |
 | GET | `/audit-events/verify` | 보안 | 회사 감사 체인을 처음부터 재검증(30분 타이머와 같은 함수) | 없음 |
-| POST | `/agent/reports` | 보안 | 온프레 Agent 보고 수신(Falco 경보·PolicyReport·kube-bench·스크립트·audit log) | 없음 |
+| POST | `/agent/reports` | 보안 | 온프레 Agent 보고 수신(Falco 경보·PolicyReport·kube-bench·스크립트·audit log) | 있음 |
 | POST | `/agent-runs` | 에이전트 | 에이전트 실행 요청 (경로 이름 추정) | 없음 |
 | GET | `/agent-runs/:id` | 에이전트 | 실행 상세 + 타임라인(단계·도구·입력·결과 지문·거부 규칙·ms) + PR 링크 (경로 이름 추정) | 없음 |
 | POST | `/agent-runs/:id/cancel` | 에이전트 | 실행 취소 (경로 이름 추정) | 없음 |
@@ -210,6 +210,8 @@ contracts의 화면용 모양 `MigrationView`는 열 칸이다. 지금 응답에
 | POST | `/cost-estimates` | 비용 (2단계) | 비용 예측 만들기 (경로 이름 추정) | 없음 |
 | GET | `/cost-estimates/:id` | 비용 (2단계) | 환경별 월 비용, 단가 출처와 시각, 모르는 칸, 추천 프로필과 이유 (경로 이름 추정) | 없음 |
 | GET | `/migrations/:id/plan` | - | 명세 목록에 없는 경로 | 있음 |
+| POST | `/migrations/:id/replan` | - | 다시 계획하기: failed(provisioning 이하)·stale·rejected → planning | 있음 |
+| POST | `/migrations/:id/spec/reopen` | - | 거절 뒤 명세부터 다시 고치기: rejected → spec_review | 있음 |
 <!-- /GEN:planned -->
 
 ---
