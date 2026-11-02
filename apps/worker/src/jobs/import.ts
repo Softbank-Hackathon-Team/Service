@@ -1,6 +1,6 @@
 import { AppSpec, ImportResultV2, MigrationJob, checkV2, type FieldMeta, type ObserveSession, type Provider, type RawInventory } from "@svc/contracts";
 import { withTenant, advance, scrubString } from "@svc/core";
-import { AWS_DATA_READ_ACTIONS, GCP_DATA_READ_PERMISSIONS, actionsOfCommands, AdapterError, adapterFor, discoverForImport, ECS_OBSERVE_ACTIONS, envFor, inventoryForAudit, isAdapterError, normalizeV2, projectV1 } from "@svc/adapters";
+import { AWS_DATA_READ_ACTIONS, GCP_DATA_READ_PERMISSIONS, actionsOfCommands, AdapterError, adapterFor, discoverForImport, ECS_OBSERVE_ACTIONS, EC2_OBSERVE_ACTIONS, GCE_OBSERVE_PERMISSIONS, envFor, inventoryForAudit, isAdapterError, normalizeV2, projectV1 } from "@svc/adapters";
 import { StsCliError, TempRoleDenied } from "@svc/security";
 import { tempRoles } from "../platform.js";
 import { failedAttempts, recordAttemptFailure } from "./_step.js";
@@ -103,9 +103,9 @@ export const IMPORT_GCP_OBSERVE_ACTIONS = actionsOfCommands("gcp", ["projects de
 export const importObserveActions = (provider = "aws"): string[] => {
   const v2 = process.env.IMPORT_IR?.trim() === "v2";
   if (provider === "gcp")
-    return v2 ? [...IMPORT_GCP_OBSERVE_ACTIONS, ...GCP_DATA_READ_PERMISSIONS] : IMPORT_GCP_OBSERVE_ACTIONS;
+    return v2 ? [...IMPORT_GCP_OBSERVE_ACTIONS, ...GCP_DATA_READ_PERMISSIONS, ...GCE_OBSERVE_PERMISSIONS.filter((a) => !IMPORT_GCP_OBSERVE_ACTIONS.includes(a) && !(GCP_DATA_READ_PERMISSIONS as readonly string[]).includes(a))] : IMPORT_GCP_OBSERVE_ACTIONS;
   if (!v2) return IMPORT_OBSERVE_ACTIONS;
-  return [...IMPORT_OBSERVE_ACTIONS, ...AWS_DATA_READ_ACTIONS, ...ECS_OBSERVE_ACTIONS, ...(process.env.IMPORT_AWS_IAM === "1" ? actionsOfCommands("aws", IMPORT_AWS_IAM_KEYS) : [])];
+  return [...IMPORT_OBSERVE_ACTIONS, ...AWS_DATA_READ_ACTIONS, ...ECS_OBSERVE_ACTIONS, ...EC2_OBSERVE_ACTIONS.filter((a) => !IMPORT_OBSERVE_ACTIONS.includes(a)), ...(process.env.IMPORT_AWS_IAM === "1" ? actionsOfCommands("aws", IMPORT_AWS_IAM_KEYS) : [])];
 };
 async function borrowObserve(job: MigrationJob, row: { source_env_id: string; provider: string; account_id: string | null; region: string | null }) {
   const roles = tempRoles();

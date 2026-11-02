@@ -40,6 +40,7 @@ export const OPTIONAL_PROBES: ReadonlyArray<{ key: string; args: string[] }> = [
   { key: "compute networks list", args: ["compute", "networks", "list", "--limit=1"] },
   { key: "compute forwarding-rules list", args: ["compute", "forwarding-rules", "list", "--limit=1"] },
   { key: "compute firewall-rules list", args: ["compute", "firewall-rules", "list", "--limit=1"] },
+  { key: "compute instances list", args: ["compute", "instances", "list", "--limit=1"] },   // VMIMPORT
   { key: "artifacts repositories list", args: ["artifacts", "repositories", "list", "--limit=1"] },
   { key: "secrets list", args: ["secrets", "list", "--limit=1"] },
   { key: "storage buckets list", args: ["storage", "buckets", "list", "--limit=1"] },

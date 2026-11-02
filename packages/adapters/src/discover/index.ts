@@ -12,6 +12,8 @@ import { appIdentities, readAwsIam } from "./aws-iam.js";
 import { readAwsData, readGcpData } from "./data.js";
 import { DATA_RAW_KINDS } from "../import/raw-data.js";
 import { readEcs } from "../import/readers/aws-ecs.js";
+import { readEc2 } from "../import/readers/aws-ec2.js";
+import { readGce } from "../import/readers/gcp-gce.js";
 
 // Z88: 출발 환경 진짜 읽기 (데모 원본 STUB 대체). 결과는 normalize 가 아는 원본 모양 + 둘레 자원 목록.
 //   AWS  : sts → eks list/describe-cluster → kubeconfig(임시 파일) → kubectl 앱 읽기 · rds describe-db-instances
@@ -82,7 +84,11 @@ export async function discoverAws(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
   // I9: v2 는 ECS 서비스도 읽는다 (관리형 컨테이너 갈래). EKS 가 없어도 ECS 서비스가 있으면 계속. v1 은 지금 그대로(EKS 필수)
   const ecs = opts.ir === "v2" ? await readEcs(d, region, env).catch((e) => ({ items: [] as Obj[], counts: {}, notes: [`ECS 못 읽음: ${cliReason(e, "aws")}`] })) : null;
   const hasEcs = (ecs?.items ?? []).some((i) => i.kind === "ecs.service");
-  if (!cl && !hasEcs) throw incomplete(env.IMPORT_AWS_EKS_CLUSTER ? `EKS 클러스터 ${env.IMPORT_AWS_EKS_CLUSTER} 없음` : `리전 ${region} 에 EKS 클러스터 없음${ecs ? " (ECS 서비스도 없음)" : ""}`);
+  // VMIMPORT: v2 는 VM(EC2) 도 읽는다 — 명시(IMPORT_VM=1·IMPORT_AWS_VM_TAG)했거나 EKS·ECS 가 없을 때만 (있는 앱의 호출 수·권한은 안 늘린다). 못 읽어도 계속(notes)
+  const wantVm = opts.ir === "v2" && (env.IMPORT_VM === "1" || !!env.IMPORT_AWS_VM_TAG?.trim() || (!cl && !hasEcs));
+  const vm = wantVm ? await readEc2(d, region, env).catch((e) => ({ items: [] as Obj[], counts: {}, notes: [`EC2 못 읽음: ${cliReason(e, "aws")}`] })) : null;
+  const hasVm = (vm?.items ?? []).length > 0;
+  if (!cl && !hasEcs && !hasVm) throw incomplete(env.IMPORT_AWS_EKS_CLUSTER ? `EKS 클러스터 ${env.IMPORT_AWS_EKS_CLUSTER} 없음` : `리전 ${region} 에 EKS 클러스터 없음${ecs ? " (ECS 서비스도 없음)" : ""}${vm ? ` (VM 도 없음${vm.notes.length ? `: ${vm.notes[0]}` : ""})` : ""}`);
   const desc = cl ? get(await runJson(d, "aws", ["eks", "describe-cluster", "--name", cl.name, ...r]), "cluster") as Obj | undefined : undefined;
   const vpcId = str(get(desc, "resourcesVpcConfig", "vpcId"));
 
@@ -124,10 +130,11 @@ export async function discoverAws(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
       ...(opts.ir === "v2" ? { MultiAZ: db.MultiAZ ?? null, PubliclyAccessible: db.PubliclyAccessible ?? null, MaxAllocatedStorage: db.MaxAllocatedStorage ?? null, DBInstanceArn: db.DBInstanceArn ?? null } : {}) }] : []),
     ...(cl ? [{ kind: "eks.cluster", name: cl.name, version: get(desc, "version") ?? null, vpcId }] : []),
     ...(ecs?.items ?? []),
+    ...(vm?.items ?? []),
     ...vpcs, ...lbs, ...repos, ...secrets, ...iam,
-    ...[...notes, ...app.notes, ...(ecs?.notes ?? [])].map(note),
+    ...[...notes, ...app.notes, ...(ecs?.notes ?? []), ...(vm?.notes ?? [])].map(note),
   ];
-  return { provider: "aws", items, coverage: coverage(items, { ...app.counts, ...(ecs?.counts ?? {}) }) };
+  return { provider: "aws", items, coverage: coverage(items, { ...app.counts, ...(ecs?.counts ?? {}), ...(vm?.counts ?? {}) }) };
 }
 
 // ── GCP ───────────────────────────────────────────────────────────────
@@ -142,10 +149,13 @@ export async function discoverGcp(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
 
   const clusters = arr(await runJson(d, "gcloud", ["container", "clusters", "list", ...p]).catch((e) => { throw sourceFail(e, cliReason(e, "gcloud")); }));
   const cl = pick(clusters, env.IMPORT_GCP_GKE_CLUSTER, (x) => String(x.name), "GKE 클러스터", notes);
-  if (!cl) throw incomplete(env.IMPORT_GCP_GKE_CLUSTER ? `GKE 클러스터 ${env.IMPORT_GCP_GKE_CLUSTER} 없음` : `프로젝트 ${project} 에 GKE 클러스터 없음`);
-  const name = String(cl.name), loc = String(cl.location ?? cl.zone ?? "");
+  // VMIMPORT: v2 는 GCE VM 도 읽는다 — 명시(IMPORT_VM=1·IMPORT_GCP_VM_LABEL)했거나 GKE 가 없을 때만. 못 읽어도 계속(notes)
+  const wantVm = opts.ir === "v2" && (env.IMPORT_VM === "1" || !!env.IMPORT_GCP_VM_LABEL?.trim() || !cl);
+  const vm = wantVm ? await readGce(d, project, env).catch((e) => ({ items: [] as Obj[], counts: {}, notes: [`GCE 못 읽음: ${cliReason(e, "gcloud")}`] })) : null;
+  if (!cl && !(vm?.items ?? []).length) throw incomplete(env.IMPORT_GCP_GKE_CLUSTER ? `GKE 클러스터 ${env.IMPORT_GCP_GKE_CLUSTER} 없음` : `프로젝트 ${project} 에 GKE 클러스터 없음${vm ? ` (VM 도 없음${vm.notes.length ? `: ${vm.notes[0]}` : ""})` : ""}`);
+  const name = String(cl?.name ?? ""), loc = String(cl?.location ?? cl?.zone ?? "");
 
-  const app = await withTempKube(async (kc) => {
+  const app = !cl ? { items: [] as Obj[], namespace: "", counts: {} as Record<string, number>, notes: [] as string[] } : await withTempKube(async (kc) => {
     try { await runText(d, "gcloud", ["container", "clusters", "get-credentials", name, "--location", loc, "--project", project], { KUBECONFIG: kc }); }
     catch (e) { throw sourceFail(e, `GKE ${name} kubeconfig 만들기 실패 (${cliReason(e, "gcloud")})`); }
     try { return await readApp(d, ["--kubeconfig", kc], opts); }
@@ -173,11 +183,12 @@ export async function discoverGcp(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
         ...(opts.ir === "v2" ? { availabilityType: get(db, "settings", "availabilityType") ?? null, ipConfiguration: get(db, "settings", "ipConfiguration") ?? null } : {}) },
       region: db.region ?? null,
       ...(opts.ir === "v2" ? { ipAddresses: arr(db.ipAddresses).map((a) => ({ type: a.type ?? null, ipAddress: a.ipAddress ?? null })), selfLink: db.selfLink ?? null } : {}) }] : []),
-    { kind: "gke.cluster", name, location: loc, version: cl.currentMasterVersion ?? null },
+    ...(cl ? [{ kind: "gke.cluster", name, location: loc, version: cl.currentMasterVersion ?? null }] : []),
+    ...(vm?.items ?? []),
     ...nets, ...fwd, ...repos, ...secrets,
-    ...[...notes, ...app.notes].map(note),
+    ...[...notes, ...app.notes, ...(vm?.notes ?? [])].map(note),
   ];
-  return { provider: "gcp", items, coverage: coverage(items, app.counts) };
+  return { provider: "gcp", items, coverage: coverage(items, { ...app.counts, ...(vm?.counts ?? {}) }) };
 }
 
 // ── 온프레 (k3s·k3d + CNPG) ──────────────────────────────────────────

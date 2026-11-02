@@ -57,3 +57,6 @@ export { resolveSpecV2, specV2OrThrow, specV2ForPlan, v2PrecheckItems, flattenTf
 export { readEcs, ECS_OBSERVE_ACTIONS, type EcsRead } from "./import/readers/aws-ecs.js";
 export { ecsServiceMapper, secretRefOf, roleNameOf } from "./import/mappers/ecs-service.js";
 export { ECS_RAW_KIND, type RawEcsService, type RawEcsContainer } from "./import/raw-ecs.js";
+export { readEc2, EC2_OBSERVE_ACTIONS } from "./import/readers/aws-ec2.js";
+export { readGce, GCE_OBSERVE_PERMISSIONS } from "./import/readers/gcp-gce.js";
+export { VM_RAW_KIND, type RawVmGroup, type RawVmIngress } from "./import/raw-vm.js";

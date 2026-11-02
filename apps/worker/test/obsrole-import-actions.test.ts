@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { AWS_DATA_READ_ACTIONS, ECS_OBSERVE_ACTIONS, GCP_DATA_READ_PERMISSIONS } from "@svc/adapters";
+import { AWS_DATA_READ_ACTIONS, ECS_OBSERVE_ACTIONS, EC2_OBSERVE_ACTIONS, GCE_OBSERVE_PERMISSIONS, GCP_DATA_READ_PERMISSIONS } from "@svc/adapters";
 import { checkLeastPrivilege } from "@svc/security";
 import { IMPORT_GCP_OBSERVE_ACTIONS, IMPORT_OBSERVE_ACTIONS, importObserveActions } from "../src/jobs/import.js";
 
@@ -29,7 +29,7 @@ test("IMPORT_IR=v2(앞뒤 공백 허용) 이면 데이터 읽기 12개가 더해
   for (const v of ["v2", " v2 "]) {
     const a = withFlag(v, importObserveActions);
     // I9: ECS 출발 읽기(목록·설명만)도 더해진다
-    assert.deepEqual(a, [...IMPORT_OBSERVE_ACTIONS, ...AWS_DATA_READ_ACTIONS, ...ECS_OBSERVE_ACTIONS]);
+    assert.deepEqual(a, [...IMPORT_OBSERVE_ACTIONS, ...AWS_DATA_READ_ACTIONS, ...ECS_OBSERVE_ACTIONS, ...EC2_OBSERVE_ACTIONS]);
     assert.equal(new Set(a).size, a.length);
     assert.doesNotThrow(() => checkLeastPrivilege(req(a)));
   }
@@ -48,7 +48,7 @@ const shPerms = readFileSync(new URL("../../../infra/onboarding/gcp-connect.sh",
 
 test("IMPORT_AWS_IAM=1 + v2: 앱 신원 IAM 읽기(파드 신원 2 + IAM 5)가 더해지고, 깃발 하나만으로는 안 더해짐", () => {
   const base = withFlag("v2", importObserveActions, "0");   // 기본 + 데이터 + ECS
-  assert.deepEqual(base, [...IMPORT_OBSERVE_ACTIONS, ...AWS_DATA_READ_ACTIONS, ...ECS_OBSERVE_ACTIONS]);
+  assert.deepEqual(base, [...IMPORT_OBSERVE_ACTIONS, ...AWS_DATA_READ_ACTIONS, ...ECS_OBSERVE_ACTIONS, ...EC2_OBSERVE_ACTIONS]);
   const a = withFlag("v2", importObserveActions, "1");
   assert.deepEqual(a.slice(0, base.length), base);
   assert.deepEqual(a.slice(base.length).sort(), ["eks:DescribePodIdentityAssociation", "eks:ListPodIdentityAssociations", "iam:GetPolicy", "iam:GetPolicyVersion",
@@ -71,6 +71,6 @@ test("GCP 가져오기는 AWS 동작 이름이 아니라 GCP 권한 이름으로
   assert.deepEqual(off, IMPORT_GCP_OBSERVE_ACTIONS);
   assert.ok(off.every((p) => /^[a-z]+\.[A-Za-z]+\.[A-Za-z]+$/.test(p)), off.join());
   assert.ok(!off.some((p) => p.includes(":")));
-  assert.deepEqual(withFlag("v2", () => importObserveActions("gcp")), [...IMPORT_GCP_OBSERVE_ACTIONS, ...GCP_DATA_READ_PERMISSIONS]);
+  assert.deepEqual(withFlag("v2", () => importObserveActions("gcp")), [...IMPORT_GCP_OBSERVE_ACTIONS, ...GCP_DATA_READ_PERMISSIONS, ...GCE_OBSERVE_PERMISSIONS]);
   assert.doesNotThrow(() => checkLeastPrivilege({ ...req([]), provider: "gcp" as const, actions: withFlag("v2", () => importObserveActions("gcp")) }));
 });

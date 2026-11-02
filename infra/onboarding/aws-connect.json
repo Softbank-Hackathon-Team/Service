@@ -339,6 +339,8 @@
                     "ec2:DescribeSecurityGroups",
                     "ec2:DescribeRegions",
                     "ec2:DescribeAddresses",
+                    "ec2:DescribeInstances",
+                    "ec2:DescribeInstanceTypes",
                     "elasticloadbalancing:DescribeLoadBalancers",
                     "ecs:ListClusters",
                     "ecs:ListServices",
