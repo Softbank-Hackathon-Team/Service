@@ -49,6 +49,7 @@ const COMMON: Record<string, Rule> = {
   SHUTDOWN_HARD_TIMEOUT_MS: { check: num({ min: 0 }) },
   FAILURE_ANALYSIS: { check: oneOf("0", "1") },               // PA5a: 실패 원인 분석 넣기. 기본 꺼짐(A5b 머지 전)
   RETRY_BUDGET: { check: num({ int: true, min: 0 }) },        // PA5a DRAFT(ai): 이전당 사람 재시도 한도 (기본 3, 0 = 끔)
+  TENANT_MAX_ACTIVE: { check: num({ int: true, min: 0 }) },   // DRAFT(ai): 회사당 동시 진행 이전 상한. 0 = 꺼짐(기본)
 };
 export const CONFIG_RULES = {
   api: {

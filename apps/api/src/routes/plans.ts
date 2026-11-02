@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { randomUUID } from "node:crypto";
 import { ApprovalInput, PlanDoc, QUEUES, StartInput, type MigrationStatus } from "@svc/contracts";
-import { withTenant, advance, checkRetryBudget, writeAudit, DomainError, planExpired, type Tx } from "@svc/core";
+import { withTenant, advance, checkRetryBudget, writeAudit, DomainError, planExpired, assertTenantCapacity, type Tx } from "@svc/core";
 import { Accepted, ApprovalResult, errors } from "./responses.js";
 import { IdParam, RetryBody, auditOk, found, nextJob } from "./kit.js";
 import { loadLatestApproval, loadLatestPlan, loadPlanById, saveApproval } from "./plan-store.js";
@@ -124,6 +124,8 @@ export async function planRoutes(app: FastifyInstance) {
       // PA4: 비용 드는 apply 직전 두 번째 게이트. 화면이 본 지문 = 승인한 지문이어야 시작
       if (planAcksOn() && m.status === "approved" && req.body?.planHash !== appr?.planHash)
         throw new DomainError(409, "PLAN_HASH_MISMATCH", req.body?.planHash ? "plan changed since approval" : "planHash required");
+      // A8: 회사당 동시 진행 상한 (TENANT_MAX_ACTIVE, 기본 꺼짐). 넘으면 409 TENANT_BUSY
+      if (m.status === "approved") await assertTenantCapacity(tx, req.tenantId, id);
       await advance(tx, { id, tenantId: req.tenantId }, "approved", "provisioning", {
         // 설계 5.3: apply는 도착 환경 단위로 하나씩 (singletonKey = 도착 환경)
         next: nextJob(req, QUEUES.apply, id, { extra: { planId: appr?.planId, planHash: appr?.planHash },

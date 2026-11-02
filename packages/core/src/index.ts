@@ -21,3 +21,4 @@ export * from "./connection.js";
 export * from "./notify.js";
 export * from "./agent-runs.js";
 export * from "./retry-budget.js";
+export * from "./tenant-limit.js";
