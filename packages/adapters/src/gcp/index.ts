@@ -29,6 +29,13 @@ export const PERMS: PermTable = {
     read: ["storage.buckets.get"], write: ["storage.buckets.create", "storage.buckets.update"], remove: ["storage.buckets.delete"] },
   google_pubsub_topic: {
     read: ["pubsub.topics.get"], write: ["pubsub.topics.create", "pubsub.topics.update"], remove: ["pubsub.topics.delete"] },
+  // A8fix: 옮긴 권한(grants) 바인딩 = 그 자원 하나의 IAM 정책 (프로젝트 setIamPolicy 아님). 조건부 역할(IAM_CONDITION)로 app- 자원에만
+  google_storage_bucket_iam_member: {
+    read: ["storage.buckets.getIamPolicy"], write: ["storage.buckets.setIamPolicy"], remove: ["storage.buckets.setIamPolicy"] },
+  google_pubsub_topic_iam_member: {
+    read: ["pubsub.topics.getIamPolicy"], write: ["pubsub.topics.setIamPolicy"], remove: ["pubsub.topics.setIamPolicy"] },
+  google_pubsub_subscription_iam_member: {
+    read: ["pubsub.subscriptions.getIamPolicy"], write: ["pubsub.subscriptions.setIamPolicy"], remove: ["pubsub.subscriptions.setIamPolicy"] },
   google_pubsub_subscription: {
     read: ["pubsub.subscriptions.get"], write: ["pubsub.subscriptions.create", "pubsub.subscriptions.update", "pubsub.topics.attachSubscription"], remove: ["pubsub.subscriptions.delete"] },
   google_sql_user: {
@@ -74,7 +81,11 @@ export const operateActions = (spec: AppSpec, purpose: Purpose) => actionsFor(PE
 // 플랫폼이 만드는 SA·시크릿은 모두 app- 로 시작한다 (infra/modules/gcp/app). 【추정】 조건 문법은 실계정에서 확인 필요
 export const IAM_CONDITION =
   `(resource.type == "iam.googleapis.com/ServiceAccount" && resource.name.extract("serviceAccounts/{name}@").startsWith("app-")) || ` +
-  `(resource.type == "secretmanager.googleapis.com/Secret" && resource.name.extract("/secrets/{name}").startsWith("app-"))`;
+  `(resource.type == "secretmanager.googleapis.com/Secret" && resource.name.extract("/secrets/{name}").startsWith("app-")) || ` +
+  // A8fix DRAFT(ai): 옮긴 권한 바인딩용 — app- 접두어 버킷·토픽·구독에만 setIamPolicy. TODO(human): 첫 실측에서 조건 식 확인
+  `(resource.type == "storage.googleapis.com/Bucket" && resource.name.startsWith("projects/_/buckets/app-")) || ` +
+  `(resource.type == "pubsub.googleapis.com/Topic" && resource.name.extract("/topics/{name}").startsWith("app-")) || ` +
+  `(resource.type == "pubsub.googleapis.com/Subscription" && resource.name.extract("/subscriptions/{name}").startsWith("app-"))`;
 
 export function names(spec: AppSpec, t: Target) {
   const seed = [nameSeed(t), spec.app.name];

@@ -27,11 +27,13 @@ includedPermissions:
 - pubsub.subscriptions.create
 - pubsub.subscriptions.delete
 - pubsub.subscriptions.get
+- pubsub.subscriptions.getIamPolicy
 - pubsub.subscriptions.update
 - pubsub.topics.attachSubscription
 - pubsub.topics.create
 - pubsub.topics.delete
 - pubsub.topics.get
+- pubsub.topics.getIamPolicy
 - pubsub.topics.update
 - redis.instances.create
 - redis.instances.delete
@@ -48,4 +50,5 @@ includedPermissions:
 - storage.buckets.create
 - storage.buckets.delete
 - storage.buckets.get
+- storage.buckets.getIamPolicy
 - storage.buckets.update

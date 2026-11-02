@@ -7,7 +7,7 @@ import {
   asV1Name, assertRenderable, connectIdentities, identitiesOf, identityName, instancesOf, K8S_RENDER_CAPS, kindJson,
   postgresOf, postureOfComponent, refV2, secretNamesOf, workloadsOf,
 } from "./shared.js";
-import { assertGrants, grantsJsonFor } from "./grants.js";
+import { assertGrants, gcpGrantTypes, grantsJsonFor } from "./grants.js";
 import { buildWorkloadValues, cloudPostgresValues } from "./cloud.js";
 import { cacheVars, cachesOf, dataTypesOf, objectStoreVars, objectStoresOf, queueVars, queuesOf } from "./data.js";
 
@@ -39,6 +39,7 @@ export function resourceTypesV2(spec: AppSpecV2): string[] {
   if (postgresOf(spec).length) ["google_sql_database_instance", "google_sql_database", "google_sql_user", "random_password",
     "google_secret_manager_secret", "google_secret_manager_secret_version", "google_secret_manager_secret_iam_member"].forEach((x) => t.add(x));
   dataTypesOf("gcp", spec).forEach((x) => t.add(x));
+  gcpGrantTypes(spec).forEach((x) => t.add(x));   // A8fix: 옮긴 권한 바인딩 → 실행 역할에 그 자원의 setIamPolicy
   return [...t].sort();
 }
 
