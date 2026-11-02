@@ -1,6 +1,6 @@
 import { AppSpec, ImportResultV2, MigrationJob, checkV2, type FieldMeta, type ObserveSession, type Provider, type RawInventory } from "@svc/contracts";
 import { withTenant, advance } from "@svc/core";
-import { AdapterError, adapterFor, discoverForImport, envFor, inventoryForAudit, isAdapterError, normalizeV2, projectV1 } from "@svc/adapters";
+import { AWS_DATA_READ_ACTIONS, AdapterError, adapterFor, discoverForImport, envFor, inventoryForAudit, isAdapterError, normalizeV2, projectV1 } from "@svc/adapters";
 import { StsCliError, TempRoleDenied } from "@svc/security";
 import { tempRoles } from "../platform.js";
 import { failedAttempts, recordAttemptFailure } from "./_step.js";
@@ -90,13 +90,17 @@ export const IMPORT_OBSERVE_TTL_SEC = 3600;
 // DRAFT(ai): discover 가 실제로 부르는 읽기 동작 (discover/index.ts aws 쪽 명령과 같은 목록)
 export const IMPORT_OBSERVE_ACTIONS = ["sts:GetCallerIdentity", "eks:ListClusters", "eks:DescribeCluster", "rds:DescribeDBInstances",
   "ec2:DescribeVpcs", "elasticloadbalancing:DescribeLoadBalancers", "ecr:DescribeRepositories", "secretsmanager:ListSecrets"];
+// OBSROLE: 깃발 IMPORT_IR=v2 일 때만 데이터 자원 읽기(S3·SQS·ElastiCache) 동작을 더해 요청한다 (깃발 off = 지금 목록 그대로).
+//   목록 원본은 adapters discover/data.ts (고객 관찰 역할 템플릿도 같은 목록을 가져감)
+export const importObserveActions = (): string[] =>
+  process.env.IMPORT_IR?.trim() === "v2" ? [...IMPORT_OBSERVE_ACTIONS, ...AWS_DATA_READ_ACTIONS] : IMPORT_OBSERVE_ACTIONS;
 async function borrowObserve(job: MigrationJob, row: { source_env_id: string; provider: string; account_id: string | null; region: string | null }) {
   const roles = tempRoles();
   let ref: string;
   let session: ObserveSession;
   try {
     const cred = await roles.issue({ tenantId: job.tenantId, envId: row.source_env_id, provider: row.provider as Provider,
-      purpose: "observe", migrationId: job.migrationId, actions: IMPORT_OBSERVE_ACTIONS, ttlSec: IMPORT_OBSERVE_TTL_SEC }, { step: "import" });
+      purpose: "observe", migrationId: job.migrationId, actions: importObserveActions(), ttlSec: IMPORT_OBSERVE_TTL_SEC }, { step: "import" });
     ref = cred.credentialRef;
     session = { accountId: row.account_id ?? "dev", expiresAt: cred.expiresAt, ...(row.region ? { region: row.region } : {}) };
     if (!cred.stub) {

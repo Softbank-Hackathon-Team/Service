@@ -10,7 +10,7 @@
 ## 무엇을 만드나
 | 자원 | 내용 |
 |---|---|
-| `svc-observe` | AWS 관리형 `ViewOnlyAccess` 하나 + 인라인 `observe-extra`(GuardDuty 읽기 5, EKS 읽기 3, IAM 근거 읽기 6). 쓰기 0, 데이터 읽기 0 |
+| `svc-observe` | AWS 관리형 `ViewOnlyAccess` 하나 + 인라인 `observe-extra`(GuardDuty 읽기 5, EKS 읽기 3, IAM 근거 읽기 6, 데이터 자원 메타데이터 읽기 12: S3 7·CloudWatch 1·SQS 2·ElastiCache 2). 쓰기 0, 객체·메시지 내용 읽기 0 |
 | `svc-operate` | 이전에 필요한 서비스만 허용하는 관리형 정책(`svc-operate-policy`). 앱 역할(`app-*`)은 권한 경계가 붙어야만 만들 수 있음 |
 | `platform-app-boundary` | 앱 역할이 가질 수 있는 최대 권한. 실행 정책이 요구한다. `svc-operate` 자신에게는 붙이지 않는다 |
 | EKS 접근 항목 2개 | 관찰 = `AmazonEKSViewPolicy`(클러스터 범위), 실행 = 그룹 `platform:operate`만 |
@@ -41,7 +41,7 @@
 - [ ] 역할 `svc-observe`의 신뢰 주체가 **역할 ARN 하나**(우리가 알려 준 값)이고 `:root`·사용자가 아니다
 - [ ] 두 역할의 신뢰 정책에 `sts:ExternalId` 조건이 있다
 - [ ] `svc-observe`에 붙은 관리형 정책이 `ViewOnlyAccess` 하나뿐이다 (`ReadOnlyAccess`는 S3·DynamoDB 데이터까지 읽어서 쓰지 않는다)
-- [ ] `svc-observe`가 비밀값(`secretsmanager:GetSecretValue`, `ssm:GetParameter*`)·객체(`s3:GetObject`)·`kms:Decrypt`를 읽지 못한다
+- [ ] `svc-observe`가 비밀값(`secretsmanager:GetSecretValue`, `ssm:GetParameter*`)·객체(`s3:GetObject`)·큐 메시지(`sqs:ReceiveMessage`)·버킷 정책 본문(`s3:GetBucketPolicy`)·`kms:Decrypt`를 읽지 못한다
 - [ ] `svc-operate`에는 `app-*` 역할 외의 IAM 쓰기가 없다
 - 참고: `ViewOnlyAccess`의 `Describe*`/`List*`는 설정값(예: ConfigMap 값)을 읽을 수 있다. 플랫폼은 읽되 저장하지 않는다
 
@@ -61,7 +61,7 @@
 | 만드는 것 | 내용 |
 |---|---|
 | SA 2개 | `svc-observe`(관찰), `svc-operate`(실행) |
-| 커스텀 역할 3개 | `platform_observe`(읽기만), `platform_operate`, `platform_operate_iam`(`infra/permissions`의 자동 생성 파일) |
+| 커스텀 역할 3개 | `platform_observe`(읽기만. 데이터 자원 읽기 5개 포함: `storage.buckets.list`·`storage.buckets.getIamPolicy`·`pubsub.topics.list`·`pubsub.subscriptions.list`·`redis.instances.list`, 객체 내용·메시지 권한 없음), `platform_operate`, `platform_operate_iam`(`infra/permissions`의 자동 생성 파일) |
 | 프로젝트 연결 | 실행 SA의 IAM 정책 변경 권한은 `app-` 접두어 SA·시크릿에만 닿는 조건부 바인딩 |
 | 빌리기 허용 | 플랫폼의 **이 회사 전용 SA**(`t-<16진 28자>@...`) 하나에게, 두 고객 SA 각각에 `roles/iam.serviceAccountTokenCreator` (프로젝트 전체가 아니라 SA 단위) |
 

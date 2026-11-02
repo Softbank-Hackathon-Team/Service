@@ -84,6 +84,8 @@ ensure_sa svc-operate
 # 2) 커스텀 역할 3개. 실행용 2개는 infra/permissions의 자동 생성 파일, 관찰용은 읽기 권한만
 # DRAFT(ai): 관찰 역할 권한 = 읽기 3개(검증용) + 가져오기에 필요한 조회. 값은 첫 실측으로 보정
 OBSERVE_PERMS="container.clusters.list,container.clusters.get,sql.instances.list,sql.instances.get,iam.serviceAccounts.get,iam.serviceAccounts.list,resourcemanager.projects.get"
+# OBSROLE: 데이터 자원(Cloud Storage·Pub/Sub·Memorystore) 메타데이터 읽기. 객체 내용(storage.objects.*)·메시지는 못 읽음. 목록 원본 = packages/adapters/src/discover/data.ts
+OBSERVE_PERMS="${OBSERVE_PERMS},storage.buckets.list,storage.buckets.getIamPolicy,pubsub.topics.list,pubsub.subscriptions.list,redis.instances.list"
 ensure_role platform_observe --title="platform-observe" --description="platform read-only inventory" --permissions="${OBSERVE_PERMS}" --stage=GA
 ensure_role platform_operate --file="${ROLE_DIR}/gcp-operate-custom-role.yaml"
 ensure_role platform_operate_iam --file="${ROLE_DIR}/gcp-operate-iam-custom-role.yaml"
