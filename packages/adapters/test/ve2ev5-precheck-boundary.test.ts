@@ -82,13 +82,6 @@ test("기대값 고정: 도착별로 어떤 조합이 막히나 (바뀌면 설�
     "이미지 digest 없음"];   // A8: IAM grants·posture.permissions 는 이제 네 도착 모두 그림(온프레는 STUB+warn)
   for (const p of ["aws", "gcp", "onprem"] as const) assert.deepEqual(blocked(p).sort(), [...common, ...(EXTRA[p] ?? [])].sort(), p);
   assert.deepEqual(blocked("azure_mock").sort(), [...common, "신원 2개", ...(EXTRA.azure_mock ?? [])].sort());
-  // TA12: aws·gcp·azure_mock 은 캐시·객체 저장소·큐를 그림 (온프레만 TODO(human)으로 아직 막힘)
-  const data = ["캐시", "객체 저장소", "큐"];
-  const common = ["postgres 2개", "postgres 14", "postgres 버전 모름", "postgres 크기 모름", "관리형 컨테이너 실행",
-    "이미지 digest 없음", "IAM grants(I4)", "posture.permissions(I4)"];
-  for (const p of ["aws", "gcp"] as const) assert.deepEqual(blocked(p).sort(), [...common].sort(), p);
-  assert.deepEqual(blocked("onprem").sort(), [...common, ...data].sort(), "onprem");
-  assert.deepEqual(blocked("azure_mock").sort(), [...common, "신원 2개"].sort());
 });
 
 test("block 메시지는 PrecheckItem 모양 + 고칠 방법(fix) 이 있고, 번호가 1부터 이어진다", () => {

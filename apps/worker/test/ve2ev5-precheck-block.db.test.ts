@@ -30,6 +30,8 @@ const twoIds = (): AppSpecV2 => { const s = ok(), a = svc(s);
 const withMemcached = (): AppSpecV2 => { const s = withCache(); (s.components.find((c) => c.kind === "cache")!.props as { engine: string }).engine = "memcached"; return s; };
 const withCache = (): AppSpecV2 => { const s = ok();
   s.components.push({ id: "shop-cache", kind: "cache", props: { engine: "redis", memoryMiB: 512, tls: true, auth: true } }); return s; };
+// VTA12fix: AWS 는 캐시 AUTH 를 아직 못 옮겨 auth=true 면 사람 확인(block). auth=false(사람이 AUTH 없이 가기로 함)면 그림
+const withCacheNoAuth = (): AppSpecV2 => { const s = withCache(); (s.components.find((c) => c.kind === "cache")!.props as { auth: boolean }).auth = false; return s; };
 
 before(async () => {
   if (skip) return;
@@ -76,7 +78,7 @@ const settle = () => new Promise((r) => setTimeout(r, 150));
 test("도착 4개 × 못 그리는 조합: block 이면 spec_review(failed 아님), 그릴 수 있으면 planning", { skip }, async () => {
   const cases: Array<[Prov, () => AppSpecV2, string]> = [
     ["azure_mock", twoIds, "spec_review"], ["azure_mock", withMemcached, "spec_review"], ["azure_mock", withCache, "planning"], ["azure_mock", ok, "planning"],
-    ["aws", withMemcached, "spec_review"], ["aws", withCache, "planning"], ["aws", twoIds, "planning"],
+    ["aws", withMemcached, "spec_review"], ["aws", withCache, "spec_review"], ["aws", withCacheNoAuth, "planning"], ["aws", twoIds, "planning"],
     ["gcp", withMemcached, "spec_review"], ["gcp", withCache, "planning"], ["gcp", twoIds, "planning"],
     ["onprem", withCache, "spec_review"], ["onprem", twoIds, "planning"],
   ];

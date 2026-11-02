@@ -1,9 +1,8 @@
 // OBSROLE: 가져오기가 관찰 역할을 빌릴 때 요청하는 동작 목록 — 깃발 off 는 지금 그대로, v2 는 데이터 읽기가 더해지고 최소 권한 검사를 통과한다
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AWS_DATA_READ_ACTIONS, ECS_OBSERVE_ACTIONS } from "@svc/adapters";
 import { readFileSync } from "node:fs";
-import { AWS_DATA_READ_ACTIONS, GCP_DATA_READ_PERMISSIONS } from "@svc/adapters";
+import { AWS_DATA_READ_ACTIONS, ECS_OBSERVE_ACTIONS, GCP_DATA_READ_PERMISSIONS } from "@svc/adapters";
 import { checkLeastPrivilege } from "@svc/security";
 import { IMPORT_GCP_OBSERVE_ACTIONS, IMPORT_OBSERVE_ACTIONS, importObserveActions } from "../src/jobs/import.js";
 
@@ -48,7 +47,7 @@ const shPerms = readFileSync(new URL("../../../infra/onboarding/gcp-connect.sh",
   .filter((l) => l.startsWith("OBSERVE_PERMS=")).join(",");
 
 test("IMPORT_AWS_IAM=1 + v2: 앱 신원 IAM 읽기(파드 신원 2 + IAM 5)가 더해지고, 깃발 하나만으로는 안 더해짐", () => {
-  const base = [...IMPORT_OBSERVE_ACTIONS, ...AWS_DATA_READ_ACTIONS];
+  const base = [...IMPORT_OBSERVE_ACTIONS, ...AWS_DATA_READ_ACTIONS, ...ECS_OBSERVE_ACTIONS];   // I9: v2 는 ECS 읽기(11개)도 요청
   const a = withFlag("v2", importObserveActions, "1");
   assert.deepEqual(a.slice(0, base.length), base);
   assert.deepEqual(a.slice(base.length).sort(), ["eks:DescribePodIdentityAssociation", "eks:ListPodIdentityAssociations", "iam:GetPolicy", "iam:GetPolicyVersion",

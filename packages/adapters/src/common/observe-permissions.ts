@@ -21,6 +21,18 @@ export const AWS_COMMAND_ACTIONS: Record<string, string | null> = {
   "ec2 describe-regions": "ec2:DescribeRegions",
   "ec2 describe-addresses": "ec2:DescribeAddresses",
   "elbv2 describe-load-balancers": "elasticloadbalancing:DescribeLoadBalancers",
+  // I9 ECS 출발 읽기(import/readers/aws-ecs.ts). ECS_OBSERVE_ACTIONS 와 같은 11개 (시험이 대조)
+  "ecs list-clusters": "ecs:ListClusters",
+  "ecs list-services": "ecs:ListServices",
+  "ecs describe-services": "ecs:DescribeServices",
+  "ecs describe-task-definition": "ecs:DescribeTaskDefinition",   // 작업 정의 본문. 환경변수 secrets 는 ARN 만 (값 아님)
+  "ecs list-tasks": "ecs:ListTasks",
+  "ecs describe-tasks": "ecs:DescribeTasks",
+  "elbv2 describe-target-groups": "elasticloadbalancing:DescribeTargetGroups",
+  "elbv2 describe-listeners": "elasticloadbalancing:DescribeListeners",
+  "elbv2 describe-rules": "elasticloadbalancing:DescribeRules",
+  "application-autoscaling describe-scalable-targets": "application-autoscaling:DescribeScalableTargets",
+  "application-autoscaling describe-scaling-policies": "application-autoscaling:DescribeScalingPolicies",
   "ecr describe-repositories": "ecr:DescribeRepositories",
   "secretsmanager list-secrets": "secretsmanager:ListSecrets",   // 이름·메타데이터만. 값(GetSecretValue)은 금지
   "iam get-role": "iam:GetRole",

@@ -19,7 +19,7 @@ function withData(mut?: (s: Raw) => void): AppSpecV2 {
     { id: "shop-cache", kind: "cache", props: { engine: "redis", version: "7.1", memoryMiB: 1024, tls: true, auth: true, ha: true } },
     { id: "shop-assets", kind: "objectStore", props: { versioning: true, public: false, sizeGb: 5, lifecycle: [{ prefix: "tmp/", expireDays: 7 }, { prefix: "log/", expireDays: 30 }] } },
     { id: "orders", kind: "queue", props: { model: "queue", ordered: true, retentionSec: 86400, ackTimeoutSec: 30, deadLetter: { to: "orders-dlq", maxReceive: 5 } } },
-    { id: "orders-dlq", kind: "queue", props: { model: "queue" } });
+    { id: "orders-dlq", kind: "queue", props: { model: "queue", ordered: true } });   // VTA12: FIFO 큐의 DLQ 는 FIFO (SQS 규칙)
   for (const to of ["shop-cache", "shop-assets", "orders"]) s.links.push({ from: svc, to, intent: "connect" });
   mut?.(s);
   return AppSpecV2.parse(s);

@@ -1,7 +1,6 @@
 import { AppSpec, ImportResultV2, MigrationJob, checkV2, type FieldMeta, type ObserveSession, type Provider, type RawInventory } from "@svc/contracts";
-import { withTenant, advance } from "@svc/core";
-import { AWS_DATA_READ_ACTIONS, AdapterError, adapterFor, discoverForImport, ECS_OBSERVE_ACTIONS, envFor, inventoryForAudit, isAdapterError, normalizeV2, projectV1 } from "@svc/adapters";
-import { AWS_DATA_READ_ACTIONS, GCP_DATA_READ_PERMISSIONS, actionsOfCommands, AdapterError, adapterFor, discoverForImport, envFor, inventoryForAudit, isAdapterError, normalizeV2, projectV1 } from "@svc/adapters";
+import { withTenant, advance, scrubString } from "@svc/core";
+import { AWS_DATA_READ_ACTIONS, GCP_DATA_READ_PERMISSIONS, actionsOfCommands, AdapterError, adapterFor, discoverForImport, ECS_OBSERVE_ACTIONS, envFor, inventoryForAudit, isAdapterError, normalizeV2, projectV1 } from "@svc/adapters";
 import { StsCliError, TempRoleDenied } from "@svc/security";
 import { tempRoles } from "../platform.js";
 import { failedAttempts, recordAttemptFailure } from "./_step.js";
@@ -94,8 +93,6 @@ export const IMPORT_OBSERVE_ACTIONS = ["sts:GetCallerIdentity", "eks:ListCluster
 // OBSROLE: 깃발 IMPORT_IR=v2 일 때만 데이터 자원 읽기(S3·SQS·ElastiCache) 동작을 더해 요청한다 (깃발 off = 지금 목록 그대로).
 //   목록 원본은 adapters discover/data.ts (고객 관찰 역할 템플릿도 같은 목록을 가져감)
 //   I9: v2 는 ECS·ALB 규칙·Auto Scaling 읽기(adapters import/readers/aws-ecs.ts)도 더한다
-export const importObserveActions = (): string[] =>
-  process.env.IMPORT_IR?.trim() === "v2" ? [...IMPORT_OBSERVE_ACTIONS, ...AWS_DATA_READ_ACTIONS, ...ECS_OBSERVE_ACTIONS] : IMPORT_OBSERVE_ACTIONS;
 // OBSROLE/OBSROLE2: 장부에 남기는 "이 가져오기가 부르는 읽기 동작" 목록. 표 원본 = adapters common/observe-permissions.ts (고객 관찰 역할 템플릿·연결 스크립트도 같은 표)
 //   AWS: 기본 = 지금 목록. IMPORT_IR=v2 이면 데이터 자원(S3·SQS·ElastiCache) 읽기 12개, IMPORT_IR=v2 + IMPORT_AWS_IAM=1 이면 앱 신원 IAM 읽기(파드 신원 2 + IAM 5)까지
 //   GCP: 예전에는 AWS 동작 이름을 그대로 요청했다(장부가 틀림). GCP 권한 이름으로 요청한다 — discover gcp 가 부르는 명령 + v2 데이터 자원 읽기
@@ -108,7 +105,7 @@ export const importObserveActions = (provider = "aws"): string[] => {
   if (provider === "gcp")
     return v2 ? [...IMPORT_GCP_OBSERVE_ACTIONS, ...GCP_DATA_READ_PERMISSIONS] : IMPORT_GCP_OBSERVE_ACTIONS;
   if (!v2) return IMPORT_OBSERVE_ACTIONS;
-  return [...IMPORT_OBSERVE_ACTIONS, ...AWS_DATA_READ_ACTIONS, ...(process.env.IMPORT_AWS_IAM === "1" ? actionsOfCommands("aws", IMPORT_AWS_IAM_KEYS) : [])];
+  return [...IMPORT_OBSERVE_ACTIONS, ...AWS_DATA_READ_ACTIONS, ...ECS_OBSERVE_ACTIONS, ...(process.env.IMPORT_AWS_IAM === "1" ? actionsOfCommands("aws", IMPORT_AWS_IAM_KEYS) : [])];
 };
 async function borrowObserve(job: MigrationJob, row: { source_env_id: string; provider: string; account_id: string | null; region: string | null }) {
   const roles = tempRoles();
@@ -133,7 +130,7 @@ async function borrowObserve(job: MigrationJob, row: { source_env_id: string; pr
   }
   return {
     session,
-    release: () => roles.revoke(ref, job.tenantId, "import_done").then(() => undefined, (e) => console.error("import revoke", (e as Error).message)),
+    release: () => roles.revoke(ref, job.tenantId, "import_done").then(() => undefined, (e) => console.error("import revoke", scrubString((e as Error).message))),
   };
 }
 

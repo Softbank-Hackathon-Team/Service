@@ -15,8 +15,9 @@ let imp: typeof import("../src/jobs/import.js");
 let owner: pg.Client;
 const T = randomUUID();
 const bin = mkdtempSync(join(tmpdir(), "vl5-bin-"));
+const myTmp = mkdtempSync(join(tmpdir(), "vl5-tmp-"));
 const log = join(bin, "calls.log"), mode = join(bin, "mode");
-const saved = { PATH: process.env.PATH, MOCK_SEED: process.env.MOCK_SEED, AWS_PROFILE: process.env.AWS_PROFILE, EKS: process.env.IMPORT_AWS_EKS_CLUSTER };
+const saved = { TMPDIR: process.env.TMPDIR, PATH: process.env.PATH, MOCK_SEED: process.env.MOCK_SEED, AWS_PROFILE: process.env.AWS_PROFILE, EKS: process.env.IMPORT_AWS_EKS_CLUSTER };
 const setMode = (m: string) => writeFileSync(mode, m);
 const calls = () => (existsSync(log) ? readFileSync(log, "utf8").trim().split("\n").filter(Boolean) : []);
 const resetLog = () => writeFileSync(log, "");
@@ -49,6 +50,7 @@ echo "forbidden" >&2; exit 1
   chmodSync(join(bin, "aws"), 0o755); chmodSync(join(bin, "kubectl"), 0o755);
   setMode("ok");
   process.env.PATH = `${bin}:${saved.PATH}`;
+  process.env.TMPDIR = myTmp;   // os.tmpdir() 는 부를 때마다 TMPDIR 를 읽는다
   process.env.REAL_STS = "1";
   process.env.AWS_PROFILE = "worker-own-profile";
   delete process.env.MOCK_SEED;
@@ -59,11 +61,12 @@ echo "forbidden" >&2; exit 1
 });
 after(async () => {
   if (skip) return;
+  if (saved.TMPDIR !== undefined) process.env.TMPDIR = saved.TMPDIR; else delete process.env.TMPDIR;
   process.env.PATH = saved.PATH; delete process.env.REAL_STS;
   if (saved.MOCK_SEED !== undefined) process.env.MOCK_SEED = saved.MOCK_SEED;
   if (saved.AWS_PROFILE !== undefined) process.env.AWS_PROFILE = saved.AWS_PROFILE; else delete process.env.AWS_PROFILE;
   if (saved.EKS !== undefined) process.env.IMPORT_AWS_EKS_CLUSTER = saved.EKS; else delete process.env.IMPORT_AWS_EKS_CLUSTER;
-  await core.pool.end(); await owner.end(); rmSync(bin, { recursive: true, force: true });
+  await core.pool.end(); await owner.end(); rmSync(bin, { recursive: true, force: true }); rmSync(myTmp, { recursive: true, force: true });
 });
 
 async function seed(status: string, extId: string | null = "auto") {
@@ -77,7 +80,9 @@ async function seed(status: string, extId: string | null = "auto") {
 const job = (id: string, tenantId = T) => ({ tenantId, requestId: `r-vl5-${id.slice(0, 8)}`, migrationId: id });
 const row = async (id: string) => (await owner.query("SELECT status, failure_code FROM migrations WHERE id=$1", [id])).rows[0];
 const creds = async (id: string) => (await owner.query("SELECT status, stub, revoke_reason FROM temp_credentials WHERE migration_id=$1", [id])).rows;
-const kubeDirs = () => readdirSync(tmpdir()).filter((n) => n.startsWith("svc-import-"));
+// FLAKY 고침: 임시 폴더 검사는 이 파일 전용 TMPDIR 안에서만 본다. 예전엔 시스템 tmp 전체에서 svc-import- 를 세서,
+//   test:db 가 동시에 도는 다른 파일(import-observe, 가져오기를 부르는 시험)의 진행 중 폴더가 잡혀 가끔 실패했다
+const kubeDirs = () => readdirSync(myTmp).filter((n) => n.startsWith("svc-import-"));
 
 test("빌린 자격은 aws·kubectl 자식 모두에 들어가고(AWS_PROFILE 없음), 끝나면 반납(import_done), 비밀은 장부·감사 어디에도 없다", { skip }, async () => {
   setMode("ok"); resetLog();

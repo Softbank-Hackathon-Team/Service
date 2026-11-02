@@ -32,7 +32,12 @@ export function contextFromJob(queue: string, jobId: string | undefined, data: u
 // LOGLEAK DRAFT(ai): 로그에 비밀값이 안 남게 한다. 대안: pino redact 경로만(깊이 1단·문자열 속은 못 가림) → worker 로그는 pino 가 아니라 못 씀
 //   (1) 비밀 이름의 칸은 깊이 상관없이 값을 가림  (2) 문자열 속 DB 접속 주소 비밀번호·Bearer·토큰 모양(JWT·svc_pat_·et_·세션 쿠키·sk-ant-·AKIA)을 가림
 //   칸 이름은 정확히 맞는 것만 (input_tokens 같은 숫자 칸은 건드리지 않는다)
-const SECRET_KEY = /^(password|passwd|pwd|secret|token|access_?token|refresh_?token|id_?token|session_?token|enroll_?token|api_?key|auth(orization)?|cookie|set-cookie|x-agent-signature|x-agent-key-id|client_?secret|secret_?access_?key|private_?key|credentials?|database_?url|owner_?database_?url|connection_?string|dsn|signature)$|(_|-)(password|secret|api_?key|access_?token|private_?key)$/i;
+// VLOGLEAK: 칸 이름을 소문자로 바꾸고 _ - 를 뺀 뒤 판단한다 → AWS_SECRET_ACCESS_KEY, PGPASSWORD, newPassword, awsSessionToken, bearerToken 도 잡힌다
+//   끝이 비밀 낱말이면 비밀(…password/…secret/…token/…apikey/…accesskey/…secretkey/…privatekey/…signature), 이름 전체가 같을 때만 비밀인 낱말은 따로(auth, cookie …)
+//   input_tokens·max_tokens·token_count·primary_key·external_id 는 끝이 달라 그대로 남는다
+const SECRET_SUFFIX = /(password|passwd|pwd|secret|token|apikey|accesskey|secretkey|privatekey|signature|credential|credentials)$/;
+const SECRET_EXACT = new Set(["auth", "authorization", "cookie", "setcookie", "xagentkeyid", "databaseurl", "ownerdatabaseurl", "connectionstring", "dsn", "connectionurl"]);
+const SECRET_KEY = { test: (k: string): boolean => { const n = k.toLowerCase().replace(/[_-]/g, ""); return SECRET_EXACT.has(n) || SECRET_SUFFIX.test(n); } };
 export const REDACTED = "[redacted]";
 const TOKEN_SHAPES: Array<[RegExp, string]> = [
   [/\b([a-z][a-z0-9+.-]*:\/\/[^\s:\/@"']*):([^\s@\/"']+)@/gi, `$1:${REDACTED}@`],       // scheme://user:pass@host
@@ -52,7 +57,12 @@ export function scrubString(s: string): string {
 }
 export function scrubValue(v: unknown, depth = 0, seen = new WeakSet<object>()): unknown {
   if (typeof v === "string") return scrubString(v);
+  if (typeof v === "bigint") return v.toString();          // JSON.stringify 가 BigInt 에서 던지지 않게
   if (v == null || typeof v !== "object") return v;
+  if (ArrayBuffer.isView(v) || v instanceof ArrayBuffer) return `[binary ${(v as { byteLength: number }).byteLength} bytes]`;   // 바이트를 숫자 목록으로 찍지 않는다
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v.toISOString();
+  if (v instanceof Map) return scrubValue(Object.fromEntries([...v].map(([k, x]) => [String(k), x])), depth, seen);
+  if (v instanceof Set) return scrubValue([...v], depth, seen);
   if (depth > 8) return "[too deep]";
   if (seen.has(v)) return "[circular]";
   seen.add(v);

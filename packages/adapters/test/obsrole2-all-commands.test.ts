@@ -9,7 +9,7 @@ import { AWS_COMMAND_ACTIONS, GCP_COMMAND_PERMISSIONS, actionsOfCommands } from 
 const root = new URL("../../../", import.meta.url);
 const read = (p: string) => readFileSync(new URL(p, root), "utf8");
 // 부르는 쪽 소스 (주석은 빼고 센다)
-const SOURCES = ["packages/adapters/src/discover/index.ts", "packages/adapters/src/discover/aws-iam.ts", "packages/adapters/src/discover/data.ts",
+const SOURCES = ["packages/adapters/src/discover/index.ts", "packages/adapters/src/discover/aws-iam.ts", "packages/adapters/src/discover/data.ts", "packages/adapters/src/import/readers/aws-ecs.ts",
   "packages/adapters/src/verify/aws.ts", "packages/adapters/src/verify/gcp.ts", "packages/adapters/src/precheck/cloud-precheck.ts", "packages/adapters/src/common/cli.ts",
   "packages/security/src/live/aws.ts", "packages/security/src/live/gcp.ts", "packages/security/src/live/exec.ts"];
 const code = (p: string) => read(p).split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
@@ -89,4 +89,12 @@ test("거부: 표 전체에 쓰기·비밀값·내용 읽기 권한이 하나도
   assert.ok(all.length >= 50, String(all.length));
   for (const a of all) assert.ok(!FORBIDDEN.some((r) => r.test(a)), `금지 권한 ${a}`);
   assert.throws(() => actionsOfCommands("aws", ["s3api put-object"]), /표에 없는/);
+});
+
+test("INTFIX: ECS 읽기 동작 11개가 권한 표에 모두 있고 쓰기 동사는 없다", async () => {
+  const { ECS_OBSERVE_ACTIONS } = await import("../src/index.js");
+  const inTable = new Set(Object.values(AWS_COMMAND_ACTIONS).filter((v): v is string => typeof v === "string"));
+  assert.equal(ECS_OBSERVE_ACTIONS.length, 11);
+  assert.deepEqual(ECS_OBSERVE_ACTIONS.filter((a) => !inTable.has(a)), []);
+  assert.deepEqual(ECS_OBSERVE_ACTIONS.filter((a) => /:(Create|Delete|Update|Put|Run|Start|Stop|Register|Deregister|Tag|Untag)/.test(a)), []);
 });
