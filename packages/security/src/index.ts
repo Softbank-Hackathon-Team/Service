@@ -15,3 +15,4 @@ export * from "./step-roles.js";
 export * from "./evidence.js";
 export * from "./renew.js";
 export * from "./regression.js";
+export * from "./sts-cli.js";      // L4 AWS CLI STS

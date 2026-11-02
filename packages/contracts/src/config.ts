@@ -74,6 +74,7 @@ export const CONFIG_RULES = {
     TRAFFIC_TICK_MS: { check: num({ min: 0 }) },
     TRAFFIC_OBSERVE_SEC: { check: num({ min: 0 }) },
     TEMP_ROLE_SWEEP_MS: { check: num({ min: 1 }) },
+    REAL_STS: { check: oneOf("0", "1") },   // L4: 1 = 진짜 AWS STS(CLI), external_id 있는 환경만. 운영 스위치 (시험 전용 아님)
   },
   "agent-worker": {
     ...COMMON,

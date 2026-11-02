@@ -15,6 +15,9 @@ export interface Issued { material: SecretMaterial; expiresAt: Date; ttlSec: num
 export interface RevokeContext { roleRef: string; issuedAt: Date; now: Date; material: SecretMaterial | null; hard: boolean }
 export interface ProviderIssuer {
   readonly mock: boolean;
+  // L4: 환경마다 진짜/가짜가 갈리는 발급기(perEnvAwsIssuer)만 둔다. broker 가 resolveEnv 뒤에 불러 ExternalId 관문·장부 stub 칸에 쓴다.
+  //   없으면 mock 값 그대로
+  mockFor?(binding: { externalId?: string }): boolean;
   issue(ctx: IssueContext): Promise<Issued>;
   // 회수. hard=false 면 보관함에서 지우기만 (만료까지 최대 1시간 남는다). hard=true 는 제공자에서 실제로 무효화 시도
   revoke(ctx: RevokeContext): Promise<{ hardRevoked: boolean; detail: Record<string, unknown> }>;
@@ -80,6 +83,26 @@ export function awsStsIssuer(o: { sts: StsApi; mock?: boolean }): ProviderIssuer
     },
     // 고객 역할을 건드리지 않는다. 보관함 삭제 + 만료 대기 (위 설명)
     async revoke() { return { hardRevoked: false, detail: { method: "drop_and_expire", maxRemainingSec: AWS_STS_MIN_TTL } }; },
+  };
+}
+
+// L4: REAL_STS=1 일 때 AWS 발급기를 환경별로 고른다. external_id 가 있는 환경 = 진짜, 없는 환경(시드) = mock.
+// DRAFT(ai): 시드 환경엔 external_id 가 없어 진짜 발급기면 broker 가 ROLE_NO_EXTERNAL_ID 로 거부한다 → precheck·plan·apply 가 깨진다.
+//   그래서 그 환경만 지금처럼 mock 으로 둔다. 진짜 발급은 ExternalId 가 있을 때만 일어나므로 혼동된 대리인 방어(T-ROLE-2)는 그대로
+export function perEnvAwsIssuer(real: ProviderIssuer, fallback: ProviderIssuer): ProviderIssuer {
+  const pick = (externalId?: string) => (externalId ? real : fallback);
+  return {
+    mock: false,
+    mockFor: (b) => pick(b.externalId).mock,
+    async issue(ctx) {
+      const out = await pick(ctx.externalId).issue(ctx);
+      return { ...out, detail: { ...out.detail, realSts: !pick(ctx.externalId).mock } };
+    },
+    // 회수 맥락엔 ExternalId 가 없다. 둘 다 "보관함 삭제 + 만료 대기"라 aws 쪽은 같은 결과 → material 이 mock 키 모양이면 mock 으로
+    async revoke(ctx) {
+      const isMock = ctx.material?.kind === "aws" && ctx.material.accessKeyId.startsWith("ASIAMOCK");
+      return (isMock ? fallback : real).revoke(ctx);
+    },
   };
 }
 

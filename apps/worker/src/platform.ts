@@ -1,5 +1,5 @@
 import { prometheusMetrics, stubMetrics, switcherFromEnv, type MetricsSource, type TrafficSwitcher } from "@svc/traffic";
-import { createTempRoleBroker, loadPermissionSet, mockIssuer, type PermissionSet, type TempRoleBroker } from "@svc/security";
+import { awsCliSts, awsStsIssuer, createTempRoleBroker, loadPermissionSet, mockIssuer, perEnvAwsIssuer, type PermissionSet, type ProviderIssuer, type TempRoleBroker } from "@svc/security";
 import { fileURLToPath } from "node:url";
 import { pgLedger } from "./temp-cred-ledger.js";
 import { withTenant, writeAudit } from "@svc/core";
@@ -56,12 +56,20 @@ async function resolveEnv(tenantId: string, envId: string, purpose: "observe" | 
   return { roleRef, ...(e?.external_id ? { externalId: e.external_id } : {}) };
 }
 
+// L4: 진짜 AWS 발급기 스위치. REAL_STS=1 일 때만 aws sts assume-role (CLI). 빈 값·0 = 지금처럼 전부 mock
+// MOCK_CREDS 는 읽는 코드가 없어 기준으로 쓰지 않는다. 시험 전용이 아니라 운영 스위치라 TEST_ONLY_SWITCHES 에 넣지 않는다
+export const realStsEnabled = (env: NodeJS.ProcessEnv = process.env) => env.REAL_STS?.trim() === "1";
+// REAL_STS=1 이어도 external_id 없는 환경(시드)은 mock (issuers.ts perEnvAwsIssuer DRAFT(ai))
+export function awsIssuer(env: NodeJS.ProcessEnv = process.env): ProviderIssuer {
+  return realStsEnabled(env) ? perEnvAwsIssuer(awsStsIssuer({ sts: awsCliSts() }), mockIssuer("aws")) : mockIssuer("aws");
+}
+
 export function tempRoles(): TempRoleBroker {
-  // STUB: 발급기가 전부 mock. 진짜 STS·GCP 발급기는 SDK·WIF 연결 뒤 (CHANGES.md)
+  // STUB: GCP·온프레 발급기는 mock. AWS 는 REAL_STS=1 + external_id 있는 환경만 진짜 (L4). GCP 는 WIF 연결 뒤
   // TODO(human): environments 표에 고객 역할 ARN·ExternalId 칸이 생기면 resolveEnv 를 DB 읽기로 바꾼다 (T-ROLE-2)
   const permissions = permissionSet();
   broker ??= createTempRoleBroker({
-    issuers: { aws: mockIssuer("aws"), gcp: mockIssuer("gcp"), onprem: mockIssuer("onprem"), azure_mock: mockIssuer("azure_mock") },
+    issuers: { aws: awsIssuer(), gcp: mockIssuer("gcp"), onprem: mockIssuer("onprem"), azure_mock: mockIssuer("azure_mock") },
     ...(permissions ? { permissions } : {}),
     ledger: pgLedger(),   // 회수 증거는 DB 장부로 센다 (워커 여러 대, T-ROLE-8)
     resolveEnv,
