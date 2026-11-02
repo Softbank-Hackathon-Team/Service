@@ -128,17 +128,17 @@ if [ -z "$src" ]; then fail repl-source ".env 에 REPL_SOURCE_URL 없음 (B3 단
 # demo-day 는 .env 값을 글자 그대로 읽는다(sed). ${X} 꼴이 남아 있으면 비밀번호 자리에 그 글자가 들어가 복제 접속이 실패한다 (11/2 맥: compose 가 SRC_PW 경고)
 elif printf '%s' "$src" | grep -q '\$'; then
   v=$(printf '%s' "$src" | grep -o '\${\{0,1\}[A-Za-z_][A-Za-z0-9_]*' | tr -d '${' | sort -u | tr '\n' ' ')
-  miss=""; for x in $v; do eval "[ -n \"\${$x:-}\" ]" || miss="$miss $x"; done
-  if [ -z "$miss" ]; then warn repl-source "REPL_SOURCE_URL 이 변수(${v% })를 씀. 지금 셸엔 있지만 demo-day 는 글자 그대로 읽으니 .env 에 실제 값으로 적기"
-  else fail repl-source "REPL_SOURCE_URL 안에 풀리지 않는 변수:$miss (.env 에 실제 값으로 적는다. 값은 채팅에 붙이지 않는다)"; fi
+
+  fail repl-source "REPL_SOURCE_URL 안에 \${${v% }} 참조 → 그 자리에 실제 비밀번호를 URL 인코딩해 바로 적는다 (demo-day 는 글자 그대로 읽음. 값은 채팅 금지)"
 else ok repl-source "REPL_SOURCE_URL 있음 (변수 없음)"; fi
 (exec 3<>"/dev/tcp/127.0.0.1/$LPORT") 2>/dev/null && ok source-db "맥 $LPORT 열림 (터널 뒤 출발 DB)" || fail source-db "맥 $LPORT 닫힘: k3d 출발 클러스터(CNPG)가 안 떠 있음"
 # .env 값 안의 ${X} 참조: compose 는 .env 와 셸에서만 푼다. 없으면 빈 글자가 된다(11/2 맥 SRC_PW 경고). 이름만 찍고 값은 안 찍는다
 if [ -f .env ]; then
   refs=$(grep -v '^[[:space:]]*#' .env | sed -n 's/^[A-Za-z_][A-Za-z0-9_]*=//p' | grep -o '\${\{0,1\}[A-Za-z_][A-Za-z0-9_]*' | tr -d '${' | sort -u)
-  bad=""; for x in $refs; do grep -q "^${x}=." .env || eval "[ -n \"\${$x:-}\" ]" || bad="$bad $x"; done
-  if [ -n "$bad" ]; then fail env-refs ".env 값이 참조하는데 정의 안 된 변수:$bad → .env 에 '이름=값' 줄을 더한다(Jeong 손, 값은 채팅 금지)"
-  else ok env-refs ".env 안 \${…} 참조 ${refs:+전부 정의됨}${refs:-없음}"; fi
+  # 다른 줄에 정의돼 있어도 안 된다: compose 만 풀고 demo-day·워커(node --env-file)는 글자 그대로 읽는다 → 참조가 있으면 전부 FAIL
+  bad=""; for x in $refs; do bad="$bad $x"; done
+  if [ -n "$bad" ]; then fail env-refs ".env 값 안에 풀리지 않는 참조:$bad → 그 자리에 실제 값을 바로 적는다(URL 이면 URL 인코딩). demo-day(sed)·node --env-file 은 \${…} 를 풀지 않는다. Jeong 손, 값은 채팅 금지"
+  else ok env-refs ".env 안 \${…} 참조 없음"; fi
 fi
 [ "$(curl -s -m 5 -o /dev/null -w '%{http_code}' http://localhost:8080/ 2>/dev/null)" = 200 ] && ok web-8080 "발표 화면 200" || fail web-8080 "8080 응답 없음 (docker compose -f docker-compose.prod.yml up -d --wait). up 마지막 preflight 단계가 FAIL 이 됨"
 curl -s -m 5 -o /dev/null https://checkip.amazonaws.com && ok checkip "공인 IP 조회 됨 (중계기 SSH 허용)" || fail checkip "checkip.amazonaws.com 안 됨"
