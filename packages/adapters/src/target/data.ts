@@ -15,8 +15,9 @@ export const cachesOf = (s: AppSpecV2): Cache[] => byId(s.components.filter((c):
 export const objectStoresOf = (s: AppSpecV2): ObjectStore[] => byId(s.components.filter((c): c is ObjectStore => c.kind === "objectStore"));
 export const queuesOf = (s: AppSpecV2): Queue[] => byId(s.components.filter((c): c is Queue => c.kind === "queue"));
 
+// TA12b DRAFT(ai): 이름 접두어 "app-" — 실행 역할 정책이 "app-*" 이름의 자원에만 쓰기 권한을 주려면 이름이 접두어로 시작해야 함 (IAM 역할·SA 와 같은 규칙)
 const nm = (spec: AppSpecV2, id: string, t: Target, max: number) =>
-  boundedName({ app: id, seed: [nameSeed(t), spec.app.name, id, t.migrationId ?? t.envId], max });
+  boundedName({ prefix: "app-", app: id, seed: [nameSeed(t), spec.app.name, id, t.migrationId ?? t.envId], max });
 
 // DRAFT(ai): 이름 길이 — 캐시 40(ElastiCache 복제 그룹·Memorystore 인스턴스 한도), 버킷 63, 큐·토픽 60(SQS .fifo 접미어 여유)
 export function cacheVars(spec: AppSpecV2, t: Target) {

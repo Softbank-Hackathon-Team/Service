@@ -87,6 +87,19 @@ export function stubTfOutputsV2(spec: AppSpecV2): TfOutputs {
     Object.assign(out, { [`link.${p.id}.host`]: host, [`link.${p.id}.port`]: "5432", [`link.${p.id}.user`]: "app",
       [`link.${p.id}.url`]: `postgresql://app@${host}:5432/${spec.app.name.replace(/-/g, "_")}` });
   }
+  // TA12b STUB: 데이터 자원 link 출력 (LINK_OUTPUTS 표 그대로: cache host·port·url / objectStore name·url / queue url·name). 값은 id 에서 결정적
+  for (const c of spec.components) {
+    if (c.kind === "cache") {
+      const host = `stub-${c.id}.cache.target.internal`;
+      Object.assign(out, { [`link.${c.id}.host`]: host, [`link.${c.id}.port`]: "6379", [`link.${c.id}.url`]: `${c.props.tls === false ? "redis" : "rediss"}://${host}:6379` });
+    } else if (c.kind === "objectStore") {
+      const name = `stub-${spec.app.name}-${c.id}`;
+      Object.assign(out, { [`link.${c.id}.name`]: name, [`link.${c.id}.url`]: `https://${name}.objects.target.internal` });
+    } else if (c.kind === "queue") {
+      const name = `stub-${c.id}`;
+      Object.assign(out, { [`link.${c.id}.name`]: name, [`link.${c.id}.url`]: `https://queue.target.internal/${name}` });
+    }
+  }
   for (const i of identitiesOf(spec)) {
     out[`identity.${i.id}.gsa_email`] = `stub-${i.id}@stub-project.iam.gserviceaccount.com`;
     out[`identity.${i.id}.role_arn`] = `arn:aws:iam::000000000000:role/stub-${i.id}`;

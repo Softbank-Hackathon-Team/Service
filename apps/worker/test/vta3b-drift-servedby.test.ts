@@ -120,10 +120,10 @@ test("v1/v2 섞인 판: 사람 편집(spec_v2 없음) 뒤 다시 가져와 spec_
 });
 
 // ── VTA3 설계 어긋남: 지금 동작만 고정 (고치면 이 시험을 바꿀 것) ──
-test("고정(VTA3 어긋남 1): 흉내 출력은 postgres·identity 만 (cache link 출력 없음), memcached 는 capability 에서 먼저 막힘", () => {
+test("고정(VTA3 어긋남 1): 흉내 출력은 postgres·identity·데이터 자원(TA12b: cache link 출력 있음), memcached 는 capability 에서 먼저 막힘", () => {
   const withCache = AppSpecV2.parse({ ...v2, components: [...v2.components,
     ComponentV2.parse({ id: "sessions", kind: "cache", props: { engine: "memcached", memoryMiB: 512, tls: true, auth: true } })] });   // TA12: redis·valkey 는 이제 aws·gcp 가 그림 → 모듈이 못 만드는 memcached 로 거부 경로 유지
-  assert.equal(Object.keys(stubTfOutputsV2(withCache)).some((k) => k.startsWith("link.sessions.")), false);
+  assert.equal(Object.keys(stubTfOutputsV2(withCache)).some((k) => k.startsWith("link.sessions.")), true);   // TA12b: 데이터 자원 가짜 출력 추가
   assert.throws(() => planV2(withCache), (e: unknown) => e instanceof AdapterError && e.code === "UNSUPPORTED_V2");
 });
 
