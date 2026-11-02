@@ -69,7 +69,8 @@ async function importOnce(job: MigrationJob) {
   const flag = process.env.IMPORT_IR?.trim();
   if (flag && flag !== "v1" && flag !== "v2") throw new AdapterError("IMPORT_IR_INVALID", `IMPORT_IR 은 v1 | v2 중 하나 (받은 값: ${flag.slice(0, 20)})`);
   const ir = flag === "v2" ? "v2" : "v1";
-    const v2 = ir === "v2" ? await importV2(row.provider as Provider, sess.session) : null;
+    // PREVIDS: 같은 이전의 직전 spec_v2 판의 ids(벤더 키 → id)를 넘겨, 다시 가져와도 같은 자원 = 같은 id. 첫 가져오기는 빈 값
+    const v2 = ir === "v2" ? await importV2(row.provider as Provider, sess.session, await previousIds(job)) : null;
     let inv: RawInventory, spec: unknown, fieldMeta: FieldMeta;
     if (v2) ({ inv, spec, fieldMeta } = v2);
     else {
@@ -138,6 +139,15 @@ async function borrowObserve(job: MigrationJob, row: { source_env_id: string; pr
   };
 }
 
+// PREVIDS: 이 이전(migration)의 가장 새 spec_v2 판에서 ids 만 읽는다. 작업 내용은 믿지 않고 DB 에서(회사 벽 안에서) 읽는다.
+//   범위 = 같은 migration 한 개. 다른 이전·다른 회사의 판은 안 읽는다(RLS + migration_id 조건). 앞 판이 없거나 ids 모양이 틀리면 빈 값(= 새 id)
+async function previousIds(job: MigrationJob): Promise<Record<string, string>> {
+  const r = await withTenant(job.tenantId, (tx) => tx.query(
+    `SELECT spec_v2->'ids' AS ids FROM spec_versions WHERE migration_id=$1 AND spec_v2 IS NOT NULL ORDER BY version DESC LIMIT 1`, [job.migrationId]));
+  const parsed = ImportResultV2.shape.ids.safeParse(r.rows[0]?.ids);
+  return parsed.success ? parsed.data : {};
+}
+
 async function saveImport(job: MigrationJob, inv: RawInventory, spec: unknown, fieldMeta: FieldMeta, ir: string, v2: V2Import | null) {
   AppSpec.parse(spec); // T02 조건: 명세 Zod 통과
 
@@ -148,7 +158,7 @@ async function saveImport(job: MigrationJob, inv: RawInventory, spec: unknown, f
     // 깃발 off(또는 v2 에서 되돌아감) INSERT 는 지금과 글자 하나 안 바꾼다 (0023 적용 전 DB 에서도 동작)
     if (v2?.result) await tx.query(
       `INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta, spec_v2)
-       VALUES ($1,$2,1,$3,$4,$5)`, [job.tenantId, job.migrationId, spec, fieldMeta, v2.result]);
+       VALUES ($1,$2,(SELECT COALESCE(max(version),0)+1 FROM spec_versions WHERE migration_id=$2),$3,$4,$5)`, [job.tenantId, job.migrationId, spec, fieldMeta, v2.result]);
     else await tx.query(
       `INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta)
        VALUES ($1,$2,1,$3,$4)`, [job.tenantId, job.migrationId, spec, fieldMeta]);
@@ -165,7 +175,7 @@ async function saveImport(job: MigrationJob, inv: RawInventory, spec: unknown, f
 //   원본에 k8s 워크로드가 하나도 없으면(사실상 MOCK aws 의 ECS 원본) v1 경로로 되돌아간다: v1 discover 를 다시 부르고 spec_v2 는 NULL
 //   checkV2 errors(구조 오류)만 막는다. reviews(벤더 주소·사설 IP 남음)는 spec_v2.fieldMeta 검토 표시만
 type V2Import = { inv: RawInventory; spec: unknown; fieldMeta: FieldMeta; result: ImportResultV2 | null; note?: string };
-async function importV2(p: Provider, sess: ObserveSession): Promise<V2Import> {
+async function importV2(p: Provider, sess: ObserveSession, previous: Record<string, string> = {}): Promise<V2Import> {
   // I4: 깃발 IMPORT_AWS_IAM=1 이면 앱 신원의 IAM 정책도 읽어 grants·기준선을 채운다 (기본 꺼짐 = 지금 그대로)
   const inv = await discoverForImport(p, { ir: "v2", iam: process.env.IMPORT_AWS_IAM === "1" }, sess.cliEnv ? { env: envFor(sess.cliEnv) } : {});
   // I9: ECS 서비스도 v2 워크로드 (관리형 컨테이너 갈래). 워크로드가 하나도 없을 때만 v1 경로로 되돌아간다
@@ -176,7 +186,7 @@ async function importV2(p: Provider, sess: ObserveSession): Promise<V2Import> {
     const { spec, fieldMeta } = a.normalize(inv1);
     return { inv: inv1, spec, fieldMeta, result: null, note: "원본에 k8s·ECS 워크로드 없음 → v1 경로 (spec_v2 없음)" };
   }
-  const { result, projectionEnv } = normalizeV2(inv);
+  const { result, projectionEnv } = normalizeV2(inv, { previousIds: previous });
   const { errors, reviews } = checkV2(result.spec);
   if (errors.length) throw new AdapterError("SPEC_V2_INVALID", `공통 명세 v2 검증 실패: ${errors.slice(0, 5).join("; ")}${errors.length > 5 ? ` 외 ${errors.length - 5}개` : ""}`);
   // DRAFT(ai): reviews 는 막지 않고 fieldMeta 에 "check.reviews[i]" 키로 검토 표시 (화면이 needs_review 로 센다)
