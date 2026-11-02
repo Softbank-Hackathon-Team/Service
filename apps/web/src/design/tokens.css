@@ -1,0 +1,106 @@
+/*
+ * 색은 아래 Primitives의 17색만 쓴다.
+ * 성공, 주의, 위험 색은 HTML처럼 옅은 배경 위 글자 색으로만 쓰고 면을 칠하지 않는다.
+ * 예외는 경고 화면의 큰 카드 하나로, 위험 색을 칠한다.
+ * 컴포넌트에서는 primitive가 아니라 의미 토큰(color, space, radius)만 쓴다.
+ */
+:root {
+  /* Primitives */
+  --primitive-canvas: #f6f7f9;
+  --primitive-surface: #ffffff;
+  --primitive-subtle: #f0f2f5;
+  --primitive-line: #e3e7ed;
+  --primitive-strong: #ccd3dd;
+  --primitive-muted: #747e8c;
+  --primitive-secondary: #616b7a;
+  --primitive-ink: #202631;
+  --primitive-accent: #365fce;
+  --primitive-accent-hover: #294dab;
+  --primitive-accent-soft: #edf2ff;
+  --primitive-success: #287455;
+  --primitive-success-soft: #edf7f1;
+  --primitive-warning: #946512;
+  --primitive-warning-soft: #fbf5e8;
+  --primitive-danger: #b34646;
+  --primitive-danger-soft: #fcf0ef;
+
+  /* Background */
+  --color-bg-canvas: var(--primitive-canvas);
+  --color-bg-surface: var(--primitive-surface);
+  --color-bg-subtle: var(--primitive-subtle);
+  --color-bg-hover: var(--primitive-subtle);
+  --color-bg-selected: var(--primitive-line);
+  --color-bg-inverse: var(--primitive-ink);
+  --color-bg-alert: var(--primitive-danger);
+  --color-bg-accent: var(--primitive-accent-soft);
+  --color-bg-action-primary: var(--primitive-accent);
+  --color-bg-action-primary-hover: var(--primitive-accent-hover);
+  --color-bg-action-danger: var(--primitive-danger-soft);
+  --color-bg-action-danger-hover: var(--primitive-danger-soft);
+  --color-bg-action-disabled: var(--primitive-subtle);
+  --color-bg-tone-neutral: var(--primitive-subtle);
+  --color-bg-tone-success: var(--primitive-success-soft);
+  --color-bg-tone-warning: var(--primitive-warning-soft);
+  --color-bg-tone-danger: var(--primitive-danger-soft);
+  --color-bg-tone-info: var(--primitive-accent-soft);
+  --color-bg-tone-target: var(--primitive-accent-soft);
+  --color-bg-status-pass: var(--primitive-success-soft);
+  --color-bg-status-fail: var(--primitive-danger-soft);
+  --color-bg-status-unknown: var(--primitive-warning-soft);
+  --color-bg-status-na: var(--primitive-subtle);
+  --color-bg-status-attested: var(--primitive-accent-soft);
+
+  /* Foreground */
+  --color-fg-primary: var(--primitive-ink);
+  --color-fg-secondary: var(--primitive-secondary);
+  --color-fg-tertiary: var(--primitive-muted);
+  --color-fg-disabled: var(--primitive-muted);
+  --color-fg-on-action: var(--primitive-surface);
+  --color-fg-on-accent: var(--primitive-accent);
+  --color-fg-on-alert: var(--primitive-surface);
+  --color-fg-on-alert-muted: var(--primitive-danger-soft);
+  --color-fg-tone-success: var(--primitive-success);
+  --color-fg-tone-warning: var(--primitive-warning);
+  --color-fg-tone-danger: var(--primitive-danger);
+  --color-fg-tone-info: var(--primitive-accent);
+  --color-fg-tone-target: var(--primitive-accent);
+
+  /* Border */
+  --color-border-default: var(--primitive-line);
+  --color-border-strong: var(--primitive-strong);
+  --color-border-focus: var(--primitive-accent);
+
+  /* Data, signal */
+  --color-data-source: var(--primitive-muted);
+  --color-data-target: var(--primitive-accent);
+  --color-data-track: var(--primitive-subtle);
+  --color-signal-pass: var(--primitive-success);
+  --color-signal-fail: var(--primitive-danger);
+  --color-signal-warning: var(--primitive-warning);
+  --color-signal-info: var(--primitive-accent);
+  --color-signal-neutral: var(--primitive-strong);
+
+  /* Layout */
+  --space-2: 2px;
+  --space-4: 4px;
+  --space-8: 8px;
+  --space-12: 12px;
+  --space-16: 16px;
+  --space-20: 20px;
+  --space-24: 24px;
+  --space-32: 32px;
+  --space-40: 40px;
+  --space-48: 48px;
+  --radius-sm: 8px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-xl: 32px;
+  --radius-full: 999px;
+  --size-control-s: 36px;
+  --size-control-m: 44px;
+  --size-bar: 52px;
+
+  /* Type */
+  --font-sans: 'Pretendard JP Variable', -apple-system, BlinkMacSystemFont, system-ui, 'Apple SD Gothic Neo', 'Hiragino Sans', 'Noto Sans KR', 'Noto Sans JP', 'Malgun Gothic', 'Yu Gothic', sans-serif;
+  --font-mono: 'IBM Plex Mono', 'Pretendard JP Variable', ui-monospace, monospace;
+}

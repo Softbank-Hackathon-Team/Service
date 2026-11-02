@@ -1,0 +1,94 @@
+.envList {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+}
+.envRow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-12) var(--space-8);
+  border: 0;
+  border-top: 1px solid var(--color-border-default);
+  background: transparent;
+  color: var(--color-fg-primary);
+  text-align: left;
+  cursor: pointer;
+}
+.envRow:hover {
+  background: var(--color-bg-hover);
+}
+.envHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+}
+.envName {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  min-width: 0;
+}
+.badges {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.migrationList {
+  display: flex;
+  flex-direction: column;
+}
+.migrationRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  width: 100%;
+  padding: var(--space-8) var(--space-12);
+  border: 0;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-fg-primary);
+  text-align: left;
+  cursor: pointer;
+}
+.migrationRow:hover {
+  background: var(--color-bg-hover);
+}
+.empty {
+  padding: 0 var(--space-12) var(--space-8);
+}
+.migrationText {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.progress {
+  display: block;
+  height: 4px;
+  margin-top: var(--space-4);
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-selected);
+}
+.progress span {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--color-signal-info);
+  transition: width 700ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.listError {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-12);
+  padding: 0 var(--space-12) var(--space-8);
+}

@@ -1,0 +1,30 @@
+// 작업 Z35 (Z15 제안 3): 이전 상세 "가동 중 앱" 칸이 읽는 모양 (서버 apps/api/src/live-traffic.ts LiveTrafficView 와 같다)
+// TODO(통합): contracts 로 옮기면 여기 타입은 지운다
+export type LiveReason = "not_configured" | "unreachable" | "bad_shape" | "other_migration" | "no_counters";
+export interface LiveTrafficView {
+  migrationId: string;
+  available: boolean;
+  reason?: LiveReason;
+  source: "proxy";
+  fetchedAt: string;
+  total: number; ok: number; fail: number; c4xx: number;
+  p50Ms: number | null; p95Ms: number | null;
+  held: number; maxHoldMs: number;
+  mode: string | null; switchedAt: string | null; since: string | null;
+  byState: { state: string; n: number; fail: number; p95Ms: number | null }[];
+}
+// Z83: 트래픽 전환 실측 — GET /migrations/:id/traffic-shift (Z75 z75-38 TrafficShiftProgress, 23:01Z 확정).
+//   %, 정수 0~100. reached=true 목표 ±tolerancePct 안(성공색) / false "엣지에 퍼지는 중" / null 실측 없음. available=false 면 전환 기록 없음(목표만).
+//   워커가 최대 초당 1회 갱신 → 화면은 shifting 동안 1초마다 읽는다
+export const SHIFT_TOL_PCT = 10; // 서버 tolerancePct 가 없을 때만
+export interface TrafficShiftProgress {
+  migrationId: string;
+  available: boolean;
+  targetWeightPct: number | null;
+  observedWeightPct: number | null;
+  reached: boolean | null;
+  tolerancePct: number;
+  reobserve: number;
+  stepStartedAt: string | null;
+  observedAt: string | null;
+}

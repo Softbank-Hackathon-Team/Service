@@ -1,0 +1,27 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  width: 100%;
+}
+.labels {
+  display: flex;
+  justify-content: space-between;
+}
+.track {
+  display: flex;
+  gap: var(--space-2);
+  height: 14px;
+}
+.source,
+.target {
+  flex-basis: 0;
+  border-radius: 4px;
+  transition: flex-grow 700ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.source {
+  background: var(--color-data-source);
+}
+.target {
+  background: var(--color-data-target);
+}

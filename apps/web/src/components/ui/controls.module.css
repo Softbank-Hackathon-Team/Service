@@ -1,0 +1,200 @@
+.action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-16);
+  padding: var(--space-12) var(--space-32) var(--space-12) var(--space-12);
+  border: 0;
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 160ms ease;
+}
+.action:disabled {
+  background: var(--color-bg-action-disabled);
+  color: var(--color-fg-disabled);
+  cursor: not-allowed;
+}
+.disc {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-full);
+  transition: transform 160ms ease;
+}
+.action:not(:disabled):hover .disc {
+  transform: translateX(2px);
+}
+.action:disabled .disc {
+  background: var(--color-bg-surface);
+  color: var(--color-fg-disabled);
+}
+.tile {
+  background: var(--color-bg-action-primary);
+  color: var(--color-fg-on-action);
+}
+.tile:not(:disabled):hover {
+  background: var(--color-bg-action-primary-hover);
+}
+.tile .disc {
+  background: var(--color-bg-accent);
+  color: var(--color-fg-on-accent);
+}
+.danger {
+  background: var(--color-bg-action-danger);
+  color: var(--color-fg-tone-danger);
+}
+.danger:not(:disabled):hover {
+  background: var(--color-bg-action-danger-hover);
+}
+.danger .disc {
+  background: var(--color-bg-surface);
+  color: var(--color-fg-tone-danger);
+}
+
+.bar {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  height: var(--size-bar);
+  padding: 0 var(--space-24);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-surface);
+  white-space: nowrap;
+}
+.barButton {
+  cursor: pointer;
+  transition: background-color 160ms ease;
+}
+.barButton:hover {
+  background: var(--color-bg-selected);
+}
+.barDanger {
+  color: var(--color-fg-tone-danger);
+}
+
+.account {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-12);
+  height: var(--size-bar);
+  padding: 0 var(--space-24) 0 6px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-inverse);
+  color: var(--color-fg-on-action);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.nav {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--size-bar);
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-surface);
+}
+.navItem {
+  height: 40px;
+  padding: 0 var(--space-16);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-fg-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 160ms ease;
+}
+.navItem:hover {
+  background: var(--color-bg-selected);
+}
+.navCurrent,
+.navCurrent:hover {
+  background: var(--color-bg-accent);
+  color: var(--color-fg-on-accent);
+}
+.accountDisc {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-surface);
+  color: var(--color-fg-primary);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--space-4) var(--space-12);
+  border-radius: var(--radius-full);
+  white-space: nowrap;
+}
+.badge-neutral {
+  background: var(--color-bg-selected);
+  color: var(--color-fg-secondary);
+}
+.badge-warning {
+  background: var(--color-bg-tone-warning);
+  color: var(--color-fg-tone-warning);
+}
+.badge-success {
+  background: var(--color-bg-tone-success);
+  color: var(--color-fg-tone-success);
+}
+.badge-info {
+  background: var(--color-bg-tone-info);
+  color: var(--color-fg-tone-info);
+}
+.badge-danger {
+  background: var(--color-bg-tone-danger);
+  color: var(--color-fg-tone-danger);
+}
+
+.live {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  height: var(--size-bar);
+  padding: 0 var(--space-20);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-surface);
+  color: var(--color-fg-secondary);
+  white-space: nowrap;
+}
+.liveDot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-signal-pass);
+  animation: pulse 1.8s ease-in-out infinite;
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.option {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: var(--space-16) var(--space-24);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-subtle);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 160ms ease;
+}
+.option:hover {
+  background: var(--color-bg-selected);
+}
+.optionSelected,
+.optionSelected:hover {
+  background: var(--color-bg-accent);
+  color: var(--color-fg-on-accent);
+}

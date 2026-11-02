@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AuthError, createAuth, EARLY_REFRESH_SEC } from "../src/auth";
-import { createClient, HttpError } from "../src/http";
+import { AuthError, createAuth, EARLY_REFRESH_SEC } from "../src/lib/auth";
+import { createClient, HttpError } from "../legacy/src/http";
 
 // Z96: 로그인 상태(auth.ts)와 http.ts 의 Bearer·401 처리를 브라우저 없이 확인한다
 
@@ -75,7 +75,7 @@ test("로그인 실패 401 → 한국어 문구, 429 → 기다리라는 문구"
     "POST /api/auth/login": [{ status: 401, body: { code: "INVALID_CREDENTIALS" } }, { status: 429, body: { code: "TOO_MANY_ATTEMPTS" } }] });
   const a = createAuth({ base: "/api", fetch: s.f });
   await a.bootstrap();
-  await assert.rejects(a.login("x@y.z", "no"), (e: unknown) => e instanceof AuthError && e.code === "INVALID_CREDENTIALS" && /맞지 않아/.test(e.message));
+  await assert.rejects(a.login("x@y.z", "no"), (e: unknown) => e instanceof AuthError && e.code === "INVALID_CREDENTIALS" && /맞지 않습니다/.test(e.message));
   await assert.rejects(a.login("x@y.z", "no"), (e: unknown) => e instanceof AuthError && e.status === 429 && /잠시 뒤/.test(e.message));
   assert.equal(a.get().needLogin, true);
 });

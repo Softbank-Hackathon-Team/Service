@@ -1,0 +1,10 @@
+@import './fonts/pretendard-jp/pretendardvariable-jp-dynamic-subset.css';
+
+/* 코드와 해시 글꼴. 파일은 public/fonts 에 있다. */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/plex-mono-Regular.woff2') format('woff2');
+}

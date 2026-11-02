@@ -58,7 +58,7 @@ export function missingInSource(sel: ReturnType<typeof selectorsFromE2e>, srcFil
 test("선택자 계약: e2e 가 쓰는 testid·클래스·data 속성이 화면 소스에 모두 있다", () => {
   const t0 = performance.now();
   const sel = selectorsFromE2e(walk(join(WEB, "e2e"), /\.ts$/));
-  const missing = missingInSource(sel, walk(join(WEB, "src"), /\.(tsx?|css)$/));
+  const missing = missingInSource(sel, walk(join(WEB, "legacy/src"), /\.(tsx?|css)$/));
   const ms = performance.now() - t0;
   console.log(`[z81-12] testid ${sel.testIds.size} · class ${sel.classes.size} · data 속성 ${sel.dataAttrs.size} 확인, 없음 ${missing.length}, ${ms.toFixed(0)} ms`);
   assert.ok(sel.classes.size > 10, "e2e 에서 클래스를 거의 못 뽑음 → 뽑는 식이 깨졌다");

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { liveHeadline, REASON_TEXT, type LiveTrafficView } from "../src/liveTraffic";
+import { liveHeadline, REASON_TEXT, type LiveTrafficView } from "../legacy/src/liveTraffic";
 
 // 작업 Z35: 가동 중 앱 칸 맨 위 한 줄
 const base: LiveTrafficView = { migrationId: "x", available: true, source: "proxy", fetchedAt: "", total: 12345, ok: 12345, fail: 0, c4xx: 0,
