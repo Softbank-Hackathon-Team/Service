@@ -7,6 +7,7 @@ import { checkGuard, loadGuardFacts, type GuardFacts, type TransitionEvidence } 
 import { REPLANNABLE_FAILURES, canMove } from "./states.js";
 import { reserveEnvLocks, releaseEnvLocks, reclaimEnvLocks, type ReclaimedLock } from "./envlock.js";
 import { envNumber } from "@svc/contracts";
+import { notifyMigration } from "./notify.js";
 
 export interface AdvanceOpts {
   mode?: "strict" | "ifStill";
@@ -140,6 +141,5 @@ async function recordAndNotify(tx: Tx, m: { id: string; tenantId: string }, from
   for (const r of reclaimed)
     await writeAudit(tx, m.tenantId, { actor: o.audit.actor, action: "env_lock.reclaimed", target: r.envId, result: "ok",
       detail: { code: "LOCK_RECLAIMED", byMigrationId: m.id, ...r } });
-  await tx.query("SELECT pg_notify('migration_events', $1)",
-    [JSON.stringify({ t: m.tenantId, id: m.id, s: to })]);
+  await notifyMigration(tx, { t: m.tenantId, id: m.id, s: to });
 }

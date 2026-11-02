@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "baseVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "changes": {
+      "maxItems": 20,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "enum": [
+              "schemaVersion",
+              "app.name",
+              "service.image",
+              "service.port",
+              "service.healthPath",
+              "service.replicas",
+              "service.cpu",
+              "service.memory",
+              "service.env",
+              "service.secretRefs",
+              "database",
+              "ingress.hostname",
+              "ingress.entry"
+            ]
+          },
+          "value": {}
+        },
+        "required": [
+          "path",
+          "value"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "confirm": {
+      "maxItems": 20,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "schemaVersion",
+          "app.name",
+          "service.image",
+          "service.port",
+          "service.healthPath",
+          "service.replicas",
+          "service.cpu",
+          "service.memory",
+          "service.env",
+          "service.secretRefs",
+          "database",
+          "ingress.hostname",
+          "ingress.entry"
+        ]
+      }
+    },
+    "acceptDraft": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    }
+  },
+  "required": [
+    "baseVersion"
+  ],
+  "additionalProperties": false
+}

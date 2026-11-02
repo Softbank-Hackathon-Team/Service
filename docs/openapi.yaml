@@ -2719,6 +2719,55 @@ paths:
         "500":
           $ref: "#/components/responses/E500"
           description: "INTERNAL"
+    patch:
+      operationId: "patchMigrationsByIdSpec"
+      tags:
+        - "migrations"
+      summary: "/api/v1/migrations/{id}/spec"
+      description: "코드: apps/api/src/routes/spec.ts"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/SpecPatchInput"
+      security:
+        - bearerAuth: []
+        - devTenant: []
+      parameters:
+        - name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+            pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        - $ref: "#/components/parameters/DevTenant"
+      responses:
+        "200":
+          description: "OK"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/MigrationSpecView"
+        "400":
+          $ref: "#/components/responses/E400"
+          description: "BAD_REQUEST (Zod 검증 실패)"
+        "401":
+          $ref: "#/components/responses/E401"
+          description: "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+        "404":
+          $ref: "#/components/responses/E404"
+          description: "ApiError"
+        "409":
+          $ref: "#/components/responses/E409"
+          description: "ApiError"
+        "429":
+          $ref: "#/components/responses/E429"
+          description: "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+        "500":
+          $ref: "#/components/responses/E500"
+          description: "INTERNAL"
   "/api/v1/migrations/{id}/spec/reopen":
     post:
       operationId: "postMigrationsByIdSpecReopen"
@@ -5067,6 +5116,54 @@ components:
         - "target"
         - "items"
         - "recorded"
+      additionalProperties: false
+    SpecFieldPath:
+      type: "string"
+      enum:
+        - "schemaVersion"
+        - "app.name"
+        - "service.image"
+        - "service.port"
+        - "service.healthPath"
+        - "service.replicas"
+        - "service.cpu"
+        - "service.memory"
+        - "service.env"
+        - "service.secretRefs"
+        - "database"
+        - "ingress.hostname"
+        - "ingress.entry"
+    SpecPatchInput:
+      type: "object"
+      properties:
+        baseVersion:
+          type: "integer"
+          minimum: 1
+          maximum: 9007199254740991
+        changes:
+          maxItems: 20
+          type: "array"
+          items:
+            type: "object"
+            properties:
+              path:
+                $ref: "#/components/schemas/SpecFieldPath"
+              value: {}
+            required:
+              - "path"
+              - "value"
+            additionalProperties: false
+        confirm:
+          maxItems: 20
+          type: "array"
+          items:
+            $ref: "#/components/schemas/SpecFieldPath"
+        acceptDraft:
+          type: "integer"
+          minimum: 1
+          maximum: 9007199254740991
+      required:
+        - "baseVersion"
       additionalProperties: false
     StateDuration:
       type: "object"
