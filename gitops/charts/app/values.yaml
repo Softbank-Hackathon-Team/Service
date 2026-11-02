@@ -12,3 +12,5 @@ database: null
 ingress: { mode: cloudflared, className: "", hostname: demo.example.com, tunnelTokenSecret: cloudflared-token }
 labels: { managed-by: platform }
 traffic: null
+# A4: workloads 를 채우면(서비스·잡 여러 개) 옛 단일 값(image·replicas·port·probes·env)은 안 쓰고 workloads.yaml 이 그린다. 모양은 templates/workloads.yaml 머리 주석
+# workloads: []
