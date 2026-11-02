@@ -75,10 +75,13 @@ test("신뢰도 문턱값 0.7: spec_v2 미처리 0.6 칸 → 409, 처리된(need
 
 test("모양이 틀린 spec_v2(fieldMeta 가 배열·없음)는 세지 않는다 (500 안 남)", { skip }, async () => {
   delete process.env.SPEC_MIN_CONFIDENCE;
-  for (const bad of [{ fieldMeta: [1, 2] }, { spec: {} }, "x"]) {
+  for (const bad of [{ fieldMeta: [1, 2] }, { spec: {} }]) {
     const id = await setup([{ specV2: bad }]);
     await go(id); assert.equal(await status(id), "prechecking");
   }
+  // I8apifix2: 스칼라 spec_v2("x")는 0031 CHECK 로 DB 가 INSERT 를 거부 → 가드가 볼 일 자체가 없다
+  await assert.rejects(setup([{ specV2: "x" }]), (e: { code?: string; constraint?: string }) =>
+    e.code === "23514" && e.constraint === "spec_versions_spec_v2_object");
 });
 
 test("AI 초안 판(_draft)의 spec_v2 는 안 센다: 받아들인 최신 판만 본다", { skip }, async () => {

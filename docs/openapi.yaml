@@ -3935,6 +3935,49 @@ components:
         - "message"
         - "requestId"
       additionalProperties: false
+    AppSpecV2:
+      type: "object"
+      properties:
+        schemaVersion:
+          type: "string"
+          const: "2"
+        app:
+          type: "object"
+          properties:
+            name:
+              type: "string"
+              pattern: "^[a-z][a-z0-9-]{0,39}$"
+          required:
+            - "name"
+          additionalProperties: false
+        availability:
+          type: "string"
+          enum:
+            - "singleZone"
+            - "multiZone"
+        components:
+          minItems: 1
+          maxItems: 30
+          type: "array"
+          items:
+            $ref: "#/components/schemas/ComponentV2"
+        links:
+          maxItems: 100
+          type: "array"
+          items:
+            $ref: "#/components/schemas/LinkV2"
+        entry:
+          $ref: "#/components/schemas/EntriesV2"
+        posture:
+          $ref: "#/components/schemas/PostureV2"
+        security: {}
+      required:
+        - "schemaVersion"
+        - "app"
+        - "components"
+        - "links"
+        - "posture"
+      additionalProperties: false
     ApprovalInput:
       type: "object"
       properties:
@@ -4053,6 +4096,42 @@ components:
         - "cheapest"
         - "nodes"
       additionalProperties: false
+    BuildPlan:
+      type: "object"
+      properties:
+        repo:
+          type: "string"
+          minLength: 1
+        commit:
+          type: "string"
+          minLength: 1
+        path:
+          type: "string"
+        method:
+          type: "string"
+          enum:
+            - "dockerfile"
+            - "buildpacks"
+        builder:
+          type: "string"
+        startCommand:
+          type: "string"
+        port:
+          type: "integer"
+          minimum: 1
+          maximum: 65535
+        evidence:
+          maxItems: 50
+          type: "array"
+          items:
+            type: "string"
+      required:
+        - "repo"
+        - "commit"
+        - "path"
+        - "method"
+        - "evidence"
+      additionalProperties: false
     CancelResult:
       type: "object"
       properties:
@@ -4070,6 +4149,2529 @@ components:
         - "from"
         - "status"
       additionalProperties: false
+    ComponentV2:
+      oneOf:
+        - type: "object"
+          properties:
+            id:
+              type: "string"
+              pattern: "^[a-z][a-z0-9-]{0,39}$"
+            kind:
+              type: "string"
+              const: "service"
+            props:
+              type: "object"
+              properties:
+                runtime:
+                  type: "string"
+                  enum:
+                    - "k8s"
+                    - "managedContainer"
+                origin:
+                  $ref: "#/components/schemas/OriginV2"
+                namespace:
+                  type: "string"
+                image:
+                  $ref: "#/components/schemas/ImageV2"
+                command:
+                  maxItems: 50
+                  type: "array"
+                  items:
+                    type: "string"
+                args:
+                  maxItems: 100
+                  type: "array"
+                  items:
+                    type: "string"
+                resources:
+                  type: "object"
+                  properties:
+                    request:
+                      type: "object"
+                      properties:
+                        cpuMilli:
+                          anyOf:
+                            - type: "integer"
+                              minimum: 1
+                              maximum: 64000
+                            - type: "null"
+                        memMiB:
+                          anyOf:
+                            - type: "integer"
+                              minimum: 1
+                              maximum: 262144
+                            - type: "null"
+                      required:
+                        - "cpuMilli"
+                        - "memMiB"
+                      additionalProperties: false
+                    limit:
+                      type: "object"
+                      properties:
+                        cpuMilli:
+                          anyOf:
+                            - type: "integer"
+                              minimum: 1
+                              maximum: 64000
+                            - type: "null"
+                        memMiB:
+                          anyOf:
+                            - type: "integer"
+                              minimum: 1
+                              maximum: 262144
+                            - type: "null"
+                      required:
+                        - "cpuMilli"
+                        - "memMiB"
+                      additionalProperties: false
+                  additionalProperties: false
+                env:
+                  maxItems: 200
+                  type: "array"
+                  items:
+                    anyOf:
+                      - type: "object"
+                        properties:
+                          name:
+                            type: "string"
+                            pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                          value:
+                            type: "string"
+                        required:
+                          - "name"
+                          - "value"
+                        additionalProperties: false
+                      - type: "object"
+                        properties:
+                          name:
+                            type: "string"
+                            pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                          template:
+                            type: "string"
+                        required:
+                          - "name"
+                          - "template"
+                        additionalProperties: false
+                      - type: "object"
+                        properties:
+                          name:
+                            type: "string"
+                            pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                          fromResource:
+                            type: "string"
+                        required:
+                          - "name"
+                          - "fromResource"
+                        additionalProperties: false
+                      - type: "object"
+                        properties:
+                          name:
+                            type: "string"
+                            pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                          fromSecret:
+                            type: "object"
+                            properties:
+                              secret:
+                                type: "string"
+                              key:
+                                type: "string"
+                            required:
+                              - "secret"
+                              - "key"
+                            additionalProperties: false
+                        required:
+                          - "name"
+                          - "fromSecret"
+                        additionalProperties: false
+                      - type: "object"
+                        properties:
+                          name:
+                            type: "string"
+                            pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                          fromConfig:
+                            type: "object"
+                            properties:
+                              config:
+                                type: "string"
+                              key:
+                                type: "string"
+                            required:
+                              - "config"
+                              - "key"
+                            additionalProperties: false
+                        required:
+                          - "name"
+                          - "fromConfig"
+                        additionalProperties: false
+                      - type: "object"
+                        properties:
+                          name:
+                            type: "string"
+                            pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                          fromField:
+                            type: "string"
+                        required:
+                          - "name"
+                          - "fromField"
+                        additionalProperties: false
+                      - type: "object"
+                        properties:
+                          name:
+                            type: "string"
+                            pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                          fromLink:
+                            type: "object"
+                            properties:
+                              to:
+                                type: "string"
+                                pattern: "^[a-z][a-z0-9-]{0,39}$"
+                              output:
+                                $ref: "#/components/schemas/LinkOutputV2"
+                            required:
+                              - "to"
+                              - "output"
+                            additionalProperties: false
+                        required:
+                          - "name"
+                          - "fromLink"
+                        additionalProperties: false
+                envFrom:
+                  maxItems: 20
+                  type: "array"
+                  items:
+                    anyOf:
+                      - type: "object"
+                        properties:
+                          config:
+                            type: "string"
+                          prefix:
+                            type: "string"
+                        required:
+                          - "config"
+                          - "prefix"
+                        additionalProperties: false
+                      - type: "object"
+                        properties:
+                          secret:
+                            type: "string"
+                          prefix:
+                            type: "string"
+                        required:
+                          - "secret"
+                          - "prefix"
+                        additionalProperties: false
+                configs:
+                  maxItems: 20
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      name:
+                        type: "string"
+                      data:
+                        type: "object"
+                        propertyNames:
+                          type: "string"
+                        additionalProperties:
+                          type: "string"
+                      sha256:
+                        type: "string"
+                      mountPath:
+                        type: "string"
+                    required:
+                      - "name"
+                      - "data"
+                      - "sha256"
+                    additionalProperties: false
+                secretMounts:
+                  maxItems: 20
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      secret:
+                        type: "string"
+                      mountPath:
+                        type: "string"
+                    required:
+                      - "secret"
+                      - "mountPath"
+                    additionalProperties: false
+                serviceAccount:
+                  type: "string"
+                securityContext:
+                  type: "object"
+                  propertyNames:
+                    type: "string"
+                  additionalProperties: {}
+                sidecars:
+                  maxItems: 5
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      name:
+                        type: "string"
+                      image:
+                        $ref: "#/components/schemas/ImageV2"
+                      command:
+                        type: "array"
+                        items:
+                          type: "string"
+                      args:
+                        type: "array"
+                        items:
+                          type: "string"
+                      ports:
+                        type: "array"
+                        items:
+                          type: "object"
+                          properties:
+                            name:
+                              type: "string"
+                            port:
+                              type: "integer"
+                              minimum: 1
+                              maximum: 65535
+                            protocol:
+                              type: "string"
+                              enum:
+                                - "TCP"
+                                - "UDP"
+                                - "SCTP"
+                          required:
+                            - "port"
+                          additionalProperties: false
+                      env:
+                        type: "array"
+                        items:
+                          anyOf:
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                value:
+                                  type: "string"
+                              required:
+                                - "name"
+                                - "value"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                template:
+                                  type: "string"
+                              required:
+                                - "name"
+                                - "template"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                fromResource:
+                                  type: "string"
+                              required:
+                                - "name"
+                                - "fromResource"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                fromSecret:
+                                  type: "object"
+                                  properties:
+                                    secret:
+                                      type: "string"
+                                    key:
+                                      type: "string"
+                                  required:
+                                    - "secret"
+                                    - "key"
+                                  additionalProperties: false
+                              required:
+                                - "name"
+                                - "fromSecret"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                fromConfig:
+                                  type: "object"
+                                  properties:
+                                    config:
+                                      type: "string"
+                                    key:
+                                      type: "string"
+                                  required:
+                                    - "config"
+                                    - "key"
+                                  additionalProperties: false
+                              required:
+                                - "name"
+                                - "fromConfig"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                fromField:
+                                  type: "string"
+                              required:
+                                - "name"
+                                - "fromField"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                fromLink:
+                                  type: "object"
+                                  properties:
+                                    to:
+                                      type: "string"
+                                      pattern: "^[a-z][a-z0-9-]{0,39}$"
+                                    output:
+                                      $ref: "#/components/schemas/LinkOutputV2"
+                                  required:
+                                    - "to"
+                                    - "output"
+                                  additionalProperties: false
+                              required:
+                                - "name"
+                                - "fromLink"
+                              additionalProperties: false
+                      resources:
+                        type: "object"
+                        properties:
+                          request:
+                            type: "object"
+                            properties:
+                              cpuMilli:
+                                anyOf:
+                                  - type: "integer"
+                                    minimum: 1
+                                    maximum: 64000
+                                  - type: "null"
+                              memMiB:
+                                anyOf:
+                                  - type: "integer"
+                                    minimum: 1
+                                    maximum: 262144
+                                  - type: "null"
+                            required:
+                              - "cpuMilli"
+                              - "memMiB"
+                            additionalProperties: false
+                          limit:
+                            type: "object"
+                            properties:
+                              cpuMilli:
+                                anyOf:
+                                  - type: "integer"
+                                    minimum: 1
+                                    maximum: 64000
+                                  - type: "null"
+                              memMiB:
+                                anyOf:
+                                  - type: "integer"
+                                    minimum: 1
+                                    maximum: 262144
+                                  - type: "null"
+                            required:
+                              - "cpuMilli"
+                              - "memMiB"
+                            additionalProperties: false
+                        additionalProperties: false
+                      probes:
+                        type: "object"
+                        propertyNames:
+                          type: "string"
+                        additionalProperties:
+                          oneOf:
+                            - type: "object"
+                              properties:
+                                type:
+                                  type: "string"
+                                  const: "http"
+                                path:
+                                  type: "string"
+                                port:
+                                  anyOf:
+                                    - type: "integer"
+                                      minimum: 1
+                                      maximum: 65535
+                                    - type: "string"
+                                scheme:
+                                  type: "string"
+                                  enum:
+                                    - "HTTP"
+                                    - "HTTPS"
+                                periodSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                failureThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                initialDelaySec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                              required:
+                                - "type"
+                                - "port"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                type:
+                                  type: "string"
+                                  const: "tcp"
+                                port:
+                                  anyOf:
+                                    - type: "integer"
+                                      minimum: 1
+                                      maximum: 65535
+                                    - type: "string"
+                                periodSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                failureThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                initialDelaySec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                              required:
+                                - "type"
+                                - "port"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                type:
+                                  type: "string"
+                                  const: "grpc"
+                                port:
+                                  type: "integer"
+                                  minimum: 1
+                                  maximum: 65535
+                                periodSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                failureThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                initialDelaySec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                              required:
+                                - "type"
+                                - "port"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                type:
+                                  type: "string"
+                                  const: "exec"
+                                command:
+                                  type: "array"
+                                  items:
+                                    type: "string"
+                                periodSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                failureThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                initialDelaySec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                              required:
+                                - "type"
+                                - "command"
+                              additionalProperties: false
+                      injected:
+                        type: "boolean"
+                    required:
+                      - "name"
+                      - "image"
+                      - "env"
+                      - "resources"
+                    additionalProperties: false
+                initContainers:
+                  maxItems: 5
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      name:
+                        type: "string"
+                      image:
+                        $ref: "#/components/schemas/ImageV2"
+                      command:
+                        type: "array"
+                        items:
+                          type: "string"
+                      args:
+                        type: "array"
+                        items:
+                          type: "string"
+                      ports:
+                        type: "array"
+                        items:
+                          type: "object"
+                          properties:
+                            name:
+                              type: "string"
+                            port:
+                              type: "integer"
+                              minimum: 1
+                              maximum: 65535
+                            protocol:
+                              type: "string"
+                              enum:
+                                - "TCP"
+                                - "UDP"
+                                - "SCTP"
+                          required:
+                            - "port"
+                          additionalProperties: false
+                      env:
+                        type: "array"
+                        items:
+                          anyOf:
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                value:
+                                  type: "string"
+                              required:
+                                - "name"
+                                - "value"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                template:
+                                  type: "string"
+                              required:
+                                - "name"
+                                - "template"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                fromResource:
+                                  type: "string"
+                              required:
+                                - "name"
+                                - "fromResource"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                fromSecret:
+                                  type: "object"
+                                  properties:
+                                    secret:
+                                      type: "string"
+                                    key:
+                                      type: "string"
+                                  required:
+                                    - "secret"
+                                    - "key"
+                                  additionalProperties: false
+                              required:
+                                - "name"
+                                - "fromSecret"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                fromConfig:
+                                  type: "object"
+                                  properties:
+                                    config:
+                                      type: "string"
+                                    key:
+                                      type: "string"
+                                  required:
+                                    - "config"
+                                    - "key"
+                                  additionalProperties: false
+                              required:
+                                - "name"
+                                - "fromConfig"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                fromField:
+                                  type: "string"
+                              required:
+                                - "name"
+                                - "fromField"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                fromLink:
+                                  type: "object"
+                                  properties:
+                                    to:
+                                      type: "string"
+                                      pattern: "^[a-z][a-z0-9-]{0,39}$"
+                                    output:
+                                      $ref: "#/components/schemas/LinkOutputV2"
+                                  required:
+                                    - "to"
+                                    - "output"
+                                  additionalProperties: false
+                              required:
+                                - "name"
+                                - "fromLink"
+                              additionalProperties: false
+                      resources:
+                        type: "object"
+                        properties:
+                          request:
+                            type: "object"
+                            properties:
+                              cpuMilli:
+                                anyOf:
+                                  - type: "integer"
+                                    minimum: 1
+                                    maximum: 64000
+                                  - type: "null"
+                              memMiB:
+                                anyOf:
+                                  - type: "integer"
+                                    minimum: 1
+                                    maximum: 262144
+                                  - type: "null"
+                            required:
+                              - "cpuMilli"
+                              - "memMiB"
+                            additionalProperties: false
+                          limit:
+                            type: "object"
+                            properties:
+                              cpuMilli:
+                                anyOf:
+                                  - type: "integer"
+                                    minimum: 1
+                                    maximum: 64000
+                                  - type: "null"
+                              memMiB:
+                                anyOf:
+                                  - type: "integer"
+                                    minimum: 1
+                                    maximum: 262144
+                                  - type: "null"
+                            required:
+                              - "cpuMilli"
+                              - "memMiB"
+                            additionalProperties: false
+                        additionalProperties: false
+                      probes:
+                        type: "object"
+                        propertyNames:
+                          type: "string"
+                        additionalProperties:
+                          oneOf:
+                            - type: "object"
+                              properties:
+                                type:
+                                  type: "string"
+                                  const: "http"
+                                path:
+                                  type: "string"
+                                port:
+                                  anyOf:
+                                    - type: "integer"
+                                      minimum: 1
+                                      maximum: 65535
+                                    - type: "string"
+                                scheme:
+                                  type: "string"
+                                  enum:
+                                    - "HTTP"
+                                    - "HTTPS"
+                                periodSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                failureThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                initialDelaySec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                              required:
+                                - "type"
+                                - "port"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                type:
+                                  type: "string"
+                                  const: "tcp"
+                                port:
+                                  anyOf:
+                                    - type: "integer"
+                                      minimum: 1
+                                      maximum: 65535
+                                    - type: "string"
+                                periodSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                failureThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                initialDelaySec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                              required:
+                                - "type"
+                                - "port"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                type:
+                                  type: "string"
+                                  const: "grpc"
+                                port:
+                                  type: "integer"
+                                  minimum: 1
+                                  maximum: 65535
+                                periodSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                failureThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                initialDelaySec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                              required:
+                                - "type"
+                                - "port"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                type:
+                                  type: "string"
+                                  const: "exec"
+                                command:
+                                  type: "array"
+                                  items:
+                                    type: "string"
+                                periodSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                failureThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                initialDelaySec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                              required:
+                                - "type"
+                                - "command"
+                              additionalProperties: false
+                      injected:
+                        type: "boolean"
+                    required:
+                      - "name"
+                      - "image"
+                      - "env"
+                      - "resources"
+                    additionalProperties: false
+                volumes:
+                  maxItems: 10
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      name:
+                        type: "string"
+                      mountPath:
+                        type: "string"
+                      sizeGb:
+                        type: "number"
+                      access:
+                        type: "string"
+                        enum:
+                          - "RWO"
+                          - "RWX"
+                          - "ROX"
+                    required:
+                      - "name"
+                      - "mountPath"
+                    additionalProperties: false
+                ports:
+                  maxItems: 10
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      name:
+                        type: "string"
+                      port:
+                        type: "integer"
+                        minimum: 1
+                        maximum: 65535
+                      protocol:
+                        type: "string"
+                        enum:
+                          - "TCP"
+                          - "UDP"
+                          - "SCTP"
+                    required:
+                      - "port"
+                    additionalProperties: false
+                endpoints:
+                  maxItems: 5
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      name:
+                        type: "string"
+                      type:
+                        type: "string"
+                        enum:
+                          - "ClusterIP"
+                          - "NodePort"
+                          - "LoadBalancer"
+                          - "Headless"
+                      ports:
+                        type: "array"
+                        items:
+                          type: "object"
+                          properties:
+                            name:
+                              type: "string"
+                            port:
+                              type: "integer"
+                              minimum: 1
+                              maximum: 65535
+                            targetPort:
+                              anyOf:
+                                - type: "integer"
+                                  minimum: 1
+                                  maximum: 65535
+                                - type: "string"
+                            protocol:
+                              type: "string"
+                              enum:
+                                - "TCP"
+                                - "UDP"
+                                - "SCTP"
+                          required:
+                            - "port"
+                            - "targetPort"
+                            - "protocol"
+                          additionalProperties: false
+                    required:
+                      - "name"
+                      - "type"
+                      - "ports"
+                    additionalProperties: false
+                probes:
+                  type: "object"
+                  properties:
+                    readiness:
+                      oneOf:
+                        - type: "object"
+                          properties:
+                            type:
+                              type: "string"
+                              const: "http"
+                            path:
+                              type: "string"
+                            port:
+                              anyOf:
+                                - type: "integer"
+                                  minimum: 1
+                                  maximum: 65535
+                                - type: "string"
+                            scheme:
+                              type: "string"
+                              enum:
+                                - "HTTP"
+                                - "HTTPS"
+                            periodSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            failureThreshold:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            initialDelaySec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                          required:
+                            - "type"
+                            - "port"
+                          additionalProperties: false
+                        - type: "object"
+                          properties:
+                            type:
+                              type: "string"
+                              const: "tcp"
+                            port:
+                              anyOf:
+                                - type: "integer"
+                                  minimum: 1
+                                  maximum: 65535
+                                - type: "string"
+                            periodSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            failureThreshold:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            initialDelaySec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                          required:
+                            - "type"
+                            - "port"
+                          additionalProperties: false
+                        - type: "object"
+                          properties:
+                            type:
+                              type: "string"
+                              const: "grpc"
+                            port:
+                              type: "integer"
+                              minimum: 1
+                              maximum: 65535
+                            periodSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            failureThreshold:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            initialDelaySec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                          required:
+                            - "type"
+                            - "port"
+                          additionalProperties: false
+                        - type: "object"
+                          properties:
+                            type:
+                              type: "string"
+                              const: "exec"
+                            command:
+                              type: "array"
+                              items:
+                                type: "string"
+                            periodSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            failureThreshold:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            initialDelaySec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                          required:
+                            - "type"
+                            - "command"
+                          additionalProperties: false
+                    liveness:
+                      oneOf:
+                        - type: "object"
+                          properties:
+                            type:
+                              type: "string"
+                              const: "http"
+                            path:
+                              type: "string"
+                            port:
+                              anyOf:
+                                - type: "integer"
+                                  minimum: 1
+                                  maximum: 65535
+                                - type: "string"
+                            scheme:
+                              type: "string"
+                              enum:
+                                - "HTTP"
+                                - "HTTPS"
+                            periodSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            failureThreshold:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            initialDelaySec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                          required:
+                            - "type"
+                            - "port"
+                          additionalProperties: false
+                        - type: "object"
+                          properties:
+                            type:
+                              type: "string"
+                              const: "tcp"
+                            port:
+                              anyOf:
+                                - type: "integer"
+                                  minimum: 1
+                                  maximum: 65535
+                                - type: "string"
+                            periodSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            failureThreshold:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            initialDelaySec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                          required:
+                            - "type"
+                            - "port"
+                          additionalProperties: false
+                        - type: "object"
+                          properties:
+                            type:
+                              type: "string"
+                              const: "grpc"
+                            port:
+                              type: "integer"
+                              minimum: 1
+                              maximum: 65535
+                            periodSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            failureThreshold:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            initialDelaySec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                          required:
+                            - "type"
+                            - "port"
+                          additionalProperties: false
+                        - type: "object"
+                          properties:
+                            type:
+                              type: "string"
+                              const: "exec"
+                            command:
+                              type: "array"
+                              items:
+                                type: "string"
+                            periodSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            failureThreshold:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            initialDelaySec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                          required:
+                            - "type"
+                            - "command"
+                          additionalProperties: false
+                    startup:
+                      oneOf:
+                        - type: "object"
+                          properties:
+                            type:
+                              type: "string"
+                              const: "http"
+                            path:
+                              type: "string"
+                            port:
+                              anyOf:
+                                - type: "integer"
+                                  minimum: 1
+                                  maximum: 65535
+                                - type: "string"
+                            scheme:
+                              type: "string"
+                              enum:
+                                - "HTTP"
+                                - "HTTPS"
+                            periodSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            failureThreshold:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            initialDelaySec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                          required:
+                            - "type"
+                            - "port"
+                          additionalProperties: false
+                        - type: "object"
+                          properties:
+                            type:
+                              type: "string"
+                              const: "tcp"
+                            port:
+                              anyOf:
+                                - type: "integer"
+                                  minimum: 1
+                                  maximum: 65535
+                                - type: "string"
+                            periodSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            failureThreshold:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            initialDelaySec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                          required:
+                            - "type"
+                            - "port"
+                          additionalProperties: false
+                        - type: "object"
+                          properties:
+                            type:
+                              type: "string"
+                              const: "grpc"
+                            port:
+                              type: "integer"
+                              minimum: 1
+                              maximum: 65535
+                            periodSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            failureThreshold:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            initialDelaySec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                          required:
+                            - "type"
+                            - "port"
+                          additionalProperties: false
+                        - type: "object"
+                          properties:
+                            type:
+                              type: "string"
+                              const: "exec"
+                            command:
+                              type: "array"
+                              items:
+                                type: "string"
+                            periodSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            failureThreshold:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            initialDelaySec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                          required:
+                            - "type"
+                            - "command"
+                          additionalProperties: false
+                  additionalProperties: false
+                replicas:
+                  type: "object"
+                  properties:
+                    min:
+                      type: "integer"
+                      minimum: 0
+                      maximum: 100
+                    max:
+                      type: "integer"
+                      minimum: 0
+                      maximum: 100
+                  required:
+                    - "min"
+                    - "max"
+                  additionalProperties: false
+                scale:
+                  type: "object"
+                  properties:
+                    targetCpuPct:
+                      type: "integer"
+                      minimum: 1
+                      maximum: 100
+                  required:
+                    - "targetCpuPct"
+                  additionalProperties: false
+              required:
+                - "runtime"
+                - "origin"
+                - "image"
+                - "resources"
+                - "env"
+                - "serviceAccount"
+                - "replicas"
+              additionalProperties: false
+          required:
+            - "id"
+            - "kind"
+            - "props"
+          additionalProperties: false
+        - type: "object"
+          properties:
+            id:
+              type: "string"
+              pattern: "^[a-z][a-z0-9-]{0,39}$"
+            kind:
+              type: "string"
+              const: "job"
+            props:
+              type: "object"
+              properties:
+                namespace:
+                  type: "string"
+                image:
+                  $ref: "#/components/schemas/ImageV2"
+                command:
+                  maxItems: 50
+                  type: "array"
+                  items:
+                    type: "string"
+                args:
+                  maxItems: 100
+                  type: "array"
+                  items:
+                    type: "string"
+                resources:
+                  type: "object"
+                  properties:
+                    request:
+                      type: "object"
+                      properties:
+                        cpuMilli:
+                          anyOf:
+                            - type: "integer"
+                              minimum: 1
+                              maximum: 64000
+                            - type: "null"
+                        memMiB:
+                          anyOf:
+                            - type: "integer"
+                              minimum: 1
+                              maximum: 262144
+                            - type: "null"
+                      required:
+                        - "cpuMilli"
+                        - "memMiB"
+                      additionalProperties: false
+                    limit:
+                      type: "object"
+                      properties:
+                        cpuMilli:
+                          anyOf:
+                            - type: "integer"
+                              minimum: 1
+                              maximum: 64000
+                            - type: "null"
+                        memMiB:
+                          anyOf:
+                            - type: "integer"
+                              minimum: 1
+                              maximum: 262144
+                            - type: "null"
+                      required:
+                        - "cpuMilli"
+                        - "memMiB"
+                      additionalProperties: false
+                  additionalProperties: false
+                env:
+                  maxItems: 200
+                  type: "array"
+                  items:
+                    anyOf:
+                      - type: "object"
+                        properties:
+                          name:
+                            type: "string"
+                            pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                          value:
+                            type: "string"
+                        required:
+                          - "name"
+                          - "value"
+                        additionalProperties: false
+                      - type: "object"
+                        properties:
+                          name:
+                            type: "string"
+                            pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                          template:
+                            type: "string"
+                        required:
+                          - "name"
+                          - "template"
+                        additionalProperties: false
+                      - type: "object"
+                        properties:
+                          name:
+                            type: "string"
+                            pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                          fromResource:
+                            type: "string"
+                        required:
+                          - "name"
+                          - "fromResource"
+                        additionalProperties: false
+                      - type: "object"
+                        properties:
+                          name:
+                            type: "string"
+                            pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                          fromSecret:
+                            type: "object"
+                            properties:
+                              secret:
+                                type: "string"
+                              key:
+                                type: "string"
+                            required:
+                              - "secret"
+                              - "key"
+                            additionalProperties: false
+                        required:
+                          - "name"
+                          - "fromSecret"
+                        additionalProperties: false
+                      - type: "object"
+                        properties:
+                          name:
+                            type: "string"
+                            pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                          fromConfig:
+                            type: "object"
+                            properties:
+                              config:
+                                type: "string"
+                              key:
+                                type: "string"
+                            required:
+                              - "config"
+                              - "key"
+                            additionalProperties: false
+                        required:
+                          - "name"
+                          - "fromConfig"
+                        additionalProperties: false
+                      - type: "object"
+                        properties:
+                          name:
+                            type: "string"
+                            pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                          fromField:
+                            type: "string"
+                        required:
+                          - "name"
+                          - "fromField"
+                        additionalProperties: false
+                      - type: "object"
+                        properties:
+                          name:
+                            type: "string"
+                            pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                          fromLink:
+                            type: "object"
+                            properties:
+                              to:
+                                type: "string"
+                                pattern: "^[a-z][a-z0-9-]{0,39}$"
+                              output:
+                                $ref: "#/components/schemas/LinkOutputV2"
+                            required:
+                              - "to"
+                              - "output"
+                            additionalProperties: false
+                        required:
+                          - "name"
+                          - "fromLink"
+                        additionalProperties: false
+                envFrom:
+                  maxItems: 20
+                  type: "array"
+                  items:
+                    anyOf:
+                      - type: "object"
+                        properties:
+                          config:
+                            type: "string"
+                          prefix:
+                            type: "string"
+                        required:
+                          - "config"
+                          - "prefix"
+                        additionalProperties: false
+                      - type: "object"
+                        properties:
+                          secret:
+                            type: "string"
+                          prefix:
+                            type: "string"
+                        required:
+                          - "secret"
+                          - "prefix"
+                        additionalProperties: false
+                configs:
+                  maxItems: 20
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      name:
+                        type: "string"
+                      data:
+                        type: "object"
+                        propertyNames:
+                          type: "string"
+                        additionalProperties:
+                          type: "string"
+                      sha256:
+                        type: "string"
+                      mountPath:
+                        type: "string"
+                    required:
+                      - "name"
+                      - "data"
+                      - "sha256"
+                    additionalProperties: false
+                secretMounts:
+                  maxItems: 20
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      secret:
+                        type: "string"
+                      mountPath:
+                        type: "string"
+                    required:
+                      - "secret"
+                      - "mountPath"
+                    additionalProperties: false
+                serviceAccount:
+                  type: "string"
+                securityContext:
+                  type: "object"
+                  propertyNames:
+                    type: "string"
+                  additionalProperties: {}
+                sidecars:
+                  maxItems: 5
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      name:
+                        type: "string"
+                      image:
+                        $ref: "#/components/schemas/ImageV2"
+                      command:
+                        type: "array"
+                        items:
+                          type: "string"
+                      args:
+                        type: "array"
+                        items:
+                          type: "string"
+                      ports:
+                        type: "array"
+                        items:
+                          type: "object"
+                          properties:
+                            name:
+                              type: "string"
+                            port:
+                              type: "integer"
+                              minimum: 1
+                              maximum: 65535
+                            protocol:
+                              type: "string"
+                              enum:
+                                - "TCP"
+                                - "UDP"
+                                - "SCTP"
+                          required:
+                            - "port"
+                          additionalProperties: false
+                      env:
+                        type: "array"
+                        items:
+                          anyOf:
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                value:
+                                  type: "string"
+                              required:
+                                - "name"
+                                - "value"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                template:
+                                  type: "string"
+                              required:
+                                - "name"
+                                - "template"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                fromResource:
+                                  type: "string"
+                              required:
+                                - "name"
+                                - "fromResource"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                fromSecret:
+                                  type: "object"
+                                  properties:
+                                    secret:
+                                      type: "string"
+                                    key:
+                                      type: "string"
+                                  required:
+                                    - "secret"
+                                    - "key"
+                                  additionalProperties: false
+                              required:
+                                - "name"
+                                - "fromSecret"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                fromConfig:
+                                  type: "object"
+                                  properties:
+                                    config:
+                                      type: "string"
+                                    key:
+                                      type: "string"
+                                  required:
+                                    - "config"
+                                    - "key"
+                                  additionalProperties: false
+                              required:
+                                - "name"
+                                - "fromConfig"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                fromField:
+                                  type: "string"
+                              required:
+                                - "name"
+                                - "fromField"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                fromLink:
+                                  type: "object"
+                                  properties:
+                                    to:
+                                      type: "string"
+                                      pattern: "^[a-z][a-z0-9-]{0,39}$"
+                                    output:
+                                      $ref: "#/components/schemas/LinkOutputV2"
+                                  required:
+                                    - "to"
+                                    - "output"
+                                  additionalProperties: false
+                              required:
+                                - "name"
+                                - "fromLink"
+                              additionalProperties: false
+                      resources:
+                        type: "object"
+                        properties:
+                          request:
+                            type: "object"
+                            properties:
+                              cpuMilli:
+                                anyOf:
+                                  - type: "integer"
+                                    minimum: 1
+                                    maximum: 64000
+                                  - type: "null"
+                              memMiB:
+                                anyOf:
+                                  - type: "integer"
+                                    minimum: 1
+                                    maximum: 262144
+                                  - type: "null"
+                            required:
+                              - "cpuMilli"
+                              - "memMiB"
+                            additionalProperties: false
+                          limit:
+                            type: "object"
+                            properties:
+                              cpuMilli:
+                                anyOf:
+                                  - type: "integer"
+                                    minimum: 1
+                                    maximum: 64000
+                                  - type: "null"
+                              memMiB:
+                                anyOf:
+                                  - type: "integer"
+                                    minimum: 1
+                                    maximum: 262144
+                                  - type: "null"
+                            required:
+                              - "cpuMilli"
+                              - "memMiB"
+                            additionalProperties: false
+                        additionalProperties: false
+                      probes:
+                        type: "object"
+                        propertyNames:
+                          type: "string"
+                        additionalProperties:
+                          oneOf:
+                            - type: "object"
+                              properties:
+                                type:
+                                  type: "string"
+                                  const: "http"
+                                path:
+                                  type: "string"
+                                port:
+                                  anyOf:
+                                    - type: "integer"
+                                      minimum: 1
+                                      maximum: 65535
+                                    - type: "string"
+                                scheme:
+                                  type: "string"
+                                  enum:
+                                    - "HTTP"
+                                    - "HTTPS"
+                                periodSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                failureThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                initialDelaySec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                              required:
+                                - "type"
+                                - "port"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                type:
+                                  type: "string"
+                                  const: "tcp"
+                                port:
+                                  anyOf:
+                                    - type: "integer"
+                                      minimum: 1
+                                      maximum: 65535
+                                    - type: "string"
+                                periodSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                failureThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                initialDelaySec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                              required:
+                                - "type"
+                                - "port"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                type:
+                                  type: "string"
+                                  const: "grpc"
+                                port:
+                                  type: "integer"
+                                  minimum: 1
+                                  maximum: 65535
+                                periodSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                failureThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                initialDelaySec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                              required:
+                                - "type"
+                                - "port"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                type:
+                                  type: "string"
+                                  const: "exec"
+                                command:
+                                  type: "array"
+                                  items:
+                                    type: "string"
+                                periodSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                failureThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                initialDelaySec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                              required:
+                                - "type"
+                                - "command"
+                              additionalProperties: false
+                      injected:
+                        type: "boolean"
+                    required:
+                      - "name"
+                      - "image"
+                      - "env"
+                      - "resources"
+                    additionalProperties: false
+                initContainers:
+                  maxItems: 5
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      name:
+                        type: "string"
+                      image:
+                        $ref: "#/components/schemas/ImageV2"
+                      command:
+                        type: "array"
+                        items:
+                          type: "string"
+                      args:
+                        type: "array"
+                        items:
+                          type: "string"
+                      ports:
+                        type: "array"
+                        items:
+                          type: "object"
+                          properties:
+                            name:
+                              type: "string"
+                            port:
+                              type: "integer"
+                              minimum: 1
+                              maximum: 65535
+                            protocol:
+                              type: "string"
+                              enum:
+                                - "TCP"
+                                - "UDP"
+                                - "SCTP"
+                          required:
+                            - "port"
+                          additionalProperties: false
+                      env:
+                        type: "array"
+                        items:
+                          anyOf:
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                value:
+                                  type: "string"
+                              required:
+                                - "name"
+                                - "value"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                template:
+                                  type: "string"
+                              required:
+                                - "name"
+                                - "template"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                fromResource:
+                                  type: "string"
+                              required:
+                                - "name"
+                                - "fromResource"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                fromSecret:
+                                  type: "object"
+                                  properties:
+                                    secret:
+                                      type: "string"
+                                    key:
+                                      type: "string"
+                                  required:
+                                    - "secret"
+                                    - "key"
+                                  additionalProperties: false
+                              required:
+                                - "name"
+                                - "fromSecret"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                fromConfig:
+                                  type: "object"
+                                  properties:
+                                    config:
+                                      type: "string"
+                                    key:
+                                      type: "string"
+                                  required:
+                                    - "config"
+                                    - "key"
+                                  additionalProperties: false
+                              required:
+                                - "name"
+                                - "fromConfig"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                fromField:
+                                  type: "string"
+                              required:
+                                - "name"
+                                - "fromField"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                  pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
+                                fromLink:
+                                  type: "object"
+                                  properties:
+                                    to:
+                                      type: "string"
+                                      pattern: "^[a-z][a-z0-9-]{0,39}$"
+                                    output:
+                                      $ref: "#/components/schemas/LinkOutputV2"
+                                  required:
+                                    - "to"
+                                    - "output"
+                                  additionalProperties: false
+                              required:
+                                - "name"
+                                - "fromLink"
+                              additionalProperties: false
+                      resources:
+                        type: "object"
+                        properties:
+                          request:
+                            type: "object"
+                            properties:
+                              cpuMilli:
+                                anyOf:
+                                  - type: "integer"
+                                    minimum: 1
+                                    maximum: 64000
+                                  - type: "null"
+                              memMiB:
+                                anyOf:
+                                  - type: "integer"
+                                    minimum: 1
+                                    maximum: 262144
+                                  - type: "null"
+                            required:
+                              - "cpuMilli"
+                              - "memMiB"
+                            additionalProperties: false
+                          limit:
+                            type: "object"
+                            properties:
+                              cpuMilli:
+                                anyOf:
+                                  - type: "integer"
+                                    minimum: 1
+                                    maximum: 64000
+                                  - type: "null"
+                              memMiB:
+                                anyOf:
+                                  - type: "integer"
+                                    minimum: 1
+                                    maximum: 262144
+                                  - type: "null"
+                            required:
+                              - "cpuMilli"
+                              - "memMiB"
+                            additionalProperties: false
+                        additionalProperties: false
+                      probes:
+                        type: "object"
+                        propertyNames:
+                          type: "string"
+                        additionalProperties:
+                          oneOf:
+                            - type: "object"
+                              properties:
+                                type:
+                                  type: "string"
+                                  const: "http"
+                                path:
+                                  type: "string"
+                                port:
+                                  anyOf:
+                                    - type: "integer"
+                                      minimum: 1
+                                      maximum: 65535
+                                    - type: "string"
+                                scheme:
+                                  type: "string"
+                                  enum:
+                                    - "HTTP"
+                                    - "HTTPS"
+                                periodSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                failureThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                initialDelaySec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                              required:
+                                - "type"
+                                - "port"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                type:
+                                  type: "string"
+                                  const: "tcp"
+                                port:
+                                  anyOf:
+                                    - type: "integer"
+                                      minimum: 1
+                                      maximum: 65535
+                                    - type: "string"
+                                periodSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                failureThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                initialDelaySec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                              required:
+                                - "type"
+                                - "port"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                type:
+                                  type: "string"
+                                  const: "grpc"
+                                port:
+                                  type: "integer"
+                                  minimum: 1
+                                  maximum: 65535
+                                periodSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                failureThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                initialDelaySec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                              required:
+                                - "type"
+                                - "port"
+                              additionalProperties: false
+                            - type: "object"
+                              properties:
+                                type:
+                                  type: "string"
+                                  const: "exec"
+                                command:
+                                  type: "array"
+                                  items:
+                                    type: "string"
+                                periodSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                failureThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                initialDelaySec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                              required:
+                                - "type"
+                                - "command"
+                              additionalProperties: false
+                      injected:
+                        type: "boolean"
+                    required:
+                      - "name"
+                      - "image"
+                      - "env"
+                      - "resources"
+                    additionalProperties: false
+                volumes:
+                  maxItems: 10
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      name:
+                        type: "string"
+                      mountPath:
+                        type: "string"
+                      sizeGb:
+                        type: "number"
+                      access:
+                        type: "string"
+                        enum:
+                          - "RWO"
+                          - "RWX"
+                          - "ROX"
+                    required:
+                      - "name"
+                      - "mountPath"
+                    additionalProperties: false
+                schedule:
+                  type: "string"
+                  minLength: 9
+                timeZone:
+                  type: "string"
+                concurrencyPolicy:
+                  type: "string"
+                  enum:
+                    - "Allow"
+                    - "Forbid"
+                    - "Replace"
+                suspend:
+                  type: "boolean"
+                backoffLimit:
+                  type: "integer"
+                  minimum: -9007199254740991
+                  maximum: 9007199254740991
+                activeDeadlineSec:
+                  type: "integer"
+                  minimum: -9007199254740991
+                  maximum: 9007199254740991
+                restartPolicy:
+                  type: "string"
+                  enum:
+                    - "OnFailure"
+                    - "Never"
+              required:
+                - "image"
+                - "resources"
+                - "env"
+                - "serviceAccount"
+                - "schedule"
+              additionalProperties: false
+          required:
+            - "id"
+            - "kind"
+            - "props"
+          additionalProperties: false
+        - type: "object"
+          properties:
+            id:
+              type: "string"
+              pattern: "^[a-z][a-z0-9-]{0,39}$"
+            kind:
+              type: "string"
+              const: "postgres"
+            props:
+              type: "object"
+              properties:
+                majorVersion:
+                  anyOf:
+                    - type: "string"
+                      pattern: "^\\d{1,2}$"
+                    - type: "null"
+                storageGb:
+                  anyOf:
+                    - type: "integer"
+                      minimum: 1
+                      maximum: 65536
+                    - type: "null"
+                storageMaxGb:
+                  type: "integer"
+                  minimum: -9007199254740991
+                  maximum: 9007199254740991
+                compute:
+                  type: "object"
+                  properties:
+                    cpuMilli:
+                      anyOf:
+                        - type: "integer"
+                          minimum: 1
+                          maximum: 64000
+                        - type: "null"
+                    memMiB:
+                      anyOf:
+                        - type: "integer"
+                          minimum: 1
+                          maximum: 262144
+                        - type: "null"
+                  required:
+                    - "cpuMilli"
+                    - "memMiB"
+                  additionalProperties: false
+                ha:
+                  type: "boolean"
+                readReplicas:
+                  type: "integer"
+                  minimum: 0
+                  maximum: 15
+                databases:
+                  maxItems: 50
+                  type: "array"
+                  items:
+                    type: "string"
+                extensions:
+                  maxItems: 100
+                  type: "array"
+                  items:
+                    type: "string"
+                parameters:
+                  type: "object"
+                  propertyNames:
+                    type: "string"
+                  additionalProperties:
+                    type: "string"
+                logicalReplication:
+                  type: "boolean"
+              required:
+                - "majorVersion"
+                - "storageGb"
+              additionalProperties: false
+          required:
+            - "id"
+            - "kind"
+            - "props"
+          additionalProperties: false
+        - type: "object"
+          properties:
+            id:
+              type: "string"
+              pattern: "^[a-z][a-z0-9-]{0,39}$"
+            kind:
+              type: "string"
+              const: "cache"
+            props:
+              type: "object"
+              properties:
+                engine:
+                  type: "string"
+                  enum:
+                    - "redis"
+                    - "valkey"
+                    - "memcached"
+                version:
+                  type: "string"
+                memoryMiB:
+                  anyOf:
+                    - type: "integer"
+                      minimum: 1
+                      maximum: 1048576
+                    - type: "null"
+                clusterMode:
+                  type: "boolean"
+                shards:
+                  type: "integer"
+                  minimum: -9007199254740991
+                  maximum: 9007199254740991
+                tls:
+                  type:
+                    - "boolean"
+                    - "null"
+                auth:
+                  type:
+                    - "boolean"
+                    - "null"
+                ha:
+                  type: "boolean"
+              required:
+                - "engine"
+                - "memoryMiB"
+                - "tls"
+                - "auth"
+              additionalProperties: false
+          required:
+            - "id"
+            - "kind"
+            - "props"
+          additionalProperties: false
+        - type: "object"
+          properties:
+            id:
+              type: "string"
+              pattern: "^[a-z][a-z0-9-]{0,39}$"
+            kind:
+              type: "string"
+              const: "objectStore"
+            props:
+              type: "object"
+              properties:
+                versioning:
+                  type: "boolean"
+                public:
+                  type:
+                    - "boolean"
+                    - "null"
+                sizeGb:
+                  anyOf:
+                    - type: "number"
+                      minimum: 0
+                    - type: "null"
+                lifecycle:
+                  maxItems: 50
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      prefix:
+                        type: "string"
+                      expireDays:
+                        type: "integer"
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      toColdAfterDays:
+                        type: "integer"
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                    required:
+                      - "prefix"
+                    additionalProperties: false
+                cors:
+                  type: "array"
+                  items:
+                    type: "object"
+                    propertyNames:
+                      type: "string"
+                    additionalProperties: {}
+              required:
+                - "versioning"
+                - "public"
+                - "sizeGb"
+              additionalProperties: false
+          required:
+            - "id"
+            - "kind"
+            - "props"
+          additionalProperties: false
+        - type: "object"
+          properties:
+            id:
+              type: "string"
+              pattern: "^[a-z][a-z0-9-]{0,39}$"
+            kind:
+              type: "string"
+              const: "queue"
+            props:
+              type: "object"
+              properties:
+                model:
+                  type: "string"
+                  enum:
+                    - "queue"
+                    - "topic"
+                ordered:
+                  type: "boolean"
+                retentionSec:
+                  type: "integer"
+                  minimum: 60
+                  maximum: 2678400
+                ackTimeoutSec:
+                  type: "integer"
+                  minimum: -9007199254740991
+                  maximum: 9007199254740991
+                deadLetter:
+                  type: "object"
+                  properties:
+                    to:
+                      type: "string"
+                      pattern: "^[a-z][a-z0-9-]{0,39}$"
+                    maxReceive:
+                      type: "integer"
+                      minimum: -9007199254740991
+                      maximum: 9007199254740991
+                  additionalProperties: false
+              required:
+                - "model"
+              additionalProperties: false
+          required:
+            - "id"
+            - "kind"
+            - "props"
+          additionalProperties: false
     ConnectionLink:
       type: "object"
       properties:
@@ -4228,6 +6830,129 @@ components:
         - "bundleHash"
         - "status"
         - "resources"
+      additionalProperties: false
+    EntriesV2:
+      type: "object"
+      properties:
+        via:
+          type: "string"
+          const: "cloudflare-lb"
+        hosts:
+          minItems: 1
+          maxItems: 10
+          type: "array"
+          items:
+            type: "object"
+            properties:
+              hostnames:
+                minItems: 1
+                maxItems: 10
+                type: "array"
+                items:
+                  type: "string"
+              tls:
+                type: "object"
+                properties:
+                  mode:
+                    type: "string"
+                    enum:
+                      - "terminate"
+                      - "passthrough"
+                  source:
+                    type: "string"
+                required:
+                  - "mode"
+                additionalProperties: false
+              routes:
+                maxItems: 20
+                type: "array"
+                items:
+                  type: "object"
+                  properties:
+                    matches:
+                      minItems: 1
+                      maxItems: 8
+                      type: "array"
+                      items:
+                        type: "object"
+                        properties:
+                          path:
+                            type: "object"
+                            properties:
+                              type:
+                                type: "string"
+                                enum:
+                                  - "Exact"
+                                  - "PathPrefix"
+                              value:
+                                type: "string"
+                                format: "starts_with"
+                                pattern: "^\\/.*"
+                            required:
+                              - "type"
+                              - "value"
+                            additionalProperties: false
+                          headers:
+                            maxItems: 8
+                            type: "array"
+                            items:
+                              type: "object"
+                              properties:
+                                name:
+                                  type: "string"
+                                value:
+                                  type: "string"
+                              required:
+                                - "name"
+                                - "value"
+                              additionalProperties: false
+                          method:
+                            type: "string"
+                            enum:
+                              - "GET"
+                              - "POST"
+                              - "PUT"
+                              - "PATCH"
+                              - "DELETE"
+                              - "HEAD"
+                              - "OPTIONS"
+                        required:
+                          - "path"
+                        additionalProperties: false
+                    backends:
+                      minItems: 1
+                      maxItems: 4
+                      type: "array"
+                      items:
+                        type: "object"
+                        properties:
+                          to:
+                            type: "string"
+                            pattern: "^[a-z][a-z0-9-]{0,39}$"
+                          port:
+                            type: "integer"
+                            minimum: 1
+                            maximum: 65535
+                          weight:
+                            type: "integer"
+                            minimum: 0
+                            maximum: 1000000
+                        required:
+                          - "to"
+                          - "port"
+                          - "weight"
+                        additionalProperties: false
+                  required:
+                    - "matches"
+                    - "backends"
+                  additionalProperties: false
+            required:
+              - "hostnames"
+              - "routes"
+            additionalProperties: false
+      required:
+        - "via"
+        - "hosts"
       additionalProperties: false
     EnvEstimate:
       type: "object"
@@ -4741,6 +7466,34 @@ components:
         - "retryable"
         - "confidence"
       additionalProperties: false
+    FieldMetaEntryV2:
+      type: "object"
+      properties:
+        source:
+          type: "string"
+        confidence:
+          anyOf:
+            - type: "number"
+              const: 1
+            - type: "number"
+              const: 0.9
+            - type: "number"
+              const: 0.6
+        needs_review:
+          type: "boolean"
+        rationale:
+          type: "string"
+      required:
+        - "source"
+        - "confidence"
+        - "needs_review"
+      additionalProperties: false
+    FieldMetaV2:
+      type: "object"
+      propertyNames:
+        type: "string"
+      additionalProperties:
+        $ref: "#/components/schemas/FieldMetaEntryV2"
     Finding:
       type: "object"
       properties:
@@ -4797,6 +7550,100 @@ components:
         - "kind"
         - "observedAt"
         - "evidence"
+      additionalProperties: false
+    ImageV2:
+      type: "object"
+      properties:
+        source:
+          type: "string"
+          enum:
+            - "registry"
+            - "build"
+        repository:
+          type: "string"
+        digest:
+          type:
+            - "string"
+            - "null"
+        build:
+          $ref: "#/components/schemas/BuildPlan"
+      required:
+        - "source"
+        - "repository"
+        - "digest"
+      additionalProperties: false
+    LinkOutputV2:
+      type: "string"
+      enum:
+        - "host"
+        - "port"
+        - "url"
+        - "name"
+        - "user"
+    LinkV2:
+      type: "object"
+      properties:
+        from:
+          type: "string"
+          pattern: "^[a-z][a-z0-9-]{0,39}$"
+        to:
+          anyOf:
+            - type: "string"
+              pattern: "^[a-z][a-z0-9-]{0,39}$"
+            - type: "object"
+              properties:
+                unmapped:
+                  type: "string"
+              required:
+                - "unmapped"
+              additionalProperties: false
+            - type: "object"
+              properties:
+                external:
+                  type: "string"
+              required:
+                - "external"
+              additionalProperties: false
+        intent:
+          type: "string"
+          enum:
+            - "connect"
+            - "read"
+            - "write"
+            - "readwrite"
+            - "admin"
+            - "call"
+        grants:
+          maxItems: 50
+          type: "array"
+          items:
+            type: "object"
+            properties:
+              effect:
+                type: "string"
+                const: "Allow"
+              actions:
+                type: "array"
+                items:
+                  type: "string"
+              resources:
+                type: "array"
+                items:
+                  type: "string"
+              conditions:
+                type: "object"
+                propertyNames:
+                  type: "string"
+                additionalProperties: {}
+            required:
+              - "effect"
+              - "actions"
+              - "resources"
+            additionalProperties: false
+      required:
+        - "from"
+        - "to"
+        - "intent"
       additionalProperties: false
     LiveCheck:
       type: "object"
@@ -5205,6 +8052,10 @@ components:
           type: "array"
           items:
             type: "string"
+        specV2:
+          $ref: "#/components/schemas/AppSpecV2"
+        fieldMetaV2:
+          $ref: "#/components/schemas/FieldMetaV2"
       required:
         - "migrationId"
         - "version"
@@ -5315,6 +8166,23 @@ components:
         - "objectStore"
         - "queue"
         - "job"
+    OriginV2:
+      type: "object"
+      properties:
+        runtime:
+          type: "string"
+          enum:
+            - "k8s"
+            - "managedContainer"
+            - "vm"
+            - "paas"
+            - "source"
+        product:
+          type: "string"
+      required:
+        - "runtime"
+        - "product"
+      additionalProperties: false
     PlanAckKind:
       type: "string"
       enum:
@@ -5493,6 +8361,144 @@ components:
       required:
         - "id"
         - "owner"
+      additionalProperties: false
+    PostureV2:
+      type: "object"
+      properties:
+        permissions:
+          maxItems: 200
+          type: "array"
+          items:
+            type: "object"
+            properties:
+              subject:
+                type: "string"
+                pattern: "^[a-z][a-z0-9-]{0,39}$"
+              source:
+                type: "string"
+              effect:
+                type: "string"
+                enum:
+                  - "Allow"
+                  - "Deny"
+              actions:
+                type: "array"
+                items:
+                  type: "string"
+              notActions:
+                type: "array"
+                items:
+                  type: "string"
+              resources:
+                type: "array"
+                items:
+                  type: "string"
+              notResources:
+                type: "array"
+                items:
+                  type: "string"
+              conditions:
+                type: "object"
+                propertyNames:
+                  type: "string"
+                additionalProperties: {}
+              covers:
+                type: "array"
+                items:
+                  type: "string"
+                  pattern: "^[a-z][a-z0-9-]{0,39}$"
+              mode:
+                type: "string"
+                enum:
+                  - "mirror"
+                  - "narrowed"
+              note:
+                type: "string"
+            required:
+              - "subject"
+              - "source"
+              - "effect"
+              - "actions"
+              - "resources"
+              - "mode"
+            additionalProperties: false
+        network:
+          maxItems: 50
+          type: "array"
+          items:
+            oneOf:
+              - type: "object"
+                properties:
+                  scope:
+                    type: "string"
+                    const: "namespace"
+                  namespace:
+                    type: "string"
+                  mode:
+                    type: "string"
+                    enum:
+                      - "mirror"
+                      - "narrowed"
+                  policies:
+                    type: "array"
+                    items:
+                      type: "string"
+                  default:
+                    type: "string"
+                    enum:
+                      - "allow-all"
+                      - "as-declared"
+                required:
+                  - "scope"
+                  - "namespace"
+                  - "mode"
+                  - "policies"
+                  - "default"
+                additionalProperties: false
+              - type: "object"
+                properties:
+                  scope:
+                    type: "string"
+                    const: "component"
+                  subject:
+                    type: "string"
+                    pattern: "^[a-z][a-z0-9-]{0,39}$"
+                  mode:
+                    type: "string"
+                    enum:
+                      - "mirror"
+                      - "narrowed"
+                  ingress:
+                    anyOf:
+                      - type: "array"
+                        items:
+                          type: "object"
+                          properties:
+                            from:
+                              type: "string"
+                            port:
+                              type: "integer"
+                              minimum: 1
+                              maximum: 65535
+                          required:
+                            - "from"
+                          additionalProperties: false
+                      - type: "string"
+                        const: "unknown"
+                  public:
+                    type:
+                      - "boolean"
+                      - "null"
+                required:
+                  - "scope"
+                  - "subject"
+                  - "mode"
+                  - "ingress"
+                  - "public"
+                additionalProperties: false
+      required:
+        - "permissions"
+        - "network"
       additionalProperties: false
     PrecheckItem:
       type: "object"

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
-import { AppSpec, AppSpecV2, ImportResultV2, type FieldMeta, MigrationSpecViewV2, SpecPatchInput, SpecV2ConfirmPath, SpecV2FieldPath, checkV2 } from "@svc/contracts";
+import { AppSpec, AppSpecV2, FieldMetaV2, ImportResultV2, type FieldMeta, MigrationSpecViewV2, SpecPatchInput, SpecV2ConfirmPath, SpecV2FieldPath, checkV2 } from "@svc/contracts";
 import { rebuildFromV2 } from "@svc/adapters";
 import { BadRequest, DomainError, SPEC_DRAFT_KEY, applySpecPatch, applySpecV2Patch, notifyMigration, saveSpecRevision, withTenant, writeAudit,
          type SpecMeta, type Tx } from "@svc/core";
@@ -25,9 +25,17 @@ export function toSpecView(migrationId: string, row: Row): MigrationSpecViewV2 {
   if (!part.success) throw new DomainError(409, "SPEC_INVALID", `spec version ${row.version} does not match AppSpec`);
   const needsReview = reviewKeys(row.fieldMeta, SPEC_DRAFT_KEY);
   // PA2v2: v2 판이면 v2 검토 키도 (화면이 confirm 에 그대로 보냄). v1 판은 키 자체가 없음 → 응답 글자 그대로
-  const v2 = row.specV2 && typeof row.specV2 === "object" ? (row.specV2 as { fieldMeta?: unknown }) : undefined;
+  // I8apifix DRAFT(ai): spec_v2 가 NULL 이 아닌데 객체도 아니면(JSON 스칼라) v1 판처럼 200 이 아니라 깨진 v2 와 같은 409 (0031 CHECK 가 새로 들어오는 것은 막음)
+  if (row.specV2 != null && typeof row.specV2 !== "object")
+    throw new DomainError(409, "SPEC_INVALID", `spec version ${row.version} spec_v2 does not match AppSpecV2`);
+  const v2 = row.specV2 && typeof row.specV2 === "object" ? (row.specV2 as { spec?: unknown; fieldMeta?: unknown }) : undefined;
+  // I8api: v2 칸이 AppSpecV2·FieldMetaV2 모양이 아니면 409 SPEC_INVALID (응답 직렬화 500 대신, 가짜 값으로 안 채움)
+  const v2spec = v2 ? AppSpecV2.safeParse(v2.spec) : undefined;
+  const v2meta = v2 ? FieldMetaV2.safeParse(v2.fieldMeta ?? {}) : undefined;
+  if (v2 && (!v2spec?.success || !v2meta?.success)) throw new DomainError(409, "SPEC_INVALID", `spec version ${row.version} spec_v2 does not match AppSpecV2`);
   return { migrationId, version: row.version, createdAt: row.createdAt, source: row.draft ? "ai_draft" : "accepted",
-           complete: full.success, spec: part.data, needsReview, ...(v2 ? { needsReviewV2: reviewKeys(v2.fieldMeta) } : {}) };
+           complete: full.success, spec: part.data, needsReview, ...(v2 && v2spec?.success && v2meta?.success
+             ? { needsReviewV2: reviewKeys(v2.fieldMeta), specV2: v2spec.data, fieldMetaV2: v2meta.data } : {}) };
 }
 
 // 화면이 GET 으로 보는 판 = 받아들인 최신 판, 없으면 AI 초안 최신 판 (PATCH 의 baseVersion 도 이 판과 비교)

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { AppSpecV2, FieldMetaV2 } from "./spec-v2.js";
 
 // 공통 명세(IR). 클라우드 이름 없이 앱을 적는다.
 export const AppSpec = z.object({
@@ -107,5 +108,11 @@ export type SpecPatchInput = z.infer<typeof SpecPatchInput>;
 
 // PA2v2: 명세 보기 + v2 검토 칸. 판에 spec_v2 가 있을 때만 needsReviewV2 가 붙는다 (v1 판 응답은 지금과 글자 그대로)
 //   needsReviewV2 = spec_v2.fieldMeta 에서 needs_review=true 인 키. 화면은 이 키를 PATCH confirm 에 그대로 보낸다
-export const MigrationSpecViewV2 = MigrationSpecView.extend({ needsReviewV2: z.array(z.string()).optional() }).strict();
+// I8api: 판에 spec_v2 가 있으면 specV2(= spec_v2.spec, AppSpecV2)·fieldMetaV2(= spec_v2.fieldMeta)도 같이 돌려준다 (화면 v2 용). v1 판 응답엔 칸 자체가 없음
+//   unmapped·ids·environment 는 안 내보낸다 (화면이 안 쓰고, 벤더 고유 키가 섞여 있음)
+export const MigrationSpecViewV2 = MigrationSpecView.extend({
+  needsReviewV2: z.array(z.string()).optional(),
+  specV2: AppSpecV2.optional(),
+  fieldMetaV2: FieldMetaV2.optional(),
+}).strict();
 export type MigrationSpecViewV2 = z.infer<typeof MigrationSpecViewV2>;

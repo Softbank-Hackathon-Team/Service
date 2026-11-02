@@ -93,6 +93,7 @@ marker_sql() {
     0023) echo "EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='spec_versions' AND column_name='spec_v2')" ;;
     0024) echo "EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='environments' AND column_name='verify_failures')" ;;
     0026) echo "to_regprocedure('public.maint_verify_due(integer)') IS NOT NULL" ;;
+    0031) echo "EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'spec_versions_spec_v2_object')" ;;
     0030) echo "has_column_privilege('app_user', 'public.agent_enroll_tokens', 'expires_at', 'UPDATE')" ;;
     0029) echo "EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'tenants' AND column_name = 'gcp_platform_sa')" ;;
     0028) echo "to_regclass('public.personal_tokens') IS NOT NULL" ;;
