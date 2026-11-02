@@ -186,7 +186,7 @@ test("3티어 (gcp·onprem): GSA 표시는 신원별, 온프레 DB 는 CNPG 주�
 
 test("거부: capability 밖 종류(cache)·permissions·as-declared 네트워크·빌드 이미지는 UNSUPPORTED_V2", () => {
   const cases: Array<[string, (s: AppSpecV2) => void, string]> = [
-    ["cache", (s) => { s.components.push(ComponentV2.parse({ id: "cache", kind: "cache", props: { engine: "redis", memoryMiB: 512, tls: true, auth: true } })); }, "kind.cache.redis"],
+    ["cache", (s) => { s.components.push(ComponentV2.parse({ id: "cache", kind: "cache", props: { engine: "memcached", memoryMiB: 512, tls: true, auth: true } })); }, "kind.cache.memcached"],
     ["permissions", (s) => { s.posture.permissions.push({ subject: "api", source: "iam:r", effect: "Allow", actions: ["s3:*"], resources: ["*"], mode: "mirror" }); }, "posture.permissions"],
     ["netpol", (s) => { s.posture.network[0] = { scope: "namespace", namespace: "shop", mode: "mirror", policies: ["deny"], default: "as-declared" }; }, "posture.networkPolicy"],
     ["build", (s) => { (s.components[0]!.props as any).image = { source: "build", repository: "x", digest: null }; }, "image.build"],

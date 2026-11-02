@@ -8,6 +8,7 @@ import {
   postgresOf, postureOfComponent, refV2, secretNamesOf, workloadsOf,
 } from "./shared.js";
 import { buildWorkloadValues, cloudPostgresValues } from "./cloud.js";
+import { cacheVars, cachesOf, dataTypesOf, objectStoreVars, objectStoresOf, queueVars, queuesOf } from "./data.js";
 
 // DRAFT(ai): AWS 도착 Builder v2 (설계 27번 A1). 루트 = infra/modules/aws/root, 종류 = kinds/{postgres,identity,namespace}.
 // DECISION(team): AWS 도착 컴퓨트 = EKS (GKE·k3s와 같은 Helm 차트 재사용) (Jeong 2026-10-31) — v1 주석 그대로 따름
@@ -23,7 +24,9 @@ export function rdsClassFor(c: { cpuMilli: number | null; memMiB: number | null 
   return (hit ?? RDS_CLASSES[RDS_CLASSES.length - 1]!)[0];
 }
 
-const CAPS = [...K8S_RENDER_CAPS, "kind.postgres.15", "kind.postgres.16", "kind.postgres.17"];
+// TA12 DRAFT(ai): 데이터 자원 — ElastiCache(redis·valkey, 클러스터 모드 가능)·S3·SQS/SNS. memcached 는 모듈이 안 만듦 → capability 없음(거부)
+const CAPS = [...K8S_RENDER_CAPS, "kind.postgres.15", "kind.postgres.16", "kind.postgres.17",
+  "kind.cache.redis", "kind.cache.valkey", "kind.cache.cluster", "kind.objectStore", "kind.queue"];
 
 export function resourceTypesV2(spec: AppSpecV2): string[] {
   const t = new Set(["data.aws_eks_cluster", "data.aws_eks_cluster_auth", "kubernetes_namespace_v1"]);
@@ -31,6 +34,7 @@ export function resourceTypesV2(spec: AppSpecV2): string[] {
   if (ids.length) ["aws_iam_role", "aws_iam_role_policy", "aws_eks_pod_identity_association"].forEach((x) => t.add(x));
   if (workloadsOf(spec).some((w) => secretNamesOf(w).length)) t.add("aws_secretsmanager_secret");
   if (postgresOf(spec).length) ["aws_db_instance", "aws_db_parameter_group", "aws_db_subnet_group", "aws_security_group"].forEach((x) => t.add(x));
+  dataTypesOf("aws", spec).forEach((x) => t.add(x));
   return [...t].sort();
 }
 
@@ -77,6 +81,9 @@ export const awsTarget: TargetBuilder = {
     const instances = instancesOf("aws", [
       ...postgres.map((p) => ({ kind: "postgres" as const, id: p.id })),
       ...identity.map((i) => ({ kind: "identity" as const, id: i.id })),
+      ...cachesOf(spec).map((c) => ({ kind: "cache" as const, id: c.id })),
+      ...objectStoresOf(spec).map((c) => ({ kind: "objectStore" as const, id: c.id })),
+      ...queuesOf(spec).map((c) => ({ kind: "queue" as const, id: c.id })),
       { kind: "namespace" as const, id: ns },
     ]);
     const acct = t.accountId ?? envRef("accountId");
@@ -97,6 +104,9 @@ export const awsTarget: TargetBuilder = {
         // DRAFT(ai): aws·gcp 는 v1 처럼 할당량 없음 (null = 안 만듦). 온프레만 계산
         namespace_json: kindJson("namespace", [{ name: ns, quota_cpu_m: null, quota_memory_mi: null }]),
         identity_json: kindJson("identity", identity),
+        cache_json: cacheVars(spec, t),
+        object_store_json: objectStoreVars(spec, t),
+        queue_json: queueVars(spec, t),
       },
       instances,
     };

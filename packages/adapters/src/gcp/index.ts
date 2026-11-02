@@ -22,6 +22,15 @@ export const PERMS: PermTable = {
     read: ["cloudsql.databases.get"],
     write: ["cloudsql.databases.create", "cloudsql.databases.update"],
     remove: ["cloudsql.databases.delete"] },
+  // TA12 DRAFT(ai): 데이터 자원 종류 권한. 【미확인】 gcp-operate-custom-role.yaml 에는 아직 없음(경계 밖 TODO)
+  google_redis_instance: {
+    read: ["redis.instances.get"], write: ["redis.instances.create", "redis.instances.update"], remove: ["redis.instances.delete"] },
+  google_storage_bucket: {
+    read: ["storage.buckets.get"], write: ["storage.buckets.create", "storage.buckets.update"], remove: ["storage.buckets.delete"] },
+  google_pubsub_topic: {
+    read: ["pubsub.topics.get"], write: ["pubsub.topics.create", "pubsub.topics.update"], remove: ["pubsub.topics.delete"] },
+  google_pubsub_subscription: {
+    read: ["pubsub.subscriptions.get"], write: ["pubsub.subscriptions.create", "pubsub.subscriptions.update"], remove: ["pubsub.subscriptions.delete"] },
   google_sql_user: {
     read: ["cloudsql.users.list"],
     write: ["cloudsql.users.create", "cloudsql.users.update"],

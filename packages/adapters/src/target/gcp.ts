@@ -8,6 +8,7 @@ import {
   postgresOf, postureOfComponent, refV2, secretNamesOf, workloadsOf,
 } from "./shared.js";
 import { buildWorkloadValues, cloudPostgresValues } from "./cloud.js";
+import { cacheVars, cachesOf, dataTypesOf, objectStoreVars, objectStoresOf, queueVars, queuesOf } from "./data.js";
 
 // DRAFT(ai): GCP 도착 Builder v2 (설계 27번 A1). 루트 = infra/modules/gcp/root, 종류 = kinds/{postgres,identity,namespace}
 
@@ -26,7 +27,9 @@ export function cloudSqlTierFor(c: { cpuMilli: number | null; memMiB: number | n
   return `db-custom-${cpu}-${mem}`;
 }
 
-const CAPS = [...K8S_RENDER_CAPS, "kind.postgres.15", "kind.postgres.16", "kind.postgres.17"];
+// TA12 DRAFT(ai): 데이터 자원 — Memorystore(redis·valkey, 클러스터 모드는 모듈이 아직 안 함 → capability 없음)·Cloud Storage·Pub/Sub
+const CAPS = [...K8S_RENDER_CAPS, "kind.postgres.15", "kind.postgres.16", "kind.postgres.17",
+  "kind.cache.redis", "kind.cache.valkey", "kind.objectStore", "kind.queue"];
 
 export function resourceTypesV2(spec: AppSpecV2): string[] {
   const t = new Set(["data.google_client_config", "data.google_container_cluster", "kubernetes_namespace_v1"]);
@@ -34,6 +37,7 @@ export function resourceTypesV2(spec: AppSpecV2): string[] {
   if (workloadsOf(spec).some((w) => secretNamesOf(w).length)) ["google_secret_manager_secret", "google_secret_manager_secret_iam_member"].forEach((x) => t.add(x));
   if (postgresOf(spec).length) ["google_sql_database_instance", "google_sql_database", "google_sql_user", "random_password",
     "google_secret_manager_secret", "google_secret_manager_secret_version", "google_secret_manager_secret_iam_member"].forEach((x) => t.add(x));
+  dataTypesOf("gcp", spec).forEach((x) => t.add(x));
   return [...t].sort();
 }
 
@@ -80,6 +84,9 @@ export const gcpTarget: TargetBuilder = {
     const instances = instancesOf("gcp", [
       ...postgres.map((p) => ({ kind: "postgres" as const, id: p.id })),
       ...identity.map((i) => ({ kind: "identity" as const, id: i.id })),
+      ...cachesOf(spec).map((c) => ({ kind: "cache" as const, id: c.id })),
+      ...objectStoresOf(spec).map((c) => ({ kind: "objectStore" as const, id: c.id })),
+      ...queuesOf(spec).map((c) => ({ kind: "queue" as const, id: c.id })),
       { kind: "namespace" as const, id: ns },
     ]);
     return {
@@ -97,6 +104,9 @@ export const gcpTarget: TargetBuilder = {
         postgres_json: kindJson("postgres", postgres),
         namespace_json: kindJson("namespace", [{ name: ns, quota_cpu_m: null, quota_memory_mi: null }]),
         identity_json: kindJson("identity", identity),
+        cache_json: cacheVars(spec, t),
+        object_store_json: objectStoreVars(spec, t),
+        queue_json: queueVars(spec, t),
       },
       instances,
     };

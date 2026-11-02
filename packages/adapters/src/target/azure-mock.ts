@@ -7,6 +7,7 @@ import { envRef, fromOut, nameSeed, regionOf, tenantOf, type Target } from "../c
 import { azureMockAdapter } from "../azure-mock/index.js";
 import { fakeUuid, MOCK_SUBSCRIPTION, resourceGroupOf } from "../azure-mock/runner.js";
 import { asV1Name, assertRenderable, identitiesOf, K8S_RENDER_CAPS, postgresOf, UNSUPPORTED_V2 } from "./shared.js";
+import { cacheVars, cachesOf, objectStoreVars, objectStoresOf, queueVars, queuesOf } from "./data.js";
 import { buildWorkloadValues } from "./cloud.js";
 
 // TA10 (설계 27번 A10): Azure Mock 도착 Builder v2 = capability 표 + mock plan 만. 아키텍처 전제: Azure 는 모양 + Mock, apply 안 함.
@@ -15,7 +16,9 @@ import { buildWorkloadValues } from "./cloud.js";
 //   신원 1개(serviceAccount 하나) · postgres 0~1개. 그 밖은 capability 로 막는다(UNSUPPORTED_V2)
 
 // 이 Builder 가 그릴 수 있는 것. "mock" 은 화면 배지(실자원 아님)
-const CAPS = [...K8S_RENDER_CAPS, "kind.postgres.15", "kind.postgres.16", "kind.postgres.17", "mock"];
+// TA12 STUB: 데이터 자원은 Mock 이라 "모양만" 그린다 (Azure Cache·Storage·Service Bus 이름·ARM id 를 결정적으로). 진짜 모듈 없음 — Azure 는 어댑터 모양과 Mock 만 (CLAUDE.md 0-1)
+const CAPS = [...K8S_RENDER_CAPS, "kind.postgres.15", "kind.postgres.16", "kind.postgres.17", "mock",
+  "kind.cache.redis", "kind.cache.valkey", "kind.cache.cluster", "kind.objectStore", "kind.queue"];
 
 // v1 통짜 모듈이 담지 못하는 모양 → UNSUPPORTED_V2 (capability 표 밖과 같은 오류)
 // E2E-v5: precheck(v2PrecheckItems)도 같은 검사를 불러 계획 단계 failed 대신 block(명세 검토로 되돌림)으로 먼저 알린다
@@ -33,8 +36,18 @@ function assertAzureShape(spec: AppSpecV2): void {
 export function resourceTypesV2(spec: AppSpecV2): string[] {
   const t = ["azurerm_key_vault", "azurerm_user_assigned_identity", "azurerm_federated_identity_credential"];
   if (postgresOf(spec).length) t.push("azurerm_postgresql_flexible_server", "azurerm_postgresql_flexible_server_database");
+  if (cachesOf(spec).length) t.push("azurerm_redis_cache");
+  if (objectStoresOf(spec).length) t.push("azurerm_storage_account");
+  const qs = queuesOf(spec);
+  if (qs.length) t.push("azurerm_servicebus_namespace");
+  if (qs.some((q) => q.props.model === "queue")) t.push("azurerm_servicebus_queue");
+  if (qs.some((q) => q.props.model === "topic")) t.push("azurerm_servicebus_topic");
   return t.sort();
 }
+
+const DATA_MOCK_TYPES = new Set(["azurerm_redis_cache", "azurerm_storage_account", "azurerm_servicebus_namespace", "azurerm_servicebus_queue", "azurerm_servicebus_topic"]);
+// 데이터 자원 이름 (data.ts 와 같은 규칙·같은 seed). Service Bus 네임스페이스는 앱 하나에 하나
+export const sbNamespaceName = (spec: AppSpecV2, t: Target) => boundedName({ prefix: "sb", app: spec.app.name, seed: [nameSeed(t), spec.app.name, "servicebus"], max: 50 });
 
 const names = (spec: AppSpecV2, t: Target) => ({
   // Key Vault 이름은 전 세계 유일 3~24자 (v1 과 같은 규칙·같은 seed → 같은 이름)
@@ -68,11 +81,18 @@ function toTerraformV2(spec: AppSpecV2, t: Target): TfRootCall {
       db_version: pg?.props.majorVersion ?? "16",
       // DRAFT(ai): Flexible Server 최소 32GiB (v1 과 같은 올림)
       db_storage_mb: Math.max(32768, (pg?.props.storageGb ?? 32) * 1024),
+      // 데이터 자원이 없으면 변수를 아예 안 넣음 (v1 통짜 모듈 변수와 같은 모양 유지)
+      ...(cachesOf(spec).length ? { cache_json: cacheVars(spec, t) } : {}),
+      ...(objectStoresOf(spec).length ? { object_store_json: objectStoreVars(spec, t) } : {}),
+      ...(queuesOf(spec).length ? { queue_json: queueVars(spec, t) } : {}),
     },
     // 매트릭스 줄은 다른 클라우드와 같은 종류 이름. 모듈은 통짜 하나
     instances: [
       ...(pg ? [{ kind: "postgres" as const, id: pg.id, module: "azure/app" }] : []),
       ...(ident ? [{ kind: "identity" as const, id: ident.id, module: "azure/app" }] : []),
+      ...cachesOf(spec).map((c) => ({ kind: "cache" as const, id: c.id, module: "azure/app" })),
+      ...objectStoresOf(spec).map((c) => ({ kind: "objectStore" as const, id: c.id, module: "azure/app" })),
+      ...queuesOf(spec).map((c) => ({ kind: "queue" as const, id: c.id, module: "azure/app" })),
       { kind: "namespace" as const, id: ns, module: "azure/app" },
     ].sort((a, b) => a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id)),
   };
@@ -93,6 +113,17 @@ export function mockOutputsV2(spec: AppSpecV2, t: Target): TfOutputs {
     // v1 모듈은 비밀번호 없이 Entra(AAD) 인증만 → 접속 사용자 = 앱 관리 신원 id-<앱>. DB 이름 = 앱 이름의 - 를 _ 로 (모듈 규칙)
     out[`link.${pg.id}.user`] = `id-${spec.app.name}`;
     out[`link.${pg.id}.url`] = `postgresql://id-${spec.app.name}@${out.db_fqdn}:5432/${spec.app.name.replace(/-/g, "_")}`;
+  }
+  // TA12 STUB: 데이터 자원 link 출력 (모양만 실제 Azure 와 같게, 값은 이름에서 결정적으로)
+  for (const [c, j] of cachesOf(spec).map((x, i) => [x, (JSON.parse(String(tf.vars.cache_json)) as Array<{ name: string }>)[i]!] as const)) {
+    const host = `${j.name}.redis.cache.windows.net`;
+    out[`link.${c.id}.host`] = host; out[`link.${c.id}.port`] = "6380"; out[`link.${c.id}.url`] = `rediss://${host}:6380`;
+  }
+  for (const [c, j] of objectStoresOf(spec).map((x, i) => [x, (JSON.parse(String(tf.vars.object_store_json)) as Array<{ name: string }>)[i]!] as const)) {
+    out[`link.${c.id}.name`] = j.name; out[`link.${c.id}.url`] = `https://${j.name.replace(/[^a-z0-9]/g, "").slice(0, 24)}.blob.core.windows.net/${j.name}`;
+  }
+  for (const [c, j] of queuesOf(spec).map((x, i) => [x, (JSON.parse(String(tf.vars.queue_json)) as Array<{ name: string }>)[i]!] as const)) {
+    out[`link.${c.id}.name`] = j.name; out[`link.${c.id}.url`] = `sb://${sbNamespaceName(spec, t)}.servicebus.windows.net/${j.name}`;
   }
   return out;
 }
@@ -116,10 +147,18 @@ export function mockPlanV2(spec: AppSpecV2, t: Target, state: ResourceState = "C
     azurerm_postgresql_flexible_server: ["Microsoft.DBforPostgreSQL/flexibleServers", db],
     azurerm_postgresql_flexible_server_database: [`Microsoft.DBforPostgreSQL/flexibleServers/${db}/databases`, app],
   };
-  const resources = resourceTypesV2(spec).map((type) => {
+  const resources = resourceTypesV2(spec).filter((type) => !DATA_MOCK_TYPES.has(type)).map((type) => {
     const [p, name] = row[type]!;
     return { type, name, id: arm(p, name), state };
   });
+  // TA12 STUB: 데이터 자원은 컴포넌트마다 한 줄 (Service Bus 는 네임스페이스 1 + 큐·토픽)
+  const nameOf = (json: unknown, i: number) => (JSON.parse(String(json)) as Array<{ name: string }>)[i]!.name;
+  cachesOf(spec).forEach((_c, i) => { const n = nameOf(tf.vars.cache_json, i); resources.push({ type: "azurerm_redis_cache", name: n, id: arm("Microsoft.Cache/redis", n), state }); });
+  objectStoresOf(spec).forEach((_c, i) => { const n = nameOf(tf.vars.object_store_json, i).replace(/[^a-z0-9]/g, "").slice(0, 24); resources.push({ type: "azurerm_storage_account", name: n, id: arm("Microsoft.Storage/storageAccounts", n), state }); });
+  if (queuesOf(spec).length) { const sb = sbNamespaceName(spec, t); resources.push({ type: "azurerm_servicebus_namespace", name: sb, id: arm("Microsoft.ServiceBus/namespaces", sb), state });
+    queuesOf(spec).forEach((q, i) => { const n = nameOf(tf.vars.queue_json, i); const topic = q.props.model === "topic";
+      resources.push({ type: topic ? "azurerm_servicebus_topic" : "azurerm_servicebus_queue", name: n, id: arm(`Microsoft.ServiceBus/namespaces/${sb}/${topic ? "topics" : "queues"}`, n), state }); }); }
+  resources.sort((a, b) => a.type.localeCompare(b.type) || a.name.localeCompare(b.name));
   return { provider: "azure_mock", mock: true, region: regionOf(t), root: tf.root, vars: tf.vars, instances: tf.instances,
     summary: { add: resources.length, change: 0, destroy: 0 }, resources };
 }

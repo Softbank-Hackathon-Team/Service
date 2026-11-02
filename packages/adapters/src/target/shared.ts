@@ -68,7 +68,7 @@ export function requirementsV2(spec: AppSpecV2): Capability[] {
       // DRAFT(ai): job 엔 runtime 칸이 없다 → k8s CronJob(Helm)으로 그림. 관리형 잡은 A7
       case "job": r.add("runtime.k8s"); r.add("kind.job"); break;
       case "postgres": r.add(c.props.majorVersion ? `kind.postgres.${c.props.majorVersion}` : "kind.postgres"); break;
-      case "cache": r.add(`kind.cache.${c.props.engine}`); break;
+      case "cache": r.add(`kind.cache.${c.props.engine}`); if (c.props.clusterMode) r.add("kind.cache.cluster"); break;   // TA12: 클러스터 모드는 별도 capability
       default: r.add(`kind.${c.kind}`);
     }
     if (c.kind === "service" || c.kind === "job") {
@@ -107,6 +107,20 @@ export function v2Blockers(spec: AppSpecV2, caps: Capability[]): { unsupported: 
       for (const img of [c.props.image, ...(c.props.sidecars ?? []).filter((s) => !s.injected).map((s) => s.image), ...(c.props.initContainers ?? []).map((s) => s.image)])
         if (img.source === "registry" && !img.digest) unsupported.push(`도착 렌더 미지원: ${c.id} 이미지 digest 없음 (${img.repository})`);
     }
+  }
+  // TA12: 데이터 자원. DLQ 는 같은 명세 안의 다른 queue(model=queue)여야 하고, 대상은 또 DLQ 를 갖지 않는다 (루트·모듈 검증과 같은 규칙 — 계획 전에 거부)
+  for (const c of spec.components) {
+    if (c.kind === "queue" && c.props.deadLetter) {
+      const to = c.props.deadLetter.to;
+      if (to === undefined) needsHuman.push(`${c.id}: 죽은 편지 큐(DLQ)를 출발에서 찾지 못함 → 도착에 DLQ 를 만들지 사람이 정함`);
+      else {
+        const t = spec.components.find((x) => x.id === to);
+        if (!t || t.kind !== "queue" || t.id === c.id) unsupported.push(`도착 렌더 미지원: ${c.id} DLQ 대상 ${to} 이(가) 같은 명세의 다른 queue 가 아님`);
+        else if (t.props.model !== "queue") unsupported.push(`도착 렌더 미지원: ${c.id} DLQ 대상 ${to} 은 topic 이라 DLQ 가 될 수 없음`);
+        else if (t.props.deadLetter?.to !== undefined) unsupported.push(`도착 렌더 미지원: ${c.id} DLQ 대상 ${to} 이(가) 또 DLQ 를 가짐 (한 단계만)`);
+      }
+    }
+    if (c.kind === "objectStore" && c.props.public === null) needsHuman.push(`${c.id}: 버킷 공개 여부를 못 읽음 → 도착은 비공개로 만들고 사람이 정함`);
   }
   for (const n of spec.posture.network) {
     if (n.scope !== "component") continue;
