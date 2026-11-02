@@ -86,11 +86,19 @@ export async function readEcs(d: CliDeps, region: string, env: NodeJS.ProcessEnv
     const defs = arr(td.containerDefinitions);
     const main = defs.find((c) => c.essential !== false) ?? defs[0];
     // 실행 중 작업의 주 컨테이너 digest (태그만 있는 이미지를 같은 이미지로 박으려고)
+    // VI9: 롤링 배포 중엔 옛 판 작업도 RUNNING 이다 → 서비스가 가리키는 판(tdArn)의 작업만 본다 (예전: 목록 첫 작업 = 옛 판 digest 가능, 순서도 안 정해짐)
+    //   같은 판인데 digest 가 둘 이상(같은 태그를 다시 올림)이면 고르지 않는다 → 매퍼가 unmapped B (사람이 확인)
     const digest = await soft(`${name} 실행 중 작업`, notes, async () => {
-      const tasks = strs(get(await runJson(d, "aws", ["ecs", "list-tasks", "--cluster", cluster, "--service-name", name, "--desired-status", "RUNNING", ...r]), "taskArns"));
-      if (!tasks.length) return null;
-      const t = arr(get(await runJson(d, "aws", ["ecs", "describe-tasks", "--cluster", cluster, "--tasks", tasks[0]!, ...r]), "tasks"))[0];
-      return str(arr(t?.containers).find((c) => c.name === main?.name)?.imageDigest);
+      const tasks = strs(get(await runJson(d, "aws", ["ecs", "list-tasks", "--cluster", cluster, "--service-name", name, "--desired-status", "RUNNING", ...r]), "taskArns")).sort();
+      const ds = new Set<string>();
+      for (const part of chunks(tasks, 100))
+        for (const t of arr(get(await runJson(d, "aws", ["ecs", "describe-tasks", "--cluster", cluster, "--tasks", ...part, ...r]), "tasks"))) {
+          if (str(t.taskDefinitionArn) !== tdArn) continue;
+          const x = str(arr(t.containers).find((c) => c.name === main?.name)?.imageDigest);
+          if (x) ds.add(x);
+        }
+      if (ds.size > 1) { notes.push(`${name}: 작업 정의 ${nameOfArn(tdArn)} 의 실행 중 작업 digest 가 ${ds.size}개 → 고르지 않음`); return null; }
+      return [...ds][0] ?? null;
     }, null);
     const resId = `service/${cluster}/${name}`;
     const autoscaling = await soft(`${name} Auto Scaling`, notes, async () => {

@@ -145,6 +145,7 @@
               "Sid": "DataDescribe",
               "Effect": "Allow",
               "Action": [
+                "elasticache:DescribeCacheClusters",
                 "elasticache:DescribeCacheSubnetGroups",
                 "elasticache:DescribeReplicationGroups"
               ],

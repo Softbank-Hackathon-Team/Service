@@ -36,6 +36,23 @@ export function maskPlainSecrets(components: MappedComponent[], fieldMeta: Field
       c.projection.env = c.projection.env.filter((e) => !names.has(e.name));
     }
   }
+  // VI9: 보조 컨테이너(sidecars, ECS 매퍼) env 도 같은 규칙. 예전엔 주 컨테이너만 봐서 보조 컨테이너 평문 비밀 값이 spec_v2 에 남았다
+  for (const c of components) {
+    if (c.kind !== "service" && c.kind !== "job") continue;
+    for (const sc of (Array.isArray(c.props.sidecars) ? c.props.sidecars : []) as Env[]) {
+      const list = (Array.isArray(sc.env) ? sc.env : []) as Env[];
+      const plain = list.filter((e) => typeof e.value === "string" && isPlainSecret(String(e.name), e.value as string));
+      if (!plain.length) continue;
+      sc.env = list.filter((e) => !plain.includes(e));
+      for (const e of plain) {
+        const name = String(e.name), scn = String(sc.name);
+        masked.push({ from: c.id!, env: `${scn}.${name}`, value: String(e.value) });
+        fieldMeta[`components.${c.id}.sidecars.${scn}.env.${name}`] = { source: "source.env", confidence: 0.6, needs_review: true,
+          rationale: "보조 컨테이너의 평문 비밀로 보여 명세에서 뺐다. 도착 비밀 저장소에 등록 후 fromSecret 으로 연결" };
+        unmapped.push({ resource: `env:${c.id}.${scn}.${name}`, grade: "B", reason: "보조 컨테이너의 평문 비밀로 보이는 환경변수 → 명세에 안 넣음. 비밀 저장소로 옮겨야 함" });
+      }
+    }
+  }
   return masked;
 }
 

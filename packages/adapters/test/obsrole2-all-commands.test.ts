@@ -8,10 +8,6 @@ import { AWS_COMMAND_ACTIONS, GCP_COMMAND_PERMISSIONS, actionsOfCommands } from 
 
 const root = new URL("../../../", import.meta.url);
 const read = (p: string) => readFileSync(new URL(p, root), "utf8");
-// 부르는 쪽 소스 (주석은 빼고 센다)
-const SOURCES = ["packages/adapters/src/discover/index.ts", "packages/adapters/src/discover/aws-iam.ts", "packages/adapters/src/discover/data.ts", "packages/adapters/src/import/readers/aws-ecs.ts",
-  "packages/adapters/src/verify/aws.ts", "packages/adapters/src/verify/gcp.ts", "packages/adapters/src/precheck/cloud-precheck.ts", "packages/adapters/src/common/cli.ts",
-  "packages/security/src/live/aws.ts", "packages/security/src/live/gcp.ts", "packages/security/src/live/exec.ts"];
 // 부르는 쪽 소스: adapters/src 아래 모든 .ts (새 읽기 파일이 생겨도 자동으로 잡힘. 표 파일 자신은 제외) + security live
 function walk(dir: string): string[] {
   return readdirSync(new URL(dir, root), { withFileTypes: true }).flatMap((e) =>
@@ -97,12 +93,6 @@ test("거부: 표 전체에 쓰기·비밀값·내용 읽기 권한이 하나도
   assert.throws(() => actionsOfCommands("aws", ["s3api put-object"]), /표에 없는/);
 });
 
-test("INTFIX: ECS 읽기 동작 11개가 권한 표에 모두 있고 쓰기 동사는 없다", async () => {
-  const { ECS_OBSERVE_ACTIONS } = await import("../src/index.js");
-  const inTable = new Set(Object.values(AWS_COMMAND_ACTIONS).filter((v): v is string => typeof v === "string"));
-  assert.equal(ECS_OBSERVE_ACTIONS.length, 11);
-  assert.deepEqual(ECS_OBSERVE_ACTIONS.filter((a) => !inTable.has(a)), []);
-  assert.deepEqual(ECS_OBSERVE_ACTIONS.filter((a) => /:(Create|Delete|Update|Put|Run|Start|Stop|Register|Deregister|Tag|Untag)/.test(a)), []);
 test("소스 훑기가 실제로 읽기 파일을 다 잡음 (ECS 읽기·데이터·IAM·verify·precheck 가 목록에 있음)", () => {
   for (const f of ["import/readers/aws-ecs.ts", "discover/data.ts", "discover/aws-iam.ts", "discover/index.ts", "verify/aws.ts", "verify/gcp.ts", "precheck/cloud-precheck.ts"])
     assert.ok(SOURCES.includes(`packages/adapters/src/${f}`), f);

@@ -34,7 +34,8 @@ export const PERMS: PermTable = {
     remove: ["rds:DeleteDBSubnetGroup"] },
   // TA12 DRAFT(ai): 데이터 자원 종류 권한. 【미확인】 infra/permissions 정책 파일에는 아직 없음(경계 밖 TODO) — 실 apply 전에 정책 파일에 같은 동작을 넣어야 함
   aws_elasticache_replication_group: {
-    read: ["elasticache:DescribeReplicationGroups", "elasticache:ListTagsForResource"],
+    // VTA12b DRAFT(ai): 【추정】 terraform aws_elasticache_replication_group 읽기는 멤버 클러스터(DescribeCacheClusters)도 부른다 — 빠지면 plan 이 AccessDenied. 읽기 전용이라 천장에 추가. 첫 맥 실측으로 확인
+    read: ["elasticache:DescribeCacheClusters", "elasticache:DescribeReplicationGroups", "elasticache:ListTagsForResource"],
     write: ["elasticache:CreateReplicationGroup", "elasticache:ModifyReplicationGroup", "elasticache:AddTagsToResource"],
     remove: ["elasticache:DeleteReplicationGroup"] },
   aws_elasticache_subnet_group: {

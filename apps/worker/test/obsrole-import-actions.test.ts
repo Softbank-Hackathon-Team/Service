@@ -47,7 +47,6 @@ const shPerms = readFileSync(new URL("../../../infra/onboarding/gcp-connect.sh",
   .filter((l) => l.startsWith("OBSERVE_PERMS=")).join(",");
 
 test("IMPORT_AWS_IAM=1 + v2: 앱 신원 IAM 읽기(파드 신원 2 + IAM 5)가 더해지고, 깃발 하나만으로는 안 더해짐", () => {
-  const base = [...IMPORT_OBSERVE_ACTIONS, ...AWS_DATA_READ_ACTIONS, ...ECS_OBSERVE_ACTIONS];   // I9: v2 는 ECS 읽기(11개)도 요청
   const base = withFlag("v2", importObserveActions, "0");   // 기본 + 데이터 + ECS
   assert.deepEqual(base, [...IMPORT_OBSERVE_ACTIONS, ...AWS_DATA_READ_ACTIONS, ...ECS_OBSERVE_ACTIONS]);
   const a = withFlag("v2", importObserveActions, "1");
