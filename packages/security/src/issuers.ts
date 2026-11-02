@@ -17,7 +17,7 @@ export interface ProviderIssuer {
   readonly mock: boolean;
   // L4: 환경마다 진짜/가짜가 갈리는 발급기(perEnvAwsIssuer)만 둔다. broker 가 resolveEnv 뒤에 불러 ExternalId 관문·장부 stub 칸에 쓴다.
   //   없으면 mock 값 그대로
-  mockFor?(binding: { externalId?: string }): boolean;
+  mockFor?(binding: { roleRef?: string; externalId?: string }): boolean;
   issue(ctx: IssueContext): Promise<Issued>;
   // 회수. hard=false 면 보관함에서 지우기만 (만료까지 최대 1시간 남는다). hard=true 는 제공자에서 실제로 무효화 시도
   revoke(ctx: RevokeContext): Promise<{ hardRevoked: boolean; detail: Record<string, unknown> }>;

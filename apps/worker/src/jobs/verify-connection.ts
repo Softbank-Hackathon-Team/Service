@@ -1,7 +1,7 @@
 import { nextAfterPeriodic, VerifyConnectionJob, type ConnectionStatus } from "@svc/contracts";
 import { advanceConnection, withTenant } from "@svc/core";
-import { verifyAwsObserve, type CliDeps } from "@svc/adapters";
-import { StsCliError, TempRoleDenied, type TempRoleBroker } from "@svc/security";
+import { verifyAwsObserve, verifyGcpObserve, type CliDeps } from "@svc/adapters";
+import { GcpIssueError, StsCliError, TempRoleDenied, type TempRoleBroker } from "@svc/security";
 import { tempRoles } from "../platform.js";
 
 // L4: 연결 확인 작업 (verify-connection 큐). 설계 IA 6.1 4단계 · 5단계(주기 재확인은 처리만, 일정은 L4b)
@@ -12,6 +12,8 @@ import { tempRoles } from "../platform.js";
 
 // 관찰 역할이 실제로 부르는 읽기 동작 (최소 권한 검사·장부에 남는 목록)
 export const VERIFY_ACTIONS = ["eks:ListClusters", "eks:DescribeCluster", "rds:DescribeDBInstances", "iam:GetRole", "guardduty:ListDetectors"];
+// L7i: GCP 관찰 SA 가 실제로 쓰는 권한 (gcp-connect.sh 의 platform_observe 안 목록의 부분집합)
+export const VERIFY_GCP_ACTIONS = ["resourcemanager.projects.get", "container.clusters.list", "sql.instances.list", "iam.serviceAccounts.get"];
 // DRAFT(ai): 관찰 역할 15분 (STS 최소값, 설계 IA 6.1 "15분 빌림")
 export const VERIFY_TTL_SEC = 900;
 
@@ -20,12 +22,13 @@ export interface VerifyOutcome { status: ConnectionStatus; reason?: string; skip
 
 interface EnvRow {
   provider: string; account_id: string | null; external_id: string | null; region: string | null; cluster_name: string | null;
-  connection_status: ConnectionStatus; verify_failures: number;
+  connection_status: ConnectionStatus; verify_failures: number; gcp_project_number: string | null;
 }
 
 /** 발급 실패 → 사유. 정해지지 않은 것은 null (다시 던짐) */
 function issueFailure(e: unknown): string | null {
   if (e instanceof TempRoleDenied) return e.code;
+  if (e instanceof GcpIssueError && e.reason !== "PLATFORM_SA_MISSING") return e.reason;   // 플랫폼 SA 없음 = 우리 설정 문제라 던진다
   if (e instanceof StsCliError) {
     if (e.awsCode === "AccessDenied") return "ROLE_ASSUME_DENIED";
     if (e.awsCode === "NoSuchEntity") return "ROLE_NOT_FOUND";
@@ -37,25 +40,26 @@ export async function handleVerifyConnection(data: unknown, deps: VerifyDeps = {
   const job = VerifyConnectionJob.parse(data);
   const { tenantId, envId, reason } = job;
   const env = await withTenant(tenantId, async (tx) => (await tx.query<EnvRow>(
-    `SELECT provider, account_id, external_id, region, cluster_name, connection_status, verify_failures
+    `SELECT provider, account_id, external_id, region, cluster_name, connection_status, verify_failures, gcp_project_number
        FROM environments WHERE id = $1`, [envId])).rows[0]);
   // 남의 회사·지워진 환경: RLS 로 0줄 → 아무것도 안 바꾸고 끝 (다시 해도 같다)
   if (!env) return { status: "disconnected", skipped: "env_not_found" };
   const cur = env.connection_status;
-  // STUB: GCP(L7)·온프레(L6) 연결 확인. 지금은 상태 그대로 두고 끝 (실패 처리 아님)
-  if (env.provider !== "aws") return { status: cur, skipped: "provider_not_supported" };
+  // STUB: 온프레(L6) 연결 확인. 지금은 상태 그대로 두고 끝 (실패 처리 아님). GCP 는 L7i
+  if (env.provider !== "aws" && env.provider !== "gcp") return { status: cur, skipped: "provider_not_supported" };
   if (reason === "user" && cur !== "verifying") return { status: cur, skipped: "not_verifying" };
   if (reason === "periodic" && cur !== "connected" && cur !== "unstable") return { status: cur, skipped: "not_connected" };
 
   const roles = deps.roles ?? tempRoles();
   // DRAFT(ai): 환경에 리전이 없으면 서울 (issuers.ts AWS_DEFAULT_REGION 과 같음)
   const region = env.region || "ap-northeast-2";
-  let result: { ok: true; clusters: string[] } | { ok: false; reason: string };
+  let result: { ok: true; clusters: string[]; projectNumber?: string } | { ok: false; reason: string };
   let ref: string | null = null;
   try {
+    const gcp = env.provider === "gcp";
     try {
-      const cred = await roles.issue({ tenantId, envId, provider: "aws", purpose: "observe", actions: VERIFY_ACTIONS, ttlSec: VERIFY_TTL_SEC },
-        { step: "verify" });
+      const cred = await roles.issue({ tenantId, envId, provider: gcp ? "gcp" : "aws", purpose: "observe",
+        actions: gcp ? VERIFY_GCP_ACTIONS : VERIFY_ACTIONS, ttlSec: VERIFY_TTL_SEC }, { step: "verify" });
       ref = cred.credentialRef;
       // L4b: 가짜 발급기(REAL_STS 꺼짐·external_id 없는 시드 환경)의 자격으로 고객 CLI 를 부르지 않는다 (가짜 키로 진짜 AWS 를 부르면
       //   InvalidClientTokenId 로 재시도만 돈다). 상태는 그대로 두고 끝. 주기 훑기가 시드 환경에도 오기 때문에 필요
@@ -63,6 +67,15 @@ export async function handleVerifyConnection(data: unknown, deps: VerifyDeps = {
       if (cred.stub) {
         await roles.revoke(ref, tenantId, "verify_done");
         ref = null;
+        // VL4fix DRAFT(ai): 사용자가 누른 확인(verifying)은 가짜 결과로 connected 로 닫는다 (verify_detail.mock=true, clusters 비움).
+        //   그대로 두면 시드 환경이 verifying 에 영영 남는다. 주기 훑기는 상태를 안 건드림
+        if (reason === "user") return withTenant(tenantId, async (tx) => {
+          await advanceConnection(tx, tenantId, envId, "connected", { from: ["verifying"], failures: 0, touchVerified: true,
+            audit: { actor: "worker", action: "env.verified", detail: { mock: true, trigger: reason } } });
+          await tx.query("UPDATE environments SET verify_detail = $2 WHERE id = $1",
+            [envId, JSON.stringify({ clusters: [], mock: true, checkedAt: new Date().toISOString() })]);
+          return { status: "connected" as const, skipped: "stub_credentials" };
+        });
         return { status: cur, skipped: "stub_credentials" };
       }
     } catch (e) {
@@ -72,10 +85,18 @@ export async function handleVerifyConnection(data: unknown, deps: VerifyDeps = {
     }
     if (ref) {
       const m = roles.use(ref, tenantId);
-      if (m.kind !== "aws") throw new Error("AWS 발급기가 aws 자격이 아닌 것을 돌려줬다");
-      if (!env.cluster_name) result = { ok: false, reason: "K8S_ACCESS_MISSING" };   // DRAFT(ai): 클러스터 이름이 없으면 쿠버네티스를 못 봄
-      else result = await verifyAwsObserve(deps.cli ?? {}, { region, clusterName: env.cluster_name,
-        cliEnv: { AWS_ACCESS_KEY_ID: m.accessKeyId, AWS_SECRET_ACCESS_KEY: m.secretAccessKey, AWS_SESSION_TOKEN: m.sessionToken, AWS_REGION: region } });
+      if (gcp) {
+        if (m.kind !== "bearer") throw new Error("GCP 발급기가 bearer 자격이 아닌 것을 돌려줬다");
+        // account_id = GCP 프로젝트 ID. 없으면 볼 곳이 없다 (checkAccountId 가 연결 때 이미 거른다)
+        if (!env.account_id) result = { ok: false, reason: "ROLE_NOT_FOUND" };
+        else result = await verifyGcpObserve(deps.cli ?? {}, { projectId: env.account_id, expectedProjectNumber: env.gcp_project_number,
+          clusterName: env.cluster_name, token: m.token });
+      } else {
+        if (m.kind !== "aws") throw new Error("AWS 발급기가 aws 자격이 아닌 것을 돌려줬다");
+        if (!env.cluster_name) result = { ok: false, reason: "K8S_ACCESS_MISSING" };   // DRAFT(ai): 클러스터 이름이 없으면 쿠버네티스를 못 봄
+        else result = await verifyAwsObserve(deps.cli ?? {}, { region, clusterName: env.cluster_name,
+          cliEnv: { AWS_ACCESS_KEY_ID: m.accessKeyId, AWS_SECRET_ACCESS_KEY: m.secretAccessKey, AWS_SESSION_TOKEN: m.sessionToken, AWS_REGION: region } });
+      }
     }
   } finally {
     if (ref) await roles.revoke(ref, tenantId, "verify_done");
@@ -91,6 +112,8 @@ export async function handleVerifyConnection(data: unknown, deps: VerifyDeps = {
         await advanceConnection(tx, tenantId, envId, "connected", { from: ["verifying"], failures: 0, touchVerified: true, audit });
         await tx.query("UPDATE environments SET verify_detail = $2 WHERE id = $1",
           [envId, JSON.stringify({ clusters: r.clusters, checkedAt: new Date().toISOString() })]);
+        // L7i: 첫 성공 때 GCP 프로젝트 번호 고정 (이미 있으면 그대로 — 위 확인이 같음을 보장)
+        if (r.projectNumber) await tx.query("UPDATE environments SET gcp_project_number = COALESCE(gcp_project_number, $2) WHERE id = $1", [envId, r.projectNumber]);
         return { status: "connected" as const };
       }
       await advanceConnection(tx, tenantId, envId, "failed", { from: ["verifying"], failureReason: r.reason, audit });

@@ -1,5 +1,5 @@
 import { prometheusMetrics, stubMetrics, switcherFromEnv, type MetricsSource, type TrafficSwitcher } from "@svc/traffic";
-import { awsCliSts, awsStsIssuer, createTempRoleBroker, loadPermissionSet, mockIssuer, perEnvAwsIssuer, type PermissionSet, type ProviderIssuer, type TempRoleBroker } from "@svc/security";
+import { awsCliSts, awsStsIssuer, createTempRoleBroker, gcpCliIssuer, perEnvGcpIssuer, loadPermissionSet, mockIssuer, perEnvAwsIssuer, type PermissionSet, type ProviderIssuer, type TempRoleBroker } from "@svc/security";
 import { fileURLToPath } from "node:url";
 import { pgLedger } from "./temp-cred-ledger.js";
 import { withTenant, writeAudit } from "@svc/core";
@@ -64,12 +64,23 @@ export function awsIssuer(env: NodeJS.ProcessEnv = process.env): ProviderIssuer 
   return realStsEnabled(env) ? perEnvAwsIssuer(awsStsIssuer({ sts: awsCliSts() }), mockIssuer("aws")) : mockIssuer("aws");
 }
 
+// L7i: GCP 진짜 발급기. REAL_STS=1 + GCP_PLATFORM_PROJECT 있을 때만 gcloud impersonate. 플랫폼 SA 는 회사 번호로 DB 에서만 읽는다
+export async function gcpPlatformSa(tenantId: string): Promise<string | undefined> {
+  return withTenant(tenantId, async (tx) => (await tx.query(`SELECT gcp_platform_sa FROM tenants WHERE id = $1`, [tenantId])).rows[0]?.gcp_platform_sa);
+}
+export function gcpIssuer(env: NodeJS.ProcessEnv = process.env): ProviderIssuer {
+  const project = env.GCP_PLATFORM_PROJECT?.trim();
+  return realStsEnabled(env) && project
+    ? perEnvGcpIssuer(gcpCliIssuer({ platformSa: gcpPlatformSa, platformProject: project }), mockIssuer("gcp"))
+    : mockIssuer("gcp");
+}
+
 export function tempRoles(): TempRoleBroker {
   // STUB: GCP·온프레 발급기는 mock. AWS 는 REAL_STS=1 + external_id 있는 환경만 진짜 (L4). GCP 는 WIF 연결 뒤
   // TODO(human): environments 표에 고객 역할 ARN·ExternalId 칸이 생기면 resolveEnv 를 DB 읽기로 바꾼다 (T-ROLE-2)
   const permissions = permissionSet();
   broker ??= createTempRoleBroker({
-    issuers: { aws: awsIssuer(), gcp: mockIssuer("gcp"), onprem: mockIssuer("onprem"), azure_mock: mockIssuer("azure_mock") },
+    issuers: { aws: awsIssuer(), gcp: gcpIssuer(), onprem: mockIssuer("onprem"), azure_mock: mockIssuer("azure_mock") },
     ...(permissions ? { permissions } : {}),
     ledger: pgLedger(),   // 회수 증거는 DB 장부로 센다 (워커 여러 대, T-ROLE-8)
     resolveEnv,

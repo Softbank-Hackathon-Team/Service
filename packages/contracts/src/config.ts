@@ -77,9 +77,10 @@ export const CONFIG_RULES = {
     TRAFFIC_TICK_MS: { check: num({ min: 0 }) },
     TRAFFIC_OBSERVE_SEC: { check: num({ min: 0 }) },
     TEMP_ROLE_SWEEP_MS: { check: num({ min: 1 }) },
-    REAL_STS: { check: oneOf("0", "1") },
     // L4b: 주기 재확인 일정. cron 5칸 또는 off (모양만 본다. 값은 pg-boss 가 다시 검사)
-    VERIFY_CRON: { check: (v) => v.trim() === "off" || v.trim().split(/\s+/).length === 5 ? null : "cron 5칸 또는 off" },   // L4: 1 = 진짜 AWS STS(CLI), external_id 있는 환경만. 운영 스위치 (시험 전용 아님)
+    VERIFY_CRON: { check: (v) => v.trim() === "off" || v.trim().split(/\s+/).length === 5 ? null : "cron 5칸 또는 off" },
+    REAL_STS: { check: oneOf("0", "1") },   // L4: 1 = 진짜 AWS STS(CLI), external_id 있는 환경만. 운영 스위치 (시험 전용 아님)
+    GCP_PLATFORM_PROJECT: { check: (v) => (/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(v.trim()) ? null : "GCP 프로젝트 ID 모양이 아님") },   // L7i: REAL_STS=1 일 때 GCP 발급기가 쓰는 플랫폼 프로젝트 ID
   },
   "agent-worker": {
     ...COMMON,
