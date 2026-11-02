@@ -169,3 +169,29 @@ test("SMOKEFIX 거부: 깃발 on + 본문 {} → 409 PLAN_HASH_MISMATCH(planHash
   assert.equal((await start(m.id, { planHash: m.planHash, extra: 1 })).statusCode, 400);
   delete process.env.PLAN_ACKS;
 });
+
+// DEMOFLAGS: smoke 본문(smokePlanBodies)이 서버 깃발 on·off 둘 다에서 끝까지 통과하고, acks 가 빠지면 on 에서만 409
+test("DEMOFLAGS: smoke 본문 → 깃발 on 에서 approved → provisioning, off 에서도 똑같이 통과", { skip }, async () => {
+  const { smokePlanBodies } = await import("../../../tools/smoke-env.js");
+  for (const flag of ["1", undefined] as const) {
+    if (flag) process.env.PLAN_ACKS = flag; else delete process.env.PLAN_ACKS;
+    const m = await seed();
+    const b = smokePlanBodies({ planHash: m.planHash, acknowledgements: ACKS });
+    assert.equal((await approve(m.planId, b.approve)).statusCode, 200, `flag=${flag}`);
+    const s = await start(m.id, b.start);
+    assert.equal(s.statusCode, 202, `flag=${flag} ${s.body}`);
+    assert.equal(await status(m.id), "provisioning");
+  }
+});
+
+test("DEMOFLAGS 거부: 깃발 on 에서 smoke 본문의 acks 를 떼면 409 ACKS_MISSING (제어 사례: 그대로면 200)", { skip }, async () => {
+  const { smokePlanBodies } = await import("../../../tools/smoke-env.js");
+  process.env.PLAN_ACKS = "1";
+  const m = await seed();
+  const b = smokePlanBodies({ planHash: m.planHash, acknowledgements: ACKS });
+  const { acks: _drop, ...noAcks } = b.approve as Record<string, unknown>;
+  const r = await approve(m.planId, noAcks);
+  assert.equal(r.statusCode, 409);
+  assert.equal(r.json().code, "ACKS_MISSING");
+  assert.equal((await approve(m.planId, b.approve)).statusCode, 200);
+});

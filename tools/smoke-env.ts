@@ -12,13 +12,14 @@ export function smokeEnvs(env: NodeJS.ProcessEnv = process.env): { sourceEnvId: 
   return { sourceEnvId, targetEnvId };
 }
 
-// PLAN_ACKS=1 서버용 본문. 확인 항목이 있으면 승인에 acks, 시작에 planHash 를 보낸다. 깃발 꺼짐이면 예전 본문 그대로
-export function smokePlanBodies(plan: { planHash: string; acknowledgements?: { id: string }[] }, env: NodeJS.ProcessEnv = process.env): { approve: Record<string, unknown>; start: Record<string, unknown> } {
-  const on = env.PLAN_ACKS?.trim() === "1";
+// DEMOFLAGS DRAFT(ai): smoke 는 서버 깃발(PLAN_ACKS)이 켜졌든 꺼졌든 늘 acks·planHash 를 보낸다.
+//   서버 깃발이 꺼져 있으면 acks 는 기록만 되고 planHash 는 그냥 지나간다 (api 시험 approval-acks·vpa8-verify). 켜져 있으면 둘 다 검사된다.
+//   예전엔 smoke 쪽 PLAN_ACKS 와 서버 쪽 PLAN_ACKS 가 따로여서 한쪽만 켜면 409 가 났다. env 인자는 옛 호출부 호환용으로만 남김
+export function smokePlanBodies(plan: { planHash: string; acknowledgements?: { id: string }[] }, _env: NodeJS.ProcessEnv = process.env): { approve: Record<string, unknown>; start: Record<string, unknown> } {
   const acks = (plan.acknowledgements ?? []).map((a) => a.id);
   return {
-    approve: { decision: "approve", planHash: plan.planHash, ...(on && acks.length ? { acks } : {}) },
-    start: on ? { planHash: plan.planHash } : {},
+    approve: { decision: "approve", planHash: plan.planHash, ...(acks.length ? { acks } : {}) },
+    start: { planHash: plan.planHash },
   };
 }
 
