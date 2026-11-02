@@ -31,7 +31,7 @@ export { discoverSource, inventoryForAudit, discoverAws, discoverGcp, discoverOn
 export { readK8sApp, readK8sNamespace, type K8sRead, type K8sNamespaceRead, type K8sNamespaceOpts } from "./discover/k8s.js";
 // I2: k8s 원본 타입 + 종류 문자열
 export * from "./import/raw-k8s.js";
-export { mockSeed, CliError, type CliDeps } from "./common/cli.js";
+export { mockSeed, CliError, classifyCliError, sourceFail, type CliErrorKind, type CliDeps } from "./common/cli.js";
 export { runCloudPrecheck, toPrecheckItems, mockPrecheckEnabled, mockChecks, cliProblem, tcpProbe, apiEndpoint, AWS_QUOTAS, GCP_APIS, CLOUDSQL_PG_MAJORS_DEFAULT, MIN_REPL_PG_MAJOR,
   type CloudCheck, type Verdict, type PrecheckEnvInfo, type PrecheckInput, type PrecheckDeps, type CloudProvider } from "./precheck/cloud-precheck.js";
 // L4: 연결 확인 (빌린 관찰 역할로 고객 AWS 읽어 보기)

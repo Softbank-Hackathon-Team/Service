@@ -29,7 +29,9 @@ export async function handleImport(raw: unknown) {
     // I3b: 공통 명세 v2 구조 오류(checkV2 errors)도 다시 해도 같다 → 바로 failed(IMPORT_SPEC_INVALID)
     const v2invalid = isAdapterError(e) && (e.code === "SPEC_V2_INVALID" || e.code === "IMPORT_IR_INVALID");
     const permanent = zod || v2invalid || source !== null;
-    const code = source ? SOURCE_FAILURE[source] : permanent ? "IMPORT_SPEC_INVALID" : "IMPORT_FAILED";
+    // L5fix: 읽다가 일시 오류(SOURCE_TRANSIENT)는 다시 해 본다. 재시도를 다 쓰고도 안 되면 사유는 "출발 못 읽음"(IMPORT_FAILED 가 아니라)
+    const transient = isAdapterError(e) && e.code === "SOURCE_TRANSIENT";
+    const code = source ? SOURCE_FAILURE[source] : transient ? "IMPORT_SOURCE_UNAVAILABLE" : permanent ? "IMPORT_SPEC_INVALID" : "IMPORT_FAILED";
     const attempts = (await failedAttempts(job, "import")) + 1;
     if (!permanent && attempts < IMPORT_MAX_ATTEMPTS) {
       await recordAttemptFailure(job, "import", { attempts, max: IMPORT_MAX_ATTEMPTS, error: msg });

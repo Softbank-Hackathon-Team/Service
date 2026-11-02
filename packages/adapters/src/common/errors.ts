@@ -10,6 +10,7 @@ export type AdapterErrorCode =
   | "DB_ENGINE_UNSUPPORTED"     // RDS 엔진이 postgres 가 아님 (common/normalize.ts)
   | "AZURE_MOCK_DISABLED"       // AZURE_MOCK=0 인데 Azure 실행기를 찾음 (runners.ts, RunnerUnavailable)
   | "SOURCE_UNAVAILABLE"        // Z88: 출발 환경을 못 읽음 (CLI 없음·자격 없음·클러스터 안 닿음). 가짜 값 대신 멈춤
+  | "SOURCE_TRANSIENT"         // L5fix: 읽다가 일시 오류(연결 거부·타임아웃·TLS handshake 등). 영구 실패가 아니라 재시도
   | "SOURCE_INCOMPLETE";        // Z88: 읽었지만 명세 재료 없음 (앱 Deployment·실행 중 Pod·포트 없음)
 
 export class AdapterError extends Error {
