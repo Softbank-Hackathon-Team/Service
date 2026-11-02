@@ -17,6 +17,7 @@ import { agentReportRoutes } from "./agent-reports.js";
 import { specRoutes } from "./spec.js";
 import { tokenRoutes } from "./tokens.js";
 import { agentEnrollRoutes } from "./agent-enroll.js";
+import { eventRoutes } from "./events.js";
 
 // Z81: 업무 경로 목록 한 곳. 예전엔 main.ts 와 tools/openapi/gen-openapi.ts 가 같은 목록을 따로 적었다
 //   (main.ts 가 import 하자마자 listen 해서 명세 생성기가 불러 쓸 수 없었다). 새 경로 파일은 여기에 한 줄만 넣는다.
@@ -42,4 +43,5 @@ export const ROUTE_PLUGINS: ReadonlyArray<{ file: string; plugin: (app: FastifyI
   { file: "apps/api/src/routes/spec.ts", plugin: specRoutes }, // Z100: 이전의 최신 명세 한 판 (읽기 전용)
   { file: "apps/api/src/routes/tokens.ts", plugin: tokenRoutes }, // L8b: CLI 개인 토큰
   { file: "apps/api/src/routes/agent-enroll.ts", plugin: agentEnrollRoutes }, // L6: 온프레 등록 토큰 → Agent 키
+  { file: "apps/api/src/routes/events.ts", plugin: eventRoutes }, // 화면 신호 (SSE, GET /events)
 ];

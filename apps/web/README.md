@@ -10,7 +10,15 @@
 - `legacy/`: 이전 콘솔. `npm run dev:legacy`, 포트 5174. e2e는 아직 이쪽을 본다
 - `src/design`, `src/components`: 토큰과 컴포넌트. 원본은 `prototypes/console`이고 화면에서 쓰는 것을 가져왔다
 - `src/features/<화면>`: 화면과 순수 판단(`model.ts`). 판단은 `test/`에서 시험한다
-- `src/lib`: API 클라이언트, 인증, 폴링, 상태 이름표
+- `src/lib`: API 클라이언트, 인증, 폴링, 화면 신호, 상태 이름표
+
+## 화면 신호 (SSE)
+
+서버 `GET /api/v1/events`가 로그인한 회사의 신호를 계속 보낸다. 신호는 "다시 읽어"라는 뜻이다(contracts `SseEvent`).
+
+- 연결: `lib/events.ts`. 브라우저 `EventSource`는 Authorization 머리말을 못 붙여서 `fetch`로 스트림을 읽는다. 401이면 토큰을 갱신해 다시 붙고, 끊기면 서버가 보낸 `retry`만큼 쉬고 다시 붙는다. 붙지 못하면 대기를 늘려 30초에서 멈춘다
+- 탭 하나에 연결 하나: `lib/live.ts`. 콘솔에 들어오면 붙이고 로그인 화면으로 나가면 끊는다. 다시 붙으면 끊긴 사이를 메우려고 한 번 전부 다시 읽는다
+- 화면: `usePoll(fn, ms, deps, { signal })`. 맞는 신호가 오면 간격을 기다리지 않고 다시 읽는다. 연결이 살아 있는 동안 간격은 10초 이상으로 늘고, 연결이 없으면 원래 간격으로 돌아간다. 지금은 이전 한 건(`aboutMigration`)과 이전 목록(`anyMigration`)이 듣는다
 
 화면을 옮기는 원칙: 기능 명세를 표로 옮기지 않는다. 화면 흐름을 따라가면 명세가 충족되게 만든다.
 서버에 없는 값은 지어내지 않고, 없는 기능의 버튼은 두지 않는다.
@@ -24,6 +32,7 @@
 - 시간 조절: 파일 맨 위 `TIMES`, `SHIFT_STEP_MS`, `ROLLBACK_WINDOW_SEC`, `AGENT_RUN_MS`
 - 상황 만들기: 왼쪽 아래 `목업` 버튼에서 지금 보는 이전을 가드레일 멈춤, 오류율 멈춤(트래픽 판정 포함), 자동 롤백, 실패, 롤백 대기 같은 상태로 보낸다
 - 화면 점검: 같은 메뉴의 `화면 점검`은 지금 화면에서 카드·버튼 겹침, 가로 넘침, 화면 밖으로 나간 행동 버튼, 좁은 화면의 쌓는 순서, 글자 대비(4.5:1)를 잰다. `전체 점검`은 모든 화면과 상황을 차례로 넘기며 같은 것을 재고 결과를 콘솔 표로 남긴다. 창을 1024×768, 1280×720, 1440×900, 1920×1080으로 바꿔 가며 돌린다. 콘솔에서는 `__layoutCheck()`, `__layoutSweep()`
+- 화면 신호: `GET /api/events`에 실제 서버와 같은 형식의 SSE 스트림으로 답한다. 목업 이전의 상태가 바뀔 때마다 `migration.status_changed`를 보낸다. 메뉴의 `신호 끊기`는 연결을 닫고 새 연결을 503으로 막아, 화면이 폴링으로 돌아가는지와 다시 켜면 붙는지를 보게 한다. 신호가 붙어 있으면 상황 만들기도 새로 고침 없이 화면에 반영된다
 - 응답 모양: 제품의 타입을 그대로 써서 API 타입이 바뀌면 타입 검사에서 깨진다
 
 **제출 전에 `src/dev-mock.ts`를 지운다.** 코드를 고칠 필요 없이 빌드되고, 번들에서 목업과 계정 문자열이 사라진다. 파일이 있는 채로 빌드하면 번들에 함께 들어간다.
@@ -77,4 +86,4 @@
 | 계획서 `tfPlanHash`·`helmValuesHash`·`adapterVersion`, 타임라인 `stateDurations`, 리포트 `deploy`·`cost`·`precheck` | 감사·증적 리포트 쪽 원자료라 기본 화면에 두지 않는다. 증적 리포트(HTML)에서 본다 |
 | 비용 `recommendations`, `load` | 비용 화면은 출발·도착 비교와 조건 바꿔 보기만 맡는다 |
 | 보안 `tempRoleAudit`, 실점검 `durationMs` | 장부와 항목별 근거 카드가 같은 사실을 사람 말로 보여 준다 |
-| 화면 신호(SSE, contracts `SseEvent`) | 서버에 경로가 아직 없어 화면은 간격을 두고 다시 읽는다 (`lib/usePoll.ts`) |
+| 화면 신호 `weight_changed`·`rollback_*`·`matrix_changed`·`agent.step` | 서버가 아직 내지 않는다. 지금 오는 신호는 `migration.status_changed`와 `reload_all` 뿐이다 |

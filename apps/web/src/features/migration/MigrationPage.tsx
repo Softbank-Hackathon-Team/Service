@@ -6,6 +6,7 @@ import { CodeValue } from '../../components/ui/CodeValue';
 import { ActionPill, Badge, BarPill } from '../../components/ui/controls';
 import { Icon } from '../../components/ui/Icon';
 import { api } from '../../lib/api';
+import { aboutMigration } from '../../lib/events';
 import { errorText } from '../../lib/errors';
 import { stopReasonOf } from '../../lib/failure';
 import { is404, or404 } from '../../lib/http';
@@ -311,7 +312,7 @@ const SCREENS: Record<Exclude<MigrationScreen, 'rejected' | 'stale'>, (props: Sc
 
 export function MigrationPage({ id }: { id: string }) {
   const [status, setStatus] = useState<MigrationView['status'] | undefined>();
-  const poll = usePoll(() => api.getMigration(id), pollMs(status), [id], { keepOnError: false });
+  const poll = usePoll(() => api.getMigration(id), pollMs(status), [id], { keepOnError: false, signal: aboutMigration(id) });
   const envs = usePoll(api.listEnvironments, null, []);
 
   // 화면이 바뀔 때만 카드를 움직인다. 같은 화면 안의 갱신은 그대로 둔다.
