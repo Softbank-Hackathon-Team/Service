@@ -29,6 +29,44 @@ export function contextFromJob(queue: string, jobId: string | undefined, data: u
     request_id: s("requestId"), agent_run_id: s("agentRunId") });
 }
 
+// LOGLEAK DRAFT(ai): 로그에 비밀값이 안 남게 한다. 대안: pino redact 경로만(깊이 1단·문자열 속은 못 가림) → worker 로그는 pino 가 아니라 못 씀
+//   (1) 비밀 이름의 칸은 깊이 상관없이 값을 가림  (2) 문자열 속 DB 접속 주소 비밀번호·Bearer·토큰 모양(JWT·svc_pat_·et_·세션 쿠키·sk-ant-·AKIA)을 가림
+//   칸 이름은 정확히 맞는 것만 (input_tokens 같은 숫자 칸은 건드리지 않는다)
+const SECRET_KEY = /^(password|passwd|pwd|secret|token|access_?token|refresh_?token|id_?token|session_?token|enroll_?token|api_?key|auth(orization)?|cookie|set-cookie|x-agent-signature|x-agent-key-id|client_?secret|secret_?access_?key|private_?key|credentials?|database_?url|owner_?database_?url|connection_?string|dsn|signature)$|(_|-)(password|secret|api_?key|access_?token|private_?key)$/i;
+export const REDACTED = "[redacted]";
+const TOKEN_SHAPES: Array<[RegExp, string]> = [
+  [/\b([a-z][a-z0-9+.-]*:\/\/[^\s:\/@"']*):([^\s@\/"']+)@/gi, `$1:${REDACTED}@`],       // scheme://user:pass@host
+  [/\b(Bearer|Basic)\s+[A-Za-z0-9._~+\/=-]{6,}/gi, `$1 ${REDACTED}`],
+  [/\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{2,}\.[A-Za-z0-9_-]{2,}/g, REDACTED],             // JWT
+  [/\bsvc_(pat|refresh)_[A-Za-z0-9_-]{8,}/g, REDACTED],
+  [/\bet_[A-Za-z0-9_-]{43}\b/g, REDACTED],
+  [/\bsk-ant-[A-Za-z0-9_-]{8,}/g, REDACTED],
+  [/\b(AKIA|ASIA)[0-9A-Z]{16}\b/g, REDACTED],
+  [/(svc_refresh=)[^;\s"]+/g, `$1${REDACTED}`],
+  [/([?&](?:access_?token|token|api_?key|key|secret|password|signature|sig)=)[^&\s"]+/gi, `$1${REDACTED}`],
+];
+export function scrubString(s: string): string {
+  let out = s;
+  for (const [re, to] of TOKEN_SHAPES) out = out.replace(re, to);
+  return out;
+}
+export function scrubValue(v: unknown, depth = 0, seen = new WeakSet<object>()): unknown {
+  if (typeof v === "string") return scrubString(v);
+  if (v == null || typeof v !== "object") return v;
+  if (depth > 8) return "[too deep]";
+  if (seen.has(v)) return "[circular]";
+  seen.add(v);
+  if (v instanceof Error) return scrubValue(errorFields(v), depth + 1, seen);
+  if (Array.isArray(v)) return v.map((x) => scrubValue(x, depth + 1, seen));
+  const out: Record<string, unknown> = {};
+  for (const [k, x] of Object.entries(v)) out[k] = SECRET_KEY.test(k) && x != null && x !== "" ? REDACTED : scrubValue(x, depth + 1, seen);
+  return out;
+}
+function errorFields(v: Error) {
+  return { type: v.name, message: v.message, ...(("code" in v) ? { code: (v as { code: unknown }).code } : {}),
+    ...(process.env.LOG_LEVEL === "debug" ? { stack: v.stack } : {}) };
+}
+
 export interface Logger {
   debug(fields: Record<string, unknown> | string, msg?: string): void;
   info(fields: Record<string, unknown> | string, msg?: string): void;
@@ -50,7 +88,7 @@ export function createLogger(service: string, base: Record<string, unknown> = {}
     const fields = typeof a === "string" ? {} : a;
     const text = typeof a === "string" ? a : msg ?? "";
     const line: Record<string, unknown> = {
-      level, time: new Date().toISOString(), service, ...base, ...currentLogContext(), ...normalize(fields), msg: text,
+      level, time: new Date().toISOString(), service, ...base, ...currentLogContext(), ...(scrubValue(normalize(fields)) as Record<string, unknown>), msg: scrubString(text),
     };
     write(JSON.stringify(line));
   };
@@ -68,7 +106,27 @@ export function fastifyObservabilityOptions(service = "api") {
       base: { service },
       messageKey: "msg",
       timestamp: () => `,"time":"${new Date().toISOString()}"`,
-      formatters: { level: (label: string) => ({ level: label }) },
+      formatters: { level: (label: string) => ({ level: label }),
+        // LOGLEAK: 찍는 객체 전체(깊이 무관)와 문자열 속 비밀 모양을 가린다
+        //   req·res·err 는 아래 직렬화 함수가 따로 가린다 (요청 객체를 통째로 훑지 않으려고 건너뜀)
+        log: (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).map(([k, v]) =>
+          [k, k === "req" || k === "res" || k === "err" ? v : SECRET_KEY.test(k) && v != null && v !== "" ? REDACTED : scrubValue(v)])) },
+      // msg 칸: req.log.error(err) 는 오류 메시지가 msg 로 나간다. 문자열 인자(msg)도 비밀 모양을 가린다
+      hooks: {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        logMethod(this: any, args: any[], method: any) {
+          const [a0, a1, ...rest] = args;
+          if (a0 instanceof Error) return method.call(this, { err: a0 }, scrubString(a0.message), ...(a1 === undefined ? [] : [a1]), ...rest);
+          if (typeof a0 === "string") return method.call(this, scrubString(a0), ...(a1 === undefined ? [] : [a1]), ...rest);
+          return method.call(this, a0, typeof a1 === "string" ? scrubString(a1) : a1, ...rest);
+        },
+      },
+      // 오류·요청 줄: 메시지·스택·주소(쿼리)의 비밀 모양을 가린다. 요청은 헤더·본문 없이 메서드·주소·호스트·상대 주소만
+      serializers: {
+        err: (e: Error) => scrubValue({ ...errorFields(e), ...(e.stack ? { stack: e.stack } : {}) }) as { [key: string]: unknown; type: string; message: string; stack: string },
+        req: (r: { method?: string; url?: string; host?: string; hostname?: string; ip?: string; remoteAddress?: string }) =>
+          ({ method: r.method, url: r.url ? scrubString(r.url) : r.url, host: r.host ?? r.hostname, remoteAddress: r.ip ?? r.remoteAddress }),
+      },
       // 로그에 비밀값이 안 남게 가린다 (위협 모델 U)
       redact: {
         paths: ["req.headers.authorization", "req.headers.cookie", "req.headers[\"x-agent-signature\"]",

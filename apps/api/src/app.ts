@@ -13,9 +13,11 @@ import { API_PREFIX, ROUTE_PLUGINS } from "./routes/index.js";
 //   Fastify 시험 안내(Guides/Testing)가 권하는 모양: 앱 파일은 만들기만, 서버 파일이 listen.
 //   예전엔 main.ts 가 import 하자마자 listen 해서 시험·명세 생성기가 진짜 등록 순서를 그대로 쓸 수 없었다.
 // 여기서는 DB 에 붙지 않는다 (pool 은 /readyz 가 처음 부를 때 연결)
-export async function buildApp() {
+// LOGLEAK: logStream 은 시험이 로그 줄을 잡으려고 넣는다 (기본은 pino 의 stdout)
+export async function buildApp(opts: { logStream?: { write(line: string): void } } = {}) {
   // 로그 형식·비밀값 가리기는 core obs/log.ts 한 곳에서 (T, 위협 모델 U)
-  const app = Fastify(fastifyObservabilityOptions("api"));
+  const o = fastifyObservabilityOptions("api");
+  const app = Fastify(opts.logStream ? { ...o, logger: { ...o.logger, stream: opts.logStream } } : o);
   const metrics = createApiRegistry();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
