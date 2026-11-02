@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AppSpecV2, FieldMetaV2 } from "./spec-v2.js";
+import { ImportAccuracy } from "./import-accuracy.js";
 
 // 공통 명세(IR). 클라우드 이름 없이 앱을 적는다.
 export const AppSpec = z.object({
@@ -114,5 +115,7 @@ export const MigrationSpecViewV2 = MigrationSpecView.extend({
   needsReviewV2: z.array(z.string()).optional(),
   specV2: AppSpecV2.optional(),
   fieldMetaV2: FieldMetaV2.optional(),
+  /** ACCVIEW: 가져오기 정확도 % (가져오기 감사 detail.accuracy). 가져오기 v2 판에만 있고 없으면 키 자체가 없음 */
+  accuracy: ImportAccuracy.optional(),
 }).strict();
 export type MigrationSpecViewV2 = z.infer<typeof MigrationSpecViewV2>;

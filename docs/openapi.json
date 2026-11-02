@@ -5799,6 +5799,42 @@
         ],
         "additionalProperties": false
       },
+      "AccuracyField": {
+        "type": "object",
+        "properties": {
+          "component": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "field": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          },
+          "result": {
+            "$ref": "#/components/schemas/AccuracyResult"
+          },
+          "detail": {
+            "type": "string",
+            "maxLength": 300
+          }
+        },
+        "required": [
+          "component",
+          "field",
+          "result"
+        ],
+        "additionalProperties": false
+      },
+      "AccuracyResult": {
+        "type": "string",
+        "enum": [
+          "match",
+          "mismatch",
+          "unverifiable"
+        ]
+      },
       "AgentReport": {
         "oneOf": [
           {
@@ -11501,6 +11537,78 @@
         ],
         "additionalProperties": false
       },
+      "ImportAccuracy": {
+        "type": "object",
+        "properties": {
+          "schemaVersion": {
+            "type": "string",
+            "const": "1"
+          },
+          "basis": {
+            "type": "string",
+            "enum": [
+              "render",
+              "spec"
+            ]
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "matched": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "mismatched": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "unverifiable": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "comparable": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "percent": {
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "fields": {
+            "maxItems": 2000,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AccuracyField"
+            }
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "basis",
+          "total",
+          "matched",
+          "mismatched",
+          "unverifiable",
+          "comparable",
+          "percent",
+          "fields"
+        ],
+        "additionalProperties": false
+      },
       "LinkOutputV2": {
         "type": "string",
         "enum": [
@@ -12151,6 +12259,9 @@
           },
           "fieldMetaV2": {
             "$ref": "#/components/schemas/FieldMetaV2"
+          },
+          "accuracy": {
+            "$ref": "#/components/schemas/ImportAccuracy"
           }
         },
         "required": [

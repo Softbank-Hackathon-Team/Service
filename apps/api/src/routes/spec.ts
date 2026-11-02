@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
-import { AppSpec, AppSpecV2, FieldMetaV2, ImportResultV2, type FieldMeta, MigrationSpecViewV2, SpecPatchInput, SpecV2ConfirmPath, SpecV2FieldPath, checkV2 } from "@svc/contracts";
+import { AppSpec, AppSpecV2, FieldMetaV2, ImportAccuracy, ImportResultV2, type FieldMeta, MigrationSpecViewV2, SpecPatchInput, SpecV2ConfirmPath, SpecV2FieldPath, checkV2 } from "@svc/contracts";
 import { rebuildFromV2 } from "@svc/adapters";
 import { BadRequest, DomainError, SPEC_DRAFT_KEY, applySpecPatch, applySpecV2Patch, notifyMigration, saveSpecRevision, withTenant, writeAudit,
          type SpecMeta, type Tx } from "@svc/core";
@@ -47,12 +47,23 @@ async function shownSpec(tx: Tx, migrationId: string): Promise<Row | undefined> 
       ORDER BY (field_meta ? $2), version DESC LIMIT 1`, [migrationId, SPEC_DRAFT_KEY])).rows[0] as Row | undefined;
 }
 
+// ACCVIEW DRAFT(ai): 가장 최근 가져오기 감사(migration.spec_review)의 detail.accuracy. 없거나 모양이 안 맞으면 undefined (키를 뺀다, 화면 안 깨짐)
+async function importAccuracyOf(tx: Tx, migrationId: string): Promise<ImportAccuracy | undefined> {
+  const d = (await tx.query(
+    `SELECT detail->'accuracy' AS a FROM audit_events WHERE target = $1 AND action = 'migration.spec_review' ORDER BY seq DESC LIMIT 1`, [migrationId])).rows[0] as { a: unknown } | undefined;
+  const p = d?.a == null ? undefined : ImportAccuracy.safeParse(d.a);
+  return p?.success ? p.data : undefined;
+}
+
 export async function specRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
   r.get("/migrations/:id/spec", { schema: { params: IdParam,
     response: { 200: MigrationSpecViewV2, ...errors(400, 401, 404, 409, 500) } } }, async (req) => {
-    const row = found(await withTenant(req.tenantId, (tx) => shownSpec(tx, req.params.id)), "spec", req.params.id);
-    return toSpecView(req.params.id, row);
+    const { row, accuracy } = await withTenant(req.tenantId, async (tx) => {
+      const found0 = await shownSpec(tx, req.params.id);
+      return { row: found0, accuracy: found0 ? await importAccuracyOf(tx, req.params.id) : undefined };
+    });
+    return { ...toSpecView(req.params.id, found(row, "spec", req.params.id)), ...(accuracy ? { accuracy } : {}) };
   });
 
   // PA2 (계획 26 · A2 v1): PATCH /api/v1/migrations/:id/spec — 사람이 칸을 고치거나(changes) 봤다고 확인(confirm)하거나
