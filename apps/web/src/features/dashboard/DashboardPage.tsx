@@ -28,11 +28,7 @@ import {
 import { ShellLayout } from '../shell/ShellLayout';
 import s from './DashboardPage.module.css';
 
-const DASHBOARD: BentoLayout = {
-  columns: '760fr 612fr',
-  rows: 'minmax(0, 1fr)',
-  areas: ['hero migrations'],
-};
+const DASHBOARD: BentoLayout = { columns: ['fill', 'side'], areas: 'hero migrations' };
 
 const HEALTH: Record<Health, { label: string; tone: 'success' | 'warning' | 'neutral' }> = {
   healthy: { label: '정상', tone: 'success' },
@@ -161,7 +157,7 @@ export function DashboardPage() {
           <BarPill label="다시 시도" icon="refresh" onClick={() => void envs.reload()} />
         ) : (
           list.length > 0 && (
-            <ul className={s.envList}>
+            <ul className={`${s.envList} scroll-fade`}>
               {list.map((env) => (
                 <EnvRow key={env.id} env={env} seen={seen[env.id]} />
               ))}

@@ -3,6 +3,7 @@ import { go } from '../../app/routes';
 import { withTransition } from '../../app/transition';
 import type { BentoLayout } from '../../components/layout/ConsoleLayout';
 import { ActionRow, FoldTile, Hero, Stack } from '../../components/layout/tiles';
+import { Checklist, type ChecklistEntry } from '../../components/ui/Checklist';
 import { ActionPill, Badge, BarPill } from '../../components/ui/controls';
 import { Icon } from '../../components/ui/Icon';
 import { api } from '../../lib/api';
@@ -16,8 +17,25 @@ import { ShellLayout } from '../shell/ShellLayout';
 import { canPick } from './model';
 import s from '../common/page.module.css';
 
-const PICK_SOURCE: BentoLayout = { columns: '1fr', rows: 'minmax(0, 1fr)', areas: ['hero'] };
-const PICK_TARGET: BentoLayout = { columns: '592fr 780fr', rows: 'minmax(0, 1fr)', areas: ['found hero'] };
+// 출발을 고르기 전에도 칸은 그대로 두고, 고른 뒤에 찾은 자원이 오른쪽 칸을 채운다.
+const LAYOUT: BentoLayout = { columns: ['fill', 'side'], areas: 'hero found' };
+
+/** 이전을 만드는 순서. 근거 칸 맨 위에 두어 고르는 내내 지금 몇 번째인지 보인다. */
+function CreateSteps({ source, reading, target }: { source?: string; reading?: boolean; target?: string }) {
+  const items: ChecklistEntry[] = [
+    { status: source ? 'done' : 'active', label: '출발 고르기', detail: source },
+    { status: !source ? 'pending' : reading ? 'active' : 'done', label: '찾은 자원 확인' },
+    { status: !source ? 'pending' : target ? 'done' : 'active', label: '도착 고르기', detail: target },
+  ];
+  const current = items.findIndex((item) => item.status !== 'done');
+  return (
+    <FoldTile title="새 이전" summary={`${current === -1 ? items.length : current + 1}/${items.length}`}>
+      <div className={s.agent}>
+        <Checklist items={items} />
+      </div>
+    </FoldTile>
+  );
+}
 
 function EnvPick({ env, selected, disabled, onPick }: { env: EnvironmentView; selected?: boolean; disabled: boolean; onPick: () => void }) {
   const connected = env.connectionStatus === 'connected';
@@ -87,7 +105,7 @@ export function NewMigrationPage() {
   if (!source) {
     const empty = !envs.loading && list.length === 0;
     return (
-      <ShellLayout layout={PICK_SOURCE}>
+      <ShellLayout layout={LAYOUT}>
         <Hero tone="run" meta="새 이전" title={empty ? '연결된 환경이\n없습니다' : '어디에서\n옮길까요?'}>
           {envs.error != null && !envs.data && <p className={`${s.error} t-body-md`}>{errorText(envs.error)}</p>}
           <div className={s.pickList}>
@@ -96,6 +114,9 @@ export function NewMigrationPage() {
             ))}
           </div>
         </Hero>
+        <Stack area="found">
+          <CreateSteps />
+        </Stack>
       </ShellLayout>
     );
   }
@@ -116,7 +137,7 @@ export function NewMigrationPage() {
 
   return (
     <ShellLayout
-      layout={PICK_TARGET}
+      layout={LAYOUT}
       barLeft={
         <BarPill
           label={`${source.name}에서 출발 · 다시 고르기`}
@@ -130,7 +151,15 @@ export function NewMigrationPage() {
         />
       }
     >
+      <Hero tone="run" meta={`${source.name}에서 출발`} title="어디로 옮길까요?">
+        <div className={s.pickList}>
+          {list.filter((env) => env.id !== source.id).map((env) => (
+            <EnvPick key={env.id} env={env} selected={env.id === targetId} disabled={!canPick(env, source.id)} onPick={() => setTargetId(env.id)} />
+          ))}
+        </div>
+      </Hero>
       <Stack area="found">
+        <CreateSteps source={source.name} reading={inventory.loading} target={target?.name} />
         {inventory.loading ? (
           <FoldTile title="찾은 자원" summary="읽는 중">
             <p className={`${s.note} t-body-sm c-secondary`}>{source.name}의 자원을 읽고 있습니다.</p>
@@ -142,22 +171,14 @@ export function NewMigrationPage() {
             <p className={`${s.note} t-body-sm c-secondary`}>{errorText(inventory.error)} 이전을 만들면 다시 읽습니다.</p>
           </FoldTile>
         )}
-      </Stack>
-      <Hero tone="run" meta={`${source.name}에서 출발`} title="어디로 옮길까요?">
-        <div className={s.pickList}>
-          {list.filter((env) => env.id !== source.id).map((env) => (
-            <EnvPick key={env.id} env={env} selected={env.id === targetId} disabled={!canPick(env, source.id)} onPick={() => setTargetId(env.id)} />
-          ))}
-        </div>
-        {error && <p className={`${s.error} t-body-md`}>{error}</p>}
-        <ActionRow>
+        <ActionRow notice={error}>
           <ActionPill
             label={busy ? '만드는 중' : target ? `${target.name}로 옮기기` : '도착지를 고르세요'}
             disabled={!target || busy}
             onClick={() => void create()}
           />
         </ActionRow>
-      </Hero>
+      </Stack>
     </ShellLayout>
   );
 }

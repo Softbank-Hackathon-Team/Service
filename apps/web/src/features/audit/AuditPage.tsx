@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { BentoLayout } from '../../components/layout/ConsoleLayout';
-import { ActionRow, FoldTile, Hero, Stack, Tile, TileHeader } from '../../components/layout/tiles';
+import { ActionRow, FoldTile, Hero, SkeletonTile, Stack, Tile, TileHeader } from '../../components/layout/tiles';
+import { SkeletonRows, SkeletonStats } from '../../components/ui/Skeleton';
 import { ActionPill, Badge } from '../../components/ui/controls';
 import { Timeline, type TimelineEntry } from '../../components/ui/Timeline';
 import { api } from '../../lib/api';
@@ -13,8 +14,7 @@ import { ShellLayout } from '../shell/ShellLayout';
 import { useChosenMigration } from '../shell/useChosenMigration';
 import s from '../common/page.module.css';
 
-const LAYOUT: BentoLayout = { columns: '460fr 480fr 432fr', rows: 'minmax(0, 1fr)', areas: ['hero log side'] };
-const EMPTY: BentoLayout = { columns: '1fr', rows: 'minmax(0, 1fr)', areas: ['hero'] };
+const LAYOUT: BentoLayout = { columns: ['fill', 'side', 'side'], areas: 'hero log side' };
 
 const time = (iso: string) => new Date(iso).toTimeString().slice(0, 8);
 const statusName = (value: string | null) => (value && value in LABEL ? LABEL[value as MigrationStatus] : value ?? '');
@@ -54,9 +54,10 @@ function AuditBody({ migration }: { migration: MigrationView }) {
       <Hero
         tone={broken ? 'stop' : 'run'}
         meta="감사 기록"
-        title={!data ? '감사 기록을\n읽고 있습니다' : broken ? '감사 기록이\n끊겼습니다' : '감사 기록이\n온전합니다'}
+        title={!data ? (report.loading ? '감사 기록을\n읽고 있습니다' : '아직 감사 기록이\n없습니다') : broken ? '감사 기록이\n끊겼습니다' : '감사 기록이\n온전합니다'}
         foot="줄마다 앞 줄의 지문을 품습니다. 한 줄이라도 고치면 여기서 드러납니다"
       >
+        {!data && report.loading && <SkeletonStats count={3} />}
         {data && (
           <ul className={`${s.heroStats} ${broken ? s.onAlert : ''}`}>
             <li><span className="t-metric-lg">{data.integrity.checked}</span><span className="t-caption">검증한 줄</span></li>
@@ -68,7 +69,13 @@ function AuditBody({ migration }: { migration: MigrationView }) {
       </Hero>
       <Tile area="log" compact scroll>
         <TileHeader title="타임라인" />
-        {entries.length > 0 ? <Timeline items={entries} /> : <p className="t-body-sm c-tertiary">아직 기록이 없습니다.</p>}
+        {entries.length > 0 ? (
+          <Timeline items={entries} />
+        ) : !timeline.data && timeline.loading ? (
+          <SkeletonRows count={8} />
+        ) : (
+          <p className="t-body-sm c-tertiary">아직 기록이 없습니다.</p>
+        )}
       </Tile>
       <Stack area="side">
         <FoldTile title="승인 기록" summary={`${data?.approvals.length ?? 0}건`}>
@@ -120,8 +127,9 @@ export function AuditPage({ id }: { id: string | null }) {
   const { chosen, picker, loading } = useChosenMigration('audit', id);
   if (!chosen) {
     return (
-      <ShellLayout layout={EMPTY}>
+      <ShellLayout layout={LAYOUT}>
         <Hero tone="run" meta="감사 기록" title={loading ? '이전을\n읽고 있습니다' : '확인할 이전이\n없습니다'} />
+        {loading && <SkeletonTile area="log" title="타임라인" rows={8} />}
       </ShellLayout>
     );
   }

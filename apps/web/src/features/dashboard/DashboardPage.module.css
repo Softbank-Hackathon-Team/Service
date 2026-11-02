@@ -51,7 +51,7 @@
   width: 100%;
   padding: var(--space-8) var(--space-12);
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-inner);
   background: transparent;
   color: var(--color-fg-primary);
   text-align: left;

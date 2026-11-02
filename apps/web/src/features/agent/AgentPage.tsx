@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { BentoLayout } from '../../components/layout/ConsoleLayout';
-import { ActionRow, FoldTile, Hero, Stack, Tile, TileHeader } from '../../components/layout/tiles';
+import { ActionRow, FoldTile, Hero, SkeletonTile, Stack, Tile, TileHeader } from '../../components/layout/tiles';
 import { ActionPill, Badge, BarPill } from '../../components/ui/controls';
 import { Timeline, type TimelineEntry } from '../../components/ui/Timeline';
 import { api } from '../../lib/api';
@@ -10,8 +10,7 @@ import { useChosenMigration } from '../shell/useChosenMigration';
 import { agentSummary, isRunning, RemediateBody, useAgentReview } from './AgentResult';
 import s from '../common/page.module.css';
 
-const LAYOUT: BentoLayout = { columns: '520fr 400fr 452fr', rows: 'minmax(0, 1fr)', areas: ['hero steps side'] };
-const EMPTY: BentoLayout = { columns: '1fr', rows: 'minmax(0, 1fr)', areas: ['hero'] };
+const LAYOUT: BentoLayout = { columns: ['fill', 'side', 'side'], areas: 'hero steps side' };
 
 const TOOL_LABEL: Record<string, string> = {
   sandbox_get: '샌드박스 상태 보기',
@@ -106,8 +105,9 @@ export function AgentPage({ id }: { id: string | null }) {
   const { chosen, picker, loading } = useChosenMigration('agent', id);
   if (!chosen) {
     return (
-      <ShellLayout layout={EMPTY}>
+      <ShellLayout layout={LAYOUT}>
         <Hero tone="run" meta="AI 에이전트" title={loading ? '이전을\n읽고 있습니다' : '점검할 이전이\n없습니다'} />
+        {loading && <SkeletonTile area="steps" title="에이전트가 한 일" rows={6} />}
       </ShellLayout>
     );
   }

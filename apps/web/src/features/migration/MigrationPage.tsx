@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { go } from '../../app/routes';
 import { withTransition } from '../../app/transition';
 import { ActionRow, FoldTile, Hero, Stack } from '../../components/layout/tiles';
+import { CodeValue } from '../../components/ui/CodeValue';
 import { ActionPill, Badge, BarPill } from '../../components/ui/controls';
 import { Icon } from '../../components/ui/Icon';
 import { api } from '../../lib/api';
@@ -24,7 +25,7 @@ const LEVEL: Record<PrecheckItem['level'], { label: string; tone: 'danger' | 'wa
 
 function ImportingScreen({ migration, route }: ScreenProps) {
   return (
-    <Frame migration={migration} hasSide={false} route={route}>
+    <Frame migration={migration} route={route}>
       <Hero tone="run" meta="구성 읽기" title={'운영 중인 앱을\n읽고 있습니다'} foot="읽기만 합니다. 아무것도 바꾸지 않습니다" />
     </Frame>
   );
@@ -64,7 +65,7 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
           review.map((row) => (
             <div key={row.path} className={s.reviewRow}>
               <span className="t-label-md">{row.name}</span>
-              <span className={`${s.rowValue} t-code-md`}>{row.value}</span>
+              <CodeValue value={row.value} size="md" max={32} className={s.rowValue} />
             </div>
           ))}
       </Hero>
@@ -75,7 +76,7 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
               {rows.map((row) => (
                 <li key={row.path} className={s.row}>
                   <span className={`t-label-md ${row.review ? 'c-warning' : ''}`}>{row.name}</span>
-                  <span className={`${s.rowValue} t-code-sm c-secondary`}>{row.value}</span>
+                  <CodeValue value={row.value} className={`${s.rowValue} c-secondary`} />
                 </li>
               ))}
             </ul>
@@ -95,11 +96,11 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
 function PreparingScreen({ migration, route }: ScreenProps) {
   const checking = migration.status === 'prechecking';
   return (
-    <Frame migration={migration} hasSide={false} route={route}>
+    <Frame migration={migration} route={route}>
       <Hero
         tone="run"
         meta={LABEL[migration.status]}
-        title={checking ? '이 앱을 옮길 수\n있는지 봅니다' : '계획서를\n만들고 있습니다'}
+        title={checking ? '이 앱을\n옮길 수 있는지 봅니다' : '계획서를\n만들고 있습니다'}
         foot="끝나면 계획서와 승인 버튼이 나옵니다"
       />
     </Frame>
@@ -127,7 +128,7 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
         title={expired ? '승인 시간이\n지났습니다' : '승인하면\n이대로만 실행합니다'}
         foot={doc ? `유효 시각 ${new Date(doc.expiresAt).toLocaleString('ko-KR', { hour12: false })}` : undefined}
       >
-        {doc && <code className={`${s.code} t-code-md`}>{doc.planHash.slice(0, 32)}</code>}
+        {doc && <CodeValue value={doc.planHash} chip max={32} />}
         {doc && (
           <p className="t-body-md c-secondary">
             오류율이 {doc.rollbackCriteria.errorRatePct}%를 넘거나 응답 시간이 {doc.rollbackCriteria.p95Multiplier}배를 넘으면 자동으로 되돌립니다
@@ -205,7 +206,7 @@ function ApprovedScreen({ migration, route, onChanged }: ScreenProps) {
         title={busyEnv ? '다른 이전이\n환경을 쓰고 있습니다' : '승인했습니다.\n버튼 하나만 남았습니다'}
         foot="이 지문의 계획만 실행합니다"
       >
-        {plan.data && <code className={`${s.code} t-code-md`}>{plan.data.planHash.slice(0, 32)}</code>}
+        {plan.data && <CodeValue value={plan.data.planHash} chip max={32} />}
       </Hero>
       <Stack area="side">
         <ActionRow notice={busyEnv ? null : error}>
@@ -270,7 +271,7 @@ function FailedScreen({ migration, route, onChanged }: ScreenProps) {
 
 function CancelledScreen({ migration, route }: ScreenProps) {
   return (
-    <Frame migration={migration} hasSide={false} route={route}>
+    <Frame migration={migration} route={route}>
       <Hero tone="run" meta="취소" title={'이 이전은\n여기서 끝났습니다'} foot="환경 잠금을 풀었습니다" />
     </Frame>
   );

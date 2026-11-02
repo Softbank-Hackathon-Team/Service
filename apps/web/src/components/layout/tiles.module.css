@@ -5,7 +5,7 @@
   min-width: 0;
   min-height: 0;
   padding: var(--space-32);
-  border-radius: var(--radius-xl);
+  border-radius: var(--radius-card);
 }
 .surface {
   background: var(--color-bg-surface);
@@ -20,25 +20,38 @@
   overflow: auto;
 }
 
+/* 카드 묶음과 행동 버튼 줄. 두 줄로 나눠 버튼이 카드를 덮지 않게 한다. */
 .stack {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: var(--gap-bento);
+  min-width: 0;
+  min-height: 0;
+}
+.stackBody {
   display: flex;
   flex-direction: column;
-  gap: var(--space-12);
+  gap: var(--gap-bento);
   min-height: 0;
   overflow: auto;
 }
+/* 마지막으로 펼친 카드가 남은 높이를 채워, 칸 아랫단이 옆 카드들과 맞는다. 접힌 카드는 그 아래에 붙는다. */
+.stackBody > .fold[data-open='true']:not(:has(~ .fold[data-open='true'])) {
+  flex: 1 0 auto;
+}
+/* 늘어난 카드에 안내 문장 하나뿐이면 빈 상태로 보고 가운데에 둔다. */
+.stackBody > .fold[data-open='true']:not(:has(~ .fold[data-open='true'])) > .foldBody:has(> p:only-child) {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  text-align: center;
+}
 .actionDock {
   display: flex;
-  flex: none;
   flex-direction: column;
+  align-items: flex-end;
   gap: var(--space-8);
-  margin-top: auto;
-  padding-top: var(--space-12);
-}
-.stack > .actionDock {
-  position: sticky;
-  bottom: 0;
-  background: var(--color-bg-canvas);
+  min-width: 0;
 }
 .actionRow {
   display: flex;
@@ -48,8 +61,9 @@
   gap: var(--space-12);
 }
 .actionNotice {
+  align-self: stretch;
   padding: var(--space-12) var(--space-16);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-inner);
   background: var(--color-bg-tone-danger);
   color: var(--color-fg-tone-danger);
 }
@@ -59,7 +73,7 @@
   flex: none;
   min-height: 0;
   border: 1px solid var(--color-border-default);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-card);
   background: var(--color-bg-surface);
 }
 .foldHead {
@@ -68,9 +82,10 @@
   justify-content: space-between;
   gap: var(--space-12);
   width: 100%;
-  padding: var(--space-16) var(--space-20);
+  min-height: var(--size-control-m);
+  padding: var(--space-12) var(--space-20);
   border: 0;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-card);
   background: transparent;
   color: var(--color-fg-primary);
   text-align: left;
@@ -102,9 +117,9 @@
   gap: var(--space-24);
   min-width: 0;
   min-height: 0;
-  padding: var(--space-40);
+  padding: var(--space-32);
   overflow: hidden;
-  border-radius: var(--radius-xl);
+  border-radius: var(--radius-card);
   background: var(--color-bg-surface);
 }
 .heroMeta,
@@ -147,18 +162,21 @@
   background: var(--color-bg-tone-success);
   color: var(--color-fg-tone-success);
 }
+/* 헤드라인은 가운데가 아니라 위에서 정한 거리에 둔다. 상태가 바뀌어도 같은 자리에 있다. */
 .heroContent {
   display: flex;
   flex: 1;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-start;
   gap: var(--space-24);
   min-height: 0;
+  padding-top: var(--hero-offset);
 }
 .heroTitle {
   white-space: pre-line;
 }
 .heroFoot {
+  flex: none;
   padding-top: var(--space-16);
   border-top: 1px solid var(--color-border-default);
   color: var(--color-fg-secondary);
@@ -201,12 +219,31 @@
   background: var(--color-bg-selected);
 }
 
-@media (max-width: 1099px) {
+/* 좁은 화면: 칸이 내용 높이만 차지하고, 행동 버튼 줄은 벤토 끝에서 화면 아래에 붙는다. */
+@media (max-width: 1199px) {
   .hero {
-    min-height: 420px;
     padding: var(--space-24);
+  }
+  .heroContent {
+    padding-top: var(--space-24);
   }
   .tile {
     padding: var(--space-24);
+  }
+  .stack {
+    display: contents;
+  }
+  .stackBody {
+    grid-area: var(--stack-area);
+    overflow: visible;
+    mask-image: none;
+  }
+  .stack > .actionDock {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    grid-area: dock;
+    padding: var(--space-12) 0;
+    background: var(--color-bg-canvas);
   }
 }

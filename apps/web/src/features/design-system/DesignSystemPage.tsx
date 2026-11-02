@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { FoldTile, Hero, StatTile, Tile, TileHeader, TileLink } from '../../components/layout/tiles';
 import { Checklist } from '../../components/ui/Checklist';
+import { CodeValue } from '../../components/ui/CodeValue';
 import { AccountPill, ActionPill, Badge, BarPill, LiveIndicator, NavPills, OptionPill } from '../../components/ui/controls';
 import { Icon, ICON_NAMES } from '../../components/ui/Icon';
 import { Logo } from '../../components/ui/Logo';
+import { SkeletonRows, SkeletonStats } from '../../components/ui/Skeleton';
 import { SecurityCell, SecurityDotMap, SecurityLegend, STATUS_LABEL, type SecurityStatus } from '../../components/ui/Security';
 import { Timeline } from '../../components/ui/Timeline';
 import { TrafficBar } from '../../components/ui/TrafficBar';
@@ -14,7 +16,7 @@ const noop = () => {};
 const SECTIONS = [
   { id: 'color', label: '색' },
   { id: 'type', label: '글자' },
-  { id: 'layout', label: '간격과 모서리' },
+  { id: 'layout', label: '간격, 모서리, 칸' },
   { id: 'assets', label: '로고와 아이콘' },
   { id: 'controls', label: '조작' },
   { id: 'tiles', label: '타일' },
@@ -197,7 +199,7 @@ export function DesignSystemPage({ onExit }: { onExit?: () => void }) {
           </div>
         </Section>
 
-        <Section id="layout" title="간격과 모서리" source="src/design/tokens.css">
+        <Section id="layout" title="간격, 모서리, 칸" source="src/design/tokens.css">
           <div className={s.scale}>
             {matching('--space-').map((name) => (
               <div key={name} className={s.scaleItem}>
@@ -214,6 +216,25 @@ export function DesignSystemPage({ onExit }: { onExit?: () => void }) {
               </div>
             ))}
           </div>
+          <div className={s.scale}>
+            {matching('--size-control-').map((name) => (
+              <div key={name} className={s.scaleItem}>
+                <span className={s.controlBar} style={{ height: `var(${name})` }} />
+                <code className="t-code-sm c-secondary">
+                  {name.replace('--size-', '')} {value(name)}
+                </code>
+              </div>
+            ))}
+          </div>
+          <p className="t-body-sm c-secondary">벤토는 큰 카드만 늘고 줄며, 나머지 칸은 아래 너비로 고정합니다. 1200px보다 좁으면 큰 카드부터 한 줄로 쌓습니다.</p>
+          <ul className={s.tokenList}>
+            {[...matching('--col-'), '--gap-bento', '--content-max', '--hero-offset'].map((name) => (
+              <li key={name}>
+                <code className="t-code-sm">{name}</code>
+                <code className="t-code-sm c-secondary">{value(name)}</code>
+              </li>
+            ))}
+          </ul>
         </Section>
 
         <Section id="assets" title="로고와 아이콘" source="src/components/ui/Logo.tsx · Icon.tsx">
@@ -272,6 +293,16 @@ export function DesignSystemPage({ onExit }: { onExit?: () => void }) {
             <Badge tone="warning">승인 대기</Badge>
             <Badge tone="danger">높음</Badge>
             <Badge tone="info">진행 중</Badge>
+          </Spec>
+          <Spec name="CodeValue" note="긴 지문과 이미지는 한 줄로 가운데를 줄이고, 전체 값은 복사 버튼으로 닿습니다.">
+            <CodeValue value="sha256:7f3a9c1e5b2d884690000000000000000000000000000000000000001" chip max={32} />
+            <CodeValue value="ghcr.io/example/shop-api@sha256:abababababababababababababab" />
+          </Spec>
+          <Spec name="SkeletonRows · SkeletonStats" note="읽는 동안 빈 카드 대신 자리를 잡습니다.">
+            <div className={s.skeletonDemo}>
+              <SkeletonStats count={3} />
+              <SkeletonRows count={3} />
+            </div>
           </Spec>
           <Spec name="LiveIndicator · AccountPill">
             <LiveIndicator />

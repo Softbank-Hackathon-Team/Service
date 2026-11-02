@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import type { BentoLayout } from '../../components/layout/ConsoleLayout';
-import { Tile, TileHeader } from '../../components/layout/tiles';
+import { SkeletonTile, Tile, TileHeader } from '../../components/layout/tiles';
 import { Checklist } from '../../components/ui/Checklist';
 import { BarPill } from '../../components/ui/controls';
 import { api } from '../../lib/api';
@@ -14,9 +14,8 @@ import { migrationSteps, needsStepAnchor, stepAnchorFrom } from './model';
 import s from '../common/page.module.css';
 
 // 큰 카드 다음으로 중요한 것이 진행 단계라서, 어느 화면이든 바로 옆 칸을 그대로 차지한다.
-const WITH_SIDE: BentoLayout = { columns: '620fr 300fr 452fr', rows: 'minmax(0, 1fr)', areas: ['hero steps side'] };
-const STEPS_ONLY: BentoLayout = { columns: '880fr 492fr', rows: 'minmax(0, 1fr)', areas: ['hero steps'] };
-const SOLO: BentoLayout = { columns: '1fr', rows: 'minmax(0, 1fr)', areas: ['hero'] };
+// 근거 칸이 없는 상태에서도 칸은 비워 둔 채 그대로 두어, 상태가 바뀔 때 진행 단계가 옮겨 다니지 않는다.
+const LAYOUT: BentoLayout = { columns: ['fill', 'narrow', 'side'], areas: 'hero steps side' };
 
 export type ScreenProps = {
   migration: MigrationView;
@@ -44,15 +43,18 @@ function StepsTile({ migration }: { migration: MigrationView }) {
 type FrameProps = {
   route: string;
   migration?: MigrationView;
-  hasSide?: boolean;
   children: ReactNode;
 };
 
-export function Frame({ route, migration, hasSide = true, children }: FrameProps) {
+export function Frame({ route, migration, children }: FrameProps) {
   return (
-    <ShellLayout layout={!migration ? SOLO : hasSide ? WITH_SIDE : STEPS_ONLY} barLeft={<BarPill label={route} />}>
+    <ShellLayout layout={LAYOUT} barLeft={<BarPill label={route} />}>
       {children}
-      {migration && <StepsTile migration={migration} />}
+      {migration ? (
+        <StepsTile migration={migration} />
+      ) : (
+        <SkeletonTile area="steps" title="진행 단계" rows={8} />
+      )}
     </ShellLayout>
   );
 }

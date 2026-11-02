@@ -1,0 +1,39 @@
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  padding: var(--space-8) 0;
+}
+.stats {
+  display: flex;
+  gap: var(--space-24);
+}
+.stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.line,
+.number,
+.caption {
+  display: block;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-subtle);
+  animation: breathe 1.6s ease-in-out infinite;
+}
+.line {
+  height: 12px;
+}
+.number {
+  width: 56px;
+  height: 28px;
+}
+.caption {
+  width: 40px;
+  height: 12px;
+}
+@keyframes breathe {
+  50% {
+    opacity: 0.5;
+  }
+}

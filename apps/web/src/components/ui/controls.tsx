@@ -14,9 +14,9 @@ type ActionPillProps = {
 /** 화면에 하나뿐인 지금 할 행동. 항상 오른쪽 아래에 둔다. */
 export function ActionPill({ label, icon = 'arrow-right', tone = 'tile', disabled, type = 'button', onClick }: ActionPillProps) {
   return (
-    <button type={type} className={`${s.action} ${s[tone]} t-h2`} disabled={disabled} onClick={onClick}>
+    <button type={type} className={`${s.action} ${s[tone]} t-h3`} disabled={disabled} onClick={onClick}>
       <span className={s.disc}>
-        <Icon name={icon} size={24} />
+        <Icon name={icon} size={20} />
       </span>
       {label}
     </button>
