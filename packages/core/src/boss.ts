@@ -73,6 +73,8 @@ export const POLICY: Record<string, QueuePolicy> = {
   [QUEUES.cleanup]: { policy: "stately", retryLimit: 3, retryDelay: 10, retryBackoff: true },
   // Z1 ROLLBACK_MAX_ATTEMPTS(기본 2) = 첫 시도 + 이 1번. 바꾸면 같이 바꾼다
   [QUEUES.rollback]: { policy: "stately", retryLimit: 1, retryDelay: 5 },
+  // DRAFT(ai): 빌드는 실패하면 같은 입력으로 다시 해도 같다 → pg-boss 재시도 없음(실패하면 apply 단계가 failed 로 보냄). 빌드 시간 상한 30분
+  [QUEUES.imageBuild]: { policy: "stately", retryLimit: 0, expireInSeconds: 1800 },
   [QUEUES.verifyConnection]: { policy: "stately", retryLimit: 3 },
   // 재시도하면 LLM 비용이 또 든다. 실패하면 사람이 다시 실행한다
   [QUEUES.agentRun]: { policy: "stately", retryLimit: 0 },

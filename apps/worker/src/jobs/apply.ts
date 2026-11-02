@@ -5,6 +5,7 @@ import { errorMessage, nextJob, runStep, stubWait } from "./_step.js";
 import { loadLatestApproval, loadLatestPlan, saveInfraReady } from "./plan-store.js";
 import { failedOnRenewFailure, withStepRoles } from "./_roles.js";
 import { realApply } from "./apply-real.js";
+import { runImageBuilds } from "./image-build.js";
 
 interface ApplyLoaded { plan: PlanDoc; provider: Provider; spec: AppSpec | null; accountId: string | null }
 // Z38-3: 재확인 실패. 예전엔 load 가 null → job.rejected 로 조용히 끝나고 이전은 provisioning 에 남았다.
@@ -50,6 +51,10 @@ export async function handleApply(raw: unknown) {
       let mockDetail: Record<string, unknown> | undefined;
       let realDetail: Record<string, unknown> | undefined;
 
+      // 이미지 빌드 (23번 3.3): spec_v2 서비스 중 image.source=build 가 있을 때만. IMAGE_BUILD=1 이 아니면 아무 일도 안 한다.
+      // STUB: spec_v2 저장(I3) 전이라 명세 v2 는 항상 null → 지금은 빈 목록. 저장되면 loaded 에 specV2 를 실어 여기 넘긴다. 실패하면 던져서 onError 가 failed 로 보낸다
+      const imageBuilds = await runImageBuilds(j, null);
+
       // 실행기 고르기·STUB 판단은 adapters chooseRunner 한 곳 (Z44). 막힘이면 바로 failed(failureCode = 실행기 코드)
       const c = chooseRunner(provider);
       if (c.kind === "unavailable")
@@ -84,7 +89,7 @@ export async function handleApply(raw: unknown) {
       }
       return {
         to: "deploying",
-        detail: { planId: j.planId, tfOutputs, iac: mockDetail ? "azure_mock" : realDetail ? (realDetail.imported ? "imported" : "terraform") : "mock",
+        detail: { planId: j.planId, tfOutputs, ...(imageBuilds.length ? { imageBuilds } : {}), iac: mockDetail ? "azure_mock" : realDetail ? (realDetail.imported ? "imported" : "terraform") : "mock",
                   ...(mockDetail ? { runner: mockDetail } : {}), ...(realDetail ? { terraform: realDetail } : {}) },
         evidence: { applyOk: true },   // STUB(aws/gcp/onprem): terraform apply 종료 코드 0. Azure는 Mock 결과 ok
         inTx: (tx) => saveInfraReady(tx, {
