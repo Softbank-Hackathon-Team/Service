@@ -49,6 +49,18 @@
         "string",
         "null"
       ]
+    },
+    "missingPermissions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "needsHuman": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     }
   },
   "required": [

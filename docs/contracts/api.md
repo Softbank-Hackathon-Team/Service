@@ -324,7 +324,7 @@ contracts의 화면용 모양 `MigrationView`는 열 칸이다. 지금 응답에
 - 연결은 성공했는데 관찰 역할에 선택 권한이 빠져 있으면(예전 연결 스크립트로 만든 고객) 실패로 바꾸지 않는다. 상태는 `connected`이고, 사람이 할 일로 남긴다.
 - 감사 `env.verified` detail에 `missingPermissions`(빠진 권한 이름 목록)가 남는다.
 - DB `environments.verify_detail`에는 `missingPermissions`와 `needsHuman`(사람이 할 일 한 줄)이 남는다.
-- 【사실】 이 두 칸은 아직 API 응답(`EnvironmentView`, `GET /environments`)에 없다. 화면에 보이려면 `EnvironmentView`에 칸을 더해야 한다(5절).
+- `GET /environments` 목록과 `POST /environments` 응답(`EnvironmentView`)에 선택 칸 두 개로 보인다: `missingPermissions`(문자열 목록), `needsHuman`(문자열 목록). 비었거나 없으면 칸 자체가 없다(전 응답과 같은 키). `verify_detail`의 다른 칸(`clusters`·`checkedAt`)은 내보내지 않는다.
 
 ### 이번 물결 깃발 (요청·응답 모양을 바꾸는 것만)
 
@@ -350,7 +350,6 @@ contracts의 화면용 모양 `MigrationView`는 열 칸이다. 지금 응답에
 | 다른 회사 환경 번호 | 【추정】 외래 키 검사는 회사 벽을 건너뛴다(PostgreSQL 문서). 그래서 남의 환경 번호를 넣어도 이전이 만들어질 수 있다. 그 뒤 워커는 출발 환경을 못 읽고 아무것도 안 한다. 이전은 `importing`에 멈춘다 | 다른 회사 번호는 404 | 【미확인】 시험 하나로 확인한 뒤 고친다 |
 | 같은 요청 두 번 | 【사실】 `Idempotency-Key` 헤더를 보지 않는다. 버튼을 두 번 누르면 이전이 둘 생긴다 | 【추정】 POST는 `Idempotency-Key` 필수 | 큐 이름 `idempotency-cleanup`만 자리를 잡아 두었다 |
 | 실시간 신호 | 【사실】 DB 알림(`pg_notify`)은 보내지만, 화면으로 내보내는 `GET /events`가 없다 | SSE(서버가 브라우저로 한 방향으로 계속 보내는 연결) | 경로를 더한다 |
-| 연결 확인 "사람이 할 일" | 【사실】 `missingPermissions`·`needsHuman`이 감사와 `environments.verify_detail`에만 있다 | 화면 연결 카드에 보여야 한다 | TODO(human): `EnvironmentView`에 칸을 더할지 |
 
 ---
 

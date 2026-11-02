@@ -17,6 +17,10 @@ export const EnvironmentView = z.object({
   accountId: z.string().nullable(),     // 고객 계정 번호 (확인 뒤)
   lastVerifiedAt: z.string().nullable(),
   failureReason: z.string().nullable(), // 예: 권한 부족 + 동작 이름. 모양은 ConnectionFailure 또는 "PERMISSION_MISSING:<동작>"
+  // VERIFYAPI: 마지막 연결 확인(사람 요청)이 남긴 "사람이 할 일" (OBSROLE3, environments.verify_detail).
+  //   연결은 됐지만 관찰 역할에 선택 권한이 빠진 경우만 칸이 붙는다. 없으면 칸 자체가 없음 (전 응답과 글자 그대로)
+  missingPermissions: z.array(z.string()).optional(),   // 빠진 권한 이름 (GCP 권한 이름 등)
+  needsHuman: z.array(z.string()).optional(),           // 고객이 할 일 한 줄씩 (예: 연결 스크립트 다시 실행)
 }).strict();
 export type EnvironmentView = z.infer<typeof EnvironmentView>;
 

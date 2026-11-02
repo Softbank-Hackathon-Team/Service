@@ -24,7 +24,18 @@ const VIEW_COLUMNS = `id, provider, name,
   account_id AS "accountId",
   -- Z17: 응답 스키마(lastVerifiedAt: string|null)에 맞게 DB에서 문자열로. Date의 JSON 모양과 같은 글자
   ${isoUtc("last_verified_at")} AS "lastVerifiedAt",
-  failure_reason AS "failureReason"`;
+  failure_reason AS "failureReason",
+  verify_detail AS "verifyDetail"`;
+
+// VERIFYAPI: verify_detail(jsonb) 에서 화면에 줄 두 칸만 꺼낸다. 비었거나 문자열 목록이 아니면 칸을 안 붙인다 (clusters·checkedAt 은 안 내보냄)
+const strList = (x: unknown): string[] | null =>
+  Array.isArray(x) && x.length > 0 && x.every((v) => typeof v === "string") ? x as string[] : null;
+export function toEnvironmentView(row: Record<string, unknown>): EnvironmentView {
+  const { verifyDetail, ...rest } = row;
+  const d = (verifyDetail && typeof verifyDetail === "object" ? verifyDetail : {}) as Record<string, unknown>;
+  const missing = strList(d.missingPermissions), todo = strList(d.needsHuman);
+  return { ...rest, ...(missing ? { missingPermissions: missing } : {}), ...(todo ? { needsHuman: todo } : {}) } as EnvironmentView;
+}
 
 // 202 확인 요청 응답
 export const VerifyAccepted = z.object({
@@ -69,7 +80,7 @@ export async function environmentRoutes(app: FastifyInstance) {
   r.get("/environments", { schema: { response: { 200: EnvironmentList, ...errors(401, 500) } } }, async (req) => {
     return withTenant(req.tenantId, async (tx) => {
       const q = await tx.query(`SELECT ${VIEW_COLUMNS} FROM environments ORDER BY name`);
-      return { items: q.rows };
+      return { items: q.rows.map(toEnvironmentView) };
     });
   });
 
@@ -86,7 +97,7 @@ export async function environmentRoutes(app: FastifyInstance) {
         `INSERT INTO environments (tenant_id, provider, name, connection_status, region, cluster_name)
          VALUES ($1, $2, $3, 'draft', $4, $5) RETURNING ${VIEW_COLUMNS}`,
         [req.tenantId, b.provider, b.name, b.region ?? null, b.clusterName ?? null]);
-      const view = ins.rows[0] as EnvironmentView;
+      const view = toEnvironmentView(ins.rows[0]);
       await writeAudit(tx, req.tenantId, { actor: req.actor, action: "env.create", target: view.id, result: "ok",
         detail: { provider: b.provider } });
       return { status: 201, body: view };
