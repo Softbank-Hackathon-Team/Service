@@ -177,7 +177,7 @@ contracts의 화면용 모양 `MigrationView`는 열 칸이다. 지금 응답에
 | POST | `/agent/register` | 입력층 | Agent가 일회용 토큰으로 등록하고 장기 Agent 키를 받음 (경로 이름 추정) | 있음 |
 | POST | `/environments/:id/agent-token` | 입력층 | 온프레 Agent 일회용 등록 토큰(10분) + 설치 명령 한 줄 발급 | 있음 |
 | POST | `/agent/register` | 입력층 | Agent가 일회용 토큰으로 등록하고 장기 Agent 키를 받음 | 있음 |
-| GET | `/events` | 입력층 | SSE | 없음 |
+| GET | `/events` | 입력층 | SSE | 있음 |
 | POST | `/tokens` | 입력층 | CLI 개인 토큰 발급(범위 지정, 30일, 해시 저장) (경로 이름 추정) | 있음 |
 | POST | `/migrations` | 가져오기·명세 | 이전 생성 + 가져오기 시작 | 있음 |
 | GET | `/migrations` | 가져오기·명세 | 자기 회사 이전 목록(상태·version·출발·도착) | 있음 |
@@ -257,7 +257,7 @@ contracts의 화면용 모양 `MigrationView`는 열 칸이다. 지금 응답에
 | 출발·도착 환경 확인 | 【사실】 둘이 같아도, "연결됨"이 아니어도 만든다 | 둘 다 "연결됨"이고 서로 달라야 한다 | 검사를 `POST /migrations`에 더한다 |
 | 다른 회사 환경 번호 | 【추정】 외래 키 검사는 회사 벽을 건너뛴다(PostgreSQL 문서). 그래서 남의 환경 번호를 넣어도 이전이 만들어질 수 있다. 그 뒤 워커는 출발 환경을 못 읽고 아무것도 안 한다. 이전은 `importing`에 멈춘다 | 다른 회사 번호는 404 | 【미확인】 시험 하나로 확인한 뒤 고친다 |
 | 같은 요청 두 번 | 【사실】 `Idempotency-Key` 헤더를 보지 않는다. 버튼을 두 번 누르면 이전이 둘 생긴다 | 【추정】 POST는 `Idempotency-Key` 필수 | 큐 이름 `idempotency-cleanup`만 자리를 잡아 두었다 |
-| 실시간 신호 | 【사실】 DB 알림(`pg_notify`)은 보내지만, 화면으로 내보내는 `GET /events`가 없다 | SSE(서버가 브라우저로 한 방향으로 계속 보내는 연결) | 경로를 더한다 |
+| 실시간 신호 | 【사실】 `GET /events`가 DB 알림(`pg_notify`)을 같은 회사의 화면에만 SSE로 보낸다. 지금 신호는 상태 변경(`migration.status_changed`)과 다시 붙었을 때의 `reload_all`뿐이다 | SSE(서버가 브라우저로 한 방향으로 계속 보내는 연결) | 다른 신호 종류(`weight_changed` 등)는 보내는 쪽을 더할 때 |
 
 ---
 
