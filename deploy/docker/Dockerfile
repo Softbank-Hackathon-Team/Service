@@ -53,7 +53,8 @@ RUN node deploy/docker/bundle.mjs agent-worker
 
 # git 과 git 이 쓰는 공유 라이브러리만 /out 에 모은다 (ldd 로 찾은 것 + 심볼릭 링크의 실제 파일)
 FROM ${GIT_IMAGE} AS git
-# hadolint ignore=SC2016,DL4006
+# SC2046: $(cat /tmp/libs) 는 파일 목록이라 일부러 쪼갠다 (따옴표로 묶으면 한 파일 이름이 된다)
+# hadolint ignore=SC2016,SC2046,DL4006
 RUN set -e; mkdir -p /out; \
     files="/usr/bin/git $(find /usr/libexec/git-core -type f)"; \
     libs=$(for f in $files; do ldd "$f" 2>/dev/null || true; done | awk '/=>/ {print $3}' | sort -u); \
@@ -90,7 +91,8 @@ FROM runtime AS worker
 # Z75: apk add 대신 git 단계에서 복사(패키지 서버가 막힌 곳에서도 빌드됨). 바탕에 이미 있는 라이브러리(libz·libssl 등)는 덮어쓰지 않는다.
 #      층에 임시 파일이 안 남게 bind 로 붙인다. WITH_GIT=0 은 git 없이 만드는 검증용(4차 apps/worker/Dockerfile 과 같은 뜻, 기본 1)
 ARG WITH_GIT=1
-# hadolint ignore=SC2044
+# DL3003: /g 는 이 RUN 동안만 붙는 마운트라 WORKDIR 로 못 간다. DL4006: 마지막 줄은 grep 결과만 본다(! 로 뒤집음, pipefail 이면 ldd 실패에 뒤집혀 통과해 버린다)
+# hadolint ignore=SC2044,DL3003,DL4006
 RUN --mount=type=bind,from=git,source=/out,target=/g set -e; [ "$WITH_GIT" = "1" ] || exit 0; cd /g; \
     for f in $(find . -type f -o -type l); do \
       [ -e "/$f" ] || [ -L "/$f" ] || { mkdir -p "/${f%/*}"; cp -a "$f" "/$f"; }; \
