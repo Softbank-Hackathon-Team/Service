@@ -40,3 +40,6 @@ export { verifyAwsObserve, envFor, trustHasExternalId, type VerifyAwsInput, type
 export { normalizeV2, KIND_MAPPERS, EVIDENCE_TYPES, ENVIRONMENT_TYPES } from "./import/pipeline.js";
 export { projectV1, rebuildFromV2 } from "./import/project-v1.js";
 export type { SourceReader, KindMapper, RawItem, MappedComponent, NativeRef, ProjectionEnv, ProjectionSource, NormalizeV2Options, NormalizeV2Output } from "./import/types.js";
+// TA1: 도착 Builder v2 (IR v2 → 고정 루트 Terraform 변수 + workloads[] Helm 값)
+export { targetBuilderFor, awsTarget, gcpTarget, onpremTarget, azureMockTarget, rdsClassFor, cloudSqlTierFor, requirementsV2, v2Blockers, V2_FIELD_COVERAGE,
+  K8S_RENDER_CAPS, UNSUPPORTED_V2, LINK_OUTPUT_UNKNOWN, identitiesOf, type FieldRule, type IdentityPlan } from "./target/index.js";

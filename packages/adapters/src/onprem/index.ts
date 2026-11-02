@@ -17,7 +17,7 @@ const RBAC: Record<string, { read: string[]; write: string[]; remove: string[] }
   "external-secrets.io/externalsecrets": { read: ["get"], write: ["create", "patch"], remove: ["delete"] },
   "postgresql.cnpg.io/clusters": { read: ["get"], write: ["create", "patch"], remove: ["delete"] },
 };
-const PERMS: PermTable = Object.fromEntries(Object.entries(RBAC).map(([r, v]) => [r, {
+export const PERMS: PermTable = Object.fromEntries(Object.entries(RBAC).map(([r, v]) => [r, {
   read: v.read.map((x) => `${r}:${x}`), write: v.write.map((x) => `${r}:${x}`), remove: v.remove.map((x) => `${r}:${x}`),
 }]));
 

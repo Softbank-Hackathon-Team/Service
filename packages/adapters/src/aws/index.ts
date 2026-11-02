@@ -11,7 +11,7 @@ export { repoName } from "../common/target.js";
 
 // 자원 종류 → 권한. infra/modules/aws/app/main.tf가 만드는 종류와 계약 테스트로 맞춘다.
 // DRAFT(ai): 권한 목록은 문서 기준 추정. 실계정 AccessDenied 로그로 확인 필요
-const PERMS: PermTable = {
+export const PERMS: PermTable = {
   "data.aws_eks_cluster": {
     read: ["eks:DescribeCluster"], write: [], remove: [] },
   // 토큰은 로컬에서 서명만 함 (STS GetCallerIdentity 미리 서명) → IAM 권한 불필요
