@@ -36,3 +36,7 @@ export { runCloudPrecheck, toPrecheckItems, mockPrecheckEnabled, mockChecks, cli
   type CloudCheck, type Verdict, type PrecheckEnvInfo, type PrecheckInput, type PrecheckDeps, type CloudProvider } from "./precheck/cloud-precheck.js";
 // L4: 연결 확인 (빌린 관찰 역할로 고객 AWS 읽어 보기)
 export { verifyAwsObserve, envFor, trustHasExternalId, type VerifyAwsInput, type VerifyAwsResult } from "./verify/aws.js";
+// I3a: 공통 명세 v2 가져오기 (원본 → v2, v2 → v1 투영)
+export { normalizeV2, KIND_MAPPERS, EVIDENCE_TYPES, ENVIRONMENT_TYPES } from "./import/pipeline.js";
+export { projectV1, rebuildFromV2 } from "./import/project-v1.js";
+export type { SourceReader, KindMapper, RawItem, MappedComponent, NativeRef, ProjectionEnv, ProjectionSource, NormalizeV2Options, NormalizeV2Output } from "./import/types.js";

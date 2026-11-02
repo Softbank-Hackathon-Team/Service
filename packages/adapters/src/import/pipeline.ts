@@ -1,0 +1,122 @@
+import type { FieldMetaV2, ImportResultV2, RawInventory, UnmappedV2 } from "@svc/contracts";
+import { assignIds, slug } from "./ids.js";
+import { inferLinks } from "./links.js";
+import { maskPlainSecrets, rewriteEnv } from "./env-rewrite.js";
+import { attachEndpoints, buildEntry, fillProjection } from "./entry.js";
+import { buildPosture } from "./posture.js";
+import { K8S_RAW_KINDS, type RawK8sHpa, type RawK8sIngress, type RawK8sNetworkPolicy, type RawK8sService } from "./raw-k8s.js";
+import { k8sDeploymentMapper } from "./mappers/k8s-deployment.js";
+import { k8sCronJobMapper } from "./mappers/k8s-cronjob.js";
+import { rdsMapper } from "./mappers/rds.js";
+import { cloudSqlMapper } from "./mappers/cloudsql.js";
+import { cnpgMapper } from "./mappers/cnpg.js";
+import type { KindMapper, MappedComponent, NormalizeV2Options, NormalizeV2Output, ProjectionEnv, RawItem } from "./types.js";
+
+// DRAFT(ai): 원본(RawInventory) → 공통 명세 v2 (설계 20번 5.1~5.5장, 24번 I3a). 순수 함수, 네트워크·환경변수 안 읽음.
+//   1) 종류 붙이기(매퍼)  2) id 정하기  3) Service·HPA 접기  4) 평문 비밀 가리기  5) 의존성 추론 + env 다시 쓰기
+//   6) 라우팅  7) 보안 기준선. 같은 원본이면 글자 하나까지 같은 결과(목록 정렬).
+//   검증(checkV2)·저장은 부르는 쪽(import.ts, I3b) 몫.
+
+export const KIND_MAPPERS: KindMapper[] = [k8sDeploymentMapper, k8sCronJobMapper, rdsMapper, cloudSqlMapper, cnpgMapper];
+const MAPPER_BY_TYPE = new Map(KIND_MAPPERS.flatMap((m) => m.nativeTypes.map((t) => [t, m] as const)));
+
+// 앱 리소스는 아니지만 아는 것: 근거(다른 리소스에 접힘) / 환경(도착에서 env 층이 다시 만듦)
+// R5: serviceAccount·configMapKeys 는 근거·환경 종류로 등록 (unmapped C 로 안 셈)
+export const EVIDENCE_TYPES = new Set<string>([K8S_RAW_KINDS.service, K8S_RAW_KINDS.ingress, K8S_RAW_KINDS.hpa, K8S_RAW_KINDS.networkPolicy, K8S_RAW_KINDS.serviceAccount, K8S_RAW_KINDS.configMapKeys, "aws.iamPolicy"]);
+export const ENVIRONMENT_TYPES = new Set<string>(["eks.cluster", "gke.cluster", "k8s.node", "aws.vpc", "gcp.network", "aws.ecr", "gcp.artifactRepo", "aws.alb", "gcp.forwardingRule", "aws.secret", "gcp.secret", "import.note"]);
+
+const resName = (it: RawItem): string => {
+  const md = it.metadata as { name?: string } | undefined;
+  const n = md?.name ?? it.name ?? it.Name ?? it.DBInstanceIdentifier ?? it.serviceName ?? "?";
+  return `${it.kind}:${String(n)}`;
+};
+
+export function normalizeV2(raw: RawInventory, opts: NormalizeV2Options = {}): NormalizeV2Output {
+  const items = (raw.items as RawItem[]).filter((x) => x && typeof x === "object" && typeof x.kind === "string");
+  const mapped: MappedComponent[] = [];
+  const fieldMeta: FieldMetaV2 = {};
+  const unmapped: UnmappedV2[] = [];
+  const environment: string[] = [];
+
+  // 1) 종류 붙이기. 매퍼 하나가 터져도 그 자원만 unmapped
+  for (const it of items) {
+    const mapper = MAPPER_BY_TYPE.get(it.kind);
+    if (mapper) {
+      try {
+        const c = mapper.map(it);
+        if ("skip" in c) unmapped.push({ resource: resName(it), grade: c.grade ?? "C", reason: c.skip });
+        else mapped.push(c);
+      } catch (err) {
+        unmapped.push({ resource: resName(it), grade: "C", reason: `매퍼 오류: ${err instanceof Error ? err.message : String(err)}` });
+      }
+      continue;
+    }
+    if (EVIDENCE_TYPES.has(it.kind)) continue;
+    if (ENVIRONMENT_TYPES.has(it.kind)) { environment.push(it.kind); continue; }
+    unmapped.push({ resource: resName(it), grade: "C", reason: "카탈로그에 종류 없음 → 출발에 두고 연결 유지가 기본(6.10장)" });
+  }
+  const evidence = <T>(kind: string) => items.filter((i) => i.kind === kind) as unknown as T[];
+  const svcObjs = evidence<RawK8sService>(K8S_RAW_KINDS.service).filter((s) => s.metadata && s.spec);
+  const ingresses = evidence<RawK8sIngress>(K8S_RAW_KINDS.ingress).filter((s) => s.metadata && s.spec);
+  const hpas = evidence<RawK8sHpa>(K8S_RAW_KINDS.hpa).filter((s) => s.metadata && s.spec?.scaleTargetRef);
+  const policies = evidence<RawK8sNetworkPolicy>(K8S_RAW_KINDS.networkPolicy).filter((s) => s.metadata);
+
+  // 2) id
+  const ids = assignIds(mapped, opts.previousIds ?? {});
+  const components = mapped.sort((a, b) => (a.id! < b.id! ? -1 : a.id! > b.id! ? 1 : 0));
+  for (const c of components)
+    for (const [k, [source, confidence, rationale]] of Object.entries(c.meta))
+      fieldMeta[`components.${c.id}.${k}`] = { source, confidence, needs_review: confidence < 1, ...(rationale ? { rationale } : {}) };
+
+  // 3) k8s Service 객체 → endpoints, HPA → replicas 범위 + scale (따로 종류를 두지 않는다)
+  attachEndpoints(components, [...svcObjs].sort((a, b) => `${a.metadata.namespace ?? ""}/${a.metadata.name}`.localeCompare(`${b.metadata.namespace ?? ""}/${b.metadata.name}`)), unmapped);
+  for (const h of hpas) {
+    const s = components.find((c) => c.kind === "service" && c.native.name === h.spec.scaleTargetRef.name && (!h.metadata.namespace || h.metadata.namespace === c.native.namespace));
+    if (!s) { unmapped.push({ resource: `k8s.hpa:${h.metadata.name}`, grade: "C", reason: "대상 Deployment 를 못 찾음" }); continue; }
+    const metrics = (h.spec.metrics ?? []) as Array<{ resource?: { name?: string; target?: { averageUtilization?: number } } }>;
+    const cpu = metrics.find((x) => x.resource?.name === "cpu")?.resource?.target?.averageUtilization;
+    s.props.replicas = { min: h.spec.minReplicas ?? 1, max: h.spec.maxReplicas };
+    fieldMeta[`components.${s.id}.replicas`] = { source: `k8s:hpa/${h.metadata.name}.spec.min/maxReplicas`, confidence: 1, needs_review: false };
+    if (typeof cpu === "number") {
+      s.props.scale = { targetCpuPct: cpu };
+      fieldMeta[`components.${s.id}.scale`] = { source: `k8s:hpa/${h.metadata.name}.metrics.cpu`, confidence: 1, needs_review: false };
+    } else {
+      fieldMeta[`components.${s.id}.scale`] = { source: `k8s:hpa/${h.metadata.name}`, confidence: 0.6, needs_review: true, rationale: "CPU 말고 다른 지표 → 카탈로그 HPA 모듈은 CPU 만" };
+    }
+  }
+
+  // 4) 평문 비밀 → 명세에서 뺌 (의존성 추론 전에: 비밀 값이 근거가 되지 않게)
+  const masked = maskPlainSecrets(components, fieldMeta, unmapped);
+
+  // 5) 의존성 + env 다시 쓰기
+  const { links, meta, envHits } = inferLinks(components, masked);
+  Object.assign(fieldMeta, meta);
+  rewriteEnv(components, envHits, fieldMeta);
+
+  // 6) 라우팅, 7) 보안 기준선
+  const entry = buildEntry(components, svcObjs, ingresses, fieldMeta, unmapped);
+  const posture = buildPosture(components, policies);
+  fillProjection(components, svcObjs, ingresses);
+
+  const firstService = components.find((c) => c.kind === "service") ?? components[0];
+  const result: ImportResultV2 = {
+    spec: {
+      schemaVersion: "2",
+      app: { name: slug(opts.appName ?? firstService?.id ?? "app") },
+      components: components.map(({ id, kind, props }) => ({ id: id!, kind, props }) as unknown as ImportResultV2["spec"]["components"][number]),
+      links,
+      ...(entry ? { entry } : {}),
+      posture,
+    },
+    fieldMeta: Object.fromEntries(Object.entries(fieldMeta).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))),
+    unmapped: unmapped.sort((a, b) => (a.resource < b.resource ? -1 : a.resource > b.resource ? 1 : a.reason < b.reason ? -1 : a.reason > b.reason ? 1 : 0)),
+    ids,
+    environment: environment.sort(),
+  };
+  const projectionEnv: ProjectionEnv = { workloads: {}, postgres: {} };
+  for (const c of components) {
+    if (c.projection) projectionEnv.workloads[c.id!] = c.projection;
+    if (c.kind === "postgres") projectionEnv.postgres[c.id!] = { nativeType: c.native.type };
+  }
+  return { result, projectionEnv };
+}

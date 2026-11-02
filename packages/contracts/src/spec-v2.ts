@@ -134,7 +134,7 @@ const ServiceV2 = z.object({
       }).strict()),
     }).strict()).max(5).optional(),
     probes: z.object({ readiness: Probe.optional(), liveness: Probe.optional(), startup: Probe.optional() }).strict().optional(),
-    replicas: z.object({ min: z.number().int().min(0).max(100), max: z.number().int().min(1).max(100) }).strict(),
+    replicas: z.object({ min: z.number().int().min(0).max(100), max: z.number().int().min(0).max(100) }).strict(),   // max 0 = 0으로 줄여 둔 서비스 (재현성: 그대로 가져옴, checkV2 가 검토 표시)
     scale: z.object({ targetCpuPct: z.number().int().min(1).max(100) }).strict().optional(),
   }).strict(),
 }).strict();
