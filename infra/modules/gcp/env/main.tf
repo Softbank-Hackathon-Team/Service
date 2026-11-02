@@ -79,6 +79,10 @@ resource "google_service_networking_connection" "psa" {
   network                 = google_compute_network.vpc.id
   service                 = "servicenetworking.googleapis.com"
   reserved_peering_ranges = [google_compute_global_address.psa.name]
+  # UPREV: provider 5.x 부터 지우기가 deleteConnection 을 불러 Cloud SQL 이 없어도 "Producer services ... still using this connection"(code 9)
+  #   로 실패한다 (terraform-provider-google #16275·#19908, 맥 11/2 jeong-down 782초 FAIL). 연결은 state 에서만 빼고(ABANDON),
+  #   실제 피어링은 demo-day down 의 d_gke 가 destroy 전에 gcloud 로 지운다 → 그다음 주소·네트워크가 지워진다
+  deletion_policy = "ABANDON"
 }
 
 # 노드가 외부 이미지를 받도록 Cloud NAT (노드는 사설 IP만)

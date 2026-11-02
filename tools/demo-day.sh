@@ -481,7 +481,22 @@ d_relay() { [ -d "$TFR/.terraform" ] || [ "$DRY" = 1 ] || { echo "중계기 init
   vpc=$(tfout "$TFA" vpc_id) && [ -n "$vpc" ] || { echo "aws/env 출력 vpc_id 없음 → 중계기 destroy 를 못 함 (env 보다 먼저 지워야 한다)"; return 1; }
   run terraform -chdir="$TFR" destroy -input=false -auto-approve -var "vpc_id=$vpc" -var public_subnet_id=x -var ssh_public_key=x -var 'ssh_cidrs_json=["127.0.0.1/32"]'; }
 d_eks() { aws_account_var && run terraform -chdir="$TFA" destroy -input=false -auto-approve -var create_eks=true; }
-d_gke() { run terraform -chdir="$TFG" destroy -input=false -auto-approve -var "project_id=$GCP_PROJECT"; }
+# UPREV: GCP PSA 피어링이 남으면 연결·주소·네트워크 destroy 가 code 9 로 실패한다 (11/2 맥: platform-target-psa 주소 남음).
+#   ① 피어링을 gcloud 로 먼저 지움(없으면 지나감) ② state 에 연결이 남아 있으면 state 에서만 뺌(클라우드엔 영향 없음, 예전 state 는 ABANDON 이 아님)
+#   ③ destroy, 실패하면 30초 쉬고 최대 3번 (피어링 지우기가 늦게 반영되는 경우)
+d_gke() {
+  local net=${GCP_NETWORK:-$CLUSTER_NAME} i
+  run gcloud compute networks peerings delete servicenetworking-googleapis-com --network "$net" --project "$GCP_PROJECT" --quiet 2>&1 | tail -1 || true
+  if [ "$DRY" = 1 ] || terraform -chdir="$TFG" state list 2>/dev/null | grep -qx 'google_service_networking_connection.psa'; then
+    run terraform -chdir="$TFG" state rm google_service_networking_connection.psa
+  fi
+  for i in 1 2 3; do
+    run terraform -chdir="$TFG" destroy -input=false -auto-approve -var "project_id=$GCP_PROJECT" && return 0
+    echo "gcp/env destroy ${i}번째 실패 → 30초 뒤 다시"; sleep 30
+    run gcloud compute networks peerings delete servicenetworking-googleapis-com --network "$net" --project "$GCP_PROJECT" --quiet 2>&1 | tail -1 || true
+  done
+  return 1
+}
 d_zero() { run bash tools/cloud-zero.sh; }
 
 do_down() {
