@@ -106,7 +106,7 @@ tl=$(tmo 60 npm run -s tf:real -- list 2>/dev/null | awk '$3 == "state" && $5 !=
 # 6. 클라우드 자원 0 (조회만)
 if [ "$RESUME" = 1 ]; then warn cloud-zero "RESUME=1 이라 건너뜀"
 else
-  tmo 180 bash tools/cloud-zero.sh > "$WORK/zero.out" 2>&1; zr=$?
+  CLOUD_ZERO_WAIT_SEC=${CLOUD_ZERO_WAIT_SEC:-300} tmo 420 bash tools/cloud-zero.sh > "$WORK/zero.out" 2>&1; zr=$?
   case $zr in 0) ok cloud-zero "AWS·GCP 자원 0" ;; 1) fail cloud-zero "자원이 남음: $(grep -A3 '^\[' "$WORK/zero.out" | head -6 | tr '\n' ' ' | head -c 300)" ;; *) fail cloud-zero "조회 실패(rc=$zr): $(tail -2 "$WORK/zero.out" | tr '\n' ' ')" ;; esac
 fi
 

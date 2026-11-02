@@ -462,14 +462,17 @@ d_elb_zero() {
   [ -n "$vpc" ] || { echo "aws/env 에 vpc 없음 → ELB 확인 생략"; return 0; }
   # Z38 R8-28: 조회가 실패하면 0 으로 치지 않는다
   local a b
-  for i in $(seq 1 36); do
+  # UPREV-B: k8s LB 가 사라지는 데 보통 1~4분 → 기본 5분 (ELB_ZERO_WAIT_SEC). 180초는 짧아 VPC 삭제가 ENI 에 막혔다
+  local tries=$(( ${ELB_ZERO_WAIT_SEC:-300} / 5 ))
+  [ "$tries" -ge 1 ] || tries=1
+  for i in $(seq 1 "$tries"); do
     a=$(aws elb describe-load-balancers --query "length(LoadBalancerDescriptions[?VPCId=='$vpc'])" --output text 2>/dev/null) || { echo "ELB 조회 실패 (classic)"; return 1; }
     b=$(aws elbv2 describe-load-balancers --query "length(LoadBalancers[?VpcId=='$vpc'])" --output text 2>/dev/null) || { echo "ELB 조회 실패 (v2)"; return 1; }
     n=$((a + b))
     [ "$n" -eq 0 ] && { echo "ELB 0 (${i}번째 확인)"; return 0; }
     sleep 5
   done
-  echo "ELB $n 개 남음 (180초)"; return 1
+  echo "ELB $n 개 남음 (${ELB_ZERO_WAIT_SEC:-300}초)"; return 1
 }
 # npm run 은 아래에 sh·tsx·node 를 띄운다. 맨 위 pid 만 끄면 워커가 살아남아 작업을 계속 집는다. 자식부터 끈다
 killtree() { local c; for c in $(pgrep -P "$1" 2>/dev/null); do killtree "$c"; done; kill "$1" 2>/dev/null; return 0; }
@@ -488,14 +491,20 @@ d_procs() {
 d_migration_tf() {
   local ids id rc=0
   if [ "$DRY" = 1 ]; then echo "DRY: npm run tf:real -- list → 이전마다 npm run tf:real -- destroy <id>" >> "$PROGRESS"; return 0; fi
-  ids=$(npm run -s tf:real -- list | awk '$3 == "state" && $5 != "0개" { print $1 }')
+  # UPREV-B: 목록 조회가 실패하면(DB 가 꺼진 재실행 등) 예전엔 조용히 "할 것 없음" 으로 지나갔다. 알리고 넘어간다 — 남은 자원은 마지막 cloud-zero 가 잡는다
+  if ! ids=$(npm run -s tf:real -- list); then echo "이전별 terraform 목록 조회 실패 → 이 단계는 건너뜀 (남은 자원은 cloud-zero 가 판정)"; return 0; fi
+  ids=$(printf '%s\n' "$ids" | awk '$3 == "state" && $5 != "0개" { print $1 }')
   for id in $ids; do npm run -s tf:real -- destroy "$id" || rc=1; done
   return $rc
 }
 d_relay() { tf_has_state "$TFR" || return 0
   # Z38 R8-27: 모듈의 data "aws_vpc" 가 destroy 때도 vpc_id 를 읽는다 → 아직 살아 있는 env 의 진짜 값을 넘긴다 (나머지는 쓰지 않는 자리값)
   local vpc
-  vpc=$(tfout "$TFA" vpc_id) && [ -n "$vpc" ] || { echo "aws/env 출력 vpc_id 없음 → 중계기 destroy 를 못 함 (env 보다 먼저 지워야 한다)"; return 1; }
+  if ! vpc=$(tfout "$TFA" vpc_id) || [ -z "$vpc" ]; then
+    # UPREV-B: 재실행에서 env 가 이미 지워졌으면 vpc_id 가 없다. 중계기 상태에 남은 게 없으면 이미 지운 것 → 성공 (예전엔 늘 실패라 재실행이 영영 FAIL)
+    if [ -z "$(terraform -chdir="$TFR" state list 2>/dev/null)" ]; then echo "중계기 상태 비어 있음 → 이미 지움"; return 0; fi
+    echo "aws/env 출력 vpc_id 없음 → 중계기 destroy 를 못 함 (env 보다 먼저 지워야 한다)"; return 1
+  fi
   run terraform -chdir="$TFR" destroy -input=false -auto-approve -var "vpc_id=$vpc" -var public_subnet_id=x -var ssh_public_key=x -var 'ssh_cidrs_json=["127.0.0.1/32"]'; }
 d_eks() { tf_has_state "$TFA" || return 0; aws_account_var && run terraform -chdir="$TFA" destroy -input=false -auto-approve -var create_eks=true; }
 # UPREV: GCP PSA 피어링이 남으면 연결·주소·네트워크 destroy 가 code 9 로 실패한다 (11/2 맥: platform-target-psa 주소 남음).
@@ -515,7 +524,8 @@ d_gke() {
   done
   return 1
 }
-d_zero() { run bash tools/cloud-zero.sh; }
+# UPREV-B: 지운 직후엔 NAT·EKS·RDS·ENI 가 "지우는 중"으로 한동안 남는다 → 10분까지 30초마다 다시 본다 (0 이면 바로 통과)
+d_zero() { CLOUD_ZERO_WAIT_SEC=${CLOUD_ZERO_WAIT_SEC:-600} run bash tools/cloud-zero.sh; }
 
 do_down() {
   log "down 시작 dry=$DRY"

@@ -5,7 +5,20 @@
 cd "$(dirname "$0")/.." || exit 1
 JSELF=tools/jeong-down.sh
 . tools/jeong-lib.sh
+# UPREV-B: 이미 도는 down 이 있으면 두 번째를 띄우지 않는다 (같은 terraform 상태에 destroy 두 개 → 잠금 오류·터널 중복 종료). 잠금 파일의 pid 가 살아 있고 이 스크립트일 때만
+JLOCK="$JSTATE/down.lock"
+if [ -z "${JEONG_CHILD:-}" ] && [ -f "$JLOCK" ]; then
+  LP=$(cat "$JLOCK" 2>/dev/null)
+  if [ -n "$LP" ] && kill -0 "$LP" 2>/dev/null && ps -p "$LP" -o command= 2>/dev/null | grep -q "jeong-down"; then
+    echo "이미 내리는 중 (pid $LP). 진행: tail -f $JPROG   끝 줄 'JEONG down end' 를 기다린다"; exit 0
+  fi
+  rm -f "$JLOCK"   # 죽은 잠금
+fi
 j_bg down "$@"
+echo $$ > "$JLOCK"
+# 신호로 죽어도 끝 줄을 남긴다 (맥 쪽이 "end" 를 기다리다 시간 초과로 헛도는 걸 막는다). 다시 치면 이어서 지운다 (destroy 는 재실행해도 안전)
+trap 'j_end down 143 "${DEMO_DAY_LOG_DIR:+$DEMO_DAY_LOG_DIR/progress.log}"; rm -f "$JLOCK"; exit 143' TERM INT HUP
+trap 'rm -f "$JLOCK"' EXIT
 j_begin down
 j_trap down
 # 터널부터 끈다 (재접속 고리라 안 끄면 중계기가 지워지는 동안 다시 붙으려 한다)

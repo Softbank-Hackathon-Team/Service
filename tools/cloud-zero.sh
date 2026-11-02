@@ -8,6 +8,10 @@
 # 환경 변수
 #   AWS_PROFILE        그대로 쓴다 (.env 의 finals)
 #   AWS_REGION         기본 ap-northeast-2 (서울)
+#   CLOUD_ZERO_REGIONS 조회할 AWS 리전 목록 (공백·쉼표). 기본은 AWS_REGION 하나. 여러 개면 줄 이름 앞에 리전이 붙는다
+#                      예: CLOUD_ZERO_REGIONS='ap-northeast-2 us-east-1' (UPREV-B: 엉뚱한 리전에 만든 자원도 잡으려면)
+#   CLOUD_ZERO_WAIT_SEC  0 이 아니면 "남은 것"·"조회 실패"일 때 이 시간(초)까지 CLOUD_ZERO_RETRY_SEC(기본 30)마다 다시 조회한다.
+#                      지우는 중인 것(NAT·EKS·RDS·ENI·LB 는 지운 뒤 몇 분 걸림)을 남은 것으로 오해하지 않게 (UPREV-B). 기본 0 = 한 번만
 #   GCP_PROJECT        없으면 gcloud 기본 프로젝트
 #   CLOUD_ZERO_IGNORE  모든 줄(AWS 태그 조회·AWS·GCP 개별 조회)의 결과에서 빼 둘 확장 정규식 (z75-39). 기본 없음
 #                      예: 다른 회차 GKE 를 일부러 켜 둔 채 Cloud SQL 만 0 인지 볼 때 CLOUD_ZERO_IGNORE='gke-|app-demo' bash tools/cloud-zero.sh
@@ -18,6 +22,11 @@
 set -u
 
 REGION=${AWS_REGION:-ap-northeast-2}
+REGIONS=$(printf '%s' "${CLOUD_ZERO_REGIONS:-$REGION}" | tr ',' ' ')
+WAIT_SEC=${CLOUD_ZERO_WAIT_SEC:-0}
+RETRY_SEC=${CLOUD_ZERO_RETRY_SEC:-30}
+case "$WAIT_SEC$RETRY_SEC" in *[!0-9]*) echo "CLOUD_ZERO_WAIT_SEC·CLOUD_ZERO_RETRY_SEC 는 숫자" >&2; exit 2 ;; esac
+[ "$RETRY_SEC" -ge 1 ] || RETRY_SEC=30
 WHAT=${1:-all}
 TOTAL=0
 FAILED=0
@@ -27,7 +36,8 @@ IGNORED=0
 # Z38 REVIEW-7 R7-2: 오류 파일은 이 실행만의 임시 파일 (고정 /tmp 이름은 다른 실행·다른 사용자와 겹친다)
 ERR=$(mktemp "${TMPDIR:-/tmp}/cloud-zero.XXXXXX")
 STALE_LIST=$(mktemp "${TMPDIR:-/tmp}/cloud-zero-stale.XXXXXX")
-trap 'rm -f "$ERR" "$STALE_LIST"' EXIT
+OUTF=$(mktemp "${TMPDIR:-/tmp}/cloud-zero-out.XXXXXX")
+trap 'rm -f "$ERR" "$STALE_LIST" "$OUTF"' EXIT
 
 row() { printf '%-34s %s\n' "$1:" "$2"; }
 
@@ -52,6 +62,16 @@ count() {
   [ "$n" -gt 0 ] && LEFT="$LEFT
 [$name]
 $out"
+  return 0
+}
+
+# 참고 줄: 합계에 넣지 않는다 (지운 EKS 의 로그 그룹처럼 지워지지 않는 게 정상인 것)
+info() {
+  name=$1; shift
+  if out=$("$@" 2>"$ERR"); then
+    out=$(printf '%s\n' "$out" | tr '\t' '\n' | grep -v '^None$' | grep -v '^[[:space:]]*$' || true)
+    row "$name" "$(printf '%s' "$out" | grep -c . || true) (참고, 합계 제외)"
+  else row "$name" "조회 실패 (참고, 합계 제외)"; fi
   return 0
 }
 
@@ -126,51 +146,87 @@ aws_tagged() {
   return 0
 }
 
-if [ "$WHAT" = all ] || [ "$WHAT" = aws ]; then
-  if ! command -v aws >/dev/null 2>&1; then row "AWS" "조회 실패 (aws 명령 없음)"; FAILED=1; else
+aws_checks() {
+  for REGION in $REGIONS; do
+    PFX=""; [ "$MULTI" = 1 ] && PFX="$REGION "
     echo "== AWS ($REGION, profile ${AWS_PROFILE:-기본})"
-    count "태그 붙은 자원(get-resources)" aws_tagged
+    : > "$STALE_LIST"
+    count "${PFX}태그 붙은 자원(get-resources)" aws_tagged
     n_stale=$(grep -c . "$STALE_LIST" || true)
     # Z38 R8-6: 무엇을 뺐는지 종류별 개수도 (예: ec2:instance 1, rds:db 1, secretsmanager:secret 3)
     kinds=$(cut -d: -f3,6 "$STALE_LIST" | sed -E 's#^([^:]*):([^:/]*).*#\1:\2#' | sort | uniq -c | awk '{printf "%s%s %s", s, $2, $1; s=", "}')
     [ "$n_stale" -gt 0 ] && echo "  (태그 조회에만 남은 stale ${n_stale}개 제외: ${kinds}. 직접 조회하면 없음·종료·삭제 예약)"
-    count "EKS 클러스터" aws_q eks list-clusters --query 'clusters[]'
-    count "로드 밸런서(ALB·NLB)" aws_q elbv2 describe-load-balancers --query 'LoadBalancers[].LoadBalancerArn'
-    count "클래식 로드 밸런서" aws_q elb describe-load-balancers --query 'LoadBalancerDescriptions[].LoadBalancerName'
-    count "탄력적 IP" aws_q ec2 describe-addresses --query 'Addresses[].AllocationId'
-    count "NAT 게이트웨이(살아 있는 것)" aws_q ec2 describe-nat-gateways \
+    count "${PFX}EKS 클러스터" aws_q eks list-clusters --query 'clusters[]'
+    count "${PFX}ECS 클러스터" aws_q ecs list-clusters --query 'clusterArns[]'
+    count "${PFX}ECS 서비스" ecs_each list-services serviceArns
+    count "${PFX}ECS 태스크" ecs_each list-tasks taskArns
+    count "${PFX}ECR 저장소" aws_q ecr describe-repositories --query 'repositories[].repositoryName'
+    count "${PFX}로드 밸런서(ALB·NLB)" aws_q elbv2 describe-load-balancers --query 'LoadBalancers[].LoadBalancerArn'
+    count "${PFX}클래식 로드 밸런서" aws_q elb describe-load-balancers --query 'LoadBalancerDescriptions[].LoadBalancerName'
+    count "${PFX}탄력적 IP" aws_q ec2 describe-addresses --query 'Addresses[].AllocationId'
+    count "${PFX}NAT 게이트웨이(살아 있는 것)" aws_q ec2 describe-nat-gateways \
       --filter Name=state,Values=pending,available,deleting --query 'NatGateways[].NatGatewayId'
-    count "EC2 인스턴스(종료 제외)" aws_q ec2 describe-instances \
-      --filters Name=instance-state-name,Values=pending,running,stopping,stopped --query 'Reservations[].Instances[].InstanceId'
-    count "EBS 볼륨" aws_q ec2 describe-volumes --query 'Volumes[].VolumeId'
-    count "EBS 스냅숏(내 것)" aws_q ec2 describe-snapshots --owner-ids self --query 'Snapshots[].SnapshotId'
-    count "ECS 클러스터" aws_q ecs list-clusters --query 'clusterArns[]'
-    count "ECS 서비스" ecs_each list-services serviceArns
-    count "ECS 태스크" ecs_each list-tasks taskArns
-    count "RDS 인스턴스" aws_q rds describe-db-instances --query 'DBInstances[].DBInstanceIdentifier'
-    count "RDS 스냅숏(수동)" aws_q rds describe-db-snapshots --snapshot-type manual --query 'DBSnapshots[].DBSnapshotIdentifier'
-  fi
-fi
+    count "${PFX}EC2 인스턴스(종료 제외)" aws_q ec2 describe-instances \
+      --filters Name=instance-state-name,Values=pending,running,stopping,stopped,shutting-down --query 'Reservations[].Instances[].InstanceId'
+    # UPREV-B: 지운 LB·EKS 의 ENI 와 기본 아닌 VPC 가 남으면 서브넷·VPC 삭제가 막혀 다음 회차 up 이 깨진다
+    count "${PFX}네트워크 인터페이스(ENI)" aws_q ec2 describe-network-interfaces --query 'NetworkInterfaces[].NetworkInterfaceId'
+    count "${PFX}VPC(기본 제외)" aws_q ec2 describe-vpcs --filters Name=is-default,Values=false --query 'Vpcs[].VpcId'
+    count "${PFX}EBS 볼륨" aws_q ec2 describe-volumes --filters Name=status,Values=creating,available,in-use,error --query 'Volumes[].VolumeId'
+    count "${PFX}EBS 스냅숏(내 것)" aws_q ec2 describe-snapshots --owner-ids self --query 'Snapshots[].SnapshotId'
+    count "${PFX}RDS 인스턴스" aws_q rds describe-db-instances --query 'DBInstances[].DBInstanceIdentifier'
+    count "${PFX}RDS 클러스터" aws_q rds describe-db-clusters --query 'DBClusters[].DBClusterIdentifier'
+    count "${PFX}RDS 스냅숏(수동)" aws_q rds describe-db-snapshots --snapshot-type manual --query 'DBSnapshots[].DBSnapshotIdentifier'
+    # EKS 가 스스로 만든 제어부 로그 그룹은 클러스터를 지워도 남는 게 정상이다 → 세지 않는다
+    info "${PFX}로그 그룹 /aws/eks·/aws/ecs" aws_q logs describe-log-groups --log-group-name-prefix /aws/ --query 'logGroups[].logGroupName'
+  done
+}
 
-if [ "$WHAT" = all ] || [ "$WHAT" = gcp ]; then
-  if ! command -v gcloud >/dev/null 2>&1; then row "GCP" "조회 실패 (gcloud 명령 없음)"; FAILED=1; else
-    P=${GCP_PROJECT:-$(gcloud config get-value project 2>/dev/null)}
-    echo "== GCP (project ${P:-없음})"
-    # shellcheck disable=SC2329
-    g() { gcloud --project "$P" "$@" --format='value(name)'; }
-    count "GKE 클러스터" g container clusters list
-    count "전달 규칙(LB)" g compute forwarding-rules list
-    count "고정 IP 주소" g compute addresses list
-    count "디스크" g compute disks list
-    count "VM 인스턴스" g compute instances list
-    count "Cloud SQL 인스턴스" g sql instances list
-    # Z38 REVIEW-8 (z77-bprime): GKE 안 LoadBalancer Service(z77-src-lb 등)를 지우기 전에 클러스터를 지우면
-    #   전달 규칙 말고도 대상 풀·상태 확인·k8s 방화벽이 남는다 (GKE 가 만든 것이라 terraform state 에 없음)
-    count "대상 풀(LB 뒤)" g compute target-pools list
-    count "HTTP 상태 확인(LB)" g compute http-health-checks list
-    count "방화벽(k8s 자동 생성)" g compute firewall-rules list --filter='name~^k8s'
+gcp_checks() {
+  P=${GCP_PROJECT:-$(gcloud config get-value project 2>/dev/null)}
+  echo "== GCP (project ${P:-없음})"
+  # UPREV-B: 프로젝트가 비면 gcloud 가 엉뚱한 오류를 내거나 기본 프로젝트만 봐서 0 이라고 거짓말한다 → 조회 실패로 막는다
+  if [ -z "$P" ] || [ "$P" = "(unset)" ]; then row "GCP" "조회 실패 (프로젝트 없음: GCP_PROJECT 를 주거나 gcloud config set project)"; FAILED=1; return; fi
+  # shellcheck disable=SC2329
+  g() { gcloud --project "$P" "$@" --format='value(name)'; }
+  count "GKE 클러스터" g container clusters list
+  count "전달 규칙(LB)" g compute forwarding-rules list
+  count "고정 IP 주소" g compute addresses list
+  count "디스크" g compute disks list
+  count "VM 인스턴스" g compute instances list
+  count "Cloud SQL 인스턴스" g sql instances list
+  # Z38 REVIEW-8 (z77-bprime): GKE 안 LoadBalancer Service(z77-src-lb 등)를 지우기 전에 클러스터를 지우면
+  #   전달 규칙 말고도 대상 풀·상태 확인·k8s 방화벽이 남는다 (GKE 가 만든 것이라 terraform state 에 없음)
+  count "대상 풀(LB 뒤)" g compute target-pools list
+  count "HTTP 상태 확인(LB)" g compute http-health-checks list
+  count "방화벽(k8s 자동 생성)" g compute firewall-rules list --filter='name~^k8s'
+  # UPREV-B: terraform 이 만든 VPC·라우터(Cloud NAT)가 지우기 중간에 실패하면 남는다
+  count "VPC 네트워크(default 제외)" g compute networks list --filter='name!=default'
+  count "라우터(Cloud NAT)" g compute routers list
+}
+
+run_checks() {
+  TOTAL=0; FAILED=0; LEFT=""; IGNORED=0
+  if [ "$WHAT" = all ] || [ "$WHAT" = aws ]; then
+    if ! command -v aws >/dev/null 2>&1; then row "AWS" "조회 실패 (aws 명령 없음)"; FAILED=1; else aws_checks; fi
   fi
-fi
+  if [ "$WHAT" = all ] || [ "$WHAT" = gcp ]; then
+    if ! command -v gcloud >/dev/null 2>&1; then row "GCP" "조회 실패 (gcloud 명령 없음)"; FAILED=1; else gcp_checks; fi
+  fi
+}
+
+MULTI=0
+[ "$(printf '%s\n' $REGIONS | grep -c .)" -gt 1 ] && MULTI=1
+
+T0=$SECONDS; ATTEMPT=1
+while :; do
+  run_checks > "$OUTF"
+  if [ "$FAILED" = 0 ] && [ "$TOTAL" -eq 0 ]; then break; fi
+  [ $((SECONDS - T0 + RETRY_SEC)) -le "$WAIT_SEC" ] || break
+  echo "재조회 ${ATTEMPT}: $([ "$FAILED" = 1 ] && echo '조회 실패' || echo "남은 것 ${TOTAL}개") → ${RETRY_SEC}초 뒤 다시 (지우는 중일 수 있음, 최대 ${WAIT_SEC}초)" >&2
+  sleep "$RETRY_SEC"; ATTEMPT=$((ATTEMPT + 1))
+done
+cat "$OUTF"
+[ "$ATTEMPT" -gt 1 ] && echo "(${ATTEMPT}번째 조회, 기다린 시간 $((SECONDS - T0))초)"
 
 EXC=""
 [ -n "${CLOUD_ZERO_IGNORE:-}" ] && EXC=" (예외: $CLOUD_ZERO_IGNORE, 뺀 것 ${IGNORED}개)"
