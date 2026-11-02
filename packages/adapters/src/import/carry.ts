@@ -89,6 +89,15 @@ export function carryHumanEdits(fresh: ImportResultV2, history: PrevSpecV2[]): {
           for (const k of prevKeys) result.fieldMeta[k] = structuredClone(last.fieldMeta[k]!);
         } else for (const k of confirmed) result.fieldMeta[k] = { ...result.fieldMeta[k]!, needs_review: false };
         report.kept.push(unit);
+      } else if (human.length && !baseline && pulledByHuman(last, unit.slice(0, unit.indexOf(".")))) {
+        // VPREVIDS3 DRAFT(ai): 끌어오기와 고치기를 한 요청에 한 자원은 사람 표시 없던 앞 판에 그 자원이 아예 없어 바탕을 못 찾는다.
+        //   그렇다고 "출발이 바뀜"으로 보고 사람 값을 버리면 끌어온 직후 고친 값이 첫 재가져오기에서 사라진다 → 사람 값 유지 + 다시 검토(바탕 모름, links·entry·posture 와 같은 규칙)
+        const value = (propOf(last.spec, unit) as { value: unknown } | undefined)?.value;
+        comp.props = { ...(comp.props ?? {}) };
+        if (value === undefined) delete comp.props[field]; else comp.props[field] = structuredClone(value);
+        for (const k of freshKeys) delete result.fieldMeta[k];
+        for (const k of prevKeys) result.fieldMeta[k] = flagNote(last.fieldMeta[k]!);
+        report.flagged.push(unit);
       } else {   // (b) 새 값 + 다시 검토
         for (const k of human.length ? freshKeys : confirmed) { const e = result.fieldMeta[k]; if (e) result.fieldMeta[k] = flagNote(e); }
         report.flagged.push(unit);
@@ -117,6 +126,11 @@ export function carryHumanEdits(fresh: ImportResultV2, history: PrevSpecV2[]): {
     (out.conflict ? report.flagged : report.kept).push(key);
   }
   return { result, report };
+}
+
+/** 사람이 경계 밖에서 끌어온 자원이다 (boundary 표시가 human). 바탕을 못 찾은 사람 값이 이 자원 것이면 호출부가 유지 + 다시 검토로 본다 */
+function pulledByHuman(h: PrevSpecV2, id: string): boolean {
+  return h.fieldMeta[`components.${id}.boundary`]?.source === "human";
 }
 
 // ── 항목 단위 3-way 합치기 ──────────────────────────────
