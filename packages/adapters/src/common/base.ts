@@ -3,6 +3,7 @@ import { DEMO_INVENTORY, DEMO_SPEC } from "./fixtures.js";
 import { boundedName } from "./names.js";
 import { mockSeed } from "./cli.js";
 import { discoverSource } from "../discover/index.js";
+import { envFor } from "../verify/aws.js";
 import { normalizeInventory } from "./normalize.js";
 import { MODULE_DIGEST } from "../module-digests.js";
 import { digestOf, nameSeed, repoName, tenantOf, type Target } from "./target.js";
@@ -14,7 +15,8 @@ import { digestOf, nameSeed, repoName, tenantOf, type Target } from "./target.js
 //   데모 원본(DEMO_INVENTORY)은 MOCK_SEED=1(시험·e2e 전용)일 때만 돌려준다
 export function sourceImport(p: Provider): Pick<EnvironmentAdapter, "discover" | "normalize"> {
   return {
-    discover: async () => (mockSeed() ? DEMO_INVENTORY[p] : discoverSource(p)),
+    // L5: 세션에 빌린 자격(cliEnv)이 있으면 그 env 로만 읽는다 (워커 프로필·키 지움). 없으면 지금처럼 프로세스 자격
+    discover: async (sess) => (mockSeed() ? DEMO_INVENTORY[p] : discoverSource(p, sess?.cliEnv ? { env: envFor(sess.cliEnv) } : {})),
     normalize: (raw) => normalizeInventory(raw, DEMO_SPEC),
   };
 }

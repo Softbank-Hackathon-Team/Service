@@ -117,14 +117,26 @@ test("재시도 경로(v2): 일시 오류는 3번 다시 던지고 4번째에 fa
   assert.equal((await ver(id)).length, 0);
 });
 
-test("깃발 값: IMPORT_IR 은 정확히 v2 일 때만 켜짐 (V2·빈칸 포함·off 는 v1 경로, 감사에 ir 없음)", { skip }, async () => {
-  for (const val of ["V2", " v2", "1", "true", ""]) {
+test("깃발 값: v2·앞뒤 공백 v2 는 켜짐, 빈 값은 v1, 모르는 값(V2·1·true)은 v1 로 몰래 가지 않고 영구 실패(IMPORT_SPEC_INVALID)", { skip }, async () => {
+  for (const val of ["v2", " v2 "]) {
     process.env.IMPORT_IR = val;
     const id = await seed("onprem");
     await imp.handleImport(job(id));
-    assert.equal((await ver(id))[0]!.spec_v2, null, `값 ${JSON.stringify(val)}`);
-    const a = (await owner.query("SELECT detail FROM audit_events WHERE target=$1 AND action='migration.spec_review'", [id])).rows[0];
-    assert.equal(a.detail.ir, undefined);
+    assert.ok((await ver(id))[0]!.spec_v2 !== null, `값 ${JSON.stringify(val)}`);
+  }
+  process.env.IMPORT_IR = "";
+  const off = await seed("onprem");
+  await imp.handleImport(job(off));
+  assert.equal((await ver(off))[0]!.spec_v2, null);
+  for (const val of ["V2", "1", "true", "v3"]) {
+    process.env.IMPORT_IR = val;
+    const id = await seed("onprem");
+    await imp.handleImport(job(id));   // 던지지 않고 failed 로 보냄(영구)
+    const r = await row(id);
+    assert.equal(r.status, "failed", `값 ${val}`); assert.equal(r.failure_code, "IMPORT_SPEC_INVALID");
+    assert.equal((await ver(id)).length, 0);
+    const f = (await owner.query("SELECT detail FROM audit_events WHERE target=$1 AND action='migration.failed'", [id])).rows[0];
+    assert.equal(f.detail.permanent, true); assert.equal(f.detail.attempts, 1);
   }
 });
 
@@ -148,4 +160,28 @@ test("v2 정상 경로의 감사: ir=v2, sourceInventory 에 컨테이너 환경
   assert.equal(JSON.parse(a.d).ir, "v2");
   assert.ok(a.d.includes("MARKER_VAR"), "환경변수 이름은 남음");
   assert.ok(!a.d.includes("ENVVALUE-MARKER-9f3a"), "환경변수 값이 감사에 남음");
+});
+
+test("감사 sourceInventory: Cloud SQL 주소는 종류(PRIVATE)만 남고 IP 값은 없다. 명세는 그대로 DB 주소를 가린 채 만들어진다", { skip }, async () => {
+  process.env.IMPORT_IR = "v2";
+  const id = await seed("gcp");
+  await imp.handleImport(job(id));
+  const a = (await audits(id)).find((x) => x.action === "migration.spec_review")!;
+  assert.ok(!a.d.includes("10.20.0.5"), "사설 IP 가 감사에 남음");
+  assert.ok(a.d.includes("PRIVATE"), "주소 종류는 남음");
+  assert.equal((await row(id)).status, "spec_review");
+  // v1 경로도 같은 규칙
+  delete process.env.IMPORT_IR;
+  const id1 = await seed("gcp");
+  await imp.handleImport(job(id1));
+  const a1 = (await audits(id1)).find((x) => x.action === "migration.spec_review")!;
+  assert.ok(!a1.d.includes("10.20.0.5"));
+});
+
+test("inventoryForAudit: 원본 객체는 건드리지 않는다(사본만 가림)", { skip }, () => {
+  const inv = adapters.DEMO_INVENTORY_V2.gcp!;
+  const before = JSON.stringify(inv);
+  const out = adapters.inventoryForAudit(inv);
+  assert.equal(JSON.stringify(inv), before);
+  assert.ok(!JSON.stringify(out).includes("10.20.0.5\""));
 });

@@ -206,7 +206,15 @@ export function inventoryForAudit(inv: RawInventory): RawInventory {
   };
   const items = inv.items.map((raw) => {
     const i = raw as Obj;
-    if (i.kind !== "k8s.deployment" && i.kind !== "k8s.cronjob") return i;
+    // I3bfix DRAFT(ai): Cloud SQL 등의 주소(ipAddresses·ipAddress)는 감사 표에 종류(type)만 남기고 값은 가린다 (사설 IP 노출 방지).
+    //   가져오기 매퍼는 이 사본이 아니라 원본 inv 를 읽으므로 명세·id 에는 영향이 없다
+    if (i.kind !== "k8s.deployment" && i.kind !== "k8s.cronjob") {
+      if (!("ipAddresses" in i) && !("ipAddress" in i)) return i;
+      const c = { ...i } as Obj;
+      if (Array.isArray(c.ipAddresses)) c.ipAddresses = arr(c.ipAddresses).map((a) => ({ type: a.type ?? null }));
+      delete c.ipAddress;
+      return c;
+    }
     const copy = JSON.parse(JSON.stringify(i)) as Obj;
     scrub(i.kind === "k8s.cronjob" ? get(copy, "spec", "jobTemplate", "spec", "template", "spec") : get(copy, "spec", "template", "spec"));
     return copy;
