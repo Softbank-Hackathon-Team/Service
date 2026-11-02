@@ -159,7 +159,7 @@ contracts의 화면용 모양 `MigrationView`는 열 칸이다. 지금 응답에
 요구사항·기능 명세 v4에 적은 API 45개와 지금 코드를 맞대 본 표다. 목록 원본은 `tools/planned-routes.tsv`다. "경로 이름 추정"이 붙은 줄은 설계 문서에도 아직 이름이 없는 경로다.
 
 <!-- GEN:planned -->
-명세 목록 45개 중 코드에 있는 것 (표의 "있음" 줄 중 명세 목록에 없는 경로 3줄 제외).
+명세 목록 45개 중 코드에 있는 것. 표 끝쪽 "있음" 줄 중 명세 목록에 없는 경로(`/migrations/:id/plan`·`replan`·`spec/reopen` 과, 뒤에 코드로 먼저 생긴 `/auth/*`·`/docs*`·`/tokens`·`/migrations/:id/{spec,timeline,report,cost,…}` 등)는 실제 경로(`docs/openapi.yaml`)와 맞춰 적은 것이다. 이 표와 실제 경로의 일치는 `apps/api/test/api-doc-sync.test.ts`가 본다.
 
 | 방법 | 경로 | 영역 | 하는 일 | 코드 |
 |---|---|---|---|---|
@@ -173,8 +173,8 @@ contracts의 화면용 모양 `MigrationView`는 열 칸이다. 지금 응답에
 | GET | `/environments` | 입력층 | 자기 회사 환경 목록 + 연결 상태 + 마지막 검증 시각 | 있음 |
 | POST | `/environments/:id/connection-link` | 입력층 | 원클릭 연결 링크 발급 | 있음 |
 | POST | `/environments/:id/verify` | 입력층 | 연결 검증 | 있음 |
-| POST | `/environments/:id/agent-token` | 입력층 | 온프레 Agent 일회용 등록 토큰(10분) + 설치 명령 한 줄 발급 (경로 이름 추정) | 없음 |
-| POST | `/agent/register` | 입력층 | Agent가 일회용 토큰으로 등록하고 장기 Agent 키를 받음 (경로 이름 추정) | 없음 |
+| POST | `/environments/:id/agent-token` | 입력층 | 온프레 Agent 일회용 등록 토큰(10분) + 설치 명령 한 줄 발급 (경로 이름 추정) | 있음 |
+| POST | `/agent/register` | 입력층 | Agent가 일회용 토큰으로 등록하고 장기 Agent 키를 받음 (경로 이름 추정) | 있음 |
 | POST | `/environments/:id/agent-token` | 입력층 | 온프레 Agent 일회용 등록 토큰(10분) + 설치 명령 한 줄 발급 | 있음 |
 | POST | `/agent/register` | 입력층 | Agent가 일회용 토큰으로 등록하고 장기 Agent 키를 받음 | 있음 |
 | GET | `/events` | 입력층 | SSE | 없음 |
@@ -185,8 +185,8 @@ contracts의 화면용 모양 `MigrationView`는 열 칸이다. 지금 응답에
 | PATCH | `/specs/:id` | 가져오기·명세 | 명세 칸 수정 | 없음 (같은 일을 하는 `PATCH /migrations/:id/spec` 이 있음) |
 | POST | `/migrations/:id/plan` | 이전 | 명세 확정, 사전 점검, 계획 생성 | 있음 |
 | GET | `/plans/:id` | 이전 | 계획 내용: 단계, 사전 점검 결과, Terraform plan 요약, 정책 게이트, 예외 티켓, 임시 자원 선언, planHash | 있음 |
-| POST | `/plans/:id/approvals` | 이전 | 계획 승인·거절 | 있음 |
-| POST | `/migrations/:id/start` | 이전 | Terraform 실행 시작 | 있음 |
+| POST | `/plans/:id/approvals` | 이전 | 계획 승인·거절. 깃발 PLAN_ACKS=1 이면 승인 때 본문 `acks`가 확인 항목을 다 덮어야 함(아니면 409 ACKS_MISSING) | 있음 |
+| POST | `/migrations/:id/start` | 이전 | Terraform 실행 시작. 깃발 PLAN_ACKS=1 이면 본문 `planHash`가 승인 지문과 같아야 함(아니면 409 PLAN_HASH_MISMATCH). 깃발 TENANT_MAX_ACTIVE>0 이면 회사 동시 진행 상한 초과 시 409 TENANT_BUSY | 있음 |
 | POST | `/migrations/:id/reclaim` | 이전 | 롤백 대기를 일찍 끝내고 정리로 넘긴다 | 있음 |
 | POST | `/migrations/:id/resume` | 이전 | 가드레일로 멈춘 이전을 멈추기 전 상태로 재개 | 있음 |
 | POST | `/migrations/:id/rollback` | 이전 | 수동 롤백 | 있음 |
@@ -214,6 +214,33 @@ contracts의 화면용 모양 `MigrationView`는 열 칸이다. 지금 응답에
 | GET | `/migrations/:id/plan` | - | 명세 목록에 없는 경로 | 있음 |
 | POST | `/migrations/:id/replan` | - | 다시 계획하기: failed(provisioning 이하)·stale·rejected → planning | 있음 |
 | POST | `/migrations/:id/spec/reopen` | - | 거절 뒤 명세부터 다시 고치기: rejected → spec_review | 있음 |
+| GET | `/auth/config` | 입력층 | 로그인 화면을 띄울지(devAuth·loginRequired). 인증 불필요 | 있음 |
+| POST | `/auth/login` | 입력층 | 이메일+비밀번호 로그인 → Bearer 접근 토큰(15분) + HttpOnly 쿠키 svc_refresh | 있음 |
+| POST | `/auth/refresh` | 입력층 | 쿠키로 접근 토큰 갱신 (리프레시 토큰은 쓰면 바로 무효) | 있음 |
+| GET | `/auth/me` | 입력층 | 내 정보 (사람 로그인 전용, 개인 토큰으로는 불가) | 있음 |
+| DELETE | `/environments/:id` | 입력층 | 환경 연결 해제. 진행 중 이전이 있으면 409, Agent 키 끊고 임시 자격 회수 요청 | 있음 |
+| GET | `/environments/:id/status` | 입력층 | 환경 자체의 자원 상태 (aws·gcp·onprem은 실자원 읽기, 못 읽으면 unknown) | 있음 |
+| GET | `/environments/:id/inventory` | 입력층 | 환경에 지금 돌고 있는 것과 이전 때문에 생기고 걷히는 것 | 있음 |
+| GET | `/environments/:id/agent-reports` | 보안 | 온프레 Agent가 보낸 보고를 사람이 봄 (회사 벽 안) | 있음 |
+| GET | `/tokens` | 입력층 | 내 CLI 개인 토큰 목록 (원문 없음) | 있음 |
+| DELETE | `/tokens/:id` | 입력층 | 개인 토큰 끊기 (204). 남의 토큰은 404 | 있음 |
+| GET | `/migrations/:id/spec` | 가져오기·명세 | 그 이전의 최신 명세 한 판 (받아들인 판, 없으면 AI 초안 최신 판) | 있음 |
+| PATCH | `/migrations/:id/spec` | 가져오기·명세 | 명세 칸 수정 (baseVersion 비교, 감사에는 칸 이름만) | 있음 |
+| GET | `/migrations/:id/plan/resources` | 이전 | 출발 서비스 → 도착 서비스 대응표 (어떤 방식으로 옮겨지나) | 있음 |
+| GET | `/migrations/:id/timeline` | 이전 | 감사 기록을 시간순 전이 타임라인으로 | 있음 |
+| GET | `/migrations/:id/report` | 이전 | 증적 리포트 (json 기본, 쿼리로 md·html) | 있음 |
+| GET | `/migrations/:id/cost` | 이전 | 출발 vs 도착 월 비용 비교 | 있음 |
+| POST | `/cost/estimate` | 비용 (2단계) | 비용 예측 (가격표 캐시 기준, 네트워크 안 씀) | 있음 |
+| GET | `/migrations/:id/live-traffic` | 이전 | 실시간 트래픽 지표 | 있음 |
+| GET | `/migrations/:id/traffic-shift` | 이전 | 트래픽 전환 진행 (없으면 available:false) | 있음 |
+| GET | `/migrations/:id/security` | 보안 | 이전의 보안 현황 | 있음 |
+| POST | `/migrations/:id/security/check` | 보안 | 지금 출발·도착을 다시 점검하고 감사에 남김 | 있음 |
+| GET | `/migrations/:id/security/regression` | 보안 | 출발·도착 점검 스냅숏을 열쇠별로 비교 (읽기 전용) | 있음 |
+| GET | `/migrations/:id/agent-review` | 에이전트 | 장애 점검 결과 읽기 | 있음 |
+| POST | `/migrations/:id/agent-review/run` | 에이전트 | 장애 점검 시작 (Idempotency-Key 지원) | 있음 |
+| GET | `/docs` | 운영 | API 문서 HTML (외부 스크립트 없음) | 있음 |
+| GET | `/docs/openapi.yaml` | 운영 | OpenAPI 3.1 YAML | 있음 |
+| GET | `/docs/openapi.json` | 운영 | 같은 내용 JSON | 있음 |
 <!-- /GEN:planned -->
 
 ---
