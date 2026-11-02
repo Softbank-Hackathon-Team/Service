@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AuthError, createAuth, EARLY_REFRESH_SEC } from "../src/auth";
-import { createClient, HttpError } from "../src/http";
+import { AuthError, createAuth, EARLY_REFRESH_SEC } from "../legacy/src/auth";
+import { createClient, HttpError } from "../legacy/src/http";
 
 // Z96: 로그인 상태(auth.ts)와 http.ts 의 Bearer·401 처리를 브라우저 없이 확인한다
 

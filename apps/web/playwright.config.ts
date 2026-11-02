@@ -1,11 +1,11 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// 화면(Vite 5173) → 프록시 → API(3000) → Postgres. API·워커·DB는 미리 떠 있어야 한다(global-setup이 확인).
+// 기존 시험은 레거시 화면을 본다. 화면(Vite 5174, legacy/) → 프록시 → API(3000) → Postgres. API·워커·DB는 미리 떠 있어야 한다(global-setup이 확인).
 // 화면은 안 떠 있으면 Playwright가 띄우고, 떠 있으면 그대로 쓴다.
-// Z75-11: 개발 화면(5173)이면 일꾼 3개가 동시에 돈다. 일꾼마다 회사를 따로 쓴다(e2e/helpers.ts seedFor, global-setup 이 만듦)
+// Z75-11: 개발 화면(5174)이면 일꾼 3개가 동시에 돈다. 일꾼마다 회사를 따로 쓴다(e2e/helpers.ts seedFor, global-setup 이 만듦)
 //   → 환경 잠금·회사당 쓰기 한도가 안 섞인다. 다른 주소(운영 모양 8080 등)는 DB 에 seed 를 못 넣으니 예전처럼 1개.
 //   E2E_WORKERS=1 이면 언제든 예전과 똑같이 하나씩 돈다
-const baseURL = process.env.E2E_BASE_URL ?? "http://localhost:5173";
+const baseURL = process.env.E2E_BASE_URL ?? "http://localhost:5174";
 const devServer = !process.env.E2E_BASE_URL;
 const workers = Number(process.env.E2E_WORKERS ?? (devServer ? 3 : 1));
 
@@ -36,6 +36,6 @@ export default defineConfig({
     { command: "npm run dev:worker", cwd: "../..", url: `http://localhost:${process.env.WORKER_METRICS_PORT ?? 9465}/metrics`,
       reuseExistingServer: true, timeout: 60_000, env: { ROLLBACK_WINDOW_SEC: process.env.ROLLBACK_WINDOW_SEC ?? "20",
         MOCK_SEED: "1", MOCK_IAC: "1", MOCK_ARGO: "1", MOCK_PRECHECK: "1", FAKE_LLM: "1" } },   // 시험 스위치 다섯 (Z98 조립)
-    { command: "npm run dev", url: baseURL, reuseExistingServer: true, timeout: 60_000 },
+    { command: "npm run dev:legacy", url: baseURL, reuseExistingServer: true, timeout: 60_000 },
   ] : undefined,
 });

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createClient, HttpError, newIdempotencyKey, or404, RETRY } from "../src/http";
-import { LABEL, PLAN_STEP_STATUS, progressPct, statusText } from "../src/status";
+import { createClient, HttpError, newIdempotencyKey, or404, RETRY } from "../legacy/src/http";
+import { LABEL, PLAN_STEP_STATUS, progressPct, statusText } from "../legacy/src/status";
 
 // 작업 Z46: 화면 HTTP 요청 한 곳(http.ts)의 규칙을 브라우저 없이 확인한다
 

@@ -81,7 +81,7 @@ const KNOWN_DYNAMIC: Record<string, string[]> = {
 test("문구 계약: e2e 가 찾는 화면 문구가 화면 소스에 모두 있다", () => {
   const t0 = performance.now();
   const { needles, dynamic } = textsFromE2e(walk(join(WEB, "e2e"), /\.ts$/));
-  const missing = missingTexts(needles, walk(join(WEB, "src"), /\.(tsx?|jsx?)$/), KNOWN_DYNAMIC);
+  const missing = missingTexts(needles, walk(join(WEB, "legacy/src"), /\.(tsx?|jsx?)$/), KNOWN_DYNAMIC);
   const ms = performance.now() - t0;
   const uniq = new Set(needles.map((n) => `${n.kind}:${n.value}`)).size;
   console.log(`[z81-13] 문구 ${uniq}개(호출 ${needles.length}) 확인, 변수라 건너뜀 ${dynamic}, 예외 ${Object.keys(KNOWN_DYNAMIC).length}, 없음 ${missing.length}, ${ms.toFixed(0)} ms`);

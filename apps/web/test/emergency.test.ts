@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { emergencyState } from "../src/emergency";
-import { MIGRATION_STATUSES, VALID, TERMINAL } from "../src/types";
+import { emergencyState } from "../legacy/src/emergency";
+import { MIGRATION_STATUSES, VALID, TERMINAL } from "../legacy/src/types";
 
 // 화면 비상 버튼(롤백·취소)이 상태 머신 표와 똑같이 켜지는지. 서버(control.ts)도 같은 표로 409를 낸다
 

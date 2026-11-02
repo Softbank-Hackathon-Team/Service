@@ -5,10 +5,10 @@ import react from "@vitejs/plugin-react";
 // 같은 출처처럼 보이므로 API 서버에 CORS 설정이 없어도 된다.
 //   /api/healthz, /api/readyz → 서버 /healthz, /readyz   (k8s 프로브용이라 루트에 남는다)
 //   /api/그 밖               → 서버 {API_PREFIX}/그 밖     (Jeong 결정 10/31: /api/v1)
-const target = process.env.API_URL ?? "http://localhost:3000";
+export const target = process.env.API_URL ?? "http://localhost:3000";
 const prefix = process.env.API_PREFIX ?? "/api/v1"; // 접두사를 없애려면 API_PREFIX= 로 띄운다
 const toRoot = { target, changeOrigin: true, rewrite: (p: string) => p.replace(/^\/api/, "") };
-const proxy = {
+export const proxy = {
   // 위에서부터 먼저 맞는 줄을 쓴다. 프로브 두 줄이 반드시 먼저
   "/api/healthz": toRoot,
   "/api/readyz": toRoot,
