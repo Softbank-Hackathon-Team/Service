@@ -59,6 +59,12 @@ $out"
 # shellcheck disable=SC2329
 aws_q() { aws --region "$REGION" --output text "$@"; }
 
+# REALECS: ECS 서비스·태스크는 클러스터마다 조회 (클러스터가 0 이면 비어 있음). 조회 실패는 count 가 실패 줄로 센다
+# shellcheck disable=SC2329
+ecs_each() { # $1 = list-services | list-tasks, $2 = 결과 키
+  for c in $(aws_q ecs list-clusters --query 'clusterArns[]' | tr '\t' '\n'); do aws_q ecs "$1" --cluster "$c" --query "$2[]" | tr '\t' '\n'; done
+}
+
 # R7-4: 태그 조회(get-resources)는 지운 지 얼마 안 된 자원의 ARN 을 한동안 그대로 돌려준다 (맥 실측: 인스턴스·NAT·ENI·서브넷·EKS 가
 #   직접 조회하면 전부 NotFound·terminated). 종류별로 직접 조회해 없거나 끝난 것은 뺀다. 모르는 종류·다른 오류는 남은 것으로 센다(보수적)
 # $1 = ARN. 끝 코드 0 = 살아 있음(또는 판단 못 함), 1 = 없음·끝남(stale)
@@ -138,6 +144,9 @@ if [ "$WHAT" = all ] || [ "$WHAT" = aws ]; then
       --filters Name=instance-state-name,Values=pending,running,stopping,stopped --query 'Reservations[].Instances[].InstanceId'
     count "EBS 볼륨" aws_q ec2 describe-volumes --query 'Volumes[].VolumeId'
     count "EBS 스냅숏(내 것)" aws_q ec2 describe-snapshots --owner-ids self --query 'Snapshots[].SnapshotId'
+    count "ECS 클러스터" aws_q ecs list-clusters --query 'clusterArns[]'
+    count "ECS 서비스" ecs_each list-services serviceArns
+    count "ECS 태스크" ecs_each list-tasks taskArns
     count "RDS 인스턴스" aws_q rds describe-db-instances --query 'DBInstances[].DBInstanceIdentifier'
     count "RDS 스냅숏(수동)" aws_q rds describe-db-snapshots --snapshot-type manual --query 'DBSnapshots[].DBSnapshotIdentifier'
   fi
