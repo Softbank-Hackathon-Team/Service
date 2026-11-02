@@ -32,6 +32,8 @@
 #   AWS_PROFILE(finals) AWS_REGION(ap-northeast-2) GCP_PROJECT(finals-demo) GCP_ZONE(asia-northeast3-a) CLUSTER_NAME(platform-target)
 #   EKS_CONTEXT(eks-platform-target) GKE_CONTEXT(gke_<프로젝트>_<존>_<이름>)
 #   SMOKE_SOURCE_ENV_ID(55555555… onprem) SMOKE_TARGET_ENV_ID(22222222… aws)
+#   DEMO_DAY_AUTO_DOWN(1: up 이 중간에 멈추면 뒤에서 돌던 apply 를 기다린 뒤 down 으로 자원 0. 0 이면 남겨 둠)
+#   DEMO_DAY_RESUME(1: 시작 점검의 cloud-zero 를 건너뛰고 남은 자원 위에서 apply 를 이어 감. 기본 0)
 #   DEMO_DAY_UP_LIMIT_SEC(1500) DEMO_DAY_DOWN_LIMIT_SEC(900) TUNNEL_WAIT_SEC(중계기 뒤 사람이 터널을 열 때까지, 900)
 #
 # Jeong 직접 실행 묶음 (z75-46): terraform apply/destroy 와 터널은 맥 분류기가 막는 명령이라, 진짜 실행은
@@ -41,6 +43,8 @@
 set -u
 cd "$(dirname "$0")/.." || exit 1
 ROOT=$(pwd)
+# UPREV: 자기 자신을 다시 부를 때 쓰는 절대 경로 (tools/ 안에서 bash demo-day.sh 로 쳐도 cd 뒤 "$0" 이 안 깨지게)
+SELF="$ROOT/tools/demo-day.sh"
 
 CMD=${1:-}
 shift || true
@@ -85,12 +89,16 @@ ENVF="$STATE/demo-day.env"
 
 # 뒤로 보내기: 같은 인자로 자기 자신을 nohup 으로 다시 부른다
 if [ "$FG" = 0 ] && [ -z "${DEMO_DAY_CHILD:-}" ]; then
-  DEMO_DAY_CHILD=1 nohup bash "$0" "$CMD" --fg $([ "$DRY" = 1 ] && echo --dry-run) $([ "$SERIAL" = 1 ] && echo --serial) > "$DEMO_DAY_LOG_DIR/stdout.log" 2>&1 &
+  DEMO_DAY_CHILD=1 nohup bash "$SELF" "$CMD" --fg $([ "$DRY" = 1 ] && echo --dry-run) $([ "$SERIAL" = 1 ] && echo --serial) > "$DEMO_DAY_LOG_DIR/stdout.log" 2>&1 &
   echo "뒤에서 시작 (pid $!). 진행: tail -f $PROGRESS"
   exit 0
 fi
 
 now_s() { date +%s; }
+# UPREV: 중계기 호스트 키는 회차 전용 known_hosts 에만 (예전 중계기와 IP 가 겹치면 accept-new 가 '키 바뀜' 으로 거부함 → up 시작 때 지움)
+SSH_OPTS="-o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$STATE/known_hosts"
+BGPIDS=""
+APPLIED=0   # apply 를 하나라도 시작했나 (멈출 때 자동 down 여부)
 iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 log() { echo "$(iso) $*" | tee -a "$PROGRESS"; }
 mask_ip() { echo "$1" | awk -F. 'NF == 4 { print $1 "." $2 ".x.x"; next } { print substr($0, 1, 12) "…" }'; }
@@ -138,14 +146,44 @@ tfjson() { if [ "$DRY" = 1 ]; then echo '["<dry:'"$2"'>"]'; else terraform -chdi
 finish() {
   local total=$(( $(now_s) - T_ALL )) v=PASS
   [ -z "$FAILED" ] || v=FAIL
-  [ "$total" -le "$LIMIT" ] || v="FAIL(${LIMIT}초 넘김)"
+  # UPREV DRAFT(ai): 시간 기준을 넘긴 것은 자원이 다 떴으면 실패로 치지 않는다 (끝 코드 0, 판정 줄에 "느림" 으로 남김).
+  #   예전엔 25분을 1초만 넘겨도 rc=1 이라, 다 뜬 up 을 실패로 보고 다시 치게 될 수 있었다
+  [ "$total" -le "$LIMIT" ] || v="$v(느림: ${LIMIT}초 넘김)"
   [ "$DRY" = 1 ] && v="$v(dry-run)"
   log "판정 $v $CMD 총 ${total}초 (기준 ≤$((LIMIT / 60))분)${FAILED:+ 실패:$FAILED}"
   # z75-50: timeline(TL_MODE=allow) 이 기다리는 끝 줄. jeong-up/down 과 같은 진행 파일
   if [ "$DRY" = 0 ]; then mkdir -p "$STATE" && echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) DEMODAY $CMD end rc=$([ -z "${v%%PASS*}" ] && echo 0 || echo 1) sec=$total log=$PROGRESS" >> "$STATE/jeong-progress.log"; fi
   case "$v" in PASS*) exit 0 ;; *) exit 1 ;; esac
 }
-abort() { log "멈춤: $1. 만든 자원은 'bash tools/demo-day.sh down' 으로 지운다"; finish; }
+# UPREV: 멈출 때 뒤에서 돌던 apply(GKE 등)를 그냥 두고 끝내면 고아 terraform 이 자원을 계속 만들고 state 잠금을 쥔다
+#   (20:2xZ 1차: aws rc=1 로 끝났는데 GKE 7개가 남아 2차 cloud-zero 가 막힘). 그래서 끝날 때까지 기다린 뒤 down 으로 자원 0 을 만든다
+abort() {
+  local p
+  log "멈춤: $1"
+  for p in $BGPIDS; do kill -0 "$p" 2>/dev/null && { log "뒤에서 도는 단계(pid $p)가 끝날 때까지 기다림 (terraform 을 중간에 끊지 않음)"; wait "$p"; }; done
+  if [ "$CMD" = up ] && [ "$DRY" = 0 ] && [ "$APPLIED" = 1 ] && [ "${DEMO_DAY_AUTO_DOWN:-1}" = 1 ]; then
+    log "자원 0 으로 되돌림: down 시작 (남기려면 DEMO_DAY_AUTO_DOWN=0)"
+    ( DEMO_DAY_CHILD=1 DEMO_DAY_LOG_DIR="$DEMO_DAY_LOG_DIR/auto-down" bash "$SELF" down --fg ); log "자동 down 끝 rc=$?"
+  else
+    if [ "$APPLIED" = 0 ]; then log "apply 를 시작하기 전에 멈춤 → 만든 자원 없음. 위 FAIL 줄을 고치고 up 을 다시 친다"
+    else log "만든 자원은 'bash tools/demo-day.sh down' 으로 지우거나, DEMO_DAY_RESUME=1 로 up 을 다시 쳐서 이어 간다"; fi
+  fi
+  finish
+}
+# UPREV: 지난 회차의 워커·API·터널이 살아 있으면 새 API 가 3000 을 못 잡고, readyz 는 예전 API 가 대답해 거짓 통과한다 → 먼저 끈다
+u_stale() {
+  local f n=0
+  for f in worker api tunnel; do
+    [ -f "$STATE/$f.pid" ] || continue
+    kill -0 "$(cat "$STATE/$f.pid")" 2>/dev/null && { killtree "$(cat "$STATE/$f.pid")"; n=$((n + 1)); }
+    rm -f "$STATE/$f.pid"
+  done
+  rm -f "$STATE/relay_ip" "$STATE/known_hosts"
+  echo "지난 회차 프로세스 ${n}개 끔, relay_ip·known_hosts 지움"
+  if [ "$DRY" = 0 ] && command -v lsof >/dev/null 2>&1 && lsof -ti tcp:3000 -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "3000 포트를 다른 프로세스가 쓰고 있다 (예전 dev:api?). 끄고 다시: lsof -ti tcp:3000 -sTCP:LISTEN"; return 1
+  fi
+}
 
 # ---------------- up ----------------
 u_tools() {
@@ -154,9 +192,9 @@ u_tools() {
   if [ "$DRY" = 1 ]; then echo "dry-run: 없는 도구${miss:- 0개}${miss:+:$miss} (dry-run 은 막지 않음). 사전 점검 tools/cloud-precheck.sh 는 맥에서만"; return 0; fi
   [ -z "$miss" ] || { echo "없는 도구:$miss"; return 1; }
   [ -f "$HOME/.ssh/id_ed25519.pub" ] || { echo "~/.ssh/id_ed25519.pub 없음 (Z77 B2 첫 줄로 만든다)"; return 1; }
-  run bash tools/cloud-zero.sh || return 1
-  # z75-51: 클라우드 사전 점검 (GCP API·결제·Cloud SQL 티어·에디션, AWS 한도, 서울 고정. 조회만, 10초 안)
-  run bash tools/cloud-precheck.sh
+  # UPREV: apply 전에 실패할 수 있는 것을 전부 본다(인증·ADC·필수 변수·남은 state·자원 0·한도·출발 DB·8080·validate·plan).
+  #   PASS 가 아니면 여기서 멈춰 apply 를 하나도 시작하지 않는다 (DEMO_DAY_RESUME=1 이면 남은 state·자원은 WARN)
+  run bash "${UP_PREFLIGHT:-tools/up-preflight.sh}"
 }
 u_gke() { run terraform -chdir="$TFG" init -input=false && run terraform -chdir="$TFG" apply -input=false -auto-approve -var "project_id=$GCP_PROJECT"; }
 u_eks() { aws_account_var && run terraform -chdir="$TFA" init -input=false && run terraform -chdir="$TFA" apply -input=false -auto-approve -var create_eks=true; }
@@ -192,7 +230,8 @@ u_facts() {
 u_relay() {
   local sub myip ip
   if [ "$DRY" = 1 ]; then myip="<dry:myip>"; sub="<dry:subnet>"; else
-    myip=$(curl -s -m 10 https://checkip.amazonaws.com | tr -d '[:space:]') || return 1
+    myip=$(curl -s -m 10 https://checkip.amazonaws.com | tr -d '[:space:]')
+    case "$myip" in *[!0-9.]*|"") echo "내 공인 IP 를 못 받음 (checkip)"; return 1 ;; esac
     sub=$(echo "$TF_FACT_DB_PUBLIC_SUBNET_IDS_JSON" | jq -r '.[0]')
   fi
   MYIP=$myip
@@ -203,7 +242,7 @@ u_relay() {
   [ "$DRY" = 1 ] && { echo "DRY: 터널은 사람 터미널에서 bash tools/demo-tunnel.sh → tunnel-ok 기다림 (최대 ${TUNNEL_WAIT_SEC}초)" >> "$PROGRESS"; return 0; }
   mkdir -p "$STATE" && chmod 700 "$STATE" && echo "$RELAY_IP" > "$STATE/relay_ip"
   # 중계기가 SSH 를 받을 때까지 최대 120초
-  for i in $(seq 1 24); do ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=accept-new "ec2-user@$RELAY_IP" true 2>/dev/null && break; sleep 5; done
+  for i in $(seq 1 24); do ssh $SSH_OPTS "ec2-user@$RELAY_IP" true 2>/dev/null && break; sleep 5; done
   # 역방향 터널은 맥 RC 가 열지 않는다 (Z38 R8-39: 맥 분류기가 막는 명령이라 사람이 직접 친다). 열릴 때까지 기다린다
   # z75-46: Jeong 이 tools/jeong-up.sh 로 이 스크립트를 부른 경우(DEMO_DAY_JEONG=1)엔 이미 사람 터미널에서 도는 것이라 여기서 바로 연다
   if [ "${DEMO_DAY_JEONG:-0}" = 1 ]; then
@@ -218,7 +257,7 @@ u_relay() {
 tunnel_wait() {
   local i
   for i in $(seq 1 $(( ($1 + 4) / 5 ))); do
-    ssh -o BatchMode=yes -o ConnectTimeout=5 "ec2-user@$RELAY_IP" 'timeout 3 bash -c "</dev/tcp/127.0.0.1/5432" && echo tunnel-ok' 2>/dev/null | grep -q tunnel-ok && { echo tunnel-ok; return 0; }
+    ssh $SSH_OPTS "ec2-user@$RELAY_IP" 'timeout 3 bash -c "</dev/tcp/127.0.0.1/5432" && echo tunnel-ok' 2>/dev/null | grep -q tunnel-ok && { echo tunnel-ok; return 0; }
     sleep 5
   done
   echo "터널이 ${1}초 안에 안 열림"; return 1
@@ -354,17 +393,19 @@ u_preflight() {
 do_up() {
   local gpid grc
   log "up 시작 (겹치기 순서) dry=$DRY profile=$AWS_PROFILE gcp=$GCP_PROJECT eks=$EKS_CONTEXT gke=$GKE_CONTEXT"
-  mkdir -p "$STATE"
-  rm -f "$STATE/relay_ip"   # 지난 회차 중계기 IP 를 지움 → demo-tunnel 은 이번 up 이 새로 적을 때까지 기다린다
+  mkdir -p "$STATE" && chmod 700 "$STATE"
+  # 지난 회차 중계기 IP·호스트 키·프로세스를 치움 → demo-tunnel 은 이번 up 이 relay_ip 를 새로 적을 때까지 기다린다
+  step stale u_stale || abort "지난 회차 정리 실패"
   step tools u_tools || abort "시작 점검 실패 (자원이 이미 있거나 도구 없음)"
-  step gke-apply u_gke & gpid=$!
+  APPLIED=1
+  step gke-apply u_gke & gpid=$!; BGPIDS=$gpid
   step vpc-apply u_vpc || abort "aws/env (EKS 없이) apply 실패"
   step b1-facts u_facts || abort "B1 실패"
   step b2-relay u_relay || abort "B2 중계기·터널 실패"
   step b3-env u_envfile || abort "B3 실패"
   step b4-rds-start u_rds_start || abort "B4 시작 실패"
   step eks-add u_eks_add || abort "EKS 더하기 실패"
-  wait $gpid; grc=$?
+  wait $gpid; grc=$?; BGPIDS=""
   [ $grc -eq 0 ] || { FAILED="$FAILED gke-apply"; abort "GKE apply 실패"; }
   step kubeconfig u_kubeconfig || abort "kubeconfig 실패"
   step served-by u_served_by || abort "served-by 실패"
@@ -377,9 +418,10 @@ do_up() {
 
 do_up_serial() {
   log "up 시작 (예전 순서) dry=$DRY profile=$AWS_PROFILE gcp=$GCP_PROJECT eks=$EKS_CONTEXT gke=$GKE_CONTEXT"
-  mkdir -p "$STATE"
-  rm -f "$STATE/relay_ip"   # 지난 회차 중계기 IP 를 지움 → demo-tunnel 은 이번 up 이 새로 적을 때까지 기다린다
+  mkdir -p "$STATE" && chmod 700 "$STATE"
+  step stale u_stale || abort "지난 회차 정리 실패"
   step tools u_tools || abort "시작 점검 실패 (자원이 이미 있거나 도구 없음)"
+  APPLIED=1
   par gke-apply u_gke eks-apply u_eks || abort "클러스터 apply 실패"
   step kubeconfig u_kubeconfig || abort "kubeconfig 실패"
   # 아래 셋은 변수를 다음 단계로 넘기므로 하위 셸 없이 부른다 (출력은 단계 로그로)
