@@ -13,13 +13,20 @@ export interface MatrixRow {
   state: CellState; topSeverity: string | null; basis: "static" | "measured" | "none" | "n_a";
   reason: string; files: string[];
 }
+// 임시 자격 장부 한 줄 (apps/api/src/security/schema.ts LedgerRow). 키·토큰 값은 응답에 없다
+export interface LedgerRow {
+  credentialRef: string; provider: string; purpose: "observe" | "operate"; stage: string | null;
+  status: "active" | "revoke_requested" | "revoked" | "expired"; step: string | null;
+  issuedAt: string; expiresAt: string; revokedAt: string | null; ttlSec: number;
+  expiredButActive: boolean;   // 만료 시각이 지났는데 아직 회수 처리가 안 됨
+}
 export interface SecurityView {
   viewVersion: 1;
   generatedAt: string;
   migration: { id: string; status: string };
   summary: { ok: number; warn: number; fail: number; notImplemented: number; na: number };
   rows: SecRow[];
-  ledger: unknown[] | null;
+  ledger: LedgerRow[] | null;   // null = 장부 표가 아직 없음
   auditChain: { ok: boolean; checked: number; brokenAtSeq: number | null; reason: string | null; partial: boolean };
   tempRoleAudit: Record<string, number>;
   controlMatrix: MatrixRow[] | null;

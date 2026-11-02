@@ -7,9 +7,10 @@ import { api } from '../../lib/api';
 import { errorText } from '../../lib/errors';
 import { or404 } from '../../lib/http';
 import { PROVIDER_SHORT } from '../../lib/status';
-import type { EnvEstimate, FullEstimate, Provider } from '../../lib/types';
+import type { EnvEstimate, FullEstimate, MigrationCostView, Provider } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
 import { usd } from '../migration/model';
+import { costCaveats, envCaption, ORIGIN } from './model';
 import { ShellLayout } from '../shell/ShellLayout';
 import s from '../common/page.module.css';
 
@@ -32,9 +33,34 @@ function EnvBars({ envs, cheapest }: { envs: EnvEstimate[]; cheapest: Provider |
             <span className={s.barFill} style={{ width: `${((env.monthlyUsd ?? 0) / max) * 100}%` }} />
           </span>
           {env.nodeSku && <span className="t-caption c-tertiary">{env.nodeSku} × {env.nodes}</span>}
+          {envCaption(env) && <span className={`t-caption ${env.feasible ? 'c-tertiary' : 'c-warning'}`}>{envCaption(env)}</span>}
         </li>
       ))}
     </ul>
+  );
+}
+
+/** 가격표가 어디서 왔고 언제 것인지. 숫자를 믿어도 되는지는 여기서 판단한다. */
+function PriceSources({ view }: { view: MigrationCostView }) {
+  const { estimate, priceSources } = view;
+  return (
+    <FoldTile title="가격 근거" summary={estimate.priceStale ? '오래된 가격' : `기준일 ${estimate.priceAsOf.slice(0, 10)}`} defaultOpen={estimate.priceStale}>
+      {priceSources.length > 0 ? (
+        <ul className={s.rows}>
+          {priceSources.map((source) => (
+            <li key={source.vendor} className={s.row}>
+              <span className="t-label-md">{PROVIDER_SHORT[source.vendor]}</span>
+              <span className={`${s.rowValue} t-caption c-tertiary`}>
+                {ORIGIN[source.origin]} · {source.fetchedAt.slice(0, 10)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className={`${s.note} t-body-sm c-tertiary`}>가격표 출처 기록이 아직 없습니다.</p>
+      )}
+      {estimate.priceStale && <p className={`${s.note} t-body-sm c-warning`}>7일 넘게 새 가격을 받지 못했습니다. 승인을 막지는 않습니다.</p>}
+    </FoldTile>
   );
 }
 
@@ -116,13 +142,21 @@ export function CostPage({ id }: { id: string }) {
     : diff >= 0 ? `옮기면 월 ${usd(diff)}\n아낍니다` : `옮기면 월 ${usd(-diff)}\n더 듭니다`;
   return (
     <ShellLayout layout={LAYOUT} barLeft={<BarPill label="이전으로" icon="rollback" onClick={() => go(`migrations/${id}`)} />}>
-      <Hero tone="run" meta={view?.origin === 'stored' ? '승인 때 저장한 추정' : '미리보기'} title={title} foot="공개 가격표와 가정으로 낸 추정입니다. 청구서가 아닙니다. 온프레 값은 가정입니다">
+      <Hero
+        tone="run"
+        meta={view ? (view.specFrom === 'demo' ? '예시 앱 기준' : view.origin === 'stored' ? '승인 때 저장한 추정' : '미리보기') : '비용'}
+        title={title}
+        foot="공개 가격표와 가정으로 낸 추정입니다. 청구서가 아닙니다. 온프레 값은 가정입니다"
+      >
         {view && (
           <ul className={s.heroStats}>
             <li><span className="t-metric-lg">{usd(view.pair.sourceMonthlyUsd)}</span><span className="t-caption c-tertiary">{view.source?.name ?? '출발'}</span></li>
             <li><span className="t-metric-lg">{usd(view.pair.targetMonthlyUsd)}</span><span className="t-caption c-tertiary">{view.target?.name ?? '도착'}</span></li>
           </ul>
         )}
+        {view && costCaveats(view).map((line) => (
+          <p key={line} className="t-body-md c-warning">{line}</p>
+        ))}
       </Hero>
       <Stack area="side">
         {view?.estimate && (
@@ -130,6 +164,7 @@ export function CostPage({ id }: { id: string }) {
             <EnvBars envs={view.estimate.envs} cheapest={view.estimate.cheapest} />
           </FoldTile>
         )}
+        {view && <PriceSources view={view} />}
         {view?.estimate && <Simulator key={view.estimate.peakRps} migrationId={id} from={view.pair.from} initialRps={view.estimate.peakRps} />}
       </Stack>
     </ShellLayout>

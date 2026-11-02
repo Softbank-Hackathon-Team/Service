@@ -1,8 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseRoute } from "../src/app/routes";
-import { controlRows, securityHeadline, threatsFrom } from "../src/features/security/model";
-import type { MatrixRow } from "../src/lib/security-types";
+import { controlRows, ledgerOrder, ledgerSummary, securityHeadline, threatsFrom } from "../src/features/security/model";
+import type { LedgerRow, MatrixRow } from "../src/lib/security-types";
+import type { Finding } from "../src/lib/types";
 
 test("주소 해석: 모든 화면으로 간다", () => {
   assert.deepEqual(parseRoute(""), { page: "dashboard" });
@@ -40,11 +41,23 @@ test("보안 머리말: 위반과 나빠짐은 경고, 위반 없으면 경고�
   assert.match(securityHeadline(summary({}), null).title, /모두 지켜졌습니다/);
 });
 
-test("위협: 실패한 보안 보고만 모은다", () => {
+const finding = (resource: string, status: Finding["status"], kind: Finding["kind"], severity: Finding["severity"] = "high"): Finding =>
+  ({ tool: kind === "threat" ? "falco" : "kyverno", toolCheckId: `${resource}-check`, controlId: null, resource, status, severity, kind, observedAt: "t", evidence: `${resource} 근거` });
+
+test("위협: 보안 보고 중 실패한 위협(kind: threat)만 모으고, 설정 위반은 뺀다", () => {
   const threats = threatsFrom([null, { envId: "e", lastHeartbeatAt: null, stale: false, items: [
     { id: "1", kind: "security", receivedAt: "t", migrationId: null, report: { kind: "security", findings: [
-      { status: "fail", severity: "high", resource: "db" }, { status: "pass", resource: "x" }] } },
+      finding("shell-in-pod", "fail", "threat"), finding("x", "pass", "threat"), finding("no-netpol", "fail", "posture", "medium")] } },
     { id: "2", kind: "heartbeat", receivedAt: "t", migrationId: null, report: { kind: "heartbeat", k3sVersion: "1", cnpg: null } },
   ] }]);
-  assert.deepEqual(threats.map((t) => [t.title, t.severity]), [["db", "high"]]);
+  assert.deepEqual(threats.map((t) => [t.title, t.severity, t.evidence]), [["shell-in-pod", "high", "shell-in-pod 근거"]]);
+});
+
+const ledger = (status: LedgerRow["status"], expiredButActive: boolean, issuedAt: string) => ({ status, expiredButActive, issuedAt });
+
+test("임시 권한 장부: 만료됐는데 남은 것을 따로 세고 맨 위에 둔다", () => {
+  const rows = [ledger("revoked", false, "1"), ledger("active", false, "2"), ledger("active", true, "0"), ledger("revoke_requested", false, "3"), ledger("expired", false, "4")];
+  assert.deepEqual(ledgerSummary(rows), { total: 5, live: 2, closed: 2, stale: 1 });
+  assert.deepEqual(ledgerOrder(rows).map((r) => r.issuedAt), ["0", "3", "2", "4", "1"]);
+  assert.deepEqual(ledgerSummary([]), { total: 0, live: 0, closed: 0, stale: 0 });
 });

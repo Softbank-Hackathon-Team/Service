@@ -1,6 +1,19 @@
 import type { TrafficShiftProgress } from '../../lib/liveTraffic';
 import { HUMAN_STEP, isTerminal, LABEL } from '../../lib/status';
-import { VALID, type EnvironmentView, type MigrationStatus, type MigrationView, type PlanStep, type TimelineItem } from '../../lib/types';
+import type { Judgement } from '../../lib/timelineDetail';
+import {
+  VALID,
+  type EnvApp,
+  type EnvironmentView,
+  type FootprintResource,
+  type FootprintState,
+  type MigrationStatus,
+  type MigrationView,
+  type PlanDoc,
+  type PlanStep,
+  type TimelineItem,
+  type TrafficSummary,
+} from '../../lib/types';
 import type { ChecklistEntry } from '../../components/ui/Checklist';
 
 export type MigrationSpec = {
@@ -132,6 +145,73 @@ export function migrationSteps(
     detail: step.detail,
     status: index < at ? 'done' : index === at ? (stoppedAt?.mark ?? 'active') : 'pending',
   }));
+}
+
+/**
+ * 트래픽 막대 밑 한 줄. 실측이 목표에 아직 못 미치면 퍼지는 중이라고 말한다.
+ * 전환 기록이 없거나 트래픽 이동 단계가 아니면 쓰지 않는다 (막대가 이미 말한다).
+ */
+export function shiftNote(
+  status: MigrationStatus,
+  shift: Pick<TrafficShiftProgress, 'available' | 'targetWeightPct' | 'observedWeightPct' | 'reached'> | null,
+): string | null {
+  if (status !== 'shifting' || !shift?.available || shift.targetWeightPct === null) return null;
+  if (shift.observedWeightPct === null) return `목표 ${shift.targetWeightPct}% · 실측 아직 없음`;
+  if (shift.reached === false) return `목표 ${shift.targetWeightPct}%로 퍼지는 중 · 지금 ${shift.observedWeightPct}%`;
+  return `목표 ${shift.targetWeightPct}% · 실측 ${shift.observedWeightPct}%`;
+}
+
+const LEFT_STATES: FootprintState[] = ['left', 'unknown', 'running', 'standby', 'creating', 'stopping'];
+
+export const FOOTPRINT_LABEL: Partial<Record<FootprintState, string>> = {
+  left: '남음',
+  unknown: '생겼을 수 있음',
+  running: '돌고 있음',
+  standby: '대기 중',
+  creating: '만드는 중',
+  stopping: '걷는 중',
+};
+
+/**
+ * 끝난(실패·롤백·취소) 이전이 도착 환경에 남긴 자원. 서버가 이전 상태와 감사 기록으로 낸 목록이다.
+ * 도착 환경 재고에 이 이전이 없으면 null(모름), 있는데 남은 것이 없으면 빈 목록이다.
+ */
+export function leftoversOf(apps: EnvApp[] | null | undefined, migrationId: string): FootprintResource[] | null {
+  const app = apps?.find((item) => item.migrationId === migrationId && item.role === 'target');
+  if (!app) return null;
+  return app.resources.filter((resource) => LEFT_STATES.includes(resource.state));
+}
+
+/** 남은 자원 한 줄의 오른쪽 값. 만든 척(stub)만 한 자원은 그렇다고 붙인다. */
+export const leftoverValue = (resource: Pick<FootprintResource, 'state' | 'evidence'>) =>
+  [FOOTPRINT_LABEL[resource.state] ?? resource.state, resource.evidence === 'stub' ? '흉내' : null].filter(Boolean).join(' · ');
+
+const pct = (value: number) => `${Number(value.toFixed(2))}%`;
+
+/** 멈춘·되돌린 순간의 트래픽 판정을 근거 줄로. 기준은 계획서의 되돌림 기준이다(없으면 숫자만). */
+export function judgementRows(judgement: Judgement, criteria?: PlanDoc['rollbackCriteria'] | null): { name: string; value: string }[] {
+  return [
+    {
+      name: '도착 오류율',
+      value: `${pct(judgement.targetErrorRatePct)} (출발 ${pct(judgement.sourceErrorRatePct)}${criteria ? ` · 기준 ${criteria.errorRatePct}%` : ''})`,
+    },
+    {
+      name: '도착 p95',
+      value: `${Math.round(judgement.targetP95Ms)}ms (출발 ${Math.round(judgement.sourceP95Ms)}ms${criteria ? ` · 기준 ${criteria.p95Multiplier}배` : ''})`,
+    },
+    { name: '그때 도착 비율', value: `${judgement.stepPct}%` },
+    { name: '판정에 쓴 요청', value: `${judgement.samples.toLocaleString('en-US')}건` },
+  ];
+}
+
+/** 증적 리포트의 트래픽 판정 요약을 근거 줄로. 서버가 값을 못 낸 칸(null)은 "아직 없음"으로 둔다. */
+export function trafficReportRows(summary: TrafficSummary): { name: string; value: string }[] {
+  return [
+    { name: '거친 비율', value: summary.steps.length > 0 ? summary.steps.map((step) => `${step}%`).join(' → ') : '아직 없음' },
+    { name: '판정', value: `${summary.judgements}번 · 나쁨 ${summary.bad}번` },
+    { name: '최대 도착 오류율', value: summary.maxTargetErrorRatePct === null ? '아직 없음' : pct(summary.maxTargetErrorRatePct) },
+    { name: '최대 도착 p95', value: summary.maxTargetP95Ms === null ? '아직 없음' : `${Math.round(summary.maxTargetP95Ms)}ms` },
+  ];
 }
 
 /** 지금 도착 쪽으로 가는 트래픽 비율. 전환 전에는 0, 컷오버 뒤에는 100이다. */

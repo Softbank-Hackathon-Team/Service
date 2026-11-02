@@ -9,7 +9,7 @@ import type { AgentReview, RemediateReview, SpecDraftReview } from './lib/agent-
 import type { AuthUser, TokenResponse } from './lib/auth';
 import type { LiveTrafficView, TrafficShiftProgress } from './lib/liveTraffic';
 import type { PlanResourcesView, ResourceRow } from './lib/resourceMap';
-import type { CellState, LiveSecurityReport, MatrixRow, SecurityRegression, SecurityView } from './lib/security-types';
+import type { CellState, LedgerRow, LiveSecurityReport, MatrixRow, SecurityRegression, SecurityView } from './lib/security-types';
 import type {
   AgentReportList,
   EnvApp,
@@ -17,6 +17,9 @@ import type {
   EnvironmentView,
   EnvStatus,
   EvidenceReport,
+  Finding,
+  FootprintResource,
+  FootprintState,
   FullEstimate,
   MigrationCostView,
   MigrationStatus,
@@ -372,8 +375,15 @@ function costOf(m: MockMigration): MigrationCostView {
   const of = (provider: Provider) => estimate.envs.find((item) => item.provider === provider)?.monthlyUsd ?? null;
   const a = of(source.provider);
   const b = of(target.provider);
+  // 명세를 아직 못 읽은 이전은 서버처럼 예시 앱으로 계산한다
+  const specFrom = m.status === 'draft' || m.status === 'importing' ? 'demo' as const : 'spec_versions' as const;
+  const priceSources: MigrationCostView['priceSources'] = [
+    { vendor: 'aws', origin: 'live', fetchedAt: '2026-11-01T03:00:00.000Z', urls: [] },
+    { vendor: 'gcp', origin: 'live', fetchedAt: '2026-11-01T03:00:00.000Z', urls: [] },
+    { vendor: 'azure_mock', origin: 'sample', fetchedAt: '2026-10-20T00:00:00.000Z', urls: [] },
+  ];
   return {
-    migrationId: m.id, origin: 'preview', storedId: null, planId: null, specFrom: 'spec_versions', estimate, priceSources: [], createdAt: nowIso(),
+    migrationId: m.id, origin: 'preview', storedId: null, planId: null, specFrom, estimate, priceSources, createdAt: nowIso(),
     source: { id: source.id, provider: source.provider, name: source.name },
     target: { id: target.id, provider: target.provider, name: target.name },
     pair: { from: source.provider, to: target.provider, sourceMonthlyUsd: a, targetMonthlyUsd: b, monthlyUsd: a !== null && b !== null ? a - b : null, creditPortionUsd: 0 },
@@ -401,7 +411,7 @@ function securityOf(m: MockMigration): SecurityView {
   ]);
   return {
     viewVersion: 1, generatedAt: nowIso(), migration: { id: m.id, status: m.status },
-    summary: { ok: 16, warn: 2, fail: 1, notImplemented: 3, na: 2 }, ledger: null, tempRoleAudit: {},
+    summary: { ok: 16, warn: 2, fail: 1, notImplemented: 3, na: 2 }, ledger: ledgerOf(m), tempRoleAudit: {},
     auditChain: { ok: true, checked: m.log.length, brokenAtSeq: null, reason: null, partial: false },
     controlMatrix: matrix,
     rows: [
@@ -414,6 +424,29 @@ function securityOf(m: MockMigration): SecurityView {
     ],
     live: m.securityChecked ? [liveReport('source', source), liveReport('target', target)] : null,
   };
+}
+
+/** 임시 권한 장부. 지나온 단계마다 15분짜리 역할을 빌리고 끝나면 회수한다. 멈춘 이전은 만료됐는데 회수 안 된 줄이 하나 있다. */
+function ledgerOf(m: MockMigration): LedgerRow[] {
+  const passed = (to: MigrationStatus) => m.log.some((item) => item.to === to);
+  const provider = envById(m.targetEnvId).provider;
+  const done = ['completed', 'rolled_back', 'cancelled', 'failed'].includes(m.status);
+  const row = (n: number, purpose: LedgerRow['purpose'], step: string, live: boolean): LedgerRow => {
+    const issued = Date.now() - (live ? 300_000 : 3600_000 + n * 60_000);
+    const stale = live && m.status === 'paused' && step === 'shift';
+    const issuedAt = new Date(stale ? Date.now() - 1_200_000 : issued).toISOString();
+    const expiresAt = new Date(Date.parse(issuedAt) + 900_000).toISOString();
+    return {
+      credentialRef: `cred-${m.id.slice(-4)}-${n}`, provider, purpose, stage: null, step,
+      status: live ? 'active' : 'revoked', issuedAt, expiresAt, revokedAt: live ? null : new Date(issued + 600_000).toISOString(),
+      ttlSec: 900, expiredButActive: stale,
+    };
+  };
+  const rows: LedgerRow[] = [row(1, 'observe', 'import', false)];
+  if (passed('provisioning')) rows.push(row(2, 'operate', 'apply', false));
+  if (passed('deploying')) rows.push(row(3, 'operate', 'deploy', false));
+  if (passed('shifting')) rows.push(row(4, 'operate', 'shift', !done && ['shifting', 'paused'].includes(m.status)));
+  return rows;
 }
 
 function liveReport(side: 'source' | 'target', item: EnvironmentView): LiveSecurityReport {
@@ -447,13 +480,21 @@ function timelineOf(m: MockMigration): TimelineView {
   return { migrationId: m.id, status: m.status, createdAt: first, generatedAt: nowIso(), running: !['completed', 'rolled_back', 'cancelled'].includes(m.status), totalMs: Date.now() - Date.parse(first), items: m.log, stateDurations: [] };
 }
 
+/** 트래픽 판정 요약. 전환을 시작한 이전만 있고, 오류율로 멈춘·되돌린 이전은 나쁨 1번이 있다. */
+function trafficSummaryOf(m: MockMigration): EvidenceReport['traffic'] {
+  if (!m.log.some((item) => item.to === 'shifting')) return null;
+  const reached = m.log.some((item) => item.to === 'cutover') ? SHIFT_STEPS : SHIFT_STEPS.filter((step) => step <= Math.max(m.trafficPct, SHIFT_STEPS[0]!));
+  const bad = m.failureCode === 'TRAFFIC_ERROR_RATE' ? 1 : 0;
+  return { judgements: reached.length * 3 + bad, steps: reached, bad, maxTargetErrorRatePct: bad ? 3.4 : 0.2, maxTargetP95Ms: bad ? 912 : 131 };
+}
+
 function reportOf(m: MockMigration): EvidenceReport {
   const moves = m.log.filter((item) => item.kind === 'transition');
   const denied: EvidenceReport['incidents'] = m.agentRan
     ? [{ seq: store!.seq, at: nowIso(), actor: 'agent', action: 'repo_edit', result: 'denied', note: '허용 목록 밖 파일을 고치려 해 거부했습니다' }]
     : [];
   return {
-    generatedAt: nowIso(), reportHash: `sha256:${m.id.replace(/-/g, '')}`, gaps: ['보안 수집기 기록이 아직 없습니다'],
+    generatedAt: nowIso(), reportHash: `sha256:${m.id.replace(/-/g, '')}`, gaps: ['보안 수집기 기록이 아직 없습니다'], traffic: trafficSummaryOf(m),
     summary: { startedAt: m.log[0]?.at ?? null, endedAt: null, totalMs: null, transitions: moves.length, reachedCutover: moves.some((item) => item.to === 'cutover'), rolledBack: m.status === 'rolled_back', deniedOrError: denied.length },
     integrity: { ok: true, checked: m.log.length, firstSeq: m.log[0]?.seq ?? null, lastSeq: m.log.at(-1)?.seq ?? null, brokenAtSeq: null, reason: null, partial: false },
     approvals: m.approvals, incidents: denied,
@@ -472,18 +513,26 @@ function liveOf(m: MockMigration): LiveTrafficView {
   const moving = !['completed', 'rolled_back', 'cancelled'].includes(m.status);
   const until = moving ? Date.now() : Date.parse(m.updatedAt ?? nowIso());
   const total = started ? Math.floor((until - Date.parse(shiftAt)) / 40) : 0;
+  // 컷오버 동안 앱 앞 프록시가 잠깐 붙잡았다 보낸 요청 (끊긴 요청 없이 넘겼다는 근거)
+  const cutAt = m.log.find((item) => item.to === 'rollback_window')?.at;
   return {
     migrationId: m.id, available: started, source: 'proxy', fetchedAt: nowIso(), total, ok: total, fail: 0, c4xx: Math.floor(total / 900), p50Ms: 41, p95Ms: 118,
-    held: 0, maxHoldMs: 0, mode: null, switchedAt: null, since: null, byState: [], ...(started ? {} : { reason: 'no_counters' as const }),
+    held: started && cutAt ? 37 : 0, maxHoldMs: started && cutAt ? 168 : 0, mode: null, switchedAt: cutAt ?? null, since: shiftAt ?? null, byState: [],
+    ...(started ? {} : { reason: 'no_counters' as const }),
   };
 }
 
 function shiftOf(m: MockMigration): TrafficShiftProgress {
   const known = m.log.some((item) => item.to === 'shifting');
+  // 단계가 바뀐 직후 잠깐은 엣지에 아직 덜 퍼져서 실측이 앞 단계에 머문다
+  const stepStart = m.status === 'shifting' && m.nextAt !== null ? m.nextAt - SHIFT_STEP_MS : null;
+  const spreading = stepStart !== null && Date.now() - stepStart < SHIFT_STEP_MS / 2 && m.shiftIndex > 0;
+  const observed = spreading ? SHIFT_STEPS[m.shiftIndex - 1]! + 4 : Math.max(0, m.trafficPct - (m.status === 'shifting' ? 2 : 0));
   return {
     migrationId: m.id, available: known, targetWeightPct: known ? m.trafficPct : null,
-    observedWeightPct: known ? Math.max(0, m.trafficPct - (m.status === 'shifting' ? 2 : 0)) : null,
-    reached: known, tolerancePct: 10, reobserve: 0, stepStartedAt: null, observedAt: null,
+    observedWeightPct: known ? observed : null,
+    reached: known ? !spreading : null, tolerancePct: 10, reobserve: 0,
+    stepStartedAt: stepStart !== null ? new Date(stepStart).toISOString() : null, observedAt: known ? nowIso() : null,
   };
 }
 
@@ -520,7 +569,35 @@ function agentReviewOf(m: MockMigration): AgentReview {
       { id: 'R3', level: 'low', title: '헬스 체크 경로를 추정했습니다', source: 'rule' },
     ],
   };
-  return { migrationId: m.id, llm: { state: 'ready', model: 'claude-sonnet-5-5', why: '' }, remediate, specDraft };
+  const runs = store!.migrations.filter((item) => item.agentRan).length;
+  const spend = { round: 'finals-1107', usd: Math.round((0.18 + runs * 0.11) * 100) / 100, budgetUsd: 5, calls: 6 + runs * 8, exceeded: false };
+  return { migrationId: m.id, llm: { state: 'ready', model: 'claude-sonnet-5-5', why: '', spend }, remediate, specDraft };
+}
+
+/** 도착 쪽 자원 상태. 서버 env-inventory.ts targetResources 를 줄여 옮겼다 (실패·롤백·취소 뒤 남은 자원을 보여 주려고). */
+function targetFootprint(m: MockMigration): FootprintResource[] {
+  const at = m.status === 'paused' ? (m.pausedFrom ?? 'deploying') : m.status === 'failed' ? (m.failedAtStatus ?? 'provisioning') : m.status;
+  const step = WALK.indexOf(at);
+  const applied = m.log.some((item) => item.from === 'provisioning' && item.to === 'deploying') || step > WALK.indexOf('provisioning');
+  const deployed = m.log.some((item) => item.to === 'syncing') || step >= WALK.indexOf('syncing');
+  let infra: FootprintState;
+  let app: FootprintState;
+  if (m.status === 'rolled_back') [infra, app] = ['left', 'left'];
+  else if (m.status === 'rolling_back') [infra, app] = ['running', 'standby'];
+  else if (m.status === 'cancelled') [infra, app] = [applied ? 'left' : 'none', deployed ? 'left' : 'none'];
+  else if (m.status === 'failed') [infra, app] = at === 'provisioning' ? ['unknown', 'none'] : ['left', deployed ? 'left' : 'unknown'];
+  else if (step < WALK.indexOf('provisioning')) [infra, app] = ['planned', 'planned'];
+  else if (at === 'provisioning') [infra, app] = ['creating', 'planned'];
+  else [infra, app] = ['running', at === 'deploying' ? 'creating' : 'running'];
+  const service = SERVICE[envById(m.targetEnvId).provider];
+  const evidence = applied ? 'terraform' as const : 'adapter' as const;
+  return [
+    { category: 'compute', type: 'cluster', label: `${service.cluster} 네임스페이스`, state: infra, evidence },
+    { category: 'database', type: 'db', label: `${service.db} 16 · 20GB`, state: infra, evidence },
+    { category: 'secret', type: 'secret', label: `${service.secret} 비밀`, state: infra, evidence },
+    { category: 'compute', type: 'helm.release', label: '앱 컨테이너 2개 (500m CPU · 1Gi)', state: app, evidence: deployed ? evidence : 'adapter' },
+    { category: 'replication', type: 'pg.subscription', label: '복제 구독 (출발 → 도착)', state: m.status === 'rolled_back' || m.status === 'completed' ? 'removed' : step >= WALK.indexOf('syncing') && step <= WALK.indexOf('cutover') ? 'running' : 'none', evidence: 'adapter' },
+  ];
 }
 
 function inventoryOf(item: EnvironmentView): { cloud: CloudInventory; apps: EnvApp[] } {
@@ -548,7 +625,7 @@ function inventoryOf(item: EnvironmentView): { cloud: CloudInventory; apps: EnvA
       return {
         migrationId: m.id, role: source ? 'source' : 'target', peer: { envId: peer.id, name: peer.name, provider: peer.provider },
         migrationStatus: m.status, stage: done ? 'after' : undone ? 'undone' : m.trafficPct > 0 ? 'changing' : 'before',
-        trafficPct: source ? 100 - m.trafficPct : m.trafficPct, spec: { app: m.app }, resources: [],
+        trafficPct: source ? 100 - m.trafficPct : m.trafficPct, spec: { app: m.app }, resources: source ? [] : targetFootprint(m),
       };
     }),
   };
@@ -562,6 +639,10 @@ function statusOf(item: EnvironmentView): EnvStatus {
   };
 }
 
+function finding(tool: string, toolCheckId: string, controlId: string | null, resource: string, status: Finding['status'], severity: Finding['severity'], kind: Finding['kind'], evidence: string): Finding {
+  return { tool, toolCheckId, controlId, resource, status, severity, kind, evidence, observedAt: new Date(Date.now() - 600_000).toISOString() };
+}
+
 function agentReportsOf(item: EnvironmentView): AgentReportList {
   if (item.provider !== 'onprem') return { envId: item.id, lastHeartbeatAt: null, stale: false, items: [] };
   const down = item.connectionStatus !== 'connected';
@@ -571,9 +652,9 @@ function agentReportsOf(item: EnvironmentView): AgentReportList {
     items: [
       { id: `${item.id}-1`, kind: 'heartbeat', receivedAt: beat, migrationId: null, report: { kind: 'heartbeat', k3sVersion: 'v1.31.4+k3s1', cnpg: { cluster: 'main', ready: true, replicationLagBytes: 0 } } },
       { id: `${item.id}-2`, kind: 'security', receivedAt: new Date(Date.now() - 600_000).toISOString(), migrationId: null, report: { kind: 'security', findings: [
-        { status: 'fail', severity: 'high', resource: '네임스페이스 NetworkPolicy 없음' },
-        { status: 'fail', severity: 'medium', resource: '이미지 서명 검증 꺼짐' },
-        { status: 'pass', severity: 'low', resource: '감사 로그 켜짐' },
+        finding('falco', 'shell_in_container', 'SEC-VIO-04', 'api Pod 안에서 셸 실행', 'fail', 'high', 'threat', 'kubectl exec 로 /bin/sh 실행 감지'),
+        finding('kyverno', 'require-networkpolicy', null, '네임스페이스 NetworkPolicy 없음', 'fail', 'medium', 'posture', 'shop 네임스페이스에 정책 0개'),
+        finding('agent_script', 'audit-log', 'SEC-AUD-01', '감사 로그 켜짐', 'pass', 'low', 'posture', 'k3s audit-policy 적용'),
       ] } },
       { id: `${item.id}-3`, kind: 'deploy', receivedAt: new Date(Date.now() - 3600_000).toISOString(), migrationId: null, report: { kind: 'deploy', status: 'applied', resources: ['Deployment/web', 'Deployment/api', 'Service/web'] } },
     ],
@@ -699,6 +780,9 @@ function route(method: string, path: string, search: URLSearchParams, body: Reco
       if (!ROLLBACKABLE.includes(m.status)) return fail(409, 'INVALID_TRANSITION', `${m.status} -> rolling_back`);
       if (m.status === 'rollback_window' && Date.parse(m.rollbackWindowEndsAt ?? '0') <= Date.now()) return fail(409, 'GUARD_FAILED', 'rollback window is over');
       const from = m.status;
+      // 사람이 누른 롤백은 서버처럼 실패 코드를 비운다 (자동 롤백만 코드가 남는다)
+      m.failureCode = null;
+      m.pausedFrom = null;
       setStatus(m, 'rolling_back', { actor: USER.email });
       return ok({ id: m.id, from, status: 'rolling_back' }, 202);
     }
@@ -931,6 +1015,12 @@ const stopAt = (m: MockMigration, status: MigrationStatus, extra: Partial<MockMi
   m.nextAt = null;
 };
 
+/** 워커 shift 가 멈추거나 되돌릴 때 감사 detail.lastJudgement 로 남기는 판정 (contracts TrafficJudgement 모양) */
+const badJudgement = (m: MockMigration) => ({
+  migrationId: m.id, stepPct: 50, samples: 1840, target5xx: 63, targetErrorRatePct: 3.42, sourceErrorRatePct: 0.11,
+  targetP95Ms: 912, sourceP95Ms: 124, verdict: 'bad', at: nowIso(),
+});
+
 const SCENARIOS: Scenario[] = [
   { label: '명세 검토', apply: (m) => stopAt(m, 'spec_review') },
   {
@@ -953,9 +1043,26 @@ const SCENARIOS: Scenario[] = [
     apply: (m) => {
       setStatus(m, 'shifting');
       stopAt(m, 'paused', { pausedFrom: 'shifting', trafficPct: 10 });
+      m.log.at(-1)!.detail = { evidence: { guardrailRule: 'MG-2-07' } };
     },
   },
-  { label: '작업 멈춤', apply: (m) => stopAt(m, 'paused', { pausedFrom: 'deploying', failureCode: 'DEPLOY_TIMEOUT', trafficPct: 0 }) },
+  {
+    label: '오류율 멈춤',
+    apply: (m) => {
+      setStatus(m, 'shifting');
+      stopAt(m, 'paused', { pausedFrom: 'shifting', failureCode: 'TRAFFIC_ERROR_RATE', trafficPct: 50 });
+      Object.assign(m.log.at(-1)!, { failureCode: 'TRAFFIC_ERROR_RATE', detail: { reachedPct: 50, lastJudgement: badJudgement(m) } });
+    },
+  },
+  {
+    label: '자동 롤백',
+    apply: (m) => {
+      setStatus(m, 'shifting');
+      Object.assign(m, { pausedFrom: null, failedAtStatus: null, failureCode: 'TRAFFIC_ERROR_RATE', trafficPct: 50 });
+      setStatus(m, 'rolling_back', { failureCode: 'TRAFFIC_ERROR_RATE', detail: { reachedPct: 50, rollbackReason: 'error_rate', lastJudgement: badJudgement(m) } });
+    },
+  },
+  { label: '작업 멈춤', apply: (m) => stopAt(m, 'paused', { pausedFrom: 'deploying', failureCode: 'ARGO_TIMEOUT', trafficPct: 0 }) },
   { label: '실패', apply: (m) => stopAt(m, 'failed', { failedAtStatus: 'provisioning', failureCode: 'TF_APPLY_FAILED', trafficPct: 0 }) },
   { label: '롤백 대기', apply: (m) => setStatus(m, 'rollback_window') },
   { label: '완료', apply: (m) => stopAt(m, 'completed', { trafficPct: 100 }) },

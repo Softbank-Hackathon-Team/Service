@@ -78,7 +78,11 @@ export function useAction(onChanged: () => void) {
   return { busy, error, run };
 }
 
-/** 되돌리기 어려운 보조 행동. 한 번 더 눌러야 실행한다. */
+/**
+ * 되돌리기 어려운 보조 행동. 한 번 더 눌러야 실행한다.
+ * TODO(human): 서버는 거절(POST /plans/:id/approvals)·롤백·취소·재개에 선택 칸 reason(500자)을 받아 감사 기록에 남긴다.
+ *   화면은 아직 보내지 않는다. 이유 입력을 둘지, 둔다면 어느 행동에서 필수로 할지는 사람이 정한다.
+ */
 export function ConfirmPill({ label, confirmLabel, icon, tone, disabled, onConfirm }: { label: string; confirmLabel: string; icon: 'x' | 'ban' | 'rollback'; tone?: 'danger'; disabled?: boolean; onConfirm: () => void }) {
   const [asking, setAsking] = useState(false);
   if (!asking) return <BarPill label={label} icon={icon} tone={tone} onClick={disabled ? undefined : () => setAsking(true)} />;

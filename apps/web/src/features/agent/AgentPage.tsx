@@ -8,6 +8,7 @@ import { useAction } from '../migration/shared';
 import { ShellLayout } from '../shell/ShellLayout';
 import { useChosenMigration } from '../shell/useChosenMigration';
 import { agentSummary, isRunning, RemediateBody, useAgentReview } from './AgentResult';
+import { agentBlock, spendRows, spendText } from './model';
 import s from '../common/page.module.css';
 
 const LAYOUT: BentoLayout = { columns: ['fill', 'side', 'side'], areas: 'hero steps side' };
@@ -31,15 +32,17 @@ function AgentBody({ migrationId }: { migrationId: string }) {
   const result = view?.remediate ?? null;
   const draft = view?.specDraft ?? null;
   const running = isRunning(result);
-  const blocked = view?.llm?.state === 'key_missing';
+  const block = agentBlock(view?.llm);
+  const blocked = block !== null;
+  const spend = view?.llm?.spend;
   const steps: TimelineEntry[] = (result?.steps ?? []).map((step) => ({
     kind: step.ok ? 'tool' : 'denied',
     title: TOOL_LABEL[step.tool] ?? step.tool,
     detail: step.note,
     time: `${step.seq}`,
   }));
-  const title = blocked
-    ? 'AI 키가 없어\n돌릴 수 없습니다'
+  const title = block
+    ? block.title
     : running
       ? '샌드박스에서\n점검하고 있습니다'
       : result?.outcome === 'proposed'
@@ -76,6 +79,19 @@ function AgentBody({ migrationId }: { migrationId: string }) {
             </div>
           </div>
         </FoldTile>
+        {spend && (
+          <FoldTile key={`spend-${spend.exceeded}`} title="AI 지출" summary={spendText(spend)} defaultOpen={spend.exceeded}>
+            <ul className={s.rows}>
+              {spendRows(spend).map((row) => (
+                <li key={row.name} className={s.row}>
+                  <span className="t-label-md">{row.name}</span>
+                  <span className={`${s.rowValue} t-code-sm c-secondary`}>{row.value}</span>
+                </li>
+              ))}
+            </ul>
+            <p className={`${s.note} t-caption c-tertiary`}>실제 AI 호출로 낸 추정 금액입니다. 상한에 닿으면 서버가 새 점검을 받지 않습니다.</p>
+          </FoldTile>
+        )}
         <FoldTile title="점검 지시" summary="선택" defaultOpen={false}>
           <div className={s.form}>
             <textarea
@@ -90,7 +106,7 @@ function AgentBody({ migrationId }: { migrationId: string }) {
         </FoldTile>
         <ActionRow notice={error}>
           <ActionPill
-            label={busy || running ? '점검 중' : result ? '다시 점검' : '수정안 받기'}
+            label={block ? block.button : busy || running ? '점검 중' : result ? '다시 점검' : '수정안 받기'}
             icon="bot"
             disabled={busy || running || blocked}
             onClick={() => void run(() => api.agentRun(migrationId, task.trim() || undefined))}

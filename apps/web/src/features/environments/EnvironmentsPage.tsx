@@ -9,6 +9,7 @@ import { CONN_LABEL, LABEL, PROVIDER_SHORT } from '../../lib/status';
 import type { AgentReportBody, EnvironmentView } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
 import { fromInventory, realEnvs } from '../dashboard/model';
+import { leftoversOf } from '../migration/model';
 import { FoundResources } from '../migration/NewMigrationPage';
 import { ShellLayout } from '../shell/ShellLayout';
 import s from '../common/page.module.css';
@@ -27,8 +28,10 @@ const STAGE = { before: '이전 전', changing: '이전 중', after: '이전 끝
 
 function reportLine(report: AgentReportBody) {
   if (report.kind === 'heartbeat') return `k3s ${report.k3sVersion}${report.cnpg ? ` · DB ${report.cnpg.ready ? '준비됨' : '준비 안 됨'}` : ''}`;
-  if (report.kind === 'deploy') return `배포 ${report.status === 'applied' ? '적용' : '실패'} · 자원 ${report.resources.length}개`;
-  return `보안 보고 · 발견 ${report.findings.length}개`;
+  if (report.kind === 'deploy') return report.status === 'applied' ? `배포 적용 · 자원 ${report.resources.length}개` : `배포 실패${report.reason ? ` · ${report.reason}` : ''}`;
+  const failed = report.findings.filter((finding) => finding.status === 'fail');
+  const threats = failed.filter((finding) => finding.kind === 'threat').length;
+  return `보안 보고 · 위반 ${failed.length - threats}개 · 위협 ${threats}개`;
 }
 
 function AgentReports({ envId }: { envId: string }) {
@@ -76,20 +79,25 @@ function ConnectedEnv({ env }: { env: EnvironmentView }) {
         <FoldTile title="이 환경의 이전" summary={`${data?.apps.length ?? 0}건`}>
           {data && data.apps.length > 0 ? (
             <ul className={s.rows}>
-              {data.apps.map((app) => (
-                <li key={app.migrationId}>
-                  <button type="button" className={s.listButton} onClick={() => go(`migrations/${app.migrationId}`)}>
-                    <span className={s.formRow}>
-                      <span className="t-label-md">{app.spec?.app ?? `${app.role === 'source' ? '출발' : '도착'} · ${app.peer.name}`}</span>
-                      <Badge>{LABEL[app.migrationStatus] ?? STAGE[app.stage]}</Badge>
-                    </span>
-                    <span className="t-caption c-tertiary">
-                      {app.role === 'source' ? `${app.peer.name}로 나감` : `${app.peer.name}에서 들어옴`}
-                      {app.trafficPct !== null ? ` · 트래픽 ${app.trafficPct}%` : ''}
-                    </span>
-                  </button>
-                </li>
-              ))}
+              {data.apps.map((app) => {
+                // 끝난(실패·롤백·취소) 이전이 이 환경에 남긴 자원. 정리할 것이 있으면 줄에서 바로 보이게 한다
+                const left = app.stage === 'undone' ? (leftoversOf([app], app.migrationId)?.length ?? 0) : 0;
+                return (
+                  <li key={app.migrationId}>
+                    <button type="button" className={s.listButton} onClick={() => go(`migrations/${app.migrationId}`)}>
+                      <span className={s.formRow}>
+                        <span className="t-label-md">{app.spec?.app ?? `${app.role === 'source' ? '출발' : '도착'} · ${app.peer.name}`}</span>
+                        <Badge>{LABEL[app.migrationStatus] ?? STAGE[app.stage]}</Badge>
+                      </span>
+                      <span className="t-caption c-tertiary">
+                        {app.role === 'source' ? `${app.peer.name}로 나감` : `${app.peer.name}에서 들어옴`}
+                        {app.trafficPct !== null ? ` · 트래픽 ${app.trafficPct}%` : ''}
+                      </span>
+                      {left > 0 && <span className="t-caption c-warning">남은 자원 {left}개</span>}
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           ) : (
             <p className={`${s.note} t-body-sm c-tertiary`}>이 환경을 쓰는 이전이 없습니다.</p>

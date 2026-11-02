@@ -5,6 +5,8 @@
 //   POST /auth/refresh 본문 없음, 쿠키로      → 200 같은 모양(refresh 회전) / 401
 //   POST /auth/logout                         → 204, 쿠키 지움
 //   쿠키 svc_refresh: HttpOnly, SameSite=Strict, Path=/api (화면은 /api/auth/… 로 부르고 프록시가 /api/v1 로 바꾼다)
+//   GET /auth/config {devAuth, loginRequired}, GET /auth/me 는 화면이 아직 부르지 않는다 (로그인 응답에 user 가 이미 있다)
+//   TODO(human): 서버가 시험용 헤더 인증(devAuth=true)으로 떠 있을 때 화면이 로그인을 건너뛸지. 지금은 언제나 로그인 화면을 거친다
 //
 // 토큰 보관
 //   - access 토큰: 이 모듈 변수(메모리)에만. localStorage·sessionStorage 에 안 둔다

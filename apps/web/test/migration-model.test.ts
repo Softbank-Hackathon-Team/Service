@@ -1,7 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { canPick, canRollback, formatClock, migrationSteps, needsStepAnchor, pollMs, screenOf, specRows, stepAnchorFrom, stepGate, trafficPercent } from "../src/features/migration/model";
-import { MIGRATION_STATUSES, type EnvironmentView } from "../src/lib/types";
+import {
+  canPick, canRollback, formatClock, judgementRows, leftoversOf, leftoverValue, migrationSteps, needsStepAnchor, pollMs, screenOf,
+  shiftNote, specRows, stepAnchorFrom, stepGate, trafficPercent, trafficReportRows,
+} from "../src/features/migration/model";
+import { MIGRATION_STATUSES, type EnvApp, type EnvironmentView, type FootprintResource } from "../src/lib/types";
 
 test("상태 22개가 모두 화면 하나로 묶인다", () => {
   assert.equal(MIGRATION_STATUSES.length, 22);
@@ -95,4 +98,53 @@ test("남은 시간 표시", () => {
   assert.equal(formatClock(900), "15:00");
   assert.equal(formatClock(59.9), "00:59");
   assert.equal(formatClock(-3), "00:00");
+});
+
+test("트래픽 막대 밑 한 줄: 트래픽 이동 중에만, 덜 퍼졌으면 퍼지는 중이라고 쓴다", () => {
+  const shift = { available: true, targetWeightPct: 50, observedWeightPct: 48, reached: true };
+  assert.equal(shiftNote("shifting", shift), "목표 50% · 실측 48%");
+  assert.equal(shiftNote("shifting", { ...shift, observedWeightPct: 14, reached: false }), "목표 50%로 퍼지는 중 · 지금 14%");
+  assert.equal(shiftNote("shifting", { ...shift, observedWeightPct: null, reached: null }), "목표 50% · 실측 아직 없음");
+  assert.equal(shiftNote("cutover", shift), null);
+  assert.equal(shiftNote("shifting", { ...shift, available: false }), null);
+  assert.equal(shiftNote("shifting", null), null);
+});
+
+const res = (label: string, state: FootprintResource["state"], evidence: FootprintResource["evidence"] = "terraform"): FootprintResource =>
+  ({ category: "compute", type: label, label, state, evidence });
+const app = (migrationId: string, role: EnvApp["role"], resources: FootprintResource[]): EnvApp => ({
+  migrationId, role, peer: { envId: "e2", name: "src", provider: "aws" }, migrationStatus: "failed", stage: "undone",
+  trafficPct: 0, spec: { app: "shop" }, resources,
+});
+
+test("남은 자원: 도착 쪽에서 아직 살아 있거나 모르는 것만, 이전이 없으면 모름(null)", () => {
+  const apps = [
+    app("m1", "target", [res("db", "left"), res("ns", "unknown", "adapter"), res("sub", "removed"), res("app", "none")]),
+    app("m1", "source", [res("src-app", "running")]),
+    app("m2", "target", [res("db", "removed")]),
+  ];
+  assert.deepEqual(leftoversOf(apps, "m1")?.map((r) => r.label), ["db", "ns"]);
+  assert.deepEqual(leftoversOf(apps, "m2"), []);
+  assert.equal(leftoversOf(apps, "m3"), null);
+  assert.equal(leftoversOf(null, "m1"), null);
+  assert.equal(leftoverValue(res("db", "left")), "남음");
+  assert.equal(leftoverValue(res("app", "left", "stub")), "남음 · 흉내");
+  assert.equal(leftoverValue(res("ns", "unknown", "adapter")), "생겼을 수 있음");
+});
+
+test("판정 근거 줄: 계획서 기준이 있으면 함께, 없으면 숫자만", () => {
+  const judgement = { stepPct: 50, samples: 1840, targetErrorRatePct: 3.4219, sourceErrorRatePct: 0.11, targetP95Ms: 912.4, sourceP95Ms: 124, verdict: "bad" };
+  const rows = judgementRows(judgement, { errorRatePct: 1, p95Multiplier: 2, windowSec: 30 });
+  assert.equal(rows[0]!.value, "3.42% (출발 0.11% · 기준 1%)");
+  assert.equal(rows[1]!.value, "912ms (출발 124ms · 기준 2배)");
+  assert.equal(rows[2]!.value, "50%");
+  assert.equal(rows[3]!.value, "1,840건");
+  assert.equal(judgementRows(judgement)[0]!.value, "3.42% (출발 0.11%)");
+});
+
+test("전환 판정 요약 줄: 서버가 못 낸 값은 아직 없음", () => {
+  const rows = trafficReportRows({ judgements: 9, steps: [10, 50, 100], bad: 0, maxTargetErrorRatePct: 0.2, maxTargetP95Ms: 131.6 });
+  assert.deepEqual(rows.map((r) => r.value), ["10% → 50% → 100%", "9번 · 나쁨 0번", "0.2%", "132ms"]);
+  const empty = trafficReportRows({ judgements: 0, steps: [], bad: 0, maxTargetErrorRatePct: null, maxTargetP95Ms: null });
+  assert.deepEqual(empty.map((r) => r.value), ["아직 없음", "0번 · 나쁨 0번", "아직 없음", "아직 없음"]);
 });
