@@ -30,6 +30,70 @@ tags:
   - name: "health"
     description: "쿠버네티스 프로브"
 paths:
+  "/api/v1/agent/register":
+    post:
+      operationId: "postAgentRegister"
+      tags:
+        - "agent"
+      summary: "/api/v1/agent/register"
+      description: "코드: apps/api/src/routes/agent-enroll.ts"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              type: "object"
+              properties:
+                enrollToken:
+                  type: "string"
+                  maxLength: 100
+              required:
+                - "enrollToken"
+              additionalProperties: false
+      security:
+        - bearerAuth: []
+        - devTenant: []
+      parameters:
+        - $ref: "#/components/parameters/DevTenant"
+      responses:
+        "201":
+          description: "OK"
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                properties:
+                  envId:
+                    type: "string"
+                    format: "uuid"
+                    pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  keyId:
+                    type: "string"
+                  secret:
+                    type: "string"
+                required:
+                  - "envId"
+                  - "keyId"
+                  - "secret"
+                additionalProperties: false
+        "400":
+          $ref: "#/components/responses/E400"
+          description: "BAD_REQUEST (Zod 검증 실패)"
+        "401":
+          $ref: "#/components/responses/E401"
+          description: "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+        "409":
+          $ref: "#/components/responses/E409"
+          description: "ApiError"
+        "429":
+          $ref: "#/components/responses/E429"
+          description: "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+        "500":
+          $ref: "#/components/responses/E500"
+          description: "INTERNAL"
+        "503":
+          $ref: "#/components/responses/E503"
+          description: "ApiError"
   "/api/v1/agent/reports":
     post:
       operationId: "postAgentReports"
@@ -481,6 +545,73 @@ paths:
         "500":
           $ref: "#/components/responses/E500"
           description: "INTERNAL"
+  "/api/v1/environments/{id}/agent-token":
+    post:
+      operationId: "postEnvironmentsByIdAgenttoken"
+      tags:
+        - "environments"
+      summary: "/api/v1/environments/{id}/agent-token"
+      description: "코드: apps/api/src/routes/agent-enroll.ts"
+      security:
+        - bearerAuth: []
+        - devTenant: []
+      parameters:
+        - name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+            pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        - $ref: "#/components/parameters/DevTenant"
+      responses:
+        "201":
+          description: "OK"
+          content:
+            "application/json":
+              schema:
+                type: "object"
+                properties:
+                  envId:
+                    type: "string"
+                    format: "uuid"
+                    pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  token:
+                    type: "string"
+                  expiresAt:
+                    type: "string"
+                  command:
+                    type: "string"
+                required:
+                  - "envId"
+                  - "token"
+                  - "expiresAt"
+                  - "command"
+                additionalProperties: false
+        "400":
+          $ref: "#/components/responses/E400"
+          description: "BAD_REQUEST (Zod 검증 실패)"
+        "401":
+          $ref: "#/components/responses/E401"
+          description: "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+        "403":
+          $ref: "#/components/responses/E403"
+          description: "TUNNEL_READ_ONLY (개발 헤더 인증 + Cloudflare 터널로 온 쓰기, Z47)"
+        "404":
+          $ref: "#/components/responses/E404"
+          description: "ApiError"
+        "409":
+          $ref: "#/components/responses/E409"
+          description: "ApiError"
+        "429":
+          $ref: "#/components/responses/E429"
+          description: "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+        "500":
+          $ref: "#/components/responses/E500"
+          description: "INTERNAL"
+        "503":
+          $ref: "#/components/responses/E503"
+          description: "ApiError"
   "/api/v1/environments/{id}/connection-link":
     post:
       operationId: "postEnvironmentsByIdConnectionlink"
