@@ -11,3 +11,13 @@ export function smokeEnvs(env: NodeJS.ProcessEnv = process.env): { sourceEnvId: 
   if (sourceEnvId === targetEnvId) throw new Error("출발과 도착 환경이 같다");
   return { sourceEnvId, targetEnvId };
 }
+
+// PLAN_ACKS=1 서버용 본문. 확인 항목이 있으면 승인에 acks, 시작에 planHash 를 보낸다. 깃발 꺼짐이면 예전 본문 그대로
+export function smokePlanBodies(plan: { planHash: string; acknowledgements?: { id: string }[] }, env: NodeJS.ProcessEnv = process.env): { approve: Record<string, unknown>; start: Record<string, unknown> } {
+  const on = env.PLAN_ACKS?.trim() === "1";
+  const acks = (plan.acknowledgements ?? []).map((a) => a.id);
+  return {
+    approve: { decision: "approve", planHash: plan.planHash, ...(on && acks.length ? { acks } : {}) },
+    start: on ? { planHash: plan.planHash } : {},
+  };
+}
