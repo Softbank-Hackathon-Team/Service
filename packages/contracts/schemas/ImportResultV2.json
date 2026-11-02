@@ -53,7 +53,8 @@
                         "type": "string",
                         "enum": [
                           "k8s",
-                          "managedContainer"
+                          "managedContainer",
+                          "vm"
                         ]
                       },
                       "origin": {

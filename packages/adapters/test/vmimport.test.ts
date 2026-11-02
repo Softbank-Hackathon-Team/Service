@@ -53,7 +53,7 @@ const importAws = async (opts: Parameters<typeof awsExec>[0] = {}, env: Record<s
   return { inv, calls, out: normalizeV2(inv) };
 };
 
-test("정상: EC2 2묶음 → IR v2 (origin vm/ec2, 이미지 빌드 자리, 크기→요청량, 포트·replicas, 접속 포트 제외), 스키마·checkV2 통과 + 승인 줄 2종", async () => {
+test("정상: EC2 2묶음 → IR v2 (origin vm/ec2, 이미지 빌드 자리, 크기→요청량, 포트·replicas, 접속 포트 제외), 스키마·checkV2 통과 + 승인 줄 build 만", async () => {
   const { inv, out } = await importAws();
   assert.deepEqual(out.result.unmapped, []);
   const spec = AppSpecV2.parse(out.result.spec);
@@ -61,7 +61,7 @@ test("정상: EC2 2묶음 → IR v2 (origin vm/ec2, 이미지 빌드 자리, 크
   assert.ok(web && api && web.kind === "service" && api.kind === "service");
   if (web.kind !== "service" || api.kind !== "service") return;
   assert.deepEqual(web.props.origin, { runtime: "vm", product: "ec2" });
-  assert.equal(web.props.runtime, "k8s");
+  assert.equal(web.props.runtime, "vm");
   assert.equal(web.props.image.source, "build");
   assert.equal(web.props.image.digest, null);
   assert.match(web.props.image.build!.repo, /^TODO\(human\)/);
@@ -78,11 +78,11 @@ test("정상: EC2 2묶음 → IR v2 (origin vm/ec2, 이미지 빌드 자리, 크
   const w = net.find((n) => n.scope === "component" && n.subject === "shop-web")!, a = net.find((n) => n.scope === "component" && n.subject === "shop-api")!;
   assert.ok(w.scope === "component" && w.public === true && a.scope === "component" && a.public === false);
   assert.deepEqual(a.scope === "component" && a.ingress, [{ from: "sg:sg-web", port: 8080 }]);
-  // 검증: 구조 오류 0, 승인 줄 = 런타임 변경 + 빌드
+  // 검증: 구조 오류 0, 승인 줄 = 빌드만 (RUNTIMEMAP v2: VM 출발은 VM 도착이 기본이라 runtime_change 없음)
   const chk = checkV2(spec);
   assert.deepEqual(chk.errors ?? [], []);
   const kinds = (chk.approvals ?? []).map((x: { kind: string; subject: string }) => `${x.kind}:${x.subject}`).sort();
-  assert.deepEqual(kinds, ["build:shop-api", "build:shop-web", "runtime_change:shop-api", "runtime_change:shop-web"]);
+  assert.deepEqual(kinds, ["build:shop-api", "build:shop-web"]);
   assert.ok(inv.coverage["vm.group"] === 2);
 });
 

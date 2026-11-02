@@ -119,6 +119,25 @@ variable "service_json" {
   }
 }
 
+# RUNTIMEMAP v2: VM 서비스 (GCE). 항목 모양 = tf-kinds.ts VmTfVars. 비면 아무것도 안 만듦 (기존 계획 그대로)
+variable "vm_json" {
+  type    = string
+  default = "[]"
+  validation {
+    condition     = can(jsondecode(var.vm_json)) && length(distinct([for x in jsondecode(var.vm_json) : x.id])) == length(jsondecode(var.vm_json))
+    error_message = "vm_json: id 가 겹침."
+  }
+  # 루트에도 같은 검사 (모듈 안 검증은 expect_failures 로 못 잡음): 대수 1~20, 이미지는 digest 고정
+  validation {
+    condition     = can(jsondecode(var.vm_json)) && alltrue([for x in jsondecode(var.vm_json) : x.instances >= 1 && x.instances <= 20])
+    error_message = "vm_json: VM 대수(instances)는 1~20."
+  }
+  validation {
+    condition     = can(jsondecode(var.vm_json)) && alltrue([for x in jsondecode(var.vm_json) : can(regex("@sha256:[0-9a-f]{64}$", x.image))])
+    error_message = "vm_json: 이미지는 digest 로 고정 (재현성)."
+  }
+}
+
 # JOBMOD: 관리형 컨테이너 예약 잡 (Cloud Scheduler → Cloud Run job). 항목 모양 = tf-kinds.ts JobTfVars. 비면 아무것도 안 만듦
 variable "job_json" {
   type    = string
@@ -152,7 +171,7 @@ locals {
   queue_dl     = { for id, x in local.queue_all : id => x if contains(local.queue_dl_ids, id) }
   queue        = { for id, x in local.queue_all : id => x if !contains(local.queue_dl_ids, id) }
   # TA5fix: link_outputs 는 IR id 로 합치므로 종류가 달라도 id 가 겹치면 안 된다 (VTA5h: 예전엔 조용히 덮어씀)
-  link_ids  = concat(keys(local.postgres), keys(local.cache), keys(local.object_store), keys(local.queue_all), keys(local.service), keys(local.job))
+  link_ids  = concat(keys(local.postgres), keys(local.cache), keys(local.object_store), keys(local.queue_all), keys(local.service), keys(local.job), keys(local.vm))
   namespace = local.cluster == 1 ? { for n in jsondecode(var.namespace_json) : n.name => n } : {}
   identity  = local.cluster == 1 ? { for i in jsondecode(var.identity_json) : i.id => i } : {}
 
@@ -177,10 +196,15 @@ locals {
   service = { for x in jsondecode(var.service_json) : x.id => x }
   job     = { for x in jsondecode(var.job_json) : x.id => x }
   svc_on  = length(local.service) > 0 ? 1 : 0
+  # RUNTIMEMAP v2: VM(GCE)
+  vm = { for x in jsondecode(var.vm_json) : x.id => x }
   # JOBMOD: 잡만 있어도 Direct VPC egress·프로젝트 번호가 필요하지는 않지만 서비스와 같은 규칙으로 DB 사설 길을 쓴다
   job_on = length(local.job) > 0 ? 1 : 0
   # 비밀 그릇 = 서비스들이 쓰는 secret id 합집합 (Builder 가 키마다 하나: app-<앱>-<비밀>-<키>. Cloud Run 은 JSON 키를 못 고름)
-  svc_secret_ids = toset(flatten([for x in local.service : [for s in jsondecode(x.secrets_json) : s.secret]]))
+  svc_secret_ids = toset(concat(
+    flatten([for x in local.service : [for s in jsondecode(x.secrets_json) : s.secret]]),
+    flatten([for x in local.vm : [for s in jsondecode(x.secrets_json) : s.secret]]),
+  ))
   # Cloud Run 주소는 결정적: https://<서비스>-<프로젝트 번호>.<리전>.run.app (모듈 출력 uri 를 쓰면 같은 for_each 안에서 순환)
   project_number = local.svc_on == 1 ? data.google_project.this[0].number : ""
   link_values = merge(
@@ -201,6 +225,10 @@ locals {
     value = try(local.link_values[regex("^<tf-output:link\\.([a-z][a-z0-9-]*\\.[a-z]+)>$", e.value)[0]], e.value)
   }] }
   job_cfg = { for id, x in local.job : id => merge(x, { env_json = jsonencode(local.job_env_rows[id]) }) }
+  # VM env 도 같은 규칙으로 조각을 합친다. VM 주소는 apply 뒤에야 알아서 다른 VM 을 가리키는 ref 는 Builder 가 계획 전에 막는다 (순환 방지)
+  vm_cfg = { for id, x in local.vm : id => merge(x, {
+    env_json = jsonencode([for e in jsondecode(x.env_json) : { name = e.name, value = join("", [for p in e.parts : p.ref == null ? p.lit : local.link_values[p.ref]]) }])
+  }) }
   service_cfg = { for id, x in local.service : id => merge(x, {
     env_json = jsonencode([for e in jsondecode(x.env_json) : { name = e.name, value = join("", [for p in e.parts : p.ref == null ? p.lit : local.link_values[p.ref]]) }])
   }) }
@@ -315,6 +343,18 @@ module "service" {
   secret_ids = { for n, x in google_secret_manager_secret.svc : n => x.secret_id }
 }
 
+# RUNTIMEMAP v2: GCE VM (VM 이 있을 때만). 서브넷은 서비스와 같은 곳(DB 사설 길 = 같은 VPC)
+module "vm" {
+  source     = "../kinds/vm"
+  for_each   = local.vm_cfg
+  cfg        = each.value
+  project_id = var.project_id
+  region     = var.region
+  subnetwork = local.svc_subnetwork
+  labels     = local.labels
+  secret_ids = { for n, x in google_secret_manager_secret.svc : n => x.secret_id }
+}
+
 # JOBMOD: Cloud Run job + Cloud Scheduler (잡이 있을 때만)
 module "job" {
   source     = "../kinds/job"
@@ -341,7 +381,7 @@ resource "terraform_data" "kind_ids" {
   lifecycle {
     precondition {
       condition     = length(distinct(local.link_ids)) == length(local.link_ids)
-      error_message = "postgres·cache·objectStore·queue·service·job 사이에 같은 IR id 가 있음 (IR id 는 전역 유일)."
+      error_message = "postgres·cache·objectStore·queue·service·job·vm 사이에 같은 IR id 가 있음 (IR id 는 전역 유일)."
     }
   }
 }
@@ -377,6 +417,17 @@ output "service_names" {
 }
 output "service_urls" {
   value = { for id, m in module.service : id => m.uri }
+}
+
+# RUNTIMEMAP v2: VM (IR id → 인스턴스 이름 목록 / 사설 IP 목록 / 머신 종류). 없으면 빈 값
+output "vm_instance_names" {
+  value = { for id, m in module.vm : id => m.instance_names }
+}
+output "vm_private_ips" {
+  value = { for id, m in module.vm : id => m.private_ips }
+}
+output "vm_machine_types" {
+  value = { for id, m in module.vm : id => m.machine_type }
 }
 
 # JOBMOD: 예약 잡 (IR id → Cloud Run job 이름 / Cloud Run 이 못 옮긴 칸). 없으면 빈 값

@@ -105,6 +105,17 @@ export const PERMS: PermTable = {
   aws_scheduler_schedule: {
     read: ["scheduler:GetSchedule", "scheduler:ListTagsForResource"],
     write: ["scheduler:CreateSchedule", "scheduler:UpdateSchedule", "scheduler:TagResource", "iam:PassRole"], remove: ["scheduler:DeleteSchedule"] },
+  // RUNTIMEMAP v2 DRAFT(ai): VM 도착(EC2) — kinds/vm 이 만드는 종류. 천장 파일엔 아직 안 넣음 (TA13 과 같은 이유, 보안 승인 몫)
+  //   인스턴스 프로파일 = iam:PassRole(역할) + iam:AddRoleToInstanceProfile. AMI 는 SSM 공개 매개변수(AL2023) 읽기
+  "data.aws_ssm_parameter": { read: ["ssm:GetParameter"], write: [], remove: [] },
+  aws_iam_instance_profile: {
+    read: ["iam:GetInstanceProfile", "iam:ListInstanceProfileTags"],
+    write: ["iam:CreateInstanceProfile", "iam:AddRoleToInstanceProfile", "iam:TagInstanceProfile", "iam:PassRole"],
+    remove: ["iam:DeleteInstanceProfile", "iam:RemoveRoleFromInstanceProfile"] },
+  aws_instance: {
+    read: ["ec2:DescribeInstances", "ec2:DescribeInstanceAttribute", "ec2:DescribeInstanceTypes", "ec2:DescribeVolumes", "ec2:DescribeTags", "ec2:DescribeInstanceCreditSpecifications"],
+    write: ["ec2:RunInstances", "ec2:CreateTags", "ec2:ModifyInstanceAttribute", "ec2:StopInstances", "ec2:StartInstances", "iam:PassRole"],
+    remove: ["ec2:TerminateInstances"] },
   aws_appautoscaling_target: {
     read: ["application-autoscaling:DescribeScalableTargets"],
     write: ["application-autoscaling:RegisterScalableTarget"], remove: ["application-autoscaling:DeregisterScalableTarget"] },

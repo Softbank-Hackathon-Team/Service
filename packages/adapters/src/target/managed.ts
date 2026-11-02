@@ -17,7 +17,7 @@ const lit = (s: string) => ({ lit: s, ref: null });
 const ref = (spec: AppSpecV2, to: string, out: string) => { linkTarget(spec, to, out); return { lit: null, ref: `${to}.${out}` }; };
 
 // IR env 한 줄 → 조각. 비밀은 따로 (값이 아니라 저장소 이름)
-function envParts(spec: AppSpecV2, e: EnvVarV2): Array<{ lit: string | null; ref: string | null }> {
+export function envParts(spec: AppSpecV2, e: EnvVarV2): Array<{ lit: string | null; ref: string | null }> {
   if ("value" in e) return [lit(e.value)];
   if ("fromLink" in e) return [ref(spec, e.fromLink.to, e.fromLink.output)];
   if ("template" in e) {
@@ -43,7 +43,7 @@ export function managedSecretName(p: ManagedProvider, spec: AppSpecV2, t: Target
   return `app-${spec.app.name}-${s(secret)}-${s(key)}`;
 }
 
-const entryTargets = (spec: AppSpecV2) => new Set((spec.entry?.hosts ?? []).flatMap((h) => h.routes.flatMap((r) => r.backends.map((b) => b.to))));
+export const entryTargets = (spec: AppSpecV2) => new Set((spec.entry?.hosts ?? []).flatMap((h) => h.routes.flatMap((r) => r.backends.map((b) => b.to))));
 
 export function managedServiceVars(p: ManagedProvider, spec: AppSpecV2, t: Target, imageRef: (src: string) => string) {
   const pub = entryTargets(spec);

@@ -1,8 +1,9 @@
 // RUNTIMEMAP (N8): 도착 실행 방식 = 출발과 같은 종류. 출발 k8s → 도착 k8s(EKS·GKE·k3s, 같은 Helm 차트), 출발 ECS·Cloud Run(관리형 컨테이너) → 도착 ECS(aws)·Cloud Run(gcp).
-//   사람이 runtime 을 바꾼 경우(runtime_change 승인)만 다른 종류 허용. 출발 VM 은 같은 종류의 도착이 없어 지금 k8s 로 감 (DRAFT, TODO(human))
+//   출발 VM(EC2·GCE) → 도착 VM (RUNTIMEMAP v2, 2026-11-02 결정: 최대한 출발 환경과 같게). 온프레 VM 은 없음(거부, TODO(human)).
+//   사람이 runtime 을 바꾼 경우(runtime_change 승인)만 다른 종류 허용 (컨테이너화 = opt-in)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AppSpecV2, checkV2, type Provider } from "@svc/contracts";
+import { AppSpecV2, checkV2, VmTfVars, type Provider } from "@svc/contracts";
 import { applySpecV2Patch } from "@svc/core";
 import { AdapterError, DEMO_INVENTORY_V2, managedBlockers, normalizeV2, targetBuilderFor, UNSUPPORTED_V2, v2Blockers } from "../src/index.js";
 
@@ -18,7 +19,7 @@ function withOrigin(s: AppSpecV2, runtime: string, product: string): AppSpecV2 {
   return AppSpecV2.parse(o);
 }
 const CLOUDRUN = () => withOrigin(ECS(), "managedContainer", "cloudRun");   // 관리형 컨테이너 출발 = ECS 와 같은 종류
-function withRuntime(s: AppSpecV2, runtime: "k8s" | "managedContainer", only?: string[]): AppSpecV2 {
+function withRuntime(s: AppSpecV2, runtime: "k8s" | "managedContainer" | "vm", only?: string[]): AppSpecV2 {
   const o: Raw = structuredClone(s);
   for (const c of o.components) if (c.kind === "service" && (!only || only.includes(c.id))) c.props.runtime = runtime;
   return AppSpecV2.parse(o);
@@ -107,14 +108,108 @@ test("PATCH: runtime 은 바꿀 수 있고(승인 줄이 따라옴) origin 은 �
     (e: unknown) => (e as { code?: string; status?: number }).code === "SPEC_PATCH_INVALID" && /origin/.test((e as Error).message));
 });
 
-// ── 출발 VM: 같은 종류의 도착 런타임이 없다 → 지금 k8s (DRAFT(ai)), 기본값은 TODO(human) ──
-test("출발 VM: 가져오기는 runtime=k8s 로 두고 승인 줄 runtime_change(vm→k8s)를 냄. 선택지 둘 다 막힘 없이 그려짐: k8s(aws·gcp·onprem), managedContainer(aws·gcp, onprem 거부)", () => {
-  const vm = withOrigin(K8S(), "vm", "ec2");
-  assert.ok(classChange(vm).length > 0 && classChange(vm).every((a) => a.from === "vm" && a.to === "k8s"));
-  for (const p of ["aws", "gcp", "onprem"] as const) { assert.deepEqual(unsupported(vm, p), [], p); assert.equal(isManaged(vm, p), false, p); }
-  // 선택지 2: 관리형 컨테이너 (잡이 없는 서비스만 있는 VM 앱이라고 가정 — ECS 데모 명세를 VM 출발로)
-  const vmManaged = withOrigin(ECS(), "vm", "ec2");
-  assert.ok(classChange(vmManaged).every((a) => a.from === "vm" && a.to === "managedContainer"));
-  for (const p of ["aws", "gcp"] as const) { assert.deepEqual(unsupported(vmManaged, p), [], p); assert.equal(isManaged(vmManaged, p), true, p); }
-  assert.ok(unsupported(vmManaged, "onprem").length > 0);
+// ── 출발 VM → 도착 VM (aws EC2 · gcp GCE) ──
+// 출발 VM 앱: ECS 데모에서 서비스끼리 부르는 web 을 빼고(VM 주소 참조는 아직 막혀 있음) VM 출발로 둔 것. api(2대)·worker(1대) + DB, 입구 = api
+function vmApp(): AppSpecV2 {
+  const o: Raw = structuredClone(withRuntime(withOrigin(ECS(), "vm", "ec2"), "vm"));
+  o.components = o.components.filter((c: Raw) => c.id !== "shop-web");
+  o.links = o.links.filter((l: Raw) => l.from !== "shop-web" && l.to !== "shop-web");
+  o.entry.hosts[0].routes = o.entry.hosts[0].routes.filter((r: Raw) => r.backends.every((b: Raw) => b.to !== "shop-web"));
+  return AppSpecV2.parse(o);
+}
+const isVm = (s: AppSpecV2, p: Provider) => "vm_json" in tf(s, p).vars;
+const vmItems = (s: AppSpecV2, p: Provider) => JSON.parse(String(tf(s, p).vars.vm_json)) as Array<Record<string, any>>;
+
+test("출발 VM 기본 = 도착 VM: 승인 줄(runtime_change) 0, aws(EC2)·gcp(GCE) 막힘 0, Terraform 은 vm_json 만 (service_json·k8s 신원·네임스페이스 없음)", () => {
+  const s = vmApp();
+  for (const c of s.components) if (c.kind === "service") assert.deepEqual([c.props.runtime, c.props.origin.runtime], ["vm", "vm"]);
+  assert.deepEqual(classChange(s), []);
+  for (const p of ["aws", "gcp"] as const) {
+    assert.deepEqual(unsupported(s, p), [], p);
+    const call = tf(s, p);
+    assert.equal(isVm(s, p), true, p);
+    assert.equal("service_json" in call.vars, false, p);
+    assert.equal(call.vars.identity_json, "[]", p);
+    assert.equal(call.vars.namespace_json, "[]", p);
+    assert.deepEqual(call.instances.filter((i) => i.kind === "vm").map((i) => [i.id, i.module]), [["shop-api", `${p}/kinds/vm`], ["shop-worker", `${p}/kinds/vm`]], p);
+    assert.ok(call.modules.some((m) => JSON.stringify(m).includes(`${p}/kinds/vm`)), p);
+    const items = vmItems(s, p);
+    items.forEach((x) => VmTfVars.parse(x));
+    assert.deepEqual(items.map((x) => [x.id, x.instances]), [["shop-api", 2], ["shop-worker", 1]], `${p}: 대수 = 출발 replicas.min`);
+    const api = items.find((x) => x.id === "shop-api")!;
+    assert.equal(api.port, 8080); assert.equal(api.public, true);
+    assert.match(api.image, /@sha256:[0-9a-f]{64}$/);
+    assert.match(api.role_name, /^app-/);
+    // 비밀 값은 안 옴 (저장소 이름만), DB 주소는 조각(ref)으로
+    assert.deepEqual(JSON.parse(api.secrets_json).map((x: Raw) => x.key), ["password"]);
+    assert.ok(JSON.parse(api.env_json).some((e: Raw) => e.parts.some((q: Raw) => q.ref === "shop-db.host")), p);
+  }
+});
+
+test("출발 VM 도착: DB 복제는 그대로 (postgres_json 은 VM 이 아닌 도착과 같은 모양, 논리 복제 켬), 값은 Helm 워크로드 없이 vm 목록", () => {
+  const s = vmApp();
+  for (const p of ["aws", "gcp"] as const) {
+    const k8s = tf(withRuntime(vmApp(), "k8s"), p).vars.postgres_json;
+    assert.equal(tf(s, p).vars.postgres_json, k8s, `${p}: DB 는 실행 방식과 무관`);
+    assert.equal(JSON.parse(String(k8s))[0].logical_replication, true, p);
+    const v: Raw = targetBuilderFor(p).toWorkloadValues(s, {}, at(p));
+    assert.deepEqual(v.workloads, [], p);
+    assert.deepEqual(v.vm.map((x: Raw) => [x.id, x.runtime, x.instances]), [["shop-api", p === "aws" ? "ec2" : "gce", 2], ["shop-worker", p === "aws" ? "ec2" : "gce", 1]], p);
+  }
+});
+
+test("컨테이너화는 opt-in: VM 출발을 runtime 만 바꾸면 승인 줄(vm→k8s·vm→managedContainer)이 따라오고 그 종류로 그려짐", () => {
+  const toK8s = withRuntime(vmApp(), "k8s");
+  assert.ok(classChange(toK8s).length > 0 && classChange(toK8s).every((a) => a.from === "vm" && a.to === "k8s"));
+  for (const p of ["aws", "gcp", "onprem"] as const) { assert.deepEqual(unsupported(toK8s, p), [], p); assert.equal(isVm(toK8s, p), false, p); assert.equal(isManaged(toK8s, p), false, p); }
+  const toManaged = withRuntime(vmApp(), "managedContainer");
+  assert.ok(classChange(toManaged).every((a) => a.from === "vm" && a.to === "managedContainer"));
+  for (const p of ["aws", "gcp"] as const) { assert.deepEqual(unsupported(toManaged, p), [], p); assert.equal(isManaged(toManaged, p), true, p); assert.equal(isVm(toManaged, p), false, p); }
+  // 반대로 k8s 출발을 VM 으로 바꾸는 것도 승인 줄 (재현성을 깨는 선택)
+  const k8sToVm = withRuntime(K8S(), "vm", ["shop-api"]);
+  assert.ok(classChange(k8sToVm).some((a) => a.from === "k8s" && a.to === "vm"));
+});
+
+test("PATCH: VM 출발의 runtime 을 k8s 로 바꾸면 승인 줄이 따라오고, vm 으로 되돌리면 사라짐 (origin 은 못 고침)", () => {
+  const s = vmApp();
+  const base = { spec: s, fieldMeta: {} as never };
+  const toK8s = applySpecV2Patch(base, { changes: [{ path: "components.shop-api.runtime", value: "k8s" }] });
+  assert.deepEqual(classChange(AppSpecV2.parse(toK8s.spec)).map((a) => a.subject), ["shop-api"]);
+  const back = applySpecV2Patch({ spec: toK8s.spec, fieldMeta: toK8s.fieldMeta as never }, { changes: [{ path: "components.shop-api.runtime", value: "vm" }] });
+  assert.deepEqual(classChange(AppSpecV2.parse(back.spec)), []);
+});
+
+// ── 거부: VM 모듈이 없는 도착, 섞임, VM 이 못 그리는 칸, 이미지 빌드 자리 ──
+test("거부: 온프레(k3s)·azure_mock 은 VM 도착 모듈이 없다 → runtime.vm 미지원 + 컨테이너로 옮기는 길(runtime 변경) 안내", () => {
+  const s = vmApp();
+  for (const p of ["onprem", "azure_mock"] as const) {
+    const u = unsupported(s, p);
+    assert.ok(u.some((m) => m.includes("runtime.vm") && m.includes("shop-api") && m.includes("runtime 을 k8s 로")), `${p}: ${u.join(" | ")}`);
+    if (p === "onprem") refuses(s, p);
+  }
+});
+
+test("거부: VM 서비스와 k8s 워크로드(잡) 섞임·VM 서비스끼리 주소·sidecars/volumes·이미지 빌드 자리", () => {
+  // 섞임: 같은 명세의 서비스 하나만 k8s
+  const mixed = withRuntime(vmApp(), "k8s", ["shop-worker"]);
+  assert.ok(unsupported(mixed, "aws").some((m) => m.includes("섞음")));
+  refuses(mixed, "aws");
+  // VM 끼리 주소: ECS 데모 그대로(web → api) 를 VM 으로
+  const chained = withRuntime(withOrigin(ECS(), "vm", "ec2"), "vm");
+  const u = unsupported(chained, "gcp");
+  assert.ok(u.some((m) => m.includes("shop-web") && m.includes("다른 서비스 주소")), u.join(" | "));
+  assert.ok(u.some((m) => m.includes("VM 서비스 사이 링크")));
+  refuses(chained, "gcp");
+  // VM 이 못 그리는 칸
+  const o: Raw = structuredClone(vmApp());
+  const api = o.components.find((c: Raw) => c.id === "shop-api");
+  api.props.volumes = [{ name: "data", mountPath: "/data" }];
+  api.props.ports.push({ name: "m", port: 9090, protocol: "TCP" });
+  const bad = unsupported(AppSpecV2.parse(o), "aws").join(" | ");
+  assert.match(bad, /volumes/); assert.match(bad, /ports 2개 이상/);
+  // 이미지가 빌드 자리(VM 가져오기 직후)면 이미지를 먼저 만들어야 함 — 지금은 image.build capability 없음
+  const built: Raw = structuredClone(vmApp());
+  built.components.find((c: Raw) => c.id === "shop-api").props.image = { source: "build", repository: "shop-api", digest: null,
+    build: { repo: "TODO(human):source-repo", commit: "TODO(human):deployed-commit", path: ".", method: "dockerfile", evidence: ["ec2:shop-api"] } };
+  assert.ok(unsupported(AppSpecV2.parse(built), "aws").some((m) => m.includes("image.build")));
 });

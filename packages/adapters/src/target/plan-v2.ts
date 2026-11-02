@@ -5,6 +5,7 @@ import { targetBuilderFor } from "./index.js";
 import { azureShapeBlockers } from "./azure-mock.js";
 import { grantBlockers, grantWarnings } from "./grants.js";
 import { managedWarnings } from "./managed.js";
+import { vmWarnings } from "./vm.js";
 
 // TA3 DRAFT(ai): 계획·적용 연결용 순수 조각 (설계 27번 3.5·3.6). DB·네트워크 없음. 워커(plan·precheck·apply·deploy)가 부른다
 
@@ -63,6 +64,8 @@ export function v2PrecheckItems(provider: Provider, row: SpecV2Source): Precheck
   grantWarnings(provider, r.spec).forEach((m, n) => out.push({ id: `PC-V2-GRANTS-${n + 1}`, level: "warn", message: `WARN 권한 — ${m}` }));
   if (provider === "aws" || provider === "gcp")
     managedWarnings(provider, r.spec).forEach((m, n) => out.push({ id: `PC-V2-MANAGED-${n + 1}`, level: "warn", message: `WARN 관리형 — ${m}` }));
+  if (provider === "aws" || provider === "gcp")
+    vmWarnings(provider, r.spec).forEach((m, n) => out.push({ id: `PC-V2-VM-${n + 1}`, level: "warn", message: `WARN VM — ${m}` }));
   return out.map((i) => PrecheckItem.parse(i));
 }
 
@@ -81,6 +84,8 @@ export function flattenTfOutputsV2(out: TfOutputs): TfOutputs {
   for (const [id, v] of Object.entries(obj(out.identity_role_arns) ?? {})) put(`identity.${id}.role_arn`, v);
   // TA13: 관리형 서비스 이름 (aws·gcp 루트 출력 service_names)
   for (const [id, v] of Object.entries(obj(out.service_names) ?? {})) put(`service.${id}.name`, v);
+  // RUNTIMEMAP v2: VM 머신 종류 (aws·gcp 루트 출력 vm_machine_types)
+  for (const [id, v] of Object.entries(obj(out.vm_machine_types) ?? {})) put(`vm.${id}.machine`, v);
   return res;
 }
 

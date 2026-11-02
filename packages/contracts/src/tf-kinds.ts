@@ -140,6 +140,28 @@ export const ServiceTfVars = z.object({
 }).strict();
 export type ServiceTfVars = z.infer<typeof ServiceTfVars>;
 
+// RUNTIMEMAP v2: VM 서비스 (EC2 · GCE). 출발이 VM 이면 도착도 VM (재현성 기본). kinds/vm(aws·gcp) 이 받는 cfg. 루트의 vm_json.
+//   DRAFT(ai): 앱 설치 = 컨테이너 이미지를 VM 위에서 docker + systemd 로 돌림 (user-data / startup-script). 출발 VM 의 설치 방식(패키지·스크립트)은
+//   가져오기가 안 읽음 → 이미지 빌드 계획은 IR 의 BuildPlan(TODO(human)). 자동 확장(ASG·MIG)·LB 는 없음: 대수 = instances 고정
+export const VmTfVars = z.object({
+  id: TfId,
+  name: z.string(),                  // 도착 VM 이름 (인스턴스는 <name>-<번호>)
+  role_name: z.string(),             // 모듈이 만드는 실행 신원 이름 (aws IAM 역할 app- / gcp SA account_id app- 30자)
+  image: z.string(),                 // 도착 레지스트리 주소 + digest (VM 이 docker 로 받음)
+  command_json: z.string().nullable(),
+  args_json: z.string().nullable(),
+  cpu_milli: z.number().int().nullable(),   // 머신 종류를 고르는 기준 (이상인 가장 작은 것). null = 상품 기본
+  mem_mib: z.number().int().nullable(),
+  port: z.number().int().nullable(),        // 받는 포트 하나 (없으면 워커)
+  instances: z.number().int(),              // VM 대수 (출발 replicas.min)
+  health_path: z.string().nullable(),
+  env_json: z.string(),                     // 루트가 조각을 합친 뒤엔 [{name, value}] (service 와 같은 규칙)
+  secrets_json: z.string(),                 // 도착 비밀 저장소 이름 (값 아님). VM 이 시작할 때 읽어 환경 파일에 씀
+  identity: TfId,
+  public: z.boolean(),
+}).strict();
+export type VmTfVars = z.infer<typeof VmTfVars>;
+
 // 루트 변수 이름(`<이름>_json`) ↔ 항목 스키마. 어댑터·HCL 대조 시험이 이 표를 씀
 export const TF_KIND_VARS = {
   postgres: PostgresTfVars,
@@ -150,8 +172,9 @@ export const TF_KIND_VARS = {
   queue: QueueTfVars,
   job: JobTfVars,
   service: ServiceTfVars,
+  vm: VmTfVars,
 } as const;
-export const TF_VAR_KINDS = ["postgres", "namespace", "identity", "cache", "objectStore", "queue", "job", "service"] as const;
+export const TF_VAR_KINDS = ["postgres", "namespace", "identity", "cache", "objectStore", "queue", "job", "service", "vm"] as const;
 export type TfVarKind = (typeof TF_VAR_KINDS)[number];
 
 // 모듈 내부 출력: 비밀 이름만. link_outputs 에는 안 섞음

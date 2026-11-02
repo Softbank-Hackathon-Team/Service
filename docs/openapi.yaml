@@ -4167,6 +4167,7 @@ components:
                   enum:
                     - "k8s"
                     - "managedContainer"
+                    - "vm"
                 origin:
                   $ref: "#/components/schemas/OriginV2"
                 namespace:
@@ -8179,6 +8180,7 @@ components:
         - "queue"
         - "job"
         - "service"
+        - "vm"
     OriginV2:
       type: "object"
       properties:

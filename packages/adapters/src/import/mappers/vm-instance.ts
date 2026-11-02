@@ -43,7 +43,9 @@ export const vmInstanceMapper: KindMapper = {
     const resources = cpu != null || mem != null ? { request: { cpuMilli: cpu, memMiB: mem } } : {};
     const publicRule = rules?.some((r) => r.sources.includes("0.0.0.0/0") && !(r.fromPort === r.toPort && ADMIN.has(r.fromPort)) && r.toPort - r.fromPort + 1 <= MAX_RANGE) ?? false;
     const props: Record<string, unknown> = {
-      runtime: "k8s",
+      // RUNTIMEMAP v2 DECISION(team): VM 출발의 기본 도착은 VM (최대한 출발 환경과 같게, 2026-11-02 결정). 컨테이너로 옮기는 건 명세 검토에서
+      //   runtime 을 k8s·managedContainer 로 바꾸는 opt-in 이고 그때 runtime_change 승인 줄이 생긴다
+      runtime: "vm",
       origin: { runtime: "vm", product: g.product },
       // STUB: VM 에는 이미지가 없다. 도착에서 소스를 빌드해 이미지를 만든다 (BuildPlan). 레포·커밋은 사람이 채운다
       // TODO(human): 소스 레포·운영 커밋·빌드 방식(dockerfile|buildpacks)·시작 명령. 지금 값은 자리 표시
@@ -66,10 +68,10 @@ export const vmInstanceMapper: KindMapper = {
         .flatMap((r) => r.sources.map((s) => ({ from: s, ...(r.fromPort === r.toPort ? { port: r.fromPort } : {}) }))) : "unknown",
         public: g.hasPublicIp === undefined ? null : !!g.hasPublicIp && publicRule },
       meta: {
-        origin: m(src, 1, "VM 출발 → 도착은 컨테이너(k8s)로 리플랫폼. 기본 도착 실행 방식은 사람 결정(N8 와 같이)"),
-        image: m(`${src}.image`, 0.6, "VM 에는 이미지가 없음 → 도착에서 빌드(BuildPlan 자리, 레포·커밋은 사람이 채움)"),
+        origin: m(src, 1, "VM 출발 → 도착도 VM (EC2·GCE, 출발과 같은 클래스가 기본). 컨테이너로 옮기려면 runtime 을 바꾸고 실행 방식 바뀜 승인"),
+        image: m(`${src}.image`, 0.6, "VM 에는 이미지가 없음 → 도착에서 빌드(BuildPlan 자리, 레포·커밋은 사람이 채움). 도착 VM 은 그 이미지를 docker 로 돌림"),
         resources: cpu != null || mem != null
-          ? m(`${src}.instanceType`, 0.6, mixed ? `종류가 섞여 있음(${g.instanceTypes.join(", ")}) → 가장 큰 쪽 기준. VM 크기를 요청량으로 옮김, 사람 확인` : "VM 크기를 요청량으로 옮김. 컨테이너에 맞는 값인지 사람 확인")
+          ? m(`${src}.instanceType`, 0.6, mixed ? `종류가 섞여 있음(${g.instanceTypes.join(", ")}) → 가장 큰 쪽 기준. VM 크기를 요청량으로 옮김, 사람 확인` : "VM 크기를 요청량으로 옮김 (도착 VM 머신 종류를 고르는 기준). 사람 확인")
           : m(`${src}.instanceType`, 0.6, "VM 크기를 못 읽음"),
         env: m(`${src}.env`, 0.6, "VM 환경변수·시작 스크립트는 읽지 않음(비밀이 있을 수 있음). 사람이 채움"),
         serviceAccount: g.identity ? m(`${src}.identity`) : m(`${src}.identity`, 0.9, "인스턴스 프로파일·서비스 계정 없음 → default"),

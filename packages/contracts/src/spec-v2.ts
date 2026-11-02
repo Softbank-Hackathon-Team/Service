@@ -122,7 +122,8 @@ export type OriginV2 = z.infer<typeof OriginV2>;
 const ServiceV2 = z.object({
   id: Id, kind: z.literal("service"),
   props: z.object({
-    runtime: z.enum(["k8s", "managedContainer"]),      // 도착 실행 방식. 재현성: 기본은 출발과 같은 클래스
+    // 도착 실행 방식. 재현성: 기본은 출발과 같은 클래스 (VM → VM, ECS·Cloud Run → 관리형 컨테이너, k8s → k8s). 다른 칸은 runtime_change 승인
+    runtime: z.enum(["k8s", "managedContainer", "vm"]),
     origin: OriginV2,
     ...Workload,
     ports: z.array(PortSpec).max(10).optional(),        // 없을 수 있다 (워커)
