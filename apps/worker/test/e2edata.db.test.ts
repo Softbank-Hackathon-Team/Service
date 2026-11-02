@@ -69,7 +69,8 @@ const GCP: Array<[string, Reply]> = [
   ["gcloud pubsub subscriptions list", { out: [{ name: "projects/p/subscriptions/orders-sub", topic: "projects/p/topics/orders", ackDeadlineSeconds: 60,
     deadLetterPolicy: { deadLetterTopic: "projects/p/topics/orders-dlq", maxDeliveryAttempts: 5 } }] }],
   ["gcloud redis instances list", { out: [{ name: "projects/p/locations/asia-northeast3/instances/shop-cache", redisVersion: "REDIS_7_0", memorySizeGb: 2, tier: "STANDARD_HA", host: "10.9.0.3" }] }],
-  ...KC([{ name: "CACHE_ADDR", value: "10.9.0.3" }]),
+  // BOUNDARY 뒤: 앱이 env 로 가리키는 데이터 자원만 명세에 → Pub/Sub 토픽도 env 로 가리킴 (DLQ 토픽은 경계 안 토픽을 따라 들어감)
+  ...KC([{ name: "CACHE_ADDR", value: "10.9.0.3" }, { name: "ORDERS_TOPIC", value: "orders" }]),
 ];
 
 function installFakeClis(table: Array<[string, Reply]>) {

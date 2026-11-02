@@ -49,6 +49,8 @@ export { targetBuilderFor, awsTarget, gcpTarget, onpremTarget, azureMockTarget, 
 export { verifyGcpObserve, OPTIONAL_PROBES, gcpEnvFor, gcpReasonOf, type VerifyGcpInput, type VerifyGcpResult } from "./verify/gcp.js";   // L7i
 // L5b: 빌린 AWS 실행 자격 → terraform 자식 프로세스 (credential_process 임시 파일)
 export { borrowedAwsCreds, type BorrowedAwsCreds, type AwsSessionKeys } from "./terraform/borrowed-aws.js";
+// DEPLOYNONK8S: Terraform 이 앱까지 띄우는 도착(ECS·Cloud Run·VM)의 배포 확인
+export { terraformRuntimeOf, checkTerraformRuntime, type TerraformRuntime, type RuntimeHealth, type RuntimeHealthCode, type RuntimeHealthInput, type RuntimeHealthDeps } from "./target/runtime-health.js";
 // TA10: Azure Mock 도착 Builder v2 (capability 표 + mock plan)
 export { azureMockPlanV2, azureMockOutputsV2, azureResourceTypesV2, type AzureMockPlanV2 } from "./target/index.js";
 // TA3: 계획·적용 연결 (PLAN_IR=v2) — v2 명세 출처 고르기·precheck 대조·출력 펼치기·흉내 출력
