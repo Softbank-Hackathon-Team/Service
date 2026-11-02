@@ -23,7 +23,7 @@ test("GCP: DLQ 대상 토픽은 queue 로(신뢰도 0.9 + 이유), 그냥 토픽
   assert.equal(comp(result.spec, "orders").props.model, "topic");   // DLQ 를 가진 쪽은 바뀌지 않음
   assert.deepEqual(comp(result.spec, "orders").props.deadLetter, { to: "orders-dlq", maxReceive: 5 });
   const m = result.fieldMeta["components.orders-dlq.model"]!;
-  assert.equal(m.confidence, 0.9); assert.match(m.rationale ?? "", /DLQ 대상/);
+  assert.equal(m.confidence, 0.9); assert.match(m.rationale ?? "", /DLQ 로 쓰이는 토픽 → 꺼내 읽는 queue/);   // E2EDATA2 문구(TA12c 중복 블록은 지움)
   // 도착 aws·gcp 모두 막힘 없음 (DLQ 규칙 통과)
   for (const p of ["aws", "gcp"] as const) assert.deepEqual(v2Blockers(result.spec, targetBuilderFor(p).capabilities()).unsupported, [], p);
 });
@@ -79,7 +79,10 @@ test("사람 확인: 캐시 출발 방화벽을 못 읽으면 막지 않고 need
   const unk = v2Blockers(spec({ intent: "connect" }, withFirewall("unknown")), caps);
   assert.deepEqual(unk.unsupported, []);
   assert.ok(unk.needsHuman.some((x) => /shop-cache: 출발 방화벽을 못 읽음/.test(x)));
-  assert.deepEqual(v2Blockers(spec({ intent: "connect" }, withFirewall([])), caps).needsHuman, []);
+  // 허용 목록을 정하면 방화벽 줄은 사라진다. 남는 건 VTA12fix 의 AWS AUTH 줄(방화벽과 별개) 하나뿐
+  const after = v2Blockers(spec({ intent: "connect" }, withFirewall([])), caps).needsHuman;
+  assert.ok(!after.some((x) => /방화벽/.test(x)), after.join("|"));
+  assert.deepEqual(after.filter((x) => !/AUTH 를 씀/.test(x)), []);
 });
 test("사람 확인: 출발이 공개였는데 CIDR 허용이 없거나, 보안 그룹 같은 원본이 있으면 needsHuman", () => {
   const caps = targetBuilderFor("gcp").capabilities();
