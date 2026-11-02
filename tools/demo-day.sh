@@ -102,6 +102,15 @@ run() {
   if [ "$DRY" = 1 ]; then echo "DRY: $*" >> "$PROGRESS"; return 0; fi
   "$@"
 }
+# aws/env·bootstrap 의 필수 변수 expected_account_id: 값은 sts 에서 받아 환경 변수(TF_VAR_)로만 넘긴다 — 명령줄·로그에 안 찍힘.
+#   이미 TF_VAR_expected_account_id 가 있으면 그대로 쓴다(사람이 export 한 우회와 같이 써도 됨). dry-run 은 자리값
+aws_account_var() {
+  [ -n "${TF_VAR_expected_account_id:-}" ] && return 0
+  if [ "$DRY" = 1 ]; then export TF_VAR_expected_account_id=000000000000; return 0; fi
+  local a
+  a=$(aws sts get-caller-identity --query Account --output text 2>/dev/null) || { log "aws sts 실패: expected_account_id 를 못 받음"; return 1; }
+  case "$a" in [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) export TF_VAR_expected_account_id="$a" ;; *) log "aws sts 응답 모양이 계정 번호 아님"; return 1 ;; esac
+}
 # step <이름> <명령…>: 시작·끝·rc·초를 progress.log 에. 출력은 <이름>.log
 step() {
   local name=$1 t0 rc
@@ -150,7 +159,7 @@ u_tools() {
   run bash tools/cloud-precheck.sh
 }
 u_gke() { run terraform -chdir="$TFG" init -input=false && run terraform -chdir="$TFG" apply -input=false -auto-approve -var "project_id=$GCP_PROJECT"; }
-u_eks() { run terraform -chdir="$TFA" init -input=false && run terraform -chdir="$TFA" apply -input=false -auto-approve -var create_eks=true; }
+u_eks() { aws_account_var && run terraform -chdir="$TFA" init -input=false && run terraform -chdir="$TFA" apply -input=false -auto-approve -var create_eks=true; }
 u_kubeconfig() {
   run gcloud container clusters get-credentials "$CLUSTER_NAME" --zone "$GCP_ZONE" --project "$GCP_PROJECT" &&
   run aws eks update-kubeconfig --name "$(tfout "$TFA" cluster_name)" --alias "$EKS_CONTEXT" --region "$AWS_REGION"
@@ -253,8 +262,8 @@ print(u.urlunsplit((p.scheme, auth + sys.argv[2] + ":5432", p.path, "sslmode=req
   echo "공개 설정 $(grep -c '=' "$ENVF")줄 → $ENVF (.env 는 안 고침)"
 }
 with_env() { ( set -a; . "$ENVF"; set +a; "$@" ); }
-u_vpc() { run terraform -chdir="$TFA" init -input=false && run terraform -chdir="$TFA" apply -input=false -auto-approve -var create_eks=false; }
-u_eks_add() { run terraform -chdir="$TFA" apply -input=false -auto-approve -var create_eks=true; }
+u_vpc() { aws_account_var && run terraform -chdir="$TFA" init -input=false && run terraform -chdir="$TFA" apply -input=false -auto-approve -var create_eks=false; }
+u_eks_add() { aws_account_var && run terraform -chdir="$TFA" apply -input=false -auto-approve -var create_eks=true; }
 # 워커·API 를 뒤에서 띄우고 smoke(RDS 생성)를 뒤에서 시작한다. 끝은 u_rds_wait 가 기다린다
 RDS_PID=""
 u_rds_start() {
@@ -427,7 +436,7 @@ d_relay() { [ -d "$TFR/.terraform" ] || [ "$DRY" = 1 ] || { echo "중계기 init
   local vpc
   vpc=$(tfout "$TFA" vpc_id) && [ -n "$vpc" ] || { echo "aws/env 출력 vpc_id 없음 → 중계기 destroy 를 못 함 (env 보다 먼저 지워야 한다)"; return 1; }
   run terraform -chdir="$TFR" destroy -input=false -auto-approve -var "vpc_id=$vpc" -var public_subnet_id=x -var ssh_public_key=x -var 'ssh_cidrs_json=["127.0.0.1/32"]'; }
-d_eks() { run terraform -chdir="$TFA" destroy -input=false -auto-approve -var create_eks=true; }
+d_eks() { aws_account_var && run terraform -chdir="$TFA" destroy -input=false -auto-approve -var create_eks=true; }
 d_gke() { run terraform -chdir="$TFG" destroy -input=false -auto-approve -var "project_id=$GCP_PROJECT"; }
 d_zero() { run bash tools/cloud-zero.sh; }
 
