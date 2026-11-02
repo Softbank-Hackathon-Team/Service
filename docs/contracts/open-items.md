@@ -180,7 +180,7 @@ flowchart LR
 | 실패·멈춤 정보 칸 | 【사실】 `paused_from`, `failed_at_status`, `failure_code`, `rollback_window_ends_at`을 쓰는 코드가 없다 | 화면이 왜 멈췄는지 못 보여 준다 | `advance()` 옵션으로 넣는다 |
 | 상태 칸 검사 | 【사실】 `migrations.status`, `environments.connection_status`가 아무 글자나 받는다 | 오타 난 상태가 DB에 들어갈 수 있다 | SQL `CHECK` 규칙 |
 | `deploy` 작업 모양 | 【사실】 `MigrationJob` | 설계는 "도착 자원 준비됨"(`InfraReady`)을 넘긴다 | DB 표에 저장하고 작업에는 번호만 |
-| 화면 신호 | 【사실】 DB 알림은 보내지만 `GET /events`가 없다 | 화면이 실시간으로 못 바뀐다 | SSE 경로를 더한다 |
+| 화면 신호 | 【사실】 `GET /events`가 상태 변경 신호를 보낸다. `weight_changed`·`rollback_*`·`matrix_changed`·`agent.step`은 보내는 쪽이 없다 | 트래픽 비율·보안 표 변화는 화면이 폴링으로만 안다 | 보내는 쪽에 `pg_notify`를 더한다 |
 | `CreateMigration` 위치 | 【사실】 경로 파일 안 | 화면과 CLI도 같은 모양이 필요하다 | contracts로 옮긴다 |
 
 ---

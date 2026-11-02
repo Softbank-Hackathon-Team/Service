@@ -14,7 +14,7 @@ const noop = () => {};
 const SECTIONS = [
   { id: 'color', label: '색' },
   { id: 'type', label: '글자' },
-  { id: 'layout', label: '간격과 모서리' },
+  { id: 'layout', label: '간격, 모서리, 칸' },
   { id: 'assets', label: '로고와 아이콘' },
   { id: 'controls', label: '조작' },
   { id: 'tiles', label: '타일' },
@@ -197,7 +197,7 @@ export function DesignSystemPage({ onExit }: { onExit: () => void }) {
           </div>
         </Section>
 
-        <Section id="layout" title="간격과 모서리" source="src/design/tokens.css">
+        <Section id="layout" title="간격, 모서리, 칸" source="src/design/tokens.css">
           <div className={s.scale}>
             {matching('--space-').map((name) => (
               <div key={name} className={s.scaleItem}>
@@ -214,6 +214,27 @@ export function DesignSystemPage({ onExit }: { onExit: () => void }) {
               </div>
             ))}
           </div>
+          <div className={s.scale}>
+            {matching('--size-control-').map((name) => (
+              <div key={name} className={s.scaleItem}>
+                <span className={s.controlBar} style={{ height: `var(${name})` }} />
+                <code className="t-code-sm c-secondary">
+                  {name.replace('--size-', '')} {value(name)}
+                </code>
+              </div>
+            ))}
+          </div>
+          <p className="t-body-sm c-secondary">
+            콘솔(apps/web)의 벤토는 큰 카드만 늘고 줄며, 나머지 칸을 아래 너비로 고정합니다. 프로토타입 화면은 아직 화면마다 정한 칸 비율을 씁니다.
+          </p>
+          <ul className={s.tokenList}>
+            {[...matching('--col-'), '--gap-bento', '--content-max', '--hero-offset'].map((name) => (
+              <li key={name}>
+                <code className="t-code-sm">{name}</code>
+                <code className="t-code-sm c-secondary">{value(name)}</code>
+              </li>
+            ))}
+          </ul>
         </Section>
 
         <Section id="assets" title="로고와 아이콘" source="src/components/ui/Logo.tsx · Icon.tsx">
