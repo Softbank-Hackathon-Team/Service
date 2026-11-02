@@ -1,7 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
-import { ApprovalInput, PlanDoc, QUEUES } from "@svc/contracts";
-import { withTenant, advance, DomainError, planExpired, type Tx } from "@svc/core";
+import { randomUUID } from "node:crypto";
+import { ApprovalInput, PlanDoc, QUEUES, type MigrationStatus } from "@svc/contracts";
+import { withTenant, advance, writeAudit, DomainError, planExpired, type Tx } from "@svc/core";
 import { Accepted, ApprovalResult, errors } from "./responses.js";
 import { IdParam, auditOk, found, nextJob } from "./kit.js";
 import { loadLatestApproval, loadLatestPlan, loadPlanById, saveApproval } from "./plan-store.js";
@@ -12,15 +13,19 @@ import { loadLatestApproval, loadLatestPlan, loadPlanById, saveApproval } from "
 //   GET  /plans/:id                 계획서 내용·지문
 //   POST /plans/:id/approvals       awaiting_approval → approved | rejected  (planHash 바인딩)
 //   POST /migrations/:id/start      approved → provisioning     (+ apply 작업)
+//   POST /migrations/:id/replan     failed(provisioning 이하)·stale·rejected → planning  (+ plan 작업)
+//   POST /migrations/:id/spec/reopen  rejected → spec_review    (거절 뒤 명세부터 고칠 때)
 // 상태를 바꾸는 POST 하나 = advance() 한 번.
 // TODO(human): Idempotency-Key 필수 처리는 공용 플러그인이 붙으면 이 경로들에도 걸린다
 
 async function migrationOf(tx: Tx, id: string) {
   const q = await tx.query(
-    `SELECT id, status, source_env_id AS "sourceEnvId", target_env_id AS "targetEnvId"
+    `SELECT id, status, source_env_id AS "sourceEnvId", target_env_id AS "targetEnvId",
+            failed_at_status AS "failedAtStatus"
        FROM migrations WHERE id=$1`, [id]);
   // 남의 회사 것도 RLS 때문에 404
-  return found(q.rows[0] as { id: string; status: string; sourceEnvId: string; targetEnvId: string } | undefined,
+  return found(q.rows[0] as { id: string; status: MigrationStatus; sourceEnvId: string; targetEnvId: string;
+    failedAtStatus: MigrationStatus | null } | undefined,
     "migration", id);
 }
 
@@ -103,6 +108,48 @@ export async function planRoutes(app: FastifyInstance) {
         next: nextJob(req, QUEUES.apply, id, { extra: { planId: appr?.planId, planHash: appr?.planHash },
                                                singletonKey: `apply:${m.targetEnvId}` }),
         audit: auditOk(req, "migration.provisioning", id, { planId: appr?.planId }),
+      });
+      return { status: 202, body: { id } };
+    });
+  });
+
+  // 다시 계획하기. failed(실패 지점이 provisioning 이하)·stale·rejected 에서 planning 으로 되돌리고 plan 작업을 넣는다. 202
+  // DRAFT(ai): H-8 이른 실패의 환경 잠금은 지금 코드대로 실패 때 이미 풀려 있다(advance.ts RELEASES_LOCK). 설계 6.4(잠금 유지)와 어긋남 —
+  //   다시 승인할 때 잠금을 새로 예약하고, 그 사이 다른 이전이 같은 환경을 잡으면 409 ENV_BUSY. 어긋남은 PR 설명에 적는다
+  // DRAFT(ai): H-9 importing·prechecking 에서 실패한 이전은 여기서 막는다(409 REPLAN_NOT_ALLOWED) — "취소 후 새 이전".
+  //   T37 가드(guards.ts)는 그대로 둔다. 그 밖의 실패 지점(cutover 등)은 가드가 409 GUARD_FAILED 로 막는다
+  r.post("/migrations/:id/replan", { schema: { params: IdParam,
+    response: { 202: Accepted, ...errors(400, 401, 403, 404, 409, 500) } } }, async (req, reply) => {
+    const id = req.params.id;
+    return req.idempotent(reply, async (tx) => {
+      const m = await migrationOf(tx, id);
+      if (m.status === "failed" && (m.failedAtStatus === "importing" || m.failedAtStatus === "prechecking"))
+        throw new DomainError(409, "REPLAN_NOT_ALLOWED",
+          `failed at ${m.failedAtStatus}: cancel and start a new migration`);
+      const planId = randomUUID();
+      // precheck.ts 가 plan 작업을 넣는 모양 그대로 (작업 키 plan:<이전 번호>)
+      await advance(tx, { id, tenantId: req.tenantId }, m.status, "planning", {
+        next: { queue: QUEUES.plan,
+                data: { tenantId: req.tenantId, requestId: req.id, migrationId: id, planId },
+                opts: { singletonKey: `${QUEUES.plan}:${id}` } },
+        audit: auditOk(req, "migration.replanning", id, { planId, fromStatus: m.status, failedAtStatus: m.failedAtStatus }),
+      });
+      // 실패를 사람이 다시 시도한 횟수 (재시도 한도는 이 줄을 센다). stale·rejected 에서 다시 계획하는 것은 실패 재시도가 아니라 세지 않는다
+      if (m.status === "failed")
+        await writeAudit(tx, req.tenantId, { actor: req.actor, action: "migration.retried", target: id, result: "ok",
+          detail: { planId, failedAtStatus: m.failedAtStatus } });
+      return { status: 202, body: { id } };
+    });
+  });
+
+  // 거절된 계획 뒤에 명세부터 다시 고친다 (VALID rejected → spec_review). 202
+  r.post("/migrations/:id/spec/reopen", { schema: { params: IdParam,
+    response: { 202: Accepted, ...errors(400, 401, 403, 404, 409, 500) } } }, async (req, reply) => {
+    const id = req.params.id;
+    return req.idempotent(reply, async (tx) => {
+      const m = await migrationOf(tx, id);
+      await advance(tx, { id, tenantId: req.tenantId }, m.status, "spec_review", {
+        audit: auditOk(req, "migration.spec_reopened", id, { fromStatus: m.status }),
       });
       return { status: 202, body: { id } };
     });
