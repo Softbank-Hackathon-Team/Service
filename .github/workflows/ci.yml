@@ -105,6 +105,15 @@ jobs:
         env:
           NODE_OPTIONS: ${{ env.TEST_REPORT_OPTS }}
       - name: start api + worker (background)
+        # smoke 가 쓰는 시험 스위치 (apps/web/playwright.config.ts 의 webServer env 와 같게). test:db 에는 안 준다(기본값 시험이 있어서)
+        # 없으면 x-dev-tenant 가 401 이고(DEV_AUTH, Z93), 워커는 진짜 terraform·Argo·점검 길로 간다(MOCK_*, Z89)
+        env:
+          DEV_AUTH: "1"
+          MOCK_SEED: "1"
+          MOCK_IAC: "1"
+          MOCK_ARGO: "1"
+          MOCK_PRECHECK: "1"
+          FAKE_LLM: "1"
         run: |
           mkdir -p .ci-logs
           nohup npm run start -w @svc/worker > .ci-logs/worker.log 2>&1 &
@@ -135,6 +144,14 @@ jobs:
     timeout-minutes: 20
     env:
       TRAFFIC_OBSERVE_SEC: "0.5"   # 워커가 읽는다
+      # Playwright 는 떠 있는 서버를 그대로 쓴다(reuseExistingServer) → 여기서 띄우는 api·worker 에 webServer env 를 같게 준다
+      DEV_AUTH: "1"
+      MOCK_SEED: "1"
+      MOCK_IAC: "1"
+      MOCK_ARGO: "1"
+      MOCK_PRECHECK: "1"
+      FAKE_LLM: "1"
+      ROLLBACK_WINDOW_SEC: "20"
     services:
       db:
         image: postgres:16-alpine
