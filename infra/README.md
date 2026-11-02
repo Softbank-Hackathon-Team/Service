@@ -10,6 +10,7 @@ packages/adapters  toTerraform(spec, target) ──► infra/modules/<환경>/ap
 
 | 폴더 | 무엇을 만드나 | 누가 돌리나 |
 |---|---|---|
+| `modules/aws/bootstrap` | Terraform state 버킷(S3, 퍼블릭 차단·버전 관리·암호화·TLS 강제) + 이 버킷만 쓰는 `tf-state` 역할 | 사람, 로컬 state, 맨 처음 한 번 |
 | `modules/aws/env` | VPC(공개2·사설2) + NAT 1 + EKS + Pod Identity 애드온 + ECR `platform` | 사람, 로컬 세션, 한 번 |
 | `modules/aws/platform` | 플랫폼 자체 저장소: 이미지 ECR 4개(`svc-*`, 태그 변경 금지·올릴 때 스캔·최근 10개) + 플랫폼 DB(RDS Postgres 16, 사설, 비밀번호는 RDS가 Secrets Manager에 관리) + 증거 버킷(S3, 퍼블릭 차단·버전 관리·TLS 강제). VPC·EKS는 받기만 하고, 증거 쓰기 권한은 워커 역할 쪽에서 `evidence_bucket_arn`으로 붙인다 | 사람, 한 번 |
 | `modules/aws/app` | RDS Postgres(논리 복제 켬, 비밀번호는 RDS가 Secrets Manager에 관리) + 보안 그룹 + 시크릿 그릇 + 앱 IAM 역할(Pod Identity) | worker, 승인된 plan만 |
@@ -26,6 +27,22 @@ packages/adapters  toTerraform(spec, target) ──► infra/modules/<환경>/ap
 - 권한표를 고치면 `npx tsx packages/adapters/scripts/export-permissions.ts infra/permissions`.
 - `modules/aws/env` kubectl 관리자: 변수 `admin_principal_arn`(선택). 주면 그 IAM role/user에 access entry + `AmazonEKSClusterAdminPolicy`(클러스터 범위), 비우면 `bootstrap_cluster_creator_admin_permissions = true`(terraform 돌린 주체가 admin, 데모용). 이 값을 나중에 바꾸면 EKS가 다시 만들어진다. DRAFT(ai)
 - 이 레포의 클라우드 세션에서는 `init -backend=false`, `validate`, `test`(mock)만. **apply/destroy는 사람 승인 후 로컬에서만.**
+
+## 실행 순서
+`aws/bootstrap` → `aws/env`·`aws/platform` → 앱(worker). 정리는 역순, bootstrap 맨 마지막.
+
+```
+cd infra/modules/aws/bootstrap
+terraform init
+terraform apply -var expected_account_id=$(aws sts get-caller-identity --query Account --output text)
+#   주체를 좁힐 때만: -var 'state_admin_principal_arns=["arn:aws:iam::<계정>:user/<이름>"]'
+
+# 다른 스택: backend.s3.tf.example 을 backend.tf 로 복사하고, bootstrap 출력값을 레포 밖 파일로 넘긴다
+#   ~/.svc-tf/backend.hcl:  bucket = "<state_bucket>"
+#                           assume_role = { role_arn = "<tf_state_role_arn>" }
+terraform init -backend-config=$HOME/.svc-tf/backend.hcl
+```
+- bootstrap 의 로컬 `terraform.tfstate` 는 레포 밖에 보관한다. 잃어버려도 버킷은 남고 `terraform import` 로 다시 잡는다.
 
 ## 검증 명령
 ```
@@ -44,3 +61,11 @@ terraform validate
 terraform test
 ```
 기대 출력: `Success! The configuration is valid.` 그리고 `Success! 3 passed, 0 failed.` (kubectl admin 두 갈래 + 잘못된 ARN 거부)
+
+```
+cd infra/modules/aws/bootstrap
+terraform init -backend=false
+terraform validate
+terraform test
+```
+기대 출력: `Success! The configuration is valid.` 그리고 `Success! 4 passed, 0 failed.` (버킷 보호 + 역할 범위 + 주체 목록 있음/빔)
