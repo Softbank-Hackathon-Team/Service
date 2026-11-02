@@ -12,6 +12,12 @@ set -u
 cd "$(dirname "$0")/.." || exit 1
 QUICK=0
 for a in "$@"; do case "$a" in --quick) QUICK=1 ;; *) echo "모르는 옵션: $a" >&2; exit 2 ;; esac; done
+# UPREV: gke-gcloud-auth-plugin 은 gcloud SDK 의 bin 에 깔리는데 그 폴더가 PATH 에 없을 수 있다(Homebrew cask·설치 스크립트). kubectl 이 못 찾으면 GKE 접속 실패
+#   → PATH 에 없으면 gcloud 가 알려 주는 SDK 폴더의 bin 을 PATH 앞에 더한다 (설치는 안 함)
+if ! command -v gke-gcloud-auth-plugin >/dev/null 2>&1 && command -v gcloud >/dev/null 2>&1; then
+  _sdk=$(gcloud info --format='value(installation.sdk_root)' 2>/dev/null)
+  [ -n "$_sdk" ] && [ -x "$_sdk/bin/gke-gcloud-auth-plugin" ] && export PATH="$_sdk/bin:$PATH"
+fi
 export AWS_PROFILE=${AWS_PROFILE:-finals}
 export AWS_REGION=${AWS_REGION:-ap-northeast-2}
 GCP_PROJECT=${GCP_PROJECT:-finals-demo}
@@ -40,7 +46,8 @@ if command -v terraform >/dev/null 2>&1; then
   tv=$(terraform version -json 2>/dev/null | jq -r .terraform_version 2>/dev/null)
   case "$tv" in 1.1[1-9]*|1.[2-9][0-9]*|[2-9].*) ok terraform-version "$tv (≥1.11, S3 use_lockfile·모듈 required_version)" ;; *) fail terraform-version "${tv:-못 읽음} (모듈이 ≥1.11 요구)" ;; esac
 fi
-command -v gke-gcloud-auth-plugin >/dev/null 2>&1 && ok gke-auth-plugin "있음" || fail gke-auth-plugin "gke-gcloud-auth-plugin 없음 (kubeconfig 단계 실패)"
+if command -v gke-gcloud-auth-plugin >/dev/null 2>&1; then ok gke-auth-plugin "$(command -v gke-gcloud-auth-plugin)"
+else fail gke-auth-plugin "gke-gcloud-auth-plugin 없음 → gcloud components install gke-gcloud-auth-plugin (Homebrew gcloud 면 같은 줄, 그래도 없으면 brew 의 google-cloud-sdk/bin 이 PATH 에 있는지)"; fi
 [ -f "$HOME/.ssh/id_ed25519.pub" ] && ok ssh-key "~/.ssh/id_ed25519.pub 있음" || fail ssh-key "~/.ssh/id_ed25519.pub 없음 (ssh-keygen -t ed25519)"
 
 # 2. 인증 (값은 안 찍음)

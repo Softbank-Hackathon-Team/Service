@@ -61,6 +61,12 @@ for a in "$@"; do
 done
 case "$CMD" in up|down) ;; -h|--help|"") sed -n '2,32p' "$0"; [ -n "$CMD" ]; exit $? ;; *) echo "up 또는 down" >&2; exit 2 ;; esac
 
+# UPREV: gke-gcloud-auth-plugin 은 gcloud SDK 의 bin 에 깔리는데 그 폴더가 PATH 에 없을 수 있다(Homebrew cask·설치 스크립트). kubectl 이 못 찾으면 GKE 접속 실패
+#   → PATH 에 없으면 gcloud 가 알려 주는 SDK 폴더의 bin 을 PATH 앞에 더한다 (설치는 안 함)
+if ! command -v gke-gcloud-auth-plugin >/dev/null 2>&1 && command -v gcloud >/dev/null 2>&1; then
+  _sdk=$(gcloud info --format='value(installation.sdk_root)' 2>/dev/null)
+  [ -n "$_sdk" ] && [ -x "$_sdk/bin/gke-gcloud-auth-plugin" ] && export PATH="$_sdk/bin:$PATH"
+fi
 export AWS_PROFILE=${AWS_PROFILE:-finals}
 export AWS_REGION=${AWS_REGION:-ap-northeast-2}
 # UPREV-A: AWS CLI 는 AWS_REGION 이 아니라 AWS_DEFAULT_REGION 을 읽는다(프로필 리전이 서울이 아니면 rds·elb 조회가 엉뚱한 리전을 본다 → ELB 0 오판)
