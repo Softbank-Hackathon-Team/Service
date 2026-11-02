@@ -116,6 +116,8 @@ OBSERVE_PERMS="${OBSERVE_PERMS},storage.buckets.list,storage.buckets.getIamPolic
 # VMIMPORT: compute.instances.list (GCE VM 출발 읽기, 목록만 — metadata·접속 권한 없음)
 # OBSROLE2: 그 밖에 플랫폼이 관찰 SA 로 부르는 모든 gcloud 읽기 명령의 권한 (표 원본 = packages/adapters/src/common/observe-permissions.ts, 시험이 소스의 모든 명령과 대조). 비밀값(secretmanager.versions.access)은 없음
 OBSERVE_PERMS="${OBSERVE_PERMS},resourcemanager.projects.getIamPolicy,serviceusage.services.list,compute.networks.list,compute.forwardingRules.list,compute.globalForwardingRules.list,compute.firewalls.list,compute.regions.get,artifactregistry.repositories.list,secretmanager.secrets.list,compute.instances.list"
+# CRIMPORT: Cloud Run 출발(서비스·잡·도메인 매핑·Cloud Scheduler 일정) 메타데이터 읽기. 환경변수 비밀 값은 원본에도 없음(이름·버전만)
+OBSERVE_PERMS="${OBSERVE_PERMS},run.services.list,run.locations.list,run.revisions.get,run.services.getIamPolicy,run.domainmappings.list,run.jobs.list,cloudscheduler.jobs.list"
 ensure_role platform_observe --title="platform-observe" --description="platform read-only inventory" --permissions="${OBSERVE_PERMS}" --stage=GA
 sync_role_permissions platform_observe "${OBSERVE_PERMS}"
 ensure_role platform_operate --file="${ROLE_DIR}/gcp-operate-custom-role.yaml"

@@ -14,6 +14,7 @@ import { DATA_RAW_KINDS } from "../import/raw-data.js";
 import { readEcs } from "../import/readers/aws-ecs.js";
 import { readEc2 } from "../import/readers/aws-ec2.js";
 import { readGce } from "../import/readers/gcp-gce.js";
+import { readCloudRun } from "../import/readers/gcp-cloudrun.js";
 
 // Z88: 출발 환경 진짜 읽기 (데모 원본 STUB 대체). 결과는 normalize 가 아는 원본 모양 + 둘레 자원 목록.
 //   AWS  : sts → eks list/describe-cluster → kubeconfig(임시 파일) → kubectl 앱 읽기 · rds describe-db-instances
@@ -152,8 +153,13 @@ export async function discoverGcp(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
   // VMIMPORT: v2 는 GCE VM 도 읽는다 — 명시(IMPORT_VM=1·IMPORT_GCP_VM_LABEL)했거나 GKE 가 없을 때만. 못 읽어도 계속(notes)
   const wantVm = opts.ir === "v2" && (env.IMPORT_VM === "1" || !!env.IMPORT_GCP_VM_LABEL?.trim() || !cl);
   const vm = wantVm ? await readGce(d, project, env).catch((e) => ({ items: [] as Obj[], counts: {}, notes: [`GCE 못 읽음: ${cliReason(e, "gcloud")}`] })) : null;
-  if (!cl && !(vm?.items ?? []).length) throw incomplete(env.IMPORT_GCP_GKE_CLUSTER ? `GKE 클러스터 ${env.IMPORT_GCP_GKE_CLUSTER} 없음` : `프로젝트 ${project} 에 GKE 클러스터 없음${vm ? ` (VM 도 없음${vm.notes.length ? `: ${vm.notes[0]}` : ""})` : ""}`);
-  const name = String(cl?.name ?? ""), loc = String(cl?.location ?? cl?.zone ?? "");
+  // CRIMPORT: v2 는 Cloud Run 서비스·잡도 읽는다 (관리형 컨테이너 갈래, ECS 와 같은 규칙). GKE 가 없어도 Cloud Run 서비스가 있으면 계속. v1 은 지금 그대로(GKE 필수)
+  //   DRAFT(ai): 따로 깃발 없음 — 가져오기 v2(IMPORT_IR=v2) 면 켜짐 (ECS 와 같음)
+  const run = opts.ir === "v2" ? await readCloudRun(d, project, env).catch((e) => ({ items: [] as Obj[], counts: {}, notes: [`Cloud Run 못 읽음: ${cliReason(e, "gcloud")}`] })) : null;
+  const hasRun = (run?.items ?? []).some((i) => i.kind === "cloudrun.service");
+  // VMIMPORT×CRIMPORT: GKE·VM·Cloud Run 서비스 셋 다 없을 때만 멈춘다
+  if (!cl && !(vm?.items ?? []).length && !hasRun) throw incomplete(env.IMPORT_GCP_GKE_CLUSTER ? `GKE 클러스터 ${env.IMPORT_GCP_GKE_CLUSTER} 없음` : `프로젝트 ${project} 에 GKE 클러스터 없음${vm ? ` (VM 도 없음${vm.notes.length ? `: ${vm.notes[0]}` : ""})` : ""}${run ? " (Cloud Run 서비스도 없음)" : ""}`);
+  const name = cl ? String(cl.name) : "", loc = cl ? String(cl.location ?? cl.zone ?? "") : "";
 
   const app = !cl ? { items: [] as Obj[], namespace: "", counts: {} as Record<string, number>, notes: [] as string[] } : await withTempKube(async (kc) => {
     try { await runText(d, "gcloud", ["container", "clusters", "get-credentials", name, "--location", loc, "--project", project], { KUBECONFIG: kc }); }
@@ -185,10 +191,11 @@ export async function discoverGcp(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
       ...(opts.ir === "v2" ? { ipAddresses: arr(db.ipAddresses).map((a) => ({ type: a.type ?? null, ipAddress: a.ipAddress ?? null })), selfLink: db.selfLink ?? null } : {}) }] : []),
     ...(cl ? [{ kind: "gke.cluster", name, location: loc, version: cl.currentMasterVersion ?? null }] : []),
     ...(vm?.items ?? []),
+    ...(run?.items ?? []),
     ...nets, ...fwd, ...repos, ...secrets,
-    ...[...notes, ...app.notes, ...(vm?.notes ?? [])].map(note),
+    ...[...notes, ...app.notes, ...(vm?.notes ?? []), ...(run?.notes ?? [])].map(note),
   ];
-  return { provider: "gcp", items, coverage: coverage(items, { ...app.counts, ...(vm?.counts ?? {}) }) };
+  return { provider: "gcp", items, coverage: coverage(items, { ...app.counts, ...(vm?.counts ?? {}), ...(run?.counts ?? {}) }) };
 }
 
 // ── 온프레 (k3s·k3d + CNPG) ──────────────────────────────────────────
@@ -244,6 +251,15 @@ export function inventoryForAudit(inv: RawInventory): RawInventory {
   const items = inv.items.map((raw) => {
     const i = raw as Obj;
     // I9: ECS 작업 정의 환경변수도 이름만 (평문 비밀일 수 있음), 시작 명령 지움. secrets 는 ARN 이라 그대로
+    // CRIMPORT: Cloud Run 컨테이너 환경변수도 이름만 (평문 비밀일 수 있음), 시작 명령·인자 지움. 비밀 참조는 이름·버전이라 그대로
+    if (i.kind === "cloudrun.service" || i.kind === "cloudrun.job") {
+      const copy = JSON.parse(JSON.stringify(i)) as Obj;
+      for (const c of arr(copy.containers)) {
+        if (Array.isArray(c.env)) c.env = arr(c.env).map((e) => (e.secret ? { name: e.name, secret: e.secret } : { name: e.name }));
+        delete c.command; delete c.args;
+      }
+      return copy;
+    }
     if (i.kind === "ecs.service") {
       const copy = JSON.parse(JSON.stringify(i)) as Obj;
       for (const c of arr(get(copy, "taskDefinition", "containerDefinitions"))) {

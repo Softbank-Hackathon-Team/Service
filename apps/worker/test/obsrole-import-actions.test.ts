@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { AWS_DATA_READ_ACTIONS, ECS_OBSERVE_ACTIONS, EC2_OBSERVE_ACTIONS, GCE_OBSERVE_PERMISSIONS, GCP_DATA_READ_PERMISSIONS } from "@svc/adapters";
+import { AWS_DATA_READ_ACTIONS, CLOUDRUN_OBSERVE_PERMISSIONS, ECS_OBSERVE_ACTIONS, EC2_OBSERVE_ACTIONS, GCE_OBSERVE_PERMISSIONS, GCP_DATA_READ_PERMISSIONS } from "@svc/adapters";
 import { checkLeastPrivilege } from "@svc/security";
 import { IMPORT_GCP_OBSERVE_ACTIONS, IMPORT_OBSERVE_ACTIONS, importObserveActions } from "../src/jobs/import.js";
 
@@ -71,6 +71,21 @@ test("GCP 가져오기는 AWS 동작 이름이 아니라 GCP 권한 이름으로
   assert.deepEqual(off, IMPORT_GCP_OBSERVE_ACTIONS);
   assert.ok(off.every((p) => /^[a-z]+\.[A-Za-z]+\.[A-Za-z]+$/.test(p)), off.join());
   assert.ok(!off.some((p) => p.includes(":")));
-  assert.deepEqual(withFlag("v2", () => importObserveActions("gcp")), [...IMPORT_GCP_OBSERVE_ACTIONS, ...GCP_DATA_READ_PERMISSIONS, ...GCE_OBSERVE_PERMISSIONS]);
+  // VMIMPORT: GCE 읽기 + CRIMPORT: Cloud Run 읽기 (겹치는 권한은 한 번만)
+  const base = [...IMPORT_GCP_OBSERVE_ACTIONS, ...GCP_DATA_READ_PERMISSIONS];
+  const v2 = withFlag("v2", () => importObserveActions("gcp"));
+  assert.deepEqual(v2.slice(0, base.length), base);
+  assert.deepEqual(new Set(v2), new Set([...base, ...GCE_OBSERVE_PERMISSIONS, ...CLOUDRUN_OBSERVE_PERMISSIONS]));
+  assert.equal(new Set(v2).size, v2.length);
   assert.doesNotThrow(() => checkLeastPrivilege({ ...req([]), provider: "gcp" as const, actions: withFlag("v2", () => importObserveActions("gcp")) }));
+});
+
+test("CRIMPORT: gcp v2 관찰 요청에 Cloud Run 읽기 권한이 들어가고 최소 권한을 통과, 쓰기(run.services.update·run.jobs.run)를 섞으면 거부", () => {
+  const gcp = withFlag("v2", () => importObserveActions("gcp"));
+  for (const p of ["run.services.list", "run.revisions.get", "run.jobs.list", "cloudscheduler.jobs.list"]) assert.ok(gcp.includes(p), p);
+  assert.ok(!withFlag(undefined, () => importObserveActions("gcp")).some((p) => p.startsWith("run.")), "깃발 off 는 그대로");
+  const g = (actions: string[]) => ({ ...req([]), provider: "gcp" as const, actions });
+  assert.doesNotThrow(() => checkLeastPrivilege(g(gcp)));
+  for (const w of ["run.services.update", "run.jobs.run", "run.services.setIamPolicy", "cloudscheduler.jobs.pause"])
+    assert.throws(() => checkLeastPrivilege(g([...gcp, w])), /ROLE_OBSERVE_WRITE|쓰기/, w);
 });

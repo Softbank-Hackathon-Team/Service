@@ -86,6 +86,14 @@ export const GCP_COMMAND_PERMISSIONS: Record<string, string[] | null> = {
   "pubsub topics list": ["pubsub.topics.list"],
   "pubsub subscriptions list": ["pubsub.subscriptions.list"],
   "redis instances list": ["redis.instances.list"],
+  // CRIMPORT: Cloud Run 출발 읽기(import/readers/gcp-cloudrun.ts). CLOUDRUN_OBSERVE_PERMISSIONS 와 같은 목록 (시험이 대조)
+  //   DRAFT(ai): 모든 지역 목록은 지역 목록(run.locations.list)도 부른다
+  "run services list": ["run.services.list", "run.locations.list"],
+  "run revisions describe": ["run.revisions.get"],              // 판의 imageDigest. 환경변수 비밀은 이름·버전만 (값 아님)
+  "run services get-iam-policy": ["run.services.getIamPolicy"], // 공개 여부(allUsers 호출 권한)만 본다
+  "run domain-mappings list": ["run.domainmappings.list"],
+  "run jobs list": ["run.jobs.list"],
+  "scheduler jobs list": ["cloudscheduler.jobs.list"],           // 잡을 부르는 일정(cron). 대상 URI·일정만 읽음
 };
 
 /** 명령 키들에 필요한 권한(중복 없음, 입력 순서). 표에 없는 키면 던진다 — 장부 목록이 조용히 비지 않게 */

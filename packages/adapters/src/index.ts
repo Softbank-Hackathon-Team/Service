@@ -56,6 +56,9 @@ export { resolveSpecV2, specV2OrThrow, specV2ForPlan, v2PrecheckItems, flattenTf
 // I9: ECS 출발 갈래 (Reader·매퍼). 원본 모양·관찰 권한 목록
 export { readEcs, ECS_OBSERVE_ACTIONS, type EcsRead } from "./import/readers/aws-ecs.js";
 export { ecsServiceMapper, secretRefOf, roleNameOf } from "./import/mappers/ecs-service.js";
+export { readCloudRun, CLOUDRUN_COMMANDS, CLOUDRUN_OBSERVE_PERMISSIONS, type CloudRunRead } from "./import/readers/gcp-cloudrun.js";
+export { cloudRunServiceMapper, cloudRunJobMapper, saNameOf } from "./import/mappers/cloudrun-service.js";
+export { CLOUDRUN_RAW_KINDS, type RawCloudRunService, type RawCloudRunJob } from "./import/raw-cloudrun.js";
 export { ECS_RAW_KIND, type RawEcsService, type RawEcsContainer } from "./import/raw-ecs.js";
 export { readEc2, EC2_OBSERVE_ACTIONS } from "./import/readers/aws-ec2.js";
 export { readGce, GCE_OBSERVE_PERMISSIONS } from "./import/readers/gcp-gce.js";

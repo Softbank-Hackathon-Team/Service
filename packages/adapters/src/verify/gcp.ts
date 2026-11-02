@@ -47,6 +47,9 @@ export const OPTIONAL_PROBES: ReadonlyArray<{ key: string; args: string[] }> = [
   { key: "pubsub topics list", args: ["pubsub", "topics", "list", "--limit=1"] },
   { key: "pubsub subscriptions list", args: ["pubsub", "subscriptions", "list", "--limit=1"] },
   { key: "redis instances list", args: ["redis", "instances", "list", "--region=-", "--limit=1"] },
+  // CRIMPORT: Cloud Run 출발 읽기. 이름·지역이 있어야 부를 수 있는 것(run.revisions.get·run.services.getIamPolicy·run.domainmappings.list·cloudscheduler.jobs.list)은 찌르지 않는다
+  { key: "run services list", args: ["run", "services", "list", "--limit=1"] },
+  { key: "run jobs list", args: ["run", "jobs", "list", "--limit=1"] },
 ];
 // 권한이 없어서 거절된 것만 센다. API 가 꺼져 있는 프로젝트(SERVICE_DISABLED)·조직 정책·네트워크 오류는 권한 문제가 아니므로 세지 않는다
 const API_OFF = /SERVICE_DISABLED|has not been used|is disabled|accessNotConfigured|API .* not enabled/i;
