@@ -4711,7 +4711,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MigrationSpecView"
+                  "$ref": "#/components/schemas/MigrationSpecViewV2"
                 }
               }
             }
@@ -4788,7 +4788,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MigrationSpecView"
+                  "$ref": "#/components/schemas/MigrationSpecViewV2"
                 }
               }
             }
@@ -7498,7 +7498,7 @@
         ],
         "additionalProperties": false
       },
-      "MigrationSpecView": {
+      "MigrationSpecViewV2": {
         "type": "object",
         "properties": {
           "migrationId": {
@@ -7683,6 +7683,12 @@
             "additionalProperties": false
           },
           "needsReview": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "needsReviewV2": {
             "type": "array",
             "items": {
               "type": "string"
@@ -8443,7 +8449,14 @@
               "type": "object",
               "properties": {
                 "path": {
-                  "$ref": "#/components/schemas/SpecFieldPath"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/SpecFieldPath"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SpecV2FieldPath"
+                    }
+                  ]
                 },
                 "value": {}
               },
@@ -8464,6 +8477,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/SpecEnvFieldPath"
+                },
+                {
+                  "$ref": "#/components/schemas/SpecV2ConfirmPath"
                 }
               ]
             }
@@ -8478,6 +8494,14 @@
           "baseVersion"
         ],
         "additionalProperties": false
+      },
+      "SpecV2ConfirmPath": {
+        "type": "string",
+        "pattern": "^(components|links|entry|check)(\\.|$)\\S{0,300}$"
+      },
+      "SpecV2FieldPath": {
+        "type": "string",
+        "pattern": "^(components\\.[a-z][a-z0-9-]{0,39}\\.[A-Za-z][A-Za-z0-9]{0,39}|links|entry)$"
       },
       "StartInput": {
         "type": "object",

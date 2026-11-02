@@ -14,21 +14,29 @@
         "type": "object",
         "properties": {
           "path": {
-            "type": "string",
-            "enum": [
-              "schemaVersion",
-              "app.name",
-              "service.image",
-              "service.port",
-              "service.healthPath",
-              "service.replicas",
-              "service.cpu",
-              "service.memory",
-              "service.env",
-              "service.secretRefs",
-              "database",
-              "ingress.hostname",
-              "ingress.entry"
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "schemaVersion",
+                  "app.name",
+                  "service.image",
+                  "service.port",
+                  "service.healthPath",
+                  "service.replicas",
+                  "service.cpu",
+                  "service.memory",
+                  "service.env",
+                  "service.secretRefs",
+                  "database",
+                  "ingress.hostname",
+                  "ingress.entry"
+                ]
+              },
+              {
+                "type": "string",
+                "pattern": "^(components\\.[a-z][a-z0-9-]{0,39}\\.[A-Za-z][A-Za-z0-9]{0,39}|links|entry)$"
+              }
             ]
           },
           "value": {}
@@ -66,6 +74,10 @@
           {
             "type": "string",
             "pattern": "^service\\.env\\.[A-Za-z_][A-Za-z0-9_]{0,127}$"
+          },
+          {
+            "type": "string",
+            "pattern": "^(components|links|entry|check)(\\.|$)\\S{0,300}$"
           }
         ]
       }

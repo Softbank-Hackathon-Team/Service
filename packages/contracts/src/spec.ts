@@ -77,7 +77,8 @@ export type MigrationSpecView = z.infer<typeof MigrationSpecView>;
 //   confirm     = 값 그대로 "봤다" → needs_review:false (신뢰도·출처 그대로)
 //   acceptDraft = AI 초안 판 번호. 그 판을 사람 판으로 옮겨 시작한다(_draft 뺌). AI 가 바꾼 칸은 아직 needs_review:true
 // path 는 지금 명세(AppSpec v1)에 있는 칸 이름만 받는다 (field_meta 키와 같은 점 표기)
-// TODO: v2 분기(I3 뒤, rebuildFromV2) — 기준 판에 spec_v2 가 있으면 v2 경로만 받게 넓힌다
+// PA2v2: 기준 판에 spec_v2 가 있으면 v2 경로만 받는다(아래 SpecV2FieldPath·SpecV2ConfirmPath). 어느 쪽 경로인지는 라우트가 기준 판을 보고 고른다
+//   (v2 판에 v1 키 → 400, v1 판에 v2 키 → 400. 두 명세를 따로 고쳐 어긋나지 않게 — 계획 26 A2 함정 표)
 export const SpecFieldPath = z.enum([
   "schemaVersion", "app.name", "service.image", "service.port", "service.healthPath", "service.replicas",
   "service.cpu", "service.memory", "service.env", "service.secretRefs", "database", "ingress.hostname", "ingress.entry",
@@ -85,16 +86,26 @@ export const SpecFieldPath = z.enum([
 export type SpecFieldPath = z.infer<typeof SpecFieldPath>;
 // service.env.<이름> (환경변수 칸 하나). 이름 모양은 POSIX 환경변수 이름
 export const SpecEnvFieldPath = z.string().regex(/^service\.env\.[A-Za-z_][A-Za-z0-9_]{0,127}$/);
+// DRAFT(ai) PA2v2: v2 값 바꾸기 경로 = 리소스 props 의 맨 위 칸 하나(components.<id>.<칸>) 또는 links·entry 통째.
+//   더 깊은 칸(예: env 한 줄)은 그 칸 통째로 바꾼다 (v1 의 service.env 와 같은 방식). 모양 검사는 라우트가 AppSpecV2 + checkV2 로
+export const SpecV2FieldPath = z.string().regex(/^(components\.[a-z][a-z0-9-]{0,39}\.[A-Za-z][A-Za-z0-9]{0,39}|links|entry)$/);
+// v2 확인 경로 = spec_v2.fieldMeta 키 그대로 (components.<id>.<칸>[.env.<이름>], links.<a>-><b>, entry.<host>.routes[i]…, check.reviews[i])
+export const SpecV2ConfirmPath = z.string().regex(/^(components|links|entry|check)(\.|$)\S{0,300}$/);
 export const SpecPatchInput = z.object({
   baseVersion: z.number().int().min(1),
   // DRAFT(ai) VPA2b: 값 바꾸기 항목은 value 키가 꼭 있어야 한다. 빠지면 400 (예전엔 칸이 조용히 지워졌다).
   //   지우기는 명시적 null 로만 말하고, null 이 그 칸의 모양에 안 맞으면(지금은 nullable 칸 없음) 라우트의 모양 검사가 400 으로 막는다
-  changes: z.array(z.object({ path: SpecFieldPath, value: z.unknown() }).strict()
+  changes: z.array(z.object({ path: z.union([SpecFieldPath, SpecV2FieldPath]), value: z.unknown() }).strict()
     .refine((c) => "value" in c, { message: "value 가 있어야 한다 (지우려면 명시적 null)", path: ["value"] })).max(20).optional(),
   // VPA3 버그 수정: 가져오기는 평문 비밀 환경변수를 칸 하나씩 service.env.<이름> 키로 검토 필요 표시한다(adapters normalize.ts).
   //   예전엔 confirm 이 그 키를 400 으로 막아 검토 칸이 영원히 남고 T04(POST /plan)가 409 로 막혔다 → 그 모양 키도 받는다
-  confirm: z.array(z.union([SpecFieldPath, SpecEnvFieldPath])).max(20).optional(),
+  confirm: z.array(z.union([SpecFieldPath, SpecEnvFieldPath, SpecV2ConfirmPath])).max(20).optional(),
   acceptDraft: z.number().int().min(1).optional(),
 }).strict().refine((b) => (b.changes?.length ?? 0) + (b.confirm?.length ?? 0) > 0 || b.acceptDraft !== undefined,
   { message: "changes, confirm, acceptDraft 중 하나는 있어야 한다" });
 export type SpecPatchInput = z.infer<typeof SpecPatchInput>;
+
+// PA2v2: 명세 보기 + v2 검토 칸. 판에 spec_v2 가 있을 때만 needsReviewV2 가 붙는다 (v1 판 응답은 지금과 글자 그대로)
+//   needsReviewV2 = spec_v2.fieldMeta 에서 needs_review=true 인 키. 화면은 이 키를 PATCH confirm 에 그대로 보낸다
+export const MigrationSpecViewV2 = MigrationSpecView.extend({ needsReviewV2: z.array(z.string()).optional() }).strict();
+export type MigrationSpecViewV2 = z.infer<typeof MigrationSpecViewV2>;

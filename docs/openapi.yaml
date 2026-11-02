@@ -3142,7 +3142,7 @@ paths:
           content:
             "application/json":
               schema:
-                $ref: "#/components/schemas/MigrationSpecView"
+                $ref: "#/components/schemas/MigrationSpecViewV2"
         "400":
           $ref: "#/components/responses/E400"
           description: "BAD_REQUEST (Zod 검증 실패)"
@@ -3191,7 +3191,7 @@ paths:
           content:
             "application/json":
               schema:
-                $ref: "#/components/schemas/MigrationSpecView"
+                $ref: "#/components/schemas/MigrationSpecViewV2"
         "400":
           $ref: "#/components/responses/E400"
           description: "BAD_REQUEST (Zod 검증 실패)"
@@ -5061,7 +5061,7 @@ components:
         - "targetEnvId"
         - "updatedAt"
       additionalProperties: false
-    MigrationSpecView:
+    MigrationSpecViewV2:
       type: "object"
       properties:
         migrationId:
@@ -5198,6 +5198,10 @@ components:
               additionalProperties: false
           additionalProperties: false
         needsReview:
+          type: "array"
+          items:
+            type: "string"
+        needsReviewV2:
           type: "array"
           items:
             type: "string"
@@ -5750,7 +5754,9 @@ components:
             type: "object"
             properties:
               path:
-                $ref: "#/components/schemas/SpecFieldPath"
+                anyOf:
+                  - $ref: "#/components/schemas/SpecFieldPath"
+                  - $ref: "#/components/schemas/SpecV2FieldPath"
               value: {}
             required:
               - "path"
@@ -5763,6 +5769,7 @@ components:
             anyOf:
               - $ref: "#/components/schemas/SpecFieldPath"
               - $ref: "#/components/schemas/SpecEnvFieldPath"
+              - $ref: "#/components/schemas/SpecV2ConfirmPath"
         acceptDraft:
           type: "integer"
           minimum: 1
@@ -5770,6 +5777,12 @@ components:
       required:
         - "baseVersion"
       additionalProperties: false
+    SpecV2ConfirmPath:
+      type: "string"
+      pattern: "^(components|links|entry|check)(\\.|$)\\S{0,300}$"
+    SpecV2FieldPath:
+      type: "string"
+      pattern: "^(components\\.[a-z][a-z0-9-]{0,39}\\.[A-Za-z][A-Za-z0-9]{0,39}|links|entry)$"
     StartInput:
       type: "object"
       properties:

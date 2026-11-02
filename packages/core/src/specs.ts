@@ -69,10 +69,15 @@ export function applySpecPatch(base: { spec: unknown; fieldMeta: SpecMeta | null
  * 명세 새 판 저장. version = 그 이전의 지금 최대 + 1. 이전 행 FOR UPDATE 는 부르는 쪽이 먼저 잡는다(잠금 순서: 이전 행 → 감사).
  * 이전 행 잠금을 안 거치는 쓰기(에이전트 초안 등)와 부딪히면 UNIQUE(migration_id, version) → 409 SPEC_VERSION_CONFLICT
  */
-export async function saveSpecRevision(tx: Tx, r: { tenantId: string; migrationId: string; spec: unknown; fieldMeta: unknown }):
+export async function saveSpecRevision(tx: Tx, r: { tenantId: string; migrationId: string; spec: unknown; fieldMeta: unknown; specV2?: unknown }):
   Promise<{ version: number; createdAt: string }> {
   try {
-    const q = await tx.query(
+    // PA2v2: specV2 가 오면 spec·field_meta·spec_v2 를 한 줄에 같이 (0023). 안 오면 아래 v1 SQL 그대로
+    const q = r.specV2 !== undefined ? await tx.query(
+      `INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta, spec_v2)
+       SELECT $1::uuid, $2::uuid, COALESCE(MAX(version), 0) + 1, $3::jsonb, $4::jsonb, $5::jsonb FROM spec_versions WHERE migration_id = $2::uuid
+       RETURNING version, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAt"`,
+      [r.tenantId, r.migrationId, JSON.stringify(r.spec), JSON.stringify(r.fieldMeta), JSON.stringify(r.specV2)]) : await tx.query(
       `INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta)
        SELECT $1::uuid, $2::uuid, COALESCE(MAX(version), 0) + 1, $3::jsonb, $4::jsonb FROM spec_versions WHERE migration_id = $2::uuid
        RETURNING version, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAt"`,
@@ -84,4 +89,45 @@ export async function saveSpecRevision(tx: Tx, r: { tenantId: string; migrationI
       throw new DomainError(409, "SPEC_VERSION_CONFLICT", `spec of migration ${r.migrationId} changed, reload`);
     throw e;
   }
+}
+
+// ---- PA2v2 (계획 26 · A2 v2 분기): 기준 판에 spec_v2 가 있을 때 v2 명세를 고친 새 v2 ----
+
+const V2_COMPONENT_PATH = /^components\.([a-z][a-z0-9-]{0,39})\.([A-Za-z][A-Za-z0-9]{0,39})$/;
+
+/**
+ * spec_v2 {spec, fieldMeta, …} 에 사람 수정을 얹은 새 v2 spec·fieldMeta (순수 함수, 입력은 안 바꿈). 규칙은 applySpecPatch 와 같다.
+ *  - changes: "components.<id>.<칸>" → 그 리소스 props.<칸> 을 바꿈. "links"·"entry" → 통째로 바꿈
+ *    그 키와 그 아래 키(예: components.api.env.DB_URL)의 표시 → {source:"human", confidence:1, needs_review:false}
+ *  - confirm: fieldMeta 키 그대로 needs_review:false. 표시 없는 키는 넘어감
+ * 없는 리소스 id → 400 SPEC_PATCH_INVALID. 모양 검사(AppSpecV2·checkV2)와 v1 다시 뽑기(rebuildFromV2)는 부르는 쪽
+ */
+export function applySpecV2Patch(base: { spec: unknown; fieldMeta: SpecMeta | null }, ops: SpecPatchOps):
+  { spec: Record<string, unknown>; fieldMeta: SpecMeta; changed: string[]; confirmed: string[] } {
+  const spec = structuredClone((base.spec ?? {}) as Record<string, unknown>);
+  const fieldMeta = structuredClone(base.fieldMeta ?? {}) as SpecMeta;
+  const changed: string[] = [], confirmed: string[] = [];
+  for (const c of ops.changes ?? []) {
+    const m = V2_COMPONENT_PATH.exec(c.path);
+    if (m) {
+      const comp = (Array.isArray(spec.components) ? spec.components : [])
+        .find((x) => !!x && typeof x === "object" && (x as { id?: unknown }).id === m[1]) as { props?: Record<string, unknown> } | undefined;
+      if (!comp) throw new DomainError(400, "SPEC_PATCH_INVALID", `${c.path}: no component ${m[1]}`);
+      comp.props = { ...(comp.props ?? {}), [m[2]!]: structuredClone(c.value) };
+    } else if (c.path === "links" || c.path === "entry") {
+      spec[c.path] = structuredClone(c.value);
+    } else {
+      throw new DomainError(400, "SPEC_PATCH_INVALID", `${c.path}: not a v2 path`);
+    }
+    fieldMeta[c.path] = { source: "human", confidence: 1, needs_review: false };
+    for (const k of Object.keys(fieldMeta))
+      if (k.startsWith(`${c.path}.`)) fieldMeta[k] = { source: "human", confidence: 1, needs_review: false };
+    if (!changed.includes(c.path)) changed.push(c.path);
+  }
+  for (const p of ops.confirm ?? []) {
+    const m = fieldMeta[p];
+    if (m && typeof m === "object") fieldMeta[p] = { ...m, needs_review: false };
+    if (m && typeof m === "object" && !confirmed.includes(p)) confirmed.push(p);
+  }
+  return { spec, fieldMeta, changed, confirmed };
 }

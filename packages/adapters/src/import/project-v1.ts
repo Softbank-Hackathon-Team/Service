@@ -98,8 +98,12 @@ export function projectV1(result: ImportResultV2, env: ProjectionEnv, opts: { ma
 /**
  * 사람이 고친 v2(PATCH) → v1 다시 뽑기. 투영 재료(원래 env 값)는 저장하지 않으므로 env·secretRefs 는 앞 판 v1 에서 복사 (R15).
  * 나머지는 v2 값 → 비면 앞 판 v1 값. field_meta 는 v2 fieldMeta 의 같은 리소스 필드 확신을 따른다.
+ * PA2v2 opts(명세 PATCH 용, 안 주면 지금 동작 그대로):
+ *   confirmed = 이번에 사람이 바꾸거나 확인한 v2 키. prevMeta = 앞 판 v1 field_meta.
+ *   v1 단계 올림(cpu·memory) 검토 표시는 v2 에 없는 v1 투영 사정이라 v2 키로만 끌 수 있다 →
+ *   components.<주 서비스>.resources 를 바꾸거나 확인했으면 끄고, 앞 판에서 이미 껐고 값이 같으면 계속 끈 채로 둔다
  */
-export function rebuildFromV2(v2: ImportResultV2 | AppSpecV2, prevV1: AppSpec): V1 {
+export function rebuildFromV2(v2: ImportResultV2 | AppSpecV2, prevV1: AppSpec, opts: { confirmed?: string[]; prevMeta?: FieldMeta } = {}): V1 {
   const spec: AppSpecV2 = "spec" in v2 ? v2.spec : v2;
   const v2meta: FieldMetaV2 = "spec" in v2 ? v2.fieldMeta : {};
   const meta: FieldMeta = {};
@@ -136,7 +140,22 @@ export function rebuildFromV2(v2: ImportResultV2 | AppSpecV2, prevV1: AppSpec): 
   from("replicas", "spec_v2.replicas");
   from("resources", "spec_v2.resources.cpu", cpu.exact); meta["service.cpu"] = meta["service.resources"]!; delete meta["service.resources"];
   from("resources", "spec_v2.resources.memory", mem.exact); meta["service.memory"] = meta["service.resources"]!; delete meta["service.resources"];
+  for (const k of ["cpu", "memory"] as const) {
+    const m = meta[`service.${k}`]!;
+    if (!m.needs_review) continue;
+    const seen = opts.confirmed?.includes(`components.${main.id}.resources`)
+      || (opts.prevMeta?.[`service.${k}`]?.needs_review === false && service[k] === prevV1.service[k]);
+    if (seen) meta[`service.${k}`] = { ...m, needs_review: false };
+  }
   for (const e of service.env) meta[`service.env.${e.name}`] = { source: "spec_v1.prev", confidence: 1, needs_review: false };
+  // PA2v2: 평문 비밀로 명세에서 뺀 env(v1 env 에 없음)의 검토 표시는 v2 의 components.<주 서비스>.env.<이름> 을 그대로 따른다.
+  //   v2 판엔 v1 키를 confirm 할 수 없으니, v2 쪽 confirm 이 v1 field_meta 에도 남아야 T04 가 안 막힌다 (계획 26 A2 함정 표)
+  const envPrefix = `components.${main.id}.env.`;
+  for (const [k, m] of Object.entries(v2meta)) {
+    const n = k.slice(envPrefix.length);
+    if (!k.startsWith(envPrefix) || !n || service.env.some((e) => e.name === n)) continue;
+    meta[`service.env.${n}`] = { source: "spec_v2.env", confidence: m.confidence, needs_review: m.needs_review, ...(m.rationale ? { rationale: m.rationale } : {}) };
+  }
   const out: Partial<AppSpec> = {
     schemaVersion: "1",
     app: { name: prevV1.app.name },
