@@ -74,7 +74,7 @@ kubeconfig*
 .skeleton-import.zip
 .merge-*.tgz
 '
-EXF=$(mktemp); trap 'rm -f "$EXF"' EXIT
+EXF=$(mktemp "${TMPDIR:-/tmp}/export-upload.XXXXXX"); trap 'rm -f "$EXF"' EXIT
 printf '%s\n' "$EXCLUDES" | grep -v '^$' > "$EXF"
 # .env.example 은 남긴다 (값 없는 견본)
 rsync -a --include='.env.example' --exclude-from="$EXF" "$SRC"/ "$OUT"/ || { echo "FAIL rsync"; exit 2; }
