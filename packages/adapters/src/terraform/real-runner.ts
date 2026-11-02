@@ -76,8 +76,16 @@ export function fillTfVars(vars: TfVars, facts: Record<string, string>): { vars:
     if (v === undefined) { missing.add(k); return m; }
     return v;
   });
+  // TA11: v2 종류 목록(postgres_json 등)은 JSON 문자열 안에 자리표시가 들어 있다 → 풀어서 글자 칸만 채우고 다시 묶는다
+  //   (그냥 바꾸면 값 안의 따옴표가 JSON 을 깨뜨림). JSON 이 아닌 값(v1 db_subnet_ids_json="<env:…>" 통째)은 예전 그대로
+  const walk = (x: unknown): unknown => typeof x === "string" ? sub(x) : Array.isArray(x) ? x.map(walk)
+    : x && typeof x === "object" ? Object.fromEntries(Object.entries(x).map(([a, b]) => [a, walk(b)])) : x;
+  const subJson = (v: string) => {
+    if (!/^\s*[[{]/.test(v) || !v.includes("<env:")) return sub(v);
+    try { return JSON.stringify(walk(JSON.parse(v))); } catch { return sub(v); }
+  };
   const out: TfVars = {};
-  for (const [k, v] of Object.entries(vars)) out[k] = typeof v === "string" ? sub(v) : v;
+  for (const [k, v] of Object.entries(vars)) out[k] = typeof v === "string" ? subJson(v) : v;
   return { vars: out, missing: [...missing].sort() };
 }
 

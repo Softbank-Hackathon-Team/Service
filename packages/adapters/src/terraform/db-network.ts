@@ -60,3 +60,20 @@ export function withDbNetwork<T extends { moduleRef: ModuleRef; vars: TfVars }>(
   if (!n) return tf;
   return { ...tf, vars: { ...tf.vars, ...n.vars } };
 }
+
+/** TA11 DRAFT(ai): v2 판 (설계 27번 3.5 withDbNetworkV2). 같은 환경변수를 postgres_json 각 항목에 넣는다.
+ *  아무것도 안 켰으면 같은 객체 그대로 (지문 안 바뀜). 잘못된 값은 v1 과 같은 DbNetworkError */
+export function withDbNetworkV2<T extends { vars: TfVars }>(tf: T, provider: Provider, env: NodeJS.ProcessEnv = process.env): T {
+  const n = dbNetworkFromEnv(provider, env);
+  if (!n || typeof tf.vars.postgres_json !== "string") return tf;
+  const items = (JSON.parse(tf.vars.postgres_json) as Array<Record<string, unknown>>).map((p) => ({
+    ...p,
+    ...(n.summary.public ? {
+      public: true,
+      peer_cidrs_json: JSON.stringify([...new Set([...(JSON.parse(String(p.peer_cidrs_json ?? "[]")) as string[]), ...n.summary.peerCidrs])].sort()),
+      ...(provider === "aws" ? { public_subnet_ids_json: "<env:dbPublicSubnetIdsJson>" } : {}),
+    } : {}),
+    ...(n.summary.disposable ? { deletion_protection: false } : {}),
+  }));
+  return { ...tf, vars: { ...tf.vars, postgres_json: JSON.stringify(items) } };
+}

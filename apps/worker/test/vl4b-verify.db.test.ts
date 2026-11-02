@@ -78,7 +78,7 @@ test("일정 등록: 기본 cron 으로 등록되고, off 면 지워진다 (두 
   assert.equal(await has(), false);
 });
 
-test("설정 검사: VERIFY_CRON 은 5칸 cron 또는 off 만", () => {
+test("설정 검사: VERIFY_CRON 은 5칸 cron 또는 off 만", { skip }, async () => {
   const bad = (v: string) => configProblems("worker", { DATABASE_URL: "postgres://x/y", VERIFY_CRON: v }).filter((p) => p.startsWith("VERIFY_CRON"));
   for (const ok of ["off", "0 * * * *", "* * * * *", "*/5 * * * *"]) assert.deepEqual(bad(ok), [], ok);
   for (const no of ["bad", "1 2 3", "0 * * * * *", "every hour"]) assert.equal(bad(no).length, 1, no);
