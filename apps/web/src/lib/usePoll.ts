@@ -1,6 +1,13 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import type { SseEvent } from "./events";
+import { live } from "./live";
 
-// SSE(GET /events)가 아직 없어서 일정 간격으로 다시 읽는다.
+// DRAFT(ai): 신호 연결이 살아 있을 때 signal 을 준 폴링의 간격 하한. 신호를 놓쳐도 이 시간 안에는 맞춰진다
+export const LIVE_FALLBACK_MS = 10_000;
+
+// 일정 간격으로 다시 읽는다. signal 을 주면 화면 신호(SSE, lib/events.ts)도 듣는다.
+// - signal: 이 신호가 오면 간격을 기다리지 않고 바로 다시 읽는다. 신호 연결이 살아 있는 동안은 간격을 LIVE_FALLBACK_MS 이상으로 늘린다
+//   (신호는 상태가 바뀔 때만 온다. 상태 말고 바뀌는 값은 늘린 간격 안에 맞춰진다). 연결이 없으면 ms 그대로
 // - ms = null 이면 처음 한 번만 읽고 멈춘다 (끝난 이전 등)
 // - deps 가 바뀌면 data·error를 비우고 처음부터 (회사 번호를 바꿨을 때 옛 값이 남지 않게)
 // - loading: 첫 응답(성공이든 실패든)이 오기 전. "아직 안 옴"과 "진짜 없음"을 구분하려고 쓴다
@@ -9,18 +16,20 @@ export function usePoll<T>(
   fn: (() => Promise<T>) | null,
   ms: number | null,
   deps: unknown[],
-  opts: { keepOnError?: boolean } = {},
+  opts: { keepOnError?: boolean; signal?: (e: SseEvent) => boolean } = {},
 ) {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
   const fnRef = useRef(fn);
   const keepRef = useRef(opts.keepOnError ?? true);
+  const signalRef = useRef(opts.signal);
   // 최신 fn·옵션을 ref 에 담는다. 렌더 중에 ref 를 쓰지 않고(React useRef Pitfall) 레이아웃 효과에서 쓴다.
   // 레이아웃 효과는 아래 useEffect 들보다 먼저 돌아서, 타이머·첫 읽기는 늘 최신 fn 을 본다
   useLayoutEffect(() => {
     fnRef.current = fn;
     keepRef.current = opts.keepOnError ?? true;
+    signalRef.current = opts.signal;
   });
   const gen = useRef(0); // deps가 바뀐 뒤 늦게 온 옛 응답은 버린다
   // Z83-11: 같은 deps 안에서도 요청 순서를 센다. 간격 GET 이 떠난 뒤 버튼(POST → reload)이 먼저 답을 받으면,
@@ -59,13 +68,24 @@ export function usePoll<T>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 
-  // 간격. ms가 바뀌면 데이터는 그대로 두고 타이머만 바꾼다
+  // 화면 신호. 맞는 신호가 오면 바로 다시 읽는다 (끝난 이전처럼 간격이 없어도)
+  const listening = opts.signal !== undefined;
   useEffect(() => {
-    if (ms === null || !fnRef.current) return;
-    const t = setInterval(() => void reload(), ms);
+    if (!listening) return;
+    return live.subscribe((e) => {
+      if (fnRef.current && signalRef.current?.(e)) void reload();
+    });
+  }, [listening, reload]);
+  const liveOpen = useSyncExternalStore(live.watch, live.state) === "open";
+  const every = ms !== null && listening && liveOpen ? Math.max(ms, LIVE_FALLBACK_MS) : ms;
+
+  // 간격. 간격이 바뀌면 데이터는 그대로 두고 타이머만 바꾼다
+  useEffect(() => {
+    if (every === null || !fnRef.current) return;
+    const t = setInterval(() => void reload(), every);
     return () => clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ms, ...deps]);
+  }, [every, ...deps]);
 
   return { data, error, loading, reload };
 }
