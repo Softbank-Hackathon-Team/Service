@@ -11,6 +11,12 @@ import { rdsMapper } from "./mappers/rds.js";
 import { cloudSqlMapper } from "./mappers/cloudsql.js";
 import { cnpgMapper } from "./mappers/cnpg.js";
 import type { RawAwsIamPolicy } from "./mappers/iam-grants.js";
+import { s3Mapper } from "./mappers/s3.js";
+import { sqsMapper } from "./mappers/sqs.js";
+import { elasticacheMapper } from "./mappers/elasticache.js";
+import { gcsMapper } from "./mappers/gcs.js";
+import { pubsubMapper } from "./mappers/pubsub.js";
+import { memorystoreMapper } from "./mappers/memorystore.js";
 import type { KindMapper, MappedComponent, NormalizeV2Options, NormalizeV2Output, ProjectionEnv, RawItem } from "./types.js";
 
 // DRAFT(ai): 원본(RawInventory) → 공통 명세 v2 (설계 20번 5.1~5.5장, 24번 I3a). 순수 함수, 네트워크·환경변수 안 읽음.
@@ -18,7 +24,8 @@ import type { KindMapper, MappedComponent, NormalizeV2Options, NormalizeV2Output
 //   6) 라우팅  7) 보안 기준선. 같은 원본이면 글자 하나까지 같은 결과(목록 정렬).
 //   검증(checkV2)·저장은 부르는 쪽(import.ts, I3b) 몫.
 
-export const KIND_MAPPERS: KindMapper[] = [k8sDeploymentMapper, k8sCronJobMapper, rdsMapper, cloudSqlMapper, cnpgMapper];
+export const KIND_MAPPERS: KindMapper[] = [k8sDeploymentMapper, k8sCronJobMapper, rdsMapper, cloudSqlMapper, cnpgMapper,
+  s3Mapper, sqsMapper, elasticacheMapper, gcsMapper, pubsubMapper, memorystoreMapper];   // I6: 객체 저장소·큐·캐시
 const MAPPER_BY_TYPE = new Map(KIND_MAPPERS.flatMap((m) => m.nativeTypes.map((t) => [t, m] as const)));
 
 // 앱 리소스는 아니지만 아는 것: 근거(다른 리소스에 접힘) / 환경(도착에서 env 층이 다시 만듦)
@@ -65,6 +72,17 @@ export function normalizeV2(raw: RawInventory, opts: NormalizeV2Options = {}): N
   // 2) id
   const ids = assignIds(mapped, opts.previousIds ?? {});
   const components = mapped.sort((a, b) => (a.id! < b.id! ? -1 : a.id! > b.id! ? 1 : 0));
+  // I6: 큐의 DLQ 참조(ARN·토픽 이름) → 같은 가져오기 안의 큐 id. 못 찾으면(다른 계정·리전) to 를 비우고 검토 표시
+  for (const q of components) {
+    if (!q.deadLetterRef) continue;
+    const dl = q.props.deadLetter as { to?: string; maxReceive?: number };
+    // VI6: 이름만 같은 다른 계정·프로젝트의 큐를 잇지 않는다. ARN·전체 이름(uid)이 있으면 uid 로만, uid 를 못 읽은 큐일 때만 이름으로
+    const ref = q.deadLetterRef;
+    const queues = components.filter((o) => o !== q && o.kind === "queue");
+    const target = queues.find((o) => o.native.uid === ref.arn) ?? queues.find((o) => !o.native.uid && o.native.name === ref.name);
+    if (target) dl.to = target.id;
+    else q.meta.deadLetter = [q.meta.deadLetter?.[0] ?? "dlq", 0.6, `DLQ ${q.deadLetterRef.name} 를 이 가져오기에서 못 찾음 (다른 계정·리전일 수 있음)`];
+  }
   for (const c of components)
     for (const [k, [source, confidence, rationale]] of Object.entries(c.meta))
       fieldMeta[`components.${c.id}.${k}`] = { source, confidence, needs_review: confidence < 1, ...(rationale ? { rationale } : {}) };

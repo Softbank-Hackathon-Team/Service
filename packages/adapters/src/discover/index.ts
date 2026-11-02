@@ -9,6 +9,7 @@ import {
 import { DEMO_INVENTORY, DEMO_INVENTORY_V2 } from "../common/fixtures.js";
 import { readK8sApp, readK8sNamespace } from "./k8s.js";
 import { appIdentities, readAwsIam } from "./aws-iam.js";
+import { readAwsData, readGcpData } from "./data.js";
 
 // Z88: 출발 환경 진짜 읽기 (데모 원본 STUB 대체). 결과는 normalize 가 아는 원본 모양 + 둘레 자원 목록.
 //   AWS  : sts → eks list/describe-cluster → kubeconfig(임시 파일) → kubectl 앱 읽기 · rds describe-db-instances
@@ -107,8 +108,11 @@ export async function discoverAws(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
       .map((x) => ({ name: x.Name }))), notes),   // 이름만. GetSecretValue 는 부르지 않는다
   ]);
 
+  // I6: v2 만 S3·SQS·ElastiCache 를 읽는다 (v1 은 지금 동작 그대로 — 호출 수·권한이 늘지 않는다)
+  const data = opts.ir === "v2" ? await readAwsData(d, region, notes) : [];
   const items: Obj[] = [
     ...app.items,
+    ...data,
     ...(db ? [{ kind: "rds.dbInstance", DBInstanceIdentifier: db.DBInstanceIdentifier, Engine: db.Engine, EngineVersion: db.EngineVersion,
       AllocatedStorage: db.AllocatedStorage, DBInstanceClass: db.DBInstanceClass, Endpoint: get(db, "Endpoint", "Address") ?? null,
       ...(opts.ir === "v2" ? { MultiAZ: db.MultiAZ ?? null, PubliclyAccessible: db.PubliclyAccessible ?? null, MaxAllocatedStorage: db.MaxAllocatedStorage ?? null, DBInstanceArn: db.DBInstanceArn ?? null } : {}) }] : []),
@@ -152,8 +156,10 @@ export async function discoverGcp(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
     side("Secret Manager", async () => peri("gcp.secret", arr(await runJson(d, "gcloud", ["secrets", "list", ...p])).map((x) => ({ name: String(x.name ?? "").split("/").pop() }))), notes),
   ]);
 
+  const data = opts.ir === "v2" ? await readGcpData(d, project, notes) : [];   // I6: v2 만 Cloud Storage·Pub/Sub·Memorystore
   const items: Obj[] = [
     ...app.items,
+    ...data,
     ...(db ? [{ kind: "cloudsql.instance", name: db.name, databaseVersion: db.databaseVersion,
       settings: { dataDiskSizeGb: get(db, "settings", "dataDiskSizeGb") == null && opts.ir === "v2" ? null : String(get(db, "settings", "dataDiskSizeGb") ?? "10"),   // v2: 못 읽은 값을 지어내지 않는다
         tier: get(db, "settings", "tier") ?? null,

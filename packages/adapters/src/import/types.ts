@@ -41,6 +41,8 @@ export interface MappedComponent {
   network?: { ingress: Array<{ from: string; port?: number }> | "unknown"; public: boolean | null };
   /** v1 투영 재료 (서비스만) */
   projection?: ProjectionSource;
+  /** I6: 큐의 DLQ 가 가리키는 다른 큐(ARN·토픽 이름). 파이프라인이 id 가 정해진 뒤 props.deadLetter.to 로 바꾼다 (저장 안 함) */
+  deadLetterRef?: { arn: string; name: string };
   /** 파이프라인이 채움: 정한 id, 이 서비스를 고르는 k8s Service 이름들 */
   id?: string;
   svcNames?: string[];
