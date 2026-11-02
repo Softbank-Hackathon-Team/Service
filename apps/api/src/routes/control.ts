@@ -2,9 +2,9 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { QUEUES, VALID, type MigrationStatus, type QueueName } from "@svc/contracts";
-import { advance, boss, asBossDb, reclaimEnvLocks, writeAudit, NotFound, DomainError, type Tx } from "@svc/core";
+import { advance, boss, asBossDb, checkRetryBudget, reclaimEnvLocks, writeAudit, NotFound, DomainError, type Tx } from "@svc/core";
 import { RollbackResult, ReclaimResult, CancelResult, errors } from "./responses.js";
-import { IdParam, auditOk, found, nextJob } from "./kit.js";
+import { IdParam, RetryBody, auditOk, found, nextJob } from "./kit.js";
 
 // 사람이 누르는 비상 버튼 둘 (상태 머신 표 기준)
 //   POST /migrations/:id/rollback   지금 상태 → rolling_back (+ rollback 작업). 출발로 되돌린다
@@ -22,6 +22,7 @@ const CancelBody = ReasonBody.extend({
 const ResumeBody = ReasonBody.extend({
   // 가드레일 규칙으로 멈춘 경우(failure_code 없음)만 필요 (T31/T32): 규칙 위반이 풀렸다고 사람이 확인
   ruleCleared: z.boolean().optional(),
+  ...RetryBody.shape,   // PA5a: 재시도 한도 이상이면 acceptCustomerCost:true
 }).strict();
 
 // 재개할 때 다시 넣는 작업. 작업 키는 워커가 다음 단계를 넣을 때와 같은 모양(<queue>:<id>)
@@ -100,6 +101,8 @@ export async function controlRoutes(app: FastifyInstance) {
       const queue = to ? RESUME_QUEUE[to] : undefined;
       if (!to || !queue) throw new DomainError(409, "INVALID_TRANSITION", `paused_from ${to ?? "?"}: nothing to resume`);
       const ruleCleared = m.failureCode ? true : req.body?.ruleCleared === true;
+      // PA5a: 실패 코드로 멈춘 경우만 "실패 재시도"로 센다 (가드레일 규칙 멈춤은 실패가 아님). 한도 이상이면 acceptCustomerCost 필요
+      const budget = m.failureCode ? await checkRetryBudget(tx, id, req.body?.acceptCustomerCost) : null;
       // 남은 잠금(죽은 워커 이름·기한 지난 예약)을 예약 10분으로 되돌린다 → 새 작업이 바로 인수. 10분 안에 안 집히면 청소가 다시 paused
       const relocked = await reclaimEnvLocks(tx, id);
       if (relocked === 0) throw new DomainError(409, "ENV_LOCK_MISSING", "no env lock left for this migration (cancel or roll back)");
@@ -112,6 +115,10 @@ export async function controlRoutes(app: FastifyInstance) {
       // 그 작업이 곧 같은 일을 하므로 재개는 성공으로 본다 (advance next면 JobNotCreated로 재개 자체가 취소된다)
       const jobId = await boss.send(queue, { tenantId: req.tenantId, requestId: req.id, migrationId: id },
         { singletonKey: `${queue}:${id}`, db: asBossDb(tx) });
+      if (budget)
+        await writeAudit(tx, req.tenantId, { actor: req.actor, action: "migration.retried", target: id, result: "ok",
+          detail: { via: "resume", pausedFrom: to, failureCode: m.failureCode, attempt: budget.attempt,
+                    customerCostAccepted: budget.customerCostAccepted } });
       return { status: 202, body: { id, from: "paused" as const, status: to, queue, jobQueued: jobId !== null } };
     });
   });

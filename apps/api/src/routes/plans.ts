@@ -2,9 +2,9 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { randomUUID } from "node:crypto";
 import { ApprovalInput, PlanDoc, QUEUES, type MigrationStatus } from "@svc/contracts";
-import { withTenant, advance, writeAudit, DomainError, planExpired, type Tx } from "@svc/core";
+import { withTenant, advance, checkRetryBudget, writeAudit, DomainError, planExpired, type Tx } from "@svc/core";
 import { Accepted, ApprovalResult, errors } from "./responses.js";
-import { IdParam, auditOk, found, nextJob } from "./kit.js";
+import { IdParam, RetryBody, auditOk, found, nextJob } from "./kit.js";
 import { loadLatestApproval, loadLatestPlan, loadPlanById, saveApproval } from "./plan-store.js";
 
 // 계획 → 승인 → 시작 경로 (설계 api-orchestrator-v1 3.4)
@@ -118,7 +118,8 @@ export async function planRoutes(app: FastifyInstance) {
   //   다시 승인할 때 잠금을 새로 예약하고, 그 사이 다른 이전이 같은 환경을 잡으면 409 ENV_BUSY. 어긋남은 PR 설명에 적는다
   // DRAFT(ai): H-9 importing·prechecking 에서 실패한 이전은 여기서 막는다(409 REPLAN_NOT_ALLOWED) — "취소 후 새 이전".
   //   T37 가드(guards.ts)는 그대로 둔다. 그 밖의 실패 지점(cutover 등)은 가드가 409 GUARD_FAILED 로 막는다
-  r.post("/migrations/:id/replan", { schema: { params: IdParam,
+  // PA5a: 실패 재시도가 한도(RETRY_BUDGET, 기본 3) 이상이면 본문 acceptCustomerCost:true 필요 → 없으면 409 RETRY_BUDGET_EXHAUSTED
+  r.post("/migrations/:id/replan", { schema: { params: IdParam, body: RetryBody.nullish(),
     response: { 202: Accepted, ...errors(400, 401, 403, 404, 409, 500) } } }, async (req, reply) => {
     const id = req.params.id;
     return req.idempotent(reply, async (tx) => {
@@ -126,6 +127,7 @@ export async function planRoutes(app: FastifyInstance) {
       if (m.status === "failed" && (m.failedAtStatus === "importing" || m.failedAtStatus === "prechecking"))
         throw new DomainError(409, "REPLAN_NOT_ALLOWED",
           `failed at ${m.failedAtStatus}: cancel and start a new migration`);
+      const budget = m.status === "failed" ? await checkRetryBudget(tx, id, req.body?.acceptCustomerCost) : null;
       const planId = randomUUID();
       // precheck.ts 가 plan 작업을 넣는 모양 그대로 (작업 키 plan:<이전 번호>)
       await advance(tx, { id, tenantId: req.tenantId }, m.status, "planning", {
@@ -137,7 +139,8 @@ export async function planRoutes(app: FastifyInstance) {
       // 실패를 사람이 다시 시도한 횟수 (재시도 한도는 이 줄을 센다). stale·rejected 에서 다시 계획하는 것은 실패 재시도가 아니라 세지 않는다
       if (m.status === "failed")
         await writeAudit(tx, req.tenantId, { actor: req.actor, action: "migration.retried", target: id, result: "ok",
-          detail: { planId, failedAtStatus: m.failedAtStatus } });
+          detail: { planId, failedAtStatus: m.failedAtStatus, via: "replan",
+                    ...(budget ? { attempt: budget.attempt, customerCostAccepted: budget.customerCostAccepted } : {}) } });
       return { status: 202, body: { id } };
     });
   });

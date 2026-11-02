@@ -96,3 +96,20 @@ export const Measurement = z.object({
   at: z.string(),
 }).strict();
 export type Measurement = z.infer<typeof Measurement>;
+
+// PA5a (계획 26 · A5a): AI 실행 종류 한 곳. agent_runs.kind CHECK(0025)와 같아야 한다
+//   remediate = 샌드박스 점검·수정 제안, spec_draft = 명세 초안, failure_analysis = 실패 원인 분석(읽기 전용)
+// agent-worker 의 손으로 쓴 AgentRunKind 타입을 이걸로 바꾸는 건 A5b (에이전트 워커 분기)
+export const AgentRunKind = z.enum(["remediate", "spec_draft", "failure_analysis"]);
+export type AgentRunKind = z.infer<typeof AgentRunKind>;
+
+// 실패 원인 분석 결과 (agent_runs.result, kind = failure_analysis). AI 는 원인·고칠 것만 알려 주고 재시도는 사람이 누른다 (계획 26 3.2)
+// DRAFT(ai): 칸 이름·길이 상한은 계획 26 A5a 안. confidence 는 0~1 (명세 칸 신뢰도 1/0.9/0.6 과 달리 연속값)
+export const FailureAnalysis = z.object({
+  cause: z.string().max(500),                    // 원인 한두 문장
+  evidence: z.array(z.string().max(300)).max(10), // 근거 (감사 줄·실패 코드·작업 오류 요약에서)
+  fix: z.array(z.string().max(300)).max(10),      // 사람이 할 일 (명세 수정·권한·쿼터 등)
+  retryable: z.boolean(),                        // 고치지 않고 그냥 다시 해도 될 만한지
+  confidence: z.number().min(0).max(1),
+}).strict();
+export type FailureAnalysis = z.infer<typeof FailureAnalysis>;

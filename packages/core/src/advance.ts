@@ -8,6 +8,7 @@ import { REPLANNABLE_FAILURES, canMove } from "./states.js";
 import { reserveEnvLocks, releaseEnvLocks, reclaimEnvLocks, type ReclaimedLock } from "./envlock.js";
 import { envNumber } from "@svc/contracts";
 import { notifyMigration } from "./notify.js";
+import { queueAgentRun, type QueueAgentResult } from "./agent-runs.js";
 
 export interface AdvanceOpts {
   mode?: "strict" | "ifStill";
@@ -17,6 +18,9 @@ export interface AdvanceOpts {
   evidence?: TransitionEvidence;     // 전이 조건에 쓰는 증거. 감사 detail에 남는다
   failureCode?: string;              // → failed / → paused 일 때 이유 (예: WORKER_LOST)
   rollbackWindowSec?: number;        // cutover → rollback_window 일 때 창 길이
+  // PA5a: → failed / paused 이고 failureCode 가 있으면 실패 원인 분석(agent_runs failure_analysis)을 같은 트랜잭션에 넣는다.
+  //   깃발 FAILURE_ANALYSIS=1 일 때만 (기본 꺼짐: 에이전트 워커 분기 A5b 전엔 분석이 queued 로 남음). 못 넣어도 전이는 그대로 확정
+  analyze?: boolean;
   audit: AuditInput;
 }
 
@@ -50,7 +54,8 @@ export async function advance(
   const reclaimed = await settleEnvLocks(tx, m, from, to, facts, o.fence); // 3. 환경 잠금
   await writeStatus(tx, m.id, from, to, o);                           // 4. 상태 변경
   if (o.next) await enqueueNext(tx, m.id, facts.targetEnvId, o.next); // 5. 다음 작업
-  await recordAndNotify(tx, m, from, to, o, reclaimed);               // 6·7. 감사 + 화면 신호
+  const fa = await queueFailureAnalysis(tx, m, from, to, o);          // 5-1. 실패 원인 분석 (큐 뒤·감사 앞 고정)
+  await recordAndNotify(tx, m, from, to, o, reclaimed, fa);           // 6·7. 감사 + 화면 신호
   return true;
 }
 
@@ -130,9 +135,33 @@ async function enqueueNext(tx: Tx, migrationId: string, targetEnvId: string,
   if (!jobId) throw new JobNotCreated(next.queue);
 }
 
+// 5-1. 실패 원인 분석 넣기 (PA5a, 계획 26 3.2). 자리 = 큐 단계 뒤·감사 앞: 잠금 순서(이전 행 → 큐 → 감사)를 그대로 지킨다
+// 던지지 않는다: 바쁨·키 없음·지출 상한·작업 키 겹침은 { skipped }, DB 오류도 SAVEPOINT 로 되돌리고 { skipped: "error" }
+//   → 실패 전이는 언제나 확정된다. 같은 실패에 한 번: 작업 키 agent-run:fa:<이전>:<version> + 같은 종류 queued·running 이면 busy
+async function queueFailureAnalysis(tx: Tx, m: { id: string; tenantId: string }, from: MigrationStatus,
+  to: MigrationStatus, o: AdvanceOpts): Promise<QueueAgentResult | null> {
+  if (!o.analyze || (to !== "failed" && to !== "paused") || !o.failureCode) return null;
+  if (process.env.FAILURE_ANALYSIS !== "1") return null;
+  await tx.query("SAVEPOINT failure_analysis");
+  try {
+    const v = (await tx.query("SELECT version FROM migrations WHERE id = $1", [m.id])).rows[0]?.version as number;
+    const r = await queueAgentRun(tx, {
+      tenantId: m.tenantId, migrationId: m.id, kind: "failure_analysis", checkLlm: true,
+      requestId: `failure-analysis:${m.id}:${v}`, singletonKey: `agent-run:fa:${m.id}:${v}`,
+      // 모델에 들어가는 글. 상태·코드 이름만 (비밀·오류 원문은 워커가 감사에서 다시 읽는다)
+      task: `실패 원인 분석: ${from} → ${to}, 실패 코드 ${o.failureCode}`,
+    });
+    await tx.query("RELEASE SAVEPOINT failure_analysis");
+    return r;
+  } catch {
+    await tx.query("ROLLBACK TO SAVEPOINT failure_analysis");
+    return { skipped: "error" };
+  }
+}
+
 // 6. 감사 기록 (마지막 잠금). 증거와 실패 사유를 detail에 같이 남긴다 / 7. 화면 신호 (확정될 때만 나감)
 async function recordAndNotify(tx: Tx, m: { id: string; tenantId: string }, from: MigrationStatus,
-  to: MigrationStatus, o: AdvanceOpts, reclaimed: ReclaimedLock[] = []): Promise<void> {
+  to: MigrationStatus, o: AdvanceOpts, reclaimed: ReclaimedLock[] = [], fa: QueueAgentResult | null = null): Promise<void> {
   const detail = { ...(o.audit.detail ?? {}), from, to,
     ...(o.evidence ? { evidence: o.evidence } : {}),
     ...(o.failureCode ? { failureCode: o.failureCode } : {}) };
@@ -141,5 +170,11 @@ async function recordAndNotify(tx: Tx, m: { id: string; tenantId: string }, from
   for (const r of reclaimed)
     await writeAudit(tx, m.tenantId, { actor: o.audit.actor, action: "env_lock.reclaimed", target: r.envId, result: "ok",
       detail: { code: "LOCK_RECLAIMED", byMigrationId: m.id, ...r } });
+  // PA5a: 실패 원인 분석을 넣었거나 건너뛴 기록 (감사 자문 잠금은 이미 쥐었음)
+  if (fa) await writeAudit(tx, m.tenantId, "skipped" in fa
+    ? { actor: o.audit.actor, action: "failure_analysis.skipped", target: m.id, result: "ok",
+        detail: { reason: fa.skipped, failureCode: o.failureCode, to } }
+    : { actor: o.audit.actor, action: "agent.failure_analysis.requested", target: m.id, result: "ok",
+        detail: { agentRunId: fa.runId, jobId: fa.jobId, failureCode: o.failureCode, to } });
   await notifyMigration(tx, { t: m.tenantId, id: m.id, s: to });
 }

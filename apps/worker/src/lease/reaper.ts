@@ -122,8 +122,9 @@ export async function reapLock(l: ExpiredLock): Promise<{ action: ReapAction; ap
     if (act.kind === "stale")
       return advance(tx, m, "approved", "stale", { mode: "ifStill", audit: audit("migration.stale") });
     const au = audit(`migration.${act.to}`);
+    // PA5a: analyze = 리퍼가 failed·paused 로 옮길 때도 실패 원인 분석 (깃발 FAILURE_ANALYSIS)
     return advance(tx, m, l.status as MigrationStatus, act.to,
-      { mode: "ifStill", failureCode: act.code, audit: fence ? { ...au, detail: { ...au.detail, fence } } : au });
+      { mode: "ifStill", failureCode: act.code, analyze: true, audit: fence ? { ...au, detail: { ...au.detail, fence } } : au });
   });
   const a = act as ReapAction;
   // 쥐고 있던 큐 작업도 실패 처리한다. 안 하면 같은 작업 키가 "실행 중"으로 남아 재개 작업이 못 들어간다

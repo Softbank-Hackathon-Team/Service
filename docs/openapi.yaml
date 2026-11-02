@@ -1449,6 +1449,93 @@ paths:
                           - "rejectedCount"
                         additionalProperties: false
                       - type: "null"
+                  failureAnalysis:
+                    type: "object"
+                    properties:
+                      source:
+                        type: "string"
+                        enum:
+                          - "db"
+                          - "stub"
+                      runId:
+                        type:
+                          - "string"
+                          - "null"
+                      status:
+                        type: "string"
+                        enum:
+                          - "queued"
+                          - "running"
+                          - "finished"
+                          - "failed"
+                      model:
+                        type:
+                          - "string"
+                          - "null"
+                      createdAt:
+                        type:
+                          - "string"
+                          - "null"
+                      finishedAt:
+                        type:
+                          - "string"
+                          - "null"
+                      reason:
+                        type:
+                          - "string"
+                          - "null"
+                      usage:
+                        type: "object"
+                        properties:
+                          input:
+                            type: "integer"
+                            minimum: -9007199254740991
+                            maximum: 9007199254740991
+                          output:
+                            type: "integer"
+                            minimum: -9007199254740991
+                            maximum: 9007199254740991
+                        required:
+                          - "input"
+                          - "output"
+                        additionalProperties: false
+                      steps:
+                        type: "array"
+                        items:
+                          type: "object"
+                          properties:
+                            seq:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            tool:
+                              type: "string"
+                            ok:
+                              type: "boolean"
+                            note:
+                              type: "string"
+                          required:
+                            - "seq"
+                            - "tool"
+                            - "ok"
+                            - "note"
+                          additionalProperties: false
+                      analysis:
+                        anyOf:
+                          - $ref: "#/components/schemas/FailureAnalysis"
+                          - type: "null"
+                    required:
+                      - "source"
+                      - "runId"
+                      - "status"
+                      - "model"
+                      - "createdAt"
+                      - "finishedAt"
+                      - "reason"
+                      - "usage"
+                      - "steps"
+                      - "analysis"
+                    additionalProperties: false
                 required:
                   - "migrationId"
                   - "llm"
@@ -2263,6 +2350,18 @@ paths:
         - "migrations"
       summary: "/api/v1/migrations/{id}/replan"
       description: "코드: apps/api/src/routes/plans.ts"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              anyOf:
+                - type: "object"
+                  properties:
+                    acceptCustomerCost:
+                      type: "boolean"
+                  additionalProperties: false
+                - type: "null"
       security:
         - bearerAuth: []
         - devTenant: []
@@ -2381,6 +2480,8 @@ paths:
                       type: "string"
                       maxLength: 500
                     ruleCleared:
+                      type: "boolean"
+                    acceptCustomerCost:
                       type: "boolean"
                   additionalProperties: false
                 - type: "null"
@@ -4462,6 +4563,37 @@ components:
         - "incidents"
         - "gaps"
         - "reportHash"
+      additionalProperties: false
+    FailureAnalysis:
+      type: "object"
+      properties:
+        cause:
+          type: "string"
+          maxLength: 500
+        evidence:
+          maxItems: 10
+          type: "array"
+          items:
+            type: "string"
+            maxLength: 300
+        fix:
+          maxItems: 10
+          type: "array"
+          items:
+            type: "string"
+            maxLength: 300
+        retryable:
+          type: "boolean"
+        confidence:
+          type: "number"
+          minimum: 0
+          maximum: 1
+      required:
+        - "cause"
+        - "evidence"
+        - "fix"
+        - "retryable"
+        - "confidence"
       additionalProperties: false
     Finding:
       type: "object"

@@ -47,6 +47,8 @@ const COMMON: Record<string, Rule> = {
   REPL_MAX_MARKER_RTT_MS: { check: num({ min: 0 }) },
   SPEC_MIN_CONFIDENCE: { check: num({ min: 0, max: 1 }) },   // DRAFT(ai): 0 = 꺼짐(기본)
   SHUTDOWN_HARD_TIMEOUT_MS: { check: num({ min: 0 }) },
+  FAILURE_ANALYSIS: { check: oneOf("0", "1") },               // PA5a: 실패 원인 분석 넣기. 기본 꺼짐(A5b 머지 전)
+  RETRY_BUDGET: { check: num({ int: true, min: 0 }) },        // PA5a DRAFT(ai): 이전당 사람 재시도 한도 (기본 3, 0 = 끔)
 };
 export const CONFIG_RULES = {
   api: {
