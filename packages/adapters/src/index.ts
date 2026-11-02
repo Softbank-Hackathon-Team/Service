@@ -48,3 +48,5 @@ export { verifyGcpObserve, gcpEnvFor, gcpReasonOf, type VerifyGcpInput, type Ver
 export { borrowedAwsCreds, type BorrowedAwsCreds, type AwsSessionKeys } from "./terraform/borrowed-aws.js";
 // TA10: Azure Mock 도착 Builder v2 (capability 표 + mock plan)
 export { azureMockPlanV2, azureMockOutputsV2, azureResourceTypesV2, type AzureMockPlanV2 } from "./target/index.js";
+// TA3: 계획·적용 연결 (PLAN_IR=v2) — v2 명세 출처 고르기·precheck 대조·출력 펼치기·흉내 출력
+export { resolveSpecV2, specV2OrThrow, specV2ForPlan, v2PrecheckItems, flattenTfOutputsV2, stubTfOutputsV2, NEEDS_HUMAN, type SpecV2Source, type ResolvedSpecV2 } from "./target/plan-v2.js";

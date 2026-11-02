@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { AppSpec, PlanDoc, type PlanCostSummary, type PrecheckItem } from "@svc/contracts";
 import { adapterFor } from "@svc/adapters";
-import { buildAcknowledgements, buildPlanDoc, estimatePlanCost, PLAN_FREE_RETRIES } from "../src/jobs/plan.js";
+import { buildAcknowledgements, buildPlanDoc, estimatePlanCost } from "../src/jobs/plan.js";
 
 const spec = AppSpec.parse(adapterFor("aws").normalize({ provider: "aws", items: [], coverage: {} }).spec);
 const base = {
@@ -31,10 +31,19 @@ test("항목 순서·개수: cost, failure_cost_policy, precheck warn(입력 순
   assert.equal(new Set(out.map((x) => x.id)).size, out.length, "id 중복 없음 — acks 는 id 로만 덮는다");
 });
 
-test("고지 문구에 무료 재시도 횟수가 상수 그대로 들어간다 (RETRY_BUDGET 기본과 같은 3)", () => {
-  assert.equal(PLAN_FREE_RETRIES, 3);
-  const a = buildAcknowledgements({ cost: cost(80), from: "aws", to: "gcp", precheck: [] });
-  assert.match(a[1]!.text, /재시도 3번/);
+test("고지 문구의 재시도 횟수 = 실제 한도(RETRY_BUDGET) — PA4fix", () => {
+  const t = (env: NodeJS.ProcessEnv) => buildAcknowledgements({ cost: cost(80), from: "aws", to: "gcp", precheck: [], env })[1]!.text;
+  assert.match(t({}), /재시도 3번/, "기본");
+  assert.match(t({ RETRY_BUDGET: "5" }), /재시도 5번/);
+  assert.match(t({ RETRY_BUDGET: "abc" }), /재시도 3번/, "글자는 기본 3 (retryBudget 과 같은 규칙)");
+  assert.match(t({ RETRY_BUDGET: "0" }), /횟수 제한 없이/, "0 = 한도 꺼짐");
+  assert.doesNotMatch(t({ RETRY_BUDGET: "0" }), /재시도 0번/);
+});
+
+test("PA4fix 지문: 같은 RETRY_BUDGET 이면 같은 지문, 값이 다르면 지문이 다르다 (본 문구 = 승인 지문)", () => {
+  const mk = (env: NodeJS.ProcessEnv) => buildPlanDoc({ ...base, costSummary: cost(80) }, env).planHash;
+  assert.equal(mk({}), mk({ RETRY_BUDGET: "3" }));
+  assert.notEqual(mk({}), mk({ RETRY_BUDGET: "5" }));
 });
 
 test("지문: 확인 항목 글 하나(사전 점검 warn 추가)만 달라도 planHash 가 다르다, 같은 입력은 같은 지문", () => {

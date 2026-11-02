@@ -14,6 +14,21 @@ export async function latestAcceptedSpec(tx: Tx, migrationId: string): Promise<u
   return r.rows[0]?.spec ?? null;
 }
 
+// TA3 (설계 27번 3.5): 같은 줄(받아들인 최신 판)의 v1 spec + spec_v2->'spec' + "앞 판에 spec_v2 가 있었나".
+//   spec_v2 칸(0023)은 to_jsonb 로 읽어 칸이 없는 DB 에서도 안 깨진다. 판이 없으면 null
+export interface AcceptedSpecV2Row { version: number; spec: unknown; specV2: unknown | null; hadV2Before: boolean }
+export async function latestAcceptedSpecV2(tx: Tx, migrationId: string): Promise<AcceptedSpecV2Row | null> {
+  const r = await tx.query(
+    `SELECT s.version, s.spec, to_jsonb(s)->'spec_v2'->'spec' AS "specV2",
+            EXISTS (SELECT 1 FROM spec_versions p WHERE p.migration_id = s.migration_id AND p.version < s.version
+                     AND NOT (p.field_meta ? $2) AND jsonb_typeof(to_jsonb(p)->'spec_v2') = 'object') AS "hadV2Before"
+       FROM spec_versions s WHERE s.migration_id = $1 AND NOT (s.field_meta ? $2)
+      ORDER BY s.version DESC LIMIT 1`, [migrationId, SPEC_DRAFT_KEY]);
+  const row = r.rows[0] as { version: number; spec: unknown; specV2: unknown; hadV2Before: boolean } | undefined;
+  if (!row) return null;
+  return { version: Number(row.version), spec: row.spec, specV2: row.specV2 ?? null, hadV2Before: row.hadV2Before === true };
+}
+
 // ---- PA2 (계획 26 · A2 v1): 사람이 명세를 고친 새 판 ----
 
 type MetaEntry = { source: string; confidence: number; needs_review: boolean; rationale?: string };

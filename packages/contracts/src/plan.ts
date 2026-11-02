@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ModuleInstance } from "./target.js";
 
 // 사전 점검 한 줄
 export const PrecheckItem = z.object({
@@ -63,6 +64,12 @@ export const PlanDoc = z.object({
   specVersion: z.number().int().positive().optional(),
   costSummary: PlanCostSummary.optional(),
   acknowledgements: z.array(PlanAcknowledgement).optional(),
+  // TA3 (설계 27번 3.5, A3): PLAN_IR=v2 로 만든 계획서만 이 세 칸을 싣는다. v1 계획서 body 엔 키 자체가 없다(지문 보존).
+  //   apply·deploy 는 깃발이 아니라 이 칸으로 길을 고른다 (승인 뒤 깃발을 바꿔도 승인한 길 그대로)
+  //   specSource: spec_v2 = 가져오기가 저장한 v2, upconvert = v1 판을 올린 것 (spec_v2 없음)
+  irVersion: z.literal("2").optional(),
+  specSource: z.enum(["spec_v2", "upconvert"]).optional(),
+  instances: z.array(ModuleInstance).optional(),   // 매트릭스 줄 module.<종류>["<id>"] (비용 고지·화면용)
   planHash: z.string(),
   expiresAt: z.string(),
 }).strict();

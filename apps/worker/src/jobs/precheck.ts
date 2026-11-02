@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { MigrationJob, PrecheckItem, QUEUES } from "@svc/contracts";
-import { withTenant } from "@svc/core";
-import { envFor, runCloudPrecheck, toPrecheckItems, spawnExec, type PrecheckEnvInfo, type PrecheckInput, type PrecheckDeps, type CloudProvider } from "@svc/adapters";
+import { latestAcceptedSpecV2, withTenant } from "@svc/core";
+import { envFor, v2PrecheckItems, runCloudPrecheck, toPrecheckItems, spawnExec, type PrecheckEnvInfo, type PrecheckInput, type PrecheckDeps, type CloudProvider } from "@svc/adapters";
 import { endpointFromEnv, withClient } from "@svc/replication";
 import { runStep } from "./_step.js";
 import { withStepRoles, type StepRoles } from "./_roles.js";
 import type { MigrationRow } from "./_step.js";
+import { planIrV2 } from "./plan-v2.js";
 
 // 사전 점검: 이전해도 되는지 본다. block(FAIL)이 하나라도 있으면 명세 검토로 되돌린다
 // Z97: STUB(고정 "확인됨")을 실조회로 바꿨다 — 자격(STS·tokeninfo·kubectl)·도착 API·결제·할당량·DB 버전·TCP·디스크.
@@ -63,13 +64,25 @@ export async function realPrecheck(tenantId: string, m: MigrationRow, deps: Part
   return toPrecheckItems(checks).map((i) => PrecheckItem.parse(i));
 }
 
+// TA3 (설계 27번 3.6): PLAN_IR=v2 면 v2 명세를 도착 capability 와 대조한다. 못 그리는 칸·사람 확인 → block (명세 검토로 되돌림)
+//   깃발 off 면 빈 목록 (지금 점검 그대로)
+export async function v2PrecheckFor(tenantId: string, m: MigrationRow, env: NodeJS.ProcessEnv = process.env): Promise<PrecheckItem[]> {
+  if (!planIrV2(env)) return [];
+  return withTenant(tenantId, async (tx) => {
+    const row = await latestAcceptedSpecV2(tx, m.id);
+    const e = await tx.query(`SELECT provider FROM environments WHERE id=$1`, [m.targetEnvId]);
+    if (!row || !e.rows[0]) return [];   // 명세·도착이 없으면 계획 단계 재확인이 막는다
+    return v2PrecheckItems(e.rows[0].provider, row);
+  });
+}
+
 export async function handlePrecheck(raw: unknown) {
   const job = MigrationJob.parse(raw); // 큐 내용은 믿지 않는다: 모양부터
   return runStep(job, {
     name: "precheck",
     expect: "prechecking",
     work: async (j, m) => withStepRoles("precheck", j, m, async (roles) => {
-      const items = await realPrecheck(j.tenantId, m, {}, roles);
+      const items = [...await realPrecheck(j.tenantId, m, {}, roles), ...await v2PrecheckFor(j.tenantId, m)];
       const precheckBlockers = items.filter((i) => i.level === "block").length;
       const precheckWarnings = items.filter((i) => i.level === "warn").length;
       const mock = process.env.MOCK_PRECHECK === "1";

@@ -18,11 +18,15 @@ import { buildWorkloadValues } from "./cloud.js";
 const CAPS = [...K8S_RENDER_CAPS, "kind.postgres.15", "kind.postgres.16", "kind.postgres.17", "mock"];
 
 // v1 통짜 모듈이 담지 못하는 모양 → UNSUPPORTED_V2 (capability 표 밖과 같은 오류)
+// E2E-v5: precheck(v2PrecheckItems)도 같은 검사를 불러 계획 단계 failed 대신 block(명세 검토로 되돌림)으로 먼저 알린다
+export function azureShapeBlockers(spec: AppSpecV2): string[] {
+  const ids = identitiesOf(spec);
+  return ids.length > 1 ? [`도착 렌더 미지원: azure_mock 은 신원 1개만 (serviceAccount ${ids.map((i) => i.serviceAccount).join(",")})`] : [];
+}
 function assertAzureShape(spec: AppSpecV2): void {
   assertRenderable(spec, CAPS);
-  const ids = identitiesOf(spec);
-  if (ids.length > 1)
-    throw new AdapterError(UNSUPPORTED_V2, `도착 렌더 미지원: azure_mock 은 신원 1개만 (serviceAccount ${ids.map((i) => i.serviceAccount).join(",")})`);
+  const [why] = azureShapeBlockers(spec);
+  if (why) throw new AdapterError(UNSUPPORTED_V2, why);
 }
 
 // v1 resourceTypes 와 같은 종류 (Key Vault·신원·연합 자격 + DB 있으면 Flexible Server·DB)

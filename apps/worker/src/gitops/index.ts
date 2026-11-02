@@ -1,5 +1,6 @@
-import type { AppSpec, DeployResult, HelmValues, PlanDoc, Provider, TfOutputs } from "@svc/contracts";
-import { adapterFor } from "@svc/adapters";
+import type { AppSpec, AppSpecV2, DeployResult, HelmValues, PlanDoc, Provider, TfOutputs } from "@svc/contracts";
+import { adapterFor, flattenTfOutputsV2 } from "@svc/adapters";
+import { helmValuesV2 } from "../jobs/plan-v2.js";
 import { stableHash } from "../jobs/_step.js";
 import { ENV_DIR, DELIVERY, appNamespace, fillPlaceholders, planFile, tenantSlug, withTraffic, argoAppName, type BundleRef } from "./bundle.js";
 import { GitopsError, GitopsRepo, type CommitResult } from "./repo.js";
@@ -13,13 +14,18 @@ export interface DeployInput {
   plan: PlanDoc;
   target: { envId: string; provider: Provider; region: string; accountId: string | null };
   tfOutputs: TfOutputs;
+  // TA3: 계획서 irVersion "2" 일 때 계획서 specSource 와 같은 출처의 v2 명세. 없으면 GITOPS_VALUES_DRIFT
+  specV2?: AppSpecV2 | null;
 }
 
 // 승인 때 값과 같은지: 계획 처리기와 똑같이 toHelmValues(spec, {}, target)를 다시 만들어 지문을 비교한다.
 // 다르면 어댑터나 명세가 승인 뒤에 바뀐 것 → 배포하지 않는다
 export function approvedValues(i: DeployInput): HelmValues {
   const t = { envId: i.target.envId, provider: i.target.provider, region: i.target.region };
-  const v = adapterFor(i.target.provider).toHelmValues(i.spec, {}, t);
+  // TA3: 길은 계획서 irVersion 으로 (깃발 아님). v2 인데 승인한 출처의 v2 명세가 없으면 upconvert 로 몰래 넘어가지 않는다
+  if (i.plan.irVersion === "2" && !i.specV2)
+    throw new GitopsError("GITOPS_VALUES_DRIFT", `승인한 v2 명세(${i.plan.specSource ?? "?"})가 지금 판에 없다`);
+  const v = i.plan.irVersion === "2" ? helmValuesV2(i.specV2!, t) : adapterFor(i.target.provider).toHelmValues(i.spec, {}, t);
   if (stableHash(v) !== i.plan.helmValuesHash) {
     throw new GitopsError("GITOPS_VALUES_DRIFT", "승인한 Helm 값 지문과 지금 만든 값 지문이 다르다 (어댑터·명세가 승인 뒤 바뀜)");
   }
@@ -54,7 +60,9 @@ export interface SyncWatcher { wait(b: BundleRef, c: CommitResult): Promise<Sync
 export async function deployToGitops(repo: GitopsRepo, i: DeployInput, watcher: SyncWatcher):
   Promise<{ result: DeployResult; commit: string; app: string; argo?: SyncWatchResult["observed"] }> {
   const b = bundleRefOf(i);
-  const filled = fillPlaceholders(approvedValues(i), { tf: i.tfOutputs, env: envFacts(i) });
+  // TA3: v2 값은 <tf-output:link.<id>.<출력>> 를 찾는다 → 맵 출력(link_outputs 등)을 펼친 표로 채운다 (v1 은 그대로)
+  const tf = i.plan.irVersion === "2" ? flattenTfOutputsV2(i.tfOutputs) : i.tfOutputs;
+  const filled = fillPlaceholders(approvedValues(i), { tf, env: envFacts(i) });
   if (filled.missing.length) {
     throw new GitopsError("GITOPS_PLACEHOLDER_MISSING", `채우지 못한 자리표시: ${filled.missing.join(", ")}`);
   }
@@ -77,9 +85,20 @@ export function servedByName(b: BundleRef): string {
   return `${b.env.split("-")[0]}-${appNamespace(b)}`;
 }
 export function withServedBy(values: HelmValues, b: BundleRef): HelmValues {
-  const env = Array.isArray(values.env) ? (values.env as Array<{ name: string; value: string }>) : [];
-  if (env.some((e) => e.name === "SERVED_BY")) return values;
-  return { ...values, env: [...env, { name: "SERVED_BY", value: servedByName(b) }] };
+  const add = (env: unknown) => {
+    const xs = Array.isArray(env) ? (env as Array<{ name: string; value?: string }>) : [];
+    return xs.some((e) => e.name === "SERVED_BY") ? xs : [...xs, { name: "SERVED_BY", value: servedByName(b) }];
+  };
+  // TA3: v2 값(workloads[])은 서비스마다 env 가 따로 → 서비스 워크로드에도 넣는다 (트래픽 확인 헤더). 잡에는 안 넣음
+  //   최상위 env 는 v1 값에만 있다. v2 값엔 최상위 env 를 새로 만들지 않는다 (차트가 안 읽는 키)
+  //   이미 다 있으면 같은 객체를 그대로 돌려준다 (예전 동작)
+  if (Array.isArray(values.workloads)) {
+    const ws = values.workloads as Array<Record<string, unknown>>;
+    if (ws.every((w) => w.kind !== "service" || add(w.env) === w.env)) return values;
+    return { ...values, workloads: ws.map((w) => (w.kind === "service" ? { ...w, env: add(w.env) } : w)) };
+  }
+  const env = add(values.env);
+  return env === values.env ? values : { ...values, env };
 }
 
 // 트래픽 단계 기록 (shift 작업용. 아직 shift.ts에는 안 붙였다)
