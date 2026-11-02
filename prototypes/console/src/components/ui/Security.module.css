@@ -76,7 +76,7 @@
   height: 100%;
   min-height: 40px;
   padding: 0 var(--space-12);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-inner);
   white-space: nowrap;
 }
 .cell-pass {

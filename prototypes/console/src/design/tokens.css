@@ -11,7 +11,7 @@
   --primitive-subtle: #f0f2f5;
   --primitive-line: #e3e7ed;
   --primitive-strong: #ccd3dd;
-  --primitive-muted: #747e8c;
+  --primitive-muted: #68717f;
   --primitive-secondary: #616b7a;
   --primitive-ink: #202631;
   --primitive-accent: #365fce;
@@ -91,14 +91,22 @@
   --space-32: 32px;
   --space-40: 40px;
   --space-48: 48px;
-  --radius-sm: 8px;
-  --radius-md: 16px;
-  --radius-lg: 24px;
-  --radius-xl: 32px;
+  /* 반경은 두 단계와 알약뿐이다. 카드끼리는 같은 반경, 카드 안의 칩은 작은 반경. */
+  --radius-card: 24px;
+  --radius-inner: 12px;
   --radius-full: 999px;
+  /* 조작 높이는 세 단계: 작은 버튼, 보조 버튼과 상단 바, 주 버튼. */
   --size-control-s: 36px;
   --size-control-m: 44px;
-  --size-bar: 52px;
+  --size-control-l: 56px;
+
+  /* Bento: 큰 카드만 늘고 줄며 나머지 칸은 고정 너비다. 상태가 바뀌어도 칸은 그대로 있다. */
+  --gap-bento: 16px;
+  --col-narrow: 280px;
+  --col-side: 400px;
+  --col-wide: 560px;
+  --content-max: 1600px;
+  --hero-offset: var(--space-32);
 
   /* Type */
   --font-sans: 'Pretendard JP Variable', -apple-system, BlinkMacSystemFont, system-ui, 'Apple SD Gothic Neo', 'Hiragino Sans', 'Noto Sans KR', 'Noto Sans JP', 'Malgun Gothic', 'Yu Gothic', sans-serif;

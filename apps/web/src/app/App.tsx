@@ -12,6 +12,7 @@ import { NewMigrationPage } from '../features/migration/NewMigrationPage';
 import { SecurityPage } from '../features/security/SecurityPage';
 import { SettingsPage } from '../features/settings/SettingsPage';
 import { auth } from '../lib/api';
+import { live } from '../lib/live';
 import type { AuthState } from '../lib/auth';
 import { go, parseRoute } from './routes';
 import { withTransition } from './transition';
@@ -43,6 +44,13 @@ export function App() {
   }, []);
 
   const view = viewOf(state);
+  // 화면 신호(SSE)는 콘솔에 있는 동안만 붙여 둔다. 로그아웃하면 끊는다
+  useEffect(() => {
+    if (view !== 'console') return;
+    live.start();
+    return () => live.stop();
+  }, [view]);
+
   if (view === 'checking') return null;
   if (view === 'login') return <LoginPage notice={state.notice} />;
 
