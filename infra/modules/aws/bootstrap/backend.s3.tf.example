@@ -1,0 +1,11 @@
+# 원격 state 예시. 다른 스택(aws/platform, aws/env, gcp/env) 폴더에 backend.tf 로 복사하고 key 의 <스택 이름> 을 바꾼다
+# - use_lockfile = true: S3 파일로 잠금 (Terraform 1.10+). DynamoDB 잠금은 폐기 예정이라 안 쓴다
+# - bucket·assume_role 은 init 때 -backend-config 로 준다 (값은 aws/bootstrap 출력)
+terraform {
+  backend "s3" {
+    key          = "service/<스택 이름>/terraform.tfstate"
+    region       = "ap-northeast-2"
+    encrypt      = true
+    use_lockfile = true
+  }
+}
