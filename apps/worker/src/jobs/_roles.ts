@@ -13,7 +13,8 @@ import { envNumber } from "@svc/contracts";
 // 왜 단계마다: 자격 값은 빌린 워커 메모리(보관함)에만 있고, 다음 단계는 다른 워커가 할 수 있다 → 단계 밖으로 못 가져간다.
 // 그래서 "빌림 → 일 → 회수"를 한 단계 안에서 끝낸다. 장부(temp_credentials)·감사(temp_role.*)에 발급·회수·만료가 남는다.
 //
-// STUB: 지금 어댑터·실행기는 이 자격을 아직 안 쓴다 (전부 Mock 발급기). 그래도 발급 검사(최소 권한·세션 정책·TTL)는 진짜로 돈다.
+// L5b·L5c: 진짜 발급기(REAL_STS=1 + external_id)로 빌린 AWS 자격은 apply terraform·precheck CLI 가 쓴다 (awsEnv).
+// STUB: 가짜 발급기·GCP·온프레 자격은 아직 안 쓴다 (프로세스 자격). 그래도 발급 검사(최소 권한·세션 정책·TTL)는 진짜로 돈다.
 // 거부되면(권한 파일 없음 등) 감사에 temp_role.denied 가 남고 단계는 계속 간다.
 // DRAFT(ai): TEMP_ROLE_REQUIRED=1 이면 거부 = 단계 실패(예외). 기본 0 (자격을 아직 안 쓰는 STUB 단계를 거부로 멈추지 않게)
 // DRAFT(ai): 요청 수명 = 900초 (실행 역할 상한, AWS STS 최소값과 같음)
@@ -119,17 +120,23 @@ export async function withStepRoles<T>(step: RoleStep, j: { tenantId: string; mi
 async function awsCredFiles(r: StepRoles, j: { tenantId: string; migrationId: string }, m: MigrationRow) {
   const files = new Map<string, BorrowedAwsCreds>();
   if (!r.creds.some((c) => c.provider === "aws" && !c.stub)) return files;
-  const envs = await envsOf(j.tenantId, m);
-  r.creds.forEach((c, i) => {
-    const side = r.sides?.[i];
-    if (c.provider !== "aws" || c.stub || !side) return;
-    const k = tempRoles().use(c.credentialRef, j.tenantId, j.migrationId);
-    if (k.kind !== "aws") return;
-    const region = envs.get(side === "source" ? m.sourceEnvId : m.targetEnvId)?.region || "ap-northeast-2";
-    const f = borrowedAwsCreds(k, new Date(c.expiresAt), { region });
-    files.set(c.credentialRef, f);
-    (r.awsEnv ??= {})[side] = f.env;
-  });
+  try {
+    const envs = await envsOf(j.tenantId, m);
+    r.creds.forEach((c, i) => {
+      const side = r.sides?.[i];
+      if (c.provider !== "aws" || c.stub || !side) return;
+      const k = tempRoles().use(c.credentialRef, j.tenantId, j.migrationId);
+      if (k.kind !== "aws") return;
+      const region = envs.get(side === "source" ? m.sourceEnvId : m.targetEnvId)?.region || "ap-northeast-2";
+      const f = borrowedAwsCreds(k, new Date(c.expiresAt), { region });
+      files.set(c.credentialRef, f);
+      (r.awsEnv ??= {})[side] = f.env;
+    });
+  } catch (e) {
+    // 중간에 실패하면 이미 만든 자격 파일을 지운다 (호출부는 이 함수가 던지면 files 를 못 받아 못 지운다)
+    for (const f of files.values()) f.dispose();
+    throw e;
+  }
   return files;
 }
 
