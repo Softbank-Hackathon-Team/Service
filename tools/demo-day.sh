@@ -355,6 +355,7 @@ do_up() {
   local gpid grc
   log "up 시작 (겹치기 순서) dry=$DRY profile=$AWS_PROFILE gcp=$GCP_PROJECT eks=$EKS_CONTEXT gke=$GKE_CONTEXT"
   mkdir -p "$STATE"
+  rm -f "$STATE/relay_ip"   # 지난 회차 중계기 IP 를 지움 → demo-tunnel 은 이번 up 이 새로 적을 때까지 기다린다
   step tools u_tools || abort "시작 점검 실패 (자원이 이미 있거나 도구 없음)"
   step gke-apply u_gke & gpid=$!
   step vpc-apply u_vpc || abort "aws/env (EKS 없이) apply 실패"
@@ -377,6 +378,7 @@ do_up() {
 do_up_serial() {
   log "up 시작 (예전 순서) dry=$DRY profile=$AWS_PROFILE gcp=$GCP_PROJECT eks=$EKS_CONTEXT gke=$GKE_CONTEXT"
   mkdir -p "$STATE"
+  rm -f "$STATE/relay_ip"   # 지난 회차 중계기 IP 를 지움 → demo-tunnel 은 이번 up 이 새로 적을 때까지 기다린다
   step tools u_tools || abort "시작 점검 실패 (자원이 이미 있거나 도구 없음)"
   par gke-apply u_gke eks-apply u_eks || abort "클러스터 apply 실패"
   step kubeconfig u_kubeconfig || abort "kubeconfig 실패"
