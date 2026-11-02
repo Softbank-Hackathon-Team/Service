@@ -21,6 +21,7 @@ POST	/migrations/:id/plan	이전	명세 확정, 사전 점검, 계획 생성
 GET	/plans/:id	이전	계획 내용: 단계, 사전 점검 결과, Terraform plan 요약, 정책 게이트, 예외 티켓, 임시 자원 선언, planHash
 POST	/plans/:id/approvals	이전	계획 승인·거절
 POST	/migrations/:id/start	이전	Terraform 실행 시작
+POST	/migrations/:id/reclaim	이전	롤백 대기를 일찍 끝내고 정리로 넘긴다
 POST	/migrations/:id/resume	이전	가드레일로 멈춘 이전을 멈추기 전 상태로 재개
 POST	/migrations/:id/rollback	이전	수동 롤백
 POST	/migrations/:id/cancel	이전	취소
