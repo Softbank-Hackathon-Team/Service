@@ -27,7 +27,7 @@
   overflow: auto;
   padding: var(--space-8);
   border: 1px dashed var(--color-border-strong);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-inner);
   background: var(--color-bg-surface);
   transform: translateX(-50%);
 }
@@ -43,7 +43,7 @@
 .item {
   padding: var(--space-4) var(--space-12);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-inner);
   background: transparent;
   text-align: left;
   cursor: pointer;
