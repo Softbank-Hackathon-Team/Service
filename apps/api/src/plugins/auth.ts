@@ -5,6 +5,8 @@ import { verifyAccess, jwtSecret, type AccessClaims } from "../auth/jwt.js";
 import { devHeaderAuthEnabled } from "../auth/settings.js";
 import { isFamilyRevoked } from "../auth/revoked.js";
 import { withTenant } from "@svc/core";
+import { PAT_PREFIX } from "@svc/contracts";
+import { hashPat, isPatShape, type PatLookup } from "../auth/pat.js";
 
 declare module "fastify" {
   // auth = 진짜 로그인(Bearer JWT)일 때만 채워진다. 개발용 헤더 인증이면 null (Z93)
@@ -34,7 +36,8 @@ export const isViaCloudflare = (req: FastifyRequest) =>
 //   함수는 주입한다: 옵션을 안 주면 확인을 건너뛰어(지금 동작 그대로) DB 없는 시험이 안 깨진다. 진짜 앱(app.ts)이 dbUserActive 를 넣는다
 // DRAFT(ai) L8: 회사 번호는 토큰(tid)에서만 온다(withTenant → RLS). 다른 회사 사용자 번호면 줄이 안 보여 false
 export type UserRecheck = (tenantId: string, userId: string) => Promise<boolean>;
-export interface AuthPluginOptions { recheckUser?: UserRecheck }
+// L8b: lookupPat = 개인 토큰(svc_pat_…) 해시로 찾기. 옵션이 없으면 개인 토큰은 전부 401 (DB 없는 시험용)
+export interface AuthPluginOptions { recheckUser?: UserRecheck; lookupPat?: PatLookup }
 export const dbUserActive: UserRecheck = (tenantId, userId) =>
   withTenant(tenantId, async (tx) => {
     const q = await tx.query(`SELECT disabled_at IS NULL AS active FROM users WHERE id = $1`, [userId]);
@@ -43,6 +46,7 @@ export const dbUserActive: UserRecheck = (tenantId, userId) =>
 
 async function authPluginImpl(app: FastifyInstance, opts: AuthPluginOptions) {
   const recheckUser = opts.recheckUser;
+  const lookupPat = opts.lookupPat;
   app.decorateRequest("tenantId", "");
   app.decorateRequest("actor", "");
   app.decorateRequest("auth", null);
@@ -58,8 +62,21 @@ async function authPluginImpl(app: FastifyInstance, opts: AuthPluginOptions) {
     if (isPublicAuthPath(req.url)) return;
     const authz = req.headers.authorization;
     if (typeof authz === "string" && /^Bearer /i.test(authz)) {
+      const raw = authz.slice(7).trim();
+      // L8b: CLI 개인 토큰. JWT 가 아니라 해시로 DB 에서 찾는다. 회사·사용자는 찾은 줄에서만 정한다(요청 값 무시)
+      //   req.auth 는 비워 둔다 → 개인 토큰으로는 /auth/me·토큰 만들기·지우기 불가 (사람 로그인 전용)
+      if (raw.startsWith(PAT_PREFIX)) {
+        const row = lookupPat && isPatShape(raw) ? await lookupPat(hashPat(raw)) : undefined;
+        if (!row || row.revoked || row.expiresAt.getTime() <= Date.now())
+          return sendError(req, reply, 401, "UNAUTHENTICATED", "invalid or expired token");
+        if (recheckUser && !(await recheckUser(row.tenantId, row.userId)))
+          return sendError(req, reply, 401, "USER_DISABLED", "user is disabled or removed");
+        req.tenantId = row.tenantId;
+        req.actor = `user:${row.userId}`;
+        return;
+      }
       const secret = jwtSecret();
-      const claims = secret ? verifyAccess(authz.slice(7).trim(), secret) : null;
+      const claims = secret ? verifyAccess(raw, secret) : null;
       if (!claims) return sendError(req, reply, 401, "UNAUTHENTICATED", "invalid or expired token");
       // z75-69: 로그아웃·재사용 감지로 끊긴 로그인 묶음의 토큰 (만료 전이라도)
       if (isFamilyRevoked(claims.fam)) return sendError(req, reply, 401, "TOKEN_REVOKED", "this login was signed out");

@@ -4354,6 +4354,181 @@
         }
       }
     },
+    "/api/v1/tokens": {
+      "post": {
+        "operationId": "postTokens",
+        "tags": [
+          "tokens"
+        ],
+        "summary": "/api/v1/tokens",
+        "description": "코드: apps/api/src/routes/tokens.ts",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTokenBodyInput"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devTenant": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DevTenant"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenCreated"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400",
+            "description": "BAD_REQUEST (Zod 검증 실패)"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401",
+            "description": "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403",
+            "description": "TUNNEL_READ_ONLY (개발 헤더 인증 + Cloudflare 터널로 온 쓰기, Z47)"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429",
+            "description": "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500",
+            "description": "INTERNAL"
+          }
+        }
+      },
+      "get": {
+        "operationId": "getTokens",
+        "tags": [
+          "tokens"
+        ],
+        "summary": "/api/v1/tokens",
+        "description": "코드: apps/api/src/routes/tokens.ts",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devTenant": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DevTenant"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/E401",
+            "description": "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429",
+            "description": "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500",
+            "description": "INTERNAL"
+          }
+        }
+      }
+    },
+    "/api/v1/tokens/{id}": {
+      "delete": {
+        "operationId": "deleteTokensById",
+        "tags": [
+          "tokens"
+        ],
+        "summary": "/api/v1/tokens/{id}",
+        "description": "코드: apps/api/src/routes/tokens.ts",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devTenant": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/DevTenant"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "null"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400",
+            "description": "BAD_REQUEST (Zod 검증 실패)"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401",
+            "description": "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404",
+            "description": "ApiError"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429",
+            "description": "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500",
+            "description": "INTERNAL"
+          }
+        }
+      }
+    },
     "/healthz": {
       "get": {
         "operationId": "getHealthz",
@@ -7306,6 +7481,85 @@
         ],
         "additionalProperties": false
       },
+      "TokenCreated": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "name": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string"
+          },
+          "revoked": {
+            "type": "boolean"
+          },
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "createdAt",
+          "expiresAt",
+          "revoked",
+          "token"
+        ],
+        "additionalProperties": false
+      },
+      "TokenList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TokenView"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false
+      },
+      "TokenView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "name": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string"
+          },
+          "revoked": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "createdAt",
+          "expiresAt",
+          "revoked"
+        ],
+        "additionalProperties": false
+      },
       "TrafficShiftProgress": {
         "type": "object",
         "properties": {
@@ -7522,6 +7776,26 @@
         "required": [
           "spec",
           "traffic"
+        ],
+        "additionalProperties": false
+      },
+      "CreateTokenBodyInput": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "ttlDays": {
+            "default": 30,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30
+          }
+        },
+        "required": [
+          "name"
         ],
         "additionalProperties": false
       },
