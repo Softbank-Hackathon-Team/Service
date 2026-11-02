@@ -23,7 +23,7 @@ test("GCP: DLQ 대상 토픽은 queue 로(신뢰도 0.9 + 이유), 그냥 토픽
   assert.equal(comp(result.spec, "orders").props.model, "topic");   // DLQ 를 가진 쪽은 바뀌지 않음
   assert.deepEqual(comp(result.spec, "orders").props.deadLetter, { to: "orders-dlq", maxReceive: 5 });
   const m = result.fieldMeta["components.orders-dlq.model"]!;
-  assert.equal(m.confidence, 0.9); assert.match(m.rationale ?? "", /DLQ 로 쓰이는 토픽 → 꺼내 읽는 queue/);   // E2EDATA2 문구(TA12c 중복 블록은 지움)
+  assert.equal(m.confidence, 0.9); assert.match(m.rationale ?? "", /DLQ (대상으)?로 쓰이는 토픽 → 꺼내 읽는 queue/);   // E2EDATA2 문구(TA12c 중복 블록은 지움)
   // 도착 aws·gcp 모두 막힘 없음 (DLQ 규칙 통과)
   for (const p of ["aws", "gcp"] as const) assert.deepEqual(v2Blockers(result.spec, targetBuilderFor(p).capabilities()).unsupported, [], p);
 });

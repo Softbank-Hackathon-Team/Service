@@ -171,3 +171,20 @@ test("VOBSROLE3 거부: 다른 회사 작업으로는 남의 환경을 확인하
   await job.handleVerifyConnection({ tenantId: T2, envId: id, requestId: randomUUID(), reason: "user" }, deps()).catch(() => null);
   assert.deepEqual(await row(id), before);
 });
+
+test("VVERIFYAPI SSE: 빠진 권한으로 끝난 연결 확인은 이전 화면 신호(migration_events)를 하나도 안 보낸다 (환경 신호는 TODO(human))", { skip }, async () => {
+  reset(); denied = new Set(["secrets list"]);
+  const id = await env(T);
+  const l = new pg.Client({ connectionString: OWNER }); await l.connect();
+  const got: string[] = [];
+  l.on("notification", (n) => { if (n.channel === "migration_events") got.push(n.payload ?? ""); });
+  await l.query("LISTEN migration_events");
+  try {
+    const r = await job.handleVerifyConnection({ tenantId: T, envId: id, requestId: randomUUID(), reason: "user" }, deps());
+    assert.equal(r.status, "connected");
+    assert.deepEqual((await row(id)).verify_detail.missingPermissions, ["secretmanager.secrets.list"]);
+    await l.query("SELECT 1");
+    await new Promise((res) => setTimeout(res, 200));
+    assert.deepEqual(got.filter((p) => p.includes(id)), [], "환경 id 로 나간 신호 없음");
+  } finally { await l.end(); }
+});

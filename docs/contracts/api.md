@@ -325,6 +325,8 @@ contracts의 화면용 모양 `MigrationView`는 열 칸이다. 지금 응답에
 - 감사 `env.verified` detail에 `missingPermissions`(빠진 권한 이름 목록)가 남는다.
 - DB `environments.verify_detail`에는 `missingPermissions`와 `needsHuman`(사람이 할 일 한 줄)이 남는다.
 - `GET /environments` 목록과 `POST /environments` 응답(`EnvironmentView`)에 선택 칸 두 개로 보인다: `missingPermissions`(문자열 목록), `needsHuman`(문자열 목록). 비었거나 없으면 칸 자체가 없다(전 응답과 같은 키). `verify_detail`의 다른 칸(`clusters`·`checkedAt`)은 내보내지 않는다.
+- 응답에서만 다듬는다(DB 원본은 그대로): 12자리 숫자(AWS 계정 ID, ARN 계정 칸)는 `••••` + 끝 4자리로 가리고, 목록은 앞 100개·한 줄 300자까지 자른다. 계약도 `maxItems 100`·`maxLength 300`. 문자열 아닌 값이 섞이면 칸을 안 붙인다. (DRAFT(ai))
+- 환경 상태 SSE 신호는 아직 없다(`packages/core/src/connection.ts` TODO(human)). 연결 확인은 `migration_events` 신호를 보내지 않으니 화면은 목록을 다시 읽어야 한다.
 
 ### 이번 물결 깃발 (요청·응답 모양을 바꾸는 것만)
 

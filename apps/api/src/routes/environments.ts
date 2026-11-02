@@ -28,8 +28,12 @@ const VIEW_COLUMNS = `id, provider, name,
   verify_detail AS "verifyDetail"`;
 
 // VERIFYAPI: verify_detail(jsonb) 에서 화면에 줄 두 칸만 꺼낸다. 비었거나 문자열 목록이 아니면 칸을 안 붙인다 (clusters·checkedAt 은 안 내보냄)
+// DRAFT(ai): 화면에 내보내는 목록은 100개·한 줄 300자까지만. 12자리 숫자(AWS 계정 ID, ARN 계정 칸 포함)는 끝 4자리만 남기고 가린다
+export const VERIFY_LIST_MAX = 100, VERIFY_ITEM_MAX = 300;
+const maskIds = (t: string) => t.replace(/(?<!\d)\d{12}(?!\d)/g, (m) => `••••${m.slice(-4)}`);
 const strList = (x: unknown): string[] | null =>
-  Array.isArray(x) && x.length > 0 && x.every((v) => typeof v === "string") ? x as string[] : null;
+  Array.isArray(x) && x.length > 0 && x.every((v) => typeof v === "string")
+    ? (x as string[]).slice(0, VERIFY_LIST_MAX).map((v) => maskIds(v).slice(0, VERIFY_ITEM_MAX)) : null;
 export function toEnvironmentView(row: Record<string, unknown>): EnvironmentView {
   const { verifyDetail, ...rest } = row;
   const d = (verifyDetail && typeof verifyDetail === "object" ? verifyDetail : {}) as Record<string, unknown>;
