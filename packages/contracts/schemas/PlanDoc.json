@@ -131,6 +131,93 @@
     "helmValuesHash": {
       "type": "string"
     },
+    "specVersion": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "costSummary": {
+      "type": "object",
+      "properties": {
+        "currency": {
+          "type": "string",
+          "const": "USD"
+        },
+        "monthlyTarget": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "monthlySource": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "deltaMonthly": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "unknownFields": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "priceAsOf": {
+          "type": "string"
+        },
+        "stub": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "currency",
+        "monthlyTarget",
+        "monthlySource",
+        "deltaMonthly",
+        "unknownFields"
+      ],
+      "additionalProperties": false
+    },
+    "acknowledgements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "cost",
+              "failure_cost_policy",
+              "runtime_change",
+              "build",
+              "precheck_warn",
+              "low_confidence"
+            ]
+          },
+          "text": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "text"
+        ],
+        "additionalProperties": false
+      }
+    },
     "planHash": {
       "type": "string"
     },

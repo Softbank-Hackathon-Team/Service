@@ -21,6 +21,7 @@ const pick = {
   ModuleInstance: C.ModuleInstance,
   PostgresTfVars: C.PostgresTfVars, NamespaceTfVars: C.NamespaceTfVars, IdentityTfVars: C.IdentityTfVars,
   CacheTfVars: C.CacheTfVars, ObjectStoreTfVars: C.ObjectStoreTfVars, QueueTfVars: C.QueueTfVars, JobTfVars: C.JobTfVars,
+  StartInput: C.StartInput,
 };
 for (const [name, schema] of Object.entries(pick)) {
   writeFileSync(new URL(`${name}.json`, out),

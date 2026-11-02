@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { randomUUID } from "node:crypto";
-import { ApprovalInput, PlanDoc, QUEUES, type MigrationStatus } from "@svc/contracts";
+import { ApprovalInput, PlanDoc, QUEUES, StartInput, type MigrationStatus } from "@svc/contracts";
 import { withTenant, advance, checkRetryBudget, writeAudit, DomainError, planExpired, type Tx } from "@svc/core";
 import { Accepted, ApprovalResult, errors } from "./responses.js";
 import { IdParam, RetryBody, auditOk, found, nextJob } from "./kit.js";
@@ -17,6 +17,16 @@ import { loadLatestApproval, loadLatestPlan, loadPlanById, saveApproval } from "
 //   POST /migrations/:id/spec/reopen  rejected → spec_review    (거절 뒤 명세부터 고칠 때)
 // 상태를 바꾸는 POST 하나 = advance() 한 번.
 // TODO(human): Idempotency-Key 필수 처리는 공용 플러그인이 붙으면 이 경로들에도 걸린다
+
+// PA4 (계획 26 · A4): 깃발 PLAN_ACKS=1 이면 승인 때 확인 항목(acks)을 전부 덮어야 하고, 시작 때 planHash 를 다시 본다
+// DRAFT(ai): 기본 off. 화면이 acks·/start 본문을 보내기 시작한 뒤 켠다. 요청마다 읽는다(시험에서 바꿔 끼우기 쉽게)
+export const planAcksOn = (env: NodeJS.ProcessEnv = process.env) => env.PLAN_ACKS?.trim() === "1";
+
+// 계획서 확인 항목 중 acks 가 덮지 못한 id (옛 계획서처럼 항목이 없으면 빈 목록)
+export function missingAcks(plan: PlanDoc, acks: string[] | undefined): string[] {
+  const got = new Set(acks ?? []);
+  return (plan.acknowledgements ?? []).map((a) => a.id).filter((id) => !got.has(id));
+}
 
 async function migrationOf(tx: Tx, id: string) {
   const q = await tx.query(
@@ -78,12 +88,19 @@ export async function planRoutes(app: FastifyInstance) {
         throw new DomainError(409, "PLAN_EXPIRED", plan.expiresAt);
 
       const approve = req.body.decision === "approve";
+      // PA4: 승인이면 확인 항목을 전부 덮어야 한다 (거절은 안 봄). advance() 전에 막으므로 상태·잠금 그대로
+      if (approve && planAcksOn()) {
+        const missing = missingAcks(plan, req.body.acks);
+        if (missing.length) throw new DomainError(409, "ACKS_MISSING", `missing acks: ${missing.join(", ")}`);
+      }
       const to = approve ? "approved" : "rejected";
       // 승인이면 advance()가 같은 트랜잭션에서 출발·도착 환경 잠금을 예약한다 (설계 5.4, 충돌 시 409 ENV_BUSY)
       // T09 조건이 "계획이 제안 상태 + 지문 일치 + 만료 전"을 plans 표에서 다시 본다
       await advance(tx, { id: plan.migrationId, tenantId: req.tenantId }, "awaiting_approval", to, {
         evidence: { planHash: req.body.planHash, reason: req.body.reason },
-        audit: auditOk(req, `plan.${to}`, plan.migrationId, { planId: plan.planId, planHash: plan.planHash }),
+        // PA4: 확인한 항목은 감사 detail 에 남긴다 (plan_approvals 에 칸 없음 → 마이그레이션 0). 안 보냈으면 예전 detail 그대로
+        audit: auditOk(req, `plan.${to}`, plan.migrationId, { planId: plan.planId, planHash: plan.planHash,
+          ...(req.body.acks ? { acks: req.body.acks } : {}) }),
       });
       // DECISION(team): 역할 없음, 회사 멤버 누구나 승인, 본인 승인 허용 → self_approved로 기록 (입력층 v1, 10/31)
       await saveApproval(tx, req.tenantId, plan.migrationId, {
@@ -95,7 +112,8 @@ export async function planRoutes(app: FastifyInstance) {
   });
 
   // 실행 시작 (T15). 승인된 계획의 지문을 apply 작업에 싣는다. 202
-  r.post("/migrations/:id/start", { schema: { params: IdParam,
+  // PA4: 본문 { planHash } 는 깃발 off 면 없어도 된다 (지금 화면·smoke 그대로)
+  r.post("/migrations/:id/start", { schema: { params: IdParam, body: StartInput.nullish(),
     response: { 202: Accepted, ...errors(400, 401, 403, 404, 409, 500) } } }, async (req, reply) => {
     const id = req.params.id;
     return req.idempotent(reply, async (tx) => {
@@ -103,6 +121,9 @@ export async function planRoutes(app: FastifyInstance) {
       const appr = await loadLatestApproval(tx, id);
       if (m.status === "approved" && !appr)
         throw new DomainError(409, "PLAN_NOT_APPROVED", id);
+      // PA4: 비용 드는 apply 직전 두 번째 게이트. 화면이 본 지문 = 승인한 지문이어야 시작
+      if (planAcksOn() && m.status === "approved" && req.body?.planHash !== appr?.planHash)
+        throw new DomainError(409, "PLAN_HASH_MISMATCH", req.body?.planHash ? "plan changed since approval" : "planHash required");
       await advance(tx, { id, tenantId: req.tenantId }, "approved", "provisioning", {
         // 설계 5.3: apply는 도착 환경 단위로 하나씩 (singletonKey = 도착 환경)
         next: nextJob(req, QUEUES.apply, id, { extra: { planId: appr?.planId, planHash: appr?.planHash },

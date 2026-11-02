@@ -15,6 +15,15 @@
     "reason": {
       "type": "string",
       "maxLength": 500
+    },
+    "acks": {
+      "maxItems": 500,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      }
     }
   },
   "required": [

@@ -1,5 +1,7 @@
-import { AppSpec, PlanDoc, PlanJob, PrecheckItem, type PlanStep, type Provider } from "@svc/contracts";
-import { latestAcceptedSpec } from "@svc/core";
+import { AppSpec, ApprovalRowV2, PlanDoc, PlanJob, PrecheckItem, checkV2, AppSpecV2,
+  type PlanAcknowledgement, type PlanCostSummary, type PlanStep, type Provider } from "@svc/contracts";
+import { latestAcceptedSpec, SPEC_DRAFT_KEY, type Tx } from "@svc/core";
+import { estimateCost, loadCatalog } from "@svc/cost";
 import { adapterFor, DbNetworkError, withDbNetwork } from "@svc/adapters";
 import type { z } from "zod";
 import { runStep, stableHash, stubWait, type StepOutcome } from "./_step.js";
@@ -12,6 +14,85 @@ export interface PlanInput {
   planId: string; migrationId: string; spec: AppSpec;
   target: { envId: string; provider: Provider; region: string };
   precheck: PrecheckItem[]; now: Date;
+  // PA4: 아래 셋은 계획 작업(handlePlan)이 채운다. costSummary 가 없으면 예전 계획서 모양·지문 그대로
+  source?: { provider: Provider };
+  specVersion?: number;
+  costSummary?: PlanCostSummary;
+  v2Approvals?: ApprovalRowV2[];
+}
+
+// ---- PA4 (계획 26 · A4): 비용 고지 + 확인 항목 ----
+
+// DRAFT(ai): 계획서 비용 계산의 피크 트래픽. API 미리보기(routes/migration-cost.ts PREVIEW_PEAK_RPS)와 같은 10 rps
+export const PLAN_COST_PEAK_RPS = 10;
+// DRAFT(ai): 실패 재시도를 우리 부담으로 하는 횟수. 계획 26 H-3 기본값 3 (A5 재시도 한도와 같은 값이어야 함)
+export const PLAN_FREE_RETRIES = 3;
+
+type CostEstimator = (spec: AppSpec, from: Provider, to: Provider) => PlanCostSummary;
+
+const r1 = (x: number) => Math.round(x * 10) / 10;
+
+// 출발·도착 월 비용. 순수 계산(가격표는 파일). 실패해도 던지지 않는다: 계획을 막지 않고 unknownFields 에 남긴다 (계획 26 A4 함정)
+// 시간에 따라 바뀌는 값(priceStale)은 넣지 않는다 → 같은 입력이면 같은 지문
+export const estimatePlanCost: CostEstimator = (spec, from, to) => {
+  try {
+    const est = estimateCost({ spec, from, targets: [to], traffic: { peakRps: PLAN_COST_PEAK_RPS }, profile: "startup" },
+      loadCatalog(), { breakpoints: false });
+    const src = est.envs.find((e) => e.provider === from)?.monthlyUsd ?? null;
+    const dst = est.envs.find((e) => e.provider === to)?.monthlyUsd ?? null;
+    const unknownFields = [...(src === null ? ["monthlySource"] : []), ...(dst === null ? ["monthlyTarget"] : [])];
+    return { currency: "USD", monthlyTarget: dst, monthlySource: src,
+      deltaMonthly: src !== null && dst !== null ? r1(dst - src) : null, unknownFields, priceAsOf: est.priceAsOf };
+  } catch {
+    return { currency: "USD", monthlyTarget: null, monthlySource: null, deltaMonthly: null, unknownFields: ["*"] };
+  }
+};
+
+const usd = (v: number | null) => (v === null ? "계산 못 함" : `$${v}`);
+
+// 확인 항목 목록. cost·failure_cost_policy 는 항상, 그다음 사전 점검 warn, IR v2 승인 행 (같은 id 는 하나로)
+export function buildAcknowledgements(i: {
+  cost: PlanCostSummary; from: Provider; to: Provider;
+  precheck: PrecheckItem[]; v2Approvals?: ApprovalRowV2[];
+}): PlanAcknowledgement[] {
+  const c = i.cost;
+  const out: PlanAcknowledgement[] = [
+    { id: "cost", kind: "cost",
+      // DRAFT(ai): 고지 문구. "고객 부담" 뜻 = 자원은 고객 계정에 생기므로 클라우드 요금은 처음부터 고객 청구서 (계획 26 3.1 추정)
+      text: `예상 월 비용(USD): 도착 ${i.to} ${usd(c.monthlyTarget)} / 출발 ${i.from} ${usd(c.monthlySource)} / 차이 ${usd(c.deltaMonthly)}. `
+        + "도착 자원은 고객 클라우드 계정에 만들어지고 요금도 고객 계정에 청구됩니다"
+        + (c.unknownFields.length ? ` (계산 못 한 칸: ${c.unknownFields.join(", ")})` : "")
+        + (c.stub ? " (가짜 고정값)" : "") },
+    { id: "failure_cost_policy", kind: "failure_cost_policy",
+      text: `이전이 실패하면 AI 원인 분석과 재시도 ${PLAN_FREE_RETRIES}번까지의 AI 비용은 플랫폼이 부담합니다. `
+        + "그 뒤 재시도의 비용은 고객 부담입니다. 클라우드 자원 요금은 처음부터 고객 계정에 청구됩니다" },
+  ];
+  for (const p of i.precheck) if (p.level === "warn")
+    out.push({ id: `precheck_warn:${p.id}`, kind: "precheck_warn", text: p.message + (p.fix ? ` (조치: ${p.fix})` : ""), ref: p.id });
+  for (const a of i.v2Approvals ?? []) {
+    const text = [a.from !== undefined || a.to !== undefined ? `${a.from ?? "?"} → ${a.to ?? "?"}` : "", a.detail ?? ""]
+      .filter(Boolean).join(" · ") || a.subject;
+    out.push({ id: `${a.kind}:${a.subject}`, kind: a.kind, text, ref: a.subject });
+  }
+  // 같은 id 가 두 번이면 글을 합친다 (acks 는 id 로만 덮으므로)
+  const byId = new Map<string, PlanAcknowledgement>();
+  for (const a of out) {
+    const prev = byId.get(a.id);
+    byId.set(a.id, prev ? { ...prev, text: `${prev.text} / ${a.text}` } : a);
+  }
+  return [...byId.values()];
+}
+
+// 계획에 쓰는 명세 판의 번호와 IR v2 승인 행. spec_v2 칸은 IR 묶음(0023)이 넣는다 → to_jsonb 로 읽어 칸이 없어도 안 깨진다
+// latestAcceptedSpec 과 같은 줄(초안 판 제외 최신)을 고른다
+export async function loadPlanSpecExtras(tx: Tx, migrationId: string): Promise<{ specVersion?: number; v2Approvals: ApprovalRowV2[] }> {
+  const r = await tx.query(
+    `SELECT s.version, to_jsonb(s)->'spec_v2' AS v2 FROM spec_versions s
+      WHERE s.migration_id = $1 AND NOT (s.field_meta ? $2) ORDER BY s.version DESC LIMIT 1`, [migrationId, SPEC_DRAFT_KEY]);
+  const row = r.rows[0] as { version: number; v2: unknown } | undefined;
+  if (!row) return { v2Approvals: [] };
+  const v2 = AppSpecV2.safeParse(row.v2);
+  return { specVersion: Number(row.version), v2Approvals: v2.success ? checkV2(v2.data).approvals : [] };
 }
 
 // DRAFT(ai): 승인 유효 시간 2시간 (설계 5.4 "승인 유효 2시간"을 따름)
@@ -44,6 +125,13 @@ export function buildPlanDoc(i: PlanInput, env: NodeJS.ProcessEnv = process.env)
     rollbackCriteria: { errorRatePct: 1, p95Multiplier: 2, windowSec: 30 },
     tfPlanHash: stableHash(tf),
     helmValuesHash: stableHash(helm),
+    // PA4: 비용 요약이 있을 때만 새 칸을 싣는다 (없으면 예전 지문 그대로)
+    ...(i.specVersion !== undefined ? { specVersion: i.specVersion } : {}),
+    ...(i.costSummary ? {
+      costSummary: i.costSummary,
+      acknowledgements: buildAcknowledgements({ cost: i.costSummary, from: i.source?.provider ?? i.target.provider,
+        to: i.target.provider, precheck: i.precheck, v2Approvals: i.v2Approvals }),
+    } : {}),
   };
   // planHash는 만료 시각을 뺀 내용 전체의 지문이다 (같은 계획을 다시 만들어도 같은 지문)
   const planHash = stableHash(body);
@@ -63,21 +151,30 @@ export async function handlePlan(raw: unknown) {
       const e = await tx.query(
         `SELECT id, provider, connection_status FROM environments WHERE id=$1`, [m.targetEnvId]);
       const env = e.rows[0];
+      // PA4: 출발 환경 종류 (비용 비교의 출발)
+      const se = await tx.query(`SELECT provider FROM environments WHERE id=$1`, [m.sourceEnvId]);
       if (!spec || !env || env.connection_status !== "connected") return null;
       // Z97: 계획서의 사전 점검 칸 = 바로 앞 precheck 단계가 실조회로 남긴 결과 (감사 precheck.planning detail). 예전엔 STUB 고정값
       const pc = await tx.query(
         `SELECT detail->'precheck' AS items FROM audit_events WHERE target=$1 AND action='precheck.planning' ORDER BY seq DESC LIMIT 1`, [m.id]);
       const precheck = PrecheckItem.array().safeParse(pc.rows[0]?.items ?? []);
-      return { spec: AppSpec.parse(spec), provider: env.provider as Provider, precheck: precheck.success ? precheck.data : [] };
+      const extras = await loadPlanSpecExtras(tx, m.id);
+      return { spec: AppSpec.parse(spec), provider: env.provider as Provider, precheck: precheck.success ? precheck.data : [],
+               sourceProvider: (se.rows[0]?.provider ?? env.provider) as Provider, ...extras };
     },
     work: async (j, m, loaded) => withStepRoles("plan", j, m, async () => {
-      const { spec, provider, precheck } = loaded as { spec: AppSpec; provider: Provider; precheck: PrecheckItem[] };
+      const { spec, provider, precheck, sourceProvider, specVersion, v2Approvals } = loaded as {
+        spec: AppSpec; provider: Provider; precheck: PrecheckItem[];
+        sourceProvider: Provider; specVersion?: number; v2Approvals: ApprovalRowV2[] };
       await stubWait();
       const plan = buildPlanDoc({
         planId: job.planId, migrationId: m.id, spec,
         // TODO(human): 환경별 리전은 environments 표에 칸이 없다. 연결 정보에서 가져올지 정해야 한다
         target: { envId: m.targetEnvId, provider, region: "default" },
         precheck, now: new Date(),
+        // PA4: 비용 고지·확인 항목은 항상 싣는다 (승인 때 확인을 강제하는 건 api 깃발 PLAN_ACKS)
+        source: { provider: sourceProvider }, specVersion, v2Approvals,
+        costSummary: estimatePlanCost(spec, sourceProvider, provider),
       });
       return { to: "awaiting_approval", detail: { planId: plan.planId, planHash: plan.planHash },
                inTx: (tx) => savePlan(tx, job.tenantId, plan) };
