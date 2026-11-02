@@ -170,17 +170,24 @@ export async function loadGuardFacts(tx: Tx, migrationId: string): Promise<Guard
        JOIN environments te ON te.id = m.target_env_id
        LEFT JOIN LATERAL (
          SELECT s.version,
-                (SELECT count(*) FROM jsonb_each(s.field_meta) f
+                -- A3v2: v1 field_meta 와 v2 spec_v2->'fieldMeta'(I3b, IMPORT_IR=v2 판만) 를 같이 센다. 같은 문제를 두 곳에서 셀 수 있어
+                --   수는 "0이면 통과"로만 쓴다. to_jsonb 로 읽어 0023 전 DB 에서도 돈다 (칸이 없거나 NULL·객체가 아니면 빈 객체)
+                (SELECT count(*) FROM (SELECT * FROM jsonb_each(s.field_meta)
+                                       UNION ALL SELECT * FROM jsonb_each(sv2.meta)) f
                   WHERE f.value->>'needs_review' = 'true') AS needs_review,
                 -- 문턱값 미만 + 아직 승인 안 한 칸(needs_review 가 false 로 바뀌면 처리된 것). 문턱값 0 이면 셈 자체를 안 한다
                 -- confidence 가 숫자 글자면 숫자로, 숫자가 아니거나 없으면 가장 낮은 쪽(-1)으로 본다
-                -- TODO: I3b 뒤 spec_v2->'fieldMeta' 칸도 같은 식으로 합산 (두 곳 모두 "0이면 통과"로만 쓴다)
-                (SELECT count(*) FROM jsonb_each(s.field_meta) f
+                -- A3v2: spec_v2->'fieldMeta' 칸도 같은 식으로 합산 (두 곳 모두 "0이면 통과"로만 쓴다)
+                (SELECT count(*) FROM (SELECT * FROM jsonb_each(s.field_meta)
+                                       UNION ALL SELECT * FROM jsonb_each(sv2.meta)) f
                   WHERE $2::numeric > 0 AND jsonb_typeof(f.value) = 'object'
                     AND COALESCE(f.value->>'needs_review', 'true') <> 'false'
                     AND (CASE WHEN f.value->>'confidence' ~ '^[0-9]+(\\.[0-9]+)?$'
                               THEN (f.value->>'confidence')::numeric ELSE -1 END) < $2::numeric) AS low_open
-           FROM spec_versions s WHERE s.migration_id = m.id
+           FROM spec_versions s
+           CROSS JOIN LATERAL (SELECT CASE WHEN jsonb_typeof(to_jsonb(s)->'spec_v2'->'fieldMeta') = 'object'
+                                           THEN to_jsonb(s)->'spec_v2'->'fieldMeta' ELSE '{}'::jsonb END AS meta) sv2
+          WHERE s.migration_id = m.id
             -- Z19 H1: AI 초안 판(field_meta._draft)은 사람이 받아들이기 전까지 조건에 안 쓴다 (packages/agent DRAFT_MARKER_KEY)
             AND NOT (s.field_meta ? '_draft')
           ORDER BY s.version DESC LIMIT 1) sv ON true
