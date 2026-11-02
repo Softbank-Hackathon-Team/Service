@@ -57,3 +57,55 @@ test("거부: 읽기 권한 없음 → PERMISSION_MISSING:<권한>, 클러스터
   assert.equal(await r([[/^gcloud sql instances list/, { code: 1, err: "constraints/gcp.resourceLocations violated by organization policy" }]]), "ORG_POLICY_BLOCKED");
   await assert.rejects(verifyGcpObserve({ exec: fakeExec(table([[/^gcloud sql instances list/, { code: 127 }]])).exec, env: {} }, input));
 });
+
+// ── OBSROLE3: 선택 권한 찔러 보기 (probeOptional) ──
+import { OPTIONAL_PROBES } from "../src/verify/gcp.js";
+import { GCP_COMMAND_PERMISSIONS } from "../src/common/observe-permissions.js";
+const OPT: Array<[RegExp, Reply]> = [   // 선택 읽기는 전부 통과하는 기본
+  [/^gcloud (projects get-iam-policy|services list|compute |artifacts |secrets list|storage buckets list|pubsub |redis )/, { out: [] }]];
+const probeLines = (f: ReturnType<typeof fakeExec>) => f.calls.map((c) => c.line).filter((l) => !/^gcloud (projects describe|container|sql|iam service-accounts)/.test(l));
+
+test("선택 권한 찌르기 끄면(기본) 지금과 똑같이 4번만 부름, 켜면 11번 더 부르고 전부 통과하면 missingPermissions 없음", async () => {
+  const off = fakeExec([...table(), ...OPT]);
+  assert.deepEqual(await verifyGcpObserve({ exec: off.exec, env: {} }, input), { ok: true, clusters: ["shop"], projectNumber: "123456789012" });
+  assert.equal(off.calls.length, 4);
+  const on = fakeExec([...table(), ...OPT]);
+  const r = await verifyGcpObserve({ exec: on.exec, env: {} }, { ...input, probeOptional: true });
+  assert.deepEqual(r, { ok: true, clusters: ["shop"], projectNumber: "123456789012" });
+  assert.equal(probeLines(on).length, OPTIONAL_PROBES.length);
+  assert.equal(on.calls.length, 4 + OPTIONAL_PROBES.length);
+  for (const l of probeLines(on)) assert.ok(/--limit=1|get-iam-policy/.test(l) && !/create|delete|update|set-iam|access-secret|versions/.test(l), `읽기 아님/전체 읽기: ${l}`);
+});
+
+test("선택 권한이 빠져도 연결은 ok: 빠진 권한 이름만 모아 돌려줌 (정렬·중복 없음), 전역 전달 규칙은 권한 둘", async () => {
+  const f = fakeExec([[/^gcloud secrets list/, denied], [/^gcloud compute forwarding-rules list/, denied], [/^gcloud redis instances list/, denied], ...table(), ...OPT]);
+  const r = await verifyGcpObserve({ exec: f.exec, env: {} }, { ...input, probeOptional: true });
+  assert.deepEqual(r, { ok: true, clusters: ["shop"], projectNumber: "123456789012",
+    missingPermissions: ["compute.forwardingRules.list", "compute.globalForwardingRules.list", "redis.instances.list", "secretmanager.secrets.list"] });
+});
+
+test("거부 아님: API 꺼짐·조직 정책·네트워크 오류는 권한 문제로 세지 않고, 명령 없음(127)도 연결 확인을 안 깨뜨림", async () => {
+  const off = { code: 1, err: "ERROR: (gcloud) PERMISSION_DENIED: Cloud Memorystore for Redis API has not been used in project 1 before or it is disabled. SERVICE_DISABLED" };
+  const f = fakeExec([[/^gcloud redis instances list/, off], [/^gcloud pubsub topics list/, { code: 1, err: "constraints/gcp.resourceLocations violated by organization policy" }],
+    [/^gcloud storage buckets list/, { code: 1, err: "ERROR: Unable to reach the server: connection reset" }], [/^gcloud artifacts repositories list/, { code: 127 }], ...table(), ...OPT]);
+  const r = await verifyGcpObserve({ exec: f.exec, env: {} }, { ...input, probeOptional: true });
+  assert.deepEqual(r, { ok: true, clusters: ["shop"], projectNumber: "123456789012" });
+});
+
+test("필수 읽기가 실패하면 선택 찌르기는 부르지 않음 (이전 사유 그대로)", async () => {
+  const f = fakeExec([[/^gcloud sql instances list/, denied], ...table(), ...OPT]);
+  const r = await verifyGcpObserve({ exec: f.exec, env: {} }, { ...input, probeOptional: true });
+  assert.deepEqual(r, { ok: false, reason: "PERMISSION_MISSING:sql.instances.list" });
+  assert.equal(probeLines(f).length, 0);
+});
+
+test("찌르기 목록은 권한 표와 맞음: 키가 표에 있고, 표의 클라우드 읽기 권한 중 못 찌르는 것은 이 2개뿐", () => {
+  const probed = new Set<string>();
+  for (const p of OPTIONAL_PROBES) {
+    assert.ok(p.key in GCP_COMMAND_PERMISSIONS, p.key);
+    for (const perm of GCP_COMMAND_PERMISSIONS[p.key] ?? []) probed.add(perm);
+  }
+  const required = new Set(["resourcemanager.projects.get", "container.clusters.list", "container.clusters.get", "sql.instances.list", "sql.instances.get", "iam.serviceAccounts.get"]);
+  const notProbed = Object.values(GCP_COMMAND_PERMISSIONS).flatMap((v) => v ?? []).filter((p) => !probed.has(p) && !required.has(p));
+  assert.deepEqual([...new Set(notProbed)].sort(), ["compute.regions.get", "storage.buckets.getIamPolicy"]);
+});

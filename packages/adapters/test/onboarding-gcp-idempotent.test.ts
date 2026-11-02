@@ -19,8 +19,10 @@ fail_if="$S/fail"; [ -f "$fail_if" ] && grep -qF -- "$(cat "$fail_if")" <<<"$arg
 case "$args" in
   "iam service-accounts describe "*) [ -f "$S/sa/$4" ] ;;
   "iam service-accounts create "*) n="$4@\${5#--project=}.iam.gserviceaccount.com"; [ -f "$S/sa/$n" ] && { echo "already exists" >&2; exit 1; }; touch "$S/sa/$n" ;;
+  "iam roles describe "*--format=value*) [ -f "$S/role/$4" ] || exit 1; tr ',' ';' < "$S/role/$4" ;;
   "iam roles describe "*) [ -f "$S/role/$4" ] || exit 1; [ -f "$S/role/$4.deleted" ] && echo "deleted: true"; echo "name: x" ;;
-  "iam roles create "*) [ -f "$S/role/$4" ] && { echo "already exists" >&2; exit 1; }; touch "$S/role/$4" ;;
+  "iam roles create "*) [ -f "$S/role/$4" ] && { echo "already exists" >&2; exit 1; }; grep -o -- '--permissions=[^ ]*' <<<"$args" | cut -d= -f2 | tr -d '\n' > "$S/role/$4" ;;
+  "iam roles update "*) [ -f "$S/role/$4" ] || exit 1; add=$(grep -o -- '--add-permissions=[^ ]*' <<<"$args" | cut -d= -f2); { cat "$S/role/$4"; echo -n ",$add"; } > "$S/role/$4.new"; mv "$S/role/$4.new" "$S/role/$4" ;;
   "iam roles undelete "*) rm -f "$S/role/$4.deleted" ;;
   "projects get-iam-policy "*)
     role=$(grep -o 'bindings.role=[^ ]*' <<<"$args" | head -1 | cut -d= -f2); mem=$(grep -o 'bindings.members=[^ "]*' <<<"$args" | head -1 | cut -d= -f2)
@@ -51,7 +53,7 @@ function env() {
       env: { PATH: `${root}:/usr/bin:/bin`, GCLOUD_STATE: state, PLATFORM_SA: SA, PROJECT_ID: PRJ, ROLE_DIR: "./permissions", ...extra } }),
   };
 }
-const MUTATING = /^(iam service-accounts create|iam roles create|iam roles undelete|projects add-iam-policy-binding|iam service-accounts add-iam-policy-binding)/;
+const MUTATING = /^(iam service-accounts create|iam roles create|iam roles update|iam roles undelete|projects add-iam-policy-binding|iam service-accounts add-iam-policy-binding)/;
 const mutations = (calls: string[]) => calls.filter((c) => MUTATING.test(c));
 
 test("처음 실행: SA 2 + 역할 3 + 프로젝트 바인딩 3 + tokenCreator 2 = 변경 10번", () => {
@@ -81,7 +83,9 @@ test("부분 상태: 관찰 SA·관찰 역할만 있으면 나머지만 만든�
   const r = e.run();
   assert.equal(r.status, 0, r.stderr);
   const m = mutations(e.calls());
-  assert.equal(m.length, 8);
+  // OBSROLE3: 있는 관찰 역할에 권한이 비어 있으면 create 가 아니라 update(add-permissions) 1번이 더해진다 (8 → 9)
+  assert.equal(m.length, 9);
+  assert.equal(m.filter((c) => c.startsWith("iam roles update platform_observe ")).length, 1);
   assert.ok(!m.some((c) => c.includes("service-accounts create svc-observe")) && !m.some((c) => c.includes("roles create platform_observe ")));
   assert.ok(m.some((c) => c.includes("service-accounts create svc-operate")));
 });
@@ -139,4 +143,70 @@ test("DRY_RUN 은 확인 명령도 안 부르고, 이미 있어도 전부 출력
   assert.equal(r.status, 0);
   assert.equal(e.calls().length, before, "DRY_RUN 중 gcloud 호출 없음");
   assert.equal((r.stdout.match(/^\+ gcloud/gm) ?? []).length, 10);
+});
+
+// ── OBSROLE3: 이미 만든 관찰 역할 권한 갱신 ──
+const OLD7 = "container.clusters.list,container.clusters.get,sql.instances.list,sql.instances.get,iam.serviceAccounts.get,iam.serviceAccounts.list,resourcemanager.projects.get";
+const permsOf = (e: ReturnType<typeof env>) => readFileSync(join(e.state, "role", "platform_observe"), "utf8").split(",").filter(Boolean);
+const wanted = (e: ReturnType<typeof env>) => { const f = env(); f.run(); return permsOf(f); };
+
+test("갱신: 예전 스크립트로 만든 관찰 역할(권한 7개)은 빠진 권한만 --add-permissions 로 더하고, 다시 실행하면 0번", () => {
+  const e = env();
+  assert.equal(e.run().status, 0);
+  const want = wanted(e);
+  assert.ok(want.length >= 21);
+  writeFileSync(join(e.state, "role", "platform_observe"), OLD7);   // 예전 버전 상태로 되돌림
+  const before = e.calls().length;
+  const r = e.run();
+  assert.equal(r.status, 0, r.stderr);
+  const second = e.calls().slice(before);
+  const upd = second.filter((c) => c.startsWith("iam roles update"));
+  assert.equal(upd.length, 1, upd.join("|"));
+  assert.match(upd[0]!, /^iam roles update platform_observe --project=cust-prj --add-permissions=/);
+  assert.ok(!upd[0]!.includes("--permissions=") || upd[0]!.includes("--add-permissions="), "통째 교체(--permissions) 금지");
+  const added = /--add-permissions=(\S+)/.exec(upd[0]!)![1]!.split(",");
+  for (const p of OLD7.split(",")) assert.ok(!added.includes(p), `이미 있는 권한을 또 더함: ${p}`);
+  assert.deepEqual([...new Set([...OLD7.split(","), ...added])].sort(), [...want].sort());
+  assert.deepEqual(permsOf(e).sort(), [...want].sort());
+  assert.equal(second.filter((c) => MUTATING.test(c)).length, 1, "다른 변경은 없음");
+  assert.match(r.stdout, /역할 platform_observe 에 빠진 읽기 권한 추가: /);
+  // 다시 실행: 권한 최신 → 변경 0
+  const b2 = e.calls().length;
+  const r2 = e.run();
+  assert.equal(r2.status, 0, r2.stderr);
+  assert.equal(e.calls().slice(b2).filter((c) => MUTATING.test(c)).length, 0);
+  assert.match(r2.stdout, /역할 platform_observe 권한 최신/);
+});
+
+test("갱신: 고객이 따로 넣은 권한은 지우지 않는다 (더하기만)", () => {
+  const e = env();
+  e.run();
+  const want = wanted(e);
+  writeFileSync(join(e.state, "role", "platform_observe"), [...want.filter((p) => p !== "compute.networks.list"), "custom.extra.permission"].join(","));
+  assert.equal(e.run().status, 0);
+  const now = permsOf(e);
+  assert.ok(now.includes("custom.extra.permission"));
+  assert.ok(now.includes("compute.networks.list"));
+});
+
+test("갱신 거부: 권한 목록을 못 읽으면 바꾸지 않고 알린다 (종료 0), 실행 역할은 자동으로 안 바꾼다", () => {
+  const e = env();
+  e.run();
+  writeFileSync(join(e.state, "role", "platform_observe"), OLD7);
+  writeFileSync(join(e.state, "fail"), "--format=value(includedPermissions)");
+  const before = e.calls().length;
+  const r = e.run();
+  assert.equal(r.status, 0, r.stderr);
+  const second = e.calls().slice(before);
+  assert.equal(second.filter((c) => c.startsWith("iam roles update")).length, 0);
+  assert.match(r.stderr, /권한 목록을 못 읽음/);
+  assert.ok(!second.some((c) => /^iam roles update platform_operate/.test(c)), "실행 역할 자동 갱신 금지");
+});
+
+test("DRY_RUN: 역할을 새로 만드는 명령만 나오고 describe·update 는 안 부름", () => {
+  const e = env();
+  const r = e.run({ DRY_RUN: "1" });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(e.calls().length, 0, "DRY_RUN 은 gcloud 를 아무것도 부르지 않는다");
+  assert.ok(!r.stdout.includes("roles update"));
 });

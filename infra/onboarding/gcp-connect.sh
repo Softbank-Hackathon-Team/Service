@@ -53,6 +53,29 @@ ensure_role() { # 역할ID, 만들 때 추가 인자...
     run gcloud iam roles create "${id}" --project="${PROJECT_ID}" "$@"
   fi
 }
+# OBSROLE3: 이미 있는 역할도 권한이 모자라면 채운다. 예전 버전 스크립트로 만든 고객의 관찰 역할에는 새 권한이 없다.
+#   --add-permissions 는 빠진 권한만 더하고 있는 권한은 안 지운다(고객이 따로 넣은 것도 그대로). 관찰 역할(읽기만)에만 쓴다 —
+#   실행 역할은 권한이 늘면 할 수 있는 일이 늘기 때문에 여기서 자동으로 바꾸지 않는다.
+#   권한 목록을 못 읽으면(iam.roles.get 없음) 바꾸지 않고 알린다. DRY_RUN 에서는 역할을 새로 만드는 명령만 나오므로 부르지 않는다.
+sync_role_permissions() { # 역할ID 원하는권한(쉼표)
+  local id="$1" want="$2" have missing="" p
+  dry && return 0
+  if ! have="$(gcloud iam roles describe "${id}" --project="${PROJECT_ID}" --format='value(includedPermissions)' 2>/dev/null)"; then
+    echo "! 역할 ${id} 의 권한 목록을 못 읽음 — 권한 갱신을 건너뜀 (iam.roles.get 권한 필요)" >&2
+    return 0
+  fi
+  have=";${have//,/;};"   # value() 출력은 ; 로 이어진다
+  local IFS=','
+  for p in ${want}; do
+    case "${have}" in *";${p};"*) ;; *) missing="${missing:+${missing},}${p}" ;; esac
+  done
+  unset IFS
+  if [ -z "${missing}" ]; then echo "= 역할 ${id} 권한 최신"
+  else
+    echo "~ 역할 ${id} 에 빠진 읽기 권한 추가: ${missing}"
+    run gcloud iam roles update "${id}" --project="${PROJECT_ID}" --add-permissions="${missing}"
+  fi
+}
 # 프로젝트 바인딩: 같은 주체·역할(조건 바인딩이면 조건 있는 것)이 이미 있으면 건너뜀
 ensure_project_binding() { # 주체SA 역할 [조건파일]
   local sa="$1" role="$2" cond="${3:-}" flt
@@ -89,6 +112,7 @@ OBSERVE_PERMS="${OBSERVE_PERMS},storage.buckets.list,storage.buckets.getIamPolic
 # OBSROLE2: 그 밖에 플랫폼이 관찰 SA 로 부르는 모든 gcloud 읽기 명령의 권한 (표 원본 = packages/adapters/src/common/observe-permissions.ts, 시험이 소스의 모든 명령과 대조). 비밀값(secretmanager.versions.access)은 없음
 OBSERVE_PERMS="${OBSERVE_PERMS},resourcemanager.projects.getIamPolicy,serviceusage.services.list,compute.networks.list,compute.forwardingRules.list,compute.globalForwardingRules.list,compute.firewalls.list,compute.regions.get,artifactregistry.repositories.list,secretmanager.secrets.list"
 ensure_role platform_observe --title="platform-observe" --description="platform read-only inventory" --permissions="${OBSERVE_PERMS}" --stage=GA
+sync_role_permissions platform_observe "${OBSERVE_PERMS}"
 ensure_role platform_operate --file="${ROLE_DIR}/gcp-operate-custom-role.yaml"
 ensure_role platform_operate_iam --file="${ROLE_DIR}/gcp-operate-iam-custom-role.yaml"
 

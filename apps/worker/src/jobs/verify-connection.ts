@@ -36,6 +36,10 @@ function issueFailure(e: unknown): string | null {
   return null;
 }
 
+/** OBSROLE3: 빠진 선택 권한 → 사람이 할 일 한 줄. 갱신은 연결 스크립트를 다시 실행 (있는 역할에는 빠진 권한만 더한다) */
+export const needsHumanText = (missing: string[]) =>
+  `관찰 역할에 읽기 권한 ${missing.length}개가 없음(${missing.slice(0, 6).join(", ")}${missing.length > 6 ? " 외" : ""}). 고객 Cloud Shell 에서 연결 스크립트(gcp-connect.sh)를 다시 실행하면 역할에 빠진 권한만 더해짐. 그 전에는 해당 자원을 가져오지 못하고 가져오기 notes 에 남음`;
+
 export async function handleVerifyConnection(data: unknown, deps: VerifyDeps = {}): Promise<VerifyOutcome> {
   const job = VerifyConnectionJob.parse(data);
   const { tenantId, envId, reason } = job;
@@ -53,7 +57,7 @@ export async function handleVerifyConnection(data: unknown, deps: VerifyDeps = {
   const roles = deps.roles ?? tempRoles();
   // DRAFT(ai): 환경에 리전이 없으면 서울 (issuers.ts AWS_DEFAULT_REGION 과 같음)
   const region = env.region || "ap-northeast-2";
-  let result: { ok: true; clusters: string[]; projectNumber?: string } | { ok: false; reason: string };
+  let result: { ok: true; clusters: string[]; projectNumber?: string; missingPermissions?: string[] } | { ok: false; reason: string };
   let ref: string | null = null;
   try {
     const gcp = env.provider === "gcp";
@@ -90,7 +94,7 @@ export async function handleVerifyConnection(data: unknown, deps: VerifyDeps = {
         // account_id = GCP 프로젝트 ID. 없으면 볼 곳이 없다 (checkAccountId 가 연결 때 이미 거른다)
         if (!env.account_id) result = { ok: false, reason: "ROLE_NOT_FOUND" };
         else result = await verifyGcpObserve(deps.cli ?? {}, { projectId: env.account_id, expectedProjectNumber: env.gcp_project_number,
-          clusterName: env.cluster_name, token: m.token });
+          clusterName: env.cluster_name, token: m.token, probeOptional: reason === "user" });
       } else {
         if (m.kind !== "aws") throw new Error("AWS 발급기가 aws 자격이 아닌 것을 돌려줬다");
         if (!env.cluster_name) result = { ok: false, reason: "K8S_ACCESS_MISSING" };   // DRAFT(ai): 클러스터 이름이 없으면 쿠버네티스를 못 봄
@@ -104,14 +108,16 @@ export async function handleVerifyConnection(data: unknown, deps: VerifyDeps = {
 
   const r = result!;
   return withTenant(tenantId, async (tx) => {
-    const detail = r.ok ? {} : { reason: r.reason };
+    // OBSROLE3: 연결은 성공했지만 관찰 역할에 선택 권한이 빠져 있으면(예전 스크립트로 만든 고객) 실패로 바꾸지 않고 사람이 할 일로 남긴다
+    const missing = r.ok && r.missingPermissions?.length ? r.missingPermissions : null;
+    const detail = r.ok ? (missing ? { missingPermissions: missing } : {}) : { reason: r.reason };
     const action = r.ok ? "env.verified" : "env.verify_failed";
     const audit = { actor: "worker", action, detail: { ...detail, trigger: reason } };
     if (reason === "user") {
       if (r.ok) {
         await advanceConnection(tx, tenantId, envId, "connected", { from: ["verifying"], failures: 0, touchVerified: true, audit });
         await tx.query("UPDATE environments SET verify_detail = $2 WHERE id = $1",
-          [envId, JSON.stringify({ clusters: r.clusters, checkedAt: new Date().toISOString() })]);
+          [envId, JSON.stringify({ clusters: r.clusters, checkedAt: new Date().toISOString(), ...(missing ? { missingPermissions: missing, needsHuman: [needsHumanText(missing)] } : {}) })]);
         // L7i: 첫 성공 때 GCP 프로젝트 번호 고정 (이미 있으면 그대로 — 위 확인이 같음을 보장)
         if (r.projectNumber) await tx.query("UPDATE environments SET gcp_project_number = COALESCE(gcp_project_number, $2) WHERE id = $1", [envId, r.projectNumber]);
         return { status: "connected" as const };

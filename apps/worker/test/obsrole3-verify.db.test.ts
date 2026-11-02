@@ -1,0 +1,112 @@
+// OBSROLE3 DB 시험: GCP 연결 확인이 관찰 역할의 빠진 선택 권한을 사람이 할 일(needsHuman)로 남긴다. 발급기·CLI 는 가짜. DB 없으면 건너뛴다
+import { test, before, after } from "node:test";
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import pg from "pg";
+import type { Exec } from "@svc/adapters";
+
+const DB = process.env.DATABASE_URL, OWNER = process.env.OWNER_DATABASE_URL;
+const skip = !DB || !OWNER ? "DATABASE_URL / OWNER_DATABASE_URL 없음 (DB 시험 건너뜀)" : false;
+
+let core: typeof import("@svc/core");
+let security: typeof import("@svc/security");
+let job: typeof import("../src/jobs/verify-connection.js");
+let platform: typeof import("../src/platform.js");
+let ledgerMod: typeof import("../src/temp-cred-ledger.js");
+let owner: pg.Client;
+const T = randomUUID(), T2 = randomUUID();
+const P = "cust-proj-123";
+let number = "123456789012";
+let denySql = false;
+let denied = new Set<string>();
+const lines: string[] = [];
+const delegates: string[] = [];
+
+const exec: Exec = async (cmd, args) => {
+  const line = `${cmd} ${args.join(" ")}`;
+  const out = (o: unknown, code = 0, err = "") => ({ code, stdout: JSON.stringify(o), stderr: err, ms: 1 });
+  lines.push(line);
+  for (const d of denied) if (new RegExp(`^gcloud ${d}`).test(line)) return out(null, 1, "ERROR: (gcloud) PERMISSION_DENIED: Permission denied");
+  if (/^gcloud projects describe/.test(line)) return out({ projectId: P, projectNumber: number });
+  if (/^gcloud container clusters list/.test(line)) return out([{ name: "shop" }]);
+  if (/^gcloud sql instances list/.test(line)) return denySql ? out(null, 1, "PERMISSION_DENIED") : out([]);
+  return out({});
+};
+const run: import("@svc/security").GcloudRun = async (args) => { delegates.push(args.find((a) => a.startsWith("--delegates="))!); return { code: 0, stdout: "ya29." + "x".repeat(40), stderr: "" }; };
+
+function broker() {
+  return security.createTempRoleBroker({
+    issuers: { gcp: security.gcpCliIssuer({ platformSa: platform.gcpPlatformSa, platformProject: "svc-platform", run }) },
+    ledger: ledgerMod.pgLedger(),
+    resolveEnv: async () => ({ roleRef: `svc-observe@${P}.iam.gserviceaccount.com` }),
+    audit: (tenantId, a) => core.withTenant(tenantId, (tx) => core.writeAudit(tx, tenantId, a)),
+  });
+}
+const deps = () => ({ roles: broker(), cli: { exec, env: {} } });
+async function env(tenant: string, extra: { number?: string; status?: string } = {}) {
+  const id = randomUUID();
+  await owner.query(`INSERT INTO environments (id, tenant_id, provider, name, connection_status, account_id, region, cluster_name, gcp_project_number)
+    VALUES ($1,$2,'gcp',$3,$6,$4,'asia-northeast3','shop',$5)`, [id, tenant, `g-${id.slice(0, 6)}`, P, extra.number ?? null, extra.status ?? "verifying"]);
+  return id;
+}
+const row = async (id: string) => (await owner.query("SELECT connection_status, failure_reason, gcp_project_number, verify_detail FROM environments WHERE id=$1", [id])).rows[0];
+
+before(async () => {
+  if (skip) return;
+  core = await import("@svc/core");
+  security = await import("@svc/security");
+  platform = await import("../src/platform.js");
+  ledgerMod = await import("../src/temp-cred-ledger.js");
+  job = await import("../src/jobs/verify-connection.js");
+  owner = new pg.Client({ connectionString: OWNER }); await owner.connect();
+  await owner.query("INSERT INTO tenants (id, name) VALUES ($1, 'test-obsrole3'), ($2, 'test-obsrole3-other')", [T, T2]);
+});
+after(async () => { if (skip) return; await core.pool.end(); await owner.end(); });
+
+const PROBE = /^gcloud (projects get-iam-policy|services list|compute |artifacts |secrets list|storage buckets list|pubsub |redis )/;
+const auditOf = async (id: string, action: string) => (await owner.query("SELECT detail FROM audit_events WHERE target=$1 AND action=$2 ORDER BY seq DESC LIMIT 1", [id, action])).rows[0];
+const reset = () => { denied = new Set(); denySql = false; lines.length = 0; delegates.length = 0; number = "123456789012"; };
+
+test("정상: 선택 권한이 다 있으면 connected, verify_detail 에 missingPermissions·needsHuman 없음", { skip }, async () => {
+  reset();
+  const id = await env(T);
+  const r = await job.handleVerifyConnection({ tenantId: T, envId: id, requestId: randomUUID(), reason: "user" }, deps());
+  assert.equal(r.status, "connected");
+  const e = await row(id);
+  assert.deepEqual(Object.keys(e.verify_detail).sort(), ["checkedAt", "clusters"]);
+  assert.ok(lines.filter((l) => PROBE.test(l)).length >= 11, "사용자 확인에서는 선택 권한을 찔러 봄");
+});
+
+test("선택 권한이 빠진 관찰 역할: 실패로 바꾸지 않고 connected + 빠진 권한·할 일(needsHuman)·감사에 남김", { skip }, async () => {
+  reset(); denied = new Set(["secrets list", "redis instances list", "compute forwarding-rules list"]);
+  const id = await env(T);
+  const r = await job.handleVerifyConnection({ tenantId: T, envId: id, requestId: randomUUID(), reason: "user" }, deps());
+  assert.equal(r.status, "connected");
+  const e = await row(id);
+  assert.equal(e.connection_status, "connected");
+  assert.equal(e.failure_reason, null);
+  assert.deepEqual(e.verify_detail.missingPermissions, ["compute.forwardingRules.list", "compute.globalForwardingRules.list", "redis.instances.list", "secretmanager.secrets.list"]);
+  assert.equal(e.verify_detail.needsHuman.length, 1);
+  assert.match(e.verify_detail.needsHuman[0], /gcp-connect\.sh/);
+  assert.match(e.verify_detail.needsHuman[0], /secretmanager\.secrets\.list/);
+  assert.equal(e.verify_detail.needsHuman[0], job.needsHumanText(e.verify_detail.missingPermissions));
+  assert.deepEqual((await auditOf(id, "env.verified")).detail.missingPermissions, e.verify_detail.missingPermissions);
+});
+
+test("거부: 필수 권한(sql)이 없으면 선택 권한 여부와 상관없이 failed, 선택 찌르기는 안 함", { skip }, async () => {
+  reset(); denySql = true; denied = new Set(["secrets list"]);
+  const id = await env(T);
+  const r = await job.handleVerifyConnection({ tenantId: T, envId: id, requestId: randomUUID(), reason: "user" }, deps());
+  assert.equal(r.status, "failed");
+  assert.equal((await row(id)).failure_reason, "PERMISSION_MISSING:sql.instances.list");
+  assert.equal(lines.filter((l) => PROBE.test(l)).length, 0);
+});
+
+test("주기 재확인(periodic)은 선택 권한을 찌르지 않는다 (호출 수 그대로)", { skip }, async () => {
+  reset(); denied = new Set(["secrets list"]);
+  const id = await env(T, { status: "connected", number: "123456789012" });
+  const r = await job.handleVerifyConnection({ tenantId: T, envId: id, requestId: randomUUID(), reason: "periodic" }, deps());
+  assert.equal(r.status, "connected");
+  assert.equal(lines.filter((l) => PROBE.test(l)).length, 0);
+  assert.equal((await row(id)).verify_detail.missingPermissions, undefined);
+});
