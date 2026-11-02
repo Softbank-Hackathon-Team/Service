@@ -19,6 +19,7 @@ export const QUEUES = {
   agentRun: "agent-run",
   leaseReaper: "lease-reaper",
   idempotencyCleanup: "idempotency-cleanup",
+  verifySweep: "verify-sweep",          // L4b: 연결 주기 재확인 훑기 (일정이 냄 → 환경마다 verify-connection periodic)
 } as const;
 export type QueueName = typeof QUEUES[keyof typeof QUEUES];
 

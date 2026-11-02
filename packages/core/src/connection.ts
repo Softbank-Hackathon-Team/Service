@@ -1,5 +1,5 @@
 import { canTransition, VerifyConnectionJob, type ConnectionStatus, type Provider } from "@svc/contracts";
-import type { Tx } from "./db.js";
+import { pool, type Tx } from "./db.js";
 import { boss, asBossDb, jobKey } from "./boss.js";
 import { writeAudit } from "./audit.js";
 import { NotFound, InvalidTransition } from "./errors.js";
@@ -67,4 +67,12 @@ export async function advanceConnection(tx: Tx, tenantId: string, envId: string,
     detail: { ...(o.audit.detail ?? {}), from, to, ...(jobQueued !== null ? { jobQueued } : {}) },
   });
   return { from, to, jobQueued };
+}
+
+// L4b: 주기 재확인 훑기 전용. 모든 회사의 연결됨·불안정 환경 (번호만).
+// withTenant 밖에서 pool 을 쓰는 예외다 (envlock.ts listExpiredEnvLocks 와 같음). 회사 벽은 DB 함수(svc_maintenance 소유, 0026)가 지키고,
+// 받은 번호로 하는 실제 확인·변경은 verify-connection 처리기가 그 회사의 withTenant 안에서 다시 읽고 한다
+export async function listVerifyDue(maxRows = 500): Promise<Array<{ envId: string; tenantId: string }>> {
+  const r = await pool.query<{ env_id: string; tenant_id: string }>("SELECT * FROM maint_verify_due($1)", [maxRows]);
+  return r.rows.map((x) => ({ envId: x.env_id, tenantId: x.tenant_id }));
 }

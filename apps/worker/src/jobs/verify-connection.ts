@@ -57,6 +57,14 @@ export async function handleVerifyConnection(data: unknown, deps: VerifyDeps = {
       const cred = await roles.issue({ tenantId, envId, provider: "aws", purpose: "observe", actions: VERIFY_ACTIONS, ttlSec: VERIFY_TTL_SEC },
         { step: "verify" });
       ref = cred.credentialRef;
+      // L4b: 가짜 발급기(REAL_STS 꺼짐·external_id 없는 시드 환경)의 자격으로 고객 CLI 를 부르지 않는다 (가짜 키로 진짜 AWS 를 부르면
+      //   InvalidClientTokenId 로 재시도만 돈다). 상태는 그대로 두고 끝. 주기 훑기가 시드 환경에도 오기 때문에 필요
+      // DRAFT(ai): 가짜면 확인 안 함(connected 로 바꾸지도, 실패로 바꾸지도 않음). 화면은 지금 상태 그대로
+      if (cred.stub) {
+        await roles.revoke(ref, tenantId, "verify_done");
+        ref = null;
+        return { status: cur, skipped: "stub_credentials" };
+      }
     } catch (e) {
       const why = issueFailure(e);
       if (!why) throw e;

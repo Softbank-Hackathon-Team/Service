@@ -147,3 +147,18 @@ test("REAL_STS=1 이어도 external_id 없는 환경(시드)은 mock 발급기�
   const c = await b.issue({ tenantId: T, envId: randomUUID(), provider: "aws", purpose: "observe", actions: ["eks:DescribeCluster"], ttlSec: 900 });
   assert.equal(c.stub, true);
 });
+
+test("가짜 발급기 자격(stub)이면 고객 CLI 를 안 부르고 상태 그대로 (주기 훑기가 시드 환경에 와도 안전)", { skip }, async () => {
+  const id = await env(T, "connected");
+  let calls = 0;
+  const b = security.createTempRoleBroker({ issuers: { aws: security.mockIssuer("aws") }, ledger: ledgerMod.pgLedger(),
+    resolveEnv: async () => ({ roleRef: "arn:aws:iam::000000000000:role/svc-observe" }),
+    audit: (tenantId, a) => core.withTenant(tenantId, (tx) => core.writeAudit(tx, tenantId, a)) });
+  const r = await job.handleVerifyConnection({ tenantId: T, envId: id, requestId: req(), reason: "periodic" },
+    { roles: b, cli: { exec: async () => { calls++; return { code: 0, stdout: "{}", stderr: "", ms: 1 }; }, env: {} } });
+  assert.equal(r.skipped, "stub_credentials");
+  assert.equal(calls, 0);
+  const e = await row(id);
+  assert.equal(e.connection_status, "connected"); assert.equal(e.verify_failures, 0);
+  assert.equal((await creds(id))[0].status, "revoked");
+});

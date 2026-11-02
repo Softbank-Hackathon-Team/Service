@@ -80,6 +80,7 @@ export const POLICY: Record<string, QueuePolicy> = {
   [QUEUES.agentRun]: { policy: "stately", retryLimit: 0 },
   [QUEUES.leaseReaper]: { policy: "singleton", retryLimit: 0 },
   [QUEUES.idempotencyCleanup]: { policy: "singleton", retryLimit: 0 },
+  [QUEUES.verifySweep]: { policy: "singleton", retryLimit: 0 },   // L4b: 다음 일정이 다시 훑는다
 };
 
 // Z32 (Z6-2): 워커가 kill -9 로 죽으면 쥐고 있던 작업이 expireInSeconds(기본 900초, apply 3600초) 동안 active로 남았다.
