@@ -65,3 +65,25 @@
     transform: rotate(360deg);
   }
 }
+
+/* 좁은 화면에서는 가로 띠로 줄인다. 표시는 모두 남기고 이름은 지금 단계만 보인다. */
+@media (max-width: 1199px) {
+  .list {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-8);
+  }
+  .item {
+    flex: none;
+    gap: var(--space-8);
+  }
+  .item[data-status='done'] .label,
+  .item[data-status='pending'] .label,
+  .detail {
+    display: none;
+  }
+  .item:not([data-status='done']):not([data-status='pending']) {
+    padding-right: var(--space-8);
+  }
+}

@@ -1,0 +1,38 @@
+.root {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+  max-width: 100%;
+}
+.text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.chip {
+  align-self: flex-start;
+  padding: var(--space-8) var(--space-8) var(--space-8) var(--space-16);
+  border-radius: var(--radius-inner);
+  background: var(--color-bg-subtle);
+  color: var(--color-fg-primary);
+}
+.copy {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-fg-tertiary);
+  cursor: pointer;
+}
+.copy:hover {
+  background: var(--color-bg-selected);
+  color: var(--color-fg-primary);
+}
+.chip .copy:hover {
+  background: var(--color-bg-surface);
+}

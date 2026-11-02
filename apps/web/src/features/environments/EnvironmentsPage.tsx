@@ -13,8 +13,7 @@ import { FoundResources } from '../migration/NewMigrationPage';
 import { ShellLayout } from '../shell/ShellLayout';
 import s from '../common/page.module.css';
 
-const LAYOUT: BentoLayout = { columns: '280fr 620fr 472fr', rows: 'minmax(0, 1fr)', areas: ['list hero side'] };
-const NO_SIDE: BentoLayout = { columns: '280fr 1092fr', rows: 'minmax(0, 1fr)', areas: ['list hero'] };
+const LAYOUT: BentoLayout = { columns: ['narrow', 'fill', 'side'], areas: 'list hero side' };
 
 const ago = (iso: string | null) => {
   if (!iso) return '기록 없음';
@@ -119,9 +118,8 @@ export function EnvironmentsPage({ id }: { id: string | null }) {
   const list = realEnvs(envs.data ?? []);
   const env = list.find((item) => item.id === id) ?? list[0];
   const connected = env?.connectionStatus === 'connected';
-  const hasSide = connected || env?.provider === 'onprem';
   return (
-    <ShellLayout layout={hasSide ? LAYOUT : NO_SIDE}>
+    <ShellLayout layout={LAYOUT}>
       <Tile area="list" compact scroll>
         <TileHeader title="환경" />
         <ul className={s.listTile}>

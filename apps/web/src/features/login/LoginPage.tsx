@@ -6,11 +6,7 @@ import { auth } from '../../lib/api';
 import { AuthError } from '../../lib/auth';
 import s from './LoginPage.module.css';
 
-const LOGIN: BentoLayout = {
-  columns: '872fr 480fr',
-  rows: 'minmax(0, 1fr)',
-  areas: ['hero form'],
-};
+const LOGIN: BentoLayout = { columns: ['fill', 'side'], areas: 'hero form' };
 
 export function LoginPage({ notice }: { notice: string | null }) {
   const [email, setEmail] = useState('');

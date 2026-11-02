@@ -149,7 +149,7 @@ export function WindowScreen({ migration, route, onChanged }: ScreenProps) {
       <Hero
         tone="done"
         meta="롤백 대기"
-        title={over ? '자원을\n정리하고 있습니다' : `${source}로 되돌릴 수\n있는 시간입니다`}
+        title={over ? '자원을\n정리하고 있습니다' : `${source}로\n되돌릴 수 있는 시간입니다`}
         foot={over ? '이제 되돌릴 수 없습니다' : '시간이 끝나면 임시 자원을 지우고 되돌릴 수 없습니다'}
       >
         {!over && <span className={`${s.clock} t-metric-2xl`}>{formatClock(left)}</span>}
@@ -247,7 +247,8 @@ export function RollingBackScreen({ migration, route }: ScreenProps) {
   );
 }
 
-function ReportPill({ id }: { id: string }) {
+/** 증적 리포트를 새 탭에 연다. 버튼 줄은 화면이 Stack 안에 직접 둔다. */
+function useReport(id: string) {
   const [error, setError] = useState<string | null>(null);
   const open = async () => {
     setError(null);
@@ -259,22 +260,21 @@ function ReportPill({ id }: { id: string }) {
       setError(errorText(reason));
     }
   };
-  return (
-    <ActionRow notice={error}>
-      <ActionPill label="증적 리포트" icon="download" onClick={() => void open()} />
-    </ActionRow>
-  );
+  return { error, open };
 }
 
 export function RolledBackScreen({ migration, route }: ScreenProps) {
   const { source } = routeEnds(route);
+  const report = useReport(migration.id);
   return (
     <Frame migration={migration} route={route}>
       <Hero tone="run" meta="롤백 완료" title={`트래픽을 모두\n${source}로 되돌렸습니다`} foot="도착 환경은 남겨 두었습니다" />
       <Stack area="side">
         <MeasureFold migration={migration} />
         <TimelineFold migration={migration} />
-        <ReportPill id={migration.id} />
+        <ActionRow notice={report.error}>
+          <ActionPill label="증적 리포트" icon="download" onClick={() => void report.open()} />
+        </ActionRow>
       </Stack>
     </Frame>
   );
@@ -294,6 +294,7 @@ export function CleanupScreen({ migration, route }: ScreenProps) {
 
 export function DoneScreen({ migration, route }: ScreenProps) {
   const { target } = routeEnds(route);
+  const report = useReport(migration.id);
   return (
     <Frame migration={migration} route={route}>
       <Hero tone="done" meta="완료" title={`멈추지 않고\n${target}로 옮겼습니다`} foot="누가 요청하고 승인했는지 모두 기록했습니다" />
@@ -301,7 +302,9 @@ export function DoneScreen({ migration, route }: ScreenProps) {
         <LiveFold migration={migration} />
         <MeasureFold migration={migration} />
         <TimelineFold migration={migration} />
-        <ReportPill id={migration.id} />
+        <ActionRow notice={report.error}>
+          <ActionPill label="증적 리포트" icon="download" onClick={() => void report.open()} />
+        </ActionRow>
       </Stack>
     </Frame>
   );

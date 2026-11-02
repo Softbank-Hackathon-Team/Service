@@ -1,8 +1,9 @@
 .action {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-16);
-  padding: var(--space-12) var(--space-32) var(--space-12) var(--space-12);
+  gap: var(--space-12);
+  height: var(--size-control-l);
+  padding: 0 var(--space-24) 0 6px;
   border: 0;
   border-radius: var(--radius-full);
   white-space: nowrap;
@@ -17,8 +18,8 @@
 .disc {
   display: grid;
   place-items: center;
-  width: 56px;
-  height: 56px;
+  width: var(--size-control-m);
+  height: var(--size-control-m);
   border-radius: var(--radius-full);
   transition: transform 160ms ease;
 }
@@ -56,8 +57,8 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-8);
-  height: var(--size-bar);
-  padding: 0 var(--space-24);
+  height: var(--size-control-m);
+  padding: 0 var(--space-20);
   border: 0;
   border-radius: var(--radius-full);
   background: var(--color-bg-surface);
@@ -74,31 +75,36 @@
   color: var(--color-fg-tone-danger);
 }
 
+/* 계정은 상단 바의 다른 알약과 같은 무게로 둔다. 화면에서 가장 센 색은 주 버튼 하나뿐이다. */
 .account {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-12);
-  height: var(--size-bar);
-  padding: 0 var(--space-24) 0 6px;
+  gap: var(--space-8);
+  height: var(--size-control-m);
+  padding: 0 var(--space-20) 0 6px;
   border: 0;
   border-radius: var(--radius-full);
-  background: var(--color-bg-inverse);
-  color: var(--color-fg-on-action);
+  background: var(--color-bg-surface);
+  color: var(--color-fg-primary);
   white-space: nowrap;
   cursor: pointer;
+  transition: background-color 160ms ease;
+}
+.account:hover {
+  background: var(--color-bg-selected);
 }
 
 .nav {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  height: var(--size-bar);
-  padding: 0 6px;
+  height: var(--size-control-m);
+  padding: 0 var(--space-4);
   border-radius: var(--radius-full);
   background: var(--color-bg-surface);
 }
 .navItem {
-  height: 40px;
+  height: var(--size-control-s);
   padding: 0 var(--space-16);
   border: 0;
   border-radius: var(--radius-full);
@@ -119,11 +125,11 @@
 .accountDisc {
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
+  width: 32px;
+  height: 32px;
   border-radius: var(--radius-full);
-  background: var(--color-bg-surface);
-  color: var(--color-fg-primary);
+  background: var(--color-bg-subtle);
+  color: var(--color-fg-secondary);
 }
 
 .badge {
@@ -134,7 +140,7 @@
   white-space: nowrap;
 }
 .badge-neutral {
-  background: var(--color-bg-selected);
+  background: var(--color-bg-subtle);
   color: var(--color-fg-secondary);
 }
 .badge-warning {
@@ -158,7 +164,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-8);
-  height: var(--size-bar);
+  height: var(--size-control-m);
   padding: 0 var(--space-20);
   border-radius: var(--radius-full);
   background: var(--color-bg-surface);
@@ -182,7 +188,8 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-8);
-  padding: var(--space-16) var(--space-24);
+  height: var(--size-control-m);
+  padding: 0 var(--space-20);
   border: 0;
   border-radius: var(--radius-full);
   background: var(--color-bg-subtle);

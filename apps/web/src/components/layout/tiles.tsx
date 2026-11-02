@@ -1,5 +1,6 @@
-import { useState, type CSSProperties, type ReactNode } from 'react';
+import { Children, isValidElement, useState, type CSSProperties, type ReactNode } from 'react';
 import { Icon, type IconName } from '../ui/Icon';
+import { SkeletonRows } from '../ui/Skeleton';
 import s from './tiles.module.css';
 
 const areaStyle = (area: string) => ({ gridArea: area, viewTransitionName: `tile-${area}` }) as CSSProperties;
@@ -14,7 +15,7 @@ type TileProps = {
 
 /** 벤토의 한 칸. area 이름이 같으면 화면이 바뀔 때 같은 타일로 이어져 움직인다. */
 export function Tile({ area, spread, compact, scroll, children }: TileProps) {
-  const className = [s.tile, s.surface, spread && s.spread, compact && s.compact, scroll && s.scroll]
+  const className = [s.tile, s.surface, spread && s.spread, compact && s.compact, scroll && `${s.scroll} scroll-fade`]
     .filter(Boolean)
     .join(' ');
   return (
@@ -24,11 +25,19 @@ export function Tile({ area, spread, compact, scroll, children }: TileProps) {
   );
 }
 
-/** 벤토 한 칸에 카드를 쌓는다. 행동 버튼은 ActionRow로 맨 아래에 둔다. */
+/**
+ * 벤토 한 칸에 카드를 쌓는다. 행동 버튼(ActionRow)은 카드 묶음과 따로 맨 아래 줄을 차지해서 카드를 덮지 않는다.
+ * 카드가 길면 카드 묶음만 스크롤한다. 좁은 화면에서는 행동 버튼 줄이 벤토 끝(dock)으로 가서 화면 아래에 붙는다.
+ */
 export function Stack({ area, children }: { area: string; children: ReactNode }) {
+  const items = Children.toArray(children);
+  const isDock = (item: ReactNode) => isValidElement(item) && item.type === ActionRow;
   return (
     <div className={s.stack} style={areaStyle(area)}>
-      {children}
+      <div className={`${s.stackBody} scroll-fade`} style={{ '--stack-area': area } as CSSProperties}>
+        {items.filter((item) => !isDock(item))}
+      </div>
+      {items.filter(isDock)}
     </div>
   );
 }
@@ -39,10 +48,10 @@ type ActionRowProps = {
   children: ReactNode;
 };
 
-/** 행동 버튼 줄. Stack 안에서는 내용이 길어져도 아래에 붙어 있어 버튼이 잘리지 않는다. */
+/** 행동 버튼 줄. Stack 안에서는 카드 묶음 아래 자기 줄을 차지한다. */
 export function ActionRow({ before, notice, children }: ActionRowProps) {
   return (
-    <div className={s.actionDock}>
+    <div className={s.actionDock} data-dock>
       {before}
       {notice && (
         <p className={`${s.actionNotice} t-body-md`} role="alert">
@@ -65,7 +74,7 @@ type FoldTileProps = {
 export function FoldTile({ title, summary, defaultOpen = true, children }: FoldTileProps) {
   const [open, setOpen] = useState(defaultOpen);
   return (
-    <section className={s.fold}>
+    <section className={s.fold} data-open={open}>
       <button type="button" className={s.foldHead} aria-expanded={open} onClick={() => setOpen(!open)}>
         <span className={s.foldTitle}>
           <span className="t-label-md">{title}</span>
@@ -150,5 +159,15 @@ export function TileLink({ label, onClick }: { label: string; onClick: () => voi
       {label}
       <Icon name="chevron" size={12} />
     </button>
+  );
+}
+
+/** 읽는 동안의 칸. 빈 카드 대신 줄 모양으로 자리를 잡는다. */
+export function SkeletonTile({ area, title, rows = 6 }: { area: string; title: string; rows?: number }) {
+  return (
+    <Tile area={area} compact>
+      <TileHeader title={title} />
+      <SkeletonRows count={rows} />
+    </Tile>
   );
 }

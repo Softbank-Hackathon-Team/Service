@@ -803,6 +803,124 @@ function restore() {
   }
 }
 
+// ---- 화면 점검 ----
+// 지금 창 크기에서 레이아웃이 깨진 곳을 잰다. 패널의 '화면 점검' 버튼이나 콘솔의 __layoutCheck() 로 부른다.
+// '전체 점검'(__layoutSweep())은 모든 화면과 아래 상황을 차례로 넘기며 잰다. 새로 고침해도 이어 가고, 끝나면 표를 남긴다.
+// 크기별로 보려면 창을 1024×768, 1280×720, 1440×900, 1920×1080 으로 바꿔 가며 다시 부른다.
+
+type LayoutProblem = { kind: '겹침' | '가로 넘침' | '버튼 화면 밖' | '쌓는 순서' | '대비'; detail: string };
+type Box = { top: number; left: number; right: number; bottom: number };
+
+const label = (el: Element) => (el.textContent ?? '').trim().replace(/\s+/g, ' ').slice(0, 24) || el.tagName.toLowerCase();
+
+/** 스크롤 칸과 overflow 로 잘린 부분을 뺀, 실제로 보이는 사각형. 다 잘렸으면 null. */
+function shownBox(el: Element): Box | null {
+  const r = el.getBoundingClientRect();
+  let box: Box = { top: r.top, left: r.left, right: r.right, bottom: r.bottom };
+  for (let up = el.parentElement; up && up !== document.body; up = up.parentElement) {
+    const style = getComputedStyle(up);
+    if (style.overflowX === 'visible' && style.overflowY === 'visible') continue;
+    const c = up.getBoundingClientRect();
+    box = { top: Math.max(box.top, c.top), left: Math.max(box.left, c.left), right: Math.min(box.right, c.right), bottom: Math.min(box.bottom, c.bottom) };
+  }
+  return box.right - box.left > 1 && box.bottom - box.top > 1 ? box : null;
+}
+
+const overlapArea = (a: Box, b: Box) => Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left)) * Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+
+function rgb(color: string) {
+  const [r = 0, g = 0, b = 0, a = 1] = (color.match(/[\d.]+/g) ?? []).map(Number);
+  return { r, g, b, a };
+}
+function luminance({ r, g, b }: { r: number; g: number; b: number }) {
+  const [R, G, B] = [r, g, b].map((v) => (v / 255 <= 0.03928 ? v / 255 / 12.92 : ((v / 255 + 0.055) / 1.055) ** 2.4));
+  return 0.2126 * R! + 0.7152 * G! + 0.0722 * B!;
+}
+function backgroundOf(el: Element | null) {
+  for (let up = el; up; up = up.parentElement) {
+    const color = rgb(getComputedStyle(up).backgroundColor);
+    if (color.a > 0.5) return color;
+  }
+  return { r: 255, g: 255, b: 255, a: 1 };
+}
+
+function layoutCheck(): LayoutProblem[] {
+  const problems: LayoutProblem[] = [];
+  const main = document.querySelector('main');
+  if (!main) return problems;
+  const scroller = document.scrollingElement ?? document.documentElement;
+  const keep = scroller.scrollTop;
+  const narrow = window.innerWidth < 1200;
+  // 색이 바뀌는 중에 재지 않도록 잴 동안 전환을 끈다
+  const still = document.createElement('style');
+  still.textContent = '*, *::before, *::after { transition: none !important; }';
+  document.head.append(still);
+
+  // 1. 겹침: 카드(section), 버튼, 행동 버튼 줄끼리 보이는 부분이 겹치면 안 된다. 좁은 화면은 버튼 줄이 화면 아래에 붙으므로 맨 아래로 내려서 잰다.
+  if (narrow) scroller.scrollTop = scroller.scrollHeight;
+  const blocks = [...main.querySelectorAll('section, button, [data-dock]')].filter((el) => !panel?.contains(el));
+  const boxes = blocks.map((el) => ({ el, box: shownBox(el) })).filter((item): item is { el: Element; box: Box } => item.box !== null);
+  for (let i = 0; i < boxes.length; i++) {
+    for (let j = i + 1; j < boxes.length; j++) {
+      const a = boxes[i]!, b = boxes[j]!;
+      if (a.el.contains(b.el) || b.el.contains(a.el)) continue;
+      if (overlapArea(a.box, b.box) > 4) problems.push({ kind: '겹침', detail: `${label(a.el)} ↔ ${label(b.el)}` });
+    }
+  }
+  scroller.scrollTop = 0;
+
+  // 2. 가로로 넘치면 안 된다.
+  if (scroller.scrollWidth > window.innerWidth + 1) problems.push({ kind: '가로 넘침', detail: `${scroller.scrollWidth}px > ${window.innerWidth}px` });
+
+  // 3. 처음 연 화면에서 행동 버튼이 화면 안에 있어야 한다.
+  for (const button of main.querySelectorAll('[data-dock] button')) {
+    const r = button.getBoundingClientRect();
+    if (r.bottom > window.innerHeight + 1 || r.top < 0) problems.push({ kind: '버튼 화면 밖', detail: `${label(button)} (${Math.round(r.top)}~${Math.round(r.bottom)}, 창 ${window.innerHeight})` });
+  }
+
+  // 4. 좁은 화면에서는 진행 단계가 큰 카드 바로 다음에 와야 한다.
+  const hero = main.querySelector('[style*="tile-hero"]');
+  const steps = main.querySelector('[style*="tile-steps"]');
+  if (narrow && hero && steps) {
+    const heroBottom = hero.getBoundingClientRect().bottom;
+    const stepsTop = steps.getBoundingClientRect().top;
+    const between = [...main.querySelectorAll('section')].filter((el) => !hero.contains(el) && !steps.contains(el)).some((el) => {
+      const top = el.getBoundingClientRect().top;
+      return top > heroBottom && top < stepsTop;
+    });
+    if (stepsTop < heroBottom || between) problems.push({ kind: '쌓는 순서', detail: '진행 단계가 큰 카드 바로 다음에 있지 않습니다' });
+  }
+
+  // 5. 일반 크기 글자는 바탕과 4.5:1 이상. 누를 수 없는 버튼의 글자는 기준에서 뺀다(WCAG 1.4.3).
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  const seen = new Set<Element>();
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const el = node.parentElement;
+    if (!el || seen.has(el) || !node.textContent?.trim() || panel?.contains(el) || el.closest('[aria-hidden="true"], :disabled')) continue;
+    seen.add(el);
+    const style = getComputedStyle(el);
+    const size = parseFloat(style.fontSize);
+    const large = size >= 24 || (size >= 18.66 && Number(style.fontWeight) >= 700);
+    if (large || style.visibility === 'hidden' || !shownBox(el)) continue;
+    const fg = luminance(rgb(style.color));
+    const bg = luminance(backgroundOf(el));
+    const ratio = (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05);
+    if (ratio < 4.5) problems.push({ kind: '대비', detail: `${label(el)} ${ratio.toFixed(2)}:1 (${size}px)` });
+  }
+
+  scroller.scrollTop = keep;
+  still.remove();
+  const unique = new Map(problems.map((p) => [`${p.kind}|${p.detail}`, p]));
+  return [...unique.values()];
+}
+
+(window as unknown as { __layoutCheck?: () => LayoutProblem[] }).__layoutCheck = () => {
+  const problems = layoutCheck();
+  console.info(`[화면 점검] ${window.innerWidth}×${window.innerHeight} ${window.location.hash || '#/'}: 문제 ${problems.length}건`);
+  if (problems.length > 0) console.table(problems);
+  return problems;
+};
+
 // ---- 조작 패널 ----
 
 type Scenario = { label: string; apply: (m: MockMigration) => void };
@@ -876,6 +994,16 @@ function mountPanel() {
       window.location.reload();
     }));
   }
+  const result = document.createElement('span');
+  result.style.cssText = 'max-width:220px;padding:0 4px;color:var(--color-fg-secondary);white-space:pre-line';
+  menu.append(pillButton('화면 점검', () => {
+    const problems = (window as unknown as { __layoutCheck: () => LayoutProblem[] }).__layoutCheck();
+    result.textContent = problems.length === 0 ? '문제 없음' : problems.slice(0, 6).map((p) => `${p.kind}: ${p.detail}`).join('\n');
+  }), result);
+  menu.append(pillButton('전체 점검', () => {
+    result.textContent = '모든 화면을 넘기며 재는 중입니다. 결과는 콘솔에 나옵니다';
+    (window as unknown as { __layoutSweep: () => void }).__layoutSweep();
+  }));
   menu.append(pillButton('데이터 처음으로', () => {
     store = freshStore();
     save();
@@ -896,5 +1024,75 @@ function unmountPanel() {
   panel = null;
 }
 
+// ---- 전체 점검 ----
+
+const SWEEP_KEY = 'kross.layout-sweep';
+type SweepResult = { step: string; problems: LayoutProblem[] };
+type Sweep = { steps: string[]; pending: string | null; results: SweepResult[] };
+
+const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+const readSweep = () => JSON.parse(sessionStorage.getItem(SWEEP_KEY) ?? 'null') as Sweep | null;
+const writeSweep = (sweep: Sweep) => sessionStorage.setItem(SWEEP_KEY, JSON.stringify(sweep));
+
+function sweepSteps() {
+  const id = store?.migrations[0]?.id ?? '';
+  const pages = ['#/', '#/migrations', '#/migrations/new', 'new:출발 고른 뒤', '#/environments', '#/settings', '#/design-system'];
+  const perMigration = ['cost', 'security', 'audit', 'agent'].map((page) => (page === 'cost' ? `#/migrations/${id}/cost` : `#/${page}/${id}`));
+  return [...pages, ...perMigration, ...SCENARIOS.map((scenario) => `상황:${scenario.label}`)];
+}
+
+async function record(sweep: Sweep, step: string) {
+  await wait(2000);
+  sweep.results.push({ step, problems: layoutCheck() });
+  writeSweep(sweep);
+}
+
+/** 한 걸음씩 진행한다. 상황을 바꾸는 걸음은 새로 고침이 필요해서, 다시 열린 뒤 이어서 잰다. */
+async function runSweep() {
+  const sweep = readSweep();
+  if (!sweep) return;
+  if (sweep.pending) {
+    const step = sweep.pending;
+    sweep.pending = null;
+    await record(sweep, step);
+  }
+  while (sweep.steps.length > 0) {
+    const step = sweep.steps.shift()!;
+    if (step.startsWith('상황:')) {
+      const scenario = SCENARIOS.find((item) => `상황:${item.label}` === step);
+      const m = store?.migrations[0];
+      if (!scenario || !m) continue;
+      scenario.apply(m);
+      save();
+      sweep.pending = step;
+      writeSweep(sweep);
+      window.location.hash = `#/migrations/${m.id}`;
+      window.location.reload();
+      return;
+    }
+    if (step.startsWith('new:')) {
+      window.location.hash = '#/migrations/new';
+      await wait(1500);
+      document.querySelector<HTMLButtonElement>('main section button:not(:disabled)')?.click();
+    } else {
+      window.location.hash = step;
+    }
+    await record(sweep, step);
+  }
+  sessionStorage.removeItem(SWEEP_KEY);
+  const rows = sweep.results.flatMap(({ step, problems }) => problems.map((problem) => ({ 화면: step, ...problem })));
+  console.info(`[전체 점검] ${window.innerWidth}×${window.innerHeight}: 화면 ${sweep.results.length}개, 문제 ${rows.length}건`);
+  if (rows.length > 0) console.table(rows);
+  sessionStorage.setItem(`${SWEEP_KEY}-result`, JSON.stringify({ size: `${window.innerWidth}×${window.innerHeight}`, screens: sweep.results.length, rows }));
+}
+
+(window as unknown as { __layoutSweep?: () => void }).__layoutSweep = () => {
+  sessionStorage.removeItem(`${SWEEP_KEY}-result`);
+  writeSweep({ steps: sweepSteps(), pending: null, results: [] });
+  void runSweep();
+};
+
 // 새로 고침해도 이 탭의 목업 세션을 이어 간다
 if (isActive()) restore();
+// 전체 점검 중에 새로 고침됐으면 이어서 잰다
+if (isActive() && readSweep()) void runSweep();

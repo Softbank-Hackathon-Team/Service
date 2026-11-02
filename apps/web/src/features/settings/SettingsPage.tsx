@@ -7,7 +7,7 @@ import { usePoll } from '../../lib/usePoll';
 import { ShellLayout } from '../shell/ShellLayout';
 import s from '../common/page.module.css';
 
-const LAYOUT: BentoLayout = { columns: '760fr 612fr', rows: 'minmax(0, 1fr)', areas: ['hero side'] };
+const LAYOUT: BentoLayout = { columns: ['fill', 'side'], areas: 'hero side' };
 
 function useLatency(probe: () => Promise<unknown>, ms: number) {
   return usePoll(async () => {

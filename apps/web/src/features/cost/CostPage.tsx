@@ -13,7 +13,7 @@ import { usd } from '../migration/model';
 import { ShellLayout } from '../shell/ShellLayout';
 import s from '../common/page.module.css';
 
-const LAYOUT: BentoLayout = { columns: '560fr 812fr', rows: 'minmax(0, 1fr)', areas: ['hero side'] };
+const LAYOUT: BentoLayout = { columns: ['fill', 'wide'], areas: 'hero side' };
 const TARGETS: Provider[] = ['aws', 'gcp', 'onprem'];
 
 function EnvBars({ envs, cheapest }: { envs: EnvEstimate[]; cheapest: Provider | null }) {

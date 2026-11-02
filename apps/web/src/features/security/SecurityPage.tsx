@@ -1,5 +1,6 @@
 import type { BentoLayout } from '../../components/layout/ConsoleLayout';
-import { ActionRow, FoldTile, Hero, Stack, Tile, TileHeader } from '../../components/layout/tiles';
+import { ActionRow, FoldTile, Hero, SkeletonTile, Stack, Tile, TileHeader } from '../../components/layout/tiles';
+import { SkeletonRows, SkeletonStats } from '../../components/ui/Skeleton';
 import { ActionPill, Badge } from '../../components/ui/controls';
 import { SecurityDot, SecurityLegend } from '../../components/ui/Security';
 import { api } from '../../lib/api';
@@ -14,8 +15,7 @@ import { useChosenMigration } from '../shell/useChosenMigration';
 import { controlRows, securityHeadline, threatsFrom } from './model';
 import s from '../common/page.module.css';
 
-const LAYOUT: BentoLayout = { columns: '520fr 380fr 472fr', rows: 'minmax(0, 1fr)', areas: ['hero matrix side'] };
-const EMPTY: BentoLayout = { columns: '1fr', rows: 'minmax(0, 1fr)', areas: ['hero'] };
+const LAYOUT: BentoLayout = { columns: ['fill', 'side', 'side'], areas: 'hero matrix side' };
 
 const AREA: Record<SecArea, string> = { temp_credentials: '임시 자격', least_privilege: '최소 권한', audit: '감사 기록', secrets: '비밀값', runtime: '런타임', controls: '통제' };
 const STATE: Record<SecState, { label: string; tone: 'success' | 'warning' | 'danger' | 'neutral' }> = {
@@ -46,7 +46,8 @@ function SecurityBody({ migration }: { migration: MigrationView }) {
   });
   const data = view.data ?? null;
   const compare = regression.data ?? null;
-  const headline = securityHeadline(data, compare);
+  const reading = !data && view.loading;
+  const headline = !data && !reading ? { stop: false, title: '아직 보안 표가\n없습니다' } : securityHeadline(data, compare);
   const controls = data?.controlMatrix ? controlRows(data.controlMatrix) : [];
   const threats = threatsFrom(reports.data ?? []);
   const items = [...(compare?.items ?? [])].sort((a, b) => ORDER.indexOf(a.change) - ORDER.indexOf(b.change));
@@ -57,6 +58,7 @@ function SecurityBody({ migration }: { migration: MigrationView }) {
   return (
     <>
       <Hero tone={headline.stop ? 'stop' : 'run'} meta="이전 보안" title={headline.title} foot="서버가 확인한 값만 보여 줍니다. 값이 없는 칸은 미구현으로 표시합니다">
+        {reading && <SkeletonStats count={4} />}
         {data && (
           <ul className={`${s.heroStats} ${headline.stop ? s.onAlert : ''}`}>
             <li><span className="t-metric-lg">{data.summary.ok}</span><span className="t-caption">지켜짐</span></li>
@@ -80,7 +82,8 @@ function SecurityBody({ migration }: { migration: MigrationView }) {
             <span className={s.matrixCell}><SecurityDot status={control.target} /></span>
           </div>
         ))}
-        {data && controls.length === 0 && <p className="t-body-sm c-tertiary">아직 통제 표가 없습니다.</p>}
+        {reading && <SkeletonRows count={8} />}
+        {!reading && controls.length === 0 && <p className="t-body-sm c-tertiary">아직 통제 표가 없습니다.</p>}
         <SecurityLegend />
       </Tile>
       <Stack area="side">
@@ -177,8 +180,9 @@ export function SecurityPage({ id }: { id: string | null }) {
   const { chosen, picker, loading } = useChosenMigration('security', id);
   if (!chosen) {
     return (
-      <ShellLayout layout={EMPTY}>
+      <ShellLayout layout={LAYOUT}>
         <Hero tone="run" meta="이전 보안" title={loading ? '이전을\n읽고 있습니다' : '확인할 이전이\n없습니다'} />
+        {loading && <SkeletonTile area="matrix" title="통제 표" rows={8} />}
       </ShellLayout>
     );
   }

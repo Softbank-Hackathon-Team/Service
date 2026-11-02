@@ -10,7 +10,7 @@ import { groupMigrations, type MigrationBucket } from '../dashboard/model';
 import { ShellLayout } from '../shell/ShellLayout';
 import s from '../common/page.module.css';
 
-const LAYOUT: BentoLayout = { columns: '560fr 812fr', rows: 'minmax(0, 1fr)', areas: ['hero list'] };
+const LAYOUT: BentoLayout = { columns: ['fill', 'side'], areas: 'hero list' };
 const BUCKETS: { id: MigrationBucket; label: string }[] = [
   { id: 'human', label: '사람 차례' },
   { id: 'running', label: '진행 중' },
