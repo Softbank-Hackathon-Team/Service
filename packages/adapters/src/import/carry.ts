@@ -17,7 +17,8 @@ const unitOf = (k: string): string | null => { const m = KEY.exec(k); return m ?
 const propOf = (spec: PrevSpecV2["spec"], unit: string): unknown => {
   const [id, field] = [unit.slice(0, unit.indexOf(".")), unit.slice(unit.indexOf(".") + 1)];
   const c = (spec.components as Array<{ id: string; props?: Record<string, unknown> }>).find((x) => x.id === id);
-  return c ? { present: true, value: c.props?.[field] } : undefined;
+  // VPREVIDS2 고침: 상속 속성(constructor·toString)을 칸 값으로 읽지 않는다 (structuredClone 이 함수에서 던짐)
+  return c ? { present: true, value: c.props && Object.hasOwn(c.props, field) ? c.props[field] : undefined } : undefined;
 };
 const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 
