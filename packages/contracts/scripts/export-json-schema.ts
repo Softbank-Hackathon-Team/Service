@@ -16,6 +16,7 @@ const pick = {
   EnvironmentView: C.EnvironmentView, ConnectionLink: C.ConnectionLink,
   TransitionEvidence: C.TransitionEvidence, CostEstimateRequest: C.CostEstimateRequest,
   CostEstimate: C.CostEstimate, PriceCatalog: C.PriceCatalog,
+  AppSpecV2: C.AppSpecV2, ImportResultV2: C.ImportResultV2,
 };
 for (const [name, schema] of Object.entries(pick)) {
   writeFileSync(new URL(`${name}.json`, out),

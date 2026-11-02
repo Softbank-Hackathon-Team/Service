@@ -14,3 +14,7 @@ export * from "./env.js";
 export * from "./config.js";
 export * from "./agent.js";
 export * from "./agent-llm.js";
+export * from "./build.js";            // IR v2: 이미지 빌드 계획 모양
+export * from "./spec-v2.js";          // IR v2 공통 명세
+export * from "./spec-v2-check.js";    // IR v2 의미 검증 checkV2
+export * from "./spec-v2-upconvert.js"; // v1 → v2 올리기
