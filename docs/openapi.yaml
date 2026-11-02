@@ -784,6 +784,36 @@ paths:
         "500":
           $ref: "#/components/responses/E500"
           description: "INTERNAL"
+  "/api/v1/events":
+    get:
+      operationId: "getEvents"
+      tags:
+        - "events"
+      summary: "화면 신호 (SSE). 로그인한 회사의 신호만 계속 보낸다. `data:` 줄마다 SseEvent 하나, `:` 줄은 연결 유지용 주석. 신호는 \"다시 읽어\"라는 뜻"
+      description: "코드: apps/api/src/routes/events.ts"
+      security:
+        - bearerAuth: []
+        - devTenant: []
+      parameters:
+        - $ref: "#/components/parameters/DevTenant"
+      responses:
+        "200":
+          description: "화면 신호 (SSE). 로그인한 회사의 신호만 계속 보낸다. `data:` 줄마다 SseEvent 하나, `:` 줄은 연결 유지용 주석. 신호는 \"다시 읽어\"라는 뜻"
+          x-response-source: "supplement"
+          content:
+            "text/event-stream":
+              schema:
+                type: "string"
+                description: "data: <SseEvent JSON>"
+        "401":
+          $ref: "#/components/responses/E401"
+          description: "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+        "429":
+          $ref: "#/components/responses/E429"
+          description: "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+        "500":
+          $ref: "#/components/responses/E500"
+          description: "INTERNAL"
   "/api/v1/migrations":
     post:
       operationId: "postMigrations"
