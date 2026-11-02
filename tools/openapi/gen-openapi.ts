@@ -47,6 +47,8 @@ const SUPPLEMENT: Record<string, Sup> = {
   "POST /api/v1/migrations/{id}/security/check": { desc: "출발·도착 실제 보안 점검(클라우드·k8s 읽기 전용) + 감사 security.live_check 기록 (Z91)" },
   "GET /api/v1/environments/{id}/status": { desc: "환경 자체의 자원 상태 (지금은 Azure Mock만 실제 값)" },
   "GET /api/v1/environments/{id}/inventory": { desc: "환경별 자원: 환경 자체 + 이전마다 이 환경 쪽 앱 자원(생길 것·생김·바뀜·걷힘)과 값의 출처 (Z86). cloud 칸 = aws·gcloud·kubectl 읽기 명령으로 읽은 실자원(30초 캐시), 자격 없으면 status unavailable" },
+  "GET /api/v1/events": { status: 200, desc: "화면 신호 (SSE). 로그인한 회사의 신호만 계속 보낸다. `data:` 줄마다 SseEvent 하나, `:` 줄은 연결 유지용 주석. 신호는 \"다시 읽어\"라는 뜻",
+    alt: { "text/event-stream": "data: <SseEvent JSON>" } },
   "GET /api/v1/migrations/{id}/plan/resources": { desc: "클라우드 서비스 대응표: 출발 서비스 → 도착 서비스, 이전 방식(재배포·논리 복제·트래픽 전환·새로 만듦), 계획서 단계와 진행 (Z86)" },
 };
 
