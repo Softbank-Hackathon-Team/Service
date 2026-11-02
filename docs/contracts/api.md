@@ -173,8 +173,6 @@ contracts의 화면용 모양 `MigrationView`는 열 칸이다. 지금 응답에
 | GET | `/environments` | 입력층 | 자기 회사 환경 목록 + 연결 상태 + 마지막 검증 시각 | 있음 |
 | POST | `/environments/:id/connection-link` | 입력층 | 원클릭 연결 링크 발급 | 있음 |
 | POST | `/environments/:id/verify` | 입력층 | 연결 검증 | 있음 |
-| POST | `/environments/:id/agent-token` | 입력층 | 온프레 Agent 일회용 등록 토큰(10분) + 설치 명령 한 줄 발급 (경로 이름 추정) | 있음 |
-| POST | `/agent/register` | 입력층 | Agent가 일회용 토큰으로 등록하고 장기 Agent 키를 받음 (경로 이름 추정) | 있음 |
 | POST | `/environments/:id/agent-token` | 입력층 | 온프레 Agent 일회용 등록 토큰(10분) + 설치 명령 한 줄 발급 | 있음 |
 | POST | `/agent/register` | 입력층 | Agent가 일회용 토큰으로 등록하고 장기 Agent 키를 받음 | 있음 |
 | GET | `/events` | 입력층 | SSE | 없음 |
@@ -243,6 +241,100 @@ contracts의 화면용 모양 `MigrationView`는 열 칸이다. 지금 응답에
 | GET | `/docs/openapi.json` | 운영 | 같은 내용 JSON | 있음 |
 <!-- /GEN:planned -->
 
+
+---
+
+## 4-1. 경로는 같고 요청·응답 칸이 바뀐 곳 (DOCAPI2)
+
+지금 경로는 `docs/openapi.yaml` 기준 52개이고 4절 표와 맞는다(`api-doc-sync` 시험). 아래는 같은 경로의 요청·응답 칸과 오류 코드가 바뀐 것이다. 칸 모양의 원본은 `packages/contracts`의 Zod 스키마이고, 이 절은 그 요약이다. 깃발(환경변수)은 워커·API가 읽는 이름 그대로 적었다.
+
+### `GET /migrations/:id/spec`: v2 명세 칸
+
+- 응답 스키마는 `MigrationSpecViewV2`다(`packages/contracts/src/spec.ts`).
+- 보여 주는 판에 `spec_v2`(공통 명세 v2, 가져오기 깃발 `IMPORT_IR=v2`로 저장)가 있을 때만 세 칸이 더 붙는다. v1 판의 응답은 전과 글자 그대로다.
+
+| 칸 | 모양 | 뜻 |
+|---|---|---|
+| `needsReviewV2` | 문자열 목록 | v2 검토 칸 키 (`spec_v2.fieldMeta` 중 `needs_review=true`). 화면은 이 키를 PATCH `confirm`에 그대로 보낸다 |
+| `specV2` | `AppSpecV2` | v2 명세 본문 (리소스·의존성·라우팅·보안 기준선) |
+| `fieldMetaV2` | `FieldMetaV2` | v2 칸별 출처·신뢰도 |
+
+- `unmapped`·`ids`·`environment`는 내보내지 않는다. 화면이 안 쓰고, 벤더 고유 키가 섞여 있기 때문이다.
+
+### `PATCH /migrations/:id/spec`: v2 경로·posture·초안 받아들이기
+
+- 기준 판(받아들일 초안이 있으면 그 초안)에 `spec_v2`가 있으면 v2 경로만 받는다. v1 판에는 v1 경로만 받는다. 섞이면 400 `SPEC_PATH_IR_MISMATCH`.
+- v2 `changes[].path`:
+  - `components.<id>.<칸>`: 리소스 props 맨 위 칸 하나를 통째로 바꾼다.
+  - `links`, `entry`, `posture`: 통째로 바꾼다.
+  - `posture` 통째 바꾸기는 출발 방화벽을 못 읽은 데이터 자원(사전 점검이 사람 결정으로 막는 것)을 풀 길이다.
+- v2 `confirm[]`: `spec_v2.fieldMeta` 키를 그대로 보낸다 (`components.…`, `links.<a>-><b>`, `entry.…`, `check.reviews[i]`). 모르는 키는 아무것도 안 지우고 새 판만 만든다.
+- 검사 순서: v2 값을 고친다 → `AppSpecV2` 모양 검사 + `checkV2` 오류 → v1 명세를 v2에서 다시 뽑는다(`rebuildFromV2`) → 세 칸을 한 줄에 같이 저장한다.
+- 감사 `spec.edited` detail에는 `ir: "v2"`가 붙는다. 칸 이름만 남고 값은 남지 않는다.
+- `acceptDraft`: 초안에 `spec_v2`가 없으면 같은 이전에서 가장 최근에 받아들인 판의 `spec_v2`를 이어받는다. v2 검토 칸이 남는다. 감사 detail에 `inheritedV2: true`가 붙는다.
+  - 같은 요청 안에서 v2 키 `confirm`은 400이다(기준이 초안 v1 판이라서). 받아들인 뒤 다시 보낸다.
+
+| 오류 | 언제 |
+|---|---|
+| 400 `SPEC_PATH_IR_MISMATCH` | 판의 IR 버전과 경로 종류가 다름 |
+| 400 `SPEC_PATCH_INVALID` | v2 모양 검사·`checkV2`·다시 뽑기 실패 (칸 이름과 이유만, 값은 안 돌려줌) |
+| 400 `SPEC_DRAFT_NOT_FOUND` | 없는 초안 번호 |
+| 409 `SPEC_DRAFT_STALE` | 받아들인 판보다 옛 초안 |
+| 409 `SPEC_DRAFT_NOT_ACCEPTED` | 초안만 있는데 `acceptDraft` 없이 고침 |
+| 409 `SPEC_VERSION_CONFLICT` | `baseVersion`이 지금 보이는 판이 아님 |
+| 409 `SPEC_INVALID` | v2 판인데 v1 부분이 `AppSpec` 모양이 아니라 다시 뽑을 재료가 없음 |
+| 409 `INVALID_TRANSITION` | 상태가 `spec_review`가 아님 |
+
+### `POST /migrations/:id/plan` → 사전 점검: v2 대조 줄 (깃발 `PLAN_IR=v2`)
+
+- 경로와 응답(202)은 그대로다. 결과는 이전 상태 전이와 감사 detail `precheck`, 그리고 계획서 `precheck`에 남는다.
+- 깃발이 꺼져 있으면 아래 줄은 하나도 안 생긴다(전과 같음).
+
+| 점검 id | 수준 | 뜻 |
+|---|---|---|
+| `PC-V2-SOURCE` | info | v2 명세 출처 (`spec_v2` 또는 `upconvert`)와 리소스 수 |
+| `PC-V2-UNSUP-n` | block | 도착 Builder가 못 그리는 것 (capability 밖, azure_mock 신원 2개 이상, 옮길 수 없는 IAM 권한 등) |
+| `PC-V2-HUMAN-n` | block | 사람이 정해야 하는 것. 데이터 자원 줄 포함: DLQ 못 찾음, 버킷 공개 여부 모름·공개 버킷, 캐시 AUTH, 출발 방화벽 못 읽음 |
+| `PC-V2-HUMAN` | block | v2 명세 자체를 못 씀 (사람이 고친 판에 `spec_v2`가 빠짐 등) |
+| `PC-V2-GRANTS-n` | warn | 옮긴 IAM 권한 알림: 권한 경계 밖 문장, 좁힌 `Resource "*"`, 온프레·azure_mock은 권한 안 옮김 |
+
+- block이 하나라도 있으면 이전은 `failed`가 아니라 `spec_review`로 돌아간다. 사람이 명세를 고친 뒤 다시 `POST /plan`을 보낸다.
+- warn은 계획서 확인 항목(`acknowledgements`, kind `precheck_warn`, id `precheck_warn:<점검 id>`)이 된다.
+
+### `GET /plans/:id`: 계획서 v2 칸
+
+- `PLAN_IR=v2`로 만든 계획서에만 세 칸이 붙는다. v1 계획서 본문엔 키 자체가 없다(지문 `planHash` 보존).
+
+| 칸 | 뜻 |
+|---|---|
+| `irVersion` | `"2"` |
+| `specSource` | `spec_v2` 또는 `upconvert` |
+| `instances` | Terraform 매트릭스 줄 `module.<종류>["<IR id>"]` (비용 고지·화면용) |
+
+- apply·deploy는 깃발이 아니라 이 칸으로 길을 고른다. 승인 뒤에 깃발을 바꿔도 승인한 길 그대로 간다.
+- `acknowledgements[].kind`: `cost`, `failure_cost_policy`, `runtime_change`, `build`, `precheck_warn`, `low_confidence`.
+
+### `POST /plans/:id/approvals`, `POST /migrations/:id/start` (깃발 `PLAN_ACKS=1`)
+
+- 승인 본문 `acks`(문자열 목록, 최대 500개)가 계획서 `acknowledgements[].id`를 전부 덮어야 한다. 하나라도 빠지면 409 `ACKS_MISSING`이고, 메시지에 빠진 id가 있다. 거절은 `acks`를 안 본다. 막히면 상태·잠금은 그대로다.
+- start 본문 `planHash`는 선택 칸이다(본문 없는 `{}` 호환). 깃발이 켜져 있는데 빠졌거나 승인 지문과 다르면 409 `PLAN_HASH_MISMATCH`.
+
+### `POST /environments/:id/verify`: 관찰 역할 선택 권한 빠짐 (`missingPermissions`)
+
+- 연결은 성공했는데 관찰 역할에 선택 권한이 빠져 있으면(예전 연결 스크립트로 만든 고객) 실패로 바꾸지 않는다. 상태는 `connected`이고, 사람이 할 일로 남긴다.
+- 감사 `env.verified` detail에 `missingPermissions`(빠진 권한 이름 목록)가 남는다.
+- DB `environments.verify_detail`에는 `missingPermissions`와 `needsHuman`(사람이 할 일 한 줄)이 남는다.
+- 【사실】 이 두 칸은 아직 API 응답(`EnvironmentView`, `GET /environments`)에 없다. 화면에 보이려면 `EnvironmentView`에 칸을 더해야 한다(5절).
+
+### 이번 물결 깃발 (요청·응답 모양을 바꾸는 것만)
+
+| 깃발 | 기본 | 켜면 |
+|---|---|---|
+| `IMPORT_IR=v2` | 끔 | 가져오기가 `spec_v2`를 같이 저장한다 → `GET /spec`에 v2 칸이 붙고, PATCH는 v2 경로만 받는다 |
+| `IMPORT_AWS_IAM=1` | 끔 | (`IMPORT_IR=v2`와 함께) 앱 신원 IAM 정책을 읽어 의존성 `grants`·`posture.permissions`를 채운다 |
+| `PLAN_IR=v2` | 끔 | 사전 점검 v2 대조 줄 + 계획서 v2 칸 |
+| `PLAN_ACKS=1` | 끔 | 승인 `acks`·start `planHash` 강제 |
+
 ---
 
 ## 5. 어긋난 점 (코드와 설계가 다른 곳)
@@ -258,6 +350,7 @@ contracts의 화면용 모양 `MigrationView`는 열 칸이다. 지금 응답에
 | 다른 회사 환경 번호 | 【추정】 외래 키 검사는 회사 벽을 건너뛴다(PostgreSQL 문서). 그래서 남의 환경 번호를 넣어도 이전이 만들어질 수 있다. 그 뒤 워커는 출발 환경을 못 읽고 아무것도 안 한다. 이전은 `importing`에 멈춘다 | 다른 회사 번호는 404 | 【미확인】 시험 하나로 확인한 뒤 고친다 |
 | 같은 요청 두 번 | 【사실】 `Idempotency-Key` 헤더를 보지 않는다. 버튼을 두 번 누르면 이전이 둘 생긴다 | 【추정】 POST는 `Idempotency-Key` 필수 | 큐 이름 `idempotency-cleanup`만 자리를 잡아 두었다 |
 | 실시간 신호 | 【사실】 DB 알림(`pg_notify`)은 보내지만, 화면으로 내보내는 `GET /events`가 없다 | SSE(서버가 브라우저로 한 방향으로 계속 보내는 연결) | 경로를 더한다 |
+| 연결 확인 "사람이 할 일" | 【사실】 `missingPermissions`·`needsHuman`이 감사와 `environments.verify_detail`에만 있다 | 화면 연결 카드에 보여야 한다 | TODO(human): `EnvironmentView`에 칸을 더할지 |
 
 ---
 
