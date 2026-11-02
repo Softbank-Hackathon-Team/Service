@@ -98,6 +98,14 @@ flowchart LR
 | `external_id` | text |  |  |
 | `account_id` | text |  |  |
 | `last_verified_at` | timestamptz |  |  |
+| `region` | text |  | 0024. 환경 리전 (만들 때 선택) |
+| `cluster_name` | text |  | 0024. 클러스터 이름 (만들 때 선택) |
+| `link_issued_at` | timestamptz |  | 0024. 연결 링크 발급 시각 (24시간 만료 기준) |
+| `failure_reason` | text |  | 0024. 연결 실패 사유 (ConnectionFailure 또는 `PERMISSION_MISSING:<동작>`) |
+| `verify_failures` | int | NOT NULL DEFAULT 0 CHECK (>= 0) | 0024. 주기 재확인 연속 실패 수 (3번이면 unstable) |
+| `verify_detail` | jsonb |  | 0024. 마지막 확인 결과 상세 |
+
+`external_id`는 0024부터 전역 유일 (`environments_external_id_uq`, NULL 제외).
 
 #### `migrations` (db/migrations/0001_init.sql:22, 회사 벽 켜짐)
 

@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "postgres",
+        "namespace",
+        "identity",
+        "cache",
+        "objectStore",
+        "queue",
+        "job"
+      ]
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,39}$"
+    },
+    "module": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "kind",
+    "id",
+    "module"
+  ],
+  "additionalProperties": false
+}

@@ -2,9 +2,20 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "aws_quick_create",
+        "gcp_cloud_shell",
+        "onprem_install"
+      ]
+    },
     "url": {
       "type": "string",
       "format": "uri"
+    },
+    "command": {
+      "type": "string"
     },
     "externalId": {
       "type": "string"
@@ -14,8 +25,7 @@
     }
   },
   "required": [
-    "url",
-    "externalId",
+    "kind",
     "expiresAt"
   ],
   "additionalProperties": false

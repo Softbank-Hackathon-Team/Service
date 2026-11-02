@@ -44,13 +44,20 @@ export const EnvJob = JobBase.extend({
   envId: z.uuid(),
 }).strict();
 
+// 연결 확인 작업. user = 고객이 계정 번호를 넣고 누른 확인, periodic = 1시간마다 재확인
+// EnvJob은 security-scan이 같이 쓰므로 그대로 두고 넓힌 모양을 따로 둔다
+export const VerifyConnectionJob = EnvJob.extend({
+  reason: z.enum(["user", "periodic"]),
+}).strict();
+export type VerifyConnectionJob = z.infer<typeof VerifyConnectionJob>;
+
 export const AgentRunJob = JobBase.extend({
   agentRunId: z.uuid(),
 }).strict();
 
 // 큐 이름 → 작업 내용 모양
 export const JOB_SCHEMAS = {
-  "verify-connection": EnvJob,
+  "verify-connection": VerifyConnectionJob,
   "import": MigrationJob,
   "precheck": MigrationJob,
   "plan": PlanJob,

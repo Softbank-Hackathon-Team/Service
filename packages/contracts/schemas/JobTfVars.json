@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,39}$"
+    },
+    "name": {
+      "type": "string"
+    },
+    "schedule": {
+      "type": "string"
+    },
+    "time_zone": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "concurrency_policy": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "Allow",
+            "Forbid",
+            "Replace"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "suspend": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "backoff_limit": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "active_deadline_sec": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "restart_policy": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "OnFailure",
+            "Never"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "image": {
+      "type": "string"
+    },
+    "command_json": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "args_json": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "cpu_milli": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "mem_mib": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "env_json": {
+      "type": "string"
+    },
+    "identity": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,39}$"
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "schedule",
+    "time_zone",
+    "concurrency_policy",
+    "suspend",
+    "backoff_limit",
+    "active_deadline_sec",
+    "restart_policy",
+    "image",
+    "command_json",
+    "args_json",
+    "cpu_milli",
+    "mem_mib",
+    "env_json",
+    "identity"
+  ],
+  "additionalProperties": false
+}
