@@ -1,0 +1,90 @@
+import { useState, type ReactNode } from 'react';
+import type { BentoLayout } from '../../components/layout/ConsoleLayout';
+import { Tile, TileHeader } from '../../components/layout/tiles';
+import { Checklist } from '../../components/ui/Checklist';
+import { BarPill } from '../../components/ui/controls';
+import { api } from '../../lib/api';
+import { errorText } from '../../lib/errors';
+import { or404 } from '../../lib/http';
+import { isTerminal } from '../../lib/status';
+import type { MigrationView } from '../../lib/types';
+import { usePoll } from '../../lib/usePoll';
+import { ShellLayout } from '../shell/ShellLayout';
+import { migrationSteps, needsStepAnchor, stepAnchorFrom } from './model';
+import s from '../common/page.module.css';
+
+// 큰 카드 다음으로 중요한 것이 진행 단계라서, 어느 화면이든 바로 옆 칸을 그대로 차지한다.
+const WITH_SIDE: BentoLayout = { columns: '620fr 300fr 452fr', rows: 'minmax(0, 1fr)', areas: ['hero steps side'] };
+const STEPS_ONLY: BentoLayout = { columns: '880fr 492fr', rows: 'minmax(0, 1fr)', areas: ['hero steps'] };
+const SOLO: BentoLayout = { columns: '1fr', rows: 'minmax(0, 1fr)', areas: ['hero'] };
+
+export type ScreenProps = {
+  migration: MigrationView;
+  route: string;
+  onChanged: () => void;
+};
+
+/** 진행 단계 카드. 접지 않고 항상 보인다. */
+function StepsTile({ migration }: { migration: MigrationView }) {
+  const located = needsStepAnchor(migration);
+  const timeline = usePoll(
+    located ? () => or404(api.timeline(migration.id)) : null,
+    located && !isTerminal(migration.status) ? 5000 : null,
+    [migration.id, migration.version, located],
+  );
+  const anchor = timeline.data ? stepAnchorFrom(timeline.data.items, migration.status) : null;
+  return (
+    <Tile area="steps" compact scroll>
+      <TileHeader title="진행 단계" />
+      <Checklist items={migrationSteps(migration, anchor)} />
+    </Tile>
+  );
+}
+
+type FrameProps = {
+  route: string;
+  migration?: MigrationView;
+  hasSide?: boolean;
+  children: ReactNode;
+};
+
+export function Frame({ route, migration, hasSide = true, children }: FrameProps) {
+  return (
+    <ShellLayout layout={!migration ? SOLO : hasSide ? WITH_SIDE : STEPS_ONLY} barLeft={<BarPill label={route} />}>
+      {children}
+      {migration && <StepsTile migration={migration} />}
+    </ShellLayout>
+  );
+}
+
+/** 버튼 동작을 묶는다. 실패하면 문장을 보이고, 성공하면 상태를 다시 읽는다. */
+export function useAction(onChanged: () => void) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const run = async (action: () => Promise<unknown>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await action();
+      onChanged();
+    } catch (reason) {
+      setError(errorText(reason));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return { busy, error, run };
+}
+
+/** 되돌리기 어려운 보조 행동. 한 번 더 눌러야 실행한다. */
+export function ConfirmPill({ label, confirmLabel, icon, tone, disabled, onConfirm }: { label: string; confirmLabel: string; icon: 'x' | 'ban' | 'rollback'; tone?: 'danger'; disabled?: boolean; onConfirm: () => void }) {
+  const [asking, setAsking] = useState(false);
+  if (!asking) return <BarPill label={label} icon={icon} tone={tone} onClick={disabled ? undefined : () => setAsking(true)} />;
+  return (
+    <span className={s.confirm}>
+      <BarPill label={confirmLabel} icon={icon} tone="danger" onClick={onConfirm} />
+      <BarPill label="그만두기" onClick={() => setAsking(false)} />
+    </span>
+  );
+}
+

@@ -1,0 +1,212 @@
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  min-width: 0;
+  min-height: 0;
+  padding: var(--space-32);
+  border-radius: var(--radius-xl);
+}
+.surface {
+  background: var(--color-bg-surface);
+}
+.spread {
+  justify-content: space-between;
+}
+.compact {
+  padding: var(--space-24);
+}
+.scroll {
+  overflow: auto;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  min-height: 0;
+  overflow: auto;
+}
+.actionDock {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--space-8);
+  margin-top: auto;
+  padding-top: var(--space-12);
+}
+.stack > .actionDock {
+  position: sticky;
+  bottom: 0;
+  background: var(--color-bg-canvas);
+}
+.actionRow {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--space-12);
+}
+.actionNotice {
+  padding: var(--space-12) var(--space-16);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-tone-danger);
+  color: var(--color-fg-tone-danger);
+}
+.fold {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  min-height: 0;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-surface);
+}
+.foldHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  width: 100%;
+  padding: var(--space-16) var(--space-20);
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--color-fg-primary);
+  text-align: left;
+  cursor: pointer;
+}
+.foldTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.foldChevron {
+  display: inline-flex;
+  color: var(--color-fg-tertiary);
+  transition: transform 160ms ease;
+}
+.foldOpen {
+  transform: rotate(90deg);
+}
+.foldBody {
+  min-height: 0;
+  padding: 0 var(--space-8) var(--space-8);
+  overflow: auto;
+}
+
+.hero {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-24);
+  min-width: 0;
+  min-height: 0;
+  padding: var(--space-40);
+  overflow: hidden;
+  border-radius: var(--radius-xl);
+  background: var(--color-bg-surface);
+}
+.heroMeta,
+.heroContent,
+.heroFoot {
+  position: relative;
+}
+.heroMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--color-fg-secondary);
+}
+.stop {
+  background: var(--color-bg-alert);
+  color: var(--color-fg-on-alert);
+}
+.stop .heroMeta,
+.stop .heroFoot {
+  border-color: var(--color-fg-on-alert-muted);
+  color: var(--color-fg-on-alert-muted);
+}
+.done .heroMeta {
+  color: var(--color-fg-tone-success);
+}
+.heroStep {
+  display: grid;
+  place-items: center;
+  width: var(--size-control-m);
+  height: var(--size-control-m);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-subtle);
+  color: var(--color-fg-primary);
+}
+.stop .heroStep {
+  background: var(--color-bg-surface);
+  color: var(--color-fg-tone-danger);
+}
+.done .heroStep {
+  background: var(--color-bg-tone-success);
+  color: var(--color-fg-tone-success);
+}
+.heroContent {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-24);
+  min-height: 0;
+}
+.heroTitle {
+  white-space: pre-line;
+}
+.heroFoot {
+  padding-top: var(--space-16);
+  border-top: 1px solid var(--color-border-default);
+  color: var(--color-fg-secondary);
+}
+
+.statIcon {
+  display: grid;
+  place-items: center;
+  width: var(--size-control-m);
+  height: var(--size-control-m);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-subtle);
+  color: var(--color-fg-secondary);
+}
+.statValue {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+}
+
+.tileHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+}
+.tileLink {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-8) var(--space-4) var(--space-12);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-subtle);
+  color: var(--color-fg-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.tileLink:hover {
+  background: var(--color-bg-selected);
+}
+
+@media (max-width: 1099px) {
+  .hero {
+    min-height: 420px;
+    padding: var(--space-24);
+  }
+  .tile {
+    padding: var(--space-24);
+  }
+}
