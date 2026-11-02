@@ -12,6 +12,7 @@ export * from "./jobs.js";
 export * from "./plans.js";
 export * from "./advance.js";
 export * from "./timeline.js";
+export * from "./notify.js";
 export * from "./specs.js";
 export * from "./obs/index.js";
 export * from "./shutdown.js";
