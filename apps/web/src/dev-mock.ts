@@ -5,8 +5,10 @@
 //
 // 동작: window.fetch 를 감싼다. 아래 ACCOUNT 로 로그인하면 이 탭의 /api/* 를 전부 여기서 응답하고,
 // 그 밖의 계정은 실제 서버로 그대로 보낸다. 처리하지 못한 경로는 실제 서버로 흘려보내지 않고 501 을 낸다.
+// 화면 신호(SSE, GET /api/events)도 실제 서버와 같은 형식의 스트림으로 답한다 (아래 '화면 신호').
 import type { AgentReview, RemediateReview, SpecDraftReview } from './lib/agent-review-types';
 import type { AuthUser, TokenResponse } from './lib/auth';
+import type { SseEvent } from './lib/events';
 import type { LiveTrafficView, TrafficShiftProgress } from './lib/liveTraffic';
 import type { PlanResourcesView, ResourceRow } from './lib/resourceMap';
 import type { CellState, LedgerRow, LiveSecurityReport, MatrixRow, SecurityRegression, SecurityView } from './lib/security-types';
@@ -53,6 +55,9 @@ const SHIFT_STEPS = [10, 50, 100];
 const ROLLBACK_WINDOW_SEC = 15;
 const AGENT_RUN_MS = 2000;
 const LATENCY_MS = 60;
+/** 화면 신호: 처음 보내는 retry 값과 쉬는 동안 주석 줄 간격. 실제 서버(apps/api/src/routes/events.ts)와 같다 */
+const SIGNAL_RETRY_MS = 3000;
+const SIGNAL_PING_MS = 15_000;
 
 const USER: AuthUser = {
   id: '90000000-0000-4000-8000-000000000001',
@@ -178,6 +183,8 @@ function setStatus(m: MockMigration, to: MigrationStatus, entry: Partial<Timelin
   if (to === 'rolling_back') m.rollbackWindowEndsAt = null;
   if (to === 'rolled_back') m.trafficPct = 0;
   if (to === 'awaiting_approval') m.planExpiresAt = new Date(Date.now() + 2 * 3600_000).toISOString();
+  // 실제 서버는 advance() 가 확정될 때마다 알림을 하나 보낸다. 목업은 상태가 바뀌는 곳이 여기 하나뿐이다
+  emitSignal({ type: 'migration.status_changed', migrationId: m.id, status: to });
 }
 
 function advance(m: MockMigration) {
@@ -812,6 +819,101 @@ function route(method: string, path: string, search: URLSearchParams, body: Reco
   return fail(501, 'MOCK_NOT_HANDLED', key);
 }
 
+// ---- 화면 신호 (SSE) ----
+// 실제 서버 GET /api/v1/events 와 같은 형식: 처음에 retry 줄, 쉬는 동안 주석 줄, 신호마다 `data: <SseEvent JSON>` 과 빈 줄.
+// 패널의 '신호 끊기'는 열린 연결을 닫고 새 연결을 503 으로 막는다. 화면이 폴링으로 돌아가는지, 다시 켜면 붙는지 본다
+
+const SIGNALS_OFF_KEY = 'kross.dev-mock.signals-off';
+const encoder = new TextEncoder();
+const signalStreams = new Map<ReadableStreamDefaultController<Uint8Array>, number>();
+// 새로 고침해도 끊은 채로 둔다 (이 탭 동안)
+let signalsOff = (() => {
+  try {
+    return sessionStorage.getItem(SIGNALS_OFF_KEY) === '1';
+  } catch {
+    return false;
+  }
+})();
+
+function setSignalsOff(off: boolean) {
+  signalsOff = off;
+  try {
+    if (off) sessionStorage.setItem(SIGNALS_OFF_KEY, '1');
+    else sessionStorage.removeItem(SIGNALS_OFF_KEY);
+  } catch {
+    /* 저장에 실패해도 이 페이지에서는 끊긴 채로 돈다 */
+  }
+  if (off) closeSignals();
+  updateSignalButton();
+}
+let signalButton: HTMLButtonElement | null = null;
+
+function dropSignal(c: ReadableStreamDefaultController<Uint8Array>) {
+  window.clearInterval(signalStreams.get(c));
+  signalStreams.delete(c);
+  updateSignalButton();
+}
+
+function emitSignal(event: SseEvent) {
+  const bytes = encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
+  for (const c of [...signalStreams.keys()]) {
+    try {
+      c.enqueue(bytes);
+    } catch {
+      dropSignal(c);
+    }
+  }
+}
+
+function closeSignals() {
+  for (const c of [...signalStreams.keys()]) {
+    try {
+      c.close();
+    } catch {
+      /* 이미 닫힘 */
+    }
+    dropSignal(c);
+  }
+}
+
+function signalResponse(signal?: AbortSignal | null): Response {
+  if (signalsOff) return toResponse(fail(503, 'MOCK_SIGNALS_OFF', 'signals are switched off in the mock panel'));
+  let me: ReadableStreamDefaultController<Uint8Array> | null = null;
+  const body = new ReadableStream<Uint8Array>({
+    start(c) {
+      me = c;
+      c.enqueue(encoder.encode(`retry: ${SIGNAL_RETRY_MS}\n\n`));
+      signalStreams.set(c, window.setInterval(() => {
+        try {
+          c.enqueue(encoder.encode(': ping\n\n'));
+        } catch {
+          dropSignal(c);
+        }
+      }, SIGNAL_PING_MS));
+      updateSignalButton();
+    },
+    cancel() {
+      if (me) dropSignal(me);
+    },
+  });
+  // 화면이 연결을 끊으면(로그아웃·탭 닫기) 실제 fetch 처럼 읽기가 AbortError 로 끝난다
+  signal?.addEventListener('abort', () => {
+    if (!me) return;
+    dropSignal(me);
+    try {
+      me.error(new DOMException('aborted', 'AbortError'));
+    } catch {
+      /* 이미 닫힘 */
+    }
+  });
+  return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache, no-transform' } });
+}
+
+function updateSignalButton() {
+  if (!signalButton) return;
+  signalButton.textContent = signalsOff ? '신호 다시 켜기' : `신호 끊기 (연결 ${signalStreams.size})`;
+}
+
 // ---- 세션과 fetch ----
 
 const isActive = () => {
@@ -831,6 +933,7 @@ function startSession(existing?: Store) {
 
 function endSession() {
   if (timer !== null) window.clearInterval(timer);
+  setSignalsOff(false);
   timer = null;
   store = null;
   try {
@@ -868,6 +971,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   if (!isActive()) return realFetch(input, init);
   if (!store) restore();
   await delay(LATENCY_MS);
+  if (path === '/events' && method === 'GET') return signalResponse(init?.signal);
   if (path === '/auth/logout' && method === 'POST') {
     endSession();
     return toResponse({ status: 204 });
@@ -1096,9 +1200,9 @@ function mountPanel() {
       if (!m || !store) return;
       scenario.apply(m);
       save();
-      // 끝난 이전은 화면이 다시 읽지 않아서 새로 고침으로 맞춘다
       window.location.hash = `#/migrations/${m.id}`;
-      window.location.reload();
+      // 신호가 붙어 있으면 화면이 신호를 받고 다시 읽는다. 끊겨 있으면 끝난 이전은 다시 읽지 않아서 새로 고침으로 맞춘다
+      if (signalStreams.size === 0) window.location.reload();
     }));
   }
   const result = document.createElement('span');
@@ -1111,6 +1215,9 @@ function mountPanel() {
     result.textContent = '모든 화면을 넘기며 재는 중입니다. 결과는 콘솔에 나옵니다';
     (window as unknown as { __layoutSweep: () => void }).__layoutSweep();
   }));
+  signalButton = pillButton('', () => setSignalsOff(!signalsOff));
+  updateSignalButton();
+  menu.append(signalButton);
   menu.append(pillButton('데이터 처음으로', () => {
     store = freshStore();
     save();
@@ -1129,6 +1236,7 @@ function mountPanel() {
 function unmountPanel() {
   panel?.remove();
   panel = null;
+  signalButton = null;
 }
 
 // ---- 전체 점검 ----

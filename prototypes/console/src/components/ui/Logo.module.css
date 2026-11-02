@@ -3,7 +3,7 @@
   align-items: center;
   flex: none;
   gap: var(--space-12);
-  height: var(--size-bar);
+  height: var(--size-control-m);
 }
 .mark {
   width: 40px;
