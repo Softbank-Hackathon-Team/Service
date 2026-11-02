@@ -53,3 +53,21 @@
 - 문법 확인(자원 안 만듦, 사람 환경에서): `aws cloudformation validate-template --template-body file://infra/onboarding/aws-connect.json`
 - STUB: `AmazonEKSViewPolicy` 이름과 `AWS::EKS::AccessEntry` 속성은 일반 지식 기준. 위 validate와 첫 실측으로 확인
 - TODO(human): 이미지 저장소 읽기(`ecr:BatchGetImage` 등)가 `ViewOnlyAccess`에 없을 수 있음(미확인). 샌드박스 이미지 복사 때 관찰 인라인에 추가
+
+# GCP 연결 (`gcp-connect.sh`)
+
+키 파일은 만들지 않는다. 고객이 Cloud Shell에서 스크립트를 한 번 실행하면 아래가 생긴다.
+
+| 만드는 것 | 내용 |
+|---|---|
+| SA 2개 | `svc-observe`(관찰), `svc-operate`(실행) |
+| 커스텀 역할 3개 | `platform_observe`(읽기만), `platform_operate`, `platform_operate_iam`(`infra/permissions`의 자동 생성 파일) |
+| 프로젝트 연결 | 실행 SA의 IAM 정책 변경 권한은 `app-` 접두어 SA·시크릿에만 닿는 조건부 바인딩 |
+| 빌리기 허용 | 플랫폼의 **이 회사 전용 SA**(`t-<16진 28자>@...`) 하나에게, 두 고객 SA 각각에 `roles/iam.serviceAccountTokenCreator` (프로젝트 전체가 아니라 SA 단위) |
+
+순서: 연결 화면에서 `PLATFORM_SA` 복사 → Cloud Shell에서 `PLATFORM_SA=... PROJECT_ID=... ROLE_DIR=./permissions bash gcp-connect.sh` → 출력된 프로젝트 번호를 화면에 입력 → "확인".
+`DRY_RUN=1`이면 명령만 출력한다. `PLATFORM_SA` 이름 규칙이 맞지 않으면 아무것도 만들기 전에 멈춘다.
+
+- DRAFT(ai): 관찰 역할 권한 목록, 역할 ID 이름(`platform_observe` 등). 첫 실측 거부 로그로 보정
+- TODO(human): 고객 프로젝트에서 `ROLE_DIR` 파일을 어떻게 전달할지(S3처럼 공개 위치 vs 스크립트에 내장)
+- STUB: 이 스크립트는 레포 세션에서 실행하지 않음. 발급기(gcloud impersonate)는 별도 묶음
