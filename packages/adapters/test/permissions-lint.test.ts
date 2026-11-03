@@ -18,7 +18,7 @@ const actionsOf = (f: string) => new Set(aws(f).flatMap((s) => arr(s.Action)));
 // 있으면 곧바로 권한 상승이나 비밀값 읽기로 이어지는 동작
 const AWS_FORBIDDEN = [
   /^iam:(AttachRolePolicy|AttachUserPolicy|PutUserPolicy|CreatePolicyVersion|SetDefaultPolicyVersion|CreateAccessKey|CreateUser|UpdateAssumeRolePolicy|CreateLoginProfile|PutRolePermissionsBoundary|DeleteRolePermissionsBoundary)$/,
-  /^sts:/, /^secretsmanager:(GetSecretValue|PutSecretValue|PutResourcePolicy)$/,
+  /^sts:/, /^secretsmanager:(PutSecretValue|PutResourcePolicy)$/,
   /^kms:Decrypt$/, /^organizations:/, /^ssm:GetParameter/, /^eks:(AssociateAccessPolicy|CreateAccessEntry|UpdateClusterConfig)$/,
 ];
 const isRead = (a: string) => /:(Describe|Get|List)/.test(a);
@@ -35,6 +35,19 @@ test("AWS: Action에 * 없음, NotAction·NotResource·Deny 없음", () => {
 test("AWS: 금지 동작(권한 상승·비밀값 읽기) 없음", () => {
   for (const f of AWS_FILES) for (const a of actionsOf(f))
     assert.ok(!AWS_FORBIDDEN.some((r) => r.test(a)), `${f}: 금지 동작 ${a}`);
+});
+
+// ID-2: 비밀값 읽기는 하나뿐 — 실행 역할의 AppDbSecretRead(RDS 관리형 rds!db-* + 주인 DB 태그 조건)와 apply 세션 정책. plan·destroy 에는 없다
+test("AWS: GetSecretValue 는 RDS 관리형 시크릿 조건 문장과 apply 단계에만", () => {
+  for (const s of aws("aws-operate-role-policy.json")) {
+    if (!arr(s.Action).includes("secretsmanager:GetSecretValue")) continue;
+    assert.equal(s.Sid, "AppDbSecretRead");
+    assert.equal(s.Resource, "arn:aws:secretsmanager:*:*:secret:rds!db-*");
+    assert.equal(s.Condition?.StringEquals?.["aws:ResourceTag/aws:secretsmanager:owningService"], "rds");
+    assert.ok((s.Condition as any)?.StringLike?.["aws:ResourceTag/aws:rds:primaryDBInstanceArn"]);
+  }
+  assert.ok(actionsOf("aws-session-policy-apply.json").has("secretsmanager:GetSecretValue"));
+  for (const f of ["aws-session-policy-plan.json", "aws-session-policy-destroy.json"]) assert.ok(!actionsOf(f).has("secretsmanager:GetSecretValue"), f);
 });
 
 test("AWS: 세션 정책(plan·apply·destroy)은 실행 역할 정책의 부분집합", () => {
@@ -71,10 +84,11 @@ test("AWS: IAM 동작은 app-* 역할에만, PassRole은 EKS Pod Identity로만,
 });
 
 // 알려진 과다 권한 (THREAT-MODEL.md 권한 점검 표 A-1~A-4). 고칠 때 이 목록에서 지운다. 늘어나면 실패
-// ID-4: 바꾸기·지우기는 managed-by=platform 태그 조건 문장으로 옮겼다. 남은 것 = 만들기 + EC2 태그 붙이기(자원 ID 라 이름으로 못 좁힘)
+// ID-4: 바꾸기·지우기는 managed-by=platform 태그 조건 문장으로 옮겼다. 남은 것 = 만들기 + 태그 붙이기(만들 때 태그에도 필요, 이름으로 못 좁힘)
 const AWS_KNOWN_BROAD_WRITES = [
   "ec2:CreateSecurityGroup", "ec2:CreateTags", "eks:CreatePodIdentityAssociation",
-  "rds:CreateDBInstance", "rds:CreateDBParameterGroup", "rds:CreateDBSubnetGroup", "secretsmanager:CreateSecret",
+  "rds:AddTagsToResource", "rds:CreateDBInstance", "rds:CreateDBParameterGroup", "rds:CreateDBSubnetGroup", "secretsmanager:CreateSecret",
+  "secretsmanager:TagResource",
 ].sort();
 test("AWS: Resource \"*\" + 쓰기 동작 = 알려진 목록과 같다 (늘어나면 실패)", () => {
   const broad = aws("aws-operate-role-policy.json")

@@ -43,29 +43,12 @@
       }
     },
     {
-      "Sid": "AppTagNamed",
+      "Sid": "AppTag",
       "Effect": "Allow",
       "Action": [
+        "ec2:CreateTags",
         "rds:AddTagsToResource",
         "secretsmanager:TagResource"
-      ],
-      "Resource": [
-        "arn:aws:rds:*:*:db:app-*",
-        "arn:aws:rds:*:*:pg:app-*",
-        "arn:aws:rds:*:*:subgrp:app-*",
-        "arn:aws:secretsmanager:*:*:secret:app-*"
-      ],
-      "Condition": {
-        "StringEquals": {
-          "aws:RequestedRegion": "ap-northeast-2"
-        }
-      }
-    },
-    {
-      "Sid": "AppTagEc2",
-      "Effect": "Allow",
-      "Action": [
-        "ec2:CreateTags"
       ],
       "Resource": "*",
       "Condition": {
@@ -201,6 +184,23 @@
         "StringEquals": {
           "aws:RequestedRegion": "ap-northeast-2",
           "aws:ResourceTag/managed-by": "platform"
+        }
+      }
+    },
+    {
+      "Sid": "AppDbSecretRead",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:GetSecretValue"
+      ],
+      "Resource": "arn:aws:secretsmanager:*:*:secret:rds!db-*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "ap-northeast-2",
+          "aws:ResourceTag/aws:secretsmanager:owningService": "rds"
+        },
+        "StringLike": {
+          "aws:ResourceTag/aws:rds:primaryDBInstanceArn": "arn:aws:rds:*:*:db:*-pg-??????"
         }
       }
     },

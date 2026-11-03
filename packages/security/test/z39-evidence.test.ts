@@ -118,6 +118,18 @@ test("단계별 요청 동작: 권한 파일에서 뽑고, 50개 이하, 중개�
   assert.ok(stepActions(perms, "aws", "operate", "plan").every((a) => /:(Describe|Get|List)/.test(a)));
 });
 
+// ID-8: 장부·감사에 남는 동작 목록이 세션 정책과 같다 (예전엔 50개에서 잘려 66개 중 앞 50개만 남았다)
+test("ID-8: AWS 단계 요청 동작 = 세션 정책 동작 전체 (안 잘림), 정리 단계는 아무 자격도 안 빌림", () => {
+  const perms = loadPermissionSet(PERM_DIR);
+  for (const st of ["plan", "apply", "destroy"] as const) {
+    const doc = JSON.parse(perms.aws.sessionPolicies[st]) as { Statement: Array<{ Action: string[] }> };
+    const all = new Set(doc.Statement.flatMap((s) => s.Action));
+    assert.equal(stepActions(perms, "aws", "operate", st).length, all.size, st);
+  }
+  assert.ok(stepActions(perms, "aws", "operate", "apply").length > 50, "apply 는 50개를 넘는다 (잘리면 이 시험이 잡는다)");
+  assert.deepEqual(STEP_ROLES.cleanup, []);
+});
+
 test("장부 만료 처리: 만료 시각이 지나면 sweep 이 expired 로 닫고 감사는 한 번만, 회수 증거에서 빠진다", async () => {
   let now = NOW;
   const ledger = memoryLedger({ durable: true });
@@ -139,4 +151,27 @@ test("장부 만료 처리: 만료 시각이 지나면 sweep 이 expired 로 닫
   await a.sweep();
   assert.equal(log.filter((x) => x.action === "temp_role.expired").length, 2);   // b 가 닫은 감사 1 + a 보관함 청소 1 (같은 참조)
   assert.equal(log.filter((x) => x.action === "temp_role.expired" && x.detail?.closedBy === "worker-b").length, 1);
+});
+
+// 세션 정책 줄이기: 보내는 판은 실효 권한(∩ 천장)이 원문과 같고, 상한 2,048자보다 300자 이상 짧다
+import { compactSessionPolicy, compactActions } from "../src/permissions.js";
+const expand = (pats: string[], universe: string[]) => universe.filter((u) => pats.some((p) => new RegExp("^" + p.replace(/\*/g, ".*") + "$", "i").test(u)));
+test("세션 정책 줄이기 정상: 단계마다 보내는 판 ≤ 1748자, 천장 안에서 펼치면 원래 동작과 똑같다", () => {
+  const perms = loadPermissionSet(PERM_DIR);
+  for (const st of ["plan", "apply", "destroy"] as const) {
+    const explicit = JSON.parse(perms.aws.sessionPolicies[st]).Statement[0].Action as string[];
+    const wire = compactSessionPolicy(perms.aws.sessionPolicies[st], perms.aws.ceiling);
+    assert.ok(wire.length <= 2048 - 300, `${st} ${wire.length}`);
+    const pats = JSON.parse(wire).Statement[0].Action as string[];
+    assert.deepEqual(expand(pats, perms.aws.ceiling).sort(), [...explicit].sort(), st);
+  }
+});
+test("세션 정책 줄이기 거부: 천장에 목록 밖 동작이 걸리는 앞글자로는 안 묶는다 (plan 은 Delete 를 못 얻는다)", () => {
+  const ceiling = ["rds:DescribeDBInstances", "rds:DeleteDBInstance", "rds:DescribeDBSubnetGroups"];
+  const packed = compactActions(["rds:DescribeDBInstances", "rds:DescribeDBSubnetGroups"], ceiling);
+  assert.ok(!packed.includes("rds:*") && !packed.includes("rds:D*"), packed.join());
+  assert.deepEqual(expand(packed, ceiling).sort(), ["rds:DescribeDBInstances", "rds:DescribeDBSubnetGroups"]);
+  const perms = loadPermissionSet(PERM_DIR);
+  const plan = JSON.parse(compactSessionPolicy(perms.aws.sessionPolicies.plan, perms.aws.ceiling)).Statement[0].Action as string[];
+  assert.deepEqual(expand(plan, perms.aws.ceiling).filter((a) => /:(Delete|Create|Modify|Put|GetSecretValue)/.test(a)), []);
 });

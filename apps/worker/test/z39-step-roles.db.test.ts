@@ -52,14 +52,14 @@ test("apply 단계: 도착 gcp 실행 역할 1건 발급 → 단계 끝에 회�
   assert.equal(issued.at(-1).step, "apply");
 });
 
-test("precheck 단계: 출발·도착 관찰 역할 2건 (이전 번호를 붙여 이 이전 장부에 보임), cleanup 은 출발 aws destroy", { skip }, async () => {
+test("precheck 단계: 출발·도착 관찰 역할 2건 (이전 번호를 붙여 이 이전 장부에 보임), cleanup 은 아무것도 안 빌림(ID-4·ID-8)", { skip }, async () => {
   const before = (await audits("temp_role.issued")).length;
   const p = await roles.withStepRoles("precheck", { tenantId: T, migrationId: M1 }, mig(M1, AWS, GCP), async (x) => x);
   assert.deepEqual(p.creds.map((c) => `${c.provider}:${c.purpose}`), ["aws:observe", "gcp:observe"]);
   assert.equal((await ledger(M1)).filter((x) => x.step === "precheck" && x.purpose === "observe").length, 2);
   const c = await roles.withStepRoles("cleanup", { tenantId: T, migrationId: M1 }, mig(M1, AWS, GCP), async (x) => x);
-  assert.deepEqual(c.creds.map((x) => `${x.provider}:${x.purpose}:${x.stage}`), ["aws:operate:destroy"]);
-  assert.equal((await audits("temp_role.issued")).length, before + 3);
+  assert.deepEqual(c.creds, []);
+  assert.equal((await audits("temp_role.issued")).length, before + 2);
 });
 
 test("Azure Mock 도착: 실행 역할은 묻지도 않는다 (거부 감사 없음, skipped 로만 남음)", { skip }, async () => {
