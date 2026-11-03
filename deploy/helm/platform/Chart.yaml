@@ -1,0 +1,6 @@
+apiVersion: v2
+name: platform
+description: 플랫폼(제어판) 비밀 연동(External Secrets) + 바깥 입구(Cloudflare Tunnel)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

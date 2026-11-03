@@ -1,6 +1,6 @@
 # 플랫폼(제어판) 자체: 네트워크(VPC) + EKS(노드 그룹 general·cred·sandbox) + 저장소(ECR·RDS Postgres·증거 S3)를 한 번의 apply 로 만든다. 사람이 한 번 돌린다.
 # 플랫폼 DB 는 general·cred 노드에서만 들어온다 (sandbox 는 불가). state 는 aws/bootstrap 장부 버킷 (backend.tf)
-# 앱 파드 권한(Pod Identity)도 여기 없다: 서비스 계정 하나에 역할 하나라, 증거 쓰기 권한은 워커 역할을 만드는 쪽에서 evidence_bucket_arn 으로 붙인다
+# External Secrets(ESO) 권한(Pod Identity)과 비밀 그릇도 여기서: 플랫폼 비밀은 Secrets Manager → ESO → 클러스터 Secret. 앱 파드(워커 등) 권한은 아직 없다
 terraform {
   required_version = ">= 1.11"
   required_providers {
@@ -515,6 +515,54 @@ resource "aws_s3_bucket_policy" "evidence" {
   depends_on = [aws_s3_bucket_public_access_block.evidence]
 }
 
+# --- 비밀 연동 (External Secrets). Pod Identity 는 서비스 계정 하나에 역할 하나
+# 차트(deploy/helm/platform)의 SecretStore 가 이 역할로 읽는다
+locals {
+  pod_trust = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "pods.eks.amazonaws.com" }
+      Action    = ["sts:AssumeRole", "sts:TagSession"]
+    }]
+  })
+}
+
+# 비밀 그릇: 값은 사람이 콘솔·CLI 로 넣는다 (state 에 비밀 0). ESO 가 클러스터 Secret 으로 가져온다
+#   app: api·worker·agent-worker 환경변수 JSON (DATABASE_URL, JWT_SECRET, ANTHROPIC_API_KEY ...)
+#   cloudflared: Cloudflare Tunnel 토큰 하나 (키 TUNNEL_TOKEN)
+resource "aws_secretsmanager_secret" "platform" {
+  for_each                = toset(["app", "cloudflared"])
+  name                    = "${var.name}/${each.key}"
+  recovery_window_in_days = var.deletion_protection ? 7 : 0
+}
+
+# External Secrets 컨트롤러 (공식 차트 기본: 네임스페이스·서비스 계정 external-secrets). 플랫폼 비밀 2개 + RDS 마스터 비밀만 읽는다
+resource "aws_iam_role" "eso" {
+  name               = "${var.name}-external-secrets"
+  assume_role_policy = local.pod_trust
+}
+
+resource "aws_iam_role_policy" "eso" {
+  name = "read-platform-secrets"
+  role = aws_iam_role.eso.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+      Resource = concat([for s in aws_secretsmanager_secret.platform : s.arn], [aws_db_instance.db.master_user_secret[0].secret_arn])
+    }]
+  })
+}
+
+resource "aws_eks_pod_identity_association" "eso" {
+  cluster_name    = aws_eks_cluster.this.name
+  namespace       = "external-secrets"
+  service_account = "external-secrets"
+  role_arn        = aws_iam_role.eso.arn
+}
+
 output "vpc_id" { value = aws_vpc.this.id }
 output "private_app_subnet_ids" { value = aws_subnet.private_app[*].id }
 output "cluster_name" { value = aws_eks_cluster.this.name }
@@ -531,3 +579,4 @@ output "db_master_secret_arn" { value = aws_db_instance.db.master_user_secret[0]
 output "evidence_bucket" { value = aws_s3_bucket.evidence.id }
 # 워커 역할에 붙일 권한의 대상: s3:PutObject·GetObject 는 "<arn>/*", ListBucket 은 "<arn>"
 output "evidence_bucket_arn" { value = aws_s3_bucket.evidence.arn }
+output "platform_secret_names" { value = { for k, s in aws_secretsmanager_secret.platform : k => s.name } }

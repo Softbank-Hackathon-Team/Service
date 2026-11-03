@@ -1,0 +1,25 @@
+# 플랫폼(제어판) 비밀 연동 + 바깥 입구. 이름은 infra/modules/aws/platform 과 맞물린다 (비밀 platform/*, ESO 역할)
+aws:
+  region: ap-northeast-2
+
+# Secrets Manager 이름 (terraform output platform_secret_names). 값은 사람이 넣는다
+secrets:
+  app: platform/app                  # JSON. 각 컴포넌트는 secretKeys 에 적은 키만 받는다 (적은 키가 JSON 에 없으면 ESO 동기화가 멈춘다)
+  cloudflared: platform/cloudflared  # JSON {"TUNNEL_TOKEN": "..."}
+
+# 컴포넌트마다 받을 키 → 클러스터 Secret <이름>-env (앱 배포는 envFrom 으로 이 Secret 을 쓴다)
+# 최소 권한: 워커는 JWT 서명 키를 못 본다
+components:
+  api:
+    secretKeys: [DATABASE_URL, JWT_SECRET, PLATFORM_PRINCIPAL_ARN]
+  worker:
+    secretKeys: [DATABASE_URL]
+  agent-worker:
+    secretKeys: [DATABASE_URL, ANTHROPIC_API_KEY]
+
+# 바깥 입구: Cloudflare Tunnel (원격 관리 터널). 공개 호스트 이름과 http://web.<네임스페이스>.svc.cluster.local:8080 연결은 Cloudflare 쪽에서 한다
+cloudflared:
+  # DRAFT(ai): 버전 고정. 배포 전에 최신 안정판으로 올린다
+  image: cloudflare/cloudflared:2025.4.0
+  replicas: 2
+  pool: general
