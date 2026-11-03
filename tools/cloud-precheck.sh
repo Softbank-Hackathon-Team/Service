@@ -11,11 +11,13 @@
 #                edition 이 글자 그대로 있어야 한다. 없으면 FAIL (PG16+ 기본 ENTERPRISE_PLUS 는 db-f1-micro·db-g1-small 을 "Invalid Tier" 로 거절, 10/31 맥).
 #                edition 이 ENTERPRISE_PLUS 인데 티어가 공유 코어(db-f1-micro·db-g1-small)여도 FAIL. 변수로 바뀌면 CLOUDSQL_EDITION 으로 덮는다
 #                gcloud sql tiers list 는 CLOUDSQL_TIER(db-f1-micro) 가 있는지만 본다 (맥 실조회: 키가 DiskQuota·RAM·kind·region·tier 뿐, edition 칸 없음)
-#   aws-quota-*  service-quotas 한도 − 지금 쓰는 수 ≥ 필요 수. VPC(vpc L-F678F1CE) 1, EIP(ec2 L-0263D0A3) 1(NAT), RDS(rds L-7B6409FD) 1
+#   aws-quota-*  service-quotas 한도 − 지금 쓰는 수 ≥ 필요 수. VPC(vpc L-F678F1CE) 1, EIP(ec2 L-0263D0A3) 1(NAT), RDS(rds L-7B6409FD) 1,
+#                vCPU(ec2 L-1216C47A, 표준 인스턴스) NEED_VCPU 6 = EKS 노드 t3.medium 2대(4) + 중계기 t4g.nano(2)  (GATE)
 #                한도를 못 읽으면(권한 없음 등) WARN, 모자라면 FAIL
+#   gcp-quota    (GATE) 지역 한도 CPUS 남은 것 ≥ NEED_GCP_CPUS 4 (e2-standard-2 2대), IN_USE_ADDRESSES ≥ NEED_GCP_ADDR 2 (Cloud NAT + LB)
 # 끝 코드: 0 = FAIL 없음, 1 = FAIL 있음
 # 환경 변수: AWS_REGION GCP_PROJECT(finals-demo) GCP_ZONE(asia-northeast3-a) CLOUDSQL_TIER CLOUDSQL_EDITION(직접 정하기)
-#            PRECHECK_CALL_SEC(8, 명령 하나 최대) NEED_VPC(1) NEED_EIP(1) NEED_RDS(1)
+#            PRECHECK_CALL_SEC(8, 명령 하나 최대) NEED_VPC(1) NEED_EIP(1) NEED_RDS(1) NEED_VCPU(6) NEED_GCP_CPUS(4) NEED_GCP_ADDR(2)
 set -u
 cd "$(dirname "$0")/.." || exit 1
 T0=$(date +%s)
@@ -73,11 +75,16 @@ c_gcp_auth() {
   if [ $rc -eq 0 ]; then say OK gcp-auth "gcloud 로그인됨"; else say FAIL gcp-auth "gcloud 토큰 못 받음 rc=$rc → gcloud auth login"; fi
 }
 c_apis() {
-  local out rc miss="" a
+  local out rc miss="" late="" a
   out=$(tmo "$CALL" gcloud services list --enabled --project "$P" --format='value(config.name)' 2>"$W/apis.err"); rc=$?
   [ $rc -eq 0 ] || { say FAIL gcp-apis "조회 실패 rc=$rc ($(head -c 120 "$W/apis.err" | tr '\n' ' '))"; return; }
-  for a in sqladmin container compute; do echo "$out" | grep -qx "$a.googleapis.com" || miss="$miss $a"; done
-  if [ -z "$miss" ]; then say OK gcp-apis "sqladmin·container·compute 켜짐"; else say FAIL gcp-apis "꺼진 API:$miss (gcloud services enable <이름>.googleapis.com)"; fi
+  # GATE-gcp: serviceusage 가 꺼져 있으면 gcp/env 의 google_project_service(나머지 API 켜기)부터 실패한다 → FAIL.
+  #   servicenetworking·artifactregistry·secretmanager 는 apply 가 켜 주지만, 켜는 직후 몇 분은 "has not been used" 로 실패할 수 있다 → WARN (미리 켜 두면 안전)
+  for a in sqladmin container compute serviceusage; do echo "$out" | grep -qx "$a.googleapis.com" || miss="$miss $a"; done
+  for a in servicenetworking artifactregistry secretmanager; do echo "$out" | grep -qx "$a.googleapis.com" || late="$late $a"; done
+  if [ -n "$miss" ]; then say FAIL gcp-apis "꺼진 API:$miss (gcloud services enable <이름>.googleapis.com --project $P)"
+  elif [ -n "$late" ]; then say WARN gcp-apis "apply 가 켤 API:$late (미리 켜 두면 안전: gcloud services enable <이름>.googleapis.com --project $P)"
+  else say OK gcp-apis "sqladmin·container·compute·serviceusage·servicenetworking·artifactregistry·secretmanager 켜짐"; fi
 }
 c_billing() {
   local out rc
@@ -115,9 +122,48 @@ q() {
 c_vpc() { q vpc vpc L-F678F1CE "${NEED_VPC:-1}" aws ec2 describe-vpcs --region "$REGION" --query 'length(Vpcs)' --output text; }
 c_eip() { q eip ec2 L-0263D0A3 "${NEED_EIP:-1}" aws ec2 describe-addresses --region "$REGION" --query 'length(Addresses)' --output text; }
 c_rds() { q rds rds L-7B6409FD "${NEED_RDS:-1}" aws rds describe-db-instances --region "$REGION" --query 'length(DBInstances)' --output text; }
+# GATE: 표준 인스턴스 vCPU 한도가 모자라면 EKS 노드 그룹(apply 뒤 ≈15분)에서 멈춘다. 쓰는 수 = 켜진 인스턴스의 코어×스레드 합
+vcpu_used() { aws ec2 describe-instances --region "$REGION" --filters Name=instance-state-name,Values=pending,running --query 'Reservations[].Instances[].CpuOptions.[CoreCount,ThreadsPerCore]' --output json | jq '[.[] | ((.[0] // 1) * (.[1] // 1))] | add // 0'; }
+c_vcpu() { if command -v jq >/dev/null 2>&1; then q vcpu ec2 L-1216C47A "${NEED_VCPU:-6}" vcpu_used; else say WARN aws-quota-vcpu "jq 없음"; fi; }
+# GATE: GCP 한도. 지역(asia-northeast3) + 전역(프로젝트). "남은 것(limit-usage) ≥ 필요" 인지 본다
+#   GATE-gcp DRAFT(ai) 필요 수: CPUS 4·INSTANCES 2 (e2-standard-2 노드 2대), IN_USE_ADDRESSES 2 (Cloud NAT + LB),
+#   SSD_TOTAL_GB 200 (GKE 노드 부팅 디스크 기본 pd-balanced 100GB ×2 — pd-balanced 는 SSD 한도로 셈【추정, GKE 기본값】),
+#   전역 NETWORKS 1·FIREWALLS 10 (GKE 자체 5 + LB 2 + 여유)·ROUTERS 1·GLOBAL_INTERNAL_ADDRESSES 1 (PSA 범위)·CPUS_ALL_REGIONS 4
+#   한도 항목이 응답에 없으면(새 프로젝트 모양 차이) 그 항목만 WARN. 모자라면 FAIL → apply 전에 멈춤
+GCP_NEED_REGION=${GCP_NEED_REGION:-"CPUS=${NEED_GCP_CPUS:-4} INSTANCES=2 IN_USE_ADDRESSES=${NEED_GCP_ADDR:-2} SSD_TOTAL_GB=200"}
+GCP_NEED_GLOBAL=${GCP_NEED_GLOBAL:-"NETWORKS=1 FIREWALLS=10 ROUTERS=1 GLOBAL_INTERNAL_ADDRESSES=1 CPUS_ALL_REGIONS=4"}
+# quota_eval <json 파일> <필요 목록> → 줄마다 "OK|FAIL|MISS 이름 남은 필요"
+quota_eval() { python3 - "$1" "$2" <<'PY2'
+import json, sys
+try: q = {x.get("metric"): x for x in json.load(open(sys.argv[1])).get("quotas", [])}
+except Exception: print("ERR - - -"); sys.exit(0)
+for item in sys.argv[2].split():
+    m, need = item.split("="); need = float(need)
+    if m not in q or "limit" not in q[m]: print("MISS", m, "-", int(need)); continue
+    left = float(q[m]["limit"]) - float(q[m].get("usage", 0))
+    print("OK" if left >= need else "FAIL", m, int(left), int(need))
+PY2
+}
+c_gcp_quota() {
+  local rc reg=${ZONE%-*} res bad="" miss="" okl=""
+  tmo "$CALL" gcloud compute regions describe "$reg" --project "$P" --format=json > "$W/gq-r.json" 2>"$W/gq.err"; rc=$?
+  [ $rc -eq 0 ] || { say WARN gcp-quota "지역 한도 못 읽음 rc=$rc"; return; }
+  tmo "$CALL" gcloud compute project-info describe --project "$P" --format=json > "$W/gq-g.json" 2>>"$W/gq.err"; rc=$?
+  [ $rc -eq 0 ] || { say WARN gcp-quota "전역 한도 못 읽음 rc=$rc"; return; }
+  res=$( { quota_eval "$W/gq-r.json" "$GCP_NEED_REGION"; quota_eval "$W/gq-g.json" "$GCP_NEED_GLOBAL"; } )
+  case "$res" in *ERR*) say WARN gcp-quota "한도 응답을 못 읽음 (JSON 아님)"; return ;; esac
+  while read -r v m l n; do
+    case "$v" in OK) okl="$okl $m:$l/$n" ;; FAIL) bad="$bad $m 남은 $l<필요 $n" ;; MISS) miss="$miss $m" ;; esac
+  done <<EOF
+$res
+EOF
+  if [ -n "$bad" ]; then say FAIL gcp-quota "모자람 ($reg·전역):$bad (콘솔 IAM 및 관리자 → 할당량에서 증설 요청)"
+  elif [ -n "$miss" ]; then say WARN gcp-quota "응답에 없는 한도:$miss (나머지 OK:$okl)"
+  else say OK gcp-quota "남은/필요$okl"; fi
+}
 
 c_region
-for c in c_aws_auth c_gcp_auth c_apis c_billing c_tier c_vpc c_eip c_rds; do $c & done
+for c in c_aws_auth c_gcp_auth c_apis c_billing c_tier c_vpc c_eip c_rds c_vcpu c_gcp_quota; do $c & done
 wait
 cat "$W"/*.res
 n=$(cat "$W"/*.res | wc -l | tr -d ' ')

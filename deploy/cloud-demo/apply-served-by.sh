@@ -27,6 +27,7 @@ case "$cmd" in
       -o jsonpath='{.status.loadBalancer.ingress[0].hostname}{.status.loadBalancer.ingress[0].ip}{"\n"}' ;;
   down)
     ns="${3:-app-demo}"; check "$ns"
-    kubectl --context "$ctx" delete namespace "$ns" --wait=true --ignore-not-found ;;
+    # GATE: 끝나기를 끝없이 기다리지 않는다 (Terminating 에 걸린 구역이면 down 전체가 멈춘다). 남은 LB 는 demo-day 가 API 로 지운다
+    kubectl --context "$ctx" delete namespace "$ns" --wait=true --ignore-not-found --timeout=300s ;;
   *) echo "up|addr|down" >&2; exit 2 ;;
 esac

@@ -83,6 +83,9 @@ resource "google_service_networking_connection" "psa" {
   #   로 실패한다 (terraform-provider-google #16275·#19908, 맥 11/2 jeong-down 782초 FAIL). 연결은 state 에서만 빼고(ABANDON),
   #   실제 피어링은 demo-day down 의 d_gke 가 destroy 전에 gcloud 로 지운다 → 그다음 주소·네트워크가 지워진다
   deletion_policy = "ABANDON"
+  # GATE: 위처럼 피어링만 gcloud 로 지우고 연결 기록이 남은 채 같은 이름의 네트워크·범위로 다시 만들면 CreateConnection 이
+  #   "Cannot modify allocated ranges" 로 거절될 수 있다 → 그때 provider 가 update(patch) 로 바꿔 넣는다 (provider ≥5.12, 6.x 문서 항목)
+  update_on_creation_fail = true
 }
 
 # 노드가 외부 이미지를 받도록 Cloud NAT (노드는 사설 IP만)

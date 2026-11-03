@@ -18,15 +18,35 @@ until [ -n "$(relay_ip)" ]; do
   sleep 10; waited=$((waited + 10))
 done
 echo $$ > "$STATE/tunnel.pid"
-trap 'rm -f "$STATE/tunnel.pid"; exit 0' INT TERM
+SSHPID=""
+trap 'kill $SSHPID 2>/dev/null; rm -f "$STATE/tunnel.pid"; exit 0' INT TERM
+# UPREV-A: 호스트 키는 이 상태 폴더 전용 known_hosts 에만 (회차마다 새 중계기라 맥 known_hosts 의 같은 IP 옛 키와 부딪히지 않게. demo-day up 이 시작 때 지움)
+SSH_OPTS="-o BatchMode=yes -o UserKnownHostsFile=$STATE/known_hosts -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes"
+# GATE: 중계기 sshd 가 user_data(GatewayPorts clientspecified + 재시작)를 읽기 전에 붙으면 -R 0.0.0.0:5432 가 조용히 루프백(127.0.0.1)에만 열린다
+#   (ExitOnForwardFailure 도 안 잡는다) → RDS 가 중계기 5432 에 못 붙어 복제가 10분 뒤에야 실패. 붙은 뒤 중계기에서 바인딩을 보고,
+#   루프백뿐이면 끊고 다시 붙는다 (sshd 가 다시 뜬 뒤엔 바로 0.0.0.0). demo-day 의 tunnel_wait 도 같은 기준(0.0.0.0:5432)으로 본다
+bound() { ssh $SSH_OPTS -o ConnectTimeout=5 "ec2-user@$1" 'ss -ltn 2>/dev/null | grep -E "(0\.0\.0\.0|\*):5432[[:space:]]" >/dev/null && echo all || { ss -ltn 2>/dev/null | grep -q "127\.0\.0\.1:5432" && echo loopback || echo none; }' 2>/dev/null; }
 n=0
 while :; do
   n=$((n + 1))
   IP=$(relay_ip)
   echo "$(date -u +%H:%M:%SZ) 터널 연결 ${n}번째 (중계기 ${IP%.*.*}.x.x)"
-  # UPREV-A: 호스트 키는 이 상태 폴더 전용 known_hosts 에만 (회차마다 새 중계기라 맥 known_hosts 의 같은 IP 옛 키와 부딪히지 않게. demo-day up 이 시작 때 지움)
-  ssh -N -o BatchMode=yes -o UserKnownHostsFile="$STATE/known_hosts" -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes \
-    -R "0.0.0.0:5432:localhost:$LPORT" "ec2-user@$IP"
-  echo "$(date -u +%H:%M:%SZ) 끊김 (끝 코드 $?), 2초 뒤 다시"
+  ssh -N $SSH_OPTS -R "0.0.0.0:5432:localhost:$LPORT" "ec2-user@$IP" &
+  SSHPID=$!
+  w=0; ok=""
+  while kill -0 "$SSHPID" 2>/dev/null && [ $w -lt 45 ]; do
+    sleep 3; w=$((w + 3))
+    case "$(bound "$IP")" in
+      all) ok=1; break ;;
+      loopback) echo "$(date -u +%H:%M:%SZ) 5432 가 루프백에만 열림 (sshd 가 아직 GatewayPorts 전) → 끊고 다시"; kill "$SSHPID" 2>/dev/null; break ;;
+    esac
+  done
+  if [ -n "$ok" ]; then
+    echo "$(date -u +%H:%M:%SZ) tunnel-ok (중계기 0.0.0.0:5432 ← 맥 $LPORT)"
+    wait "$SSHPID"; echo "$(date -u +%H:%M:%SZ) 끊김 (끝 코드 $?), 2초 뒤 다시"
+  else
+    wait "$SSHPID" 2>/dev/null
+    [ $w -ge 45 ] && echo "$(date -u +%H:%M:%SZ) 45초 안에 5432 가 안 열림 (끝 코드 $?) → 다시"
+  fi
   sleep 2
 done

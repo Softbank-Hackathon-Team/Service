@@ -255,6 +255,8 @@ resource "aws_iam_policy" "app_boundary" {
 resource "aws_ecr_repository" "platform" {
   name                 = "platform"
   image_tag_mutability = "IMMUTABLE"
+  # GATE DRAFT(ai): 데모 저장소. 이미지가 하나라도 남으면 destroy 가 RepositoryNotEmpty 로 막혀 자원 0 이 안 된다 → 같이 지운다
+  force_delete = true
   image_scanning_configuration {
     scan_on_push = true
   }

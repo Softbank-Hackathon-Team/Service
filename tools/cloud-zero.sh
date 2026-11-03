@@ -184,6 +184,12 @@ aws_checks() {
     # EKS 가 스스로 만든 제어부 로그 그룹은 클러스터를 지워도 남는 게 정상이다 → 세지 않는다
     info "${PFX}로그 그룹 /aws/eks·/aws/ecs" aws_q logs describe-log-groups --log-group-name-prefix /aws/ --query 'logGroups[].logGroupName'
   done
+  # GATE: IAM 은 리전이 없어 한 번만. demo-day(aws/env)가 만드는 이름만 센다 — state 를 잃고 남으면 다음 up 의 EKS 더하기가 EntityAlreadyExists 로 멈춘다
+  count "IAM 역할(platform-target-*)" aws --output text iam list-roles --query "Roles[?starts_with(RoleName,'platform-target-')].RoleName"
+  count "IAM 정책(platform-app-boundary)" aws --output text iam list-policies --scope Local --query "Policies[?PolicyName=='platform-app-boundary'].PolicyName"
+  # GATE-v1: 실세션 connect 가 만든 연결 스택(svc-connect-*; 역할 svc-observe·svc-operate). 남으면 다음 회차 connect 가 실패 → down 의 connect-stack 단계가 지움
+  count "연결 스택(svc-connect-*)" aws --output text cloudformation describe-stacks --query "Stacks[?starts_with(StackName,'svc-connect-')].StackName"
+  count "IAM 역할(svc-observe·svc-operate)" aws --output text iam list-roles --query "Roles[?RoleName=='svc-observe' || RoleName=='svc-operate'].RoleName"
 }
 
 gcp_checks() {
@@ -207,6 +213,22 @@ gcp_checks() {
   # UPREV-B: terraform 이 만든 VPC·라우터(Cloud NAT)가 지우기 중간에 실패하면 남는다
   count "VPC 네트워크(default 제외)" g compute networks list --filter='name!=default'
   count "라우터(Cloud NAT)" g compute routers list
+  # GATE: Artifact Registry 저장소(platform)는 안 세던 것. 남으면 다음 gcp/env apply 가 "already exists" 로 멈춘다. API 가 꺼진 새 프로젝트는 0 으로 본다
+  # shellcheck disable=SC2329
+  ar_list() { local o; if o=$(gcloud --project "$P" artifacts repositories list --location "${GCP_REGION:-asia-northeast3}" --format='value(name)' 2>"$ERR"); then printf '%s\n' "$o"; return 0; fi
+    grep -qiE 'not enabled|has not been used|SERVICE_DISABLED' "$ERR" && return 0; return 1; }
+  count "Artifact Registry 저장소" ar_list
+  # GATE-gcp: 안 세던 것. ① l4-rbs 방식 LB(백엔드 서비스·새 상태 확인·NEG) ② 우리 앱 모듈(gcp/app)이 만드는 시크릿·앱 SA
+  #   — 이름이 이전마다 같아서(app-<앱>-db-password, app-<앱>-…) 남으면 다음 gcp 도착 apply 가 409 already exists 로 멈춘다 (참고 줄)
+  count "백엔드 서비스(LB)" g compute backend-services list
+  count "상태 확인(새 방식 LB)" g compute health-checks list
+  count "NEG(LB 뒤)" g compute network-endpoint-groups list
+  # shellcheck disable=SC2329
+  api_off_zero() { local o; if o=$("$@" 2>"$ERR"); then printf '%s\n' "$o"; return 0; fi
+    grep -qiE 'not enabled|has not been used|SERVICE_DISABLED' "$ERR" && return 0; return 1; }
+  # ②는 참고 줄(합계 제외): 요금이 거의 없고 이번 up(onprem→aws)은 안 쓴다. 0 이 아니면 GCP 도착 이전 전에 지우라는 표시
+  info "Secret Manager 비밀(managed-by=platform)" api_off_zero gcloud --project "$P" secrets list --filter='labels.managed-by=platform' --format='value(name)'
+  info "앱 서비스 계정(app-*)" gcloud --project "$P" iam service-accounts list --filter='email~^app-' --format='value(email)'
 }
 
 run_checks() {
