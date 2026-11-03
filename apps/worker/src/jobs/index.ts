@@ -2,6 +2,7 @@ import { QUEUES, type QueueName } from "@svc/contracts";
 import { handleImport } from "./import.js";
 import { handlePrecheck } from "./precheck.js";
 import { handlePlan } from "./plan.js";
+import { handlePlanExpiry } from "./plan-expiry.js";
 import { handleApply } from "./apply.js";
 import { handleDeploy } from "./deploy.js";
 import { handleSync } from "./sync.js";
@@ -19,6 +20,7 @@ export const HANDLERS: Partial<Record<QueueName, (data: unknown) => Promise<unkn
   [QUEUES.import]: handleImport,       // importing → spec_review
   [QUEUES.precheck]: handlePrecheck,   // prechecking → planning
   [QUEUES.plan]: handlePlan,           // planning → awaiting_approval   (사람 승인)
+  [QUEUES.planExpiry]: handlePlanExpiry, // awaiting_approval → stale (계획 만료 시각에, G7-1)
   [QUEUES.apply]: handleApply,         // provisioning → deploying
   [QUEUES.deploy]: handleDeploy,       // deploying → syncing
   [QUEUES.sync]: handleSync,           // syncing → shifting

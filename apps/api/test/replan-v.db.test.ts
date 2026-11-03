@@ -52,7 +52,7 @@ async function seed(status: string, failedAt: string | null = null) {
 }
 const status = async (id: string) => (await owner.query(`SELECT status FROM migrations WHERE id=$1`, [id])).rows[0].status as string;
 const planJobs = async (id: string) => (await owner.query(
-  `SELECT id FROM pgboss.job WHERE name='plan' AND singleton_key=$1 AND state IN ('created','active','retry')`, [`plan:${id}`])).rows;
+  `SELECT id FROM pgboss.job WHERE name='precheck' AND singleton_key=$1 AND state IN ('created','active','retry')`, [`precheck:${id}`])).rows;
 const audits = async (id: string) => (await owner.query(
   `SELECT action FROM audit_events WHERE target=$1 ORDER BY seq`, [id])).rows.map((r) => r.action as string);
 const post = (path: string, tenantHeaders: Record<string, string> = H, key = randomUUID()) =>
@@ -60,14 +60,14 @@ const post = (path: string, tenantHeaders: Record<string, string> = H, key = ran
 
 
 async function failAgain(id: string) {
-  await core.withTenant(T, (tx) => core.advance(tx, { id, tenantId: T }, "planning", "failed",
+  await core.withTenant(T, (tx) => core.advance(tx, { id, tenantId: T }, "prechecking", "failed",
     { failureCode: "PLAN_FAILED", audit: { actor: "worker", action: "migration.failed", target: id, result: "error" } }));
 }
 const jobStates = async (id: string) => (await owner.query(
-  `SELECT state FROM pgboss.job WHERE name='plan' AND singleton_key=$1 ORDER BY created_on`, [`plan:${id}`])).rows.map((r) => r.state as string);
+  `SELECT state FROM pgboss.job WHERE name='precheck' AND singleton_key=$1 ORDER BY created_on`, [`precheck:${id}`])).rows.map((r) => r.state as string);
 async function fetchPlanJob(id: string) {
   // 이 이전의 plan 작업만 집는다(다른 시험 작업은 건드리지 않음)
-  const r = await owner.query(`SELECT id FROM pgboss.job WHERE name='plan' AND singleton_key=$1 AND state='created'`, [`plan:${id}`]);
+  const r = await owner.query(`SELECT id FROM pgboss.job WHERE name='precheck' AND singleton_key=$1 AND state='created'`, [`precheck:${id}`]);
   const jid = r.rows[0]?.id as string | undefined;
   assert.ok(jid, "created 상태 plan 작업 없음");
   await owner.query(`UPDATE pgboss.job SET state='active', started_on=now() WHERE id=$1`, [jid]);
@@ -78,7 +78,7 @@ test("실제 수명: replan → 작업 완료 → 다시 failed → replan 은 J
   const { id } = await seed("failed", "provisioning");
   assert.equal((await post(`/migrations/${id}/replan`)).statusCode, 202);
   const jid = await fetchPlanJob(id);
-  await core.boss.complete("plan", jid);
+  await core.boss.complete("precheck", jid);
   await failAgain(id);
   const r = await post(`/migrations/${id}/replan`);
   assert.equal(r.statusCode, 202, r.body);
@@ -89,7 +89,7 @@ test("실제 수명: boss.fail 로 실패시킨 뒤(재시도 정책 포함) rep
   const { id } = await seed("failed", "provisioning");
   assert.equal((await post(`/migrations/${id}/replan`)).statusCode, 202);
   const jid = await fetchPlanJob(id);
-  await core.boss.fail("plan", jid, { message: "x" });
+  await core.boss.fail("precheck", jid, { message: "x" });
   const states = await jobStates(id);
   await failAgain(id);
   const r = await post(`/migrations/${id}/replan`);

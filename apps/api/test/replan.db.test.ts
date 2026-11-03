@@ -52,7 +52,7 @@ async function seed(status: string, failedAt: string | null = null) {
 }
 const status = async (id: string) => (await owner.query(`SELECT status FROM migrations WHERE id=$1`, [id])).rows[0].status as string;
 const planJobs = async (id: string) => (await owner.query(
-  `SELECT id FROM pgboss.job WHERE name='plan' AND singleton_key=$1 AND state IN ('created','active','retry')`, [`plan:${id}`])).rows;
+  `SELECT id FROM pgboss.job WHERE name='precheck' AND singleton_key=$1 AND state IN ('created','active','retry')`, [`precheck:${id}`])).rows;
 const audits = async (id: string) => (await owner.query(
   `SELECT action FROM audit_events WHERE target=$1 ORDER BY seq`, [id])).rows.map((r) => r.action as string);
 const post = (path: string, tenantHeaders: Record<string, string> = H, key = randomUUID()) =>
@@ -66,28 +66,28 @@ function planDoc(migrationId: string) {
     expiresAt: new Date(Date.now() + 3600_000).toISOString() };
 }
 
-test("failed(provisioning) → replan: planning, plan 작업 1개, 감사 2줄(replanning·retried)", { skip }, async () => {
+test("failed(provisioning) → replan: prechecking(G7-2), precheck 작업 1개, 감사 2줄(replanning·retried)", { skip }, async () => {
   const { id } = await seed("failed", "provisioning");
   const r = await post(`/migrations/${id}/replan`);
   assert.equal(r.statusCode, 202);
   assert.equal(r.json().id, id);
-  assert.equal(await status(id), "planning");
+  assert.equal(await status(id), "prechecking");
   assert.equal((await planJobs(id)).length, 1);
   assert.deepEqual(await audits(id), ["migration.replanning", "migration.retried"]);
 });
 
-test("stale → replan: planning + plan 작업 1개 (실패 재시도가 아니라 retried 는 안 남는다)", { skip }, async () => {
+test("stale → replan: prechecking + precheck 작업 1개 (실패 재시도가 아니라 retried 는 안 남는다)", { skip }, async () => {
   const { id } = await seed("stale");
   assert.equal((await post(`/migrations/${id}/replan`)).statusCode, 202);
-  assert.equal(await status(id), "planning");
+  assert.equal(await status(id), "prechecking");
   assert.equal((await planJobs(id)).length, 1);
   assert.deepEqual(await audits(id), ["migration.replanning"]);
 });
 
-test("rejected → replan: planning / rejected → spec/reopen: spec_review", { skip }, async () => {
+test("rejected → replan: prechecking / rejected → spec/reopen: spec_review", { skip }, async () => {
   const a = await seed("rejected");
   assert.equal((await post(`/migrations/${a.id}/replan`)).statusCode, 202);
-  assert.equal(await status(a.id), "planning");
+  assert.equal(await status(a.id), "prechecking");
   const b = await seed("rejected");
   const r = await post(`/migrations/${b.id}/spec/reopen`);
   assert.equal(r.statusCode, 202);
@@ -99,9 +99,11 @@ test("rejected → replan: planning / rejected → spec/reopen: spec_review", { 
 test("replan → 새 계획 → 승인 → 환경 잠금 2줄을 다시 예약한다", { skip }, async () => {
   const { id, src, dst } = await seed("failed", "provisioning");
   assert.equal((await post(`/migrations/${id}/replan`)).statusCode, 202);
-  // 워커가 하는 일을 흉내: 새 계획 저장 + planning → awaiting_approval
+  // 워커가 하는 일을 흉내: 점검 통과(prechecking → planning) + 새 계획 저장 + planning → awaiting_approval
   const plan = planDoc(id);
   await core.withTenant(T, async (tx) => {
+    await core.advance(tx, { id, tenantId: T }, "prechecking", "planning",
+      { evidence: { precheckBlockers: 0 }, audit: { actor: "worker", action: "precheck.planning", target: id, result: "ok" } });
     await core.savePlan(tx, T, plan);
     await core.advance(tx, { id, tenantId: T }, "planning", "awaiting_approval",
       { audit: { actor: "worker", action: "plan.proposed", target: id, result: "ok" } });
@@ -117,13 +119,13 @@ test("replan → 새 계획 → 승인 → 환경 잠금 2줄을 다시 예약�
 test("replan 두 번(사이에 plan 실패): 두 번째도 plan 작업이 새로 생긴다", { skip }, async () => {
   const { id } = await seed("failed", "provisioning");
   assert.equal((await post(`/migrations/${id}/replan`)).statusCode, 202);
-  // plan 작업이 실패해 다시 failed(planning)가 된 상황
-  await core.withTenant(T, (tx) => core.advance(tx, { id, tenantId: T }, "planning", "failed",
+  // 사전 점검 작업이 실패해 다시 failed(prechecking)가 된 상황 (G7-2: 다시 계획은 점검부터)
+  await core.withTenant(T, (tx) => core.advance(tx, { id, tenantId: T }, "prechecking", "failed",
     { failureCode: "PLAN_FAILED", audit: { actor: "worker", action: "migration.failed", target: id, result: "error" } }));
-  await owner.query(`UPDATE pgboss.job SET state='failed' WHERE name='plan' AND singleton_key=$1`, [`plan:${id}`]);
+  await owner.query(`UPDATE pgboss.job SET state='failed' WHERE name='precheck' AND singleton_key=$1`, [`precheck:${id}`]);
   const r = await post(`/migrations/${id}/replan`);
   assert.equal(r.statusCode, 202);
-  assert.equal(await status(id), "planning");
+  assert.equal(await status(id), "prechecking");
   assert.equal((await planJobs(id)).length, 1);
 });
 

@@ -40,13 +40,13 @@ const mig = async (status: string) => {
 };
 const adv = (id: string, from: string, to: string, o: { code?: string; analyze?: boolean } = {}) => core.withTenant(T, (tx) =>
   core.advance(tx, { id, tenantId: T }, from as never, to as never, {
-    ...(o.code ? { failureCode: o.code } : {}), ...(o.analyze === false ? {} : { analyze: true }),
+    ...(o.code ? { failureCode: o.code } : {}), ...(o.analyze === false ? { analyze: false } : { analyze: true }),
     audit: { actor: "worker", action: `t.${to}`, target: id, result: "ok" } }));
 const runs = async (id: string) => (await owner.query("SELECT id, status FROM agent_runs WHERE migration_id=$1 ORDER BY created_at", [id])).rows;
 const audits = async (id: string, a: string) => (await owner.query("SELECT detail FROM audit_events WHERE target=$1 AND action=$2", [id, a])).rows;
 const statusOf = async (id: string) => (await owner.query("SELECT status FROM migrations WHERE id=$1", [id])).rows[0].status as string;
 
-test("분석 대상 아님: failureCode 없음 / analyze 없음 / 깃발 값이 '1' 이 아님('true') / failed·paused 가 아닌 전이", { skip }, async () => {
+test("분석 대상 아님: failureCode 없음 / analyze:false / 깃발 '0' / failed·paused 가 아닌 전이", { skip }, async () => {
   setEnv({ FAILURE_ANALYSIS: "1", FAKE_LLM: "1" });
   // failureCode 없이 failed (advance 가 UNSPECIFIED 로 채우지만 분석은 부르는 쪽 코드가 있어야)
   const a = await mig("provisioning"); await adv(a, "provisioning", "failed");
@@ -54,8 +54,8 @@ test("분석 대상 아님: failureCode 없음 / analyze 없음 / 깃발 값이 
   // analyze 옵션 없음
   const b = await mig("provisioning"); await adv(b, "provisioning", "failed", { code: "X", analyze: false });
   assert.equal((await runs(b)).length, 0);
-  // 깃발 "true"
-  setEnv({ FAILURE_ANALYSIS: "true", FAKE_LLM: "1" });
+  // G5-1: 깃발 기본 켬, "0" 일 때만 끔
+  setEnv({ FAILURE_ANALYSIS: "0", FAKE_LLM: "1" });
   const c = await mig("provisioning"); await adv(c, "provisioning", "failed", { code: "X" });
   assert.equal((await runs(c)).length, 0);
   // 정상 전이(failed·paused 아님)
@@ -70,7 +70,7 @@ test("새 실패 = 새 version: 앞 분석이 끝났으면(finished) 다시 실�
   await adv(id, "provisioning", "failed", { code: "APPLY_FAILED" });
   const first = await runs(id); assert.equal(first.length, 1);
   await owner.query("UPDATE agent_runs SET status='finished' WHERE id=$1", [first[0].id]);
-  await adv(id, "failed", "planning", { analyze: false });
+  await adv(id, "failed", "prechecking", { analyze: false });   // G7-2: 다시 계획 = 점검부터
   await owner.query("UPDATE migrations SET status='provisioning' WHERE id=$1", [id]);
   await adv(id, "provisioning", "failed", { code: "APPLY_FAILED" });
   const all = await runs(id);

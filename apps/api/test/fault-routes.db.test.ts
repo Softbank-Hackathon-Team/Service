@@ -215,8 +215,13 @@ test("P-5 고침: x-dev-tenant가 uuid가 아니면 401", { skip }, async () => 
 // (_step.ts·apply.ts의 TODO(human)). 잠금은 승인 때 넣은 'reserved'(기한 = 계획 만료, 지금 2시간) 그대로다.
 // 결과: apply 도중 워커가 죽으면 청소 작업은 계획 만료까지 아무것도 못 보고, 그 뒤엔 WORKER_LOST가 아니라
 // JOB_NOT_PICKED로 실패 처리한다. apply 큐는 retryLimit 0이라 다른 워커가 이어받지도 않는다.
+// → runStep 이 잠금 인수·생존 신호를 하도록 고쳐짐. 시험이 기준본에서 실패한 건 명세 판이 없어 apply 가 일 전에 끝났기 때문
 test("【P-3 재현】 apply가 일하는 동안 환경 잠금 주인은 worker:로 바뀌어야 한다", { skip }, async () => {
   const m = await seed("provisioning", { approval: "approve", locks: "live" });
+  // apply 는 받아들인 판의 명세를 다시 읽는다(TA3). 없으면 일하기 전에 TF_PLAN_DRIFT 로 끝나 잠금 주인을 볼 틈이 없다
+  const { ONE } = await import("../../worker/test/demo-one.js");
+  await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta, spec_v2) VALUES ($1,$2,1,'{}','{}',$3)`,
+    [T, m.id, JSON.stringify({ spec: ONE, fieldMeta: {}, unmapped: [], ids: {} })]);
   const holders = new Set<string>();
   let done = false;
   const run = apply.handleApply({ tenantId: T, requestId: "r-p3", migrationId: m.id, planId: m.planId, planHash: "hp" })

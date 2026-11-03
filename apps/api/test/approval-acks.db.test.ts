@@ -36,6 +36,14 @@ before(async () => {
   await app.ready();
   await core.startBoss();
 });
+// G7-8: 깃발이 비어 있으면 켬 (기본 켬)
+test("G7-8: PLAN_ACKS 를 안 주면 켜짐, 0 일 때만 꺼짐", async () => {
+  const { planAcksOn } = await import("../src/routes/plans.js");
+  assert.equal(planAcksOn({}), true);
+  assert.equal(planAcksOn({ PLAN_ACKS: "" }), true);
+  assert.equal(planAcksOn({ PLAN_ACKS: "1" }), true);
+  assert.equal(planAcksOn({ PLAN_ACKS: "0" }), false);
+});
 afterEach(() => { if (prevFlag === undefined) delete process.env.PLAN_ACKS; else process.env.PLAN_ACKS = prevFlag; });
 after(async () => {
   if (skip) return;
@@ -90,8 +98,8 @@ test("깃발 on + acks 전부 → approved, acks 는 감사 detail 에 남는다
   assert.deepEqual(a.rows[0].detail.acks, ACKS.map((x) => x.id));
 });
 
-test("깃발 off + acks 없음 → approved (지금 동작 그대로), /start 본문 없이 → provisioning", { skip }, async () => {
-  delete process.env.PLAN_ACKS;
+test("깃발 off(PLAN_ACKS=0) + acks 없음 → approved, /start 본문 없이 → provisioning", { skip }, async () => {
+  process.env.PLAN_ACKS = "0";
   const m = await seed();
   assert.equal((await approve(m.planId, { decision: "approve", planHash: m.planHash })).statusCode, 200);
   assert.equal(await status(m.id), "approved");
@@ -148,8 +156,8 @@ test("거부: 남의 회사 계획 승인·시작 → 404", { skip }, async () =
 });
 
 // SMOKEFIX: smoke·화면은 본문 없는 POST 에 "{}" 를 싣는다. 깃발 off 면 202, on 이면 409 (400 아님)
-test("SMOKEFIX: 깃발 off + 본문 {} → 202 provisioning (smoke 와 같은 모양)", { skip }, async () => {
-  delete process.env.PLAN_ACKS;
+test("SMOKEFIX: 깃발 off(PLAN_ACKS=0) + 본문 {} → 202 provisioning (smoke 와 같은 모양)", { skip }, async () => {
+  process.env.PLAN_ACKS = "0";
   const m = await seed();
   assert.equal((await approve(m.planId, { decision: "approve", planHash: m.planHash })).statusCode, 200);
   const s = await start(m.id, {});

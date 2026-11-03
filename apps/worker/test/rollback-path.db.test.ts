@@ -85,7 +85,7 @@ test("컷오버 단계 실패 → failed(cutover): 다시 계획 불가, 잠금 
   assert.equal(r.status, "failed"); assert.equal(r.failed_at_status, "cutover");
   assert.equal(r.failure_code, "CUTOVER_C3_ROWCOUNT");
   assert.equal(await lockCount(id), 2, "실패는 잠금을 남긴다 (반쯤 바뀐 환경을 사람이 본다)");
-  await assert.rejects(mv(id, "failed", "planning"), { code: "GUARD_FAILED" }, "컷오버 뒤 실패는 다시 계획 불가");
+  await assert.rejects(mv(id, "failed", "prechecking"), { code: "GUARD_FAILED" }, "컷오버 뒤 실패는 다시 계획 불가");
   await assert.rejects(mv(id, "failed", "cancelled"), { code: "GUARD_FAILED" });
   await mv(id, "failed", "cancelled", { evidence: { manualCleanupConfirmed: true } });
   assert.equal(await lockCount(id), 0);

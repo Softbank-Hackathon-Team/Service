@@ -60,9 +60,14 @@ test("T30/T31: 일시정지는 이유가 필요하고, 재개는 멈추기 전 �
   assert.equal(checkGuard("paused", "rolling_back", { facts: p, ev: {} }), null, "롤백은 언제나");
 });
 
-test("T37: provisioning 이하에서 실패했을 때만 다시 계획", () => {
-  assert.equal(checkGuard("failed", "planning", { facts: f({ failedAtStatus: "provisioning" }), ev: {} }), null);
-  assert.match(checkGuard("failed", "planning", { facts: f({ failedAtStatus: "cutover" }), ev: {} })!, /replan/);
+test("T37: provisioning 이하에서 실패했을 때만 다시 계획 (G7-2: 다시 계획 = 사전 점검부터)", () => {
+  assert.equal(checkGuard("failed", "prechecking", { facts: f({ failedAtStatus: "provisioning" }), ev: {} }), null);
+  assert.match(checkGuard("failed", "prechecking", { facts: f({ failedAtStatus: "cutover" }), ev: {} })!, /replan/);
+});
+test("T16 G7-3: 승인 뒤 환경이 바뀌면(env_changed) 잠금이 살아 있어도 낡음", () => {
+  const live = f({ locks: { total: 2, live: 2, reservedLive: 2 } });
+  assert.match(checkGuard("approved", "stale", { facts: live, ev: {} }) ?? "", /lock still valid/);
+  assert.equal(checkGuard("approved", "stale", { facts: live, ev: { staleReason: "env_changed" } }), null);
 });
 
 test("모든 조건 키는 VALID에 있는 이동이다 (오타 방지)", () => {

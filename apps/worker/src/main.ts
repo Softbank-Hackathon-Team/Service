@@ -1,4 +1,4 @@
-import { boss, startBoss, startMetricsServerNear, workOptions, concurrencyOf, LISTEN_NOTIFY } from "@svc/core";
+import { boss, startBoss, startMetricsServerNear, workOptions, stepWorkOptions, LISTEN_NOTIFY } from "@svc/core";
 import { HANDLERS } from "./jobs/index.js";
 import { jobAttempt } from "./jobs/_step.js";
 import { registerLeaseJobs } from "./lease/index.js";
@@ -51,7 +51,7 @@ for (const [queue, handle] of Object.entries(HANDLERS)) {
   const run = instrument(queue, handle);
   // Z19 H4: 몇 번째 시도인지(retryCount/retryLimit)를 처리기에 알린다. 마지막 시도가 실패하면 runStep이 이전을 failed/paused로 옮긴다
   // Z32 (Z62 #38): shift 만 localConcurrency 5 (boss.ts WORK_CONCURRENCY). 처리기는 그대로 한 번에 1건을 받는다
-  await boss.work(queue, { ...workOptions(), includeMetadata: true, localConcurrency: concurrencyOf(queue) }, async ([job]) => {
+  await boss.work(queue, { ...stepWorkOptions(queue), includeMetadata: true }, async ([job]) => {
     await jobAttempt.run({ queue, retryCount: job!.retryCount, retryLimit: job!.retryLimit }, () => run(job!));
   });
 }

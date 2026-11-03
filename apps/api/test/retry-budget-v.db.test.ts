@@ -52,7 +52,7 @@ const replan = (id: string, body?: object, key = `v-${randomUUID()}`) => app.inj
   ...(body ? { payload: body } : {}), headers: { "x-dev-tenant": T, "idempotency-key": key } });
 const retried = async (id: string) => (await owner.query("SELECT detail FROM audit_events WHERE target=$1 AND action='migration.retried' ORDER BY seq", [id])).rows.map((r) => r.detail);
 const st = async (id: string) => (await owner.query("SELECT status FROM migrations WHERE id=$1", [id])).rows[0].status as string;
-const jobs = async (id: string) => (await owner.query("SELECT count(*)::int AS n FROM pgboss.job WHERE name='plan' AND singleton_key=$1 AND state IN ('created','active','retry')", [`plan:${id}`])).rows[0].n as number;
+const jobs = async (id: string) => (await owner.query("SELECT count(*)::int AS n FROM pgboss.job WHERE name='precheck' AND singleton_key=$1 AND state IN ('created','active','retry')", [`precheck:${id}`])).rows[0].n as number;
 
 test("retryBudget(): 빈 값·글자·음수·소수 처리 (기본 3, 음수→0, 소수는 내림)", async () => {
   const { retryBudget } = await import("@svc/core");
