@@ -13,7 +13,9 @@ app.kubernetes.io/component: {{ .w.name | quote }}
 
 {{- /* CV-1: 파드 템플릿 metadata (라벨 + 허용 목록 annotation). 입력 dict: root, w */}}
 {{- define "app.wpodmeta" -}}
-labels: {{- include "app.wlabels" (dict "root" .root "w" .w) | nindent 2 }}
+{{- /* PL-2: 출발 파드 라벨 + 플랫폼 라벨 (겹치면 플랫폼 우선 = selector 가 깨지지 않게) */}}
+{{- $pl := include "app.wlabels" (dict "root" .root "w" .w) | fromYaml }}
+labels: {{- toYaml (merge $pl (.w.podLabels | default dict)) | nindent 2 }}
 {{- with .w.podAnnotations }}
 annotations: {{- toYaml . | nindent 2 }}
 {{- end }}
@@ -40,8 +42,13 @@ annotations: {{- toYaml . | nindent 2 }}
 {{- end }}
 {{- range $w.pvcs }}
 {{- if .mountPath }}
+{{- if .claimTemplate }}
+{{- /* D6: volumeClaimTemplates 이름 그대로 마운트 (볼륨 칸 없음, StatefulSet 이 파드마다 붙임) */}}
+{{- $mounts = append $mounts (dict "name" .name "mountPath" .mountPath) }}
+{{- else }}
 {{- $vols = append $vols (dict "name" (printf "pvc-%s" .name) "persistentVolumeClaim" (dict "claimName" (printf "%s-%s" $w.name .name))) }}
 {{- $mounts = append $mounts (dict "name" (printf "pvc-%s" .name) "mountPath" .mountPath) }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- range $w.volumes }}{{- $vols = append $vols . }}{{- end }}

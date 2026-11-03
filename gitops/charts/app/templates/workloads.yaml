@@ -31,6 +31,7 @@ data: {{- toYaml ($c.data | default dict) | nindent 2 }}
 {{- end }}
 {{- end }}
 {{- range $p := ($w.pvcs | default list) }}
+{{- if not $p.claimTemplate }}
 ---
 {{- /* 빈 PVC. 출발 데이터는 안 따라온다 (어댑터가 경고 줄을 띄움) */}}
 apiVersion: v1
@@ -46,6 +47,7 @@ spec:
   resources:
     requests:
       storage: {{ $p.size | quote }}
+{{- end }}
 {{- end }}
 {{- if eq ($w.kind | default "service") "job" }}
 {{- $j := $w.job | default dict }}
@@ -97,18 +99,48 @@ spec:
     spec: {{- include "app.wpod" (dict "root" $ "w" $w "restart" ($j.restartPolicy | default "OnFailure")) | nindent 6 }}
 {{- end }}
 {{- else }}
+{{- /* D6: 출발 종류 그대로 (Deployment·StatefulSet·DaemonSet) */}}
+{{- $wk := $w.workloadKind | default "deployment" }}
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: {{ if eq $wk "statefulset" }}StatefulSet{{ else if eq $wk "daemonset" }}DaemonSet{{ else }}Deployment{{ end }}
 metadata:
   name: {{ $w.name }}
   labels: {{- include "app.wlabels" (dict "root" $ "w" $w) | nindent 4 }}
 spec:
-  {{- if and (hasKey $w "replicas") (not $w.scale) }}
+  {{- if and (ne $wk "daemonset") (hasKey $w "replicas") (not $w.scale) }}
   replicas: {{ $w.replicas }}
   {{- end }}
+  {{- if eq $wk "deployment" }}
   {{- with $.Values.progressDeadlineSeconds }}
   progressDeadlineSeconds: {{ . }}
+  {{- end }}
+  {{- end }}
+  {{- if eq $wk "statefulset" }}
+  {{- $st := $w.statefulSet | default dict }}
+  {{- with $st.serviceName }}
+  serviceName: {{ . }}
+  {{- end }}
+  {{- with $st.podManagementPolicy }}
+  podManagementPolicy: {{ . }}
+  {{- end }}
+  {{- with $st.pvcRetention }}
+  persistentVolumeClaimRetentionPolicy: {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- $vct := list }}
+  {{- range $p := ($w.pvcs | default list) }}{{ if $p.claimTemplate }}{{ $vct = append $vct $p }}{{ end }}{{ end }}
+  {{- if $vct }}
+  volumeClaimTemplates:
+  {{- range $p := $vct }}
+    - metadata: { name: {{ $p.name }} }
+      spec:
+        accessModes: {{- toYaml $p.accessModes | nindent 10 }}
+        {{- with $p.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources: { requests: { storage: {{ $p.size | quote }} } }
+  {{- end }}
+  {{- end }}
   {{- end }}
   selector:
     matchLabels:
@@ -160,7 +192,7 @@ metadata:
   name: {{ $w.name }}
   labels: {{- include "app.wlabels" (dict "root" $ "w" $w) | nindent 4 }}
 spec:
-  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: {{ $w.name }} }
+  scaleTargetRef: { apiVersion: apps/v1, kind: {{ if eq ($w.workloadKind | default "deployment") "statefulset" }}StatefulSet{{ else }}Deployment{{ end }}, name: {{ $w.name }} }
   minReplicas: {{ .min }}
   maxReplicas: {{ .max }}
   {{- /* CV-1: 출발 HPA metrics 원문이 있으면 그대로, 없으면 cpuPct 하나 */}}
