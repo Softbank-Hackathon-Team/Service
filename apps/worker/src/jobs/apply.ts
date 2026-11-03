@@ -103,7 +103,8 @@ export async function handleApply(raw: unknown) {
       }
       return {
         to: "deploying",
-        detail: { planId: j.planId, tfOutputs, ...(imageBuilds.length ? { imageBuilds } : {}), iac: mockDetail ? "azure_mock" : realDetail ? (realDetail.imported ? "imported" : "terraform") : "mock",
+        // SECAUDIT: 감사엔 출력 이름만 (값 = DB 주소·ARN 은 infra_ready 표)
+        detail: { planId: j.planId, outputs: Object.keys(tfOutputs).sort(), ...(imageBuilds.length ? { imageBuilds } : {}), iac: mockDetail ? "azure_mock" : realDetail ? (realDetail.imported ? "imported" : "terraform") : "mock",
                   ...(mockDetail ? { runner: mockDetail } : {}), ...(realDetail ? { terraform: realDetail } : {}) },
         evidence: { applyOk: true },   // STUB(aws/gcp/onprem): terraform apply 종료 코드 0. Azure는 Mock 결과 ok
         inTx: (tx) => saveInfraReady(tx, {

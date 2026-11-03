@@ -94,11 +94,13 @@ marker_sql() {
     0024) echo "EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='environments' AND column_name='verify_failures')" ;;
     0026) echo "to_regprocedure('public.maint_verify_due(integer)') IS NOT NULL" ;;
     0031) echo "EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'spec_versions_spec_v2_object')" ;;
+    0032) echo "EXISTS (SELECT 1 FROM pg_roles r JOIN pg_class c ON c.relowner = r.oid WHERE r.rolname = 'svc_spend' AND c.oid = 'public.llm_spend_global'::regclass)" ;;
     0030) echo "has_column_privilege('app_user', 'public.agent_enroll_tokens', 'expires_at', 'UPDATE')" ;;
     0029) echo "EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'tenants' AND column_name = 'gcp_platform_sa')" ;;
     0028) echo "to_regclass('public.personal_tokens') IS NOT NULL" ;;
     0025) echo "EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agent_runs_kind_check' AND pg_get_constraintdef(oid) LIKE '%failure_analysis%')" ;;
     0027) echo "to_regclass('public.agent_enroll_tokens') IS NOT NULL" ;;
+    0033) echo "to_regclass('public.infra_ready') IS NOT NULL" ;;
     *) echo "" ;;
   esac
 }

@@ -5,6 +5,7 @@ export * from "./failure-codes.js";
 export * from "./hash.js";
 export * from "./boss.js";
 export * from "./audit.js";
+export * from "./redact.js";
 export * from "./guards.js";
 export * from "./envlock.js";
 export * from "./idempotency.js";

@@ -15,9 +15,13 @@ const isStub = (tf: Record<string, string>) =>
 
 // 그 환경을 도착으로 삼은 이전 중 마지막 infra.ready (이 이전이 아니어도 같은 회사 것. RLS 가 회사 벽)
 async function lastTfOutputs(tx: Tx, envId: string): Promise<Record<string, string> | null> {
-  const q = await tx.query(
+  // SECAUDIT: 출력 값은 infra_ready 표(0031). 그 전에 만든 이전은 옛 감사 detail.infraReady
+  const n = await tx.query(
+    `SELECT r.tf_outputs AS tf FROM infra_ready r JOIN migrations m ON m.id = r.migration_id
+      WHERE m.target_env_id = $1 ORDER BY r.id DESC LIMIT 1`, [envId]);
+  const q = n.rows[0] ? n : await tx.query(
     `SELECT a.detail->'infraReady'->'tfOutputs' AS tf FROM audit_events a JOIN migrations m ON a.target = m.id::text
-      WHERE a.action = 'infra.ready' AND m.target_env_id = $1 ORDER BY a.seq DESC LIMIT 1`, [envId]);
+      WHERE a.action = 'infra.ready' AND m.target_env_id = $1 AND a.detail ? 'infraReady' ORDER BY a.seq DESC LIMIT 1`, [envId]);
   const tf = q.rows[0]?.tf;
   return tf && typeof tf === "object" ? (tf as Record<string, string>) : null;
 }
