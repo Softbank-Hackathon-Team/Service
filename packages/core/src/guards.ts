@@ -18,6 +18,8 @@ export interface GuardFacts {
   targetConn: string;
   specVersion: number | null;           // 최신 명세 버전 (없으면 null)
   specNeedsReview: number;              // 최신 명세에서 needs_review=true 칸 수
+  // 신뢰도가 문턱값(SPEC_MIN_CONFIDENCE) 미만이고 사람이 아직 처리(승인) 안 한 칸 수. 없거나 0이면 통과. 깃발 꺼짐(0)이면 늘 0
+  specLowConfidenceOpen?: number;
   plan: { id: string; hash: string; status: string; expired: boolean; expiresAt: Date } | null;
   locks: { total: number; live: number; reservedLive: number }; // 이 이전이 쥔 환경 잠금 줄
 }
@@ -35,6 +37,12 @@ export function observeMinSec(env: NodeJS.ProcessEnv = process.env): number {
   return env.PROM_URL ? Math.max(v, 30) : v;
 }
 export const OBSERVE_MIN_SEC = observeMinSec();
+// DRAFT(ai): 신뢰도 문턱값. 0 = 꺼짐(기본, 지금 동작 그대로). 0~1 숫자만 켜짐, 숫자가 아니거나 범위 밖이면 꺼짐으로 본다
+//   (잘못된 값은 시작 때 설정 검사가 먼저 알린다). 읽는 때마다 env 를 봐서 시험이 값을 바꿀 수 있다. TODO(human): 값·칸 범위는 팀 결정(N1)
+export function specMinConfidence(env: NodeJS.ProcessEnv = process.env): number {
+  const n = envNumber(env.SPEC_MIN_CONFIDENCE, 0);
+  return Number.isFinite(n) && n > 0 && n <= 1 ? n : 0;
+}
 export type { TransitionEvidence };
 
 export interface GuardInput {
@@ -63,7 +71,8 @@ const GUARDS: Partial<Record<`${MigrationStatus}>${MigrationStatus}`, Guard>> = 
   "importing>spec_review": ({ facts }) => need(facts.specVersion !== null, "no spec saved"), // T02
   "spec_review>prechecking": ({ facts }) =>                                                 // T04
     need(facts.specVersion !== null, "no spec") ??
-    need(facts.specNeedsReview === 0, `${facts.specNeedsReview} field(s) need review`),
+    need(facts.specNeedsReview === 0, `${facts.specNeedsReview} field(s) need review`) ??
+    need((facts.specLowConfidenceOpen ?? 0) === 0, `${facts.specLowConfidenceOpen} field(s) below min confidence`),
   "prechecking>planning": ({ ev }) =>                                                       // T05
     need(ev.precheckBlockers === 0, "precheckBlockers must be 0"),
   "prechecking>spec_review": ({ ev }) =>                                                    // T06
@@ -148,6 +157,7 @@ export async function loadGuardFacts(tx: Tx, migrationId: string): Promise<Guard
             m.source_env_id, m.target_env_id,
             se.connection_status AS source_conn, te.connection_status AS target_conn,
             sv.version AS spec_version, COALESCE(sv.needs_review, 0)::int AS spec_needs_review,
+            COALESCE(sv.low_open, 0)::int AS spec_low_open,
             p.id AS plan_id, p.plan_hash, p.status AS plan_status, p.expires_at AS plan_expires_at,
             (p.expires_at <= now()) AS plan_expired,
             (SELECT count(*) FROM env_locks l WHERE l.migration_id = m.id)::int AS locks_total,
@@ -160,16 +170,31 @@ export async function loadGuardFacts(tx: Tx, migrationId: string): Promise<Guard
        JOIN environments te ON te.id = m.target_env_id
        LEFT JOIN LATERAL (
          SELECT s.version,
-                (SELECT count(*) FROM jsonb_each(s.field_meta) f
-                  WHERE f.value->>'needs_review' = 'true') AS needs_review
-           FROM spec_versions s WHERE s.migration_id = m.id
+                -- A3v2: v1 field_meta 와 v2 spec_v2->'fieldMeta'(I3b, IMPORT_IR=v2 판만) 를 같이 센다. 같은 문제를 두 곳에서 셀 수 있어
+                --   수는 "0이면 통과"로만 쓴다. to_jsonb 로 읽어 0023 전 DB 에서도 돈다 (칸이 없거나 NULL·객체가 아니면 빈 객체)
+                (SELECT count(*) FROM (SELECT * FROM jsonb_each(s.field_meta)
+                                       UNION ALL SELECT * FROM jsonb_each(sv2.meta)) f
+                  WHERE f.value->>'needs_review' = 'true') AS needs_review,
+                -- 문턱값 미만 + 아직 승인 안 한 칸(needs_review 가 false 로 바뀌면 처리된 것). 문턱값 0 이면 셈 자체를 안 한다
+                -- confidence 가 숫자 글자면 숫자로, 숫자가 아니거나 없으면 가장 낮은 쪽(-1)으로 본다
+                -- A3v2: spec_v2->'fieldMeta' 칸도 같은 식으로 합산 (두 곳 모두 "0이면 통과"로만 쓴다)
+                (SELECT count(*) FROM (SELECT * FROM jsonb_each(s.field_meta)
+                                       UNION ALL SELECT * FROM jsonb_each(sv2.meta)) f
+                  WHERE $2::numeric > 0 AND jsonb_typeof(f.value) = 'object'
+                    AND COALESCE(f.value->>'needs_review', 'true') <> 'false'
+                    AND (CASE WHEN f.value->>'confidence' ~ '^[0-9]+(\\.[0-9]+)?$'
+                              THEN (f.value->>'confidence')::numeric ELSE -1 END) < $2::numeric) AS low_open
+           FROM spec_versions s
+           CROSS JOIN LATERAL (SELECT CASE WHEN jsonb_typeof(to_jsonb(s)->'spec_v2'->'fieldMeta') = 'object'
+                                           THEN to_jsonb(s)->'spec_v2'->'fieldMeta' ELSE '{}'::jsonb END AS meta) sv2
+          WHERE s.migration_id = m.id
             -- Z19 H1: AI 초안 판(field_meta._draft)은 사람이 받아들이기 전까지 조건에 안 쓴다 (packages/agent DRAFT_MARKER_KEY)
             AND NOT (s.field_meta ? '_draft')
           ORDER BY s.version DESC LIMIT 1) sv ON true
        LEFT JOIN LATERAL (
          SELECT id, plan_hash, status, expires_at FROM plans
           WHERE migration_id = m.id ORDER BY created_at DESC LIMIT 1) p ON true
-      WHERE m.id = $1`, [migrationId]);
+      WHERE m.id = $1`, [migrationId, specMinConfidence()]);
   const x = r.rows[0];
   if (!x) return null;
   return {
@@ -183,6 +208,7 @@ export async function loadGuardFacts(tx: Tx, migrationId: string): Promise<Guard
     targetConn: x.target_conn,
     specVersion: x.spec_version,
     specNeedsReview: x.spec_needs_review,
+    specLowConfidenceOpen: x.spec_low_open,
     plan: x.plan_id ? { id: x.plan_id, hash: x.plan_hash, status: x.plan_status,
                         expired: x.plan_expired, expiresAt: x.plan_expires_at } : null,
     locks: { total: x.locks_total, live: x.locks_live, reservedLive: x.locks_reserved_live },

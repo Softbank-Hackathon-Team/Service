@@ -6,7 +6,7 @@ import { boundedName } from "../common/names.js";
 import { envRef, fromOut, nameSeed, regionOf, tenantOf, type Target } from "../common/target.js";
 
 // DRAFT(ai): 권한 목록은 문서 기준 추정. 실계정 PERMISSION_DENIED 로그로 확인 필요
-const PERMS: PermTable = {
+export const PERMS: PermTable = {
   "data.google_client_config": { read: [], write: [], remove: [] },   // 현재 자격 증명의 토큰만 읽음
   "data.google_container_cluster": { read: ["container.clusters.get"], write: [], remove: [] },
   // GKE는 k8s API 호출도 IAM 권한으로 확인한다 (container.namespaces.*)

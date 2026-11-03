@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { MigrationJob, PrecheckItem, QUEUES } from "@svc/contracts";
-import { withTenant } from "@svc/core";
-import { runCloudPrecheck, toPrecheckItems, spawnExec, type PrecheckEnvInfo, type PrecheckInput, type PrecheckDeps, type CloudProvider } from "@svc/adapters";
+import { latestAcceptedSpecV2, withTenant } from "@svc/core";
+import { envFor, v2PrecheckItems, runCloudPrecheck, toPrecheckItems, spawnExec, type PrecheckEnvInfo, type PrecheckInput, type PrecheckDeps, type CloudProvider } from "@svc/adapters";
 import { endpointFromEnv, withClient } from "@svc/replication";
 import { runStep } from "./_step.js";
-import { withStepRoles } from "./_roles.js";
+import { withStepRoles, type StepRoles } from "./_roles.js";
 import type { MigrationRow } from "./_step.js";
+import { planIrV2 } from "./plan-v2.js";
 
 // 사전 점검: 이전해도 되는지 본다. block(FAIL)이 하나라도 있으면 명세 검토로 되돌린다
 // Z97: STUB(고정 "확인됨")을 실조회로 바꿨다 — 자격(STS·tokeninfo·kubectl)·도착 API·결제·할당량·DB 버전·TCP·디스크.
@@ -48,11 +49,31 @@ export async function sourceDbFacts(env: NodeJS.ProcessEnv = process.env): Promi
   } catch { return { sourcePgMajor: null, sourceDbBytes: null, endpoints }; }
 }
 
-export async function realPrecheck(tenantId: string, m: MigrationRow, deps: Partial<PrecheckDeps> = {}): Promise<PrecheckItem[]> {
+// L5c: 빌린 관찰 자격(진짜 발급기일 때만 있음) → 쪽마다 CLI env. 워커 자기 자격(AWS_PROFILE·키)은 지운다
+export function precheckSideEnv(roles: Pick<StepRoles, "awsEnv"> | undefined, env: NodeJS.ProcessEnv): PrecheckDeps["sideEnv"] {
+  const out: NonNullable<PrecheckDeps["sideEnv"]> = {};
+  for (const side of ["source", "target"] as const) { const e = roles?.awsEnv?.[side]; if (e) out[side] = envFor(e, env); }
+  return Object.keys(out).length ? out : undefined;
+}
+
+export async function realPrecheck(tenantId: string, m: MigrationRow, deps: Partial<PrecheckDeps> = {}, roles?: Pick<StepRoles, "awsEnv">): Promise<PrecheckItem[]> {
   const env = deps.env ?? process.env;
   const [envs, db] = await Promise.all([envInfo(tenantId, m), sourceDbFacts(env)]);
-  const checks = await runCloudPrecheck({ ...envs, ...db }, { exec: spawnExec, ...deps, env });
+  const sideEnv = deps.sideEnv ?? precheckSideEnv(roles, env);
+  const checks = await runCloudPrecheck({ ...envs, ...db }, { exec: spawnExec, ...deps, env, ...(sideEnv ? { sideEnv } : {}) });
   return toPrecheckItems(checks).map((i) => PrecheckItem.parse(i));
+}
+
+// TA3 (설계 27번 3.6): PLAN_IR=v2 면 v2 명세를 도착 capability 와 대조한다. 못 그리는 칸·사람 확인 → block (명세 검토로 되돌림)
+//   깃발 off 면 빈 목록 (지금 점검 그대로)
+export async function v2PrecheckFor(tenantId: string, m: MigrationRow, env: NodeJS.ProcessEnv = process.env): Promise<PrecheckItem[]> {
+  if (!planIrV2(env)) return [];
+  return withTenant(tenantId, async (tx) => {
+    const row = await latestAcceptedSpecV2(tx, m.id);
+    const e = await tx.query(`SELECT provider FROM environments WHERE id=$1`, [m.targetEnvId]);
+    if (!row || !e.rows[0]) return [];   // 명세·도착이 없으면 계획 단계 재확인이 막는다
+    return v2PrecheckItems(e.rows[0].provider, row);
+  });
 }
 
 export async function handlePrecheck(raw: unknown) {
@@ -60,8 +81,8 @@ export async function handlePrecheck(raw: unknown) {
   return runStep(job, {
     name: "precheck",
     expect: "prechecking",
-    work: async (j, m) => withStepRoles("precheck", j, m, async () => {
-      const items = await realPrecheck(j.tenantId, m);
+    work: async (j, m) => withStepRoles("precheck", j, m, async (roles) => {
+      const items = [...await realPrecheck(j.tenantId, m, {}, roles), ...await v2PrecheckFor(j.tenantId, m)];
       const precheckBlockers = items.filter((i) => i.level === "block").length;
       const precheckWarnings = items.filter((i) => i.level === "warn").length;
       const mock = process.env.MOCK_PRECHECK === "1";

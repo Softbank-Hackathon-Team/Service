@@ -108,6 +108,8 @@ export function checkV2(spec: AppSpecV2, opts: CheckV2Options = {}): CheckV2Resu
     const replicas = props.replicas;
     if (kind === "service" && isObj(replicas) && typeof replicas.min === "number" && typeof replicas.max === "number" && replicas.min > replicas.max)
       errors.push(`${id}.replicas min > max`);
+    // 0으로 줄여 둔 서비스: 막지 않고 검토 표시 (도착에서도 0으로 뜨는 게 재현이지만 사람이 알아야 함)
+    if (kind === "service" && isObj(replicas) && replicas.max === 0 && !opts.legacy) reviews.push(`${id}.replicas 0 (출발에서 0으로 줄여 둔 서비스)`);
 
     if (kind === "service" || kind === "job") {
       const image = props.image;

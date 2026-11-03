@@ -2,6 +2,7 @@ import { boss, startBoss, startMetricsServerNear, workOptions, concurrencyOf, LI
 import { HANDLERS } from "./jobs/index.js";
 import { jobAttempt } from "./jobs/_step.js";
 import { registerLeaseJobs } from "./lease/index.js";
+import { registerVerifySweep } from "./jobs/verify-sweep.js";
 import { instrument, log, workerRegistry } from "./instrument.js";
 import { startTempRoleSweeper } from "./platform.js";
 import { gitopsPreflight } from "./gitops/index.js";
@@ -55,6 +56,7 @@ for (const [queue, handle] of Object.entries(HANDLERS)) {
   });
 }
 await registerLeaseJobs(); // 생존 신호·청소 작업
+await registerVerifySweep(); // L4b: 연결 주기 재확인 (VERIFY_CRON, 기본 1시간)
 startTempRoleSweeper();    // 임시 자격 만료·회수 요청 처리 (보안)
 
 log.info({ queues: Object.keys(HANDLERS), metrics_port: METRICS_PORT, poll_sec: workOptions().pollingIntervalSeconds, listen_notify: LISTEN_NOTIFY }, "worker ready");

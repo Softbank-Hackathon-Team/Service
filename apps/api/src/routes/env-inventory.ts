@@ -1,9 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { AppSpec, MigrationStatus, Provider, type MigrationStatus as Status } from "@svc/contracts";
+import { AppSpec, AppSpecV2, MigrationStatus, Provider, type MigrationStatus as Status } from "@svc/contracts";
 import { SPEC_DRAFT_KEY, withTenant } from "@svc/core";
-import { aws, azure, cachedInventory, chooseRunner, gcp, onprem, serviceMap, stubStatus, type RunnerStatus } from "@svc/adapters";
+import { aws, azure, cachedInventory, chooseRunner, gcp, onprem, resourceTypesV2For, serviceMap, stubStatus, type RunnerStatus } from "@svc/adapters";
 import { EnvironmentStatus, errors } from "./responses.js";
 import { IdParam, found, isoUtc } from "./kit.js";
 
@@ -89,17 +89,29 @@ export interface MigrationRow {
   applyEvidence: "runner" | "terraform" | "stub" | null;   // provisioning → deploying 감사 줄에 무엇이 있었나
   cleanupRemoved: string[] | null;                 // 정리(→completed)·롤백 때 걷었다고 적힌 것
   reachedPct: number | null;                       // 전환이 남긴 마지막 도달 % (0~100)
+  // TA11: 최신 계획서 irVersion(없으면 null = v1) + 같은 판의 spec_v2->'spec'(칸이 없거나 NULL 이면 null). 둘 다 선택 칸 → 예전 호출 그대로
+  planIrVersion?: string | null;
+  specV2?: unknown;
 }
 
 const TYPES: Record<Provider, (s: AppSpec) => string[]> = {
   aws: aws.resourceTypes, gcp: gcp.resourceTypes, onprem: onprem.resourceTypes, azure_mock: azure.resourceTypes,
 };
 
+// TA11 (설계 27번 A11): 계획서가 v2(irVersion "2")이고 v2 명세가 있으면 "생길 자원"은 v2 Builder 기준. 아니면 v1 그대로 (깃발 off = 지금 동작)
+export function targetTypesOf(m: MigrationRow, s: AppSpec): string[] {
+  if (m.planIrVersion === "2") {
+    const v2 = AppSpecV2.safeParse(m.specV2);
+    if (v2.success) return resourceTypesV2For(m.targetProvider, v2.data);
+  }
+  return TYPES[m.targetProvider](s);
+}
+
 // 종류 → (분류, 이름표). 모르는 종류는 network 로 두고 종류 이름 그대로
 const KIND: Record<string, [z.infer<typeof ResourceCategory>, string]> = {
   kubernetes_namespace_v1: ["compute", "k8s 네임스페이스"],
   "core/namespaces": ["compute", "k8s 네임스페이스"], "core/resourcequotas": ["compute", "자원 한도(ResourceQuota)"],
-  "apps/deployments": ["compute", "k8s Deployment"], "core/services": ["network", "k8s Service"],
+  "apps/deployments": ["compute", "k8s Deployment"], "batch/cronjobs": ["compute", "k8s CronJob"], "core/services": ["network", "k8s Service"],
   "networking.k8s.io/networkpolicies": ["network", "네트워크 정책"], "core/serviceaccounts": ["identity", "서비스 계정(k8s)"],
   "external-secrets.io/externalsecrets": ["secret", "외부 비밀 연결"], "postgresql.cnpg.io/clusters": ["database", "CNPG PostgreSQL"],
   aws_db_instance: ["database", "RDS PostgreSQL"], aws_db_parameter_group: ["database", "RDS 파라미터 그룹"],
@@ -180,7 +192,7 @@ export function targetResources(m: MigrationRow, s: AppSpec): Res[] {
   const evInfra: z.infer<typeof Evidence> = applied ? m.applyEvidence! : "adapter";
 
   const out: Res[] = [];
-  for (const type of TYPES[m.targetProvider](s)) {
+  for (const type of targetTypesOf(m, s)) {
     if (type.startsWith("data.")) continue;    // 읽기만 하는 data 원본은 자원이 아니다
     const [category, base] = KIND[type] ?? ["network", type];
     const label = category === "database" && /RDS PostgreSQL|Cloud SQL PostgreSQL|CNPG|Flexible Server$/.test(base) ? dbLabel(base, s) : base;
@@ -317,6 +329,10 @@ const MIGRATION_SQL = (where: string, limit: string) =>
           se.name AS "sourceName", se.provider AS "sourceProvider", te.name AS "targetName", te.provider AS "targetProvider",
           (SELECT s.spec FROM spec_versions s WHERE s.migration_id = m.id AND NOT (s.field_meta ? $2)
             ORDER BY s.version DESC LIMIT 1) AS spec,
+          -- TA11: to_jsonb(s) 로 읽어 spec_v2 칸(0023)이 아직 없는 DB 에서도 NULL. 계획서 irVersion 은 PlanDoc 칸(A3)이 없으면 NULL
+          (SELECT to_jsonb(s)->'spec_v2'->'spec' FROM spec_versions s WHERE s.migration_id = m.id AND NOT (s.field_meta ? $2)
+            ORDER BY s.version DESC LIMIT 1) AS "specV2",
+          (SELECT p.plan_doc->>'irVersion' FROM plans p WHERE p.migration_id = m.id ORDER BY p.created_at DESC LIMIT 1) AS "planIrVersion",
           (SELECT CASE WHEN a.detail ? 'terraform' THEN 'terraform' WHEN a.detail ? 'runner' THEN 'runner' ELSE 'stub' END
              FROM audit_events a WHERE a.target = m.id::text AND a.detail->>'from' = 'provisioning' AND a.detail->>'to' = 'deploying'
             ORDER BY a.seq DESC LIMIT 1) AS "applyEvidence",

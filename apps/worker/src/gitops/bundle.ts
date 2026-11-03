@@ -28,7 +28,8 @@ export const clusterName = (b: BundleRef) => (DELIVERY[b.env] === "agent-pull" ?
 export const argoAppName = (b: BundleRef) => `${b.tenant}-${b.app}-${b.env}`;
 
 // 자리표시 채우기. 승인 때 만든 값의 "<tf-output:키>", "<env:키>"만 바꾼다. 어댑터는 다시 부르지 않는다
-const PH = /<(tf-output|env):([A-Za-z0-9_]+)>/g;
+// TA3: 키에 . 과 - 도 받는다 (v2 link.<IR id>.<출력>, 예: link.shop-db.host). 예전 키([A-Za-z0-9_]+)는 그대로 맞는다
+const PH = /<(tf-output|env):([A-Za-z0-9_.-]+)>/g;
 export interface FillFacts { tf: Record<string, string>; env: Record<string, string | undefined> }
 
 export function fillPlaceholders(values: HelmValues, f: FillFacts): { values: HelmValues; missing: string[] } {

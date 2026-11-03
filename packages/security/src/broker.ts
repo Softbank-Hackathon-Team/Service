@@ -130,7 +130,9 @@ export function createTempRoleBroker(d: BrokerDeps) {
       // Z47: 진짜 AWS 발급기는 ExternalId 없이 고객 역할을 빌리지 않는다 (혼동된 대리인, 위협 모델 T-ROLE-2).
       //   ExternalId 가 없으면 다른 고객이 우리 플랫폼 계정을 믿는 역할 ARN 을 적어 넣어 남의 계정을 조작하게 만들 수 있다.
       //   Mock 발급기는 막지 않는다 (지금 워커 연결은 전부 Mock, resolveEnv 가 ExternalId 를 아직 안 읽는다 → platform.ts TODO)
-      if (req.provider === "aws" && !issuer.mock && !env.externalId)
+      // L4: 환경별로 진짜/가짜가 갈리는 발급기(perEnvAwsIssuer)는 여기서 정해진다
+      const mock = issuer.mockFor?.(env) ?? issuer.mock;
+      if (req.provider === "aws" && !mock && !env.externalId)
         return deny(req, new TempRoleDenied("ROLE_NO_EXTERNAL_ID", "AWS 고객 역할을 빌릴 때 ExternalId 가 필요하다 (environments.external_id)"));
       const sessionName = `svc-${req.purpose}-${req.tenantId.slice(0, 8)}-${(req.migrationId ?? "observe").slice(0, 8)}-${++seq}`;
       let out;
@@ -146,13 +148,13 @@ export function createTempRoleBroker(d: BrokerDeps) {
       await ledger.record({ ref, tenantId: req.tenantId, migrationId: req.migrationId ?? null, envId: req.envId,
         provider: req.provider, purpose: req.purpose, stage: req.stage ?? null, roleRef: env.roleRef, owner,
         issuedAt: t, expiresAt: out.expiresAt,
-        step: o.step ?? null, actionsCount: req.actions.length, requestedTtlSec: parsed.ttlSec, stub: issuer.mock,
+        step: o.step ?? null, actionsCount: req.actions.length, requestedTtlSec: parsed.ttlSec, stub: mock,
         renewedFrom: o.renewedFrom ?? null, renewSeq: o.seq ?? 0 });
       vault.put({ ref, tenantId: req.tenantId, migrationId: req.migrationId ?? null, provider: req.provider,
         expiresAt: out.expiresAt.getTime(), material: out.material });
       const cred = TempCredential.parse({
         provider: req.provider, purpose: req.purpose, roleRef: env.roleRef, sessionName, actions: req.actions,
-        issuedAt: t.toISOString(), expiresAt: out.expiresAt.toISOString(), credentialRef: ref, stub: issuer.mock,
+        issuedAt: t.toISOString(), expiresAt: out.expiresAt.toISOString(), credentialRef: ref, stub: mock,
         ...(req.stage ? { stage: req.stage } : {}),
         ...(out.ttlSec !== parsed.ttlSec ? { ttlAdjustedSec: out.ttlSec } : {}),
       });
@@ -161,7 +163,7 @@ export function createTempRoleBroker(d: BrokerDeps) {
       await d.audit(req.tenantId, {
         actor: "worker", action: "temp_role.issued", target: req.migrationId ?? req.envId, result: "ok",
         detail: { credentialRef: ref, provider: req.provider, purpose: req.purpose, stage: req.stage ?? null,
-          roleRef: env.roleRef, expiresAt: cred.expiresAt, actions: req.actions.length, stub: issuer.mock,
+          roleRef: env.roleRef, expiresAt: cred.expiresAt, actions: req.actions.length, stub: mock,
           ...(o.step ? { step: o.step } : {}),
           ...(o.renewedFrom ? { renewedFrom: o.renewedFrom, renewSeq: o.seq } : {}),
           owner, issuer: out.detail },

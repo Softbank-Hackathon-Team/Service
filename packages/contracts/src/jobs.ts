@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { BuildPlan } from "./build.js";
 
 // 큐 이름. pg-boss 큐 선언과 작업 등록이 이 목록 하나를 본다
 export const QUEUES = {
@@ -13,10 +14,12 @@ export const QUEUES = {
   cutover: "cutover",
   cleanup: "cleanup",
   rollback: "rollback",
+  imageBuild: "image-build",
   securityScan: "security-scan",
   agentRun: "agent-run",
   leaseReaper: "lease-reaper",
   idempotencyCleanup: "idempotency-cleanup",
+  verifySweep: "verify-sweep",          // L4b: 연결 주기 재확인 훑기 (일정이 냄 → 환경마다 verify-connection periodic)
 } as const;
 export type QueueName = typeof QUEUES[keyof typeof QUEUES];
 
@@ -51,6 +54,22 @@ export const VerifyConnectionJob = EnvJob.extend({
 }).strict();
 export type VerifyConnectionJob = z.infer<typeof VerifyConnectionJob>;
 
+// 이미지 빌드 작업 (설계 23번 3.3). 계획 승인 뒤 provisioning 에서 apply 앞에 서비스마다 하나.
+// 빌드 계획(BuildPlan)은 승인된 명세에서 온 값이지만, 워커는 이 내용을 믿지 않고 명세를 DB에서 다시 읽는다 (STUB 단계에선 아직 읽지 않음)
+export const ImageBuildJob = PlanJob.extend({
+  serviceId: z.string().min(1),
+  build: BuildPlan,
+}).strict();
+export type ImageBuildJob = z.infer<typeof ImageBuildJob>;
+
+// 빌드 결과: 도착 레지스트리에 올린 이미지의 digest. 명세 새 판에 기록하는 값
+export const ImageBuildResult = z.object({
+  serviceId: z.string().min(1),
+  digest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  builtFrom: z.object({ repo: z.string(), commit: z.string(), method: z.enum(["dockerfile", "buildpacks"]) }).strict(),
+}).strict();
+export type ImageBuildResult = z.infer<typeof ImageBuildResult>;
+
 export const AgentRunJob = JobBase.extend({
   agentRunId: z.uuid(),
 }).strict();
@@ -68,6 +87,7 @@ export const JOB_SCHEMAS = {
   "cutover": MigrationJob,
   "cleanup": MigrationJob,
   "rollback": MigrationJob,
+  "image-build": ImageBuildJob,
   "security-scan": EnvJob,
   "agent-run": AgentRunJob,
 } as const;

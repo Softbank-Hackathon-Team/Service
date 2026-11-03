@@ -1,8 +1,11 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { AgentReportAccepted, AgentReportList, ApiError, envNumber, type AgentReport } from "@svc/contracts";
-import { DomainError, pool, withTenant } from "@svc/core";
+import {
+  AgentReportAccepted, AgentReportList, ApiError, canTransition, envNumber,
+  type AgentReport, type ConnectionStatus, type Provider,
+} from "@svc/contracts";
+import { advanceConnection, DomainError, pool, withTenant, type Tx } from "@svc/core";
 import {
   acceptAgentReport, AgentReportRejected, AGENT_HEADERS, deriveAgentSecret, MIN_MASTER_KEY_LEN,
   type AgentKeyRegistry,
@@ -15,7 +18,7 @@ import { IdParam, found, isoUtc } from "./kit.js";
 //   GET  /api/v1/environments/:id/agent-reports  사람이 보는 받은 보고 (회사 벽 안)
 // 받는 순서: 키 찾기(DB 함수, 회사 모름) → 서명·시각·모양(acceptAgentReport) → 그 회사의 withTenant 안에서 넣기.
 // 재전송은 DB 고유 색인(key_id, signature)이 막는다 → 409 AGENT_REPLAY
-// heartbeat 가 오면 그 환경의 연결 상태를 connected + last_verified_at 지금으로 바꾼다 (온프레 "모름" 대신 실측)
+// heartbeat 가 오면 그 환경의 연결 상태를 connected + last_verified_at 지금으로 바꾼다 (온프레 "모름" 대신 실측). L6: advanceConnection 으로
 
 declare module "fastify" {
   interface FastifyRequest { agentAccepted?: { tenantId: string; envId: string; keyId: string; signature: string; report: AgentReport } }
@@ -47,6 +50,22 @@ export function pgAgentKeyRegistry(env: NodeJS.ProcessEnv = process.env): AgentK
   };
 }
 
+// L6: heartbeat → 연결 상태. 상태 변경은 advanceConnection 으로만 (전이 표: draft·고객 대기 → connected 는 온프레 전용).
+//   이미 connected 면 상태는 그대로 두고 확인 시각만 (DRAFT(ai): 30초마다 감사 줄을 쌓지 않으려고. 상태 칸은 안 건드린다)
+//   표에 없는 길(disconnected·expired·failed → connected)이면 상태를 살리지 않는다. 보고 자체는 저장된다
+async function heartbeatConnection(tx: Tx, a: { tenantId: string; envId: string; keyId: string }) {
+  const e = (await tx.query<{ provider: Provider; connection_status: ConnectionStatus }>(
+    "SELECT provider, connection_status FROM environments WHERE id = $1 FOR UPDATE", [a.envId])).rows[0];
+  if (!e) return;
+  if (e.connection_status === "connected") {
+    await tx.query("UPDATE environments SET last_verified_at = now(), verify_failures = 0 WHERE id = $1", [a.envId]);
+    return;
+  }
+  if (!canTransition(e.provider, e.connection_status, "connected")) return;
+  await advanceConnection(tx, a.tenantId, a.envId, "connected", { touchVerified: true, failures: 0,
+    audit: { actor: `agent:${a.keyId}`, action: "env.agent_heartbeat" } });
+}
+
 export const staleSec = (env: NodeJS.ProcessEnv = process.env) => Math.max(1, envNumber(env.AGENT_STALE_SEC, 120) || 120);
 
 export function pgAgentReportStore(env: NodeJS.ProcessEnv = process.env): AgentReportStore {
@@ -62,8 +81,7 @@ export function pgAgentReportStore(env: NodeJS.ProcessEnv = process.env): AgentR
         [a.tenantId, a.envId, a.keyId, a.report.kind, a.signature, a.report.sentAt,
          a.report.kind === "deploy" ? a.report.migrationId : null, JSON.stringify(a.report)]);
       if (ins.rowCount === 0) return "replay" as const;
-      if (a.report.kind === "heartbeat")
-        await tx.query(`UPDATE environments SET connection_status = 'connected', last_verified_at = now() WHERE id = $1`, [a.envId]);
+      if (a.report.kind === "heartbeat") await heartbeatConnection(tx, a);
       return ins.rows[0] as { id: string; receivedAt: string };
     }),
     list: (tenantId, envId, o) => withTenant(tenantId, async (tx) => {

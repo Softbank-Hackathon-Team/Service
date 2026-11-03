@@ -1,3 +1,4 @@
+{{- /* A4: workloads 일 땐 ingress.service 로 받을 서비스 이름을 지정 (없으면 옛 값 app.name) */}}
 {{- /* 들어오는 길 두 가지. cloudflared: 인바운드 0 (Cloudflare LB 원본 = 터널). lb: ALB / GCE Ingress */}}
 {{- if eq .Values.ingress.mode "cloudflared" }}
 apiVersion: apps/v1
@@ -16,7 +17,7 @@ spec:
       containers:
         - name: cloudflared
           image: cloudflare/cloudflared:2025.9.1
-          args: ["tunnel", "--no-autoupdate", "run", "--url", {{ printf "http://%s:80" .Values.app.name | quote }}]
+          args: ["tunnel", "--no-autoupdate", "run", "--url", {{ printf "http://%s:80" (.Values.ingress.service | default .Values.app.name) | quote }}]
           env:
             - name: TUNNEL_TOKEN
               valueFrom: { secretKeyRef: { name: {{ .Values.ingress.tunnelTokenSecret }}, key: token } }
@@ -43,5 +44,5 @@ spec:
         paths:
           - path: /
             pathType: Prefix
-            backend: { service: { name: {{ .Values.app.name }}, port: { number: 80 } } }
+            backend: { service: { name: {{ .Values.ingress.service | default .Values.app.name }}, port: { number: 80 } } }
 {{- end }}

@@ -21,8 +21,8 @@ export { unexpectedPlanTypes, type Purpose } from "./common/actions.js";
 export { DEMO_INVENTORY, DEMO_INVENTORY_V2, DEMO_SPEC } from "./common/fixtures.js";
 export type { Target, TargetExtras } from "./common/target.js";
 export { realTerraformEnabled, iacMockEnabled, findWorkDir, readImported, type ImportedInfra, TENANT_DIR_RE, createRealTerraformRunner, fillTfVars, factsFromEnv, factEnvName, parseOutputs, childEnv,
-  workRootOf, workDirOf, PLAN_ONLY_ID, planOnlyId, spawnExec, REAL_MODULE_DIR, DEFAULT_MODULE_ROOT, type Exec, type ExecResult, type RealApplyResult, type RealTerraformRunner } from "./terraform/real-runner.js";
-export { dbNetworkFromEnv, withDbNetwork, cidrProblem, DbNetworkError, type DbNetworkSummary } from "./terraform/db-network.js";
+  workRootOf, workDirOf, PLAN_ONLY_ID, planOnlyId, spawnExec, REAL_MODULE_DIR, REAL_MODULE_BASE_V2, V2_ROOT_DIR, isV2WorkDir, type TfLayout, DEFAULT_MODULE_ROOT, type Exec, type ExecResult, type RealApplyResult, type RealTerraformRunner } from "./terraform/real-runner.js";
+export { dbNetworkFromEnv, withDbNetwork, withDbNetworkV2, cidrProblem, DbNetworkError, type DbNetworkSummary } from "./terraform/db-network.js";
 // Z86: 환경 실자원 읽기(읽기 전용 CLI) + 클라우드 서비스 대응표
 export { readInventory, cachedInventory, clearInventoryCache, inventoryToStatus, itemState, type CloudInventory, type InventoryGroup, type InventoryItem, type InventoryDeps } from "./inventory.js";
 export { serviceMap, categoryOfType, SERVICE_NAME, SOURCE_WORKLOAD, METHOD_LABEL, type ServiceMapRow, type ServiceCategory, type MoveMethod, type PlanStepId } from "./common/service-map.js";
@@ -31,6 +31,22 @@ export { discoverSource, inventoryForAudit, discoverAws, discoverGcp, discoverOn
 export { readK8sApp, readK8sNamespace, type K8sRead, type K8sNamespaceRead, type K8sNamespaceOpts } from "./discover/k8s.js";
 // I2: k8s 원본 타입 + 종류 문자열
 export * from "./import/raw-k8s.js";
-export { mockSeed, CliError, type CliDeps } from "./common/cli.js";
+export { mockSeed, CliError, classifyCliError, sourceFail, type CliErrorKind, type CliDeps } from "./common/cli.js";
 export { runCloudPrecheck, toPrecheckItems, mockPrecheckEnabled, mockChecks, cliProblem, tcpProbe, apiEndpoint, AWS_QUOTAS, GCP_APIS, CLOUDSQL_PG_MAJORS_DEFAULT, MIN_REPL_PG_MAJOR,
   type CloudCheck, type Verdict, type PrecheckEnvInfo, type PrecheckInput, type PrecheckDeps, type CloudProvider } from "./precheck/cloud-precheck.js";
+// L4: 연결 확인 (빌린 관찰 역할로 고객 AWS 읽어 보기)
+export { verifyAwsObserve, envFor, trustHasExternalId, type VerifyAwsInput, type VerifyAwsResult } from "./verify/aws.js";
+// I3a: 공통 명세 v2 가져오기 (원본 → v2, v2 → v1 투영)
+export { normalizeV2, KIND_MAPPERS, EVIDENCE_TYPES, ENVIRONMENT_TYPES } from "./import/pipeline.js";
+export { projectV1, rebuildFromV2 } from "./import/project-v1.js";
+export type { SourceReader, KindMapper, RawItem, MappedComponent, NativeRef, ProjectionEnv, ProjectionSource, NormalizeV2Options, NormalizeV2Output } from "./import/types.js";
+// TA1: 도착 Builder v2 (IR v2 → 고정 루트 Terraform 변수 + workloads[] Helm 값)
+export { targetBuilderFor, awsTarget, gcpTarget, onpremTarget, azureMockTarget, rdsClassFor, cloudSqlTierFor, requirementsV2, v2Blockers, V2_FIELD_COVERAGE,
+  K8S_RENDER_CAPS, UNSUPPORTED_V2, LINK_OUTPUT_UNKNOWN, identitiesOf, resourceTypesV2For, type FieldRule, type IdentityPlan } from "./target/index.js";
+export { verifyGcpObserve, gcpEnvFor, gcpReasonOf, type VerifyGcpInput, type VerifyGcpResult } from "./verify/gcp.js";   // L7i
+// L5b: 빌린 AWS 실행 자격 → terraform 자식 프로세스 (credential_process 임시 파일)
+export { borrowedAwsCreds, type BorrowedAwsCreds, type AwsSessionKeys } from "./terraform/borrowed-aws.js";
+// TA10: Azure Mock 도착 Builder v2 (capability 표 + mock plan)
+export { azureMockPlanV2, azureMockOutputsV2, azureResourceTypesV2, type AzureMockPlanV2 } from "./target/index.js";
+// TA3: 계획·적용 연결 (PLAN_IR=v2) — v2 명세 출처 고르기·precheck 대조·출력 펼치기·흉내 출력
+export { resolveSpecV2, specV2OrThrow, specV2ForPlan, v2PrecheckItems, flattenTfOutputsV2, stubTfOutputsV2, NEEDS_HUMAN, type SpecV2Source, type ResolvedSpecV2 } from "./target/plan-v2.js";

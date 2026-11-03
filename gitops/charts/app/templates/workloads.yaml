@@ -1,0 +1,149 @@
+{{- /* A4 DRAFT(ai): workloads[] — 서비스·잡 여러 개를 한 차트(= Argo 앱 1개)로. 값이 없으면 이 파일은 아무것도 안 그린다 (옛 단일 값 길).
+       값 칸: name, kind(service|job), image, command, args, env, envFrom, ports, probes{readiness,liveness,startup}, resources,
+              replicas, scale{min,max,cpuPct}, serviceAccount{name,annotations}, securityContext{pod,container},
+              initContainers, sidecars(injected:true 는 안 그림), configs[{name,data,mountPath}], secretMounts[{name,secretName,mountPath}],
+              pvcs[{name,size,storageClassName,mountPath}], volumes, volumeMounts,
+              job{schedule,concurrencyPolicy,suspend,backoffLimit,restartPolicy}, service{name}
+       없는 칸은 키 자체를 안 그린다 */}}
+{{- $seenSA := dict }}
+{{- range $w := .Values.workloads }}
+{{- $sa := $w.serviceAccount | default dict }}
+{{- if and $sa.name (not (hasKey $seenSA $sa.name)) }}
+{{- $_ := set $seenSA $sa.name true }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $sa.name }}
+  labels: {{- include "app.labels" $ | nindent 4 }}
+  {{- with $sa.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- range $c := ($w.configs | default list) }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ printf "%s-%s" $w.name $c.name }}
+  labels: {{- include "app.wlabels" (dict "root" $ "w" $w) | nindent 4 }}
+data: {{- toYaml ($c.data | default dict) | nindent 2 }}
+{{- end }}
+{{- range $p := ($w.pvcs | default list) }}
+---
+{{- /* 빈 PVC. 출발 데이터는 안 따라온다 (어댑터가 경고 줄을 띄움) */}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ printf "%s-%s" $w.name $p.name }}
+  labels: {{- include "app.wlabels" (dict "root" $ "w" $w) | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with $p.storageClassName }}
+  storageClassName: {{ . }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $p.size | quote }}
+{{- end }}
+{{- if eq ($w.kind | default "service") "job" }}
+{{- $j := $w.job | default dict }}
+{{- if $j.schedule }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ $w.name }}
+  labels: {{- include "app.wlabels" (dict "root" $ "w" $w) | nindent 4 }}
+spec:
+  schedule: {{ $j.schedule | quote }}
+  {{- with $j.concurrencyPolicy }}
+  concurrencyPolicy: {{ . }}
+  {{- end }}
+  {{- if hasKey $j "suspend" }}
+  suspend: {{ $j.suspend }}
+  {{- end }}
+  jobTemplate:
+    spec:
+      {{- if hasKey $j "backoffLimit" }}
+      backoffLimit: {{ $j.backoffLimit }}
+      {{- end }}
+      template:
+        metadata:
+          labels: {{- include "app.wlabels" (dict "root" $ "w" $w) | nindent 12 }}
+        spec: {{- include "app.wpod" (dict "root" $ "w" $w "restart" ($j.restartPolicy | default "OnFailure")) | nindent 10 }}
+{{- else }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $w.name }}
+  labels: {{- include "app.wlabels" (dict "root" $ "w" $w) | nindent 4 }}
+spec:
+  {{- if hasKey $j "backoffLimit" }}
+  backoffLimit: {{ $j.backoffLimit }}
+  {{- end }}
+  template:
+    metadata:
+      labels: {{- include "app.wlabels" (dict "root" $ "w" $w) | nindent 8 }}
+    spec: {{- include "app.wpod" (dict "root" $ "w" $w "restart" ($j.restartPolicy | default "OnFailure")) | nindent 6 }}
+{{- end }}
+{{- else }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $w.name }}
+  labels: {{- include "app.wlabels" (dict "root" $ "w" $w) | nindent 4 }}
+spec:
+  {{- if and (hasKey $w "replicas") (not $w.scale) }}
+  replicas: {{ $w.replicas }}
+  {{- end }}
+  {{- with $.Values.progressDeadlineSeconds }}
+  progressDeadlineSeconds: {{ . }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $.Values.app.name }}
+      app.kubernetes.io/component: {{ $w.name | quote }}
+  template:
+    metadata:
+      labels: {{- include "app.wlabels" (dict "root" $ "w" $w) | nindent 8 }}
+    spec: {{- include "app.wpod" (dict "root" $ "w" $w) | nindent 6 }}
+{{- if $w.ports }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ ($w.service | default dict).name | default $w.name }}
+  labels: {{- include "app.wlabels" (dict "root" $ "w" $w) | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: {{ $.Values.app.name }}
+    app.kubernetes.io/component: {{ $w.name | quote }}
+  ports:
+    {{- range $w.ports }}
+    - name: {{ .name | default "http" }}
+      port: {{ .servicePort | default .containerPort }}
+      targetPort: {{ .containerPort }}
+    {{- end }}
+{{- end }}
+{{- with $w.scale }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $w.name }}
+  labels: {{- include "app.wlabels" (dict "root" $ "w" $w) | nindent 4 }}
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: {{ $w.name }} }
+  minReplicas: {{ .min }}
+  maxReplicas: {{ .max }}
+  {{- with .cpuPct }}
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: {{ . }} } }
+  {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,240 @@
+{
+  "app": {
+    "name": "shop"
+  },
+  "workloads": [
+    {
+      "name": "web",
+      "kind": "service",
+      "image": "<env:registryHost>/platform/t1/shop-web@sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "ports": [
+        {
+          "name": "http",
+          "containerPort": 8080,
+          "servicePort": 80
+        }
+      ],
+      "env": [
+        {
+          "name": "API_URL",
+          "value": "http://shop-api:80"
+        }
+      ],
+      "probes": {
+        "readiness": {
+          "httpGet": {
+            "path": "/healthz",
+            "port": "http"
+          }
+        },
+        "liveness": {
+          "httpGet": {
+            "path": "/healthz",
+            "port": "http"
+          },
+          "initialDelaySeconds": 10
+        }
+      },
+      "resources": {
+        "requests": {
+          "cpu": "100m",
+          "memory": "128Mi"
+        },
+        "limits": {
+          "memory": "256Mi"
+        }
+      },
+      "replicas": 2,
+      "serviceAccount": {
+        "name": "shop-web",
+        "annotations": {}
+      },
+      "securityContext": {
+        "container": {
+          "runAsNonRoot": true,
+          "readOnlyRootFilesystem": true
+        }
+      }
+    },
+    {
+      "name": "api",
+      "kind": "service",
+      "image": "<env:registryHost>/platform/t1/shop-api@sha256:abababababababababababababababababababababababababababababababab",
+      "command": [
+        "node"
+      ],
+      "args": [
+        "server.js"
+      ],
+      "ports": [
+        {
+          "name": "http",
+          "containerPort": 3000,
+          "servicePort": 80
+        }
+      ],
+      "env": [
+        {
+          "name": "DB_HOST",
+          "value": "<tf-output:link.shop-db.host>"
+        },
+        {
+          "name": "DB_PORT",
+          "value": "5432"
+        },
+        {
+          "name": "DB_USER",
+          "value": "app"
+        },
+        {
+          "name": "DB_PASSWORD",
+          "valueFrom": {
+            "secretKeyRef": {
+              "name": "shop-db-app",
+              "key": "password"
+            }
+          }
+        },
+        {
+          "name": "JWT_SECRET",
+          "valueFrom": {
+            "secretKeyRef": {
+              "name": "shop-secrets",
+              "key": "JWT_SECRET"
+            }
+          }
+        }
+      ],
+      "probes": {
+        "readiness": {
+          "httpGet": {
+            "path": "/ready",
+            "port": "http"
+          }
+        }
+      },
+      "scale": {
+        "min": 2,
+        "max": 6,
+        "cpuPct": 70
+      },
+      "resources": {
+        "requests": {
+          "cpu": "250m",
+          "memory": "256Mi"
+        },
+        "limits": {
+          "memory": "512Mi"
+        }
+      },
+      "serviceAccount": {
+        "name": "shop-api",
+        "annotations": {
+          "eks.amazonaws.com/role-arn": "<tf-output:identity_role_arns.api>"
+        }
+      },
+      "configs": [
+        {
+          "name": "app-config",
+          "data": {
+            "app.json": "{\"feature\":true}"
+          },
+          "mountPath": "/etc/app"
+        }
+      ],
+      "secretMounts": [
+        {
+          "name": "tls",
+          "secretName": "shop-tls",
+          "mountPath": "/etc/tls"
+        }
+      ],
+      "pvcs": [
+        {
+          "name": "cache",
+          "size": "1Gi",
+          "mountPath": "/var/cache/app"
+        }
+      ],
+      "initContainers": [
+        {
+          "name": "wait-db",
+          "image": "busybox:1.36",
+          "command": [
+            "sh",
+            "-c",
+            "true"
+          ]
+        }
+      ],
+      "sidecars": [
+        {
+          "name": "log",
+          "image": "busybox:1.36",
+          "command": [
+            "sh",
+            "-c",
+            "sleep infinity"
+          ]
+        },
+        {
+          "name": "mesh",
+          "image": "istio/proxyv2",
+          "injected": true
+        }
+      ]
+    },
+    {
+      "name": "nightly",
+      "kind": "job",
+      "image": "<env:registryHost>/platform/t1/shop-api@sha256:abababababababababababababababababababababababababababababababab",
+      "command": [
+        "node",
+        "job.js"
+      ],
+      "job": {
+        "schedule": "0 3 * * *",
+        "concurrencyPolicy": "Forbid",
+        "suspend": false,
+        "backoffLimit": 2
+      },
+      "serviceAccount": {
+        "name": "shop-api",
+        "annotations": {
+          "eks.amazonaws.com/role-arn": "<tf-output:identity_role_arns.api>"
+        }
+      }
+    }
+  ],
+  "externalSecrets": {
+    "store": {
+      "kind": "ClusterSecretStore",
+      "name": "aws-secrets-manager"
+    },
+    "refs": [
+      {
+        "name": "JWT_SECRET",
+        "key": "jwt"
+      }
+    ]
+  },
+  "database": {
+    "mode": "external",
+    "host": "<tf-output:link.shop-db.host>",
+    "port": 5432,
+    "name": "shop",
+    "passwordSecret": "<tf-output:link.shop-db.password_secret>",
+    "passwordProperty": "password"
+  },
+  "ingress": {
+    "mode": "cloudflared",
+    "className": "",
+    "hostname": "shop.example.com",
+    "tunnelTokenSecret": "cloudflared-token",
+    "service": "web"
+  },
+  "labels": {
+    "managed-by": "platform",
+    "tenant": "t1"
+  }
+}

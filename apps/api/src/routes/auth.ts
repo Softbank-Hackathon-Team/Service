@@ -3,6 +3,7 @@ import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { withTenant } from "@svc/core";
+import { NotifySession, SESSION_EVENTS_CHANNEL } from "@svc/contracts";
 import { sendError } from "../plugins/errors.js";
 import { errors } from "./responses.js";
 import { signAccess, jwtSecret } from "../auth/jwt.js";
@@ -149,8 +150,14 @@ export async function authRoutes(app: FastifyInstance) {
     if (tok) {
       const row = await findSession(tok.sid);
       if (row && !row.revoked_at && refreshMatches(tok.secret, row.refresh_hash)) {
-        await withTenant(row.tenant_id, (tx) => tx.query(
-          `UPDATE auth_sessions SET revoked_at = now(), revoked_reason = 'logout' WHERE id = $1 AND revoked_at IS NULL`, [tok.sid]));
+        await withTenant(row.tenant_id, async (tx) => {
+          await tx.query(
+            `UPDATE auth_sessions SET revoked_at = now(), revoked_reason = 'logout' WHERE id = $1 AND revoked_at IS NULL`, [tok.sid]);
+          // L8: 같은 트랜잭션에서 알림 → 커밋돼야 나간다. 모든 API 서버 허브가 이 사용자 연결을 닫는다
+          // TODO: #62 머지 뒤 SSE 허브가 session_events 를 LISTEN 해서 연결 닫기 (허브 쪽은 이 묶음에서 안 함)
+          const note = NotifySession.parse({ t: row.tenant_id, u: row.user_id, r: "logout" });
+          await tx.query(`SELECT pg_notify($1, $2)`, [SESSION_EVENTS_CHANNEL, JSON.stringify(note)]);
+        });
         revokeFamily(row.family_id, authSettings().accessTtlSec);   // 로그아웃 전에 받은 접근 토큰(앞 회전 것 포함)도 즉시 무효 (z75-69)
         await audit(row.tenant_id, row.user_id, "auth.logout", "ok", { sid: tok.sid });
       }

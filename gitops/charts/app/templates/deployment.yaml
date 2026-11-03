@@ -1,3 +1,5 @@
+{{- /* A4: workloads[] 값이 있으면 workloads.yaml 이 대신 그린다 (옛 단일 값 길은 그대로) */}}
+{{- if not .Values.workloads }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -40,3 +42,4 @@ spec:
             - name: DB_PASSWORD
               valueFrom: { secretKeyRef: { name: {{ $.Values.app.name }}-db-app, key: password } }
             {{- end }}{{- end }}
+{{- end }}

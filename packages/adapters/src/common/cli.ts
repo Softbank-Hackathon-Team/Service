@@ -56,6 +56,24 @@ export const unavailable = (why: string) => new AdapterError("SOURCE_UNAVAILABLE
 /** 읽긴 읽었는데 명세를 만들 재료가 없음 (앱 Deployment 없음, 실행 중 Pod 없음 등) */
 export const incomplete = (why: string) => new AdapterError("SOURCE_INCOMPLETE", `출발 환경에서 명세 재료를 못 찾음: ${why}`);
 
+/** L5fix DRAFT(ai): CLI 오류를 일시(재시도로 낫는 네트워크·서버 문제) / 거부(자격·권한·인증서, 사람이 고쳐야 함) / 그 밖으로 가른다.
+ *  거부 문구를 먼저 본다: "Unable to connect to the server: x509 …" 는 연결 실패 문구가 있어도 인증서 문제라 거부. stderr 전체를 본다(CliError.message 는 마지막 줄만) */
+const DENIED_RE = /forbidden|unauthorized|accessdenied|access denied|not authorized|unable to locate credentials|expiredtoken|invalidclienttokenid|you must be logged in|x509|certificate/i;
+const TRANSIENT_RE = /connection refused|connection reset|i\/o timeout|timed out|timeout|tls handshake|unable to connect to the server|could not connect to the endpoint|no such host|temporary failure|context deadline exceeded|unexpected eof|service ?unavailable|throttl|too many requests|rate exceeded|\b50[234]\b/i;
+export type CliErrorKind = "transient" | "denied" | "other";
+export function classifyCliError(e: unknown): CliErrorKind {
+  if (!(e instanceof CliError) || e.missing) return "other";
+  // VL5fix: "timeout-svc" 같은 따옴표 속 리소스 이름의 낱말(timeout·502·certificate)로 분류가 바뀌지 않게 따옴표 안은 뺀다
+  const t = `${e.stderr}\n${e.message}`.replace(/"[^"\n]*"|'[^'\n]*'/g, '""');
+  if (DENIED_RE.test(t)) return "denied";
+  return TRANSIENT_RE.test(t) ? "transient" : "other";
+}
+/** discover 가 CLI 실패를 도메인 오류로 바꾸는 한 곳. 일시 오류는 SOURCE_TRANSIENT(워커가 재시도), 그 밖은 SOURCE_UNAVAILABLE(영구) */
+export const sourceFail = (e: unknown, why: string) =>
+  classifyCliError(e) === "transient"
+    ? new AdapterError("SOURCE_TRANSIENT", `출발 환경을 일시적으로 읽지 못함: ${why}`)
+    : unavailable(why);
+
 /** 데모 원본 허용 여부. MOCK_SEED=1 (시험·e2e 전용) 일 때만 */
 export const mockSeed = (env: NodeJS.ProcessEnv = process.env) => env.MOCK_SEED === "1";
 

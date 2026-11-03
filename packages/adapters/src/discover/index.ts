@@ -3,11 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Provider, RawInventory } from "@svc/contracts";
 import {
-  arr, awsRegion, CliError, gcpProject, get, onpremContext, runJson, runText, str, unavailable, incomplete, type CliDeps,
+  arr, awsRegion, CliError, gcpProject, get, onpremContext, runJson, runText, str, unavailable, incomplete, sourceFail, type CliDeps,
   maskAccount, mockSeed,
 } from "../common/cli.js";
 import { DEMO_INVENTORY, DEMO_INVENTORY_V2 } from "../common/fixtures.js";
 import { readK8sApp, readK8sNamespace } from "./k8s.js";
+import { appIdentities, readAwsIam } from "./aws-iam.js";
+import { readAwsData, readGcpData } from "./data.js";
+import { DATA_RAW_KINDS } from "../import/raw-data.js";
 
 // Z88: 출발 환경 진짜 읽기 (데모 원본 STUB 대체). 결과는 normalize 가 아는 원본 모양 + 둘레 자원 목록.
 //   AWS  : sts → eks list/describe-cluster → kubeconfig(임시 파일) → kubectl 앱 읽기 · rds describe-db-instances
@@ -23,7 +26,8 @@ import { readK8sApp, readK8sNamespace } from "./k8s.js";
 type Obj = Record<string, unknown>;
 
 /** I2: 가져오기 옵션. ir 를 안 주면 지금 동작(v1) 그대로. adapters 는 IMPORT_IR 환경변수를 읽지 않는다 (호출하는 쪽이 옵션으로만 넘김) */
-export interface DiscoverOpts { ir?: "v1" | "v2"; namespace?: string }
+/** I4: iam = true 면 (v2 + AWS 만) 앱 신원의 IAM 정책도 읽는다 (aws.iamPolicy). 기본 꺼짐 = 지금 그대로 */
+export interface DiscoverOpts { ir?: "v1" | "v2"; namespace?: string; iam?: boolean }
 
 /** v1 = 앱 Deployment 하나(readK8sApp), v2 = 네임스페이스 전체(readK8sNamespace). 같은 모양 {items, namespace, counts, notes} 로 맞춘다 */
 async function readApp(d: CliDeps, kube: string[], opts: DiscoverOpts): Promise<{ items: Obj[]; namespace: string; counts: Record<string, number>; notes: string[] }> {
@@ -68,10 +72,10 @@ export async function discoverAws(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
   const env = d.env ?? process.env, region = awsRegion(env), r = ["--region", region, "--output", "json"];
   let account: string | null;
   try { account = str(get(await runJson(d, "aws", ["sts", "get-caller-identity", "--output", "json"]), "Account")); }
-  catch (e) { throw unavailable(`AWS 자격 없음 (${cliReason(e, "aws")})`); }
+  catch (e) { throw sourceFail(e, `AWS 자격 없음 (${cliReason(e, "aws")})`); }
   const notes: string[] = [`AWS 계정 ${maskAccount(account)} · 리전 ${region}${env.AWS_PROFILE ? ` · 프로필 ${env.AWS_PROFILE}` : ""}`];
 
-  const clusters = arr(get(await runJson(d, "aws", ["eks", "list-clusters", ...r]).catch((e) => { throw unavailable(cliReason(e, "aws")); }), "clusters"))
+  const clusters = arr(get(await runJson(d, "aws", ["eks", "list-clusters", ...r]).catch((e) => { throw sourceFail(e, cliReason(e, "aws")); }), "clusters"))
     .map((n) => ({ name: String(n) }));
   const cl = pick(clusters, env.IMPORT_AWS_EKS_CLUSTER, (x) => x.name, "EKS 클러스터", notes);
   if (!cl) throw incomplete(env.IMPORT_AWS_EKS_CLUSTER ? `EKS 클러스터 ${env.IMPORT_AWS_EKS_CLUSTER} 없음` : `리전 ${region} 에 EKS 클러스터 없음`);
@@ -80,10 +84,15 @@ export async function discoverAws(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
 
   const app = await withTempKube(async (kc) => {
     try { await runText(d, "aws", ["eks", "update-kubeconfig", "--name", cl.name, "--kubeconfig", kc, "--region", region]); }
-    catch (e) { throw unavailable(`EKS ${cl.name} kubeconfig 만들기 실패 (${cliReason(e, "aws")})`); }
+    catch (e) { throw sourceFail(e, `EKS ${cl.name} kubeconfig 만들기 실패 (${cliReason(e, "aws")})`); }
     try { return await readApp(d, ["--kubeconfig", kc], opts); }
-    catch (e) { if (e instanceof CliError) throw unavailable(`EKS ${cl.name} 쿠버네티스 API 읽기 실패 (access entry 확인): ${e.message.slice(0, 160)}`); throw e; }
+    catch (e) { if (e instanceof CliError) throw sourceFail(e, `EKS ${cl.name} 쿠버네티스 API 읽기 실패 (access entry 확인): ${e.message.slice(0, 160)}`); throw e; }
   });
+
+  // I4: 앱 신원의 IAM 정책 (v2 + 옵션 켬). 못 읽어도 앱·DB 는 계속 (notes 에 이유)
+  const iam = opts.ir === "v2" && opts.iam
+    ? await side("IAM", async () => (await readAwsIam(d, r, cl.name, appIdentities(app.items), notes)) as unknown as Obj[], notes)
+    : [];
 
   const dbs = arr(get(await runJson(d, "aws", ["rds", "describe-db-instances", ...r]), "DBInstances")).filter((x) => x.Engine === "postgres");
   const db = pick(dbs, env.IMPORT_AWS_DB_ID, (x) => String(x.DBInstanceIdentifier), "RDS Postgres", notes);
@@ -100,13 +109,16 @@ export async function discoverAws(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
       .map((x) => ({ name: x.Name }))), notes),   // 이름만. GetSecretValue 는 부르지 않는다
   ]);
 
+  // I6: v2 만 S3·SQS·ElastiCache 를 읽는다 (v1 은 지금 동작 그대로 — 호출 수·권한이 늘지 않는다)
+  const data = opts.ir === "v2" ? await readAwsData(d, region, notes) : [];
   const items: Obj[] = [
     ...app.items,
+    ...data,
     ...(db ? [{ kind: "rds.dbInstance", DBInstanceIdentifier: db.DBInstanceIdentifier, Engine: db.Engine, EngineVersion: db.EngineVersion,
       AllocatedStorage: db.AllocatedStorage, DBInstanceClass: db.DBInstanceClass, Endpoint: get(db, "Endpoint", "Address") ?? null,
       ...(opts.ir === "v2" ? { MultiAZ: db.MultiAZ ?? null, PubliclyAccessible: db.PubliclyAccessible ?? null, MaxAllocatedStorage: db.MaxAllocatedStorage ?? null, DBInstanceArn: db.DBInstanceArn ?? null } : {}) }] : []),
     { kind: "eks.cluster", name: cl.name, version: get(desc, "version") ?? null, vpcId },
-    ...vpcs, ...lbs, ...repos, ...secrets,
+    ...vpcs, ...lbs, ...repos, ...secrets, ...iam,
     ...[...notes, ...app.notes].map(note),
   ];
   return { provider: "aws", items, coverage: coverage(items, app.counts) };
@@ -119,19 +131,19 @@ export async function discoverGcp(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
   if (!project) throw unavailable("GCP 프로젝트가 정해지지 않음 (GCP_PROJECT)");
   const p = ["--project", project, "--format", "json"];
   try { await runJson(d, "gcloud", ["projects", "describe", project, "--format", "json"]); }
-  catch (e) { throw unavailable(`GCP 자격 없음 또는 프로젝트 ${project} 접근 불가 (${cliReason(e, "gcloud")})`); }
+  catch (e) { throw sourceFail(e, `GCP 자격 없음 또는 프로젝트 ${project} 접근 불가 (${cliReason(e, "gcloud")})`); }
   const notes: string[] = [`GCP 프로젝트 ${project}`];
 
-  const clusters = arr(await runJson(d, "gcloud", ["container", "clusters", "list", ...p]).catch((e) => { throw unavailable(cliReason(e, "gcloud")); }));
+  const clusters = arr(await runJson(d, "gcloud", ["container", "clusters", "list", ...p]).catch((e) => { throw sourceFail(e, cliReason(e, "gcloud")); }));
   const cl = pick(clusters, env.IMPORT_GCP_GKE_CLUSTER, (x) => String(x.name), "GKE 클러스터", notes);
   if (!cl) throw incomplete(env.IMPORT_GCP_GKE_CLUSTER ? `GKE 클러스터 ${env.IMPORT_GCP_GKE_CLUSTER} 없음` : `프로젝트 ${project} 에 GKE 클러스터 없음`);
   const name = String(cl.name), loc = String(cl.location ?? cl.zone ?? "");
 
   const app = await withTempKube(async (kc) => {
     try { await runText(d, "gcloud", ["container", "clusters", "get-credentials", name, "--location", loc, "--project", project], { KUBECONFIG: kc }); }
-    catch (e) { throw unavailable(`GKE ${name} kubeconfig 만들기 실패 (${cliReason(e, "gcloud")})`); }
+    catch (e) { throw sourceFail(e, `GKE ${name} kubeconfig 만들기 실패 (${cliReason(e, "gcloud")})`); }
     try { return await readApp(d, ["--kubeconfig", kc], opts); }
-    catch (e) { if (e instanceof CliError) throw unavailable(`GKE ${name} 쿠버네티스 API 읽기 실패: ${e.message.slice(0, 160)}`); throw e; }
+    catch (e) { if (e instanceof CliError) throw sourceFail(e, `GKE ${name} 쿠버네티스 API 읽기 실패: ${e.message.slice(0, 160)}`); throw e; }
   });
 
   const sqls = arr(await side("Cloud SQL", async () => arr(await runJson(d, "gcloud", ["sql", "instances", "list", ...p])), notes))
@@ -145,8 +157,10 @@ export async function discoverGcp(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
     side("Secret Manager", async () => peri("gcp.secret", arr(await runJson(d, "gcloud", ["secrets", "list", ...p])).map((x) => ({ name: String(x.name ?? "").split("/").pop() }))), notes),
   ]);
 
+  const data = opts.ir === "v2" ? await readGcpData(d, project, notes) : [];   // I6: v2 만 Cloud Storage·Pub/Sub·Memorystore
   const items: Obj[] = [
     ...app.items,
+    ...data,
     ...(db ? [{ kind: "cloudsql.instance", name: db.name, databaseVersion: db.databaseVersion,
       settings: { dataDiskSizeGb: get(db, "settings", "dataDiskSizeGb") == null && opts.ir === "v2" ? null : String(get(db, "settings", "dataDiskSizeGb") ?? "10"),   // v2: 못 읽은 값을 지어내지 않는다
         tier: get(db, "settings", "tier") ?? null,
@@ -165,11 +179,11 @@ export async function discoverOnprem(d: CliDeps = {}, opts: DiscoverOpts = {}): 
   const env = d.env ?? process.env, ctx = onpremContext(env), k = ["--context", ctx];
   let nodes: Obj[];
   try { nodes = arr(get(await runJson(d, "kubectl", ["get", "nodes", ...k, "--request-timeout=10s", "-o", "json"]), "items")); }
-  catch (e) { throw unavailable(`온프레 클러스터(context ${ctx})에 닿지 않음 (${cliReason(e, "kubectl")})`); }
+  catch (e) { throw sourceFail(e, `온프레 클러스터(context ${ctx})에 닿지 않음 (${cliReason(e, "kubectl")})`); }
   const notes: string[] = [`온프레 context ${ctx} · 노드 ${nodes.length}개`];
   let app;
   try { app = await readApp(d, k, opts); }
-  catch (e) { if (e instanceof CliError) throw unavailable(`온프레 쿠버네티스 API 읽기 실패: ${e.message.slice(0, 160)}`); throw e; }
+  catch (e) { if (e instanceof CliError) throw sourceFail(e, `온프레 쿠버네티스 API 읽기 실패: ${e.message.slice(0, 160)}`); throw e; }
 
   let cnpg: Obj[] = [];
   try { cnpg = arr(get(await runJson(d, "kubectl", ["get", "clusters.postgresql.cnpg.io", "-A", ...k, "--request-timeout=10s", "-o", "json"]), "items")); }
@@ -196,6 +210,12 @@ export async function discoverOnprem(d: CliDeps = {}, opts: DiscoverOpts = {}): 
 
 /** 감사·화면에 남길 판: 환경변수는 이름만 (평문 값은 비밀일 수 있다, Z38b). 원본은 바꾸지 않는다.
  *  I2: env 가 있는 모든 워크로드(deployment·cronjob)의 containers·initContainers 에 적용하고, 값이 박힐 수 있는 command·args 도 지운다 */
+// VI3bfix: 감사 사본에서 값을 가리는 주소 칸 (종류별). 가져오기 매퍼는 원본을 읽으므로 명세에는 영향 없음
+const ADDRESS_KEYS: Record<string, readonly string[]> = {
+  "rds.dbInstance": ["Endpoint"],
+  [DATA_RAW_KINDS.elasticache]: ["PrimaryEndpoint", "ConfigurationEndpoint"],
+  [DATA_RAW_KINDS.memorystore]: ["host"],
+};
 export function inventoryForAudit(inv: RawInventory): RawInventory {
   const scrub = (pod: unknown) => {
     for (const key of ["containers", "initContainers"])
@@ -206,7 +226,19 @@ export function inventoryForAudit(inv: RawInventory): RawInventory {
   };
   const items = inv.items.map((raw) => {
     const i = raw as Obj;
-    if (i.kind !== "k8s.deployment" && i.kind !== "k8s.cronjob") return i;
+    // I3bfix DRAFT(ai): Cloud SQL 등의 주소(ipAddresses·ipAddress)는 감사 표에 종류(type)만 남기고 값은 가린다 (사설 IP 노출 방지).
+    //   가져오기 매퍼는 이 사본이 아니라 원본 inv 를 읽으므로 명세·id 에는 영향이 없다
+    if (i.kind !== "k8s.deployment" && i.kind !== "k8s.cronjob") {
+      // VI3bfix: RDS(Endpoint)·ElastiCache(Primary/ConfigurationEndpoint)·Memorystore(host) 주소도 같은 규칙.
+      //   DRAFT(ai): 값이 있었으면 "<hidden>" 으로 바꿔 "주소가 있었다"만 남긴다 (null 은 그대로 null)
+      const addrKeys = ADDRESS_KEYS[String(i.kind)] ?? [];
+      if (!("ipAddresses" in i) && !("ipAddress" in i) && !addrKeys.some((k) => k in i)) return i;
+      const c = { ...i } as Obj;
+      if (Array.isArray(c.ipAddresses)) c.ipAddresses = arr(c.ipAddresses).map((a) => ({ type: a.type ?? null }));
+      delete c.ipAddress;
+      for (const k of addrKeys) if (k in c) c[k] = c[k] == null ? null : "<hidden>";
+      return c;
+    }
     const copy = JSON.parse(JSON.stringify(i)) as Obj;
     scrub(i.kind === "k8s.cronjob" ? get(copy, "spec", "jobTemplate", "spec", "template", "spec") : get(copy, "spec", "template", "spec"));
     return copy;

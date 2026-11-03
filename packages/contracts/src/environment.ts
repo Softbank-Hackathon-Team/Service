@@ -25,6 +25,7 @@ export type EnvironmentView = z.infer<typeof EnvironmentView>;
 export const ConnectionFailure = z.enum([
   "ROLE_ASSUME_DENIED", "PERMISSION_MISSING", "ORG_POLICY_BLOCKED",
   "ROLE_NOT_FOUND", "LINK_EXPIRED", "K8S_ACCESS_MISSING",
+  "ACCOUNT_MISMATCH",   // L7i: GCP 프로젝트 번호가 처음 확인한 값과 다름
 ]);
 export type ConnectionFailure = z.infer<typeof ConnectionFailure>;
 

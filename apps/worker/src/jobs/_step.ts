@@ -115,7 +115,7 @@ async function markJobDead(job: StepJob, def: { name: string; expect: MigrationS
     // ifStill: 그 사이 상태가 바뀌었으면 아무것도 안 한다
     // Z36 (Z12-7): 전이 조건 실패도 JOB_FAILED_<단계>로 둔다(Z19 규칙). 어느 조건인지는 감사 detail.error·detail.guard
     return advance(tx, { id: job.migrationId, tenantId: job.tenantId }, def.expect, to, {
-      mode: "ifStill", failureCode: jobFailedCode(def.name),
+      mode: "ifStill", failureCode: jobFailedCode(def.name), analyze: true,   // PA5a: 실패 원인 분석 (깃발 FAILURE_ANALYSIS)
       audit: { actor: "worker", action: `${def.name}.${to}`, target: job.migrationId, result: "error",
         detail: { requestId: job.requestId, error: msg, queue: a?.queue, retryCount: a?.retryCount, retryLimit: a?.retryLimit, by: "dead-letter",
           ...(e instanceof GuardFailed ? { guard: true } : {}) } },
@@ -286,7 +286,7 @@ async function finish<J extends StepJob, L>(run: StepRun<J, L>, out: StepOutcome
       ...(useLock ? { fence: { envIds, holder: WORKER_HOLDER } } : {}),
       next: out.next,
       evidence: out.evidence,
-      failureCode: out.failureCode,
+      failureCode: out.failureCode, analyze: true,   // PA5a: out.to 가 failed·paused 일 때만 분석 (깃발 FAILURE_ANALYSIS)
       audit: {
         actor: "worker", action: `${def.name}.${out.to}`, target: job.migrationId, result: "ok",
         detail: { requestId: job.requestId, ...(out.detail ?? {}) },

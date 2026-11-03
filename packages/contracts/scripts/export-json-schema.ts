@@ -17,9 +17,11 @@ const pick = {
   TransitionEvidence: C.TransitionEvidence, CostEstimateRequest: C.CostEstimateRequest,
   CostEstimate: C.CostEstimate, PriceCatalog: C.PriceCatalog,
   AppSpecV2: C.AppSpecV2, ImportResultV2: C.ImportResultV2,
+  SpecPatchInput: C.SpecPatchInput,
   ModuleInstance: C.ModuleInstance,
   PostgresTfVars: C.PostgresTfVars, NamespaceTfVars: C.NamespaceTfVars, IdentityTfVars: C.IdentityTfVars,
   CacheTfVars: C.CacheTfVars, ObjectStoreTfVars: C.ObjectStoreTfVars, QueueTfVars: C.QueueTfVars, JobTfVars: C.JobTfVars,
+  StartInput: C.StartInput,
 };
 for (const [name, schema] of Object.entries(pick)) {
   writeFileSync(new URL(`${name}.json`, out),

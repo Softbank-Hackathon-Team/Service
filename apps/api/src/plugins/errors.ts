@@ -21,6 +21,9 @@ function toHttp(err: unknown): { status: number; code: string; message: string }
   if (e.validation) return { status: 400, code: "BAD_REQUEST", message: e.message ?? "" };
   // Z52: 요청 횟수 제한(rate-limit 플러그인)이 던진 429. 모양은 플러그인 쪽에서 이미 맞춰 보낸다
   if ((err as { statusCode?: number }).statusCode === 429) return { status: 429, code: "RATE_LIMITED", message: e.message ?? "too many requests" };
+  // E2E v1 버그 수정: Fastify 자체 4xx(예: FST_ERR_CTP_EMPTY_JSON_BODY — content-type json + 빈 본문 DELETE)가 500 INTERNAL 로 나갔다
+  const sc = (err as { statusCode?: number }).statusCode;
+  if (e.code?.startsWith("FST_") && sc !== undefined && sc >= 400 && sc < 500) return { status: sc, code: "BAD_REQUEST", message: e.message ?? "" };
   if (e.code === "23503") return { status: 404, code: "NOT_FOUND", message: "referenced resource not found" };
   return null;
 }

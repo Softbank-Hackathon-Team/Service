@@ -12,6 +12,9 @@ import { arr, str as s, get, lastLine, maskAccount, awsRegion, gcpRegion, onprem
 // 규칙: 쓰기 명령 0개(인자 배열 고정, 셸 없음, 사용자 입력이 인자에 안 들어감). 자격·CLI 가 없으면 가짜 값 없이 status "unavailable" + 이유.
 // 명령 하나가 실패하면 그 묶음만 error 로 두고 나머지는 보여 준다. 결과는 환경별 30초 캐시 (INVENTORY_CACHE_SEC)
 // INVENTORY_CLI=0 이면 아예 부르지 않는다 (시험·CI)
+// STUB(L5c): 이 읽기는 API 프로세스에서 돌고, 임시 역할 중개자(보관함·장부)는 워커에만 있다 → 아직 프로세스 자격(맥 프로필)으로 읽는다.
+//   precheck 는 워커라 빌린 관찰 자격으로 바꿨다 (L5c). 상태·인벤토리 화면은 발표에서 "프로세스 자격"이라고 숨기지 않는다
+// TODO(human): 인벤토리·상태를 빌린 자격으로 바꾸는 길 — (a) API 가 워커에 읽기 작업(큐)을 맡기고 결과 캐시를 읽음 (b) API 에도 중개자를 둠(보관함이 프로세스마다 생김)
 
 export interface InventoryItem { name: string; status: string | null; detail: string | null }
 export interface InventoryGroup { category: ServiceCategory; service: string; items: InventoryItem[]; error: string | null }

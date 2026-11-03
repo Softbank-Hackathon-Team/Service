@@ -3,9 +3,13 @@
 //   npm run agent:onprem -- security
 //   npm run agent:onprem -- deploy --migration <uuid> --bundle <해시>
 //   npm run agent:onprem -- loop [--every 30]         heartbeat 30초마다 + security 10번에 1번 (Ctrl+C 로 멈춤)
+//   SVC_ENROLL_TOKEN=<토큰> AGENT_REPORT_URL=<API> npm run agent:onprem -- --enroll [--out .agent-key.env]
+//     L6: 화면에서 받은 10분 일회용 토큰으로 Agent 키를 받아 --out 파일(권한 600)에 쓰고 heartbeat 한 번 보낸다
+//     토큰은 argv 대신 환경변수로 받는다 (ps·셸 기록에 덜 남는다)
 // 필요한 .env: AGENT_REPORT_URL, AGENT_KEY_ID, AGENT_KEY_SECRET (agent:key 가 만든 .agent-key.env 를 --env-file 로 더 읽어도 된다)
 //   선택: AGENT_NAMESPACE(app), AGENT_CNPG_CLUSTER(app-db), AGENT_KUBE_CONTEXT
 // 출력: 보낼 때마다 JSON 한 줄 {kind, status, ok, body}
+import { chmodSync, writeFileSync } from "node:fs";
 import {
   collectDeploy, collectHeartbeat, collectSecurity, kubectlExec, sendAgentReport, type AgentReport,
 } from "@svc/agent";
@@ -26,7 +30,29 @@ const send = async (r: AgentReport) => {
 const heartbeat = async () => send(await collectHeartbeat({ ...base, namespace: ns, cnpgCluster: process.env.AGENT_CNPG_CLUSTER || "app-db" }));
 const security = async () => send(await collectSecurity(base));
 
+// L6: 등록. 받은 키는 파일에만 쓰고 화면엔 키 번호만. 이 프로세스의 환경에도 넣어 바로 heartbeat 를 보낸다
+async function enroll(): Promise<boolean> {
+  const token = need("SVC_ENROLL_TOKEN");
+  const url = need("AGENT_REPORT_URL").replace(/\/+$/, "");
+  const res = await fetch(`${url}/api/v1/agent/register`, { method: "POST",
+    headers: { "content-type": "application/json" }, body: JSON.stringify({ enrollToken: token }) });
+  const body = await res.json() as { envId?: string; keyId?: string; secret?: string; code?: string };
+  if (res.status !== 201 || !body.keyId || !body.secret) {
+    console.error(JSON.stringify({ kind: "enroll", status: res.status, ok: false, code: body.code ?? null }));
+    return false;
+  }
+  const out = opt("out") ?? ".agent-key.env";
+  writeFileSync(out, `AGENT_KEY_ID=${body.keyId}\nAGENT_KEY_SECRET=${body.secret}\n`, { mode: 0o600 });
+  chmodSync(out, 0o600);   // VL6: mode 는 새 파일에만 먹는다. 이미 있던 느슨한 권한의 파일(644)에 비밀을 쓰면 남이 읽을 수 있다
+  console.log(JSON.stringify({ kind: "enroll", status: res.status, ok: true, keyId: body.keyId, envId: body.envId, secretFile: out }));
+  process.env.AGENT_KEY_ID = body.keyId;
+  process.env.AGENT_KEY_SECRET = body.secret;
+  delete process.env.SVC_ENROLL_TOKEN;
+  return heartbeat();
+}
+
 async function main(): Promise<boolean> {
+  if (args.includes("--enroll")) return enroll();
   switch (args[0]) {
     case "heartbeat": return heartbeat();
     case "security": return security();
@@ -48,7 +74,7 @@ async function main(): Promise<boolean> {
       }
       return true;
     }
-    default: throw new Error("사용: onprem-agent.ts heartbeat | security | deploy --migration <uuid> --bundle <해시> | loop [--every 초]");
+    default: throw new Error("사용: onprem-agent.ts --enroll | heartbeat | security | deploy --migration <uuid> --bundle <해시> | loop [--every 초]");
   }
 }
 main().then((ok) => process.exit(ok ? 0 : 1), (e) => { console.error(JSON.stringify({ ok: false, error: (e as Error).message })); process.exit(1); });

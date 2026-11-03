@@ -54,6 +54,104 @@
     }
   ],
   "paths": {
+    "/api/v1/agent/register": {
+      "post": {
+        "operationId": "postAgentRegister",
+        "tags": [
+          "agent"
+        ],
+        "summary": "/api/v1/agent/register",
+        "description": "코드: apps/api/src/routes/agent-enroll.ts",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enrollToken": {
+                    "type": "string",
+                    "maxLength": 100
+                  }
+                },
+                "required": [
+                  "enrollToken"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devTenant": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DevTenant"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "envId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "keyId": {
+                      "type": "string"
+                    },
+                    "secret": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "envId",
+                    "keyId",
+                    "secret"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400",
+            "description": "BAD_REQUEST (Zod 검증 실패)"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401",
+            "description": "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409",
+            "description": "ApiError"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429",
+            "description": "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500",
+            "description": "INTERNAL"
+          },
+          "503": {
+            "$ref": "#/components/responses/E503",
+            "description": "ApiError"
+          }
+        }
+      }
+    },
     "/api/v1/agent/reports": {
       "post": {
         "operationId": "postAgentReports",
@@ -519,6 +617,146 @@
             "description": "INTERNAL"
           }
         }
+      },
+      "post": {
+        "operationId": "postEnvironments",
+        "tags": [
+          "environments"
+        ],
+        "summary": "/api/v1/environments",
+        "description": "코드: apps/api/src/routes/environments.ts",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateEnvironmentBody"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devTenant": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DevTenant"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EnvironmentView"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400",
+            "description": "BAD_REQUEST (Zod 검증 실패)"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401",
+            "description": "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403",
+            "description": "TUNNEL_READ_ONLY (개발 헤더 인증 + Cloudflare 터널로 온 쓰기, Z47)"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409",
+            "description": "ApiError"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429",
+            "description": "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500",
+            "description": "INTERNAL"
+          }
+        }
+      }
+    },
+    "/api/v1/environments/{id}": {
+      "delete": {
+        "operationId": "deleteEnvironmentsById",
+        "tags": [
+          "environments"
+        ],
+        "summary": "/api/v1/environments/{id}",
+        "description": "코드: apps/api/src/routes/environments.ts",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devTenant": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/DevTenant"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "null"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400",
+            "description": "BAD_REQUEST (Zod 검증 실패)"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401",
+            "description": "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403",
+            "description": "TUNNEL_READ_ONLY (개발 헤더 인증 + Cloudflare 터널로 온 쓰기, Z47)"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404",
+            "description": "ApiError"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409",
+            "description": "ApiError"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429",
+            "description": "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500",
+            "description": "INTERNAL"
+          }
+        }
       }
     },
     "/api/v1/environments/{id}/agent-reports": {
@@ -606,6 +844,187 @@
           "500": {
             "$ref": "#/components/responses/E500",
             "description": "INTERNAL"
+          }
+        }
+      }
+    },
+    "/api/v1/environments/{id}/agent-token": {
+      "post": {
+        "operationId": "postEnvironmentsByIdAgenttoken",
+        "tags": [
+          "environments"
+        ],
+        "summary": "/api/v1/environments/{id}/agent-token",
+        "description": "코드: apps/api/src/routes/agent-enroll.ts",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devTenant": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/DevTenant"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "envId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "token": {
+                      "type": "string"
+                    },
+                    "expiresAt": {
+                      "type": "string"
+                    },
+                    "command": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "envId",
+                    "token",
+                    "expiresAt",
+                    "command"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400",
+            "description": "BAD_REQUEST (Zod 검증 실패)"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401",
+            "description": "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403",
+            "description": "TUNNEL_READ_ONLY (개발 헤더 인증 + Cloudflare 터널로 온 쓰기, Z47)"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404",
+            "description": "ApiError"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409",
+            "description": "ApiError"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429",
+            "description": "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500",
+            "description": "INTERNAL"
+          },
+          "503": {
+            "$ref": "#/components/responses/E503",
+            "description": "ApiError"
+          }
+        }
+      }
+    },
+    "/api/v1/environments/{id}/connection-link": {
+      "post": {
+        "operationId": "postEnvironmentsByIdConnectionlink",
+        "tags": [
+          "environments"
+        ],
+        "summary": "/api/v1/environments/{id}/connection-link",
+        "description": "코드: apps/api/src/routes/environments.ts",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devTenant": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/DevTenant"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionLink"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400",
+            "description": "BAD_REQUEST (Zod 검증 실패)"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401",
+            "description": "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403",
+            "description": "TUNNEL_READ_ONLY (개발 헤더 인증 + Cloudflare 터널로 온 쓰기, Z47)"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404",
+            "description": "ApiError"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409",
+            "description": "ApiError"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429",
+            "description": "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500",
+            "description": "INTERNAL"
+          },
+          "501": {
+            "$ref": "#/components/responses/E501",
+            "description": "ApiError"
+          },
+          "503": {
+            "$ref": "#/components/responses/E503",
+            "description": "ApiError"
           }
         }
       }
@@ -1146,6 +1565,109 @@
           "409": {
             "$ref": "#/components/responses/E409",
             "description": "AZURE_MOCK_DISABLED (AZURE_MOCK=0인데 azure_mock 환경, adapters RunnerUnavailable)"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429",
+            "description": "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500",
+            "description": "INTERNAL"
+          }
+        }
+      }
+    },
+    "/api/v1/environments/{id}/verify": {
+      "post": {
+        "operationId": "postEnvironmentsByIdVerify",
+        "tags": [
+          "environments"
+        ],
+        "summary": "/api/v1/environments/{id}/verify",
+        "description": "코드: apps/api/src/routes/environments.ts",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VerifyBody"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devTenant": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/DevTenant"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "envId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "status": {
+                      "type": "string",
+                      "const": "verifying"
+                    },
+                    "queued": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "envId",
+                    "status",
+                    "queued"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400",
+            "description": "BAD_REQUEST (Zod 검증 실패)"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401",
+            "description": "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403",
+            "description": "TUNNEL_READ_ONLY (개발 헤더 인증 + Cloudflare 터널로 온 쓰기, Z47)"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404",
+            "description": "ApiError"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409",
+            "description": "ApiError"
           },
           "429": {
             "$ref": "#/components/responses/E429",
@@ -1878,6 +2400,129 @@
                           "type": "null"
                         }
                       ]
+                    },
+                    "failureAnalysis": {
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "db",
+                            "stub"
+                          ]
+                        },
+                        "runId": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "queued",
+                            "running",
+                            "finished",
+                            "failed"
+                          ]
+                        },
+                        "model": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "createdAt": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "finishedAt": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "reason": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "usage": {
+                          "type": "object",
+                          "properties": {
+                            "input": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            "output": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "input",
+                            "output"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "steps": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "seq": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              "tool": {
+                                "type": "string"
+                              },
+                              "ok": {
+                                "type": "boolean"
+                              },
+                              "note": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "seq",
+                              "tool",
+                              "ok",
+                              "note"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "analysis": {
+                          "anyOf": [
+                            {
+                              "$ref": "#/components/schemas/FailureAnalysis"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "source",
+                        "runId",
+                        "status",
+                        "model",
+                        "createdAt",
+                        "finishedAt",
+                        "reason",
+                        "usage",
+                        "steps",
+                        "analysis"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -3087,6 +3732,102 @@
         }
       }
     },
+    "/api/v1/migrations/{id}/replan": {
+      "post": {
+        "operationId": "postMigrationsByIdReplan",
+        "tags": [
+          "migrations"
+        ],
+        "summary": "/api/v1/migrations/{id}/replan",
+        "description": "코드: apps/api/src/routes/plans.ts",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "acceptCustomerCost": {
+                        "type": "boolean"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devTenant": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/DevTenant"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Accepted"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400",
+            "description": "BAD_REQUEST (Zod 검증 실패)"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401",
+            "description": "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403",
+            "description": "TUNNEL_READ_ONLY (개발 헤더 인증 + Cloudflare 터널로 온 쓰기, Z47)"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404",
+            "description": "ApiError"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409",
+            "description": "ApiError"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429",
+            "description": "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500",
+            "description": "INTERNAL"
+          }
+        }
+      }
+    },
     "/api/v1/migrations/{id}/report": {
       "get": {
         "operationId": "getMigrationsByIdReport",
@@ -3200,6 +3941,9 @@
                         "maxLength": 500
                       },
                       "ruleCleared": {
+                        "type": "boolean"
+                      },
+                      "acceptCustomerCost": {
                         "type": "boolean"
                       }
                     },
@@ -4016,7 +4760,84 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/MigrationSpecView"
+                  "$ref": "#/components/schemas/MigrationSpecViewV2"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400",
+            "description": "BAD_REQUEST (Zod 검증 실패)"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401",
+            "description": "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404",
+            "description": "ApiError"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409",
+            "description": "ApiError"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429",
+            "description": "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500",
+            "description": "INTERNAL"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "patchMigrationsByIdSpec",
+        "tags": [
+          "migrations"
+        ],
+        "summary": "/api/v1/migrations/{id}/spec",
+        "description": "코드: apps/api/src/routes/spec.ts",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpecPatchInput"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devTenant": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/DevTenant"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MigrationSpecViewV2"
                 }
               }
             }
@@ -4048,6 +4869,79 @@
         }
       }
     },
+    "/api/v1/migrations/{id}/spec/reopen": {
+      "post": {
+        "operationId": "postMigrationsByIdSpecReopen",
+        "tags": [
+          "migrations"
+        ],
+        "summary": "/api/v1/migrations/{id}/spec/reopen",
+        "description": "코드: apps/api/src/routes/plans.ts",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devTenant": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/DevTenant"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Accepted"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400",
+            "description": "BAD_REQUEST (Zod 검증 실패)"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401",
+            "description": "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403",
+            "description": "TUNNEL_READ_ONLY (개발 헤더 인증 + Cloudflare 터널로 온 쓰기, Z47)"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404",
+            "description": "ApiError"
+          },
+          "409": {
+            "$ref": "#/components/responses/E409",
+            "description": "ApiError"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429",
+            "description": "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500",
+            "description": "INTERNAL"
+          }
+        }
+      }
+    },
     "/api/v1/migrations/{id}/start": {
       "post": {
         "operationId": "postMigrationsByIdStart",
@@ -4057,6 +4951,23 @@
         "summary": "apply 작업 예약 (approved→provisioning)",
         "description": "코드: apps/api/src/routes/plans.ts\n상태 전이: T15 approved→provisioning (advance() 한 번)",
         "x-state-transition": "T15 approved→provisioning",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/StartInput"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        },
         "security": [
           {
             "bearerAuth": []
@@ -4391,6 +5302,181 @@
           "409": {
             "$ref": "#/components/responses/E409",
             "description": "PLAN_SUPERSEDED · PLAN_HASH_MISMATCH · PLAN_EXPIRED · ENV_BUSY · INVALID_TRANSITION · GUARD_FAILED · IDEMPOTENCY_KEY_REUSED"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429",
+            "description": "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500",
+            "description": "INTERNAL"
+          }
+        }
+      }
+    },
+    "/api/v1/tokens": {
+      "post": {
+        "operationId": "postTokens",
+        "tags": [
+          "tokens"
+        ],
+        "summary": "/api/v1/tokens",
+        "description": "코드: apps/api/src/routes/tokens.ts",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTokenBodyInput"
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devTenant": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DevTenant"
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenCreated"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400",
+            "description": "BAD_REQUEST (Zod 검증 실패)"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401",
+            "description": "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+          },
+          "403": {
+            "$ref": "#/components/responses/E403",
+            "description": "TUNNEL_READ_ONLY (개발 헤더 인증 + Cloudflare 터널로 온 쓰기, Z47)"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429",
+            "description": "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500",
+            "description": "INTERNAL"
+          }
+        }
+      },
+      "get": {
+        "operationId": "getTokens",
+        "tags": [
+          "tokens"
+        ],
+        "summary": "/api/v1/tokens",
+        "description": "코드: apps/api/src/routes/tokens.ts",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devTenant": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DevTenant"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/E401",
+            "description": "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429",
+            "description": "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500",
+            "description": "INTERNAL"
+          }
+        }
+      }
+    },
+    "/api/v1/tokens/{id}": {
+      "delete": {
+        "operationId": "deleteTokensById",
+        "tags": [
+          "tokens"
+        ],
+        "summary": "/api/v1/tokens/{id}",
+        "description": "코드: apps/api/src/routes/tokens.ts",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devTenant": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/DevTenant"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "null"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/E400",
+            "description": "BAD_REQUEST (Zod 검증 실패)"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401",
+            "description": "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+          },
+          "404": {
+            "$ref": "#/components/responses/E404",
+            "description": "ApiError"
           },
           "429": {
             "$ref": "#/components/responses/E429",
@@ -4911,6 +5997,15 @@
           "reason": {
             "type": "string",
             "maxLength": 500
+          },
+          "acks": {
+            "maxItems": 500,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
           }
         },
         "required": [
@@ -5070,6 +6165,40 @@
         ],
         "additionalProperties": false
       },
+      "ConnectionLink": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/ConnectionLinkKind"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "command": {
+            "type": "string"
+          },
+          "externalId": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "expiresAt"
+        ],
+        "additionalProperties": false
+      },
+      "ConnectionLinkKind": {
+        "type": "string",
+        "enum": [
+          "aws_quick_create",
+          "gcp_cloud_shell",
+          "onprem_install"
+        ]
+      },
       "ConnectionStatus": {
         "type": "string",
         "enum": [
@@ -5204,6 +6333,32 @@
           "db",
           "storage",
           "fixed"
+        ],
+        "additionalProperties": false
+      },
+      "CreateEnvironmentBody": {
+        "type": "object",
+        "properties": {
+          "provider": {
+            "$ref": "#/components/schemas/Provider"
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "region": {
+            "type": "string",
+            "maxLength": 32
+          },
+          "clusterName": {
+            "type": "string",
+            "maxLength": 100
+          }
+        },
+        "required": [
+          "provider",
+          "name"
         ],
         "additionalProperties": false
       },
@@ -5934,6 +7089,47 @@
         ],
         "additionalProperties": false
       },
+      "FailureAnalysis": {
+        "type": "object",
+        "properties": {
+          "cause": {
+            "type": "string",
+            "maxLength": 500
+          },
+          "evidence": {
+            "maxItems": 10,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 300
+            }
+          },
+          "fix": {
+            "maxItems": 10,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 300
+            }
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        },
+        "required": [
+          "cause",
+          "evidence",
+          "fix",
+          "retryable",
+          "confidence"
+        ],
+        "additionalProperties": false
+      },
       "Finding": {
         "type": "object",
         "properties": {
@@ -6351,7 +7547,7 @@
         ],
         "additionalProperties": false
       },
-      "MigrationSpecView": {
+      "MigrationSpecViewV2": {
         "type": "object",
         "properties": {
           "migrationId": {
@@ -6540,6 +7736,12 @@
             "items": {
               "type": "string"
             }
+          },
+          "needsReviewV2": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -6656,6 +7858,121 @@
         ],
         "additionalProperties": false
       },
+      "ModuleInstance": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/ModuleKind"
+          },
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z][a-z0-9-]{0,39}$"
+          },
+          "module": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "id",
+          "module"
+        ],
+        "additionalProperties": false
+      },
+      "ModuleKind": {
+        "type": "string",
+        "enum": [
+          "postgres",
+          "namespace",
+          "identity",
+          "cache",
+          "objectStore",
+          "queue",
+          "job"
+        ]
+      },
+      "PlanAckKind": {
+        "type": "string",
+        "enum": [
+          "cost",
+          "failure_cost_policy",
+          "runtime_change",
+          "build",
+          "precheck_warn",
+          "low_confidence"
+        ]
+      },
+      "PlanAcknowledgement": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "$ref": "#/components/schemas/PlanAckKind"
+          },
+          "text": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "PlanCostSummary": {
+        "type": "object",
+        "properties": {
+          "currency": {
+            "type": "string",
+            "const": "USD"
+          },
+          "monthlyTarget": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "monthlySource": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "deltaMonthly": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "unknownFields": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "priceAsOf": {
+            "type": "string"
+          },
+          "stub": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "currency",
+          "monthlyTarget",
+          "monthlySource",
+          "deltaMonthly",
+          "unknownFields"
+        ],
+        "additionalProperties": false
+      },
       "PlanDoc": {
         "type": "object",
         "properties": {
@@ -6711,6 +8028,37 @@
           },
           "helmValuesHash": {
             "type": "string"
+          },
+          "specVersion": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "costSummary": {
+            "$ref": "#/components/schemas/PlanCostSummary"
+          },
+          "acknowledgements": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PlanAcknowledgement"
+            }
+          },
+          "irVersion": {
+            "type": "string",
+            "const": "2"
+          },
+          "specSource": {
+            "type": "string",
+            "enum": [
+              "spec_v2",
+              "upconvert"
+            ]
+          },
+          "instances": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModuleInstance"
+            }
           },
           "planHash": {
             "type": "string"
@@ -7163,6 +8511,107 @@
         ],
         "additionalProperties": false
       },
+      "SpecEnvFieldPath": {
+        "type": "string",
+        "pattern": "^service\\.env\\.[A-Za-z_][A-Za-z0-9_]{0,127}$"
+      },
+      "SpecFieldPath": {
+        "type": "string",
+        "enum": [
+          "schemaVersion",
+          "app.name",
+          "service.image",
+          "service.port",
+          "service.healthPath",
+          "service.replicas",
+          "service.cpu",
+          "service.memory",
+          "service.env",
+          "service.secretRefs",
+          "database",
+          "ingress.hostname",
+          "ingress.entry"
+        ]
+      },
+      "SpecPatchInput": {
+        "type": "object",
+        "properties": {
+          "baseVersion": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "changes": {
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/SpecFieldPath"
+                    },
+                    {
+                      "$ref": "#/components/schemas/SpecV2FieldPath"
+                    }
+                  ]
+                },
+                "value": {}
+              },
+              "required": [
+                "path",
+                "value"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "confirm": {
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/SpecFieldPath"
+                },
+                {
+                  "$ref": "#/components/schemas/SpecEnvFieldPath"
+                },
+                {
+                  "$ref": "#/components/schemas/SpecV2ConfirmPath"
+                }
+              ]
+            }
+          },
+          "acceptDraft": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "baseVersion"
+        ],
+        "additionalProperties": false
+      },
+      "SpecV2ConfirmPath": {
+        "type": "string",
+        "pattern": "^(components|links|entry|check)(\\.|$)\\S{0,300}$"
+      },
+      "SpecV2FieldPath": {
+        "type": "string",
+        "pattern": "^(components\\.[a-z][a-z0-9-]{0,39}\\.[A-Za-z][A-Za-z0-9]{0,39}|links|entry)$"
+      },
+      "StartInput": {
+        "type": "object",
+        "properties": {
+          "planHash": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
       "StateDuration": {
         "type": "object",
         "properties": {
@@ -7355,6 +8804,85 @@
         ],
         "additionalProperties": false
       },
+      "TokenCreated": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "name": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string"
+          },
+          "revoked": {
+            "type": "boolean"
+          },
+          "token": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "createdAt",
+          "expiresAt",
+          "revoked",
+          "token"
+        ],
+        "additionalProperties": false
+      },
+      "TokenList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TokenView"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "additionalProperties": false
+      },
+      "TokenView": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "name": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "string"
+          },
+          "revoked": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "createdAt",
+          "expiresAt",
+          "revoked"
+        ],
+        "additionalProperties": false
+      },
       "TrafficShiftProgress": {
         "type": "object",
         "properties": {
@@ -7429,6 +8957,18 @@
           "reobserve",
           "stepStartedAt",
           "observedAt"
+        ],
+        "additionalProperties": false
+      },
+      "VerifyBody": {
+        "type": "object",
+        "properties": {
+          "accountId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "accountId"
         ],
         "additionalProperties": false
       },
@@ -7571,6 +9111,26 @@
         "required": [
           "spec",
           "traffic"
+        ],
+        "additionalProperties": false
+      },
+      "CreateTokenBodyInput": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "ttlDays": {
+            "default": 30,
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 30
+          }
+        },
+        "required": [
+          "name"
         ],
         "additionalProperties": false
       },

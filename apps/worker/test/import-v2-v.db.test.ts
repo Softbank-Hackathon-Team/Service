@@ -1,0 +1,187 @@
+// 검증 묶음 VI3b: I3b 추가 시험(비밀 노출·검토 표시·두 번 배달·동시 배달·재시도 경로·깃발 값): 가져오기에 공통 명세 v2 연결 (IMPORT_IR 깃발 뒤). 처리기를 직접 부른다. MOCK_SEED=1 데모 원본
+import { test, before, after } from "node:test";
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import pg from "pg";
+
+const DB = process.env.DATABASE_URL, OWNER = process.env.OWNER_DATABASE_URL;
+const skip = !DB || !OWNER ? "DATABASE_URL / OWNER_DATABASE_URL 없음 (DB 시험 건너뜀)" : false;
+
+let core: typeof import("@svc/core");
+let imp: typeof import("../src/jobs/import.js");
+let adapters: typeof import("@svc/adapters");
+let owner: pg.Client;
+const T = randomUUID();
+
+before(async () => {
+  if (skip) return;
+  core = await import("@svc/core");
+  imp = await import("../src/jobs/import.js");
+  adapters = await import("@svc/adapters");
+  owner = new pg.Client({ connectionString: OWNER }); await owner.connect();
+  await owner.query("INSERT INTO tenants (id, name) VALUES ($1, 'test-vi3b')", [T]);
+  await core.startBoss();
+});
+after(async () => {
+  if (skip) return;
+  delete process.env.IMPORT_IR;
+  await core.boss.stop({ graceful: false }); await core.pool.end(); await owner.end();
+});
+
+async function seed(provider: "aws" | "gcp" | "onprem") {
+  const id = randomUUID(), src = randomUUID(), dst = randomUUID();
+  await owner.query(`INSERT INTO environments (id, tenant_id, provider, name, connection_status) VALUES
+    ($1,$3,$4,'s','connected'), ($2,$3,'aws','d','connected')`, [src, dst, T, provider]);
+  await owner.query(`INSERT INTO migrations (id, tenant_id, source_env_id, target_env_id, status)
+    VALUES ($1,$2,$3,$4,'importing')`, [id, T, src, dst]);
+  return id;
+}
+const job = (id: string) => ({ tenantId: T, requestId: `r-i3b-${id.slice(0, 8)}`, migrationId: id });
+const row = async (id: string) => (await owner.query("SELECT status, failure_code FROM migrations WHERE id=$1", [id])).rows[0] as { status: string; failure_code: string | null };
+const ver = async (id: string) => (await owner.query("SELECT spec, field_meta, spec_v2 FROM spec_versions WHERE migration_id=$1", [id])).rows as Array<{ spec: any; field_meta: Record<string, { needs_review: boolean }>; spec_v2: any }>;
+const reviewKeys = (m: Record<string, { needs_review: boolean }>) => Object.keys(m).filter((k) => m[k]!.needs_review).sort();
+
+
+// DEMO_INVENTORY_V2.onprem 항목을 시험 동안만 바꾼다
+function withItems(extra: Array<Record<string, unknown>>) {
+  const src = adapters.DEMO_INVENTORY_V2.onprem!;
+  const orig = src.items;
+  const worker = (orig as Array<any>).find((i) => i.kind === "k8s.deployment" && i.metadata.name === "shop-worker");
+  const patched = JSON.parse(JSON.stringify(worker));
+  patched.spec.template.spec.containers[0].env.push(...extra);
+  src.items = (orig as Array<any>).map((i) => (i === worker ? patched : i));
+  return () => { src.items = orig; };
+}
+const audits = async (id: string) => (await owner.query("SELECT action, detail::text AS d FROM audit_events WHERE target=$1 ORDER BY seq", [id])).rows as Array<{ action: string; d: string }>;
+
+test("비밀: 평문 토큰·URL 속 비밀번호는 spec·spec_v2·field_meta·감사 어디에도 남지 않는다", { skip }, async () => {
+  process.env.IMPORT_IR = "v2";
+  const TOKEN = "sk_live_ABCDEF1234567890SECRETX", PW = "hunter2passw0rd";
+  const restore = withItems([
+    { name: "API_TOKEN", value: TOKEN },
+    { name: "DATABASE_URL", value: `postgres://admin:${PW}@shop-db-rw.shop.svc:5432/app` },
+  ]);
+  const id = await seed("onprem");
+  try { await imp.handleImport(job(id)); } finally { restore(); }
+  assert.equal((await row(id)).status, "spec_review");
+  const [v] = await ver(id);
+  const all = JSON.stringify([v!.spec, v!.spec_v2, v!.field_meta]) + (await audits(id)).map((a) => a.d).join("\n");
+  assert.ok(!all.includes(TOKEN), "토큰 평문이 남음");
+  assert.ok(!all.includes(PW), "URL 속 비밀번호가 남음");
+});
+
+test("검토 표시: 벤더 주소가 값으로 남은 env → 막지 않고 spec_v2.fieldMeta 에 check.reviews[i] 0.6", { skip }, async () => {
+  process.env.IMPORT_IR = "v2";
+  const restore = withItems([{ name: "LEGACY_DB", value: "legacy.abc123xyz.ap-northeast-2.rds.amazonaws.com" }]);
+  const id = await seed("onprem");
+  try { await imp.handleImport(job(id)); } finally { restore(); }
+  assert.equal((await row(id)).status, "spec_review");
+  const [v] = await ver(id);
+  const keys = Object.keys(v!.spec_v2.fieldMeta ?? {}).filter((k) => k.startsWith("check.reviews["));
+  assert.ok(keys.length >= 1, `reviews 키 없음: ${Object.keys(v!.spec_v2.fieldMeta ?? {})}`);
+  assert.equal(v!.spec_v2.fieldMeta[keys[0]!].confidence, 0.6);
+  assert.equal(v!.spec_v2.fieldMeta[keys[0]!].needs_review, true);
+});
+
+test("두 번 배달: 같은 작업을 순서대로·동시에 불러도 명세 판 1개, spec_review 감사 1줄", { skip }, async () => {
+  process.env.IMPORT_IR = "v2";
+  const a = await seed("gcp");
+  await imp.handleImport(job(a)); await imp.handleImport(job(a));
+  assert.equal((await ver(a)).length, 1);
+  assert.equal((await audits(a)).filter((x) => x.action === "migration.spec_review").length, 1);
+  const b = await seed("gcp");
+  await Promise.all([imp.handleImport(job(b)), imp.handleImport(job(b)), imp.handleImport(job(b))]);
+  assert.equal((await ver(b)).length, 1);
+  assert.equal((await audits(b)).filter((x) => x.action === "migration.spec_review").length, 1);
+  assert.equal((await row(b)).status, "spec_review");
+});
+
+test("재시도 경로(v2): 일시 오류는 3번 다시 던지고 4번째에 failed(IMPORT_FAILED, 영구 아님)", { skip }, async () => {
+  process.env.IMPORT_IR = "v2";
+  const src = adapters.DEMO_INVENTORY_V2.onprem!;
+  const orig = src.items;
+  Object.defineProperty(src, "items", { configurable: true, get() { throw new Error("network down"); } });
+  const id = await seed("onprem");
+  const thrown: boolean[] = [];
+  try {
+    for (let i = 0; i < 4; i++) {
+      try { await imp.handleImport(job(id)); thrown.push(false); } catch { thrown.push(true); }
+    }
+  } finally { Object.defineProperty(src, "items", { configurable: true, writable: true, value: orig }); }
+  assert.deepEqual(thrown, [true, true, true, false]);
+  const r = await row(id);
+  assert.equal(r.status, "failed"); assert.equal(r.failure_code, "IMPORT_FAILED");
+  const f = (await owner.query("SELECT detail FROM audit_events WHERE target=$1 AND action='migration.failed'", [id])).rows[0];
+  assert.equal(f.detail.permanent, false);
+  assert.equal(f.detail.attempts, 4);
+  assert.equal((await ver(id)).length, 0);
+});
+
+test("깃발 값: v2·앞뒤 공백 v2 는 켜짐, 빈 값은 v1, 모르는 값(V2·1·true)은 v1 로 몰래 가지 않고 영구 실패(IMPORT_SPEC_INVALID)", { skip }, async () => {
+  for (const val of ["v2", " v2 "]) {
+    process.env.IMPORT_IR = val;
+    const id = await seed("onprem");
+    await imp.handleImport(job(id));
+    assert.ok((await ver(id))[0]!.spec_v2 !== null, `값 ${JSON.stringify(val)}`);
+  }
+  process.env.IMPORT_IR = "";
+  const off = await seed("onprem");
+  await imp.handleImport(job(off));
+  assert.equal((await ver(off))[0]!.spec_v2, null);
+  for (const val of ["V2", "1", "true", "v3"]) {
+    process.env.IMPORT_IR = val;
+    const id = await seed("onprem");
+    await imp.handleImport(job(id));   // 던지지 않고 failed 로 보냄(영구)
+    const r = await row(id);
+    assert.equal(r.status, "failed", `값 ${val}`); assert.equal(r.failure_code, "IMPORT_SPEC_INVALID");
+    assert.equal((await ver(id)).length, 0);
+    const f = (await owner.query("SELECT detail FROM audit_events WHERE target=$1 AND action='migration.failed'", [id])).rows[0];
+    assert.equal(f.detail.permanent, true); assert.equal(f.detail.attempts, 1);
+  }
+});
+
+test("깃발 껐다 켜기: 같은 프로세스에서 v2 → v1 → v2 가 매번 따로 읽힌다", { skip }, async () => {
+  const seen: Array<unknown> = [];
+  for (const val of ["v2", undefined, "v2"]) {
+    if (val) process.env.IMPORT_IR = val; else delete process.env.IMPORT_IR;
+    const id = await seed("gcp");
+    await imp.handleImport(job(id));
+    seen.push((await ver(id))[0]!.spec_v2 !== null);
+  }
+  assert.deepEqual(seen, [true, false, true]);
+});
+
+test("v2 정상 경로의 감사: ir=v2, sourceInventory 에 컨테이너 환경변수 값 없음(이름만)", { skip }, async () => {
+  process.env.IMPORT_IR = "v2";
+  const restore = withItems([{ name: "MARKER_VAR", value: "ENVVALUE-MARKER-9f3a" }]);
+  const id = await seed("onprem");
+  try { await imp.handleImport(job(id)); } finally { restore(); }
+  const a = (await audits(id)).find((x) => x.action === "migration.spec_review")!;
+  assert.equal(JSON.parse(a.d).ir, "v2");
+  assert.ok(a.d.includes("MARKER_VAR"), "환경변수 이름은 남음");
+  assert.ok(!a.d.includes("ENVVALUE-MARKER-9f3a"), "환경변수 값이 감사에 남음");
+});
+
+test("감사 sourceInventory: Cloud SQL 주소는 종류(PRIVATE)만 남고 IP 값은 없다. 명세는 그대로 DB 주소를 가린 채 만들어진다", { skip }, async () => {
+  process.env.IMPORT_IR = "v2";
+  const id = await seed("gcp");
+  await imp.handleImport(job(id));
+  const a = (await audits(id)).find((x) => x.action === "migration.spec_review")!;
+  assert.ok(!a.d.includes("10.20.0.5"), "사설 IP 가 감사에 남음");
+  assert.ok(a.d.includes("PRIVATE"), "주소 종류는 남음");
+  assert.equal((await row(id)).status, "spec_review");
+  // v1 경로도 같은 규칙
+  delete process.env.IMPORT_IR;
+  const id1 = await seed("gcp");
+  await imp.handleImport(job(id1));
+  const a1 = (await audits(id1)).find((x) => x.action === "migration.spec_review")!;
+  assert.ok(!a1.d.includes("10.20.0.5"));
+});
+
+test("inventoryForAudit: 원본 객체는 건드리지 않는다(사본만 가림)", { skip }, () => {
+  const inv = adapters.DEMO_INVENTORY_V2.gcp!;
+  const before = JSON.stringify(inv);
+  const out = adapters.inventoryForAudit(inv);
+  assert.equal(JSON.stringify(inv), before);
+  assert.ok(!JSON.stringify(out).includes("10.20.0.5\""));
+});

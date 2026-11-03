@@ -98,7 +98,8 @@ export interface RawK8sNetworkPolicy {
   metadata: RawK8sMeta;
   spec: { podSelector?: { matchLabels?: Record<string, string> }; policyTypes?: string[]; ingress?: unknown[]; egress?: unknown[] };
 }
-export interface RawK8sServiceAccount { kind: "k8s.serviceAccount"; metadata: RawK8sMeta }
+/** I4: irsaRoleArn = 주석 eks.amazonaws.com/role-arn (IRSA). 없으면 칸 없음 */
+export interface RawK8sServiceAccount { kind: "k8s.serviceAccount"; metadata: RawK8sMeta; irsaRoleArn?: string }
 /** ConfigMap 은 키 이름만. 값은 버린다 */
 export interface RawK8sConfigMapKeys { kind: "k8s.configMapKeys"; metadata: RawK8sMeta; keys: string[] }
 

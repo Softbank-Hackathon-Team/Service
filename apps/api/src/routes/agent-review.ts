@@ -1,9 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { randomUUID } from "node:crypto";
-import { QUEUES, LLM_KEY_MISSING, LLM_BUDGET_EXCEEDED, agentLlmStatusFromEnv, llmBudgetFromEnv, llmSpendView, type AgentLlmStatus, type LlmSpendView } from "@svc/contracts";
-import { boss, asBossDb, jobKey, parseJobData, writeAudit, DomainError, NotFound, withTenant, type Tx } from "@svc/core";
+import { FailureAnalysis, LLM_KEY_MISSING, LLM_BUDGET_EXCEEDED, agentLlmStatusFromEnv, llmBudgetFromEnv, llmSpendView, type AgentLlmStatus, type LlmSpendView } from "@svc/contracts";
+import { queueAgentRun, type SendAgentJob as CoreSendAgentJob, writeAudit, DomainError, NotFound, withTenant, type Tx } from "@svc/core";
 import { errors } from "./responses.js";
 
 // 작업 Z58: 데모 S7 "AI 점검 결과"를 화면에서 보여 주는 읽기 전용 경로.
@@ -58,11 +57,21 @@ export const AgentLlm = z.object({
 }).strict();
 export type AgentLlm = z.infer<typeof AgentLlm>;
 
+// PA5a: 실패 원인 분석(failure_analysis). 이전이 failed·paused 로 갈 때 advance() 가 넣은 실행의 최신 한 건.
+//   결과 칸은 contracts FailureAnalysis 를 느슨하게 읽는다 (아직 안 끝났거나 모양이 틀리면 null). AI 는 알려 주기만, 재시도는 사람이 누름
+export const FailureAnalysisReview = z.object({
+  ...RunMeta,
+  analysis: FailureAnalysis.nullable(),
+}).strict();
+export type FailureAnalysisReview = z.infer<typeof FailureAnalysisReview>;
+
 export const AgentReview = z.object({
   migrationId: z.uuid(),
   llm: AgentLlm,
   remediate: RemediateReview.nullable(),
   specDraft: SpecDraftReview.nullable(),
+  // PA5a: 실패 원인 분석 기록이 있을 때만 칸이 생긴다 (없으면 칸 없음 = 예전 응답 그대로)
+  failureAnalysis: FailureAnalysisReview.optional(),
 }).strict();
 export type AgentReview = z.infer<typeof AgentReview>;
 export type RemediateReview = z.infer<typeof RemediateReview>;
@@ -116,7 +125,7 @@ export const STUB_REMEDIATE: RemediateReview = {
 
 // DB 에서 읽은 줄 (시험에서 바꿔 끼울 수 있게 모양을 따로 둔다)
 export interface RunRow {
-  id: string; kind: "remediate" | "spec_draft"; status: RemediateReview["status"]; model: string | null;
+  id: string; kind: "remediate" | "spec_draft" | "failure_analysis"; status: RemediateReview["status"]; model: string | null;
   result: unknown; reason: string | null; usage: unknown; created_at: Date | string; finished_at: Date | string | null;
   steps: { seq: number; tool: string; ok: boolean; note: string }[];
 }
@@ -169,7 +178,14 @@ export function buildAgentReview(migrationId: string, runs: RunRow[],
       rejectedCount: d.rejectedChanges?.length ?? 0,
     };
   }
-  return { migrationId, llm, remediate, specDraft };
+  const fa = latest("failure_analysis");
+  let failureAnalysis: FailureAnalysisReview | undefined;
+  if (fa) {
+    // agent-worker(A5b)가 result 에 FailureAnalysis 를 그대로 넣는다 (DRAFT(ai): 감싸는 칸 없이)
+    const res = FailureAnalysis.safeParse(fa.result);
+    failureAnalysis = { ...meta(fa), analysis: res.success ? res.data : null };
+  }
+  return { migrationId, llm, remediate, specDraft, ...(failureAnalysis ? { failureAnalysis } : {}) };
 }
 
 export async function loadAgentReviewDb(tx: Tx, migrationId: string): Promise<AgentReviewInput> {
@@ -210,10 +226,8 @@ export type AgentRunKind = RunAccepted["kind"];
 export type RunAccepted = z.infer<typeof RunAccepted>;
 export const DEFAULT_REMEDIATE_TASK = "web 이 계속 재시작한다. 원인을 찾고 고칠 수 있으면 deploy/ 수정안을 내라";
 
-// 큐 넣기를 바꿔 끼울 수 있게 (시험). 기본은 pg-boss, 같은 트랜잭션 연결로 넣는다
-export type SendAgentJob = (tx: Tx, data: unknown, singletonKey: string | undefined) => Promise<string | null>;
-const bossSend: SendAgentJob = (tx, data, singletonKey) =>
-  boss.send(QUEUES.agentRun, data as object, { ...(singletonKey ? { singletonKey } : {}), db: asBossDb(tx) });
+// 큐 넣기를 바꿔 끼울 수 있게 (시험). 기본은 pg-boss, 같은 트랜잭션 연결로 넣는다 (PA5a: 기본 넣기는 core queueAgentRun 안)
+export type SendAgentJob = CoreSendAgentJob;
 
 export const DEFAULT_SPEC_DRAFT_TASK = "가져오기 결과로 명세 초안·위험·계획 설명 만들기";
 export async function startRemediateRun(tx: Tx, o: {
@@ -224,19 +238,15 @@ export async function startRemediateRun(tx: Tx, o: {
   const m = await tx.query(`SELECT 1 FROM migrations WHERE id=$1 FOR UPDATE`, [o.migrationId]);
   if (m.rowCount === 0) throw new NotFound("migration", o.migrationId);
   // DRAFT(ai): 같은 이전에 아직 안 끝난 점검이 있으면 409. LLM 비용이 두 번 드는 걸 막는다 (agent-run 큐는 재시도 0)
-  const busy = (await tx.query(
-    `SELECT id FROM agent_runs WHERE migration_id=$1 AND kind=$2 AND status IN ('queued','running')
-      ORDER BY created_at DESC LIMIT 1`, [o.migrationId, kind])).rows[0];
-  if (busy) throw new DomainError(409, "AGENT_RUN_IN_PROGRESS", `${kind} run ${busy.id} is still queued or running`);
-
-  const runId = randomUUID();
+  // PA5a: 넣기는 core queueAgentRun(던지지 않는 판)으로 옮김. 이 경로는 예전처럼 409 를 던진다 (키·지출은 경로가 tx 밖에서 먼저 봄)
   const task = kind === "spec_draft" ? DEFAULT_SPEC_DRAFT_TASK : o.task ?? DEFAULT_REMEDIATE_TASK;
-  await tx.query(
-    `INSERT INTO agent_runs (id, tenant_id, migration_id, kind, task) VALUES ($1,$2,$3,$4,$5)`,
-    [runId, o.tenantId, o.migrationId, kind, task]);
-  const data = parseJobData(QUEUES.agentRun, { tenantId: o.tenantId, requestId: o.requestId, agentRunId: runId });
-  const jobId = await (o.send ?? bossSend)(tx, data, jobKey(QUEUES.agentRun, { agentRunId: runId }));
-  if (!jobId) throw new DomainError(409, "JOB_NOT_CREATED", "agent-run job was not created");
+  const q = await queueAgentRun(tx, { tenantId: o.tenantId, migrationId: o.migrationId, requestId: o.requestId, kind, task,
+    checkLlm: false, ...(o.send ? { send: o.send } : {}) });
+  if ("skipped" in q) {
+    if (q.skipped === "busy") throw new DomainError(409, "AGENT_RUN_IN_PROGRESS", `${kind} run ${q.busyRunId} is still queued or running`);
+    throw new DomainError(409, "JOB_NOT_CREATED", "agent-run job was not created");
+  }
+  const { runId, jobId } = q;
   await writeAudit(tx, o.tenantId, {
     actor: o.actor, action: `agent.${kind}.requested`, target: o.migrationId, result: "ok",
     detail: { agentRunId: runId, jobId, taskChars: task.length },

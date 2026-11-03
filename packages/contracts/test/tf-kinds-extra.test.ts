@@ -74,3 +74,18 @@ test("HCL 대조: postgres·identity·namespace kinds 가 읽는 칸 ⊂ TfVars 
     for (const f of usedCfg(p, d)) assert.ok(fields.includes(f), `${p}/${d}: HCL 이 읽는 cfg.${f} 가 ${kind} TfVars 에 없음`);
   }
 });
+
+// TA5fix: cache·objectStore·queue 는 계약이 기준. HCL cfg 가 선언한 칸 = TfVars 칸 (양방향: IR 칸이 도착에 다 옮겨지고, HCL 전용 칸 없음)
+const DIR_A5: Record<string, string> = { cache: "cache", objectStore: "object-store", queue: "queue" };
+const declaredCfg = (p: string, d: string) => {
+  const src = readFileSync(join(infra, p, "kinds", d, "main.tf"), "utf8");
+  const body = src.match(/variable "cfg" \{\s*type = object\(\{([\s\S]*?)\}\)/)?.[1] ?? "";
+  return [...body.matchAll(/^\s*([a-z_]+)\s*=/gm)].map((m) => m[1]!).sort();
+};
+test("HCL 대조: cache·objectStore·queue kinds 의 cfg 칸 = TfVars 칸, 읽는 칸 ⊂ TfVars (aws·gcp)", () => {
+  for (const p of ["aws", "gcp"]) for (const [kind, d] of Object.entries(DIR_A5)) {
+    const fields = Object.keys((TF_KIND_VARS as Record<string, z.ZodObject>)[kind]!.shape).sort();
+    assert.deepEqual(declaredCfg(p, d), fields, `${p}/${d}: cfg 선언 칸 ≠ ${kind} TfVars 칸`);
+    for (const f of usedCfg(p, d)) assert.ok(fields.includes(f), `${p}/${d}: HCL 이 읽는 cfg.${f} 가 ${kind} TfVars 에 없음`);
+  }
+});

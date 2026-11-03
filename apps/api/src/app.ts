@@ -1,7 +1,8 @@
 import Fastify from "fastify";
 import { serializerCompiler, validatorCompiler } from "fastify-type-provider-zod";
 import { pool, fastifyObservabilityOptions } from "@svc/core";
-import { authPlugin } from "./plugins/auth.js";
+import { authPlugin, dbUserActive } from "./plugins/auth.js";
+import { dbPatLookup } from "./auth/pat.js";
 import { errorsPlugin } from "./plugins/errors.js";
 import { idempotencyPlugin } from "./plugins/idempotency.js";
 import { rateLimitPlugin } from "./plugins/rate-limit.js";
@@ -20,7 +21,7 @@ export async function buildApp() {
   app.setSerializerCompiler(serializerCompiler);
 
   await app.register(errorsPlugin);
-  await app.register(authPlugin);
+  await app.register(authPlugin, { recheckUser: dbUserActive, lookupPat: dbPatLookup });   // L8: 요청마다 사용자 재확인
   // Z52: 요청 횟수 제한. 회사 번호로 세므로 인증 뒤에 (RATE_LIMIT=0 이면 끔)
   await app.register(rateLimitPlugin);
   await app.register(idempotencyPlugin);

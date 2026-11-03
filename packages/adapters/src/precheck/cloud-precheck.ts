@@ -31,6 +31,9 @@ export interface PrecheckDeps {
   fetch?: typeof fetch;
   tcp?: (host: string, port: number, timeoutMs: number) => Promise<{ ok: boolean; ms: number; error?: string }>;
   diskFree?: (path: string) => Promise<number>;   // 남은 바이트
+  // L5c: 쪽마다 빌린 관찰 자격 env (워커 _roles.ts awsEnv → envFor 로 워커 자기 자격을 지운 것). 있으면 그쪽 클라우드 CLI 는 이 env 로 부른다.
+  //   없으면 지금처럼 env (프로세스 자격: 맥 프로필·gcloud 로그인)
+  sideEnv?: Partial<Record<"source" | "target", NodeJS.ProcessEnv>>;
 }
 
 // 할당량 코드 (Z78 cloud-precheck.sh 와 같은 값). 필요 수 = 도착 모듈 하나가 만드는 수
@@ -297,13 +300,16 @@ export async function runCloudPrecheck(i: PrecheckInput, deps: PrecheckDeps): Pr
   const projOf = (e: PrecheckEnvInfo) => e.provider === "gcp" ? (env.GCP_PROJECT || e.accountId || e.externalId || undefined) : undefined;
   const c: Ctx = { deps, env, region: awsRegion(env), gcpRegion: gcpRegion(env),
     gcpProject: projOf(i.target) ?? projOf(i.source), kubeCtx: onpremContext(env) };
+  // L5c: 출발·도착 클라우드 조회는 그쪽 빌린 자격으로 (TCP·디스크는 워커 자신의 것이라 기본 env)
+  const sideCtx = (side: "source" | "target"): Ctx => deps.sideEnv?.[side] ? { ...c, env: deps.sideEnv[side]! } : c;
+  const cS = sideCtx("source"), cT = sideCtx("target");
   const t0 = Date.now();
-  const [cs, ct] = await Promise.all([credCheck(c, i.source), credCheck(c, i.target)]);
+  const [cs, ct] = await Promise.all([credCheck(cS, i.source), credCheck(cT, i.target)]);
   const out: CloudCheck[] = [cs, ct];
   const tasks: Promise<CloudCheck | CloudCheck[] | null>[] = [netChecks(c, i), diskCheck(c, i)];
-  if (ct.verdict !== "FAIL") tasks.push(apiCheck(c, i.target), billingCheck(c, i.target, ct), quotaChecks(c, i.target));
+  if (ct.verdict !== "FAIL") tasks.push(apiCheck(cT, i.target), billingCheck(cT, i.target, ct), quotaChecks(cT, i.target));
   else out.push({ id: "PC-SKIP", side: "target", item: "도착 클라우드 조회", verdict: "FAIL", reason: "도착 자격이 없어 API·결제·할당량 조회를 건너뜀" });
-  tasks.push(dbVersionCheck(c, i));
+  tasks.push(dbVersionCheck(cT, i));   // 도착이 받는 버전 조회 (출발 버전은 REPL_SOURCE_URL 로 이미 앎)
   for (const r of await Promise.all(tasks)) { if (Array.isArray(r)) out.push(...r); else if (r) out.push(r); }
   out.push({ id: "PC-TIME", side: "both", item: "점검 시간", verdict: "PASS", reason: `실조회 ${out.length}항목 ${Date.now() - t0}ms` });
   return out;

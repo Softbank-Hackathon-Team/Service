@@ -1,5 +1,6 @@
-import { AppSpec, DeployResult, MigrationJob, QUEUES, type InfraReady, type PlanDoc, type Provider } from "@svc/contracts";
-import { asFailureCode, latestAcceptedSpec } from "@svc/core";
+import { AppSpec, DeployResult, MigrationJob, QUEUES, type AppSpecV2, type InfraReady, type PlanDoc, type Provider } from "@svc/contracts";
+import { asFailureCode, latestAcceptedSpec, latestAcceptedSpecV2 } from "@svc/core";
+import { specV2ForPlan } from "@svc/adapters";
 import { nextJob, runStep, stubWait, stubFailIfAsked, type StepOutcome } from "./_step.js";
 import { loadInfraReady, loadPlanById } from "./plan-store.js";
 import { configFromEnv, deployToGitops, GitopsError, GitopsRepo } from "../gitops/index.js";
@@ -13,6 +14,7 @@ interface Loaded {
   plan: PlanDoc | null;
   spec: AppSpec | null;
   env: { provider: Provider; accountId: string | null } | null;
+  specV2?: AppSpecV2 | null;   // TA3: 계획서 irVersion "2" 일 때만 (출처가 바뀌었으면 null → approvedValues 가 drift)
 }
 
 export async function handleDeploy(raw: unknown) {
@@ -31,6 +33,10 @@ export async function handleDeploy(raw: unknown) {
       const e = await tx.query(
         `SELECT provider, account_id AS "accountId" FROM environments WHERE id=$1`, [m.targetEnvId]);
       if (!plan || !spec || !e.rows[0]) return null;
+      if (plan.irVersion === "2") {
+        const row = await latestAcceptedSpecV2(tx, m.id);
+        return { infra, plan, spec: AppSpec.parse(spec), env: e.rows[0], specV2: row ? specV2ForPlan(row, plan.specSource) : null };
+      }
       return { infra, plan, spec: AppSpec.parse(spec), env: e.rows[0] };
     },
     work: async (j, m, l): Promise<StepOutcome> => {
@@ -57,6 +63,7 @@ export async function handleDeploy(raw: unknown) {
         try {
           const out = await deployToGitops(new GitopsRepo(cfg), {
             tenantId: j.tenantId, spec: l.spec!, plan: l.plan!, tfOutputs: l.infra.tfOutputs,
+            ...(l.plan!.irVersion === "2" ? { specV2: l.specV2 ?? null } : {}),
             // 계획 처리기와 같은 target이어야 Helm 값 지문이 같다 (region "default")
             target: { envId: m.targetEnvId, provider: l.env!.provider, region: "default", accountId: l.env!.accountId },
           }, argoWatcherFromEnv());

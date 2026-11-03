@@ -32,3 +32,6 @@ export function nextJob(req: FastifyRequest, queue: QueueName, migrationId: stri
            data: { tenantId: req.tenantId, requestId: req.id, migrationId, ...o.extra },
            opts: { singletonKey: o.singletonKey ?? `${queue}:${migrationId}` } };
 }
+
+// PA5a: 실패를 다시 시도하는 경로(replan·resume)의 본문 칸. 재시도 한도(core RETRY_BUDGET) 이상이면 true 가 있어야 한다 (회의 D5 "고객 부담")
+export const RetryBody = z.object({ acceptCustomerCost: z.boolean().optional() }).strict();

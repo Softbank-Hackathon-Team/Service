@@ -29,6 +29,12 @@ const pgUrl: Check = (v) => {
   catch { return "주소 모양이 아님"; }
 };
 
+// 입력층 L2: CloudFormation 빠른 생성 링크의 templateURL 은 https 주소여야 한다 (S3 주소만 되는 건 AWS 쪽 규칙)
+const httpsUrl: Check = (v) => {
+  try { return new URL(v.trim()).protocol === "https:" ? null : "https:// 주소가 아님"; }
+  catch { return "주소 모양이 아님"; }
+};
+
 // 이름 → 검사. required 가 아니면 비어 있어도 된다 (비면 코드 기본값)
 interface Rule { check?: Check; required?: true }
 const COMMON: Record<string, Rule> = {
@@ -39,7 +45,11 @@ const COMMON: Record<string, Rule> = {
   BOSS_SUPERVISE_SEC: { check: num({ min: 1 }) },
   ROLLBACK_WINDOW_SEC: { check: num({ min: 0 }) },
   REPL_MAX_MARKER_RTT_MS: { check: num({ min: 0 }) },
+  SPEC_MIN_CONFIDENCE: { check: num({ min: 0, max: 1 }) },   // DRAFT(ai): 0 = 꺼짐(기본)
   SHUTDOWN_HARD_TIMEOUT_MS: { check: num({ min: 0 }) },
+  FAILURE_ANALYSIS: { check: oneOf("0", "1") },               // PA5a: 실패 원인 분석 넣기. 기본 꺼짐(A5b 머지 전)
+  RETRY_BUDGET: { check: num({ int: true, min: 0 }) },        // PA5a DRAFT(ai): 이전당 사람 재시도 한도 (기본 3, 0 = 끔)
+  TENANT_MAX_ACTIVE: { check: num({ int: true, min: 0 }) },   // DRAFT(ai): 회사당 동시 진행 이전 상한. 0 = 꺼짐(기본)
 };
 export const CONFIG_RULES = {
   api: {
@@ -50,6 +60,9 @@ export const CONFIG_RULES = {
     RATE_LIMIT_WRITE_PER_MIN: { check: num({ min: 0 }) },
     COST_CACHE_TTL_MS: { check: num({ min: 0 }) },
     REPORT_CHAIN_LIMIT: { check: num({ int: true, min: 1 }) },
+    // 입력층 L2: AWS 연결 링크. 비면 링크 발급이 503 CONNECT_NOT_CONFIGURED (서버는 뜬다)
+    CONNECT_TEMPLATE_URL: { check: httpsUrl },
+    PLATFORM_PRINCIPAL_ARN: { check: (v) => (/^arn:aws:iam::\d{12}:role\/[\w+=,.@\/-]+$/.test(v.trim()) ? null : "IAM 역할 ARN 모양이 아님") },
   },
   worker: {
     ...COMMON,
@@ -58,12 +71,19 @@ export const CONFIG_RULES = {
     CRED_RENEW_SEC: { check: num({ min: 0 }) },
     STUB_DELAY_MS: { check: num({ min: 0 }) },
     IMPORT_MAX_ATTEMPTS: { check: num({ int: true, min: 1 }) },
+    IMPORT_IR: { check: oneOf("v1", "v2") },                    // I3b: 가져오기 공통 명세 판. v2 = spec_v2 도 저장(v1 은 그대로). 기본 v1
+    PLAN_IR: { check: oneOf("v1", "v2") },                      // TA3: 계획 명세 판. v2 = 도착 Builder v2(고정 루트 + workloads[]). 기본 v1. IMPORT_IR 과 따로
+    IMPORT_AWS_IAM: { check: oneOf("0", "1") },                 // I4: 1 = 가져오기(v2)가 AWS 앱 신원의 IAM 정책도 읽음 (grants·기준선). 기본 꺼짐
     MAX_CUTOVER_ATTEMPTS: { check: num({ int: true, min: 1 }) },
     ROLLBACK_MAX_ATTEMPTS: { check: num({ int: true, min: 1 }) },
     REPL_MAX_CATCHUP_MS: { check: num({ min: 0 }) },
     TRAFFIC_TICK_MS: { check: num({ min: 0 }) },
     TRAFFIC_OBSERVE_SEC: { check: num({ min: 0 }) },
     TEMP_ROLE_SWEEP_MS: { check: num({ min: 1 }) },
+    // L4b: 주기 재확인 일정. cron 5칸 또는 off (모양만 본다. 값은 pg-boss 가 다시 검사)
+    VERIFY_CRON: { check: (v) => v.trim() === "off" || v.trim().split(/\s+/).length === 5 ? null : "cron 5칸 또는 off" },
+    REAL_STS: { check: oneOf("0", "1") },   // L4: 1 = 진짜 AWS STS(CLI), external_id 있는 환경만. 운영 스위치 (시험 전용 아님)
+    GCP_PLATFORM_PROJECT: { check: (v) => (/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(v.trim()) ? null : "GCP 프로젝트 ID 모양이 아님") },   // L7i: REAL_STS=1 일 때 GCP 발급기가 쓰는 플랫폼 프로젝트 ID
   },
   "agent-worker": {
     ...COMMON,
