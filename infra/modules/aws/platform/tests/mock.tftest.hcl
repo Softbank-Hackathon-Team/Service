@@ -207,3 +207,19 @@ run "demo_teardown" {
     error_message = "deletion_protection=false 면 그날 지울 수 있어야 함"
   }
 }
+
+run "eso_secrets" {
+  command = plan
+  assert {
+    condition     = aws_eks_pod_identity_association.eso.namespace == "external-secrets" && aws_eks_pod_identity_association.eso.service_account == "external-secrets"
+    error_message = "ESO 역할은 external-secrets/external-secrets 에 묶여야 함 (공식 차트 기본값)"
+  }
+  assert {
+    condition     = jsondecode(aws_iam_role.eso.assume_role_policy).Statement[0].Principal.Service == "pods.eks.amazonaws.com"
+    error_message = "ESO 역할은 Pod Identity(pods.eks.amazonaws.com)만 믿어야 함"
+  }
+  assert {
+    condition     = toset([for s in aws_secretsmanager_secret.platform : s.name]) == toset(["platform/app", "platform/cloudflared"]) && alltrue([for s in aws_secretsmanager_secret.platform : s.recovery_window_in_days == 7])
+    error_message = "비밀 그릇 2개(platform/app, platform/cloudflared), 기본은 7일 복구 창"
+  }
+}
