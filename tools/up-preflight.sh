@@ -37,7 +37,10 @@ ok() { echo "OK   $1 $2"; }
 fail() { echo "FAIL $1 $2"; NF=$((NF + 1)); }
 warn() { echo "WARN $1 $2"; NW=$((NW + 1)); }
 # 명령 하나를 최대 $1 초. 맥에는 timeout 이 없을 수 있어 perl alarm 으로 (perl 은 macOS 기본)
-tmo() { local s=$1; shift; if command -v timeout >/dev/null 2>&1; then timeout "$s" "$@"; else perl -e 'alarm shift; exec @ARGV' "$s" "$@"; fi; }
+tmo() { local s=$1; shift; if command -v timeout >/dev/null 2>&1; then timeout "$s" "$@" < /dev/null; else perl -e 'alarm shift; exec @ARGV' "$s" "$@" < /dev/null; fi; }   # NOTTY
+# NOTTY: 뒤로 띄운 줄(j_bg·nohup)이 터미널 입력을 물려받으면 gcloud·aws 가 묻는 창(프롬프트·페이저)에서 터미널을 읽다 멈춘다
+#   (11/3 5차: Jeong 터미널에서 띄운 up 만 cloud-precheck gcp-billing 이 30초 넘게 멈춤, 맥 RC 에선 2~4초) → 묻지 않게·페이저 끄기
+export CLOUDSDK_CORE_DISABLE_PROMPTS=1 AWS_PAGER="" PAGER=cat
 # GATE: aws CLI 는 AWS_REGION 이 아니라 AWS_DEFAULT_REGION 을 읽는다 (demo-day 와 같은 줄). 비밀·IAM 조회가 엉뚱한 리전을 보지 않게
 export AWS_DEFAULT_REGION=$AWS_REGION
 # GATE: 명령 출력에서 12자리 계정 번호·IP 를 가린다 (FAIL 줄은 Jeong 화면·공유 폴더로 간다)
@@ -345,7 +348,7 @@ if [ -n "$ramip" ]; then
 else warn relay-ami "demo-relay main.tf 에서 SSM AMI 이름을 못 찾음 (점검 생략)"; fi
 # (5) RDS 등급·엔진: 모듈 기본 db.t4g.micro + postgres 16 (adapters aws 기본). 서울에 그 조합이 없으면 smoke 의 apply 가 9분 뒤 실패
 rdsc=${CHECK_RDS_CLASS:-db.t4g.micro}; rdsv=${CHECK_RDS_MAJOR:-16}
-rn=$(tmo 60 aws rds describe-orderable-db-instance-options --engine postgres --db-instance-class "$rdsc" --query "length(OrderableDBInstanceOptions[?starts_with(EngineVersion, '$rdsv.')])" --output text 2>/dev/null)
+rn=$(tmo 60 aws rds describe-orderable-db-instance-options --engine postgres --db-instance-class "$rdsc" --query "length(OrderableDBInstanceOptions[?starts_with(EngineVersion, '$rdsv.')])" --output text 2>/dev/null | awk '/^[0-9]+$/ {s+=$1; n++} END {if (n) print s}')   # 쪽(page)마다 숫자 하나씩 나옴 → 더함
 case "$rn" in ''|None|*[!0-9]*) fail rds-class "RDS 주문 가능 조회 실패 (값 '${rn:-없음}')" ;; 0) fail rds-class "$rdsc + postgres $rdsv 를 이 리전에서 못 만듦" ;; *) ok rds-class "$rdsc + postgres $rdsv 주문 가능 (${rn}개 조합)" ;; esac
 # (6) 지난 회차가 남긴 RDS 가 바쁜 상태(creating·deleting 등)면 같은 이름 RDS 생성이 막히거나 cloud-zero 가 늦게 0 이 된다 → 이름만 알림
 rb=$(tmo 20 aws rds describe-db-instances --query 'DBInstances[].[DBInstanceIdentifier,DBInstanceStatus]' --output text 2>/dev/null | awk 'NF == 2 { printf "%s%s=%s", s, $1, $2; s=" " }')
@@ -400,6 +403,62 @@ else
   kill "$ppid" 2>/dev/null; wait "$ppid" 2>/dev/null
 fi
 if curl -s -m 2 -o /dev/null http://localhost:3300/healthz; then warn web-prod-api "svc-prod api(3300)가 떠 있음. up 끝에 demo-day 가 멈춘다(화면은 3000 에 붙음)"; fi
+# ENVPASS: 워커(가져오기·사전 점검)는 온프레 출발 클러스터를 kubectl --context ONPREM_KUBE_CONTEXT 로 읽는다. 코드 기본은 k3d-onprem 인데
+#   맥은 k3s-onprem(deploy/onprem-demo 가 이름을 바꿈) → 기본으로 두면 "context was not found" (11/3 실측 4차 IMPORT_SOURCE_UNAVAILABLE).
+#   순서: 환경변수 → .env → kubeconfig 에서 찾기(k3s-onprem → k3d-onprem → 이름에 onprem 이 든 것 하나). 못 찾으면 빈 값
+onprem_ctx() {
+  local c names
+  c=${ONPREM_KUBE_CONTEXT:-$(sed -n 's/^ONPREM_KUBE_CONTEXT=//p' .env 2>/dev/null | tail -n 1 | tr -d "\"' ")}
+  [ -n "$c" ] && { echo "$c"; return 0; }
+  names=$(kubectl config get-contexts -o name 2>/dev/null)
+  for c in k3s-onprem k3d-onprem; do printf '%s\n' "$names" | grep -qx "$c" && { echo "$c"; return 0; }; done
+  c=$(printf '%s\n' "$names" | grep onprem)
+  [ -n "$c" ] && [ "$(printf '%s\n' "$c" | wc -l | tr -d ' ')" = 1 ] && echo "$c"
+  return 0
+}
+okc=$(onprem_ctx)
+if [ -z "$okc" ]; then fail onprem-ctx "온프레 출발 kube 컨텍스트를 못 찾음 (k3s-onprem 없음) → 가져오기 IMPORT_SOURCE_UNAVAILABLE. 다른 이름이면 .env ONPREM_KUBE_CONTEXT=<이름>"
+elif ! kubectl config get-contexts -o name 2>/dev/null | grep -qx "$okc"; then fail onprem-ctx "ONPREM_KUBE_CONTEXT=$okc 가 kubeconfig 에 없음 (kubectl config get-contexts)"
+elif ! tmo 15 kubectl --context "$okc" --request-timeout=10s get nodes >/dev/null 2>&1; then fail onprem-ctx "컨텍스트 $okc 에 못 닿음 (k3d cluster list 로 출발 클러스터 확인)"
+else ok onprem-ctx "워커가 쓸 온프레 컨텍스트 $okc 있음·닿음 (demo-day 가 워커·API 에 넘김)"; fi
+# DBNAME: demo-day 가 복제 대상 주소에 쓰는 {tf:키} 가 terraform 출력(aws app·root 모듈)이나 비밀 파일(db_username·db_password)에 다 있는지,
+#   DB 이름을 고정으로 박지 않았는지 (11/3 6차: 고정 shop_api ↔ terraform 이 만든 shop → 복제 syncing 에서 paused)
+rmiss=""; rfix=""
+for line in $(grep -oE 'kv REPL_TARGET(_PEER)?_URL "[^"]*"' tools/demo-day.sh | sed 's/^kv //; s/ /=/'); do
+  for k in $(printf '%s' "$line" | grep -oE '\{tf:[a-z_]+\}' | sed 's/{tf://; s/}//' | sort -u); do
+    case "$k" in db_username|db_password) continue ;; esac
+    for m in infra/modules/aws/app/main.tf infra/modules/aws/root/main.tf; do grep -q "^output \"$k\"" "$m" || rmiss="$rmiss ${m#infra/modules/}:$k"; done
+  done
+  printf '%s' "$line" | grep -qE ':5432/[A-Za-z_]' && rfix="$rfix ${line%%=*}"
+done
+if [ -n "$rmiss" ]; then fail repl-target-keys "복제 대상 주소의 {tf:키} 를 terraform 이 안 내보냄:$rmiss → 복제 단계 실패"
+elif [ -n "$rfix" ]; then fail repl-target-keys "복제 대상 주소에 DB 이름이 고정돼 있음:$rfix → {tf:db_name} 으로 (terraform 이 앱 이름으로 만든다)"
+else ok repl-target-keys "복제 대상 주소의 {tf:키} 가 모두 terraform 출력·비밀 파일에 있음 (DB 이름 = {tf:db_name})"; fi
+# PRINCIPALUSER: API·워커 시작 설정 검사(assertConfig)를 실회차와 같은 값으로 미리 돌린다. 틀리면 서비스가 "설정 오류 … 시작 안 함" 으로 안 뜬다
+#   (11/3 실세션: connect 단계에서 api 를 PLATFORM_PRINCIPAL_ARN=IAM 사용자로 다시 띄우다 역할 전용 검사에 걸림). 값은 안 찍고 이름·이유만
+carn=$(tmo 20 aws sts get-caller-identity --query Arn --output text 2>/dev/null)
+case "$carn" in
+  arn:aws:sts::*:assumed-role/*) pparn="arn:aws:iam::$(printf '%s' "$carn" | cut -d: -f5):role/$(printf '%s' "$carn" | cut -d/ -f2)" ;;
+  *) pparn=$carn ;;
+esac
+cfgout=$(env API_HOST=127.0.0.1 ONPREM_KUBE_CONTEXT="${okc:-}" PLAN_ACKS=1 MOCK_IAC= GITOPS_DISABLE=1 TRAFFIC_OBSERVE_SEC=4 IMPORT_IR=v2 PLAN_IR=v2 \
+  CONNECT_TEMPLATE_URL="${CONNECT_TEMPLATE_URL:-https://connect-template.invalid/cli-template-body/aws-connect.json}" PLATFORM_PRINCIPAL_ARN="$pparn" \
+  tmo 60 node --env-file-if-exists=.env --import tsx -e 'import("@svc/contracts").then((m) => { let n = 0; for (const s of ["api", "worker"]) for (const p of m.configProblems(s, process.env)) { n++; console.log(s + " " + p); } process.exit(n ? 1 : 0); })' 2>&1); crc=$?
+if [ $crc -eq 0 ]; then ok config-run "api·worker 시작 설정 검사 통과 (실회차 값: .env + demo-day·실세션이 넣는 값, 플랫폼 주체 = 지금 AWS 자격)"
+else fail config-run "api·worker 가 시작을 거부할 설정: $(printf '%s' "$cfgout" | redact | tr '\n' ';' | head -c 400)"; fi
+# REALSTS: .env 의 REAL_STS 가 1 이 아니면 워커가 고객 관찰 역할을 안 빌리고 맥 자격으로 읽는다(CloudTrail SourceIdentity 증거 없음).
+#   실세션은 connect 단계에서 REAL_STS=1 로 워커를 다시 띄우므로 알림만 (근거 apps/worker/src/jobs/import.ts L5, packages/security/src/issuers.ts L4)
+rsts=${REAL_STS:-$(sed -n 's/^REAL_STS=//p' .env 2>/dev/null | tail -n 1 | tr -d "\"' ")}
+[ "$rsts" = 1 ] && ok real-sts ".env REAL_STS=1 (관찰 역할 진짜로 빌림)" || warn real-sts ".env REAL_STS=${rsts:-비어 있음} → demo-day 워커는 맥 자격으로 읽음. 실세션 connect 단계가 REAL_STS=1 로 다시 띄움"
+# AUTHSMOKE: API 인증 모드 ↔ smoke 인증 방식. demo-day 의 API 는 DEV_AUTH 를 안 준다(.env 값만) → x-dev-tenant 는 401.
+#   예전엔 여기서 못 잡아 클러스터·RDS 단계까지 간 뒤 smoke 가 POST /migrations 401 로 멈췄다(11/3 실측 2차)
+dauth=${DEV_AUTH:-$(sed -n 's/^DEV_AUTH=//p' .env 2>/dev/null | tail -n 1 | tr -d "\"' ")}
+dpw=$(sed -n 's/^DEMO_USER_PASSWORD=//p' .env 2>/dev/null | tail -n 1 | tr -d "\"'"); dpwlen=${#dpw}; dpw=""
+if ! grep -q '/auth/login' tools/smoke.ts 2>/dev/null; then
+  [ "$dauth" = 1 ] && warn smoke-auth "smoke 가 x-dev-tenant 만 씀. .env DEV_AUTH=1 이라 통하지만 시험 전용 길" || fail smoke-auth "API 는 DEV_AUTH 꺼짐(로그인만), smoke 는 x-dev-tenant 만 씀 → B4 에서 401"
+elif ! grep -q '^u_login()' tools/demo-day.sh 2>/dev/null; then fail smoke-auth "demo-day 가 apply 전에 데모 계정 비밀번호를 안 넣음(u_login 없음) → smoke 로그인 실패"
+elif [ "$dpwlen" -gt 0 ] && [ "$dpwlen" -lt 8 ]; then fail smoke-auth ".env DEMO_USER_PASSWORD 가 8자 미만 → auth:seed 거부, up 이 apply 전에 멈춤"
+else ok smoke-auth "API $([ "$dauth" = 1 ] && echo 'DEV_AUTH=1' || echo '로그인만') · smoke 로그인(비밀번호: $([ "$dpwlen" -gt 0 ] && echo '.env' || echo '.secrets, up 이 apply 전에 만듦'))"; fi
 ip1=$(curl -fsS -m 5 https://checkip.amazonaws.com 2>/dev/null | tr -d '[:space:]')
 case "$ip1" in *[!0-9.]*|"") fail checkip "checkip.amazonaws.com 안 됨" ;; *) ok checkip "공인 IP 조회 됨 (중계기 SSH 허용)" ;; esac
 # GATE: 출구 IP 가 둘이면(VPN·이중 회선) 중계기 SSH 허용(/32)이 어긋나 터널이 900초 기다리다 멈춘다 → up 은 둘 다 넣는다. 여기선 알림만

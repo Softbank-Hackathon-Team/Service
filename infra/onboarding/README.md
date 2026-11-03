@@ -23,7 +23,7 @@
 | 이름 | 설명 |
 |---|---|
 | `ExternalId` | 플랫폼이 연결 화면에서 알려 준 값을 그대로 (32자 이상). NoEcho가 아니라 빠른 생성 링크로 넘길 수 있다 |
-| `PlatformPrincipalArn` | 플랫폼 워커 **역할** ARN. 사용자·`:root`는 패턴이 거부한다 |
+| `PlatformPrincipalArn` | 플랫폼 워커 **역할 또는 사용자** ARN (데모 계정은 사용자 키). `:root`·assumed-role 은 패턴이 거부한다. API 설정 검사와 같은 규칙 (DRAFT(ai)) |
 | `EksClusterName` | 이전 대상 EKS 클러스터 이름 |
 | `ArgoHubRoleArn` | 선택. 플랫폼 Argo CD 허브 역할 ARN (API 설정 `ARGO_HUB_ROLE_ARN`이 있으면 링크가 채움). 비우면 배포 역할 없음 |
 | `CreateBoundaryPolicy` | 기본 `true`. 같은 계정에 `infra/modules/aws/env`가 이미 `platform-app-boundary`를 만들었으면 `false`. F17: 연결 링크가 알아서 `false`를 넣는 경우 = 링크 요청에 `?boundaryPolicyExists=true`(CLI `env:connect`가 `aws iam get-policy`로 확인해 붙임) 또는 고객 계정 번호 = 플랫폼 주체 계정 |
@@ -41,7 +41,7 @@
    - 남은 일(범위 밖, GitOps·프로비저닝): 네임스페이스 모듈이 `platform:deploy` RoleBinding을 만들기, Argo CD 클러스터 등록(namespaces 한정, `awsAuthConfig.roleARN` = `svc-deploy`)
 
 ## IAM 확인 체크 (고객이 눈으로 확인)
-- [ ] 역할 `svc-observe`의 신뢰 주체가 **역할 ARN 하나**(우리가 알려 준 값)이고 `:root`·사용자가 아니다
+- [ ] 역할 `svc-observe`의 신뢰 주체가 **역할 또는 사용자 ARN 하나**(우리가 알려 준 값)이고 `:root`가 아니다
 - [ ] 두 역할의 신뢰 정책에 `sts:ExternalId` 조건이 있다
 - [ ] `svc-observe`에 붙은 관리형 정책이 `ViewOnlyAccess` 하나뿐이다 (`ReadOnlyAccess`는 S3·DynamoDB 데이터까지 읽어서 쓰지 않는다)
 - [ ] `svc-observe`가 비밀값(`secretsmanager:GetSecretValue`, `ssm:GetParameter*`)·객체(`s3:GetObject`)·큐 메시지(`sqs:ReceiveMessage`)·버킷 정책 본문(`s3:GetBucketPolicy`)·`kms:Decrypt`를 읽지 못한다
