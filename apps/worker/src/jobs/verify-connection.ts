@@ -49,7 +49,10 @@ export async function handleVerifyConnection(data: unknown, deps: VerifyDeps = {
   // 남의 회사·지워진 환경: RLS 로 0줄 → 아무것도 안 바꾸고 끝 (다시 해도 같다)
   if (!env) return { status: "disconnected", skipped: "env_not_found" };
   const cur = env.connection_status;
-  // STUB: 온프레(L6) 연결 확인. 지금은 상태 그대로 두고 끝 (실패 처리 아님). GCP 는 L7i
+  // L6: 온프레 연결 확인 = Agent 하트비트. 플랫폼은 온프레 API 서버에 못 붙는다(밖으로 나가는 연결만) → 빌린 자격·CLI 대신
+  //   "살아 있는 Agent 키가 있고, 그 키로 마지막 하트비트가 AGENT_STALE_SEC 안에 왔나"를 DB(agent_reports)로 본다.
+  //   connected 로 올리는 길은 하트비트 받기(agent-reports.ts heartbeatConnection) 하나. 여기서는 내리기(unstable·disconnected)만 한다
+  if (env.provider === "onprem") return verifyOnprem(tenantId, envId, cur, env.verify_failures, reason);
   if (env.provider !== "aws" && env.provider !== "gcp") return { status: cur, skipped: "provider_not_supported" };
   if (reason === "user" && cur !== "verifying") return { status: cur, skipped: "not_verifying" };
   if (reason === "periodic" && cur !== "connected" && cur !== "unstable") return { status: cur, skipped: "not_connected" };
@@ -136,5 +139,37 @@ export async function handleVerifyConnection(data: unknown, deps: VerifyDeps = {
          'missingPermissions', verify_detail->'missingPermissions', 'needsHuman', verify_detail->'needsHuman')) WHERE id = $1`,
       [envId, JSON.stringify({ clusters: r.clusters, checkedAt: new Date().toISOString() })]);
     return { status: next.status, ...(r.ok ? {} : { reason: r.reason }) };
+  });
+}
+
+// DRAFT(ai): 하트비트가 이 초보다 오래되면 "안 보임" (API agent-reports.ts staleSec 와 같은 값·같은 기본 120초)
+export const agentStaleSec = (env: NodeJS.ProcessEnv = process.env) => Math.max(1, Number(env.AGENT_STALE_SEC) || 120);
+// 온프레 실패 사유 (ConnectionFailure 와 같은 칸 failureReason 에 들어감)
+export const AGENT_HEARTBEAT_STALE = "AGENT_HEARTBEAT_STALE", AGENT_KEY_MISSING = "AGENT_KEY_MISSING";
+
+async function verifyOnprem(tenantId: string, envId: string, cur: ConnectionStatus, failures: number, reason: "user" | "periodic"): Promise<VerifyOutcome> {
+  return withTenant(tenantId, async (tx) => {
+    const q = await tx.query<{ keys: number; fresh: boolean | null }>(
+      `SELECT (SELECT count(*)::int FROM agent_keys WHERE env_id = $1 AND revoked_at IS NULL) AS keys,
+              (SELECT max(r.received_at) >= now() - make_interval(secs => $2)
+                 FROM agent_reports r JOIN agent_keys k ON k.id = r.key_id AND k.revoked_at IS NULL
+                WHERE r.env_id = $1 AND r.kind = 'heartbeat') AS fresh`, [envId, agentStaleSec()]);
+    const keys = q.rows[0]?.keys ?? 0, fresh = q.rows[0]?.fresh === true;
+    const ok = keys > 0 && fresh;
+    const why = keys === 0 ? AGENT_KEY_MISSING : AGENT_HEARTBEAT_STALE;
+    const audit = { actor: "worker", action: ok ? "env.verified" : "env.verify_failed", detail: { ...(ok ? {} : { reason: why }), trigger: reason, agentKeys: keys } };
+    if (reason === "user") {
+      // 온프레는 사람 확인 요청(verify)이 계정 번호 검사에서 이미 막힌다. 그래도 verifying 에 있으면 하트비트로 닫는다
+      if (cur !== "verifying") return { status: cur, skipped: "not_verifying" };
+      if (ok) { await advanceConnection(tx, tenantId, envId, "connected", { from: ["verifying"], failures: 0, touchVerified: true, audit }); return { status: "connected" as const }; }
+      await advanceConnection(tx, tenantId, envId, "failed", { from: ["verifying"], failureReason: why, audit });
+      return { status: "failed" as const, reason: why };
+    }
+    if (cur !== "connected" && cur !== "unstable") return { status: cur, skipped: "not_connected" };
+    // 키가 다 끊겼으면(폐기) 다시 붙을 길이 없다 → disconnected (AWS 역할 없음과 같은 자리). 하트비트만 늦으면 실패 횟수 세다 unstable
+    const next = nextAfterPeriodic(cur, failures, ok, keys === 0);
+    await advanceConnection(tx, tenantId, envId, next.status, {
+      from: [cur], failures: next.failures, ...(ok ? { touchVerified: true } : { failureReason: why }), audit });
+    return { status: next.status, ...(ok ? {} : { reason: why }) };
   });
 }
