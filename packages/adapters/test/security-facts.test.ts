@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { EnvFacts, ImportResultV2, type RawInventory } from "@svc/contracts";
-import { normalizeV2, targetFactsV2, sourceFactsV2, appEnvV2, MODULE_DB_FACTS } from "../src/index.js";
+import { normalizeV2, targetFactsV2, sourceFactsV2, sourceDbsV2, appEnvV2, MODULE_DB_FACTS } from "../src/index.js";
 
 const tf = (p: string) => readFileSync(new URL(`../../../${p}`, import.meta.url), "utf8");
 
@@ -72,4 +72,27 @@ test("앱 설정값: 평문 값만 (링크·비밀 참조는 뺀다)", () => {
   const env = appEnvV2(imported().spec);
   assert.ok(env.some((e) => e.name === "LOG_LEVEL" && e.value === "info"));
   assert.ok(env.every((e) => typeof e.value === "string"));
+});
+
+test("앱 설정값: 사이드카·init 컨테이너의 평문 값도 읽는다 (비밀 참조는 여전히 뺀다)", () => {
+  const spec = structuredClone(imported().spec);
+  const svc = spec.components.find((c) => c.kind === "service")!;
+  const side = (name: string, env: unknown[]) => ({ name, image: (svc.props as { image: unknown }).image, env, resources: {} });
+  Object.assign(svc.props, {
+    sidecars: [side("proxy", [{ name: "PROXY_DSN", value: "postgres://x@db/app?sslmode=disable" }])],
+    initContainers: [side("migrate", [{ name: "MIG_PW", fromSecret: { secret: "db", key: "pw" } }])],
+  });
+  const env = appEnvV2(spec);
+  assert.ok(env.some((e) => e.name === "PROXY_DSN" && /sslmode=disable/.test(e.value)));
+  assert.ok(!env.some((e) => e.name === "MIG_PW"));
+});
+
+test("출발 DB 컴포넌트별: sourceDbsV2 는 postgres 마다 자기 사실·버전을 갖는다", () => {
+  const r = imported();
+  const id = r.spec.components.find((c) => c.kind === "postgres")!.id;
+  const dbs = sourceDbsV2(r.spec, r.securityFacts);
+  assert.deepEqual(dbs.map((d) => d.componentId), [id]);
+  assert.equal(dbs[0]!.db.encryptedAtRest.value, true);
+  assert.equal(dbs[0]!.db.majorVersion.value, 16);
+  assert.equal(sourceDbsV2(r.spec)[0]!.db.encryptedAtRest.origin, "unknown");
 });

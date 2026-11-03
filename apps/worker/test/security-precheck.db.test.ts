@@ -1,6 +1,6 @@
 // 보안 판정 연결 DB 시험: 받아들인 판의 spec_v2(security 요구사항 + securityFacts)와 환경 region 을 읽어
 //   사전 점검이 SEC:* 를 낸다. block 이면 spec_review, warn 이면 planning → 계획서 승인 항목 precheck_warn:SEC:…
-//   깃발 SEC_PRECHECK=0 이면 지금 동작 · 모양이 틀린 securityFacts 는 모름으로 · 남의 회사 판은 안 읽힘
+//   깃발 SEC_PRECHECK 가 1 이 아니면(기본) 지금 동작 · 모양이 틀린 securityFacts 는 모름으로 · 남의 회사 판은 안 읽힘
 import { test, before, after, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -70,7 +70,7 @@ const lastPrecheck = async (id: string) => (await owner.query(
 const sec = (d: { precheck: Array<{ id: string; level: string }> }) => d.precheck.filter((i) => i.id.startsWith("SEC:")).map((i) => `${i.id}:${i.level}`);
 
 test("GCP 도착 + 고객 키 요구: SEC:P-KEY-1 block → spec_review (계획 번호 없음)", { skip }, async () => {
-  process.env.PLAN_IR = "v2";
+  process.env.PLAN_IR = "v2"; process.env.SEC_PRECHECK = "1";
   const s = withReq();
   const { id } = await seed("gcp", "asia-northeast3", s);
   await pre.handlePrecheck(job(id));
@@ -83,7 +83,7 @@ test("GCP 도착 + 고객 키 요구: SEC:P-KEY-1 block → spec_review (계획 
 });
 
 test("온프레 도착: block 없이 planning, 고객 확인 경고가 계획서 승인 항목 precheck_warn:SEC:… 가 된다", { skip }, async () => {
-  process.env.PLAN_IR = "v2";
+  process.env.PLAN_IR = "v2"; process.env.SEC_PRECHECK = "1";
   const s = withReq();
   const { id } = await seed("onprem", null, s);
   await pre.handlePrecheck(job(id));
@@ -99,12 +99,12 @@ test("온프레 도착: block 없이 planning, 고객 확인 경고가 계획서
 });
 
 test("securityFacts 를 실제로 읽는다: 요구사항이 없어도 출발 DB 가 고객 키(측정)면 GCP 도착은 P-KEY-1 막기. 모양이 틀린 사실은 모름", { skip }, async () => {
-  process.env.PLAN_IR = "v2";
+  process.env.PLAN_IR = "v2"; process.env.SEC_PRECHECK = "1";
   const s = base();   // security 요구사항 없음 → 키 규칙을 켜는 것은 출발 사실뿐
   const customerKey = { [dbId(s)]: { ...facts(s)[dbId(s)], keyOwner: { value: "customer", origin: "measured", source: "kms describe-key KeyManager=CUSTOMER" } } };
   const run = async (f: unknown) => {
     const { id, src, dst } = await seed("gcp", "asia-northeast3", s, f);
-    return (await pre.securityPrecheckFor(T, { id, sourceEnvId: src, targetEnvId: dst } as never, { PLAN_IR: "v2" })).map((i) => `${i.id}:${i.level}`);
+    return (await pre.securityPrecheckFor(T, { id, sourceEnvId: src, targetEnvId: dst } as never, { PLAN_IR: "v2", SEC_PRECHECK: "1" })).map((i) => `${i.id}:${i.level}`);
   };
   const read = await run(customerKey);
   assert.ok(read.includes(`SEC:P-KEY-1:${dbId(s)}:block`), read.join(" "));
@@ -115,13 +115,17 @@ test("securityFacts 를 실제로 읽는다: 요구사항이 없어도 출발 DB
   assert.ok(none.includes("SEC:P-REQ-0:env:warn"), none.join(" "));
 });
 
-test("깃발: SEC_PRECHECK=0 이면 SEC 항목 없음 (지금 동작), PLAN_IR 이 v2 가 아니어도 없음", { skip }, async () => {
-  process.env.PLAN_IR = "v2"; process.env.SEC_PRECHECK = "0";
+test("깃발: 기본(SEC_PRECHECK 없음)·0 이면 SEC 항목 없음 (지금 동작), PLAN_IR 이 v2 가 아니어도 없음", { skip }, async () => {
+  process.env.PLAN_IR = "v2"; delete process.env.SEC_PRECHECK;
+  const z = await seed("gcp", "asia-northeast3", withReq());
+  await pre.handlePrecheck(job(z.id));
+  assert.deepEqual(sec(await lastPrecheck(z.id)), []);
+  process.env.SEC_PRECHECK = "0";
   const a = await seed("gcp", "asia-northeast3", withReq());
   await pre.handlePrecheck(job(a.id));
   assert.deepEqual(sec(await lastPrecheck(a.id)), []);
   assert.equal((await mig(a.id)).status, "planning");
-  delete process.env.SEC_PRECHECK; delete process.env.PLAN_IR;
+  process.env.SEC_PRECHECK = "1"; delete process.env.PLAN_IR;
   const b = await seed("gcp", "asia-northeast3", withReq());
   await pre.handlePrecheck(job(b.id));
   assert.deepEqual(sec(await lastPrecheck(b.id)), []);
@@ -129,6 +133,6 @@ test("깃발: SEC_PRECHECK=0 이면 SEC 항목 없음 (지금 동작), PLAN_IR �
 
 test("남의 회사: 다른 회사 이전 번호로 부르면 판을 못 읽어 빈 목록 (RLS)", { skip }, async () => {
   const { id, src, dst } = await seed("gcp", "asia-northeast3", withReq(), undefined, OTHER);
-  const items = await pre.securityPrecheckFor(T, { id, sourceEnvId: src, targetEnvId: dst } as never, { PLAN_IR: "v2" });
+  const items = await pre.securityPrecheckFor(T, { id, sourceEnvId: src, targetEnvId: dst } as never, { PLAN_IR: "v2", SEC_PRECHECK: "1" });
   assert.deepEqual(items, []);
 });

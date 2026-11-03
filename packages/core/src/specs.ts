@@ -136,7 +136,7 @@ export function applySpecV2Patch(base: { spec: unknown; fieldMeta: SpecMeta | nu
       // E2EDATA2 DRAFT(ai): posture 통째 바꾸기. 출발 방화벽을 못 읽은 데이터 자원(ingress "unknown")은 precheck 가 사람이 정하라며 막는데,
       //   posture 를 고칠 길이 없어 영원히 spec_review 에 갇혔다. 모양은 AppSpecV2 검사(부르는 쪽)가 막는다
       // security: 앱 보안 요구사항(데이터 등급·허용 국가·키 소유). 가져오기는 채우지 않으므로 사람이 넣는 길이 이것뿐이다.
-      //   null 이면 칸을 지운다 (요구사항 없음 = 판정이 P-REQ-0 으로 선언을 요청)
+      //   DRAFT(ai): null 이면 칸을 지운다 (요구사항 없음 = 판정이 P-REQ-0 으로 선언을 요청)
       if (c.path === "security" && c.value === null) delete spec.security;
       else spec[c.path] = structuredClone(c.value);
     } else {

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { MigrationJob, PrecheckItem, QUEUES, SourceDbFacts, type AppSpecV2, type Provider } from "@svc/contracts";
 import { latestAcceptedSpecV2, withTenant } from "@svc/core";
-import { envFor, v2PrecheckItems, runCloudPrecheck, toPrecheckItems, spawnExec, resolveSpecV2, targetFactsV2, sourceFactsV2, appEnvV2,
+import { envFor, v2PrecheckItems, runCloudPrecheck, toPrecheckItems, spawnExec, resolveSpecV2, targetFactsV2, sourceFactsV2, sourceDbsV2, appEnvV2,
   type EnvSide, type PrecheckEnvInfo, type PrecheckInput, type PrecheckDeps, type CloudProvider } from "@svc/adapters";
 import { evaluatePortabilityV2, toSecurityPrecheckItems } from "@svc/security";
 import { endpointFromEnv, withClient } from "@svc/replication";
@@ -84,15 +84,17 @@ export function securityPrecheckItems(i: { spec: AppSpecV2; securityFacts?: Reco
   const t = targetFactsV2(i.target, i.spec);
   const r = evaluatePortabilityV2({
     requirements: i.spec.security?.requirements ?? null,
-    source: sourceFactsV2(i.source, i.spec, i.securityFacts),
+    source: sourceFactsV2(i.source, i.spec, i.securityFacts), sourceDbs: sourceDbsV2(i.spec, i.securityFacts),
     target: t.env, targetDbs: t.dbs, appEnv: appEnvV2(i.spec),
   });
   return toSecurityPrecheckItems(r).map((x) => PrecheckItem.parse(x));
 }
 
-// PLAN_IR=v2 일 때만. SEC_PRECHECK=0 이면 끔 (지금 점검 그대로). 명세를 못 쓰면 [] (v2PrecheckFor·계획 단계가 막는다)
+// PLAN_IR=v2 이고 SEC_PRECHECK=1 일 때만. 꺼져 있으면 지금 점검 그대로. 명세를 못 쓰면 [] (v2PrecheckFor·계획 단계가 막는다)
+// DRAFT(ai): 기본 꺼짐. 켜면 요구사항 없음(P-REQ-0)·도착 로그인 방식 모름·출발 확장 모름 경고가 모든 v2 계획서의 승인 항목이 되므로 보안 시연 환경에서만 켠다
+export const secPrecheckOn = (env: NodeJS.ProcessEnv = process.env) => planIrV2(env) && env.SEC_PRECHECK === "1";
 export async function securityPrecheckFor(tenantId: string, m: MigrationRow, env: NodeJS.ProcessEnv = process.env): Promise<PrecheckItem[]> {
-  if (!planIrV2(env) || env.SEC_PRECHECK === "0") return [];
+  if (!secPrecheckOn(env)) return [];
   return withTenant(tenantId, async (tx) => {
     const row = await latestAcceptedSpecV2(tx, m.id);
     const spec = row ? resolveSpecV2(row) : null;

@@ -96,7 +96,7 @@ export const SpecV2ConfirmPath = z.string().regex(/^(components|links|entry|chec
 export const SpecPatchInput = z.object({
   baseVersion: z.number().int().min(1),
   // DRAFT(ai) VPA2b: 값 바꾸기 항목은 value 키가 꼭 있어야 한다. 빠지면 400 (예전엔 칸이 조용히 지워졌다).
-  //   지우기는 명시적 null 로만 말하고, null 이 그 칸의 모양에 안 맞으면(지금은 nullable 칸 없음) 라우트의 모양 검사가 400 으로 막는다
+  //   지우기는 명시적 null 로만 말하고, null 이 그 칸의 모양에 안 맞으면(예외: v2 security 는 null = 칸 지우기) 라우트의 모양 검사가 400 으로 막는다
   changes: z.array(z.object({ path: z.union([SpecFieldPath, SpecV2FieldPath]), value: z.unknown() }).strict()
     .refine((c) => "value" in c, { message: "value 가 있어야 한다 (지우려면 명시적 null)", path: ["value"] })).max(20).optional(),
   // VPA3 버그 수정: 가져오기는 평문 비밀 환경변수를 칸 하나씩 service.env.<이름> 키로 검토 필요 표시한다(adapters normalize.ts).

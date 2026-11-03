@@ -19,7 +19,8 @@ export function sourceDbFactsOf(item: RawItem): SourceDbFacts | null {
     const enc = item.StorageEncrypted;
     return {
       encryptedAtRest: typeof enc === "boolean" ? measured(enc, `rds:${id}.StorageEncrypted`) : unknown(),
-      // 암호화된 RDS 는 AWS 관리 키여도 KmsKeyId 가 있다. 고객 키인지는 kms describe-key 의 KeyManager 를 봐야 안다 (아직 안 부름)
+      // DRAFT(ai): KmsKeyId 로 고객 키를 추정하지 않는다. 암호화된 RDS 는 AWS 관리 키여도 KmsKeyId 가 있다.
+      //   고객 키인지는 kms describe-key 의 KeyManager 를 봐야 안다 (아직 안 부름)
       keyOwner: unknown(),
       // TLS 강제는 파라미터 그룹의 rds.force_ssl 이다. 파라미터 그룹은 아직 안 읽는다
       tlsEnforced: unknown(),
@@ -33,7 +34,7 @@ export function sourceDbFactsOf(item: RawItem): SourceDbFacts | null {
       : typeof ip?.requireSsl === "boolean" ? measured(ip.requireSsl, `${src}.requireSsl`)
       : unknown();
     return {
-      // Cloud SQL 은 저장 데이터를 늘 암호화한다 (끌 수 있는 칸이 없다). 읽은 값이 아니라 제공자 문서 근거라 attested
+      // DRAFT(ai): Cloud SQL 은 저장 데이터를 늘 암호화한다 (끌 수 있는 칸이 없다). 읽은 값이 아니라 제공자 문서 근거라 attested
       encryptedAtRest: { value: true, origin: "attested", source: "GCP Cloud SQL 기본 저장 암호화 (제공자 문서)" },
       // 고객 키(CMEK)는 diskEncryptionConfiguration 이다. 아직 안 읽는다
       keyOwner: unknown(),

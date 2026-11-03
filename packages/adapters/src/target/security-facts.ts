@@ -15,7 +15,7 @@ const measured = <T>(value: T, source: string): Fact<T> => ({ value, origin: "me
 const AWS_PG = "infra/modules/aws/kinds/postgres/main.tf";
 const GCP_PG = "infra/modules/gcp/kinds/postgres/main.tf";
 
-// 도착 postgres 모듈이 고정한 값. 근거 줄은 test/security-facts-drift.test.ts 가 .tf 파일에서 다시 확인한다 (모듈이 바뀌면 시험이 깨진다)
+// 도착 postgres 모듈이 고정한 값. 근거 줄은 test/security-facts.test.ts 가 .tf 파일에서 다시 확인한다 (모듈이 바뀌면 시험이 깨진다)
 // DRAFT(ai): 온프레(CNPG)는 TLS·저장 암호화·키를 우리 차트가 정하지 않아 모름 = 고객 확인. azure_mock 은 모양만이라 전부 모름
 type ModuleDbFacts = Pick<Db, "encryptedAtRest" | "keyOwner" | "tlsEnforced" | "pitr">;
 export const MODULE_DB_FACTS: Record<Provider, ModuleDbFacts> = {
@@ -82,26 +82,39 @@ export function targetFactsV2(t: EnvSide, spec: AppSpecV2): { env: EnvFacts; dbs
   return { env: { provider: t.provider, envId: t.envId, country: country(t.provider, t.region), db: blankDb(), platform: PLATFORM[t.provider] }, dbs };
 }
 
-/** 출발 환경 사실. db 칸은 출발 대표 DB 하나 (postgres 구성요소 id 순 첫째). 나머지 출발 DB 는 판정에 안 들어간다 */
+// 출발 postgres 구성요소 하나의 DB 사실: 가져오기가 읽은 securityFacts + 명세 값 + 명세의 공개 여부
+function sourceDbOf(spec: AppSpecV2, c: ReturnType<typeof postgresOf>[number], securityFacts: Record<string, SourceDbFacts>): Db {
+  const net = spec.posture.network.find((n) => n.scope === "component" && n.subject === c.id);
+  const pub = net && net.scope === "component" && typeof net.public === "boolean" ? measured(net.public, `spec_v2 posture.network ${c.id}.public`) : unknown();
+  return { ...blankDb(), ...(securityFacts[c.id] ?? {}), ...specDb(c), publicAccess: pub };
+}
+
+/** 출발 환경 사실. db 칸은 env 규칙용 대표 DB 하나 (postgres 구성요소 id 순 첫째). db 규칙은 sourceDbsV2 로 컴포넌트마다 짝짓는다 */
 export function sourceFactsV2(s: EnvSide, spec: AppSpecV2, securityFacts: Record<string, SourceDbFacts> = {}): EnvFacts {
   const c = [...postgresOf(spec)].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0];
-  const net = c ? spec.posture.network.find((n) => n.scope === "component" && n.subject === c.id) : undefined;
-  const pub = net && net.scope === "component" && typeof net.public === "boolean" ? measured(net.public, `spec_v2 posture.network ${c!.id}.public`) : unknown();
-  const db: Db = c ? { ...blankDb(), ...(securityFacts[c.id] ?? {}), ...specDb(c), publicAccess: pub } : blankDb();
   return {
-    provider: s.provider, envId: s.envId, country: country(s.provider, s.region), db,
+    provider: s.provider, envId: s.envId, country: country(s.provider, s.region), db: c ? sourceDbOf(spec, c, securityFacts) : blankDb(),
     platform: { auditLog: unknown(), secretsEncrypted: unknown(), workloadIdentity: unknown() },
   };
 }
 
-/** 앱 설정값 중 평문 값만 (비밀 참조·링크·템플릿은 뺀다). 판정 규칙 P-SEC-1·G-21·G-23 이 본다 */
+/** 출발 postgres 구성요소마다 DB 사실. 같은 명세라 도착 targetFactsV2().dbs 와 컴포넌트 id 로 짝이 맞는다 */
+export function sourceDbsV2(spec: AppSpecV2, securityFacts: Record<string, SourceDbFacts> = {}): { componentId: string; db: Db }[] {
+  return postgresOf(spec).map((c) => ({ componentId: c.id, db: sourceDbOf(spec, c, securityFacts) }));
+}
+
+/** 앱 설정값 중 평문 값만 (비밀 참조·링크·템플릿은 뺀다). 본 컨테이너 + 사이드카·init 컨테이너. 판정 규칙 P-SEC-1·G-21·G-23 이 본다 */
 export function appEnvV2(spec: AppSpecV2): { name: string; value: string }[] {
   const out: { name: string; value: string }[] = [];
-  for (const c of spec.components) {
-    const env = (c.props as { env?: unknown }).env;
-    if (!Array.isArray(env)) continue;
+  const take = (env: unknown) => {
+    if (!Array.isArray(env)) return;
     for (const e of env) if (e && typeof e === "object" && typeof (e as { value?: unknown }).value === "string")
       out.push({ name: (e as { name: string }).name, value: (e as { value: string }).value });
+  };
+  for (const c of spec.components) {
+    const p = c.props as { env?: unknown; sidecars?: unknown; initContainers?: unknown };
+    take(p.env);
+    for (const list of [p.sidecars, p.initContainers]) if (Array.isArray(list)) for (const s of list) take((s as { env?: unknown })?.env);
   }
   return out;
 }

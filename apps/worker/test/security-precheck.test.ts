@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ImportResultV2, PrecheckItem, type RawInventory } from "@svc/contracts";
 import { normalizeV2 } from "@svc/adapters";
-import { securityPrecheckFor, securityPrecheckItems } from "../src/jobs/precheck.js";
+import { secPrecheckOn, securityPrecheckFor, securityPrecheckItems } from "../src/jobs/precheck.js";
 
 // AWS 출발: 서비스 + RDS (저장 암호화 읽음, 비공개)
 const imported = (): ImportResultV2 => ImportResultV2.parse(normalizeV2({ provider: "aws", coverage: {}, items: [
@@ -53,8 +53,19 @@ test("같은 입력이면 같은 항목 (계획서 해시가 흔들리지 않게
   assert.deepEqual(run(r, { provider: "gcp", region: "asia-northeast3" }), run(r, { provider: "gcp", region: "asia-northeast3" }));
 });
 
-test("깃발: PLAN_IR 이 v2 가 아니거나 SEC_PRECHECK=0 이면 DB 를 보지 않고 빈 목록", async () => {
+test("깃발: 기본 꺼짐. SEC_PRECHECK=1 + PLAN_IR=v2 일 때만 켜지고, 아니면 DB 를 보지 않고 빈 목록", async () => {
   const m = { id: "m", sourceEnvId: "s", targetEnvId: "t" } as never;
-  assert.deepEqual(await securityPrecheckFor("tenant", m, { PLAN_IR: "v1" }), []);
+  assert.deepEqual(await securityPrecheckFor("tenant", m, { PLAN_IR: "v2" }), []);
+  assert.deepEqual(await securityPrecheckFor("tenant", m, { PLAN_IR: "v1", SEC_PRECHECK: "1" }), []);
   assert.deepEqual(await securityPrecheckFor("tenant", m, { PLAN_IR: "v2", SEC_PRECHECK: "0" }), []);
+  assert.equal(secPrecheckOn({ PLAN_IR: "v2", SEC_PRECHECK: "1" }), true);
+});
+
+test("출발 DB 2개: 각 도착 DB 는 같은 이름의 출발 DB 와 비교한다 (버전 16·14 를 엇갈려 비교하지 않는다)", () => {
+  const r = imported();
+  const pg = r.spec.components.find((c) => c.kind === "postgres")!;
+  const old = { ...structuredClone(pg), id: "zz-db", props: { ...structuredClone(pg.props), majorVersion: "14" } };
+  const spec = { ...r.spec, components: [...r.spec.components.map((c) => (c.id === pg.id ? { ...c, id: "aa-db" } : c)), old] };
+  const items = securityPrecheckItems({ spec, securityFacts: {}, source: SRC, target: { envId: "t", provider: "aws", region: "ap-northeast-2" } });
+  assert.ok(!items.some((i) => i.id.startsWith("SEC:P-DB-5")), ids(items).join(" "));
 });
