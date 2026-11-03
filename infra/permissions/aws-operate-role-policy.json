@@ -44,6 +44,84 @@
       }
     },
     {
+      "Sid": "DataDescribe",
+      "Effect": "Allow",
+      "Action": [
+        "elasticache:DescribeCacheSubnetGroups",
+        "elasticache:DescribeReplicationGroups"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "ap-northeast-2"
+        }
+      }
+    },
+    {
+      "Sid": "DataScoped",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:CreateSecurityGroup",
+        "ec2:CreateTags",
+        "ec2:DeleteSecurityGroup",
+        "ec2:DescribeSecurityGroupRules",
+        "ec2:DescribeSecurityGroups",
+        "ec2:RevokeSecurityGroupEgress",
+        "elasticache:AddTagsToResource",
+        "elasticache:CreateCacheSubnetGroup",
+        "elasticache:CreateReplicationGroup",
+        "elasticache:DeleteCacheSubnetGroup",
+        "elasticache:DeleteReplicationGroup",
+        "elasticache:ListTagsForResource",
+        "elasticache:ModifyReplicationGroup",
+        "s3:CreateBucket",
+        "s3:DeleteBucket",
+        "s3:GetBucketCORS",
+        "s3:GetBucketLocation",
+        "s3:GetBucketPublicAccessBlock",
+        "s3:GetBucketTagging",
+        "s3:GetBucketVersioning",
+        "s3:GetEncryptionConfiguration",
+        "s3:GetLifecycleConfiguration",
+        "s3:ListBucket",
+        "s3:PutBucketCORS",
+        "s3:PutBucketPublicAccessBlock",
+        "s3:PutBucketTagging",
+        "s3:PutBucketVersioning",
+        "s3:PutEncryptionConfiguration",
+        "s3:PutLifecycleConfiguration",
+        "sns:CreateTopic",
+        "sns:DeleteTopic",
+        "sns:GetTopicAttributes",
+        "sns:ListTagsForResource",
+        "sns:SetTopicAttributes",
+        "sns:TagResource",
+        "sqs:CreateQueue",
+        "sqs:DeleteQueue",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl",
+        "sqs:ListQueueTags",
+        "sqs:SetQueueAttributes",
+        "sqs:TagQueue"
+      ],
+      "Resource": [
+        "arn:aws:elasticache:*:*:replicationgroup:app-*",
+        "arn:aws:elasticache:*:*:cluster:app-*",
+        "arn:aws:elasticache:*:*:subnetgroup:app-*",
+        "arn:aws:elasticache:*:*:parametergroup:*",
+        "arn:aws:s3:::app-*",
+        "arn:aws:s3:::app-*/*",
+        "arn:aws:sqs:*:*:app-*",
+        "arn:aws:sns:*:*:app-*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "ap-northeast-2"
+        }
+      }
+    },
+    {
       "Sid": "AppRolesWithBoundary",
       "Effect": "Allow",
       "Action": [

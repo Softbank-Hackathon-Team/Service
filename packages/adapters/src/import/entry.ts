@@ -103,6 +103,8 @@ export function buildEntry(components: MappedComponent[], svcObjs: RawK8sService
 export function fillProjection(components: MappedComponent[], svcObjs: RawK8sService[], ingresses: RawK8sIngress[]): void {
   for (const c of components) {
     if (c.kind !== "service" || !c.projection) continue;
+    // I9: k8s 밖 출발(ECS)은 매퍼가 호스트를 정해 둔다 (k8s Service·Ingress 가 없음). 못 정했으면 v1 기본 이름 규칙(투영)
+    if (c.native.type === "ecs.service") continue;
     const ns = c.native.namespace;
     const svc = svcObjs.find((s) => s.metadata.namespace === ns && selects(s, c));
     if (c.projection.port == null && svc) {
@@ -121,4 +123,30 @@ export function fillProjection(components: MappedComponent[], svcObjs: RawK8sSer
     } else hostname = `${c.native.name}.${ns}.svc.cluster.local`;
     c.projection.hostname = hostname;
   }
+}
+
+/** I9: 매퍼가 넘긴 라우팅 재료(ECS ALB 규칙)를 entry 에 더한다. 같은 호스트면 k8s 줄 뒤에 붙인다. 경로가 같은 줄은 안 겹친다 */
+export function mergeRoutes(entry: EntriesV2 | undefined, components: MappedComponent[], fieldMeta: FieldMetaV2): EntriesV2 | undefined {
+  if (!components.some((c) => c.routes?.length)) return entry;   // k8s 만이면 그대로 (같은 객체)
+  const hosts = new Map<string, Host>((entry?.hosts ?? []).map((h) => [h.hostnames[0]!, h]));
+  const touched = new Set<Host>();
+  for (const c of [...components].sort((a, b) => (a.id! < b.id! ? -1 : 1))) {
+    for (const r of c.routes ?? []) {
+      const h: Host = hosts.get(r.host) ?? { hostnames: [r.host], routes: [] };
+      hosts.set(r.host, h); touched.add(h);
+      // ALB path-pattern: "/api/*" → PathPrefix "/api", 끝 * 없는 글자 → Exact. 없으면 "/"
+      const raw = r.path ?? "/";
+      const prefix = raw.endsWith("*");
+      const value = prefix ? (raw.replace(/\/?\*+$/, "") || "/") : raw;
+      const type = prefix || raw === "/" ? "PathPrefix" as const : "Exact" as const;
+      if (h.routes.some((x) => x.matches.some((mm) => mm.path.value === value && mm.path.type === type))) continue;
+      h.routes.push({ matches: [{ path: { type, value } }], backends: [{ to: c.id!, port: r.port, weight: 1 }] });
+      if (r.path == null) fieldMeta[`entry.${r.host}.routes[${h.routes.length - 1}]`] = { source: `ecs:${c.native.name}.hostname`, confidence: 0.9, needs_review: true,
+        rationale: "ALB 규칙을 못 읽고 호스트만 앎 → \"/\" 전체를 이 서비스로" };
+    }
+  }
+  // 긴 경로 먼저 (ALB 우선순위 대신 HTTPRoute 최장 일치 규칙과 같은 순서)
+  for (const h of touched) h.routes.sort((a, b) => b.matches[0]!.path.value.length - a.matches[0]!.path.value.length);
+  const list = [...hosts.values()].filter((h) => h.routes.length).sort((a, b) => (a.hostnames[0]! < b.hostnames[0]! ? -1 : 1));
+  return list.length ? { via: "cloudflare-lb", hosts: list } : undefined;
 }

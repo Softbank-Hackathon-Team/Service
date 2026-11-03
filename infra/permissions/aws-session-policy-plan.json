@@ -8,6 +8,9 @@
         "ec2:DescribeSecurityGroups",
         "eks:DescribeCluster",
         "eks:DescribePodIdentityAssociation",
+        "elasticache:DescribeCacheSubnetGroups",
+        "elasticache:DescribeReplicationGroups",
+        "elasticache:ListTagsForResource",
         "iam:GetRole",
         "iam:GetRolePolicy",
         "iam:ListAttachedRolePolicies",
@@ -17,8 +20,21 @@
         "rds:DescribeDBParameters",
         "rds:DescribeDBSubnetGroups",
         "rds:ListTagsForResource",
+        "s3:GetBucketCORS",
+        "s3:GetBucketLocation",
+        "s3:GetBucketPublicAccessBlock",
+        "s3:GetBucketTagging",
+        "s3:GetBucketVersioning",
+        "s3:GetEncryptionConfiguration",
+        "s3:GetLifecycleConfiguration",
+        "s3:ListBucket",
         "secretsmanager:DescribeSecret",
-        "secretsmanager:GetResourcePolicy"
+        "secretsmanager:GetResourcePolicy",
+        "sns:GetTopicAttributes",
+        "sns:ListTagsForResource",
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl",
+        "sqs:ListQueueTags"
       ],
       "Resource": "*"
     }

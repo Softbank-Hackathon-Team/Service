@@ -1,6 +1,6 @@
 import { QUEUES, type MigrationStatus } from "@svc/contracts";
 import {
-  boss, withTenant, advance, listExpiredEnvLocks, cleanupIdempotencyKeys,
+  boss, scrubValue, withTenant, advance, listExpiredEnvLocks, cleanupIdempotencyKeys,
   releaseEnvLocks, failureEdge, INACTIVE_STATES, STEP_QUEUES, LEASE, type ExpiredLock, type Tx,
 } from "@svc/core";
 import { replicationFromEnv, type FenceRecovery } from "@svc/replication";
@@ -132,7 +132,7 @@ export async function reapLock(l: ExpiredLock): Promise<{ action: ReapAction; ap
   let jobFailed = false;
   if (done && a.kind === "fail" && l.jobId && l.jobQueue) {
     await boss.fail(l.jobQueue, l.jobId, { reason: a.code }).then(() => { jobFailed = true; },
-      (e) => console.error("[lease-reaper] boss.fail", e));
+      (e) => console.error("[lease-reaper] boss.fail", scrubValue(e)));
   }
   return { action: a, applied: done, jobFailed, lost };
 }

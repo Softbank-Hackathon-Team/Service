@@ -1,6 +1,6 @@
 import pg from "pg";
 import { envNumber } from "@svc/contracts";
-import { createLogger } from "./obs/log.js";
+import { createLogger, scrubString } from "./obs/log.js";
 
 export type Tx = pg.PoolClient;
 
@@ -24,7 +24,7 @@ export async function withTenant<T>(
 ): Promise<T> {
   const c = await pool.connect();
   // 빌린 연결이 일하는 중 끊겨도 프로세스가 죽지 않게. 오류는 진행 중인 query가 대신 던진다
-  const onErr = (e: Error) => console.error("[pg client] error", e.message);
+  const onErr = (e: Error) => console.error("[pg client] error", scrubString(e.message));
   c.on("error", onErr);
   let broken: Error | undefined;
   try {

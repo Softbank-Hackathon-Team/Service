@@ -1,6 +1,6 @@
 import { AppSpec, ImportResultV2, MigrationJob, checkV2, type FieldMeta, type ObserveSession, type Provider, type RawInventory } from "@svc/contracts";
-import { withTenant, advance } from "@svc/core";
-import { AWS_DATA_READ_ACTIONS, AdapterError, adapterFor, discoverForImport, envFor, inventoryForAudit, isAdapterError, normalizeV2, projectV1 } from "@svc/adapters";
+import { withTenant, advance, scrubString } from "@svc/core";
+import { AWS_DATA_READ_ACTIONS, GCP_DATA_READ_PERMISSIONS, actionsOfCommands, AdapterError, adapterFor, discoverForImport, ECS_OBSERVE_ACTIONS, envFor, inventoryForAudit, isAdapterError, normalizeV2, projectV1 } from "@svc/adapters";
 import { StsCliError, TempRoleDenied } from "@svc/security";
 import { tempRoles } from "../platform.js";
 import { failedAttempts, recordAttemptFailure } from "./_step.js";
@@ -92,15 +92,28 @@ export const IMPORT_OBSERVE_ACTIONS = ["sts:GetCallerIdentity", "eks:ListCluster
   "ec2:DescribeVpcs", "elasticloadbalancing:DescribeLoadBalancers", "ecr:DescribeRepositories", "secretsmanager:ListSecrets"];
 // OBSROLE: 깃발 IMPORT_IR=v2 일 때만 데이터 자원 읽기(S3·SQS·ElastiCache) 동작을 더해 요청한다 (깃발 off = 지금 목록 그대로).
 //   목록 원본은 adapters discover/data.ts (고객 관찰 역할 템플릿도 같은 목록을 가져감)
-export const importObserveActions = (): string[] =>
-  process.env.IMPORT_IR?.trim() === "v2" ? [...IMPORT_OBSERVE_ACTIONS, ...AWS_DATA_READ_ACTIONS] : IMPORT_OBSERVE_ACTIONS;
+//   I9: v2 는 ECS·ALB 규칙·Auto Scaling 읽기(adapters import/readers/aws-ecs.ts)도 더한다
+// OBSROLE/OBSROLE2: 장부에 남기는 "이 가져오기가 부르는 읽기 동작" 목록. 표 원본 = adapters common/observe-permissions.ts (고객 관찰 역할 템플릿·연결 스크립트도 같은 표)
+//   AWS: 기본 = 지금 목록. IMPORT_IR=v2 이면 데이터 자원(S3·SQS·ElastiCache) 읽기 12개, IMPORT_IR=v2 + IMPORT_AWS_IAM=1 이면 앱 신원 IAM 읽기(파드 신원 2 + IAM 5)까지
+//   GCP: 예전에는 AWS 동작 이름을 그대로 요청했다(장부가 틀림). GCP 권한 이름으로 요청한다 — discover gcp 가 부르는 명령 + v2 데이터 자원 읽기
+const IMPORT_AWS_IAM_KEYS = ["eks list-pod-identity-associations", "eks describe-pod-identity-association", "iam list-attached-role-policies",
+  "iam get-policy", "iam get-policy-version", "iam list-role-policies", "iam get-role-policy"] as const;
+export const IMPORT_GCP_OBSERVE_ACTIONS = actionsOfCommands("gcp", ["projects describe", "container clusters list", "container clusters get-credentials", "sql instances list",
+  "compute networks list", "compute forwarding-rules list", "artifacts repositories list", "secrets list"]);
+export const importObserveActions = (provider = "aws"): string[] => {
+  const v2 = process.env.IMPORT_IR?.trim() === "v2";
+  if (provider === "gcp")
+    return v2 ? [...IMPORT_GCP_OBSERVE_ACTIONS, ...GCP_DATA_READ_PERMISSIONS] : IMPORT_GCP_OBSERVE_ACTIONS;
+  if (!v2) return IMPORT_OBSERVE_ACTIONS;
+  return [...IMPORT_OBSERVE_ACTIONS, ...AWS_DATA_READ_ACTIONS, ...ECS_OBSERVE_ACTIONS, ...(process.env.IMPORT_AWS_IAM === "1" ? actionsOfCommands("aws", IMPORT_AWS_IAM_KEYS) : [])];
+};
 async function borrowObserve(job: MigrationJob, row: { source_env_id: string; provider: string; account_id: string | null; region: string | null }) {
   const roles = tempRoles();
   let ref: string;
   let session: ObserveSession;
   try {
     const cred = await roles.issue({ tenantId: job.tenantId, envId: row.source_env_id, provider: row.provider as Provider,
-      purpose: "observe", migrationId: job.migrationId, actions: importObserveActions(), ttlSec: IMPORT_OBSERVE_TTL_SEC }, { step: "import" });
+      purpose: "observe", migrationId: job.migrationId, actions: importObserveActions(row.provider), ttlSec: IMPORT_OBSERVE_TTL_SEC }, { step: "import" });
     ref = cred.credentialRef;
     session = { accountId: row.account_id ?? "dev", expiresAt: cred.expiresAt, ...(row.region ? { region: row.region } : {}) };
     if (!cred.stub) {
@@ -117,7 +130,7 @@ async function borrowObserve(job: MigrationJob, row: { source_env_id: string; pr
   }
   return {
     session,
-    release: () => roles.revoke(ref, job.tenantId, "import_done").then(() => undefined, (e) => console.error("import revoke", (e as Error).message)),
+    release: () => roles.revoke(ref, job.tenantId, "import_done").then(() => undefined, (e) => console.error("import revoke", scrubString((e as Error).message))),
   };
 }
 
@@ -151,12 +164,13 @@ type V2Import = { inv: RawInventory; spec: unknown; fieldMeta: FieldMeta; result
 async function importV2(p: Provider, sess: ObserveSession): Promise<V2Import> {
   // I4: 깃발 IMPORT_AWS_IAM=1 이면 앱 신원의 IAM 정책도 읽어 grants·기준선을 채운다 (기본 꺼짐 = 지금 그대로)
   const inv = await discoverForImport(p, { ir: "v2", iam: process.env.IMPORT_AWS_IAM === "1" }, sess.cliEnv ? { env: envFor(sess.cliEnv) } : {});
-  const k8s = (inv.items as Array<{ kind?: string }>).some((i) => i.kind === "k8s.deployment" || i.kind === "k8s.cronjob");
+  // I9: ECS 서비스도 v2 워크로드 (관리형 컨테이너 갈래). 워크로드가 하나도 없을 때만 v1 경로로 되돌아간다
+  const k8s = (inv.items as Array<{ kind?: string }>).some((i) => i.kind === "k8s.deployment" || i.kind === "k8s.cronjob" || i.kind === "ecs.service");
   if (!k8s) {
     const a = adapterFor(p);
     const inv1 = await a.discover(sess, { kind: "container", selector: "*" });
     const { spec, fieldMeta } = a.normalize(inv1);
-    return { inv: inv1, spec, fieldMeta, result: null, note: "원본에 k8s 워크로드 없음 → v1 경로 (spec_v2 없음)" };
+    return { inv: inv1, spec, fieldMeta, result: null, note: "원본에 k8s·ECS 워크로드 없음 → v1 경로 (spec_v2 없음)" };
   }
   const { result, projectionEnv } = normalizeV2(inv);
   const { errors, reviews } = checkV2(result.spec);

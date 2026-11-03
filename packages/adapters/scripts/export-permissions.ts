@@ -2,6 +2,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AppSpec } from "@svc/contracts";
 import { adapterFor, aws, gcp, onprem, DEMO_INVENTORY } from "../src/index.js";
+import { actionsFor } from "../src/common/actions.js";
+import { DATA_TYPES } from "../src/target/data.js";
 import { buildAwsConnectTemplate } from "./aws-connect-template.js";
 
 // 앱 모듈(infra/modules/*/app)을 plan/apply/destroy 하는 데 필요한 최소 권한을 파일로 뽑는다.
@@ -24,11 +26,27 @@ const BOUNDARY_ARN = "arn:aws:iam::${aws:PrincipalAccount}:policy/platform-app-b
 const NEEDS_BOUNDARY = ["iam:CreateRole", "iam:PutRolePolicy"];
 const awsIamBound = awsAll.filter((a) => NEEDS_BOUNDARY.includes(a));
 const awsIamOther = awsAll.filter((a) => a.startsWith("iam:") && a !== "iam:PassRole" && !NEEDS_BOUNDARY.includes(a));
+// TA12b: 데이터 자원(ElastiCache·S3·SQS·SNS / Memorystore·GCS·Pub/Sub) 권한. 모든 단계 합집합이 천장, 단계별로 세션 정책에 더함.
+//   쓰기·태그·삭제는 이름이 "app-" 로 시작하는 자원에만 (target/data.ts 의 이름 규칙). 자원 단위 제한이 안 되는 ElastiCache Describe* 만 Resource "*".
+const AWS_DATA = [...Object.values(DATA_TYPES.aws).flat()];
+const awsDataFor = (p: (typeof purposes)[number]) => actionsFor(aws.PERMS, AWS_DATA, p);
+const awsDataAll = [...new Set(purposes.flatMap(awsDataFor))].sort();
+const awsDataDescribe = awsDataAll.filter((a) => a.startsWith("elasticache:Describe"));
+const awsDataScoped = awsDataAll.filter((a) => !a.startsWith("elasticache:Describe"));
+const DATA_ARNS = [
+  "arn:aws:elasticache:*:*:replicationgroup:app-*", "arn:aws:elasticache:*:*:cluster:app-*", "arn:aws:elasticache:*:*:subnetgroup:app-*",
+  "arn:aws:elasticache:*:*:parametergroup:*",   // 【미확인】 기본 파라미터 그룹(default.*)을 읽어야 만들어짐 — 첫 실측으로 확인
+  "arn:aws:s3:::app-*", "arn:aws:s3:::app-*/*", "arn:aws:sqs:*:*:app-*", "arn:aws:sns:*:*:app-*",
+];
 const awsRest = awsAll.filter((a) => !a.startsWith("iam:"));
 const awsOperatePolicy = {
   Version: "2012-10-17",
   Statement: [
     { Sid: "AppModule", Effect: "Allow", Action: awsRest, Resource: "*",
+      Condition: { StringEquals: { "aws:RequestedRegion": "ap-northeast-2" } } },
+    { Sid: "DataDescribe", Effect: "Allow", Action: awsDataDescribe, Resource: "*",
+      Condition: { StringEquals: { "aws:RequestedRegion": "ap-northeast-2" } } },
+    { Sid: "DataScoped", Effect: "Allow", Action: awsDataScoped, Resource: DATA_ARNS,
       Condition: { StringEquals: { "aws:RequestedRegion": "ap-northeast-2" } } },
     { Sid: "AppRolesWithBoundary", Effect: "Allow", Action: awsIamBound, Resource: "arn:aws:iam::*:role/app-*",
       Condition: { StringEquals: { "iam:PermissionsBoundary": BOUNDARY_ARN } } },
@@ -43,12 +61,20 @@ const awsBoundary = aws.appRoleBoundary("ap-northeast-2");
 writeFileSync(join(out, "aws-app-role-boundary.json"), JSON.stringify(awsBoundary, null, 2) + "\n");
 // 고객 연결 템플릿(CloudFormation): 위 두 정책을 그대로 넣는다 → 실행 정책과 어긋나지 않음
 writeFileSync(join(onboardingOut, "aws-connect.json"), JSON.stringify(buildAwsConnectTemplate(awsOperatePolicy, awsBoundary), null, 2) + "\n");
-for (const p of purposes)
-  writeFileSync(join(out, `aws-session-policy-${p}.json`), JSON.stringify(JSON.parse(aws.sessionPolicy(spec("aws"), p)), null, 2) + "\n");
+for (const p of purposes) {
+  // 세션 정책 = v1 데모 동작 + 데이터 자원 동작 (한 문장에 합침: 2,048자 제한). 실제 효력은 천장(역할 정책)과의 교집합이라 자원 접두어 제한이 같이 걸림
+  const doc = JSON.parse(aws.sessionPolicy(spec("aws"), p)) as { Statement: Array<{ Action: string[] }> };
+  doc.Statement[0]!.Action = [...new Set([...doc.Statement[0]!.Action, ...awsDataFor(p)])].sort();
+  const compact = JSON.stringify(doc);
+  if (compact.length > 2048) throw new Error(`세션 정책 ${p} ${compact.length}자 > 2048`);
+  writeFileSync(join(out, `aws-session-policy-${p}.json`), JSON.stringify(doc, null, 2) + "\n");
+}
 
 // GCP: 테넌트 SA에 줄 커스텀 역할 2개 (GCP는 호출별 세션 정책이 없음).
 // setIamPolicy 2개는 따로 떼어 "이름이 app-로 시작하는 SA·시크릿"에만 쓰이게 IAM 조건을 건다 (위협 모델 G-1, G-2)
-const gcpAll = [...new Set(purposes.flatMap((p) => gcp.operateActions(spec("gcp"), p)))].sort();
+const GCP_DATA = [...Object.values(DATA_TYPES.gcp).flat()];
+// TA12b: 데이터 자원 권한도 천장에 포함. 【미확인】 GCP 커스텀 역할은 이름 접두어로 제한 못 함 (프로젝트 단위) — 필요하면 IAM 조건부 바인딩 추가 TODO(human)
+const gcpAll = [...new Set([...purposes.flatMap((p) => gcp.operateActions(spec("gcp"), p)), ...purposes.flatMap((p) => actionsFor(gcp.PERMS, GCP_DATA, p))])].sort();
 const gcpIam = gcpAll.filter((x) => x.endsWith(".setIamPolicy"));
 const gcpRest = gcpAll.filter((x) => !x.endsWith(".setIamPolicy"));
 const role = (title: string, desc: string, perms: string[]) =>

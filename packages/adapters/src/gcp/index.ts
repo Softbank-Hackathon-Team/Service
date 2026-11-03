@@ -30,7 +30,7 @@ export const PERMS: PermTable = {
   google_pubsub_topic: {
     read: ["pubsub.topics.get"], write: ["pubsub.topics.create", "pubsub.topics.update"], remove: ["pubsub.topics.delete"] },
   google_pubsub_subscription: {
-    read: ["pubsub.subscriptions.get"], write: ["pubsub.subscriptions.create", "pubsub.subscriptions.update"], remove: ["pubsub.subscriptions.delete"] },
+    read: ["pubsub.subscriptions.get"], write: ["pubsub.subscriptions.create", "pubsub.subscriptions.update", "pubsub.topics.attachSubscription"], remove: ["pubsub.subscriptions.delete"] },
   google_sql_user: {
     read: ["cloudsql.users.list"],
     write: ["cloudsql.users.create", "cloudsql.users.update"],

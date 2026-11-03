@@ -24,6 +24,19 @@ includedPermissions:
 - iam.serviceAccounts.get
 - iam.serviceAccounts.getIamPolicy
 - iam.serviceAccounts.update
+- pubsub.subscriptions.create
+- pubsub.subscriptions.delete
+- pubsub.subscriptions.get
+- pubsub.subscriptions.update
+- pubsub.topics.attachSubscription
+- pubsub.topics.create
+- pubsub.topics.delete
+- pubsub.topics.get
+- pubsub.topics.update
+- redis.instances.create
+- redis.instances.delete
+- redis.instances.get
+- redis.instances.update
 - secretmanager.secrets.create
 - secretmanager.secrets.delete
 - secretmanager.secrets.get
@@ -32,3 +45,7 @@ includedPermissions:
 - secretmanager.versions.add
 - secretmanager.versions.destroy
 - secretmanager.versions.get
+- storage.buckets.create
+- storage.buckets.delete
+- storage.buckets.get
+- storage.buckets.update

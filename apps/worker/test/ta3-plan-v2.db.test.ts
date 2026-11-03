@@ -46,7 +46,12 @@ test("정상: v2 가져오기 판 → spec_v2, v1 되돌아감 판 → upconvert
   assert.equal(rg.ok && rg.source, "spec_v2");
   assert.equal(rg.ok && rg.spec.components.some((c) => c.kind === "postgres"), true);
   assert.equal(adapters.v2PrecheckItems("gcp", g!)[0]!.id, "PC-V2-SOURCE");
-  const a = await pick(T, await imported("aws"));
+  // I9: aws 데모가 ECS v2 가 됐다 → 워크로드 없는 원본(DB 만)으로 v1 되돌아감 판을 만든다
+  const src = adapters.DEMO_INVENTORY_V2.aws!, orig = src.items;
+  src.items = orig.filter((i) => (i as { kind: string }).kind !== "ecs.service");
+  let aid: string;
+  try { aid = await imported("aws"); } finally { src.items = orig; }
+  const a = await pick(T, aid);
   assert.equal(a!.specV2, null);
   const ra = adapters.resolveSpecV2(a!);
   assert.equal(ra.ok && ra.source, "upconvert");

@@ -77,7 +77,7 @@ test("GCP·온프레: 커스텀 역할·ClusterRole 천장 안만 허용", async
     actions: ["cloudsql.instances.create"], ttlSec: 1800 });
   assert.equal(g.ttlAdjustedSec, 900);   // 실행 역할은 15분까지 (T-ROLE-9)
   await assert.rejects(broker.issue({ tenantId: T, envId: E, provider: "gcp", purpose: "operate", migrationId: M,
-    actions: ["storage.buckets.delete"], ttlSec: 1800 }), (e) => e instanceof TempRoleDenied && e.code === "ROLE_OUTSIDE_CEILING");
+    actions: ["compute.instances.delete"], ttlSec: 1800 }), (e) => e instanceof TempRoleDenied && e.code === "ROLE_OUTSIDE_CEILING");   // TA12b: storage.buckets.* 는 이제 데이터 자원 때문에 천장 안 → compute 로 바꿈
   const k = await broker.issue({ tenantId: T, envId: E, provider: "onprem", purpose: "operate", migrationId: M,
     actions: ["apps/deployments:patch"], ttlSec: 300 });
   assert.equal(k.ttlAdjustedSec, 600);   // k8s TokenRequest 최소 600초

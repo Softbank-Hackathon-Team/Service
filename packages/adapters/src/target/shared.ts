@@ -69,6 +69,15 @@ export function requirementsV2(spec: AppSpecV2): Capability[] {
       case "job": r.add("runtime.k8s"); r.add("kind.job"); break;
       case "postgres": r.add(c.props.majorVersion ? `kind.postgres.${c.props.majorVersion}` : "kind.postgres"); break;
       case "cache": r.add(`kind.cache.${c.props.engine}`); if (c.props.clusterMode) r.add("kind.cache.cluster"); break;   // TA12: 클러스터 모드는 별도 capability
+      case "queue": {
+        r.add("kind.queue");
+        // VTA12 DRAFT(ai): 순서 보장(ordered) 큐와 DLQ 의 순서 보장이 다르면 별도 capability. SQS 는 FIFO 큐의 DLQ 도 FIFO(표준은 표준)여야 해서
+        //   AWS 는 apply 에서야 실패한다 → AWS 는 이 capability 를 안 가져 계획 전에 막는다. Pub/Sub 은 DLQ 가 토픽이라 상관없음
+        const dl = c.props.deadLetter?.to;
+        const t = dl ? spec.components.find((x) => x.id === dl) : undefined;
+        if (t?.kind === "queue" && (c.props.ordered === true) !== (t.props.ordered === true)) r.add("kind.queue.dlqMixedOrder");
+        break;
+      }
       default: r.add(`kind.${c.kind}`);
     }
     if (c.kind === "service" || c.kind === "job") {
@@ -79,13 +88,13 @@ export function requirementsV2(spec: AppSpecV2): Capability[] {
   if (pg.length > 1) r.add("kind.postgres.multi");   // 지금 복제 코드는 DB 하나 (3.2)
   for (const l of spec.links) {
     r.add(typeof l.to === "string" ? `link.${l.intent}` : "unmapped" in l.to ? "link.unmapped" : "link.external");
-    if (l.grants?.length) r.add("render.grants");    // A8 전까지 막음
+    if (l.grants?.length) r.add("render.grants");    // A8: Builder 가 target/grants.ts 로 그림. 대응표 밖은 grantBlockers 가 막음
   }
   if (spec.entry) {
     r.add("entry.ingress");
     if (spec.entry.hosts.some((h) => h.tls?.mode === "passthrough")) r.add("entry.tlsPassthrough");
   }
-  if (spec.posture.permissions.length) r.add("posture.permissions");   // A8 전까지 막음 (3.3)
+  if (spec.posture.permissions.length) r.add("posture.permissions");   // A8: 위와 같음 (3.3)
   for (const n of spec.posture.network) {
     if (n.scope === "namespace") r.add(n.default === "allow-all" ? "posture.allowAll" : "posture.networkPolicy");
     else r.add("posture.component");
@@ -96,7 +105,10 @@ export function requirementsV2(spec: AppSpecV2): Capability[] {
 // capability 밖(unsupported) + 사람이 봐야 하는 것(needsHuman). precheck(A3)가 그대로 쓴다
 export function v2Blockers(spec: AppSpecV2, caps: Capability[]): { unsupported: string[]; needsHuman: string[] } {
   const have = new Set(caps);
-  const unsupported = requirementsV2(spec).filter((x) => !have.has(x)).map((x) => `도착 렌더 미지원: ${x}`);
+  // I9: 관리형 컨테이너(ECS·Cloud Run) 렌더는 아직 없음 → 막고, 어느 서비스인지·어떻게 풀지 적는다 (모듈은 kinds/service-ecs·service-cloudrun 카탈로그만)
+  const hint = (x: Capability) => x !== "runtime.managedContainer" ? "" :
+    ` (서비스 ${spec.components.filter((c) => c.kind === "service" && c.props.runtime === "managedContainer").map((c) => c.id).sort().join(",")} — 명세 검토에서 runtime 을 k8s 로 바꾸면 EKS·GKE·k3s 로 옮김, 실행 방식 바뀜 승인)`;
+  const unsupported = requirementsV2(spec).filter((x) => !have.has(x)).map((x) => `도착 렌더 미지원: ${x}${hint(x)}`);
   const needsHuman: string[] = [];
   for (const c of spec.components) {
     if (c.kind === "postgres") {
@@ -121,6 +133,13 @@ export function v2Blockers(spec: AppSpecV2, caps: Capability[]): { unsupported: 
       }
     }
     if (c.kind === "objectStore" && c.props.public === null) needsHuman.push(`${c.id}: 버킷 공개 여부를 못 읽음 → 도착은 비공개로 만들고 사람이 정함`);
+    // VTA12: 출발이 공개 버킷이어도 도착 모듈은 공개 차단을 늘 켠다(TODO(human) 보안 승인). 조용히 비공개로 바꾸지 않게 사람에게 알림
+    // VTA12fix DRAFT(ai): 출발 캐시에 AUTH 가 켜져 있는데 도착이 AUTH 를 못 옮기면(capability kind.cache.auth 없음 = 지금 AWS) 조용히 AUTH 없이
+    //   그리지 않고 사람에게 묻는다. 명세 검토에서 auth 를 false 로 바꾸면(= AUTH 없이 네트워크로만 막는 것에 동의) 통과.
+    //   AWS 에 auth token 을 만들지(state 에 남는 비밀)는 infra/modules/aws/kinds/cache TODO(human) — Claude 가 정하지 않음
+    if (c.kind === "cache" && c.props.auth === true && !have.has("kind.cache.auth"))
+      needsHuman.push(`${c.id}: 출발 캐시는 AUTH 를 씀 → 이 도착은 AUTH 를 아직 못 옮겨 네트워크(보안 그룹)로만 막힘. 그대로 갈지(auth=false) 사람이 정함`);
+    if (c.kind === "objectStore" && c.props.public === true) needsHuman.push(`${c.id}: 출발은 공개 버킷 → 도착은 비공개로 만들고 공개 여부는 사람이 정함`);
   }
   for (const n of spec.posture.network) {
     if (n.scope !== "component") continue;

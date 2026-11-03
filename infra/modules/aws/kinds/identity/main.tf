@@ -14,6 +14,7 @@ variable "cfg" {
     name              = string # boundedName({prefix:"app-", max:64}) — 실행 역할 권한 조건 때문에 그대로 씀
     service_account   = string
     secret_names_json = optional(string, "[]")
+    grants_json       = optional(string, "[]") # A8: 이 모듈은 안 읽음. root grants.tf 가 읽어 권한을 붙임
   })
   validation {
     condition     = length(var.cfg.name) <= 64 && startswith(var.cfg.name, "app-")

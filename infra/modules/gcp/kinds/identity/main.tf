@@ -13,6 +13,7 @@ variable "cfg" {
     name              = string # boundedName({prefix:"app-", max:30}) — SA account_id 규칙
     service_account   = string # k8s SA 이름
     secret_names_json = optional(string, "[]")
+    grants_json       = optional(string, "[]") # A8: 이 모듈은 안 읽음. root grants.tf 가 읽어 권한을 붙임
   })
   validation {
     condition     = length(var.cfg.name) >= 6 && length(var.cfg.name) <= 30 && startswith(var.cfg.name, "app-")

@@ -26,8 +26,12 @@ const ok = (): AppSpecV2 => structuredClone(upconvertV1(V1).spec);
 const svc = (s: AppSpecV2) => s.components.find((c) => c.kind === "service")! as Extract<AppSpecV2["components"][number], { kind: "service" }>;
 const twoIds = (): AppSpecV2 => { const s = ok(), a = svc(s);
   s.components.push({ ...structuredClone(a), id: `${a.id}-2`, props: { ...structuredClone(a.props), serviceAccount: "other-sa" } }); return s; };
+// TA12: redis·valkey 는 aws·gcp·azure_mock 이 그림 → 거부 경로는 모듈이 못 만드는 memcached 로
+const withMemcached = (): AppSpecV2 => { const s = withCache(); (s.components.find((c) => c.kind === "cache")!.props as { engine: string }).engine = "memcached"; return s; };
 const withCache = (): AppSpecV2 => { const s = ok();
   s.components.push({ id: "shop-cache", kind: "cache", props: { engine: "redis", memoryMiB: 512, tls: true, auth: true } }); return s; };
+// VTA12fix: AWS 는 캐시 AUTH 를 아직 못 옮겨 auth=true 면 사람 확인(block). auth=false(사람이 AUTH 없이 가기로 함)면 그림
+const withCacheNoAuth = (): AppSpecV2 => { const s = withCache(); (s.components.find((c) => c.kind === "cache")!.props as { auth: boolean }).auth = false; return s; };
 
 before(async () => {
   if (skip) return;
@@ -73,9 +77,9 @@ const settle = () => new Promise((r) => setTimeout(r, 150));
 
 test("도착 4개 × 못 그리는 조합: block 이면 spec_review(failed 아님), 그릴 수 있으면 planning", { skip }, async () => {
   const cases: Array<[Prov, () => AppSpecV2, string]> = [
-    ["azure_mock", twoIds, "spec_review"], ["azure_mock", withCache, "spec_review"], ["azure_mock", ok, "planning"],
-    ["aws", withCache, "spec_review"], ["aws", twoIds, "planning"],
-    ["gcp", withCache, "spec_review"], ["gcp", twoIds, "planning"],
+    ["azure_mock", twoIds, "spec_review"], ["azure_mock", withMemcached, "spec_review"], ["azure_mock", withCache, "planning"], ["azure_mock", ok, "planning"],
+    ["aws", withMemcached, "spec_review"], ["aws", withCache, "spec_review"], ["aws", withCacheNoAuth, "planning"], ["aws", twoIds, "planning"],
+    ["gcp", withMemcached, "spec_review"], ["gcp", withCache, "planning"], ["gcp", twoIds, "planning"],
     ["onprem", withCache, "spec_review"], ["onprem", twoIds, "planning"],
   ];
   process.env.PLAN_IR = "v2";
@@ -140,7 +144,7 @@ test("명세를 고치면(신원 1개 판) 다시 점검 → planning + 계획 �
 
 test("두 번 돌려도 같다: block 뒤 같은 작업이 다시 오면(상태가 이미 spec_review) 전이·임시 역할·신호 없이 job.rejected 한 줄만", { skip }, async () => {
   process.env.PLAN_IR = "v2";
-  const id = await seed("aws", withCache());
+  const id = await seed("aws", withMemcached());
   await pre.handlePrecheck(job(id));
   const acts = async () => (await owner.query(`SELECT action FROM audit_events WHERE target=$1 ORDER BY seq`, [id])).rows.map((r) => r.action);
   const n1 = (await acts()).length;

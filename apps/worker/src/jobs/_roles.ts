@@ -1,5 +1,5 @@
 import type { Provider } from "@svc/contracts";
-import { withTenant } from "@svc/core";
+import { withTenant, scrubString } from "@svc/core";
 import {
   STEP_ROLES, stepActions, TempRoleDenied, CredRenewFailed, startRenewal, renewIntervalSec, CRED_RENEW_DEFAULT_SEC,
   type RoleStep, type TempCredential,
@@ -75,7 +75,7 @@ export async function borrowStepRoles(step: RoleStep, j: { tenantId: string; mig
 // 단계 끝 (성공·실패 모두). 이 워커가 쥔 것만 지운다
 export async function returnStepRoles(r: StepRoles, tenantId: string, reason: string) {
   for (const c of r.creds) await tempRoles().revoke(c.credentialRef, tenantId, reason).catch((e) =>
-    console.error("temp role revoke", (e as Error).message));
+    console.error("temp role revoke", scrubString((e as Error).message)));
 }
 
 // 감사 detail 에 남길 요약 (참조·값 없음)

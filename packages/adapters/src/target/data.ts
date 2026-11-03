@@ -15,8 +15,17 @@ export const cachesOf = (s: AppSpecV2): Cache[] => byId(s.components.filter((c):
 export const objectStoresOf = (s: AppSpecV2): ObjectStore[] => byId(s.components.filter((c): c is ObjectStore => c.kind === "objectStore"));
 export const queuesOf = (s: AppSpecV2): Queue[] => byId(s.components.filter((c): c is Queue => c.kind === "queue"));
 
-const nm = (spec: AppSpecV2, id: string, t: Target, max: number) =>
-  boundedName({ app: id, seed: [nameSeed(t), spec.app.name, id, t.migrationId ?? t.envId], max });
+// TA12b DRAFT(ai): 이름 접두어 "app-" — 실행 역할 정책이 "app-*" 이름의 자원에만 쓰기 권한을 주려면 이름이 접두어로 시작해야 함 (IAM 역할·SA 와 같은 규칙)
+const nm = (spec: AppSpecV2, id: string, t: Target, max: number, app = id) =>
+  boundedName({ prefix: "app-", app, seed: [nameSeed(t), spec.app.name, id, t.migrationId ?? t.envId], max });
+// VTA12 DRAFT(ai): 버킷 이름 금지어. GCS = "goog" 로 시작·"google" 포함 불가, S3 = "sthree-" 로 시작 불가. 해당 id 만 앞부분을 바꾼다
+//   (다른 id 의 이름은 그대로 → planHash 안 흔들림). seed 는 원래 id 라 해시는 같다
+export const bucketApp = (id: string) => {
+  let a = id.replace(/[^a-z0-9]/g, "").replace(/google/g, "ggl");
+  if (a.startsWith("goog")) a = `gog${a.slice(4)}`;
+  if (a === "sthree") a = "s3";   // 잘린 이름 + "-해시" 라 "sthree-" 는 id 가 정확히 sthree 일 때만
+  return a;
+};
 
 // DRAFT(ai): 이름 길이 — 캐시 40(ElastiCache 복제 그룹·Memorystore 인스턴스 한도), 버킷 63, 큐·토픽 60(SQS .fifo 접미어 여유)
 export function cacheVars(spec: AppSpecV2, t: Target) {
@@ -29,7 +38,7 @@ export function cacheVars(spec: AppSpecV2, t: Target) {
 
 export function objectStoreVars(spec: AppSpecV2, t: Target) {
   return kindJson("objectStore", objectStoresOf(spec).map((c) => ({
-    id: c.id, name: nm(spec, c.id, t, 63), versioning: c.props.versioning,
+    id: c.id, name: nm(spec, c.id, t, 63, bucketApp(c.id)), versioning: c.props.versioning,
     public: c.props.public,   // null 은 null 그대로 (모듈이 비공개로 만들고 사람에게 묻는다 — 공개로 열지 않음)
     size_gb: c.props.sizeGb,
     lifecycle_json: JSON.stringify([...(c.props.lifecycle ?? [])].sort((a, b) => a.prefix.localeCompare(b.prefix))),

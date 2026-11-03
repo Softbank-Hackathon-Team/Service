@@ -40,6 +40,9 @@ export const IdentityTfVars = z.object({
   name: z.string(),                  // boundedName({ prefix: "app-", max: aws 64 / gcp 30 }) — 실행 역할 이름 규칙
   service_account: z.string(),       // k8s SA 이름 (IR serviceAccount 그대로)
   secret_names_json: z.string(),
+  // A8 DRAFT(ai): 출발 IAM 권한을 도착 모양으로 바꾼 목록(JSON). aws = 문장(effect·actions·star·targets{kind,id,paths}),
+  //   gcp = 자원 단위 바인딩(kind·target·role·scope). 자원은 IR id → root 가 모듈 출력(ARN·이름)으로 채움. 없으면 칸 없음
+  grants_json: z.string().optional(),
 }).strict();
 export type IdentityTfVars = z.infer<typeof IdentityTfVars>;
 
@@ -107,6 +110,29 @@ export const JobTfVars = z.object({
   identity: TfId,                    // 실행 역할을 가진 identity 인스턴스 id
 }).strict();
 export type JobTfVars = z.infer<typeof JobTfVars>;
+
+// I9: 관리형 컨테이너 서비스 (ECS Fargate 서비스 · Cloud Run 서비스). kinds/service-ecs · kinds/service-cloudrun 이 받는 cfg.
+//   DRAFT(ai): 아직 루트에 안 붙임 (Builder 가 runtime.managedContainer 를 capability 로 막음) → TF_KIND_VARS 7종에 안 넣는다.
+//   루트 연결(렌더) 때 TF_KIND_VARS·TF_VAR_KINDS 에 "service" 로 더한다. 칸은 JobTfVars 와 같은 규칙(이미지는 도착 주소+digest, env 는 확정값+자리표시)
+export const ServiceTfVars = z.object({
+  id: TfId,
+  name: z.string(),                  // 도착 서비스 이름 (ECS 255자·Cloud Run 49자 이하, 이전마다 해시)
+  image: z.string(),
+  command_json: z.string().nullable(),
+  args_json: z.string().nullable(),
+  cpu_milli: z.number().int().nullable(),
+  mem_mib: z.number().int().nullable(),
+  port: z.number().int().nullable(),           // 받는 포트 하나 (없으면 워커)
+  min_instances: z.number().int(),
+  max_instances: z.number().int(),
+  target_cpu_pct: z.number().int().nullable(), // null = 자동 확장 정책 없음 (min=max 고정)
+  health_path: z.string().nullable(),          // HTTP 확인 경로 (readiness http)
+  env_json: z.string(),                        // [{name, value}] 확정값 + <tf-output:…> 자리표시
+  secrets_json: z.string(),                    // [{name, secret, key}] 도착 비밀 저장소 이름 (값 아님)
+  identity: TfId,                              // 실행 역할을 가진 identity 인스턴스 id
+  public: z.boolean(),                         // 입구(entry)가 이 서비스로 오나. false 면 내부 전용
+}).strict();
+export type ServiceTfVars = z.infer<typeof ServiceTfVars>;
 
 // 루트 변수 이름(`<이름>_json`) ↔ 항목 스키마. 어댑터·HCL 대조 시험이 이 표를 씀
 export const TF_KIND_VARS = {

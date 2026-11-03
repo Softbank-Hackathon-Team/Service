@@ -110,6 +110,7 @@ locals {
 }
 
 output "host" { value = local.endpoint }
+output "arn" { value = aws_elasticache_replication_group.this.arn } # A8: 옮긴 IAM 권한의 Resource (root grants.tf)
 output "port" { value = 6379 }
 # TODO(human): auth=true 를 AWS 에서 어떻게 옮길지(auth token 은 state 에 남음). 지금은 SG(클러스터에서만)로만 막고 비밀은 없다 → 이름 출력은 빈 값
 output "auth_secret" { value = "" } # KIND_INTERNAL_OUTPUTS.cache = ["auth_secret"]

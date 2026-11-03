@@ -84,7 +84,12 @@ test("거부: 승인 뒤 사람이 고친 판(spec_v2 없음)이 생기면 TF_PL
 });
 
 test("거부: upconvert 로 승인했는데 다시 가져와 spec_v2 가 생긴 판 → 출처가 달라 TF_PLAN_DRIFT (몰래 바꿔 타지 않음)", { skip }, async () => {
-  const m = await approvedV2("aws");
+  // I9: aws 데모가 ECS v2(관리형 컨테이너 → 도착 렌더 미지원)가 됐다 → 워크로드 없는 원본(DB 만)으로 v1 되돌아감 판을 만든다
+  const { DEMO_INVENTORY_V2 } = await import("@svc/adapters");
+  const src = DEMO_INVENTORY_V2.aws!, orig = src.items;
+  src.items = orig.filter((i) => (i as { kind: string }).kind !== "ecs.service");
+  let m: Awaited<ReturnType<typeof approvedV2>>;
+  try { m = await approvedV2("aws"); } finally { src.items = orig; }
   assert.equal(m.plan.specSource, "upconvert");
   const { AppSpec, upconvertV1 } = await import("@svc/contracts");
   const v1 = (await owner.query(`SELECT spec FROM spec_versions WHERE migration_id=$1 AND version=1`, [m.id])).rows[0].spec;

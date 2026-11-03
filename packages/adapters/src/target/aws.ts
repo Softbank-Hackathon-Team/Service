@@ -7,6 +7,7 @@ import {
   asV1Name, assertRenderable, connectIdentities, identitiesOf, identityName, instancesOf, K8S_RENDER_CAPS, kindJson,
   postgresOf, postureOfComponent, refV2, secretNamesOf, workloadsOf,
 } from "./shared.js";
+import { assertGrants, grantsJsonFor } from "./grants.js";
 import { buildWorkloadValues, cloudPostgresValues } from "./cloud.js";
 import { cacheVars, cachesOf, dataTypesOf, objectStoreVars, objectStoresOf, queueVars, queuesOf } from "./data.js";
 
@@ -25,8 +26,8 @@ export function rdsClassFor(c: { cpuMilli: number | null; memMiB: number | null 
 }
 
 // TA12 DRAFT(ai): 데이터 자원 — ElastiCache(redis·valkey, 클러스터 모드 가능)·S3·SQS/SNS. memcached 는 모듈이 안 만듦 → capability 없음(거부)
-const CAPS = [...K8S_RENDER_CAPS, "kind.postgres.15", "kind.postgres.16", "kind.postgres.17",
-  "kind.cache.redis", "kind.cache.valkey", "kind.cache.cluster", "kind.objectStore", "kind.queue"];
+// A8: 출발 IAM 권한 → 도착 신원 권한 (target/grants.ts). 대응표 밖은 assertGrants·precheck 가 막음
+const CAPS = [...K8S_RENDER_CAPS, "kind.postgres.15", "kind.postgres.16", "kind.postgres.17", "kind.cache.redis", "kind.cache.valkey", "kind.cache.cluster", "kind.objectStore", "kind.queue", "render.grants", "posture.permissions"];
 
 export function resourceTypesV2(spec: AppSpecV2): string[] {
   const t = new Set(["data.aws_eks_cluster", "data.aws_eks_cluster_auth", "kubernetes_namespace_v1"]);
@@ -46,6 +47,7 @@ export const awsTarget: TargetBuilder = {
   operateActionsV2: (spec, purpose) => actionsFor(PERMS, resourceTypesV2(spec), purpose),
   toTerraformV2(spec: AppSpecV2, t: Target): TfRootCall {
     assertRenderable(spec, CAPS);
+    assertGrants("aws", spec);
     const ids = identitiesOf(spec);
     const byId = new Map(workloadsOf(spec).map((w) => [w.id, w]));
     const postgres = postgresOf(spec).map((c) => {
@@ -77,6 +79,7 @@ export const awsTarget: TargetBuilder = {
       name: identityName(spec, i.id, t, 64),
       service_account: i.serviceAccount,
       secret_names_json: JSON.stringify([...new Set(i.workloads.flatMap((w) => secretNamesOf(byId.get(w)!)))].sort()),
+      ...grantsJsonFor("aws", spec, i.id),
     }));
     const instances = instancesOf("aws", [
       ...postgres.map((p) => ({ kind: "postgres" as const, id: p.id })),
@@ -113,6 +116,7 @@ export const awsTarget: TargetBuilder = {
   },
   toWorkloadValues(spec: AppSpecV2, out: TfOutputs, t: Target) {
     assertRenderable(spec, CAPS);
+    assertGrants("aws", spec);
     return buildWorkloadValues(spec, out, t, {
       imageRef: (src) => awsAdapter.imageRef(src, t),
       secretStore: { kind: "ClusterSecretStore", name: "aws-secrets-manager" },

@@ -2,7 +2,7 @@ import { prometheusMetrics, stubMetrics, switcherFromEnv, type MetricsSource, ty
 import { awsCliSts, awsStsIssuer, createTempRoleBroker, gcpCliIssuer, perEnvGcpIssuer, loadPermissionSet, mockIssuer, perEnvAwsIssuer, type PermissionSet, type ProviderIssuer, type TempRoleBroker } from "@svc/security";
 import { fileURLToPath } from "node:url";
 import { pgLedger } from "./temp-cred-ledger.js";
-import { withTenant, writeAudit } from "@svc/core";
+import { withTenant, writeAudit, scrubString } from "@svc/core";
 import { envNumber } from "@svc/contracts";
 
 // 워커 프로세스 하나에 하나씩 두는 외부 연결 (트래픽 전환기, 지표, 임시 역할 중개자)
@@ -38,7 +38,7 @@ let broker: TempRoleBroker | null = null;
 export function permissionSet(): PermissionSet | null {
   const dir = process.env.PERMISSIONS_DIR ?? fileURLToPath(new URL("../../../infra/permissions/", import.meta.url));
   try { return loadPermissionSet(dir); }
-  catch (e) { console.error(`최소 권한 파일을 못 읽음 (${dir}): 실행 역할 발급이 거부된다`, (e as Error).message); return null; }
+  catch (e) { console.error(`최소 권한 파일을 못 읽음 (${dir}): 실행 역할 발급이 거부된다`, scrubString((e as Error).message)); return null; }
 }
 
 // 환경 → 고객 역할 참조 (Z39). environments 의 provider·account_id·external_id 로 만든다. 값이 아니라 이름이다
@@ -93,7 +93,7 @@ export function tempRoles(): TempRoleBroker {
 
 // 만료 지우기 + 다른 워커가 남긴 회수 요청 처리. DRAFT(ai): 15초마다 (실행 역할 15분 대비 충분히 짧게)
 export function startTempRoleSweeper(everyMs = envNumber(process.env.TEMP_ROLE_SWEEP_MS, 15000)) {
-  const t = setInterval(() => { tempRoles().sweep().catch((e) => console.error("temp role sweep", (e as Error).message)); }, everyMs);
+  const t = setInterval(() => { tempRoles().sweep().catch((e) => console.error("temp role sweep", scrubString((e as Error).message))); }, everyMs);
   t.unref();
   return t;
 }
