@@ -2,7 +2,7 @@ import type { ApiError } from "./types";
 
 // 화면의 HTTP 요청은 전부 여기 한 곳을 지난다 (작업 Z46).
 //   - 로그인 토큰(Authorization: Bearer)
-//   - POST 마다 Idempotency-Key 하나 (버튼 한 번 = 키 하나)
+//   - POST·PATCH 마다 Idempotency-Key 하나 (버튼 한 번 = 키 하나. 서버 req.idempotent 는 메서드를 안 가린다)
 //   - 응답 본문 읽기 + 오류를 HttpError 하나로
 //   - GET 만 짧게 다시 시도 (아래 RETRY)
 // Vite(import.meta.env)를 안 쓰는 순수 모듈이라 node:test 로 바로 시험한다 (test/http.test.ts)
@@ -30,10 +30,11 @@ export interface ClientOptions {
   // 로그인 토큰. 회사는 토큰이 정한다
   token?: () => Promise<string | null>;
   // Z96: 401 을 맞으면 한 번 부른다(refresh). true 면 같은 요청(같은 멱등 키)을 한 번 더 보낸다
-  onUnauthorized?: () => Promise<boolean>;
+  //   code = 서버 오류 코드 (USER_DISABLED 면 refresh 하지 않고 바로 로그인 화면으로)
+  onUnauthorized?: (code?: string) => Promise<boolean>;
 }
 
-export type Method = "GET" | "POST";
+export type Method = "GET" | "POST" | "PATCH";
 
 // Z38 REVIEW-4 W-4: crypto.randomUUID 는 보안 문맥(https·localhost)에서만 있다.
 //   심사 기기가 http://<맥 IP>:5173 로 붙으면 없어서 모든 POST(승인·롤백 포함)가 TypeError 로 죽는다.
@@ -75,7 +76,7 @@ export function createClient(o: ClientOptions) {
   const retryablePost = (e: unknown) => e instanceof HttpError && e.status === 409 && e.body?.code === "RETRY";
 
   async function request<T>(method: Method, path: string, body?: unknown): Promise<T> {
-    const key = method === "POST" ? newKey() : null;
+    const key = method === "GET" ? null : newKey();
     const attempts = Math.max(1, retry.getAttempts);
     let reauthed = false;
     for (let i = 1; ; i++) {
@@ -84,7 +85,7 @@ export function createClient(o: ClientOptions) {
         // Z96: 401 → refresh 한 번 → 같은 요청 한 번 더. 두 번째 401 이면 그대로 던진다(화면은 로그인으로)
         if (e instanceof HttpError && e.status === 401 && o.onUnauthorized && !reauthed) {
           reauthed = true; i--;
-          if (await o.onUnauthorized()) continue;
+          if (await o.onUnauthorized(e.body?.code ?? undefined)) continue;
           throw e;
         }
         const again = method === "GET" ? retryable(e) : retryablePost(e);
@@ -104,6 +105,8 @@ export function createClient(o: ClientOptions) {
     headers: headersFor,
     get: <T>(path: string) => request<T>("GET", path),
     post: <T>(path: string, body?: unknown) => request<T>("POST", path, body),
+    // 명세 고치기(PATCH /migrations/:id/spec). 다시 보내기 규칙은 POST 와 같다 (409 RETRY 만 같은 키로 한 번 더)
+    patch: <T>(path: string, body: unknown) => request<T>("PATCH", path, body),
   };
 }
 

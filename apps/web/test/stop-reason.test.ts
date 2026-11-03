@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { errorText } from "../src/lib/errors";
-import { stopReasonOf } from "../src/lib/failure";
+import { connectionReasonText, stopReasonOf } from "../src/lib/failure";
+import { errorCode } from "../src/lib/errors";
 import { HttpError } from "../src/lib/http";
 import { stopEvidence } from "../src/lib/timelineDetail";
 import type { TimelineItem } from "../src/lib/types";
@@ -59,4 +60,46 @@ test("오류 문장: 서버가 새로 내는 코드도 사람 말로 바꾼다",
   assert.match(errorText(err(409, "LLM_BUDGET_EXCEEDED")), /지출 상한/);
   assert.match(errorText(err(409, "AGENT_RUN_IN_PROGRESS")), /이미 점검이/);
   assert.equal(errorText(err(409, "NO_SUCH_CODE")), "요청을 처리하지 못했습니다.");
+});
+
+test("멈춘 이유 v2: 새 코드도 사람 말로, 승인 뒤 바뀜은 '일부만 생겼을 수 있음' 줄로 떨어지지 않는다", () => {
+  const drift = stopReasonOf("TF_PLAN_DRIFT", "failed")!;
+  assert.equal(drift.label, "승인 뒤 계획 바뀜");
+  assert.match(drift.hint, /이번 실행으로 생긴 자원은 없습니다/);
+  assert.doesNotMatch(drift.hint, /일부만/);
+  assert.equal(stopReasonOf("TF_APPLY_FAILED", "failed")?.label, "자원 생성 실패");   // 넓은 TF_ 줄은 그대로
+  const values = stopReasonOf("GITOPS_VALUES_DRIFT", "paused")!;
+  assert.equal(values.label, "승인 뒤 배포 값 바뀜");
+  assert.match(values.hint, /앱을 올리기 전에/);
+  assert.equal(stopReasonOf("GITOPS_PUSH_FAILED", "paused")?.label, "배포 저장소 반영 실패");
+  assert.equal(stopReasonOf("UNSUPPORTED_V2", "failed")?.label, "도착이 못 만드는 구성");
+  assert.equal(stopReasonOf("NEEDS_HUMAN", "failed")?.label, "사람이 정할 것 남음");
+  assert.equal(stopReasonOf("RUNTIME_OUTPUT_MISSING", "paused")?.kind, "step");
+  assert.equal(stopReasonOf("RUNTIME_UNHEALTHY", "paused")?.label, "앱이 정상으로 안 뜸");
+  assert.equal(stopReasonOf("RUNTIME_CHECK_FAILED", "paused")?.kind, "system");
+  for (const code of ["UNSUPPORTED_V2", "NEEDS_HUMAN", "RUNTIME_OUTPUT_MISSING", "RUNTIME_UNHEALTHY", "RUNTIME_CHECK_FAILED", "TF_PLAN_DRIFT", "GITOPS_VALUES_DRIFT"])
+    assert.notEqual(stopReasonOf(code, "failed")?.label, "알 수 없는 사유", code);
+});
+
+test("오류 문장 v2: 승인·시작·재시도·명세 고치기·계정 코드", () => {
+  const err = (status: number, code: string) => new HttpError(status, { status, code, message: "", requestId: "r" });
+  for (const code of ["ACKS_MISSING", "PLAN_HASH_MISMATCH", "TENANT_BUSY", "RETRY_BUDGET_EXHAUSTED", "REPLAN_NOT_ALLOWED", "SPEC_VERSION_CONFLICT",
+    "SPEC_PATH_IR_MISMATCH", "SPEC_INCLUDE_UNAVAILABLE", "SPEC_PATCH_INVALID", "USER_DISABLED", "ENV_IN_USE", "BAD_ACCOUNT_ID", "ENV_NAME_TAKEN"])
+    assert.notEqual(errorText(err(409, code)), "요청을 처리하지 못했습니다.", code);
+  assert.match(errorText(err(409, "TENANT_BUSY")), /다시 시작/);
+  assert.match(errorText(err(409, "RETRY_BUDGET_EXHAUSTED")), /고객이 부담/);
+  assert.match(errorText(err(401, "USER_DISABLED")), /계정/);
+  assert.equal(errorCode(err(409, "TENANT_BUSY")), "TENANT_BUSY");
+  assert.equal(errorCode(new TypeError("x")), null);
+});
+
+test("연결 실패 이유: 코드는 사람 말로, 권한 이름은 문장에 넣고, 모르는 코드는 코드 그대로, 옛 글은 그대로", () => {
+  assert.match(connectionReasonText("ROLE_ASSUME_DENIED")!, /임시 역할/);
+  assert.equal(connectionReasonText("PERMISSION_MISSING:rds:DescribeDBInstances"), "관찰 역할에 권한이 빠졌습니다: rds:DescribeDBInstances");
+  assert.match(connectionReasonText("PERMISSION_MISSING")!, /권한이 빠졌습니다/);
+  for (const code of ["ORG_POLICY_BLOCKED", "ROLE_NOT_FOUND", "LINK_EXPIRED", "K8S_ACCESS_MISSING", "ACCOUNT_MISMATCH"])
+    assert.doesNotMatch(connectionReasonText(code)!, /모르는/, code);
+  assert.match(connectionReasonText("SOMETHING_NEW")!, /SOMETHING_NEW/);
+  assert.equal(connectionReasonText("Agent 생존 신호가 30분째 없습니다"), "Agent 생존 신호가 30분째 없습니다");
+  assert.equal(connectionReasonText(null), null);
 });

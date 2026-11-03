@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ConsoleLayout, type BentoLayout } from '../../components/layout/ConsoleLayout';
 import { Hero, Tile, TileHeader } from '../../components/layout/tiles';
-import { ActionPill } from '../../components/ui/controls';
-import { auth } from '../../lib/api';
-import { AuthError } from '../../lib/auth';
+import { ActionPill, BarPill } from '../../components/ui/controls';
+import { API_BASE, auth } from '../../lib/api';
+import { AuthError, githubErrorText, githubStartUrl, takeGithubError } from '../../lib/auth';
 import s from './LoginPage.module.css';
 
 const LOGIN: BentoLayout = { columns: ['fill', 'side'], areas: 'hero form' };
@@ -13,9 +13,29 @@ export function LoginPage({ notice }: { notice: string | null }) {
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [github, setGithub] = useState(false);
   const emailRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => emailRef.current?.focus(), []);
+
+  // GitHub 버튼은 서버가 켜 둔 경우만 (GET /auth/config 의 github.enabled). 못 읽으면 띄우지 않는다
+  useEffect(() => {
+    let alive = true;
+    void auth.config().then((config) => {
+      if (alive) setGithub(config?.github?.enabled === true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // GitHub 에서 실패하고 돌아오면 ?github_error=<코드> 가 붙어 온다. 문장으로 보이고, 새로 고침해도 다시 뜨지 않게 주소에서 지운다
+  useEffect(() => {
+    const { code, clean } = takeGithubError(window.location.href);
+    if (!code) return;
+    setError(githubErrorText(code));
+    window.history.replaceState(window.history.state, '', clean);
+  }, []);
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -77,6 +97,7 @@ export function LoginPage({ notice }: { notice: string | null }) {
             </div>
           </div>
           <div className={s.submit}>
+            {github && <BarPill label="GitHub로 로그인" icon="github" onClick={busy ? undefined : () => window.location.assign(githubStartUrl(API_BASE))} />}
             <ActionPill type="submit" label={busy ? '확인 중' : '로그인'} disabled={busy} />
           </div>
         </form>

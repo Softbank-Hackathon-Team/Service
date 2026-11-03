@@ -31,4 +31,12 @@ export interface SpecDraftReview extends RunMeta {
 // z75-64: spend = 이 회차 실제 LLM 지출 (달러 추정)
 export interface AgentLlmSpend { round: string; usd: number; budgetUsd: number; calls: number; exceeded: boolean; totalUsd?: number; globalUsd?: number }
 export interface AgentLlm { state: "ready" | "key_missing" | "fake"; model: string; why: string; spend?: AgentLlmSpend }
-export interface AgentReview { migrationId: string; llm?: AgentLlm; remediate: RemediateReview | null; specDraft: SpecDraftReview | null }
+// PA5a: 실패 원인 분석 (contracts results.ts FailureAnalysis). AI 는 원인·고칠 것만 알려 주고 재시도는 사람이 누른다
+//   analysis 는 아직 안 끝났거나 모양이 틀리면 null. confidence 는 0~1 연속값
+export interface FailureAnalysis { cause: string; evidence: string[]; fix: string[]; retryable: boolean; confidence: number }
+export interface FailureAnalysisReview extends RunMeta { analysis: FailureAnalysis | null }
+// failureAnalysis: 이전이 failed·paused 로 갈 때 넣은 분석 실행이 있을 때만 칸이 생긴다
+export interface AgentReview {
+  migrationId: string; llm?: AgentLlm; remediate: RemediateReview | null; specDraft: SpecDraftReview | null;
+  failureAnalysis?: FailureAnalysisReview;
+}

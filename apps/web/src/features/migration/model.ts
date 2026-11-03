@@ -92,6 +92,38 @@ export function pollMs(status: MigrationStatus | undefined): number | null {
     : POLL.worker;
 }
 
+/**
+ * 화면 신호(SSE)만으로 이 이전 화면이 맞춰지는지. 신호는 상태가 바뀔 때만 온다.
+ * 워커 단계는 상태가 그대로인 채 값이 바뀌므로(롤백 창 끝 시각 등) 신호가 살아 있어도 빠른 간격을 그대로 둔다.
+ * 사람 차례·멈춘 상태는 사람이나 워커가 상태를 바꿀 때까지 바뀔 것이 없어서 신호에 맡기고 간격을 늘려도 된다.
+ */
+export const signalCovers = (status: MigrationStatus | undefined): boolean => pollMs(status) !== POLL.worker;
+
+/**
+ * "계획 다시 만들기"(POST /migrations/:id/replan)를 보여 줄지. 서버 규칙 그대로:
+ * stale·rejected 는 늘, failed 는 실패 지점이 planning·provisioning 일 때만
+ * (core REPLANNABLE_FAILURES 중 importing·prechecking 은 라우트가 409 REPLAN_NOT_ALLOWED 로 막는다).
+ */
+export function canReplan(migration: Pick<MigrationView, 'status' | 'failedAtStatus'>): boolean {
+  if (migration.status === 'stale' || migration.status === 'rejected') return true;
+  return migration.status === 'failed' && (migration.failedAtStatus === 'planning' || migration.failedAtStatus === 'provisioning');
+}
+
+/** 승인 확인 항목(계획서 acknowledgements) 중 아직 체크하지 않은 것. 옛 계획서처럼 항목이 없으면 바로 승인할 수 있다. */
+export function ackState(acks: readonly { id: string }[] | undefined, checked: ReadonlySet<string>) {
+  const all = acks ?? [];
+  const missing = all.filter((ack) => !checked.has(ack.id)).map((ack) => ack.id);
+  return { total: all.length, missing, ready: missing.length === 0, ids: all.map((ack) => ack.id).filter((id) => checked.has(id)) };
+}
+
+/** 승인 버튼 글자. 모자라면 무엇이 모자란지 말한다. */
+export function approveLabel(o: { busy: boolean; expired: boolean; missing: number }): string {
+  if (o.busy) return '보내는 중';
+  if (o.expired) return '승인 시간이 지났습니다';
+  if (o.missing > 0) return `확인 ${o.missing}개 남음`;
+  return '이 계획 승인';
+}
+
 const STEPS: { label: string; detail?: string; through: MigrationStatus[] }[] = [
   { label: '구성 읽기', through: ['draft', 'importing'] },
   { label: '명세 확정', detail: '사람', through: ['spec_review'] },

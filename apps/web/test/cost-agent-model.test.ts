@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { agentBlock, spendRows, spendText } from "../src/features/agent/model";
-import { costCaveats, costSummary, envCaption } from "../src/features/cost/model";
+import { agentBlock, analysisCaption, failureAnalysisOf, spendRows, spendText } from "../src/features/agent/model";
+import { costCaveats, costNote, costSummary, envCaption, planCostCaveats, planCostSummary } from "../src/features/cost/model";
 
 const estimate = (priceStale: boolean) => ({
   priceAsOf: "2026-11-01T00:00:00Z", priceStale, peakRps: 10, requiredVcpu: 1, profile: "startup" as const,
@@ -40,4 +40,31 @@ test("AI 지출 표시: 이 회사 지출과 상한, 모든 회사 합은 서버
   assert.equal(spendRows(spend).length, 3);
   assert.equal(spendRows(spend)[1]!.value, "1,200번");
   assert.equal(spendRows({ ...spend, totalUsd: 12.5, globalUsd: 50 })[3]!.value, "$12.5 / $50");
+});
+
+test("계획서 비용: 차이를 머리줄에, 계산 못 한 칸과 고정값은 단서로, 기준일은 안내 줄에", () => {
+  const base = { deltaMonthly: -50.4, unknownFields: [] as string[], stub: false };
+  assert.equal(planCostSummary(base), "월 -$50");
+  assert.equal(planCostSummary({ ...base, deltaMonthly: 12 }), "월 +$12");
+  assert.equal(planCostSummary({ ...base, deltaMonthly: 0.2 }), "월 차이 없음");
+  assert.equal(planCostSummary({ ...base, deltaMonthly: null, unknownFields: ["monthlySource"] }), "차이 계산 불가");
+  assert.equal(planCostSummary({ ...base, unknownFields: ["*"] }), "계산하지 못함");
+  assert.equal(planCostSummary({ ...base, stub: true }), "고정 예시값");
+  assert.deepEqual(planCostCaveats({ unknownFields: [], stub: false }), []);
+  assert.deepEqual(planCostCaveats({ unknownFields: ["monthlySource"], stub: false }), ["출발 비용을 계산하지 못했습니다."]);
+  assert.equal(planCostCaveats({ unknownFields: ["*"], stub: true }).length, 2);
+  assert.match(costNote("2026-11-01T00:00:00Z"), /가격 기준일 2026-11-01\./);
+  assert.doesNotMatch(costNote(undefined), /기준일/);
+});
+
+test("실패 원인 분석: 끝난 분석만 쓰고, 없거나 진행 중이면 아무것도 그리지 않는다", () => {
+  const run = { source: "db" as const, runId: "r", status: "finished" as const, model: null, createdAt: null, finishedAt: null, reason: null, usage: { input: 0, output: 0 }, steps: [] };
+  const analysis = { cause: "원인", evidence: ["근거"], fix: ["고칠 것"], retryable: true, confidence: 0.72 };
+  const review = { migrationId: "m", remediate: null, specDraft: null };
+  assert.equal(failureAnalysisOf({ ...review }), null);
+  assert.equal(failureAnalysisOf({ ...review, failureAnalysis: { ...run, status: "running", analysis: null } }), null);
+  assert.deepEqual(failureAnalysisOf({ ...review, failureAnalysis: { ...run, analysis } }), analysis);
+  assert.equal(failureAnalysisOf(null), null);
+  assert.equal(analysisCaption(analysis), "AI 추정 · 확신 72% · 고치지 않고 다시 해도 될 것으로 봄");
+  assert.equal(analysisCaption({ confidence: 0.5, retryable: false }), "AI 추정 · 확신 50%");
 });

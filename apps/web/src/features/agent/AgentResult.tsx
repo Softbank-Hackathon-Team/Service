@@ -68,9 +68,8 @@ export function agentSummary(result: RemediateReview | null | undefined) {
   return result?.status === 'failed' ? '점검 실패' : '아직 없음';
 }
 
-/** 멈춘 이전 화면에 끼우는 수정안 카드. */
-export function AgentFold({ migrationId }: { migrationId: string }) {
-  const review = useAgentReview(migrationId);
+/** 멈춘 이전 화면에 끼우는 수정안 카드. 같은 화면의 멈춘 이유 카드도 실패 분석을 쓰므로 읽기는 화면이 한 번만 한다. */
+export function AgentFold({ migrationId, review }: { migrationId: string; review: ReturnType<typeof useAgentReview> }) {
   const { busy, error, run } = useAction(() => void review.reload());
   const view = review.data ?? null;
   const result = view?.remediate ?? null;

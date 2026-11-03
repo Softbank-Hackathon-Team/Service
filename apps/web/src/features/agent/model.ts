@@ -1,4 +1,4 @@
-import type { AgentLlm, AgentLlmSpend } from '../../lib/agent-review-types';
+import type { AgentLlm, AgentLlmSpend, AgentReview, FailureAnalysis } from '../../lib/agent-review-types';
 
 // AI 점검을 지금 돌릴 수 없는 이유 (서버 apps/api/src/routes/agent-review.ts 와 같은 규칙).
 //   key_missing → 409 LLM_KEY_MISSING, spend.exceeded → 409 LLM_BUDGET_EXCEEDED. 둘 다 큐에 넣기 전에 서버가 막는다
@@ -26,3 +26,15 @@ export function spendRows(spend: AgentLlmSpend): { name: string; value: string }
       : []),
   ];
 }
+
+/**
+ * 실패 원인 분석 (agent-review 의 failureAnalysis, PA5a). 끝난 분석이 있을 때만 돌려준다.
+ * 칸이 없거나 아직 안 끝났으면(analysis null) null: 화면은 "분석 중"이라고 말하지 않고 아무것도 그리지 않는다.
+ */
+export function failureAnalysisOf(review: AgentReview | null | undefined): FailureAnalysis | null {
+  return review?.failureAnalysis?.analysis ?? null;
+}
+
+/** 분석 머리말 한 줄. AI 가 낸 추정이라는 것과 확신 정도, 그대로 다시 해도 될지(retryable)를 함께 적는다. */
+export const analysisCaption = (analysis: Pick<FailureAnalysis, 'confidence' | 'retryable'>) =>
+  `AI 추정 · 확신 ${Math.round(analysis.confidence * 100)}%${analysis.retryable ? ' · 고치지 않고 다시 해도 될 것으로 봄' : ''}`;

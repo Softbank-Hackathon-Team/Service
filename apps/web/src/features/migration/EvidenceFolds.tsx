@@ -2,12 +2,14 @@ import type { ReactNode } from 'react';
 import { FoldTile } from '../../components/layout/tiles';
 import { CodeValue } from '../../components/ui/CodeValue';
 import { api } from '../../lib/api';
+import type { FailureAnalysis } from '../../lib/agent-review-types';
 import type { StopReason } from '../../lib/failure';
 import { or404 } from '../../lib/http';
 import { isTerminal } from '../../lib/status';
 import { stopEvidence } from '../../lib/timelineDetail';
 import type { MigrationStatus, MigrationView } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
+import { analysisCaption } from '../agent/model';
 import { judgementRows, leftoversOf, leftoverValue, trafficReportRows } from './model';
 import s from '../common/page.module.css';
 
@@ -19,13 +21,15 @@ type StopFoldProps = {
   /** 큰 카드가 이미 같은 문장을 쓰면 끈다 */
   hint?: boolean;
   defaultOpen?: boolean;
+  /** AI 실패 원인 분석 (끝난 것만). 없으면 아무것도 그리지 않는다 */
+  analysis?: FailureAnalysis | null;
 };
 
 /**
  * 멈춘 이유의 근거. 큰 카드는 사람 말로 결론만 말하고, 판정 숫자·규칙 번호·사유 코드는 여기 접어 둔다.
  * 트래픽 판정은 워커가 멈춘 전이에 남긴 마지막 판정이고, 기준은 승인한 계획서의 되돌림 기준이다.
  */
-export function StopFold({ migration, reason, into, hint = true, defaultOpen = true }: StopFoldProps) {
+export function StopFold({ migration, reason, into, hint = true, defaultOpen = true, analysis = null }: StopFoldProps) {
   const live = !isTerminal(migration.status);
   const timeline = usePoll(() => or404(api.timeline(migration.id)), live ? 5000 : null, [migration.id, migration.version]);
   const plan = usePoll(() => or404(api.latestPlan(migration.id)), null, [migration.id]);
@@ -54,6 +58,28 @@ export function StopFold({ migration, reason, into, hint = true, defaultOpen = t
           </li>
         )}
       </ul>
+      {analysis && (
+        <div className={s.agent}>
+          <p className="t-caption c-tertiary">{analysisCaption(analysis)}</p>
+          <p className="t-body-sm">{analysis.cause}</p>
+          {analysis.fix.length > 0 && (
+            <div>
+              <p className="t-label-sm c-tertiary">고칠 것</p>
+              <ul className="t-body-sm c-secondary">
+                {analysis.fix.map((line) => <li key={line}>{line}</li>)}
+              </ul>
+            </div>
+          )}
+          {analysis.evidence.length > 0 && (
+            <div>
+              <p className="t-label-sm c-tertiary">근거</p>
+              <ul className="t-body-sm c-secondary">
+                {analysis.evidence.map((line) => <li key={line}>{line}</li>)}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
     </FoldTile>
   );
 }
