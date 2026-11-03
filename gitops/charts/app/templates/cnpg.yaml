@@ -5,36 +5,33 @@
          - managed.roles: REPLICATION 속성 계정. 비밀번호는 Secret <name>-repl (값은 차트에 없다. 스크립트/ESO 가 만든다)
          - max_replication_slots / max_wal_senders: fwd·rev 슬롯 2개 + 여유
        TODO(human): superuser 대신 PG16 pg_create_subscription 역할로 줄일지 (최소 권한) */}}
-{{- range $db := (.Values.postgres | default list) }}
-{{- if eq $db.mode "cnpg" }}
-{{- $repl := ($db.replication | default dict) }}
+{{- /* CNPG-V2 DRAFT(ai): v2 값(irVersion "2")은 database 하나가 아니라 postgres 목록. mode cnpg 인 줄마다 Cluster 하나.
+       이름·initdb(database·owner)·walStorage·resources·parameters 는 어댑터(onprem.ts)가 IR 에서 채운 값 그대로.
+       replication 칸은 v1 과 같은 뜻 (DB 이전 스레드가 값에 넣을 때만) */}}
+{{- range $pg := (.Values.postgres | default list) }}{{- if eq (toString $pg.mode) "cnpg" }}
+{{- $repl := ($pg.replication | default dict) }}
 ---
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
-  name: {{ $db.name }}
+  name: {{ required "postgres[].name" $pg.name }}
   labels: {{- include "app.labels" $ | nindent 4 }}
-    app.kubernetes.io/component: {{ $db.id | quote }}
 spec:
-  instances: {{ $db.instances }}
-  {{- /* 버전을 못 읽었으면(null) imageName 을 안 적는다 → CNPG 기본 이미지 (명세 검토 표시가 따로 뜬다) */}}
-  {{- with $db.majorVersion }}
-  imageName: {{ printf "ghcr.io/cloudnative-pg/postgresql:%s" (toString .) | quote }}
+  instances: {{ $pg.instances | default 1 }}
+  imageName: {{ printf "ghcr.io/cloudnative-pg/postgresql:%s" (toString (required "postgres[].majorVersion" $pg.majorVersion)) | quote }}
+  storage: { size: {{ printf "%dGi" (int (required "postgres[].storageGb" $pg.storageGb)) | quote }} }
+  {{- with $pg.walStorageGb }}
+  walStorage: { size: {{ printf "%dGi" (int .) | quote }} }
   {{- end }}
-  {{- /* DRAFT(ai): 용량을 못 읽었으면 1Gi (CNPG 는 storage.size 필수) */}}
-  storage: { size: {{ printf "%dGi" (int ($db.storageGb | default 1)) | quote }} }
-  # O 스레드 수정: 네임스페이스에 ResourceQuota(requests.cpu/memory)가 있으면 요청량 없는 파드는 거부된다.
-  # 출발 compute 가 있으면 그 값, 없으면 어댑터 할당량의 DB 몫(1000m / 2048Mi) 안에 들어가는 기본
   resources:
-    {{- toYaml ($db.resources | default (dict "requests" (dict "cpu" "500m" "memory" "1Gi") "limits" (dict "memory" "1Gi"))) | nindent 4 }}
+    {{- toYaml ($pg.resources | default (dict "requests" (dict "cpu" "500m" "memory" "1Gi") "limits" (dict "memory" "1Gi"))) | nindent 4 }}
   bootstrap:
-    initdb: { database: app, owner: app }
+    initdb: { database: {{ required "postgres[].database" $pg.database | quote }}, owner: {{ required "postgres[].owner" $pg.owner | quote }} }
   postgresql:
     parameters:
-      {{- /* 출발 파라미터 그대로 + 논리 복제에 필요한 wal_level=logical (복제가 이 DB 로 따라오게) */}}
-      {{- range $k, $v := ($db.parameters | default dict) }}
-      {{- if ne $k "wal_level" }}
-      {{ $k }}: {{ $v | quote }}
+      {{- range $k, $v := ($pg.parameters | default dict) }}
+      {{- if not (or (eq $k "wal_level") (and $repl.enabled (has $k (list "max_replication_slots" "max_wal_senders")))) }}
+      {{ $k }}: {{ toString $v | quote }}
       {{- end }}
       {{- end }}
       wal_level: logical
@@ -51,7 +48,6 @@ spec:
         login: true
         replication: true
         inRoles: [pg_read_all_data]
-        passwordSecret: { name: {{ printf "%s-repl" $db.name | quote }} }
+        passwordSecret: { name: {{ printf "%s-repl" $pg.name | quote }} }
   {{- end }}
-{{- end }}
-{{- end }}
+{{- end }}{{- end }}
