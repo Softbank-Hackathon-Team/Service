@@ -71,19 +71,36 @@ test("AWS: IAM 동작은 app-* 역할에만, PassRole은 EKS Pod Identity로만,
 });
 
 // 알려진 과다 권한 (THREAT-MODEL.md 권한 점검 표 A-1~A-4). 고칠 때 이 목록에서 지운다. 늘어나면 실패
+// ID-4: 바꾸기·지우기는 managed-by=platform 태그 조건 문장으로 옮겼다. 남은 것 = 만들기 + EC2 태그 붙이기(자원 ID 라 이름으로 못 좁힘)
 const AWS_KNOWN_BROAD_WRITES = [
-  "ec2:AuthorizeSecurityGroupIngress", "ec2:CreateSecurityGroup", "ec2:CreateTags", "ec2:DeleteSecurityGroup",
-  "ec2:RevokeSecurityGroupEgress", "eks:CreatePodIdentityAssociation", "eks:DeletePodIdentityAssociation",
-  "rds:AddTagsToResource", "rds:CreateDBInstance", "rds:CreateDBParameterGroup", "rds:CreateDBSubnetGroup",
-  "rds:DeleteDBInstance", "rds:DeleteDBParameterGroup", "rds:DeleteDBSubnetGroup", "rds:ModifyDBInstance",
-  "rds:ModifyDBParameterGroup", "secretsmanager:CreateSecret", "secretsmanager:DeleteSecret",
-  "secretsmanager:TagResource",
+  "ec2:CreateSecurityGroup", "ec2:CreateTags", "eks:CreatePodIdentityAssociation",
+  "rds:CreateDBInstance", "rds:CreateDBParameterGroup", "rds:CreateDBSubnetGroup", "secretsmanager:CreateSecret",
 ].sort();
 test("AWS: Resource \"*\" + 쓰기 동작 = 알려진 목록과 같다 (늘어나면 실패)", () => {
   const broad = aws("aws-operate-role-policy.json")
     .filter((s) => arr(s.Resource).includes("*") && !s.Condition?.StringEquals?.["aws:ResourceTag/managed-by"])
     .flatMap((s) => arr(s.Action)).filter((a) => !isRead(a)).sort();
   assert.deepEqual(broad, AWS_KNOWN_BROAD_WRITES);
+});
+
+// ID-4: 기존 자원을 바꾸거나 지우는 동작(Modify·Delete·Set·Authorize·Revoke)은 우리 태그(managed-by=platform) 조건 문장에만.
+//   S3 는 버킷 태그 조건을 믿지 못해 이름(app-*)만 — 예외로 고정. 고객 기존 RDS·보안 그룹·시크릿·app-* 역할을 지울 수 없게
+const MUTATES = /:(Modify|Delete|Set|Authorize|Revoke|Update|Put(?!Bucket|Encryption|Lifecycle))/;
+test("AWS 실행 역할: 기존 자원 바꾸기·지우기는 managed-by=platform 태그 조건이 있을 때만 (S3 제외)", () => {
+  const bad: string[] = [];
+  for (const s of aws("aws-operate-role-policy.json")) {
+    const tagged = s.Condition?.StringEquals?.["aws:ResourceTag/managed-by"] === "platform";
+    const realArns = arr(s.Resource).filter((r) => r === "*" || r.startsWith("arn:aws:rds") || r.startsWith("arn:aws:iam") || r.startsWith("arn:aws:secretsmanager")
+      || r.startsWith("arn:aws:elasticache") || r.startsWith("arn:aws:sqs") || r.startsWith("arn:aws:sns"));
+    if (tagged || realArns.length === 0) continue;
+    for (const a of arr(s.Action)) {
+      if (!MUTATES.test(a) || a.startsWith("s3:") || a === "iam:PutRolePolicy") continue;   // PutRolePolicy 는 경계 조건(위 시험)
+      // 데이터 문장의 ec2 동작은 elasticache·sqs 자원 ARN 에 걸려 실제 효력이 없다
+      if (s.Sid === "DataScoped" && a.startsWith("ec2:")) continue;
+      bad.push(`${s.Sid}:${a}`);
+    }
+  }
+  assert.deepEqual(bad, []);
 });
 
 // GCP 커스텀 역할

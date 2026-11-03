@@ -2,44 +2,98 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "AppModule",
+      "Sid": "AppRead",
       "Effect": "Allow",
       "Action": [
-        "ec2:AuthorizeSecurityGroupIngress",
-        "ec2:CreateSecurityGroup",
-        "ec2:CreateTags",
-        "ec2:DeleteSecurityGroup",
         "ec2:DescribeSecurityGroupRules",
         "ec2:DescribeSecurityGroups",
-        "ec2:RevokeSecurityGroupEgress",
-        "eks:CreatePodIdentityAssociation",
-        "eks:DeletePodIdentityAssociation",
         "eks:DescribeCluster",
         "eks:DescribePodIdentityAssociation",
-        "rds:AddTagsToResource",
-        "rds:CreateDBInstance",
-        "rds:CreateDBParameterGroup",
-        "rds:CreateDBSubnetGroup",
-        "rds:DeleteDBInstance",
-        "rds:DeleteDBParameterGroup",
-        "rds:DeleteDBSubnetGroup",
         "rds:DescribeDBInstances",
         "rds:DescribeDBParameterGroups",
         "rds:DescribeDBParameters",
         "rds:DescribeDBSubnetGroups",
         "rds:ListTagsForResource",
-        "rds:ModifyDBInstance",
-        "rds:ModifyDBParameterGroup",
-        "secretsmanager:CreateSecret",
-        "secretsmanager:DeleteSecret",
         "secretsmanager:DescribeSecret",
-        "secretsmanager:GetResourcePolicy",
-        "secretsmanager:TagResource"
+        "secretsmanager:GetResourcePolicy"
       ],
       "Resource": "*",
       "Condition": {
         "StringEquals": {
           "aws:RequestedRegion": "ap-northeast-2"
+        }
+      }
+    },
+    {
+      "Sid": "AppCreate",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateSecurityGroup",
+        "eks:CreatePodIdentityAssociation",
+        "rds:CreateDBInstance",
+        "rds:CreateDBParameterGroup",
+        "rds:CreateDBSubnetGroup",
+        "secretsmanager:CreateSecret"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "ap-northeast-2"
+        }
+      }
+    },
+    {
+      "Sid": "AppTagNamed",
+      "Effect": "Allow",
+      "Action": [
+        "rds:AddTagsToResource",
+        "secretsmanager:TagResource"
+      ],
+      "Resource": [
+        "arn:aws:rds:*:*:db:app-*",
+        "arn:aws:rds:*:*:pg:app-*",
+        "arn:aws:rds:*:*:subgrp:app-*",
+        "arn:aws:secretsmanager:*:*:secret:app-*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "ap-northeast-2"
+        }
+      }
+    },
+    {
+      "Sid": "AppTagEc2",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateTags"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "ap-northeast-2"
+        }
+      }
+    },
+    {
+      "Sid": "AppOwned",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:DeleteSecurityGroup",
+        "ec2:RevokeSecurityGroupEgress",
+        "eks:DeletePodIdentityAssociation",
+        "rds:DeleteDBInstance",
+        "rds:DeleteDBParameterGroup",
+        "rds:DeleteDBSubnetGroup",
+        "rds:ModifyDBInstance",
+        "rds:ModifyDBParameterGroup",
+        "secretsmanager:DeleteSecret"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "ap-northeast-2",
+          "aws:ResourceTag/managed-by": "platform"
         }
       }
     },
@@ -72,19 +126,24 @@
         "elasticache:AddTagsToResource",
         "elasticache:CreateCacheSubnetGroup",
         "elasticache:CreateReplicationGroup",
-        "elasticache:DeleteCacheSubnetGroup",
-        "elasticache:DeleteReplicationGroup",
         "elasticache:ListTagsForResource",
-        "elasticache:ModifyReplicationGroup",
         "s3:CreateBucket",
         "s3:DeleteBucket",
+        "s3:GetAccelerateConfiguration",
+        "s3:GetBucketAcl",
         "s3:GetBucketCORS",
         "s3:GetBucketLocation",
+        "s3:GetBucketLogging",
+        "s3:GetBucketObjectLockConfiguration",
+        "s3:GetBucketPolicy",
         "s3:GetBucketPublicAccessBlock",
+        "s3:GetBucketRequestPayment",
         "s3:GetBucketTagging",
         "s3:GetBucketVersioning",
+        "s3:GetBucketWebsite",
         "s3:GetEncryptionConfiguration",
         "s3:GetLifecycleConfiguration",
+        "s3:GetReplicationConfiguration",
         "s3:ListBucket",
         "s3:PutBucketCORS",
         "s3:PutBucketPublicAccessBlock",
@@ -93,17 +152,13 @@
         "s3:PutEncryptionConfiguration",
         "s3:PutLifecycleConfiguration",
         "sns:CreateTopic",
-        "sns:DeleteTopic",
         "sns:GetTopicAttributes",
         "sns:ListTagsForResource",
-        "sns:SetTopicAttributes",
         "sns:TagResource",
         "sqs:CreateQueue",
-        "sqs:DeleteQueue",
         "sqs:GetQueueAttributes",
         "sqs:GetQueueUrl",
         "sqs:ListQueueTags",
-        "sqs:SetQueueAttributes",
         "sqs:TagQueue"
       ],
       "Resource": [
@@ -119,6 +174,33 @@
       "Condition": {
         "StringEquals": {
           "aws:RequestedRegion": "ap-northeast-2"
+        }
+      }
+    },
+    {
+      "Sid": "DataOwned",
+      "Effect": "Allow",
+      "Action": [
+        "elasticache:DeleteCacheSubnetGroup",
+        "elasticache:DeleteReplicationGroup",
+        "elasticache:ModifyReplicationGroup",
+        "sns:DeleteTopic",
+        "sns:SetTopicAttributes",
+        "sqs:DeleteQueue",
+        "sqs:SetQueueAttributes"
+      ],
+      "Resource": [
+        "arn:aws:elasticache:*:*:replicationgroup:app-*",
+        "arn:aws:elasticache:*:*:cluster:app-*",
+        "arn:aws:elasticache:*:*:subnetgroup:app-*",
+        "arn:aws:elasticache:*:*:parametergroup:*",
+        "arn:aws:sqs:*:*:app-*",
+        "arn:aws:sns:*:*:app-*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "ap-northeast-2",
+          "aws:ResourceTag/managed-by": "platform"
         }
       }
     },
@@ -140,15 +222,28 @@
       "Sid": "AppRolesOnly",
       "Effect": "Allow",
       "Action": [
-        "iam:DeleteRole",
-        "iam:DeleteRolePolicy",
         "iam:GetRole",
         "iam:GetRolePolicy",
         "iam:ListAttachedRolePolicies",
+        "iam:ListInstanceProfilesForRole",
         "iam:ListRolePolicies",
         "iam:TagRole"
       ],
       "Resource": "arn:aws:iam::*:role/app-*"
+    },
+    {
+      "Sid": "AppRolesOwnedDelete",
+      "Effect": "Allow",
+      "Action": [
+        "iam:DeleteRole",
+        "iam:DeleteRolePolicy"
+      ],
+      "Resource": "arn:aws:iam::*:role/app-*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/managed-by": "platform"
+        }
+      }
     },
     {
       "Sid": "PassOnlyAppRoles",

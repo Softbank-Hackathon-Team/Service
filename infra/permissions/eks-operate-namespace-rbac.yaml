@@ -22,3 +22,58 @@ subjects:
   - apiGroup: rbac.authorization.k8s.io
     kind: Group
     name: platform:operate
+---
+# ID-1·ID-4 울타리 (EKS 에는 Kyverno 가 없어서 k8s 내장 ValidatingAdmissionPolicy, v1 = k8s 1.30+. 도착 EKS 기본 1.33)
+# 위 RBAC 만으로는 실행 그룹이 아무 네임스페이스(kube-system 포함)에, 아무 주체에게 RoleBinding 을 만들 수 있고,
+# 고객 기존 네임스페이스도 지울 수 있다. 아래 정책이 실행 그룹의 요청만 골라 막는다:
+#   1) RoleBinding = managed-by=platform 표시가 있는 네임스페이스에만, ClusterRole platform-deploy-app 만, 주체는 그룹 platform:deploy 만
+#   2) 네임스페이스 지우기 = managed-by=platform 표시가 있는 것만
+#   3) 표시 없는 네임스페이스에 managed-by 표시를 새로 붙이기 금지 (붙인 뒤 지우는 두 단계 막음)
+# DRAFT(ai) 【미확인】 실제 클러스터 적용 확인 전 (맥 k3d 로 kubectl apply → 거부 시험 필요)
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: platform-operate-guard
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["rbac.authorization.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["rolebindings"]
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["DELETE", "UPDATE"]
+        resources: ["namespaces"]
+  matchConditions:
+    - name: only-platform-operate
+      expression: "'platform:operate' in request.userInfo.groups"
+  variables:
+    - name: isRb
+      expression: "request.resource.resource == 'rolebindings'"
+    - name: nsOwned
+      expression: "has(namespaceObject.metadata.labels) && 'managed-by' in namespaceObject.metadata.labels && namespaceObject.metadata.labels['managed-by'] == 'platform'"
+    - name: oldOwned
+      expression: "oldObject != null && has(oldObject.metadata.labels) && 'managed-by' in oldObject.metadata.labels && oldObject.metadata.labels['managed-by'] == 'platform'"
+    - name: newOwned
+      expression: "object != null && has(object.metadata.labels) && 'managed-by' in object.metadata.labels && object.metadata.labels['managed-by'] == 'platform'"
+  validations:
+    - expression: "!variables.isRb || variables.nsOwned"
+      message: "platform:operate 는 managed-by=platform 네임스페이스에만 RoleBinding 을 만든다"
+    - expression: "!variables.isRb || (object.roleRef.kind == 'ClusterRole' && object.roleRef.name == 'platform-deploy-app')"
+      message: "platform:operate 가 묶을 수 있는 역할은 platform-deploy-app 하나"
+    - expression: "!variables.isRb || (has(object.subjects) && object.subjects.all(s, s.kind == 'Group' && s.name == 'platform:deploy'))"
+      message: "RoleBinding 주체는 그룹 platform:deploy 만"
+    - expression: "variables.isRb || request.operation != 'DELETE' || variables.oldOwned"
+      message: "managed-by=platform 표시가 없는 네임스페이스는 지우지 않는다"
+    - expression: "variables.isRb || request.operation != 'UPDATE' || variables.oldOwned || !variables.newOwned"
+      message: "표시 없는 네임스페이스에 managed-by=platform 을 새로 붙이지 않는다"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: platform-operate-guard
+spec:
+  policyName: platform-operate-guard
+  validationActions: ["Deny"]
