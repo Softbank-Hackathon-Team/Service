@@ -1,5 +1,5 @@
 # kind: service (AWS ECS Fargate 서비스). 관리형 컨테이너 출발(ECS)을 ECS 로 옮길 때 (재현성 기본, 설계 23번 ②).
-# 변수 모양 = packages/contracts/src/tf-kinds.ts ServiceTfVars. 상태: 카탈로그만 — 루트(aws/root)에 아직 안 붙음 (Builder 가 capability 로 막음)
+# 변수 모양 = packages/contracts/src/tf-kinds.ts ServiceTfVars. TA13: 루트(aws/root) service_json 으로 붙음. env_json 은 루트가 조각을 합친 [{name, value}]
 # 원칙: null 이면 상품 기본값(DRAFT 표시), IR 값은 지어내지 않음. 비밀 값은 모듈이 모른다 (Secrets Manager ARN 으로만 넘김)
 # TODO(human): N8 — ECS 출발의 기본 도착 실행 방식 (ECS 유지 vs EKS). 이 모듈은 "유지" 쪽
 terraform {
@@ -13,6 +13,7 @@ variable "cfg" {
   type = object({
     id             = string
     name           = string
+    role_name      = string
     image          = string
     command_json   = optional(string)
     args_json      = optional(string)
@@ -40,14 +41,29 @@ variable "cfg" {
     condition     = length(var.cfg.name) >= 1 && length(var.cfg.name) <= 255
     error_message = "ECS 서비스 이름은 1~255자."
   }
+  validation {
+    condition     = startswith(var.cfg.role_name, "app-") && length(var.cfg.role_name) <= 61
+    error_message = "역할 이름은 app- 로 시작, 61자 이하 (실행 역할은 뒤에 -ex)."
+  }
 }
 # env 층 사실 (TF_FACT_*) — 클러스터·서브넷·보안 그룹은 env 층이 만든다 (11/2 회의 D2: 모듈화는 app 층만)
 variable "cluster_arn" { type = string }
 variable "subnet_ids" { type = list(string) }
 variable "security_group_ids" { type = list(string) }
-variable "execution_role_arn" { type = string }
-variable "task_role_arn" { type = string } # identity 인스턴스 출력
 variable "region" { type = string }
+# TA13: 역할 두 개(앱이 쓰는 task 역할 + 이미지·로그·비밀을 읽는 실행 역할)를 이 모듈이 만든다. 둘 다 플랫폼 권한 경계를 붙임
+# TODO(human): 경계(platform-app-boundary)가 지금은 비밀 읽기만 허용 → 실행 역할의 ECR pull·로그 쓰기가 경계에 막힘. 경계 넓히기는 보안 승인 몫
+variable "boundary_arn" { type = string }
+# 비밀 이름 → Secrets Manager ARN (루트가 만든 그릇). valueFrom 은 진짜 ARN 이어야 JSON 키를 고를 수 있다
+variable "secret_arns" {
+  type    = map(string)
+  default = {}
+}
+# 서비스끼리 부르는 이름 (Service Connect, dns = IR id). null 이면 안 켬
+variable "service_connect_namespace_arn" {
+  type    = string
+  default = null
+}
 # 입구가 이 서비스로 오면 ALB 대상 그룹 (null = 내부 전용)
 variable "target_group_arn" {
   type    = string
@@ -74,9 +90,9 @@ locals {
       # Secrets Manager 이름 + JSON 키 → valueFrom ARN 꼴 (값은 ECS 가 실행 때 읽음)
       secrets = [for s in local.secrets : {
         name      = s.name
-        valueFrom = "arn:aws:secretsmanager:${var.region}:${data.aws_caller_identity.me.account_id}:secret:${s.secret}:${s.key}::"
+        valueFrom = "${var.secret_arns[s.secret]}:${s.key}::"
       }]
-      portMappings = var.cfg.port == null ? [] : [{ containerPort = var.cfg.port, protocol = "tcp" }]
+      portMappings = var.cfg.port == null ? [] : [{ name = local.port_name, containerPort = var.cfg.port, protocol = "tcp" }]
       logConfiguration = {
         logDriver = "awslogs"
         options = {
@@ -90,9 +106,50 @@ locals {
     var.cfg.args_json == null ? {} : { command = jsondecode(var.cfg.args_json) },
   )
   autoscale = var.cfg.target_cpu_pct != null && var.cfg.max_instances > var.cfg.min_instances
+  port_name = "p${coalesce(var.cfg.port, 0)}"
+  # 실행 역할이 읽을 비밀 ARN (이 서비스가 쓰는 것만)
+  read_arns = distinct([for s in local.secrets : var.secret_arns[s.secret]])
+  trust = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "ecs-tasks.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
 }
 
 data "aws_caller_identity" "me" {}
+
+resource "aws_iam_role" "task" {
+  name                 = var.cfg.role_name
+  permissions_boundary = var.boundary_arn
+  assume_role_policy   = local.trust
+  tags                 = var.tags
+}
+
+resource "aws_iam_role" "exec" {
+  name                 = "${var.cfg.role_name}-ex"
+  permissions_boundary = var.boundary_arn
+  assume_role_policy   = local.trust
+  tags                 = var.tags
+}
+
+# 관리형 정책(AmazonECSTaskExecutionRolePolicy)을 붙이지 않고 인라인으로 (실행 역할 정책은 AttachRolePolicy 금지 — permissions-lint)
+resource "aws_iam_role_policy" "exec" {
+  name = "pull-log-secrets"
+  role = aws_iam_role.exec.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = concat([
+      { Effect = "Allow", Action = ["ecr:GetAuthorizationToken"], Resource = "*" },
+      { Effect = "Allow", Action = ["ecr:BatchCheckLayerAvailability", "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer"], Resource = "arn:aws:ecr:${var.region}:${data.aws_caller_identity.me.account_id}:repository/*" },
+      { Effect = "Allow", Action = ["logs:CreateLogStream", "logs:PutLogEvents"], Resource = "${aws_cloudwatch_log_group.app.arn}:*" },
+      ], length(local.read_arns) == 0 ? [] : [
+      { Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = local.read_arns },
+    ])
+  })
+}
 
 resource "aws_cloudwatch_log_group" "app" {
   name              = "/platform/ecs/${var.cfg.name}"
@@ -106,8 +163,8 @@ resource "aws_ecs_task_definition" "app" {
   network_mode             = "awsvpc"
   cpu                      = tostring(local.cpu_units)
   memory                   = tostring(local.mem_mib)
-  execution_role_arn       = var.execution_role_arn
-  task_role_arn            = var.task_role_arn
+  execution_role_arn       = aws_iam_role.exec.arn
+  task_role_arn            = aws_iam_role.task.arn
   container_definitions    = jsonencode([local.container])
   tags                     = var.tags
 }
@@ -129,6 +186,25 @@ resource "aws_ecs_service" "app" {
       target_group_arn = var.target_group_arn
       container_name   = var.cfg.id
       container_port   = var.cfg.port
+    }
+  }
+  dynamic "service_connect_configuration" {
+    for_each = var.service_connect_namespace_arn == null ? [] : [1]
+    content {
+      enabled   = true
+      namespace = var.service_connect_namespace_arn
+      # 받는 포트가 있으면 IR id 로 불림 (다른 서비스의 env 주소 = <id>:<port>). 없으면(워커) 부르기만
+      dynamic "service" {
+        for_each = var.cfg.port == null ? [] : [1]
+        content {
+          port_name      = local.port_name
+          discovery_name = var.cfg.id
+          client_alias {
+            port     = var.cfg.port
+            dns_name = var.cfg.id
+          }
+        }
+      }
     }
   }
   # 자동 확장이 desired_count 를 바꾸므로 다음 plan 에서 되돌리지 않게
@@ -167,3 +243,5 @@ output "task_definition_arn" { value = aws_ecs_task_definition.app.arn }
 output "cpu_units" { value = local.cpu_units }
 output "mem_mib" { value = local.mem_mib }
 output "autoscale" { value = local.autoscale }
+output "task_role_arn" { value = aws_iam_role.task.arn }
+output "execution_role_arn" { value = aws_iam_role.exec.arn }

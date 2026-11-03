@@ -8204,6 +8204,7 @@ components:
         - "objectStore"
         - "queue"
         - "job"
+        - "service"
     OriginV2:
       type: "object"
       properties:

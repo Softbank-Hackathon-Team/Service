@@ -79,13 +79,14 @@ test("secrets ARN → 비밀 이름·키, 작업 역할 ARN → 이름", () => {
   assert.equal(roleNameOf(null), null);
 });
 
-test("Builder: managedContainer 는 capability 로 막힘 (UNSUPPORTED_V2, 서비스·푸는 길 적음), runtime 을 k8s 로 바꾸면 그려진다", () => {
+// TA13: aws·gcp 는 ECS·Cloud Run 으로 그림 (ta13-managed-target.test.ts). 온프레·azure 는 계속 capability 로 막힘
+test("Builder: managedContainer 는 온프레에서 capability 로 막힘 (UNSUPPORTED_V2, 서비스·푸는 길 적음), runtime 을 k8s 로 바꾸면 그려진다", () => {
   const spec = normalizeV2(DEMO_INVENTORY_V2.aws!).result.spec;
-  for (const p of ["aws", "gcp", "onprem"] as const) {
+  for (const p of ["onprem"] as const) {
     assert.throws(() => targetBuilderFor(p).toTerraformV2(spec, { ...T, provider: p }), (e: unknown) =>
       e instanceof AdapterError && e.code === UNSUPPORTED_V2 && /runtime\.managedContainer/.test(e.message) && /shop-api,shop-web,shop-worker/.test(e.message), p);
   }
-  const items = v2PrecheckItems("gcp", { spec: null, specV2: spec, hadV2Before: false });
+  const items = v2PrecheckItems("onprem", { spec: null, specV2: spec, hadV2Before: false });
   assert.ok(items.some((i) => i.level === "block" && /runtime\.managedContainer/.test(i.message)));
   // 사람이 runtime 을 k8s 로 바꾼 판 = 실행 방식 바뀜 승인 줄 + GKE 로 그려짐
   const k8s = AppSpecV2.parse({ ...spec, components: spec.components.map((c) => (c.kind === "service" ? { ...c, props: { ...c.props, runtime: "k8s" } } : c)) });

@@ -108,6 +108,16 @@ variable "identity_json" {
   }
 }
 
+# TA13: 관리형 컨테이너 서비스 (ECS Fargate). 항목 모양 = tf-kinds.ts ServiceTfVars. 비면 아무것도 안 만듦 (기존 계획 그대로)
+variable "service_json" {
+  type    = string
+  default = "[]"
+  validation {
+    condition     = can(jsondecode(var.service_json)) && length(distinct([for x in jsondecode(var.service_json) : x.id])) == length(jsondecode(var.service_json))
+    error_message = "service_json: id 가 겹침."
+  }
+}
+
 provider "aws" {
   region = var.region
   # 잘못된 계정에 만드는 사고 방지
@@ -130,7 +140,7 @@ locals {
   queue_dl     = { for id, x in local.queue_all : id => x if contains(local.queue_dl_ids, id) }
   queue        = { for id, x in local.queue_all : id => x if !contains(local.queue_dl_ids, id) }
   # TA5fix: link_outputs 는 IR id 로 합치므로 종류가 달라도 id 가 겹치면 안 된다 (VTA5h: 예전엔 조용히 덮어씀)
-  link_ids = concat(keys(local.postgres), keys(local.cache), keys(local.object_store), keys(local.queue_all))
+  link_ids = concat(keys(local.postgres), keys(local.cache), keys(local.object_store), keys(local.queue_all), keys(local.service))
   # 클러스터 없이는 k8s 쪽 종류(namespace·identity)를 안 만든다
   namespace = local.cluster == 1 ? { for n in jsondecode(var.namespace_json) : n.name => n } : {}
   identity  = local.cluster == 1 ? { for i in jsondecode(var.identity_json) : i.id => i } : {}
@@ -154,6 +164,32 @@ locals {
   repl_key = length(local.postgres) == 1 ? keys(local.postgres)[0] : ""
   # v1 app_role_arn 자리: 신원이 있으면 id 가 가장 앞선 것 (DRAFT(ai): 여러 개면 대표 하나)
   first_identity = length(local.identity_ids) > 0 ? local.identity_ids[0] : ""
+
+  # --- TA13: 관리형 컨테이너 (ECS) ---
+  service = { for x in jsondecode(var.service_json) : x.id => x }
+  svc_on  = length(local.service) > 0 ? 1 : 0
+  # DRAFT(ai): env 층엔 ECS 클러스터가 없다 → 앱 루트가 클러스터·보안 그룹·Service Connect 이름 공간을 만든다 (이전마다 해시)
+  svc_base = "app-${var.app_name}-${substr(sha1("${var.tenant_id}/${var.app_name}"), 0, 6)}"
+  # 비밀 그릇 = 서비스들이 쓰는 이름 합집합 (k8s 신원 모듈과 같은 platform/<tenant>/<app>/<이름>, Builder 가 전체 이름을 넘김)
+  svc_secret_names = toset(flatten([for x in local.service : [for s in jsondecode(x.secrets_json) : s.secret]]))
+  # env 조각의 ref("<IR id>.<출력>") 값표 = 데이터 자원 link 출력 + 서비스 주소(Service Connect: host = IR id)
+  link_values = merge(
+    merge([for id, m in module.postgres : { for k, v in m.link : "${id}.${k}" => v }]...),
+    merge([for id, m in module.cache : { for k, v in m.link : "${id}.${k}" => v }]...),
+    merge([for id, m in module.object_store : { for k, v in m.link : "${id}.${k}" => v }]...),
+    merge([for id, m in module.queue_dl : { for k, v in m.link : "${id}.${k}" => v }]...),
+    merge([for id, m in module.queue : { for k, v in m.link : "${id}.${k}" => v }]...),
+    merge([for id, x in local.service : {
+      "${id}.host" = id
+      "${id}.port" = x.port == null ? "" : tostring(x.port)
+      "${id}.url"  = x.port == null || x.port == 80 ? "http://${id}" : "http://${id}:${x.port}"
+    }]...),
+  )
+  service_cfg = { for id, x in local.service : id => merge(x, {
+    env_json = jsonencode([for e in jsondecode(x.env_json) : { name = e.name, value = join("", [for p in e.parts : p.ref == null ? p.lit : local.link_values[p.ref]]) }])
+  }) }
+  # DB·캐시가 받아 줄 앱 쪽 보안 그룹: 서비스가 있으면 ECS 쪽, 아니면 EKS 클러스터 SG (v1 과 같음)
+  app_sg_id = local.svc_on == 1 ? aws_security_group.svc[0].id : try(data.aws_eks_cluster.this[0].vpc_config[0].cluster_security_group_id, "")
 }
 
 data "aws_eks_cluster" "this" {
@@ -186,7 +222,7 @@ module "postgres" {
   app_name      = var.app_name
   vpc_id        = var.vpc_id
   subnet_ids    = jsondecode(var.db_subnet_ids_json)
-  cluster_sg_id = try(data.aws_eks_cluster.this[0].vpc_config[0].cluster_security_group_id, "")
+  cluster_sg_id = local.app_sg_id
 }
 
 module "identity" {
@@ -211,7 +247,7 @@ module "cache" {
   cfg           = each.value
   vpc_id        = var.vpc_id
   subnet_ids    = jsondecode(var.db_subnet_ids_json)
-  cluster_sg_id = try(data.aws_eks_cluster.this[0].vpc_config[0].cluster_security_group_id, "")
+  cluster_sg_id = local.app_sg_id
 }
 
 module "object_store" {
@@ -233,12 +269,64 @@ module "queue" {
   dead_letter_arn = try(each.value.dead_letter_to, null) == null ? "" : module.queue_dl[each.value.dead_letter_to].arn
 }
 
+# --- TA13: ECS 공용 자원 (서비스가 있을 때만) ---
+resource "aws_ecs_cluster" "svc" {
+  count = local.svc_on
+  name  = local.svc_base
+}
+
+resource "aws_service_discovery_http_namespace" "svc" {
+  count = local.svc_on
+  name  = local.svc_base
+}
+
+# 서비스끼리(Service Connect)만 받는다. 입구(ALB·Cloudflare)는 아직 없음 → TODO(human) 아래
+resource "aws_security_group" "svc" {
+  count       = local.svc_on
+  name        = local.svc_base
+  description = "platform ECS services"
+  vpc_id      = var.vpc_id
+  ingress {
+    from_port = 0
+    to_port   = 65535
+    protocol  = "tcp"
+    self      = true
+  }
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_secretsmanager_secret" "svc" {
+  for_each                = local.svc_secret_names
+  name                    = each.key
+  recovery_window_in_days = 7
+}
+
+# TODO(human): 입구(entry) → ECS 연결 (ALB 대상 그룹 또는 Cloudflare 터널). 지금 target_group_arn 은 비움 = 내부 전용
+module "service" {
+  source                        = "../kinds/service-ecs"
+  for_each                      = local.service_cfg
+  cfg                           = each.value
+  cluster_arn                   = aws_ecs_cluster.svc[0].arn
+  subnet_ids                    = jsondecode(var.db_subnet_ids_json) # DRAFT(ai): env 층 사설 서브넷(DB 와 같은 곳, NAT 로 나감)
+  security_group_ids            = [aws_security_group.svc[0].id]
+  region                        = var.region
+  boundary_arn                  = var.app_role_boundary_arn
+  secret_arns                   = { for n, x in aws_secretsmanager_secret.svc : n => x.arn }
+  service_connect_namespace_arn = aws_service_discovery_http_namespace.svc[0].arn
+  tags                          = { managed-by = "platform", tenant = var.tenant_id, app = var.app_name }
+}
+
 # TA5fix: 종류 간 같은 IR id 거부 (link_outputs 가 조용히 덮어쓰지 않게). 계획 단계에서 멈춤
 resource "terraform_data" "kind_ids" {
   lifecycle {
     precondition {
       condition     = length(distinct(local.link_ids)) == length(local.link_ids)
-      error_message = "postgres·cache·objectStore·queue 사이에 같은 IR id 가 있음 (IR id 는 전역 유일)."
+      error_message = "postgres·cache·objectStore·queue·service 사이에 같은 IR id 가 있음 (IR id 는 전역 유일)."
     }
   }
 }
@@ -267,3 +355,9 @@ output "namespace" { value = length(module.namespace) > 0 ? try(module.namespace
 output "identity_role_arns" {
   value = { for id, m in module.identity : id => m.role_arn }
 }
+
+# TA13: 관리형 서비스 (IR id → ECS 서비스 이름). 없으면 빈 값
+output "service_names" {
+  value = { for id, m in module.service : id => m.service_name }
+}
+output "ecs_cluster_name" { value = local.svc_on == 1 ? aws_ecs_cluster.svc[0].name : "" }

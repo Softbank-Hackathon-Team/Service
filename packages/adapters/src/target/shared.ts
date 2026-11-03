@@ -109,6 +109,7 @@ export function v2Blockers(spec: AppSpecV2, caps: Capability[]): { unsupported: 
   const hint = (x: Capability) => x !== "runtime.managedContainer" ? "" :
     ` (서비스 ${spec.components.filter((c) => c.kind === "service" && c.props.runtime === "managedContainer").map((c) => c.id).sort().join(",")} — 명세 검토에서 runtime 을 k8s 로 바꾸면 EKS·GKE·k3s 로 옮김, 실행 방식 바뀜 승인)`;
   const unsupported = requirementsV2(spec).filter((x) => !have.has(x)).map((x) => `도착 렌더 미지원: ${x}${hint(x)}`);
+  if (have.has("runtime.managedContainer")) unsupported.push(...managedBlockers(spec));
   const needsHuman: string[] = [];
   for (const c of spec.components) {
     if (c.kind === "postgres") {
@@ -150,6 +151,35 @@ export function v2Blockers(spec: AppSpecV2, caps: Capability[]): { unsupported: 
       needsHuman.push(`${n.subject}: 출발은 공개였는데 허용 주소(CIDR)가 없음 → 도착은 비공개로 두고 사람이 정함`);
   }
   return { unsupported: [...new Set(unsupported)].sort(), needsHuman: needsHuman.sort() };
+}
+
+// TA13: 관리형 컨테이너(ECS·Cloud Run) 도착이 못 그리는 것. capability 가 있는 도착(aws·gcp)에서만 본다
+//   DRAFT(ai): 한 명세 안에 k8s 워크로드와 섞으면 막는다 (신원·비밀·Helm 값이 두 갈래가 됨). 칸 대응은 kinds/service-* 가 받는 것만
+export const managedServicesOf = (spec: AppSpecV2): Service[] =>
+  workloadsOf(spec).filter((w): w is Service => w.kind === "service" && w.props.runtime === "managedContainer");
+export function managedBlockers(spec: AppSpecV2): string[] {
+  const m = managedServicesOf(spec);
+  if (!m.length) return [];
+  const out: string[] = [];
+  const k8s = workloadsOf(spec).filter((w) => !(w.kind === "service" && w.props.runtime === "managedContainer")).map((w) => w.id);
+  if (k8s.length) out.push(`도착 렌더 미지원: 관리형 서비스(${m.map((x) => x.id).join(",")})와 k8s 워크로드(${k8s.join(",")})를 한 명세에 섞음 — 명세 검토에서 runtime 을 한쪽으로 맞춤`);
+  for (const w of m) {
+    const p = w.props;
+    const bad: string[] = [];
+    if ((p.sidecars ?? []).some((s) => !s.injected)) bad.push("sidecars");
+    if (p.initContainers?.length) bad.push("initContainers");
+    if (p.volumes?.length) bad.push("volumes");
+    if (p.configs?.length) bad.push("configs");
+    if (p.secretMounts?.length) bad.push("secretMounts");
+    if (p.envFrom?.length) bad.push("envFrom");
+    if (p.env.some((e) => "fromConfig" in e || "fromField" in e || "fromResource" in e)) bad.push("env(fromConfig·fromField·fromResource)");
+    if ((p.ports?.length ?? 0) > 1) bad.push("ports 2개 이상");
+    if (bad.length) out.push(`도착 렌더 미지원: ${w.id} 관리형 서비스에 ${bad.join("·")} 못 그림`);
+  }
+  // A8 권한 대응(grants.ts)은 k8s 신원 모듈에 붙는다 → 관리형 역할엔 아직 없음
+  if (spec.links.some((l) => l.grants?.length && m.some((x) => x.id === l.from)) || spec.posture.permissions.length)
+    out.push("도착 렌더 미지원: 관리형 서비스의 권한 대응(grants·posture.permissions)은 아직 없음");
+  return out;
 }
 
 export function assertRenderable(spec: AppSpecV2, caps: Capability[]): void {
@@ -224,7 +254,8 @@ export function kindJson<K extends keyof typeof TF_KIND_VARS>(kind: K, items: un
 }
 
 export function instancesOf(provider: "aws" | "gcp" | "onprem", rows: Array<{ kind: ModuleInstance["kind"]; id: string }>): ModuleInstance[] {
-  const dir: Record<string, string> = { objectStore: "object-store" };
+  // TA13: service 는 프로바이더마다 모듈이 다름 (ECS · Cloud Run)
+  const dir: Record<string, string> = { objectStore: "object-store", service: provider === "gcp" ? "service-cloudrun" : "service-ecs" };
   return rows.map((r) => ({ kind: r.kind, id: r.id, module: `${provider}/kinds/${dir[r.kind] ?? r.kind}` }))
     .sort((a, b) => a.module.localeCompare(b.module) || a.id.localeCompare(b.id));
 }
@@ -242,11 +273,15 @@ export function serviceAddress(c: Service, ns: string): { host: string; port: nu
   const port = ep?.ports[0]?.port ?? c.props.ports?.[0]?.port ?? null;
   return { host: `${ep?.name ?? c.id}.${ns}.svc`, port };
 }
-export function linkValue(spec: AppSpecV2, to: string, output: string, ctx: LinkCtx): string {
+export function linkTarget(spec: AppSpecV2, to: string, output: string): ComponentV2 {
   const c = spec.components.find((x) => x.id === to);
   if (!c) throw new AdapterError(LINK_OUTPUT_UNKNOWN, `의존성 대상 없음: ${to}`);
   const allowed = (LINK_OUTPUTS as Record<string, readonly string[]>)[c.kind] ?? [];
   if (!allowed.includes(output)) throw new AdapterError(LINK_OUTPUT_UNKNOWN, `${c.kind} 에 없는 출력: ${to}.${output}`);
+  return c;
+}
+export function linkValue(spec: AppSpecV2, to: string, output: string, ctx: LinkCtx): string {
+  const c = linkTarget(spec, to, output);
   if (c.kind === "service") {
     const a = serviceAddress(c, ctx.namespace);
     if (output === "host") return a.host;
@@ -256,7 +291,7 @@ export function linkValue(spec: AppSpecV2, to: string, output: string, ctx: Link
   }
   return ctx.local?.(c, output) ?? fromOut(ctx.out, `link.${to}.${output}`);
 }
-const TEMPLATE = /\$\{([a-z][a-z0-9-]{0,39})\.(host|port|url|name|user)\}/g;
+export const TEMPLATE = /\$\{([a-z][a-z0-9-]{0,39})\.(host|port|url|name|user)\}/g;
 export const renderTemplate = (spec: AppSpecV2, tpl: string, ctx: LinkCtx) =>
   tpl.replace(TEMPLATE, (_m, id: string, o: string) => linkValue(spec, id, o, ctx));
 

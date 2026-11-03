@@ -85,6 +85,28 @@ export const PERMS: PermTable = {
     read: ["eks:DescribePodIdentityAssociation"],
     write: ["eks:CreatePodIdentityAssociation", "iam:PassRole"],
     remove: ["eks:DeletePodIdentityAssociation"] },
+  // TA13 DRAFT(ai): 관리형 컨테이너(ECS Fargate) 도착 — root(service_json) + kinds/service-ecs 가 만드는 종류.
+  //   TODO(human): 실행 역할 천장(infra/permissions/aws-operate-role-policy.json)·세션 정책엔 아직 안 넣음 (PassRole 대상 ecs-tasks, 보안 승인 몫)
+  "data.aws_caller_identity": { read: ["sts:GetCallerIdentity"], write: [], remove: [] },
+  aws_ecs_cluster: {
+    read: ["ecs:DescribeClusters"], write: ["ecs:CreateCluster", "ecs:TagResource"], remove: ["ecs:DeleteCluster"] },
+  aws_service_discovery_http_namespace: {
+    read: ["servicediscovery:GetNamespace", "servicediscovery:ListTagsForResource"],
+    write: ["servicediscovery:CreateHttpNamespace", "servicediscovery:GetOperation", "servicediscovery:TagResource"],
+    remove: ["servicediscovery:DeleteNamespace"] },
+  aws_cloudwatch_log_group: {
+    read: ["logs:DescribeLogGroups", "logs:ListTagsForResource"],
+    write: ["logs:CreateLogGroup", "logs:PutRetentionPolicy", "logs:TagResource"], remove: ["logs:DeleteLogGroup"] },
+  aws_ecs_task_definition: {
+    read: ["ecs:DescribeTaskDefinition"], write: ["ecs:RegisterTaskDefinition", "iam:PassRole"], remove: ["ecs:DeregisterTaskDefinition"] },
+  aws_ecs_service: {
+    read: ["ecs:DescribeServices"], write: ["ecs:CreateService", "ecs:UpdateService", "iam:PassRole"], remove: ["ecs:DeleteService"] },
+  aws_appautoscaling_target: {
+    read: ["application-autoscaling:DescribeScalableTargets"],
+    write: ["application-autoscaling:RegisterScalableTarget"], remove: ["application-autoscaling:DeregisterScalableTarget"] },
+  aws_appautoscaling_policy: {
+    read: ["application-autoscaling:DescribeScalingPolicies"],
+    write: ["application-autoscaling:PutScalingPolicy"], remove: ["application-autoscaling:DeleteScalingPolicy"] },
 };
 
 // DECISION(team): AWS 도착 컴퓨트 = EKS (GKE·k3s와 같은 Helm 차트 재사용) (Jeong 2026-10-31)

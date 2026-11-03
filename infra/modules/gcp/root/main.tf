@@ -109,6 +109,16 @@ variable "identity_json" {
   }
 }
 
+# TA13: 관리형 컨테이너 서비스 (Cloud Run). 항목 모양 = tf-kinds.ts ServiceTfVars. 비면 아무것도 안 만듦 (기존 계획 그대로)
+variable "service_json" {
+  type    = string
+  default = "[]"
+  validation {
+    condition     = can(jsondecode(var.service_json)) && length(distinct([for x in jsondecode(var.service_json) : x.id])) == length(jsondecode(var.service_json))
+    error_message = "service_json: id 가 겹침."
+  }
+}
+
 provider "google" {
   project = var.project_id
   region  = var.region
@@ -128,7 +138,7 @@ locals {
   queue_dl     = { for id, x in local.queue_all : id => x if contains(local.queue_dl_ids, id) }
   queue        = { for id, x in local.queue_all : id => x if !contains(local.queue_dl_ids, id) }
   # TA5fix: link_outputs 는 IR id 로 합치므로 종류가 달라도 id 가 겹치면 안 된다 (VTA5h: 예전엔 조용히 덮어씀)
-  link_ids  = concat(keys(local.postgres), keys(local.cache), keys(local.object_store), keys(local.queue_all))
+  link_ids  = concat(keys(local.postgres), keys(local.cache), keys(local.object_store), keys(local.queue_all), keys(local.service))
   namespace = local.cluster == 1 ? { for n in jsondecode(var.namespace_json) : n.name => n } : {}
   identity  = local.cluster == 1 ? { for i in jsondecode(var.identity_json) : i.id => i } : {}
 
@@ -148,6 +158,36 @@ locals {
   }
   repl_key       = length(local.postgres) == 1 ? keys(local.postgres)[0] : ""
   first_identity = length(local.identity_ids) > 0 ? local.identity_ids[0] : ""
+
+  # --- TA13: 관리형 컨테이너 (Cloud Run) ---
+  service = { for x in jsondecode(var.service_json) : x.id => x }
+  svc_on  = length(local.service) > 0 ? 1 : 0
+  # 비밀 그릇 = 서비스들이 쓰는 secret id 합집합 (Builder 가 키마다 하나: app-<앱>-<비밀>-<키>. Cloud Run 은 JSON 키를 못 고름)
+  svc_secret_ids = toset(flatten([for x in local.service : [for s in jsondecode(x.secrets_json) : s.secret]]))
+  # Cloud Run 주소는 결정적: https://<서비스>-<프로젝트 번호>.<리전>.run.app (모듈 출력 uri 를 쓰면 같은 for_each 안에서 순환)
+  project_number = local.svc_on == 1 ? data.google_project.this[0].number : ""
+  link_values = merge(
+    merge([for id, m in module.postgres : { for k, v in m.link : "${id}.${k}" => v }]...),
+    merge([for id, m in module.cache : { for k, v in m.link : "${id}.${k}" => v }]...),
+    merge([for id, m in module.object_store : { for k, v in m.link : "${id}.${k}" => v }]...),
+    merge([for id, m in module.queue_dl : { for k, v in m.link : "${id}.${k}" => v }]...),
+    merge([for id, m in module.queue : { for k, v in m.link : "${id}.${k}" => v }]...),
+    merge([for id, x in local.service : {
+      "${id}.host" = "${x.name}-${local.project_number}.${var.region}.run.app"
+      "${id}.port" = "443"
+      "${id}.url"  = "https://${x.name}-${local.project_number}.${var.region}.run.app"
+    }]...),
+  )
+  service_cfg = { for id, x in local.service : id => merge(x, {
+    env_json = jsonencode([for e in jsondecode(x.env_json) : { name = e.name, value = join("", [for p in e.parts : p.ref == null ? p.lit : local.link_values[p.ref]]) }])
+  }) }
+  # DRAFT(ai): Direct VPC egress 서브넷 = env 층 이름 규칙(<네트워크>-nodes, gcp/env). env 층이 바뀌면 같이 고침
+  svc_subnetwork = "projects/${var.project_id}/regions/${var.region}/subnetworks/${element(split("/", var.network_id), length(split("/", var.network_id)) - 1)}-nodes"
+}
+
+data "google_project" "this" {
+  count      = local.svc_on
+  project_id = var.project_id
 }
 
 data "google_client_config" "me" {}
@@ -229,12 +269,35 @@ module "queue" {
   dead_letter_topic = try(each.value.dead_letter_to, null) == null ? "" : module.queue_dl[each.value.dead_letter_to].topic_id
 }
 
+# --- TA13: Cloud Run 서비스 (서비스가 있을 때만) ---
+resource "google_secret_manager_secret" "svc" {
+  for_each  = local.svc_secret_ids
+  secret_id = each.key
+  labels    = local.labels
+  replication {
+    auto {}
+  }
+}
+
+# TODO(human): 입구(entry) → Cloud Run 연결 (Cloudflare 원점 = 서비스 uri 또는 서버리스 NEG + LB). 지금은 public=true 면 ingress ALL 만
+module "service" {
+  source     = "../kinds/service-cloudrun"
+  for_each   = local.service_cfg
+  cfg        = each.value
+  project_id = var.project_id
+  region     = var.region
+  network    = var.network_id
+  subnetwork = local.svc_subnetwork
+  labels     = local.labels
+  secret_ids = { for n, x in google_secret_manager_secret.svc : n => x.secret_id }
+}
+
 # TA5fix: 종류 간 같은 IR id 거부 (link_outputs 가 조용히 덮어쓰지 않게). 계획 단계에서 멈춤
 resource "terraform_data" "kind_ids" {
   lifecycle {
     precondition {
       condition     = length(distinct(local.link_ids)) == length(local.link_ids)
-      error_message = "postgres·cache·objectStore·queue 사이에 같은 IR id 가 있음 (IR id 는 전역 유일)."
+      error_message = "postgres·cache·objectStore·queue·service 사이에 같은 IR id 가 있음 (IR id 는 전역 유일)."
     }
   }
 }
@@ -262,4 +325,12 @@ output "namespace" { value = length(module.namespace) > 0 ? try(module.namespace
 
 output "identity_gsa_emails" {
   value = { for id, m in module.identity : id => m.gsa_email }
+}
+
+# TA13: 관리형 서비스 (IR id → Cloud Run 이름·주소). 없으면 빈 값
+output "service_names" {
+  value = { for id, m in module.service : id => m.service_name }
+}
+output "service_urls" {
+  value = { for id, m in module.service : id => m.uri }
 }

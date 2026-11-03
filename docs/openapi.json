@@ -12156,7 +12156,8 @@
           "cache",
           "objectStore",
           "queue",
-          "job"
+          "job",
+          "service"
         ]
       },
       "OriginV2": {

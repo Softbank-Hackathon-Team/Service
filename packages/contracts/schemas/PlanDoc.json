@@ -243,7 +243,8 @@
               "cache",
               "objectStore",
               "queue",
-              "job"
+              "job",
+              "service"
             ]
           },
           "id": {
