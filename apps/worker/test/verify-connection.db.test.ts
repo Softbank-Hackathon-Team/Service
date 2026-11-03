@@ -136,7 +136,7 @@ test("user 작업인데 이미 verifying 이 아님 → 그냥 끝 (중복 작�
 
 test("REAL_STS=1 이어도 external_id 없는 환경(시드)은 mock 발급기로 감 (platform awsIssuer)", { skip }, async () => {
   const platform = await import("../src/platform.js");
-  assert.equal(platform.awsIssuer({}).mock, true);
+  assert.equal(platform.awsIssuer({ REAL_STS: "0" }).mock, true);
   const w = platform.awsIssuer({ REAL_STS: "1" });
   assert.equal(w.mock, false);
   assert.equal(w.mockFor?.({}), true);
