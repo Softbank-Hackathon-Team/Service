@@ -181,6 +181,7 @@ flowchart LR
 | 상태 칸 검사 | 【사실】 `migrations.status`, `environments.connection_status`가 아무 글자나 받는다 | 오타 난 상태가 DB에 들어갈 수 있다 | SQL `CHECK` 규칙 |
 | `deploy` 작업 모양 | 【사실】 `MigrationJob` | 설계는 "도착 자원 준비됨"(`InfraReady`)을 넘긴다 | DB 표에 저장하고 작업에는 번호만 |
 | 화면 신호 | 【사실】 `GET /events`가 상태 변경 신호를 보낸다. `weight_changed`·`rollback_*`·`matrix_changed`·`agent.step`은 보내는 쪽이 없다 | 트래픽 비율·보안 표 변화는 화면이 폴링으로만 안다 | 보내는 쪽에 `pg_notify`를 더한다 |
+| 화면 신호 연결 끊기 | 【사실】 연결은 연 토큰이 만료되면 끊긴다(JWT `exp`와 15분 상한 중 이른 쪽, 개인 토큰·개발용 헤더는 15분). `session_events`(로그아웃·사용자 끄기)가 오면 그 회사·사용자의 연결이 닫힌다 | 개인 토큰 지우기와 갱신 토큰 재사용 감지는 `session_events`를 안 보낸다. 듣기 연결이 끊긴 사이 온 알림도 잃는다. 그런 연결은 상한(최대 15분)까지 신호를 받는다 | 15분을 받아들일지 정한다. 줄이려면 그 두 곳에서도 `session_events`를 보낸다 |
 | `CreateMigration` 위치 | 【사실】 경로 파일 안 | 화면과 CLI도 같은 모양이 필요하다 | contracts로 옮긴다 |
 
 ---
