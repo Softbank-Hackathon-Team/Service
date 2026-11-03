@@ -22,6 +22,8 @@ case "$*" in
   *"describe-cluster"*) echo "An error occurred (ResourceNotFoundException)" >&2; exit 254 ;;
   *"--db-instance-identifier shop"*) echo "available" ;;
   *"--db-instance-identifier gone"*) echo "An error occurred (DBInstanceNotFound)" >&2; exit 254 ;;
+  *"ecs list-clusters"*) printf '%s' "\${FAKE_ECS:-}" ;;
+  *"ecs list-services"*) printf '%s' "\${FAKE_ECS_SVC:-}" ;;
   *"describe-secret"*) case "$*" in *pending*) echo "2026-10-31T21:00:00+00:00" ;; *) echo "None" ;; esac ;;
   *) echo "" ;;
 esac
@@ -83,4 +85,15 @@ esac
   assert.equal(leak.status, 1, leak.stdout);
   assert.match(leak.stdout, /k8s-fw-a1b2c3/);
   assert.match(leak.stdout, /대상 풀\(LB 뒤\): +1/);
+});
+
+test("REALECS: ECS 클러스터·서비스가 남아 있으면 끝 코드 1, 없으면 OK zero", () => {
+  const left = run({ FAKE_ECS: "arn:aws:ecs:ap-northeast-2:111122223333:cluster/realecs-src", FAKE_ECS_SVC: "arn:aws:ecs:ap-northeast-2:111122223333:service/realecs-src/realecs-src-api" });
+  assert.equal(left.code, 1, left.out);
+  assert.match(left.out, /ECS 클러스터: +1/);
+  assert.match(left.out, /ECS 서비스: +1/);
+  const zero = run({});
+  assert.equal(zero.code, 0, zero.out);
+  assert.match(zero.out, /ECS 클러스터: +0/);
+  assert.match(zero.out, /OK zero/);
 });
