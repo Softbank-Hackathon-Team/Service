@@ -49,5 +49,6 @@ test("흉내 apply 출력(stubTfOutputsV2): cache·objectStore·queue 가 LINK_O
 
 test("PATCH 경로: posture 통째는 받고, posture.network 같은 깊은 경로·모르는 경로는 거부", () => {
   assert.ok(SpecV2FieldPath.safeParse("posture").success);
-  for (const p of ["posture.network", "security", "posture ", "app"]) assert.equal(SpecV2FieldPath.safeParse(p).success, false, p);
+  assert.ok(SpecV2FieldPath.safeParse("security").success);   // 보안 요구사항 통째 (보안 판정 연결)
+  for (const p of ["posture.network", "security.requirements", "securityFacts", "posture ", "app"]) assert.equal(SpecV2FieldPath.safeParse(p).success, false, p);
 });

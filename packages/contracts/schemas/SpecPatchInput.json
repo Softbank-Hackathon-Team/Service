@@ -35,7 +35,7 @@
               },
               {
                 "type": "string",
-                "pattern": "^(components\\.[a-z][a-z0-9-]{0,39}\\.[A-Za-z][A-Za-z0-9]{0,39}|links|entry|posture)$"
+                "pattern": "^(components\\.[a-z][a-z0-9-]{0,39}\\.[A-Za-z][A-Za-z0-9]{0,39}|links|entry|posture|security)$"
               }
             ]
           },

@@ -112,7 +112,7 @@ const V2_COMPONENT_PATH = /^components\.([a-z][a-z0-9-]{0,39})\.([A-Za-z][A-Za-z
 
 /**
  * spec_v2 {spec, fieldMeta, …} 에 사람 수정을 얹은 새 v2 spec·fieldMeta (순수 함수, 입력은 안 바꿈). 규칙은 applySpecPatch 와 같다.
- *  - changes: "components.<id>.<칸>" → 그 리소스 props.<칸> 을 바꿈. "links"·"entry" → 통째로 바꿈
+ *  - changes: "components.<id>.<칸>" → 그 리소스 props.<칸> 을 바꿈. "links"·"entry"·"posture"·"security" → 통째로 바꿈 (security 는 null 이면 지움)
  *    그 키와 그 아래 키(예: components.api.env.DB_URL)의 표시 → {source:"human", confidence:1, needs_review:false}
  *  - confirm: fieldMeta 키 그대로 needs_review:false. 표시 없는 키는 넘어감
  * 없는 리소스 id → 400 SPEC_PATCH_INVALID. 모양 검사(AppSpecV2·checkV2)와 v1 다시 뽑기(rebuildFromV2)는 부르는 쪽
@@ -132,10 +132,13 @@ export function applySpecV2Patch(base: { spec: unknown; fieldMeta: SpecMeta | nu
       //   checkV2 의 runtime_change 승인 줄을 없앨 수 있다 (N8: 도착 실행 방식 = 출발과 같은 종류, 바꾸려면 runtime 을 바꾸고 승인)
       if (m[2] === "origin") throw new DomainError(400, "SPEC_PATCH_INVALID", `${c.path}: origin 은 가져오기가 정한 값이라 고칠 수 없음 (도착 실행 방식을 바꾸려면 runtime 을 고침)`);
       comp.props = { ...(comp.props ?? {}), [m[2]!]: structuredClone(c.value) };
-    } else if (c.path === "links" || c.path === "entry" || c.path === "posture") {
+    } else if (c.path === "links" || c.path === "entry" || c.path === "posture" || c.path === "security") {
       // E2EDATA2 DRAFT(ai): posture 통째 바꾸기. 출발 방화벽을 못 읽은 데이터 자원(ingress "unknown")은 precheck 가 사람이 정하라며 막는데,
       //   posture 를 고칠 길이 없어 영원히 spec_review 에 갇혔다. 모양은 AppSpecV2 검사(부르는 쪽)가 막는다
-      spec[c.path] = structuredClone(c.value);
+      // security: 앱 보안 요구사항(데이터 등급·허용 국가·키 소유). 가져오기는 채우지 않으므로 사람이 넣는 길이 이것뿐이다.
+      //   null 이면 칸을 지운다 (요구사항 없음 = 판정이 P-REQ-0 으로 선언을 요청)
+      if (c.path === "security" && c.value === null) delete spec.security;
+      else spec[c.path] = structuredClone(c.value);
     } else {
       throw new DomainError(400, "SPEC_PATCH_INVALID", `${c.path}: not a v2 path`);
     }

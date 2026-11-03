@@ -6269,7 +6269,9 @@
           "posture": {
             "$ref": "#/components/schemas/PostureV2"
           },
-          "security": {}
+          "security": {
+            "$ref": "#/components/schemas/SecuritySpecV2"
+          }
         },
         "required": [
           "schemaVersion",
@@ -10508,6 +10510,15 @@
         ],
         "additionalProperties": false
       },
+      "DataClass": {
+        "type": "string",
+        "enum": [
+          "public",
+          "internal",
+          "personal",
+          "sensitive"
+        ]
+      },
       "DeployResult": {
         "type": "object",
         "properties": {
@@ -12503,6 +12514,15 @@
           "vm"
         ]
       },
+      "Operator": {
+        "type": "string",
+        "enum": [
+          "customer",
+          "aws",
+          "gcp",
+          "azure"
+        ]
+      },
       "OriginV2": {
         "type": "object",
         "properties": {
@@ -13376,6 +13396,52 @@
         ],
         "additionalProperties": false
       },
+      "SecurityRequirements": {
+        "type": "object",
+        "properties": {
+          "dataClass": {
+            "$ref": "#/components/schemas/DataClass"
+          },
+          "residency": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Z]{2}$"
+            }
+          },
+          "keyOwnership": {
+            "type": "string",
+            "enum": [
+              "provider",
+              "customer"
+            ]
+          },
+          "operatorAllow": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Operator"
+            }
+          }
+        },
+        "required": [
+          "dataClass",
+          "residency",
+          "keyOwnership"
+        ],
+        "additionalProperties": false
+      },
+      "SecuritySpecV2": {
+        "type": "object",
+        "properties": {
+          "requirements": {
+            "$ref": "#/components/schemas/SecurityRequirements"
+          }
+        },
+        "required": [
+          "requirements"
+        ],
+        "additionalProperties": false
+      },
       "SpecEnvFieldPath": {
         "type": "string",
         "pattern": "^service\\.env\\.[A-Za-z_][A-Za-z0-9_]{0,127}$"
@@ -13474,7 +13540,7 @@
       },
       "SpecV2FieldPath": {
         "type": "string",
-        "pattern": "^(components\\.[a-z][a-z0-9-]{0,39}\\.[A-Za-z][A-Za-z0-9]{0,39}|links|entry|posture)$"
+        "pattern": "^(components\\.[a-z][a-z0-9-]{0,39}\\.[A-Za-z][A-Za-z0-9]{0,39}|links|entry|posture|security)$"
       },
       "StartInput": {
         "type": "object",

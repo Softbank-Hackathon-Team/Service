@@ -1,4 +1,4 @@
-import type { FieldMetaV2, ImportResultV2, RawInventory, UnmappedV2 } from "@svc/contracts";
+import type { FieldMetaV2, ImportResultV2, RawInventory, SourceDbFacts, UnmappedV2 } from "@svc/contracts";
 import { assignIds, slug } from "./ids.js";
 import { inferLinks } from "./links.js";
 import { maskPlainSecrets, rewriteEnv } from "./env-rewrite.js";
@@ -6,6 +6,7 @@ import { attachEndpoints, buildEntry, fillProjection, mergeRoutes } from "./entr
 import { buildPosture } from "./posture.js";
 import { applyBoundary } from "./boundary.js";
 import { selectAppGroup } from "./app-group.js";
+import { sourceDbFactsOf } from "./security-facts.js";
 import { K8S_RAW_KINDS, type RawK8sHpa, type RawK8sIngress, type RawK8sNetworkPolicy, type RawK8sService } from "./raw-k8s.js";
 import { k8sDeploymentMapper } from "./mappers/k8s-deployment.js";
 import { k8sCronJobMapper } from "./mappers/k8s-cronjob.js";
@@ -54,6 +55,7 @@ export function normalizeV2(raw: RawInventory, opts: NormalizeV2Options = {}): N
   const fieldMeta: FieldMetaV2 = {};
   const unmapped: UnmappedV2[] = [];
   const environment: string[] = [];
+  const dbFacts = new Map<MappedComponent, SourceDbFacts>();   // 출발 DB 보안 사실 (id 가 붙기 전이라 구성요소로 잇는다)
 
   // 1) 종류 붙이기. 매퍼 하나가 터져도 그 자원만 unmapped
   for (const it of items) {
@@ -62,7 +64,11 @@ export function normalizeV2(raw: RawInventory, opts: NormalizeV2Options = {}): N
       try {
         const c = mapper.map(it);
         if ("skip" in c) unmapped.push({ resource: resName(it), grade: c.grade ?? "C", reason: c.skip });
-        else mapped.push(c);
+        else {
+          mapped.push(c);
+          const f = c.kind === "postgres" ? sourceDbFactsOf(it) : null;
+          if (f) dbFacts.set(c, f);
+        }
       } catch (err) {
         unmapped.push({ resource: resName(it), grade: "C", reason: `매퍼 오류: ${err instanceof Error ? err.message : String(err)}` });
       }
@@ -147,6 +153,8 @@ export function normalizeV2(raw: RawInventory, opts: NormalizeV2Options = {}): N
   posture.permissions.push(...permissions);
   fillProjection(components, svcObjs, ingresses);
 
+  // 경계 안 postgres 만. 경계 밖에서 끌어온 것(BOUNDPULL)은 사실 없음 = 판정에서 모름
+  const securityFacts = Object.fromEntries(components.flatMap((c) => { const f = dbFacts.get(c); return f ? [[c.id!, f] as const] : []; }));
   const firstService = components.find((c) => c.kind === "service") ?? components[0];
   const result: ImportResultV2 = {
     spec: {
@@ -164,6 +172,7 @@ export function normalizeV2(raw: RawInventory, opts: NormalizeV2Options = {}): N
     ...(Object.keys(bounded.pool).length ? { boundaryPool: Object.fromEntries(Object.entries(bounded.pool).sort((a, b) => (a[0] < b[0] ? -1 : 1))) } : {}),
     ids,
     environment: environment.sort(),
+    ...(Object.keys(securityFacts).length ? { securityFacts } : {}),
   };
   const projectionEnv: ProjectionEnv = { workloads: {}, postgres: {} };
   for (const c of components) {
