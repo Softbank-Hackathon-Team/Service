@@ -17,9 +17,9 @@
 - 규칙표는 `rules.ts` 의 `PORTABILITY_RULES` (번호는 보안 영역 설계 문서의 P-*·G-* 와 같다). 판정 단계는 `block`(승인 불가) / `warn`(위험 수용 체크 필요) / `attest`(고객 선언 필요) / `advise`(추천만)
 - 모름(`unknown`)은 통과가 아니다. 클라우드는 `warn`, 온프레는 API 가 없어 `attest` 로 바꾼다
 - Z95 보안 회귀(같은 열쇠가 pass→fail)가 잡는 "출발보다 나빠짐"은 다시 세지 않는다. 여기는 값(국가·키 소유·확장 목록)과 요구사항이 있어야 판정되는 것을 본다
-- IR v2 (`v2.ts` `evaluatePortabilityV2`): 규칙마다 `scope` 가 있다. `env` 규칙은 한 번, `db` 규칙(도착 DB 를 읽는 것)은 도착 postgres 컴포넌트마다 돌린다. 판정에 `componentId` 가 붙는다
+- IR v2 (`v2.ts` `evaluatePortabilityV2`): 규칙마다 `scope` 가 있다. `env` 규칙은 한 번, `db` 규칙(도착 DB 를 읽는 것)은 도착 postgres 컴포넌트마다 돌리고, 같은 컴포넌트 id 의 출발 DB(`sourceDbs`)와 짝짓는다. 판정에 `componentId` 가 붙는다
 - 사전 점검 변환 (`precheck.ts` `toSecurityPrecheckItems`): id `SEC:<규칙>:<컴포넌트|env>`. block→block, warn→warn, attest→warn("고객 확인"), advise→info. 클라우드 모름 경고는 쪽마다 `SEC:UNKNOWN:<source|target>` 한 항목으로 묶는다
-- 아직 연결 전: IR v2 `security` 칸(`SecuritySpecV2`), 출발 사실(`SourceDbFacts`), 도착 사실표, 워커 precheck 호출부는 다음 PR 이다
+- 연결: IR v2 `security` 칸(`SecuritySpecV2`), 출발 사실(`SourceDbFacts`, 가져오기), 도착 사실표(`adapters` `target/security-facts.ts`), 워커 `apps/worker/src/jobs/precheck.ts` `securityPrecheckFor`. 깃발 `SEC_PRECHECK=1` + `PLAN_IR=v2` 일 때만 켜진다 (기본 꺼짐)
 
 ## 임시 역할 흐름
 

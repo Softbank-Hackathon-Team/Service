@@ -31,11 +31,10 @@ export function toSecurityPrecheckItems(r: PortabilityResultV2): PrecheckItem[] 
       continue;
     }
     const [level, head] = HEAD[v.level];
-    slots.push({
-      id: `SEC:${v.ruleId}:${where(v)}`, level,
-      message: `${head}${v.title}${v.componentId ? ` (${v.componentId})` : ""}. ${v.reason}. 근거: ${v.evidence}`,
-      fix: v.recommend,
-    });
+    const at = v.componentId ? ` (${v.componentId})` : "";
+    // 모름으로 낸 판정은 제목(예: "저장 암호화가 꺼져 있다")을 사실처럼 앞세우지 않는다. 모른다는 것을 먼저, 제목은 확인할 것으로
+    const what = v.basis === "unknown" ? `${v.reason}${at}. 확인할 것: ${v.title}` : `${v.title}${at}. ${v.reason}`;
+    slots.push({ id: `SEC:${v.ruleId}:${where(v)}`, level, message: `${head}${what}. 근거: ${v.evidence}`, fix: v.recommend });
   }
   return slots.map((s) => (typeof s === "string" ? collapse(s, unknown[s]) : s));
 }

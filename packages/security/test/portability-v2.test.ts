@@ -60,6 +60,19 @@ test("postgres 2개: db 규칙은 컴포넌트마다 따로, env 규칙은 한 �
   for (const { componentId: _, ...v } of r.items) PortabilityVerdict.parse(v);
 });
 
+test("출발 DB 짝짓기: db 규칙은 같은 컴포넌트 id 의 출발 DB 와 비교한다 (없으면 대표 source.db)", () => {
+  const v = (n: number) => goodDb((d) => { d.majorVersion = m(n); });
+  const base = {
+    requirements: req(), source: env("aws", (f) => { f.db = v(16); }), target: env("gcp"),
+    targetDbs: [{ componentId: "pg-a", db: v(16) }, { componentId: "pg-b", db: v(14) }],
+  };
+  // 짝을 주면 pg-b 는 출발 14 → 도착 14, 버전 낮아짐 없음
+  const paired = evaluatePortabilityV2({ ...base, sourceDbs: [{ componentId: "pg-a", db: v(16) }, { componentId: "pg-b", db: v(14) }] });
+  assert.ok(!ids(paired).some((x) => x.startsWith("P-DB-5")), ids(paired).join(" "));
+  // 대조: 짝이 없으면 대표(16)와 비교해 pg-b 에 버전 낮아짐이 나온다 (짝짓기가 실제로 결과를 바꾼다)
+  assert.ok(ids(evaluatePortabilityV2(base)).includes("P-DB-5:pg-b:advise"));
+});
+
 test("target.db 는 판정에 안 쓴다: 도착 DB 사실은 targetDbs 에서만 온다", () => {
   const base = { requirements: req(), source: env("aws") };
   const badEnvDb = env("gcp", (f) => { f.db = goodDb((d) => { d.keyOwner = m("provider"); d.tlsEnforced = m(false); }); });

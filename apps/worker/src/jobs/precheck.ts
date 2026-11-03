@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { MigrationJob, PrecheckItem, QUEUES } from "@svc/contracts";
+import { MigrationJob, PrecheckItem, QUEUES, SourceDbFacts, type AppSpecV2, type Provider } from "@svc/contracts";
 import { latestAcceptedSpecV2, withTenant } from "@svc/core";
-import { envFor, v2PrecheckItems, runCloudPrecheck, toPrecheckItems, spawnExec, type PrecheckEnvInfo, type PrecheckInput, type PrecheckDeps, type CloudProvider } from "@svc/adapters";
+import { envFor, v2PrecheckItems, runCloudPrecheck, toPrecheckItems, spawnExec, resolveSpecV2, targetFactsV2, sourceFactsV2, sourceDbsV2, appEnvV2,
+  type EnvSide, type PrecheckEnvInfo, type PrecheckInput, type PrecheckDeps, type CloudProvider } from "@svc/adapters";
+import { evaluatePortabilityV2, toSecurityPrecheckItems } from "@svc/security";
 import { endpointFromEnv, withClient } from "@svc/replication";
 import { runStep } from "./_step.js";
 import { withStepRoles, type StepRoles } from "./_roles.js";
@@ -76,13 +78,50 @@ export async function v2PrecheckFor(tenantId: string, m: MigrationRow, env: Node
   });
 }
 
+// 보안 판정 연결: 명세의 보안 요구사항 + 출발 사실(가져오기가 읽은 securityFacts) + 도착 사실(모듈 고정값)을 맞대어
+//   막기(block → 명세 검토로 되돌림)·경고(warn → 계획서 승인 항목 precheck_warn:SEC:…)·참고(info)를 낸다. 순수 함수
+export function securityPrecheckItems(i: { spec: AppSpecV2; securityFacts?: Record<string, SourceDbFacts>; source: EnvSide; target: EnvSide }): PrecheckItem[] {
+  const t = targetFactsV2(i.target, i.spec);
+  const r = evaluatePortabilityV2({
+    requirements: i.spec.security?.requirements ?? null,
+    source: sourceFactsV2(i.source, i.spec, i.securityFacts), sourceDbs: sourceDbsV2(i.spec, i.securityFacts),
+    target: t.env, targetDbs: t.dbs, appEnv: appEnvV2(i.spec),
+  });
+  return toSecurityPrecheckItems(r).map((x) => PrecheckItem.parse(x));
+}
+
+// PLAN_IR=v2 이고 SEC_PRECHECK=1 일 때만. 꺼져 있으면 지금 점검 그대로. 명세를 못 쓰면 [] (v2PrecheckFor·계획 단계가 막는다)
+// DRAFT(ai): 기본 꺼짐. 켜면 요구사항 없음(P-REQ-0)·도착 로그인 방식 모름·출발 확장 모름 경고가 모든 v2 계획서의 승인 항목이 되므로 보안 시연 환경에서만 켠다
+export const secPrecheckOn = (env: NodeJS.ProcessEnv = process.env) => planIrV2(env) && env.SEC_PRECHECK === "1";
+export async function securityPrecheckFor(tenantId: string, m: MigrationRow, env: NodeJS.ProcessEnv = process.env): Promise<PrecheckItem[]> {
+  if (!secPrecheckOn(env)) return [];
+  return withTenant(tenantId, async (tx) => {
+    const row = await latestAcceptedSpecV2(tx, m.id);
+    const spec = row ? resolveSpecV2(row) : null;
+    if (!row || !spec?.ok) return [];
+    // 출발 사실은 같은 판의 spec_v2.securityFacts (spec 밖이라 사람 PATCH 로 안 바뀜). 모양이 틀리거나 없으면 모름
+    const f = await tx.query(`SELECT to_jsonb(s)->'spec_v2'->'securityFacts' AS f FROM spec_versions s WHERE s.migration_id = $1 AND s.version = $2`, [m.id, row.version]);
+    const raw = f.rows[0]?.f;
+    const facts: Record<string, SourceDbFacts> = {};
+    if (raw && typeof raw === "object") for (const [id, v] of Object.entries(raw)) { const p = SourceDbFacts.safeParse(v); if (p.success) facts[id] = p.data; }
+    const e = await tx.query(`SELECT id, provider, region FROM environments WHERE id = ANY($1::uuid[])`, [[m.sourceEnvId, m.targetEnvId]]);
+    const side = (id: string): EnvSide | null => {
+      const r = e.rows.find((x) => x.id === id);
+      return r ? { envId: id, provider: r.provider as Provider, region: (r.region as string | null) ?? null } : null;
+    };
+    const source = side(m.sourceEnvId), target = side(m.targetEnvId);
+    if (!source || !target) return [];
+    return securityPrecheckItems({ spec: spec.spec, securityFacts: facts, source, target });
+  });
+}
+
 export async function handlePrecheck(raw: unknown) {
   const job = MigrationJob.parse(raw); // 큐 내용은 믿지 않는다: 모양부터
   return runStep(job, {
     name: "precheck",
     expect: "prechecking",
     work: async (j, m) => withStepRoles("precheck", j, m, async (roles) => {
-      const items = [...await realPrecheck(j.tenantId, m, {}, roles), ...await v2PrecheckFor(j.tenantId, m)];
+      const items = [...await realPrecheck(j.tenantId, m, {}, roles), ...await v2PrecheckFor(j.tenantId, m), ...await securityPrecheckFor(j.tenantId, m)];
       const precheckBlockers = items.filter((i) => i.level === "block").length;
       const precheckWarnings = items.filter((i) => i.level === "warn").length;
       const mock = process.env.MOCK_PRECHECK === "1";

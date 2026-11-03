@@ -73,6 +73,7 @@ export const CONFIG_RULES = {
     IMPORT_MAX_ATTEMPTS: { check: num({ int: true, min: 1 }) },
     IMPORT_IR: { check: oneOf("v1", "v2") },                    // I3b: 가져오기 공통 명세 판. v2 = spec_v2 도 저장(v1 은 그대로). 기본 v1
     PLAN_IR: { check: oneOf("v1", "v2") },                      // TA3: 계획 명세 판. v2 = 도착 Builder v2(고정 루트 + workloads[]). 기본 v1. IMPORT_IR 과 따로
+    SEC_PRECHECK: { check: oneOf("0", "1") },                   // 보안 판정 연결: PLAN_IR=v2 일 때 사전 점검에 보안 판정(SEC:*)을 붙임. 기본 꺼짐, 1 = 켬
     IMPORT_AWS_IAM: { check: oneOf("0", "1") },                 // I4: 1 = 가져오기(v2)가 AWS 앱 신원의 IAM 정책도 읽음 (grants·기준선). 기본 꺼짐
     MAX_CUTOVER_ATTEMPTS: { check: num({ int: true, min: 1 }) },
     ROLLBACK_MAX_ATTEMPTS: { check: num({ int: true, min: 1 }) },

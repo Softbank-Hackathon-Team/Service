@@ -46,6 +46,7 @@ export type { SourceReader, KindMapper, RawItem, MappedComponent, NativeRef, Pro
 export { targetBuilderFor, awsTarget, gcpTarget, onpremTarget, azureMockTarget, rdsClassFor, cloudSqlTierFor, requirementsV2, v2Blockers, V2_FIELD_COVERAGE,
   K8S_RENDER_CAPS, UNSUPPORTED_V2, LINK_OUTPUT_UNKNOWN, identitiesOf, resourceTypesV2For, type FieldRule, type IdentityPlan,
   managedBlockers, managedServicesOf, managedServiceVars, managedSecretName, managedJobsOf, managedJobVars } from "./target/index.js";   // TA13 · JOBBUILD
+export { targetFactsV2, sourceFactsV2, sourceDbsV2, appEnvV2, MODULE_DB_FACTS, type EnvSide } from "./target/security-facts.js";   // 보안 판정용 환경 사실
 export { verifyGcpObserve, OPTIONAL_PROBES, gcpEnvFor, gcpReasonOf, type VerifyGcpInput, type VerifyGcpResult } from "./verify/gcp.js";   // L7i
 // L5b: 빌린 AWS 실행 자격 → terraform 자식 프로세스 (credential_process 임시 파일)
 export { borrowedAwsCreds, type BorrowedAwsCreds, type AwsSessionKeys } from "./terraform/borrowed-aws.js";
