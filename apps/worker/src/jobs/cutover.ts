@@ -2,10 +2,10 @@ import { Measurement, MigrationJob, QUEUES } from "@svc/contracts";
 import { replicationFromEnv, toMeasurements, SwitchoverError } from "@svc/replication";
 import { errorMessage, nextJob, runStep, stubWait, stubFailIfAsked, type StepOutcome } from "./_step.js";
 import { appLinkHooks, appLinkMeasurements, recordActiveWriter, targetBundle } from "../app-link.js";
-import { DEFAULT_ROLLBACK_WINDOW_SEC } from "@svc/core";
+import { DEFAULT_ROLLBACK_WINDOW_SEC, loadLatestApproval, loadPlanById, rollbackWindowSecFor } from "@svc/core";
 import { envNumber } from "@svc/contracts";
 
-// M3: 롤백 가능 창 길이는 core 한 곳(DEFAULT_ROLLBACK_WINDOW_SEC, 환경변수 ROLLBACK_WINDOW_SEC, 기본 3초)에서만 정한다. 데모·e2e 롤백 장면은 20초
+// M3: 롤백 가능 창 길이는 core 한 곳에서만 정한다. F8-4: 승인한 계획서 칸 rollbackWindowSec (환경변수 ROLLBACK_WINDOW_SEC 는 개발·시험 덮어쓰기). 데모·e2e 롤백 장면은 20초
 // 통합 시험은 apps/api/test/_fast-env.ts 로 짧은 값을 준다
 export const ROLLBACK_WINDOW_SEC = DEFAULT_ROLLBACK_WINDOW_SEC;
 // DRAFT(ai): C3 마지막 따라잡기 제한 시간. 넘기면 C6' 되돌림 → shifting
@@ -25,22 +25,25 @@ export async function handleCutover(raw: unknown) {
       const q = await tx.query(
         `SELECT count(*)::int AS n FROM audit_events WHERE target = $1 AND action = 'cutover.shifting'`, [job.migrationId]);
       // Z31: 컷오버 뒤 GitOps 값(database.activeWriter)을 남길 도착 묶음 위치 (gitops 설정이 없으면 null)
-      return { reverts: q.rows[0].n as number, bundle: await targetBundle(tx, job.tenantId, m) };
+      // F8-4: 창 길이 = 승인한 계획서 칸
+      const ap = await loadLatestApproval(tx, job.migrationId);
+      const win = rollbackWindowSecFor(ap ? await loadPlanById(tx, ap.planId) : null);
+      return { reverts: q.rows[0].n as number, bundle: await targetBundle(tx, job.tenantId, m), win };
     },
     work: async (j, _m, loaded, ctx) => {
-      const { reverts, bundle } = loaded as { reverts: number; bundle: Awaited<ReturnType<typeof targetBundle>> };
+      const { reverts, bundle, win } = loaded as { reverts: number; bundle: Awaited<ReturnType<typeof targetBundle>>; win: ReturnType<typeof rollbackWindowSecFor> };
       const data = { tenantId: j.tenantId, requestId: j.requestId, migrationId: j.migrationId };
       const toWindow = (measurements: unknown[], extra: Record<string, unknown>): StepOutcome => ({
-        to: "rollback_window", detail: { measurements, windowSec: ROLLBACK_WINDOW_SEC, ...extra },
+        to: "rollback_window", detail: { measurements, windowSec: win.sec, windowSource: win.source, ...extra },
         evidence: { cutoverStepsOk: true },
         // 롤백 가능 창 끝 시각. 상태 칸이 아니라 advance() 밖에서 같은 트랜잭션으로 적는다
         inTx: async (tx) => { await tx.query(
           `UPDATE migrations SET rollback_window_ends_at = now() + make_interval(secs => $2) WHERE id = $1`,
-          [j.migrationId, ROLLBACK_WINDOW_SEC]); },
+          [j.migrationId, win.sec]); },
         // DRAFT(ai): 계약 표는 "rollback_window → cleanup 때 cleanup 작업"인데, 그 전이를 일으킬 주체가 없어서
         // 창이 끝나는 시각에 cleanup 작업이 깨어나게 미리 넣는다(startAfter). cleanup 작업이 rollback_window → cleanup → completed를 한다
         // TODO(human): 정리 전에 사람 승인을 받을지 (계약 표의 "정리 승인 뒤")
-        next: nextJob(QUEUES.cleanup, j, { startAfter: ROLLBACK_WINDOW_SEC }),
+        next: nextJob(QUEUES.cleanup, j, { startAfter: win.sec }),
       });
 
       const repl = replicationFromEnv(j.migrationId);
