@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { QUEUES, MigrationView } from "@svc/contracts";
+import { QUEUES, MigrationView, SourceScope } from "@svc/contracts";
 import { withTenant, advance } from "@svc/core";
 import { Accepted, MigrationList, errors } from "./responses.js";
 import { IdParam, auditOk, found, isoUtc, nextJob } from "./kit.js";
@@ -9,6 +9,8 @@ import { IdParam, auditOk, found, isoUtc, nextJob } from "./kit.js";
 const CreateMigration = z.object({
   sourceEnvId: z.uuid(),
   targetEnvId: z.uuid(),
+  // K-1: 이 이전의 출발 범위 (클러스터·네임스페이스·앱 묶음·DB·앱 이름). 없으면 자동 고르기 + 검토 줄
+  sourceScope: SourceScope.optional(),
 }).strict().refine((b) => b.sourceEnvId !== b.targetEnvId, { message: "source and target must differ", path: ["targetEnvId"] });
 
 export async function migrationRoutes(app: FastifyInstance) {
@@ -20,9 +22,9 @@ export async function migrationRoutes(app: FastifyInstance) {
     // Idempotency-Key가 있으면 같은 키 두 번째 요청은 첫 응답(같은 id)을 그대로 돌려준다
     return req.idempotent(reply, async (tx) => {
       const ins = await tx.query(
-        `INSERT INTO migrations (tenant_id, source_env_id, target_env_id)
-         VALUES ($1,$2,$3) RETURNING id`,
-        [req.tenantId, req.body.sourceEnvId, req.body.targetEnvId]);
+        `INSERT INTO migrations (tenant_id, source_env_id, target_env_id, source_scope)
+         VALUES ($1,$2,$3,$4) RETURNING id`,
+        [req.tenantId, req.body.sourceEnvId, req.body.targetEnvId, req.body.sourceScope ?? {}]);
       const id: string = ins.rows[0].id;
       await advance(tx, { id, tenantId: req.tenantId }, "draft", "importing", {
         next: nextJob(req, QUEUES.import, id),
@@ -39,6 +41,7 @@ export async function migrationRoutes(app: FastifyInstance) {
                 target_env_id AS "targetEnvId", paused_from AS "pausedFrom",
                 failed_at_status AS "failedAtStatus", failure_code AS "failureCode",
                 ${isoUtc("rollback_window_ends_at")} AS "rollbackWindowEndsAt",
+                source_scope AS "sourceScope",
                 ${isoUtc("updated_at")} AS "updatedAt"
            FROM migrations WHERE id=$1`, [req.params.id]);
       return found(q.rows[0], "migration", req.params.id);

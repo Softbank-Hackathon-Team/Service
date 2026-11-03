@@ -129,6 +129,41 @@
         "null"
       ]
     },
+    "sourceScope": {
+      "type": "object",
+      "properties": {
+        "appName": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,39}$"
+        },
+        "partOf": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._\\/:-]{0,199}$"
+        },
+        "namespaces": {
+          "minItems": 1,
+          "maxItems": 10,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+          }
+        },
+        "cluster": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._\\/:-]{0,199}$"
+        },
+        "ecsCluster": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._\\/:-]{0,199}$"
+        },
+        "database": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._\\/:-]{0,199}$"
+        }
+      },
+      "additionalProperties": false
+    },
     "updatedAt": {
       "type": "string"
     }
