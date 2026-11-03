@@ -1,4 +1,5 @@
 import type { MigrationSpecView } from './model';
+import type { SecuritySpecV2, SourceDbFacts } from './securityV2';
 
 // 명세 v2 검토 (GET /migrations/:id/spec 의 v2 칸, apps/api spec.ts · contracts spec.ts MigrationSpecViewV2).
 // 서버는 v2 판일 때만 needsReviewV2·specV2·fieldMetaV2 를 싣고, 가져오기 v2 판이면 accuracy·outOfBoundary 도 싣는다.
@@ -17,6 +18,8 @@ export interface AppSpecV2 {
   links: LinkV2[];
   entry?: { via: string; hosts: { hostnames: string[]; routes: EntryRouteV2[] }[] };
   posture?: unknown;
+  /** 앱 보안 요구사항. 가져오기는 비워 두고 고객이 명세 검토에서 넣는다 (PATCH changes path "security") */
+  security?: SecuritySpecV2;
 }
 export interface FieldMetaEntryV2 { source: string; confidence: 1 | 0.9 | 0.6; needs_review: boolean; rationale?: string }
 export interface OutOfBoundaryV2 { resource: string; kind: ComponentKindV2; reason: string }
@@ -33,9 +36,14 @@ export type MigrationSpecViewV2 = MigrationSpecView & {
   fieldMetaV2?: Record<string, FieldMetaEntryV2>;
   accuracy?: ImportAccuracy;
   outOfBoundary?: OutOfBoundaryV2[];
+  /**
+   * 가져오기가 출발 DB 에서 읽은 보안 사실 (postgres 구성요소 id → 사실, 판의 spec_v2.securityFacts). 사람이 고칠 수 없다.
+   * 서버 GET spec 은 아직 이 칸을 싣지 않는다 (contracts MigrationSpecViewV2 에 키 없음). 칸이 올 때만 화면에 그린다
+   */
+  securityFacts?: Record<string, SourceDbFacts>;
 };
-/** PATCH /migrations/:id/spec 본문 중 화면이 쓰는 칸 (contracts SpecPatchInput) */
-export interface SpecPatch { baseVersion: number; confirm?: string[]; include?: string[]; acceptDraft?: number }
+/** PATCH /migrations/:id/spec 본문 중 화면이 쓰는 칸 (contracts SpecPatchInput). changes 는 지금 "security" 하나만 보낸다 (값 통째, null = 지움) */
+export interface SpecPatch { baseVersion: number; confirm?: string[]; include?: string[]; acceptDraft?: number; changes?: { path: string; value: unknown }[] }
 
 /** 한 번에 confirm 으로 보낼 수 있는 키 수 (contracts SpecPatchInput confirm max 20) */
 export const CONFIRM_MAX = 20;
@@ -196,7 +204,8 @@ export function specRowsV2(view: MigrationSpecViewV2): SpecRowV2[] {
   if (!v2) return [];
   const review = new Set(v2.review);
   const first = v2.review.map((key, index) => ({ key, index })).sort((a, b) => groupOf(a.key) - groupOf(b.key) || a.index - b.index).map(({ key }) => key);
-  const rest = Object.keys(v2.meta).filter((key) => !review.has(key)).sort();
+  // security 표시는 사람이 요구사항을 저장하면 생긴다 (읽은 값이 아님). 요구사항은 보안 요구사항 카드에서 본다
+  const rest = Object.keys(v2.meta).filter((key) => !review.has(key) && key !== 'security').sort();
   return [...first, ...rest].map((key) => {
     const meta = v2.meta[key];
     const { name, value } = resolveKey(v2.spec, key, meta);
