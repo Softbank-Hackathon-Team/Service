@@ -5,8 +5,12 @@
 //   POST /auth/refresh 본문 없음, 쿠키로      → 200 같은 모양(refresh 회전) / 401
 //   POST /auth/logout                         → 204, 쿠키 지움
 //   쿠키 svc_refresh: HttpOnly, SameSite=Strict, Path=/api (화면은 /api/auth/… 로 부르고 프록시가 /api/v1 로 바꾼다)
-//   GET /auth/config {devAuth, loginRequired}, GET /auth/me 는 화면이 아직 부르지 않는다 (로그인 응답에 user 가 이미 있다)
+//   GET /auth/config {devAuth, loginRequired, github:{enabled}} 인증 없이. 로그인 화면이 GitHub 버튼을 띄울지만 본다
+//   GET /auth/github/start (브라우저 이동) → GitHub → 서버 콜백 → 화면으로 302. 성공이면 refresh 쿠키가 생겨 bootstrap 이 들어가고,
+//     실패면 ?github_error=<코드> 가 붙어 온다 (contracts github-login.ts GITHUB_LOGIN_ERRORS)
+//   GET /auth/me 는 화면이 부르지 않는다 (로그인·refresh 응답에 user 가 이미 있다)
 //   TODO(human): 서버가 시험용 헤더 인증(devAuth=true)으로 떠 있을 때 화면이 로그인을 건너뛸지. 지금은 언제나 로그인 화면을 거친다
+//     참고: 화면은 x-dev-tenant 를 보내지 않고, devAuth 서버에서도 Bearer 로그인이 그대로 된다. 그래서 로그인 화면을 두는 쪽이 더 단순하다
 //
 // 토큰 보관
 //   - access 토큰: 이 모듈 변수(메모리)에만. localStorage·sessionStorage 에 안 둔다
@@ -36,6 +40,37 @@ export interface AuthOptions {
 
 // DRAFT(ai): 만료 몇 초 전에 미리 refresh 할지. 요청 도중 만료되어 401 을 한 번 맞는 것보다 싸다
 export const EARLY_REFRESH_SEC = 30;
+
+/** GET /auth/config (apps/api routes/auth.ts AuthConfig) */
+export interface AuthConfig { devAuth: boolean; loginRequired: boolean; github?: { enabled: boolean } }
+
+// 쓰던 중에 계정이 꺼지면 보호 경로가 401 USER_DISABLED 를 준다 (apps/api plugins/auth.ts). refresh 해도 같으니 바로 로그인 화면으로
+export const USER_DISABLED_NOTICE = "이 계정은 꺼졌거나 회사에서 빠졌습니다. 회사 관리자에게 확인해 주세요.";
+
+/** GitHub 로그인 시작 주소. fetch 가 아니라 브라우저 이동으로 연다 (GitHub 화면을 거쳐 서버 콜백이 화면으로 돌려보낸다) */
+export const githubStartUrl = (base: string) => `${base}/auth/github/start`;
+
+const GITHUB_ERROR: Record<string, string> = {
+  GITHUB_LOGIN_DISABLED: "이 서버에서는 GitHub 로그인이 꺼져 있습니다.",
+  GITHUB_STATE_INVALID: "GitHub 로그인 확인 시간이 지났거나 다른 창에서 시작했습니다. 다시 시도해 주세요.",
+  GITHUB_ACCESS_DENIED: "GitHub에서 접근을 허락하지 않았습니다.",
+  GITHUB_CODE_INVALID: "GitHub 로그인을 확인하지 못했습니다. 다시 시도해 주세요.",
+  GITHUB_UNAVAILABLE: "GitHub에 연결하지 못했습니다. 잠시 뒤 다시 시도해 주세요.",
+  GITHUB_EMAIL_UNVERIFIED: "GitHub 계정에 확인된 기본 이메일이 없습니다. GitHub에서 이메일을 확인한 뒤 다시 시도해 주세요.",
+  GITHUB_ACCOUNT_NOT_ALLOWED: "이 GitHub 계정으로 들어올 콘솔 계정이 없거나 꺼져 있습니다. 회사 관리자에게 확인해 주세요.",
+  GITHUB_ALREADY_LINKED: "이 이메일의 계정은 다른 GitHub 계정과 이미 연결되어 있습니다.",
+};
+
+/** ?github_error= 코드 → 사람 말. 모르는 코드는 지어내지 않고 실패했다고만 한다 */
+export const githubErrorText = (code: string) => GITHUB_ERROR[code] ?? "GitHub 로그인에 실패했습니다.";
+
+/** 주소에서 github_error 를 꺼내고, 그 칸을 뺀 주소를 돌려준다 (해시는 그대로). 없으면 code 가 null */
+export function takeGithubError(href: string): { code: string | null; clean: string } {
+  const url = new URL(href);
+  const code = url.searchParams.get("github_error");
+  url.searchParams.delete("github_error");
+  return { code, clean: `${url.pathname}${url.search}${url.hash}` };
+}
 
 export function createAuth(o: AuthOptions) {
   const doFetch = o.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
@@ -93,7 +128,8 @@ export function createAuth(o: AuthOptions) {
         let b: { code?: string; message?: string } = {};
         try { b = await res.json() as typeof b; } catch { /* JSON 아님 */ }
         throw new AuthError(res.status, b.code ?? `HTTP_${res.status}`,
-          res.status === 401 ? "이메일이나 비밀번호가 맞지 않습니다." : res.status === 429 ? "시도가 너무 많습니다. 잠시 뒤 다시 시도해 주세요." : (b.message ?? `로그인 실패 (HTTP ${res.status})`));
+          b.code === "USER_DISABLED" ? USER_DISABLED_NOTICE
+            : res.status === 401 ? "이메일이나 비밀번호가 맞지 않습니다." : res.status === 429 ? "시도가 너무 많습니다. 잠시 뒤 다시 시도해 주세요." : (b.message ?? `로그인 실패 (HTTP ${res.status})`));
       }
       accept(await res.json() as TokenResponse);
     },
@@ -108,9 +144,18 @@ export function createAuth(o: AuthOptions) {
       return token;
     },
     // 보호 경로가 401 → refresh 한 번. 성공하면 true (요청을 한 번 더 보낸다), 실패하면 로그인 화면으로
-    async onUnauthorized(): Promise<boolean> {
+    // 401 USER_DISABLED(계정이 꺼짐)는 refresh 해도 같으므로 바로 로그인 화면으로 보내고 그 이유를 말한다
+    async onUnauthorized(code?: string): Promise<boolean> {
       token = null;
+      if (code === "USER_DISABLED") { drop(USER_DISABLED_NOTICE); return false; }
       return refresh();
+    },
+    // 로그인 화면용 서버 설정. 못 읽으면 null (GitHub 버튼을 안 띄운다)
+    async config(): Promise<AuthConfig | null> {
+      try {
+        const res = await doFetch(`${o.base}/auth/config`, { method: "GET", credentials: "same-origin" });
+        return res.ok ? (await res.json() as AuthConfig) : null;
+      } catch { return null; }
     },
     get: () => state,
     subscribe(f: () => void) { subs.add(f); return () => { subs.delete(f); }; },

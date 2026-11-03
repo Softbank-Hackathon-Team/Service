@@ -4,6 +4,7 @@ import { FoldTile, Hero, Stack, Tile, TileHeader } from '../../components/layout
 import { Badge } from '../../components/ui/controls';
 import { api } from '../../lib/api';
 import { errorText } from '../../lib/errors';
+import { connectionReasonText } from '../../lib/failure';
 import { or404 } from '../../lib/http';
 import { CONN_LABEL, LABEL, PROVIDER_SHORT } from '../../lib/status';
 import type { AgentReportBody, EnvironmentView } from '../../lib/types';
@@ -114,7 +115,7 @@ function DisconnectedEnv({ env }: { env: EnvironmentView }) {
   return (
     <>
       <Hero tone="stop" meta={`${PROVIDER_SHORT[env.provider]} · ${CONN_LABEL[env.connectionStatus]}`} title={`${env.name}\n연결되어 있지 않습니다`} foot={env.lastVerifiedAt ? `마지막 확인 ${ago(env.lastVerifiedAt)}` : undefined}>
-        {env.failureReason && <div className={s.heroPanel}><span className="t-body-md">{env.failureReason}</span></div>}
+        {env.failureReason && <div className={s.heroPanel}><span className="t-body-md">{connectionReasonText(env.failureReason)}</span></div>}
       </Hero>
       <Stack area="side">{env.provider === 'onprem' && <AgentReports envId={env.id} />}</Stack>
     </>

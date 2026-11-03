@@ -7,6 +7,7 @@ import { ActionPill, Badge, BarPill } from '../../components/ui/controls';
 import { Icon } from '../../components/ui/Icon';
 import { api } from '../../lib/api';
 import { anyMigration } from '../../lib/events';
+import { connectionReasonText } from '../../lib/failure';
 import { isApiDown } from '../../lib/http';
 import { CONN_LABEL, LABEL, PROVIDER_SHORT, progressPct } from '../../lib/status';
 import type { EnvironmentView, MigrationView } from '../../lib/types';
@@ -54,7 +55,7 @@ async function observe(env: EnvironmentView): Promise<EnvObservation> {
 
 function EnvRow({ env, seen }: { env: EnvironmentView; seen: EnvObservation | undefined }) {
   const connected = env.connectionStatus === 'connected';
-  const problem = connected ? seen?.problem : env.failureReason;
+  const problem = connected ? seen?.problem : connectionReasonText(env.failureReason);
   const detail = !seen ? (connected ? '확인 중' : null) : seen.health === 'unknown' ? null : [`자원 ${seen.resources}개`, seen.region].filter(Boolean).join(' · ');
   return (
     <li>

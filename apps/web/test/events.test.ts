@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  aboutMigration, anyMigration, connectEvents, createLive, createSseParser, parseEvent, RECONNECT,
+  aboutMigration, anyMigration, connectEvents, createLive, createSseParser, LIVE_FALLBACK_MS, parseEvent, pollInterval, RECONNECT,
   type LiveState, type SseEvent,
 } from "../src/lib/events";
 
@@ -130,4 +130,14 @@ test("탭 묶음: 다시 붙으면 듣는 쪽에 전부 다시 읽기를 한 번
   assert.ok(changes >= 4);
   off();
   live.stop();
+});
+
+test("폴링 간격: 신호가 살아 있어도 워커 단계(floor=false)는 원래 간격, 사람 차례만 하한까지 늘린다", () => {
+  const open = { listening: true, liveOpen: true };
+  assert.equal(pollInterval(700, { ...open, floor: false }), 700);                 // 워커 단계: 트래픽·진행 숫자가 신호 없이 바뀜
+  assert.equal(pollInterval(1500, { ...open, floor: true }), LIVE_FALLBACK_MS);     // 사람 차례: 신호에 맡김
+  assert.equal(pollInterval(30_000, { ...open, floor: true }), 30_000);            // 원래 더 느리면 그대로
+  assert.equal(pollInterval(700, { listening: true, liveOpen: false, floor: true }), 700);   // 연결이 없으면 원래 간격
+  assert.equal(pollInterval(700, { listening: false, liveOpen: true, floor: true }), 700);   // 신호를 안 들으면 원래 간격
+  assert.equal(pollInterval(null, { ...open, floor: true }), null);
 });

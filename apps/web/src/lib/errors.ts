@@ -24,7 +24,32 @@ const BY_CODE: Record<string, string> = {
   TUNNEL_READ_ONLY: '공개 터널로 들어온 개발용 접속은 읽기만 됩니다.',
   RATE_LIMITED: '요청이 너무 많습니다. 잠시 뒤 다시 시도해 주세요.',
   TOKEN_REVOKED: '로그아웃된 세션입니다. 다시 로그인해 주세요.',
+  USER_DISABLED: '이 계정은 꺼졌거나 회사에서 빠졌습니다. 회사 관리자에게 확인해 주세요.',
+  // 승인·시작 (apps/api plans.ts, core tenant-limit.ts)
+  ACKS_MISSING: '확인하지 않은 항목이 있습니다. 계획서를 다시 읽었으니 확인 항목을 모두 체크해 주세요.',
+  TENANT_BUSY: '회사에서 동시에 진행할 수 있는 이전 수를 넘었습니다. 승인은 그대로이니 다른 이전이 끝난 뒤 다시 시작해 주세요.',
+  // 다시 시도 (apps/api plans.ts replan, control.ts resume, core retry-budget.ts)
+  RETRY_BUDGET_EXHAUSTED: '플랫폼이 부담하는 재시도 횟수를 다 썼습니다. 다시 시도하려면 비용을 고객이 부담하는 데 동의해 주세요.',
+  REPLAN_NOT_ALLOWED: '이 단계에서 실패한 이전은 계획을 다시 만들 수 없습니다. 이 이전을 끝내고 새로 시작해 주세요.',
+  // 명세 고치기 (apps/api spec.ts PATCH)
+  SPEC_VERSION_CONFLICT: '그 사이 명세가 바뀌었습니다. 새 명세를 다시 읽었으니 확인한 뒤 다시 확정해 주세요.',
+  SPEC_PATH_IR_MISMATCH: '이 명세 판과 맞지 않는 칸을 보냈습니다. 화면을 새로 고친 뒤 다시 확정해 주세요.',
+  SPEC_INCLUDE_UNAVAILABLE: '가져올 때 이 자원의 값을 읽어 두지 않아 이 앱으로 끌어올 수 없습니다.',
+  SPEC_PATCH_INVALID: '바꾼 명세가 공통 명세 규칙에 맞지 않아 저장하지 않았습니다.',
+  SPEC_DRAFT_NOT_ACCEPTED: 'AI 초안만 있는 명세입니다. 초안을 받아들인 뒤 확정해 주세요.',
+  SPEC_DRAFT_STALE: '사람이 확정한 판보다 오래된 AI 초안이라 받아들이지 않았습니다.',
+  // 환경 (apps/api environments.ts). 연결 마법사는 아직 화면에 없지만 같은 문장을 쓴다
+  ENV_IN_USE: '이 환경을 쓰는 이전이 진행 중이라 지금은 바꿀 수 없습니다.',
+  ENV_NAME_TAKEN: '같은 이름의 환경이 이미 있습니다. 다른 이름을 써 주세요.',
+  BAD_ACCOUNT_ID: '계정 번호 모양이 맞지 않습니다. AWS는 12자리 숫자, GCP는 프로젝트 ID입니다.',
+  LINK_EXPIRED: '연결 링크가 만료됐습니다. 새 링크를 받아 다시 연결해 주세요.',
+  ENV_DISCONNECTED: '연결이 해제된 환경입니다. 환경을 다시 연결해 주세요.',
 };
+
+/** 서버가 준 오류 코드 (ApiError.code). 화면이 다음 행동을 고를 때 쓴다. 서버 오류가 아니면 null. */
+export function errorCode(reason: unknown): string | null {
+  return reason instanceof HttpError ? (reason.body?.code ?? null) : null;
+}
 
 /** 화면에 보여 줄 한 문장. 서버 원문은 개발자 도구의 응답에서 본다. */
 export function errorText(reason: unknown): string {

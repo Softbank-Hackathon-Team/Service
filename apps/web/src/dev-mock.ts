@@ -32,7 +32,8 @@ import type {
   TimelineView,
 } from './lib/types';
 import type { CloudInventory } from './features/dashboard/model';
-import type { MigrationSpec, MigrationSpecView } from './features/migration/model';
+import type { MigrationSpec } from './features/migration/model';
+import type { AppSpecV2, FieldMetaEntryV2, MigrationSpecViewV2, OutOfBoundaryV2 } from './features/migration/specV2';
 
 // ---- 여기만 고치면 되는 값 ----
 
@@ -75,6 +76,8 @@ const ENVS: EnvironmentView[] = [
   env('e5', 'aws', 'batch-aws', 'connected'),
   env('e6', 'gcp', 'batch-gcp', 'connected'),
   env('e7', 'onprem', 'dr-busan', 'failed', 'Agent 생존 신호가 30분째 없습니다'),
+  // 서버는 연결 실패 이유를 코드로 적는다 (contracts ConnectionFailure, "PERMISSION_MISSING:<동작>")
+  env('e8', 'aws', 'dr-aws', 'failed', 'PERMISSION_MISSING:rds:DescribeDBInstances'),
 ];
 
 const REGION: Record<Provider, string> = { aws: 'ap-northeast-2', gcp: 'asia-northeast3', onprem: 'seoul-dc1', azure_mock: 'koreacentral' };
@@ -98,6 +101,15 @@ type MockMigration = MigrationView & {
   agentRan: boolean;
   securityChecked: boolean;
   planExpiresAt: string;
+  // 아래는 상황 만들기로 켜는 서버 모양 (저장된 옛 세션에는 없을 수 있어 선택 칸)
+  specV2?: boolean;        // GET /spec 이 v2 칸(needsReviewV2·specV2·fieldMetaV2·accuracy·outOfBoundary)을 싣는다
+  specVersion?: number;    // v2 명세 판 번호. PATCH 마다 하나씩 는다
+  reviewDone?: string[];   // PATCH confirm 으로 확인한 v2 키
+  included?: string[];     // PATCH include 로 끌어온 경계 밖 자원
+  v2plan?: boolean;        // 계획서에 비용 요약·확인 항목·irVersion "2", 자원 대응 v2
+  tenantBusy?: number;     // POST /start 가 이 횟수만큼 409 TENANT_BUSY
+  retries?: number;        // 사람이 실패를 다시 시도한 횟수 (서버 감사 migration.retried 줄 수)
+  analysis?: boolean;      // agent-review 에 실패 원인 분석(failureAnalysis)을 싣는다
 };
 
 type Store = { migrations: MockMigration[]; seq: number };
@@ -282,8 +294,36 @@ function planHash(m: Pick<MockMigration, 'id'>) {
   return `sha256:7f3a9c1e5b2d8846${m.id.replace(/-/g, '').slice(-16)}`;
 }
 
+/** 서버 core retry-budget.ts 기본 한도 (RETRY_BUDGET=3) */
+const RETRY_BUDGET = 3;
+
+/** 계획서 확인 항목. 글은 워커 plan.ts buildAcknowledgements 와 같은 모양 */
+function acksOf(m: MockMigration): NonNullable<PlanDoc['acknowledgements']> {
+  const cost = planCostOf(m);
+  const usd = (v: number | null) => (v === null ? '계산 못 함' : `$${v}`);
+  return [
+    { id: 'cost', kind: 'cost', text: `예상 월 비용(USD): 도착 ${envById(m.targetEnvId).provider} ${usd(cost.monthlyTarget)} / 출발 ${envById(m.sourceEnvId).provider} ${usd(cost.monthlySource)} / 차이 ${usd(cost.deltaMonthly)}. 도착 자원은 고객 클라우드 계정에 만들어지고 요금도 고객 계정에 청구됩니다` },
+    { id: 'failure_cost_policy', kind: 'failure_cost_policy', text: `이전이 실패하면 AI 원인 분석과 재시도 ${RETRY_BUDGET}번까지의 AI 비용은 플랫폼이 부담합니다. 그 뒤 재시도의 비용은 고객 부담입니다. 클라우드 자원 요금은 처음부터 고객 계정에 청구됩니다` },
+    { id: 'precheck_warn:PC-07', kind: 'precheck_warn', text: '도착 리전의 vCPU 한도가 80%입니다 (조치: 한도 증설을 요청해 주세요)', ref: 'PC-07' },
+    { id: 'runtime_change:web', kind: 'runtime_change', text: 'managedContainer → k8s · 같은 이미지로 GKE Deployment 에 올림', ref: 'web' },
+  ];
+}
+
+function planCostOf(m: MockMigration): NonNullable<PlanDoc['costSummary']> {
+  const pair = costOf(m).pair;
+  const delta = pair.sourceMonthlyUsd !== null && pair.targetMonthlyUsd !== null ? Math.round((pair.targetMonthlyUsd - pair.sourceMonthlyUsd) * 10) / 10 : null;
+  return { currency: 'USD', monthlySource: pair.sourceMonthlyUsd, monthlyTarget: pair.targetMonthlyUsd, deltaMonthly: delta, unknownFields: [], priceAsOf: '2026-11-01' };
+}
+
 function planOf(m: MockMigration): PlanDoc {
+  const v2: Partial<PlanDoc> = m.v2plan
+    ? {
+        specVersion: m.specVersion ?? 2, costSummary: planCostOf(m), acknowledgements: acksOf(m), irVersion: '2', specSource: 'spec_v2',
+        instances: [{ kind: 'postgres', id: 'shop-db', module: 'gcp/kinds/postgres' }, { kind: 'cache', id: 'shop-cache', module: 'gcp/kinds/cache' }],
+      }
+    : {};
   return {
+    ...v2,
     planId: `plan-${m.id}`, migrationId: m.id, adapterVersion: '1.0.0', planHash: planHash(m), tfPlanHash: 'tf-7f3a9c', helmValuesHash: 'helm-5b2d88', expiresAt: m.planExpiresAt,
     rollbackCriteria: { errorRatePct: 1, p95Multiplier: 2, windowSec: 30 },
     steps: [
@@ -301,7 +341,68 @@ function planOf(m: MockMigration): PlanDoc {
   };
 }
 
-function specOf(m: MockMigration): MigrationSpecView {
+// 명세 v2 (가져오기 v2 판). ECS 에서 읽은 앱을 GKE(k8s)로 옮기는 예. 칸 이름·값 모양은 contracts spec-v2.ts 그대로
+const V2_META: Record<string, FieldMetaEntryV2> = {
+  'components.web.image': { source: 'ecs:task-def/shop-web', confidence: 1, needs_review: false },
+  'components.web.replicas': { source: 'ecs:service/shop-web.desiredCount', confidence: 0.6, needs_review: true, rationale: '자동 확장 범위를 못 읽어 desiredCount 로 둠' },
+  'components.web.resources': { source: 'ecs:task-def/shop-web', confidence: 0.9, needs_review: false, rationale: '태스크 단위 값을 컨테이너 하나로 봄' },
+  'components.web.env.DB_PASSWORD': { source: 'source.env', confidence: 0.6, needs_review: true, rationale: '평문 비밀로 보임 → 비밀 저장소로 옮길지 확인' },
+  'components.shop-db.majorVersion': { source: 'rds:shop-db', confidence: 0.6, needs_review: true, rationale: '엔진 버전을 읽지 못함' },
+  'components.shop-db.storageGb': { source: 'rds:shop-db', confidence: 1, needs_review: false },
+  'components.shop-cache.tls': { source: 'elasticache:shop-cache', confidence: 1, needs_review: false },
+  'links.web->shop-db': { source: 'iam:shop-web-task', confidence: 0.6, needs_review: true, rationale: '읽기·쓰기 근거 없음 → 넓게 둠' },
+  'entry.shop.example.com.routes[0]': { source: 'ecs:shop-web.hostname', confidence: 0.9, needs_review: false },
+  'check.reviews[0]': { source: 'checkV2', confidence: 0.6, needs_review: true, rationale: 'web 의 실행 방식이 출발(ECS)과 다릅니다. 승인 때 한 번 더 확인합니다' },
+};
+const V2_BOUNDARY: OutOfBoundaryV2[] = [
+  { resource: 'rds:analytics-db', kind: 'postgres', reason: '이 앱의 서비스·잡이 근거 있게 닿지 않음' },
+  { resource: 'ecs:legacy-cron', kind: 'job', reason: '다른 앱 묶음 라벨 (app-group: legacy)' },
+];
+
+function specV2Of(m: MockMigration): MigrationSpecViewV2 {
+  const included = m.included ?? [];
+  const spec: AppSpecV2 = {
+    schemaVersion: '2', app: { name: m.app },
+    components: [
+      { id: 'web', kind: 'service', props: {
+        runtime: 'k8s', origin: { runtime: 'managedContainer', product: 'ecs' },
+        image: { source: 'registry', repository: `ghcr.io/example/${m.app}`, digest: `sha256:${'cd'.repeat(32)}` },
+        resources: { request: { cpuMilli: 500, memMiB: 1024 } },
+        env: [{ name: 'DB_PASSWORD', value: 'mock-not-a-secret' }, { name: 'DB_HOST', fromLink: { to: 'shop-db', output: 'host' } }],
+        serviceAccount: 'default', replicas: { min: 2, max: 2 }, ports: [{ port: 8080 }],
+      } },
+      { id: 'shop-db', kind: 'postgres', props: { majorVersion: null, storageGb: 20 } },
+      { id: 'shop-cache', kind: 'cache', props: { engine: 'redis', memoryMiB: 1024, tls: false, auth: true } },
+      ...(included.includes('rds:analytics-db') ? [{ id: 'analytics-db', kind: 'postgres' as const, props: { majorVersion: '15', storageGb: 100 } }] : []),
+    ],
+    links: [{ from: 'web', to: 'shop-db', intent: 'readwrite' }, { from: 'web', to: 'shop-cache', intent: 'readwrite' }],
+    entry: { via: 'cloudflare-lb', hosts: [{ hostnames: ['shop.example.com'], routes: [{ matches: [{ path: { type: 'PathPrefix', value: '/' } }], backends: [{ to: 'web', port: 8080, weight: 1 }] }] }] },
+    posture: { permissions: [], network: [] },
+  };
+  const meta: Record<string, FieldMetaEntryV2> = { ...V2_META };
+  if (included.includes('rds:analytics-db'))
+    meta['components.analytics-db.boundary'] = { source: 'human', confidence: 1, needs_review: true, rationale: '사람이 경계 안으로 끌어옴' };
+  const done = new Set(m.reviewDone ?? []);
+  for (const key of done) if (meta[key]) meta[key] = { ...meta[key]!, needs_review: false };
+  return {
+    migrationId: m.id, version: m.specVersion ?? 2, createdAt: m.updatedAt ?? nowIso(), source: 'accepted', complete: true,
+    spec: { app: { name: m.app } }, needsReview: [],
+    needsReviewV2: Object.entries(meta).filter(([, value]) => value.needs_review).map(([key]) => key).sort(),
+    specV2: spec, fieldMetaV2: meta,
+    outOfBoundary: V2_BOUNDARY.filter((item) => !included.includes(item.resource)),
+    accuracy: {
+      schemaVersion: '1', basis: 'render', total: 24, matched: 20, mismatched: 1, unverifiable: 3, comparable: 21, percent: 95.2,
+      fields: [
+        { component: 'web', field: 'replicas', result: 'mismatch', detail: '출발 3개 · 도착 2개' },
+        { component: 'web', field: 'image.digest', result: 'match' },
+        { component: 'shop-db', field: 'db.version', result: 'unverifiable', detail: '출발 버전을 읽지 못함' },
+      ],
+    },
+  };
+}
+
+function specOf(m: MockMigration): MigrationSpecViewV2 {
+  if (m.specV2) return specV2Of(m);
   const spec: MigrationSpec = {
     app: { name: m.app },
     service: { image: `ghcr.io/example/${m.app}@sha256:${'ab'.repeat(32)}`, port: 8080, healthPath: '/healthz', replicas: 2, cpu: '500m', memory: '1Gi', secretRefs: [] },
@@ -319,6 +420,29 @@ function resourcesOf(m: MockMigration): PlanResourcesView {
   const row = (category: ResourceRow['category'], label: string, a: string, b: string, method: ResourceRow['method'], methodLabel: string, step: ResourceRow['step']): ResourceRow => ({
     category, label, source: { service: a, detail: null }, target: { service: b, detail: null }, method, methodLabel, step, stepState: 'todo', afterSource: null,
   });
+  // v2 명세면 서버 service-map-v2.ts 처럼 앱마다 한 줄, 캐시·큐·경계 밖 줄이 온다
+  if (m.v2plan || m.specV2) {
+    const boundary = V2_BOUNDARY.filter((item) => !(m.included ?? []).includes(item.resource)).length;
+    return {
+      migrationId: m.id, status: m.status, specKnown: true, irVersion: '2',
+      source: { envId: source.id, name: source.name, provider: source.provider },
+      target: { envId: target.id, name: target.name, provider: target.provider },
+      rows: [
+        row('cluster', '컨테이너 클러스터', 'Amazon ECS 클러스터', to.cluster, 'reuse_existing', '기존 클러스터 재사용', null),
+        { ...row('workload', '앱(컨테이너) · web', 'Amazon ECS 서비스', `${to.cluster} Deployment (Helm)`, 'redeploy', '앱 재배포', 'deploy'), runtimeChange: { from: 'managedContainer', to: 'k8s' } },
+        { ...row('workload', '앱(예약 잡) · nightly', 'Amazon ECS 서비스 (예약 작업)', `${to.cluster} CronJob (Helm)`, 'redeploy', '앱 재배포', 'deploy'), runtimeChange: null },
+        { ...row('database', 'DB', from.db, to.db, 'logical_replication', '논리 복제', 'sync'), runtimeChange: null },
+        { ...row('cache', '캐시 · shop-cache', 'Amazon ElastiCache', 'Memorystore for Redis', 'create_new', '새로 만듦', 'provision'), runtimeChange: null },
+        { ...row('queue', '큐·토픽 · orders', 'Amazon SQS / SNS', 'Cloud Pub/Sub', 'create_new', '새로 만듦', 'provision'), runtimeChange: null },
+        { ...row('storage', '객체 저장소', '', '', 'out_of_scope', '해당 없음', null), source: null, target: null, runtimeChange: null },
+        { ...row('ingress', '진입(Cloudflare LB)', 'Cloudflare LB 출발 풀', 'Cloudflare LB 도착 풀', 'traffic_shift', '가중치 전환', 'shift'), runtimeChange: null },
+        { ...row('secret', '비밀 저장소', from.secret, to.secret, 'create_new', '새로 만듦', 'provision'), runtimeChange: null },
+        ...(boundary > 0
+          ? [{ ...row('boundary', `경계 밖 자원 ${boundary}개`, `출발 계정의 다른 자원 ${boundary}개`, '', 'out_of_scope', '해당 없음', null), target: null, afterSource: '출발에 그대로 (건드리지 않음)', runtimeChange: null }]
+          : []),
+      ],
+    };
+  }
   return {
     migrationId: m.id, status: m.status, specKnown: true,
     source: { envId: source.id, name: source.name, provider: source.provider },
@@ -578,7 +702,25 @@ function agentReviewOf(m: MockMigration): AgentReview {
   };
   const runs = store!.migrations.filter((item) => item.agentRan).length;
   const spend = { round: 'finals-1107', usd: Math.round((0.18 + runs * 0.11) * 100) / 100, budgetUsd: 5, calls: 6 + runs * 8, exceeded: false };
-  return { migrationId: m.id, llm: { state: 'ready', model: 'claude-sonnet-5-5', why: '', spend }, remediate, specDraft };
+  const failureAnalysis = m.analysis && (m.status === 'failed' || m.status === 'paused') ? { ...meta, status: 'finished' as const, steps: [], analysis: analysisOf(m) } : undefined;
+  return { migrationId: m.id, llm: { state: 'ready', model: 'claude-sonnet-5-5', why: '', spend }, remediate, specDraft, ...(failureAnalysis ? { failureAnalysis } : {}) };
+}
+
+/** 실패 원인 분석 결과 (contracts results.ts FailureAnalysis 모양) */
+function analysisOf(m: MockMigration): NonNullable<NonNullable<AgentReview['failureAnalysis']>['analysis']> {
+  if (m.failureCode === 'RUNTIME_UNHEALTHY')
+    return {
+      cause: '도착 앱이 시작할 때 DB 주소 환경변수를 찾지 못해 계속 다시 시작했습니다.',
+      evidence: ['감사 migration.paused: failureCode RUNTIME_UNHEALTHY', '배포 확인: 6번 봐도 정상 상태가 되지 않음', '앱 로그: DB_HOST is not set'],
+      fix: ['명세에서 web 의 DB_HOST 를 DB 연결 값으로 바꿉니다', '고친 뒤 이전을 재개합니다'],
+      retryable: false, confidence: 0.65,
+    };
+  return {
+    cause: '승인한 뒤 서버의 DB 네트워크 설정이 바뀌어 Terraform 입력이 승인 때와 달라졌습니다.',
+    evidence: ['감사 migration.failed: failureCode TF_PLAN_DRIFT', '자원 생성: 승인한 Terraform 입력 지문과 지금 만든 지문이 다름'],
+    fix: ['바뀐 설정이 의도한 것인지 확인합니다', '계획을 다시 만들어 새 계획서로 승인합니다'],
+    retryable: false, confidence: 0.8,
+  };
 }
 
 /** 도착 쪽 자원 상태. 서버 env-inventory.ts targetResources 를 줄여 옮겼다 (실패·롤백·취소 뒤 남은 자원을 보여 주려고). */
@@ -592,7 +734,7 @@ function targetFootprint(m: MockMigration): FootprintResource[] {
   if (m.status === 'rolled_back') [infra, app] = ['left', 'left'];
   else if (m.status === 'rolling_back') [infra, app] = ['running', 'standby'];
   else if (m.status === 'cancelled') [infra, app] = [applied ? 'left' : 'none', deployed ? 'left' : 'none'];
-  else if (m.status === 'failed') [infra, app] = at === 'provisioning' ? ['unknown', 'none'] : ['left', deployed ? 'left' : 'unknown'];
+  else if (m.status === 'failed') [infra, app] = step < WALK.indexOf('provisioning') ? ['none', 'none'] : at === 'provisioning' ? ['unknown', 'none'] : ['left', deployed ? 'left' : 'unknown'];
   else if (step < WALK.indexOf('provisioning')) [infra, app] = ['planned', 'planned'];
   else if (at === 'provisioning') [infra, app] = ['creating', 'planned'];
   else [infra, app] = ['running', at === 'deploying' ? 'creating' : 'running'];
@@ -682,6 +824,8 @@ function route(method: string, path: string, search: URLSearchParams, body: Reco
   switch (key) {
     case 'POST /auth/refresh':
       return ok(token());
+    case 'GET /auth/config':
+      return ok({ devAuth: false, loginRequired: true, github: { enabled: true } });
     case 'GET /healthz':
     case 'GET /readyz':
       return ok({ ok: true });
@@ -717,6 +861,9 @@ function route(method: string, path: string, search: URLSearchParams, body: Reco
       m.approvals.push({ planId: `plan-${m.id}`, decision: 'reject', approvedBy: USER.email, at: nowIso(), approvedPlanHash: planHash(m), storedPlanHash: planHash(m), hashMatches: true });
       return ok({ migrationId: m.id, planId: `plan-${m.id}`, status: 'rejected' });
     }
+    // 서버는 PLAN_ACKS=1 일 때만 본다. 목업은 확인 항목이 있는 계획서면 늘 본다
+    const missing = (planOf(m).acknowledgements ?? []).map((ack) => ack.id).filter((id) => !(body.acks as string[] | undefined)?.includes(id));
+    if (missing.length > 0) return fail(409, 'ACKS_MISSING', `missing acks: ${missing.join(', ')}`);
     const busy = data.migrations.find((other) => other.id !== m.id && HOLDS_LOCK.includes(other.status)
       && [other.sourceEnvId, other.targetEnvId].some((id) => id === m.sourceEnvId || id === m.targetEnvId));
     if (busy) return fail(409, 'ENV_BUSY', busy.id);
@@ -751,6 +898,8 @@ function route(method: string, path: string, search: URLSearchParams, body: Reco
         : fail(404, 'NOT_FOUND', 'plan');
     case 'POST /plan':
       if (m.status !== 'spec_review') return fail(409, 'INVALID_TRANSITION', `${m.status} -> prechecking`);
+      // T04: v2 검토 칸이 남아 있으면 막는다
+      if (m.specV2 && (specV2Of(m).needsReviewV2 ?? []).length > 0) return fail(409, 'GUARD_FAILED', `${specV2Of(m).needsReviewV2!.length} field(s) need review`);
       setStatus(m, 'prechecking', { actor: USER.email });
       return ok({ id: m.id }, 202);
     case 'GET /plan/resources':
@@ -779,8 +928,49 @@ function route(method: string, path: string, search: URLSearchParams, body: Reco
       m.agentDoneAt = Date.now() + AGENT_RUN_MS;
       m.agentRan = false;
       return ok({ runId: `run-${m.id}`, migrationId: m.id, kind: body.kind ?? 'remediate', status: 'queued' }, 202);
+    case 'PATCH /spec': {
+      if (m.status !== 'spec_review') return fail(409, 'INVALID_TRANSITION', `spec can be edited only in spec_review (now ${m.status})`);
+      const shown = specOf(m);
+      if (body.baseVersion !== shown.version) return fail(409, 'SPEC_VERSION_CONFLICT', `base ${String(body.baseVersion)} is not the latest shown version ${shown.version}`);
+      if (!m.specV2) return fail(400, 'SPEC_PATH_IR_MISMATCH', 'mock: v1 PATCH not handled');
+      const confirm = (body.confirm as string[] | undefined) ?? [];
+      const include = (body.include as string[] | undefined) ?? [];
+      if (confirm.length > 20) return fail(400, 'BAD_REQUEST', 'confirm max 20');
+      for (const resource of include) {
+        const item = V2_BOUNDARY.find((value) => value.resource === resource);
+        if (!item || (m.included ?? []).includes(resource)) return fail(400, 'SPEC_PATCH_INVALID', `not outside the boundary: ${resource}`);
+        if (item.kind === 'service' || item.kind === 'job') return fail(400, 'SPEC_PATCH_INVALID', `workloads cannot be included: ${resource}`);
+      }
+      m.included = [...(m.included ?? []), ...include];
+      m.reviewDone = [...new Set([...(m.reviewDone ?? []), ...confirm])];
+      m.specVersion = shown.version + 1;
+      return ok(specOf(m));
+    }
+    case 'POST /replan': {
+      if (m.status === 'failed' && (m.failedAtStatus === 'importing' || m.failedAtStatus === 'prechecking'))
+        return fail(409, 'REPLAN_NOT_ALLOWED', `failed at ${m.failedAtStatus}: cancel and start a new migration`);
+      if (m.status === 'failed' && m.failedAtStatus !== 'planning' && m.failedAtStatus !== 'provisioning') return fail(409, 'GUARD_FAILED', 'replan only if failed at provisioning or earlier');
+      if (!['failed', 'stale', 'rejected'].includes(m.status)) return fail(409, 'INVALID_TRANSITION', `${m.status} -> planning`);
+      if (m.status === 'failed') {
+        if ((m.retries ?? 0) >= RETRY_BUDGET && body.acceptCustomerCost !== true)
+          return fail(409, 'RETRY_BUDGET_EXHAUSTED', `retried ${m.retries} times (budget ${RETRY_BUDGET}); send acceptCustomerCost:true to retry at customer cost`);
+        m.retries = (m.retries ?? 0) + 1;
+      }
+      Object.assign(m, { failedAtStatus: null, failureCode: null, analysis: false });
+      setStatus(m, 'planning', { actor: USER.email });
+      return ok({ id: m.id }, 202);
+    }
+    case 'POST /spec/reopen':
+      if (m.status !== 'rejected') return fail(409, 'INVALID_TRANSITION', `${m.status} -> spec_review`);
+      setStatus(m, 'spec_review', { actor: USER.email });
+      return ok({ id: m.id }, 202);
     case 'POST /start':
       if (m.status !== 'approved') return fail(409, 'INVALID_TRANSITION', `${m.status} -> provisioning`);
+      if (m.v2plan && body.planHash !== planHash(m)) return fail(409, 'PLAN_HASH_MISMATCH', body.planHash ? 'plan changed since approval' : 'planHash required');
+      if ((m.tenantBusy ?? 0) > 0) {
+        m.tenantBusy = (m.tenantBusy ?? 0) - 1;
+        return fail(409, 'TENANT_BUSY', 'tenant: 2 migrations in progress (limit 2)');
+      }
       setStatus(m, 'provisioning', { actor: USER.email });
       return ok({ id: m.id }, 202);
     case 'POST /rollback': {
@@ -802,6 +992,13 @@ function route(method: string, path: string, search: URLSearchParams, body: Reco
     case 'POST /resume': {
       if (m.status !== 'paused') return fail(409, 'NOT_PAUSED', m.status);
       if (!m.failureCode && body.ruleCleared !== true) return fail(409, 'GUARD_FAILED', 'rule not cleared');
+      // 실패 코드로 멈춘 경우만 재시도로 센다 (가드레일 규칙 멈춤은 실패가 아님)
+      if (m.failureCode) {
+        if ((m.retries ?? 0) >= RETRY_BUDGET && body.acceptCustomerCost !== true)
+          return fail(409, 'RETRY_BUDGET_EXHAUSTED', `retried ${m.retries} times (budget ${RETRY_BUDGET})`);
+        m.retries = (m.retries ?? 0) + 1;
+      }
+      m.analysis = false;
       const to = m.pausedFrom ?? 'shifting';
       m.pausedFrom = null;
       m.failureCode = null;
@@ -968,6 +1165,17 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     if (isActive()) endSession();
     return realFetch(input, init);
   }
+  // 로그인 전 화면의 서버 설정. 실제 서버가 답하면 그대로 쓰고, 서버가 없을 때만 GitHub 버튼이 보이는 설정으로 답한다
+  //   (GitHub 시작은 브라우저 이동이라 목업이 받지 못한다. 돌아온 실패 화면은 주소에 ?github_error=GITHUB_ACCESS_DENIED 를 붙여 본다)
+  if (path === '/auth/config' && method === 'GET' && !isActive()) {
+    try {
+      const real = await realFetch(input, init);
+      if (real.ok) return real;
+    } catch {
+      /* 서버 없음 */
+    }
+    return toResponse(ok({ devAuth: false, loginRequired: true, github: { enabled: true } }));
+  }
   if (!isActive()) return realFetch(input, init);
   if (!store) restore();
   await delay(LATENCY_MS);
@@ -1113,8 +1321,11 @@ function layoutCheck(): LayoutProblem[] {
 
 type Scenario = { label: string; apply: (m: MockMigration) => void };
 
+// 상황마다 서버 모양 깃발을 처음으로 돌린다 (앞 상황의 깃발이 남지 않게)
+const PLAIN: Partial<MockMigration> = { specV2: false, specVersion: 2, reviewDone: [], included: [], v2plan: false, tenantBusy: 0, retries: 0, analysis: false };
+
 const stopAt = (m: MockMigration, status: MigrationStatus, extra: Partial<MockMigration> = {}) => {
-  Object.assign(m, { pausedFrom: null, failedAtStatus: null, failureCode: null, ...extra });
+  Object.assign(m, { pausedFrom: null, failedAtStatus: null, failureCode: null, ...PLAIN, ...extra });
   setStatus(m, status);
   m.nextAt = null;
 };
@@ -1127,6 +1338,7 @@ const badJudgement = (m: MockMigration) => ({
 
 const SCENARIOS: Scenario[] = [
   { label: '명세 검토', apply: (m) => stopAt(m, 'spec_review') },
+  { label: '명세 검토 v2', apply: (m) => stopAt(m, 'spec_review', { specV2: true }) },
   {
     label: '사전 점검 막힘',
     apply: (m) => {
@@ -1139,6 +1351,8 @@ const SCENARIOS: Scenario[] = [
     },
   },
   { label: '계획 승인', apply: (m) => stopAt(m, 'awaiting_approval') },
+  { label: '계획 승인 v2 (확인 항목)', apply: (m) => stopAt(m, 'awaiting_approval', { specV2: true, v2plan: true }) },
+  { label: '동시 진행 상한', apply: (m) => stopAt(m, 'approved', { specV2: true, v2plan: true, tenantBusy: 1 }) },
   { label: '낡은 계획', apply: (m) => stopAt(m, 'stale') },
   { label: '거절', apply: (m) => stopAt(m, 'rejected') },
   { label: '트래픽 이동', apply: (m) => setStatus(m, 'shifting') },
@@ -1167,7 +1381,11 @@ const SCENARIOS: Scenario[] = [
     },
   },
   { label: '작업 멈춤', apply: (m) => stopAt(m, 'paused', { pausedFrom: 'deploying', failureCode: 'ARGO_TIMEOUT', trafficPct: 0 }) },
+  { label: '앱 상태 멈춤 (분석)', apply: (m) => stopAt(m, 'paused', { pausedFrom: 'deploying', failureCode: 'RUNTIME_UNHEALTHY', trafficPct: 0, analysis: true }) },
   { label: '실패', apply: (m) => stopAt(m, 'failed', { failedAtStatus: 'provisioning', failureCode: 'TF_APPLY_FAILED', trafficPct: 0 }) },
+  { label: '실패 · 계획 바뀜 (분석)', apply: (m) => stopAt(m, 'failed', { failedAtStatus: 'provisioning', failureCode: 'TF_PLAN_DRIFT', trafficPct: 0, analysis: true }) },
+  { label: '실패 · 재시도 한도', apply: (m) => stopAt(m, 'failed', { failedAtStatus: 'provisioning', failureCode: 'TF_APPLY_FAILED', trafficPct: 0, retries: RETRY_BUDGET }) },
+  { label: '실패 · 다시 계획 불가', apply: (m) => stopAt(m, 'failed', { failedAtStatus: 'importing', failureCode: 'IMPORT_SOURCE_UNAVAILABLE', trafficPct: 0 }) },
   { label: '롤백 대기', apply: (m) => setStatus(m, 'rollback_window') },
   { label: '완료', apply: (m) => stopAt(m, 'completed', { trafficPct: 100 }) },
 ];
@@ -1251,7 +1469,8 @@ const writeSweep = (sweep: Sweep) => sessionStorage.setItem(SWEEP_KEY, JSON.stri
 
 function sweepSteps() {
   const id = store?.migrations[0]?.id ?? '';
-  const pages = ['#/', '#/migrations', '#/migrations/new', 'new:출발 고른 뒤', '#/environments', '#/settings', '#/design-system'];
+  const failedEnv = ENVS.find((item) => item.connectionStatus !== 'connected' && item.provider !== 'onprem')?.id ?? '';
+  const pages = ['#/', '#/migrations', '#/migrations/new', 'new:출발 고른 뒤', '#/environments', `#/environments/${failedEnv}`, '#/settings', '#/design-system'];
   const perMigration = ['cost', 'security', 'audit', 'agent'].map((page) => (page === 'cost' ? `#/migrations/${id}/cost` : `#/${page}/${id}`));
   return [...pages, ...perMigration, ...SCENARIOS.map((scenario) => `상황:${scenario.label}`)];
 }

@@ -74,6 +74,19 @@ export interface PlanStep {
   owner: "terraform" | "argocd" | "agent" | "worker";
   estSec?: number; gate?: string; weights?: number[]; holdSec?: number; rollback?: string;
 }
+// contracts plan.ts PlanCostSummary: 계획서에 실린 월 비용(USD). 계산 못 한 칸은 null + unknownFields 에 이름("*" = 전체 실패)
+export interface PlanCostSummary {
+  currency: "USD";
+  monthlyTarget: number | null;
+  monthlySource: number | null;
+  deltaMonthly: number | null;
+  unknownFields: string[];
+  priceAsOf?: string;
+  stub?: boolean;
+}
+// contracts plan.ts PlanAcknowledgement: 승인 때 사람이 하나씩 확인하는 항목. 승인 본문 acks 가 이 id 를 덮는다
+export type PlanAckKind = "cost" | "failure_cost_policy" | "runtime_change" | "build" | "precheck_warn" | "low_confidence";
+export interface PlanAcknowledgement { id: string; kind: PlanAckKind; text: string; ref?: string }
 export interface PlanDoc {
   planId: string;
   migrationId: string;
@@ -83,6 +96,14 @@ export interface PlanDoc {
   rollbackCriteria: { errorRatePct: number; p95Multiplier: number; windowSec: number };
   tfPlanHash: string;
   helmValuesHash: string;
+  // 옛 계획서에는 없다 (PA4). 있으면 지문에 들어간다
+  specVersion?: number;
+  costSummary?: PlanCostSummary;
+  acknowledgements?: PlanAcknowledgement[];
+  // PLAN_IR=v2 로 만든 계획서에만 (TA3). 화면은 기본 화면에 쓰지 않는다 (L3)
+  irVersion?: "2";
+  specSource?: "spec_v2" | "upconvert";
+  instances?: { kind: string; id: string; module: string }[];
   planHash: string;
   expiresAt: string;
 }

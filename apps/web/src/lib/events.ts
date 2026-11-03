@@ -25,6 +25,19 @@ export const aboutMigration = (id: string) => (e: SseEvent) => e.type === 'reloa
 /** 어느 이전이든 바뀌었거나 전부 다시 읽기 (이전 목록용) */
 export const anyMigration = (e: SseEvent) => e.type === 'reload_all' || 'migrationId' in e;
 
+// DRAFT(ai): 신호 연결이 살아 있을 때 signal 을 준 폴링의 간격 하한. 신호를 놓쳐도 이 시간 안에는 맞춰진다
+export const LIVE_FALLBACK_MS = 10_000;
+
+/**
+ * 폴링 간격. 신호를 듣고 있고 연결이 살아 있을 때만 간격을 LIVE_FALLBACK_MS 이상으로 늘린다.
+ * floor = false 는 "이 화면은 상태가 안 바뀌어도 값이 바뀐다"는 뜻이다 (워커 단계: 진행 숫자는 신호가 오지 않는다).
+ * 그때는 연결이 살아 있어도 원래 간격 그대로 둔다. ms = null 이면 간격 없음 그대로.
+ */
+export function pollInterval(ms: number | null, o: { listening: boolean; liveOpen: boolean; floor: boolean }): number | null {
+  if (ms === null) return null;
+  return o.listening && o.liveOpen && o.floor ? Math.max(ms, LIVE_FALLBACK_MS) : ms;
+}
+
 /** 받은 글자 조각을 줄로 풀어 빈 줄마다 data 한 건을 낸다. 조각 경계가 줄 가운데여도 된다 */
 export function createSseParser(onData: (data: string) => void, onRetry?: (ms: number) => void) {
   let buffer = '';

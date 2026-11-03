@@ -1,9 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  canPick, canRollback, formatClock, judgementRows, leftoversOf, leftoverValue, migrationSteps, needsStepAnchor, pollMs, screenOf,
-  shiftNote, specRows, stepAnchorFrom, stepGate, trafficPercent, trafficReportRows,
+  ackState, approveLabel, canPick, canReplan, canRollback, formatClock, judgementRows, leftoversOf, leftoverValue, migrationSteps, needsStepAnchor,
+  pollMs, screenOf, shiftNote, signalCovers, specRows, stepAnchorFrom, stepGate, trafficPercent, trafficReportRows,
 } from "../src/features/migration/model";
+import { planResourceRows, runtimeChangeNote, type ResourceRow } from "../src/lib/resourceMap";
 import { MIGRATION_STATUSES, type EnvApp, type EnvironmentView, type FootprintResource } from "../src/lib/types";
 
 test("상태 22개가 모두 화면 하나로 묶인다", () => {
@@ -147,4 +148,72 @@ test("전환 판정 요약 줄: 서버가 못 낸 값은 아직 없음", () => {
   assert.deepEqual(rows.map((r) => r.value), ["10% → 50% → 100%", "9번 · 나쁨 0번", "0.2%", "132ms"]);
   const empty = trafficReportRows({ judgements: 0, steps: [], bad: 0, maxTargetErrorRatePct: null, maxTargetP95Ms: null });
   assert.deepEqual(empty.map((r) => r.value), ["아직 없음", "0번 · 나쁨 0번", "아직 없음", "아직 없음"]);
+});
+
+test("신호가 화면을 다 맞춰 주는 상태: 사람 차례·멈춤은 맞고, 워커 단계는 아니다", () => {
+  for (const status of ["provisioning", "deploying", "syncing", "shifting", "cutover", "rollback_window", "cleanup", "rolling_back"] as const)
+    assert.equal(signalCovers(status), false, status);
+  for (const status of ["spec_review", "awaiting_approval", "approved", "paused", "failed", "rejected", "stale", "completed"] as const)
+    assert.equal(signalCovers(status), true, status);
+});
+
+test("계획 다시 만들기: stale·rejected 는 늘, failed 는 planning·provisioning 에서 멈춘 것만", () => {
+  assert.equal(canReplan({ status: "stale", failedAtStatus: null }), true);
+  assert.equal(canReplan({ status: "rejected", failedAtStatus: null }), true);
+  assert.equal(canReplan({ status: "failed", failedAtStatus: "planning" }), true);
+  assert.equal(canReplan({ status: "failed", failedAtStatus: "provisioning" }), true);
+  assert.equal(canReplan({ status: "failed", failedAtStatus: "importing" }), false);     // 서버 409 REPLAN_NOT_ALLOWED
+  assert.equal(canReplan({ status: "failed", failedAtStatus: "prechecking" }), false);
+  assert.equal(canReplan({ status: "failed", failedAtStatus: "cutover" }), false);       // 서버 가드 T37
+  assert.equal(canReplan({ status: "failed", failedAtStatus: null }), false);
+  assert.equal(canReplan({ status: "paused", failedAtStatus: null }), false);
+});
+
+test("승인 확인 항목: 다 체크해야 승인, 버튼은 남은 수를 말한다, 옛 계획서는 항목 없이 바로 승인", () => {
+  const acks = [{ id: "cost" }, { id: "failure_cost_policy" }, { id: "runtime_change:web" }];
+  const none = ackState(acks, new Set());
+  assert.deepEqual(none.missing, ["cost", "failure_cost_policy", "runtime_change:web"]);
+  assert.equal(none.ready, false);
+  assert.equal(approveLabel({ busy: false, expired: false, missing: none.missing.length }), "확인 3개 남음");
+  const some = ackState(acks, new Set(["cost", "stray"]));
+  assert.deepEqual(some.ids, ["cost"]);                 // 계획서에 없는 id 는 보내지 않는다
+  assert.equal(some.missing.length, 2);
+  const all = ackState(acks, new Set(acks.map((a) => a.id)));
+  assert.equal(all.ready, true);
+  assert.deepEqual(all.ids, ["cost", "failure_cost_policy", "runtime_change:web"]);
+  assert.equal(approveLabel({ busy: false, expired: false, missing: 0 }), "이 계획 승인");
+  assert.equal(approveLabel({ busy: true, expired: false, missing: 2 }), "보내는 중");
+  assert.equal(approveLabel({ busy: false, expired: true, missing: 2 }), "승인 시간이 지났습니다");
+  const old = ackState(undefined, new Set());
+  assert.equal(old.ready, true);
+  assert.deepEqual(old.ids, []);
+});
+
+const resRow = (over: Partial<ResourceRow>): ResourceRow => ({
+  category: "workload", label: "앱", source: { service: "a", detail: null }, target: { service: "b", detail: null },
+  method: "redeploy", methodLabel: "", step: "deploy", stepState: "todo", afterSource: null, ...over,
+});
+
+test("자원 대응 v2: 같은 칸 여러 줄도 열쇠가 겹치지 않고, 건수는 그린 줄 수, 경계 밖은 따로 한 줄", () => {
+  const view = {
+    rows: [
+      resRow({ category: "workload", label: "앱(컨테이너) · web", runtimeChange: { from: "managedContainer", to: "k8s" } }),
+      resRow({ category: "workload", label: "앱(예약 잡) · nightly", runtimeChange: null }),
+      resRow({ category: "cache", label: "캐시 · shop-cache", method: "create_new" }),
+      resRow({ category: "storage", label: "객체 저장소", method: "out_of_scope", source: null, target: null }),
+      resRow({ category: "boundary", label: "경계 밖 자원 2개", method: "out_of_scope", target: null, afterSource: "출발에 그대로 (건드리지 않음)" }),
+    ],
+  };
+  const got = planResourceRows(view);
+  assert.equal(got.listed.length, 3);
+  assert.equal(new Set(got.listed.map((item) => item.key)).size, 3);
+  assert.equal(got.boundary?.label, "경계 밖 자원 2개");
+  assert.equal(got.runtimeChanges, 1);
+  assert.equal(runtimeChangeNote(view.rows[0]!), "실행 방식 바뀜: 관리형 컨테이너 → 쿠버네티스");
+  assert.equal(runtimeChangeNote(view.rows[1]!), null);
+  assert.equal(runtimeChangeNote(resRow({})), null);       // v1 줄엔 칸 자체가 없다
+  const v1 = planResourceRows({ rows: [resRow({}), resRow({ category: "storage", method: "out_of_scope" })] });
+  assert.equal(v1.listed.length, 1);
+  assert.equal(v1.boundary, null);
+  assert.equal(planResourceRows(null).listed.length, 0);
 });

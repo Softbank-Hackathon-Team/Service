@@ -4,7 +4,7 @@ import { SkeletonTile, Tile, TileHeader } from '../../components/layout/tiles';
 import { Checklist } from '../../components/ui/Checklist';
 import { BarPill } from '../../components/ui/controls';
 import { api } from '../../lib/api';
-import { errorText } from '../../lib/errors';
+import { errorCode, errorText } from '../../lib/errors';
 import { or404 } from '../../lib/http';
 import { isTerminal } from '../../lib/status';
 import type { MigrationView } from '../../lib/types';
@@ -59,23 +59,57 @@ export function Frame({ route, migration, children }: FrameProps) {
   );
 }
 
-/** 버튼 동작을 묶는다. 실패하면 문장을 보이고, 성공하면 상태를 다시 읽는다. */
-export function useAction(onChanged: () => void) {
+/**
+ * 버튼 동작을 묶는다. 실패하면 문장을 보이고, 성공하면 상태를 다시 읽는다.
+ * code 는 마지막 실패의 서버 오류 코드다 (화면이 다음 행동을 고를 때: TENANT_BUSY → 다시 시작 등).
+ * onFailed 는 실패 때 한 번 부른다 (계획서가 바뀌었으면 다시 읽기 등).
+ */
+export function useAction(onChanged: () => void, onFailed?: (reason: unknown) => void) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [code, setCode] = useState<string | null>(null);
   const run = async (action: () => Promise<unknown>) => {
     setBusy(true);
     setError(null);
+    setCode(null);
     try {
       await action();
       onChanged();
     } catch (reason) {
       setError(errorText(reason));
+      setCode(errorCode(reason));
+      onFailed?.(reason);
     } finally {
       setBusy(false);
     }
   };
-  return { busy, error, run };
+  return { busy, error, code, run };
+}
+
+/**
+ * TODO(human): 고객 비용 동의 문구와 방식(체크 한 번이면 되는지, 누가 동의할 수 있는지)은 사람이 정한다. 지금은 체크 한 줄
+ * 재시도 비용 동의 (서버 core retry-budget.ts). 플랫폼이 부담하는 재시도 횟수를 넘으면 서버가 409 RETRY_BUDGET_EXHAUSTED 를 준다.
+ * 그때만 동의 체크를 보이고, 체크하면 같은 요청을 acceptCustomerCost:true 로 다시 보낸다. 다시 계획하기·재개가 같이 쓴다.
+ */
+export function useCostConsent(code: string | null) {
+  const [asked, setAsked] = useState(false);
+  const [agreed, setAgreed] = useState(false);
+  if (code === 'RETRY_BUDGET_EXHAUSTED' && !asked) setAsked(true);
+  const check = asked ? (
+    <label className={`${s.resumeCheck} t-body-md`}>
+      <input type="checkbox" checked={agreed} onChange={(event) => setAgreed(event.target.checked)} />
+      무료 재시도를 다 썼습니다. 이번 재시도 비용은 고객이 부담합니다
+    </label>
+  ) : null;
+  return {
+    /** 동의를 물어야 하는데 아직 체크하지 않음 */
+    waiting: asked && !agreed,
+    /** 다음 요청에 실을 값 */
+    accept: asked && agreed ? true : undefined,
+    check,
+    /** 동의를 묻는 동안은 빨간 알림 대신 체크 한 줄로 말한다 */
+    notice: (error: string | null) => (asked && code === 'RETRY_BUDGET_EXHAUSTED' ? null : error),
+  };
 }
 
 /**

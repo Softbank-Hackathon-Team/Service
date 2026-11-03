@@ -19,17 +19,18 @@ import type {
   TimelineView,
 } from './types';
 import type { CloudInventory } from '../features/dashboard/model';
-import type { MigrationSpec, MigrationSpecView } from '../features/migration/model';
+import type { MigrationSpec } from '../features/migration/model';
+import type { MigrationSpecViewV2, SpecPatch } from '../features/migration/specV2';
 
 // 화면은 /api/... 만 부른다. 개발은 Vite, 운영은 nginx 가 서버 경로로 넘긴다.
 export const API_BASE: string = import.meta.env.VITE_API_BASE ?? '/api';
 
 export const auth = createAuth({ base: API_BASE });
 
-const { get, post, headers } = createClient({
+const { get, post, patch, headers } = createClient({
   base: API_BASE,
   token: () => auth.accessToken(),
-  onUnauthorized: () => auth.onUnauthorized(),
+  onUnauthorized: (code) => auth.onUnauthorized(code),
 });
 
 export const api = {
@@ -48,22 +49,32 @@ export const api = {
   ready: () => get<{ ok: boolean }>('/readyz'),
   getMigration: (id: string) => get<MigrationView>(`/migrations/${id}`),
   createMigration: (sourceEnvId: string, targetEnvId: string) => post<{ id: string }>('/migrations', { sourceEnvId, targetEnvId }),
-  migrationSpec: (id: string) => get<MigrationSpecView>(`/migrations/${id}/spec`),
+  migrationSpec: (id: string) => get<MigrationSpecViewV2>(`/migrations/${id}/spec`),
+  /** 명세 칸 확인·끌어오기. 결과는 늘 새 판 하나. baseVersion 이 지금 판이 아니면 409 SPEC_VERSION_CONFLICT */
+  patchSpec: (id: string, body: SpecPatch) => patch<MigrationSpecViewV2>(`/migrations/${id}/spec`, body),
+  /** 명세 확정 → 사전 점검 시작 (T04: 검토 칸이 남아 있으면 409) */
   confirmSpec: (id: string) => post<{ id: string }>(`/migrations/${id}/plan`),
+  /** 계획 다시 만들기: failed(planning·provisioning)·stale·rejected → planning. 재시도 한도를 넘었으면 acceptCustomerCost 필요 */
+  replan: (id: string, acceptCustomerCost?: boolean) =>
+    post<{ id: string }>(`/migrations/${id}/replan`, acceptCustomerCost ? { acceptCustomerCost } : {}),
+  /** 거절 뒤 명세부터 다시 고치기: rejected → spec_review */
+  reopenSpec: (id: string) => post<{ id: string }>(`/migrations/${id}/spec/reopen`),
   latestPlan: (id: string) => get<PlanDoc>(`/migrations/${id}/plan`),
   planResources: (id: string) => get<PlanResourcesView>(`/migrations/${id}/plan/resources`),
   migrationCost: (id: string) => get<MigrationCostView>(`/migrations/${id}/cost`),
   timeline: (id: string) => get<TimelineView>(`/migrations/${id}/timeline`),
-  decide: (planId: string, decision: 'approve' | 'reject', planHash: string) =>
-    post<{ status: string }>(`/plans/${planId}/approvals`, { decision, planHash }),
-  start: (id: string) => post<{ id: string }>(`/migrations/${id}/start`),
+  // 승인 때는 확인 항목(acks)을 언제나 보낸다. 서버는 PLAN_ACKS=1 일 때만 다 덮었는지 본다. 거절은 acks 를 안 본다
+  decide: (planId: string, decision: 'approve' | 'reject', planHash: string, acks?: string[]) =>
+    post<{ status: string }>(`/plans/${planId}/approvals`, { decision, planHash, ...(decision === 'approve' && acks ? { acks } : {}) }),
+  // 실행 시작에 승인한 계획 지문을 싣는다 (PLAN_ACKS=1 이면 서버가 승인 지문과 비교)
+  start: (id: string, planHash?: string) => post<{ id: string }>(`/migrations/${id}/start`, planHash ? { planHash } : {}),
   cancel: (id: string, manualCleanupConfirmed?: boolean) =>
     post<{ status: 'cancelled' }>(`/migrations/${id}/cancel`, manualCleanupConfirmed ? { manualCleanupConfirmed } : {}),
   rollback: (id: string) => post<{ status: 'rolling_back' }>(`/migrations/${id}/rollback`, {}),
   // 서버 main 에는 아직 이 경로가 없다 (리소스 회수, README "서버에 없어서" 참고). 목업만 응답한다
   reclaim: (id: string) => post<{ status: 'rollback_window' }>(`/migrations/${id}/reclaim`, {}),
-  resume: (id: string, ruleCleared?: boolean) =>
-    post<ResumeResult>(`/migrations/${id}/resume`, ruleCleared ? { ruleCleared } : {}),
+  resume: (id: string, ruleCleared?: boolean, acceptCustomerCost?: boolean) =>
+    post<ResumeResult>(`/migrations/${id}/resume`, { ...(ruleCleared ? { ruleCleared } : {}), ...(acceptCustomerCost ? { acceptCustomerCost } : {}) }),
   liveTraffic: (id: string) => get<LiveTrafficView>(`/migrations/${id}/live-traffic`),
   trafficShift: (id: string) => get<TrafficShiftProgress>(`/migrations/${id}/traffic-shift`),
   agentReview: (id: string) => get<AgentReview>(`/migrations/${id}/agent-review`),

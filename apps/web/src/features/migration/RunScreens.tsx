@@ -10,10 +10,11 @@ import { LIVE_REASON } from '../../lib/liveTraffic';
 import { isTerminal, LABEL } from '../../lib/status';
 import { latestMeasurements, MEASURE_LABEL } from '../../lib/timelineDetail';
 import { usePoll } from '../../lib/usePoll';
-import { AgentFold } from '../agent/AgentResult';
+import { AgentFold, useAgentReview } from '../agent/AgentResult';
+import { failureAnalysisOf } from '../agent/model';
 import { LeftoverFold, StopFold, TrafficReportFold } from './EvidenceFolds';
 import { canRollback, formatClock, runTitle, shiftNote, trafficPercent } from './model';
-import { ConfirmPill, Frame, useAction, type ScreenProps } from './shared';
+import { ConfirmPill, Frame, useAction, useCostConsent, type ScreenProps } from './shared';
 import s from '../common/page.module.css';
 
 const routeEnds = (route: string) => {
@@ -199,9 +200,12 @@ export function WindowScreen({ migration, route, onChanged }: ScreenProps) {
 export function PausedScreen({ migration, route, onChanged }: ScreenProps) {
   const { source, target } = routeEnds(route);
   const { percent } = useTraffic(migration);
-  const { busy, error, run } = useAction(onChanged);
+  const { busy, error, code, run } = useAction(onChanged);
+  const consent = useCostConsent(code);
+  const review = useAgentReview(migration.id);
   const [cleared, setCleared] = useState(false);
-  // 서버 규칙(apps/api control.ts): 실패 코드 없이 멈춘 경우만 재개에 "원인이 풀렸다" 확인이 필요하다
+  // 서버 규칙(apps/api control.ts): 실패 코드 없이 멈춘 경우만 재개에 "원인이 풀렸다" 확인이 필요하다.
+  //   실패 코드로 멈춘 경우만 재시도 한도를 센다 → 넘으면 비용 동의(useCostConsent) 뒤 다시 보낸다
   const byRule = !migration.failureCode;
   const reason = stopReasonOf(migration.failureCode, migration.status);
   return (
@@ -217,27 +221,29 @@ export function PausedScreen({ migration, route, onChanged }: ScreenProps) {
         </div>
       </Hero>
       <Stack area="side">
-        {reason && <StopFold migration={migration} reason={reason} into="paused" />}
-        <AgentFold migrationId={migration.id} />
+        {reason && <StopFold migration={migration} reason={reason} into="paused" analysis={failureAnalysisOf(review.data)} />}
+        <AgentFold migrationId={migration.id} review={review} />
         <LiveFold migration={migration} />
         <TimelineFold migration={migration} />
         <ActionRow
-          notice={error}
+          notice={consent.notice(error)}
           before={
-            byRule && (
+            byRule ? (
               <label className={`${s.resumeCheck} t-body-md`}>
                 <input type="checkbox" checked={cleared} onChange={(event) => setCleared(event.target.checked)} />
                 멈춘 원인이 풀렸습니다
               </label>
+            ) : (
+              consent.check
             )
           }
         >
           <RollbackPill migration={migration} busy={busy} onConfirm={() => void run(() => api.rollback(migration.id))} />
           <ActionPill
-            label={busy ? '보내는 중' : '이전 재개'}
+            label={busy ? '보내는 중' : consent.accept ? '고객 부담으로 재개' : '이전 재개'}
             icon="play"
-            disabled={busy || (byRule && !cleared)}
-            onClick={() => void run(() => api.resume(migration.id, byRule ? cleared : undefined))}
+            disabled={busy || (byRule && !cleared) || consent.waiting}
+            onClick={() => void run(() => api.resume(migration.id, byRule ? cleared : undefined, consent.accept))}
           />
         </ActionRow>
       </Stack>
