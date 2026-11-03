@@ -14,6 +14,7 @@
 | `svc-operate` | 이전에 필요한 서비스만 허용하는 관리형 정책(`svc-operate-policy`). 앱 역할(`app-*`)은 권한 경계가 붙어야만 만들 수 있음 |
 | `platform-app-boundary` | 앱 역할이 가질 수 있는 최대 권한. 실행 정책이 요구한다. `svc-operate` 자신에게는 붙이지 않는다 |
 | EKS 접근 항목 2개 | 관찰 = `AmazonEKSViewPolicy`(클러스터 범위), 실행 = 그룹 `platform:operate`만 |
+| (선택) `svc-deploy` + 접근 항목 | ID-1: `ArgoHubRoleArn`을 줄 때만. Argo CD 허브가 빌리는 배포 역할(IAM 권한 0) → 그룹 `platform:deploy`. 권한은 앱 네임스페이스 RoleBinding으로만(`infra/permissions/eks-deploy-rbac.yaml`, 클러스터 범위 없음). 신뢰에 ExternalId 없음(Argo가 못 넘김【추정】) TODO(human) |
 | 신뢰 정책(두 역할 공통) | 주체 = 플랫폼 워커 역할 하나, 동작 = `sts:AssumeRole`·`sts:TagSession`·`sts:SetSourceIdentity`, 조건 = `sts:ExternalId` 일치 |
 
 신뢰 정책에 `TagSession`·`SetSourceIdentity`가 있어야 한다. 플랫폼 발급기가 역할을 빌릴 때 항상 태그와 SourceIdentity를 넣기 때문에, 빠지면 AssumeRole이 전부 AccessDenied가 된다.
@@ -24,6 +25,7 @@
 | `ExternalId` | 플랫폼이 연결 화면에서 알려 준 값을 그대로 (32자 이상). NoEcho가 아니라 빠른 생성 링크로 넘길 수 있다 |
 | `PlatformPrincipalArn` | 플랫폼 워커 **역할** ARN. 사용자·`:root`는 패턴이 거부한다 |
 | `EksClusterName` | 이전 대상 EKS 클러스터 이름 |
+| `ArgoHubRoleArn` | 선택. 플랫폼 Argo CD 허브 역할 ARN (API 설정 `ARGO_HUB_ROLE_ARN`이 있으면 링크가 채움). 비우면 배포 역할 없음 |
 | `CreateBoundaryPolicy` | 기본 `true`. 같은 계정에 `infra/modules/aws/env`가 이미 `platform-app-boundary`를 만들었으면 `false`. F17: 연결 링크가 알아서 `false`를 넣는 경우 = 링크 요청에 `?boundaryPolicyExists=true`(CLI `env:connect`가 `aws iam get-policy`로 확인해 붙임) 또는 고객 계정 번호 = 플랫폼 주체 계정 |
 
 ## 올리는 곳 (S3)
@@ -35,7 +37,8 @@
 2. `EksClusterName`을 입력하고, 같은 계정에 `platform-app-boundary` 정책이 이미 있으면 `CreateBoundaryPolicy`를 `false`로 바꾼다
 3. "IAM 리소스를 만들 수 있음" 확인란에 체크하고 스택을 만든다 (`CAPABILITY_NAMED_IAM`: 역할 이름이 고정이라 필요)
 4. 스택이 `CREATE_COMPLETE`가 되면 연결 화면에서 "확인"을 누른다 (플랫폼이 관찰 역할을 빌려 읽기를 확인)
-5. 실행 역할이 클러스터에서 일하려면 RBAC를 한 번 적용한다: `kubectl apply -f infra/permissions/eks-operate-namespace-rbac.yaml` (네임스페이스 관리만)
+5. 실행 역할이 클러스터에서 일하려면 RBAC를 한 번 적용한다: `kubectl apply -f infra/permissions/eks-operate-namespace-rbac.yaml` (네임스페이스 관리 + 배포 RoleBinding 만들기, bind는 `platform-deploy-app` 하나만). 배포 역할을 쓰면 `eks-deploy-rbac.yaml`도 같이
+   - 남은 일(범위 밖, GitOps·프로비저닝): 네임스페이스 모듈이 `platform:deploy` RoleBinding을 만들기, Argo CD 클러스터 등록(namespaces 한정, `awsAuthConfig.roleARN` = `svc-deploy`)
 
 ## IAM 확인 체크 (고객이 눈으로 확인)
 - [ ] 역할 `svc-observe`의 신뢰 주체가 **역할 ARN 하나**(우리가 알려 준 값)이고 `:root`·사용자가 아니다

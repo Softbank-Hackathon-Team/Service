@@ -139,7 +139,8 @@ export async function environmentRoutes(app: FastifyInstance) {
       const createBoundaryPolicy = shouldCreateBoundary({ boundaryPolicyExists: req.query.boundaryPolicyExists === "true",
         envAccountId: env.account_id, principalArn: s.principalArn });
       const url = awsQuickCreateUrl({ envId: id, region: env.region, templateUrl: s.templateUrl,
-        principalArn: s.principalArn, externalId, clusterName: env.cluster_name, createBoundaryPolicy });
+        principalArn: s.principalArn, externalId, clusterName: env.cluster_name, createBoundaryPolicy,
+        ...(s.argoHubRoleArn ? { argoHubRoleArn: s.argoHubRoleArn } : {}) });
       return { status: 200, body: { kind: "aws_quick_create" as const, url, externalId, createBoundaryPolicy,
         expiresAt: exp.rows[0]!.expires_at } };
     });

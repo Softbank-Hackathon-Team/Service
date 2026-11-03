@@ -9,6 +9,15 @@ rules:
   - apiGroups: [""]
     resources: ["namespaces"]
     verbs: ["get", "create", "patch", "delete"]
+  # ID-1: 앱 네임스페이스에 배포 그룹(platform:deploy) RoleBinding 을 만들고 지운다. bind 는 ClusterRole platform-deploy-app 하나에만
+  #   (k8s 는 자기에게 없는 권한을 남에게 묶으려면 bind 동사가 있어야 한다. 다른 ClusterRole 은 못 묶는다)
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings"]
+    verbs: ["get", "create", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    resourceNames: ["platform-deploy-app"]
+    verbs: ["bind"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

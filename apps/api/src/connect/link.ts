@@ -28,6 +28,8 @@ export interface AwsLinkInput {
   clusterName: string;
   // F17: false 면 param_CreateBoundaryPolicy=false (템플릿 기본 true). 빠지면 템플릿 기본값
   createBoundaryPolicy?: boolean;
+  // ID-1: 플랫폼 Argo CD 허브 역할 ARN. 있으면 템플릿이 배포 역할(svc-deploy)·접근 항목을 만든다. 없으면 안 만든다(예전과 같음)
+  argoHubRoleArn?: string;
 }
 
 // F17: 플랫폼 주체 ARN(arn:aws:iam::<12자리>:role/...)의 계정 칸. 모양이 아니면 null
@@ -54,14 +56,18 @@ export function awsQuickCreateUrl(i: AwsLinkInput): string {
     `param_PlatformPrincipalArn=${encodeURIComponent(i.principalArn)}`,
     `param_EksClusterName=${encodeURIComponent(i.clusterName)}`,
     ...(i.createBoundaryPolicy === false ? ["param_CreateBoundaryPolicy=false"] : []),
+    ...(i.argoHubRoleArn ? [`param_ArgoHubRoleArn=${encodeURIComponent(i.argoHubRoleArn)}`] : []),
   ].join("&");
   const r = encodeURIComponent(region);
   return `https://${r}.console.aws.amazon.com/cloudformation/home?region=${r}#/stacks/create/review?${q}`;
 }
 
 // 연결 링크 설정 (요청 때마다 읽는다: 시험·운영이 값을 바꿔도 다시 띄울 필요 없음). 둘 중 하나라도 없으면 null
-export function connectSettings(env: NodeJS.ProcessEnv = process.env): { templateUrl: string; principalArn: string } | null {
+// ID-1: ARGO_HUB_ROLE_ARN 은 선택. 역할 ARN 모양이 아니면 무시한다 (템플릿 패턴이 어차피 거부)
+export function connectSettings(env: NodeJS.ProcessEnv = process.env): { templateUrl: string; principalArn: string; argoHubRoleArn?: string } | null {
   const templateUrl = env.CONNECT_TEMPLATE_URL?.trim();
   const principalArn = env.PLATFORM_PRINCIPAL_ARN?.trim();
-  return templateUrl && principalArn ? { templateUrl, principalArn } : null;
+  const hub = env.ARGO_HUB_ROLE_ARN?.trim();
+  const argo = hub && /^arn:aws:iam::\d{12}:role\/.+$/.test(hub) ? { argoHubRoleArn: hub } : {};
+  return templateUrl && principalArn ? { templateUrl, principalArn, ...argo } : null;
 }

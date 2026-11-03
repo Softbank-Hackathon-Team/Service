@@ -64,3 +64,14 @@ test("F17 거부: 모르거나 다른 계정이면 템플릿 기본(만듦), 링
   assert.ok(!awsQuickCreateUrl({ ...base, createBoundaryPolicy: true }).includes("CreateBoundaryPolicy"));
   assert.ok(!awsQuickCreateUrl(base).includes("CreateBoundaryPolicy"));
 });
+
+// ID-1: Argo 허브 역할은 설정에 있을 때만 링크에 들어간다
+test("ID-1: ARGO_HUB_ROLE_ARN 이 역할 ARN 이면 링크에 param_ArgoHubRoleArn, 없거나 이상하면 안 들어감", () => {
+  const env = { CONNECT_TEMPLATE_URL: base.templateUrl, PLATFORM_PRINCIPAL_ARN: base.principalArn };
+  const ok = connectSettings({ ...env, ARGO_HUB_ROLE_ARN: "arn:aws:iam::111122223333:role/argocd-hub" })!;
+  assert.equal(ok.argoHubRoleArn, "arn:aws:iam::111122223333:role/argocd-hub");
+  assert.ok(awsQuickCreateUrl({ ...base, argoHubRoleArn: ok.argoHubRoleArn }).includes(`param_ArgoHubRoleArn=${encodeURIComponent(ok.argoHubRoleArn!)}`));
+  assert.equal(connectSettings({ ...env, ARGO_HUB_ROLE_ARN: "arn:aws:iam::111122223333:user/x" })!.argoHubRoleArn, undefined);
+  assert.equal(connectSettings(env)!.argoHubRoleArn, undefined);
+  assert.ok(!awsQuickCreateUrl(base).includes("ArgoHubRoleArn"));
+});
