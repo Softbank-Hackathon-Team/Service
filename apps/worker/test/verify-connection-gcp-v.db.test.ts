@@ -31,7 +31,10 @@ const exec: Exec = async (cmd, args, o) => {
   if (fail && fail.re.test(line)) throw new CliError(cmd, args, 1, fail.stderr);
   const out = (o2: unknown) => ({ code: 0, stdout: JSON.stringify(o2), stderr: "", ms: 1 });
   if (/^gcloud projects describe/.test(line)) return out({ projectId: describeId, projectNumber: number });
-  if (/^gcloud container clusters list/.test(line)) return out([{ name: "shop" }]);
+  if (/^gcloud container clusters list/.test(line)) return out([{ name: "shop", location: "asia-northeast3" }]);
+  // GKE can-i: 임시 KUBECONFIG 만들기 + 쿠버네티스 읽기 확인 (verify/gcp.ts 5단계)
+  if (/^gcloud container clusters get-credentials /.test(line)) return { code: 0, stdout: "", stderr: "", ms: 1 };
+  if (/^kubectl .* auth can-i list deployments/.test(line)) return { code: 0, stdout: "yes\n", stderr: "", ms: 1 };
   return out([]);
 };
 const run: import("@svc/security").GcloudRun = async (args, env) => { issueArgs.push(args); issueEnvs.push(env); return { code: 0, stdout: TOKEN, stderr: "" }; };
@@ -146,7 +149,7 @@ test("오류→사유: describe 권한 없음 / 조직 정책 / 클러스터 목
     ["describe 권한", /^gcloud projects describe/, "ERROR: (gcloud.projects.describe) PERMISSION_DENIED: The caller does not have permission", "PERMISSION_MISSING:resourcemanager.projects.get"],
     ["조직 정책", /^gcloud container clusters list/, "Request is prohibited by organization's policy. constraints/gcp.resourceLocations", "ORG_POLICY_BLOCKED"],
     ["VPC-SC", /^gcloud sql instances list/, "VPC_SERVICE_CONTROLS violation 403", "ORG_POLICY_BLOCKED"],
-    ["sql 권한", /^gcloud sql instances list/, "403 Forbidden", "PERMISSION_MISSING:sql.instances.list"],
+    ["sql 권한", /^gcloud sql instances list/, "403 Forbidden", "PERMISSION_MISSING:cloudsql.instances.list"],
     ["실행 SA 없음", /^gcloud iam service-accounts describe/, "NOT_FOUND: Unknown service account", "ROLE_NOT_FOUND"],
   ];
   for (const [name, re, stderr, want] of cases) {

@@ -73,3 +73,26 @@ export function connectSettings(env: NodeJS.ProcessEnv = process.env): { templat
   const argo = hub && /^arn:aws:iam::\d{12}:role\/.+$/.test(hub) ? { argoHubRoleArn: hub } : {};
   return templateUrl && principalArn ? { templateUrl, principalArn, ...argo } : null;
 }
+
+// ── GCP Cloud Shell 연결 (L7) ──
+// 【사실: Google "Open in Cloud Shell" 문서】 https://shell.cloud.google.com/cloudshell/editor?cloudshell_git_repo=…&cloudshell_workspace=…&shellonly=true
+//   는 레포를 고객 Cloud Shell 에 복제하고 그 폴더에서 터미널을 연다. 환경변수는 링크로 못 넘긴다 → 화면이 명령 한 줄을 같이 보여 주고 고객이 붙여 넣는다
+// DRAFT(ai): 레포 주소(GCP_CONNECT_REPO_URL)가 없으면 빈 Cloud Shell 만 연다(고객이 스크립트를 따로 받아야 함). 키 파일은 어디에도 없다
+export interface GcpLinkInput { platformSa: string; projectId?: string | null; repoUrl?: string | null; repoBranch?: string | null }
+const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+export function gcpCloudShellLink(i: GcpLinkInput): { url: string; command: string } {
+  const url = i.repoUrl
+    ? `https://shell.cloud.google.com/cloudshell/editor?${[
+      `cloudshell_git_repo=${encodeURIComponent(i.repoUrl)}`,
+      ...(i.repoBranch ? [`cloudshell_git_branch=${encodeURIComponent(i.repoBranch)}`] : []),
+      "cloudshell_workspace=infra", "shellonly=true"].join("&")}`
+    : "https://shell.cloud.google.com/?show=terminal";
+  // 프로젝트를 아직 모르면(검증 전) 고객 gcloud 기본 프로젝트를 스크립트가 쓴다
+  const env = [`PLATFORM_SA=${shq(i.platformSa)}`, ...(i.projectId ? [`PROJECT_ID=${shq(i.projectId)}`] : []), "ROLE_DIR=./permissions"];
+  return { url, command: `${env.join(" ")} bash onboarding/gcp-connect.sh` };
+}
+export function gcpConnectSettings(env: NodeJS.ProcessEnv = process.env): { platformProject: string; repoUrl: string | null; repoBranch: string | null } | null {
+  const platformProject = env.GCP_PLATFORM_PROJECT?.trim();
+  if (!platformProject || !/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(platformProject)) return null;
+  return { platformProject, repoUrl: env.GCP_CONNECT_REPO_URL?.trim() || null, repoBranch: env.GCP_CONNECT_REPO_BRANCH?.trim() || null };
+}

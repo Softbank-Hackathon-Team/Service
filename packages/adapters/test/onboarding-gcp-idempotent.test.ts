@@ -146,7 +146,8 @@ test("DRY_RUN 은 확인 명령도 안 부르고, 이미 있어도 전부 출력
 });
 
 // ── OBSROLE3: 이미 만든 관찰 역할 권한 갱신 ──
-const OLD7 = "container.clusters.list,container.clusters.get,sql.instances.list,sql.instances.get,iam.serviceAccounts.get,iam.serviceAccounts.list,resourcemanager.projects.get";
+// GCP 권한 이름은 cloudsql.instances.* (예전 sql.instances.* 는 없는 권한이라 역할 만들기가 거절됐다)
+const OLD7 = "container.clusters.list,container.clusters.get,cloudsql.instances.list,cloudsql.instances.get,iam.serviceAccounts.get,iam.serviceAccounts.list,resourcemanager.projects.get";
 const permsOf = (e: ReturnType<typeof env>) => readFileSync(join(e.state, "role", "platform_observe"), "utf8").split(",").filter(Boolean);
 const wanted = (e: ReturnType<typeof env>) => { const f = env(); f.run(); return permsOf(f); };
 

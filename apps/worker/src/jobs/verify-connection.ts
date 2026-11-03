@@ -13,7 +13,7 @@ import { tempRoles } from "../platform.js";
 // 관찰 역할이 실제로 부르는 읽기 동작 (최소 권한 검사·장부에 남는 목록)
 export const VERIFY_ACTIONS = ["eks:ListClusters", "eks:DescribeCluster", "rds:DescribeDBInstances", "iam:GetRole", "guardduty:ListDetectors"];
 // L7i: GCP 관찰 SA 가 실제로 쓰는 권한 (gcp-connect.sh 의 platform_observe 안 목록의 부분집합)
-export const VERIFY_GCP_ACTIONS = ["resourcemanager.projects.get", "container.clusters.list", "sql.instances.list", "iam.serviceAccounts.get"];
+export const VERIFY_GCP_ACTIONS = ["resourcemanager.projects.get", "container.clusters.list", "cloudsql.instances.list", "iam.serviceAccounts.get"];
 // DRAFT(ai): 관찰 역할 15분 (STS 최소값, 설계 IA 6.1 "15분 빌림")
 export const VERIFY_TTL_SEC = 900;
 

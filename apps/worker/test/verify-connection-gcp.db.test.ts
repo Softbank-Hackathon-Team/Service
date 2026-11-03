@@ -24,7 +24,10 @@ const exec: Exec = async (cmd, args) => {
   const line = `${cmd} ${args.join(" ")}`;
   const out = (o: unknown, code = 0, err = "") => ({ code, stdout: JSON.stringify(o), stderr: err, ms: 1 });
   if (/^gcloud projects describe/.test(line)) return out({ projectId: P, projectNumber: number });
-  if (/^gcloud container clusters list/.test(line)) return out([{ name: "shop" }]);
+  if (/^gcloud container clusters list/.test(line)) return out([{ name: "shop", location: "asia-northeast3" }]);
+  // GKE can-i: 임시 KUBECONFIG 만들기 + 쿠버네티스 읽기 확인 (verify/gcp.ts 5단계)
+  if (/^gcloud container clusters get-credentials /.test(line)) return { code: 0, stdout: "", stderr: "", ms: 1 };
+  if (/^kubectl .* auth can-i list deployments/.test(line)) return { code: 0, stdout: "yes\n", stderr: "", ms: 1 };
   if (/^gcloud sql instances list/.test(line)) return denySql ? out(null, 1, "PERMISSION_DENIED") : out([]);
   return out({});
 };
@@ -86,7 +89,7 @@ test("거부: 고정된 프로젝트 번호와 다르면 failed ACCOUNT_MISMATCH
   assert.deepEqual(await job.handleVerifyConnection({ tenantId: T, envId: a, requestId: randomUUID(), reason: "user" }, deps()), { status: "failed", reason: "ACCOUNT_MISMATCH" });
   number = "123456789012"; denySql = true;
   const b = await env(T);
-  assert.equal((await job.handleVerifyConnection({ tenantId: T, envId: b, requestId: randomUUID(), reason: "user" }, deps())).reason, "PERMISSION_MISSING:sql.instances.list");
+  assert.equal((await job.handleVerifyConnection({ tenantId: T, envId: b, requestId: randomUUID(), reason: "user" }, deps())).reason, "PERMISSION_MISSING:cloudsql.instances.list");
   assert.equal((await row(b)).gcp_project_number, null);
   denySql = false;
   const other = await env(T2);

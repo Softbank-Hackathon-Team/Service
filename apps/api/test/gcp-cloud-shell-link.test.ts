@@ -1,0 +1,28 @@
+// L7: GCP Cloud Shell 연결 링크 (순수 함수). 실클라우드 호출 0
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { ConnectionLink } from "@svc/contracts";
+import { gcpCloudShellLink, gcpConnectSettings } from "../src/connect/link.js";
+
+const SA = "t-0123456789abcdef0123456789ab@platform-prj.iam.gserviceaccount.com";
+
+test("정상: 레포가 있으면 그 레포를 Cloud Shell 에 열고, 명령 한 줄에 회사 플랫폼 SA·프로젝트가 들어간다 (키 없음)", () => {
+  const l = gcpCloudShellLink({ platformSa: SA, projectId: "cust-prj-1", repoUrl: "https://github.com/x/y.git", repoBranch: "main" });
+  assert.match(l.url, /^https:\/\/shell\.cloud\.google\.com\/cloudshell\/editor\?cloudshell_git_repo=https%3A%2F%2Fgithub\.com%2Fx%2Fy\.git&cloudshell_git_branch=main&cloudshell_workspace=infra&shellonly=true$/);
+  assert.equal(l.command, `PLATFORM_SA='${SA}' PROJECT_ID='cust-prj-1' ROLE_DIR=./permissions bash onboarding/gcp-connect.sh`);
+  ConnectionLink.parse({ kind: "gcp_cloud_shell", ...l, expiresAt: "2026-11-04T00:00:00.000Z" });
+  assert.doesNotMatch(l.command + l.url, /key|json|credentials/i);
+});
+
+test("레포·프로젝트를 모르면 빈 Cloud Shell + PROJECT_ID 없는 명령 (스크립트가 gcloud 기본 프로젝트를 씀)", () => {
+  const l = gcpCloudShellLink({ platformSa: SA });
+  assert.equal(l.url, "https://shell.cloud.google.com/?show=terminal");
+  assert.doesNotMatch(l.command, /PROJECT_ID/);
+});
+
+test("거부: GCP_PLATFORM_PROJECT 가 없거나 모양이 틀리면 설정 없음(null → 503), 따옴표가 든 값은 셸에서 안 깨짐", () => {
+  assert.equal(gcpConnectSettings({}), null);
+  assert.equal(gcpConnectSettings({ GCP_PLATFORM_PROJECT: "Bad_Project" }), null);
+  assert.deepEqual(gcpConnectSettings({ GCP_PLATFORM_PROJECT: "platform-prj" }), { platformProject: "platform-prj", repoUrl: null, repoBranch: null });
+  assert.match(gcpCloudShellLink({ platformSa: SA, projectId: "a'b" }).command, /PROJECT_ID='a'\\''b'/);
+});
