@@ -210,3 +210,74 @@ test("DRY_RUN: 역할을 새로 만드는 명령만 나오고 describe·update �
   assert.equal(e.calls().length, 0, "DRY_RUN 은 gcloud 를 아무것도 부르지 않는다");
   assert.ok(!r.stdout.includes("roles update"));
 });
+
+// ---- VOBSROLE3: 갱신 경계 ----
+const NOT_ALLOWED_ON_UPDATE = /--remove-permissions|(^|\s)--permissions=|--file=|^iam roles delete/;
+
+test("VOBSROLE3: 삭제 표시된 예전 역할(권한 7개)은 undelete 뒤 빠진 권한만 더하고, 다시 실행하면 0번", () => {
+  const e = env();
+  e.run();
+  const want = wanted(e);
+  writeFileSync(join(e.state, "role", "platform_observe"), OLD7);
+  writeFileSync(join(e.state, "role", "platform_observe.deleted"), "");
+  const before = e.calls().length;
+  const r = e.run();
+  assert.equal(r.status, 0, r.stderr);
+  const second = e.calls().slice(before);
+  assert.deepEqual(second.filter((c) => MUTATING.test(c)).map((c) => c.split(" ").slice(0, 4).join(" ")),
+    ["iam roles undelete platform_observe", "iam roles update platform_observe"]);
+  assert.deepEqual(permsOf(e).sort(), [...want].sort());
+  const b2 = e.calls().length;
+  assert.equal(e.run().status, 0);
+  assert.equal(mutations(e.calls().slice(b2)).length, 0);
+});
+
+test("VOBSROLE3: 권한 비교는 이름 전체로 (순서 무관, 앞뒤가 붙은 비슷한 이름은 다른 권한)", () => {
+  const e = env();
+  e.run();
+  const want = wanted(e);
+  // 순서 뒤집고, 두 개는 비슷한 이름으로 바꿔 둔다 (substring 비교면 '있다'로 착각)
+  const fake = [...want].reverse().map((p) => p === "compute.regions.get" ? "compute.regions.getIamPolicy"
+    : p === "container.clusters.list" ? "xcontainer.clusters.list" : p);
+  writeFileSync(join(e.state, "role", "platform_observe"), fake.join(","));
+  const before = e.calls().length;
+  assert.equal(e.run().status, 0);
+  const upd = e.calls().slice(before).filter((c) => c.startsWith("iam roles update"));
+  assert.equal(upd.length, 1);
+  assert.deepEqual(/--add-permissions=(\S+)/.exec(upd[0]!)![1]!.split(",").sort(), ["compute.regions.get", "container.clusters.list"]);
+  // 다 있으면(순서만 다름) 0번
+  writeFileSync(join(e.state, "role", "platform_observe"), [...want].reverse().join(","));
+  const b2 = e.calls().length;
+  const r = e.run();
+  assert.equal(mutations(e.calls().slice(b2)).length, 0);
+  assert.match(r.stdout, /권한 최신/);
+});
+
+test("VOBSROLE3 거부: 권한 추가(update)가 거절돼도 나머지 연결 단계는 끝까지 하고 종료 0, 할 일을 알린다 (예전 스크립트 재실행보다 나빠지지 않음)", () => {
+  const e = env();
+  // 예전 버전으로 SA·관찰 역할만 만든 고객(바인딩 전): update 가 거절되어도 바인딩·tokenCreator 는 만들어져야 한다
+  mkdirSync(join(e.state, "sa"), { recursive: true });
+  writeFileSync(join(e.state, "sa", OBS), ""); writeFileSync(join(e.state, "role", "platform_observe"), OLD7);
+  writeFileSync(join(e.state, "fail"), "iam roles update");
+  const r = e.run();
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /권한 추가 실패/);
+  const calls = e.calls();
+  assert.equal(calls.filter((c) => c.startsWith("projects add-iam-policy-binding")).length, 3);
+  assert.equal(calls.filter((c) => c.startsWith("iam service-accounts add-iam-policy-binding")).length, 2);
+  assert.deepEqual(permsOf(e).sort(), OLD7.split(",").sort(), "실패했으니 권한은 그대로");
+});
+
+test("VOBSROLE3: 어떤 경우에도 지우는 명령이 없고, update 는 관찰 역할에만 --add-permissions 로", () => {
+  const e = env();
+  const all: string[] = [];
+  e.run();
+  writeFileSync(join(e.state, "role", "platform_observe"), OLD7 + ",custom.extra.permission"); e.run();
+  writeFileSync(join(e.state, "role", "platform_operate"), "only.one"); e.run();   // 실행 역할이 모자라도 자동 갱신 안 함
+  all.push(...e.calls());
+  const upd = all.filter((c) => /^iam roles (update|delete)/.test(c));
+  assert.ok(upd.length >= 1);
+  assert.equal(upd.some((c) => NOT_ALLOWED_ON_UPDATE.test(c)), false, upd.join("|"));
+  for (const c of all.filter((x) => x.startsWith("iam roles update"))) assert.match(c, /^iam roles update platform_observe --project=cust-prj --add-permissions=\S+$/);
+  assert.equal(readFileSync(join(e.state, "role", "platform_operate"), "utf8"), "only.one");
+});

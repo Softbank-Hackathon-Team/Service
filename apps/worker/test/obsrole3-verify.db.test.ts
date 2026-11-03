@@ -110,3 +110,64 @@ test("주기 재확인(periodic)은 선택 권한을 찌르지 않는다 (호출
   assert.equal(lines.filter((l) => PROBE.test(l)).length, 0);
   assert.equal((await row(id)).verify_detail.missingPermissions, undefined);
 });
+
+// ---- VOBSROLE3: 알림 수명·멱등 ----
+const userVerify = async (id: string) => {
+  await owner.query("UPDATE environments SET connection_status='verifying' WHERE id=$1", [id]);   // 화면의 "확인" 버튼 (시험 준비라 owner 로)
+  return job.handleVerifyConnection({ tenantId: T, envId: id, requestId: randomUUID(), reason: "user" }, deps());
+};
+
+test("VOBSROLE3: 고객이 스크립트를 다시 돌려 권한을 채우면 다음 사용자 확인에서 빠진 권한·할 일이 사라진다 (connected 그대로)", { skip }, async () => {
+  reset(); denied = new Set(["secrets list", "redis instances list"]);
+  const id = await env(T);
+  await userVerify(id);
+  assert.deepEqual((await row(id)).verify_detail.missingPermissions, ["redis.instances.list", "secretmanager.secrets.list"]);
+  denied = new Set();
+  const r = await userVerify(id);
+  assert.equal(r.status, "connected");
+  const e = await row(id);
+  assert.equal(e.connection_status, "connected");
+  assert.equal(e.verify_detail.missingPermissions, undefined);
+  assert.equal(e.verify_detail.needsHuman, undefined);
+  assert.equal((await auditOf(id, "env.verified")).detail.missingPermissions, undefined);
+});
+
+test("VOBSROLE3: 주기 재확인(찌르지 않음)은 지난 사용자 확인의 빠진 권한·할 일을 지우지 않는다 (찾은 버그)", { skip }, async () => {
+  reset(); denied = new Set(["secrets list"]);
+  const id = await env(T);
+  await userVerify(id);
+  const before = (await row(id)).verify_detail;
+  assert.deepEqual(before.missingPermissions, ["secretmanager.secrets.list"]);
+  const r = await job.handleVerifyConnection({ tenantId: T, envId: id, requestId: randomUUID(), reason: "periodic" }, deps());
+  assert.equal(r.status, "connected");
+  const after = (await row(id)).verify_detail;
+  assert.deepEqual(after.missingPermissions, before.missingPermissions);
+  assert.deepEqual(after.needsHuman, before.needsHuman);
+  assert.notEqual(after.checkedAt, undefined);
+  // 빠진 게 없던 환경은 주기 재확인 뒤에도 키가 안 생김
+  reset();
+  const ok = await env(T, { status: "connected", number: "123456789012" });
+  await job.handleVerifyConnection({ tenantId: T, envId: ok, requestId: randomUUID(), reason: "periodic" }, deps());
+  assert.deepEqual(Object.keys((await row(ok)).verify_detail).sort(), ["checkedAt", "clusters"]);
+});
+
+test("VOBSROLE3 멱등: 같은 빠진 권한으로 두 번 확인해도 상세는 같고(시각 빼고), 감사는 확인마다 한 줄", { skip }, async () => {
+  reset(); denied = new Set(["services list", "secrets list"]);
+  const id = await env(T);
+  await userVerify(id);
+  const a = (await row(id)).verify_detail;
+  await userVerify(id);
+  const b = (await row(id)).verify_detail;
+  delete a.checkedAt; delete b.checkedAt;
+  assert.deepEqual(a, b);
+  const n = (await owner.query("SELECT count(*)::int n FROM audit_events WHERE target=$1 AND action='env.verified'", [id])).rows[0].n;
+  assert.equal(n, 2);
+});
+
+test("VOBSROLE3 거부: 다른 회사 작업으로는 남의 환경을 확인하지 못하고 상태·상세가 안 바뀐다", { skip }, async () => {
+  reset(); denied = new Set(["secrets list"]);
+  const id = await env(T);
+  const before = await row(id);
+  await job.handleVerifyConnection({ tenantId: T2, envId: id, requestId: randomUUID(), reason: "user" }, deps()).catch(() => null);
+  assert.deepEqual(await row(id), before);
+});

@@ -8,6 +8,7 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pg from "pg";
+import { AppSpec as AppSpecC } from "@svc/contracts";
 
 const DB = process.env.DATABASE_URL, OWNER = process.env.OWNER_DATABASE_URL;
 const skip = !DB || !OWNER ? "DATABASE_URL / OWNER_DATABASE_URL 없음 (DB 시험 건너뜀)" : false;
@@ -24,11 +25,11 @@ const prev = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
 
 type Reply = { code?: number; out?: unknown; err?: string };
 const D = "sha256:" + "ab".repeat(32);
-const KC: Array<[string, Reply]> = [
+const KC = (extraEnv: Array<{ name: string; value: string }> = []): Array<[string, Reply]> => [
   ["^kubectl get deployments", { out: { items: [{ kind: "Deployment", metadata: { name: "shop-api", namespace: "shop", labels: { app: "shop-api" } }, spec: { replicas: 2, selector: { matchLabels: { app: "shop-api" } },
     template: { metadata: { labels: { app: "shop-api" } }, spec: { containers: [{ name: "api", image: "ghcr.io/demo/shop-api:1.0", ports: [{ containerPort: 8080 }], resources: { requests: { cpu: "500m", memory: "512Mi" } },
       env: [{ name: "QUEUE_URL", value: "https://sqs.ap-northeast-1.amazonaws.com/123456789012/orders" }, { name: "BUCKET", value: "shop-assets" },
-            { name: "REDIS_HOST", value: "shop-cache.abc.ng.0001.apne1.cache.amazonaws.com" }] }] } } } }] } }],
+            { name: "REDIS_HOST", value: "shop-cache.abc.ng.0001.apne1.cache.amazonaws.com" }, ...extraEnv] }] } } } }] } }],
   ["^kubectl get pods", { out: { items: [{ metadata: { name: "shop-api-1", namespace: "shop", labels: { app: "shop-api" } }, status: { containerStatuses: [{ name: "api", imageID: `ghcr.io/demo/shop-api@${D}` }] } }] } }],
   ["^kubectl get nodes", { out: { items: [] } }],
   ["^kubectl get (services|ingresses|horizontalpodautoscalers|cronjobs|statefulsets|configmaps|namespaces)", { out: { items: [] } }],
@@ -55,7 +56,7 @@ const AWS: Array<[string, Reply]> = [
   ["^aws elasticache describe-replication-groups", { out: { ReplicationGroups: [{ ReplicationGroupId: "shop-cache", MemberClusters: ["shop-cache-001"], CacheNodeType: "cache.t4g.medium",
     NodeGroups: [{ PrimaryEndpoint: { Address: "shop-cache.abc.ng.0001.apne1.cache.amazonaws.com" } }], ClusterEnabled: false, MultiAZ: "enabled", TransitEncryptionEnabled: true }] } }],
   ["^aws elasticache describe-cache-clusters", { out: { CacheClusters: [{ Engine: "redis", EngineVersion: "7.1.0" }] } }],
-  ...KC,
+  ...KC(),
 ];
 const GCP: Array<[string, Reply]> = [
   ["^gcloud projects describe", { out: { projectId: "p" } }],
@@ -68,7 +69,7 @@ const GCP: Array<[string, Reply]> = [
   ["gcloud pubsub subscriptions list", { out: [{ name: "projects/p/subscriptions/orders-sub", topic: "projects/p/topics/orders", ackDeadlineSeconds: 60,
     deadLetterPolicy: { deadLetterTopic: "projects/p/topics/orders-dlq", maxDeliveryAttempts: 5 } }] }],
   ["gcloud redis instances list", { out: [{ name: "projects/p/locations/asia-northeast3/instances/shop-cache", redisVersion: "REDIS_7_0", memorySizeGb: 2, tier: "STANDARD_HA", host: "10.9.0.3" }] }],
-  ...KC,
+  ...KC([{ name: "CACHE_ADDR", value: "10.9.0.3" }]),
 ];
 
 function installFakeClis(table: Array<[string, Reply]>) {
@@ -117,6 +118,7 @@ const specRow = async (id: string) => (await owner.query(`SELECT spec, field_met
   { spec: any; field_meta: any; spec_v2: any };
 const pjob = (id: string) => ({ tenantId: T, requestId: `r-e2ed-${id.slice(0, 8)}`, migrationId: id });
 const job = (id: string) => ({ ...pjob(id), planId: randomUUID() });
+const contractsAppSpec = (x: unknown) => AppSpecC.parse(x);
 const comps = (v2: any, kind: string) => (v2.spec.components as Array<{ id: string; kind: string; props: any }>).filter((c) => c.kind === kind);
 
 async function importWith(provider: "aws" | "gcp", dst: "aws" | "gcp") {
@@ -193,6 +195,8 @@ async function humanFix(id: string) {
 for (const [src, dst] of [["aws", "gcp"], ["aws", "aws"], ["gcp", "aws"], ["gcp", "gcp"]] as const) {
   test(`끝-끝 ${src}→${dst}: 점검 → 사람 수정 → 점검 통과 → 계획 → 승인 → apply(흉내) 까지 데이터 자원이 빠지지 않는다`, { skip }, async () => {
     const id = await importWith(src, dst);
+    // 도착 환경의 계정/프로젝트 (연결 확인이 채우는 값. 시험용 가짜)
+    await owner.query(`UPDATE environments SET account_id = $2 WHERE id = (SELECT target_env_id FROM migrations WHERE id=$1)`, [id, dst === "aws" ? "000000000000" : "demo-project"]);
     await owner.query(`UPDATE migrations SET status='prechecking' WHERE id=$1`, [id]);
     process.env.PLAN_IR = "v2";
     await pre.handlePrecheck(pjob(id));
@@ -231,6 +235,29 @@ for (const [src, dst] of [["aws", "gcp"], ["aws", "aws"], ["gcp", "aws"], ["gcp"
     assert.equal(m.status, "deploying", `apply ${m.status}/${m.failure_code}`);
     const infra = (await core.withTenant(T, (tx) => core.loadInfraReady(tx, id)))!;
     for (const d of dataIds) assert.ok(Object.keys(infra.tfOutputs).some((k) => k.startsWith(`link.${d}.`)), `apply 출력에 link.${d}.* 없음: ${Object.keys(infra.tfOutputs).join()}`);
+    // ⑤ 배포 (E2EDATA3): 진짜 deployToGitops(가짜 레포·감시자)로 계획서·명세·apply 출력에서 Helm 값을 만들어 본다
+    const adapters = await import("@svc/adapters");
+    const gitops = await import("../src/gitops/index.js");
+    const loaded = await core.withTenant(T, async (tx) => ({
+      plan: (await core.loadPlanById(tx, infra.planId))!, spec: (await core.latestAcceptedSpec(tx, id))!, row: (await core.latestAcceptedSpecV2(tx, id))!,
+      env: (await tx.query(`SELECT provider, account_id AS "accountId" FROM environments WHERE id=$1`, [mg.d])).rows[0] as { provider: "aws" | "gcp"; accountId: string | null } }));
+    const commits: unknown[] = [];
+    const repo = { chartVersion: async () => "0.1.0", commitBundle: async (_k: string, _b: unknown, values: unknown) => {
+      commits.push(structuredClone(values)); return { commit: "c1", bundleSha256: "sha", resources: ["Deployment/x"], changed: true }; } } as unknown as import("../src/gitops/index.js").GitopsRepo;
+    const out = await gitops.deployToGitops(repo, { tenantId: T, spec: contractsAppSpec(loaded.spec), plan: loaded.plan, tfOutputs: infra.tfOutputs,
+      specV2: adapters.specV2ForPlan(loaded.row, loaded.plan.specSource), target: { envId: mg.d, provider: loaded.env.provider, region: "default", accountId: loaded.env.accountId } }, { wait: async () => ({ ok: true }) });
+    assert.equal(out.result.status, loaded.env.provider === "aws" || loaded.env.provider === "gcp" ? out.result.status : "synced_healthy");
+    const text = JSON.stringify(commits[0]);
+    assert.ok(!/<tf-output|<env:/.test(text), "자리표시가 값에 남음");
+    const cacheId = [...dataIds].find((d) => /cache/.test(d))!;
+    assert.ok(text.includes(String(infra.tfOutputs[`link.${cacheId}.host`])), `캐시 주소(link.${cacheId}.host)가 배포 값에 안 들어감`);
+    // 출발에서 읽은 데이터 자원 주소만 본다 (도착 ECR 같은 도착 쪽 amazonaws.com 은 정상). gcp 가짜 앱 env 의 SQS 글자값은 출발 자원이 아닌 바깥 주소라 뺀다
+    const leak = text.match(src === "aws" ? /.{40}(sqs\.ap-northeast-1|\.cache\.amazonaws).{30}/g : /.{40}10\.9\.0\.3.{30}/g);
+    assert.ok(!leak, `출발 주소가 도착 배포 값에 남음: ${leak?.join(" // ")}`);
+    // 진짜 handleDeploy (MOCK_ARGO 흉내 길): deploying → syncing
+    const dp = await import("../src/jobs/deploy.js");
+    await dp.handleDeploy(pjob(id));
+    assert.equal((await mig(id)).status, "syncing");
     await owner.query("DELETE FROM env_locks WHERE migration_id=$1", [id]);
   });
 }

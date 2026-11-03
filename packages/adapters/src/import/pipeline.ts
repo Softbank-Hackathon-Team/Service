@@ -89,7 +89,7 @@ export function normalizeV2(raw: RawInventory, opts: NormalizeV2Options = {}): N
       //   DLQ 로 쓰이는 토픽은 모아 두고 꺼내 읽는 큐이므로 model 을 queue 로 올리고 검토 표시 (팀 검토 대상)
       if (target.props.model === "topic") {
         target.props.model = "queue";
-        target.meta.model = [target.meta.model?.[0] ?? "dlq", 0.9, `${q.id} 의 DLQ 로 쓰이는 토픽 → 꺼내 읽는 queue 로 둠. 사람 확인 필요`];
+        target.meta.model = [target.meta.model?.[0] ?? "dlq", 0.9, `${q.id} 의 DLQ 대상으로 쓰이는 토픽 → 꺼내 읽는 queue 로 둠. 사람 확인 필요`];
       }
     }
     else q.meta.deadLetter = [q.meta.deadLetter?.[0] ?? "dlq", 0.6, `DLQ ${q.deadLetterRef.name} 를 이 가져오기에서 못 찾음 (다른 계정·리전일 수 있음)`];
