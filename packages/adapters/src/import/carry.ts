@@ -104,9 +104,9 @@ export function carryHumanEdits(fresh: ImportResultV2, history: PrevSpecV2[]): {
       }
     }
   }
-  // ── links · entry · posture (PREVIDS3) ──
+  // ── links · entry · posture · security (PREVIDS3) ──
   const ids = new Set((result.spec.components as Array<{ id: string }>).map((c) => c.id));
-  for (const key of ["links", "entry", "posture"] as const) {
+  for (const key of ["links", "entry", "posture", "security"] as const) {
     const hi = hist.findIndex((h) => h.fieldMeta[key]?.source === "human");
     if (hi < 0) continue;
     const H = hist[hi]!;
@@ -171,7 +171,9 @@ function merge3(Bi: Obj[] | undefined, Hi: Obj[], Fi: Obj[], sp: Spec3): { items
 }
 
 const str = (x: unknown) => canon(x);
-function mergeTop(key: "links" | "entry" | "posture", B: unknown, hasB: boolean, H: unknown, F: unknown, ids: Set<string>): { value: unknown; conflict: boolean; dropped: string[] } {
+function mergeTop(key: "links" | "entry" | "posture" | "security", B: unknown, hasB: boolean, H: unknown, F: unknown, ids: Set<string>): { value: unknown; conflict: boolean; dropped: string[] } {
+  // security 는 가져오기가 채우지 않는다 (F 는 늘 비어 있음). 사람이 넣은 요구사항을 그대로 둔다
+  if (key === "security") return { value: H, conflict: false, dropped: [] };
   const idOk = (id: unknown) => typeof id === "string" && ids.has(id);
   if (key === "links") {
     const r = merge3(hasB ? (B as Obj[]) ?? [] : undefined, (H as Obj[]) ?? [], (F as Obj[]) ?? [], {

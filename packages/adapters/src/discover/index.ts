@@ -137,7 +137,8 @@ export async function discoverAws(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
     ...data,
     ...(db ? [{ kind: "rds.dbInstance", DBInstanceIdentifier: db.DBInstanceIdentifier, Engine: db.Engine, EngineVersion: db.EngineVersion,
       AllocatedStorage: db.AllocatedStorage, DBInstanceClass: db.DBInstanceClass, Endpoint: get(db, "Endpoint", "Address") ?? null,
-      ...(opts.ir === "v2" ? { MultiAZ: db.MultiAZ ?? null, PubliclyAccessible: db.PubliclyAccessible ?? null, MaxAllocatedStorage: db.MaxAllocatedStorage ?? null, DBInstanceArn: db.DBInstanceArn ?? null } : {}) }] : []),
+      ...(opts.ir === "v2" ? { MultiAZ: db.MultiAZ ?? null, PubliclyAccessible: db.PubliclyAccessible ?? null, MaxAllocatedStorage: db.MaxAllocatedStorage ?? null, DBInstanceArn: db.DBInstanceArn ?? null,
+        StorageEncrypted: db.StorageEncrypted ?? null } : {}) }] : []),   // 보안 판정용 출발 사실 (import/security-facts.ts). KmsKeyId 는 키 소유를 못 가려 안 읽는다
     ...(cl ? [{ kind: "eks.cluster", name: cl.name, version: get(desc, "version") ?? null, vpcId }] : []),
     ...(ecs?.items ?? []),
     ...(vm?.items ?? []),

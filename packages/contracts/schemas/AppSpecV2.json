@@ -4793,7 +4793,61 @@
       ],
       "additionalProperties": false
     },
-    "security": {}
+    "security": {
+      "type": "object",
+      "properties": {
+        "requirements": {
+          "type": "object",
+          "properties": {
+            "dataClass": {
+              "type": "string",
+              "enum": [
+                "public",
+                "internal",
+                "personal",
+                "sensitive"
+              ]
+            },
+            "residency": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Z]{2}$"
+              }
+            },
+            "keyOwnership": {
+              "type": "string",
+              "enum": [
+                "provider",
+                "customer"
+              ]
+            },
+            "operatorAllow": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "customer",
+                  "aws",
+                  "gcp",
+                  "azure"
+                ]
+              }
+            }
+          },
+          "required": [
+            "dataClass",
+            "residency",
+            "keyOwnership"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "requirements"
+      ],
+      "additionalProperties": false
+    }
   },
   "required": [
     "schemaVersion",

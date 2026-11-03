@@ -4796,7 +4796,61 @@
           ],
           "additionalProperties": false
         },
-        "security": {}
+        "security": {
+          "type": "object",
+          "properties": {
+            "requirements": {
+              "type": "object",
+              "properties": {
+                "dataClass": {
+                  "type": "string",
+                  "enum": [
+                    "public",
+                    "internal",
+                    "personal",
+                    "sensitive"
+                  ]
+                },
+                "residency": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[A-Z]{2}$"
+                  }
+                },
+                "keyOwnership": {
+                  "type": "string",
+                  "enum": [
+                    "provider",
+                    "customer"
+                  ]
+                },
+                "operatorAllow": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "customer",
+                      "aws",
+                      "gcp",
+                      "azure"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "dataClass",
+                "residency",
+                "keyOwnership"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "requirements"
+          ],
+          "additionalProperties": false
+        }
       },
       "required": [
         "schemaVersion",
@@ -9288,6 +9342,125 @@
     "environment": {
       "type": "array",
       "items": {}
+    },
+    "securityFacts": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9-]{0,39}$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "encryptedAtRest": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "origin": {
+                "type": "string",
+                "enum": [
+                  "measured",
+                  "attested",
+                  "unknown"
+                ]
+              },
+              "source": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "value",
+              "origin",
+              "source"
+            ],
+            "additionalProperties": false
+          },
+          "keyOwner": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "provider",
+                      "customer"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "origin": {
+                "type": "string",
+                "enum": [
+                  "measured",
+                  "attested",
+                  "unknown"
+                ]
+              },
+              "source": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "value",
+              "origin",
+              "source"
+            ],
+            "additionalProperties": false
+          },
+          "tlsEnforced": {
+            "type": "object",
+            "properties": {
+              "value": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "origin": {
+                "type": "string",
+                "enum": [
+                  "measured",
+                  "attested",
+                  "unknown"
+                ]
+              },
+              "source": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "value",
+              "origin",
+              "source"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "encryptedAtRest",
+          "keyOwner",
+          "tlsEnforced"
+        ],
+        "additionalProperties": false
+      }
     }
   },
   "required": [

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { BuildPlan } from "./build.js";
+import { SecuritySpecV2, SourceDbFacts } from "./portability.js";
 
 // DRAFT(ai): 공통 명세(IR) v2. 리소스(components) + 의존성(links) + 라우팅(entry) + 보안 기준선(posture).
 //   설계 20번 4장 스케치 + 24번 I1 + 3.5장 R1~R3. 이름·상한·종류 목록은 팀 검토 대상.
@@ -296,7 +297,7 @@ export const AppSpecV2 = z.object({
   links: z.array(LinkV2).max(100),
   entry: EntriesV2.optional(),
   posture: PostureV2,
-  security: z.unknown().optional(),                     // 보안 명세 파트 자리. 일반 IR 은 비워 둔다
+  security: SecuritySpecV2.optional(),                  // 보안 명세 파트. 가져오기는 비워 두고 고객이 명세 검토에서 넣는다 (PATCH "security")
 }).strict();
 export type AppSpecV2 = z.infer<typeof AppSpecV2>;
 
@@ -348,6 +349,9 @@ export const ImportResultV2 = z.object({
   included: z.array(z.string().max(300)).max(200).optional(),                  // BOUNDPULL: 사람이 끌어온 자원("<원본종류>:<이름>"). 재가져오기 때도 경계 안 유지
   ids: z.record(z.string(), Id),                        // 벤더 고유 키 → id. 재가져오기 때 같은 id 유지
   environment: z.array(z.unknown()).optional(),         // 근거·환경 종류로 읽은 항목 (매퍼 몫)
+  // 가져오기가 출발 원본에서 읽은 DB 보안 사실 (postgres 구성요소 id → 사실). spec 밖이라 사람이 PATCH 로 못 고친다.
+  //   다시 가져오면 새로 읽은 값으로 바뀐다 (carry 대상 아님). 없으면 옛 판 = 출발 사실 모름
+  securityFacts: z.record(Id, SourceDbFacts).optional(),
 }).strict();
 export type ImportResultV2 = z.infer<typeof ImportResultV2>;
 
