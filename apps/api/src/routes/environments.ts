@@ -6,7 +6,7 @@ import {
   type Provider,
 } from "@svc/contracts";
 import {
-  withTenant, advanceConnection, writeAudit, DomainError, BadRequest, INACTIVE_STATES, type Tx,
+  withTenant, advanceConnection, writeAudit, DomainError, BadRequest, INACTIVE_STATES, staleMigrationsForEnvChange, type Tx,
 } from "@svc/core";
 import { cachedInventory, chooseRunner, inventoryToStatus } from "@svc/adapters";
 import { EnvironmentList, EnvironmentStatus, errors } from "./responses.js";
@@ -163,12 +163,17 @@ export async function environmentRoutes(app: FastifyInstance) {
       throw new BadRequest("LINK_EXPIRED", "connection link expired, issue a new one");
     }
     return req.idempotent(reply, async (tx) => {
+      const prev = (await tx.query<{ account_id: string | null }>("SELECT account_id FROM environments WHERE id = $1", [id])).rows[0]?.account_id ?? null;
       await tx.query("UPDATE environments SET account_id = $2 WHERE id = $1", [id, req.body.accountId]);
       const res = await advanceConnection(tx, req.tenantId, id, "verifying", {
         from: ["awaiting_customer", "failed"],
         verifyJob: { tenantId: req.tenantId, requestId: req.id, reason: "user" },
         audit: { actor: req.actor, action: "env.verify_requested" },
       });
+      // G7-3: 다른 계정으로 다시 연결하면 이 환경을 쓰는 승인 대기·승인됨 이전은 사람이 본 계획과 실행할 곳이 달라진다 → stale(env_changed).
+      //   처음 넣는 계정(prev 없음)·같은 계정이면 안 건드림. 연결 상태 전이가 409 면 위에서 던져 같이 롤백
+      if (prev !== null && prev !== req.body.accountId)
+        await staleMigrationsForEnvChange(tx, req.tenantId, id, req.actor, { reason: "account_changed" });
       return { status: 202, body: { envId: id, status: "verifying" as const, queued: res.jobQueued === true } };
     });
   });
