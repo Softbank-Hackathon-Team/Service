@@ -277,7 +277,7 @@ contracts의 화면용 모양 `MigrationView`는 열 칸이다. 지금 응답에
 | 오류 | 언제 |
 |---|---|
 | 400 `SPEC_PATH_IR_MISMATCH` | 판의 IR 버전과 경로 종류가 다름 |
-| 400 `SPEC_PATCH_INVALID` | v2 모양 검사·`checkV2`·다시 뽑기 실패 (칸 이름과 이유만, 값은 안 돌려줌) |
+| 400 `SPEC_PATCH_INVALID` | v2 모양 검사·`checkV2`·다시 뽑기 실패 (칸 이름과 이유만, 값은 안 돌려줌). 출발 원래 실행 모양 `components.<id>.origin` 을 고치려 해도 400 (가져오기가 정한 값, 도착 실행 방식은 `runtime` 으로 바꾸고 승인) |
 | 400 `SPEC_DRAFT_NOT_FOUND` | 없는 초안 번호 |
 | 409 `SPEC_DRAFT_STALE` | 받아들인 판보다 옛 초안 |
 | 409 `SPEC_DRAFT_NOT_ACCEPTED` | 초안만 있는데 `acceptDraft` 없이 고침 |

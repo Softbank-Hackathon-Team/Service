@@ -12,7 +12,8 @@
         "objectStore",
         "queue",
         "job",
-        "service"
+        "service",
+        "vm"
       ]
     },
     "id": {

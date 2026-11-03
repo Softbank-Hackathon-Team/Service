@@ -118,6 +118,25 @@ variable "service_json" {
   }
 }
 
+# RUNTIMEMAP v2: VM 서비스 (EC2). 항목 모양 = tf-kinds.ts VmTfVars. 비면 아무것도 안 만듦 (기존 계획 그대로)
+variable "vm_json" {
+  type    = string
+  default = "[]"
+  validation {
+    condition     = can(jsondecode(var.vm_json)) && length(distinct([for x in jsondecode(var.vm_json) : x.id])) == length(jsondecode(var.vm_json))
+    error_message = "vm_json: id 가 겹침."
+  }
+  # 루트에도 같은 검사 (모듈 안 검증은 expect_failures 로 못 잡음): 대수 1~20, 이미지는 digest 고정
+  validation {
+    condition     = can(jsondecode(var.vm_json)) && alltrue([for x in jsondecode(var.vm_json) : x.instances >= 1 && x.instances <= 20])
+    error_message = "vm_json: VM 대수(instances)는 1~20."
+  }
+  validation {
+    condition     = can(jsondecode(var.vm_json)) && alltrue([for x in jsondecode(var.vm_json) : can(regex("@sha256:[0-9a-f]{64}$", x.image))])
+    error_message = "vm_json: 이미지는 digest 로 고정 (재현성)."
+  }
+}
+
 # JOBMOD: 관리형 컨테이너 예약 잡 (EventBridge Scheduler → ECS RunTask). 항목 모양 = tf-kinds.ts JobTfVars. 비면 아무것도 안 만듦 (기존 계획 그대로)
 variable "job_json" {
   type    = string
@@ -165,7 +184,7 @@ locals {
   queue_dl     = { for id, x in local.queue_all : id => x if contains(local.queue_dl_ids, id) }
   queue        = { for id, x in local.queue_all : id => x if !contains(local.queue_dl_ids, id) }
   # TA5fix: link_outputs 는 IR id 로 합치므로 종류가 달라도 id 가 겹치면 안 된다 (VTA5h: 예전엔 조용히 덮어씀)
-  link_ids = concat(keys(local.postgres), keys(local.cache), keys(local.object_store), keys(local.queue_all), keys(local.service), keys(local.job))
+  link_ids = concat(keys(local.postgres), keys(local.cache), keys(local.object_store), keys(local.queue_all), keys(local.service), keys(local.job), keys(local.vm))
   # 클러스터 없이는 k8s 쪽 종류(namespace·identity)를 안 만든다
   namespace = local.cluster == 1 ? { for n in jsondecode(var.namespace_json) : n.name => n } : {}
   identity  = local.cluster == 1 ? { for i in jsondecode(var.identity_json) : i.id => i } : {}
@@ -195,10 +214,17 @@ locals {
   # JOBMOD: 예약 잡도 ECS 를 쓴다 → 서비스 또는 잡이 있으면 ECS 공용 자원(클러스터·보안 그룹)을 만든다
   job    = { for x in jsondecode(var.job_json) : x.id => x }
   svc_on = length(local.service) + length(local.job) > 0 ? 1 : 0
+  # RUNTIMEMAP v2: VM(EC2). ECS 클러스터는 필요 없고 보안 그룹만 ECS 와 같은 것을 씀 (DB 가 받아 줄 앱 쪽 그룹)
+  vm    = { for x in jsondecode(var.vm_json) : x.id => x }
+  vm_on = length(local.vm) > 0 ? 1 : 0
+  sg_on = local.svc_on + local.vm_on > 0 ? 1 : 0
   # DRAFT(ai): env 층엔 ECS 클러스터가 없다 → 앱 루트가 클러스터·보안 그룹·Service Connect 이름 공간을 만든다 (이전마다 해시)
   svc_base = "app-${var.app_name}-${substr(sha1("${var.tenant_id}/${var.app_name}"), 0, 6)}"
   # 비밀 그릇 = 서비스들이 쓰는 이름 합집합 (k8s 신원 모듈과 같은 platform/<tenant>/<app>/<이름>, Builder 가 전체 이름을 넘김)
-  svc_secret_names = toset(flatten([for x in local.service : [for s in jsondecode(x.secrets_json) : s.secret]]))
+  svc_secret_names = toset(concat(
+    flatten([for x in local.service : [for s in jsondecode(x.secrets_json) : s.secret]]),
+    flatten([for x in local.vm : [for s in jsondecode(x.secrets_json) : s.secret]]),
+  ))
   # env 조각의 ref("<IR id>.<출력>") 값표 = 데이터 자원 link 출력 + 서비스 주소(Service Connect: host = IR id)
   link_values = merge(
     merge([for id, m in module.postgres : { for k, v in m.link : "${id}.${k}" => v }]...),
@@ -218,11 +244,15 @@ locals {
     value = try(local.link_values[regex("^<tf-output:link\\.([a-z][a-z0-9-]*\\.[a-z]+)>$", e.value)[0]], e.value)
   }] }
   job_cfg = { for id, x in local.job : id => merge(x, { env_json = jsonencode(local.job_env_rows[id]) }) }
+  # VM env 도 같은 규칙으로 조각을 합친다. VM 주소는 apply 뒤에야 알아서 다른 VM 을 가리키는 ref 는 Builder 가 계획 전에 막는다 (순환 방지)
+  vm_cfg = { for id, x in local.vm : id => merge(x, {
+    env_json = jsonencode([for e in jsondecode(x.env_json) : { name = e.name, value = join("", [for p in e.parts : p.ref == null ? p.lit : local.link_values[p.ref]]) }])
+  }) }
   service_cfg = { for id, x in local.service : id => merge(x, {
     env_json = jsonencode([for e in jsondecode(x.env_json) : { name = e.name, value = join("", [for p in e.parts : p.ref == null ? p.lit : local.link_values[p.ref]]) }])
   }) }
   # DB·캐시가 받아 줄 앱 쪽 보안 그룹: 서비스가 있으면 ECS 쪽, 아니면 EKS 클러스터 SG (v1 과 같음)
-  app_sg_id = local.svc_on == 1 ? aws_security_group.svc[0].id : try(data.aws_eks_cluster.this[0].vpc_config[0].cluster_security_group_id, "")
+  app_sg_id = local.sg_on == 1 ? aws_security_group.svc[0].id : try(data.aws_eks_cluster.this[0].vpc_config[0].cluster_security_group_id, "")
 }
 
 data "aws_eks_cluster" "this" {
@@ -315,9 +345,9 @@ resource "aws_service_discovery_http_namespace" "svc" {
 
 # 서비스끼리(Service Connect)만 받는다. 입구(ALB·Cloudflare)는 아직 없음 → TODO(human) 아래
 resource "aws_security_group" "svc" {
-  count       = local.svc_on
+  count       = local.sg_on
   name        = local.svc_base
-  description = "platform ECS services"
+  description = "platform ECS services / VMs"
   vpc_id      = var.vpc_id
   ingress {
     from_port = 0
@@ -354,6 +384,19 @@ module "service" {
   tags                          = { managed-by = "platform", tenant = var.tenant_id, app = var.app_name }
 }
 
+# RUNTIMEMAP v2: EC2 VM (VM 이 있을 때만). 서브넷은 서비스와 같은 곳(DB 와 같은 사설), 보안 그룹은 DB 가 받아 주는 그것
+module "vm" {
+  source             = "../kinds/vm"
+  for_each           = local.vm_cfg
+  cfg                = each.value
+  subnet_ids         = jsondecode(var.db_subnet_ids_json)
+  security_group_ids = [aws_security_group.svc[0].id]
+  region             = var.region
+  boundary_arn       = var.app_role_boundary_arn
+  secret_arns        = { for n, x in aws_secretsmanager_secret.svc : n => x.arn }
+  tags               = { managed-by = "platform", tenant = var.tenant_id, app = var.app_name }
+}
+
 # JOBMOD: ECS 예약 잡 (잡이 있을 때만). 클러스터·서브넷·보안 그룹은 서비스와 같은 것을 씀
 module "job" {
   source             = "../kinds/job"
@@ -381,7 +424,7 @@ resource "terraform_data" "kind_ids" {
   lifecycle {
     precondition {
       condition     = length(distinct(local.link_ids)) == length(local.link_ids)
-      error_message = "postgres·cache·objectStore·queue·service·job 사이에 같은 IR id 가 있음 (IR id 는 전역 유일)."
+      error_message = "postgres·cache·objectStore·queue·service·job·vm 사이에 같은 IR id 가 있음 (IR id 는 전역 유일)."
     }
   }
 }
@@ -414,6 +457,16 @@ output "identity_role_arns" {
 # TA13: 관리형 서비스 (IR id → ECS 서비스 이름). 없으면 빈 값
 output "service_names" {
   value = { for id, m in module.service : id => m.service_name }
+}
+# RUNTIMEMAP v2: VM (IR id → 인스턴스 id 목록 / 사설 IP 목록 / 머신 종류). 없으면 빈 값
+output "vm_instance_ids" {
+  value = { for id, m in module.vm : id => m.instance_ids }
+}
+output "vm_private_ips" {
+  value = { for id, m in module.vm : id => m.private_ips }
+}
+output "vm_machine_types" {
+  value = { for id, m in module.vm : id => m.machine_type }
 }
 output "ecs_cluster_name" { value = local.svc_on == 1 ? aws_ecs_cluster.svc[0].name : "" }
 

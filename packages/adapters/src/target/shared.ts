@@ -107,10 +107,15 @@ export function requirementsV2(spec: AppSpecV2): Capability[] {
 export function v2Blockers(spec: AppSpecV2, caps: Capability[]): { unsupported: string[]; needsHuman: string[] } {
   const have = new Set(caps);
   // I9: 관리형 컨테이너(ECS·Cloud Run) 렌더는 아직 없음 → 막고, 어느 서비스인지·어떻게 풀지 적는다 (모듈은 kinds/service-ecs·service-cloudrun 카탈로그만)
-  const hint = (x: Capability) => x !== "runtime.managedContainer" ? "" :
-    ` (서비스 ${spec.components.filter((c) => c.kind === "service" && c.props.runtime === "managedContainer").map((c) => c.id).sort().join(",")} — 명세 검토에서 runtime 을 k8s 로 바꾸면 EKS·GKE·k3s 로 옮김, 실행 방식 바뀜 승인)`;
+  // RUNTIMEMAP v2: VM 출발은 VM 도착이 기본 (재현성). VM 모듈이 없는 도착(온프레·Azure 가짜)은 막고, 컨테이너로 옮기려면 runtime 을 바꾸고 승인 (opt-in)
+  const hint = (x: Capability) => x === "runtime.managedContainer"
+    ? ` (서비스 ${spec.components.filter((c) => c.kind === "service" && c.props.runtime === "managedContainer").map((c) => c.id).sort().join(",")} — 명세 검토에서 runtime 을 k8s 로 바꾸면 EKS·GKE·k3s 로 옮김, 실행 방식 바뀜 승인)`
+    : x === "runtime.vm"
+      ? ` (서비스 ${spec.components.filter((c) => c.kind === "service" && c.props.runtime === "vm").map((c) => c.id).sort().join(",")} — 이 도착엔 VM 모듈이 없음. 컨테이너로 옮기려면 명세 검토에서 runtime 을 k8s 로 바꿈 (실행 방식 바뀜 승인). 온프레 VM 은 TODO(human))`
+      : "";
   const unsupported = requirementsV2(spec).filter((x) => !have.has(x)).map((x) => `도착 렌더 미지원: ${x}${hint(x)}`);
   if (have.has("runtime.managedContainer")) unsupported.push(...managedBlockers(spec));
+  if (have.has("runtime.vm")) unsupported.push(...vmBlockers(spec));
   const needsHuman: string[] = [];
   for (const c of spec.components) {
     if (c.kind === "postgres") {
@@ -213,6 +218,41 @@ export function managedBlockers(spec: AppSpecV2): string[] {
   // A8 권한 대응(grants.ts)은 k8s 신원 모듈에 붙는다 → 관리형 역할엔 아직 없음
   if (spec.links.some((l) => l.grants?.length && [...m, ...managedJobsOf(spec)].some((x) => x.id === l.from)) || spec.posture.permissions.length)
     out.push("도착 렌더 미지원: 관리형 서비스의 권한 대응(grants·posture.permissions)은 아직 없음");
+  return out;
+}
+
+// RUNTIMEMAP v2: VM(EC2·GCE) 도착이 못 그리는 것. capability(runtime.vm)가 있는 도착(aws·gcp)에서만 본다
+//   DRAFT(ai): 한 명세 안에서 VM 서비스는 다른 실행 방식(k8s·관리형·잡)과 섞지 않는다 (신원·비밀·Helm 값이 갈라짐). 칸 대응은 kinds/vm 이 받는 것만
+//   VM 주소는 apply 뒤에야 알아서 다른 서비스를 가리키는 env·링크는 막는다 (TODO(human): 사설 DNS 이름 규칙)
+export const vmServicesOf = (spec: AppSpecV2): Service[] =>
+  workloadsOf(spec).filter((w): w is Service => w.kind === "service" && w.props.runtime === "vm");
+export function vmBlockers(spec: AppSpecV2): string[] {
+  const m = vmServicesOf(spec);
+  if (!m.length) return [];
+  const out: string[] = [];
+  const other = workloadsOf(spec).filter((w) => !(w.kind === "service" && w.props.runtime === "vm")).map((w) => w.id);
+  if (other.length) out.push(`도착 렌더 미지원: VM 서비스(${m.map((x) => x.id).join(",")})와 다른 실행 방식 워크로드(${other.join(",")})를 한 명세에 섞음 — 명세 검토에서 runtime 을 한쪽으로 맞춤`);
+  const ids = new Set(spec.components.filter((c) => c.kind === "service" || c.kind === "job").map((c) => c.id));
+  for (const w of m) {
+    const p = w.props;
+    const bad: string[] = [];
+    if ((p.sidecars ?? []).some((s) => !s.injected)) bad.push("sidecars");
+    if (p.initContainers?.length) bad.push("initContainers");
+    if (p.volumes?.length) bad.push("volumes");
+    if (p.configs?.length) bad.push("configs");
+    if (p.secretMounts?.length) bad.push("secretMounts");
+    if (p.envFrom?.length) bad.push("envFrom");
+    if (p.env.some((e) => "fromConfig" in e || "fromField" in e || "fromResource" in e)) bad.push("env(fromConfig·fromField·fromResource)");
+    if ((p.ports?.length ?? 0) > 1) bad.push("ports 2개 이상");
+    const toService = p.env.some((e) => ("fromLink" in e && ids.has(e.fromLink.to)) || ("template" in e && [...e.template.matchAll(TEMPLATE)].some((x) => ids.has(x[1]!))));
+    if (toService) bad.push("다른 서비스 주소를 가리키는 env");
+    if (bad.length) out.push(`도착 렌더 미지원: ${w.id} VM 서비스에 ${bad.join("·")} 못 그림`);
+  }
+  if (spec.links.some((l) => typeof l.to === "string" && ids.has(l.to) && m.some((x) => x.id === l.from)))
+    out.push("도착 렌더 미지원: VM 서비스 사이 링크는 아직 (VM 주소가 apply 뒤에 정해짐, TODO(human))");
+  // A8 권한 대응(grants.ts)은 k8s 신원 모듈에 붙는다 → VM 역할엔 아직 없음
+  if (spec.links.some((l) => l.grants?.length && m.some((x) => x.id === l.from)) || spec.posture.permissions.length)
+    out.push("도착 렌더 미지원: VM 서비스의 권한 대응(grants·posture.permissions)은 아직 없음");
   return out;
 }
 

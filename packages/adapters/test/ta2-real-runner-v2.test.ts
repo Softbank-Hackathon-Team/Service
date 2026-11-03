@@ -49,7 +49,7 @@ test("v2 apply: root/·kinds/ 복사(tests/ 제외), -chdir=root, tfvars·output
   assert.ok(existsSync(join(dir, "root", "main.tf")));
   assert.equal(existsSync(join(dir, "root", "tests")), false);
   // I9: service-ecs(카탈로그, 루트 미연결)도 같이 복사된다
-  assert.deepEqual(sorted(join(dir, "kinds")), ["cache", "identity", "job", "namespace", "object-store", "postgres", "queue", "service-ecs"]);
+  assert.deepEqual(sorted(join(dir, "kinds")), ["cache", "identity", "job", "namespace", "object-store", "postgres", "queue", "service-ecs", "vm"]);
   assert.ok(existsSync(join(dir, "kinds", "postgres", "main.tf")));
   assert.equal(existsSync(join(dir, "main.tf")), false);
   assert.ok(isV2WorkDir(dir));

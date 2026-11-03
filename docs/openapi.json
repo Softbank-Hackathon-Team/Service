@@ -6293,7 +6293,8 @@
                     "type": "string",
                     "enum": [
                       "k8s",
-                      "managedContainer"
+                      "managedContainer",
+                      "vm"
                     ]
                   },
                   "origin": {
@@ -12161,7 +12162,8 @@
           "objectStore",
           "queue",
           "job",
-          "service"
+          "service",
+          "vm"
         ]
       },
       "OriginV2": {

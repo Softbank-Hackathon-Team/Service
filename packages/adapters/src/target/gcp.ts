@@ -5,12 +5,13 @@ import { envRef, fromOut, regionOf, tenantOf, type Target } from "../common/targ
 import { gcpAdapter, PERMS } from "../gcp/index.js";
 import {
   asV1Name, assertRenderable, connectIdentities, identitiesOf, identityName, instancesOf, K8S_RENDER_CAPS, kindJson,
-  managedJobsOf, managedServicesOf, postgresOf, postureOfComponent, refV2, secretNamesOf, workloadsOf,
+  managedJobsOf, managedServicesOf, postgresOf, postureOfComponent, refV2, secretNamesOf, vmServicesOf, workloadsOf,
 } from "./shared.js";
 import { assertGrants, gcpGrantTypes, grantsJsonFor } from "./grants.js";
 import { buildWorkloadValues, cloudPostgresValues } from "./cloud.js";
 import { cacheVars, cachesOf, dataTypesOf, objectStoreVars, objectStoresOf, queueVars, queuesOf } from "./data.js";
 import { managedJobJson, managedServiceJson, managedWorkloadValues } from "./managed.js";
+import { vmServiceJson, vmWorkloadValues } from "./vm.js";
 
 // DRAFT(ai): GCP 도착 Builder v2 (설계 27번 A1). 루트 = infra/modules/gcp/root, 종류 = kinds/{postgres,identity,namespace}
 
@@ -34,7 +35,9 @@ export function cloudSqlTierFor(c: { cpuMilli: number | null; memMiB: number | n
 // TA12c: link.* = 데이터 자원 링크의 의도 요약 (실제 권한은 grants 로 그림)
 const CAPS = [...K8S_RENDER_CAPS, "kind.postgres.15", "kind.postgres.16", "kind.postgres.17", "kind.cache.redis", "kind.cache.valkey", "kind.objectStore", "kind.queue", "render.grants", "posture.permissions", "kind.queue.dlqMixedOrder", "kind.cache.auth", "link.read", "link.write", "link.readwrite", "link.admin",
   // TA13: 관리형 컨테이너 → Cloud Run (root service_json + kinds/service-cloudrun). 못 그리는 칸은 managedBlockers
-  "runtime.managedContainer"];
+  "runtime.managedContainer",
+  // RUNTIMEMAP v2: VM 출발 → GCE (root vm_json + kinds/vm). 못 그리는 칸은 vmBlockers
+  "runtime.vm"];
 
 export function resourceTypesV2(spec: AppSpecV2): string[] {
   const t = new Set(["data.google_client_config", "data.google_container_cluster", "kubernetes_namespace_v1"]);
@@ -45,8 +48,14 @@ export function resourceTypesV2(spec: AppSpecV2): string[] {
     // JOBBUILD: 관리형 예약 잡 = kinds/job (SA 2개 + Cloud Run job + 호출 권한 + Cloud Scheduler)
     if (managedJobsOf(spec).length) ["google_service_account", "google_cloud_run_v2_job", "google_cloud_run_v2_job_iam_member", "google_cloud_scheduler_job"].forEach((x) => t.add(x));
   }
-  if (!managed && identitiesOf(spec).length) ["google_service_account", "google_service_account_iam_member"].forEach((x) => t.add(x));
-  if (!managed && workloadsOf(spec).some((w) => secretNamesOf(w).length)) ["google_secret_manager_secret", "google_secret_manager_secret_iam_member"].forEach((x) => t.add(x));
+  // RUNTIMEMAP v2: VM (= kinds/vm)
+  const vms = vmServicesOf(spec);
+  if (vms.length) {
+    ["google_service_account", "google_compute_instance"].forEach((x) => t.add(x));
+    if (vms.some((w) => secretNamesOf(w).length)) ["google_secret_manager_secret", "google_secret_manager_secret_iam_member"].forEach((x) => t.add(x));
+  }
+  if (!managed && !vms.length && identitiesOf(spec).length) ["google_service_account", "google_service_account_iam_member"].forEach((x) => t.add(x));
+  if (!managed && !vms.length && workloadsOf(spec).some((w) => secretNamesOf(w).length)) ["google_secret_manager_secret", "google_secret_manager_secret_iam_member"].forEach((x) => t.add(x));
   if (postgresOf(spec).length) ["google_sql_database_instance", "google_sql_database", "google_sql_user", "random_password",
     "google_secret_manager_secret", "google_secret_manager_secret_version", "google_secret_manager_secret_iam_member"].forEach((x) => t.add(x));
   dataTypesOf("gcp", spec).forEach((x) => t.add(x));
@@ -66,7 +75,9 @@ export const gcpTarget: TargetBuilder = {
     assertGrants("gcp", spec);
     // TA13: 관리형 서비스가 있으면(섞임은 managedBlockers 가 막음) k8s 신원·네임스페이스 없이 service_json 만
     const managed = managedServicesOf(spec).length > 0;
-    const ids = managed ? [] : identitiesOf(spec);
+    // RUNTIMEMAP v2: VM 도 같은 규칙 (k8s 신원·네임스페이스 없이 vm_json 만. 섞임은 vmBlockers 가 막음)
+    const vm = vmServicesOf(spec).length > 0;
+    const ids = managed || vm ? [] : identitiesOf(spec);
     const byId = new Map(workloadsOf(spec).map((w) => [w.id, w]));
     const postgres = postgresOf(spec).map((c) => {
       const pos = postureOfComponent(spec, c.id);
@@ -106,7 +117,8 @@ export const gcpTarget: TargetBuilder = {
       ...queuesOf(spec).map((c) => ({ kind: "queue" as const, id: c.id })),
       ...managedServicesOf(spec).map((c) => ({ kind: "service" as const, id: c.id })),
       ...managedJobsOf(spec).map((c) => ({ kind: "job" as const, id: c.id })),   // JOBBUILD: 관리형 예약 잡
-      ...(managed ? [] : [{ kind: "namespace" as const, id: ns }]),
+      ...vmServicesOf(spec).map((c) => ({ kind: "vm" as const, id: c.id })),
+      ...(managed || vm ? [] : [{ kind: "namespace" as const, id: ns }]),
     ]);
     return {
       root: refV2("gcp/root", t),
@@ -121,7 +133,7 @@ export const gcpTarget: TargetBuilder = {
         cluster_name: t.clusterName ?? envRef("clusterName"),
         cluster_location: t.clusterLocation ?? envRef("clusterLocation"),
         postgres_json: kindJson("postgres", postgres),
-        namespace_json: kindJson("namespace", managed ? [] : [{ name: ns, quota_cpu_m: null, quota_memory_mi: null }]),
+        namespace_json: kindJson("namespace", managed || vm ? [] : [{ name: ns, quota_cpu_m: null, quota_memory_mi: null }]),
         identity_json: kindJson("identity", identity),
         cache_json: cacheVars(spec, t),
         object_store_json: objectStoreVars(spec, t),
@@ -130,6 +142,7 @@ export const gcpTarget: TargetBuilder = {
         ...(managed ? { service_json: managedServiceJson("gcp", spec, t, (src) => gcpAdapter.imageRef(src, t)) } : {}),
         // JOBBUILD: 관리형 앱의 예약 잡이 있을 때만 키를 둔다 (없으면 기존 계획 지문 그대로)
         ...(managedJobsOf(spec).length ? { job_json: managedJobJson("gcp", spec, t, (src) => gcpAdapter.imageRef(src, t)) } : {}),
+        ...(vm ? { vm_json: vmServiceJson("gcp", spec, t, (src) => gcpAdapter.imageRef(src, t)) } : {}),
       },
       instances,
     };
@@ -137,6 +150,7 @@ export const gcpTarget: TargetBuilder = {
   toWorkloadValues(spec: AppSpecV2, out: TfOutputs, t: Target) {
     assertRenderable(spec, CAPS);
     assertGrants("gcp", spec);
+    if (vmServicesOf(spec).length) return vmWorkloadValues("gcp", spec, out, t, cloudPostgresValues(spec, out, "db_password_secret_id"));
     if (managedServicesOf(spec).length) return managedWorkloadValues("gcp", spec, out, t, cloudPostgresValues(spec, out, "db_password_secret_id"));
     return buildWorkloadValues(spec, out, t, {
       imageRef: (src) => gcpAdapter.imageRef(src, t),
