@@ -2,6 +2,8 @@
 // 순수 함수(파일·네트워크 없음): 같은 입력이면 같은 템플릿. 실행 정책과 템플릿 속 정책이 어긋나지 않게 한 곳에서 만든다
 // DRAFT(ai): 생성기 안에 두되 파일을 분리했다. 단독으로 실행·시험할 수 있게(의존성 0)
 
+import { AWS_DATA_READ_ACTIONS } from "../src/discover/data.js";
+
 type Json = Record<string, unknown>;
 
 // DRAFT(ai): 역할 이름 고정. worker/src/platform.ts resolveEnv가 이 이름으로 ARN을 조립한다
@@ -15,12 +17,14 @@ export const OPERATE_K8S_GROUP = "platform:operate";
 // 역할 ARN만 허용(사용자·:root 거부)
 export const PRINCIPAL_PATTERN = "^arn:aws:iam::\\d{12}:role/.+$";
 
-// DRAFT(ai): 관찰 인라인 = GuardDuty 읽기 5 + EKS 읽기 3 + IAM 근거 읽기 6. 쓰기 동작 0, 데이터 읽기 0
+// DRAFT(ai): 관찰 인라인 = GuardDuty 읽기 5 + EKS 읽기 3 + IAM 근거 읽기 6 + 데이터 자원 메타데이터 읽기 12. 쓰기 동작 0, 객체·메시지 내용 읽기 0
 // TODO(human): ecr:BatchGetImage 등 이미지 저장소 읽기는 ViewOnlyAccess에 없을 수 있음(미확인). 샌드박스 이미지 복사 때 추가
 export const OBSERVE_EXTRA_ACTIONS = [
   "guardduty:ListDetectors", "guardduty:GetDetector", "guardduty:ListFindings", "guardduty:GetFindings", "guardduty:GetFindingsStatistics",
   "eks:DescribeCluster", "eks:ListPodIdentityAssociations", "eks:DescribePodIdentityAssociation",
   "iam:GetRole", "iam:ListRolePolicies", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "iam:GetPolicy", "iam:GetPolicyVersion",
+  // OBSROLE: 데이터 자원(S3·SQS·ElastiCache) 메타데이터 읽기 12. 객체·메시지·버킷 정책 본문은 못 읽음. 목록 원본 = adapters/src/discover/data.ts
+  ...AWS_DATA_READ_ACTIONS,
 ];
 
 // 두 역할 공통 신뢰 정책. TagSession·SetSourceIdentity가 없으면 발급기의 AssumeRole(Tags·SourceIdentity 항상 포함)이 AccessDenied

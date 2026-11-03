@@ -7,6 +7,21 @@ import { DATA_RAW_KINDS } from "../import/raw-data.js";
 //   【미확인】 gcloud storage buckets list JSON 칸 이름(snake_case/camelCase 혼재)·ElastiCache ReplicationGroup 의 Engine 칸: 둘 다 두 모양을 받는다. 첫 실측으로 확인
 
 type Obj = Record<string, unknown>;
+// OBSROLE: 이 파일이 부르는 읽기 명령에 필요한 권한 (관찰 역할 템플릿·GCP 연결 스크립트·가져오기 장부 목록이 모두 여기서 가져간다).
+//   메타데이터 읽기만. 객체 내용(s3:GetObject·storage.objects.*)·큐 메시지(sqs:ReceiveMessage)·버킷 정책 본문(s3:GetBucketPolicy)·
+//   캐시 인증 토큰은 읽지 않는다. 명령을 바꾸면 이 목록도 바꾼다 (obsrole-data-permissions.test.ts 가 소스와 대조)
+export const AWS_DATA_READ_ACTIONS = [
+  "s3:ListAllMyBuckets", "s3:GetBucketVersioning", "s3:GetBucketPublicAccessBlock", "s3:GetBucketPolicyStatus", "s3:GetBucketAcl",
+  "s3:GetLifecycleConfiguration", "s3:GetBucketCORS", "cloudwatch:GetMetricStatistics",
+  "sqs:ListQueues", "sqs:GetQueueAttributes",
+  "elasticache:DescribeReplicationGroups", "elasticache:DescribeCacheClusters",
+] as const;
+export const GCP_DATA_READ_PERMISSIONS = [
+  "storage.buckets.list", "storage.buckets.getIamPolicy",
+  "pubsub.topics.list", "pubsub.subscriptions.list",
+  "redis.instances.list",
+] as const;
+
 // DRAFT(ai): 버킷은 이름순 앞 50개만 자세히 읽는다 (호출 수 제한). 넘으면 notes
 export const MAX_BUCKETS = 50;
 

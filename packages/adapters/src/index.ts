@@ -28,6 +28,7 @@ export { readInventory, cachedInventory, clearInventoryCache, inventoryToStatus,
 export { serviceMap, categoryOfType, SERVICE_NAME, SOURCE_WORKLOAD, METHOD_LABEL, type ServiceMapRow, type ServiceCategory, type MoveMethod, type PlanStepId } from "./common/service-map.js";
 // Z88: 출발 환경 진짜 읽기 (가져오기). MOCK_SEED=1 이면 어댑터 discover 는 데모 원본
 export { discoverSource, inventoryForAudit, discoverAws, discoverGcp, discoverOnprem, discoverForImport, type DiscoverOpts } from "./discover/index.js";
+export { AWS_DATA_READ_ACTIONS, GCP_DATA_READ_PERMISSIONS } from "./discover/data.js";
 export { readK8sApp, readK8sNamespace, type K8sRead, type K8sNamespaceRead, type K8sNamespaceOpts } from "./discover/k8s.js";
 // I2: k8s 원본 타입 + 종류 문자열
 export * from "./import/raw-k8s.js";
