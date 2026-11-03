@@ -11,7 +11,7 @@ app.kubernetes.io/name: {{ .Values.app.name }}
 app.kubernetes.io/component: {{ .w.name | quote }}
 {{- end }}
 
-{{- /* A4: 파드 모양 (Deployment·Job·CronJob 공통). 입력 dict: root, w, restart(Job 류만).
+{{- /* A4·PB-1: 파드 모양 (Deployment·Job·CronJob 공통). 입력 dict: root, w, restart(Job 류만).
        값이 없는 칸은 키 자체를 안 그린다 (프로브·requests 기본값을 지어내지 않음, 재현성) */}}
 {{- define "app.wpod" -}}
 {{- $w := .w }}
@@ -20,7 +20,7 @@ app.kubernetes.io/component: {{ .w.name | quote }}
 {{- $vols := list }}
 {{- $mounts := list }}
 {{- range $w.configs }}
-{{- $vols = append $vols (dict "name" (printf "cfg-%s" .name) "configMap" (dict "name" (printf "%s-%s" $w.name .name))) }}
+{{- $vols = append $vols (dict "name" (printf "cfg-%s" .name) "configMap" (dict "name" .name)) }}
 {{- $mounts = append $mounts (dict "name" (printf "cfg-%s" .name) "mountPath" .mountPath "readOnly" true) }}
 {{- end }}
 {{- range $w.secretMounts }}
@@ -57,8 +57,10 @@ containers:
     {{- with $w.ports }}
     ports:
       {{- range . }}
-      - name: {{ .name | default "http" }}
-        containerPort: {{ .containerPort }}
+      - containerPort: {{ .containerPort }}
+        {{- with .name }}
+        name: {{ . }}
+        {{- end }}
         {{- with .protocol }}
         protocol: {{ . }}
         {{- end }}
@@ -89,9 +91,7 @@ containers:
     volumeMounts: {{- toYaml $mounts | nindent 6 }}
     {{- end }}
   {{- range $w.sidecars }}
-  {{- if not .injected }}
-  - {{- toYaml (omit . "injected") | nindent 4 }}
-  {{- end }}
+  - {{- toYaml . | nindent 4 }}
   {{- end }}
 {{- if $vols }}
 volumes: {{- toYaml $vols | nindent 2 }}

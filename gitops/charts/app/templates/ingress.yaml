@@ -1,48 +1,60 @@
-{{- /* A4: workloads 일 땐 ingress.service 로 받을 서비스 이름을 지정 (없으면 옛 값 app.name) */}}
-{{- /* 들어오는 길 두 가지. cloudflared: 인바운드 0 (Cloudflare LB 원본 = 터널). lb: ALB / GCE Ingress */}}
-{{- if eq .Values.ingress.mode "cloudflared" }}
+{{- /* 들어오는 길 두 가지. cloudflared: 인바운드 0 (Cloudflare LB 원본 = 터널). lb: ALB / GCE Ingress.
+       PB-1: hosts[] = 명세 entry 그대로 (호스트·경로·대상 Service·포트). Builder 가 못 그리는 줄은 warnings 로 남긴다 */}}
+{{- with .Values.ingress }}
+{{- $ing := . }}
+{{- $first := dict }}
+{{- range $h := $ing.hosts }}{{- range $p := $h.paths }}{{- if not $first.service }}{{- $first = $p }}{{- end }}{{- end }}{{- end }}
+{{- if and (eq $ing.mode "cloudflared") $first.service }}
+{{- /* DRAFT(ai): 토큰 방식 터널은 호스트별 길을 Cloudflare 쪽에서 정한다 → 여기선 첫 대상 하나로 보낸다.
+       대상이 여럿이면 Builder 가 경고 줄을 띄운다 */}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ .Values.app.name }}-cloudflared
-  labels: {{- include "app.labels" . | nindent 4 }}
+  name: {{ $.Values.app.name }}-cloudflared
+  labels: {{- include "app.labels" $ | nindent 4 }}
 spec:
   replicas: 2
   selector:
-    matchLabels: { app.kubernetes.io/name: {{ .Values.app.name }}-cloudflared }
+    matchLabels: { app.kubernetes.io/name: {{ $.Values.app.name }}-cloudflared }
   template:
     metadata:
-      labels: { app.kubernetes.io/name: {{ .Values.app.name }}-cloudflared }
+      labels: { app.kubernetes.io/name: {{ $.Values.app.name }}-cloudflared }
     spec:
       containers:
         - name: cloudflared
           image: cloudflare/cloudflared:2025.9.1
-          args: ["tunnel", "--no-autoupdate", "run", "--url", {{ printf "http://%s:80" (.Values.ingress.service | default .Values.app.name) | quote }}]
+          args: ["tunnel", "--no-autoupdate", "run", "--url", {{ printf "http://%s:%v" $first.service $first.port | quote }}]
           env:
             - name: TUNNEL_TOKEN
-              valueFrom: { secretKeyRef: { name: {{ .Values.ingress.tunnelTokenSecret }}, key: token } }
+              valueFrom: { secretKeyRef: { name: {{ $ing.tunnelTokenSecret }}, key: token } }
           resources: { requests: { cpu: 50m, memory: 64Mi }, limits: { memory: 128Mi } }
-{{- else if eq .Values.ingress.mode "lb" }}
+{{- else if eq $ing.mode "lb" }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ .Values.app.name }}
-  labels: {{- include "app.labels" . | nindent 4 }}
-  {{- if eq .Values.ingress.className "alb" }}
+  name: {{ $.Values.app.name }}
+  labels: {{- include "app.labels" $ | nindent 4 }}
+  {{- if eq $ing.className "alb" }}
   annotations:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/healthcheck-path: {{ .Values.probes.readiness | quote }}
   {{- end }}
 spec:
-  {{- with .Values.ingress.className }}
+  {{- with $ing.className }}
   ingressClassName: {{ . }}
   {{- end }}
   rules:
-    - host: {{ .Values.ingress.hostname | quote }}
+    {{- range $h := $ing.hosts }}
+    {{- range $name := $h.hostnames }}
+    - host: {{ $name | quote }}
       http:
         paths:
-          - path: /
-            pathType: Prefix
-            backend: { service: { name: {{ .Values.ingress.service | default .Values.app.name }}, port: { number: 80 } } }
+          {{- range $h.paths }}
+          - path: {{ .path | quote }}
+            pathType: {{ .pathType }}
+            backend: { service: { name: {{ .service }}, port: { number: {{ .port }} } } }
+          {{- end }}
+    {{- end }}
+    {{- end }}
+{{- end }}
 {{- end }}
