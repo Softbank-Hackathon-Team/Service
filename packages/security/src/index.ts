@@ -17,3 +17,4 @@ export * from "./renew.js";
 export * from "./regression.js";
 export * from "./sts-cli.js";      // L4 AWS CLI STS
 export * from "./gcp-cli.js";    // L7i GCP gcloud 발급기
+export * from "./portability/index.js";   // 이식성 판정
