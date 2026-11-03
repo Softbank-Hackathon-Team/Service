@@ -5,15 +5,16 @@
 | 항목 | 내용 |
 |---|---|
 | 목적 | 공통 명세(AppSpec)와 트래픽 가정을 받아 환경(AWS/GCP/온프레, Azure Mock)별 월 예상 비용, 절약액, 보안 프로필별 추천을 낸다 |
-| 받는 것 | `CostEstimateRequest` (spec, from, targets, region, traffic: `{peakRps}` 또는 `{mau,…}`, profile, applyCredits, load, nodeSkus) + `PriceCatalog` |
-| 넘기는 것 | `CostEstimate` (환경별 합계·덩어리·크레딧·미확인 표시, cheapest, savings, recommendations, breakpoints, priceAsOf, priceStale) |
-| 부작용 | `estimateCost`는 없음(순수 함수). `refreshCatalog`는 가격 API를 부를 수 있지만 지금 fetcher는 STUB(던짐), DB에 쓰지 않음 |
+| 받는 것 | `CostEstimateRequest` (spec, from, targets, region, traffic: `{peakRps}` 또는 `{mau,…}`, profile, applyCredits, load, nodeSkus) + `PriceCatalog`. v2: `estimateCostV2({ spec: AppSpecV2, providers, peakRps }, PriceCatalog)` |
+| 넘기는 것 | `CostEstimate` (환경별 합계·덩어리·크레딧·미확인 표시, cheapest, savings, recommendations, breakpoints, priceAsOf, priceStale). v2: `{ priceAsOf, peakRps, envs: EnvEstimate[] }` (`unknown`에 못 넣은 구성요소 이름) |
+| 부작용 | `estimateCost`·`estimateCostV2`는 없음(순수 함수). `refreshCatalog`는 가격 API를 부를 수 있지만 지금 fetcher는 STUB(던짐), DB에 쓰지 않음 |
 | 실패 코드 | 입력 parse 실패는 ZodError(라우트에서 400). 환경 단위: `PRICE_MISSING`, `ONPREM_CAPACITY_EXCEEDED`, `NODE_LIMIT_EXCEEDED`. 가격 소스: `PRICE_SOURCE_NOT_CONFIGURED`, `NO_ROWS` |
 
 ## 파일
 
 - `src/schema.ts` 입출력 Zod 스키마. DRAFT(ai): `packages/contracts/src/cost.ts`로 옮길 대상
 - `src/estimate.ts` `estimateCost()` 진입점, `estimateEnv()` 환경 하나 전수 탐색, `recommend()`, `findBreakpoints()`
+- `src/estimate-v2.ts` `estimateCostV2()` 공통 명세 v2(AppSpecV2) 환경별 월 비용 (PLAN_IR=v2 계획서 고지용). 아래 "v2 명세 비용" 참고
 - `src/load.ts` MAU→피크 rps, 필요 vCPU·메모리, 노드 수
 - `src/profile.ts` 보안 단계(기본/강화)와 프로필 가중치(스타트업/금융)
 - `src/catalog.ts` 샘플 가격표 읽기, 리전 매핑, 계단식 가격, 7일 경과 판정
@@ -59,6 +60,20 @@ flowchart LR
 
 PoC와 달라진 점: 노드 종류를 가격표에 있는 만큼 전부 계산한다(`nodeSkus`로 제한 가능), 메모리도 노드 수에 반영, 명세의 복제 수 x CPU 아래로는 줄이지 않는다(DRAFT(ai)).
 
+## v2 명세 비용 (`estimateCostV2`, DRAFT(ai))
+
+식은 위와 같고, 가격표에 줄이 있는 덩어리만 합계에 넣는다. 못 넣은 구성요소·칸은 환경의 `unknown`에 `<종류>:<id>` 또는 `<종류>:<id>.<칸>`으로 남긴다(단가를 지어내지 않음). upconvertV1 판은 v1 `estimateCost`와 같은 금액이다.
+
+| 구성요소 | 합계 | 근거 |
+|---|---|---|
+| k8s 서비스 (여러 개) | 넣음 | 복제 수 min x (주 컨테이너 + 주입 아닌 사이드카) 요청량 합 → 노드 수. request 없으면 limit(k8s 규칙). 모르면 `service:<id>.resources` |
+| 클러스터 관리비·크레딧 | k8s 서비스가 있을 때만 | 관리형·VM 만 있는 앱은 클러스터·노드를 안 씀 |
+| postgres (여러 개) | 넣음 | 개수 x `db` 단가 + 각 `storage` GB. `ha`·`readReplicas`·`compute`(가격표 DB 줄은 크기 하나)는 `postgres:<id>.<칸>` |
+| 온프레 | 고정비 | v1 과 같음 |
+| cache · objectStore · queue · job · 관리형 컨테이너(ECS Fargate·Cloud Run) · VM 서비스 | 못 넣음 | 가격표에 줄 없음 → `<종류>:<id>` (서비스는 `service:<id>`) |
+
+출발도 같은 명세·같은 실행 방식으로 센다(v1 과 같은 비교 방식, origin 으로 따로 안 셈).
+
 ## 확인
 
 ```bash
@@ -67,4 +82,4 @@ npm test -w @svc/cost
 npm run demo -w @svc/cost
 ```
 
-기대: `pass 27, fail 0` (sources.test.ts 9개 포함, 네트워크 안 씀). demo 첫 줄 `aws: t3.medium 2대 월 $227.5`, 둘째 줄 `gcp: e2-medium 2대 월 $146.9`.
+기대: `pass 34, fail 0` (sources.test.ts 9개, estimate-v2.test.ts 7개 포함, 네트워크 안 씀). demo 첫 줄 `aws: t3.medium 2대 월 $227.5`, 둘째 줄 `gcp: e2-medium 2대 월 $146.9`.

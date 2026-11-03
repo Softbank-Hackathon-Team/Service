@@ -1,7 +1,7 @@
 import { AppSpec, ApprovalRowV2, PlanDoc, PlanJob, PrecheckItem, checkV2, AppSpecV2,
-  type PlanAcknowledgement, type PlanCostSummary, type PlanStep, type Provider } from "@svc/contracts";
+  type PlanAcknowledgement, type PlanCostSummary, type PlanStep, type PriceCatalog, type Provider } from "@svc/contracts";
 import { latestAcceptedSpec, latestAcceptedSpecV2, retryBudget, SPEC_DRAFT_KEY, type AcceptedSpecV2Row, type Tx } from "@svc/core";
-import { estimateCost, loadCatalog } from "@svc/cost";
+import { estimateCost, estimateCostV2, loadCatalog } from "@svc/cost";
 import { adapterFor, DbNetworkError, isAdapterError, NEEDS_HUMAN, specV2OrThrow, UNSUPPORTED_V2, withDbNetwork } from "@svc/adapters";
 import type { z } from "zod";
 import { runStep, stableHash, stubWait, type StepOutcome } from "./_step.js";
@@ -52,7 +52,28 @@ export const estimatePlanCost: CostEstimator = (spec, from, to) => {
   }
 };
 
+// TA3 비용: v2 계획서의 비용은 v2 명세(구성요소 전부)로 센다. v1 투영(서비스 1개 + Postgres 1개)으로 세면
+//   v2 Terraform 루트가 만드는 캐시·큐·버킷·관리형 컨테이너·VM 이 고지에서 조용히 빠진다.
+//   가격표에 없는 구성요소·칸은 unknownFields 에 "<종류>:<id>[.<칸>]" 로 남긴다 (출발·도착 합집합, 이름순). 그 밖의 규칙은 estimatePlanCost 와 같다
+//   catalog 는 시험용 (안 주면 estimatePlanCost 와 같은 loadCatalog)
+export const estimatePlanCostV2 = (spec: AppSpecV2, from: Provider, to: Provider, catalog?: PriceCatalog): PlanCostSummary => {
+  try {
+    const est = estimateCostV2({ spec, providers: [from, to], peakRps: PLAN_COST_PEAK_RPS }, catalog ?? loadCatalog());
+    const env = (p: Provider) => est.envs.find((e) => e.provider === p)!;
+    const src = env(from).monthlyUsd;
+    const dst = env(to).monthlyUsd;
+    const unknownFields = [...(src === null ? ["monthlySource"] : []), ...(dst === null ? ["monthlyTarget"] : []),
+      ...[...new Set([...env(from).unknown, ...env(to).unknown])].sort()];
+    return { currency: "USD", monthlyTarget: dst, monthlySource: src,
+      deltaMonthly: src !== null && dst !== null ? r1(dst - src) : null, unknownFields, priceAsOf: est.priceAsOf };
+  } catch {
+    return { currency: "USD", monthlyTarget: null, monthlySource: null, deltaMonthly: null, unknownFields: ["*"] };
+  }
+};
+
 const usd = (v: number | null) => (v === null ? "계산 못 함" : `$${v}`);
+// 콜론 있는 칸 = 금액에 반영 안 된 구성요소·칸 (v2 만 냄). v1 은 monthlySource·monthlyTarget·* 만 내므로 v1 문구는 그대로
+const isUnpriced = (f: string) => f.includes(":");
 
 // 확인 항목 목록. cost·failure_cost_policy 는 항상, 그다음 사전 점검 warn, IR v2 승인 행 (같은 id 는 하나로)
 export function buildAcknowledgements(i: {
@@ -61,12 +82,16 @@ export function buildAcknowledgements(i: {
 }): PlanAcknowledgement[] {
   const c = i.cost;
   const free = retryBudget(i.env ?? process.env);
+  const gaps = c.unknownFields.filter((f) => !isUnpriced(f));
+  const unpriced = c.unknownFields.filter(isUnpriced);
   const out: PlanAcknowledgement[] = [
     { id: "cost", kind: "cost",
       // DRAFT(ai): 고지 문구. "고객 부담" 뜻 = 자원은 고객 계정에 생기므로 클라우드 요금은 처음부터 고객 청구서 (계획 26 3.1 추정)
       text: `예상 월 비용(USD): 도착 ${i.to} ${usd(c.monthlyTarget)} / 출발 ${i.from} ${usd(c.monthlySource)} / 차이 ${usd(c.deltaMonthly)}. `
         + "도착 자원은 고객 클라우드 계정에 만들어지고 요금도 고객 계정에 청구됩니다"
-        + (c.unknownFields.length ? ` (계산 못 한 칸: ${c.unknownFields.join(", ")})` : "")
+        + (gaps.length ? ` (계산 못 한 칸: ${gaps.join(", ")})` : "")
+        // TA3 비용 DRAFT(ai): v2 에서 가격표에 없어 빠진 구성요소·칸. 사람이 "이 금액이 전부가 아니다"를 보고 확인하게 문구로 적는다
+        + (unpriced.length ? `. 일부 자원·설정은 위 금액에 포함되지 않았습니다: ${unpriced.join(", ")}` : "")
         + (c.stub ? " (가짜 고정값)" : "") },
     { id: "failure_cost_policy", kind: "failure_cost_policy",
       text: (free > 0
@@ -188,7 +213,8 @@ export async function handlePlan(raw: unknown) {
         precheck, now: new Date(),
         // PA4: 비용 고지·확인 항목은 항상 싣는다 (승인 때 확인을 강제하는 건 api 깃발 PLAN_ACKS)
         source: { provider: sourceProvider }, specVersion, v2Approvals,
-        costSummary: estimatePlanCost(spec, sourceProvider, provider),
+        // TA3 비용: v2 계획서는 Terraform 루트와 같은 v2 명세로 센다. v1 계획서는 예전 그대로 (지문 그대로)
+        costSummary: specV2 ? estimatePlanCostV2(specV2.spec, sourceProvider, provider) : estimatePlanCost(spec, sourceProvider, provider),
         ...(specV2 ? { specV2 } : {}),
       });
       return { to: "awaiting_approval", detail: { planId: plan.planId, planHash: plan.planHash },

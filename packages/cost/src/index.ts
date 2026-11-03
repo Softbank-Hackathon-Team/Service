@@ -3,6 +3,7 @@ export * from "./catalog.js";
 export * from "./load.js";
 export * from "./profile.js";
 export * from "./estimate.js";
+export * from "./estimate-v2.js";
 export * from "./refresh.js";
 export * from "./adapters/types.js";
 export * from "./adapters/aws-price-list.js";
