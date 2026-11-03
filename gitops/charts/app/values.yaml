@@ -5,5 +5,7 @@ labels: { managed-by: platform }
 workloads: []
 externalSecrets: { store: { kind: ClusterSecretStore, name: none }, secrets: [] }
 postgres: []
+# Builder 기본과 같음: cloudflared 터널 (인바운드 0). hosts 는 명세 entry 에서 온다
+ingress: { mode: cloudflared, className: "", tunnelTokenSecret: cloudflared-token, hosts: [] }
 warnings: []
 traffic: null

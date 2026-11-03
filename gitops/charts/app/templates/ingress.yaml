@@ -43,6 +43,14 @@ spec:
   {{- with $ing.className }}
   ingressClassName: {{ . }}
   {{- end }}
+  {{- /* 명세 entry 의 tls(terminate) 호스트는 TLS 로 받는다. 인증서 Secret = <앱>-tls (값은 차트에 없다) */}}
+  {{- $tls := list }}
+  {{- range $h := $ing.hosts }}{{- if $h.tls }}{{- $tls = concat $tls $h.hostnames }}{{- end }}{{- end }}
+  {{- if $tls }}
+  tls:
+    - hosts: {{- toYaml $tls | nindent 8 }}
+      secretName: {{ printf "%s-tls" $.Values.app.name }}
+  {{- end }}
   rules:
     {{- range $h := $ing.hosts }}
     {{- range $name := $h.hostnames }}
