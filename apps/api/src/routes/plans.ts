@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { ApprovalInput, PlanDoc, QUEUES, StartInput, type MigrationStatus } from "@svc/contracts";
-import { withTenant, advance, checkRetryBudget, writeAudit, DomainError, InvalidTransition, planExpired, assertTenantCapacity, type Tx } from "@svc/core";
+import { withTenant, advance, checkRetryBudget, targetTeardownPending, writeAudit, DomainError, InvalidTransition, planExpired, assertTenantCapacity, type Tx } from "@svc/core";
 import { Accepted, ApprovalResult, errors } from "./responses.js";
 import { IdParam, RetryBody, auditOk, found, nextJob } from "./kit.js";
 import { loadLatestApproval, loadLatestPlan, loadPlanById, saveApproval } from "./plan-store.js";
@@ -172,6 +172,9 @@ export async function planRoutes(app: FastifyInstance) {
       if (m.status === "failed" && m.failedAtStatus === "importing")
         throw new DomainError(409, "REPLAN_NOT_ALLOWED",
           `failed at ${m.failedAtStatus}: cancel and start a new migration`);
+      // G5-1 (ADR-066): 실패로 만든 자원을 지우는 중이면 기다린다. 새 apply 가 같은 작업 폴더(state)를 쓰므로 지우기와 겹치면 새 자원을 지운다
+      if (m.status === "failed" && await targetTeardownPending(tx, id))
+        throw new DomainError(409, "TEARDOWN_PENDING", "target resources from the failed attempt are still being deleted; retry after it finishes");
       const budget = m.status === "failed" ? await checkRetryBudget(tx, id, req.body?.acceptCustomerCost) : null;
       // G7-2: 다시 계획은 사전 점검부터 (precheck 작업 → 통과하면 새 계획 번호로 plan 작업). 예전엔 바로 planning 이라
       //   계획서에 첫 바퀴의 옛 점검표(자격·할당량 문제가 생기기 전의 PASS)가 그대로 실렸다

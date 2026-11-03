@@ -83,7 +83,11 @@ test("G5-1: 깃발 없음·빈 값·'1'·'true' 는 켜짐 → failed 진입 때
       { failureCode: "APPLY_FAILED", audit: { actor: "worker", action: "apply.failed", target: id, result: "error" } }));
     assert.equal((await runs(id)).length, 1, `FAILURE_ANALYSIS=${JSON.stringify(v)}`);
     // G5-1 자원 지우기 자리: provisioning 실패는 지우기 요청 감사 1줄
-    assert.equal((await audits(id, "target_teardown.requested")).length, 1);
+    const td = await audits(id, "target_teardown.requested");
+    assert.equal(td.length, 1);
+    // DECISION(team) ADR-066: 사람 확인 없이 자동 지우기
+    assert.equal((td[0] as { detail: { mode: string; humanConfirm: boolean } }).detail.mode, "auto");
+    assert.equal((td[0] as { detail: { mode: string; humanConfirm: boolean } }).detail.humanConfirm, false);
   }
 });
 

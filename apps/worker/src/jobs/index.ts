@@ -10,6 +10,8 @@ import { handleShift } from "./shift.js";
 import { handleCutover } from "./cutover.js";
 import { handleCleanup } from "./cleanup.js";
 import { handleRollback } from "./rollback.js";
+import { handleTargetDestroy } from "./target-destroy.js";
+import { replCleanupJob } from "./repl-cleanup.js";
 import { handleVerifyConnection } from "./verify-connection.js";
 import { handleImageBuild } from "./image-build.js";
 
@@ -28,5 +30,7 @@ export const HANDLERS: Partial<Record<QueueName, (data: unknown) => Promise<unkn
   [QUEUES.cutover]: handleCutover,     // cutover → rollback_window
   [QUEUES.cleanup]: handleCleanup,     // rollback_window → cleanup → completed
   [QUEUES.rollback]: handleRollback,   // rolling_back → rolled_back
+  [QUEUES.targetDestroy]: (d) => handleTargetDestroy(d), // 상태를 안 옮김: provisioning 실패로 만든 도착 자원 지우기 (G5-1, ADR-066)
+  [QUEUES.replCleanup]: (d) => replCleanupJob(d), // 상태를 안 옮김: 끝난 이전의 남은 복제 객체 다시 걷기 (F8-5). 덜 걷으면 던져 큐가 재시도 (PF-E25)
   [QUEUES.imageBuild]: handleImageBuild, // 상태를 안 옮김: provisioning 의 apply 가 앞에서 부르는 보조 작업 (STUB)
 };
