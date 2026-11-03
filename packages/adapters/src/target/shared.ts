@@ -65,8 +65,9 @@ export function requirementsV2(spec: AppSpecV2): Capability[] {
   for (const c of spec.components) {
     switch (c.kind) {
       case "service": r.add(`runtime.${c.props.runtime}`); r.add("kind.service"); break;
-      // DRAFT(ai): job 엔 runtime 칸이 없다 → k8s CronJob(Helm)으로 그림. 관리형 잡은 A7
-      case "job": r.add("runtime.k8s"); r.add("kind.job"); break;
+      // DRAFT(ai): job 엔 runtime 칸이 없다 → k8s CronJob(Helm)으로 그림.
+      //   JOBBUILD DRAFT(ai): 관리형 서비스가 있는 앱의 잡은 관리형 예약 잡(ECS 예약 작업·Cloud Run job, root job_json)으로 그림 → 관리형 capability
+      case "job": r.add(managedServicesOf(spec).length ? "runtime.managedContainer" : "runtime.k8s"); r.add("kind.job"); break;
       case "postgres": r.add(c.props.majorVersion ? `kind.postgres.${c.props.majorVersion}` : "kind.postgres"); break;
       case "cache": r.add(`kind.cache.${c.props.engine}`); if (c.props.clusterMode) r.add("kind.cache.cluster"); break;   // TA12: 클러스터 모드는 별도 capability
       case "queue": {
@@ -157,11 +158,28 @@ export function v2Blockers(spec: AppSpecV2, caps: Capability[]): { unsupported: 
 //   DRAFT(ai): 한 명세 안에 k8s 워크로드와 섞으면 막는다 (신원·비밀·Helm 값이 두 갈래가 됨). 칸 대응은 kinds/service-* 가 받는 것만
 export const managedServicesOf = (spec: AppSpecV2): Service[] =>
   workloadsOf(spec).filter((w): w is Service => w.kind === "service" && w.props.runtime === "managedContainer");
+// JOBBUILD DRAFT(ai): 관리형 서비스가 있는 앱의 잡 = 관리형 예약 잡 (k8s CronJob 이 아니라 root job_json → kinds/job).
+//   이유: IR job 엔 runtime 칸이 없고, 관리형 앱엔 k8s 클러스터·Helm 값이 없어 CronJob 으로 그릴 곳이 없다. 같은 앱의 서비스와 같은 실행 방식이 재현성 기본.
+//   잡만 있는 앱(관리형 서비스 0)은 지금처럼 k8s CronJob — 관리형인지 알 근거가 없음 (TODO(human): IR job 에 runtime 칸을 둘지)
+export const managedJobsOf = (spec: AppSpecV2): Job[] =>
+  managedServicesOf(spec).length ? workloadsOf(spec).filter((w): w is Job => w.kind === "job") : [];
+/** 루트 job_json 검사와 같은 cron 규칙 (계획 전에 막음): 5필드, 요일 칸 간격(/) 금지, 날짜·요일 칸 동시 지정 금지 */
+export function managedCronProblem(schedule: string): string | null {
+  const f = schedule.trim().split(/\s+/);
+  if (f.length !== 5) return "schedule 은 cron 5필드여야 함";
+  if (f[4]!.includes("/")) return "요일 칸의 간격(/) 은 아직 못 옮김";
+  if (!["*", "?"].includes(f[2]!) && !["*", "?"].includes(f[4]!)) return "날짜 칸과 요일 칸을 둘 다 정한 schedule 은 못 옮김";
+  return null;
+}
+/** 관리형 잡 env 한 줄이 job_json 으로 갈 수 있나: 값 · fromLink · 자리표시 하나뿐인 template (루트가 한 덩어리 자리표시만 풂) */
+export const managedJobEnvOk = (e: EnvVarV2): boolean =>
+  "value" in e || "fromLink" in e || ("template" in e && new RegExp(`^${TEMPLATE.source}$`).test(e.template));
 export function managedBlockers(spec: AppSpecV2): string[] {
   const m = managedServicesOf(spec);
   if (!m.length) return [];
   const out: string[] = [];
-  const k8s = workloadsOf(spec).filter((w) => !(w.kind === "service" && w.props.runtime === "managedContainer")).map((w) => w.id);
+  // JOBBUILD: 잡은 관리형 예약 잡으로 그리므로 "섞임"이 아니다 (아래에서 잡 칸만 따로 봄)
+  const k8s = workloadsOf(spec).filter((w) => !(w.kind === "service" && w.props.runtime === "managedContainer") && w.kind !== "job").map((w) => w.id);
   if (k8s.length) out.push(`도착 렌더 미지원: 관리형 서비스(${m.map((x) => x.id).join(",")})와 k8s 워크로드(${k8s.join(",")})를 한 명세에 섞음 — 명세 검토에서 runtime 을 한쪽으로 맞춤`);
   for (const w of m) {
     const p = w.props;
@@ -176,8 +194,24 @@ export function managedBlockers(spec: AppSpecV2): string[] {
     if ((p.ports?.length ?? 0) > 1) bad.push("ports 2개 이상");
     if (bad.length) out.push(`도착 렌더 미지원: ${w.id} 관리형 서비스에 ${bad.join("·")} 못 그림`);
   }
+  // JOBBUILD: 관리형 예약 잡이 못 그리는 칸 (kinds/job 이 받는 것 = JobTfVars). 비밀 칸이 없음(모듈 TODO(human)) → fromSecret 은 막음
+  for (const j of managedJobsOf(spec)) {
+    const p = j.props;
+    const bad: string[] = [];
+    if (p.sidecars?.length) bad.push("sidecars");
+    if (p.initContainers?.length) bad.push("initContainers");
+    if (p.volumes?.length) bad.push("volumes");
+    if (p.configs?.length) bad.push("configs");
+    if (p.secretMounts?.length) bad.push("secretMounts");
+    if (p.envFrom?.length) bad.push("envFrom");
+    if (p.env.some((e) => "fromSecret" in e)) bad.push("env(fromSecret: 관리형 잡 모듈에 비밀 칸 없음)");
+    if (p.env.some((e) => !("fromSecret" in e) && !managedJobEnvOk(e))) bad.push("env(fromConfig·fromField·fromResource·조각 여러 개 template)");
+    const cron = managedCronProblem(p.schedule);
+    if (cron) bad.push(`schedule(${cron})`);
+    if (bad.length) out.push(`도착 렌더 미지원: ${j.id} 관리형 예약 잡에 ${bad.join("·")} 못 그림`);
+  }
   // A8 권한 대응(grants.ts)은 k8s 신원 모듈에 붙는다 → 관리형 역할엔 아직 없음
-  if (spec.links.some((l) => l.grants?.length && m.some((x) => x.id === l.from)) || spec.posture.permissions.length)
+  if (spec.links.some((l) => l.grants?.length && [...m, ...managedJobsOf(spec)].some((x) => x.id === l.from)) || spec.posture.permissions.length)
     out.push("도착 렌더 미지원: 관리형 서비스의 권한 대응(grants·posture.permissions)은 아직 없음");
   return out;
 }

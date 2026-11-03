@@ -144,3 +144,59 @@ run "reject_bad_bucket_name" {
   }
   expect_failures = [var.object_store_json]
 }
+
+# JOBMOD: 예약 잡 (Cloud Scheduler → Cloud Run job). 정상 + 거부
+run "plan_jobs" {
+  command = plan
+  variables {
+    job_json = jsonencode([
+      { id = "nightly", name = "app-shop-nightly-ab12", schedule = "30 2 * * 1-5", time_zone = "Asia/Seoul", concurrency_policy = null, suspend = null, backoff_limit = 2, active_deadline_sec = null, restart_policy = "OnFailure", image = "r.example/shop@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", command_json = null, args_json = "[\"run\",\"nightly\"]", cpu_milli = 500, mem_mib = 1024, env_json = jsonencode([{ name = "DB_HOST", value = "<tf-output:link.shop-db.host>" }, { name = "MODE", value = "batch" }]), identity = "api" },
+      { id = "monthly", name = "app-shop-monthly-cd34", schedule = "0 4 1 * *", time_zone = null, concurrency_policy = "Forbid", suspend = true, backoff_limit = null, active_deadline_sec = 600, restart_policy = null, image = "r.example/shop@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", command_json = null, args_json = null, cpu_milli = null, mem_mib = null, env_json = "[]", identity = "api" },
+    ])
+  }
+  assert {
+    condition     = module.job["nightly"].cpu == 1 && module.job["nightly"].mem_mib == 1024 && module.job["monthly"].cpu == 1 && module.job["monthly"].mem_mib == 512
+    error_message = "Cloud Run CPU·메모리가 다름 (500m → 1, null → 1/512)"
+  }
+  assert {
+    condition     = module.job["nightly"].max_retries == 2 && module.job["monthly"].max_retries == 3
+    error_message = "재시도 횟수가 다름 (backoff_limit 2, 없으면 Cloud Run 기본 3)"
+  }
+  assert {
+    condition     = module.job["monthly"].unmapped_fields.concurrency_policy == "Forbid" && length(module.job["nightly"].unmapped_fields) == 0
+    error_message = "Cloud Run 이 못 옮기는 칸(Forbid)은 unmapped_fields 에 나와야 함"
+  }
+}
+
+run "plan_jobs_default_empty" {
+  command = plan
+  assert {
+    condition     = length(module.job) == 0
+    error_message = "기본값에선 잡이 없어야 함"
+  }
+}
+
+run "reject_job_bad_name" {
+  command = plan
+  variables {
+    job_json = jsonencode([{ id = "x", name = "shop-x", schedule = "0 4 * * *", image = "r.example/shop@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", env_json = "[]", identity = "api" }])
+  }
+  expect_failures = [var.job_json]
+}
+run "reject_job_duplicate_id" {
+  command = plan
+  variables {
+    job_json = jsonencode([
+      { id = "x", name = "app-shop-x-ab12", schedule = "0 4 * * *", image = "r.example/shop@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", env_json = "[]", identity = "api" },
+      { id = "x", name = "app-shop-y-ab12", schedule = "0 5 * * *", image = "r.example/shop@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", env_json = "[]", identity = "api" },
+    ])
+  }
+  expect_failures = [var.job_json]
+}
+run "reject_job_unresolved_placeholder" {
+  command = plan
+  variables {
+    job_json = jsonencode([{ id = "x", name = "app-shop-x-ab12", schedule = "0 4 * * *", image = "r.example/shop@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", env_json = jsonencode([{ name = "A", value = "<tf-output:link.nope.host>" }]), identity = "api" }])
+  }
+  expect_failures = [terraform_data.job_env]
+}

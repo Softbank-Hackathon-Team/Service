@@ -5,12 +5,12 @@ import { envRef, fromOut, regionOf, tenantOf, type Target } from "../common/targ
 import { gcpAdapter, PERMS } from "../gcp/index.js";
 import {
   asV1Name, assertRenderable, connectIdentities, identitiesOf, identityName, instancesOf, K8S_RENDER_CAPS, kindJson,
-  managedServicesOf, postgresOf, postureOfComponent, refV2, secretNamesOf, workloadsOf,
+  managedJobsOf, managedServicesOf, postgresOf, postureOfComponent, refV2, secretNamesOf, workloadsOf,
 } from "./shared.js";
 import { assertGrants, gcpGrantTypes, grantsJsonFor } from "./grants.js";
 import { buildWorkloadValues, cloudPostgresValues } from "./cloud.js";
 import { cacheVars, cachesOf, dataTypesOf, objectStoreVars, objectStoresOf, queueVars, queuesOf } from "./data.js";
-import { managedServiceJson, managedWorkloadValues } from "./managed.js";
+import { managedJobJson, managedServiceJson, managedWorkloadValues } from "./managed.js";
 
 // DRAFT(ai): GCP 도착 Builder v2 (설계 27번 A1). 루트 = infra/modules/gcp/root, 종류 = kinds/{postgres,identity,namespace}
 
@@ -42,6 +42,8 @@ export function resourceTypesV2(spec: AppSpecV2): string[] {
   if (managed) {
     ["data.google_project", "google_service_account", "google_cloud_run_v2_service", "google_cloud_run_v2_service_iam_member"].forEach((x) => t.add(x));
     if (managedServicesOf(spec).some((w) => secretNamesOf(w).length)) ["google_secret_manager_secret", "google_secret_manager_secret_iam_member"].forEach((x) => t.add(x));
+    // JOBBUILD: 관리형 예약 잡 = kinds/job (SA 2개 + Cloud Run job + 호출 권한 + Cloud Scheduler)
+    if (managedJobsOf(spec).length) ["google_service_account", "google_cloud_run_v2_job", "google_cloud_run_v2_job_iam_member", "google_cloud_scheduler_job"].forEach((x) => t.add(x));
   }
   if (!managed && identitiesOf(spec).length) ["google_service_account", "google_service_account_iam_member"].forEach((x) => t.add(x));
   if (!managed && workloadsOf(spec).some((w) => secretNamesOf(w).length)) ["google_secret_manager_secret", "google_secret_manager_secret_iam_member"].forEach((x) => t.add(x));
@@ -103,6 +105,7 @@ export const gcpTarget: TargetBuilder = {
       ...objectStoresOf(spec).map((c) => ({ kind: "objectStore" as const, id: c.id })),
       ...queuesOf(spec).map((c) => ({ kind: "queue" as const, id: c.id })),
       ...managedServicesOf(spec).map((c) => ({ kind: "service" as const, id: c.id })),
+      ...managedJobsOf(spec).map((c) => ({ kind: "job" as const, id: c.id })),   // JOBBUILD: 관리형 예약 잡
       ...(managed ? [] : [{ kind: "namespace" as const, id: ns }]),
     ]);
     return {
@@ -125,6 +128,8 @@ export const gcpTarget: TargetBuilder = {
         queue_json: queueVars(spec, t),
         // 관리형이 없으면 키 자체를 안 둔다 (기존 계획 지문 그대로)
         ...(managed ? { service_json: managedServiceJson("gcp", spec, t, (src) => gcpAdapter.imageRef(src, t)) } : {}),
+        // JOBBUILD: 관리형 앱의 예약 잡이 있을 때만 키를 둔다 (없으면 기존 계획 지문 그대로)
+        ...(managedJobsOf(spec).length ? { job_json: managedJobJson("gcp", spec, t, (src) => gcpAdapter.imageRef(src, t)) } : {}),
       },
       instances,
     };

@@ -2,7 +2,8 @@ import { ServiceEnvVar, ServiceSecretVar, type AppSpecV2, type EnvVarV2, type He
 import { appNamespace } from "../common/base.js";
 import { boundedName } from "../common/names.js";
 import { fromOut, nameSeed, tenantOf, type Target } from "../common/target.js";
-import { compact, identityOf, kindJson, linkTarget, managedServicesOf, TEMPLATE } from "./shared.js";
+import { AdapterError } from "../common/errors.js";
+import { compact, identityOf, kindJson, linkTarget, managedCronProblem, managedJobEnvOk, managedJobsOf, managedServicesOf, TEMPLATE, UNSUPPORTED_V2 } from "./shared.js";
 
 // TA13 DRAFT(ai): 관리형 컨테이너(ECS Fargate · Cloud Run) 도착 = Terraform 이 서비스까지 만든다 (Helm 값 없음).
 //   Builder 는 순수 함수: IR 서비스 → ServiceTfVars(service_json). DB·서비스 주소는 같은 apply 안에서 생겨서 env 를 조각으로 넘기고 루트가 합친다.
@@ -80,6 +81,52 @@ export function managedServiceVars(p: ManagedProvider, spec: AppSpecV2, t: Targe
 export const managedServiceJson = (p: ManagedProvider, spec: AppSpecV2, t: Target, imageRef: (src: string) => string) =>
   kindJson("service", managedServiceVars(p, spec, t, imageRef));
 
+// JOBBUILD DRAFT(ai): 관리형 예약 잡 → JobTfVars(job_json). kinds/job (aws = EventBridge Scheduler → ECS RunTask, gcp = Cloud Scheduler → Cloud Run job)
+//   env 는 [{name, value}] — 값 그대로, 의존성은 <tf-output:link.<id>.<출력>> 한 덩어리 (루트 job_env_rows 가 같은 apply 값으로 풂).
+//   비밀·조각 여러 개 template 은 managedBlockers 가 먼저 막음 (여기 오면 그릴 수 있는 잡)
+const placeholder = (spec: AppSpecV2, to: string, out: string) => { linkTarget(spec, to, out); return `<tf-output:link.${to}.${out}>`; };
+function jobEnvValue(spec: AppSpecV2, e: EnvVarV2): string {
+  if (!managedJobEnvOk(e)) throw new AdapterError(UNSUPPORTED_V2, `관리형 잡 env 에 못 그리는 줄: ${e.name}`);
+  if ("value" in e) return e.value;
+  if ("fromLink" in e) return placeholder(spec, e.fromLink.to, e.fromLink.output);
+  const m = new RegExp(`^${TEMPLATE.source}$`).exec((e as { template: string }).template)!;
+  return placeholder(spec, m[1]!, m[2]!);
+}
+export function managedJobVars(p: ManagedProvider, spec: AppSpecV2, t: Target, imageRef: (src: string) => string) {
+  const jobs = managedJobsOf(spec);
+  const seen = new Set<string>();
+  for (const id of spec.components.map((c) => c.id)) {
+    if (seen.has(id)) throw new AdapterError(UNSUPPORTED_V2, `관리형 잡: IR id ${id} 가 겹침 (IR id 는 전역 유일)`);
+    seen.add(id);
+  }
+  return jobs.map((j) => {
+    const x = j.props;
+    const cron = managedCronProblem(x.schedule);
+    if (cron) throw new AdapterError(UNSUPPORTED_V2, `관리형 잡 ${j.id}: ${cron}`);
+    return {
+      id: j.id,
+      // aws: 역할 이름 = 이름 + -task·-ex·-sch (64자) → 58자 / gcp: SA·스케줄러 이름 파생 → 49자 소문자
+      name: boundedName({ prefix: "app-", app: j.id, seed: [nameSeed(t), spec.app.name, j.id, "job"], max: p === "gcp" ? 49 : 58 }),
+      schedule: x.schedule.trim().split(/\s+/).join(" "),
+      time_zone: x.timeZone ?? null,
+      concurrency_policy: x.concurrencyPolicy ?? null,
+      suspend: x.suspend ?? null,
+      backoff_limit: x.backoffLimit ?? null,
+      active_deadline_sec: x.activeDeadlineSec ?? null,
+      restart_policy: x.restartPolicy ?? null,
+      image: imageRef(srcOf(x.image)),
+      command_json: x.command ? JSON.stringify(x.command) : null,
+      args_json: x.args ? JSON.stringify(x.args) : null,
+      cpu_milli: x.resources.request?.cpuMilli ?? x.resources.limit?.cpuMilli ?? null,
+      mem_mib: x.resources.request?.memMiB ?? x.resources.limit?.memMiB ?? null,
+      env_json: JSON.stringify(x.env.map((e) => ({ name: e.name, value: jobEnvValue(spec, e) }))),
+      identity: identityOf(spec, j.id).id,
+    };
+  });
+}
+export const managedJobJson = (p: ManagedProvider, spec: AppSpecV2, t: Target, imageRef: (src: string) => string) =>
+  kindJson("job", managedJobVars(p, spec, t, imageRef));
+
 // 관리형 도착은 Helm 으로 띄울 워크로드가 없다 → 값은 화면·대조용 (서비스 이름은 루트 출력 service_names)
 export function managedWorkloadValues(p: ManagedProvider, spec: AppSpecV2, out: TfOutputs, t: Target, postgres: Array<Record<string, unknown>>): HelmValues {
   const warnings = [`관리형 도착(${p === "aws" ? "ECS" : "Cloud Run"}): 서비스는 Terraform 이 띄움 → Helm 워크로드 없음`];
@@ -93,6 +140,8 @@ export function managedWorkloadValues(p: ManagedProvider, spec: AppSpecV2, out: 
     managed: managedServicesOf(spec).map((w) => ({
       id: w.id, runtime: p === "aws" ? "ecs" : "cloudrun", service: fromOut(out, `service.${w.id}.name`),
     })),
+    // JOBBUILD: 관리형 예약 잡 (이름은 루트 출력 job_names)
+    ...(managedJobsOf(spec).length ? { managedJobs: managedJobsOf(spec).map((j) => ({ id: j.id, runtime: p === "aws" ? "ecs-scheduled" : "cloudrun-job", schedule: j.props.schedule })) } : {}),
     postgres,
     warnings: warnings.sort(),
   });

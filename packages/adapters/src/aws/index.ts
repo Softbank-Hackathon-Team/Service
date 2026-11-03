@@ -101,6 +101,10 @@ export const PERMS: PermTable = {
     read: ["ecs:DescribeTaskDefinition"], write: ["ecs:RegisterTaskDefinition", "iam:PassRole"], remove: ["ecs:DeregisterTaskDefinition"] },
   aws_ecs_service: {
     read: ["ecs:DescribeServices"], write: ["ecs:CreateService", "ecs:UpdateService", "iam:PassRole"], remove: ["ecs:DeleteService"] },
+  // JOBMOD DRAFT(ai): 예약 잡(EventBridge Scheduler → ECS RunTask). kinds/job 이 만드는 종류. 천장 파일엔 아직 안 넣음 (TA13 과 같은 이유, 보안 승인 몫)
+  aws_scheduler_schedule: {
+    read: ["scheduler:GetSchedule", "scheduler:ListTagsForResource"],
+    write: ["scheduler:CreateSchedule", "scheduler:UpdateSchedule", "scheduler:TagResource", "iam:PassRole"], remove: ["scheduler:DeleteSchedule"] },
   aws_appautoscaling_target: {
     read: ["application-autoscaling:DescribeScalableTargets"],
     write: ["application-autoscaling:RegisterScalableTarget"], remove: ["application-autoscaling:DeregisterScalableTarget"] },

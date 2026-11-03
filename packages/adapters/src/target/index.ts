@@ -11,8 +11,8 @@ export { awsTarget, gcpTarget, onpremTarget, azureMockTarget };
 export { mockPlanV2 as azureMockPlanV2, mockOutputsV2 as azureMockOutputsV2, resourceTypesV2 as azureResourceTypesV2, type AzureMockPlanV2 } from "./azure-mock.js";
 export { rdsClassFor } from "./aws.js";
 export { cloudSqlTierFor } from "./gcp.js";
-export { managedServiceVars, managedSecretName } from "./managed.js";
-export { requirementsV2, v2Blockers, V2_FIELD_COVERAGE, K8S_RENDER_CAPS, UNSUPPORTED_V2, LINK_OUTPUT_UNKNOWN, identitiesOf, managedBlockers, managedServicesOf, type FieldRule, type IdentityPlan } from "./shared.js";
+export { managedServiceVars, managedSecretName, managedJobVars } from "./managed.js";
+export { requirementsV2, v2Blockers, V2_FIELD_COVERAGE, K8S_RENDER_CAPS, UNSUPPORTED_V2, LINK_OUTPUT_UNKNOWN, identitiesOf, managedBlockers, managedJobsOf, managedServicesOf, type FieldRule, type IdentityPlan } from "./shared.js";
 
 // TA11: v2 Builder 가 만들 자원 종류 (화면 "생길 자원"이 v2 계획서면 이걸 씀). azure_mock 은 v2 렌더 없음 → 빈 목록
 import type { AppSpecV2 } from "@svc/contracts";

@@ -5,12 +5,12 @@ import { envRef, regionOf, tenantOf, type Target } from "../common/target.js";
 import { awsAdapter, BOUNDARY_NAME, PERMS } from "../aws/index.js";
 import {
   asV1Name, assertRenderable, connectIdentities, identitiesOf, identityName, instancesOf, K8S_RENDER_CAPS, kindJson,
-  managedServicesOf, postgresOf, postureOfComponent, refV2, secretNamesOf, workloadsOf,
+  managedJobsOf, managedServicesOf, postgresOf, postureOfComponent, refV2, secretNamesOf, workloadsOf,
 } from "./shared.js";
 import { assertGrants, grantsJsonFor } from "./grants.js";
 import { buildWorkloadValues, cloudPostgresValues } from "./cloud.js";
 import { cacheVars, cachesOf, dataTypesOf, objectStoreVars, objectStoresOf, queueVars, queuesOf } from "./data.js";
-import { managedServiceJson, managedWorkloadValues } from "./managed.js";
+import { managedJobJson, managedServiceJson, managedWorkloadValues } from "./managed.js";
 
 // DRAFT(ai): AWS 도착 Builder v2 (설계 27번 A1). 루트 = infra/modules/aws/root, 종류 = kinds/{postgres,identity,namespace}.
 // DECISION(team): AWS 도착 컴퓨트 = EKS (GKE·k3s와 같은 Helm 차트 재사용) (Jeong 2026-10-31) — v1 주석 그대로 따름
@@ -43,6 +43,8 @@ export function resourceTypesV2(spec: AppSpecV2): string[] {
       "aws_iam_role", "aws_iam_role_policy", "aws_ecs_task_definition", "aws_ecs_service"].forEach((x) => t.add(x));
     if (managed.some((m) => secretNamesOf(m).length)) t.add("aws_secretsmanager_secret");
     if (managed.some((m) => m.props.scale && m.props.replicas.max > m.props.replicas.min)) ["aws_appautoscaling_target", "aws_appautoscaling_policy"].forEach((x) => t.add(x));
+    // JOBBUILD: 관리형 예약 잡 = kinds/job (작업 정의 + 역할 3개 + EventBridge Scheduler)
+    if (managedJobsOf(spec).length) ["data.aws_caller_identity", "aws_iam_role", "aws_iam_role_policy", "aws_cloudwatch_log_group", "aws_ecs_task_definition", "aws_scheduler_schedule"].forEach((x) => t.add(x));
   }
   const ids = managed.length ? [] : identitiesOf(spec);
   if (ids.length) ["aws_iam_role", "aws_iam_role_policy", "aws_eks_pod_identity_association"].forEach((x) => t.add(x));
@@ -103,6 +105,7 @@ export const awsTarget: TargetBuilder = {
       ...objectStoresOf(spec).map((c) => ({ kind: "objectStore" as const, id: c.id })),
       ...queuesOf(spec).map((c) => ({ kind: "queue" as const, id: c.id })),
       ...managedServicesOf(spec).map((c) => ({ kind: "service" as const, id: c.id })),
+      ...managedJobsOf(spec).map((c) => ({ kind: "job" as const, id: c.id })),   // JOBBUILD: 관리형 예약 잡
       ...(managed ? [] : [{ kind: "namespace" as const, id: ns }]),
     ]);
     const acct = t.accountId ?? envRef("accountId");
@@ -128,6 +131,8 @@ export const awsTarget: TargetBuilder = {
         queue_json: queueVars(spec, t),
         // 관리형이 없으면 키 자체를 안 둔다 (기존 계획 지문 그대로)
         ...(managed ? { service_json: managedServiceJson("aws", spec, t, (src) => awsAdapter.imageRef(src, t)) } : {}),
+        // JOBBUILD: 관리형 앱의 예약 잡이 있을 때만 키를 둔다 (없으면 기존 계획 지문 그대로)
+        ...(managedJobsOf(spec).length ? { job_json: managedJobJson("aws", spec, t, (src) => awsAdapter.imageRef(src, t)) } : {}),
       },
       instances,
     };

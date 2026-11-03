@@ -146,3 +146,73 @@ run "reject_bad_bucket_name" {
   }
   expect_failures = [var.object_store_json]
 }
+
+# JOBMOD: 예약 잡 (EventBridge Scheduler → ECS RunTask). 정상 + 거부
+run "plan_jobs" {
+  command = plan
+  variables {
+    job_json = jsonencode([
+      { id = "nightly", name = "app-shop-nightly-ab12", schedule = "30 2 * * 1-5", time_zone = "Asia/Seoul", concurrency_policy = null, suspend = null, backoff_limit = 2, active_deadline_sec = null, restart_policy = "OnFailure", image = "r.example/shop@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", command_json = null, args_json = "[\"run\",\"nightly\"]", cpu_milli = 500, mem_mib = 1024, env_json = jsonencode([{ name = "DB_HOST", value = "<tf-output:link.shop-db.host>" }, { name = "MODE", value = "batch" }]), identity = "api" },
+      { id = "monthly", name = "app-shop-monthly-cd34", schedule = "0 4 1 * *", time_zone = null, concurrency_policy = "Forbid", suspend = true, backoff_limit = null, active_deadline_sec = 600, restart_policy = null, image = "r.example/shop@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", command_json = null, args_json = null, cpu_milli = null, mem_mib = null, env_json = "[]", identity = "api" },
+    ])
+  }
+  assert {
+    condition     = module.job["nightly"].schedule_expression == "cron(30 2 ? * 2-6 *)" && module.job["monthly"].schedule_expression == "cron(0 4 1 * ? *)"
+    error_message = "cron 5필드 → EventBridge 변환(요일 1-5 → 2-6, 일·요일 중 하나는 ?)이 다름"
+  }
+  assert {
+    condition     = module.job["nightly"].cpu_units == 512 && module.job["nightly"].mem_mib == 1024 && module.job["monthly"].cpu_units == 256 && module.job["monthly"].mem_mib == 512
+    error_message = "Fargate CPU·메모리 조합이 다름 (500m → 512, null → 256/512)"
+  }
+  assert {
+    condition     = length(module.job["monthly"].unmapped_fields) == 2 && module.job["monthly"].unmapped_fields.concurrency_policy == "Forbid" && contains(keys(module.job["monthly"].unmapped_fields), "active_deadline_sec")
+    error_message = "ECS 가 못 옮기는 칸(Forbid·active_deadline_sec)은 unmapped_fields 에 나와야 함"
+  }
+  assert {
+    condition     = contains(keys(module.job["nightly"].unmapped_fields), "restart_policy") && !contains(keys(module.job["nightly"].unmapped_fields), "concurrency_policy")
+    error_message = "restart_policy OnFailure 는 unmapped, 없는 칸은 안 나와야 함"
+  }
+}
+
+run "plan_jobs_default_empty" {
+  command = plan
+  assert {
+    condition     = length(module.job) == 0 && length(aws_ecs_cluster.svc) == 0
+    error_message = "기본값에선 잡도 ECS 공용 자원도 없어야 함"
+  }
+}
+
+# 거부: 날짜·요일 둘 다 정한 schedule
+run "reject_job_dom_and_dow" {
+  command = plan
+  variables {
+    job_json = jsonencode([{ id = "x", name = "app-shop-x-ab12", schedule = "0 4 1 * 1", image = "r.example/shop@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", env_json = "[]", identity = "api" }])
+  }
+  expect_failures = [var.job_json]
+}
+
+# 거부: 이름이 app- 로 시작하지 않음 / 같은 id 두 번 / 못 푼 자리표시
+run "reject_job_bad_name" {
+  command = plan
+  variables {
+    job_json = jsonencode([{ id = "x", name = "shop-x", schedule = "0 4 * * *", image = "r.example/shop@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", env_json = "[]", identity = "api" }])
+  }
+  expect_failures = [var.job_json]
+}
+run "reject_job_duplicate_id" {
+  command = plan
+  variables {
+    job_json = jsonencode([
+      { id = "x", name = "app-shop-x-ab12", schedule = "0 4 * * *", image = "r.example/shop@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", env_json = "[]", identity = "api" },
+      { id = "x", name = "app-shop-y-ab12", schedule = "0 5 * * *", image = "r.example/shop@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", env_json = "[]", identity = "api" },
+    ])
+  }
+  expect_failures = [var.job_json]
+}
+run "reject_job_unresolved_placeholder" {
+  command = plan
+  variables {
+    job_json = jsonencode([{ id = "x", name = "app-shop-x-ab12", schedule = "0 4 * * *", image = "r.example/shop@sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", env_json = jsonencode([{ name = "A", value = "<tf-output:link.nope.host>" }]), identity = "api" }])
+  }
+  expect_failures = [terraform_data.job_env]
+}

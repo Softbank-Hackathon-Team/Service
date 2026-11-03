@@ -101,8 +101,13 @@ test("거부: k8s 워크로드와 섞음 · 사이드카·볼륨·fromField · �
   const base = ECS();
   const job = { id: "nightly", kind: "job", props: { image: (base.components[0] as { props: { image: unknown } }).props.image, resources: {}, env: [],
     serviceAccount: "x", schedule: "0 3 * * *" } };
-  const mixed = AppSpecV2.parse({ ...base, components: [...base.components, job] });
-  for (const p of ["aws", "gcp"] as const) throwsUnsupported(() => targetBuilderFor(p).toTerraformV2(mixed, at(p)), /nightly.*섞음/);
+  // JOBBUILD: 관리형 앱의 잡은 이제 관리형 예약 잡(job_json)으로 그림 → 섞음이 아님. 섞음 거부는 k8s runtime 서비스로 본다
+  const withJob = AppSpecV2.parse({ ...base, components: [...base.components, job] });
+  assert.deepEqual(managedBlockers(withJob), []);
+  const k8sSvc = { ...structuredClone(base.components[0]!), id: "legacy" } as unknown as { props: Record<string, unknown> };
+  k8sSvc.props.runtime = "k8s";
+  const mixed = AppSpecV2.parse({ ...base, components: [...base.components, k8sSvc] });
+  for (const p of ["aws", "gcp"] as const) throwsUnsupported(() => targetBuilderFor(p).toTerraformV2(mixed, at(p)), /legacy.*섞음/);
   const edit = (f: (props: Record<string, unknown>) => void) => {
     const s = structuredClone(base) as unknown as { components: Array<{ id: string; props: Record<string, unknown> }> };
     f(s.components.find((c) => c.id === "shop-api")!.props);

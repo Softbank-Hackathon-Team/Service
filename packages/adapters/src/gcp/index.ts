@@ -69,6 +69,13 @@ export const PERMS: PermTable = {
   google_cloud_run_v2_service: {
     read: ["run.services.get"], write: ["run.services.create", "run.services.update", "run.operations.get", "iam.serviceAccounts.actAs"],
     remove: ["run.services.delete"] },
+  // JOBMOD DRAFT(ai): 예약 잡(Cloud Scheduler → Cloud Run job). kinds/job 이 만드는 종류. 천장 파일엔 아직 안 넣음 (위와 같은 이유)
+  google_cloud_run_v2_job: {
+    read: ["run.jobs.get"], write: ["run.jobs.create", "run.jobs.update", "run.operations.get", "iam.serviceAccounts.actAs"], remove: ["run.jobs.delete"] },
+  google_cloud_run_v2_job_iam_member: {
+    read: ["run.jobs.getIamPolicy"], write: ["run.jobs.setIamPolicy"], remove: ["run.jobs.setIamPolicy"] },
+  google_cloud_scheduler_job: {
+    read: ["cloudscheduler.jobs.get"], write: ["cloudscheduler.jobs.create", "cloudscheduler.jobs.update"], remove: ["cloudscheduler.jobs.delete"] },
   google_cloud_run_v2_service_iam_member: {
     read: ["run.services.getIamPolicy"], write: ["run.services.setIamPolicy"], remove: ["run.services.setIamPolicy"] },
 };
