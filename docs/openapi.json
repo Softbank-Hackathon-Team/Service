@@ -10631,15 +10631,19 @@
             ]
           },
           "missingPermissions": {
+            "maxItems": 100,
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "maxLength": 300
             }
           },
           "needsHuman": {
+            "maxItems": 100,
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "maxLength": 300
             }
           }
         },
