@@ -1,6 +1,6 @@
 import { AppSpec, ImportResultV2, MigrationJob, checkV2, type FieldMeta, type ObserveSession, type Provider, type RawInventory } from "@svc/contracts";
 import { withTenant, advance, scrubString } from "@svc/core";
-import { AWS_DATA_READ_ACTIONS, measureImportAccuracy, targetBuilderFor, GCP_DATA_READ_PERMISSIONS, actionsOfCommands, AdapterError, CLOUDRUN_OBSERVE_PERMISSIONS, adapterFor, discoverForImport, ECS_OBSERVE_ACTIONS, EC2_OBSERVE_ACTIONS, GCE_OBSERVE_PERMISSIONS, envFor, inventoryForAudit, isAdapterError, normalizeV2, projectV1 } from "@svc/adapters";
+import { AWS_DATA_READ_ACTIONS, measureImportAccuracy, targetBuilderFor, GCP_DATA_READ_PERMISSIONS, actionsOfCommands, AdapterError, CLOUDRUN_OBSERVE_PERMISSIONS, adapterFor, discoverForImport, ECS_OBSERVE_ACTIONS, EC2_OBSERVE_ACTIONS, GCE_OBSERVE_PERMISSIONS, envFor, inventoryForAudit, isAdapterError, normalizeV2, projectV1, carryHumanEdits, type PrevSpecV2 } from "@svc/adapters";
 import { StsCliError, TempRoleDenied } from "@svc/security";
 import { tempRoles } from "../platform.js";
 import { failedAttempts, recordAttemptFailure } from "./_step.js";
@@ -70,7 +70,8 @@ async function importOnce(job: MigrationJob) {
   if (flag && flag !== "v1" && flag !== "v2") throw new AdapterError("IMPORT_IR_INVALID", `IMPORT_IR 은 v1 | v2 중 하나 (받은 값: ${flag.slice(0, 20)})`);
   const ir = flag === "v2" ? "v2" : "v1";
     // PREVIDS: 같은 이전의 직전 spec_v2 판의 ids(벤더 키 → id)를 넘겨, 다시 가져와도 같은 자원 = 같은 id. 첫 가져오기는 빈 값
-    const v2 = ir === "v2" ? await importV2(row.provider as Provider, sess.session, await previousIds(job)) : null;
+    // PREVIDS2: 같은 이전의 앞 판들(가장 새 것부터)에서 id 와, 사람이 손댄 칸을 읽는다
+    const v2 = ir === "v2" ? await importV2(row.provider as Provider, sess.session, await previousImports(job)) : null;
     let inv: RawInventory, spec: unknown, fieldMeta: FieldMeta;
     if (v2) ({ inv, spec, fieldMeta } = v2);
     else {
@@ -139,13 +140,21 @@ async function borrowObserve(job: MigrationJob, row: { source_env_id: string; pr
   };
 }
 
-// PREVIDS: 이 이전(migration)의 가장 새 spec_v2 판에서 ids 만 읽는다. 작업 내용은 믿지 않고 DB 에서(회사 벽 안에서) 읽는다.
-//   범위 = 같은 migration 한 개. 다른 이전·다른 회사의 판은 안 읽는다(RLS + migration_id 조건). 앞 판이 없거나 ids 모양이 틀리면 빈 값(= 새 id)
-async function previousIds(job: MigrationJob): Promise<Record<string, string>> {
+// PREVIDS/PREVIDS2: 이 이전(migration)의 spec_v2 판들을 가장 새 것부터 읽는다. 작업 내용은 믿지 않고 DB 에서(회사 벽 안에서) 읽는다.
+//   범위 = 같은 migration 한 개. 다른 이전·다른 회사의 판은 안 읽는다(RLS + migration_id 조건). 앞 판이 없거나 모양이 틀리면(손상) 그 판은 건너뜀 = 새 id·새 값
+//   ids = 가장 새 판의 ids (PREVIDS). history = 사람이 손댄 칸 유지에 쓸 {spec, fieldMeta} 들 (PREVIDS2, carryHumanEdits)
+interface PreviousImports { ids: Record<string, string>; history: PrevSpecV2[] }
+async function previousImports(job: MigrationJob): Promise<PreviousImports> {
   const r = await withTenant(job.tenantId, (tx) => tx.query(
-    `SELECT spec_v2->'ids' AS ids FROM spec_versions WHERE migration_id=$1 AND spec_v2 IS NOT NULL ORDER BY version DESC LIMIT 1`, [job.migrationId]));
-  const parsed = ImportResultV2.shape.ids.safeParse(r.rows[0]?.ids);
-  return parsed.success ? parsed.data : {};
+    `SELECT spec_v2 FROM spec_versions WHERE migration_id=$1 AND spec_v2 IS NOT NULL ORDER BY version DESC LIMIT 20`, [job.migrationId]));
+  const history: PrevSpecV2[] = [];
+  let ids: Record<string, string> = {};
+  for (const [i, row] of r.rows.entries()) {
+    const spec = ImportResultV2.shape.spec.safeParse(row.spec_v2?.spec), fieldMeta = ImportResultV2.shape.fieldMeta.safeParse(row.spec_v2?.fieldMeta);
+    if (spec.success && fieldMeta.success) history.push({ spec: spec.data, fieldMeta: fieldMeta.data });
+    if (i === 0) { const p = ImportResultV2.shape.ids.safeParse(row.spec_v2?.ids); if (p.success) ids = p.data; }
+  }
+  return { ids, history };
 }
 
 async function saveImport(job: MigrationJob, inv: RawInventory, spec: unknown, fieldMeta: FieldMeta, ir: string, v2: V2Import | null) {
@@ -193,7 +202,7 @@ async function accuracyOf(tx: { query: (sql: string, p?: unknown[]) => Promise<{
 //   원본에 k8s 워크로드가 하나도 없으면(사실상 MOCK aws 의 ECS 원본) v1 경로로 되돌아간다: v1 discover 를 다시 부르고 spec_v2 는 NULL
 //   checkV2 errors(구조 오류)만 막는다. reviews(벤더 주소·사설 IP 남음)는 spec_v2.fieldMeta 검토 표시만
 type V2Import = { inv: RawInventory; spec: unknown; fieldMeta: FieldMeta; result: ImportResultV2 | null; note?: string };
-async function importV2(p: Provider, sess: ObserveSession, previous: Record<string, string> = {}): Promise<V2Import> {
+async function importV2(p: Provider, sess: ObserveSession, previous: PreviousImports = { ids: {}, history: [] }): Promise<V2Import> {
   // I4: 깃발 IMPORT_AWS_IAM=1 이면 앱 신원의 IAM 정책도 읽어 grants·기준선을 채운다 (기본 꺼짐 = 지금 그대로)
   const inv = await discoverForImport(p, { ir: "v2", iam: process.env.IMPORT_AWS_IAM === "1" }, sess.cliEnv ? { env: envFor(sess.cliEnv) } : {});
   // I9: ECS 서비스도 v2 워크로드 (관리형 컨테이너 갈래). 워크로드가 하나도 없을 때만 v1 경로로 되돌아간다
@@ -205,12 +214,17 @@ async function importV2(p: Provider, sess: ObserveSession, previous: Record<stri
     return { inv: inv1, spec, fieldMeta, result: null, note: "원본에 k8s·ECS 워크로드 없음 → v1 경로 (spec_v2 없음)" };
   }
   // PARTOF: 앱 묶음 값 = IMPORT_APP(projectV1 mainApp 과 같은 값). 없으면 라벨이 가장 많은 묶음 + 검토 표시
-  const { result, projectionEnv } = normalizeV2(inv, { previousIds: previous, partOf: process.env.IMPORT_APP?.trim() || undefined });
+  const fresh = normalizeV2(inv, { previousIds: previous.ids, partOf: process.env.IMPORT_APP?.trim() || undefined });
+  const { projectionEnv } = fresh;
+  // PREVIDS2: 앞 판에서 사람이 손댄 칸 유지 (출발 값이 같으면 사람 값·표시, 달라졌으면 새 값 + 다시 검토). 첫 가져오기는 history 가 비어 그대로
+  const { result, report } = carryHumanEdits(fresh.result, previous.history);
   const { errors, reviews } = checkV2(result.spec);
   if (errors.length) throw new AdapterError("SPEC_V2_INVALID", `공통 명세 v2 검증 실패: ${errors.slice(0, 5).join("; ")}${errors.length > 5 ? ` 외 ${errors.length - 5}개` : ""}`);
   // DRAFT(ai): reviews 는 막지 않고 fieldMeta 에 "check.reviews[i]" 키로 검토 표시 (화면이 needs_review 로 센다)
   reviews.forEach((r, i) => { result.fieldMeta[`check.reviews[${i}]`] = { source: "checkV2", confidence: 0.6, needs_review: true, rationale: r }; });
   const stored = ImportResultV2.parse(result);   // 저장 전 모양 확인 (ZodError → 영구 실패)
   const { spec, fieldMeta } = projectV1(stored, projectionEnv, { mainApp: process.env.IMPORT_APP || undefined });
-  return { inv, spec, fieldMeta, result: stored };
+  const carryNote = report.kept.length || report.flagged.length
+    ? `앞 판 사람 수정 유지 ${report.kept.length}칸, 출발 값 바뀌어 다시 검토 ${report.flagged.length}칸` : undefined;
+  return { inv, spec, fieldMeta, result: stored, ...(carryNote ? { note: carryNote } : {}) };
 }
