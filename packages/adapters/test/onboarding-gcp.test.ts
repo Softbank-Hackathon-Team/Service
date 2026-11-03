@@ -27,6 +27,23 @@ test("SA 2개(svc-observe·svc-operate), 커스텀 역할 3개", () => {
   assert.ok(out.includes("gcp-operate-custom-role.yaml") && out.includes("gcp-operate-iam-custom-role.yaml"));
   // IAM 정책 변경 역할은 조건부 바인딩
   assert.match(out, /roles\/platform_operate_iam --condition-from-file=\.\/permissions\/gcp-operate-iam-binding-condition\.json/);
+  // ID-4: 실행 역할도 조건부 (플랫폼 이름 규칙 자원만)
+  assert.match(out, /roles\/platform_operate --condition-from-file=\.\/permissions\/gcp-operate-binding-condition\.json/);
+});
+
+test("ID-4 조건식: 이름 규칙 자원만 통과, 남의 자원은 막힘 (CEL 을 단순 흉내로 평가해 고정)", () => {
+  const c = JSON.parse(readFileSync(new URL("../../../infra/permissions/gcp-operate-binding-condition.json", import.meta.url), "utf8"));
+  const x: string = c.expression;
+  // 조건식이 다루는 자원 종류를 고정 (실행 역할 권한 계열마다 하나 이상)
+  for (const t of ["sqladmin.googleapis.com/Instance", "redis.googleapis.com/Instance", "iam.googleapis.com/ServiceAccount", "secretmanager.googleapis.com/Secret",
+    "secretmanager.googleapis.com/SecretVersion", "storage.googleapis.com/Bucket", "pubsub.googleapis.com/Topic", "pubsub.googleapis.com/Subscription"])
+    assert.ok(x.includes(`resource.type == "${t}"`), t);
+  assert.ok(x.includes('resource.service == "container.googleapis.com"'));
+  // Cloud SQL 이름 규칙: dbInstanceName = <앱>-pg-<해시6>
+  const re = new RegExp(x.match(/matches\("([^"]+)"\)/)![1]!);
+  assert.ok(re.test("shop-pg-a1b2c3")); assert.ok(!re.test("prod-main-db")); assert.ok(!re.test("shop-pg-a1b2c3-x"));
+  // 접두어 규칙은 app- 하나뿐
+  assert.deepEqual([...new Set([...x.matchAll(/startsWith\("([^"]+)"\)/g)].map((m) => m[1]))].sort(), ["app-", "projects/_/buckets/app-"]);
 });
 
 test("tokenCreator는 회사 전용 SA에게, SA 단위로만", () => {

@@ -26,11 +26,14 @@ case "$args" in
   "iam roles undelete "*) rm -f "$S/role/$4.deleted" ;;
   "projects get-iam-policy "*)
     role=$(grep -o 'bindings.role=[^ ]*' <<<"$args" | head -1 | cut -d= -f2); mem=$(grep -o 'bindings.members=[^ "]*' <<<"$args" | head -1 | cut -d= -f2)
-    if grep -q 'condition.expression' <<<"$args"; then pat="^$mem $role cond$"; else pat="^$mem $role"; fi
+    if grep -q 'condition.expression' <<<"$args"; then pat="^$mem $role cond$"; elif grep -q 'NOT bindings.condition' <<<"$args"; then pat="^$mem $role$"; else pat="^$mem $role"; fi
     grep -q "$pat" "$S/pbind" 2>/dev/null && echo "$role" ;;
   "projects add-iam-policy-binding "*)
     mem=$(grep -o -- '--member=[^ ]*' <<<"$args" | cut -d= -f2); role=$(grep -o -- '--role=[^ ]*' <<<"$args" | cut -d= -f2)
     c=""; grep -q -- '--condition-from-file' <<<"$args" && c=" cond"; echo "$mem $role$c" >> "$S/pbind" ;;
+  "projects remove-iam-policy-binding "*)
+    mem=$(grep -o -- '--member=[^ ]*' <<<"$args" | cut -d= -f2); role=$(grep -o -- '--role=[^ ]*' <<<"$args" | cut -d= -f2)
+    grep -vx "$mem $role" "$S/pbind" > "$S/pbind.new"; mv "$S/pbind.new" "$S/pbind" ;;
   "iam service-accounts get-iam-policy "*)
     t="$4"; mem=$(grep -o 'bindings.members=[^ "]*' <<<"$args" | head -1 | cut -d= -f2)
     grep -q "^$t $mem" "$S/sabind" 2>/dev/null && echo "roles/iam.serviceAccountTokenCreator" ;;
@@ -53,14 +56,14 @@ function env() {
       env: { PATH: `${root}:/usr/bin:/bin`, GCLOUD_STATE: state, PLATFORM_SA: SA, PROJECT_ID: PRJ, ROLE_DIR: "./permissions", ...extra } }),
   };
 }
-const MUTATING = /^(iam service-accounts create|iam roles create|iam roles update|iam roles undelete|projects add-iam-policy-binding|iam service-accounts add-iam-policy-binding)/;
+const MUTATING = /^(iam service-accounts create|iam roles create|iam roles update|iam roles undelete|projects add-iam-policy-binding|projects remove-iam-policy-binding|iam service-accounts add-iam-policy-binding)/;
 const mutations = (calls: string[]) => calls.filter((c) => MUTATING.test(c));
 
-test("처음 실행: SA 3 + 역할 4 + 프로젝트 바인딩 4 + tokenCreator 3 = 변경 14번 (ID-7 plan SA·역할 포함)", () => {
+test("처음 실행: SA 3 + 역할 5 + 프로젝트 바인딩 5 + tokenCreator 3 = 변경 16번 (ID-7 plan SA·역할, ID-2 DB 비밀번호 역할 포함)", () => {
   const e = env();
   const r = e.run();
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(mutations(e.calls()).length, 14);
+  assert.equal(mutations(e.calls()).length, 16);
   assert.match(r.stdout, /123456/);
   assert.ok(!r.stdout.includes("건너뜀"));
 });
@@ -73,7 +76,7 @@ test("재실행: 변경 명령 0번, 전부 '건너뜀', 종료 0 (확인 명령
   assert.equal(r.status, 0, r.stderr);
   const second = e.calls().slice(before);
   assert.equal(mutations(second).length, 0, "재실행에서 변경 명령: " + mutations(second).join(" | "));
-  assert.equal((r.stdout.match(/이미 있음, 건너뜀/g) ?? []).length, 14);
+  assert.equal((r.stdout.match(/이미 있음, 건너뜀/g) ?? []).length, 16);
   assert.ok(second.length >= 10, "각 항목을 먼저 확인");
 });
 
@@ -84,7 +87,7 @@ test("부분 상태: 관찰 SA·관찰 역할만 있으면 나머지만 만든�
   assert.equal(r.status, 0, r.stderr);
   const m = mutations(e.calls());
   // OBSROLE3: 있는 관찰 역할에 권한이 비어 있으면 create 가 아니라 update(add-permissions) 1번이 더해진다 (8 → 9)
-  assert.equal(m.length, 13);
+  assert.equal(m.length, 15);
   assert.equal(m.filter((c) => c.startsWith("iam roles update platform_observe ")).length, 1);
   assert.ok(!m.some((c) => c.includes("service-accounts create svc-observe")) && !m.some((c) => c.includes("roles create platform_observe ")));
   assert.ok(m.some((c) => c.includes("service-accounts create svc-operate")));
@@ -107,6 +110,21 @@ test("조건부 바인딩: 조건 없는 같은 역할 바인딩이 있어도 �
   const iam = mutations(e.calls()).filter((c) => c.includes("platform_operate_iam") && c.startsWith("projects add"));
   assert.equal(iam.length, 1);
   assert.ok(iam[0]!.includes("--condition-from-file"));
+});
+
+test("ID-4: 실행 역할은 조건부로 묶고, 예전 조건 없는 바인딩은 걷어낸다 (관찰·plan 은 조건 없음 그대로)", () => {
+  const e = env();
+  appendFileSync(join(e.state, "pbind"), `serviceAccount:${OPR} projects/${PRJ}/roles/platform_operate\n`);
+  assert.equal(e.run().status, 0);
+  const m = mutations(e.calls());
+  const add = m.filter((c) => c.startsWith("projects add") && c.includes("roles/platform_operate "));
+  assert.equal(add.length, 1); assert.ok(add[0]!.includes("--condition-from-file=./permissions/gcp-operate-binding-condition.json"));
+  const rm = m.filter((c) => c.startsWith("projects remove-iam-policy-binding"));
+  assert.equal(rm.length, 1); assert.ok(rm[0]!.includes("roles/platform_operate ") && rm[0]!.includes("--condition=None"));
+  const left = readFileSync(join(e.state, "pbind"), "utf8").split("\n").filter((l) => l.includes("roles/platform_operate "));
+  assert.deepEqual(left, [`serviceAccount:${OPR} projects/${PRJ}/roles/platform_operate cond`]);
+  const b = e.calls().length; e.run();   // 다시 실행해도 지우기·추가 없음
+  assert.equal(mutations(e.calls().slice(b)).length, 0);
 });
 
 test("tokenCreator 는 SA 단위로 확인: 한쪽만 있으면 다른 쪽만 추가", () => {
@@ -142,7 +160,7 @@ test("DRY_RUN 은 확인 명령도 안 부르고, 이미 있어도 전부 출력
   const r = e.run({ DRY_RUN: "1" });
   assert.equal(r.status, 0);
   assert.equal(e.calls().length, before, "DRY_RUN 중 gcloud 호출 없음");
-  assert.equal((r.stdout.match(/^\+ gcloud/gm) ?? []).length, 14);
+  assert.equal((r.stdout.match(/^\+ gcloud/gm) ?? []).length, 16);
 });
 
 // ── OBSROLE3: 이미 만든 관찰 역할 권한 갱신 ──
@@ -264,7 +282,7 @@ test("VOBSROLE3 거부: 권한 추가(update)가 거절돼도 나머지 연결 �
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stderr, /권한 추가 실패/);
   const calls = e.calls();
-  assert.equal(calls.filter((c) => c.startsWith("projects add-iam-policy-binding")).length, 4);
+  assert.equal(calls.filter((c) => c.startsWith("projects add-iam-policy-binding")).length, 5);
   assert.equal(calls.filter((c) => c.startsWith("iam service-accounts add-iam-policy-binding")).length, 3);
   assert.deepEqual(permsOf(e).sort(), OLD7.split(",").sort(), "실패했으니 권한은 그대로");
 });

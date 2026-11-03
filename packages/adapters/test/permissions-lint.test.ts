@@ -147,6 +147,23 @@ test("GCP: 주 역할엔 setIamPolicy 없음, 별도 역할은 setIamPolicy만 +
   assert.equal((cond.expression.match(/resource\.type == /g) ?? []).length, 5, "조건 없는 자원 종류가 섞이면 안 됨");
 });
 
+// ID-2: 비밀값 읽기는 주 역할 금지. 도착 DB 비밀번호만 따로 역할 + 이름 조건 (app-…-db-password 시크릿 버전만)
+test("GCP: DB 비밀번호 역할은 versions.access 하나뿐 + app-…-db-password 시크릿 버전 조건", () => {
+  const role = read("gcp-operate-db-secret-role.yaml").split("\n").filter((l) => l.startsWith("- ")).map((l) => l.slice(2).trim());
+  assert.deepEqual(role, ["secretmanager.versions.access"]);
+  const x = (JSON.parse(read("gcp-operate-db-secret-condition.json")) as { expression: string }).expression;
+  assert.equal((x.match(/resource\.type == /g) ?? []).length, 1);
+  assert.match(x, /resource\.type == "secretmanager\.googleapis\.com\/SecretVersion"/);
+  assert.ok(!x.includes("||"), "다른 자원 종류로 새는 갈래 없음");
+  assert.match(x, /startsWith\("app-"\)/); assert.match(x, /endsWith\("-db-password"\)/);
+  // 이름 규칙 원본(Terraform)과 맞는지: 도착 DB 비밀번호 시크릿 이름은 app- 로 시작해 -db-password 로 끝난다
+  for (const f of ["../../../infra/modules/gcp/kinds/postgres/main.tf", "../../../infra/modules/gcp/app/main.tf"]) {
+    const tf = readFileSync(new URL(f, import.meta.url), "utf8");
+    const m = tf.match(/resource "google_secret_manager_secret" "db_password" \{[^}]*?secret_id\s*=\s*"([^"]+)"/);
+    assert.ok(m, f); assert.ok(m![1]!.startsWith("app-") && m![1]!.endsWith("-db-password"), m![1]);
+  }
+});
+
 // 온프레 k8s ClusterRole
 const k8s = read("onprem-operate-clusterrole.yaml");
 const rules = [...k8s.matchAll(/apiGroups: \[(.*?)\]\n\s+resources: \[(.*?)\]\n\s+verbs: \[(.*?)\]/g)]
