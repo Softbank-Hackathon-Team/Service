@@ -37,7 +37,7 @@ export const SOURCE_WORKLOAD: Record<Provider, string> = {
   aws: "Amazon ECS 서비스", gcp: "GKE Deployment", onprem: "k3s Deployment", azure_mock: "Container Apps (Mock)",
 };
 
-const CATEGORY_LABEL: Record<ServiceCategory, string> = {
+export const CATEGORY_LABEL: Record<ServiceCategory, string> = {
   cluster: "컨테이너 클러스터", workload: "앱(컨테이너)", database: "DB", ingress: "진입(로드 밸런서)", registry: "이미지 저장소",
   secret: "비밀 저장소", identity: "앱 권한(ID)", network: "네트워크", storage: "객체 저장소",
 };
@@ -53,13 +53,13 @@ export const METHOD_LABEL: Record<MoveMethod, string> = {
 };
 
 // 각 줄이 계획서 어느 단계에서 일어나나 (contracts PlanStep id)
-const STEP: Record<ServiceCategory, PlanStepId | null> = {
+export const STEP: Record<ServiceCategory, PlanStepId | null> = {
   cluster: null, network: null, registry: "deploy", identity: "provision", secret: "provision",
   database: "sync", workload: "deploy", ingress: "shift", storage: null,
 };
 
 // 출발 쪽이 이전 뒤 어떻게 되나 (워커 cleanup.ts: 복제 객체 걷기 + 출발 앱 0 으로. 출발 DB 는 쓰기 회수 상태로 남김 — 지울지는 TODO(human))
-const AFTER_SOURCE: Partial<Record<ServiceCategory, string>> = {
+export const AFTER_SOURCE: Partial<Record<ServiceCategory, string>> = {
   workload: "정리 단계에서 0 개로 줄임 (지우지 않음)",
   database: "컷오버 때 쓰기를 막고 남김. 롤백 창 동안 역방향 복제로 받음",
   ingress: "가중치 0 으로 (Cloudflare LB 풀에서 빠짐)",
