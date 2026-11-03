@@ -3,24 +3,28 @@ import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { withTenant } from "@svc/core";
-import { NotifySession, SESSION_EVENTS_CHANNEL } from "@svc/contracts";
+import { NotifySession, SESSION_EVENTS_CHANNEL, GithubConfig } from "@svc/contracts";
 import { sendError } from "../plugins/errors.js";
 import { errors } from "./responses.js";
 import { signAccess, jwtSecret } from "../auth/jwt.js";
 import { revokeFamily } from "../auth/revoked.js";
 import { verifyPassword, PASSWORD_MAX } from "../auth/password.js";
 import { LoginLimiter } from "../auth/limiter.js";
-import { authSettings, devHeaderAuthEnabled, REFRESH_COOKIE, REFRESH_COOKIE_PATH } from "../auth/settings.js";
+import { authSettings, devHeaderAuthEnabled, REFRESH_COOKIE } from "../auth/settings.js";
+import { readCookie, setRefreshCookie, clearRefreshCookie } from "../auth/http.js";
+import { githubEnabled } from "../auth/github.js";
+import { registerGithub } from "./auth-github.js";
 import {
   findLoginUser, findSession, parseRefresh, refreshMatches, insertSession, userView, audit, type AuthUser as AuthUserRow,
 } from "../auth/store.js";
 
 // 진짜 로그인 경로 (Z93). 화면 계약은 Z96 과 맞춤:
-//   GET  /auth/config   {devAuth, loginRequired}            인증 불필요. 화면이 로그인 화면을 띄울지 정한다
+//   GET  /auth/config   {devAuth, loginRequired, github:{enabled}} 인증 불필요. 화면이 로그인 화면을 띄울지 정한다
 //   POST /auth/login    {email,password} → AuthTokenResponse  + Set-Cookie svc_refresh (HttpOnly, SameSite=Strict, Path=/api)
 //   POST /auth/refresh  쿠키 → AuthTokenResponse (리프레시 토큰 회전: 쓴 토큰은 바로 무효)
 //   POST /auth/logout   쿠키 → 204, 세션 끊고 쿠키 지움
 //   GET  /auth/me       Bearer → AuthUser
+//   GET  /auth/github/start · /auth/github/callback   GitHub OAuth (routes/auth-github.ts). 끝나면 같은 svc_refresh 쿠키 + 화면으로 이동
 // 접근 토큰은 본문으로만 준다 (화면 메모리에 보관, localStorage 안 씀). 리프레시 토큰은 HttpOnly 쿠키로만 (스크립트가 못 읽음)
 // 출처: OWASP Session Management Cheat Sheet(쿠키 속성·회전·만료), OWASP Authentication Cheat Sheet(같은 오류 문구·시도 제한),
 //       RFC 9700(OAuth 2.0 Security BCP 4.14: 리프레시 토큰 회전과 재사용 감지)
@@ -37,31 +41,10 @@ export const AuthUser = z.object({
 export const AuthTokenResponse = z.object({
   accessToken: z.string(), tokenType: z.literal("Bearer"), expiresIn: z.number().int(), user: AuthUser,
 }).strict();
-export const AuthConfig = z.object({ devAuth: z.boolean(), loginRequired: z.boolean() }).strict();
+// GHLOGIN: github.enabled = GITHUB_CLIENT_ID·GITHUB_CLIENT_SECRET 가 둘 다 있을 때만 (화면이 GitHub 버튼을 띄울지)
+export const AuthConfig = z.object({ devAuth: z.boolean(), loginRequired: z.boolean(), github: GithubConfig }).strict();
 
 const limiter = new LoginLimiter();
-
-function readCookie(req: FastifyRequest, name: string): string | undefined {
-  const raw = req.headers.cookie;
-  if (!raw) return undefined;
-  for (const part of raw.split(";")) {
-    const i = part.indexOf("=");
-    if (i > 0 && part.slice(0, i).trim() === name) {
-      try { return decodeURIComponent(part.slice(i + 1).trim()); } catch { return undefined; }
-    }
-  }
-  return undefined;
-}
-function isHttps(req: FastifyRequest) {
-  return authSettings().cookieSecure || req.protocol === "https" || req.headers["x-forwarded-proto"] === "https";
-}
-function setRefreshCookie(req: FastifyRequest, reply: FastifyReply, value: string, maxAgeSec: number) {
-  const attrs = [`${REFRESH_COOKIE}=${encodeURIComponent(value)}`, `Path=${REFRESH_COOKIE_PATH}`, "HttpOnly", "SameSite=Strict", `Max-Age=${Math.max(0, Math.floor(maxAgeSec))}`];
-  // DRAFT(ai) Z93: 데모는 http(localhost·터널 뒤)라 Secure 를 늘 켜면 쿠키가 안 저장된다 → https 로 들어왔을 때만
-  if (isHttps(req)) attrs.push("Secure");
-  reply.header("set-cookie", attrs.join("; "));
-}
-const clearRefreshCookie = (req: FastifyRequest, reply: FastifyReply) => setRefreshCookie(req, reply, "", 0);
 
 async function issue(req: FastifyRequest, reply: FastifyReply, user: AuthUserRow, sid: string, fam: string, refresh: string, expiresAt: Date) {
   const secret = jwtSecret();
@@ -75,10 +58,11 @@ async function issue(req: FastifyRequest, reply: FastifyReply, user: AuthUserRow
 
 export async function authRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
+  await registerGithub(app);   // GHLOGIN: /auth/github/start · /auth/github/callback
 
   r.get("/auth/config", { schema: { response: { 200: AuthConfig, ...errors(500) } } }, async () => {
     const dev = devHeaderAuthEnabled();
-    return { devAuth: dev, loginRequired: !dev };
+    return { devAuth: dev, loginRequired: !dev, github: { enabled: githubEnabled() } };
   });
 
   r.post("/auth/login", { schema: { body: LoginBody,

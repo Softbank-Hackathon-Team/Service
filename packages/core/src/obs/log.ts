@@ -48,7 +48,7 @@ const TOKEN_SHAPES: Array<[RegExp, string]> = [
   [/\bsk-ant-[A-Za-z0-9_-]{8,}/g, REDACTED],
   [/\b(AKIA|ASIA)[0-9A-Z]{16}\b/g, REDACTED],
   [/(svc_refresh=)[^;\s"]+/g, `$1${REDACTED}`],
-  [/([?&](?:access_?token|token|api_?key|key|secret|password|signature|sig)=)[^&\s"]+/gi, `$1${REDACTED}`],
+  [/([?&](?:access_?token|token|api_?key|key|secret|password|signature|sig|code|state)=)[^&\s"]+/gi, `$1${REDACTED}`],
 ];
 export function scrubString(s: string): string {
   let out = s;

@@ -21,3 +21,4 @@ export * from "./spec-v2-upconvert.js"; // v1 → v2 올리기
 export * from "./tokens.js";
 export * from "./tf-kinds.js";     // 도착 Terraform 종류별 변수 (A0)
 export * from "./target.js";       // 도착 쪽 계약 TargetBuilder (A0)
+export * from "./github-login.js";   // GHLOGIN: GitHub OAuth 로그인 계약

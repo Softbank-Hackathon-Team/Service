@@ -40,7 +40,7 @@ test("로그인 한 바퀴: 토큰의 회사만 보이고, 갱신은 회전·재
   try {
     // 설정: npm test·test:db 는 DEV_AUTH=1 로 돈다
     const cfg = await app.inject({ url: "/api/v1/auth/config" });
-    assert.deepEqual(cfg.json(), { devAuth: process.env.DEV_AUTH === "1", loginRequired: process.env.DEV_AUTH !== "1" });
+    assert.deepEqual(cfg.json(), { devAuth: process.env.DEV_AUTH === "1", loginRequired: process.env.DEV_AUTH !== "1", github: { enabled: false } });
 
     // 틀린 비밀번호·없는 이메일·막힌 계정: 같은 401 INVALID_CREDENTIALS (계정 있는지 안 알려 줌)
     for (const body of [{ email: emailA, password: "wrong-password" }, { email: "nobody@test.local", password: PW }, { email: emailOff, password: PW }]) {
