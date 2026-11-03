@@ -19,7 +19,7 @@ let pre: typeof import("../src/jobs/precheck.js");
 let owner: pg.Client;
 let dir = "";
 const T = randomUUID(), OTHER = randomUUID();
-const KEYS = ["PATH", "MOCK_SEED", "IMPORT_IR", "PLAN_IR", "AWS_REGION", "GCP_PROJECT", "FAKE_CLI_LOG"];
+const KEYS = ["MOCK_IAC", "PATH", "MOCK_SEED", "IMPORT_IR", "PLAN_IR", "AWS_REGION", "GCP_PROJECT", "FAKE_CLI_LOG"];
 const prev = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
 
 type Reply = { code?: number; out?: unknown; err?: string };
@@ -163,30 +163,75 @@ test("가져오기 gcp: GCS·Pub/Sub(+DLQ)·Memorystore 가 spec_v2 에 들어�
   assert.equal(cache!.props.ha, true);
 });
 
+// 사람이 명세 검토에서 하는 일을 PATCH 라우트와 같은 부품(applySpecV2Patch·rebuildFromV2·saveSpecRevision)으로 흉내
+//   ① 데이터 자원으로 가는 링크 intent 를 connect 로 ② 못 읽은 방화벽(ingress "unknown")을 사람이 정함 ③ 검토 표시 전부 확인
+async function humanFix(id: string) {
+  const adapters = await import("@svc/adapters");
+  const contracts = await import("@svc/contracts");
+  const cur = await specRow(id);
+  const v2 = cur.spec_v2;
+  const dataIds = new Set(comps(v2, "cache").concat(comps(v2, "objectStore"), comps(v2, "queue")).map((c) => c.id));
+  // 발견(E2EDATA2): checkV2 는 objectStore·queue 링크에 connect 를 막고(read/write/readwrite/admin 만), 도착 Builder 는 link.connect 만 그릴 수 있다 →
+  //   버킷·큐로 가는 링크는 어떤 intent 로도 계획이 통과하지 못한다. 그래서 사람이 그 링크를 빼는 것으로 흉내 (캐시 링크는 connect 로 통과)
+  const plainIds = new Set([...dataIds].filter((d) => comps(v2, "cache").every((c) => c.id !== d)));
+  const links = v2.spec.links.filter((l: any) => !(typeof l.to === "string" && plainIds.has(l.to)));
+  // 그 데이터 자원을 가리키는 env(fromLink·template)도 사람이 뺀다 (링크 없는 참조는 checkV2 가 막음)
+  const svc = v2.spec.components.find((c: any) => c.kind === "service" && Array.isArray(c.props.env))!;
+  const env = svc.props.env.filter((e: any) => ![...plainIds].some((d) => JSON.stringify(e).includes(`"${d}"`) || JSON.stringify(e).includes(`${d}.`)));
+  const posture = { ...v2.spec.posture, network: v2.spec.posture.network.map((n: any) =>
+    n.scope === "component" && n.ingress === "unknown" ? { ...n, ingress: [{ from: "10.0.0.0/16" }], public: false } : n) };
+  const confirm = Object.entries(v2.fieldMeta as Record<string, { needs_review: boolean }>).filter(([, m]) => m.needs_review).map(([k]) => k);
+  const next = core.applySpecV2Patch({ spec: v2.spec, fieldMeta: v2.fieldMeta }, { changes: [{ path: "links", value: links }, { path: `components.${svc.id}.env`, value: env }, { path: "posture", value: posture }], confirm });
+  const parsed = contracts.AppSpecV2.parse(next.spec);
+  assert.deepEqual(contracts.checkV2(parsed).errors, []);
+  const result = contracts.ImportResultV2.parse({ ...v2, spec: parsed, fieldMeta: next.fieldMeta });
+  const v1 = adapters.rebuildFromV2(result, contracts.AppSpec.parse(cur.spec), { confirmed: [...next.changed, ...confirm], prevMeta: cur.field_meta });
+  await core.withTenant(T, async (tx) => { await core.saveSpecRevision(tx, { tenantId: T, migrationId: id, spec: v1.spec, fieldMeta: v1.fieldMeta, specV2: result }); });
+  return dataIds;
+}
+
 for (const [src, dst] of [["aws", "gcp"], ["aws", "aws"], ["gcp", "aws"], ["gcp", "gcp"]] as const) {
-  test(`사전 점검→계획 ${src}→${dst} (PLAN_IR=v2): 데이터 자원은 계획서에 다 있거나, 못 그리면 점검에서 이유와 함께 막힌다 (계획 단계 failed 금지)`, { skip }, async () => {
+  test(`끝-끝 ${src}→${dst}: 점검 → 사람 수정 → 점검 통과 → 계획 → 승인 → apply(흉내) 까지 데이터 자원이 빠지지 않는다`, { skip }, async () => {
     const id = await importWith(src, dst);
     await owner.query(`UPDATE migrations SET status='prechecking' WHERE id=$1`, [id]);
     process.env.PLAN_IR = "v2";
-    try { await pre.handlePrecheck(pjob(id)); } catch (e) { console.log("E2EDATA precheck threw", e instanceof Error ? `${e.name} ${(e as any).code} ${e.message}` : e); throw e; }
+    await pre.handlePrecheck(pjob(id));
     let m = await mig(id);
-    const ev = (await owner.query(`SELECT detail FROM audit_events WHERE target=$1 AND detail ? 'precheck' ORDER BY seq DESC LIMIT 1`, [id])).rows[0]?.detail?.precheck as
-      Array<{ id: string; level: string; message: string }> | undefined;
-    const blocks = (ev ?? []).filter((i) => i.level === "block");
-    console.log(`E2EDATA ${src}->${dst}: precheck → ${m.status}; blocks=${blocks.map((b) => b.message).join(" | ")}`);
-    if (m.status === "spec_review") {
-      assert.ok(blocks.length > 0, "block 없이 spec_review 로 돌아감");
-      const text = blocks.map((b) => b.message).join(" ");
-      for (const k of ["objectStore", "queue", "cache"]) assert.ok(text.includes(k), `막힌 이유에 ${k} 가 없음: ${text}`);
-      return;
-    }
-    assert.equal(m.status, "planning");
-    await plan.handlePlan(job(id));
+    const blocksOf = async () => ((await owner.query(`SELECT detail FROM audit_events WHERE target=$1 AND detail ? 'precheck' ORDER BY seq DESC LIMIT 1`, [id])).rows[0]?.detail?.precheck as
+      Array<{ level: string; message: string }> ?? []).filter((i) => i.level === "block").map((b) => b.message);
+    // ① 첫 점검: 데이터 종류 자체는 이제 그릴 수 있다 (TA12). 남은 막힘은 사람이 정할 것(링크 의도·못 읽은 방화벽)뿐이고 이유가 글로 나온다
+    const first = await blocksOf();
+    console.log(`E2EDATA2 ${src}->${dst}: 첫 점검 ${m.status}; ${first.join(" | ")}`);
+    assert.equal(m.status, "spec_review");
+    assert.ok(first.length > 0 && first.every((x) => /link\.|방화벽/.test(x)), `예상 밖 막힘: ${first.join(" | ")}`);
+    // ② 사람 수정 → 새 판
+    const dataIds = await humanFix(id);
+    assert.ok(dataIds.size >= 3, `데이터 자원 ${[...dataIds]}`);
+    // ③ 다시 점검 → 계획
+    await owner.query(`UPDATE migrations SET status='prechecking' WHERE id=$1`, [id]);
+    await pre.handlePrecheck(pjob(id));
     m = await mig(id);
-    assert.equal(m.status, "awaiting_approval", `계획 단계가 ${m.status}/${m.failure_code}`);
+    assert.equal(m.status, "planning", `둘째 점검 막힘: ${(await blocksOf()).join(" | ")}`);
+    const planId = randomUUID();
+    await plan.handlePlan({ ...pjob(id), planId });
+    m = await mig(id);
+    assert.equal(m.status, "awaiting_approval", `계획 ${m.status}/${m.failure_code}`);
     const p = (await core.withTenant(T, (tx) => core.loadLatestPlan(tx, id)))!;
-    const kinds = (p.instances ?? []).map((x) => x.kind);
-    for (const k of ["objectStore", "queue", "cache"] as const) assert.ok(kinds.includes(k), `계획서에서 ${k} 가 조용히 빠짐: ${kinds.join()}`);
+    const kinds = new Set((p.instances ?? []).map((x) => x.kind));
+    for (const k of ["objectStore", "queue", "cache"] as const) assert.ok(kinds.has(k), `계획서에서 ${k} 가 조용히 빠짐: ${[...kinds]}`);
+    // ④ 승인 → apply(MOCK_IAC)
+    const mg = (await owner.query(`SELECT source_env_id s, target_env_id d FROM migrations WHERE id=$1`, [id])).rows[0];
+    await owner.query(`INSERT INTO plan_approvals (tenant_id, plan_id, migration_id, decision, approved_by, plan_hash) VALUES ($1,$2,$3,'approve','user:dev',$4)`, [T, planId, id, p.planHash]);
+    await owner.query(`UPDATE migrations SET status='provisioning' WHERE id=$1`, [id]);
+    await owner.query(`INSERT INTO env_locks (env_id, tenant_id, migration_id, holder, lease_expires_at) VALUES ($1,$3,$4,'reserved', now() + interval '2 hours'), ($2,$3,$4,'reserved', now() + interval '2 hours')`, [mg.s, mg.d, T, id]);
+    const ap = await import("../src/jobs/apply.js");
+    process.env.MOCK_IAC = "1";
+    await ap.handleApply({ ...pjob(id), planId, planHash: p.planHash });
+    m = await mig(id);
+    assert.equal(m.status, "deploying", `apply ${m.status}/${m.failure_code}`);
+    const infra = (await core.withTenant(T, (tx) => core.loadInfraReady(tx, id)))!;
+    for (const d of dataIds) assert.ok(Object.keys(infra.tfOutputs).some((k) => k.startsWith(`link.${d}.`)), `apply 출력에 link.${d}.* 없음: ${Object.keys(infra.tfOutputs).join()}`);
+    await owner.query("DELETE FROM env_locks WHERE migration_id=$1", [id]);
   });
 }
 

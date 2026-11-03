@@ -1,6 +1,7 @@
 import type { AppSpecV2, Provider } from "@svc/contracts";
 import { parseArn } from "../import/mappers/iam-grants.js";
 import { AdapterError } from "../common/errors.js";
+import { BOUNDARY_GRANT_ACTIONS } from "../aws/index.js";
 import { identityOf, UNSUPPORTED_V2 } from "./shared.js";
 
 // A8 DRAFT(ai): 출발 IAM 근거(LinkV2.grants · posture.permissions, I4) → 도착 신원 권한. 순수 함수, 결정적 (설계 20번 4.3, 27번 3.3)
@@ -31,6 +32,9 @@ export function awsGrantPlan(spec: AppSpecV2): GrantPlan<AwsGrantStatement> {
   const by = new Map<string, AwsGrantStatement[]>(), unsupported: string[] = [], warnings: string[] = [];
   const push = (identity: string, s: AwsGrantStatement) => by.set(identity, [...(by.get(identity) ?? []), s]);
   for (const l of spec.links) {
+    // TA12c DRAFT(ai): 의도(read·write·readwrite·admin)만 있고 권한 원문이 없는 데이터 링크 — 막지 않고(출발 IAM 을 못 읽은 흔한 경우), 접근 권한은 안 그리고 경고만 남김. 넓게 주지 않음
+    if (typeof l.to === "string" && !l.grants?.length && ["read", "write", "readwrite", "admin"].includes(l.intent) && kindOf(spec, l.to))
+      warnings.push(`${l.from}→${l.to}: ${l.intent} 의도만 있고 권한 원문이 없어 접근 권한은 안 그림 (네트워크·허용 신원만)`);
     if (!l.grants?.length || typeof l.to !== "string") continue;
     const kind = kindOf(spec, l.to), ident = identityOf(spec, l.from);
     if (!kind || !ident) { unsupported.push(`권한 렌더 미지원: ${l.from}→${l.to} grants 대상이 데이터 자원·신원이 아님`); continue; }
@@ -105,6 +109,8 @@ export function gcpGrantPlan(spec: AppSpecV2): GrantPlan<GcpGrantBinding> {
     m.set(`${b.kind}/${b.target}/${b.scope}/${b.role}`, { ...b, level });
   };
   for (const l of spec.links) {
+    if (typeof l.to === "string" && !l.grants?.length && ["read", "write", "readwrite", "admin"].includes(l.intent) && kindOf(spec, l.to))
+      warnings.push(`${l.from}→${l.to}: ${l.intent} 의도만 있고 권한 원문이 없어 접근 권한은 안 그림 (네트워크·허용 신원만)`);
     if (!l.grants?.length || typeof l.to !== "string") continue;
     const kind = kindOf(spec, l.to), ident = identityOf(spec, l.from);
     if (!kind || !ident) { unsupported.push(`권한 렌더 미지원: ${l.from}→${l.to} grants 대상이 데이터 자원·신원이 아님`); continue; }
@@ -141,8 +147,11 @@ export function gcpGrantPlan(spec: AppSpecV2): GrantPlan<GcpGrantBinding> {
     if (!ident) continue;
     const binds = [...(by.get(ident.id)?.values() ?? [])];
     for (const a of p.actions) {
-      const k = serviceKind(a);
-      const hit = k && binds.find((b) => b.kind === k && (p.resources.includes("*") || (p.covers ?? []).includes(b.target)) && b.level >= levelOfDenied(k, a));
+      // VA8: IAM 동작 이름은 대소문자를 안 가리고, "*"·"*:*" 는 모든 서비스. 예전엔 서비스를 못 알아보면 겹침 검사를 건너뛰어 거부가 조용히 깨졌다
+      const al = a.toLowerCase();
+      const anySvc = al === "*" || al.startsWith("*:");
+      const k = anySvc ? null : serviceKind(al);
+      const hit = (anySvc || k) && binds.find((b) => (anySvc || b.kind === k) && (p.resources.includes("*") || (p.covers ?? []).includes(b.target)) && b.level >= levelOfDenied(b.kind, anySvc ? "*" : a));
       if (hit) unsupported.push(`권한 렌더 미지원: 기준선 ${p.subject} Deny ${a} 가 줄 역할 ${hit.role}(${hit.target}) 과 겹침`);
     }
   }
@@ -158,13 +167,37 @@ export function grantBlockers(provider: Provider, spec: AppSpecV2): string[] {
   return [];   // onprem: STUB(검토 표시만) · azure_mock: 가짜
 }
 
+/** A8fix: 이 문장이 앱 역할 권한 경계 안인가. Deny 는 경계가 필요 없음. Allow 는 app- 버킷·큐 대상 + 경계의 데이터 동작만일 때
+ *  (데이터 자원 이름은 늘 "app-" 접두어 — target/data.ts nm). "*"·RDS·ElastiCache·와일드카드 동작은 경계 밖 */
+export function insideBoundary(s: AwsGrantStatement): boolean {
+  if (s.effect === "Deny") return true;
+  if (s.star || !s.targets.length) return false;
+  const allowed = new Set<string>([...BOUNDARY_GRANT_ACTIONS.s3, ...BOUNDARY_GRANT_ACTIONS.sqs]);
+  return s.targets.every((t) => t.kind === "objectStore" || t.kind === "queue")
+    && s.actions.every((a) => allowed.has(a) && (s.targets.every((t) => a.startsWith(t.kind === "objectStore" ? "s3:" : "sqs:"))));
+}
+
+/** A8fix: gcp 권한 바인딩이 쓰는 Terraform 자원 종류 (실행 역할 권한표 PERMS 와 맞춤) */
+export const GRANT_TYPES_GCP = ["google_pubsub_subscription_iam_member", "google_pubsub_topic_iam_member", "google_storage_bucket_iam_member"] as const;
+const GCP_SCOPE_TYPE: Record<GcpGrantBinding["scope"], (typeof GRANT_TYPES_GCP)[number]> = {
+  bucket: "google_storage_bucket_iam_member", topic: "google_pubsub_topic_iam_member", subscription: "google_pubsub_subscription_iam_member" };
+export function gcpGrantTypes(spec: AppSpecV2): string[] {
+  const p = gcpGrantPlan(spec);
+  if (p.unsupported.length) return [];
+  return sortStr(Object.values(p.byIdentity).flat().map((b) => GCP_SCOPE_TYPE[b.scope]));
+}
+
 /** 도착별 권한 렌더 경고 (precheck warn) */
 export function grantWarnings(provider: Provider, spec: AppSpecV2): string[] {
   const has = spec.links.some((l) => l.grants?.length) || spec.posture.permissions.length > 0;
   if (!has) return [];
-  if (provider === "aws")
-    // TODO(human): 앱 역할 권한 경계(infra/permissions/aws-app-role-boundary.json)는 플랫폼 시크릿 읽기만 허용 → 경계를 넓히기 전엔 그린 권한이 실제로는 안 먹힘
-    return [...awsGrantPlan(spec).warnings, "앱 역할 권한 경계가 시크릿 읽기만 허용 — 경계를 넓히기 전엔 옮긴 권한이 실제로 막힘 (사람 결정)"];
+  if (provider === "aws") {
+    // A8fix: 경계(aws/index.ts appRoleBoundary MigratedDataGrants)에 실제로 들어간 문장은 경고 안 함. 경계 밖 Allow 만 "실제로 안 먹힘" 경고
+    const p = awsGrantPlan(spec);
+    const outside = Object.entries(p.byIdentity).flatMap(([id, ss]) => ss.filter((s) => !insideBoundary(s))
+      .map((s) => `${id} ${s.actions.join(",")} → ${s.star ? "*" : s.targets.map((t) => t.id).join(",")}`));
+    return [...p.warnings, ...(outside.length ? [`앱 역할 권한 경계 밖이라 실제로 안 먹힘 (사람 결정): ${outside.join("; ")}`] : [])];
+  }
   if (provider === "gcp") return gcpGrantPlan(spec).warnings;
   // STUB: 온프레엔 클라우드 IAM 이 없다. k8s ServiceAccount 만 만들고 권한은 클러스터 안 대체물(TA12)을 고를 때 사람이 정함
   if (provider === "onprem") return ["온프레 도착: 출발 IAM 권한은 옮기지 않음 (k8s ServiceAccount 만) — 사람이 검토"];

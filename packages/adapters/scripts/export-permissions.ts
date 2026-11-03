@@ -4,6 +4,7 @@ import { AppSpec } from "@svc/contracts";
 import { adapterFor, aws, gcp, onprem, DEMO_INVENTORY } from "../src/index.js";
 import { actionsFor } from "../src/common/actions.js";
 import { DATA_TYPES } from "../src/target/data.js";
+import { GRANT_TYPES_GCP } from "../src/target/grants.js";
 import { buildAwsConnectTemplate } from "./aws-connect-template.js";
 
 // 앱 모듈(infra/modules/*/app)을 plan/apply/destroy 하는 데 필요한 최소 권한을 파일로 뽑는다.
@@ -72,7 +73,7 @@ for (const p of purposes) {
 
 // GCP: 테넌트 SA에 줄 커스텀 역할 2개 (GCP는 호출별 세션 정책이 없음).
 // setIamPolicy 2개는 따로 떼어 "이름이 app-로 시작하는 SA·시크릿"에만 쓰이게 IAM 조건을 건다 (위협 모델 G-1, G-2)
-const GCP_DATA = [...Object.values(DATA_TYPES.gcp).flat()];
+const GCP_DATA = [...Object.values(DATA_TYPES.gcp).flat(), ...GRANT_TYPES_GCP];   // A8fix: 옮긴 권한 바인딩(자원 단위 setIamPolicy)
 // TA12b: 데이터 자원 권한도 천장에 포함. 【미확인】 GCP 커스텀 역할은 이름 접두어로 제한 못 함 (프로젝트 단위) — 필요하면 IAM 조건부 바인딩 추가 TODO(human)
 const gcpAll = [...new Set([...purposes.flatMap((p) => gcp.operateActions(spec("gcp"), p)), ...purposes.flatMap((p) => actionsFor(gcp.PERMS, GCP_DATA, p))])].sort();
 const gcpIam = gcpAll.filter((x) => x.endsWith(".setIamPolicy"));
@@ -82,10 +83,10 @@ const role = (title: string, desc: string, perms: string[]) =>
 writeFileSync(join(out, "gcp-operate-custom-role.yaml"),
   role("platform-operate", "infra/modules/gcp/app plan/apply/destroy, IAM 정책 바꾸기 제외 (자동 생성)", gcpRest));
 writeFileSync(join(out, "gcp-operate-iam-custom-role.yaml"),
-  role("platform-operate-iam", "app- 접두어 SA·시크릿의 IAM 정책만 (조건부 바인딩 필수, 자동 생성)", gcpIam));
+  role("platform-operate-iam", "app- 접두어 SA·시크릿·버킷·토픽·구독의 IAM 정책만 (조건부 바인딩 필수, 자동 생성)", gcpIam));
 writeFileSync(join(out, "gcp-operate-iam-binding-condition.json"), JSON.stringify({
   title: "only-app-prefixed",
-  description: "플랫폼이 만든 app- 접두어 서비스 계정·시크릿에만",
+  description: "플랫폼이 만든 app- 접두어 서비스 계정·시크릿·버킷·토픽·구독에만",
   expression: gcp.IAM_CONDITION,
 }, null, 2) + "\n");
 

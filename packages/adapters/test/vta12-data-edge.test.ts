@@ -169,5 +169,6 @@ test("버킷 이름: id 가 google·goog·sthree 여도 GCS·S3 금지어 안 �
   assert.equal(bucketApp("sthreex"), "sthreex");
   // 금지어 없는 id 의 이름은 VTA12 전과 같은 규칙 (앞부분 = id 문자, 뒤 = 해시6)
   // 금지어 없는 id 의 이름은 VTA12 전과 같은 규칙 (앞부분 = id 문자, 뒤 = 해시6). TA12b 가 앞에 "app-" 를 붙인다 ("app-" 는 GCS·S3 금지어가 아님)
+  // 금지어 없는 id 의 이름은 VTA12 전과 같은 규칙 (앞부분 = id 문자, 뒤 = 해시6, 앞에 TA12b 의 app- 접두어)
   assert.match(items(render("aws", withData()), "object_store_json")[0]!.name, /^app-shopassets-[0-9a-f]{6}$/);
 });

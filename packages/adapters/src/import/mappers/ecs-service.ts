@@ -80,7 +80,9 @@ export const ecsServiceMapper: KindMapper = {
     const sidecars = others.map((x) => {
       const xi = splitImage(x.image, null);
       return { name: x.name ?? "sidecar", image: { source: "registry", repository: xi.repository, digest: xi.digest },
-        env: (x.environment ?? []).map((e) => ({ name: e.name, value: e.value })), resources: {} };
+        // VI9: 보조 컨테이너 secrets 도 참조로 (예전엔 빠져서 도착 보조 컨테이너가 비밀 없이 뜸)
+        env: [...(x.environment ?? []).map((e) => ({ name: e.name, value: e.value })),
+              ...(x.secrets ?? []).map((e) => ({ name: e.name, fromSecret: secretRefOf(e.name, e.valueFrom) }))], resources: {} };
     });
     const props: Record<string, unknown> = {
       runtime: "managedContainer",

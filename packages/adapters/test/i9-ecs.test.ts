@@ -123,7 +123,7 @@ const ECS_TABLE: Array<[RegExp, Reply]> = [
       secrets: [{ name: "DATABASE_PASSWORD", valueFrom: "arn:aws:secretsmanager:ap-northeast-2:000000000000:secret:shop-db:password::" }],
       logConfiguration: { logDriver: "awslogs" }, healthCheck: { command: ["CMD-SHELL", "curl -f http://localhost:8080/healthz"], interval: 30 } }] } } }],
   [/^aws ecs list-tasks/, { out: { taskArns: ["arn:aws:ecs:ap-northeast-2:000000000000:task/shop/abc"] } }],
-  [/^aws ecs describe-tasks/, { out: { tasks: [{ containers: [{ name: "api", imageDigest: D }] }] } }],
+  [/^aws ecs describe-tasks/, { out: { tasks: [{ taskDefinitionArn: "arn:aws:ecs:ap-northeast-2:000000000000:task-definition/shop-api:7", containers: [{ name: "api", imageDigest: D }] }] } }],   // VI9: 진짜 응답처럼 판 ARN 포함 (reader 가 서비스 판 작업만 봄)
   [/^aws elbv2 describe-target-groups/, { out: { TargetGroups: [{ TargetGroupArn: TG, HealthCheckPath: "/healthz", LoadBalancerArns: [LB] }] } }],
   [/^aws elbv2 describe-listeners/, { out: { Listeners: [{ ListenerArn: "arn:l1" }] } }],
   [/^aws elbv2 describe-rules/, { out: { Rules: [

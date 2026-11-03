@@ -2,16 +2,18 @@
 //   그 권한이 AWS 관찰 인라인 정책·GCP 연결 스크립트에 들어 있으며, 쓰기·비밀값·내용 읽기는 0임을 소스 대조로 고정한다. 클라우드 호출 0
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { AWS_COMMAND_ACTIONS, GCP_COMMAND_PERMISSIONS, actionsOfCommands } from "../src/index.js";
 
 const root = new URL("../../../", import.meta.url);
 const read = (p: string) => readFileSync(new URL(p, root), "utf8");
-// 부르는 쪽 소스 (주석은 빼고 센다)
-const SOURCES = ["packages/adapters/src/discover/index.ts", "packages/adapters/src/discover/aws-iam.ts", "packages/adapters/src/discover/data.ts", "packages/adapters/src/import/readers/aws-ecs.ts",
-  "packages/adapters/src/verify/aws.ts", "packages/adapters/src/verify/gcp.ts", "packages/adapters/src/precheck/cloud-precheck.ts", "packages/adapters/src/common/cli.ts",
-  "packages/security/src/live/aws.ts", "packages/security/src/live/gcp.ts", "packages/security/src/live/exec.ts"];
+// 부르는 쪽 소스: adapters/src 아래 모든 .ts (새 읽기 파일이 생겨도 자동으로 잡힘. 표 파일 자신은 제외) + security live
+function walk(dir: string): string[] {
+  return readdirSync(new URL(dir, root), { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? walk(`${dir}${e.name}/`) : e.name.endsWith(".ts") && e.name !== "observe-permissions.ts" ? [`${dir}${e.name}`] : []);
+}
+const SOURCES = [...walk("packages/adapters/src/"), "packages/security/src/live/aws.ts", "packages/security/src/live/gcp.ts", "packages/security/src/live/exec.ts"];
 const code = (p: string) => read(p).split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
 
 /** 소스에서 부르는 명령 키 모음. aws: 서비스+동사 / gcloud: 동사 앞 단어들(옵션·이름 앞까지) */
@@ -91,10 +93,14 @@ test("거부: 표 전체에 쓰기·비밀값·내용 읽기 권한이 하나도
   assert.throws(() => actionsOfCommands("aws", ["s3api put-object"]), /표에 없는/);
 });
 
-test("INTFIX: ECS 읽기 동작 11개가 권한 표에 모두 있고 쓰기 동사는 없다", async () => {
+test("소스 훑기가 실제로 읽기 파일을 다 잡음 (ECS 읽기·데이터·IAM·verify·precheck 가 목록에 있음)", () => {
+  for (const f of ["import/readers/aws-ecs.ts", "discover/data.ts", "discover/aws-iam.ts", "discover/index.ts", "verify/aws.ts", "verify/gcp.ts", "precheck/cloud-precheck.ts"])
+    assert.ok(SOURCES.includes(`packages/adapters/src/${f}`), f);
+  assert.ok(found().aws.has("ecs list-clusters") && found().aws.has("application-autoscaling describe-scaling-policies"));
+});
+
+test("ECS 읽기 권한 목록(ECS_OBSERVE_ACTIONS)은 표와 같음 — 따로 적은 목록이 표에서 어긋나면 깨짐", async () => {
   const { ECS_OBSERVE_ACTIONS } = await import("../src/index.js");
-  const inTable = new Set(Object.values(AWS_COMMAND_ACTIONS).filter((v): v is string => typeof v === "string"));
-  assert.equal(ECS_OBSERVE_ACTIONS.length, 11);
-  assert.deepEqual(ECS_OBSERVE_ACTIONS.filter((a) => !inTable.has(a)), []);
-  assert.deepEqual(ECS_OBSERVE_ACTIONS.filter((a) => /:(Create|Delete|Update|Put|Run|Start|Stop|Register|Deregister|Tag|Untag)/.test(a)), []);
+  const fromTable = actionsOfCommands("aws", Object.keys(AWS_COMMAND_ACTIONS)).filter((a) => /^(ecs:|application-autoscaling:|elasticloadbalancing:Describe(TargetGroups|Listeners|Rules))/.test(a));
+  assert.deepEqual([...ECS_OBSERVE_ACTIONS].sort(), fromTable.sort());
 });

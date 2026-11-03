@@ -12,6 +12,7 @@
         "eks:DescribePodIdentityAssociation",
         "elasticache:DeleteCacheSubnetGroup",
         "elasticache:DeleteReplicationGroup",
+        "elasticache:DescribeCacheClusters",
         "elasticache:DescribeCacheSubnetGroups",
         "elasticache:DescribeReplicationGroups",
         "elasticache:ListTagsForResource",

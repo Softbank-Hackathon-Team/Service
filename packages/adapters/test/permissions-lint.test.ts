@@ -105,9 +105,15 @@ test("GCP: 와일드카드 없음, 금지 권한(키 발급·가장·비밀값 �
 test("GCP: 주 역할엔 setIamPolicy 없음, 별도 역할은 setIamPolicy만 + app- 접두어 조건", () => {
   assert.deepEqual(gcp.filter((p) => p.endsWith(".setIamPolicy")), []);
   const iamRole = read("gcp-operate-iam-custom-role.yaml").split("\n").filter((l) => l.startsWith("- ")).map((l) => l.slice(2).trim());
-  assert.deepEqual(iamRole.sort(), ["iam.serviceAccounts.setIamPolicy", "secretmanager.secrets.setIamPolicy"]);
+  // A8fix: 옮긴 권한 바인딩용 버킷·토픽·구독 setIamPolicy 3개 추가 (자원 단위, 프로젝트 setIamPolicy 는 여전히 없음)
+  assert.deepEqual(iamRole.sort(), ["iam.serviceAccounts.setIamPolicy", "pubsub.subscriptions.setIamPolicy", "pubsub.topics.setIamPolicy",
+    "secretmanager.secrets.setIamPolicy", "storage.buckets.setIamPolicy"]);
+  assert.ok(!iamRole.some((p) => p.startsWith("resourcemanager.")), "프로젝트 전체 setIamPolicy 금지");
   const cond = JSON.parse(read("gcp-operate-iam-binding-condition.json")) as { expression: string };
-  assert.equal((cond.expression.match(/startsWith\("app-"\)/g) ?? []).length, 2);
+  // 자원 종류마다 app- 접두어 조건 하나씩 (SA·시크릿·토픽·구독 = 이름 startsWith("app-"), 버킷 = 전체 이름 projects/_/buckets/app-)
+  assert.equal((cond.expression.match(/startsWith\("app-"\)/g) ?? []).length, 4);
+  assert.match(cond.expression, /storage\.googleapis\.com\/Bucket" && resource\.name\.startsWith\("projects\/_\/buckets\/app-"\)/);
+  assert.equal((cond.expression.match(/resource\.type == /g) ?? []).length, 5, "조건 없는 자원 종류가 섞이면 안 됨");
 });
 
 // 온프레 k8s ClusterRole

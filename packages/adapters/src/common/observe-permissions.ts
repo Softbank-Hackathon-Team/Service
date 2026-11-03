@@ -1,5 +1,5 @@
 // OBSROLE2: 관찰 역할(고객 쪽 svc-observe)로 부르는 "모든" 클라우드 읽기 명령 → 필요한 권한 표.
-//   부르는 곳: discover(index·aws-iam·data) · verify(aws·gcp) · precheck · security live(AWS_ALLOWED·GCLOUD_ALLOWED)
+//   부르는 곳: discover(index·aws-iam·data) · import/readers(ecs) · verify(aws·gcp) · precheck · security live(AWS_ALLOWED·GCLOUD_ALLOWED)
 //   이 표가 단일 원본이다. AWS 관찰 인라인 정책(aws-connect-template.ts)·가져오기 장부 목록(worker import.ts)이 여기서 가져가고,
 //   GCP 연결 스크립트(gcp-connect.sh)는 시험(obsrole2-all-commands.test.ts)이 소스의 모든 명령과 대조한다. 명령을 늘리면 이 표를 같이 늘려야 시험이 통과한다.
 //   읽기만: 쓰기 동작·비밀값 읽기(secretsmanager:GetSecretValue·secretmanager.versions.access)·객체/메시지 내용 읽기는 표에 넣지 않는다 (시험이 금지 고정).

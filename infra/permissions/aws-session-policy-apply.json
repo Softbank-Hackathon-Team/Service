@@ -16,6 +16,7 @@
         "elasticache:AddTagsToResource",
         "elasticache:CreateCacheSubnetGroup",
         "elasticache:CreateReplicationGroup",
+        "elasticache:DescribeCacheClusters",
         "elasticache:DescribeCacheSubnetGroups",
         "elasticache:DescribeReplicationGroups",
         "elasticache:ListTagsForResource",

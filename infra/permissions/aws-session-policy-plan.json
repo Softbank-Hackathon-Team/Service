@@ -8,6 +8,7 @@
         "ec2:DescribeSecurityGroups",
         "eks:DescribeCluster",
         "eks:DescribePodIdentityAssociation",
+        "elasticache:DescribeCacheClusters",
         "elasticache:DescribeCacheSubnetGroups",
         "elasticache:DescribeReplicationGroups",
         "elasticache:ListTagsForResource",

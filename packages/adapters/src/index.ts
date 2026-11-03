@@ -45,7 +45,7 @@ export type { SourceReader, KindMapper, RawItem, MappedComponent, NativeRef, Pro
 // TA1: 도착 Builder v2 (IR v2 → 고정 루트 Terraform 변수 + workloads[] Helm 값)
 export { targetBuilderFor, awsTarget, gcpTarget, onpremTarget, azureMockTarget, rdsClassFor, cloudSqlTierFor, requirementsV2, v2Blockers, V2_FIELD_COVERAGE,
   K8S_RENDER_CAPS, UNSUPPORTED_V2, LINK_OUTPUT_UNKNOWN, identitiesOf, resourceTypesV2For, type FieldRule, type IdentityPlan } from "./target/index.js";
-export { verifyGcpObserve, gcpEnvFor, gcpReasonOf, type VerifyGcpInput, type VerifyGcpResult } from "./verify/gcp.js";   // L7i
+export { verifyGcpObserve, OPTIONAL_PROBES, gcpEnvFor, gcpReasonOf, type VerifyGcpInput, type VerifyGcpResult } from "./verify/gcp.js";   // L7i
 // L5b: 빌린 AWS 실행 자격 → terraform 자식 프로세스 (credential_process 임시 파일)
 export { borrowedAwsCreds, type BorrowedAwsCreds, type AwsSessionKeys } from "./terraform/borrowed-aws.js";
 // TA10: Azure Mock 도착 Builder v2 (capability 표 + mock plan)

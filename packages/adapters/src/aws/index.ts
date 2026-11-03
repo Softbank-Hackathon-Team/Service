@@ -34,7 +34,8 @@ export const PERMS: PermTable = {
     remove: ["rds:DeleteDBSubnetGroup"] },
   // TA12 DRAFT(ai): 데이터 자원 종류 권한. 【미확인】 infra/permissions 정책 파일에는 아직 없음(경계 밖 TODO) — 실 apply 전에 정책 파일에 같은 동작을 넣어야 함
   aws_elasticache_replication_group: {
-    read: ["elasticache:DescribeReplicationGroups", "elasticache:ListTagsForResource"],
+    // VTA12b DRAFT(ai): 【추정】 terraform aws_elasticache_replication_group 읽기는 멤버 클러스터(DescribeCacheClusters)도 부른다 — 빠지면 plan 이 AccessDenied. 읽기 전용이라 천장에 추가. 첫 맥 실측으로 확인
+    read: ["elasticache:DescribeCacheClusters", "elasticache:DescribeReplicationGroups", "elasticache:ListTagsForResource"],
     write: ["elasticache:CreateReplicationGroup", "elasticache:ModifyReplicationGroup", "elasticache:AddTagsToResource"],
     remove: ["elasticache:DeleteReplicationGroup"] },
   aws_elasticache_subnet_group: {
@@ -107,11 +108,23 @@ export function sessionPolicy(spec: AppSpec, purpose: Purpose): string {
 // 앱 역할의 권한 경계 = 앱 역할이 가질 수 있는 최대치. 플랫폼이 만든 시크릿 읽기만 (위협 모델 A-4).
 // infra/modules/aws/env 가 이 내용(infra/permissions/aws-app-role-boundary.json)으로 정책을 만든다
 export const BOUNDARY_NAME = "platform-app-boundary";
+// A8fix DRAFT(ai): 옮긴 IAM 권한(A8 grants)이 실제로 먹게, 플랫폼이 만든 데이터 자원(이름 "app-" 접두어, target/data.ts)의
+//   데이터 동작만 경계에 더한다. 관리 동작(버킷 정책·큐 삭제 등)·RDS·ElastiCache 는 안 넣음 → 그런 grants 는 precheck warn 이 남음
+// TODO(human): 경계 확대 범위 확인 (위협 모델 A-4: 앱 역할 최대치가 "자기 시크릿 읽기" → "+ app- 버킷·큐 데이터 읽기·쓰기")
+export const BOUNDARY_GRANT_ACTIONS = {
+  s3: ["s3:AbortMultipartUpload", "s3:DeleteObject", "s3:DeleteObjectVersion", "s3:GetBucketLocation", "s3:GetObject", "s3:GetObjectVersion",
+    "s3:ListBucket", "s3:ListBucketMultipartUploads", "s3:ListBucketVersions", "s3:ListMultipartUploadParts", "s3:PutObject"],
+  sqs: ["sqs:ChangeMessageVisibility", "sqs:DeleteMessage", "sqs:GetQueueAttributes", "sqs:GetQueueUrl", "sqs:ReceiveMessage", "sqs:SendMessage"],
+} as const;
 export function appRoleBoundary(region: string) {
   return { Version: "2012-10-17", Statement: [{
     Sid: "OwnSecretsOnly", Effect: "Allow",
     Action: ["secretsmanager:DescribeSecret", "secretsmanager:GetSecretValue"],
     Resource: [`arn:aws:secretsmanager:${region}:*:secret:platform/*`, `arn:aws:secretsmanager:${region}:*:secret:rds!*`],
+  }, {
+    Sid: "MigratedDataGrants", Effect: "Allow",
+    Action: [...BOUNDARY_GRANT_ACTIONS.s3, ...BOUNDARY_GRANT_ACTIONS.sqs],
+    Resource: ["arn:aws:s3:::app-*", "arn:aws:s3:::app-*/*", `arn:aws:sqs:${region}:*:app-*`],
   }] };
 }
 

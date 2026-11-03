@@ -59,6 +59,34 @@
                 "arn:aws:secretsmanager:ap-northeast-2:*:secret:platform/*",
                 "arn:aws:secretsmanager:ap-northeast-2:*:secret:rds!*"
               ]
+            },
+            {
+              "Sid": "MigratedDataGrants",
+              "Effect": "Allow",
+              "Action": [
+                "s3:AbortMultipartUpload",
+                "s3:DeleteObject",
+                "s3:DeleteObjectVersion",
+                "s3:GetBucketLocation",
+                "s3:GetObject",
+                "s3:GetObjectVersion",
+                "s3:ListBucket",
+                "s3:ListBucketMultipartUploads",
+                "s3:ListBucketVersions",
+                "s3:ListMultipartUploadParts",
+                "s3:PutObject",
+                "sqs:ChangeMessageVisibility",
+                "sqs:DeleteMessage",
+                "sqs:GetQueueAttributes",
+                "sqs:GetQueueUrl",
+                "sqs:ReceiveMessage",
+                "sqs:SendMessage"
+              ],
+              "Resource": [
+                "arn:aws:s3:::app-*",
+                "arn:aws:s3:::app-*/*",
+                "arn:aws:sqs:ap-northeast-2:*:app-*"
+              ]
             }
           ]
         }
@@ -117,6 +145,7 @@
               "Sid": "DataDescribe",
               "Effect": "Allow",
               "Action": [
+                "elasticache:DescribeCacheClusters",
                 "elasticache:DescribeCacheSubnetGroups",
                 "elasticache:DescribeReplicationGroups"
               ],
@@ -324,6 +353,17 @@
                     "application-autoscaling:DescribeScalingPolicies",
                     "ecr:DescribeRepositories",
                     "secretsmanager:ListSecrets",
+                    "ecs:ListClusters",
+                    "ecs:ListServices",
+                    "ecs:DescribeServices",
+                    "ecs:DescribeTaskDefinition",
+                    "ecs:ListTasks",
+                    "ecs:DescribeTasks",
+                    "elasticloadbalancing:DescribeTargetGroups",
+                    "elasticloadbalancing:DescribeListeners",
+                    "elasticloadbalancing:DescribeRules",
+                    "application-autoscaling:DescribeScalableTargets",
+                    "application-autoscaling:DescribeScalingPolicies",
                     "servicequotas:GetServiceQuota"
                   ],
                   "Resource": "*"
