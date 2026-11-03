@@ -15,6 +15,8 @@ const PERMS: PermTable = {
   ...V1_PERMS,
   "batch/cronjobs": { read: ["batch/cronjobs:get"], write: ["batch/cronjobs:create", "batch/cronjobs:patch"], remove: ["batch/cronjobs:delete"] },
 };
+// TODO(human): 온프레(k3s)의 데이터 자원 대체물 선택 — cache(클러스터 안 Redis? Valkey?)·objectStore(MinIO?)·queue(NATS? RabbitMQ?)는 아직 안 정함.
+//   정하기 전까지 capability 를 안 줘서 v2Blockers 가 "도착 렌더 미지원: kind.cache.redis" 등으로 막는다 (조용히 빼먹지 않음). kinds/ 에도 해당 모듈 없음
 const CAPS = [...K8S_RENDER_CAPS, "kind.postgres.15", "kind.postgres.16", "kind.postgres.17", "db.cnpg"];
 
 export function resourceTypesV2(spec: AppSpecV2): string[] {

@@ -73,12 +73,15 @@ for (const p of PROVIDERS) {
   });
 }
 
+// 온프레 캐시·객체 저장소·큐는 TA12에서 TODO(human)(클러스터 안 대체물 미정)라 아직 막힘
+const EXTRA: Partial<Record<Provider, string[]>> = { onprem: ["캐시", "객체 저장소", "큐"] };
 test("기대값 고정: 도착별로 어떤 조합이 막히나 (바뀌면 설계 27번 3.6 과 같이 고친다)", () => {
   const blocked = (p: Provider) => Object.keys(VARIANTS).filter((n) => unsup(p, variant(n)!).some((b) => b.id.startsWith("PC-V2-UNSUP")));
-  const common = ["postgres 2개", "postgres 14", "postgres 버전 모름", "postgres 크기 모름", "캐시", "객체 저장소", "큐", "관리형 컨테이너 실행",
+  // TA12: 캐시·객체 저장소·큐는 이제 도착 Builder가 그린다 → 막힘 목록에서 빠짐 (환경별 실제 값은 아래 출력으로 고정)
+  const common = ["postgres 2개", "postgres 14", "postgres 버전 모름", "postgres 크기 모름", "관리형 컨테이너 실행",
     "이미지 digest 없음", "IAM grants(I4)", "posture.permissions(I4)"];
-  for (const p of ["aws", "gcp", "onprem"] as const) assert.deepEqual(blocked(p).sort(), [...common].sort(), p);
-  assert.deepEqual(blocked("azure_mock").sort(), [...common, "신원 2개"].sort());
+  for (const p of ["aws", "gcp", "onprem"] as const) assert.deepEqual(blocked(p).sort(), [...common, ...(EXTRA[p] ?? [])].sort(), p);
+  assert.deepEqual(blocked("azure_mock").sort(), [...common, "신원 2개", ...(EXTRA.azure_mock ?? [])].sort());
 });
 
 test("block 메시지는 PrecheckItem 모양 + 고칠 방법(fix) 이 있고, 번호가 1부터 이어진다", () => {

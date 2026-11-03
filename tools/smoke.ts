@@ -1,6 +1,6 @@
 // 끝에서 끝까지 한 번: 이전 만들기 → 가져오기 → 계획 → (사람 승인 1번) → 시작 → completed
 // 상태가 바뀔 때마다 한 줄씩 찍는다
-import { smokeEnvs } from "./smoke-env.js";
+import { smokeEnvs, smokePlanBodies } from "./smoke-env.js";
 
 const API = `http://localhost:${process.env.API_PORT ?? 3000}/api/v1`;
 // Z77 (Z62 주제 66): 실클라우드 회차는 SMOKE_TENANT_ID=66666666…(0018) 로 로컬 회차와 다른 회사·환경을 쓴다 (환경 잠금이 안 겹침)
@@ -38,11 +38,19 @@ await waitFor("spec_review");
 await call("POST", `/migrations/${id}/plan`);
 await waitFor("awaiting_approval");
 
-const plan = await call("GET", `/migrations/${id}/plan`) as { planId: string; planHash: string };
+const plan = await call("GET", `/migrations/${id}/plan`) as { planId: string; planHash: string; acknowledgements?: { id: string }[] };
 console.log("GET /migrations/:id/plan", plan.planId, "planHash", plan.planHash.slice(0, 12));
-await call("POST", `/plans/${plan.planId}/approvals`, { decision: "approve", planHash: plan.planHash });
+// MACDRY: 화면이 하듯 확인 항목을 전부 체크하고(acks), 시작 때 본 지문을 다시 보낸다 → PLAN_ACKS=1 깃발 on 에서도 끝까지 간다.
+//   깃발 off 면 둘 다 선택 칸이라 지금과 같은 결과
+await call("POST", `/plans/${plan.planId}/approvals`, { decision: "approve", planHash: plan.planHash,
+  ...(plan.acknowledgements?.length ? { acks: plan.acknowledgements.map((a) => a.id) } : {}) });
 await waitFor("approved");
 
-await call("POST", `/migrations/${id}/start`);
+await call("POST", `/migrations/${id}/start`, { planHash: plan.planHash });
+const bodies = smokePlanBodies(plan);
+await call("POST", `/plans/${plan.planId}/approvals`, bodies.approve);
+await waitFor("approved");
+
+await call("POST", `/migrations/${id}/start`, bodies.start);
 await waitFor("completed");
 console.log(`completed after ${Date.now() - T0} ms`);

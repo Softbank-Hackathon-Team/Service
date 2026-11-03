@@ -49,7 +49,7 @@ test("거부: 신원 2개·DB 2개·cache·permissions 는 UNSUPPORTED_V2 (v1 �
   const two = v2();
   two.components.push({ ...structuredClone(two.components[0]!), id: "worker", props: { ...structuredClone((two.components[0] as any).props), serviceAccount: "worker" } } as never);
   const db2 = v2(); db2.components.push({ id: "db2", kind: "postgres", props: { majorVersion: "16", storageGb: 20 } });
-  const cache = v2(); cache.components.push({ id: "c", kind: "cache", props: { engine: "redis", memoryMiB: 256, tls: true, auth: true } });
+  const cache = v2(); cache.components.push({ id: "c", kind: "cache", props: { engine: "memcached", memoryMiB: 256, tls: true, auth: true } });
   const perm = v2(); perm.posture.permissions.push({ subject: "shop", source: "iam:x", effect: "Allow", actions: ["*"], resources: ["*"], mode: "mirror" });
   for (const [name, s] of [["신원 2", two], ["DB 2", db2], ["cache", cache], ["permissions", perm]] as const) {
     for (const f of [() => b.toTerraformV2(s, T), () => b.toWorkloadValues(s, {}, T), () => azureMockPlanV2(s, T)])

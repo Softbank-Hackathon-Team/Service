@@ -32,6 +32,37 @@ export const PERMS: PermTable = {
     read: ["rds:DescribeDBSubnetGroups"],
     write: ["rds:CreateDBSubnetGroup", "rds:AddTagsToResource"],
     remove: ["rds:DeleteDBSubnetGroup"] },
+  // TA12 DRAFT(ai): 데이터 자원 종류 권한. 【미확인】 infra/permissions 정책 파일에는 아직 없음(경계 밖 TODO) — 실 apply 전에 정책 파일에 같은 동작을 넣어야 함
+  aws_elasticache_replication_group: {
+    read: ["elasticache:DescribeReplicationGroups", "elasticache:ListTagsForResource"],
+    write: ["elasticache:CreateReplicationGroup", "elasticache:ModifyReplicationGroup", "elasticache:AddTagsToResource"],
+    remove: ["elasticache:DeleteReplicationGroup"] },
+  aws_elasticache_subnet_group: {
+    read: ["elasticache:DescribeCacheSubnetGroups"],
+    write: ["elasticache:CreateCacheSubnetGroup", "elasticache:AddTagsToResource"],
+    remove: ["elasticache:DeleteCacheSubnetGroup"] },
+  aws_s3_bucket: {
+    read: ["s3:GetBucketLocation", "s3:GetBucketTagging", "s3:ListBucket"],
+    write: ["s3:CreateBucket", "s3:PutBucketTagging"],
+    remove: ["s3:DeleteBucket"] },
+  aws_s3_bucket_public_access_block: {
+    read: ["s3:GetBucketPublicAccessBlock"], write: ["s3:PutBucketPublicAccessBlock"], remove: ["s3:PutBucketPublicAccessBlock"] },
+  aws_s3_bucket_server_side_encryption_configuration: {
+    read: ["s3:GetEncryptionConfiguration"], write: ["s3:PutEncryptionConfiguration"], remove: ["s3:PutEncryptionConfiguration"] },
+  aws_s3_bucket_versioning: {
+    read: ["s3:GetBucketVersioning"], write: ["s3:PutBucketVersioning"], remove: ["s3:PutBucketVersioning"] },
+  aws_s3_bucket_lifecycle_configuration: {
+    read: ["s3:GetLifecycleConfiguration"], write: ["s3:PutLifecycleConfiguration"], remove: ["s3:PutLifecycleConfiguration"] },
+  aws_s3_bucket_cors_configuration: {
+    read: ["s3:GetBucketCORS"], write: ["s3:PutBucketCORS"], remove: ["s3:PutBucketCORS"] },
+  aws_sqs_queue: {
+    read: ["sqs:GetQueueAttributes", "sqs:ListQueueTags", "sqs:GetQueueUrl"],
+    write: ["sqs:CreateQueue", "sqs:SetQueueAttributes", "sqs:TagQueue"],
+    remove: ["sqs:DeleteQueue"] },
+  aws_sns_topic: {
+    read: ["sns:GetTopicAttributes", "sns:ListTagsForResource"],
+    write: ["sns:CreateTopic", "sns:SetTopicAttributes", "sns:TagResource"],
+    remove: ["sns:DeleteTopic"] },
   aws_security_group: {
     read: ["ec2:DescribeSecurityGroups", "ec2:DescribeSecurityGroupRules"],
     write: ["ec2:CreateSecurityGroup", "ec2:AuthorizeSecurityGroupIngress",
