@@ -56,11 +56,11 @@ function env() {
 const MUTATING = /^(iam service-accounts create|iam roles create|iam roles update|iam roles undelete|projects add-iam-policy-binding|iam service-accounts add-iam-policy-binding)/;
 const mutations = (calls: string[]) => calls.filter((c) => MUTATING.test(c));
 
-test("처음 실행: SA 2 + 역할 3 + 프로젝트 바인딩 3 + tokenCreator 2 = 변경 10번", () => {
+test("처음 실행: SA 3 + 역할 4 + 프로젝트 바인딩 4 + tokenCreator 3 = 변경 14번 (ID-7 plan SA·역할 포함)", () => {
   const e = env();
   const r = e.run();
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(mutations(e.calls()).length, 10);
+  assert.equal(mutations(e.calls()).length, 14);
   assert.match(r.stdout, /123456/);
   assert.ok(!r.stdout.includes("건너뜀"));
 });
@@ -73,7 +73,7 @@ test("재실행: 변경 명령 0번, 전부 '건너뜀', 종료 0 (확인 명령
   assert.equal(r.status, 0, r.stderr);
   const second = e.calls().slice(before);
   assert.equal(mutations(second).length, 0, "재실행에서 변경 명령: " + mutations(second).join(" | "));
-  assert.equal((r.stdout.match(/이미 있음, 건너뜀/g) ?? []).length, 10);
+  assert.equal((r.stdout.match(/이미 있음, 건너뜀/g) ?? []).length, 14);
   assert.ok(second.length >= 10, "각 항목을 먼저 확인");
 });
 
@@ -84,7 +84,7 @@ test("부분 상태: 관찰 SA·관찰 역할만 있으면 나머지만 만든�
   assert.equal(r.status, 0, r.stderr);
   const m = mutations(e.calls());
   // OBSROLE3: 있는 관찰 역할에 권한이 비어 있으면 create 가 아니라 update(add-permissions) 1번이 더해진다 (8 → 9)
-  assert.equal(m.length, 9);
+  assert.equal(m.length, 13);
   assert.equal(m.filter((c) => c.startsWith("iam roles update platform_observe ")).length, 1);
   assert.ok(!m.some((c) => c.includes("service-accounts create svc-observe")) && !m.some((c) => c.includes("roles create platform_observe ")));
   assert.ok(m.some((c) => c.includes("service-accounts create svc-operate")));
@@ -114,8 +114,8 @@ test("tokenCreator 는 SA 단위로 확인: 한쪽만 있으면 다른 쪽만 �
   appendFileSync(join(e.state, "sabind"), `${OBS} serviceAccount:${SA}\n`);
   assert.equal(e.run().status, 0);
   const tc = mutations(e.calls()).filter((c) => c.startsWith("iam service-accounts add-iam-policy-binding"));
-  assert.equal(tc.length, 1);
-  assert.ok(tc[0]!.includes(OPR));
+  assert.equal(tc.length, 2);
+  assert.ok(tc.some((c) => c.includes(OPR)) && tc.some((c) => c.includes("svc-plan@")) && !tc.some((c) => c.includes(OBS)));
 });
 
 test("거부: 다른 회사 SA 가 이미 tokenCreator 여도 이 회사 SA 는 추가된다(주체 구분)", () => {
@@ -123,7 +123,7 @@ test("거부: 다른 회사 SA 가 이미 tokenCreator 여도 이 회사 SA 는 
   const other = "t-ffffffffffffffffffffffffffff@platform-prj.iam.gserviceaccount.com";
   appendFileSync(join(e.state, "sabind"), `${OBS} serviceAccount:${other}\n${OPR} serviceAccount:${other}\n`);
   assert.equal(e.run().status, 0);
-  assert.equal(mutations(e.calls()).filter((c) => c.startsWith("iam service-accounts add-iam-policy-binding")).length, 2);
+  assert.equal(mutations(e.calls()).filter((c) => c.startsWith("iam service-accounts add-iam-policy-binding")).length, 3);
 });
 
 test("확인이 권한 오류로 실패하면 '없다'로 보고 만들기를 시도, 만들기 오류는 그대로 종료(비0)", () => {
@@ -142,7 +142,7 @@ test("DRY_RUN 은 확인 명령도 안 부르고, 이미 있어도 전부 출력
   const r = e.run({ DRY_RUN: "1" });
   assert.equal(r.status, 0);
   assert.equal(e.calls().length, before, "DRY_RUN 중 gcloud 호출 없음");
-  assert.equal((r.stdout.match(/^\+ gcloud/gm) ?? []).length, 10);
+  assert.equal((r.stdout.match(/^\+ gcloud/gm) ?? []).length, 14);
 });
 
 // ── OBSROLE3: 이미 만든 관찰 역할 권한 갱신 ──
@@ -264,8 +264,8 @@ test("VOBSROLE3 거부: 권한 추가(update)가 거절돼도 나머지 연결 �
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stderr, /권한 추가 실패/);
   const calls = e.calls();
-  assert.equal(calls.filter((c) => c.startsWith("projects add-iam-policy-binding")).length, 3);
-  assert.equal(calls.filter((c) => c.startsWith("iam service-accounts add-iam-policy-binding")).length, 2);
+  assert.equal(calls.filter((c) => c.startsWith("projects add-iam-policy-binding")).length, 4);
+  assert.equal(calls.filter((c) => c.startsWith("iam service-accounts add-iam-policy-binding")).length, 3);
   assert.deepEqual(permsOf(e).sort(), OLD7.split(",").sort(), "실패했으니 권한은 그대로");
 });
 

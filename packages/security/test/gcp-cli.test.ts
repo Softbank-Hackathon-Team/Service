@@ -60,3 +60,31 @@ test("시드(stub) 프로젝트는 mock 으로, 진짜 모양 SA 는 진짜로",
   await perEnvGcpIssuer(issuer(f.run), mockIssuer("gcp")).issue(ctx(T1, "svc-observe@stub.iam.gserviceaccount.com"));
   assert.equal(f.calls.length, 0, "stub 프로젝트는 gcloud 를 안 부른다");
 });
+
+const OPR = "svc-operate@cust-proj-123.iam.gserviceaccount.com", PLAN = "svc-plan@cust-proj-123.iam.gserviceaccount.com";
+const target = (args: string[]) => args.find((a) => a.startsWith("--impersonate-service-account="))!.split("=")[1];
+
+test("ID-7: 실행 역할의 plan 단계는 svc-plan(읽기만)을 빌리고, apply·destroy 는 svc-operate 그대로", async () => {
+  const f = fake();
+  const i = issuer(f.run);
+  const p = await i.issue(ctx(T1, OPR, { purpose: "operate", stage: "plan", migrationId: "44444444-4444-4444-8444-444444444444" }));
+  await i.issue(ctx(T1, OPR, { purpose: "operate", stage: "apply", migrationId: "44444444-4444-4444-8444-444444444444" }));
+  await i.issue(ctx(T1, OPR, { purpose: "operate", stage: "destroy", migrationId: "44444444-4444-4444-8444-444444444444" }));
+  assert.deepEqual(f.calls.map((c) => target(c.args)), [PLAN, OPR, OPR]);
+  assert.equal(p.detail.serviceAccount, PLAN);
+  assert.equal(p.detail.planFallback, undefined);
+});
+
+test("ID-7 거부: 예전 스크립트 고객(svc-plan 없음)만 svc-operate 로 한 번 더 빌리고 표시를 남긴다, 거절(권한)은 넘기지 않고 실패", async () => {
+  const calls: string[] = [];
+  const run: GcloudRun = async (args) => {
+    calls.push(target(args)!);
+    return target(args) === PLAN ? { code: 1, stdout: "", stderr: "ERROR: NOT_FOUND: Service account svc-plan does not exist" } : { code: 0, stdout: `${TOKEN}\n`, stderr: "" };
+  };
+  const out = await issuer(run).issue(ctx(T1, OPR, { purpose: "operate", stage: "plan", migrationId: "44444444-4444-4444-8444-444444444444" }));
+  assert.deepEqual(calls, [PLAN, OPR]);
+  assert.equal(out.detail.planFallback, true);
+  const denied: GcloudRun = async () => ({ code: 1, stdout: "", stderr: "PERMISSION_DENIED: iam.serviceAccounts.getAccessToken" });
+  await assert.rejects(issuer(denied).issue(ctx(T1, OPR, { purpose: "operate", stage: "plan", migrationId: "44444444-4444-4444-8444-444444444444" })),
+    (e: unknown) => e instanceof GcpIssueError && e.reason === "ROLE_ASSUME_DENIED");
+});

@@ -32,7 +32,7 @@ test("SA 2개(svc-observe·svc-operate), 커스텀 역할 3개", () => {
 test("tokenCreator는 회사 전용 SA에게, SA 단위로만", () => {
   const out = dryOut();
   const bindings = out.split("\n").filter((l) => l.includes("roles/iam.serviceAccountTokenCreator"));
-  assert.equal(bindings.length, 2);
+  assert.equal(bindings.length, 3);   // 관찰·plan(ID-7)·실행
   assert.ok(bindings.every((l) => l.includes(`--member=serviceAccount:${SA}`) && l.includes("service-accounts add-iam-policy-binding")));
   // 프로젝트 전체에 tokenCreator 금지
   assert.ok(!out.split("\n").some((l) => l.includes("projects add-iam-policy-binding") && l.includes("tokenCreator")));
@@ -57,4 +57,15 @@ test("PLATFORM_SA 이름 규칙: 회사 전용 SA만 통과, 아니면 만들기
     assert.notEqual(r.status, 0, bad);
     assert.ok(!r.stdout.includes("service-accounts create"), "거부 전에 만들면 안 됨");
   }
+});
+
+test("ID-7: plan SA 는 읽기 동사(get·list·getIamPolicy)만 가진 plan 역할을 받고, 실행 역할의 지우기·만들기 권한은 없다", () => {
+  const out = spawnSync("bash", [path.pathname], { encoding: "utf8", env: { PATH: process.env.PATH, PLATFORM_SA: SA, PROJECT_ID: "cust-prj", DRY_RUN: "1",
+    ROLE_DIR: new URL("../../../infra/permissions", import.meta.url).pathname } }).stdout.split("\n");
+  const plan = out.find((l) => l.includes("roles create platform_plan"))!;
+  const perms = /--permissions=(\S+)/.exec(plan)![1]!.split(",");
+  assert.ok(perms.includes("cloudsql.instances.get") && perms.includes("secretmanager.secrets.get"));
+  assert.equal(perms.filter((p) => /\.(create|delete|update|setIamPolicy|access)$/.test(p)).length, 0, perms.join(","));
+  assert.equal(new Set(perms).size, perms.length, "중복 없음");
+  assert.ok(out.some((l) => l.includes("--member=serviceAccount:svc-plan@cust-prj.iam.gserviceaccount.com") && l.includes("roles/platform_plan")));
 });

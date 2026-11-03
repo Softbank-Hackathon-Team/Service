@@ -38,8 +38,8 @@ test("DRY_RUN 출력: 순서(SA → 역할 → 바인딩 → tokenCreator)와 SA
   assert.ok(idx(/roles create platform_operate_iam/) < idx(/projects add-iam-policy-binding/));
   assert.ok(idx(/projects add-iam-policy-binding/) < idx(/serviceAccountTokenCreator/));
   const tc = out.split("\n").filter((l) => l.includes("serviceAccountTokenCreator"));
-  assert.equal(tc.length, 2);
-  assert.ok(tc.some((l) => l.includes("svc-observe@cust-prj.iam")) && tc.some((l) => l.includes("svc-operate@cust-prj.iam")));
+  assert.equal(tc.length, 3);
+  assert.ok(tc.some((l) => l.includes("svc-observe@cust-prj.iam")) && tc.some((l) => l.includes("svc-plan@cust-prj.iam")) && tc.some((l) => l.includes("svc-operate@cust-prj.iam")));
   assert.ok(tc.every((l) => l.includes(`serviceAccount:${GOOD}`) && l.includes("service-accounts add-iam-policy-binding")));
 });
 
