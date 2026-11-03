@@ -74,6 +74,8 @@ export function vmWarnings(p: ManagedProvider, spec: AppSpecV2): string[] {
   for (const w of m) {
     if (w.props.replicas.max > w.props.replicas.min || w.props.scale)
       out.push(`${w.id}: 자동 확장(ASG·MIG)은 아직 없음 → VM ${Math.max(1, w.props.replicas.min)}대 고정 (출발 최대 ${w.props.replicas.max}대)`);
+    // VRUNTIMEMAP2: 출발 최소 0대(사람이 고친 명세)는 VM 1대로 올려 그림(vmServiceVars) → 출발과 달라지는 것이라 알림
+    if (w.props.replicas.min < 1) out.push(`${w.id}: 출발 최소 대수 0 → VM 은 0대로 둘 수 없어 1대로 띄움`);
     if (w.props.image.source === "registry" && !/@sha256:[0-9a-f]{64}$/.test(srcOf(w.props.image))) out.push(`${w.id}: 이미지 digest 가 없음`);
   }
   out.push(`앱 설치는 컨테이너 이미지를 VM 위에서 docker 로 돌림 (${p === "aws" ? "user-data" : "startup-script"}). 출발 VM 의 설치 방식(패키지·스크립트)은 안 읽음`);

@@ -118,6 +118,8 @@ OBSERVE_PERMS="${OBSERVE_PERMS},storage.buckets.list,storage.buckets.getIamPolic
 OBSERVE_PERMS="${OBSERVE_PERMS},resourcemanager.projects.getIamPolicy,serviceusage.services.list,compute.networks.list,compute.forwardingRules.list,compute.globalForwardingRules.list,compute.firewalls.list,compute.regions.get,artifactregistry.repositories.list,secretmanager.secrets.list,compute.instances.list"
 # CRIMPORT: Cloud Run 출발(서비스·잡·도메인 매핑·Cloud Scheduler 일정) 메타데이터 읽기. 환경변수 비밀 값은 원본에도 없음(이름·버전만)
 OBSERVE_PERMS="${OBSERVE_PERMS},run.services.list,run.locations.list,run.revisions.get,run.services.getIamPolicy,run.domainmappings.list,run.jobs.list,cloudscheduler.jobs.list"
+# DEPLOYNONK8S: Cloud Run 도착 배포 확인(Ready 조건 읽기)
+OBSERVE_PERMS="${OBSERVE_PERMS},run.services.get"
 ensure_role platform_observe --title="platform-observe" --description="platform read-only inventory" --permissions="${OBSERVE_PERMS}" --stage=GA
 sync_role_permissions platform_observe "${OBSERVE_PERMS}"
 ensure_role platform_operate --file="${ROLE_DIR}/gcp-operate-custom-role.yaml"

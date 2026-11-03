@@ -23,6 +23,7 @@ export const AWS_COMMAND_ACTIONS: Record<string, string | null> = {
   // VMIMPORT: VM 출발 읽기(import/readers/aws-ec2.ts). user-data(describe-instance-attribute)·콘솔 출력은 부르지 않는다
   "ec2 describe-instances": "ec2:DescribeInstances",
   "ec2 describe-instance-types": "ec2:DescribeInstanceTypes",
+  "ec2 describe-instance-status": "ec2:DescribeInstanceStatus",   // DEPLOYNONK8S: VM 도착 배포 확인 (target/runtime-health.ts). 상태만
   "elbv2 describe-load-balancers": "elasticloadbalancing:DescribeLoadBalancers",
   // I9 ECS 출발 읽기(import/readers/aws-ecs.ts). ECS_OBSERVE_ACTIONS 와 같은 11개 (시험이 대조)
   "ecs list-clusters": "ecs:ListClusters",
@@ -89,6 +90,7 @@ export const GCP_COMMAND_PERMISSIONS: Record<string, string[] | null> = {
   // CRIMPORT: Cloud Run 출발 읽기(import/readers/gcp-cloudrun.ts). CLOUDRUN_OBSERVE_PERMISSIONS 와 같은 목록 (시험이 대조)
   //   DRAFT(ai): 모든 지역 목록은 지역 목록(run.locations.list)도 부른다
   "run services list": ["run.services.list", "run.locations.list"],
+  "run services describe": ["run.services.get"],   // DEPLOYNONK8S: Cloud Run 도착 배포 확인 (target/runtime-health.ts). Ready 조건만
   "run revisions describe": ["run.revisions.get"],              // 판의 imageDigest. 환경변수 비밀은 이름·버전만 (값 아님)
   "run services get-iam-policy": ["run.services.getIamPolicy"], // 공개 여부(allUsers 호출 권한)만 본다
   "run domain-mappings list": ["run.domainmappings.list"],

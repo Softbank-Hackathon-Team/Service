@@ -5,6 +5,10 @@ import { StsCliError, TempRoleDenied } from "@svc/security";
 import { tempRoles } from "../platform.js";
 import { failedAttempts, recordAttemptFailure } from "./_step.js";
 import { envNumber } from "@svc/contracts";
+import { CLOUDRUN_RAW_KINDS, VM_RAW_KIND } from "@svc/adapters";
+
+// v2 가져오기로 가는 원본 워크로드 종류 (하나라도 있으면 normalizeV2, 없으면 v1 길)
+const V2_WORKLOAD_KINDS = new Set<string>(["k8s.deployment", "k8s.cronjob", "ecs.service", VM_RAW_KIND, CLOUDRUN_RAW_KINDS.service, CLOUDRUN_RAW_KINDS.job]);
 
 // Z38-4: import 는 runStep 을 안 지나서 잠금도 청소 대상도 아니다. 재시도(retryLimit 3)를 다 쓰면 importing 에 영원히 남았다.
 //   (Z19 의 "마지막 시도 실패 → failed/paused" 도 runStep 안에만 있어 여기는 못 덮는다)
@@ -210,7 +214,8 @@ async function importV2(p: Provider, sess: ObserveSession, previous: PreviousImp
   // I4: 깃발 IMPORT_AWS_IAM=1 이면 앱 신원의 IAM 정책도 읽어 grants·기준선을 채운다 (기본 꺼짐 = 지금 그대로)
   const inv = await discoverForImport(p, { ir: "v2", iam: process.env.IMPORT_AWS_IAM === "1" }, sess.cliEnv ? { env: envFor(sess.cliEnv) } : {});
   // I9: ECS 서비스도 v2 워크로드 (관리형 컨테이너 갈래). 워크로드가 하나도 없을 때만 v1 경로로 되돌아간다
-  const k8s = (inv.items as Array<{ kind?: string }>).some((i) => i.kind === "k8s.deployment" || i.kind === "k8s.cronjob" || i.kind === "ecs.service");
+  // E2EKINDS: VM(vm.group, VMIMPORT)·Cloud Run(CRIMPORT) 출발도 v2 워크로드. 빠져 있어 그 출발은 v1 길(spec_v2 없음)로 떨어졌다
+  const k8s = (inv.items as Array<{ kind?: string }>).some((i) => V2_WORKLOAD_KINDS.has(String(i.kind)));
   if (!k8s) {
     const a = adapterFor(p);
     const inv1 = await a.discover(sess, { kind: "container", selector: "*" });

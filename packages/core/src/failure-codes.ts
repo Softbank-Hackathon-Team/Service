@@ -33,6 +33,7 @@ export const FAILURE_CODES = [
   "CUTOVER_UNFENCE_FAILED",      //   C5 전 예외, 울타리 걷기도 실패 (긴급)
   "ROLLBACK_FAILED",             // 롤백 재시도 소진
   // gitops 배포 (apps/worker/src/gitops GitopsError.code) → deploy가 paused로
+  "RUNTIME_OUTPUT_MISSING", "RUNTIME_UNHEALTHY", "RUNTIME_CHECK_FAILED",   // DEPLOYNONK8S: ECS·Cloud Run·VM 도착 배포 확인 (출력 빠짐 / 시간 안에 안 뜸 / 읽기 CLI 실패)
   "GITOPS_NOT_CONFIGURED",       // Z89: GitOps 레포 설정 없음인데 MOCK_ARGO=1 도 아님 (예전엔 조용히 STUB 성공)
   "GITOPS_ERROR", "GITOPS_GIT_FAILED", "GITOPS_NO_CHECKOUT", "GITOPS_PLACEHOLDER_MISSING", "GITOPS_PUSH_FAILED", "GITOPS_PUSH_CONFLICT",
   "GITOPS_VALUES_DRIFT", "GITOPS_VALIDATE_FAILED", "GITOPS_RENDER_FAILED", "GITOPS_WEIGHT_NOT_APPROVED", "GITOPS_FENCE_MANUAL",

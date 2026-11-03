@@ -341,6 +341,7 @@
                     "ec2:DescribeAddresses",
                     "ec2:DescribeInstances",
                     "ec2:DescribeInstanceTypes",
+                    "ec2:DescribeInstanceStatus",
                     "elasticloadbalancing:DescribeLoadBalancers",
                     "ecs:ListClusters",
                     "ecs:ListServices",

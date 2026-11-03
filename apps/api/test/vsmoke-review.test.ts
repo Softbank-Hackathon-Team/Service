@@ -42,3 +42,14 @@ test("방화벽 모름(ingress unknown) 컴포넌트만 빈 허용 목록으로,
   assert.equal(smokePostureDecision({ posture: { network: [] } }), null);
   assert.equal(smokePostureDecision(undefined), null);
 });
+
+test("E2EKINDS: v2 칸은 다 풀렸는데 v1 칸(service.cpu·memory)만 남으면 components.<앱>.resources 를 confirm / v1 판·앱 이름 없음은 그대로", () => {
+  const spec = { app: { name: "shop-api" } };
+  assert.deepEqual(smokeReviewBody({ version: 4, source: "accepted", needsReview: ["service.cpu", "service.memory"], needsReviewV2: [], spec }),
+    { baseVersion: 4, confirm: ["components.shop-api.resources"] });
+  assert.deepEqual(smokeReviewBody({ version: 4, source: "accepted", needsReview: ["service.cpu"], needsReviewV2: ["components.shop-api.resources"], spec }),
+    { baseVersion: 4, confirm: ["components.shop-api.resources"] }, "이미 들어 있으면 두 번 안 넣음");
+  // 거부: v1 판(needsReviewV2 없음)은 v1 키 그대로, 앱 이름을 모르면 아무것도 안 보냄
+  assert.deepEqual(smokeReviewBody({ version: 1, source: "accepted", needsReview: ["service.cpu"], spec }), { baseVersion: 1, confirm: ["service.cpu"] });
+  assert.equal(smokeReviewBody({ version: 1, source: "accepted", needsReview: ["service.cpu"], needsReviewV2: [] }), null);
+});

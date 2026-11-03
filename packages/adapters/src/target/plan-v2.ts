@@ -1,6 +1,6 @@
 import { AppSpec, AppSpecV2, PrecheckItem, upconvertV1, type Provider, type TfOutputs } from "@svc/contracts";
 import { AdapterError } from "../common/errors.js";
-import { postgresOf, v2Blockers, workloadsOf, identitiesOf } from "./shared.js";
+import { postgresOf, v2Blockers, workloadsOf, identitiesOf, managedServicesOf, vmServicesOf } from "./shared.js";
 import { targetBuilderFor } from "./index.js";
 import { azureShapeBlockers } from "./azure-mock.js";
 import { grantBlockers, grantWarnings } from "./grants.js";
@@ -113,6 +113,20 @@ export function stubTfOutputsV2(spec: AppSpecV2): TfOutputs {
   for (const i of identitiesOf(spec)) {
     out[`identity.${i.id}.gsa_email`] = `stub-${i.id}@stub-project.iam.gserviceaccount.com`;
     out[`identity.${i.id}.role_arn`] = `arn:aws:iam::000000000000:role/stub-${i.id}`;
+  }
+  // DEPLOYNONK8S STUB: 관리형 서비스 이름·VM 머신 종류·인스턴스 목록 (화면 값의 자리표시 없애기 + 배포 확인이 읽는 출력). 값은 id 에서 결정적
+  const svc = managedServicesOf(spec), vms = vmServicesOf(spec);
+  if (svc.length) {
+    for (const s of svc) out[`service.${s.id}.name`] = `stub-${s.id}`;
+    out.service_names = JSON.stringify(Object.fromEntries(svc.map((s) => [s.id, `stub-${s.id}`])));
+    out.ecs_cluster_name = `stub-${spec.app.name}`;
+  }
+  if (vms.length) {
+    const inst = Object.fromEntries(vms.map((v) => [v.id, Array.from({ length: Math.max(1, v.props.replicas.min) }, (_, n) => `stub-${v.id}-${n + 1}`)]));
+    for (const v of vms) out[`vm.${v.id}.machine`] = "stub-machine";
+    out.vm_machine_types = JSON.stringify(Object.fromEntries(vms.map((v) => [v.id, "stub-machine"])));
+    out.vm_instance_ids = JSON.stringify(inst);
+    out.vm_instance_names = JSON.stringify(inst);
   }
   return out;
 }
