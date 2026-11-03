@@ -4,6 +4,8 @@ import { inferLinks } from "./links.js";
 import { maskPlainSecrets, rewriteEnv } from "./env-rewrite.js";
 import { attachEndpoints, buildEntry, fillProjection, mergeRoutes } from "./entry.js";
 import { buildPosture } from "./posture.js";
+import { applyBoundary } from "./boundary.js";
+import { selectAppGroup } from "./app-group.js";
 import { K8S_RAW_KINDS, type RawK8sHpa, type RawK8sIngress, type RawK8sNetworkPolicy, type RawK8sService } from "./raw-k8s.js";
 import { k8sDeploymentMapper } from "./mappers/k8s-deployment.js";
 import { k8sCronJobMapper } from "./mappers/k8s-cronjob.js";
@@ -24,7 +26,7 @@ import type { KindMapper, MappedComponent, NormalizeV2Options, NormalizeV2Output
 
 // DRAFT(ai): 원본(RawInventory) → 공통 명세 v2 (설계 20번 5.1~5.5장, 24번 I3a). 순수 함수, 네트워크·환경변수 안 읽음.
 //   1) 종류 붙이기(매퍼)  2) id 정하기  3) Service·HPA 접기  4) 평문 비밀 가리기  5) 의존성 추론 + env 다시 쓰기
-//   6) 라우팅  7) 보안 기준선. 같은 원본이면 글자 하나까지 같은 결과(목록 정렬).
+//   5b) 앱 경계(BOUNDARY: 서비스가 근거로 닿는 데이터 자원만)  6) 라우팅  7) 보안 기준선. 같은 원본이면 글자 하나까지 같은 결과(목록 정렬).
 //   검증(checkV2)·저장은 부르는 쪽(import.ts, I3b) 몫.
 
 // I9: ECS 서비스 매퍼 (관리형 컨테이너 출발 갈래)
@@ -78,7 +80,7 @@ export function normalizeV2(raw: RawInventory, opts: NormalizeV2Options = {}): N
 
   // 2) id
   const ids = assignIds(mapped, opts.previousIds ?? {});
-  const components = mapped.sort((a, b) => (a.id! < b.id! ? -1 : a.id! > b.id! ? 1 : 0));
+  let components = mapped.sort((a, b) => (a.id! < b.id! ? -1 : a.id! > b.id! ? 1 : 0));
   // I6: 큐의 DLQ 참조(ARN·토픽 이름) → 같은 가져오기 안의 큐 id. 못 찾으면(다른 계정·리전) to 를 비우고 검토 표시
   for (const q of components) {
     if (!q.deadLetterRef) continue;
@@ -119,15 +121,23 @@ export function normalizeV2(raw: RawInventory, opts: NormalizeV2Options = {}): N
     }
   }
 
+  // 3b) PARTOF: 앱 묶음 라벨(part-of 등)이 있으면 그 묶음 워크로드만. 데이터 자원 경계(5b)는 남은 워크로드 기준
+  const grouped = selectAppGroup(components, fieldMeta, opts.partOf);
+  components = grouped.components;
+
   // 4) 평문 비밀 → 명세에서 뺌 (의존성 추론 전에: 비밀 값이 근거가 되지 않게)
   const masked = maskPlainSecrets(components, fieldMeta, unmapped);
 
   // 5) 의존성 + env 다시 쓰기
   // I4: 앱 신원의 IAM 정책 (discover 가 IAM 읽기를 켰을 때만 원본에 있음. 없으면 지금 그대로)
   const iamPolicies = evidence<RawAwsIamPolicy>("aws.iamPolicy").filter((p) => typeof p.roleName === "string" && typeof p.serviceAccount === "string");
-  const { links, meta, envHits, permissions, unmapped: iamUnmapped } = inferLinks(components, masked, iamPolicies);
+  const { links: allLinks, meta, envHits, permissions, unmapped: iamUnmapped } = inferLinks(components, masked, iamPolicies);
   unmapped.push(...iamUnmapped);
   Object.assign(fieldMeta, meta);
+  // 5b) BOUNDARY: 계정 전체를 읽은 데이터 자원 중 이 앱이 근거로 닿는 것만. 나머지는 outOfBoundary (이름·종류만)
+  const bounded = applyBoundary(components, allLinks, fieldMeta);
+  components = bounded.components;
+  const links = bounded.links;
   rewriteEnv(components, envHits, fieldMeta);
 
   // 6) 라우팅, 7) 보안 기준선
@@ -149,6 +159,8 @@ export function normalizeV2(raw: RawInventory, opts: NormalizeV2Options = {}): N
     },
     fieldMeta: Object.fromEntries(Object.entries(fieldMeta).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))),
     unmapped: unmapped.sort((a, b) => (a.resource < b.resource ? -1 : a.resource > b.resource ? 1 : a.reason < b.reason ? -1 : a.reason > b.reason ? 1 : 0)),
+    ...(grouped.outOfBoundary.length + bounded.outOfBoundary.length
+      ? { outOfBoundary: [...grouped.outOfBoundary, ...bounded.outOfBoundary].sort((a, b) => (a.resource < b.resource ? -1 : a.resource > b.resource ? 1 : 0)) } : {}),
     ids,
     environment: environment.sort(),
   };

@@ -123,7 +123,8 @@ test("R9: digest 없는 Deployment 는 리소스가 아니라 unmapped B", () =>
 });
 
 test("Postgres 가 아닌 DB 는 unmapped, 못 읽는 수량은 NaN 이 아니라 null + 0.6 (PoC :224, R3)", () => {
-  const { result } = normalizeV2(inv([dep("api"),
+  // BOUNDARY: 앱 경계 안에 들도록 api 가 env 로 pg 를 가리킴 (근거 없는 DB 는 경계 밖)
+  const { result } = normalizeV2(inv([dep("api", [{ name: "DB_HOST", value: "pg-rw.shop.svc" }]),
     { kind: "rds.dbInstance", DBInstanceIdentifier: "legacy", Engine: "mysql", EngineVersion: "8.0", AllocatedStorage: 20 },
     { kind: "cnpg.cluster", metadata: { name: "pg", namespace: NS }, spec: { imageName: "x:16", storage: { size: "lots" } } }]));
   assert.ok(result.unmapped.some((u) => u.resource === "rds.dbInstance:legacy" && /mysql/.test(u.reason)));
@@ -135,7 +136,7 @@ test("Postgres 가 아닌 DB 는 unmapped, 못 읽는 수량은 NaN 이 아니�
 });
 
 test("R10: CNPG 는 spec.postgresVersion 도 읽는다", () => {
-  const { result } = normalizeV2(inv([dep("api"), { kind: "cnpg.cluster", metadata: { name: "pg", namespace: NS }, spec: { postgresVersion: "17", storage: { size: "50Gi" } } }]));
+  const { result } = normalizeV2(inv([dep("api", [{ name: "DB_HOST", value: "pg-rw.shop.svc" }]), { kind: "cnpg.cluster", metadata: { name: "pg", namespace: NS }, spec: { postgresVersion: "17", storage: { size: "50Gi" } } }]));
   assert.equal(comp(result.spec, "pg")!.props.majorVersion, "17");
   assert.equal(comp(result.spec, "pg")!.props.storageGb, 50);
 });
@@ -154,10 +155,11 @@ test("자원 하나가 이상해도 전체가 안 터진다: backend.resource, �
 test("id: 같은 이름 DB 가 두 리전에 있어도 벤더 고유 ID 로 갈림, 재가져오기에도 그대로 (PoC :340)", () => {
   const rds = (ep: string, arn: string): Raw => ({ kind: "rds.dbInstance", DBInstanceIdentifier: "shop-db", Engine: "postgres", EngineVersion: "16", AllocatedStorage: 20, Endpoint: { Address: ep }, DBInstanceArn: arn });
   const items = [rds("a.rds.amazonaws.com", "arn:aws:rds:us-east-1:0:db:shop-db"), rds("b.rds.amazonaws.com", "arn:aws:rds:eu-west-1:0:db:shop-db")];
-  const one = normalizeV2(inv([dep("api"), ...items])).result;
+  const api = dep("api", [{ name: "DB_HOSTS", value: "a.rds.amazonaws.com,b.rds.amazonaws.com" }]);   // BOUNDARY: 둘 다 경계 안
+  const one = normalizeV2(inv([api, ...items])).result;
   assert.deepEqual(errorsOf(one.spec), []);
   assert.equal(new Set(one.spec.components.map((c) => c.id)).size, 3);
-  const two = normalizeV2(inv([...items].reverse().concat([dep("api")])), { previousIds: one.ids }).result;
+  const two = normalizeV2(inv([...items].reverse().concat([api])), { previousIds: one.ids }).result;
   assert.deepEqual(two.ids, one.ids);
 });
 

@@ -20,6 +20,8 @@ export interface NativeRef {
   name: string;
   namespace?: string;
   labels?: Record<string, string>;
+  /** PARTOF: 앱 묶음 라벨만 (k8s 는 metadata.labels 의 app.kubernetes.io/part-of·name). 선택자 맞추기엔 안 씀 */
+  appLabels?: Record<string, string>;
   endpoint?: string | null;        // 다른 워크로드가 값으로 적었을 주소 (연결 추론 근거)
   aliases?: string[];              // 같은 대상의 다른 주소 (예: CNPG …-rw.ns.svc.cluster.local)
   uid?: string | null;             // 벤더 고유 ID (ARN, selfLink). 있으면 id 열쇠로 씀
@@ -93,6 +95,8 @@ export interface NormalizeV2Options {
   previousIds?: Record<string, string>;
   /** 앱 이름 (없으면 첫 서비스 id) */
   appName?: string;
+  /** PARTOF: 연결 화면에서 고른 앱 묶음 값 (app.kubernetes.io/part-of 등). 없으면 라벨이 가장 많은 묶음 */
+  partOf?: string;
 }
 
 export interface NormalizeV2Output {

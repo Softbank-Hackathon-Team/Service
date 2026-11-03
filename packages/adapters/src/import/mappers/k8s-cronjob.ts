@@ -1,4 +1,5 @@
 import { K8S_RAW_KINDS, type RawK8sCronJob } from "../raw-k8s.js";
+import { appLabelsOf } from "../app-group.js";
 import type { KindMapper, MappedComponent, MetaTuple, RawItem } from "../types.js";
 import { workloadOf } from "./k8s-deployment.js";
 
@@ -28,7 +29,8 @@ export const k8sCronJobMapper: KindMapper = {
     const meta: Record<string, MetaTuple> = { ...w.meta, schedule: [`${src}.spec.schedule`, 1] };
     return {
       name: it.metadata.name, ...(ns ? { ns } : {}), kind: "job",
-      native: { type: K8S_RAW_KINDS.cronjob, name: it.metadata.name, ...(ns ? { namespace: ns } : {}), labels: js.template.metadata?.labels ?? {} },
+      native: { type: K8S_RAW_KINDS.cronjob, name: it.metadata.name, ...(ns ? { namespace: ns } : {}), labels: js.template.metadata?.labels ?? {},
+        ...(appLabelsOf(it.metadata.labels) ? { appLabels: appLabelsOf(it.metadata.labels) } : {}) },
       props: { ...w.props, schedule: it.spec.schedule, ...run },
       meta,
     };

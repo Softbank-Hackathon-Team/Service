@@ -112,3 +112,61 @@ test("남의 회사: 다른 회사로 부른 작업은 아무것도 안 바꾼�
   assert.equal((await row(id)).status, "importing");
   assert.equal((await ver(id)).length, 0);
 });
+
+// PREVIDS: 다시 가져올 때 앞 판의 id 를 유지한다
+const ids = async (id: string) => {
+  const v = (await owner.query("SELECT version, spec_v2 FROM spec_versions WHERE migration_id=$1 ORDER BY version", [id])).rows as Array<{ version: number; spec_v2: any }>;
+  return v.map((x) => ({ version: x.version, ids: x.spec_v2.spec.components.map((c: { id: string }) => c.id).sort() as string[], map: x.spec_v2.ids as Record<string, string> }));
+};
+/** 데모 onprem 원본에 "batch 네임스페이스의 shop-api" 크론잡을 더한다: 처음 받는 가져오기라면 이름이 겹쳐 기존 shop-api 의 id 도 바뀔 모양 */
+function withCollider<T>(fn: () => Promise<T>): Promise<T> {
+  const src = adapters.DEMO_INVENTORY_V2.onprem!;
+  const orig = src.items;
+  const cj = JSON.parse(JSON.stringify((orig as Array<{ kind: string }>).find((i) => i.kind === "k8s.cronjob"))) as { metadata: { name: string; namespace: string } };
+  cj.metadata.name = "shop-api"; cj.metadata.namespace = "batch";
+  src.items = [...orig, cj as never];
+  return fn().finally(() => { src.items = orig; });
+}
+
+test("PREVIDS 정상: 자원이 하나 더 생긴 재가져오기에서 기존 자원 id 가 그대로, 새 자원만 새 id (판 2 저장)", { skip }, async () => {
+  process.env.IMPORT_IR = "v2";
+  const id = await seed("onprem");
+  await imp.handleImport(job(id));
+  const first = (await ids(id))[0]!;
+  assert.deepEqual(first.ids, ["shop-api", "shop-cleanup", "shop-db", "shop-web", "shop-worker"]);
+  // 같은 이전을 다시 가져오기 상태로 되돌리고(시험 준비), 원본에 같은 이름 자원이 생긴 뒤 다시 가져온다
+  await owner.query("UPDATE migrations SET status='importing' WHERE id=$1", [id]);
+  await withCollider(() => imp.handleImport(job(id)));
+  assert.equal((await row(id)).status, "spec_review");
+  const [, second] = await ids(id);
+  assert.equal(second!.version, 2);
+  for (const [key, v] of Object.entries(first.map)) assert.equal(second!.map[key], v, `기존 자원 id 유지: ${key}`);
+  const added = second!.ids.filter((x) => !first.ids.includes(x));
+  assert.equal(added.length, 1, "새 자원 하나");
+  assert.notEqual(added[0], "shop-api", "새 자원은 기존 id 를 뺏지 않는다");
+});
+
+test("PREVIDS 경계: 앞 판이 없으면(다른 이전에 판이 있어도) 새로 정한다 — 앞 판은 같은 이전 것만", { skip }, async () => {
+  process.env.IMPORT_IR = "v2";
+  const other = await seed("onprem");
+  await imp.handleImport(job(other));            // 같은 회사의 다른 이전: 판 있음 (shop-api …)
+  const fresh = await seed("onprem");
+  await withCollider(() => imp.handleImport(job(fresh)));
+  const [v] = await ids(fresh);
+  assert.equal(v!.version, 1);
+  // 이름이 겹치는 워크로드는 둘 다 네임스페이스를 붙여 정한다 → 앞 판(shop-api)이 흘러들어왔다면 "shop-api" 가 그대로 남았을 것
+  assert.ok(!v!.ids.includes("shop-api"), `새로 정함: ${v!.ids.join(",")}`);
+});
+
+test("PREVIDS 경계: 앞 판 ids 모양이 틀려도(손상) 가져오기는 새 id 로 계속된다", { skip }, async () => {
+  process.env.IMPORT_IR = "v2";
+  const id = await seed("onprem");
+  await imp.handleImport(job(id));
+  await owner.query(`UPDATE spec_versions SET spec_v2 = jsonb_set(spec_v2, '{ids}', '{"k8s.deployment//shop/shop-api": 5}') WHERE migration_id=$1`, [id]);
+  await owner.query("UPDATE migrations SET status='importing' WHERE id=$1", [id]);
+  await imp.handleImport(job(id));
+  assert.equal((await row(id)).status, "spec_review");
+  const v = await ids(id);
+  assert.equal(v.length, 2);
+  assert.deepEqual(v[1]!.ids, v[0]!.ids);
+});
