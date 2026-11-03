@@ -12,7 +12,7 @@ packages/adapters  toTerraform(spec, target) ──► infra/modules/<환경>/ap
 |---|---|---|
 | `modules/aws/bootstrap` | Terraform state 버킷(S3, 퍼블릭 차단·버전 관리·암호화·TLS 강제) + 이 버킷만 쓰는 `tf-state` 역할 | 사람, 로컬 state, 맨 처음 한 번 |
 | `modules/aws/env` | VPC(공개2·사설2) + NAT 1 + EKS + Pod Identity 애드온 + ECR `platform` | 사람, 로컬 세션, 한 번 |
-| `modules/aws/platform` | VPC·EKS(노드 그룹 3개: general·cred·sandbox)·ECR·RDS·증거 S3 + ESO 권한(Pod Identity)·비밀 그릇 `platform/app`·`platform/cloudflared`. 비밀 연동·입구 차트는 `deploy/helm/platform` | 사람, 한 번 |
+| `modules/aws/platform` | VPC·EKS(노드 그룹 3개: general·cred·sandbox)·ECR·RDS·증거 S3 + Pod Identity(worker·api·ESO, `pod-identity.tf`. 고객 이전 state 위치가 정해지지 않아 워커 state 권한은 넣지 않음)·비밀 그릇 `platform/app`·`platform/cloudflared`. 비밀 연동·입구 차트는 `deploy/helm/platform` | 사람, 한 번 |
 | `modules/aws/app` | RDS Postgres(논리 복제 켬, 비밀번호는 RDS가 Secrets Manager에 관리) + 보안 그룹 + 시크릿 그릇 + 앱 IAM 역할(Pod Identity) | worker, 승인된 plan만 |
 | `modules/gcp/env` | VPC + Cloud SQL 사설 연결(PSA) + Cloud NAT + GKE(Workload Identity) + Artifact Registry | 사람, 한 번 |
 | `modules/gcp/app` | Cloud SQL Postgres(사설 IP, logical_decoding) + DB 사용자·비밀번호 시크릿 + 시크릿 그릇 + 앱 SA(Workload Identity) | worker |
