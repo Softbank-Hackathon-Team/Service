@@ -180,7 +180,7 @@ async function saveImport(job: MigrationJob, inv: RawInventory, spec: unknown, f
       mode: "ifStill",
       // Z88: 읽은 출발 자원 목록(종류·이름·버전만, 환경변수는 이름만)을 감사에 남긴다 → provisioning(Z89)이 "이미 있음" 판단에 쓴다
       audit: { actor: "worker", action: "migration.spec_review", target: job.migrationId, result: "ok",
-               detail: { sourceInventory: inventoryForAudit(inv), ...(ir === "v2" ? { ir: v2?.result ? "v2" : "v1-fallback", ...(v2?.note ? { note: v2.note } : {}) } : {}), ...(accuracy ? { accuracy } : {}) } },
+               detail: { sourceInventory: inventoryForAudit(inv), ...(ir === "v2" ? { ir: v2?.result ? "v2" : "v1-fallback", ...(v2?.note ? { note: v2.note } : {}), ...(v2?.carry ? { carry: v2.carry } : {}) } : {}), ...(accuracy ? { accuracy } : {}) } },
     });
   });
 }
@@ -205,7 +205,7 @@ async function accuracyOf(tx: { query: (sql: string, p?: unknown[]) => Promise<{
 // I3b: 공통 명세 v2 가져오기 (설계 24번 2장). discover(v2) → normalizeV2 → checkV2 → projectV1.
 //   원본에 k8s 워크로드가 하나도 없으면(사실상 MOCK aws 의 ECS 원본) v1 경로로 되돌아간다: v1 discover 를 다시 부르고 spec_v2 는 NULL
 //   checkV2 errors(구조 오류)만 막는다. reviews(벤더 주소·사설 IP 남음)는 spec_v2.fieldMeta 검토 표시만
-type V2Import = { inv: RawInventory; spec: unknown; fieldMeta: FieldMeta; result: ImportResultV2 | null; note?: string };
+type V2Import = { inv: RawInventory; spec: unknown; fieldMeta: FieldMeta; result: ImportResultV2 | null; note?: string; carry?: { kept: string[]; flagged: string[]; dropped: string[] } };
 async function importV2(p: Provider, sess: ObserveSession, previous: PreviousImports = { ids: {}, history: [] }): Promise<V2Import> {
   // I4: 깃발 IMPORT_AWS_IAM=1 이면 앱 신원의 IAM 정책도 읽어 grants·기준선을 채운다 (기본 꺼짐 = 지금 그대로)
   const inv = await discoverForImport(p, { ir: "v2", iam: process.env.IMPORT_AWS_IAM === "1" }, sess.cliEnv ? { env: envFor(sess.cliEnv) } : {});
@@ -224,14 +224,30 @@ async function importV2(p: Provider, sess: ObserveSession, previous: PreviousImp
   const pulled = previous.included?.length ? applyInclude(fresh.result, previous.included, { lenient: true }) : null;
   if (pulled) Object.assign(projectionEnv.postgres, pulled.postgres);
   // PREVIDS2: 앞 판에서 사람이 손댄 칸 유지 (출발 값이 같으면 사람 값·표시, 달라졌으면 새 값 + 다시 검토). 첫 가져오기는 history 가 비어 그대로
-  const { result, report } = carryHumanEdits(pulled ? pulled.result : fresh.result, previous.history);
-  const { errors, reviews } = checkV2(result.spec);
+  const base = pulled ? pulled.result : fresh.result;
+  let { result, report } = carryHumanEdits(base, previous.history);
+  let checked = checkV2(result.spec);
+  // PREVIDS3 DRAFT(ai): 사람 값을 합친 명세가 구조 검증(checkV2 errors)을 못 통과하면(예: 사람이 지운 링크를 가리키는 칸이 남음) 가져오기를 영구 실패로 막지 않고
+  //   합치기를 건너뛴 새로 읽은 그대로를 쓴다(그것도 통과할 때만). 건너뛴 사실과 보류한 이름은 note·감사 detail.carry 에 남는다
+  let carrySkipped = false;
+  if (checked.errors.length && (report.kept.length || report.flagged.length)) {
+    const plain = checkV2(base.spec);
+    if (!plain.errors.length) {
+      report = { kept: [], flagged: [], dropped: [...report.kept, ...report.flagged, ...report.dropped] };
+      result = base; checked = plain; carrySkipped = true;
+    }
+  }
+  const { errors, reviews } = checked;
   if (errors.length) throw new AdapterError("SPEC_V2_INVALID", `공통 명세 v2 검증 실패: ${errors.slice(0, 5).join("; ")}${errors.length > 5 ? ` 외 ${errors.length - 5}개` : ""}`);
   // DRAFT(ai): reviews 는 막지 않고 fieldMeta 에 "check.reviews[i]" 키로 검토 표시 (화면이 needs_review 로 센다)
   reviews.forEach((r, i) => { result.fieldMeta[`check.reviews[${i}]`] = { source: "checkV2", confidence: 0.6, needs_review: true, rationale: r }; });
   const stored = ImportResultV2.parse(result);   // 저장 전 모양 확인 (ZodError → 영구 실패)
   const { spec, fieldMeta } = projectV1(stored, projectionEnv, { mainApp: process.env.IMPORT_APP || undefined });
-  const carryNote = report.kept.length || report.flagged.length
-    ? `앞 판 사람 수정 유지 ${report.kept.length}칸, 출발 값 바뀌어 다시 검토 ${report.flagged.length}칸` : undefined;
-  return { inv, spec, fieldMeta, result: stored, ...(carryNote ? { note: carryNote } : {}) };
+  // PREVIDS3: 대상이 없어 못 옮긴 사람 값 개수도 note 에, 이름(값 아님)은 감사 detail.carry 에 (각 30개까지)
+  const carryNote = report.kept.length || report.flagged.length || report.dropped.length
+    ? (carrySkipped ? `앞 판 사람 수정 합치기가 검증을 못 통과해 건너뜀(사람 값 ${report.dropped.length}개 보류, 새로 읽은 값 사용)`
+      : `앞 판 사람 수정 유지 ${report.kept.length}칸, 출발 값 바뀌어 다시 검토 ${report.flagged.length}칸${report.dropped.length ? `, 대상 없어 보류 ${report.dropped.length}개` : ""}`) : undefined;
+  const cap = (a: string[]) => a.slice(0, 30);
+  const carry = carryNote ? { kept: cap(report.kept), flagged: cap(report.flagged), dropped: cap(report.dropped) } : undefined;
+  return { inv, spec, fieldMeta, result: stored, ...(carryNote ? { note: carryNote } : {}), ...(carry ? { carry } : {}) };
 }

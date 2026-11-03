@@ -10,7 +10,19 @@ import type { ImportResultV2 } from "@svc/contracts";
 export const CARRY_NOTE = "출발 값이 바뀜, 앞서 사람이 정한 값 있음";
 
 export interface PrevSpecV2 { spec: ImportResultV2["spec"]; fieldMeta: ImportResultV2["fieldMeta"] }
-export interface CarryReport { kept: string[]; flagged: string[] }   // 단위 이름 "<id>.<칸>"
+//
+// PREVIDS3 DRAFT(ai): 사람 결정 전부 유지 (VPREVIDS2 가 찾은 구멍 3개).
+//   ① links·entry·posture: PATCH 가 통째로 바꾸므로 fieldMeta 키 "links"|"entry"|"posture" 가 source "human". 항목 단위 3-way 합치기:
+//      바탕 B(그 사람 편집 바로 앞의 사람 표시 없던 판 값) · 사람 H(사람 표시 달린 가장 새 판 값) · 새로 읽은 F.
+//      항목 열쇠 = links: from|to|intent · entry: 호스트명들 · posture: permissions(주체|근거|효과|actions|resources), network(namespace 이름 | 주체).
+//      H==F 면 합의(그대로). H==B(사람이 안 건드림)면 F 를 따름. 사람이 바꾼 항목: F==B(출발 안 바뀜)면 H, F!=B 면 F + 다시 검토(메모).
+//      사람이 지운 항목(B 에 있고 H 에 없음): F==B 면 계속 지움, F!=B 면 F 살림 + 다시 검토. 사람이 넣은 항목(H 에만): 대상(id)이 새 판에 있으면 유지.
+//      바탕을 못 찾으면 H 를 대상 있는 항목만 유지 + 다시 검토.
+//   ② 판 창: 칸마다 "이 이전에서 그 칸에 사람 표시가 처음 나오는 판"(최근 CARRY_WINDOW 판 안)을 쓴다. 한 판 동안 묶음 밖이었다 돌아와도 유지.
+//   ③ 대상이 새 판에 없어 못 옮긴 사람 값은 report.dropped 에 이름만 (값은 안 담음). 판 창 안에 남아 있어 대상이 돌아오면 다시 살아난다.
+//   BOUNDPULL 과의 약속: 사람이 경계 안으로 넣은 자원(source human)은 경계 안 유지 — 그 자원의 칸은 새 판에 자원이 있어야만 여기서 다룬다(없으면 dropped).
+export const CARRY_WINDOW = 10;
+export interface CarryReport { kept: string[]; flagged: string[]; dropped: string[] }   // 단위 이름 "<id>.<칸>" 또는 "links"|"entry"|"posture"(+ 항목은 ":이름")
 
 const KEY = /^components\.([a-z][a-z0-9-]{0,39})\.([A-Za-z][A-Za-z0-9]{0,39})(\..*)?$/;
 // BOUNDPULL: components.<id>.boundary 는 칸 값이 아니라 경계 판단 표시(사람이 끌어옴 = source human). 재가져오기 때 included 가 따로 이어 주므로 여기선 단위로 안 센다
@@ -21,62 +33,172 @@ const propOf = (spec: PrevSpecV2["spec"], unit: string): unknown => {
   // VPREVIDS2 고침: 상속 속성(constructor·toString)을 칸 값으로 읽지 않는다 (structuredClone 이 함수에서 던짐)
   return c ? { present: true, value: c.props && Object.hasOwn(c.props, field) ? c.props[field] : undefined } : undefined;
 };
-const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+// VPREVIDS2/3 고침: 키 순서와 상관없이 같은 값이면 같다 (DB jsonb 는 키를 다시 정렬해서 돌려준다 — JSON.stringify 비교는 {cpuMilli,memMiB} 가 순서만 달라도 다르다고 봤다)
+const canon = (v: unknown): string => JSON.stringify(v ?? null, (_k, x) => (x && typeof x === "object" && !Array.isArray(x)
+  ? Object.fromEntries(Object.keys(x).sort().map((k) => [k, (x as Record<string, unknown>)[k]])) : x));
+const same = (a: unknown, b: unknown) => canon(a) === canon(b);
+
+type Meta = PrevSpecV2["fieldMeta"];
+type Obj = Record<string, any>;
+const keysByUnit = (meta: Meta) => {
+  const m = new Map<string, string[]>();
+  for (const k of Object.keys(meta)) { const u = unitOf(k); if (u) m.set(u, [...(m.get(u) ?? []), k]); }
+  return m;
+};
+const flagNote = (e: Meta[string]): Meta[string] => ({ ...e, needs_review: true, rationale: e.rationale?.includes(CARRY_NOTE) ? e.rationale : e.rationale ? `${e.rationale} / ${CARRY_NOTE}` : CARRY_NOTE });
 
 /**
  * @param fresh 새로 읽은 가져오기 결과 (checkV2 전). 입력은 안 바꾸고 복사본을 돌려준다
- * @param history 앞 판들 spec_v2, 가장 새 것부터 (history[0] = 사람이 본 최신 판). 비면 아무것도 안 한다 (첫 가져오기)
+ * @param history 앞 판들 spec_v2, 가장 새 것부터 (history[0] = 사람이 본 최신 판). 비면 아무것도 안 한다 (첫 가져오기). 앞 CARRY_WINDOW 개만 본다
  */
 export function carryHumanEdits(fresh: ImportResultV2, history: PrevSpecV2[]): { result: ImportResultV2; report: CarryReport } {
-  const report: CarryReport = { kept: [], flagged: [] };
-  const last = history[0];
-  if (!last) return { result: fresh, report };
+  const report: CarryReport = { kept: [], flagged: [], dropped: [] };
+  if (!history[0]) return { result: fresh, report };
+  const hist = history.slice(0, CARRY_WINDOW);
   const result = structuredClone(fresh);
-  const keysByUnit = (meta: PrevSpecV2["fieldMeta"]) => {
-    const m = new Map<string, string[]>();
-    for (const k of Object.keys(meta)) { const u = unitOf(k); if (u) m.set(u, [...(m.get(u) ?? []), k]); }
-    return m;
-  };
-  const prevUnits = keysByUnit(last.fieldMeta);
   const freshUnits = keysByUnit(result.fieldMeta);
-  for (const [unit, prevKeys] of [...prevUnits].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
-    const freshKeys = freshUnits.get(unit);
-    const freshProp = propOf(result.spec, unit) as { present: true; value: unknown } | undefined;
-    if (!freshKeys || !freshProp) continue;                       // 새 판에 그 자원·칸 표시가 없음 → 건드리지 않음
-    const human = prevKeys.filter((k) => last.fieldMeta[k]!.source === "human");
-    const confirmed = prevKeys.filter((k) => last.fieldMeta[k]!.source !== "human" && !last.fieldMeta[k]!.needs_review && result.fieldMeta[k]?.needs_review === true);
-    if (!human.length && !confirmed.length) continue;
-    // 가져온 값
-    let baseline: { present: true; value: unknown } | undefined;
-    if (!human.length) baseline = propOf(last.spec, unit) as typeof baseline;
-    else for (const h of history.slice(1)) {
-      const hk = keysByUnit(h.fieldMeta).get(unit) ?? [];
-      if (hk.some((k) => h.fieldMeta[k]!.source === "human")) continue;
-      baseline = propOf(h.spec, unit) as typeof baseline;
-      break;
-    }
-    const comp = (result.spec.components as Array<{ id: string; props?: Record<string, unknown> }>).find((x) => x.id === unit.slice(0, unit.indexOf(".")))!;
-    const field = unit.slice(unit.indexOf(".") + 1);
-    if (baseline && same(baseline.value, freshProp.value)) {
-      // (a) 그대로 유지
-      if (human.length) {
+  const claimed = new Set<string>();
+  // ── 부품 칸 (판 창: 칸마다 가장 새 판에서 처음 나오는 곳을 쓴다) ──
+  for (const [vi, last] of hist.entries()) {
+    for (const [unit, prevKeys] of [...keysByUnit(last.fieldMeta)].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+      if (claimed.has(unit)) continue;
+      claimed.add(unit);
+      const human = prevKeys.filter((k) => last.fieldMeta[k]!.source === "human");
+      const freshKeys = freshUnits.get(unit);
+      const confirmed = prevKeys.filter((k) => last.fieldMeta[k]!.source !== "human" && !last.fieldMeta[k]!.needs_review && result.fieldMeta[k]?.needs_review === true);
+      if (!human.length && !confirmed.length) continue;
+      const freshProp = propOf(result.spec, unit) as { present: true; value: unknown } | undefined;
+      if (!freshKeys || !freshProp) { report.dropped.push(unit); continue; }   // 대상 없음 (경계 밖·출발에서 사라짐)
+      // 가져온 값
+      let baseline: { present: true; value: unknown } | undefined;
+      if (!human.length) baseline = propOf(last.spec, unit) as typeof baseline;
+      else for (const h of hist.slice(vi + 1)) {
+        const hk = keysByUnit(h.fieldMeta).get(unit) ?? [];
+        if (hk.length === 0 || hk.some((k) => h.fieldMeta[k]!.source === "human")) continue;
+        baseline = propOf(h.spec, unit) as typeof baseline;
+        break;
+      }
+      const comp = (result.spec.components as Array<{ id: string; props?: Record<string, unknown> }>).find((x) => x.id === unit.slice(0, unit.indexOf(".")))!;
+      const field = unit.slice(unit.indexOf(".") + 1);
+      if (baseline && same(baseline.value, freshProp.value)) {
+        if (human.length) {   // (a) 그대로 유지
+          const value = (propOf(last.spec, unit) as { value: unknown } | undefined)?.value;
+          comp.props = { ...(comp.props ?? {}) };
+          if (value === undefined) delete comp.props[field]; else comp.props[field] = structuredClone(value);
+          for (const k of freshKeys) delete result.fieldMeta[k];
+          for (const k of prevKeys) result.fieldMeta[k] = structuredClone(last.fieldMeta[k]!);
+        } else for (const k of confirmed) result.fieldMeta[k] = { ...result.fieldMeta[k]!, needs_review: false };
+        report.kept.push(unit);
+      } else if (human.length && !baseline && pulledByHuman(last, unit.slice(0, unit.indexOf(".")))) {
+        // VPREVIDS3 DRAFT(ai): 끌어오기와 고치기를 한 요청에 한 자원은 사람 표시 없던 앞 판에 그 자원이 아예 없어 바탕을 못 찾는다.
+        //   그렇다고 "출발이 바뀜"으로 보고 사람 값을 버리면 끌어온 직후 고친 값이 첫 재가져오기에서 사라진다 → 사람 값 유지 + 다시 검토(바탕 모름, links·entry·posture 와 같은 규칙)
         const value = (propOf(last.spec, unit) as { value: unknown } | undefined)?.value;
         comp.props = { ...(comp.props ?? {}) };
         if (value === undefined) delete comp.props[field]; else comp.props[field] = structuredClone(value);
         for (const k of freshKeys) delete result.fieldMeta[k];
-        for (const k of prevKeys) result.fieldMeta[k] = structuredClone(last.fieldMeta[k]!);
-      } else for (const k of confirmed) result.fieldMeta[k] = { ...result.fieldMeta[k]!, needs_review: false };
-      report.kept.push(unit);
-    } else {
-      // (b) 새 값 + 다시 검토
-      for (const k of human.length ? freshKeys : confirmed) {
-        const e = result.fieldMeta[k];
-        if (!e) continue;
-        const rationale = e.rationale ? `${e.rationale} / ${CARRY_NOTE}` : CARRY_NOTE;
-        result.fieldMeta[k] = { ...e, needs_review: true, rationale };
+        for (const k of prevKeys) result.fieldMeta[k] = flagNote(last.fieldMeta[k]!);
+        report.flagged.push(unit);
+      } else {   // (b) 새 값 + 다시 검토
+        for (const k of human.length ? freshKeys : confirmed) { const e = result.fieldMeta[k]; if (e) result.fieldMeta[k] = flagNote(e); }
+        report.flagged.push(unit);
       }
-      report.flagged.push(unit);
     }
   }
+  // ── links · entry · posture (PREVIDS3) ──
+  const ids = new Set((result.spec.components as Array<{ id: string }>).map((c) => c.id));
+  for (const key of ["links", "entry", "posture"] as const) {
+    const hi = hist.findIndex((h) => h.fieldMeta[key]?.source === "human");
+    if (hi < 0) continue;
+    const H = hist[hi]!;
+    const B = hist.slice(hi + 1).find((h) => h.fieldMeta[key]?.source !== "human");
+    const out = mergeTop(key, B ? (B.spec as Obj)[key] : undefined, !!B, (H.spec as Obj)[key], (result.spec as Obj)[key], ids);
+    (result.spec as Obj)[key] = out.value;
+    if (out.value === undefined) delete (result.spec as Obj)[key];
+    report.dropped.push(...out.dropped.map((d) => `${key}:${d}`));
+    const prev = H.fieldMeta[key]!;
+    result.fieldMeta[key] = out.conflict ? flagNote(prev) : structuredClone(prev);
+    // 하위 표시: 사람 판의 것을 그대로 (그 판이 항목에 대해 정한 표시), 합쳐서 사라진 링크의 새 표시는 지움
+    for (const k of Object.keys(H.fieldMeta)) if (k.startsWith(`${key}.`)) result.fieldMeta[k] = structuredClone(H.fieldMeta[k]!);
+    if (key === "links") for (const k of Object.keys(result.fieldMeta)) {
+      const m = /^links\.(.+)->(.+)$/.exec(k);
+      if (m && !(out.value as Obj[]).some((l) => l.from === m[1] && (typeof l.to === "string" ? l.to : "") === m[2])) delete result.fieldMeta[k];
+    }
+    (out.conflict ? report.flagged : report.kept).push(key);
+  }
   return { result, report };
+}
+
+/** 사람이 경계 밖에서 끌어온 자원이다 (boundary 표시가 human). 바탕을 못 찾은 사람 값이 이 자원 것이면 호출부가 유지 + 다시 검토로 본다 */
+function pulledByHuman(h: PrevSpecV2, id: string): boolean {
+  return h.fieldMeta[`components.${id}.boundary`]?.source === "human";
+}
+
+// ── 항목 단위 3-way 합치기 ──────────────────────────────
+interface Spec3 { keyOf: (x: Obj) => string; exists: (x: Obj) => boolean; keysOf?: (a: Obj[]) => string[] }
+function merge3(Bi: Obj[] | undefined, Hi: Obj[], Fi: Obj[], sp: Spec3): { items: Obj[]; conflict: boolean; dropped: string[] } {
+  const keys = (a: Obj[]) => sp.keysOf ? sp.keysOf(a) : a.map(sp.keyOf);
+  const idx = (a: Obj[]) => new Map(keys(a).map((k, i) => [k, a[i]!]));
+  const B = Bi ? idx(Bi) : undefined, H = idx(Hi), F = idx(Fi);
+  const out: Obj[] = []; const dropped: string[] = []; let conflict = false;
+  if (!B) {   // 바탕을 못 찾음: 사람 값 그대로(대상 있는 것) + 출발에서만 나온 항목, 사람 값과 출발이 다르면 다시 검토
+    Hi.forEach((h, i) => { if (!sp.exists(h)) dropped.push(keys(Hi)[i]!); });
+    return { items: [...Hi.filter((h) => sp.exists(h)), ...Fi.filter((_f, i) => !H.has(keys(Fi)[i]!))], conflict: !same(Hi, Fi), dropped };
+  }
+  const used = new Set<string>();
+  for (const [k, f] of F) {
+    used.add(k);
+    const h = H.get(k), b = B.get(k);
+    if (h === undefined && b === undefined) { out.push(f); continue; }  // 새로 읽힌 항목
+    if (h !== undefined && same(h, f)) { out.push(f); continue; }       // 합의
+    if (h === undefined) {                                           // 사람이 지움
+      if (b !== undefined && same(b, f)) continue;                   // 출발 안 바뀜 → 계속 지움
+      out.push(f); conflict = true; continue;                        // 출발이 바뀜 → 살리고 다시 검토
+    }
+    if (b !== undefined && same(h, b)) { out.push(f); continue; }    // 사람이 안 건드림 → 출발 따름
+    if (b !== undefined && same(b, f)) { out.push(h); continue; }    // 사람이 바꿈, 출발 그대로 → 사람 값
+    out.push(f); conflict = true;                                    // 둘 다 바뀜 → 출발 값 + 다시 검토
+  }
+  for (const [k, h] of H) {                                          // 사람이 넣은 항목 (새 판에 없는 것 중 바탕에도 없던 것)
+    if (used.has(k) || B.has(k)) continue;
+    if (sp.exists(h)) out.push(h); else dropped.push(k);
+  }
+  // 사람이 바꾼 항목인데 새 판에서 출발이 사라진 경우(F 에 없고 B·H 에 있음): 사람 값이면 유지, 아니면 출발에서 사라진 것이니 뺌
+  for (const [k, h] of H) {
+    if (used.has(k) || !B.has(k)) continue;
+    if (!same(h, B.get(k))) { if (sp.exists(h)) { out.push(h); conflict = true; } else dropped.push(k); }
+  }
+  return { items: out, conflict, dropped };
+}
+
+const str = (x: unknown) => canon(x);
+function mergeTop(key: "links" | "entry" | "posture", B: unknown, hasB: boolean, H: unknown, F: unknown, ids: Set<string>): { value: unknown; conflict: boolean; dropped: string[] } {
+  const idOk = (id: unknown) => typeof id === "string" && ids.has(id);
+  if (key === "links") {
+    const r = merge3(hasB ? (B as Obj[]) ?? [] : undefined, (H as Obj[]) ?? [], (F as Obj[]) ?? [], {
+      // 같은 (from,to) 가 한 배열에 둘 이상이면 intent 를 덧붙여 가른다. 하나뿐이면 intent 를 사람이 바꿔도 같은 항목
+      keyOf: (l) => `${l.from}->${typeof l.to === "string" ? l.to : str(l.to)}`,
+      keysOf: (a) => a.map((l) => { const k = `${l.from}->${typeof l.to === "string" ? l.to : str(l.to)}`; return a.filter((x) => `${x.from}->${typeof x.to === "string" ? x.to : str(x.to)}` === k).length > 1 ? `${k}/${l.intent}` : k; }),
+      exists: (l) => idOk(l.from) && (typeof l.to !== "string" || idOk(l.to)),
+    });
+    return { value: r.items, conflict: r.conflict, dropped: r.dropped };
+  }
+  if (key === "entry") {
+    const hostsOf = (e: unknown) => ((e as Obj | undefined)?.hosts ?? []) as Obj[];
+    const r = merge3(hasB ? hostsOf(B) : undefined, hostsOf(H), hostsOf(F), {
+      keyOf: (h) => (h.hostnames as string[]).join(","),
+      exists: (h) => (h.routes as Obj[]).every((rt) => (rt.backends as Obj[]).every((b) => idOk(b.to))),
+    });
+    const base = (F ?? H) as Obj | undefined;
+    return { value: r.items.length ? { ...(base ?? { via: "cloudflare-lb" }), hosts: r.items } : undefined, conflict: r.conflict, dropped: r.dropped };
+  }
+  const P = (x: unknown) => ((x ?? { permissions: [], network: [] }) as { permissions: Obj[]; network: Obj[] });
+  const perm = merge3(hasB ? P(B).permissions : undefined, P(H).permissions, P(F).permissions, {
+    keyOf: (p) => `${p.subject}|${p.source}|${p.effect}|${str(p.actions)}|${str(p.resources)}`,
+    exists: (p) => idOk(p.subject),
+  });
+  const net = merge3(hasB ? P(B).network : undefined, P(H).network, P(F).network, {
+    keyOf: (n) => (n.scope === "namespace" ? `ns:${n.namespace}` : `c:${n.subject}`),
+    exists: (n) => n.scope === "namespace" || idOk(n.subject),
+  });
+  return { value: { ...((F ?? H) as Obj), permissions: perm.items, network: net.items }, conflict: perm.conflict || net.conflict, dropped: [...perm.dropped, ...net.dropped] };
 }
