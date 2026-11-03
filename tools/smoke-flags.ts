@@ -1,7 +1,7 @@
 // smoke 변형: 깃발 켠 서버용 (E2E). PLAN_ACKS=1 이면 승인 본문에 acks, 시작 본문에 planHash 를 보낸다
 // 거부 경로도 한 번씩 본다: acks 빠진 승인 → 409, planHash 빠진 시작 → 409 (깃발 PLAN_ACKS=1 일 때만)
 // DRAFT(ai): E2E 묶음용 개발 스크립트. 실클라우드 호출 없음 (MOCK_* 서버 기준)
-import { smokeEnvs } from "./smoke-env.js";
+import { smokeConfirmReview, smokeEnvs } from "./smoke-env.js";
 
 const API = `http://localhost:${process.env.API_PORT ?? 3000}/api/v1`;
 const H = { "content-type": "application/json", "x-dev-tenant": process.env.SMOKE_TENANT_ID?.trim() || "11111111-1111-4111-8111-111111111111" };
@@ -42,6 +42,9 @@ const envs = smokeEnvs();
 const { id } = await call("POST", "/migrations", envs) as { id: string };
 console.log("POST /migrations", id);
 await waitFor("spec_review");
+// VSMOKE: 사람 확인 칸이 있으면 화면처럼 confirm (없으면 요청 0)
+const reviewed = await smokeConfirmReview(call, id);
+if (reviewed) console.log(`PATCH /migrations/:id/spec confirm ${reviewed}칸`);
 await call("POST", `/migrations/${id}/plan`);
 await waitFor("awaiting_approval");
 

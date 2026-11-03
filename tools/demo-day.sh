@@ -350,13 +350,15 @@ u_rds_wait() {
 }
 u_workers() {
   local i
-  if [ "$DRY" = 1 ]; then echo "DRY: MOCK_IAC= GITOPS_DISABLE=1 nohup npm run dev:worker / dev:api &" >> "$PROGRESS"; return 0; fi
+  if [ "$DRY" = 1 ]; then echo "DRY: MOCK_IAC= GITOPS_DISABLE=1 nohup npm run dev:worker / dev:api & (PLAN_ACKS=$([ "${DEMO_DAY_PLAN_ACKS:-}" = 1 ] && echo 1 || echo 기본))" >> "$PROGRESS"; return 0; fi
   # UPREV-A: 3000 에 이미 API 가 있으면 새 API 는 못 뜨는데 아래 readyz 검사는 옛 API 로 통과해 버린다 → 먼저 막는다
   if curl -sf -m 2 http://localhost:3000/readyz >/dev/null 2>&1; then echo "localhost:3000 에 이미 API 가 떠 있다(옛 회차?). 끄고 다시: bash tools/demo-day.sh down 또는 lsof -ti :3000"; return 1; fi
   ( set -a; . "$ENVF"; set +a; MOCK_IAC= GITOPS_DISABLE=1 \
     nohup npm run dev:worker > "$DEMO_DAY_LOG_DIR/worker.log" 2>&1 & echo $! > "$STATE/worker.pid" )
   # WEBUP: 발표 화면(8080 컨테이너)이 host.docker.internal 로 붙으므로 IPv4 루프백에 확실히 연다 ("localhost" 는 맥에서 ::1 만 될 수 있음)
-  ( API_HOST=127.0.0.1 nohup npm run dev:api > "$DEMO_DAY_LOG_DIR/api.log" 2>&1 & echo $! > "$STATE/api.pid" )
+  # DEMOFLAGS DRAFT(ai): 계획 승인 확인 항목 게이트(회의 D5)는 기본 꺼둔다. 발표 화면(8080)이 아직 acks 를 안 보내서 켜면 화면 승인이 409 ACKS_MISSING 이다
+  #   (notes/impl-1103/WEB-GAPS.md §2). 스크립트(smoke·real-flow)만 쓰는 회차나 화면이 acks 를 보내게 된 뒤엔 DEMO_DAY_PLAN_ACKS=1 로 켠다
+  ( env API_HOST=127.0.0.1 $([ "${DEMO_DAY_PLAN_ACKS:-}" = 1 ] && echo PLAN_ACKS=1) nohup npm run dev:api > "$DEMO_DAY_LOG_DIR/api.log" 2>&1 & echo $! > "$STATE/api.pid" )
   # z75-43: 워커 유효 설정 줄(Z81 z81-10)을 10초 안에 본다. .env 에 PROM_URL 이 있으면 코드가 관찰을 최소 30초로 올린다(guards.ts)
   local obs out rc
   obs=$(with_env sh -c 'echo "${TRAFFIC_OBSERVE_SEC:-4}"')
