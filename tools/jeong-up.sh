@@ -8,10 +8,12 @@ JSELF=tools/jeong-up.sh
 . tools/jeong-lib.sh
 j_bg up "$@"
 j_begin up
+j_trap up
 # 로그 폴더를 여기서 정해 진행 파일에 경로를 적는다 (demo-day 기본 규칙과 같음)
 if [ -z "${DEMO_DAY_LOG_DIR:-}" ]; then
   if [ -d ../measurements ]; then DEMO_DAY_LOG_DIR=../measurements/demo-day-up-$(date -u +%Y%m%dT%H%M%SZ); else DEMO_DAY_LOG_DIR=tools/measure/out/demo-day-up-$(date -u +%Y%m%dT%H%M%SZ); fi
 fi
+DEMO_DAY_LOG_DIR=$(j_abs "$DEMO_DAY_LOG_DIR")   # 절대 경로 (진행 파일에 적힌다)
 export DEMO_DAY_LOG_DIR
 DEMO_DAY_JEONG=1 bash tools/demo-day.sh up --fg "$@"
 rc=$?

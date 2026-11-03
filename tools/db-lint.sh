@@ -131,7 +131,7 @@ R=$(in_db $A "
      -- DBLINTDYN: 회사 번호 칸이 없어도 app_user 가 직접 만질 수 없는 표(DEFINER 함수로만 접근, 예: llm_spend_global)는 회사 벽이 필요 없다
      AND (has_table_privilege('app_user', c.oid, 'SELECT') OR has_table_privilege('app_user', c.oid, 'INSERT')
           OR has_table_privilege('app_user', c.oid, 'UPDATE') OR has_table_privilege('app_user', c.oid, 'DELETE'))
-     AND c.relname NOT IN ($(echo $NO_TENANT_OK | sed "s/[a-z_]*/'&'/g; s/ /,/g"))")
+     AND c.relname NOT IN ($(echo "${NO_TENANT_OK:-_}" | sed -E "s/[a-z_]+/'&'/g; s/ /,/g"))")
 [ -z "$R" ] && ok "D5 tenant_id 없는 public 표는 허용 목록 또는 app_user 권한 없는 표뿐" || bad "D5 tenant_id 없는 표(허용 목록 밖): $R"
 R=$(in_db $A "SELECT relname FROM pg_class WHERE relname = 'tenants' AND relnamespace = 'public'::regnamespace AND NOT relrowsecurity")
 [ -z "$R" ] && ok "D5 tenants 회사 벽" || warn "D5 tenants 에 RLS 없음 (다른 회사 이름이 보임)"

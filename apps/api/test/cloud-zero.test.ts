@@ -97,3 +97,65 @@ test("REALECS: ECS 클러스터·서비스가 남아 있으면 끝 코드 1, 없
   assert.match(zero.out, /ECS 클러스터: +0/);
   assert.match(zero.out, /OK zero/);
 });
+
+// UPREV-B: 지우는 중인 자원은 기다렸다 다시 본다 / 리전 여러 개 / GCP 프로젝트 없음
+function fakeAwsCounter(dir: string) {
+  const bin = mkdtempSync(join(tmpdir(), "czr-"));
+  writeFileSync(join(bin, "aws"), `#!/bin/sh
+case "$*" in
+  *describe-nat-gateways*) n=$(cat "${dir}/n" 2>/dev/null || echo 0); echo $((n + 1)) > "${dir}/n"; if [ "$n" -lt "\${FAKE_DELETING_TIMES:-2}" ]; then echo nat-1; fi ;;
+  *"--region us-east-1"*"describe-vpcs"*) echo vpc-other ;;
+  *) echo "" ;;
+esac
+`); chmodSync(join(bin, "aws"), 0o755);
+  return bin;
+}
+
+test("UPREV-B: CLOUD_ZERO_WAIT_SEC 면 deleting 이던 NAT 가 사라질 때까지 다시 보고 OK zero", () => {
+  const dir = mkdtempSync(join(tmpdir(), "czc-"));
+  const bin = fakeAwsCounter(dir);
+  const r = spawnSync("bash", [SCRIPT, "aws"], { encoding: "utf8", env: { PATH: `${bin}:${process.env.PATH}`, CLOUD_ZERO_WAIT_SEC: "20", CLOUD_ZERO_RETRY_SEC: "1" } });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /OK zero/);
+  assert.match(r.stderr, /재조회 1/);
+  assert.match(r.stdout, /3번째 조회/);
+});
+
+test("UPREV-B: 기다려도 안 사라지면 시간 뒤 끝 코드 1 (대기 0 이면 처음부터 1, 재조회 없음)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "czc-"));
+  const bin = fakeAwsCounter(dir);
+  const env = { PATH: `${bin}:${process.env.PATH}`, FAKE_DELETING_TIMES: "999" };
+  const slow = spawnSync("bash", [SCRIPT, "aws"], { encoding: "utf8", env: { ...env, CLOUD_ZERO_WAIT_SEC: "3", CLOUD_ZERO_RETRY_SEC: "1" } });
+  assert.equal(slow.status, 1, slow.stdout);
+  assert.match(slow.stdout, /nat-1/);
+  const fast = spawnSync("bash", [SCRIPT, "aws"], { encoding: "utf8", env });
+  assert.equal(fast.status, 1);
+  assert.doesNotMatch(fast.stderr, /재조회/);
+});
+
+test("UPREV-B: CLOUD_ZERO_REGIONS 의 다른 리전에 남은 VPC 도 센다 (줄 이름에 리전)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "czc-"));
+  const bin = fakeAwsCounter(dir);
+  const r = spawnSync("bash", [SCRIPT, "aws"], { encoding: "utf8", env: { PATH: `${bin}:${process.env.PATH}`, FAKE_DELETING_TIMES: "0", CLOUD_ZERO_REGIONS: "ap-northeast-2,us-east-1" } });
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(r.stdout, /us-east-1 VPC\(기본 제외\): +1/);
+  assert.match(r.stdout, /ap-northeast-2 VPC\(기본 제외\): +0/);
+  assert.match(r.stdout, /vpc-other/);
+});
+
+test("UPREV-B: GCP 프로젝트가 비면 0 이라 하지 않고 조회 실패(끝 코드 2)", () => {
+  const bin = mkdtempSync(join(tmpdir(), "czg-"));
+  writeFileSync(join(bin, "gcloud"), `#!/bin/sh\ncase "$*" in config*) echo "" ;; *) echo "" ;; esac\n`); chmodSync(join(bin, "gcloud"), 0o755);
+  const r = spawnSync("bash", [SCRIPT, "gcp"], { encoding: "utf8", env: { PATH: `${bin}:${process.env.PATH}` } });
+  assert.equal(r.status, 2, r.stdout);
+  assert.match(r.stdout, /프로젝트 없음/);
+});
+
+test("UPREV-B: 기본 아닌 VPC·ENI·ECS 클러스터는 AWS 남은 것으로 센다 (gcp 쪽 VPC·라우터도)", () => {
+  const bin = mkdtempSync(join(tmpdir(), "czg-"));
+  writeFileSync(join(bin, "gcloud"), `#!/bin/sh\ncase "$*" in config*) echo proj ;; *networks*) echo net-1 ;; *routers*) echo r-1 ;; *) echo "" ;; esac\n`); chmodSync(join(bin, "gcloud"), 0o755);
+  const r = spawnSync("bash", [SCRIPT, "gcp"], { encoding: "utf8", env: { PATH: `${bin}:${process.env.PATH}` } });
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(r.stdout, /VPC 네트워크\(default 제외\): +1/);
+  assert.match(r.stdout, /라우터\(Cloud NAT\): +1/);
+});

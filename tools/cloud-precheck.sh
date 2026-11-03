@@ -2,7 +2,9 @@
 # 클라우드 사전 점검 (z75-51, 작업 Z78). 조회만 한다(만들기·고치기 없음). 10초 안. demo-day.sh up 시작 점검이 부른다. 따로 쳐도 된다.
 #   bash tools/cloud-precheck.sh
 # 항목 (줄마다 "OK|FAIL|WARN <항목> <설명>", 마지막 줄 "판정 PASS|FAIL 항목 N개 FAIL n WARN m 초 s")
-#   region       AWS_REGION = ap-northeast-2, GCP_ZONE 이 asia-northeast3-
+#   region       AWS_REGION = ap-northeast-2, GCP_ZONE 이 asia-northeast3-  (AWS_REGION 이 비면 demo-day 와 같은 ap-northeast-2)
+#   aws-auth     aws sts get-caller-identity → 12자리 계정 번호 (SSO 만료·프로필 틀림을 up 도중이 아니라 여기서 잡는다. 계정 번호는 안 찍음)
+#   gcp-auth     gcloud auth print-access-token 이 되는가 (토큰은 안 찍음)
 #   gcp-apis     gcloud services list --enabled 에 sqladmin·container·compute
 #   gcp-billing  gcloud billing projects describe → billingEnabled true
 #   sql-tier     (z75-52) 규칙: CLOUDSQL_DB_VERSION(POSTGRES_16, adapters gcp 기본) 이 16 이상이면 infra/modules/gcp/app/main.tf 에
@@ -20,7 +22,10 @@ T0=$(date +%s)
 CALL=${PRECHECK_CALL_SEC:-8}
 P=${GCP_PROJECT:-finals-demo}
 ZONE=${GCP_ZONE:-asia-northeast3-a}
-REGION=${AWS_REGION:-}
+# UPREV-A: demo-day.sh 와 같은 기본값. 예전엔 AWS_REGION 이 비면 "서울 아님" FAIL, AWS_PROFILE 이 비면 기본 프로필(다른 계정)을 조회했다
+export AWS_PROFILE=${AWS_PROFILE:-finals}
+REGION=${AWS_REGION:-ap-northeast-2}
+export AWS_DEFAULT_REGION=$REGION
 TIER=${CLOUDSQL_TIER:-db-f1-micro}
 MAIN_TF=infra/modules/gcp/app/main.tf
 DBV=${CLOUDSQL_DB_VERSION:-POSTGRES_16}
@@ -53,6 +58,19 @@ c_region() {
   [ "$REGION" = ap-northeast-2 ] || bad="AWS_REGION=${REGION:-비어 있음}"
   case "$ZONE" in asia-northeast3-*) ;; *) bad="$bad GCP_ZONE=$ZONE" ;; esac
   if [ -z "$bad" ]; then say OK region "서울 (ap-northeast-2, $ZONE)"; else say FAIL region "서울 아님:$bad"; fi
+}
+c_aws_auth() {
+  local out rc
+  out=$(tmo "$CALL" aws sts get-caller-identity --query Account --output text 2>"$W/awsauth.err"); rc=$?
+  case "$out" in
+    [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) [ $rc -eq 0 ] && { say OK aws-auth "프로필 $AWS_PROFILE 로 로그인됨"; return; } ;;
+  esac
+  say FAIL aws-auth "AWS 자격 안 됨 rc=$rc 프로필 $AWS_PROFILE ($(head -c 100 "$W/awsauth.err" | tr '\n' ' ')) → aws sso login --profile $AWS_PROFILE"
+}
+c_gcp_auth() {
+  local rc
+  tmo "$CALL" gcloud auth print-access-token > /dev/null 2>"$W/gauth.err"; rc=$?
+  if [ $rc -eq 0 ]; then say OK gcp-auth "gcloud 로그인됨"; else say FAIL gcp-auth "gcloud 토큰 못 받음 rc=$rc → gcloud auth login"; fi
 }
 c_apis() {
   local out rc miss="" a
@@ -88,6 +106,9 @@ q() {
   used=$(tmo "$CALL" "$@" 2>/dev/null); rc=$?
   [ $rc -eq 0 ] && [ -n "$used" ] || { say WARN "aws-quota-$name" "지금 수 못 읽음 rc=$rc"; return; }
   lim=${lim%%.*}
+  # UPREV-A: "None"·빈 값이 산술에서 0 으로 읽혀 조용히 통과/오판하던 것을 막는다
+  case "$lim$used" in *[!0-9]*|"") say WARN "aws-quota-$name" "한도·사용 값이 숫자가 아님 (한도 '$lim', 사용 '$used')"; return ;; esac
+  case "$lim" in "") say WARN "aws-quota-$name" "한도 값이 비었음"; return ;; esac
   if [ $((lim - used)) -ge "$need" ]; then say OK "aws-quota-$name" "한도 $lim, 사용 $used, 필요 $need"
   else say FAIL "aws-quota-$name" "모자람: 한도 $lim, 사용 $used, 필요 $need (Service Quotas 에서 증설 요청)"; fi
 }
@@ -96,7 +117,7 @@ c_eip() { q eip ec2 L-0263D0A3 "${NEED_EIP:-1}" aws ec2 describe-addresses --reg
 c_rds() { q rds rds L-7B6409FD "${NEED_RDS:-1}" aws rds describe-db-instances --region "$REGION" --query 'length(DBInstances)' --output text; }
 
 c_region
-for c in c_apis c_billing c_tier c_vpc c_eip c_rds; do $c & done
+for c in c_aws_auth c_gcp_auth c_apis c_billing c_tier c_vpc c_eip c_rds; do $c & done
 wait
 cat "$W"/*.res
 n=$(cat "$W"/*.res | wc -l | tr -d ' ')

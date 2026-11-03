@@ -15,6 +15,7 @@ P="$Q/jeong-up.progress"
 mkdir -p "$Q" && cd "$Q" || exit 1
 rm -f "$Q"/up.*.done "$Q/up.done" "$Q"/up.*.fail
 log() { echo "$(date -u +%H:%M:%SZ) $*" | tee -a "$P"; }
+command -v jq >/dev/null 2>&1 || { log "FAIL: jq 없음 (맥: brew install jq)"; exit 1; }
 export AWS_PROFILE="${AWS_PROFILE:-finals}"
 MAC_IP="$(curl -s ifconfig.me)"
 [ -n "$MAC_IP" ] || { log "FAIL: no public IP"; exit 1; }

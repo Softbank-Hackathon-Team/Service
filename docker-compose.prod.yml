@@ -112,8 +112,12 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     environment:
-      API_UPSTREAM: http://api:3000
+      # DRAFT(ai) WEBUP: 실클라우드 회차(demo-day)는 호스트에서 도는 api(3000, 호스트 DB)에 화면을 붙인다.
+      #   demo-day 가 WEB_API_UPSTREAM=http://host.docker.internal:3000 으로 web 만 다시 띄운다. 비우면 이 묶음의 api
+      API_UPSTREAM: ${WEB_API_UPSTREAM:-http://api:3000}
       API_PREFIX: /api/v1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # 맥 Docker Desktop 은 원래 있음. 리눅스도 같은 이름이 되게
     ports:
       - "127.0.0.1:${WEB_HOST_PORT:-8080}:8080"   # 개발 헤더 인증이 켜져 있어 밖에 열지 않는다
     depends_on:

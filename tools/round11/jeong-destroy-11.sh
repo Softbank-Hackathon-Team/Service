@@ -13,6 +13,7 @@ SQL_DIR="${SQL_DIR:-$HOME/.svc-tf/bprime-sql}"
 PROJECT="${PROJECT:-finals-demo}"
 P="$Q/jeong-destroy.progress"; cd "$Q" || exit 1
 log() { echo "$(date -u +%H:%M:%SZ) $*" | tee -a "$P"; }
+command -v jq >/dev/null 2>&1 || { log "FAIL: jq 없음 (맥: brew install jq). 없으면 relay VPC 를 못 찾아 정리가 빠진다"; exit 1; }
 export AWS_PROFILE="${AWS_PROFILE:-finals}"
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 TFA="$SVC/infra/modules/aws/env"; TFG="infra/modules/gcp/env"; TFR="infra/modules/aws/demo-relay"
