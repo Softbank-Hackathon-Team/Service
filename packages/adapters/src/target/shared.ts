@@ -345,6 +345,11 @@ export function v2Blockers(spec0: AppSpecV2, caps: Capability[]): { unsupported:
     const keys = Object.keys(h.annotations ?? {}).filter((k) => ACCESS_ANNOTATION.test(k)).sort();
     if (keys.length) needsHuman.push(`입구 ${h.hostnames[0]}: 출발은 인증·접근 제한(${keys.join(",")})을 걸어 둠 → 도착 입구가 아직 못 그려 그대로 두면 열림. 도착 입구에서 같은 제한을 걸지 사람이 정함`);
   }
+  // AN-1: 출발 입구의 인증·접근 제한 annotation 은 도착 입구(Cloudflare·차트 Ingress)가 아직 그 뜻을 못 그린다 → 조용히 열지 않고 사람이 정함
+  for (const h of spec.entry?.hosts ?? []) {
+    const keys = Object.keys(h.annotations ?? {}).filter((k) => ACCESS_ANNOTATION.test(k)).sort();
+    if (keys.length) needsHuman.push(`입구 ${h.hostnames[0]}: 출발은 인증·접근 제한(${keys.join(",")})을 걸어 둠 → 도착 입구가 아직 못 그려 그대로 두면 열림. 도착 입구에서 같은 제한을 걸지 사람이 정함`);
+  }
   // N3: binaryData 는 값을 안 읽어 도착에 못 만듦
   for (const w of workloadsOf(spec)) for (const c of w.props.configs ?? [])
     if (c.binaryKeys?.length) unsupported.push(`도착 렌더 미지원: ${w.id} ConfigMap ${c.name} 의 binaryData(${c.binaryKeys.join(",")}) 는 값을 안 옮김`);

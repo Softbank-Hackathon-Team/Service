@@ -11,6 +11,13 @@ app.kubernetes.io/name: {{ .Values.app.name }}
 app.kubernetes.io/component: {{ .w.name | quote }}
 {{- end }}
 
+{{- /* CV-1: 파드 템플릿 metadata (라벨 + 허용 목록 annotation). 입력 dict: root, w */}}
+{{- define "app.wpodmeta" -}}
+labels: {{- include "app.wlabels" (dict "root" .root "w" .w) | nindent 2 }}
+{{- with .w.podAnnotations }}
+annotations: {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
 {{- /* A4·PB-1: 파드 모양 (Deployment·Job·CronJob 공통). 입력 dict: root, w, restart(Job 류만).
        값이 없는 칸은 키 자체를 안 그린다 (프로브·requests 기본값을 지어내지 않음, 재현성) */}}
 {{- define "app.wpod" -}}
@@ -19,17 +26,23 @@ app.kubernetes.io/component: {{ .w.name | quote }}
 {{- $sec := $w.securityContext | default dict }}
 {{- $vols := list }}
 {{- $mounts := list }}
+{{- /* CM-2: env·envFrom 으로만 쓰는 ConfigMap(mountPath 없음)은 객체만 있고 마운트하지 않는다.
+       CM-3: 마운트 원문(volumes·volumeMounts)이 있으면 Builder 가 mountPath 를 안 넣어 두 번 마운트하지 않음 */}}
 {{- range $w.configs }}
+{{- if .mountPath }}
 {{- $vols = append $vols (dict "name" (printf "cfg-%s" .name) "configMap" (dict "name" .name)) }}
 {{- $mounts = append $mounts (dict "name" (printf "cfg-%s" .name) "mountPath" .mountPath "readOnly" true) }}
+{{- end }}
 {{- end }}
 {{- range $w.secretMounts }}
 {{- $vols = append $vols (dict "name" (printf "sec-%s" .name) "secret" (dict "secretName" .secretName)) }}
 {{- $mounts = append $mounts (dict "name" (printf "sec-%s" .name) "mountPath" .mountPath "readOnly" true) }}
 {{- end }}
 {{- range $w.pvcs }}
+{{- if .mountPath }}
 {{- $vols = append $vols (dict "name" (printf "pvc-%s" .name) "persistentVolumeClaim" (dict "claimName" (printf "%s-%s" $w.name .name))) }}
 {{- $mounts = append $mounts (dict "name" (printf "pvc-%s" .name) "mountPath" .mountPath) }}
+{{- end }}
 {{- end }}
 {{- range $w.volumes }}{{- $vols = append $vols . }}{{- end }}
 {{- range $w.volumeMounts }}{{- $mounts = append $mounts . }}{{- end }}
@@ -41,6 +54,33 @@ restartPolicy: {{ . }}
 {{- end }}
 {{- with $sec.pod }}
 securityContext: {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- /* CV-1: 노드 공유(hostNetwork·hostPID·hostIPC, host_access 승인 뒤)·배치 원문 그대로 */}}
+{{- $host := $w.host | default dict }}
+{{- if $host.network }}
+hostNetwork: true
+{{- end }}
+{{- if $host.pid }}
+hostPID: true
+{{- end }}
+{{- if $host.ipc }}
+hostIPC: true
+{{- end }}
+{{- $sch := $w.scheduling | default dict }}
+{{- with $sch.nodeSelector }}
+nodeSelector: {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with $sch.tolerations }}
+tolerations: {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with $sch.affinity }}
+affinity: {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with $sch.topologySpreadConstraints }}
+topologySpreadConstraints: {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- with $sch.priorityClassName }}
+priorityClassName: {{ . }}
 {{- end }}
 {{- with $w.initContainers }}
 initContainers: {{- toYaml . | nindent 2 }}
@@ -58,6 +98,9 @@ containers:
     ports:
       {{- range . }}
       - containerPort: {{ .containerPort }}
+        {{- with .hostPort }}
+        hostPort: {{ . }}
+        {{- end }}
         {{- with .name }}
         name: {{ . }}
         {{- end }}

@@ -76,8 +76,7 @@ spec:
       activeDeadlineSeconds: {{ . }}
       {{- end }}
       template:
-        metadata:
-          labels: {{- include "app.wlabels" (dict "root" $ "w" $w) | nindent 12 }}
+        metadata: {{- include "app.wpodmeta" (dict "root" $ "w" $w) | nindent 10 }}
         spec: {{- include "app.wpod" (dict "root" $ "w" $w "restart" ($j.restartPolicy | default "OnFailure")) | nindent 10 }}
 {{- else }}
 ---
@@ -94,8 +93,7 @@ spec:
   activeDeadlineSeconds: {{ . }}
   {{- end }}
   template:
-    metadata:
-      labels: {{- include "app.wlabels" (dict "root" $ "w" $w) | nindent 8 }}
+    metadata: {{- include "app.wpodmeta" (dict "root" $ "w" $w) | nindent 6 }}
     spec: {{- include "app.wpod" (dict "root" $ "w" $w "restart" ($j.restartPolicy | default "OnFailure")) | nindent 6 }}
 {{- end }}
 {{- else }}
@@ -117,8 +115,7 @@ spec:
       app.kubernetes.io/name: {{ $.Values.app.name }}
       app.kubernetes.io/component: {{ $w.name | quote }}
   template:
-    metadata:
-      labels: {{- include "app.wlabels" (dict "root" $ "w" $w) | nindent 8 }}
+    metadata: {{- include "app.wpodmeta" (dict "root" $ "w" $w) | nindent 6 }}
     spec: {{- include "app.wpod" (dict "root" $ "w" $w) | nindent 6 }}
 {{- /* PB-1: Service 는 services[] 한 줄에 하나 (출발 Service 이름·종류·포트 그대로). Headless = clusterIP: None */}}
 {{- range $svc := ($w.services | default list) }}
@@ -128,6 +125,9 @@ kind: Service
 metadata:
   name: {{ $svc.name }}
   labels: {{- include "app.wlabels" (dict "root" $ "w" $w) | nindent 4 }}
+  {{- with $svc.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   {{- if eq $svc.type "Headless" }}
   clusterIP: None
@@ -147,6 +147,9 @@ spec:
       {{- with .protocol }}
       protocol: {{ . }}
       {{- end }}
+      {{- with .appProtocol }}
+      appProtocol: {{ . }}
+      {{- end }}
     {{- end }}
 {{- end }}
 {{- with $w.scale }}
@@ -160,11 +163,40 @@ spec:
   scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: {{ $w.name }} }
   minReplicas: {{ .min }}
   maxReplicas: {{ .max }}
-  {{- with .cpuPct }}
+  {{- /* CV-1: 출발 HPA metrics 원문이 있으면 그대로, 없으면 cpuPct 하나 */}}
+  {{- if .metrics }}
+  metrics: {{- toYaml .metrics | nindent 4 }}
+  {{- else if .cpuPct }}
   metrics:
     - type: Resource
-      resource: { name: cpu, target: { type: Utilization, averageUtilization: {{ . }} } }
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: {{ .cpuPct }} } }
   {{- end }}
+  {{- with .behavior }}
+  behavior: {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- /* CV-1: PodDisruptionBudget (출발 이름·값 그대로). 셀렉터 = 이 Deployment 의 셀렉터 */}}
+{{- with $w.disruption }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .name }}
+  labels: {{- include "app.wlabels" (dict "root" $ "w" $w) | nindent 4 }}
+spec:
+  {{- if hasKey . "minAvailable" }}
+  minAvailable: {{ .minAvailable }}
+  {{- end }}
+  {{- if hasKey . "maxUnavailable" }}
+  maxUnavailable: {{ .maxUnavailable }}
+  {{- end }}
+  {{- with .unhealthyPodEvictionPolicy }}
+  unhealthyPodEvictionPolicy: {{ . }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $.Values.app.name }}
+      app.kubernetes.io/component: {{ $w.name | quote }}
 {{- end }}
 {{- end }}
 {{- end }}
