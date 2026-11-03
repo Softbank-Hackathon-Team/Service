@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import {
-  ApiError, ConnectionLink, ConnectionStatus, CreateEnvironmentBody, EnvironmentView, VerifyBody, checkAccountId,
+  ApiError, ConnectionLink, ConnectionLinkQuery, ConnectionStatus, CreateEnvironmentBody, EnvironmentView, VerifyBody, checkAccountId,
   type Provider,
 } from "@svc/contracts";
 import {
@@ -11,7 +11,7 @@ import {
 import { cachedInventory, chooseRunner, inventoryToStatus } from "@svc/adapters";
 import { EnvironmentList, EnvironmentStatus, errors } from "./responses.js";
 import { IdParam, found, isoUtc } from "./kit.js";
-import { awsQuickCreateUrl, connectSettings, externalIdHint, newExternalId } from "../connect/link.js";
+import { awsQuickCreateUrl, connectSettings, externalIdHint, newExternalId, shouldCreateBoundary } from "../connect/link.js";
 
 // 입력층 L2: 환경 만들기 · 연결 링크 · 연결 확인 요청 · 해제. 상태 변경은 core advanceConnection() 하나로만 한다
 // (environments.connection_status 를 여기서 직접 UPDATE 하지 않는다)
@@ -52,11 +52,11 @@ const err = (status: number, code: string, message: string) => new DomainError(s
 
 interface EnvRow {
   provider: Provider; connection_status: ConnectionStatus; external_id: string | null;
-  cluster_name: string | null; region: string | null; link_expired: boolean;
+  cluster_name: string | null; region: string | null; link_expired: boolean; account_id: string | null;
 }
 async function lockEnv(tx: Tx, id: string): Promise<EnvRow> {
   const q = await tx.query<EnvRow>(
-    `SELECT provider, connection_status, external_id, cluster_name, region, ${LINK_EXPIRED_SQL} AS link_expired
+    `SELECT provider, connection_status, external_id, cluster_name, region, account_id, ${LINK_EXPIRED_SQL} AS link_expired
        FROM environments WHERE id = $1 FOR UPDATE`, [id]);
   return found(q.rows[0], "environment", id);
 }
@@ -109,7 +109,7 @@ export async function environmentRoutes(app: FastifyInstance) {
   });
 
   // 연결 링크 발급 (설계 IA 6.1 1단계). draft·고객 대기·만료·실패 → 고객 대기
-  r.post("/environments/:id/connection-link", { schema: { params: IdParam,
+  r.post("/environments/:id/connection-link", { schema: { params: IdParam, querystring: ConnectionLinkQuery,
     response: { 200: ConnectionLink, ...errors(400, 401, 403, 404, 409, 500), 501: ApiError, 503: ApiError } } },
   async (req, reply) => {
     return req.idempotent(reply, async (tx) => {
@@ -135,9 +135,13 @@ export async function environmentRoutes(app: FastifyInstance) {
       });
       const exp = await tx.query<{ expires_at: string }>(
         `SELECT ${isoUtc("(link_issued_at + interval '24 hours')")} AS expires_at FROM environments WHERE id = $1`, [id]);
+      // F17: 같은 계정에 경계 정책이 이미 있으면 템플릿이 만들지 않게 (이름 충돌로 스택 실패 방지)
+      const createBoundaryPolicy = shouldCreateBoundary({ boundaryPolicyExists: req.query.boundaryPolicyExists === "true",
+        envAccountId: env.account_id, principalArn: s.principalArn });
       const url = awsQuickCreateUrl({ envId: id, region: env.region, templateUrl: s.templateUrl,
-        principalArn: s.principalArn, externalId, clusterName: env.cluster_name });
-      return { status: 200, body: { kind: "aws_quick_create" as const, url, externalId, expiresAt: exp.rows[0]!.expires_at } };
+        principalArn: s.principalArn, externalId, clusterName: env.cluster_name, createBoundaryPolicy });
+      return { status: 200, body: { kind: "aws_quick_create" as const, url, externalId, createBoundaryPolicy,
+        expiresAt: exp.rows[0]!.expires_at } };
     });
   });
 

@@ -47,3 +47,20 @@ test("연결 설정: 둘 다 있어야 하고, 하나라도 비면 null", () => 
   assert.deepEqual(connectSettings({ CONNECT_TEMPLATE_URL: "https://x", PLATFORM_PRINCIPAL_ARN: "arn:a" }),
     { templateUrl: "https://x", principalArn: "arn:a" });
 });
+
+// F17: 같은 계정에 platform-app-boundary 가 이미 있으면 링크가 템플릿에 "만들지 마"를 넘긴다
+import { shouldCreateBoundary, principalAccount } from "../src/connect/link.js";
+test("F17 정상: 이미 있다고 알리거나 고객 계정 = 플랫폼 계정이면 CreateBoundaryPolicy=false 가 링크에 붙는다", () => {
+  assert.equal(principalAccount(base.principalArn), "111122223333");
+  assert.equal(shouldCreateBoundary({ boundaryPolicyExists: true, principalArn: base.principalArn }), false);
+  assert.equal(shouldCreateBoundary({ envAccountId: "111122223333", principalArn: base.principalArn }), false);
+  const u = awsQuickCreateUrl({ ...base, createBoundaryPolicy: false });
+  assert.ok(u.includes("param_CreateBoundaryPolicy=false"));
+});
+test("F17 거부: 모르거나 다른 계정이면 템플릿 기본(만듦), 링크에 파라미터 없음", () => {
+  assert.equal(shouldCreateBoundary({ principalArn: base.principalArn }), true);
+  assert.equal(shouldCreateBoundary({ envAccountId: "999988887777", principalArn: base.principalArn }), true);
+  assert.equal(shouldCreateBoundary({ boundaryPolicyExists: false, envAccountId: null, principalArn: "not-an-arn" }), true);
+  assert.ok(!awsQuickCreateUrl({ ...base, createBoundaryPolicy: true }).includes("CreateBoundaryPolicy"));
+  assert.ok(!awsQuickCreateUrl(base).includes("CreateBoundaryPolicy"));
+});

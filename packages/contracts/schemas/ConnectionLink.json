@@ -20,6 +20,9 @@
     "externalId": {
       "type": "string"
     },
+    "createBoundaryPolicy": {
+      "type": "boolean"
+    },
     "expiresAt": {
       "type": "string"
     }

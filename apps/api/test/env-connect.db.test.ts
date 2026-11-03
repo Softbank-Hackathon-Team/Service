@@ -145,3 +145,18 @@ test("거부: 제공자별 링크 (onprem 400, gcp 501, aws 클러스터 없음 
     assert.equal((await dbRow(ok.id)).connection_status, "draft");
   } finally { process.env.CONNECT_TEMPLATE_URL = TEMPLATE; }
 });
+
+// F17: 링크 쿼리 boundaryPolicyExists=true 면 템플릿에 경계 정책을 만들지 말라고 넘긴다. 빠지면 기본(만듦)
+test("F17: boundaryPolicyExists=true → 링크에 CreateBoundaryPolicy=false, 없으면 안 붙음, 이상한 값은 400", { skip }, async () => {
+  const env = await create("f17-aws");
+  const a = await post(`/environments/${env.id}/connection-link`);
+  assert.equal(a.statusCode, 200, a.body);
+  assert.equal(a.json().createBoundaryPolicy, true);
+  assert.ok(!a.json().url.includes("CreateBoundaryPolicy"));
+  const b = await post(`/environments/${env.id}/connection-link?boundaryPolicyExists=true`);
+  assert.equal(b.statusCode, 200, b.body);
+  assert.equal(b.json().createBoundaryPolicy, false);
+  assert.ok(b.json().url.includes("param_CreateBoundaryPolicy=false"));
+  const bad = await post(`/environments/${env.id}/connection-link?boundaryPolicyExists=yes`);
+  assert.equal(bad.statusCode, 400);
+});

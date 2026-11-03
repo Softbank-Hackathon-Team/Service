@@ -6,6 +6,7 @@
 // 로그인: .env 의 DEMO_USER_EMAIL·DEMO_USER_PASSWORD (npm run auth:seed 계정). 비밀번호가 없고 DEV_AUTH=1 이면 개발용 회사 헤더
 // 확인 문구(ExternalId)는 비밀이 아니지만 화면 밖 기록을 줄이려고 앞 4자만 찍는다 (링크 주소 안에는 그대로 있다)
 import { readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 
 const API = (process.env.API_URL?.trim() || `http://localhost:${process.env.API_PORT ?? 3000}`) + "/api/v1";
 
@@ -51,10 +52,28 @@ async function call(h: Record<string, string>, method: string, path: string, bod
   return json;
 }
 
+// F17: 지금 맥 AWS 자격의 계정에 platform-app-boundary 정책이 이미 있으면 링크에 "만들지 마"(CreateBoundaryPolicy=false)를 넣게 알린다.
+//   데모 한 계정에서는 도착 환경 모듈(up)이 같은 이름 정책을 먼저 만들어 스택이 NAME_CONFLICT_VALIDATION 으로 되돌아갔다 (11/3 실세션 2회차).
+//   읽기 명령 2개(sts get-caller-identity, iam get-policy)만 부른다. aws CLI 가 없거나 실패하면 묻지 않은 것으로 (서버가 계정 비교로 한 번 더 본다)
+//   끄기: CONNECT_BOUNDARY_CHECK=0
+function boundaryPolicyExists(run: (args: string[]) => string = (a) =>
+  execFileSync("aws", a, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 15_000 })): boolean {
+  if (process.env.CONNECT_BOUNDARY_CHECK === "0") return false;
+  try {
+    const acct = run(["sts", "get-caller-identity", "--query", "Account", "--output", "text"]).trim();
+    if (!/^\d{12}$/.test(acct)) return false;
+    run(["iam", "get-policy", "--policy-arn", `arn:aws:iam::${acct}:policy/platform-app-boundary`, "--query", "Policy.Arn", "--output", "text"]);
+    return true;
+  } catch { return false; }
+}
+const linkPath = (envId: string, provider: string) =>
+  `/environments/${envId}/connection-link${provider === "aws" && boundaryPolicyExists() ? "?boundaryPolicyExists=true" : ""}`;
+
 function printLink(l: Record<string, unknown>) {
   console.log(`링크 종류  ${l.kind}`);
   console.log(`만료       ${l.expiresAt}`);
   if (typeof l.externalId === "string") console.log(`확인 문구  ${l.externalId.slice(0, 4)}… (앞 4자)`);
+  if (l.createBoundaryPolicy === false) console.log("경계 정책  이미 있음 → 템플릿이 만들지 않음 (CreateBoundaryPolicy=false)");
   if (l.url) console.log(`\n아래 주소를 고객 AWS 콘솔에서 열고 IAM 확인 체크 → 스택 만들기:\n${l.url}\n`);
   if (l.command) console.log(`\n명령:\n${l.command}\n`);
 }
@@ -66,10 +85,12 @@ if (cmd === "create") {
     ...(arg("region") ? { region: arg("region") } : {}), ...(arg("cluster") ? { clusterName: arg("cluster") } : {}) };
   const env = await call(h, "POST", "/environments", body);
   console.log(`환경 만듦  ${env.id} (${env.provider}, ${env.name})`);
-  printLink(await call(h, "POST", `/environments/${env.id}/connection-link`));
+  printLink(await call(h, "POST", linkPath(String(env.id), String(env.provider))));
   console.log(`스택이 다 만들어지면: npm run env:connect -- verify --env ${env.id} --account <12자리>`);
 } else if (cmd === "link") {
-  printLink(await call(h, "POST", `/environments/${need("env")}/connection-link`));
+  const id = need("env");
+  const list = await call(h, "GET", "/environments") as { items: Array<Record<string, unknown>> };
+  printLink(await call(h, "POST", linkPath(id, String(list.items.find((x) => x.id === id)?.provider ?? ""))));
 } else if (cmd === "verify") {
   const id = need("env");
   const r = await call(h, "POST", `/environments/${id}/verify`, { accountId: need("account") });

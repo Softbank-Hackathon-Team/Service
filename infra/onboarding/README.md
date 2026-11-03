@@ -24,7 +24,7 @@
 | `ExternalId` | 플랫폼이 연결 화면에서 알려 준 값을 그대로 (32자 이상). NoEcho가 아니라 빠른 생성 링크로 넘길 수 있다 |
 | `PlatformPrincipalArn` | 플랫폼 워커 **역할** ARN. 사용자·`:root`는 패턴이 거부한다 |
 | `EksClusterName` | 이전 대상 EKS 클러스터 이름 |
-| `CreateBoundaryPolicy` | 기본 `true`. 같은 계정에 `infra/modules/aws/env`가 이미 `platform-app-boundary`를 만들었으면 `false` |
+| `CreateBoundaryPolicy` | 기본 `true`. 같은 계정에 `infra/modules/aws/env`가 이미 `platform-app-boundary`를 만들었으면 `false`. F17: 연결 링크가 알아서 `false`를 넣는 경우 = 링크 요청에 `?boundaryPolicyExists=true`(CLI `env:connect`가 `aws iam get-policy`로 확인해 붙임) 또는 고객 계정 번호 = 플랫폼 주체 계정 |
 
 ## 올리는 곳 (S3)
 - TODO(human): 템플릿을 둘 S3 버킷·키 (25번 계획 H-L2). 빠른 생성 링크는 `templateURL`로 이 위치를 가리킨다
