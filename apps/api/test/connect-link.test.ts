@@ -34,9 +34,9 @@ test("스택 이름: 영문 시작, 128자 이하, 허용 글자만", () => {
   }
 });
 
-test("ExternalId: 43자 base64url, 매번 다름, 힌트는 앞 4자", () => {
+test("ExternalId: 64자 hex (실측 hotfix: base64url 의 _ 가 템플릿 패턴에 걸림), 매번 다름, 힌트는 앞 4자", () => {
   const a = newExternalId(), b = newExternalId();
-  assert.match(a, /^[A-Za-z0-9_-]{43}$/);
+  assert.match(a, /^[0-9a-f]{64}$/);
   assert.notEqual(a, b);
   assert.equal(externalIdHint(a), a.slice(0, 4));
 });
@@ -74,4 +74,27 @@ test("ID-1: ARGO_HUB_ROLE_ARN 이 역할 ARN 이면 링크에 param_ArgoHubRoleA
   assert.equal(connectSettings({ ...env, ARGO_HUB_ROLE_ARN: "arn:aws:iam::111122223333:user/x" })!.argoHubRoleArn, undefined);
   assert.equal(connectSettings(env)!.argoHubRoleArn, undefined);
   assert.ok(!awsQuickCreateUrl(base).includes("ArgoHubRoleArn"));
+});
+
+// 실측 hotfix (connect CreateStack ValidationError): 만든 ExternalId 가 템플릿 AllowedPattern·MinLength 를 언제나 통과해야 한다
+import { readFileSync } from "node:fs";
+test("ExternalId: 여러 번 만들어도 전부 템플릿 패턴(새·예전 둘 다)·최소 길이 통과", () => {
+  const tpl = JSON.parse(readFileSync(new URL("../../../infra/onboarding/aws-connect.json", import.meta.url), "utf8"));
+  const p = tpl.Parameters.ExternalId as { AllowedPattern: string; MinLength: number };
+  const now = new RegExp(p.AllowedPattern), old = /^[A-Za-z0-9+=,.@:/-]+$/;   // old = S3 에 아직 올라가 있을 수 있는 예전 패턴
+  const seen = new Set<string>();
+  for (let i = 0; i < 2000; i++) {
+    const id = newExternalId();
+    assert.match(id, now); assert.match(id, old);
+    assert.ok(id.length >= p.MinLength && id.length <= 1224, `길이 ${id.length}`);
+    seen.add(id);
+  }
+  assert.equal(seen.size, 2000, "겹침 없음");
+});
+
+test("거부: 템플릿 패턴은 빈칸·따옴표 같은 문자를 막고, _ 는 받는다", () => {
+  const tpl = JSON.parse(readFileSync(new URL("../../../infra/onboarding/aws-connect.json", import.meta.url), "utf8"));
+  const re = new RegExp(tpl.Parameters.ExternalId.AllowedPattern as string);
+  assert.ok(re.test("abc_DEF-123"));
+  for (const bad of ["a b", "a\"b", "a;b", ""]) assert.ok(!re.test(bad), bad);
 });

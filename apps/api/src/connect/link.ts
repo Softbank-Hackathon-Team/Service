@@ -9,8 +9,10 @@ import { AWS_DEFAULT_REGION } from "@svc/security";
 export const LINK_TTL_MS = 24 * 60 * 60 * 1000;
 
 // 확인 문구(ExternalId). 랜덤 32바이트 → base64url 43자 (설계 IA 6.1 1단계). 비밀은 아니지만 로그엔 앞 4자만
+// 실측 hotfix: base64url 은 "_" 가 나와 예전 템플릿 ExternalId 패턴(_ 없음)에 절반쯤 CreateStack ValidationError.
+//   hex(0-9a-f) 로 만들면 예전·새 템플릿 패턴 둘 다 통과한다 (S3 템플릿을 다시 올리기 전에도 안전). 32바이트 = 64자
 export function newExternalId(): string {
-  return randomBytes(32).toString("base64url");
+  return randomBytes(32).toString("hex");
 }
 export const externalIdHint = (id: string) => id.slice(0, 4);
 
