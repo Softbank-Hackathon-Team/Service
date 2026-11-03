@@ -23,3 +23,7 @@ cloudflared:
   image: cloudflare/cloudflared:2025.4.0
   replicas: 2
   pool: general
+
+# 워커가 Application 을 읽고 새로고침 표시를 다는 Argo CD 네임스페이스 (Role·RoleBinding 이 여기 생긴다)
+argocd:
+  namespace: argocd

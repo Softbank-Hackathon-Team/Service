@@ -1,0 +1,28 @@
+{{- /* 워커가 Argo CD Application 을 읽고 새로고침 표시를 단다 (apps/worker/src/gitops/argo-watch.ts: kubectl get / annotate applications.argoproj.io -n argocd) */}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: platform-worker-applications
+  namespace: {{ .Values.argocd.namespace }}
+  labels:
+    app.kubernetes.io/part-of: platform
+rules:
+  - apiGroups: ["argoproj.io"]
+    resources: ["applications"]
+    verbs: ["get", "list", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: platform-worker-applications
+  namespace: {{ .Values.argocd.namespace }}
+  labels:
+    app.kubernetes.io/part-of: platform
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: platform-worker-applications
+subjects:
+  - kind: ServiceAccount
+    name: worker
+    namespace: {{ .Release.Namespace }}

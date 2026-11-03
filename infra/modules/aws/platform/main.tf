@@ -1,6 +1,6 @@
 # 플랫폼(제어판) 자체: 네트워크(VPC) + EKS(노드 그룹 general·cred·sandbox) + 저장소(ECR·RDS Postgres·증거 S3)를 한 번의 apply 로 만든다. 사람이 한 번 돌린다.
 # 플랫폼 DB 는 general·cred 노드에서만 들어온다 (sandbox 는 불가). state 는 aws/bootstrap 장부 버킷 (backend.tf)
-# External Secrets(ESO) 권한(Pod Identity)과 비밀 그릇도 여기서: 플랫폼 비밀은 Secrets Manager → ESO → 클러스터 Secret. 앱 파드(워커 등) 권한은 아직 없다
+# External Secrets(ESO) 권한(Pod Identity)과 비밀 그릇도 여기서: 플랫폼 비밀은 Secrets Manager → ESO → 클러스터 Secret. 앱 파드 권한(worker·api Pod Identity)은 pod-identity.tf
 terraform {
   required_version = ">= 1.11"
   required_providers {
@@ -580,3 +580,6 @@ output "evidence_bucket" { value = aws_s3_bucket.evidence.id }
 # 워커 역할에 붙일 권한의 대상: s3:PutObject·GetObject 는 "<arn>/*", ListBucket 은 "<arn>"
 output "evidence_bucket_arn" { value = aws_s3_bucket.evidence.arn }
 output "platform_secret_names" { value = { for k, s in aws_secretsmanager_secret.platform : k => s.name } }
+# api .env 의 PLATFORM_PRINCIPAL_ARN, 고객 연결 템플릿의 PlatformPrincipalArn 에 들어가는 값 (고객 계정이 믿는 플랫폼 주체는 이것 하나)
+output "worker_role_arn" { value = aws_iam_role.worker.arn }
+output "api_role_arn" { value = aws_iam_role.api.arn }

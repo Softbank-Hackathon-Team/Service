@@ -1,0 +1,72 @@
+# 플랫폼 앱 파드 권한 (Pod Identity). 신뢰 정책은 main.tf 의 local.pod_trust (pods.eks.amazonaws.com 만 믿음)
+#   worker: 고객 계정이 믿는 플랫폼 주체는 이 역할 하나 (고객 템플릿 PlatformPrincipalArn). 고객 역할 빌리기 + 증거 쓰기
+#           state 권한은 없다: 고객 이전 state 위치가 정해지지 않아 넣지 않음
+#   api:    증거 읽기만
+#   agent-worker 는 클라우드 권한 0 이라 역할이 없다. 허브 Argo CD 역할은 다른 PR
+
+locals {
+  # 고객 역할 이름: packages/adapters/scripts/aws-connect-template.ts 의 OBSERVE_ROLE_NAME·OPERATE_ROLE_NAME 과 같아야 한다
+  # DRAFT(ai): 고객 계정 번호를 미리 알 수 없어 계정 자리만 * 로 둔다. 역할 이름은 두 개로 고정 (role/* 아님)
+  customer_role_arns = ["arn:aws:iam::*:role/svc-observe", "arn:aws:iam::*:role/svc-operate"]
+
+  worker_statements = [
+    {
+      Sid    = "AssumeCustomerRoles"
+      Effect = "Allow"
+      # 고객 신뢰 정책이 AssumeRole·TagSession·SetSourceIdentity 셋을 허용하고, 발급기는 Tags·SourceIdentity 를 항상 넣는다
+      # (aws-connect-template.ts trust 주석). 호출 쪽에도 SetSourceIdentity 가 없으면 AccessDenied 라 같이 넣는다
+      Action   = ["sts:AssumeRole", "sts:TagSession", "sts:SetSourceIdentity"]
+      Resource = local.customer_role_arns
+    },
+    {
+      Sid      = "WriteEvidence"
+      Effect   = "Allow"
+      Action   = ["s3:PutObject"]
+      Resource = ["${aws_s3_bucket.evidence.arn}/*"]
+    },
+  ]
+}
+
+# 이름 platform-worker: 고객 연결 템플릿 시험(packages/adapters/test/onboarding-template.test.ts)이 이 이름을 예시로 쓴다
+# DRAFT(ai): var.name 을 따르지 않고 고정. name 을 바꿔도 고객 템플릿 예시·bootstrap 주체 목록과 어긋나지 않게
+resource "aws_iam_role" "worker" {
+  name               = "platform-worker"
+  assume_role_policy = local.pod_trust
+}
+
+resource "aws_iam_role_policy" "worker" {
+  name   = "worker"
+  role   = aws_iam_role.worker.id
+  policy = jsonencode({ Version = "2012-10-17", Statement = local.worker_statements })
+}
+
+resource "aws_eks_pod_identity_association" "worker" {
+  cluster_name    = aws_eks_cluster.this.name
+  namespace       = "platform"
+  service_account = "worker"
+  role_arn        = aws_iam_role.worker.arn
+}
+
+resource "aws_iam_role" "api" {
+  name               = "platform-api"
+  assume_role_policy = local.pod_trust
+}
+
+resource "aws_iam_role_policy" "api" {
+  name = "read-evidence"
+  role = aws_iam_role.api.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      { Sid = "ReadEvidence", Effect = "Allow", Action = ["s3:GetObject"], Resource = ["${aws_s3_bucket.evidence.arn}/*"] },
+      { Sid = "ListEvidence", Effect = "Allow", Action = ["s3:ListBucket"], Resource = [aws_s3_bucket.evidence.arn] },
+    ]
+  })
+}
+
+resource "aws_eks_pod_identity_association" "api" {
+  cluster_name    = aws_eks_cluster.this.name
+  namespace       = "platform"
+  service_account = "api"
+  role_arn        = aws_iam_role.api.arn
+}

@@ -42,6 +42,12 @@ override_resource {
   override_during = plan
   values          = { id = "sg-0sandbox" }
 }
+# worker·api 정책이 버킷 ARN 을 쓴다. mock 은 arn 을 plan 때 모르므로 고정값
+override_resource {
+  target          = aws_s3_bucket.evidence
+  override_during = plan
+  values          = { arn = "arn:aws:s3:::platform-evidence-123456789012" }
+}
 variables {
   expected_account_id = "123456789012"
 }
@@ -221,5 +227,48 @@ run "eso_secrets" {
   assert {
     condition     = toset([for s in aws_secretsmanager_secret.platform : s.name]) == toset(["platform/app", "platform/cloudflared"]) && alltrue([for s in aws_secretsmanager_secret.platform : s.recovery_window_in_days == 7])
     error_message = "비밀 그릇 2개(platform/app, platform/cloudflared), 기본은 7일 복구 창"
+  }
+}
+
+# worker·api Pod Identity (pod-identity.tf)
+run "pod_identity" {
+  command = plan
+  assert {
+    condition = (
+      aws_eks_pod_identity_association.worker.namespace == "platform" && aws_eks_pod_identity_association.worker.service_account == "worker" &&
+      aws_eks_pod_identity_association.api.namespace == "platform" && aws_eks_pod_identity_association.api.service_account == "api"
+    )
+    error_message = "worker 는 platform/worker, api 는 platform/api 서비스 계정에 묶여야 함"
+  }
+  assert {
+    condition     = alltrue([for r in [aws_iam_role.worker, aws_iam_role.api] : [for st in jsondecode(r.assume_role_policy).Statement : st.Principal] == [{ Service = "pods.eks.amazonaws.com" }]])
+    error_message = "worker·api 역할은 Pod Identity(pods.eks.amazonaws.com)만 믿어야 함"
+  }
+  assert {
+    condition     = aws_iam_role.worker.name == "platform-worker" && aws_iam_role.api.name == "platform-api"
+    error_message = "역할 이름은 platform-worker·platform-api (고객 템플릿 시험 예시와 같음)"
+  }
+  assert {
+    condition = (
+      toset(flatten([for st in jsondecode(aws_iam_role_policy.worker.policy).Statement : st.Resource if contains(st.Action, "sts:AssumeRole")])) == toset(["arn:aws:iam::*:role/svc-observe", "arn:aws:iam::*:role/svc-operate"]) &&
+      !anytrue([for st in jsondecode(aws_iam_role_policy.worker.policy).Statement : anytrue([for r in st.Resource : r == "*" || endswith(r, ":role/*")])])
+    )
+    error_message = "worker AssumeRole 대상은 svc-observe·svc-operate 만, role/* 나 * 는 없어야 함"
+  }
+  assert {
+    condition     = !anytrue([for st in jsondecode(aws_iam_role_policy.worker.policy).Statement : anytrue([for r in st.Resource : strcontains(r, "tf-state")])])
+    error_message = "worker 에는 tf-state 역할 권한이 없어야 함 (고객 이전 state 위치 미정)"
+  }
+  assert {
+    condition     = [for st in jsondecode(aws_iam_role_policy.worker.policy).Statement : st.Resource if contains(st.Action, "s3:PutObject")] == [["arn:aws:s3:::platform-evidence-123456789012/*"]]
+    error_message = "worker 는 증거 버킷 객체에만 쓸 수 있어야 함"
+  }
+  assert {
+    condition     = !anytrue([for st in jsondecode(aws_iam_role_policy.api.policy).Statement : contains(st.Action, "s3:PutObject") || contains(st.Action, "s3:DeleteObject")])
+    error_message = "api 는 증거 버킷을 읽기만 해야 함 (PutObject 없음)"
+  }
+  assert {
+    condition     = toset(flatten([for st in jsondecode(aws_iam_role_policy.api.policy).Statement : st.Action])) == toset(["s3:GetObject", "s3:ListBucket"])
+    error_message = "api 권한은 s3:GetObject·s3:ListBucket 둘뿐이어야 함"
   }
 }
