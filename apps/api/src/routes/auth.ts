@@ -11,7 +11,7 @@ import { revokeFamily } from "../auth/revoked.js";
 import { verifyPassword, PASSWORD_MAX } from "../auth/password.js";
 import { LoginLimiter } from "../auth/limiter.js";
 import { authSettings, devHeaderAuthEnabled, REFRESH_COOKIE } from "../auth/settings.js";
-import { readCookie, setRefreshCookie, clearRefreshCookie } from "../auth/http.js";
+import { readCookie, setRefreshCookie, clearRefreshCookie, clientIp } from "../auth/http.js";
 import { githubEnabled } from "../auth/github.js";
 import { registerGithub } from "./auth-github.js";
 import {
@@ -68,7 +68,8 @@ export async function authRoutes(app: FastifyInstance) {
   r.post("/auth/login", { schema: { body: LoginBody,
     response: { 200: AuthTokenResponse, ...errors(400, 401, 500) } } }, async (req, reply) => {
     const { email, password } = req.body;
-    const wait = limiter.blockedFor(req.ip, email);
+    const ip = clientIp(req);   // 프록시 뒤면 AUTH_CLIENT_IP_HEADER (auth/http.ts)
+    const wait = limiter.blockedFor(ip, email);
     if (wait > 0) {
       reply.header("retry-after", String(wait));
       return sendError(req, reply, 429, "TOO_MANY_ATTEMPTS", "too many failed logins, try again later");
@@ -77,12 +78,12 @@ export async function authRoutes(app: FastifyInstance) {
     // 사용자가 없어도 같은 시간 계산(verifyPassword 가 가짜 해시로 돈다) + 같은 문구 (계정 있는지 알려 주지 않기)
     const ok = await verifyPassword(password, row?.password_hash);
     if (!row || !ok || row.disabled) {
-      limiter.fail(req.ip, email);
+      limiter.fail(ip, email);
       if (row) await audit(row.tenant_id, row.user_id, "auth.login", "denied", { reason: row.disabled ? "disabled" : "bad_password" });
       req.log.info({ auth: "login_failed" }, "login failed");
       return sendError(req, reply, 401, "INVALID_CREDENTIALS", "email or password is incorrect");
     }
-    limiter.succeed(req.ip, email);
+    limiter.succeed(ip, email);
     const s = authSettings();
     const out = await withTenant(row.tenant_id, async (tx) => {
       const user = await userView(tx, row.user_id);
