@@ -18,6 +18,8 @@ import { gcsMapper } from "./mappers/gcs.js";
 import { pubsubMapper } from "./mappers/pubsub.js";
 import { memorystoreMapper } from "./mappers/memorystore.js";
 import { ecsServiceMapper } from "./mappers/ecs-service.js";
+import { vmInstanceMapper } from "./mappers/vm-instance.js";
+import { cloudRunJobMapper, cloudRunServiceMapper } from "./mappers/cloudrun-service.js";
 import type { KindMapper, MappedComponent, NormalizeV2Options, NormalizeV2Output, ProjectionEnv, RawItem } from "./types.js";
 
 // DRAFT(ai): 원본(RawInventory) → 공통 명세 v2 (설계 20번 5.1~5.5장, 24번 I3a). 순수 함수, 네트워크·환경변수 안 읽음.
@@ -28,7 +30,9 @@ import type { KindMapper, MappedComponent, NormalizeV2Options, NormalizeV2Output
 // I9: ECS 서비스 매퍼 (관리형 컨테이너 출발 갈래)
 export const KIND_MAPPERS: KindMapper[] = [k8sDeploymentMapper, k8sCronJobMapper, rdsMapper, cloudSqlMapper, cnpgMapper,
   s3Mapper, sqsMapper, elasticacheMapper, gcsMapper, pubsubMapper, memorystoreMapper,   // I6: 객체 저장소·큐·캐시
-  ecsServiceMapper];
+  ecsServiceMapper,
+  vmInstanceMapper,   // VMIMPORT: VM 출발 갈래(EC2·GCE)
+  cloudRunServiceMapper, cloudRunJobMapper];   // CRIMPORT: Cloud Run 서비스·잡 (관리형 컨테이너 출발 갈래, GCP)
 const MAPPER_BY_TYPE = new Map(KIND_MAPPERS.flatMap((m) => m.nativeTypes.map((t) => [t, m] as const)));
 
 // 앱 리소스는 아니지만 아는 것: 근거(다른 리소스에 접힘) / 환경(도착에서 env 층이 다시 만듦)

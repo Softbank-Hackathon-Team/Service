@@ -12,6 +12,9 @@ import { appIdentities, readAwsIam } from "./aws-iam.js";
 import { readAwsData, readGcpData } from "./data.js";
 import { DATA_RAW_KINDS } from "../import/raw-data.js";
 import { readEcs } from "../import/readers/aws-ecs.js";
+import { readEc2 } from "../import/readers/aws-ec2.js";
+import { readGce } from "../import/readers/gcp-gce.js";
+import { readCloudRun } from "../import/readers/gcp-cloudrun.js";
 
 // Z88: 출발 환경 진짜 읽기 (데모 원본 STUB 대체). 결과는 normalize 가 아는 원본 모양 + 둘레 자원 목록.
 //   AWS  : sts → eks list/describe-cluster → kubeconfig(임시 파일) → kubectl 앱 읽기 · rds describe-db-instances
@@ -68,6 +71,11 @@ async function withTempKube<T>(f: (path: string) => Promise<T>): Promise<T> {
 const cliReason = (e: unknown, bin: string) =>
   e instanceof CliError && e.missing ? `${bin} 명령이 없음` : (e as Error).message.slice(0, 200);
 
+// VNEW DRAFT(ai): 클러스터는 있는데 앱 Deployment 가 없을 때(빈 클러스터·시스템 것만), v2 에서 다른 출발 갈래(ECS·VM·Cloud Run)에 앱이 있으면
+//   그 갈래만으로 계속한다 (예전엔 클러스터가 있다는 이유만으로 SOURCE_INCOMPLETE 로 멈춰 Cloud Run·ECS 앱을 못 가져왔다). 다른 오류(권한·연결)는 그대로 던진다
+const EMPTY_APP = (note: string) => ({ items: [] as Obj[], namespace: "", counts: {} as Record<string, number>, notes: [note] });
+const noAppInCluster = (e: unknown) => (e as { code?: string } | null)?.code === "SOURCE_INCOMPLETE";
+
 // ── AWS ───────────────────────────────────────────────────────────────
 export async function discoverAws(d: CliDeps = {}, opts: DiscoverOpts = {}): Promise<RawInventory> {
   const env = d.env ?? process.env, region = awsRegion(env), r = ["--region", region, "--output", "json"];
@@ -82,7 +90,11 @@ export async function discoverAws(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
   // I9: v2 는 ECS 서비스도 읽는다 (관리형 컨테이너 갈래). EKS 가 없어도 ECS 서비스가 있으면 계속. v1 은 지금 그대로(EKS 필수)
   const ecs = opts.ir === "v2" ? await readEcs(d, region, env).catch((e) => ({ items: [] as Obj[], counts: {}, notes: [`ECS 못 읽음: ${cliReason(e, "aws")}`] })) : null;
   const hasEcs = (ecs?.items ?? []).some((i) => i.kind === "ecs.service");
-  if (!cl && !hasEcs) throw incomplete(env.IMPORT_AWS_EKS_CLUSTER ? `EKS 클러스터 ${env.IMPORT_AWS_EKS_CLUSTER} 없음` : `리전 ${region} 에 EKS 클러스터 없음${ecs ? " (ECS 서비스도 없음)" : ""}`);
+  // VMIMPORT: v2 는 VM(EC2) 도 읽는다 — 명시(IMPORT_VM=1·IMPORT_AWS_VM_TAG)했거나 EKS·ECS 가 없을 때만 (있는 앱의 호출 수·권한은 안 늘린다). 못 읽어도 계속(notes)
+  const wantVm = opts.ir === "v2" && (env.IMPORT_VM === "1" || !!env.IMPORT_AWS_VM_TAG?.trim() || (!cl && !hasEcs));
+  const vm = wantVm ? await readEc2(d, region, env).catch((e) => ({ items: [] as Obj[], counts: {}, notes: [`EC2 못 읽음: ${cliReason(e, "aws")}`] })) : null;
+  const hasVm = (vm?.items ?? []).length > 0;
+  if (!cl && !hasEcs && !hasVm) throw incomplete(env.IMPORT_AWS_EKS_CLUSTER ? `EKS 클러스터 ${env.IMPORT_AWS_EKS_CLUSTER} 없음` : `리전 ${region} 에 EKS 클러스터 없음${ecs ? " (ECS 서비스도 없음)" : ""}${vm ? ` (VM 도 없음${vm.notes.length ? `: ${vm.notes[0]}` : ""})` : ""}`);
   const desc = cl ? get(await runJson(d, "aws", ["eks", "describe-cluster", "--name", cl.name, ...r]), "cluster") as Obj | undefined : undefined;
   const vpcId = str(get(desc, "resourcesVpcConfig", "vpcId"));
 
@@ -90,7 +102,11 @@ export async function discoverAws(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
     try { await runText(d, "aws", ["eks", "update-kubeconfig", "--name", cl.name, "--kubeconfig", kc, "--region", region]); }
     catch (e) { throw sourceFail(e, `EKS ${cl.name} kubeconfig 만들기 실패 (${cliReason(e, "aws")})`); }
     try { return await readApp(d, ["--kubeconfig", kc], opts); }
-    catch (e) { if (e instanceof CliError) throw sourceFail(e, `EKS ${cl.name} 쿠버네티스 API 읽기 실패 (access entry 확인): ${e.message.slice(0, 160)}`); throw e; }
+    catch (e) {
+      if (e instanceof CliError) throw sourceFail(e, `EKS ${cl.name} 쿠버네티스 API 읽기 실패 (access entry 확인): ${e.message.slice(0, 160)}`);
+      if (opts.ir === "v2" && (hasEcs || hasVm) && noAppInCluster(e)) return EMPTY_APP(`EKS ${cl.name} 에 앱 Deployment 없음 → ${hasEcs ? "ECS" : "VM"} 만 가져옴`);
+      throw e;
+    }
   });
 
   // I4: 앱 신원의 IAM 정책 (v2 + 옵션 켬). 못 읽어도 앱·DB 는 계속 (notes 에 이유)
@@ -124,10 +140,11 @@ export async function discoverAws(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
       ...(opts.ir === "v2" ? { MultiAZ: db.MultiAZ ?? null, PubliclyAccessible: db.PubliclyAccessible ?? null, MaxAllocatedStorage: db.MaxAllocatedStorage ?? null, DBInstanceArn: db.DBInstanceArn ?? null } : {}) }] : []),
     ...(cl ? [{ kind: "eks.cluster", name: cl.name, version: get(desc, "version") ?? null, vpcId }] : []),
     ...(ecs?.items ?? []),
+    ...(vm?.items ?? []),
     ...vpcs, ...lbs, ...repos, ...secrets, ...iam,
-    ...[...notes, ...app.notes, ...(ecs?.notes ?? [])].map(note),
+    ...[...notes, ...app.notes, ...(ecs?.notes ?? []), ...(vm?.notes ?? [])].map(note),
   ];
-  return { provider: "aws", items, coverage: coverage(items, { ...app.counts, ...(ecs?.counts ?? {}) }) };
+  return { provider: "aws", items, coverage: coverage(items, { ...app.counts, ...(ecs?.counts ?? {}), ...(vm?.counts ?? {}) }) };
 }
 
 // ── GCP ───────────────────────────────────────────────────────────────
@@ -142,14 +159,28 @@ export async function discoverGcp(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
 
   const clusters = arr(await runJson(d, "gcloud", ["container", "clusters", "list", ...p]).catch((e) => { throw sourceFail(e, cliReason(e, "gcloud")); }));
   const cl = pick(clusters, env.IMPORT_GCP_GKE_CLUSTER, (x) => String(x.name), "GKE 클러스터", notes);
-  if (!cl) throw incomplete(env.IMPORT_GCP_GKE_CLUSTER ? `GKE 클러스터 ${env.IMPORT_GCP_GKE_CLUSTER} 없음` : `프로젝트 ${project} 에 GKE 클러스터 없음`);
-  const name = String(cl.name), loc = String(cl.location ?? cl.zone ?? "");
+  // VMIMPORT: v2 는 GCE VM 도 읽는다 — 명시(IMPORT_VM=1·IMPORT_GCP_VM_LABEL)했거나 GKE 가 없을 때만. 못 읽어도 계속(notes)
+  const wantVm = opts.ir === "v2" && (env.IMPORT_VM === "1" || !!env.IMPORT_GCP_VM_LABEL?.trim() || !cl);
+  const vm = wantVm ? await readGce(d, project, env).catch((e) => ({ items: [] as Obj[], counts: {}, notes: [`GCE 못 읽음: ${cliReason(e, "gcloud")}`] })) : null;
+  // CRIMPORT: v2 는 Cloud Run 서비스·잡도 읽는다 (관리형 컨테이너 갈래, ECS 와 같은 규칙). GKE 가 없어도 Cloud Run 서비스가 있으면 계속. v1 은 지금 그대로(GKE 필수)
+  //   DRAFT(ai): 따로 깃발 없음 — 가져오기 v2(IMPORT_IR=v2) 면 켜짐 (ECS 와 같음)
+  const run = opts.ir === "v2" ? await readCloudRun(d, project, env).catch((e) => ({ items: [] as Obj[], counts: {}, notes: [`Cloud Run 못 읽음: ${cliReason(e, "gcloud")}`] })) : null;
+  const hasRun = (run?.items ?? []).some((i) => i.kind === "cloudrun.service");
+  const hasVm = (vm?.items ?? []).length > 0;
+  // VMIMPORT×CRIMPORT: GKE·VM·Cloud Run 서비스 셋 다 없을 때만 멈춘다. VNEW: Cloud Run 을 못 읽은 경우 이유도 붙인다 (없음과 못 읽음 구별)
+  const runWhy = run?.notes.find((n) => n.startsWith("Cloud Run 못 읽음"));
+  if (!cl && !hasVm && !hasRun) throw incomplete(env.IMPORT_GCP_GKE_CLUSTER ? `GKE 클러스터 ${env.IMPORT_GCP_GKE_CLUSTER} 없음` : `프로젝트 ${project} 에 GKE 클러스터 없음${vm ? ` (VM 도 없음${vm.notes.length ? `: ${vm.notes[0]}` : ""})` : ""}${run ? ` (Cloud Run 서비스도 없음${runWhy ? `: ${runWhy.slice(0, 200)}` : ""})` : ""}`);
+  const name = cl ? String(cl.name) : "", loc = cl ? String(cl.location ?? cl.zone ?? "") : "";
 
-  const app = await withTempKube(async (kc) => {
+  const app = !cl ? { items: [] as Obj[], namespace: "", counts: {} as Record<string, number>, notes: [] as string[] } : await withTempKube(async (kc) => {
     try { await runText(d, "gcloud", ["container", "clusters", "get-credentials", name, "--location", loc, "--project", project], { KUBECONFIG: kc }); }
     catch (e) { throw sourceFail(e, `GKE ${name} kubeconfig 만들기 실패 (${cliReason(e, "gcloud")})`); }
     try { return await readApp(d, ["--kubeconfig", kc], opts); }
-    catch (e) { if (e instanceof CliError) throw sourceFail(e, `GKE ${name} 쿠버네티스 API 읽기 실패: ${e.message.slice(0, 160)}`); throw e; }
+    catch (e) {
+      if (e instanceof CliError) throw sourceFail(e, `GKE ${name} 쿠버네티스 API 읽기 실패: ${e.message.slice(0, 160)}`);
+      if (opts.ir === "v2" && (hasRun || hasVm) && noAppInCluster(e)) return EMPTY_APP(`GKE ${name} 에 앱 Deployment 없음 → ${[hasRun ? "Cloud Run" : "", hasVm ? "VM" : ""].filter(Boolean).join("·")} 만 가져옴`);
+      throw e;
+    }
   });
 
   const sqls = arr(await side("Cloud SQL", async () => arr(await runJson(d, "gcloud", ["sql", "instances", "list", ...p])), notes))
@@ -173,11 +204,13 @@ export async function discoverGcp(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
         ...(opts.ir === "v2" ? { availabilityType: get(db, "settings", "availabilityType") ?? null, ipConfiguration: get(db, "settings", "ipConfiguration") ?? null } : {}) },
       region: db.region ?? null,
       ...(opts.ir === "v2" ? { ipAddresses: arr(db.ipAddresses).map((a) => ({ type: a.type ?? null, ipAddress: a.ipAddress ?? null })), selfLink: db.selfLink ?? null } : {}) }] : []),
-    { kind: "gke.cluster", name, location: loc, version: cl.currentMasterVersion ?? null },
+    ...(cl ? [{ kind: "gke.cluster", name, location: loc, version: cl.currentMasterVersion ?? null }] : []),
+    ...(vm?.items ?? []),
+    ...(run?.items ?? []),
     ...nets, ...fwd, ...repos, ...secrets,
-    ...[...notes, ...app.notes].map(note),
+    ...[...notes, ...app.notes, ...(vm?.notes ?? []), ...(run?.notes ?? [])].map(note),
   ];
-  return { provider: "gcp", items, coverage: coverage(items, app.counts) };
+  return { provider: "gcp", items, coverage: coverage(items, { ...app.counts, ...(vm?.counts ?? {}), ...(run?.counts ?? {}) }) };
 }
 
 // ── 온프레 (k3s·k3d + CNPG) ──────────────────────────────────────────
@@ -233,6 +266,15 @@ export function inventoryForAudit(inv: RawInventory): RawInventory {
   const items = inv.items.map((raw) => {
     const i = raw as Obj;
     // I9: ECS 작업 정의 환경변수도 이름만 (평문 비밀일 수 있음), 시작 명령 지움. secrets 는 ARN 이라 그대로
+    // CRIMPORT: Cloud Run 컨테이너 환경변수도 이름만 (평문 비밀일 수 있음), 시작 명령·인자 지움. 비밀 참조는 이름·버전이라 그대로
+    if (i.kind === "cloudrun.service" || i.kind === "cloudrun.job") {
+      const copy = JSON.parse(JSON.stringify(i)) as Obj;
+      for (const c of arr(copy.containers)) {
+        if (Array.isArray(c.env)) c.env = arr(c.env).map((e) => (e.secret ? { name: e.name, secret: e.secret } : { name: e.name }));
+        delete c.command; delete c.args;
+      }
+      return copy;
+    }
     if (i.kind === "ecs.service") {
       const copy = JSON.parse(JSON.stringify(i)) as Obj;
       for (const c of arr(get(copy, "taskDefinition", "containerDefinitions"))) {

@@ -99,7 +99,7 @@ test("필수 읽기가 실패하면 선택 찌르기는 부르지 않음 (이전
   assert.equal(probeLines(f).length, 0);
 });
 
-test("찌르기 목록은 권한 표와 맞음: 키가 표에 있고, 표의 클라우드 읽기 권한 중 못 찌르는 것은 이 2개뿐", () => {
+test("찌르기 목록은 권한 표와 맞음: 키가 표에 있고, 표의 클라우드 읽기 권한 중 못 찌르는 것은 이 6개뿐 (CRIMPORT: 이름·지역이 필요한 Cloud Run 읽기 4개 더함)", () => {
   const probed = new Set<string>();
   for (const p of OPTIONAL_PROBES) {
     assert.ok(p.key in GCP_COMMAND_PERMISSIONS, p.key);
@@ -107,5 +107,5 @@ test("찌르기 목록은 권한 표와 맞음: 키가 표에 있고, 표의 클
   }
   const required = new Set(["resourcemanager.projects.get", "container.clusters.list", "container.clusters.get", "sql.instances.list", "sql.instances.get", "iam.serviceAccounts.get"]);
   const notProbed = Object.values(GCP_COMMAND_PERMISSIONS).flatMap((v) => v ?? []).filter((p) => !probed.has(p) && !required.has(p));
-  assert.deepEqual([...new Set(notProbed)].sort(), ["compute.regions.get", "storage.buckets.getIamPolicy"]);
+  assert.deepEqual([...new Set(notProbed)].sort(), ["cloudscheduler.jobs.list", "compute.regions.get", "run.domainmappings.list", "run.revisions.get", "run.services.getIamPolicy", "storage.buckets.getIamPolicy"]);
 });
