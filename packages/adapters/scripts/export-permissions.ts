@@ -2,12 +2,16 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { AppSpec } from "@svc/contracts";
 import { adapterFor, aws, gcp, onprem, DEMO_INVENTORY } from "../src/index.js";
+import { buildAwsConnectTemplate } from "./aws-connect-template.js";
 
 // 앱 모듈(infra/modules/*/app)을 plan/apply/destroy 하는 데 필요한 최소 권한을 파일로 뽑는다.
 // 계정 세팅 때 "실행 역할" 정책·GCP 커스텀 역할의 출발점. 값은 권한표 추정 → 실계정 거부 로그로 보정
-// 실행: npx tsx packages/adapters/scripts/export-permissions.ts infra/permissions
+// 실행: npx tsx packages/adapters/scripts/export-permissions.ts infra/permissions [infra/onboarding]
 const out = process.argv[2] ?? "infra/permissions";
+// DRAFT(ai): 고객 연결 템플릿 출력 폴더 = 두 번째 인자, 없으면 권한 폴더 옆 onboarding (infra/permissions는 정책 파일 전용)
+const onboardingOut = process.argv[3] ?? join(out, "..", "onboarding");
 mkdirSync(out, { recursive: true });
+mkdirSync(onboardingOut, { recursive: true });
 const spec = (p: "aws" | "gcp" | "onprem") => AppSpec.parse(adapterFor(p).normalize(DEMO_INVENTORY[p]).spec);
 const purposes = ["plan", "apply", "destroy"] as const;
 
@@ -21,7 +25,7 @@ const NEEDS_BOUNDARY = ["iam:CreateRole", "iam:PutRolePolicy"];
 const awsIamBound = awsAll.filter((a) => NEEDS_BOUNDARY.includes(a));
 const awsIamOther = awsAll.filter((a) => a.startsWith("iam:") && a !== "iam:PassRole" && !NEEDS_BOUNDARY.includes(a));
 const awsRest = awsAll.filter((a) => !a.startsWith("iam:"));
-writeFileSync(join(out, "aws-operate-role-policy.json"), JSON.stringify({
+const awsOperatePolicy = {
   Version: "2012-10-17",
   Statement: [
     { Sid: "AppModule", Effect: "Allow", Action: awsRest, Resource: "*",
@@ -32,9 +36,13 @@ writeFileSync(join(out, "aws-operate-role-policy.json"), JSON.stringify({
     { Sid: "PassOnlyAppRoles", Effect: "Allow", Action: "iam:PassRole", Resource: "arn:aws:iam::*:role/app-*",
       Condition: { StringEquals: { "iam:PassedToService": "pods.eks.amazonaws.com" } } },
   ],
-}, null, 2) + "\n");
+};
+writeFileSync(join(out, "aws-operate-role-policy.json"), JSON.stringify(awsOperatePolicy, null, 2) + "\n");
 // 경계 정책 본문 (infra/modules/aws/env 가 같은 내용으로 만든다. 테스트가 둘을 대조)
-writeFileSync(join(out, "aws-app-role-boundary.json"), JSON.stringify(aws.appRoleBoundary("ap-northeast-2"), null, 2) + "\n");
+const awsBoundary = aws.appRoleBoundary("ap-northeast-2");
+writeFileSync(join(out, "aws-app-role-boundary.json"), JSON.stringify(awsBoundary, null, 2) + "\n");
+// 고객 연결 템플릿(CloudFormation): 위 두 정책을 그대로 넣는다 → 실행 정책과 어긋나지 않음
+writeFileSync(join(onboardingOut, "aws-connect.json"), JSON.stringify(buildAwsConnectTemplate(awsOperatePolicy, awsBoundary), null, 2) + "\n");
 for (const p of purposes)
   writeFileSync(join(out, `aws-session-policy-${p}.json`), JSON.stringify(JSON.parse(aws.sessionPolicy(spec("aws"), p)), null, 2) + "\n");
 
