@@ -2,6 +2,7 @@ export * from "./common.js";
 export * from "./environment.js";
 export * from "./spec.js";
 export * from "./security.js";   // Z91 실제 보안 점검 + 보안 회귀 계약
+export * from "./portability.js";   // 이식성 판정 (질의표·규칙표)
 export * from "./migration.js";
 export * from "./plan.js";
 export * from "./jobs.js";

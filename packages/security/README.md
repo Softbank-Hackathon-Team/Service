@@ -4,11 +4,22 @@
 
 | 항목 | 내용 |
 |---|---|
-| 목적 | 환경별 보안 결과를 매트릭스 칸으로 요약, 가드레일 판정, 그리고 고객 임시 역할을 최소 권한으로 발급·회수하고 감사에 남긴다 |
-| 받는 것 | `Finding[]`, 환경·시각 / `TempRoleRequest`(+`stage`), 환경 → 고객 역할 연결(`resolveEnv`), `infra/permissions/` 최소 권한 파일 |
-| 넘기는 것 | `MatrixCell[]`, `GuardrailEvent`, `TempCredential`(값이 아니라 `credentialRef`), 회수 결과 `{ operateRoleRevoked }`(T27 증거) |
+| 목적 | 환경별 보안 결과를 매트릭스 칸으로 요약, 가드레일 판정, 출발·도착 이식성 판정(`evaluatePortability`), 그리고 고객 임시 역할을 최소 권한으로 발급·회수하고 감사에 남긴다 |
+| 받는 것 | `Finding[]`, 환경·시각 / 출발·도착 `EnvFacts` + `SecurityRequirements` + 앱 env / `TempRoleRequest`(+`stage`), 환경 → 고객 역할 연결(`resolveEnv`), `infra/permissions/` 최소 권한 파일 |
+| 넘기는 것 | `MatrixCell[]`, `GuardrailEvent`, `PortabilityResult`(막기·경고·선언 요청·추천), `TempCredential`(값이 아니라 `credentialRef`), 회수 결과 `{ operateRoleRevoked }`(T27 증거) |
 | 부작용 | 발급기 호출(STS AssumeRole / IAM Credentials generateAccessToken / k8s TokenRequest), 프로세스 메모리 보관함, 감사 콜백(`temp_role.issued / denied / revoked / expired / issue_failed`) |
 | 실패 코드 (403) | `ROLE_NO_CEILING`(권한 파일 없이 실행 역할), `ROLE_WILDCARD`, `ROLE_OBSERVE_WRITE`, `ROLE_OPERATE_NO_MIGRATION`, `ROLE_OPERATE_EMPTY`, `ROLE_AZURE_MOCK`, `ROLE_OPERATE_NO_STAGE`, `ROLE_OUTSIDE_CEILING`, `ROLE_POLICY_TOO_LARGE`, `ROLE_NO_ISSUER` / 404 `CREDENTIAL_NOT_FOUND` |
+
+## 이식성 판정 (`src/portability`)
+
+계획 단계에서 출발·도착 환경의 보안 사실(`EnvFacts`)과 앱 요구사항을 맞대어 승인 화면에 띄울 판정을 낸다. 순수 함수다.
+
+- 규칙표는 `rules.ts` 의 `PORTABILITY_RULES` (번호는 보안 영역 설계 문서의 P-*·G-* 와 같다). 판정 단계는 `block`(승인 불가) / `warn`(위험 수용 체크 필요) / `attest`(고객 선언 필요) / `advise`(추천만)
+- 모름(`unknown`)은 통과가 아니다. 클라우드는 `warn`, 온프레는 API 가 없어 `attest` 로 바꾼다
+- Z95 보안 회귀(같은 열쇠가 pass→fail)가 잡는 "출발보다 나빠짐"은 다시 세지 않는다. 여기는 값(국가·키 소유·확장 목록)과 요구사항이 있어야 판정되는 것을 본다
+- IR v2 (`v2.ts` `evaluatePortabilityV2`): 규칙마다 `scope` 가 있다. `env` 규칙은 한 번, `db` 규칙(도착 DB 를 읽는 것)은 도착 postgres 컴포넌트마다 돌린다. 판정에 `componentId` 가 붙는다
+- 사전 점검 변환 (`precheck.ts` `toSecurityPrecheckItems`): id `SEC:<규칙>:<컴포넌트|env>`. block→block, warn→warn, attest→warn("고객 확인"), advise→info. 클라우드 모름 경고는 쪽마다 `SEC:UNKNOWN:<source|target>` 한 항목으로 묶는다
+- 아직 연결 전: IR v2 `security` 칸(`SecuritySpecV2`), 출발 사실(`SourceDbFacts`), 도착 사실표, 워커 precheck 호출부는 다음 PR 이다
 
 ## 임시 역할 흐름
 
