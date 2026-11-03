@@ -1,6 +1,6 @@
 import { AppSpec, ImportResultV2, MigrationJob, checkV2, type FieldMeta, type ObserveSession, type Provider, type RawInventory } from "@svc/contracts";
 import { withTenant, advance, scrubString } from "@svc/core";
-import { AWS_DATA_READ_ACTIONS, measureImportAccuracy, targetBuilderFor, GCP_DATA_READ_PERMISSIONS, actionsOfCommands, AdapterError, CLOUDRUN_OBSERVE_PERMISSIONS, adapterFor, discoverForImport, ECS_OBSERVE_ACTIONS, EC2_OBSERVE_ACTIONS, GCE_OBSERVE_PERMISSIONS, envFor, inventoryForAudit, isAdapterError, normalizeV2, projectV1, carryHumanEdits, type PrevSpecV2 } from "@svc/adapters";
+import { applyInclude, AWS_DATA_READ_ACTIONS, measureImportAccuracy, targetBuilderFor, GCP_DATA_READ_PERMISSIONS, actionsOfCommands, AdapterError, CLOUDRUN_OBSERVE_PERMISSIONS, adapterFor, discoverForImport, ECS_OBSERVE_ACTIONS, EC2_OBSERVE_ACTIONS, GCE_OBSERVE_PERMISSIONS, envFor, inventoryForAudit, isAdapterError, normalizeV2, projectV1, carryHumanEdits, type PrevSpecV2 } from "@svc/adapters";
 import { StsCliError, TempRoleDenied } from "@svc/security";
 import { tempRoles } from "../platform.js";
 import { failedAttempts, recordAttemptFailure } from "./_step.js";
@@ -143,18 +143,22 @@ async function borrowObserve(job: MigrationJob, row: { source_env_id: string; pr
 // PREVIDS/PREVIDS2: 이 이전(migration)의 spec_v2 판들을 가장 새 것부터 읽는다. 작업 내용은 믿지 않고 DB 에서(회사 벽 안에서) 읽는다.
 //   범위 = 같은 migration 한 개. 다른 이전·다른 회사의 판은 안 읽는다(RLS + migration_id 조건). 앞 판이 없거나 모양이 틀리면(손상) 그 판은 건너뜀 = 새 id·새 값
 //   ids = 가장 새 판의 ids (PREVIDS). history = 사람이 손댄 칸 유지에 쓸 {spec, fieldMeta} 들 (PREVIDS2, carryHumanEdits)
-interface PreviousImports { ids: Record<string, string>; history: PrevSpecV2[] }
+//   included = 가장 새 판에서 사람이 경계 밖에서 끌어온 자원 이름 (BOUNDPULL): 재가져오기 때도 경계 안 유지
+interface PreviousImports { ids: Record<string, string>; history: PrevSpecV2[]; included?: string[] }
 async function previousImports(job: MigrationJob): Promise<PreviousImports> {
   const r = await withTenant(job.tenantId, (tx) => tx.query(
     `SELECT spec_v2 FROM spec_versions WHERE migration_id=$1 AND spec_v2 IS NOT NULL ORDER BY version DESC LIMIT 20`, [job.migrationId]));
   const history: PrevSpecV2[] = [];
-  let ids: Record<string, string> = {};
+  let ids: Record<string, string> = {}, included: string[] | undefined;
   for (const [i, row] of r.rows.entries()) {
     const spec = ImportResultV2.shape.spec.safeParse(row.spec_v2?.spec), fieldMeta = ImportResultV2.shape.fieldMeta.safeParse(row.spec_v2?.fieldMeta);
     if (spec.success && fieldMeta.success) history.push({ spec: spec.data, fieldMeta: fieldMeta.data });
-    if (i === 0) { const p = ImportResultV2.shape.ids.safeParse(row.spec_v2?.ids); if (p.success) ids = p.data; }
+    if (i === 0) {
+      const p = ImportResultV2.shape.ids.safeParse(row.spec_v2?.ids); if (p.success) ids = p.data;
+      const inc = ImportResultV2.shape.included.safeParse(row.spec_v2?.included); if (inc.success) included = inc.data;
+    }
   }
-  return { ids, history };
+  return { ids, history, ...(included?.length ? { included } : {}) };
 }
 
 async function saveImport(job: MigrationJob, inv: RawInventory, spec: unknown, fieldMeta: FieldMeta, ir: string, v2: V2Import | null) {
@@ -216,8 +220,11 @@ async function importV2(p: Provider, sess: ObserveSession, previous: PreviousImp
   // PARTOF: 앱 묶음 값 = IMPORT_APP(projectV1 mainApp 과 같은 값). 없으면 라벨이 가장 많은 묶음 + 검토 표시
   const fresh = normalizeV2(inv, { previousIds: previous.ids, partOf: process.env.IMPORT_APP?.trim() || undefined });
   const { projectionEnv } = fresh;
+  // BOUNDPULL: 앞 판에서 사람이 경계 밖에서 끌어온 데이터 자원은 이번에도 경계 안에 둔다 (원본에서 사라졌으면 조용히 빠짐)
+  const pulled = previous.included?.length ? applyInclude(fresh.result, previous.included, { lenient: true }) : null;
+  if (pulled) Object.assign(projectionEnv.postgres, pulled.postgres);
   // PREVIDS2: 앞 판에서 사람이 손댄 칸 유지 (출발 값이 같으면 사람 값·표시, 달라졌으면 새 값 + 다시 검토). 첫 가져오기는 history 가 비어 그대로
-  const { result, report } = carryHumanEdits(fresh.result, previous.history);
+  const { result, report } = carryHumanEdits(pulled ? pulled.result : fresh.result, previous.history);
   const { errors, reviews } = checkV2(result.spec);
   if (errors.length) throw new AdapterError("SPEC_V2_INVALID", `공통 명세 v2 검증 실패: ${errors.slice(0, 5).join("; ")}${errors.length > 5 ? ` 외 ${errors.length - 5}개` : ""}`);
   // DRAFT(ai): reviews 는 막지 않고 fieldMeta 에 "check.reviews[i]" 키로 검토 표시 (화면이 needs_review 로 센다)

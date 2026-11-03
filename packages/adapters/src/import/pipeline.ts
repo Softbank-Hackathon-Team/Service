@@ -161,6 +161,7 @@ export function normalizeV2(raw: RawInventory, opts: NormalizeV2Options = {}): N
     unmapped: unmapped.sort((a, b) => (a.resource < b.resource ? -1 : a.resource > b.resource ? 1 : a.reason < b.reason ? -1 : a.reason > b.reason ? 1 : 0)),
     ...(grouped.outOfBoundary.length + bounded.outOfBoundary.length
       ? { outOfBoundary: [...grouped.outOfBoundary, ...bounded.outOfBoundary].sort((a, b) => (a.resource < b.resource ? -1 : a.resource > b.resource ? 1 : 0)) } : {}),
+    ...(Object.keys(bounded.pool).length ? { boundaryPool: Object.fromEntries(Object.entries(bounded.pool).sort((a, b) => (a[0] < b[0] ? -1 : 1))) } : {}),
     ids,
     environment: environment.sort(),
   };

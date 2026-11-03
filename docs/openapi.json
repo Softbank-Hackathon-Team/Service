@@ -12311,6 +12311,12 @@
           },
           "accuracy": {
             "$ref": "#/components/schemas/ImportAccuracy"
+          },
+          "outOfBoundary": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OutOfBoundaryV2"
+            }
           }
         },
         "required": [
@@ -12482,6 +12488,36 @@
         "required": [
           "runtime",
           "product"
+        ],
+        "additionalProperties": false
+      },
+      "OutOfBoundaryV2": {
+        "type": "object",
+        "properties": {
+          "resource": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "service",
+              "job",
+              "postgres",
+              "cache",
+              "objectStore",
+              "queue"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 300
+          }
+        },
+        "required": [
+          "resource",
+          "kind",
+          "reason"
         ],
         "additionalProperties": false
       },
@@ -13381,6 +13417,15 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 9007199254740991
+          },
+          "include": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300
+            }
           }
         },
         "required": [

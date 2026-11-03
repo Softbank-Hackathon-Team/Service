@@ -13,7 +13,8 @@ export interface PrevSpecV2 { spec: ImportResultV2["spec"]; fieldMeta: ImportRes
 export interface CarryReport { kept: string[]; flagged: string[] }   // 단위 이름 "<id>.<칸>"
 
 const KEY = /^components\.([a-z][a-z0-9-]{0,39})\.([A-Za-z][A-Za-z0-9]{0,39})(\..*)?$/;
-const unitOf = (k: string): string | null => { const m = KEY.exec(k); return m ? `${m[1]}.${m[2]}` : null; };
+// BOUNDPULL: components.<id>.boundary 는 칸 값이 아니라 경계 판단 표시(사람이 끌어옴 = source human). 재가져오기 때 included 가 따로 이어 주므로 여기선 단위로 안 센다
+const unitOf = (k: string): string | null => { const m = KEY.exec(k); return m && m[2] !== "boundary" ? `${m[1]}.${m[2]}` : null; };
 const propOf = (spec: PrevSpecV2["spec"], unit: string): unknown => {
   const [id, field] = [unit.slice(0, unit.indexOf(".")), unit.slice(unit.indexOf(".") + 1)];
   const c = (spec.components as Array<{ id: string; props?: Record<string, unknown> }>).find((x) => x.id === id);

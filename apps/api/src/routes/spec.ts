@@ -1,7 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
-import { AppSpec, AppSpecV2, FieldMetaV2, ImportAccuracy, ImportResultV2, type FieldMeta, MigrationSpecViewV2, SpecPatchInput, SpecV2ConfirmPath, SpecV2FieldPath, checkV2 } from "@svc/contracts";
-import { rebuildFromV2 } from "@svc/adapters";
+import { z } from "zod";
+import { AppSpec, AppSpecV2, FieldMetaV2, ImportAccuracy, OutOfBoundaryV2, ImportResultV2, type FieldMeta, MigrationSpecViewV2, SpecPatchInput, SpecV2ConfirmPath, SpecV2FieldPath, checkV2 } from "@svc/contracts";
+import { applyInclude, IncludeError, rebuildFromV2 } from "@svc/adapters";
 import { BadRequest, DomainError, SPEC_DRAFT_KEY, applySpecPatch, applySpecV2Patch, notifyMigration, saveSpecRevision, withTenant, writeAudit,
          type SpecMeta, type Tx } from "@svc/core";
 import { errors } from "./responses.js";
@@ -28,14 +29,16 @@ export function toSpecView(migrationId: string, row: Row): MigrationSpecViewV2 {
   // I8apifix DRAFT(ai): spec_v2 가 NULL 이 아닌데 객체도 아니면(JSON 스칼라) v1 판처럼 200 이 아니라 깨진 v2 와 같은 409 (0031 CHECK 가 새로 들어오는 것은 막음)
   if (row.specV2 != null && typeof row.specV2 !== "object")
     throw new DomainError(409, "SPEC_INVALID", `spec version ${row.version} spec_v2 does not match AppSpecV2`);
-  const v2 = row.specV2 && typeof row.specV2 === "object" ? (row.specV2 as { spec?: unknown; fieldMeta?: unknown }) : undefined;
+  const v2 = row.specV2 && typeof row.specV2 === "object" ? (row.specV2 as { spec?: unknown; fieldMeta?: unknown; outOfBoundary?: unknown }) : undefined;
   // I8api: v2 칸이 AppSpecV2·FieldMetaV2 모양이 아니면 409 SPEC_INVALID (응답 직렬화 500 대신, 가짜 값으로 안 채움)
   const v2spec = v2 ? AppSpecV2.safeParse(v2.spec) : undefined;
   const v2meta = v2 ? FieldMetaV2.safeParse(v2.fieldMeta ?? {}) : undefined;
   if (v2 && (!v2spec?.success || !v2meta?.success)) throw new DomainError(409, "SPEC_INVALID", `spec version ${row.version} spec_v2 does not match AppSpecV2`);
+  // BOUNDVIEW DRAFT(ai): 경계 밖 목록은 판에 있을 때만 싣는다. 모양이 안 맞으면 키를 뺀다(ACCVIEW 와 같은 규칙: 화면이 안 깨지게, 명세 본체는 막지 않음)
+  const oob = v2 && v2.outOfBoundary !== undefined ? z.array(OutOfBoundaryV2).safeParse(v2.outOfBoundary) : undefined;
   return { migrationId, version: row.version, createdAt: row.createdAt, source: row.draft ? "ai_draft" : "accepted",
            complete: full.success, spec: part.data, needsReview, ...(v2 && v2spec?.success && v2meta?.success
-             ? { needsReviewV2: reviewKeys(v2.fieldMeta), specV2: v2spec.data, fieldMetaV2: v2meta.data } : {}) };
+             ? { needsReviewV2: reviewKeys(v2.fieldMeta), specV2: v2spec.data, fieldMetaV2: v2meta.data, ...(oob?.success ? { outOfBoundary: oob.data } : {}) } : {}) };
 }
 
 // 화면이 GET 으로 보는 판 = 받아들인 최신 판, 없으면 AI 초안 최신 판 (PATCH 의 baseVersion 도 이 판과 비교)
@@ -120,6 +123,8 @@ export async function specRoutes(app: FastifyInstance) {
       const paths = [...(b.changes ?? []).map((c) => ({ p: c.path, v2: SpecV2FieldPath.safeParse(c.path).success })),
                      ...(b.confirm ?? []).map((p) => ({ p, v2: SpecV2ConfirmPath.safeParse(p).success }))];
       const wrong = paths.filter((x) => x.v2 !== !!v2Base).map((x) => x.p);
+      if (b.include?.length && !v2Base)
+        throw new BadRequest("SPEC_PATH_IR_MISMATCH", `version ${base.version} is v1: include (경계 밖 끌어오기) 는 v2 판만`);
       if (wrong.length)
         throw new BadRequest("SPEC_PATH_IR_MISMATCH", `version ${base.version} is ${v2Base ? "v2: send components./links/entry/check. paths" : "v1: v2 paths not allowed"} (${wrong.slice(0, 5).join(", ")})`);
       if (v2Base) return patchV2(tx, req, id, b, base, v2Base);
@@ -152,14 +157,28 @@ async function patchV2(tx: Tx, req: Req, id: string, b: SpecPatchInput, base: Ro
   const prevV1 = AppSpec.safeParse(base.spec);
   // DRAFT(ai): v2 판인데 v1 이 전체 모양이 아니면 rebuildFromV2 재료(env·secretRefs)가 없음 → 409 SPEC_INVALID (가짜 값으로 안 채움)
   if (!prevV1.success) throw new DomainError(409, "SPEC_INVALID", `spec version ${base.version} v1 part does not match AppSpec`);
-  const next = applySpecV2Patch({ spec: v2Base.spec, fieldMeta: (v2Base.fieldMeta ?? {}) as SpecMeta }, { changes: b.changes, confirm: b.confirm });
+  // BOUNDPULL: 경계 밖 자원 끌어오기를 먼저 (같은 요청의 changes·confirm 이 끌어온 자원을 가리킬 수 있게). 하나라도 못 하면 아무것도 안 바뀜
+  let baseV2: Record<string, unknown> = v2Base;
+  let included: string[] = [];
+  if (b.include?.length) {
+    const parsed = ImportResultV2.safeParse(v2Base);
+    if (!parsed.success) throw new DomainError(409, "SPEC_INVALID", `spec version ${base.version} spec_v2 does not match ImportResultV2`);
+    try { const inc = applyInclude(parsed.data, b.include); baseV2 = inc.result as unknown as Record<string, unknown>; included = inc.added; }
+    catch (e) {
+      if (!(e instanceof IncludeError)) throw e;
+      // 없는 이름·이미 안에 있는 이름 = 요청이 틀림(400), 원본 값이 판에 없어 못 만듦 = 409
+      if (e.failure === "unavailable") throw new DomainError(409, "SPEC_INCLUDE_UNAVAILABLE", e.message);
+      throw badV2(e.message);
+    }
+  }
+  const next = applySpecV2Patch({ spec: baseV2.spec, fieldMeta: (baseV2.fieldMeta ?? {}) as SpecMeta }, { changes: b.changes, confirm: b.confirm });
   const v2 = AppSpecV2.safeParse(next.spec);
   if (!v2.success)   // 값은 안 돌려줌 (비밀일 수 있음). 칸 이름과 이유만
     throw badV2(v2.error.issues.slice(0, 10).map((x) => `${x.path.join(".")}: ${x.message}`).join("; "));
   const errs = checkV2(v2.data).errors;
   if (errs.length) throw badV2(errs.slice(0, 10).join("; "));
   // DRAFT(ai): checkV2 reviews 는 다시 세지 않는다 (가져오기 때 붙인 check.reviews[i] 키를 그대로 두고 사람이 confirm). 다시 세면 번호가 밀려 확인한 줄이 되살아남
-  const result = ImportResultV2.safeParse({ ...v2Base, spec: v2.data, fieldMeta: next.fieldMeta });
+  const result = ImportResultV2.safeParse({ ...baseV2, spec: v2.data, fieldMeta: next.fieldMeta });
   if (!result.success) throw badV2(result.error.issues.slice(0, 10).map((x) => `${x.path.join(".")}: ${x.message}`).join("; "));
   let v1;
   // v1 field_meta 는 rebuildFromV2 한 번으로 (v2 쪽 바꿈·확인이 v1 검토 표시에도 남게 — 함정 표)
@@ -171,6 +190,7 @@ async function patchV2(tx: Tx, req: Req, id: string, b: SpecPatchInput, base: Ro
   const saved = await saveSpecRevision(tx, { tenantId: req.tenantId, migrationId: id, spec: ok.data, fieldMeta: v1.fieldMeta, specV2: result.data });
   await writeAudit(tx, req.tenantId, auditOk(req, "spec.edited", id, {
     baseVersion: b.baseVersion, version: saved.version, changed: next.changed, confirmed: next.confirmed, ir: "v2",
+    ...(included.length ? { included } : {}),   // BOUNDPULL: 끌어온 자원 이름만 (값 없음)
     ...(b.acceptDraft !== undefined ? { acceptedDraft: b.acceptDraft } : {}) }));
   await notifyMigration(tx, { t: req.tenantId, id, s: "spec_review" });
   return { status: 200, body: toSpecView(id, { version: saved.version, createdAt: saved.createdAt, spec: ok.data,
