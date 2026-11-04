@@ -186,7 +186,8 @@ spec:
       matchLabels:
         platform.svc/sandbox: "true"
 ---
-{{- /* 수정 고리(remediation) 샌드박스만 gVisor. vCluster 제어판(app=vcluster, 동기화 라벨 없음)은 뺀다.
+{{- /* 샌드박스 파드는 gVisor. 수정 고리(remediation)는 늘, 리허설(rehearsal)은 sandbox.gvisor.enabled=true 일 때 (ADR-006 Q7 11/04 재결정).
+       gVisor 를 끈 곳(로컬 kind 처럼 runsc 가 없는 곳)에서 리허설은 노드 기본 런타임으로 돈다. vCluster 제어판(app=vcluster, 동기화 라벨 없음)은 뺀다.
        테넌트가 가상 파드에 app=vcluster 를 달아도 동기화된 파드에는 vcluster.loft.sh/managed-by 가 붙어 빠지지 못한다.
        sandbox.gvisor.enabled=false 면 RuntimeClass 가 없어 동기화 파드가 거부된다 (닫힌 쪽) */}}
 apiVersion: admissionregistration.k8s.io/v1
@@ -208,7 +209,7 @@ spec:
       expression: '!(object.metadata.?labels[?"app"].orValue("") == "vcluster" && !("vcluster.loft.sh/managed-by" in object.metadata.?labels.orValue({})))'
   validations:
     - expression: 'object.spec.?runtimeClassName.orValue("") == {{ .Values.sandbox.gvisor.runtimeClass | quote }}'
-      message: 수정 고리 샌드박스 파드는 runtimeClassName={{ .Values.sandbox.gvisor.runtimeClass }} 이어야 한다
+      message: 샌드박스 파드는 runtimeClassName={{ .Values.sandbox.gvisor.runtimeClass }} 이어야 한다
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
@@ -223,7 +224,10 @@ spec:
     namespaceSelector:
       matchLabels:
         platform.svc/sandbox: "true"
-        platform.svc/sandbox-purpose: remediation
+      matchExpressions:
+        - key: platform.svc/sandbox-purpose
+          operator: In
+          values: {{ if .Values.sandbox.gvisor.enabled }}[remediation, rehearsal]{{ else }}[remediation]{{ end }}
 ---
 {{- /* 바깥에서 들어오는 길을 호스트에 만들지 못하게. ClusterIP 만 된다 (LoadBalancer·NodePort·ExternalName·externalIPs 거부) */}}
 apiVersion: admissionregistration.k8s.io/v1

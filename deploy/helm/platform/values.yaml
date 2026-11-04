@@ -113,9 +113,10 @@ sandbox:
     provisioner: ebs.csi.aws.com
     parameters:
       type: gp3
-  # gVisor 는 수정 고리(remediation) 샌드박스만 쓴다. 리허설은 전용 노드 + 한 번에 한 테넌트 + runc
+  # gVisor. 켜면 리허설과 수정 고리 샌드박스 파드가 모두 이 RuntimeClass 로만 뜬다 (sbx-runtimeclass-guard). 리허설은 전용 노드 + 한 번에 한 테넌트
+  #   켤 때 세 곳을 같이: Terraform sandbox_gvisor_enabled(노드에 runsc), 이 값, agent-worker SANDBOX_RUNTIME_CLASS=gvisor
   gvisor:
-    # DRAFT(ai): 기본 끔. 노드에 runsc 를 까는 launch template 이 TODO(human) (main.tf). 끄면 수정 고리 샌드박스 워크로드는 뜨지 못한다 (닫힌 쪽)
+    # DRAFT(ai): 기본 끔. 끄면 리허설은 노드 기본 런타임(runc)으로 돌고, 수정 고리 샌드박스 워크로드는 뜨지 못한다 (닫힌 쪽)
     enabled: false
     runtimeClass: gvisor
     handler: runsc

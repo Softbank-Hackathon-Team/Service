@@ -172,7 +172,7 @@ vCluster 리허설 (배포 직전, GitOps 커밋 앞). 흐름·격리·실제 EK
 | `SANDBOX_HELM_BIN`, `SANDBOX_KUBECTL_BIN` | agent-worker | vCluster 차트를 올리는 helm, port-forward 를 여는 kubectl | PATH 의 `helm`·`kubectl` |
 | `SANDBOX_VCLUSTER_CHART` | agent-worker | vCluster 0.37.6 차트 묶음 `.tgz`. CRD 는 옆 `crds/` | `/app/vendor/vcluster-0.37.6.tgz` (이미지 안) |
 | `SANDBOX_TTL_SEC` | agent-worker | 호스트 `sbx-*` 네임스페이스 만료, 청소 기준 (300 이상) | 1800 |
-| `SANDBOX_RUNTIME_CLASS` | agent-worker | gVisor RuntimeClass. 점검·수정만 쓴다 | 노드 기본 런타임 (호스트 가드가 점검·수정 파드를 막는다) |
+| `SANDBOX_RUNTIME_CLASS` | agent-worker | gVisor RuntimeClass. 리허설·점검·수정이 쓴다 | 노드 기본 런타임 (호스트 가드가 점검·수정 파드를 막는다. 리허설은 runc 로 돈다) |
 
 - `MOCK_SANDBOX`, `MOCK_SANDBOX_RESULT` 는 3-7 의 시험 스위치다.
 
