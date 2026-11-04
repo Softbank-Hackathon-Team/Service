@@ -167,3 +167,49 @@ test("FM-CLD-14: iam·iamcredentials API 가 꺼져 있으면 PC-API FAIL (3티�
   const all = byId(await run(["compute.googleapis.com", "container.googleapis.com", "sqladmin.googleapis.com", "artifactregistry.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com"]));
   assert.equal(all.get("PC-API")!.verdict, "PASS");
 });
+
+// 온프레 pull 도착: 워커는 고객 클러스터에 kubectl 로 못 붙는다 (들어오는 포트 0) → 자격·API 를 Agent 하트비트로 본다
+const toOnpremPull = (agent: NonNullable<PrecheckInput["target"]["agent"]>): PrecheckInput => ({
+  source: { side: "source", provider: "azure_mock" }, target: { side: "target", provider: "onprem", agent },
+  sourcePgMajor: 16, sourceDbBytes: 50 * 1024 ** 2, endpoints: [],
+});
+const FRESH = { keys: 1, lastHeartbeatAgeSec: 12, staleSec: 120, k3sVersion: "v1.33.5+k3s1" };
+
+test("온프레 pull 도착: 하트비트가 새것이면 자격·API PASS, kubectl 을 한 번도 안 부른다", async () => {
+  const seen: string[] = [];
+  const m = byId(await runCloudPrecheck(toOnpremPull(FRESH), { exec: fakeExec({}, seen), env: ENV, tcp: okTcp, diskFree: bigDisk }));
+  assert.equal(m.get("PC-CRED-T")!.verdict, "PASS"); assert.match(m.get("PC-CRED-T")!.reason, /하트비트 12초 전/);
+  assert.equal(m.get("PC-API")!.verdict, "PASS"); assert.match(m.get("PC-API")!.reason, /v1\.33\.5\+k3s1/);
+  assert.ok(!m.has("PC-SKIP"));
+  assert.deepEqual(seen.filter((s) => s.startsWith("kubectl")), []);
+});
+
+test("거부: 온프레 pull 도착 하트비트가 오래됐거나 없거나 키가 없으면 FAIL(block) + 건너뜀", async () => {
+  const deps = { exec: fakeExec({}), env: ENV, tcp: okTcp, diskFree: bigDisk };
+  for (const [agent, why] of [
+    [{ ...FRESH, lastHeartbeatAgeSec: 121 }, /AGENT_HEARTBEAT_STALE — 마지막 하트비트 121초 전/],
+    [{ ...FRESH, lastHeartbeatAgeSec: null }, /AGENT_HEARTBEAT_STALE — .*한 번도/],
+    [{ ...FRESH, keys: 0 }, /AGENT_KEY_MISSING/],
+  ] as const) {
+    const cs = await runCloudPrecheck(toOnpremPull(agent), deps);
+    const m = byId(cs);
+    assert.equal(m.get("PC-CRED-T")!.verdict, "FAIL"); assert.match(m.get("PC-CRED-T")!.reason, why);
+    assert.equal(m.get("PC-SKIP")!.verdict, "FAIL");
+    assert.equal(toPrecheckItems(cs).find((i) => i.id === "PC-CRED-T")!.level, "block");
+  }
+  // 경계: 정확히 staleSec 초 전이면 아직 새것
+  assert.equal(byId(await runCloudPrecheck(toOnpremPull({ ...FRESH, lastHeartbeatAgeSec: 120 }), deps)).get("PC-CRED-T")!.verdict, "PASS");
+  // k3s 버전이 비면 API 는 WARN (지어내지 않는다)
+  assert.equal(byId(await runCloudPrecheck(toOnpremPull({ ...FRESH, k3sVersion: null }), deps)).get("PC-API")!.verdict, "WARN");
+});
+
+test("push 시연(agent 정보 없음) 온프레 도착은 예전처럼 kubectl 로 본다", async () => {
+  const seen: string[] = [];
+  const i: PrecheckInput = { ...toOnpremPull(FRESH), target: { side: "target", provider: "onprem" } };
+  const m = byId(await runCloudPrecheck(i, { exec: fakeExec({ ...KUBE_OK,
+    "kubectl --context k3d-onprem get --raw /readyz": { code: 0, stdout: "ok" },
+    "kubectl --context k3d-onprem get crd": { code: 0, stdout: "customresourcedefinition/clusters.postgresql.cnpg.io" } }, seen), env: ENV, tcp: okTcp, diskFree: bigDisk }));
+  assert.equal(m.get("PC-CRED-T")!.verdict, "PASS"); assert.match(m.get("PC-CRED-T")!.reason, /kubectl 컨텍스트 k3d-onprem/);
+  assert.equal(m.get("PC-API")!.verdict, "PASS");
+  assert.ok(seen.some((s) => s.startsWith("kubectl --context k3d-onprem auth can-i")));
+});

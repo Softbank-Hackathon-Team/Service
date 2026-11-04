@@ -17,6 +17,9 @@ export interface PrecheckEnvInfo {
   side: "source" | "target"; provider: CloudProvider; name?: string;
   accountId?: string | null;   // environments.account_id (AWS 계정 번호 / GCP 프로젝트)
   externalId?: string | null;
+  // pull 모드(ONPREM_FLOOR_VIA_GIT≠0) 온프레 도착: 워커는 고객 클러스터에 들어가지 않는다 (들어오는 포트 0, 고객 Argo CD 가 당긴다).
+  //   그래서 자격·API 를 kubectl 대신 Agent 하트비트로 본다. 워커가 채운다 (agent_keys·agent_reports). 없으면 예전처럼 kubectl (push 시연: 로컬 k3d)
+  agent?: { keys: number; lastHeartbeatAgeSec: number | null; staleSec: number; k3sVersion?: string | null } | null;
 }
 export interface CloudCheck { id: string; side: "source" | "target" | "both"; item: string; verdict: Verdict; reason: string; fix?: string; ms?: number }
 export interface PrecheckInput {
@@ -111,11 +114,20 @@ async function credCheck(c: Ctx, e: PrecheckEnvInfo): Promise<CloudCheck> {
       return { id, side, item, verdict: "FAIL", reason: `tokeninfo 조회 실패 (${short((err as Error).message, 80)})`, fix: "네트워크(oauth2.googleapis.com:443) 확인" };
     }
   }
-  // onprem: kubeconfig 자격 = 그 컨텍스트로 API 서버에 읽기 권한이 있나
+  if (e.agent) return agentCredCheck(id, side, item, e.agent);
+  // onprem push: kubeconfig 자격 = 그 컨텍스트로 API 서버에 읽기 권한이 있나
   const r = await kubectl(c, ["auth", "can-i", "get", "pods", "-A"]);
   if (r.code !== 0 && !/^no/m.test(r.stdout)) { const p = cliProblem("kubectl", r); return { id, side, item, verdict: "FAIL", reason: p.kind === "missing" ? `자격 없음 — ${p.reason}` : `자격 없음 — 컨텍스트 ${c.kubeCtx} (${p.reason})`, fix: `kubectl config get-contexts 로 ${c.kubeCtx} 확인 (ONPREM_KUBE_CONTEXT)` }; }
   if (r.stdout.trim() !== "yes") return { id, side, item, verdict: "FAIL", reason: `컨텍스트 ${c.kubeCtx} 에 파드 읽기 권한 없음`, fix: "kubeconfig 사용자에 view 이상 역할" };
   return { id, side, item, verdict: "PASS", reason: `kubectl 컨텍스트 ${c.kubeCtx} 로 읽기 권한 확인` };
+}
+
+// 온프레 pull: 키가 살아 있고 하트비트가 staleSec 안에 왔으면 "닿는다". 사유 이름은 연결 확인(verify-connection)과 같다
+function agentCredCheck(id: string, side: CloudCheck["side"], item: string, a: NonNullable<PrecheckEnvInfo["agent"]>): CloudCheck {
+  if (a.keys <= 0) return { id, side, item, verdict: "FAIL", reason: "AGENT_KEY_MISSING — 이 환경에 살아 있는 Agent 키가 없음", fix: "콘솔에서 등록 토큰 발급 → 고객 서버에서 onprem-agent --enroll → tools/onprem-install.sh" };
+  if (a.lastHeartbeatAgeSec == null) return { id, side, item, verdict: "FAIL", reason: "AGENT_HEARTBEAT_STALE — Agent 하트비트가 한 번도 안 옴", fix: "고객 서버에서 kubectl -n svc-agent logs deploy/onprem-agent 로 보고 실패 이유 확인" };
+  if (a.lastHeartbeatAgeSec > a.staleSec) return { id, side, item, verdict: "FAIL", reason: `AGENT_HEARTBEAT_STALE — 마지막 하트비트 ${a.lastHeartbeatAgeSec}초 전 (기준 ${a.staleSec}초)`, fix: "고객 서버에서 kubectl -n svc-agent get pods 로 Agent 가 도는지 확인" };
+  return { id, side, item, verdict: "PASS", reason: `Agent 하트비트 ${a.lastHeartbeatAgeSec}초 전 (살아 있는 키 ${a.keys}개, pull 모드라 워커는 클러스터에 직접 안 붙음)` };
 }
 
 // ── 2. 도착 리전·API 활성 ─────────────────────────────────────
@@ -136,6 +148,12 @@ async function apiCheck(c: Ctx, e: PrecheckEnvInfo): Promise<CloudCheck | null> 
     const miss = GCP_APIS.filter((a) => !on.has(a));
     if (miss.length) return { id, side, item, verdict: "FAIL", reason: `꺼진 API: ${miss.join(", ")}`, fix: `gcloud services enable ${miss.join(" ")} --project ${c.gcpProject} (사람이 실행)` };
     return { id, side, item, verdict: "PASS", reason: `필요 API ${GCP_APIS.length}개 켜짐 (프로젝트 ${c.gcpProject}, 리전 ${c.gcpRegion})` };
+  }
+  if (e.provider === "onprem" && e.agent) {
+    // credCheck 가 PASS 일 때만 온다 = 하트비트가 새것. CNPG CRD 는 하트비트에 없어 여기서 못 본다 → 배포 확인(Agent deploy 보고)이 본다
+    const v = e.agent.k3sVersion?.trim();
+    if (!v) return { id, side, item, verdict: "WARN", reason: "Agent 하트비트에 k3s 버전이 없음 — 클러스터 버전 확인 못 함" };
+    return { id, side, item, verdict: "PASS", reason: `k3s ${v} (Agent 하트비트 기준). CNPG 운영자는 배포 확인 때 Agent 보고로 봄` };
   }
   if (e.provider === "onprem") {
     const r = await kubectl(c, ["get", "--raw", "/readyz"]);
