@@ -262,6 +262,7 @@ resource "aws_eks_pod_identity_association" "app" {
 }
 
 output "db_address" { value = var.db_enabled ? aws_db_instance.db[0].address : "" }
+output "db_name" { value = var.db_enabled ? aws_db_instance.db[0].db_name : "" } # PF-E: demo-day 복제 주소 {tf:db_name} (up-preflight 가 두 모듈 다 본다)
 # Z77: 데모 네트워크 길. {tf:키} 로 REPL_*_URL 에 넣는다
 output "db_public" { value = var.db_enabled && var.db_public }
 output "db_ca_cert_identifier" { value = var.db_enabled ? aws_db_instance.db[0].ca_cert_identifier : "" }

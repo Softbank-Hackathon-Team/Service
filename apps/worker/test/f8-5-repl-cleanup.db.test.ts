@@ -81,3 +81,11 @@ test("F8-5: 복제 설정이 없는 개발 환경은 stub (감사 ok, stub:true)
   assert.equal(await job.handleReplCleanup(data(id), null), "stub");
   assert.equal((await lastAudit(id)).detail.stub, true);
 });
+
+test("PF-E25 (RV-12): 큐 처리기는 덜 걷었으면 던진다(큐 재시도), 다 걷으면 done", { skip }, async () => {
+  const id = await seed("rolled_back");
+  const c = cleaner([["slot_left"], []]);
+  await assert.rejects(() => job.replCleanupJob(data(id), c), /incomplete/);
+  assert.equal((await lastAudit(id)).result, "error", "던지기 전에 감사는 남긴다");
+  assert.equal(await job.replCleanupJob(data(id), c), "done");
+});
