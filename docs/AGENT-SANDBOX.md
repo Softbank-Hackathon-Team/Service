@@ -1,8 +1,10 @@
 로드맵 위치: 본선 직전 / AI 점검·수정 장면을 실제 LLM + k3d 샌드박스로 / 본선 연결점: AI 10, 완성도·데모 30, 클라우드 활용 30
 
-# AI 점검·수정 샌드박스 (memory / k3d)
+# AI 점검·수정 샌드박스 (memory / k3d / vcluster)
 
 > 문서 상태: AI 초안 · 2026-10-31 · 기준 코드 `integration/service-current.tgz`(int3) + 작업 Z22 · 클라우드 컨테이너에서는 가짜 kube API 로만 시험, 맥 k3d·진짜 LLM 실행 전
+>
+> 2026-11-04 더함: LLM 기본값(작업 Z90), vCluster 방식(2-1절, #207). 배포 직전 리허설은 다른 길이다 → `docs/SANDBOX-REHEARSAL.md`
 
 ```mermaid
 flowchart LR
@@ -17,24 +19,35 @@ flowchart LR
 ## 1. 한 줄 요약
 
 - 【사실】 AI 에이전트가 "계속 재시작하는 앱"을 샌드박스에서 살펴보고, 매니페스트를 고쳐 샌드박스에 적용해 본 뒤, 고친 내용을 PR 후보로 넘긴다.
-- 【사실】 같은 루프에 LLM 2종(대본 / 진짜 Claude), 샌드박스 2종(메모리 가짜 / k3d 네임스페이스)을 끼울 수 있다. 환경변수 두 개로 고른다.
-- 【사실】 기본값은 대본 + 메모리다. 토큰도 클러스터도 안 쓴다. 맥 데모에서만 `AGENT_LLM=real`, `SANDBOX_MODE=k3d` 로 켠다.
+- 【사실】 같은 루프에 LLM 2종(대본 / 진짜 Claude), 샌드박스 3종(메모리 가짜 / k3d 네임스페이스 / vCluster)을 끼울 수 있다. 환경변수로 고른다.
+- 【사실】 LLM 기본은 진짜 Claude API 다 (작업 Z90). 키가 없으면 실행이 `LLM_KEY_MISSING` 으로 실패한다. 대본은 시험 전용 `FAKE_LLM=1` 이다. 샌드박스 기본은 메모리다. 맥 데모에서는 `SANDBOX_MODE=k3d` 로 켠다.
 
 ## 2. 고르는 법
 
 | 환경변수 | 값 | 기본 | 뜻 |
 |---|---|---|---|
-| `AGENT_LLM` | `scripted` / `real` | `scripted` | 대본 = 정해진 도구 호출 8개. real = Anthropic API (키 필요) |
-| `AGENT_MODEL` | 모델 이름 | `claude-sonnet-5-5` | real 일 때만. `claude-opus-5-5` 로 바꿀 수 있다 |
-| `AGENT_LLM_EFFORT` | low~max | `medium` | real 일 때 생각 깊이 |
+| `FAKE_LLM` | `1` | 없음 | 시험 전용 대본 = 정해진 도구 호출 8개, 토큰 0. 예전 `AGENT_LLM=real` 은 기본이라 없어도 되고, `AGENT_LLM=scripted` 는 무시하고 경고만 남긴다 |
+| `AGENT_MODEL` | 모델 이름 | `claude-sonnet-5-5` | 진짜 LLM 일 때. `claude-opus-5-5` 로 바꿀 수 있다 |
+| `AGENT_LLM_EFFORT` | low~max | `medium` | 진짜 LLM 일 때 생각 깊이 |
 | `ANTHROPIC_API_KEY` | 키 | 없음 | `.env` 에만. 코드는 "있는지"만 본다 |
-| `SANDBOX_MODE` | `memory` / `k3d` | `memory` | k3d = 맥 로컬 클러스터 `agent-sbx` |
-| `SANDBOX_KUBE_URL` | 주소 | `http://127.0.0.1:8001` | `kubectl proxy` 주소. 인증서는 kubectl 이 들고 있고 앱은 비밀을 안 받는다 |
+| `SANDBOX_MODE` | `memory` / `k3d` / `vcluster` | `memory` | k3d = 맥 로컬 클러스터 `agent-sbx`. vcluster = 플랫폼 EKS (2-1절) |
+| `SANDBOX_KUBE_URL` | 주소 | k3d 는 `http://127.0.0.1:8001` | k3d: `kubectl proxy` 주소. 인증서는 kubectl 이 들고 있고 앱은 비밀을 안 받는다. vcluster: 플랫폼 클러스터 API. 비면 클러스터 안 서비스 계정 |
+| `SANDBOX_KUBE_TOKEN_FILE`, `SANDBOX_KUBE_CA_FILE` | 파일 경로 | 없음 | (선택) proxy 대신 토큰으로 붙을 때. 토큰 파일은 요청마다 다시 읽는다 |
+| `SANDBOX_RUNTIME_CLASS` | RuntimeClass 이름 | 없음 | vcluster 일 때 수정 고리 파드의 RuntimeClass (gVisor 스위치) |
 | `SANDBOX_NODE_PREFIX` | 글자 | `k3d-agent-sbx-` | 노드 이름이 이걸로 시작하지 않으면 아무것도 만들지 않는다 (운영 클러스터 오접속 방지) |
 
-- 명세 초안 에이전트(작업 K)는 따로 `AGENT_LLM_PROVIDER` 를 쓴다. 이 문서의 두 변수는 점검·수정 경로에만 걸린다.
+- 명세 초안 에이전트(작업 K)는 따로 `AGENT_LLM_PROVIDER` 를 쓴다. 이 표의 샌드박스 변수는 점검·수정 경로에만 걸린다.
 
 > **용어** | **샌드박스** = 망가져도 되는 격리된 실험 공간. **네임스페이스** = 쿠버네티스 안의 칸막이. 이름·권한·자원 상한을 칸마다 따로 둔다. **PSS restricted** = 쿠버네티스 기본 내장 검사. root 실행·권한 상승·host 공유 파드를 거부한다. **server dry-run** = 쿠버네티스 API 서버가 진짜 검사를 다 하되 저장만 안 하는 시험 적용.
+
+### 2-1. vCluster 방식 (`SANDBOX_MODE=vcluster`, #207)
+
+- 【사실】 실행마다 플랫폼 EKS 에 `sbx-remediation-<실행 번호 앞 12자>` 네임스페이스 하나와 그 안의 일회용 vCluster 하나를 만든다. 가상 클러스터 안에 k3d 와 같은 일회용 네임스페이스를 만들어서, 3절 흐름과 4절 막는 것은 그 안에서 같다.
+- 【사실】 가상 앱 파드 보안은 `restricted`, RuntimeClass 는 `SANDBOX_RUNTIME_CLASS` 다. 자원 상한은 고정값(요청 CPU 1000m·메모리 1536Mi, 파드 10개)이다. 노드 이름 접두어 검사는 하지 않는다. 가상 클러스터에는 노드가 없어서다.
+- 【사실】 gVisor 는 기본 꺼짐이다 (플랫폼 차트 `sandbox.gvisor.enabled`, Terraform `sandbox_gvisor_enabled`). 꺼져 있거나 `SANDBOX_RUNTIME_CLASS` 가 비면 수정 고리 파드는 호스트 가드 `sbx-runtimeclass-guard` 에 막힌다 (닫힌 쪽).
+- 【사실】 LLM 도구는 아직 가상 클러스터 관리자 클라이언트로 돈다. 조회 전용 kubeconfig(`Vcluster.agent()`, 가상 SA `ai-agent`, ClusterRole `view`)로 옮기는 일은 다음 단계다 (`packages/agent/src/ai/select.ts`).
+- 【사실】 배포 직전 리허설(`sandbox-rehearsal` 큐)은 다른 길이다. LLM 을 쓰지 않고 `SANDBOX_MODE` 를 보지 않는다. 켜는 법·격리 층·실제 EKS 확인 순서는 `docs/SANDBOX-REHEARSAL.md`.
+- 호스트 쪽 권한·가드·라벨 계약은 `deploy/helm/platform/README.md` "샌드박스" 절.
 
 ## 3. 실행 한 건의 흐름 (k3d)
 
@@ -62,7 +75,7 @@ flowchart LR
 
 ## 5. 아직 막지 못하는 것 (말로 밝힌다)
 
-- 【사실】 네임스페이스 격리라 커널은 같다. 컨테이너 탈출 취약점이 있으면 노드까지 닿는다. 다음 단계는 설계 v1 의 vCluster + gVisor + Kyverno.
+- 【사실】 네임스페이스 격리라 커널은 같다. 컨테이너 탈출 취약점이 있으면 노드까지 닿는다. 다음 단계는 설계 v1 의 vCluster + gVisor + Kyverno. vCluster 와 gVisor 는 2-1절 `vcluster` 방식으로 들어왔고, 호스트 가드는 Kyverno 대신 ValidatingAdmissionPolicy 다.
 - 【사실】 `kubectl proxy` 는 맥 사용자의 `agent-sbx` 관리자 권한으로 붙는다. 클러스터를 샌드박스 전용으로 따로 둔 것이 지금의 경계다. TODO(human): 샌드박스 전용 서비스 계정 + 좁은 ClusterRole 로 바꿀지.
 - 【추정】 망 차단은 k3s 내장 망 정책 컨트롤러가 집행한다. 맥에서 `CHANGES.md` §3-4 명령으로 확인 전.
 - 【사실】 큐(agent-run) 경로의 remediate 저장소는 아직 메모리다. 작업 복사본을 GitOps 레포에서 읽어 오는 저장소가 없어서, 맥 데모는 `scripts/remediate-demo.ts` 로 한 건을 직접 돌린다.
