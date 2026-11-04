@@ -1,0 +1,19 @@
+# 온프레 Argo CD core 에 더하는 상태 판정 (설치 스크립트가 argocd-cm 에 merge patch).
+#   Argo CD v2.13.3 은 CNPG Cluster 의 상태 판정이 없어 DB 가 안 떠도 Healthy 로 본다 → Agent 가 "적용됨" 을 보낸다 (2026-11-04 VM 실측:
+#   initdb 파드가 할당량에 막혀 "Setting up primary" 인데 Application 은 Synced+Healthy).
+#   준비된 인스턴스 수가 spec.instances 와 같을 때만 Healthy. 그 전에는 Progressing (Agent 는 기다리고, 시간 안에 안 되면 워커가 실패로 본다)
+data:
+  resource.customizations.health.postgresql.cnpg.io_Cluster: |
+    hs = {}
+    if obj.status ~= nil and obj.spec ~= nil and obj.status.readyInstances ~= nil and obj.spec.instances ~= nil and obj.status.readyInstances == obj.spec.instances then
+      hs.status = "Healthy"
+      hs.message = obj.status.phase or ""
+      return hs
+    end
+    hs.status = "Progressing"
+    if obj.status ~= nil and obj.status.phase ~= nil then
+      hs.message = obj.status.phase
+    else
+      hs.message = "CNPG 클러스터 준비 대기"
+    end
+    return hs
