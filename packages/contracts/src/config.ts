@@ -111,7 +111,7 @@ export const CONFIG_RULES = {
     AGENT_LLM: { check: oneOf("scripted", "real") },
     AGENT_LLM_EFFORT: { check: oneOf("low", "medium", "high", "xhigh", "max") },
     SANDBOX_MODE: { check: oneOf(...SandboxMode.options) },
-    // gVisor 스위치. 수정 고리 실행에만 쓴다 (리허설은 baseline·노드 기본 런타임, contracts sandboxIsolation)
+    // gVisor 스위치. 리허설과 수정 고리가 같이 쓴다. 비면 노드 기본 런타임 (contracts sandboxIsolation)
     SANDBOX_RUNTIME_CLASS: { check: runtimeClassName },
     // 기본값은 contracts sandbox.ts sandboxSettings
     SANDBOX_TTL_SEC: { check: num({ int: true, min: 300 }) },

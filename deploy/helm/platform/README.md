@@ -175,7 +175,7 @@ agent-worker 는 이 다섯이 다 맞는 `sbx-` 네임스페이스만 만들고
 | `sbx-namespace-guard` | namespaces CREATE·DELETE 는 요청자 agent-worker, UPDATE 는 요청자 누구든 `platform.svc/sandbox=true` 네임스페이스 | 만들기·지우기: `sbx-` 아닌 이름, 라벨 계약 위반. 고치기: `platform.svc/tenant` 값 바꾸기·지우기 |
 | `sbx-rolebinding-guard` | rolebindings CREATE·UPDATE, 요청자 agent-worker | `sbx-` 밖, `sbx-operator`→agent-worker 와 `Role/vc-<이름>`→SA `vc-<이름>` 말고 다른 묶음 |
 | `sbx-pod-guard` | pods, pods/ephemeralcontainers CREATE·UPDATE, `platform.svc/sandbox=true` | nodeSelector `pool=sandbox` 없음, 만들 때 nodeName, hostNetwork·hostPID·hostIPC, hostPath, hostPort, privileged, 테넌트 밖 플랫폼 계정 ECR 이미지 (아래), 동기화된 파드(`vcluster.loft.sh/managed-by`)의 `release=<그 값>` 과 `app=vcluster-snapshot` |
-| `sbx-runtimeclass-guard` | pods CREATE, `platform.svc/sandbox-purpose=remediation` | `runtimeClassName` 이 `sandbox.gvisor.runtimeClass` 가 아님. vCluster 제어판(`app=vcluster` 이면서 `vcluster.loft.sh/managed-by` 없음)만 뺀다 |
+| `sbx-runtimeclass-guard` | pods CREATE, `platform.svc/sandbox-purpose=remediation` (`sandbox.gvisor.enabled=true` 면 `rehearsal` 도) | `runtimeClassName` 이 `sandbox.gvisor.runtimeClass` 가 아님. vCluster 제어판(`app=vcluster` 이면서 `vcluster.loft.sh/managed-by` 없음)만 뺀다 |
 | `sbx-service-guard` | services CREATE·UPDATE, `platform.svc/sandbox=true` | ClusterIP 아닌 type, externalIPs |
 | `sbx-ingress-guard` | ingresses, gateways·httproutes·tlsroutes·grpcroutes, `platform.svc/sandbox=true` | 만들기 전부 |
 
