@@ -55,6 +55,17 @@ test("진행 단계: 지금 칸은 활성, 앞은 끝남, 뒤는 대기", () => 
   assert.ok(marks(migrationSteps({ status: "completed" })).every((m) => m === "done"));
 });
 
+test("진행 단계: 사람이 눌러야 하는 칸은 도는 표시 대신 입력을 기다린다", () => {
+  assert.deepEqual(marks(migrationSteps({ status: "spec_review" })).slice(0, 3), ["done", "waiting", "pending"]);
+  assert.equal(migrationSteps({ status: "awaiting_approval" })[4]!.status, "waiting");
+  assert.equal(migrationSteps({ status: "approved" })[5]!.status, "waiting");
+  assert.equal(migrationSteps({ status: "prechecking" })[2]!.status, "active");
+  // 멈춘 표시가 사람 칸보다 먼저다
+  assert.equal(migrationSteps({ status: "stale" })[4]!.status, "paused");
+  assert.equal(migrationSteps({ status: "rejected" })[4]!.status, "failed");
+  assert.ok(marks(migrationSteps({ status: "shifting" })).every((m) => m !== "waiting"));
+});
+
 test("진행 단계: 멈춘 이전은 멈춘 칸을 표시한다", () => {
   assert.equal(migrationSteps({ status: "paused", pausedFrom: "syncing" })[8]!.status, "paused");
   assert.equal(migrationSteps({ status: "failed", failedAtStatus: "provisioning" })[6]!.status, "failed");
