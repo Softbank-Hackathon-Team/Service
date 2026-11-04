@@ -5,7 +5,7 @@ import { envNumber } from "./env.js";
 // 통과하면 커밋을 이어 가고, 실패하면 커밋하지 않고 deploying → paused (실패 코드는 아래 RehearsalFailureCode 닫힌 목록).
 // 기록은 sandbox_runs 표 (db 0046). 워커가 줄을 만들고, agent-worker 가 결과를 쓰고, 상태는 워커가 advance() 로만 옮긴다
 
-// 샌드박스 방식. config.ts SANDBOX_MODE 검사와 agent select.ts 가 이 목록 하나를 본다
+// 샌드박스 방식 (SANDBOX_MODE 값). config.ts 검사가 이 목록을 본다
 export const SandboxMode = z.enum(["memory", "k3d", "vcluster"]);
 export type SandboxMode = z.infer<typeof SandboxMode>;
 
