@@ -155,8 +155,25 @@ flowchart LR
 |---|---|---|
 | `ANTHROPIC_API_KEY` | 상용 LLM API | `LLM_KEY_MISSING`. `ANTHROPIC_AUTH_TOKEN`이 있으면 그게 키를 덮으니 두지 않는다 |
 | `AGENT_MODEL`, `LLM_BUDGET_USD` | 모델·예산 | 기본값 |
-| `SANDBOX_MODE`, `SANDBOX_KUBE_URL` | 에이전트 샌드박스 클러스터 | |
+| `SANDBOX_MODE` | 점검·수정(`agent-run`) 샌드박스: `memory`·`k3d`·`vcluster`. 리허설은 안 본다 | `memory` |
 | `AGENT_REPORT_MASTER_KEY` | 온프레 Agent 보고 키의 원본 | 보고 경로 503 |
+
+vCluster 리허설 (배포 직전, GitOps 커밋 앞). 흐름·격리·실제 EKS 확인은 `docs/SANDBOX-REHEARSAL.md`. 기본값은 `packages/contracts/src/sandbox.ts`, 값 검사는 `config.ts` 다.
+
+| 이름 | 누가 | 용도 | 없으면 |
+|---|---|---|---|
+| `SANDBOX_REHEARSAL` | worker | `on` 이면 리허설 문을 켠다 | `off`: `skipped`(`disabled`) 줄만 남기고 커밋 |
+| `REHEARSAL_TIMEOUT_SEC` | worker | 줄을 만든 때부터 결과까지 기한 (120 이상) | 1200. 넘으면 `REHEARSAL_TIMEOUT` |
+| `REHEARSAL_POLL_SEC` | worker | 깨우기가 안 왔을 때 다시 보는 간격 (5 이상) | 60 |
+| `SANDBOX_IMAGE_REGISTRY` | worker | 이미지 복사 자리 `<호스트>/<접두어>` = Terraform `aws/platform` 출력 `sandbox_image_registry` = 플랫폼 차트 `sandbox.imageRegistry` | `on` 이면 워커가 뜨지 않음 (`MOCK_SANDBOX=1` 이면 없어도 됨) |
+| `SANDBOX_KUBE_URL` | agent-worker | 플랫폼 클러스터 API. 있으면 클러스터 밖 실행, 가상 API 는 `kubectl port-forward`. `SANDBOX_MODE=k3d` 점검·수정에서는 `kubectl proxy` 주소 (기본 `http://127.0.0.1:8001`) | 클러스터 안 서비스 계정. 그것도 없으면 리허설마다 `REHEARSAL_SANDBOX_UNAVAILABLE` |
+| `SANDBOX_KUBE_TOKEN_FILE`, `SANDBOX_KUBE_CA_FILE` | agent-worker | 클러스터 밖일 때 토큰·CA 파일 (`kubectl -n platform create token agent-worker`). 토큰은 요청마다 다시 읽는다 | 클러스터 안이면 서비스 계정 파일 |
+| `SANDBOX_HELM_BIN`, `SANDBOX_KUBECTL_BIN` | agent-worker | vCluster 차트를 올리는 helm, port-forward 를 여는 kubectl | PATH 의 `helm`·`kubectl` |
+| `SANDBOX_VCLUSTER_CHART` | agent-worker | vCluster 0.37.6 차트 묶음 `.tgz`. CRD 는 옆 `crds/` | `/app/vendor/vcluster-0.37.6.tgz` (이미지 안) |
+| `SANDBOX_TTL_SEC` | agent-worker | 호스트 `sbx-*` 네임스페이스 만료, 청소 기준 (300 이상) | 1800 |
+| `SANDBOX_RUNTIME_CLASS` | agent-worker | gVisor RuntimeClass. 점검·수정만 쓴다 | 노드 기본 런타임 (호스트 가드가 점검·수정 파드를 막는다) |
+
+- `MOCK_SANDBOX`, `MOCK_SANDBOX_RESULT` 는 3-7 의 시험 스위치다.
 
 ### 3-7. 시험 스위치 (실제 데모 `.env`에 두지 않는다)
 
