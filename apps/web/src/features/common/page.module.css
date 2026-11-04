@@ -62,6 +62,24 @@
   border-style: dashed;
   border-color: var(--color-border-strong);
 }
+/* 등록하다 만 환경: 고르기 줄들 아래, 더 작은 줄로. 이름 옆 빨간 상태, 아래에 멈춘 단계 */
+.draftList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  margin-top: var(--space-16);
+}
+.draftHead {
+  padding: 0 var(--space-4);
+}
+.pickDraft {
+  padding: var(--space-12) var(--space-16);
+}
+.draftName {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+}
 .pickNote {
   padding: var(--space-4) var(--space-20);
 }

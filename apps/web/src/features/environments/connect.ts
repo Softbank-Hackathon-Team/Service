@@ -114,6 +114,15 @@ export function connectSteps(
   ];
 }
 
+/** 등록하다 만 환경: 연결을 마치지도, 해제하지도 않은 것. 목록에는 없고 "어디를 연결할까요?" 아래에만 보인다 */
+export const isUnfinished = (env: Pick<EnvironmentView, 'connectionStatus'>) => !isLinked(env) && env.connectionStatus !== 'disconnected';
+
+/** 등록하다 만 환경이 멈춘 단계 이름 (등록 단계 표의 첫 미완료 칸). 예: 권한 열기, Agent 설치, 연결 확인 */
+export function stoppedAt(env: Pick<EnvironmentView, 'connectionStatus' | 'provider'>): string {
+  const steps = connectSteps(phaseOf(env.connectionStatus), { provider: env.provider });
+  return (steps.find((step) => step.status !== 'done') ?? steps[steps.length - 1]!).label;
+}
+
 /** 연결을 이어 할 곳. 이미 연결됐으면 환경 화면, 아니면 등록 흐름. 어디서 들어오든 같은 길로 보낸다. */
 export const envPath = (env: Pick<EnvironmentView, 'id' | 'connectionStatus'>) =>
   env.connectionStatus === 'connected' || env.connectionStatus === 'unstable' ? `environments/${env.id}` : `environments/connect/${env.id}`;

@@ -6,7 +6,7 @@ import { ActionRow, FoldTile, Hero, Stack } from '../../components/layout/tiles'
 import { Checklist } from '../../components/ui/Checklist';
 import { CodeValue } from '../../components/ui/CodeValue';
 import { Field } from '../../components/ui/Field';
-import { ActionPill, BarPill } from '../../components/ui/controls';
+import { ActionPill, Badge, BarPill } from '../../components/ui/controls';
 import { Icon } from '../../components/ui/Icon';
 import { api } from '../../lib/api';
 import { errorCode, errorText } from '../../lib/errors';
@@ -15,6 +15,7 @@ import { CONN_LABEL } from '../../lib/status';
 import { ago } from '../../lib/text';
 import type { AgentEnrollToken, ConnectionLink, EnvironmentView, Provider } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
+import { realEnvs } from '../dashboard/model';
 import { vendorLine } from '../migration/source';
 import { ShellLayout } from '../shell/ShellLayout';
 import {
@@ -25,8 +26,10 @@ import {
   checkEnvForm,
   connectPollMs,
   connectSteps,
+  isUnfinished,
   phaseOf,
   providerLabel,
+  stoppedAt,
   type AccountForm,
   type ConnectableProvider,
   type ConnectPhase,
@@ -89,6 +92,35 @@ function HowFold({ provider }: { provider?: Provider }) {
   );
 }
 
+/**
+ * 등록하다 만 환경. 서버에는 이력으로 남아 있고 목록·대시보드에는 보이지 않는다.
+ * 새로 연결하려는 이 자리에서만 짧게 보여, 빨간 상태와 멈춘 단계로 "하다 만 것"임을 알리고 누르면 그 자리부터 이어 한다
+ */
+function UnfinishedList() {
+  const envs = usePoll(api.listEnvironments, 10_000, []);
+  const drafts = realEnvs(envs.data ?? [])
+    .filter(isUnfinished)
+    .sort((a, b) => a.name.localeCompare(b.name));
+  if (drafts.length === 0) return null;
+  return (
+    <div className={s.draftList}>
+      <span className={`${s.draftHead} t-label-sm c-tertiary`}>{t('등록하다 만 환경')}</span>
+      {drafts.map((env) => (
+        <button key={env.id} type="button" className={`${s.pickRow} ${s.pickDraft}`} onClick={() => go(`environments/connect/${env.id}`)}>
+          <span className={s.pickText}>
+            <span className={s.draftName}>
+              <span className="t-label-md">{env.name}</span>
+              <Badge tone="danger">{CONN_LABEL[env.connectionStatus]}</Badge>
+            </span>
+            <span className="t-caption c-tertiary">{t('{0} · {1} 단계', { 0: vendorLine(env.provider), 1: stoppedAt(env) })}</span>
+          </span>
+          <Icon name="chevron" />
+        </button>
+      ))}
+    </div>
+  );
+}
+
 const NAME_PLACEHOLDER: Record<ConnectableProvider, string> = { aws: 'shop-prod-aws', gcp: 'shop-prod-gcp', onprem: 'shop-onprem' };
 
 /** 새 환경: 어디를 연결할지 → 이름(AWS 는 리전·클러스터도) → 만들면 연결 이어 하기로 넘어간다. */
@@ -116,6 +148,7 @@ function NewEnvironment() {
                 <Icon name="chevron" />
               </button>
             ))}
+            <UnfinishedList />
           </div>
         </Hero>
         <Stack area="side">
