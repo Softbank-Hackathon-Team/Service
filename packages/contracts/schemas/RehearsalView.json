@@ -28,6 +28,32 @@
                 "skipped"
               ]
             },
+            "failureCode": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "REHEARSAL_DRY_RUN_REJECTED",
+                    "REHEARSAL_TARGET_POLICY_DENIED",
+                    "REHEARSAL_QUOTA_EXCEEDED",
+                    "REHEARSAL_ROLLOUT_FAILED",
+                    "REHEARSAL_CRASHLOOP",
+                    "REHEARSAL_NOT_READY",
+                    "REHEARSAL_JOB_FAILED",
+                    "REHEARSAL_CONNECTIVITY_FAILED",
+                    "REHEARSAL_POLICY_DENIED",
+                    "REHEARSAL_UNSUPPORTED_KIND",
+                    "REHEARSAL_IMAGE_MIRROR_FAILED",
+                    "REHEARSAL_SANDBOX_UNAVAILABLE",
+                    "REHEARSAL_TIMEOUT",
+                    "REHEARSAL_BUNDLE_MISMATCH"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
             "phase": {
               "anyOf": [
                 {
@@ -529,11 +555,15 @@
                   "type": "null"
                 }
               ]
+            },
+            "stale": {
+              "type": "boolean"
             }
           },
           "required": [
             "id",
             "status",
+            "failureCode",
             "phase",
             "skip",
             "reusedFrom",
@@ -543,7 +573,8 @@
             "finishedAt",
             "deadlineAt",
             "fidelity",
-            "result"
+            "result",
+            "stale"
           ],
           "additionalProperties": false
         },

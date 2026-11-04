@@ -10,6 +10,9 @@
 ARG NODE_IMAGE=node:22.23.4-alpine3.24
 # worker 의 git. 바탕(alpine 3.24)과 같은 alpine 판으로 만든 공식 git 이미지에서 꺼내 온다 (apk 저장소에 안 닿아도 빌드된다)
 ARG GIT_IMAGE=alpine/git:v2.54.0
+# worker 의 crane (리허설 이미지 복사, apps/worker/src/rehearsal/image-mirror.ts). 공식 이미지의 정적 바이너리 하나만 꺼내 온다
+#   판 v0.22.1, 다이제스트 = 여러 아키텍처 index (amd64·arm64 둘 다 같은 고정값으로 받는다)
+ARG CRANE_IMAGE=gcr.io/go-containerregistry/crane:v0.22.1@sha256:1f968817b95790bed063f71175aa6b8ff879fa17064020415f3e18bb6e6a36e1
 # agent-worker 의 helm (vCluster 차트를 sbx-* 네임스페이스에 올린다). git 과 같은 방식으로 이미지에서 꺼낸다. 다이제스트 고정
 ARG HELM_IMAGE=alpine/helm:3.22.1@sha256:8191701ad1f82ee3695c87211fcbfe6d7b1bb7df92ac1c8de9ccdb0995a6a2c1
 # agent-worker 의 kubectl (플랫폼 클러스터 밖에서 돌 때 가상 API 로 port-forward). helm 과 같은 방식, 다이제스트 고정. 플랫폼 EKS 1.35 와 같은 마이너
@@ -65,6 +68,7 @@ RUN set -e; mkdir -p /out; \
     for l in $libs; do echo "$l"; readlink -f "$l"; done | sort -u > /tmp/libs; \
     tar -cf - /usr/bin/git /usr/libexec/git-core /usr/share/git-core $(cat /tmp/libs) 2>/dev/null | tar -xf - -C /out
 
+FROM ${CRANE_IMAGE} AS crane
 FROM ${HELM_IMAGE} AS helm
 FROM ${KUBECTL_IMAGE} AS kubectl
 
@@ -106,6 +110,8 @@ RUN --mount=type=bind,from=git,source=/out,target=/g set -e; [ "$WITH_GIT" = "1"
     done; git --version; \
     # R7-3: https(push·clone)는 git-remote-https 가 libcurl 사슬을 따로 읽는다. 빠진 라이브러리가 있으면 빌드에서 멈춘다
     ! ldd /usr/libexec/git-core/git-remote-https 2>&1 | grep -q "not found"
+# 리허설 이미지 복사 도구. 정적 Go 바이너리라 라이브러리가 필요 없다 (TLS 루트는 바탕의 /etc/ssl/certs)
+COPY --from=crane /ko-app/crane /usr/local/bin/crane
 # 최소 권한 파일(J2): 묶음 파일 하나에는 안 들어가서 따로 복사. 없으면 실행 역할 발급이 전부 거부된다
 COPY infra/permissions /app/infra/permissions
 ENV PERMISSIONS_DIR=/app/infra/permissions

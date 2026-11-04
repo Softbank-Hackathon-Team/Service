@@ -24,6 +24,17 @@ export const TrafficJudgement = z.object({
 }).strict();
 export type TrafficJudgement = z.infer<typeof TrafficJudgement>;
 
+// 트래픽 전환 한 번의 판정 요약. 워커 shift 가 감사 detail.trafficSummary 로 남기고 증적 리포트 traffic 이 읽는다
+// (판정 배열 전체는 100% 관찰만 수십 개라 감사 줄에 넣지 않는다). 판정이 없으면 최대값 두 칸은 null
+export const TrafficSummary = z.object({
+  judgements: z.number().int(),
+  steps: z.array(z.number().int()),   // 지나간 가중치(%), 처음 나온 순서
+  bad: z.number().int(),              // bad + bad_shortcut 판정 수
+  maxTargetErrorRatePct: z.number().nullable(),
+  maxTargetP95Ms: z.number().nullable(),
+}).strict();
+export type TrafficSummary = z.infer<typeof TrafficSummary>;
+
 // z75-38: 트래픽 전환 진행 (GET /migrations/:id/traffic-shift). 화면 "목표 가중치 / 실측 비율" 두 칸
 // 단위는 % 정수 0~100. 실측 = 지표 창의 도착 요청 수 / 전체. reached: 실측이 목표 ±tolerancePct 안 (null = 아직 실측 없음)
 // available=false 면 이 이전에 shift 기록이 없다 (나머지 칸은 null·0)

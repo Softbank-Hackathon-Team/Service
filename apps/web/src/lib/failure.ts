@@ -81,6 +81,13 @@ const CONNECTION: Record<string, string> = {
   LINK_EXPIRED: "연결 링크가 만료됐습니다. 새 링크로 다시 연결해 주세요.",
   K8S_ACCESS_MISSING: "클러스터를 읽을 권한이 없습니다. 클러스터 이름과 접근 설정을 확인해 주세요.",
   ACCOUNT_MISMATCH: "처음 확인한 계정과 다른 계정에 연결됐습니다. 연결한 계정을 확인해 주세요.",
+  // 온프레 Agent (worker verify-connection.ts)
+  AGENT_KEY_MISSING: "온프레 Agent 키가 모두 끊겨 다시 붙을 수 없습니다. 새로 등록해 Agent 를 다시 설치해 주세요.",
+  AGENT_HEARTBEAT_STALE: "온프레 Agent 신호가 끊겼습니다. 고객 클러스터에서 Agent 가 돌고 있는지 확인해 주세요.",
+  // 플랫폼 쪽 문제. 고객이 고칠 것은 없고, 운영자가 고친 뒤 다시 확인하면 된다
+  PLATFORM_CREDENTIALS_INVALID: "플랫폼 자격이 만료돼 연결을 확인하지 못했습니다. 고객 쪽은 고칠 것이 없습니다. 플랫폼 운영자가 고친 뒤 다시 확인해 주세요.",
+  PLATFORM_CLI_MISSING: "플랫폼에 클라우드 명령 도구가 없어 연결을 확인하지 못했습니다. 고객 쪽은 고칠 것이 없습니다. 플랫폼 운영자에게 알려 주세요.",
+  PLATFORM_ERROR: "플랫폼 문제로 연결 확인을 끝내지 못했습니다. 고객 쪽은 고칠 것이 없습니다. 잠시 뒤 다시 확인해 주세요.",
 };
 
 /** 연결 실패 이유 한 문장. 이유가 없으면 null. */

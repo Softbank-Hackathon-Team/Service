@@ -21,6 +21,9 @@ export { unexpectedPlanTypes, type Purpose } from "./common/actions.js";
 export { DEMO_INVENTORY } from "./common/fixtures.js";
 export { DEMO_SPEC } from "./common/demo-spec.js";
 export type { Target, TargetExtras } from "./common/target.js";
+export { registryOf, isPublicImage } from "./common/base.js";
+// 리허설: 샌드박스 Postgres 가 도착과 같은 DB 이름·앱 계정을 쓰게 (worker rehearsal)
+export { dbIdentityFor } from "./target/data-fit.js";
 export { realTerraformEnabled, iacMockEnabled, findWorkDir, readImported, type ImportedInfra, TENANT_DIR_RE, createRealTerraformRunner, fillTfVars, factsFromEnv, factEnvName, parseOutputs, childEnv,
   workRootOf, workDirOf, PLAN_ONLY_ID, planOnlyId, spawnExec, REAL_MODULE_BASE, ROOT_DIR, layoutOf, type TfLayout, DEFAULT_MODULE_ROOT, type Exec, type ExecResult, type RealApplyResult, type RealTerraformRunner } from "./terraform/real-runner.js";
 export { dbNetworkFromEnv, withDbNetworkV2, cidrProblem, DbNetworkError, type DbNetworkSummary } from "./terraform/db-network.js";

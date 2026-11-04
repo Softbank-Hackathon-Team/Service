@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Measurement, MigrationStatus, PrecheckItem, DeployResult } from "@svc/contracts";
+import { Measurement, MigrationStatus, PrecheckItem, DeployResult, TrafficSummary } from "@svc/contracts";
 
 // 증적 리포트: 이전 한 건이 "어떻게 진행됐고, 누가 승인했고, 숫자가 얼마였고, 기록이 조작되지 않았나"를 한 장으로.
 // DRAFT(ai): 경계 계약이라 원래 packages/contracts에 둬야 한다. 공유 파일(contracts/src/index.ts)을
@@ -54,14 +54,6 @@ export const ApprovalEvidence = z.object({
   hashMatches: z.boolean(),
 }).strict();
 export type ApprovalEvidence = z.infer<typeof ApprovalEvidence>;
-
-export const TrafficSummary = z.object({
-  judgements: z.number().int(),
-  steps: z.array(z.number().int()),   // 지나간 가중치(%)
-  bad: z.number().int(),              // bad + bad_shortcut 판정 수
-  maxTargetErrorRatePct: z.number().nullable(),
-  maxTargetP95Ms: z.number().nullable(),
-}).strict();
 
 // 비용은 @svc/cost의 CostEstimate 전체가 아니라 화면에 쓸 요약만
 export const CostSummary = z.object({

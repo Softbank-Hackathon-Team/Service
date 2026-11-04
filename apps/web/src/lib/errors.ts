@@ -44,6 +44,15 @@ const BY_CODE: Record<string, string> = {
   BAD_ACCOUNT_ID: '계정 번호 모양이 맞지 않습니다. AWS는 12자리 숫자, GCP는 프로젝트 ID입니다.',
   LINK_EXPIRED: '연결 링크가 만료됐습니다. 새 링크를 받아 다시 연결해 주세요.',
   ENV_DISCONNECTED: '연결이 해제된 환경입니다. 환경을 다시 연결해 주세요.',
+  BAD_REGION: '리전 모양이 맞지 않습니다. 예: ap-northeast-2',
+  BAD_CLUSTER_NAME: 'EKS 클러스터 이름 모양이 맞지 않습니다. 영문·숫자·-·_ 로 100자까지입니다.',
+  CLUSTER_NAME_REQUIRED: 'AWS 환경은 EKS 클러스터 이름이 있어야 연결 링크를 만듭니다.',
+  BAD_TARGET_PROJECT: '이전 전용 프로젝트 ID 모양이 맞지 않거나 읽을 프로젝트와 같습니다.',
+  CONNECT_NOT_CONFIGURED: '플랫폼에 연결 설정이 아직 없어 링크를 만들지 못했습니다. 플랫폼 운영자에게 알려 주세요.',
+  USE_AGENT_TOKEN: '온프레 환경은 연결 링크 대신 Agent 등록 명령으로 연결합니다.',
+  NOT_ONPREM: 'Agent 등록은 온프레 환경에서만 합니다.',
+  NOT_SUPPORTED: '이 환경 종류는 연결 링크가 없습니다.',
+  AGENT_REPORTS_DISABLED: '플랫폼에 온프레 Agent 키 설정이 없어 등록 명령을 만들지 못했습니다. 플랫폼 운영자에게 알려 주세요.',
 };
 
 /** 서버가 준 오류 코드 (ApiError.code). 화면이 다음 행동을 고를 때 쓴다. 서버 오류가 아니면 null. */

@@ -336,6 +336,7 @@ export function DesignSystemPage({ onExit }: { onExit?: () => void }) {
                 items={[
                   { status: 'done', label: '끝남', detail: '12:01' },
                   { status: 'active', label: '진행 중', detail: '50%' },
+                  { status: 'waiting', label: '입력 기다림', detail: '사람' },
                   { status: 'paused', label: '멈춤' },
                   { status: 'failed', label: '실패' },
                   { status: 'pending', label: '대기' },

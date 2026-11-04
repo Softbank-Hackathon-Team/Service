@@ -70,12 +70,20 @@ type FoldTileProps = {
   children: ReactNode;
 };
 
-/** 얇은 테두리의 접는 카드. 머리줄 오른쪽에 요약을 두어 접어도 상태가 보인다. 쌓아서 쓴다. */
+/**
+ * 얇은 테두리의 접는 카드. 머리줄 오른쪽에 요약을 두어 접어도 상태가 보인다. 쌓아서 쓴다.
+ * 열고 닫을 때 높이가 미끄러지듯 바뀐다. 내용은 처음 열 때 그리고, 닫아도 남겨 두어 닫히는 동안에도 보인다.
+ */
 export function FoldTile({ title, summary, defaultOpen = true, children }: FoldTileProps) {
   const [open, setOpen] = useState(defaultOpen);
+  const [drawn, setDrawn] = useState(defaultOpen);
+  const toggle = () => {
+    setDrawn(true);
+    setOpen(!open);
+  };
   return (
     <section className={s.fold} data-open={open}>
-      <button type="button" className={s.foldHead} aria-expanded={open} onClick={() => setOpen(!open)}>
+      <button type="button" className={s.foldHead} aria-expanded={open} onClick={toggle}>
         <span className={s.foldTitle}>
           <span className="t-label-md">{title}</span>
           <span className={`${s.foldChevron} ${open ? s.foldOpen : ''}`}>
@@ -84,7 +92,11 @@ export function FoldTile({ title, summary, defaultOpen = true, children }: FoldT
         </span>
         {summary && <span className="t-caption c-tertiary">{summary}</span>}
       </button>
-      {open && <div className={s.foldBody}>{children}</div>}
+      <div className={s.foldBody} inert={!open}>
+        <div className={s.foldClip}>
+          <div className={s.foldContent}>{drawn && children}</div>
+        </div>
+      </div>
     </section>
   );
 }

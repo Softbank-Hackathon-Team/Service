@@ -175,14 +175,17 @@ export const RehearsalResult = z.object({
 }).strict().refine((r) => (r.verdict === "passed") === (r.failureCode === null), "통과면 코드 없음, 아니면 코드 있음");
 export type RehearsalResult = z.infer<typeof RehearsalResult>;
 
-// 화면 (GET /migrations/:id/rehearsal). 지금 deploying 차례의 줄 하나
+// 화면 (GET /migrations/:id/rehearsal). 가장 최근 deploying 차례(가장 큰 epoch)의 줄 하나. 지난 차례 줄도 기록으로 보인다
 export const RehearsalView = z.object({
   migrationId: z.uuid(),
   run: z.object({
-    id: z.uuid(), status: SandboxRunStatus, phase: SandboxRunPhase.nullable(), skip: RehearsalSkip.nullable(),
+    id: z.uuid(), status: SandboxRunStatus, failureCode: RehearsalFailureCode.nullable(), phase: SandboxRunPhase.nullable(), skip: RehearsalSkip.nullable(),
     reusedFrom: z.uuid().nullable(), sandboxName: z.string().nullable(),
     createdAt: z.string(), startedAt: z.string().nullable(), finishedAt: z.string().nullable(), deadlineAt: z.string().nullable(),
     fidelity: FidelityMatrix.nullable(), result: RehearsalResult.nullable(),
+    // true = 이 줄을 쓴 배포 시도 뒤에 deploying 에 다시 들어왔다. 지금 시도는 리허설 전에 멈췄거나(SECRET_VALUES_MISSING 등) 아직 줄이 없다.
+    //   화면은 이 줄을 지금 판정이 아니라 지난 시도의 기록으로 보여 준다
+    stale: z.boolean(),
   }).strict().nullable(),
 }).strict();
 export type RehearsalView = z.infer<typeof RehearsalView>;

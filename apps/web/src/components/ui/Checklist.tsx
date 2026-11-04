@@ -1,7 +1,8 @@
 import { Icon } from './Icon';
 import s from './Checklist.module.css';
 
-export type ChecklistStatus = 'done' | 'active' | 'pending' | 'paused' | 'failed';
+/** waiting 은 사람의 입력을 기다리는 칸이다. 기계가 도는 칸(active)과 달리 돌지 않는다. */
+export type ChecklistStatus = 'done' | 'active' | 'waiting' | 'pending' | 'paused' | 'failed';
 
 export type ChecklistEntry = {
   status: ChecklistStatus;
@@ -12,6 +13,7 @@ export type ChecklistEntry = {
 const STATUS_LABEL: Record<ChecklistStatus, string> = {
   done: '끝남',
   active: '진행 중',
+  waiting: '입력 기다림',
   pending: '대기',
   paused: '멈춤',
   failed: '실패',
@@ -19,6 +21,15 @@ const STATUS_LABEL: Record<ChecklistStatus, string> = {
 
 function Marker({ status }: { status: ChecklistStatus }) {
   if (status === 'active') return <span className={s.spinner} />;
+  if (status === 'waiting')
+    return (
+      <svg className={s.waiting} viewBox="0 0 20 20" aria-hidden="true">
+        <circle cx="10" cy="10" r="9" />
+        <circle className={s.waitingDot} cx="6" cy="10" r="1.4" />
+        <circle className={s.waitingDot} cx="10" cy="10" r="1.4" />
+        <circle className={s.waitingDot} cx="14" cy="10" r="1.4" />
+      </svg>
+    );
   if (status === 'pending') return <span className={s.pendingRing} />;
   const icon = status === 'done' ? 'check' : status === 'failed' ? 'x' : 'pause';
   return (

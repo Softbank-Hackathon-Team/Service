@@ -2704,6 +2704,47 @@ paths:
         "500":
           $ref: "#/components/responses/E500"
           description: "INTERNAL"
+  "/api/v1/migrations/{id}/rehearsal":
+    get:
+      operationId: "getMigrationsByIdRehearsal"
+      tags:
+        - "migrations"
+      summary: "/api/v1/migrations/{id}/rehearsal"
+      description: "코드: apps/api/src/routes/rehearsal.ts"
+      security:
+        - bearerAuth: []
+        - devTenant: []
+      parameters:
+        - name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+            pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        - $ref: "#/components/parameters/DevTenant"
+      responses:
+        "200":
+          description: "OK"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/RehearsalView"
+        "400":
+          $ref: "#/components/responses/E400"
+          description: "BAD_REQUEST (Zod 검증 실패)"
+        "401":
+          $ref: "#/components/responses/E401"
+          description: "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+        "404":
+          $ref: "#/components/responses/E404"
+          description: "ApiError"
+        "429":
+          $ref: "#/components/responses/E429"
+          description: "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+        "500":
+          $ref: "#/components/responses/E500"
+          description: "INTERNAL"
   "/api/v1/migrations/{id}/replan":
     post:
       operationId: "postMigrationsByIdReplan"
@@ -9276,37 +9317,7 @@ components:
             $ref: "#/components/schemas/Measurement"
         traffic:
           anyOf:
-            - type: "object"
-              properties:
-                judgements:
-                  type: "integer"
-                  minimum: -9007199254740991
-                  maximum: 9007199254740991
-                steps:
-                  type: "array"
-                  items:
-                    type: "integer"
-                    minimum: -9007199254740991
-                    maximum: 9007199254740991
-                bad:
-                  type: "integer"
-                  minimum: -9007199254740991
-                  maximum: 9007199254740991
-                maxTargetErrorRatePct:
-                  type:
-                    - "number"
-                    - "null"
-                maxTargetP95Ms:
-                  type:
-                    - "number"
-                    - "null"
-              required:
-                - "judgements"
-                - "steps"
-                - "bad"
-                - "maxTargetErrorRatePct"
-                - "maxTargetP95Ms"
-              additionalProperties: false
+            - $ref: "#/components/schemas/TrafficSummary"
             - type: "null"
         deploy:
           anyOf:
@@ -9494,6 +9505,94 @@ components:
         - "queue"
         - "jobQueued"
       additionalProperties: false
+    FidelityItem:
+      type: "object"
+      properties:
+        id:
+          $ref: "#/components/schemas/FidelityItemId"
+        status:
+          $ref: "#/components/schemas/FidelityStatus"
+        real:
+          type: "string"
+          maxLength: 200
+        sandbox:
+          type: "string"
+          maxLength: 200
+        reason:
+          type: "string"
+          maxLength: 300
+        refs:
+          maxItems: 50
+          type: "array"
+          items:
+            type: "string"
+            maxLength: 200
+      required:
+        - "id"
+        - "status"
+        - "real"
+        - "sandbox"
+        - "reason"
+        - "refs"
+      additionalProperties: false
+    FidelityItemId:
+      type: "string"
+      enum:
+        - "manifests"
+        - "namespace"
+        - "k8s_version"
+        - "objects"
+        - "target_pod_security"
+        - "sandbox_pod_security"
+        - "images"
+        - "replicas"
+        - "requests"
+        - "scheduling"
+        - "service_type"
+        - "storage"
+        - "secrets"
+        - "secret_values"
+        - "database"
+        - "ingress"
+        - "tunnel"
+        - "cloud_identity"
+        - "network"
+        - "quota"
+        - "runtime_isolation"
+        - "hpa_scaling"
+        - "cronjob_runs"
+        - "daemonsets"
+        - "data"
+        - "traffic"
+        - "node_arch"
+    FidelityMatrix:
+      type: "object"
+      properties:
+        version:
+          type: "number"
+          const: 1
+        target:
+          $ref: "#/components/schemas/RehearsalTarget"
+        bundleSha256:
+          type: "string"
+          minLength: 1
+        items:
+          minItems: 1
+          type: "array"
+          items:
+            $ref: "#/components/schemas/FidelityItem"
+      required:
+        - "version"
+        - "target"
+        - "bundleSha256"
+        - "items"
+      additionalProperties: false
+    FidelityStatus:
+      type: "string"
+      enum:
+        - "identical"
+        - "substituted"
+        - "not_checked"
     FieldMetaEntryV2:
       type: "object"
       properties:
@@ -10953,6 +11052,261 @@ components:
         - "beforeEvidence"
         - "afterEvidence"
       additionalProperties: false
+    RehearsalCheck:
+      type: "object"
+      properties:
+        id:
+          $ref: "#/components/schemas/RehearsalCheckId"
+        subject:
+          type: "string"
+          maxLength: 200
+        required:
+          type: "boolean"
+        ok:
+          type: "boolean"
+        ms:
+          type: "integer"
+          minimum: 0
+          maximum: 9007199254740991
+        detail:
+          type: "string"
+          maxLength: 500
+      required:
+        - "id"
+        - "subject"
+        - "required"
+        - "ok"
+        - "ms"
+        - "detail"
+      additionalProperties: false
+    RehearsalCheckId:
+      type: "string"
+      enum:
+        - "sandbox_ready"
+        - "dry_run"
+        - "target_policy"
+        - "quota"
+        - "apply"
+        - "rollout"
+        - "restarts"
+        - "ready"
+        - "job_complete"
+        - "service_http"
+        - "edge_http"
+        - "db_seen"
+        - "unsupported_kind"
+    RehearsalFailureCode:
+      type: "string"
+      enum:
+        - "REHEARSAL_DRY_RUN_REJECTED"
+        - "REHEARSAL_TARGET_POLICY_DENIED"
+        - "REHEARSAL_QUOTA_EXCEEDED"
+        - "REHEARSAL_ROLLOUT_FAILED"
+        - "REHEARSAL_CRASHLOOP"
+        - "REHEARSAL_NOT_READY"
+        - "REHEARSAL_JOB_FAILED"
+        - "REHEARSAL_CONNECTIVITY_FAILED"
+        - "REHEARSAL_POLICY_DENIED"
+        - "REHEARSAL_UNSUPPORTED_KIND"
+        - "REHEARSAL_IMAGE_MIRROR_FAILED"
+        - "REHEARSAL_SANDBOX_UNAVAILABLE"
+        - "REHEARSAL_TIMEOUT"
+        - "REHEARSAL_BUNDLE_MISMATCH"
+    RehearsalResult:
+      type: "object"
+      properties:
+        verdict:
+          type: "string"
+          enum:
+            - "passed"
+            - "failed"
+            - "error"
+        failureCode:
+          anyOf:
+            - $ref: "#/components/schemas/RehearsalFailureCode"
+            - type: "null"
+        sandbox:
+          type: "object"
+          properties:
+            podSecurity:
+              $ref: "#/components/schemas/SandboxPodSecurity"
+            runtimeClass:
+              anyOf:
+                - type: "string"
+                  minLength: 1
+                - type: "null"
+            name:
+              type: "string"
+            hostNamespace:
+              type: "string"
+            chart:
+              type: "string"
+              const: "vcluster-0.37.6"
+            k8sVersion:
+              type: "string"
+            mock:
+              type: "boolean"
+          required:
+            - "podSecurity"
+            - "runtimeClass"
+            - "name"
+            - "hostNamespace"
+            - "chart"
+            - "k8sVersion"
+            - "mock"
+          additionalProperties: false
+        bundleSha256:
+          type: "string"
+          minLength: 1
+        checks:
+          maxItems: 300
+          type: "array"
+          items:
+            $ref: "#/components/schemas/RehearsalCheck"
+        fidelity:
+          $ref: "#/components/schemas/FidelityMatrix"
+        warnings:
+          maxItems: 50
+          type: "array"
+          items:
+            type: "string"
+            maxLength: 300
+        timingsMs:
+          type: "object"
+          properties:
+            create:
+              type: "integer"
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            apply:
+              type: "integer"
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            check:
+              type: "integer"
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+            delete:
+              type: "integer"
+              minimum: -9007199254740991
+              maximum: 9007199254740991
+          required:
+            - "create"
+            - "apply"
+            - "check"
+            - "delete"
+          additionalProperties: false
+        deleted:
+          type: "boolean"
+      required:
+        - "verdict"
+        - "failureCode"
+        - "sandbox"
+        - "bundleSha256"
+        - "checks"
+        - "fidelity"
+        - "warnings"
+        - "timingsMs"
+        - "deleted"
+      additionalProperties: false
+    RehearsalSkip:
+      type: "string"
+      enum:
+        - "non_k8s"
+        - "no_cluster"
+        - "unsupported_target"
+        - "disabled"
+        - "mock"
+    RehearsalTarget:
+      type: "string"
+      enum:
+        - "aws-eks"
+        - "gcp-gke"
+        - "onprem-k3s"
+    RehearsalView:
+      type: "object"
+      properties:
+        migrationId:
+          type: "string"
+          format: "uuid"
+          pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        run:
+          anyOf:
+            - type: "object"
+              properties:
+                id:
+                  type: "string"
+                  format: "uuid"
+                  pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                status:
+                  $ref: "#/components/schemas/SandboxRunStatus"
+                failureCode:
+                  anyOf:
+                    - $ref: "#/components/schemas/RehearsalFailureCode"
+                    - type: "null"
+                phase:
+                  anyOf:
+                    - $ref: "#/components/schemas/SandboxRunPhase"
+                    - type: "null"
+                skip:
+                  anyOf:
+                    - $ref: "#/components/schemas/RehearsalSkip"
+                    - type: "null"
+                reusedFrom:
+                  anyOf:
+                    - type: "string"
+                      format: "uuid"
+                      pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    - type: "null"
+                sandboxName:
+                  type:
+                    - "string"
+                    - "null"
+                createdAt:
+                  type: "string"
+                startedAt:
+                  type:
+                    - "string"
+                    - "null"
+                finishedAt:
+                  type:
+                    - "string"
+                    - "null"
+                deadlineAt:
+                  type:
+                    - "string"
+                    - "null"
+                fidelity:
+                  anyOf:
+                    - $ref: "#/components/schemas/FidelityMatrix"
+                    - type: "null"
+                result:
+                  anyOf:
+                    - $ref: "#/components/schemas/RehearsalResult"
+                    - type: "null"
+                stale:
+                  type: "boolean"
+              required:
+                - "id"
+                - "status"
+                - "failureCode"
+                - "phase"
+                - "skip"
+                - "reusedFrom"
+                - "sandboxName"
+                - "createdAt"
+                - "startedAt"
+                - "finishedAt"
+                - "deadlineAt"
+                - "fidelity"
+                - "result"
+                - "stale"
+              additionalProperties: false
+            - type: "null"
+      required:
+        - "migrationId"
+        - "run"
+      additionalProperties: false
     RollbackResult:
       type: "object"
       properties:
@@ -10993,6 +11347,29 @@ components:
         - "id"
         - "state"
       additionalProperties: false
+    SandboxPodSecurity:
+      type: "string"
+      enum:
+        - "baseline"
+        - "restricted"
+    SandboxRunPhase:
+      type: "string"
+      enum:
+        - "mirroring"
+        - "creating"
+        - "applying"
+        - "checking"
+        - "deleting"
+        - "done"
+    SandboxRunStatus:
+      type: "string"
+      enum:
+        - "queued"
+        - "running"
+        - "passed"
+        - "failed"
+        - "error"
+        - "skipped"
     SecretKeyV2:
       type: "object"
       properties:
@@ -11507,6 +11884,38 @@ components:
         - "reobserve"
         - "stepStartedAt"
         - "observedAt"
+      additionalProperties: false
+    TrafficSummary:
+      type: "object"
+      properties:
+        judgements:
+          type: "integer"
+          minimum: -9007199254740991
+          maximum: 9007199254740991
+        steps:
+          type: "array"
+          items:
+            type: "integer"
+            minimum: -9007199254740991
+            maximum: 9007199254740991
+        bad:
+          type: "integer"
+          minimum: -9007199254740991
+          maximum: 9007199254740991
+        maxTargetErrorRatePct:
+          type:
+            - "number"
+            - "null"
+        maxTargetP95Ms:
+          type:
+            - "number"
+            - "null"
+      required:
+        - "judgements"
+        - "steps"
+        - "bad"
+        - "maxTargetErrorRatePct"
+        - "maxTargetP95Ms"
       additionalProperties: false
     VerifyBody:
       type: "object"

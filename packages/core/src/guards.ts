@@ -1,6 +1,6 @@
 import type { MigrationStatus, TransitionEvidence } from "@svc/contracts";
 import type { Tx } from "./db.js";
-import { ROLLBACK_ON_REJECT, RETRYABLE_FAILURES } from "@svc/contracts";
+import { ROLLBACK_ON_REJECT, RETRYABLE_FAILURES, rehearsalSettings } from "@svc/contracts";
 import { envNumber } from "@svc/contracts";
 
 // 전이 조건(guard). VALID는 "갈 수 있는 길"만 보고, 여기서는 "지금 그 길을 가도 되나"를 본다.
@@ -98,7 +98,9 @@ const GUARDS: Partial<Record<`${MigrationStatus}>${MigrationStatus}`, Guard>> = 
   // 이전 구간
   "deploying>syncing": ({ ev }) =>                                                          // T20
     need(ev.argoHealthy === true, "argoHealthy required") ??
-    need(ev.securityParity === true, "securityParity required"),
+    need(ev.securityParity === true, "securityParity required") ??
+    // 리허설을 켜면 deploy 는 어느 길이든(통과·재사용·건너뜀 이유) 근거를 남긴다. 실패는 paused 로 가서 이 길에 안 온다
+    need(!rehearsalSettings().enabled || ev.rehearsal !== undefined, "rehearsal evidence required"),
   "syncing>shifting": ({ ev }) =>                                                           // T21
     // DRAFT(ai): 쓰기 부하 중에도 넘어가야 해서 "슬롯 지연 0바이트" 대신 마커 왕복 시간으로 본다 (10/31 결정 기록)
     need(ev.snapshotDone === true, "initial snapshot not done") ??
