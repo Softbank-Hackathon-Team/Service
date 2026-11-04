@@ -196,7 +196,6 @@ test("차트 값: 도착 마이너에 맞는 제어판, 수정 고리만 Runtime
   assert.equal(v.rbac.clusterRole.enabled, false);
   assert.equal(v.policies.networkPolicy.workload.publicEgress.enabled, false);
   assert.equal(v.sync.toHost.networkPolicies.enabled, false, "테넌트 NetworkPolicy 가 호스트로 내려와 sbx-default-deny 를 넓히지 못한다");
-  assert.ok(v.controlPlane.proxy.extraSANs.includes("127.0.0.1"), "클러스터 밖 port-forward 주소도 인증서에");
   assert.equal(v.policies.podSecurityStandard, "baseline");
   assert.equal("runtimeClassName" in v.sync.toHost.pods, false);
   assert.ok(v.controlPlane.proxy.extraSANs.includes("sbx-x.sbx-x.svc"));

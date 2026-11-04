@@ -66,9 +66,9 @@ export function vclusterValues(s: VclusterSpec, name: string): Record<string, un
         // 결정(리드): 플랫폼 EKS 에 EBS CSI 가 없어 제어판 저장은 emptyDir. 차트는 이때 StatefulSet 대신 Deployment 를 그린다
         persistence: { volumeClaim: { enabled: false } },
       },
-      // 차트 기본 인증서에는 <이름>.<네임스페이스>.svc 가 없다 (측정). 클러스터 안에서 서비스 주소로 붙으려면 넣는다
-      // 클러스터 밖 agent-worker 는 port-forward 로 127.0.0.1 에 붙는다 (kubectlPortForward)
-      proxy: { extraSANs: [`${name}.${name}`, svc, `${svc}.cluster.local`, "127.0.0.1"] },
+      // 차트 기본 인증서에는 <이름>.<네임스페이스>.svc 가 없다 (측정). 클러스터 안에서 서비스 주소로 붙으려면 넣는다.
+      //   클러스터 밖 port-forward 주소 127.0.0.1·localhost 는 차트 기본에 이미 있다 (kind 측정, 11-04)
+      proxy: { extraSANs: [`${name}.${name}`, svc, `${svc}.cluster.local`] },
     },
     rbac: { clusterRole: { enabled: false }, enableVolumeSnapshotRules: { enabled: false } },
     sync: {
