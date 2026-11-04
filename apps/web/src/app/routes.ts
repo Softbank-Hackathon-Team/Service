@@ -39,3 +39,15 @@ export function parseRoute(hash: string): Route {
 export const go = (path: string) => {
   window.location.hash = `#/${path}`;
 };
+
+/**
+ * 뒤로 갈 앱 안 기록이 없을 때(주소를 바로 열었을 때) (←) 이 가는 윗 화면. 탭 첫 화면은 윗 화면이 없다 (null)
+ * 감사·에이전트는 마이그레이션을 상단 바에서 고르는 화면이라 윗 화면을 두지 않는다
+ */
+export function parentOf(route: Route): string | null {
+  if (route.page === 'environments') return 'view' in route || route.id ? 'environments' : null;
+  if (route.page !== 'migrations') return null;
+  if (route.view === 'new' || route.view === 'detail') return 'migrations';
+  if (route.view === 'cost') return `migrations/${route.id}`;
+  return null;
+}

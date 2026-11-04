@@ -4,7 +4,7 @@ import { withTransition } from '../../app/transition';
 import type { BentoLayout } from '../../components/layout/ConsoleLayout';
 import { ActionRow, FoldTile, Hero, Stack } from '../../components/layout/tiles';
 import { Checklist, type ChecklistEntry } from '../../components/ui/Checklist';
-import { ActionPill, BarPill } from '../../components/ui/controls';
+import { ActionPill } from '../../components/ui/controls';
 import { Field } from '../../components/ui/Field';
 import { Icon } from '../../components/ui/Icon';
 import { api } from '../../lib/api';
@@ -178,7 +178,7 @@ export function NewMigrationPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const all = realEnvs(envs.data ?? []);
-  // 출발은 연결된 환경만. 연결이 끝나지 않은 환경은 고를 수 없으니 보이지 않고, 등록 흐름에서 이어 한다
+  // 출발은 연결된 환경만. 끝나지 않은 등록은 기억하지 않는다
   const connected = all.filter((env) => env.connectionStatus === 'connected');
   const source = connected.find((env) => env.id === sourceId);
   const inventory = usePoll(sourceId ? () => api.envInventory(sourceId) : null, null, [sourceId]);
@@ -196,8 +196,6 @@ export function NewMigrationPage() {
 
   if (!source) {
     const empty = !envs.loading && connected.length === 0;
-    // 해제된 환경은 다시 연결할 수 없어 세지 않는다
-    const unfinished = all.filter((env) => env.connectionStatus !== 'connected' && env.connectionStatus !== 'disconnected').length;
     return (
       <ShellLayout layout={LAYOUT}>
         <Hero tone="run" meta={t('새 마이그레이션')} title={empty ? t('연결된 환경이\n없습니다') : t('어디에서\n옮길까요?')}>
@@ -206,9 +204,6 @@ export function NewMigrationPage() {
             {connected.map((env) => (
               <SourceRow key={env.id} env={env} onPick={() => withTransition(() => setSourceId(env.id))} />
             ))}
-            {unfinished > 0 && (
-              <p className={`${s.pickNote} t-caption c-tertiary`}>{t('연결이 끝나지 않은 환경 {0}개는 여기 보이지 않습니다. 환경 화면에서 이어서 연결합니다.', { 0: unfinished })}</p>
-            )}
             {!envs.loading && <RegisterEnvEntry />}
           </div>
         </Hero>
@@ -222,8 +217,6 @@ export function NewMigrationPage() {
   const software = softwareTitle(softwareOf(source.provider, inventory.data));
   // 서비스 이름을 모르면 환경 이름만 (같은 이름을 두 번 쓰지 않는다)
   const departure = software ? t('{0} · {1}에서 출발', { 0: software, 1: source.name }) : t('{0}에서 출발', { 0: source.name });
-  // 상단 바에는 한 단계 뒤로 가는 알약 하나만 둔다 (둘을 두면 1280px 에서 바가 넘친다)
-  const sourcePill = <BarPill label={t('{0}에서 출발 · 다시 고르기', { 0: source.name })} onClick={reset} />;
   const found = inventory.loading ? (
     <FoldTile title={t('찾은 자원')} summary={t('읽는 중')}>
       <p className={`${s.note} t-body-sm c-secondary`}>{t('{0}의 자원을 읽고 있습니다.', { 0: source.name })}</p>
@@ -248,8 +241,9 @@ export function NewMigrationPage() {
       pickScope({ key: 'manual', label: scopeLabel(check.scope), detail: summary, scope: check.scope });
     };
     return (
-      <ShellLayout layout={LAYOUT} barLeft={sourcePill}>
-        <Hero tone="run" meta={`${vendorLine(source.provider)} · ${source.name}`} title={t('무엇을\n옮길까요?')}>
+      <ShellLayout layout={LAYOUT}>
+        {/* (←) 은 출발 고르기로. 주소가 그대로라 브라우저 뒤로 가기로는 못 간다 */}
+        <Hero tone="run" back={reset} meta={`${vendorLine(source.provider)} · ${source.name}`} title={t('무엇을\n옮길까요?')}>
           <div className={s.pickList}>
             <PickRow icon="list" title={AUTO_SCOPE.label} caption={AUTO_SCOPE.detail} onPick={() => pickScope(AUTO_SCOPE)} />
             {choices.map((choice) => (
@@ -299,22 +293,18 @@ export function NewMigrationPage() {
   };
 
   return (
-    <ShellLayout
-      layout={LAYOUT}
-      barLeft={
-        <BarPill
-          label={t('{0} · {1} · 다시 고르기', { 0: source.name, 1: scope.key === 'auto' ? t('자동 범위') : scope.label })}
-          onClick={() =>
-            withTransition(() => {
-              setScope(null);
-              setTargetId(null);
-              setError(null);
-            })
-          }
-        />
-      }
-    >
-      <Hero tone="run" meta={departure} title={options.length === 0 ? t('옮겨 갈 환경이\n없습니다') : t('어디로 옮길까요?')}>
+    <ShellLayout layout={LAYOUT}>
+      {/* (←) 은 범위 고르기로. 직접 적은 범위는 그대로 남는다 */}
+      <Hero
+        tone="run"
+        back={() =>
+          withTransition(() => {
+            setScope(null);
+            setTargetId(null);
+            setError(null);
+          })
+        }
+        meta={departure} title={options.length === 0 ? t('옮겨 갈 환경이\n없습니다') : t('어디로 옮길까요?')}>
         <div className={s.pickList}>
           {options.map((env) => {
             const note = borrowNote(env);

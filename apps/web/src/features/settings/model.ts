@@ -6,11 +6,6 @@ import type { EnvironmentView, MigrationView, Provider } from '../../lib/types';
 /** 계정 화면 카드 순서. 그 벤더에 연결을 마친 환경이 있을 때만 카드가 뜬다 */
 export const PROVIDER_ORDER: Provider[] = ['aws', 'gcp', 'azure_mock', 'onprem'];
 
-/**
- * 역할 부여(연결 확인 또는 온프레 Agent 접속)를 마친 환경. 계정 화면은 이것만 보인다.
- * 그 앞 단계(초안·고객 작업 대기·확인 중·실패·링크 만료)는 등록을 끝내지 않은 것이라 보이지 않고, 해제(disconnected)는 끝난 것이라 보이지 않는다
- */
-export const isLinked = (env: Pick<EnvironmentView, 'connectionStatus'>) => env.connectionStatus === 'connected' || env.connectionStatus === 'unstable';
 
 /** 환경을 벤더별로 묶는다. 이름 순 */
 export function envsByProvider(envs: EnvironmentView[]): Record<Provider, EnvironmentView[]> {

@@ -1,4 +1,6 @@
 import { Children, isValidElement, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { backAction } from '../../app/nav';
+import { t } from '../../lib/i18n';
 import { Icon, type IconName } from '../ui/Icon';
 import { SkeletonRows } from '../ui/Skeleton';
 import s from './tiles.module.css';
@@ -133,17 +135,33 @@ type HeroProps = {
   step?: string;
   /** 머리줄 오른쪽 끝에 두는 작은 버튼 (예: 계정 화면의 환경 추가하기) */
   action?: ReactNode;
+  /**
+   * 머리줄 왼쪽 끝 (←). 비우면 앱 안 바로 앞 화면(없으면 윗 화면, 그것도 없으면 버튼 없음).
+   * 주소는 그대로 두고 화면 안에서 단계를 넘기는 곳(새 마이그레이션 · 환경 등록)은 한 단계 앞으로 가는 함수를 준다. false 면 두지 않는다
+   */
+  back?: false | (() => void);
   title: string;
   foot?: ReactNode;
   children?: ReactNode;
 };
 
 /** 화면의 주인공. 경고(stop)만 카드를 빨갛게 칠하고, 나머지는 머리줄의 글자와 원 색으로만 상태를 알린다. */
-export function Hero({ area = 'hero', tone, meta, step, action, title, foot, children }: HeroProps) {
+export function Hero({ area = 'hero', tone, meta, step, action, back, title, foot, children }: HeroProps) {
+  const onBack = back === false ? null : (back ?? backAction());
+  const metaText = <span className="t-label-md">{meta}</span>;
   return (
     <section className={`${s.hero} ${s[tone] ?? ''}`} style={areaStyle(area)}>
       <div className={s.heroMeta}>
-        <span className="t-label-md">{meta}</span>
+        {onBack ? (
+          <span className={s.heroMetaStart}>
+            <button type="button" className={s.heroBack} aria-label={t('뒤로')} title={t('뒤로')} onClick={onBack}>
+              <Icon name="arrow-left" size={20} />
+            </button>
+            {metaText}
+          </span>
+        ) : (
+          metaText
+        )}
         {step && <span className={`${s.heroStep} t-label-md`}>{step}</span>}
         {action}
       </div>

@@ -57,7 +57,7 @@ export function LoginPage({ notice }: { notice: string | null }) {
 
   return (
     <ConsoleLayout layout={LOGIN}>
-      <Hero tone="run" meta={t('{0} 콘솔', { 0: PRODUCT_NAME })} title={t('돌고 있는 앱을\n멈추지 않고 옮깁니다')} />
+      <Hero tone="run" back={false} meta={t('{0} 콘솔', { 0: PRODUCT_NAME })} title={t('돌고 있는 앱을\n멈추지 않고 옮깁니다')} />
       <Tile area="form">
         <form className={s.form} onSubmit={submit} noValidate aria-label={t('로그인')}>
           <TileHeader title={t('로그인')} />

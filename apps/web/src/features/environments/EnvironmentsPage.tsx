@@ -15,7 +15,7 @@ import { leftoversOf } from '../migration/model';
 import { FoundResources } from '../migration/NewMigrationPage';
 import { vendorLine } from '../migration/source';
 import { ShellLayout } from '../shell/ShellLayout';
-import { envPath } from './connect';
+import { envPath, isLinked } from './connect';
 import { RegisterEnvEntry } from './EnvEntry';
 import s from '../common/page.module.css';
 import { t } from '../../lib/i18n';
@@ -128,7 +128,8 @@ function DisconnectedEnv({ env }: { env: EnvironmentView }) {
 
 export function EnvironmentsPage({ id }: { id: string | null }) {
   const envs = usePoll(api.listEnvironments, 10_000, []);
-  const list = realEnvs(envs.data ?? []);
+  // 등록을 마친 환경만. 끝나지 않은 등록은 기억하지 않는다 (connect.ts isLinked)
+  const list = realEnvs(envs.data ?? []).filter(isLinked);
   const env = list.find((item) => item.id === id) ?? list[0];
   const connected = env?.connectionStatus === 'connected';
   return (

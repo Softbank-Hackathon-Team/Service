@@ -4,6 +4,7 @@ import './design/fonts.css';
 import './design/tokens.css';
 import './design/base.css';
 import { App } from './app/App';
+import { startNav } from './app/nav';
 import { PRODUCT_NAME } from './components/ui/Logo';
 import { locale, t } from './lib/i18n';
 import { applyTheme, readActivePrefs } from './lib/prefs';
@@ -12,6 +13,7 @@ import { applyTheme, readActivePrefs } from './lib/prefs';
 applyTheme(readActivePrefs().theme);
 document.documentElement.lang = locale();
 document.title = t('{0} 콘솔', { 0: PRODUCT_NAME });
+startNav();
 
 if (import.meta.env.DEV) void import('./dev-layout-check');
 

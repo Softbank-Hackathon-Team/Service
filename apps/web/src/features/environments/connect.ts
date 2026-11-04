@@ -6,6 +6,19 @@ import { t } from '../../lib/i18n';
 // 서버 흐름: POST /environments(draft) → 연결 링크(AWS·GCP) 또는 Agent 등록 토큰(온프레) → 고객이 역할·Agent 를 만듦
 //   → AWS·GCP 는 계정 번호로 확인 요청(verifying) → 워커가 역할을 빌려 봄 → connected 또는 failed. 온프레는 Agent 가 붙으면 connected
 
+/**
+ * 역할 부여(연결 확인 또는 온프레 Agent 접속)를 마친 환경. 환경 목록·계정 화면은 이것만 보인다.
+ * 그 앞 단계는 등록을 끝내지 않은 것이라 보이지 않고, 해제(disconnected)는 끝난 것이라 보이지 않는다
+ */
+export const isLinked = (env: Pick<EnvironmentView, 'connectionStatus'>) => env.connectionStatus === 'connected' || env.connectionStatus === 'unstable';
+
+/**
+ * 등록을 마치기 전에 화면을 떠나면 지우는(해제하는) 환경. 초안은 남기지 않는다.
+ * 확인 중(verifying)은 뺀다: 워커가 확인을 끝내며 상태를 바꾸는데, 그 사이 해제하면 워커 쪽 전이가 어긋난다. 그래도 목록에는 보이지 않는다
+ */
+export const isDiscardable = (env: Pick<EnvironmentView, 'connectionStatus'>) =>
+  env.connectionStatus === 'draft' || env.connectionStatus === 'awaiting_customer' || env.connectionStatus === 'failed' || env.connectionStatus === 'expired';
+
 export type ConnectableProvider = Exclude<Provider, 'azure_mock'>;
 
 /** 등록할 수 있는 곳. Azure 는 모의만 있어 등록하지 않는다. */

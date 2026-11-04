@@ -12,6 +12,7 @@ import { isApiDown } from '../../lib/http';
 import { CONN_LABEL, LABEL, PROVIDER_SHORT, progressPct } from '../../lib/status';
 import type { EnvironmentView, MigrationView } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
+import { isLinked } from '../environments/connect';
 import {
   bucketOf,
   bucketSignature,
@@ -115,7 +116,8 @@ export function MigrationRow({ migration, envName, reviewTag = false }: { migrat
 export function DashboardPage() {
   const envs = usePoll(api.listEnvironments, 10_000, []);
   const migrations = usePoll(api.listMigrations, 3_000, [], { signal: anyMigration });
-  const list = realEnvs(envs.data ?? []);
+  // 등록을 마친 환경만 센다. 끝나지 않은 등록은 기억하지 않는다
+  const list = realEnvs(envs.data ?? []).filter(isLinked);
   const key = list.filter((env) => env.connectionStatus === 'connected').map((env) => env.id).join(',');
   const observed = usePoll(
     async () => {

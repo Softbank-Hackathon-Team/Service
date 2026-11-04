@@ -25,6 +25,7 @@ import {
   checkEnvForm,
   connectPollMs,
   connectSteps,
+  isDiscardable,
   phaseOf,
   providerLabel,
   type AccountForm,
@@ -149,22 +150,20 @@ function NewEnvironment() {
   };
 
   return (
-    <ShellLayout
-      layout={LAYOUT}
-      barLeft={
-        <BarPill
-          label={t('{0} · 다시 고르기', { 0: providerLabel(provider) })}
-          onClick={() =>
-            withTransition(() => {
-              setProvider(null);
-              setTouched(false);
-              setError(null);
-            })
-          }
-        />
-      }
-    >
-      <Hero tone="run" meta={t('{0} 환경 등록', { 0: providerLabel(provider) })} title={t('이 환경을\n뭐라고 부를까요?')}>
+    <ShellLayout layout={LAYOUT}>
+      {/* (←) 은 어디를 연결할지 고르기로. 주소가 그대로라 브라우저 뒤로 가기로는 못 간다 */}
+      <Hero
+        tone="run"
+        back={() =>
+          withTransition(() => {
+            setProvider(null);
+            setTouched(false);
+            setError(null);
+          })
+        }
+        meta={t('{0} 환경 등록', { 0: providerLabel(provider) })}
+        title={t('이 환경을\n뭐라고 부를까요?')}
+      >
         <form className={s.fieldGrid} onSubmit={(event) => void create(event)} noValidate>
           <Field label={t('환경 이름')} hint={t('목록과 마이그레이션 화면에 보이는 이름입니다')} placeholder={NAME_PLACEHOLDER[provider]} autoFocus value={form.name} error={shown.name} onChange={set('name')} />
           {provider === 'aws' && (
@@ -296,6 +295,20 @@ function ContinueConnect({ id }: { id: string }) {
   const env = envs.data?.find((item) => item.id === id);
   const phase: ConnectPhase | null = env ? phaseOf(env.connectionStatus) : null;
   useEffect(() => setPollMs(connectPollMs(phase, env?.provider)), [phase, env?.provider]);
+
+  // 등록을 마치기 전에 이 화면을 떠나면(← · 다른 탭) 그 환경을 해제한다. 초안을 기억해 두지 않는다.
+  // 떠남은 "주소가 바뀐 뒤 화면이 내려감"으로 본다 (개발 모드가 일부러 한 번 내렸다 올리는 것은 주소가 그대로라 지나간다).
+  // 창을 닫거나 새로 고친 경우는 지울 틈이 없지만, 끝나지 않은 환경은 어느 목록에도 보이지 않는다
+  const latest = useRef(env);
+  latest.current = env;
+  useEffect(() => {
+    const here = window.location.hash;
+    return () => {
+      const last = latest.current;
+      if (window.location.hash === here || !last || !isDiscardable(last)) return;
+      void api.releaseEnvironment(last.id).catch(() => undefined);
+    };
+  }, []);
 
   const [link, setLink] = useState<ConnectionLink | null>(null);
   const [token, setToken] = useState<AgentEnrollToken | null>(null);

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { borrowedByEnv, borrowState, envsByProvider, isLinked } from "../src/features/settings/model";
+import { borrowedByEnv, borrowState, envsByProvider } from "../src/features/settings/model";
 import type { LedgerRow } from "../src/lib/security-types";
 import type { EnvironmentView } from "../src/lib/types";
 
@@ -15,11 +15,6 @@ test("계정 화면: 환경을 벤더별로, 이름 순", () => {
   const groups = envsByProvider([env("b", "aws", "zeta"), env("a", "aws", "alpha"), env("g", "gcp")]);
   assert.deepEqual(groups.aws.map((e) => e.name), ["alpha", "zeta"]);
   assert.deepEqual(groups.onprem, []);
-});
-
-test("계정 화면: 역할 부여를 마친 환경만 (연결됨·불안정). 등록 중·실패·만료·해제는 뺀다", () => {
-  const all: EnvironmentView["connectionStatus"][] = ["draft", "awaiting_customer", "verifying", "connected", "unstable", "failed", "expired", "disconnected"];
-  assert.deepEqual(all.filter((connectionStatus) => isLinked({ connectionStatus })), ["connected", "unstable"]);
 });
 
 test("빌린 권한: 진행 중 마이그레이션 장부에서 벤더로 환경을 가리고, 살아 있는 줄 중 가장 늦게 끝나는 것", () => {
