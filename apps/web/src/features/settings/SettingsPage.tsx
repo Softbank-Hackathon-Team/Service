@@ -124,7 +124,7 @@ function AddBadge() {
   return (
     <button type="button" className={own.addBadge} onClick={() => go(REGISTER_PATH)}>
       <span className={own.addDot} aria-hidden>
-        <Icon name="plus" size={14} />
+        <Icon name="plus" size={16} />
       </span>
       <span className="t-label-md">{t('환경 추가하기')}</span>
     </button>

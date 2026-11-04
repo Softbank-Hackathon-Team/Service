@@ -129,14 +129,15 @@
   color: var(--color-fg-tertiary);
   cursor: not-allowed;
 }
-/* 환경 추가하기: 큰 카드 머리줄 오른쪽 끝. 회색 알약에 파란 원 (+) — 아래 큰 실행 버튼(파란 알약 + 흰 원)을 작게 뒤집은 모양 */
+/* 환경 추가하기: 큰 카드 머리줄 오른쪽 끝. 크기·바탕은 옆 화면 카드의 고르기 버튼(OptionPill)과 같고, 색 없이 중립.
+   (+) 원은 카드 바탕색(라이트에서 흰색), + 는 글자와 같은 색 */
 .addBadge {
   display: inline-flex;
   flex: none;
   align-items: center;
   gap: var(--space-8);
-  height: 32px;
-  padding: 0 var(--space-12) 0 var(--space-4);
+  height: var(--size-control-m);
+  padding: 0 var(--space-20) 0 6px;
   border: 0;
   border-radius: var(--radius-full);
   background: var(--color-bg-subtle);
@@ -144,7 +145,7 @@
   font: inherit;
   white-space: nowrap;
   cursor: pointer;
-  transition: background var(--motion-fade) var(--ease-standard);
+  transition: background-color 160ms ease;
 }
 .addBadge:hover {
   background: var(--color-bg-selected);
@@ -152,11 +153,11 @@
 .addDot {
   display: grid;
   place-items: center;
-  width: 24px;
-  height: 24px;
+  width: 32px;
+  height: 32px;
   border-radius: var(--radius-full);
-  background: var(--color-bg-action-primary);
-  color: var(--color-fg-on-action);
+  background: var(--color-bg-surface);
+  color: var(--color-fg-primary);
   transition: transform var(--motion-fade) var(--ease-standard);
 }
 .addBadge:hover .addDot {
