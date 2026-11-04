@@ -68,8 +68,9 @@ test("정상: 컷오버·롤백 중 실패한 이전 → 202 rolling_back + 롤�
   }
 });
 
-test("거부: 자원 만들기 이하에서 실패한 이전은 409 GUARD_FAILED (다시 계획으로), 상태·작업 그대로", { skip }, async () => {
-  const id = await seed("provisioning");
+// Jeong 11/4 01:53Z: provisioning 실패도 거절 = 롤백이라 롤백 길이 열렸다. 만들기 전(planning) 실패만 막는다
+test("거부: 자원을 만들기 전(planning)에 실패한 이전은 409 GUARD_FAILED, 상태·작업 그대로", { skip }, async () => {
+  const id = await seed("planning");
   const r = await rollback(id);
   assert.equal(r.statusCode, 409);
   assert.equal(r.json().code, "GUARD_FAILED");

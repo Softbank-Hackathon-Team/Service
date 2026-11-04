@@ -1,3 +1,4 @@
+import { restoreTrafficBeforeAsking } from "./_fail-traffic.js";
 import { Measurement, MigrationJob, QUEUES } from "@svc/contracts";
 import { replicationFromEnv, toMeasurements, SwitchoverError } from "@svc/replication";
 import { errorMessage, nextJob, runStep, stubWait, stubFailIfAsked, type StepOutcome } from "./_step.js";
@@ -23,7 +24,9 @@ export async function handleCutover(raw: unknown) {
     // 지금까지 되돌린 횟수 (감사 기록에서 센다)
     load: async (tx, job, m) => {
       const q = await tx.query(
-        `SELECT count(*)::int AS n FROM audit_events WHERE target = $1 AND action = 'cutover.shifting'`, [job.migrationId]);
+        // Jeong 11/4 01:53Z: 사람이 "재시도"를 고른 뒤(감사 migration.failure_retry)엔 횟수를 다시 0부터 센다 (안 그러면 첫 되돌림에 또 소진)
+        `SELECT count(*)::int AS n FROM audit_events WHERE target = $1 AND action = 'cutover.shifting'
+            AND at > COALESCE((SELECT max(at) FROM audit_events WHERE target = $1 AND action = 'migration.failure_retry'), '-infinity')`, [job.migrationId]);
       // Z31: 컷오버 뒤 GitOps 값(database.activeWriter)을 남길 도착 묶음 위치 (gitops 설정이 없으면 null)
       // F8-4: 창 길이 = 승인한 계획서 칸
       const ap = await loadLatestApproval(tx, job.migrationId);
@@ -81,6 +84,8 @@ export async function handleCutover(raw: unknown) {
     // Z19 H2: 컷오버 도중 예외 → 재시도하지 않고 failed로 보내 사람이 본다 (cutover 큐 retryLimit 0).
     // 예전: 던지기만 해서 출발이 울타리 친 채(쓰기 금지) cutover에 멈췄다. 재시도는 C5 뒤면 "phase=idle"로 또 실패했다.
     // switchover()가 C5 전 예외면 이미 출발 울타리를 걷었다 → 서비스는 출발로 계속 돈다
+    // Jeong 11/4 01:53Z: failed 로 가기 전에 트래픽부터 출발로 (출발이 DB 주인일 때만, _fail-traffic.ts)
+    beforeFail: (out, job) => restoreTrafficBeforeAsking(out, job),
     onError: async (e) => {
       const msg = errorMessage(e);
       const se = e instanceof SwitchoverError ? e : null;

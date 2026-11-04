@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { ApprovalInput, PlanDoc, QUEUES, StartInput, type MigrationStatus } from "@svc/contracts";
-import { withTenant, advance, checkRetryBudget, targetTeardownPending, writeAudit, DomainError, InvalidTransition, planExpired, assertTenantCapacity, type Tx } from "@svc/core";
+import { withTenant, advance, writeAudit, DomainError, InvalidTransition, planExpired, assertTenantCapacity, type Tx } from "@svc/core";
 import { Accepted, ApprovalResult, errors } from "./responses.js";
 import { IdParam, RetryBody, auditOk, found, nextJob } from "./kit.js";
 import { loadLatestApproval, loadLatestPlan, loadPlanById, saveApproval } from "./plan-store.js";
@@ -154,41 +154,23 @@ export async function planRoutes(app: FastifyInstance) {
     });
   });
 
-  // 다시 계획하기. failed(실패 지점이 provisioning 이하)·stale·rejected 에서 planning 으로 되돌리고 plan 작업을 넣는다. 202
-  // DRAFT(ai): H-8 이른 실패의 환경 잠금은 지금 코드대로 실패 때 이미 풀려 있다(advance.ts RELEASES_LOCK). 설계 6.4(잠금 유지)와 어긋남 —
-  //   다시 승인할 때 잠금을 새로 예약하고, 그 사이 다른 이전이 같은 환경을 잡으면 409 ENV_BUSY. 어긋남은 PR 설명에 적는다
-  // DRAFT(ai): H-9 importing 에서 실패한 이전은 여기서 막는다(409 REPLAN_NOT_ALLOWED) — "취소 후 새 이전". (G7-2 뒤 prechecking 실패는 허용)
-  //   T37 가드(guards.ts)는 그대로 둔다. 그 밖의 실패 지점(cutover 등)은 가드가 409 GUARD_FAILED 로 막는다
-  // PA5a: 실패 재시도가 한도(RETRY_BUDGET, 기본 3) 이상이면 본문 acceptCustomerCost:true 필요 → 없으면 409 RETRY_BUDGET_EXHAUSTED
+  // 다시 계획하기. stale·rejected 에서 prechecking 으로 되돌리고 precheck 작업을 넣는다. 202
+  // DECISION(team) Jeong 11/4 01:53Z (ADR-066 개정): failed 에서는 다시 계획하지 않는다 → 409 INVALID_TRANSITION.
+  //   실패는 POST /migrations/:id/failure-decision 에서 "재시도(실패한 단계부터)" 또는 "롤백"을 고른다 (control.ts)
   r.post("/migrations/:id/replan", { schema: { params: IdParam, body: RetryBody.nullish(),
     response: { 202: Accepted, ...errors(400, 401, 403, 404, 409, 500) } } }, async (req, reply) => {
     const id = req.params.id;
     return req.idempotent(reply, async (tx) => {
       const m = await migrationOf(tx, id);
-      // G7-2: 다시 계획은 failed·stale·rejected 에서만. spec_review → prechecking 도 표에 있는 길이라 여기서 따로 막는다 (그 길은 POST /plan)
-      if (!["failed", "stale", "rejected"].includes(m.status)) throw new InvalidTransition(m.status, "prechecking");
-      // G7-2 DRAFT(ai): 다시 계획이 사전 점검부터 돌게 되어 prechecking 실패도 다시 계획으로 받는다 (점검을 다시 하는 것 = 다시 계획).
-      //   importing 실패만 막는다 (G5-1 결정: 실패하면 다시 가져오기로 돌아가지 않는다 → 취소 후 새 이전)
-      if (m.status === "failed" && m.failedAtStatus === "importing")
-        throw new DomainError(409, "REPLAN_NOT_ALLOWED",
-          `failed at ${m.failedAtStatus}: cancel and start a new migration`);
-      // G5-1 (ADR-066): 실패로 만든 자원을 지우는 중이면 기다린다. 새 apply 가 같은 작업 폴더(state)를 쓰므로 지우기와 겹치면 새 자원을 지운다
-      if (m.status === "failed" && await targetTeardownPending(tx, id))
-        throw new DomainError(409, "TEARDOWN_PENDING", "target resources from the failed attempt are still being deleted; retry after it finishes");
-      const budget = m.status === "failed" ? await checkRetryBudget(tx, id, req.body?.acceptCustomerCost) : null;
-      // G7-2: 다시 계획은 사전 점검부터 (precheck 작업 → 통과하면 새 계획 번호로 plan 작업). 예전엔 바로 planning 이라
-      //   계획서에 첫 바퀴의 옛 점검표(자격·할당량 문제가 생기기 전의 PASS)가 그대로 실렸다
+      // G7-2: spec_review → prechecking 도 표에 있는 길이라 여기서 따로 막는다 (그 길은 POST /plan)
+      if (!["stale", "rejected"].includes(m.status)) throw new InvalidTransition(m.status, "prechecking");
+      // G7-2: 다시 계획은 사전 점검부터 (precheck 작업 → 통과하면 새 계획 번호로 plan 작업)
       // 감사 detail.planId 는 옛 응답 모양 호환용: 새 계획 번호는 precheck 가 정한다 → 여기선 null
       const planId = null;
       await advance(tx, { id, tenantId: req.tenantId }, m.status, "prechecking", {
         next: nextJob(req, QUEUES.precheck, id),
-        audit: auditOk(req, "migration.replanning", id, { planId, fromStatus: m.status, failedAtStatus: m.failedAtStatus }),
+        audit: auditOk(req, "migration.replanning", id, { planId, fromStatus: m.status }),
       });
-      // 실패를 사람이 다시 시도한 횟수 (재시도 한도는 이 줄을 센다). stale·rejected 에서 다시 계획하는 것은 실패 재시도가 아니라 세지 않는다
-      if (m.status === "failed")
-        await writeAudit(tx, req.tenantId, { actor: req.actor, action: "migration.retried", target: id, result: "ok",
-          detail: { planId, failedAtStatus: m.failedAtStatus, via: "replan",
-                    ...(budget ? { attempt: budget.attempt, customerCostAccepted: budget.customerCostAccepted } : {}) } });
       return { status: 202, body: { id } };
     });
   });

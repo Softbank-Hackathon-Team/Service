@@ -60,9 +60,15 @@ test("T30/T31: 일시정지는 이유가 필요하고, 재개는 멈추기 전 �
   assert.equal(checkGuard("paused", "rolling_back", { facts: p, ev: {} }), null, "롤백은 언제나");
 });
 
-test("T37: provisioning 이하에서 실패했을 때만 다시 계획 (G7-2: 다시 계획 = 사전 점검부터)", () => {
-  assert.equal(checkGuard("failed", "prechecking", { facts: f({ failedAtStatus: "provisioning" }), ev: {} }), null);
-  assert.match(checkGuard("failed", "prechecking", { facts: f({ failedAtStatus: "cutover" }), ev: {} })!, /replan/);
+test("Jeong 11/4 01:53Z: failed 에서 재시도는 실패 지점으로만, 사람의 retry 증거가 있어야 (다시 계획 T37 은 없앰)", () => {
+  assert.equal(checkGuard("failed", "provisioning", { facts: f({ failedAtStatus: "provisioning" }), ev: { failureDecision: "retry" } }), null);
+  assert.match(checkGuard("failed", "provisioning", { facts: f({ failedAtStatus: "provisioning" }), ev: {} })!, /failureDecision retry/);
+  assert.match(checkGuard("failed", "prechecking", { facts: f({ failedAtStatus: "provisioning" }), ev: { failureDecision: "retry" } })!, /failed_at_status/);
+  // 거절: 만든 자원 있으면 rolling_back, 없으면 cancelled
+  assert.equal(checkGuard("failed", "rolling_back", { facts: f({ failedAtStatus: "provisioning" }), ev: {} }), null);
+  assert.match(checkGuard("failed", "rolling_back", { facts: f({ failedAtStatus: "planning" }), ev: {} })!, /rollback only/);
+  assert.equal(checkGuard("failed", "cancelled", { facts: f({ failedAtStatus: "planning" }), ev: { failureDecision: "rollback" } }), null);
+  assert.match(checkGuard("failed", "cancelled", { facts: f({ failedAtStatus: "provisioning" }), ev: { failureDecision: "rollback" } })!, /manual cleanup/);
 });
 test("T16 G7-3: 승인 뒤 환경이 바뀌면(env_changed) 잠금이 살아 있어도 낡음", () => {
   const live = f({ locks: { total: 2, live: 2, reservedLive: 2 } });

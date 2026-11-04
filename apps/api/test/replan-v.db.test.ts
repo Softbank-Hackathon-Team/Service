@@ -23,6 +23,7 @@ before(async () => {
   const { authPlugin } = await import("../src/plugins/auth.js");
   const { idempotencyPlugin } = await import("../src/plugins/idempotency.js");
   const { planRoutes } = await import("../src/routes/plans.js");
+  const { controlRoutes } = await import("../src/routes/control.js");
   owner = new pg.Client({ connectionString: OWNER }); await owner.connect();
   await owner.query("INSERT INTO tenants (id, name) VALUES ($1,'test-replan-v')", [T]);
   app = Fastify();
@@ -32,6 +33,7 @@ before(async () => {
   await app.register(authPlugin);
   await app.register(idempotencyPlugin);
   await app.register(planRoutes, { prefix: P });
+  await app.register(controlRoutes, { prefix: P });
   await app.ready();
   await core.startBoss();
 });
@@ -58,6 +60,9 @@ const audits = async (id: string) => (await owner.query(
 const post = (path: string, tenantHeaders: Record<string, string> = H, key = randomUUID()) =>
   app.inject({ method: "POST", url: `${P}${path}`, payload: {}, headers: { ...tenantHeaders, "idempotency-key": key } });
 
+// Jeong 11/4 01:53Z: failed 에서 다시 하기 = failure-decision retry (실패 지점 prechecking 이면 같은 precheck 작업 키)
+const retry = (id: string, key = randomUUID()) =>
+  app.inject({ method: "POST", url: `${P}/migrations/${id}/failure-decision`, payload: { choice: "retry" }, headers: { ...H, "idempotency-key": key } });
 
 async function failAgain(id: string) {
   await core.withTenant(T, (tx) => core.advance(tx, { id, tenantId: T }, "prechecking", "failed",
@@ -74,48 +79,48 @@ async function fetchPlanJob(id: string) {
   return jid;
 }
 
-test("실제 수명: replan → 작업 완료 → 다시 failed → replan 은 JobNotCreated 없이 202 (작업 상태 completed,created)", { skip }, async () => {
-  const { id } = await seed("failed", "provisioning");
+test("실제 수명: replan → 작업 완료 → 다시 failed → 재시도(failure-decision) 는 JobNotCreated 없이 202 (작업 상태 completed,created)", { skip }, async () => {
+  const { id } = await seed("stale");
   assert.equal((await post(`/migrations/${id}/replan`)).statusCode, 202);
   const jid = await fetchPlanJob(id);
   await core.boss.complete("precheck", jid);
   await failAgain(id);
-  const r = await post(`/migrations/${id}/replan`);
+  const r = await retry(id);
   assert.equal(r.statusCode, 202, r.body);
   assert.deepEqual(await jobStates(id), ["completed", "created"]);
 });
 
-test("실제 수명: boss.fail 로 실패시킨 뒤(재시도 정책 포함) replan 도 202", { skip }, async () => {
-  const { id } = await seed("failed", "provisioning");
+test("실제 수명: boss.fail 로 실패시킨 뒤(재시도 정책 포함) 재시도도 202", { skip }, async () => {
+  const { id } = await seed("stale");
   assert.equal((await post(`/migrations/${id}/replan`)).statusCode, 202);
   const jid = await fetchPlanJob(id);
   await core.boss.fail("precheck", jid, { message: "x" });
   const states = await jobStates(id);
   await failAgain(id);
-  const r = await post(`/migrations/${id}/replan`);
+  const r = await retry(id);
   // 재시도 대기(retry)가 키를 쥐고 있으면 JobNotCreated → 이 시험이 그걸 잡는다
   assert.equal(r.statusCode, 202, `fail 뒤 작업 상태 ${states} / ${r.body}`);
 });
 
 test("활성 plan 작업이 남아 있는 채 failed 가 된 이전: stately 큐라 새 작업이 대기로 들어간다(202, active 1 + created 1)", { skip }, async () => {
-  const { id } = await seed("failed", "provisioning");
+  const { id } = await seed("stale");
   assert.equal((await post(`/migrations/${id}/replan`)).statusCode, 202);
   await fetchPlanJob(id);          // 작업은 active 로 남음(워커가 죽은 상황)
   await failAgain(id);
-  const r = await post(`/migrations/${id}/replan`);
+  const r = await retry(id);
   assert.equal(r.statusCode, 202, r.body);
   assert.deepEqual((await jobStates(id)).sort(), ["active", "created"]);
   // 주의: 옛 active 작업이 뒤늦게 끝나면 새 planId 와 다른 계획을 쓸 수 있음 → 처리기가 planId/상태를 다시 확인해야 함(설계 확인 필요)
 });
 
-test("동시성: 서로 다른 키로 동시에 replan 두 번 → 202 한 번, 나머지 4xx, 작업 1개, replanning 감사 1줄", { skip }, async () => {
-  const { id } = await seed("failed", "provisioning");
-  const rs = await Promise.all([post(`/migrations/${id}/replan`), post(`/migrations/${id}/replan`)]);
+test("동시성: 서로 다른 키로 동시에 재시도 두 번 → 202 한 번, 나머지 4xx, 작업 1개, failure_retry 감사 1줄", { skip }, async () => {
+  const { id } = await seed("failed", "prechecking");
+  const rs = await Promise.all([retry(id), retry(id)]);
   const codes = rs.map((r) => r.statusCode).sort();
   assert.equal(codes[0], 202, JSON.stringify(rs.map((r) => r.body)));
   assert.ok(codes[1]! >= 400 && codes[1]! < 500, String(codes));
   assert.equal((await planJobs(id)).length, 1);
-  assert.equal((await audits(id)).filter((a) => a === "migration.replanning").length, 1);
+  assert.equal((await audits(id)).filter((a) => a === "migration.failure_retry").length, 1);
 });
 
 test("reopen 뒤 상태 spec_review: replan 은 INVALID_TRANSITION, reopen 두 번째는 거절", { skip }, async () => {

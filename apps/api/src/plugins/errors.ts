@@ -14,6 +14,7 @@ export const sendError = (req: FastifyRequest, reply: FastifyReply, status: numb
 //   RunnerUnavailable   → 409 + 실행기 코드 (예: AZURE_MOCK_DISABLED). 다른 AdapterError 는 예전처럼 500
 //   Zod 검증 실패        → 400 BAD_REQUEST
 //   pg 23503(외래 키)    → 404 (없는 번호나 다른 회사 번호를 가리킴, 0005). 남의 회사 자원은 404로 보인다
+//   pg 22021·22P05      → 400 (NUL 글자 등, PF FM-ORC-23)
 function toHttp(err: unknown): { status: number; code: string; message: string } | null {
   if (err instanceof DomainError) return { status: err.status, code: err.code, message: err.message };
   if (err instanceof RunnerUnavailable) return { status: 409, code: err.code, message: err.message };
@@ -25,6 +26,8 @@ function toHttp(err: unknown): { status: number; code: string; message: string }
   const sc = (err as { statusCode?: number }).statusCode;
   if (e.code?.startsWith("FST_") && sc !== undefined && sc >= 400 && sc < 500) return { status: sc, code: "BAD_REQUEST", message: e.message ?? "" };
   if (e.code === "23503") return { status: 404, code: "NOT_FOUND", message: "referenced resource not found" };
+  // PF FM-ORC-23: 사람이 적는 글자(승인·거절 이유, 환경 이름 등)에 NUL·깨진 글자가 있으면 Postgres 가 22021(글자 인코딩)·22P05(jsonb \u0000) 로 거부 → 예전엔 500
+  if (e.code === "22021" || e.code === "22P05") return { status: 400, code: "BAD_REQUEST", message: "text contains characters the database cannot store (NUL or invalid encoding)" };
   return null;
 }
 

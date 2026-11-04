@@ -1,4 +1,5 @@
-// G5-1 (ADR-066): provisioning → failed 가 같은 트랜잭션에 target-destroy 작업을 넣고, 지우기가 끝나기 전 다시 계획은 409
+// G5-1 (ADR-066) → Jeong 11/4 01:53Z 개정: provisioning → failed 는 바로 지우지 않는다(재시도 질문 대기).
+//   예전 길로 넣은 지우기 작업이 아직 남아 있으면 "재시도"는 409 TEARDOWN_PENDING (새 apply 가 같은 작업 폴더를 쓰지 않게)
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -21,7 +22,7 @@ before(async () => {
   const { errorsPlugin } = await import("../src/plugins/errors.js");
   const { authPlugin } = await import("../src/plugins/auth.js");
   const { idempotencyPlugin } = await import("../src/plugins/idempotency.js");
-  const { planRoutes } = await import("../src/routes/plans.js");
+  const { controlRoutes } = await import("../src/routes/control.js");
   owner = new pg.Client({ connectionString: OWNER }); await owner.connect();
   await owner.query("INSERT INTO tenants (id, name) VALUES ($1,'test-g5-1-replan')", [T]);
   app = Fastify();
@@ -30,7 +31,7 @@ before(async () => {
   await app.register(errorsPlugin);
   await app.register(authPlugin);
   await app.register(idempotencyPlugin);
-  await app.register(planRoutes, { prefix: P });
+  await app.register(controlRoutes, { prefix: P });
   await app.ready();
   await core.startBoss();
 });
@@ -53,27 +54,23 @@ async function failAtProvisioning() {
 }
 const destroyJobs = async (id: string) => (await owner.query(
   `SELECT id, state, data FROM pgboss.job WHERE name='target-destroy' AND data->>'migrationId'=$1`, [id])).rows;
-const replan = (id: string) => app.inject({ method: "POST", url: `${P}/migrations/${id}/replan`, payload: {},
+const retry = (id: string) => app.inject({ method: "POST", url: `${P}/migrations/${id}/failure-decision`, payload: { choice: "retry" },
   headers: { "x-dev-tenant": T, "idempotency-key": randomUUID() } });
 
-test("G5-1 정상: provisioning → failed 가 target-destroy 작업 1개를 넣고 감사 requested(queued:true, auto)", { skip }, async () => {
+test("01:53Z: provisioning → failed 는 target-destroy 를 넣지 않는다 (지우기는 거절 → 롤백 → rolled_back 에서)", { skip }, async () => {
   const id = await failAtProvisioning();
-  const jobs = await destroyJobs(id);
-  assert.equal(jobs.length, 1);
-  assert.equal(jobs[0].data.requestId, "r-g5");
-  const a = (await owner.query(`SELECT detail FROM audit_events WHERE target=$1 AND action='target_teardown.requested'`, [id])).rows;
-  assert.equal(a.length, 1);
-  assert.equal(a[0].detail.queued, true);
-  assert.equal(a[0].detail.mode, "auto");
+  assert.equal((await destroyJobs(id)).length, 0);
+  assert.equal((await owner.query(`SELECT count(*)::int n FROM audit_events WHERE target=$1 AND action='target_teardown.requested'`, [id])).rows[0].n, 0);
 });
 
-test("G5-1 거부: 지우기 작업이 남아 있으면 다시 계획 409 TEARDOWN_PENDING, 끝나면 다시 계획 202", { skip }, async () => {
+test("거부: 예전 길로 넣은 지우기 작업이 남아 있으면 재시도 409 TEARDOWN_PENDING, 끝나면 그 이유로는 안 막힘", { skip }, async () => {
   const id = await failAtProvisioning();
-  const r = await replan(id);
+  await core.boss.send("target-destroy", { tenantId: T, requestId: "r-old", migrationId: id }, { singletonKey: `target-destroy:${id}` });
+  const r = await retry(id);
   assert.equal(r.statusCode, 409, r.body);
   assert.equal(r.json().code, "TEARDOWN_PENDING");
   assert.equal((await owner.query("SELECT status FROM migrations WHERE id=$1", [id])).rows[0].status, "failed");
   await owner.query(`UPDATE pgboss.job SET state='completed', completed_on=now() WHERE name='target-destroy' AND data->>'migrationId'=$1`, [id]);
-  const ok = await replan(id);
-  assert.equal(ok.statusCode, 202, ok.body);
+  const next = await retry(id);
+  assert.notEqual(next.json().code, "TEARDOWN_PENDING", next.body);   // 승인 계획이 없는 시드라 PLAN_NOT_APPROVED 409 가 다음 관문
 });

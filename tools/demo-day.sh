@@ -69,18 +69,40 @@ if ! command -v gke-gcloud-auth-plugin >/dev/null 2>&1 && command -v gcloud >/de
   _sdk=$(gcloud info --format='value(installation.sdk_root)' 2>/dev/null)
   [ -n "$_sdk" ] && [ -x "$_sdk/bin/gke-gcloud-auth-plugin" ] && export PATH="$_sdk/bin:$PATH"
 fi
+# NOTTY: 뒤로 띄운 줄(j_bg·nohup)이 터미널 입력을 물려받으면 gcloud·aws 가 묻는 창(프롬프트·페이저)에서 터미널을 읽다 멈춘다
+#   (11/3 5차: Jeong 터미널에서 띄운 up 만 cloud-precheck gcp-billing 이 30초 넘게 멈춤, 맥 RC 에선 2~4초) → 묻지 않게·페이저 끄기
+export CLOUDSDK_CORE_DISABLE_PROMPTS=1 AWS_PAGER="" PAGER=cat
 export AWS_PROFILE=${AWS_PROFILE:-finals}
 export AWS_REGION=${AWS_REGION:-ap-northeast-2}
 # UPREV-A: AWS CLI 는 AWS_REGION 이 아니라 AWS_DEFAULT_REGION 을 읽는다(프로필 리전이 서울이 아니면 rds·elb 조회가 엉뚱한 리전을 본다 → ELB 0 오판)
 export AWS_DEFAULT_REGION=$AWS_REGION
 GCP_PROJECT=${GCP_PROJECT:-finals-demo}
+# DECISION 결정 3 A안(GCP 이전 전용 프로젝트): 도착 GKE·VPC·Cloud SQL(사설 IP, 같은 VPC)은 TARGET_PROJECT_ID 에 만든다.
+#   GCP_PROJECT(원래 프로젝트)는 플랫폼 쪽(회사 전용 SA 등)으로 남는다. 순서: 환경 변수 → 레포 .env. 없으면 예전처럼 GCP_PROJECT 하나(동결 실측 판과 같음)
+TARGET_PROJECT_ID=${TARGET_PROJECT_ID:-$(sed -n 's/^TARGET_PROJECT_ID=//p' .env 2>/dev/null | tail -n 1 | tr -d "\"' ")}
+GCP_TARGET=${GCP_TARGET_PROJECT:-${TARGET_PROJECT_ID:-$GCP_PROJECT}}   # FM-INT-16: 8nr2 이름(GCP_TARGET_PROJECT)도 받음
 GCP_ZONE=${GCP_ZONE:-asia-northeast3-a}
 CLUSTER_NAME=${CLUSTER_NAME:-platform-target}
 EKS_CONTEXT=${EKS_CONTEXT:-eks-platform-target}
-GKE_CONTEXT=${GKE_CONTEXT:-gke_${GCP_PROJECT}_${GCP_ZONE}_${CLUSTER_NAME}}
+GKE_CONTEXT=${GKE_CONTEXT:-gke_${GCP_TARGET}_${GCP_ZONE}_${CLUSTER_NAME}}
 # GATE: 자식 스크립트(cloud-zero·up-preflight·cloud-precheck)가 같은 프로젝트·존을 보게 내보낸다. 안 내보내면 cloud-zero 가 gcloud 기본 프로젝트를 봐서
 #   (다른 프로젝트가 기본이면) 엉뚱한 곳을 "자원 0" 이라고 판정한다
-export GCP_PROJECT GCP_ZONE CLUSTER_NAME
+export GCP_PROJECT GCP_ZONE CLUSTER_NAME TARGET_PROJECT_ID
+# ENVPASS: 워커(가져오기·사전 점검)는 온프레 출발 클러스터를 kubectl --context ONPREM_KUBE_CONTEXT 로 읽는다. 코드 기본은 k3d-onprem 인데
+#   맥은 k3s-onprem(deploy/onprem-demo 가 이름을 바꿈) → 기본으로 두면 "context was not found" (11/3 실측 4차 IMPORT_SOURCE_UNAVAILABLE).
+#   순서: 환경변수 → .env → kubeconfig 에서 찾기(k3s-onprem → k3d-onprem → 이름에 onprem 이 든 것 하나). 못 찾으면 빈 값
+onprem_ctx() {
+  local c names
+  c=${ONPREM_KUBE_CONTEXT:-$(sed -n 's/^ONPREM_KUBE_CONTEXT=//p' .env 2>/dev/null | tail -n 1 | tr -d "\"' ")}
+  [ -n "$c" ] && { echo "$c"; return 0; }
+  names=$(kubectl config get-contexts -o name 2>/dev/null)
+  for c in k3s-onprem k3d-onprem; do printf '%s\n' "$names" | grep -qx "$c" && { echo "$c"; return 0; }; done
+  c=$(printf '%s\n' "$names" | grep onprem)
+  [ -n "$c" ] && [ "$(printf '%s\n' "$c" | wc -l | tr -d ' ')" = 1 ] && echo "$c"
+  return 0
+}
+# 워커·API·smoke 가 모두 물려받게 내보낸다. demo-day.env 에도 적어 실세션이 api·워커를 다시 띄울 때도 같은 값
+ONPREM_KUBE_CONTEXT=$(onprem_ctx); export ONPREM_KUBE_CONTEXT
 STATE=${DEMO_DAY_STATE:-$HOME/.svc-tf/demo-day}
 
 TFA=infra/modules/aws/env
@@ -96,19 +118,35 @@ if [ -z "${DEMO_DAY_LOG_DIR:-}" ]; then
 fi
 export DEMO_DAY_LOG_DIR
 mkdir -p "$DEMO_DAY_LOG_DIR" || exit 1
+# RV-18: 단계 로그는 terraform·aws 원문(ARN·IP·계정 번호)이라 주인만 읽게 두고, 남에게 줄 때는 가린 사본을 만든다
+chmod 700 "$DEMO_DAY_LOG_DIR" 2>/dev/null
+[ -f "$DEMO_DAY_LOG_DIR/README.txt" ] || printf '%s\n' "이 폴더의 *.log 는 가리지 않은 원문이다 (ARN·IP·계정 번호)." "공유 폴더·메시지로 옮길 때는 가린 사본을 쓴다: sh tools/real/share-logs.sh <이 폴더> <새 폴더>" > "$DEMO_DAY_LOG_DIR/README.txt"
 PROGRESS="$DEMO_DAY_LOG_DIR/progress.log"
 [ "$DRY" = 1 ] && STATE="$DEMO_DAY_LOG_DIR/state"
 ENVF="$STATE/demo-day.env"
 # UPREV-A: 중계기 ssh 는 회차마다 새 호스트 키라, 맥 ~/.ssh/known_hosts 에 같은 IP 의 옛 키가 있으면 "키 바뀜" 으로 거절된다 → 이 상태 폴더의 known_hosts 만 쓰고 up 시작 때 지운다
 RELAY_SSH_OPTS="-o BatchMode=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=$STATE/known_hosts"
 
+# 11/3 18:3xZ 사고: 진짜 up 안의 점검(selftest)이 다시 진짜 up 을 띄워 3분마다 up 이 하나씩 늘었다(재귀).
+#   진짜 up 안에서 진짜 up 을 또 부르면 시작하지 않는다. 표식 DEMO_DAY_ACTIVE=<명령>:<pid> 는 앞에서 도는(뒤로 안 보내는) 쪽만 단다.
+#   안에서 부르는 down(자동 down)과 --dry-run 은 막지 않는다
+if [ "$CMD" = up ] && [ "$DRY" = 0 ] && [ -n "${DEMO_DAY_ACTIVE:-}" ]; then
+  _ap=${DEMO_DAY_ACTIVE##*:}
+  if [ "$_ap" != "$$" ] && kill -0 "$_ap" 2>/dev/null; then echo "이미 도는 demo-day(${DEMO_DAY_ACTIVE}) 안에서 up 이 또 불림 → 시작 안 함" >&2; exit 5; fi
+fi
 # 뒤로 보내기: 같은 인자로 자기 자신을 nohup 으로 다시 부른다
 if [ "$FG" = 0 ] && [ -z "${DEMO_DAY_CHILD:-}" ]; then
-  DEMO_DAY_CHILD=1 nohup bash "$SELF" "$CMD" --fg $([ "$DRY" = 1 ] && echo --dry-run) $([ "$SERIAL" = 1 ] && echo --serial) > "$DEMO_DAY_LOG_DIR/stdout.log" 2>&1 &
+  DEMO_DAY_CHILD=1 nohup bash "$SELF" "$CMD" --fg $([ "$DRY" = 1 ] && echo --dry-run) $([ "$SERIAL" = 1 ] && echo --serial) < /dev/null > "$DEMO_DAY_LOG_DIR/stdout.log" 2>&1 &
   echo "뒤에서 시작 (pid $!). 진행: tail -f $PROGRESS"
   exit 0
 fi
+[ "$DRY" = 0 ] && export DEMO_DAY_ACTIVE="$CMD:$$"
 
+# MACAWAKE (FM-ORC-14·OPS-08): 이 up·down 이 도는 동안 맥이 잠들지 않게 (jeong 줄 없이 바로 쳐도). -w: 이 셸이 끝나면 같이 끝남.
+#   dry-run·caffeinate 없는 곳(리눅스)·DEMO_DAY_NO_AWAKE=1 은 건너뜀. 시험은 DEMO_DAY_CAFFEINATE 로 가짜를 준다
+if [ "$DRY" = 0 ] && [ "${DEMO_DAY_NO_AWAKE:-0}" != 1 ] && command -v "${DEMO_DAY_CAFFEINATE:-caffeinate}" >/dev/null 2>&1; then
+  "${DEMO_DAY_CAFFEINATE:-caffeinate}" -i -m -s -w $$ < /dev/null > /dev/null 2>&1 &
+fi
 now_s() { date +%s; }
 BGPIDS=""
 APPLIED=0   # apply 를 하나라도 시작했나 (멈출 때 자동 down 여부)
@@ -316,12 +354,15 @@ u_tools() {
   # UPREV: apply 전에 실패할 수 있는 것을 전부 본다(인증·ADC·필수 변수·남은 state·자원 0·한도·출발 DB·8080·validate·plan).
   #   PASS 가 아니면 여기서 멈춰 apply 를 하나도 시작하지 않는다 (DEMO_DAY_RESUME=1 이면 남은 state·자원은 WARN)
   # GATE-common c2 / GATE-aws: stale 단계(secrets_purge strict) 뒤라는 표시 → 삭제 예약 비밀이 남아 있으면 up-preflight 가 WARN 이 아니라 FAIL (혼자 칠 땐 WARN)
+  # CLD-07: 콘솔 연결 링크의 S3 템플릿이 레포와 다르면 같은 주소에 다시 올린다 (손 재업로드 없앰). up-preflight 의 connect-template 점검 앞
+  if [ "$DRY" = 1 ]; then CTS_DRY=1 bash tools/connect-template-sync.sh 2>&1 | sed 's/^/  /' || true
+  else bash tools/connect-template-sync.sh || { echo "S3 연결 템플릿을 못 맞춤 (CONNECT_TEMPLATE_SYNC=0 이면 건너뜀)"; return 1; }; fi
   run env UP_PREFLIGHT_AFTER_PURGE=1 bash "${UP_PREFLIGHT:-tools/up-preflight.sh}"
 }
-u_gke() { run terraform -chdir="$TFG" init -input=false && run terraform -chdir="$TFG" apply -input=false -auto-approve -var "project_id=$GCP_PROJECT" -var "zone=$GCP_ZONE" -var "name=$CLUSTER_NAME"; }
+u_gke() { run terraform -chdir="$TFG" init -input=false && run terraform -chdir="$TFG" apply -input=false -auto-approve -var "project_id=$GCP_TARGET" -var "zone=$GCP_ZONE" -var "name=$CLUSTER_NAME"; }
 u_eks() { aws_account_var && run terraform -chdir="$TFA" init -input=false && run terraform -chdir="$TFA" apply -input=false -auto-approve -var create_eks=true; }
 u_kubeconfig() {
-  run gcloud container clusters get-credentials "$CLUSTER_NAME" --zone "$GCP_ZONE" --project "$GCP_PROJECT" &&
+  run gcloud container clusters get-credentials "$CLUSTER_NAME" --zone "$GCP_ZONE" --project "$GCP_TARGET" &&
   run aws eks update-kubeconfig --name "$(tfout "$TFA" cluster_name)" --alias "$EKS_CONTEXT" --region "$AWS_REGION"
 }
 wait_addr() {
@@ -391,7 +432,7 @@ u_relay() {
   # 역방향 터널은 맥 RC 가 열지 않는다 (Z38 R8-39: 맥 분류기가 막는 명령이라 사람이 직접 친다). 열릴 때까지 기다린다
   # z75-46: Jeong 이 tools/jeong-up.sh 로 이 스크립트를 부른 경우(DEMO_DAY_JEONG=1)엔 이미 사람 터미널에서 도는 것이라 여기서 바로 연다
   if [ "${DEMO_DAY_JEONG:-0}" = 1 ]; then
-    nohup bash tools/demo-tunnel.sh > "$DEMO_DAY_LOG_DIR/tunnel.log" 2>&1 &
+    nohup bash tools/demo-tunnel.sh < /dev/null > "$DEMO_DAY_LOG_DIR/tunnel.log" 2>&1 &
     echo "터널: Jeong 실행 묶음 안에서 뒤로 엶 (로그 tunnel.log)" | tee -a "$PROGRESS"
   else
     echo "기다림: 터널. 사람 터미널에서 bash tools/demo-tunnel.sh" | tee -a "$PROGRESS"
@@ -437,15 +478,47 @@ print(u.urlunsplit((p.scheme, auth + sys.argv[2] + ":5432", p.path, "sslmode=req
     kv DB_DISPOSABLE "1"
     kv REPL_TARGET_CA_FILE "$STATE/rds-ap-northeast-2-bundle.pem"
     kv REPL_TARGET_SSLMODE "verify-full"
-    kv REPL_TARGET_URL "postgres://{tf:db_username}:{tf:db_password}@{tf:db_address}:5432/shop_api"
-    kv REPL_TARGET_PEER_URL "postgres://{tf:db_username}:{tf:db_password}@{tf:db_address}:5432/shop_api?sslmode=require"
+    kv REPL_TARGET_URL "postgres://{tf:db_username}:{tf:db_password}@{tf:db_address}:5432/{tf:db_name}"
+    kv REPL_TARGET_PEER_URL "postgres://{tf:db_username}:{tf:db_password}@{tf:db_address}:5432/{tf:db_name}?sslmode=require"
     kv REPL_TARGET_PROVIDER "rds"
+    # PF-E (FM-APP-13): 앱 계정 이름. 없으면 기본 app_user 라 출발(CNPG owner app)에 없어 precheck DB-05 로 멈췄다. 펜스(쓰기 막기)도 이 계정에 건다
+    kv REPL_SOURCE_APP_ROLE "${REPL_SOURCE_APP_ROLE:-app}"
+    kv REPL_TARGET_APP_ROLE "{tf:db_username}"
+    # SCHEMACOPY (11/3 9회차 F16): 도착 RDS 는 terraform 이 빈 DB 로 만들고 앱 마이그레이션은 이 경로에서 안 돈다 → 워커 sync 가 복제 전에
+    #   출발 표 모양(데이터 없음)·앱 계정을 도착에 만들게 켠다 (packages/replication/src/schema.ts)
+    kv REPL_COPY_SCHEMA "1"
     kv REPL_SOURCE_PEER_URL "$peer"
     kv REPL_SOURCE_SSLMODE "disable"
+    # PF-E11 (FM-APP-20) DRAFT(ai): 도착 구독 접속 문자열에 출발 관리자 비밀번호 대신 이 이전 전용 복제 계정(teardown 때 지움). 끄려면 REPL_EPHEMERAL_USER=0
+    kv REPL_EPHEMERAL_USER "${REPL_EPHEMERAL_USER:-1}"
+    # PF-E13 (FM-APP-24): 워커는 --env-file=.env 도 읽는데 Node 는 "없는 값만" 채운다 → 여기서 안 적은 REPL_*·SYNC_* 는 .env 옛 값이 새어 든다
+    #   (옛 REPL_TABLES=customers,orders 면 DB-T1 로 SYNC_FAILED). 복제가 읽는 값은 전부 여기서 정한다. 빈 값 = 기본값
+    kv REPL_COPY_SCHEMA "${REPL_COPY_SCHEMA:-1}"
+    kv REPL_SOURCE_PROVIDER "postgres"
+    kv REPL_TABLES ""
+    kv REPL_SOURCE_SCHEMA ""
+    kv REPL_TARGET_SCHEMA ""
+    kv REPL_SOURCE_CA_FILE ""
+    kv REPL_CA_FILE ""
+    kv REPL_SSLMODE ""
+    kv REPL_FACTS_FILES ""
+    kv REPL_MAX_LAG_MS ""
+    kv REPL_GATE_SAMPLES ""
+    kv REPL_MAX_CATCHUP_MS ""
+    kv REPL_PEER_CONNECT_TIMEOUT_SEC ""
+    kv REPL_RUN_AS_OWNER ""
+    kv SYNC_RETRY_DELAYS_SEC ""
+    kv SYNC_EXHAUSTED_ACTION ""
+    kv SYNC_STUB_FAIL ""
+    kv SYNC_COPY_RECHECK_SEC ""
+    kv SYNC_COPY_MAX_WAIT_SEC ""
+    kv SYNC_EVIDENCE_WAIT_MS ""
+    kv REPL_MAX_MARKER_RTT_MS ""
     kv CF_CHECK_SOURCE_ORIGIN "${SRC_ORIGIN:-}"
     kv CF_CHECK_TARGET_ORIGIN "${TGT_ORIGIN:-}"
     # z75-36: 관찰 시간 4초로 고정 (VM 2·4·6초 비교에서 S4 10.4초·최대 대기 4.6초, 대본 문단 3 읽기 32~39초 안). 맥 .env 엔 값이 없어 기본 30초가 된다
     kv TRAFFIC_OBSERVE_SEC "${TRAFFIC_OBSERVE_SEC:-4}"
+    kv ONPREM_KUBE_CONTEXT "$ONPREM_KUBE_CONTEXT"
   } > "$ENVF"
   chmod 600 "$ENVF"
   echo "공개 설정 $(grep -c '=' "$ENVF")줄 → $ENVF (.env 는 안 고침)"
@@ -463,7 +536,7 @@ u_rds_start() {
   tunnel_wait 60 || return 1
   env SMOKE_SOURCE_ENV_ID="${SMOKE_SOURCE_ENV_ID:-55555555-5555-4555-8555-555555555555}" \
     SMOKE_TARGET_ENV_ID="${SMOKE_TARGET_ENV_ID:-22222222-2222-4222-8222-222222222222}" \
-    SMOKE_TIMEOUT_MS=1200000 ROLLBACK_WINDOW_SEC=3 npm run -s smoke > "$DEMO_DAY_LOG_DIR/rds-smoke.log" 2>&1 &
+    SMOKE_TIMEOUT_MS=1200000 ROLLBACK_WINDOW_SEC=3 npm run -s smoke < /dev/null > "$DEMO_DAY_LOG_DIR/rds-smoke.log" 2>&1 &
   RDS_PID=$!
   echo "$RDS_PID" > "$STATE/smoke.pid"   # UPREV-A: down·다음 up 이 남은 smoke 를 끌 수 있게
   echo "smoke 뒤에서 시작 (pid $RDS_PID, 로그 rds-smoke.log)"
@@ -487,17 +560,27 @@ u_rds_wait() {
   echo "경고: smoke rc=$rc 지만 RDS available → 계속 (로그 rds-smoke.log, DEMO_DAY_STRICT=1 이면 실패)"
   return 0
 }
+# PF FM-ORC-17: dev:* 는 tsx watch 라 실검증 도중 git checkout·.ts 저장이 워커를 다시 띄우고, 자식 terraform apply·destroy 가 같이 죽어
+#   state 밖 고아 자원이 남는다 → 기본은 watch 없는 start:*. 코드를 고치며 돌릴 때만 DEMO_DAY_WATCH=1
+d_run_script() { if [ "${DEMO_DAY_WATCH:-}" = 1 ]; then echo "dev:$1"; else echo "start:$1"; fi; }
 u_workers() {
   local i
-  if [ "$DRY" = 1 ]; then echo "DRY: MOCK_IAC= GITOPS_DISABLE=1 nohup npm run dev:worker / dev:api & (PLAN_ACKS=$([ "${DEMO_DAY_PLAN_ACKS:-}" = 1 ] && echo 1 || echo 기본))" >> "$PROGRESS"; return 0; fi
+  # FM-ORC-26·FM-APP-hunt-deploy-db-07: 판을 바꾸고 db:migrate 를 잊으면 워커·API 가 시작을 거부한다 → 띄우기 전에 넣는다
+  #   (플랫폼 DB 만, 앞으로만 가는 변경. 이미 다 들어갔으면 아무것도 안 함). 끄기 DEMO_DAY_AUTO_MIGRATE=0 → 그땐 남았으면 멈춤
+  if [ "$DRY" = 1 ]; then echo "DRY: db:migrate (DEMO_DAY_AUTO_MIGRATE=${DEMO_DAY_AUTO_MIGRATE:-1})" >> "$PROGRESS"
+  elif [ "${DEMO_DAY_AUTO_MIGRATE:-1}" = 1 ]; then
+    env DB_ADMIN_URL="${OWNER_DATABASE_URL:-$(sed -n 's/^OWNER_DATABASE_URL=//p' .env 2>/dev/null | tail -n 1 | tr -d "\"'")}" sh tools/db-migrate.sh < /dev/null || { echo "db:migrate 실패 → 워커·API 안 띄움 (npm run db:migrate 출력 확인)"; return 1; }
+  fi
+  if [ "$DRY" = 1 ]; then echo "DRY: MOCK_IAC= GITOPS_DISABLE=1 nohup npm run $(d_run_script worker) / $(d_run_script api) & (PLAN_ACKS=$([ "${DEMO_DAY_PLAN_ACKS:-}" = 1 ] && echo 1 || echo 0))" >> "$PROGRESS"; return 0; fi
   # UPREV-A: 3000 에 이미 API 가 있으면 새 API 는 못 뜨는데 아래 readyz 검사는 옛 API 로 통과해 버린다 → 먼저 막는다
   if curl -sf -m 2 http://localhost:3000/readyz >/dev/null 2>&1; then echo "localhost:3000 에 이미 API 가 떠 있다(옛 회차?). 끄고 다시: bash tools/demo-day.sh down 또는 lsof -ti :3000"; return 1; fi
   ( set -a; . "$ENVF"; set +a; MOCK_IAC= GITOPS_DISABLE=1 \
-    nohup npm run dev:worker > "$DEMO_DAY_LOG_DIR/worker.log" 2>&1 & echo $! > "$STATE/worker.pid" )
+    nohup npm run "$(d_run_script worker)" < /dev/null > "$DEMO_DAY_LOG_DIR/worker.log" 2>&1 & echo $! > "$STATE/worker.pid" )
   # WEBUP: 발표 화면(8080 컨테이너)이 host.docker.internal 로 붙으므로 IPv4 루프백에 확실히 연다 ("localhost" 는 맥에서 ::1 만 될 수 있음)
   # DEMOFLAGS DRAFT(ai): 계획 승인 확인 항목 게이트(회의 D5)는 기본 꺼둔다. 발표 화면(8080)이 아직 acks 를 안 보내서 켜면 화면 승인이 409 ACKS_MISSING 이다
   #   (notes/impl-1103/WEB-GAPS.md §2). 스크립트(smoke·real-flow)만 쓰는 회차나 화면이 acks 를 보내게 된 뒤엔 DEMO_DAY_PLAN_ACKS=1 로 켠다
-  ( env API_HOST=127.0.0.1 $([ "${DEMO_DAY_PLAN_ACKS:-}" = 1 ] && echo PLAN_ACKS=1) nohup npm run dev:api > "$DEMO_DAY_LOG_DIR/api.log" 2>&1 & echo $! > "$STATE/api.pid" )
+  # PF FM-ORC-05: 코드 기본값이 PLAN_ACKS 켬(0 일 때만 끔)으로 바뀌어, 위 "기본 꺼둔다"를 지키려면 0 을 명시해야 한다
+  ( env API_HOST=127.0.0.1 ONPREM_KUBE_CONTEXT="$ONPREM_KUBE_CONTEXT" PLAN_ACKS=$([ "${DEMO_DAY_PLAN_ACKS:-}" = 1 ] && echo 1 || echo 0) nohup npm run "$(d_run_script api)" < /dev/null > "$DEMO_DAY_LOG_DIR/api.log" 2>&1 & echo $! > "$STATE/api.pid" )
   # z75-43: 워커 유효 설정 줄(Z81 z81-10)을 10초 안에 본다. .env 에 PROM_URL 이 있으면 코드가 관찰을 최소 30초로 올린다(guards.ts)
   local obs out rc
   obs=$(with_env sh -c 'echo "${TRAFFIC_OBSERVE_SEC:-4}"')
@@ -510,6 +593,19 @@ u_workers() {
   echo "API 가 30초 안에 안 뜸"; return 1
 }
 # served-by 공개 주소를 B3 파일 끝에 더한다 (기본 순서에선 B3 가 served-by 보다 먼저라서)
+# APP-22: 도착 GKE 고정 출구 IP (gcp/env nat_egress_ips = /32 없는 IP 목록). GKE apply 가 끝난 뒤라야 값이 있다 → kubeconfig 다음 단계.
+#   워커 환경 파일에 계획 사실 TF_FACT_NAT_EGRESS_IPS_JSON(→ natEgressIpsJson)으로 더한다. 출발 SG 허용은 워커가 /32 를 붙인다.
+#   빈 목록이면 실패(컷오버 전 도착 앱이 출발 DB 에 못 붙음). 워커는 다음에 뜰 때 읽는다(real-session worker_env 가 다시 띄움)
+u_nat_env() {
+  local j
+  j=$(tfjson "$TFG" nat_egress_ips) || { echo "gcp/env nat_egress_ips 를 못 읽음"; return 1; }
+  j=$(printf '%s' "$j" | tr -d ' \n')
+  case "$j" in '[]'|'') echo "도착 GKE 고정 출구 IP 가 비었다 (create_gke=false 이거나 NAT 주소 없음)"; return 1 ;; esac
+  # 환경 파일엔 비밀값도 있다 → 임시 파일도 600 (umask 077), 원래 파일은 cat > 로 덮어 권한 그대로
+  ( umask 077; grep -v '^TF_FACT_NAT_EGRESS_IPS_JSON=' "$ENVF" > "$ENVF.new" 2>/dev/null; printf "%s='%s'\n" TF_FACT_NAT_EGRESS_IPS_JSON "$j" >> "$ENVF.new" ) || return 1
+  cat "$ENVF.new" > "$ENVF" && rm -f "$ENVF.new"
+  echo "도착 고정 출구 IP $(printf '%s' "$j" | grep -o '"' | wc -l | awk '{print $1/2}')개 더함"
+}
 u_cf_env() {
   printf "%s='%s'\n" CF_CHECK_SOURCE_ORIGIN "${SRC_ORIGIN:-}" CF_CHECK_TARGET_ORIGIN "${TGT_ORIGIN:-}" >> "$ENVF"
   echo "CF 오리진 2줄 더함"
@@ -568,14 +664,37 @@ u_preflight() {
   return $rc
 }
 
+# AUTHSMOKE: 실회차 smoke(RDS 이전)는 데모 계정으로 로그인한다. API 는 DEV_AUTH 없이 뜬다(x-dev-tenant 는 시험 전용, auth/settings.ts 팀 결정)
+#   → apply 전에 데모 계정 비밀번호를 플랫폼 DB 에 넣어 둔다. .env 에 DEMO_USER_PASSWORD 가 있으면 그 값으로 맞추고(화면 로그인과 같은 값),
+#   없으면 auth:seed 가 무작위 값을 .secrets/demo-login.txt(600)에만 쓴다. smoke·env:connect 는 같은 순서로 비밀번호를 찾는다
+u_login() {
+  local envpw=0 force=1
+  grep -qE '^DEMO_USER_PASSWORD=.+' .env 2>/dev/null && envpw=1
+  [ "$envpw" = 0 ] && [ -s .secrets/demo-login.txt ] && force=0
+  if [ "$DRY" = 1 ]; then echo "DRY: AUTH_SEED_FORCE=$force npm run -s auth:seed (데모 계정 비밀번호, .env 값=$envpw)" >> "$PROGRESS"; return 0; fi
+  AUTH_SEED_FORCE=$([ "$force" = 1 ] && echo 1) npm run -s auth:seed || { echo "auth:seed 실패 (플랫폼 DB·OWNER_DATABASE_URL 확인)"; return 1; }
+  [ "$envpw" = 1 ] || [ -s .secrets/demo-login.txt ] || { echo "데모 계정 비밀번호를 찾을 곳이 없다 (.env DEMO_USER_PASSWORD 또는 .secrets/demo-login.txt)"; return 1; }
+  echo "데모 계정 로그인 준비 OK (smoke 는 로그인으로 인증)"
+}
+# ENVPASS: apply 전에 온프레 출발 컨텍스트가 있고 닿는지 본다 (없으면 smoke 의 가져오기가 클러스터·RDS 를 다 만든 뒤 실패)
+u_onprem_ctx() {
+  if [ "$DRY" = 1 ]; then echo "DRY: 온프레 컨텍스트 ${ONPREM_KUBE_CONTEXT:-(못 찾음)} 확인" >> "$PROGRESS"; return 0; fi
+  [ -n "$ONPREM_KUBE_CONTEXT" ] || { echo "온프레 출발 kube 컨텍스트를 못 찾음 (kubectl config get-contexts 에 k3s-onprem 이 있어야 함. 다르면 .env ONPREM_KUBE_CONTEXT=<이름>)"; return 1; }
+  kubectl config get-contexts -o name 2>/dev/null | grep -qx "$ONPREM_KUBE_CONTEXT" || { echo "kubeconfig 에 컨텍스트 $ONPREM_KUBE_CONTEXT 없음"; return 1; }
+  kubectl --context "$ONPREM_KUBE_CONTEXT" --request-timeout=10s get nodes >/dev/null 2>&1 || { echo "컨텍스트 $ONPREM_KUBE_CONTEXT 에 못 닿음 (k3d 클러스터가 꺼졌나: k3d cluster list)"; return 1; }
+  echo "온프레 출발 컨텍스트 OK: $ONPREM_KUBE_CONTEXT (워커·API·실세션에 넘김)"
+}
+
 do_up() {
   local gpid grc
-  log "up 시작 (겹치기 순서) dry=$DRY profile=$AWS_PROFILE gcp=$GCP_PROJECT eks=$EKS_CONTEXT gke=$GKE_CONTEXT"
+  log "up 시작 (겹치기 순서) dry=$DRY profile=$AWS_PROFILE gcp=$GCP_PROJECT 도착=$GCP_TARGET eks=$EKS_CONTEXT gke=$GKE_CONTEXT"
   mkdir -p "$STATE" && chmod 700 "$STATE"
   # 지난 회차 중계기 IP·호스트 키·프로세스를 치움 → demo-tunnel 은 이번 up 이 relay_ip 를 새로 적을 때까지 기다린다
   step stale u_stale || abort "지난 회차 정리 실패"
   # GATE: 점검 FAIL 줄을 진행 파일에도 옮긴다 (Jeong 은 progress.log 만 본다 → 원인을 바로 보게)
   step tools u_tools || { grep -E '^(FAIL|없는 도구|플랫폼 DB|~/.ssh)' "$DEMO_DAY_LOG_DIR/tools.log" 2>/dev/null | tee -a "$PROGRESS"; abort "시작 점검 실패 (위 FAIL 줄, 자세한 건 tools.log)"; }
+  step login u_login || abort "데모 계정 로그인 준비 실패 (smoke 가 401 로 멈춘다)"
+  step onprem-ctx u_onprem_ctx || abort "온프레 출발 컨텍스트 없음 (가져오기가 context was not found 로 멈춘다)"
   APPLIED=1
   step gke-apply u_gke & gpid=$!; BGPIDS=$gpid
   step vpc-apply u_vpc || abort "aws/env (EKS 없이) apply 실패"
@@ -587,6 +706,7 @@ do_up() {
   wait $gpid; grc=$?; BGPIDS=""
   [ $grc -eq 0 ] || { FAILED="$FAILED gke-apply"; abort "GKE apply 실패"; }
   step kubeconfig u_kubeconfig || abort "kubeconfig 실패"
+  step nat-env u_nat_env || abort "도착 고정 출구 IP 실패"
   step served-by u_served_by || abort "served-by 실패"
   step cf-env u_cf_env
   step b4-rds-wait u_rds_wait || abort "B4 RDS 실패"
@@ -596,13 +716,16 @@ do_up() {
 }
 
 do_up_serial() {
-  log "up 시작 (예전 순서) dry=$DRY profile=$AWS_PROFILE gcp=$GCP_PROJECT eks=$EKS_CONTEXT gke=$GKE_CONTEXT"
+  log "up 시작 (예전 순서) dry=$DRY profile=$AWS_PROFILE gcp=$GCP_PROJECT 도착=$GCP_TARGET eks=$EKS_CONTEXT gke=$GKE_CONTEXT"
   mkdir -p "$STATE" && chmod 700 "$STATE"
   step stale u_stale || abort "지난 회차 정리 실패"
   step tools u_tools || { grep -E '^(FAIL|없는 도구|플랫폼 DB|~/.ssh)' "$DEMO_DAY_LOG_DIR/tools.log" 2>/dev/null | tee -a "$PROGRESS"; abort "시작 점검 실패 (위 FAIL 줄, 자세한 건 tools.log)"; }
+  step login u_login || abort "데모 계정 로그인 준비 실패 (smoke 가 401 로 멈춘다)"
+  step onprem-ctx u_onprem_ctx || abort "온프레 출발 컨텍스트 없음 (가져오기가 context was not found 로 멈춘다)"
   APPLIED=1
   par gke-apply u_gke eks-apply u_eks || abort "클러스터 apply 실패"
   step kubeconfig u_kubeconfig || abort "kubeconfig 실패"
+  step nat-env u_nat_env || abort "도착 고정 출구 IP 실패"
   # 아래 셋은 변수를 다음 단계로 넘기므로 하위 셸 없이 부른다 (출력은 단계 로그로)
   log "step=served-by start"; t=$(now_s); u_served_by >> "$DEMO_DAY_LOG_DIR/served-by.log" 2>&1; rc=$?; log "step=served-by end rc=$rc sec=$(( $(now_s) - t ))"; [ $rc -eq 0 ] || { FAILED="$FAILED served-by"; abort "served-by 실패"; }
   log "step=b1-facts start"; t=$(now_s); u_facts >> "$DEMO_DAY_LOG_DIR/b1-facts.log" 2>&1; rc=$?; log "step=b1-facts end rc=$rc sec=$(( $(now_s) - t ))"; [ $rc -eq 0 ] || { FAILED="$FAILED b1-facts"; abort "B1 실패"; }
@@ -643,9 +766,29 @@ d_elb_zero() {
   echo "ELB $n 개 남음 (${ELB_ZERO_WAIT_SEC:-300}초)"; return 1
 }
 # npm run 은 아래에 sh·tsx·node 를 띄운다. 맨 위 pid 만 끄면 워커가 살아남아 작업을 계속 집는다. 자식부터 끈다
-killtree() { local c; for c in $(pgrep -P "$1" 2>/dev/null); do killtree "$c"; done; kill "$1" 2>/dev/null; return 0; }
+# PF FM-CLD-15·FM-ORC-14: 가장 깊은 자식부터 끄면 terraform 아래 provider 플러그인이 terraform 보다 먼저 죽어, 만들던 RDS·Cloud SQL 이 state 밖 고아가 됐다.
+#   terraform 을 만나면 그 아래로 내려가지 않고 terraform 에만 INT (새 자원 시작 안 함 + 진행 중 것 끝내고 state 씀). 끝은 아래 tf_wait_idle 이 기다린다
+killtree() {
+  local c n; n=$(ps -p "$1" -o comm= 2>/dev/null)
+  case "$n" in *terraform) kill -INT "$1" 2>/dev/null; echo "terraform pid $1 에 INT 만 (provider 는 안 건드림, state 를 쓰고 끝나게)"; return 0 ;; esac
+  for c in $(pgrep -P "$1" 2>/dev/null); do killtree "$c"; done; kill "$1" 2>/dev/null; return 0
+}
 # UPREV-A: pid 파일의 pid 가 재사용돼 남의 프로세스일 수 있다(맥 pid 는 돈다) → 우리가 띄운 종류(npm·node·tsx·터널·ssh)일 때만 끈다
 proc_ours() { local c; c=$(ps -p "$1" -o command= 2>/dev/null) || return 1; case "$c" in *npm*|*node*|*tsx*|*demo-tunnel*|*ssh*) return 0 ;; esac; return 1; }
+# STUCKLOCK: 이 회차에서 멈춘 이전(paused·failed·rolling_back)을 정식 API 길로 닫는다 → 환경 잠금이 풀려 다음 up 승인이 409 ENV_BUSY 로 안 막힌다.
+#   api·worker 가 아직 떠 있을 때(procs 전) 부른다. paused 는 rollback 작업이 돌아야 끝나기 때문.
+#   DRAFT(ai): failed 는 cancel {manualCleanupConfirmed:true} 로 닫는다. 이 뒤 down 이 자원을 지우고 cloud-zero 가 0 을 확인하는 것을
+#   "수동 정리 확인"으로 본다 (cloud-zero 가 FAIL 이면 그 줄을 보고 사람이 남은 자원을 치운다). 대안 "잠금 청소 대상에 paused·failed 추가"는 버림:
+#   반쯤 만든 자원이 있을 수 있어 사람이 보라고 남긴 잠금이다 (packages/core/src/envlock.ts).
+#   api 가 이미 없으면(두 번째 down 등) 실패로 치지 않고 손 명령만 알린다
+d_close_stuck() {
+  if [ "$DRY" = 1 ]; then echo "DRY: npx tsx tools/close-stuck.ts" >> "$PROGRESS"; return 0; fi
+  local rc
+  [ -d node_modules ] && curl -fs -m 3 -o /dev/null "http://localhost:${API_PORT:-3000}/healthz" || { echo "api 가 없어 못 닫음 → api·worker 를 띄운 뒤 손으로: npx tsx tools/close-stuck.ts"; return 0; }
+  env API_PORT="${API_PORT:-3000}" npx tsx tools/close-stuck.ts < /dev/null; rc=$?
+  [ $rc -eq 2 ] && { echo "api 가 없어 못 닫음 → api·worker 를 띄운 뒤 손으로: npx tsx tools/close-stuck.ts"; return 0; }
+  return $rc
+}
 d_procs() {
   local f pid
   for f in worker api tunnel smoke; do
@@ -654,6 +797,14 @@ d_procs() {
     if [ -n "$pid" ] && proc_ours "$pid"; then run killtree "$pid"; else echo "$f pid ${pid:-?} 는 이미 끝났거나 우리 프로세스가 아님 → 건너뜀"; fi
     [ "$DRY" = 1 ] || rm -f "$STATE/$f.pid"
   done
+  # FM-ORC-22: pid 파일 밖에 남은 워커(npm 만 꺼져 고아가 된 node·tsx, 지표 포트 9465~ LISTEN, cwd */apps/worker)도 트리째 끈다 (pkill -f 안 씀)
+  local left
+  . tools/proc-leftovers.sh
+  left=$(pl_workers | tr '\n' ' ')
+  if [ -n "${left% }" ]; then
+    if [ "$DRY" = 1 ]; then echo "DRY: 남은 워커 pid ${left% } 를 트리째 끔" >> "$PROGRESS"
+    else echo "남은 워커 pid ${left% } (pid 파일 밖) → 트리째 끔"; pl_kill $left; fi
+  fi
   return 0
 }
 # GATE: 다른 terraform(끊긴 smoke 의 apply — TERM 을 받아도 만들던 자원은 끝까지 만들고 state 에 적는다)이 끝날 때까지 기다린다.
@@ -700,9 +851,14 @@ d_migration_tf() {
 d_connect_stack() {
   local r s stacks="" rc=0
   [ "${DEMO_DAY_CONNECT_STACK:-1}" = 1 ] || { echo "DEMO_DAY_CONNECT_STACK=0 → 연결 스택은 안 지움"; return 0; }
-  if [ "$DRY" = 1 ]; then echo "DRY: aws cloudformation describe-stack-resources --physical-resource-id svc-observe|svc-operate → delete-stack → wait stack-delete-complete" >> "$PROGRESS"; return 0; fi
+  if [ "$DRY" = 1 ]; then echo "DRY: aws cloudformation describe-stack-resources --physical-resource-id svc-observe|svc-operate + describe-stacks svc-connect-* → delete-stack → wait stack-delete-complete" >> "$PROGRESS"; return 0; fi
   for r in svc-observe svc-operate; do
     s=$(aws cloudformation describe-stack-resources --physical-resource-id "$r" --query 'StackResources[0].StackName' --output text 2>/dev/null)
+    case "$s" in ''|None) ;; *) case " $stacks " in *" $s "*) ;; *) stacks="$stacks $s" ;; esac ;; esac
+  done
+  # RV-04: 만들다 실패해 되돌린 스택(ROLLBACK_COMPLETE·CREATE_FAILED 등)은 역할이 없어 위 조회로 안 잡힌다. cloud-zero 는 이름(svc-connect-*)으로 세므로
+  #   같은 기준으로 한 번 더 모은다 (지워진 스택은 describe-stacks 에 안 나옴)
+  for s in $(aws cloudformation describe-stacks --query "Stacks[?starts_with(StackName,'svc-connect-')].StackName" --output text 2>/dev/null); do
     case "$s" in ''|None) ;; *) case " $stacks " in *" $s "*) ;; *) stacks="$stacks $s" ;; esac ;; esac
   done
   [ -n "$stacks" ] || { echo "연결 스택 없음"; return 0; }
@@ -712,6 +868,13 @@ d_connect_stack() {
     else echo "  $s 삭제 완료를 못 확인 (DELETE_FAILED 면 콘솔에서 남은 자원 확인) → cloud-zero 가 판정"; rc=1; fi
   done
   return $rc
+}
+# HUNT-CLD-01: GCP 쪽 연결 정리 — 플랫폼 회사 전용 SA(t-*)와 그 SA 를 주체로 한 바인딩 (AWS connect-stack 과 짝). 고객 SA(svc-*)·커스텀 역할은 남긴다
+#   (역할은 지우면 같은 ID 를 37일 못 만듦). 이전별 destroy(빌린 SA 를 쓸 수 있음) 뒤에 돈다. DEMO_DAY_CONNECT_STACK=0 이면 건너뜀
+#   다음 회차: gcp-platform-tenant-sa.sh → gcp-connect.sh 를 다시 돌려야 빌리기가 된다
+d_connect_gcp() {
+  [ "${DEMO_DAY_CONNECT_STACK:-1}" = 1 ] || { echo "DEMO_DAY_CONNECT_STACK=0 → 회사 전용 SA 는 안 지움"; return 0; }
+  run env GCP_PROJECT="$GCP_PROJECT" bash tools/gcp-tenant-sa.sh purge
 }
 d_relay() { tf_has_state "$TFR" || return 0
   # Z38 R8-27: 모듈의 data "aws_vpc" 가 destroy 때도 vpc_id 를 읽는다 → 아직 살아 있는 env 의 진짜 값을 넘긴다 (나머지는 쓰지 않는 자리값)
@@ -842,10 +1005,32 @@ d_eks() {
 #   (앞의 것이 뒤의 것을 쓰고 있으면 뒤의 것이 안 지워진다). 기본(주석 없는 LoadBalancer)은 대상 풀 방식, k8s2-* 는 l4-rbs 주석일 때만 생긴다.
 #   클러스터가 살아 있고 Service 가 남아 있으면 GKE 가 다시 만들 수 있다 → d_gke 가 destroy 성공 뒤에 한 번 더 부르고 남은 수를 센다.
 #   $2=after 이면 클러스터가 없을 때만 남는 gke-<클러스터>-* 방화벽도 지운다. 끝 코드 = 지운 뒤 다시 센 남은 수가 0 이면 0
+# FM-CLD-12: 같은 프로젝트에 우리 말고 다른 GKE 클러스터가 있으면(또는 목록을 못 읽으면) "좁힌 모드":
+#   대상 풀은 인스턴스가 gke-$CLUSTER_NAME-* 인 것만, 전달 규칙은 그 풀을 가리키는 것만 지운다.
+#   이름만으로는 어느 클러스터 것인지 모르는 k8s2-* 백엔드·상태 확인·NEG, k8s-* 상태 확인은 건너뛰고 경고만 (cloud-zero 가 판정).
+#   방화벽은 원래도 우리 VPC($net)로 좁혀져 있어 그대로. 다른 클러스터가 없을 때만 예전처럼 프로젝트 전체
 gcp_orphans() {
-  local net=$1 when=${2:-} r n reg z left
-  gq() { gcloud "$@" --project "$GCP_PROJECT" 2>/dev/null; }
-  gd() { gcloud "$@" --project "$GCP_PROJECT" --quiet >/dev/null 2>&1 || true; }
+  local net=$1 when=${2:-} r n reg z left cl others=unknown pools="" tgt ins
+  gq() { gcloud "$@" --project "$GCP_TARGET" 2>/dev/null; }
+  gd() { gcloud "$@" --project "$GCP_TARGET" --quiet >/dev/null 2>&1 || true; }
+  if cl=$(gcloud container clusters list --project "$GCP_TARGET" --format='value(name)' 2>/dev/null); then
+    others=$(printf '%s\n' "$cl" | grep -v -x -e "$CLUSTER_NAME" -e '' | grep -c . || true)
+  fi
+  if [ "$others" != 0 ]; then
+    if [ "$others" = unknown ]; then echo "GKE 클러스터 목록을 못 읽음"; else echo "같은 프로젝트에 다른 GKE 클러스터 ${others}개"; fi
+    echo "→ 우리 노드(gke-$CLUSTER_NAME-*)를 가리키는 LB 만 지움"
+    while read -r n reg ins; do
+      [ -n "$n" ] && [ -n "$reg" ] || continue
+      case "$ins" in */gke-"$CLUSTER_NAME"-*) ;; *) continue ;; esac
+      pools="$pools $n"
+      gq compute forwarding-rules list --filter="target~/targetPools/$n\$" --format='value(name,region.basename())' |
+        while read -r r z; do [ -n "$r" ] || continue; echo "고아 전달 규칙 지움: $r"; gd compute forwarding-rules delete "$r" --region "${z:-$reg}"; done
+      echo "고아 대상 풀 지움: $n"; gd compute target-pools delete "$n" --region "$reg"
+    done <<EOF_POOLS
+$(gq compute target-pools list --filter='description~kubernetes.io/service-name' --format='value(name,region.basename(),instances.list())')
+EOF_POOLS
+    echo "건너뜀: k8s2-* 백엔드·상태 확인·NEG, k8s-* 상태 확인 (어느 클러스터 것인지 이름으로 모름 → cloud-zero 판정)"
+  else
   # 전달 규칙: 전역 규칙이면 region 칸이 빈다 → --global 로 (GATE g1: 예전엔 --region "" 로 실패)
   gq compute forwarding-rules list --filter='description~kubernetes.io/service-name' --format='value(name,region.basename())' |
     while read -r n reg; do [ -n "$n" ] || continue; echo "고아 전달 규칙 지움: $n ${reg:-전역}"
@@ -863,18 +1048,26 @@ gcp_orphans() {
       if [ -n "$reg" ]; then gd compute health-checks delete "$n" --region "$reg"; else gd compute health-checks delete "$n" --global; fi; done
   gq compute network-endpoint-groups list --filter='name~^k8s2-' --format='value(name,zone.basename())' |
     while read -r n z; do [ -n "$n" ] && [ -n "$z" ] || continue; echo "고아 NEG 지움: $n"; gd compute network-endpoint-groups delete "$n" --zone "$z"; done
+  fi
   for r in $(gq compute firewall-rules list --filter="network~/$net\$ AND name~^k8s" --format='value(name)'); do
     echo "고아 k8s 방화벽 지움: $r"; gd compute firewall-rules delete "$r"
   done
   # 클러스터가 정말 없을 때만(목록 조회 성공 + 이름 없음) GKE 자체 방화벽 gke-<이름>-* 를 지운다. 조회가 실패하면 건드리지 않는다
-  if [ "$when" = after ] && n=$(gcloud container clusters list --project "$GCP_PROJECT" --filter="name~^$CLUSTER_NAME\$" --format='value(name)' 2>/dev/null) && [ -z "$n" ]; then
+  if [ "$when" = after ] && n=$(gcloud container clusters list --project "$GCP_TARGET" --filter="name~^$CLUSTER_NAME\$" --format='value(name)' 2>/dev/null) && [ -z "$n" ]; then
     for r in $(gq compute firewall-rules list --filter="network~/$net\$ AND name~^gke-$CLUSTER_NAME-" --format='value(name)'); do
       echo "고아 GKE 방화벽 지움: $r"; gd compute firewall-rules delete "$r"
     done
   fi
+  if [ "$others" != 0 ]; then
+    # 좁힌 모드: 남은 것도 우리 것만 센다 (남의 LB 가 있다고 down 이 실패하지 않게)
+    left=$( { for n in $pools; do gq compute target-pools list --filter="name=$n" --format='value(name)'
+                gq compute forwarding-rules list --filter="target~/targetPools/$n\$" --format='value(name)'; done
+              gq compute firewall-rules list --filter="network~/$net\$ AND name~^k8s" --format='value(name)'; } | grep -c . )
+  else
   left=$( { gq compute forwarding-rules list --filter='description~kubernetes.io/service-name' --format='value(name)'
             gq compute target-pools list --filter='description~kubernetes.io/service-name' --format='value(name)'
             gq compute firewall-rules list --filter="network~/$net\$ AND name~^k8s" --format='value(name)'; } | grep -c . )
+  fi
   [ "${left:-0}" -eq 0 ] || echo "아직 남은 GKE LB 자원 ${left}개"
   [ "${left:-0}" -eq 0 ]
 }
@@ -885,7 +1078,7 @@ gcp_sql_sweep() {
   local n t list
   [ "${DEMO_DAY_SQL_SWEEP:-1}" = 1 ] || { echo "Cloud SQL 쓸어 담기 꺼짐 (DEMO_DAY_SQL_SWEEP=0)"; return 0; }
   if [ "$DRY" = 1 ]; then echo "DRY: gcloud sql instances list (라벨 managed-by=platform) → 복제본 먼저 delete" >> "$PROGRESS"; return 0; fi
-  if ! list=$(gcloud sql instances list --project "$GCP_PROJECT" --filter='settings.userLabels.managed-by=platform' --format='value(name,instanceType)' 2>&1); then
+  if ! list=$(gcloud sql instances list --project "$GCP_TARGET" --filter='settings.userLabels.managed-by=platform' --format='value(name,instanceType)' 2>&1); then
     case "$list" in *"not enabled"*|*"has not been used"*|*SERVICE_DISABLED*) echo "Cloud SQL API 꺼짐 → 남은 Cloud SQL 없음"; return 0 ;; esac
     echo "Cloud SQL 목록 조회 실패 → 건너뜀 (cloud-zero 가 판정)"; return 0
   fi
@@ -893,7 +1086,7 @@ gcp_sql_sweep() {
     printf '%s\n' "$list" | while read -r n ty; do
       [ -n "$n" ] && [ "$ty" = "$t" ] || continue
       echo "남은 Cloud SQL 지움 ($t): $n"
-      gcloud sql instances delete "$n" --project "$GCP_PROJECT" --quiet >/dev/null 2>&1 || echo "  지우기 실패: $n (이미 지우는 중이면 괜찮다)"
+      gcloud sql instances delete "$n" --project "$GCP_TARGET" --quiet >/dev/null 2>&1 || echo "  지우기 실패: $n (이미 지우는 중이면 괜찮다)"
     done
   done
   return 0
@@ -910,39 +1103,83 @@ d_gke() {
     [ "$DRY" = 1 ] || gcp_orphans "$net" after
     return 0
   fi
-  run gcloud compute networks peerings delete servicenetworking-googleapis-com --network "$net" --project "$GCP_PROJECT" --quiet 2>&1 | tail -1 || true
+  run gcloud compute networks peerings delete servicenetworking-googleapis-com --network "$net" --project "$GCP_TARGET" --quiet 2>&1 | tail -1 || true
   if [ "$DRY" = 1 ] || terraform -chdir="$TFG" state list 2>/dev/null | grep -qx 'google_service_networking_connection.psa'; then
     run terraform -chdir="$TFG" state rm google_service_networking_connection.psa
   fi
   [ "$DRY" = 1 ] || gcp_orphans "$net"
   for i in 1 2 3; do
-    if run terraform -chdir="$TFG" destroy -input=false -auto-approve -var "project_id=$GCP_PROJECT" -var "zone=$GCP_ZONE" -var "name=$CLUSTER_NAME"; then
+    if run terraform -chdir="$TFG" destroy -input=false -auto-approve -var "project_id=$GCP_TARGET" -var "zone=$GCP_ZONE" -var "name=$CLUSTER_NAME"; then
       [ "$DRY" = 1 ] && return 0
       for j in 1 2 3; do gcp_orphans "$net" after && return 0; echo "고아 LB 다시 확인 ${j}/3"; sleep 20; done
       echo "gcp/env 는 지웠지만 GKE LB 자원이 남음 → cloud-zero 가 판정"; return 1
     fi
     echo "gcp/env destroy ${i}번째 실패 → 피어링·고아 LB 자원 정리 뒤 30초 쉬고 다시"
     [ "$DRY" = 1 ] || { gcp_orphans "$net" after; sleep 30; }
-    run gcloud compute networks peerings delete servicenetworking-googleapis-com --network "$net" --project "$GCP_PROJECT" --quiet 2>&1 | tail -1 || true
+    run gcloud compute networks peerings delete servicenetworking-googleapis-com --network "$net" --project "$GCP_TARGET" --quiet 2>&1 | tail -1 || true
   done
   return 1
 }
+# RV-05: ECS 출발 샘플(ecs-source)도 down 이 지운다. 실세션이 ecs-up 뒤(ecs-import 등)에서 실패하면 감시 창은 jeong-down 만 치는데,
+#   예전 down 은 ECS 를 안 지워 Fargate 가 계속 과금되고 cloud-zero 가 영영 FAIL 이었다. 상태 파일에 ECS 자원이 있을 때만 부른다 (조회는 파일만, 클라우드 호출 0)
+#   상태 위치: 모듈 폴더(지금 실제 위치, FM-CLD-13) 또는 ECS_SOURCE_STATE. 남기려면 DEMO_DAY_ECS_DOWN=0
+d_ecs_source() {
+  local st found=""
+  [ "${DEMO_DAY_ECS_DOWN:-1}" = 1 ] || { echo "DEMO_DAY_ECS_DOWN=0 → ECS 출발 샘플은 안 지움"; return 0; }
+  if [ "$DRY" = 1 ]; then echo "DRY: (ECS 상태 있으면) bash tools/ecs-source.sh down" >> "$PROGRESS"; return 0; fi
+  for st in infra/modules/aws/ecs-source/terraform.tfstate "${ECS_SOURCE_STATE:-$HOME/.svc-tf/ecs-source}/terraform.tfstate"; do
+    # PF FM-CLD-hunt-cloud-24: 클러스터 만들기 전에 실패해도 보안 그룹·로그 그룹·IAM 역할이 남는다 → aws 자원이 하나라도 있으면 down
+    #   (예전: aws_ecs_* 가 있을 때만. data 만 있는 상태여도 destroy 는 아무것도 안 지우고 끝나 해 없음)
+    [ -s "$st" ] && grep -q '"type": *"aws_' "$st" && found=$st
+  done
+  [ -n "$found" ] || { echo "ECS 출발 샘플 상태에 자원 없음 → 건너뜀"; return 0; }
+  echo "ECS 출발 샘플 상태 있음 ($found) → ecs-source.sh down"
+  bash tools/ecs-source.sh down
+}
 # UPREV-B: 지운 직후엔 NAT·EKS·RDS·ENI 가 "지우는 중"으로 한동안 남는다 → 10분까지 30초마다 다시 본다 (0 이면 바로 통과)
+# pf-d FM-TRF-09: Cloudflare LB → pool → 모니터 (cf-check 이름만). 워커를 끈 뒤(procs) 지운다. 토큰이 없으면 건너뜀 (남은 것은 cloud-zero cf 줄이 판정)
+d_cf() {
+  if [ -z "${CLOUDFLARE_API_TOKEN:-}${CF_API_TOKEN:-}" ] && ! grep -Eq '^(CLOUDFLARE|CF)_API_TOKEN=.' .env 2>/dev/null; then echo "Cloudflare 토큰 없음 → 건너뜀"; return 0; fi
+  if [ -f .env ]; then run node --env-file=.env --import tsx scripts/cf-check.ts --cleanup --apply --force; else run node --import tsx scripts/cf-check.ts --cleanup --apply --force; fi
+}
 d_zero() { CLOUD_ZERO_WAIT_SEC=${CLOUD_ZERO_WAIT_SEC:-600} run bash tools/cloud-zero.sh; }
 
 do_down() {
   log "down 시작 dry=$DRY"
   step served-by-down d_served_by
   step elb-zero d_elb_zero
+  step close-stuck d_close_stuck
   step procs d_procs
+  step cf-lb-delete d_cf
   step migration-destroy d_migration_tf
   step secrets-purge secrets_purge
   step connect-stack d_connect_stack
+  step connect-gcp d_connect_gcp
   step relay-destroy d_relay
+  step ecs-source-down d_ecs_source
   par eks-destroy d_eks gke-destroy d_gke
   if [ "$DRY" = 0 ] && [ -f "$ENVF" ] && [ -z "$FAILED" ]; then rm -f "$ENVF"; fi
   step cloud-zero d_zero
+  # WRONGROOT: 다 지웠으면 up 폴더 표를 치운다 (다음 회차가 다른 폴더에서 up 해도 되게)
+  [ "$DRY" = 0 ] && [ -z "$FAILED" ] && rm -f "$UPROOT"
   finish
 }
 
+# WRONGROOT (FM-OPS-05 맥): terraform 상태는 모듈 폴더(로컬 tfstate)에 있다. 다른 레포 폴더(예: Service-impl1103 대신 Service)에서 down 을 치면
+#   destroy 를 전부 "상태 흔적 없음 → 생략" 으로 건너뛰고 cloud-zero 만 FAIL → 자원이 남아 과금된다. up 이 친 폴더(실제 경로)를 STATE/up-root 에 남기고
+#   down 은 시작 전에 대조해 다르면 멈춘다(끝 코드 2). 그 폴더가 지워졌으면(infra/ 없음) 막지 않는다. 여기서 하려면 DEMO_DAY_ANY_ROOT=1
+UPROOT="$STATE/up-root"
+ROOTP=$(cd "$ROOT" && pwd -P)
+if [ "$DRY" = 0 ] || [ "${DEMO_DAY_ROOT_CHECK_ONLY:-0}" = 1 ]; then
+  if [ "$CMD" = up ]; then mkdir -p "$STATE" && echo "$ROOTP" > "$UPROOT"
+  else
+    ur=$(cat "$UPROOT" 2>/dev/null)
+    if [ -n "$ur" ] && [ "$ur" != "$ROOTP" ] && [ -d "$ur/infra" ] && [ "${DEMO_DAY_ANY_ROOT:-0}" != 1 ]; then
+      log "멈춤: 이 down 은 $ROOTP 에서 쳤는데 up 은 $ur 에서 했다 (terraform 상태가 거기 있다) → 그 폴더에서: sh $ur/tools/jeong-down.sh   (여기서 하려면 DEMO_DAY_ANY_ROOT=1)"
+      FINISHED=1; exit 2
+    fi
+  fi
+fi
+# 시험 전용: 위 대조만 하고 끝 (진짜 up·down 단계를 하나도 안 돈다)
+[ "${DEMO_DAY_ROOT_CHECK_ONLY:-0}" = 1 ] && { FINISHED=1; exit 0; }
 if [ "$CMD" = up ]; then if [ "$SERIAL" = 1 ]; then do_up_serial; else do_up; fi; else do_down; fi

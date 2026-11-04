@@ -56,14 +56,16 @@ async function seed() {
 // 시험용으로 상태를 바로 놓는다 (표 주인 계정). 앞 단계가 넣은 작업은 지워 작업 키가 비게 한다
 async function failAt(id: string) {
   await owner.query("DELETE FROM pgboss.job WHERE singleton_key LIKE $1", [`%:${id}`]);
-  await owner.query(`UPDATE migrations SET status='failed', failed_at_status='provisioning', failure_code='APPLY_FAILED' WHERE id=$1`, [id]);
+  await owner.query(`UPDATE migrations SET status='failed', failed_at_status='prechecking', failure_code='PRECHECK_FAILED' WHERE id=$1`, [id]);
 }
 async function pauseAt(id: string) {
   await owner.query("DELETE FROM pgboss.job WHERE singleton_key LIKE $1", [`%:${id}`]);
   await owner.query(`UPDATE migrations SET status='paused', paused_from='deploying', failure_code='JOB_FAILED_DEPLOY' WHERE id=$1`, [id]);
 }
-const post = (id: string, path: "replan" | "resume", body?: object, tenant = T) => app.inject({
-  method: "POST", url: `${P}/migrations/${id}/${path}`, ...(body ? { payload: body } : {}),
+// Jeong 11/4 01:53Z: 실패 재시도는 POST .../failure-decision {choice:"retry"} (failed 에서 replan 은 없앰). "replan" 은 stale 다시 계획만
+const post = (id: string, path: "replan" | "resume" | "retry", body?: object, tenant = T) => app.inject({
+  method: "POST", url: `${P}/migrations/${id}/${path === "retry" ? "failure-decision" : path}`,
+  ...(path === "retry" ? { payload: { choice: "retry", ...(body ?? {}) } } : body ? { payload: body } : {}),
   headers: { "x-dev-tenant": tenant, "idempotency-key": `pa5a-${randomUUID()}` } });
 const retried = async (id: string) => (await owner.query(
   "SELECT detail FROM audit_events WHERE target=$1 AND action='migration.retried' ORDER BY seq", [id])).rows.map((r) => r.detail);
@@ -84,53 +86,53 @@ test("RETRY_BUDGET=1: 두 번째부터 409 / =0: 끔(여러 번 통과) / 거부
   const id = await seed();
   process.env.RETRY_BUDGET = "1";
   try {
-    await failAt(id); assert.equal((await post(id, "replan")).statusCode, 202);
+    await failAt(id); assert.equal((await post(id, "retry")).statusCode, 202);
     await failAt(id);
     const before = (await retried(id)).length;
     const jobsBefore = (await owner.query("SELECT count(*)::int n FROM pgboss.job WHERE singleton_key LIKE $1", [`%:${id}`])).rows[0].n;
-    const over = await post(id, "replan");
+    const over = await post(id, "retry");
     assert.equal(over.statusCode, 409, over.body);
     assert.equal(over.json().code, "RETRY_BUDGET_EXHAUSTED");
     assert.equal((await retried(id)).length, before, "감사 안 남음");
     assert.equal((await owner.query("SELECT status FROM migrations WHERE id=$1", [id])).rows[0].status, "failed");
     assert.equal((await owner.query("SELECT count(*)::int n FROM pgboss.job WHERE singleton_key LIKE $1", [`%:${id}`])).rows[0].n, jobsBefore, "작업 안 생김");
     process.env.RETRY_BUDGET = "0";
-    for (let i = 0; i < 4; i++) { await failAt(id); assert.equal((await post(id, "replan")).statusCode, 202, `끔 ${i}`); }
+    for (let i = 0; i < 4; i++) { await failAt(id); assert.equal((await post(id, "retry")).statusCode, 202, `끔 ${i}`); }
   } finally { delete process.env.RETRY_BUDGET; }
 });
 
 test("한도 안에서 acceptCustomerCost:true 를 보내도 고객 부담 표시는 false, 글자 'true' 는 400", { skip }, async () => {
   const id = await seed();
   await failAt(id);
-  assert.equal((await post(id, "replan", { acceptCustomerCost: true })).statusCode, 202);
+  assert.equal((await post(id, "retry", { acceptCustomerCost: true })).statusCode, 202);
   assert.deepEqual((await retried(id)).map((d) => [d.attempt, d.customerCostAccepted]), [[1, false]]);
   await failAt(id);
-  assert.equal((await post(id, "replan", { acceptCustomerCost: "true" })).statusCode, 400);
+  assert.equal((await post(id, "retry", { acceptCustomerCost: "true" })).statusCode, 400);
   assert.equal((await retried(id)).length, 1);
 });
 
 test("한도는 이전마다 따로 센다 (다른 이전의 재시도가 안 섞임)", { skip }, async () => {
   const a = await seed(), b = await seed();
-  for (let i = 0; i < 3; i++) { await failAt(a); assert.equal((await post(a, "replan")).statusCode, 202); }
-  await failAt(a); assert.equal((await post(a, "replan")).statusCode, 409);
-  await failAt(b); assert.equal((await post(b, "replan")).statusCode, 202, "b 는 첫 시도");
+  for (let i = 0; i < 3; i++) { await failAt(a); assert.equal((await post(a, "retry")).statusCode, 202); }
+  await failAt(a); assert.equal((await post(a, "retry")).statusCode, 409);
+  await failAt(b); assert.equal((await post(b, "retry")).statusCode, 202, "b 는 첫 시도");
 });
 
 test("동시에 두 번 재시도해도(한도 직전) 한 번만 통과하고 감사는 한 줄 늘어난다", { skip }, async () => {
   const id = await seed();
-  for (let i = 0; i < 2; i++) { await failAt(id); assert.equal((await post(id, "replan")).statusCode, 202); }
+  for (let i = 0; i < 2; i++) { await failAt(id); assert.equal((await post(id, "retry")).statusCode, 202); }
   await failAt(id);
-  const rs = await Promise.all([post(id, "replan"), post(id, "replan")]);
+  const rs = await Promise.all([post(id, "retry"), post(id, "retry")]);
   const codes = rs.map((r) => r.statusCode).sort();
   assert.deepEqual(codes, [202, 409], rs.map((r) => r.body).join(" | "));
   assert.equal((await retried(id)).length, 3);
 });
 
-test("replan 거부 순서: importing 에서 실패한 이전은 REPLAN_NOT_ALLOWED(한도 계산 전), 재시도 감사 0", { skip }, async () => {
+test("재시도 거부 순서: 재시도할 단계가 없는 실패 지점(syncing)은 INVALID_TRANSITION(한도 계산 전), 재시도 감사 0", { skip }, async () => {
   const id = await seed();
-  await owner.query(`UPDATE migrations SET status='failed', failed_at_status='importing', failure_code='IMPORT_FAILED' WHERE id=$1`, [id]);
-  const r = await post(id, "replan");
+  await owner.query(`UPDATE migrations SET status='failed', failed_at_status='syncing', failure_code='SYNC_FAILED' WHERE id=$1`, [id]);
+  const r = await post(id, "retry");
   assert.equal(r.statusCode, 409);
-  assert.equal(r.json().code, "REPLAN_NOT_ALLOWED");
+  assert.equal(r.json().code, "INVALID_TRANSITION");
   assert.equal((await retried(id)).length, 0);
 });

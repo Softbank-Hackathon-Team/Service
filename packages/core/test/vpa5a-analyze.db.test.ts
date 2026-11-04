@@ -75,19 +75,15 @@ test("깃발 값 경계 (G5-1 기본 켬): '0'·' 0' 만 꺼짐 — 분석 0, �
   }
 });
 
-test("G5-1: 깃발 없음·빈 값·'1'·'true' 는 켜짐 → failed 진입 때 분석 1개 (부르는 쪽이 analyze 를 안 줘도)", { skip }, async () => {
+test("G5-1(01:53Z 개정): 깃발 없음·빈 값·'1'·'true' 는 켜짐 → failed 진입 때 분석 1개 (부르는 쪽이 analyze 를 안 줘도)", { skip }, async () => {
   for (const v of [undefined, "", "1", "true"]) {
     env({ FAILURE_ANALYSIS: v, FAKE_LLM: "1" });
     const id = await migrationAt("provisioning");
     await core.withTenant(T, (tx) => core.advance(tx, { id, tenantId: T }, "provisioning", "failed",
       { failureCode: "APPLY_FAILED", audit: { actor: "worker", action: "apply.failed", target: id, result: "error" } }));
     assert.equal((await runs(id)).length, 1, `FAILURE_ANALYSIS=${JSON.stringify(v)}`);
-    // G5-1 자원 지우기 자리: provisioning 실패는 지우기 요청 감사 1줄
-    const td = await audits(id, "target_teardown.requested");
-    assert.equal(td.length, 1);
-    // DECISION(team) ADR-066: 사람 확인 없이 자동 지우기
-    assert.equal((td[0] as { detail: { mode: string; humanConfirm: boolean } }).detail.mode, "auto");
-    assert.equal((td[0] as { detail: { mode: string; humanConfirm: boolean } }).detail.humanConfirm, false);
+    // Jeong 11/4 01:53Z (ADR-066 개정): 실패 때 자동 지우기 없음 → 사람에게 재시도를 묻고, 거절 → 롤백 끝에서 지운다
+    assert.equal((await audits(id, "target_teardown.requested")).length, 0);
   }
 });
 

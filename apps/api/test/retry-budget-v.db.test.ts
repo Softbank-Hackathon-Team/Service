@@ -22,12 +22,14 @@ before(async () => {
   const { authPlugin } = await import("../src/plugins/auth.js");
   const { idempotencyPlugin } = await import("../src/plugins/idempotency.js");
   const { planRoutes } = await import("../src/routes/plans.js");
+  const { controlRoutes } = await import("../src/routes/control.js");
   owner = new pg.Client({ connectionString: OWNER }); await owner.connect();
   await owner.query("INSERT INTO tenants (id, name) VALUES ($1,'test-vpa5a-retry')", [T]);
   app = Fastify();
   app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
   await app.register(errorsPlugin); await app.register(authPlugin); await app.register(idempotencyPlugin);
   await app.register(planRoutes, { prefix: P });
+  await app.register(controlRoutes, { prefix: P });
   await app.ready();
   await core.startBoss();
 });
@@ -38,7 +40,7 @@ after(async () => {
   await core.boss.stop({ graceful: false }); await app.close(); await core.pool.end(); await owner.end();
 });
 
-async function seed(failedAt = "provisioning") {
+async function seed(failedAt = "prechecking") {
   const id = randomUUID(), src = randomUUID(), dst = randomUUID();
   await owner.query(`INSERT INTO environments (id, tenant_id, provider, name, connection_status) VALUES ($1,$3,'aws','s','connected'), ($2,$3,'gcp','g','connected')`, [src, dst, T]);
   await owner.query(`INSERT INTO migrations (id, tenant_id, source_env_id, target_env_id, status, failed_at_status, failure_code) VALUES ($1,$2,$3,$4,'failed',$5,'APPLY_FAILED')`, [id, T, src, dst, failedAt]);
@@ -46,10 +48,13 @@ async function seed(failedAt = "provisioning") {
 }
 const refail = async (id: string) => {
   await owner.query("DELETE FROM pgboss.job WHERE singleton_key LIKE $1", [`%:${id}`]);
-  await owner.query(`UPDATE migrations SET status='failed', failed_at_status='provisioning', failure_code='APPLY_FAILED' WHERE id=$1`, [id]);
+  await owner.query(`UPDATE migrations SET status='failed', failed_at_status='prechecking', failure_code='APPLY_FAILED' WHERE id=$1`, [id]);
 };
-const replan = (id: string, body?: object, key = `v-${randomUUID()}`) => app.inject({ method: "POST", url: `${P}/migrations/${id}/replan`,
-  ...(body ? { payload: body } : {}), headers: { "x-dev-tenant": T, "idempotency-key": key } });
+// Jeong 11/4 01:53Z: 실패 재시도는 POST .../failure-decision {choice:"retry"} (failed 에서 replan 은 없앰)
+const replan = (id: string, body?: object, key = `v-${randomUUID()}`) => app.inject({ method: "POST", url: `${P}/migrations/${id}/failure-decision`,
+  payload: { choice: "retry", ...(body ?? {}) }, headers: { "x-dev-tenant": T, "idempotency-key": key } });
+const stalePlan = (id: string) => app.inject({ method: "POST", url: `${P}/migrations/${id}/replan`,
+  headers: { "x-dev-tenant": T, "idempotency-key": `v-${randomUUID()}` } });
 const retried = async (id: string) => (await owner.query("SELECT detail FROM audit_events WHERE target=$1 AND action='migration.retried' ORDER BY seq", [id])).rows.map((r) => r.detail);
 const st = async (id: string) => (await owner.query("SELECT status FROM migrations WHERE id=$1", [id])).rows[0].status as string;
 const jobs = async (id: string) => (await owner.query("SELECT count(*)::int AS n FROM pgboss.job WHERE name='precheck' AND singleton_key=$1 AND state IN ('created','active','retry')", [`precheck:${id}`])).rows[0].n as number;
@@ -124,11 +129,11 @@ test("같은 멱등 키로 다시 보내면 같은 응답이고 세는 횟수는
   assert.equal((await retried(id)).length, 2);
 });
 
-test("importing 실패는 REPLAN_NOT_ALLOWED 가 먼저 — 한도를 먹지 않는다", { skip }, async () => {
+test("재시도할 단계가 없는 실패 지점(syncing)은 INVALID_TRANSITION 이 먼저 — 한도를 먹지 않는다", { skip }, async () => {
   process.env.RETRY_BUDGET = "1";
-  const id = await seed("importing");
+  const id = await seed("syncing");
   const r = await replan(id);
-  assert.equal(r.statusCode, 409); assert.equal(r.json().code, "REPLAN_NOT_ALLOWED");
+  assert.equal(r.statusCode, 409); assert.equal(r.json().code, "INVALID_TRANSITION");
   assert.equal((await retried(id)).length, 0);
 });
 
@@ -138,7 +143,7 @@ test("stale 다시 계획은 몇 번을 해도 한도에 안 걸린다 (실패 �
   for (let i = 0; i < 3; i++) {
     await owner.query("DELETE FROM pgboss.job WHERE singleton_key LIKE $1", [`%:${id}`]);
     await owner.query("UPDATE migrations SET status='stale', failed_at_status=NULL, failure_code=NULL WHERE id=$1", [id]);
-    assert.equal((await replan(id)).statusCode, 202, `#${i + 1}`);
+    assert.equal((await stalePlan(id)).statusCode, 202, `#${i + 1}`);
   }
   assert.equal((await retried(id)).length, 0);
 });

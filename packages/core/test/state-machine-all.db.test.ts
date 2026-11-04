@@ -63,7 +63,12 @@ const OK: Partial<Record<Edge, Prep>> = {
   "rollback_window>rolling_back": { locks: "worker", windowOver: false },
   "cleanup>completed": { locks: "worker", ev: { tempResources: 0, operateRoleRevoked: true } },
   "rolling_back>rolled_back": { locks: "worker", ev: { sourceWeight100: true, sourceHealthy: true } },
-  "failed>prechecking": { failedAt: "provisioning" },
+  // Jeong 11/4 01:53Z: failed = 재시도 질문 대기. 재시도 = 실패 지점으로 (증거 failureDecision retry)
+  "failed>importing": { failedAt: "importing", ev: { failureDecision: "retry" } },
+  "failed>prechecking": { failedAt: "prechecking", ev: { failureDecision: "retry" } },
+  "failed>planning": { failedAt: "planning", ev: { failureDecision: "retry" } },
+  "failed>provisioning": { failedAt: "provisioning", locks: "reserved", ev: { failureDecision: "retry" } },
+  "failed>cutover": { failedAt: "cutover", locks: "reserved", ev: { failureDecision: "retry" } },
   "failed>rolling_back": { failedAt: "cutover", locks: "reserved" },
   "failed>cancelled": { failedAt: "cutover", locks: "reserved", ev: { manualCleanupConfirmed: true } },
   "paused>deploying": { pausedFrom: "deploying", locks: "reserved", ev: { ruleCleared: true } },
@@ -127,8 +132,8 @@ function expectLocks(from: MigrationStatus, to: MigrationStatus, before: string[
   return before;
 }
 
-test("① 표의 모든 길(54개)을 조건을 채워 한 번씩 지나간다: 상태·version·상태별 칸·환경 잠금", { skip }, async () => {
-  assert.equal(EDGES.length, 54);
+test("① 표의 모든 길(58개)을 조건을 채워 한 번씩 지나간다: 상태·version·상태별 칸·환경 잠금", { skip }, async () => {
+  assert.equal(EDGES.length, 58);
   for (const e of EDGES) {
     const [from, to] = e.split(">") as [MigrationStatus, MigrationStatus];
     const p = prepOf(e);
@@ -158,7 +163,7 @@ test("② 조건이 있는 길은 조건을 비우면 409 GUARD_FAILED, 상태·
     // 조건 표의 길 + paused 로 가는 길(T30) + paused 에서 나오는 길(T31·T32)
     if (!guarded.has(e) && to !== "paused" && from !== "paused") continue;
     // 사실(DB)·증거를 다 비운다. 단 failed 에서 나가는 길은 실패 지점이 조건이라 "틀린 지점"으로
-    const p: Prep = from === "failed" ? { failedAt: e === "failed>prechecking" ? "cutover" : "provisioning" }
+    const p: Prep = from === "failed" ? { failedAt: e === "failed>rolling_back" ? "planning" : "provisioning" }
       : from === "paused" ? { pausedFrom: e === "paused>rolling_back" ? "cleanup" : "deploying" === to ? "syncing" : "deploying" }
       : e === "rollback_window>rolling_back" ? { windowOver: true }
       : e === "approved>stale" ? { locks: "reserved", plan: "live" } : {};   // 잠금이 살아 있고 만료 전 = 낡음 아님
@@ -183,7 +188,7 @@ test("③ 표에 없는 길(22×22 중 나머지)은 전부 409 INVALID_TRANSITI
     }
     assert.equal((await row(s.id)).status, from);
   }
-  assert.equal(n, 22 * 22 - 54);
+  assert.equal(n, 22 * 22 - 58);
 });
 
 // ④ 길마다 그 길을 부르는 코드. 파일 안에 두 상태 이름이 실제로 나오는지 본다 (이름이 바뀌거나 지워지면 여기서 깨진다)
@@ -240,7 +245,11 @@ const CALLERS: Partial<Record<Edge, string[]>> = {
   "paused>rolling_back": ["apps/api/src/routes/control.ts"],
   "rolling_back>rolled_back": ["apps/worker/src/jobs/rollback.ts"],
   "rolling_back>failed": ["apps/worker/src/jobs/rollback.ts"],
-  "failed>prechecking": ["apps/api/src/routes/plans.ts"],
+  "failed>importing": ["apps/api/src/routes/control.ts"],     // 01:53Z failure-decision retry (RETRY_QUEUE)
+  "failed>prechecking": ["apps/api/src/routes/control.ts"],
+  "failed>planning": ["apps/api/src/routes/control.ts"],
+  "failed>provisioning": ["apps/api/src/routes/control.ts"],
+  "failed>cutover": ["apps/api/src/routes/control.ts"],
   "failed>rolling_back": ["apps/api/src/routes/control.ts"],
   "failed>cancelled": ["apps/api/src/routes/control.ts"],
 };
