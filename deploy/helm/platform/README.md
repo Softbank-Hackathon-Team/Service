@@ -9,7 +9,7 @@
 | External Secrets (SecretStore + ExternalSecret) | Secrets Manager `platform/app` → 컴포넌트별 Secret `<이름>-env` (적은 키만), `platform/cloudflared` → `cloudflared-token` |
 | cloudflared ×2 (general 노드) | 바깥에서 들어오는 유일한 길. 터널이 밖으로 연결을 열어서 공개 포트·로드밸런서가 없다 |
 | 서비스 계정 `worker`·`api`·`agent-worker` + 워커 Argo CD 권한 | AWS 권한은 Pod Identity(Terraform)가 이름으로 묶는다. 워커는 `argocd` 의 `applications` get·list·patch. agent-worker 는 클라우드 권한이 없다 |
-| 샌드박스 호스트 쪽 (`sandbox.enabled`) | agent-worker 가 `sbx-*` 네임스페이스에 vCluster 를 하나씩 만들고 지우는 권한, 호스트 가드 VAP 6개(테넌트별 ECR 이미지 경로 포함), StorageClass `sbx-standard`, gVisor RuntimeClass(`sandbox.gvisor.enabled` 일 때만). `sandbox.imageRegistry` 가 꼭 있어야 한다. 아래 "샌드박스" 절 |
+| 샌드박스 호스트 쪽 (`sandbox.enabled`, 기본 끔) | agent-worker 가 `sbx-*` 네임스페이스에 vCluster 를 하나씩 만들고 지우는 권한, 호스트 가드 VAP 6개(테넌트별 ECR 이미지 경로 포함), StorageClass `sbx-standard`, gVisor RuntimeClass(`sandbox.gvisor.enabled` 일 때만). `sandbox.imageRegistry` 가 꼭 있어야 한다. 아래 "샌드박스" 절 |
 
 비밀값은 차트에 없다. 사람이 Secrets Manager 에 넣는다. 앱(api·worker·web) 배포는 이 차트에 아직 없다. 앱 Deployment 는 `envFrom: secretRef: <이름>-env` 로 여기서 만든 Secret 을 쓴다.
 
@@ -35,8 +35,12 @@ helm install external-secrets external-secrets/external-secrets -n external-secr
 aws secretsmanager put-secret-value --secret-id platform/app --secret-string file://<레포 밖 app.json>
 aws secretsmanager put-secret-value --secret-id platform/cloudflared --secret-string file://<레포 밖 cf.json>
 
-# 3. 이 차트 (sandbox.imageRegistry 는 sandbox.enabled 면 꼭 넣는다. 없거나 모양이 틀리면 렌더가 멈춘다)
+# 3. 이 차트 (샌드박스 끔이 기본)
+helm upgrade --install platform deploy/helm/platform -n platform --create-namespace
+
+# 3-1. 리허설 샌드박스를 켤 때. imageRegistry 는 Terraform 출력 sandbox_image_registry 그대로 (없거나 모양이 틀리면 렌더가 멈춘다)
 helm upgrade --install platform deploy/helm/platform -n platform --create-namespace \
+  --set sandbox.enabled=true \
   --set sandbox.imageRegistry=<계정>.dkr.ecr.<리전>.amazonaws.com/sandbox
 ```
 
@@ -120,7 +124,7 @@ vCluster 차트 NetworkPolicy `vc-cp-<릴리스>`(`release=<릴리스>` 파드)�
 helm lint deploy/helm/platform
 helm template platform deploy/helm/platform -n platform
 ```
-기대: lint 0 failed, SecretStore 1·ExternalSecret 4·Deployment 1(cloudflared)·ServiceAccount 3·Role 1·RoleBinding 1, 그리고 샌드박스 켬(기본)이면 ClusterRole 2·ClusterRoleBinding 1·ValidatingAdmissionPolicy 6·ValidatingAdmissionPolicyBinding 6·StorageClass 1. `sandbox.gvisor.enabled=true` 면 RuntimeClass 1 이 더 생긴다. 샌드박스 켬이면 두 명령 모두 `--set sandbox.imageRegistry=000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/sandbox` 같은 값이 있어야 한다.
+기대: lint 0 failed, SecretStore 1·ExternalSecret 4·Deployment 1(cloudflared)·ServiceAccount 3·Role 1·RoleBinding 1, 그리고 샌드박스 켬(`sandbox.enabled=true`)이면 ClusterRole 2·ClusterRoleBinding 1·ValidatingAdmissionPolicy 6·ValidatingAdmissionPolicyBinding 6·StorageClass 1. `sandbox.gvisor.enabled=true` 면 RuntimeClass 1 이 더 생긴다. 샌드박스 켬이면 두 명령 모두 `--set sandbox.enabled=true --set sandbox.imageRegistry=000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/sandbox` 같은 값이 있어야 한다.
 
 세 벌 렌더 + kubeconform + 개수 확인 + `sandbox.imageRegistry` 없음·틀린 모양 거부는 `bash deploy/ci/check-platform.sh` 한 번이다 (CI `gitops` 작업).
 

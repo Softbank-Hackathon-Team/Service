@@ -83,7 +83,7 @@ pf_try() { # ns 대상 포트: agent-worker 로 port-forward 를 열어 본다. 
 
 echo "## 0. 호스트 가드 올리기 (kind 덮어쓰기: StorageClass provisioner=rancher.io/local-path)"
 for n in platform plat sbx-test; do $K get namespace $n >/dev/null 2>&1 || $K create namespace $n >/dev/null; done
-check ok "플랫폼 차트 샌드박스 부분 렌더·적용" sh -c "helm template platform deploy/helm/platform -n platform -s templates/serviceaccounts.yaml -s templates/agent-worker-rbac.yaml -s templates/sandbox-vap.yaml -s templates/sandbox-storageclass.yaml --set sandbox.imageRegistry=$REG --set sandbox.storageClass.provisioner=rancher.io/local-path --set sandbox.storageClass.parameters=null | $K apply -f -"
+check ok "플랫폼 차트 샌드박스 부분 렌더·적용" sh -c "helm template platform deploy/helm/platform -n platform -s templates/serviceaccounts.yaml -s templates/agent-worker-rbac.yaml -s templates/sandbox-vap.yaml -s templates/sandbox-storageclass.yaml --set sandbox.enabled=true --set sandbox.imageRegistry=$REG --set sandbox.storageClass.provisioner=rancher.io/local-path --set sandbox.storageClass.parameters=null | $K apply -f -"
 for i in $(seq 1 30); do
   echo "$(ns_json e2e-ready rehearsal baseline)" | $K $AW create --dry-run=server -f - 2>&1 | grep -q sbx-namespace-guard && break
   sleep 1
