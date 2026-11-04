@@ -14,6 +14,8 @@ gitops:
 
 argocd:
   namespace: argocd
+  # DRAFT(ai): 새 앱 폴더 찾는 주기(초). Argo 기본 180. git 확인 주기(설치 스크립트 ARGO_POLL)와 같은 30 으로 둔다
+  discoverSeconds: 30
 
 agent:
   # 이미지. digest 고정 필수 (repo@sha256:...). 태그만 주면 렌더가 실패한다

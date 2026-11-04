@@ -38,6 +38,20 @@ for d in argocd-repo-server argocd-redis argocd-applicationset-controller; do
   K -n "$ARGO_NS" rollout status "deploy/$d" --timeout=300s >/dev/null
 done
 K -n "$ARGO_NS" rollout status statefulset/argocd-application-controller --timeout=300s >/dev/null
+# git 확인 주기. 기본(180s + 흔들림)이면 커밋 뒤 적용까지 대부분이 이 대기다 (실제 동기화는 2초, 2026-11-04 VM 실측)
+#   확인 한 번 = 저장소 ref 조회 1회. 커밋이 그대로면 렌더 결과를 캐시에서 쓴다. 비용은 앱 수 × (1/주기)
+# DRAFT(ai): 30s / 흔들림 5s. 앱 몇 개짜리 온프레에서 GitHub 조회가 시간당 앱당 120회. 팀이 정할 값
+ARGO_POLL=${ARGO_POLL:-30s}
+ARGO_POLL_JITTER=${ARGO_POLL_JITTER:-5s}
+cur=$(K -n "$ARGO_NS" get cm argocd-cm -o jsonpath='{.data.timeout\.reconciliation}/{.data.timeout\.reconciliation\.jitter}')
+if [ "$cur" != "$ARGO_POLL/$ARGO_POLL_JITTER" ]; then
+  K -n "$ARGO_NS" patch cm argocd-cm --type merge \
+    -p "{\"data\":{\"timeout.reconciliation\":\"$ARGO_POLL\",\"timeout.reconciliation.jitter\":\"$ARGO_POLL_JITTER\"}}" >/dev/null
+  # 이 값은 시작할 때 환경변수로 읽는다 (설치 yaml 의 configMapKeyRef) → 다시 띄워야 먹는다
+  K -n "$ARGO_NS" rollout restart statefulset/argocd-application-controller deploy/argocd-repo-server >/dev/null
+  K -n "$ARGO_NS" rollout status statefulset/argocd-application-controller --timeout=300s >/dev/null
+  K -n "$ARGO_NS" rollout status deploy/argocd-repo-server --timeout=300s >/dev/null
+fi
 
 echo "2/5 Agent 키 Secret"
 K create ns "$NS" --dry-run=client -o yaml | K apply -f - >/dev/null

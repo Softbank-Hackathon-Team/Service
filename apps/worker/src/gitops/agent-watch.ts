@@ -1,8 +1,8 @@
 // W4: 온프레(agent-pull) 배포 확인. 워커는 온프레 클러스터에 들어가지 않는다 (ADR-005 D2)
 //   커밋 뒤 → 고객 클러스터 안 Argo CD 가 당겨 적용 → Agent 가 Application 상태를 deploy 보고로 보냄 → 여기서 그 보고를 기다린다
 //   짝짓기: 같은 환경 · app = argoAppName(b) · bundleHash = 우리가 민 커밋. applied = 성공, failed = 실패, 시간 안에 없으면 실패
-// DRAFT(ai): AGENT_DEPLOY_CONFIRM=1 일 때만 기다린다 (기본 꺼짐 = 예전처럼 커밋만 하고 applied).
-//   켜면 Agent 가 없는 온프레 시연(k3d 등)이 시간 초과로 멈추므로, Agent 를 깐 환경에서만 켠다 (오케스트레이터 영역 검토 전)
+// DRAFT(ai): 기본 켬 (2026-11-04 온프레 영역 결정). AGENT_DEPLOY_CONFIRM=0 이면 예전처럼 커밋만 하고 applied.
+//   Agent 가 없는 온프레(예: 워커가 k3d 에 직접 까는 로컬 시연)는 600초 뒤 AGENT_DEPLOY_TIMEOUT 으로 실패하므로 0 으로 끈다 (오케스트레이터 영역 검토 전)
 import { envNumber } from "@svc/contracts";
 import { withTenant } from "@svc/core";
 import { argoAppName, DELIVERY, type BundleRef } from "./bundle.js";
@@ -53,10 +53,10 @@ export function agentPullWatcher(lookup: AgentDeployLookup, env: NodeJS.ProcessE
   };
 }
 
-/** 배포 단계가 쓰는 반영 확인. argocd-push = Argo 폴링(예전 그대로), agent-pull + AGENT_DEPLOY_CONFIRM=1 = Agent 보고 기다림 */
+/** 배포 단계가 쓰는 반영 확인. argocd-push = Argo 폴링(예전 그대로), agent-pull = Agent 보고 기다림 (AGENT_DEPLOY_CONFIRM=0 이면 예전처럼 바로 ok) */
 export function syncWatcherFor(ctx: { tenantId: string; targetEnvId: string }, env: NodeJS.ProcessEnv = process.env, d: ArgoDeps & AgentWatchDeps & { lookup?: AgentDeployLookup } = {}): SyncWatcher {
   const argo = argoWatcherFromEnv(env, d);
-  if (env.MOCK_ARGO === "1" || env.AGENT_DEPLOY_CONFIRM !== "1") return argo;
+  if (env.MOCK_ARGO === "1" || env.AGENT_DEPLOY_CONFIRM === "0") return argo;
   const agent = agentPullWatcher(d.lookup ?? dbAgentDeployLookup(ctx.tenantId, ctx.targetEnvId), env, d);
   return { wait: (b, c) => (DELIVERY[b.env] === "agent-pull" ? agent.wait(b, c) : argo.wait(b, c)) };
 }

@@ -28,12 +28,12 @@ test("거부: failed 보고 → AGENT_DEPLOY_FAILED, 보고 없음 → 시간 �
   assert.equal(none.observed?.polls, 13);   // 0,5,...,60초
 });
 
-test("깃발: 기본 꺼짐이면 온프레는 예전처럼 기다리지 않는다, 켜면 Agent 보고를 본다, 클라우드는 늘 Argo 쪽", async () => {
+test("깃발: 기본 켬이면 온프레는 Agent 보고를 본다, 0 이면 예전처럼 기다리지 않는다, 클라우드는 늘 Argo 쪽", async () => {
   const never: AgentDeployLookup = async () => null;
-  // 꺼짐 (Argo 설정 없음): 온프레는 바로 ok (예전 동작), 클라우드는 ARGO_NOT_CONFIGURED
-  assert.equal((await syncWatcherFor({ tenantId: "t", targetEnvId: "e" }, {}, { lookup: never }).wait(b, C)).ok, true);
-  // 켬: 온프레는 Agent 보고를 기다려 시간 초과
-  const on = syncWatcherFor({ tenantId: "t", targetEnvId: "e" }, { ...ENV, AGENT_DEPLOY_CONFIRM: "1" }, { lookup: never, ...clock() });
+  // 0 (Argo 설정 없음): 온프레는 바로 ok (예전 동작)
+  assert.equal((await syncWatcherFor({ tenantId: "t", targetEnvId: "e" }, { AGENT_DEPLOY_CONFIRM: "0" }, { lookup: never }).wait(b, C)).ok, true);
+  // 기본(값 없음) = 켬: 온프레는 Agent 보고를 기다려 시간 초과. 클라우드는 ARGO_NOT_CONFIGURED
+  const on = syncWatcherFor({ tenantId: "t", targetEnvId: "e" }, { ...ENV }, { lookup: never, ...clock() });
   assert.match((await on.wait(b, C)).reason ?? "", /^AGENT_DEPLOY_TIMEOUT/);
   const cloud = await on.wait({ ...b, env: "gcp-gke" }, C);
   assert.match(cloud.reason ?? "", /^ARGO_NOT_CONFIGURED/);

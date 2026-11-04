@@ -36,6 +36,8 @@ spec:
     - git:
         repoURL: {{ .Values.gitops.repoURL | quote }}
         revision: {{ .Values.gitops.revision | quote }}
+        # 새 앱 폴더를 찾는 주기. 앱의 첫 배포는 이 주기 뒤에 Application 이 생기고, 그다음 git 확인 주기를 또 기다린다
+        requeueAfterSeconds: {{ .Values.argocd.discoverSeconds | int }}
         directories:
           - path: "tenants/{{ .Values.tenant }}/apps/*/onprem-k3s"
   template:

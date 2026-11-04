@@ -39,7 +39,8 @@ export function envFacts(i: DeployInput): Record<string, string | undefined> {
     projectId: i.target.accountId ?? undefined,
     registryHost: process.env.ONPREM_REGISTRY_HOST,
     // W3: 온프레 바닥(할당량)을 git 으로 그릴지. 차트 floor.yaml 이 "1" 일 때만 그린다. 값이 늘 있어야 자리표시가 비지 않는다
-    onpremFloorViaGit: process.env.ONPREM_FLOOR_VIA_GIT === "1" ? "1" : "0",
+    //   기본 켬, "0" 만 끔 (apply.ts 의 Terraform 건너뛰기와 같은 판정이어야 바닥이 빠지거나 두 번 생기지 않는다)
+    onpremFloorViaGit: process.env.ONPREM_FLOOR_VIA_GIT === "0" ? "0" : "1",
     acrHost: process.env.AZURE_MOCK_ACR_HOST ?? "mock.azurecr.io",
   };
 }
