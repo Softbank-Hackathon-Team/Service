@@ -1,4 +1,4 @@
-import { Children, isValidElement, useState, type CSSProperties, type ReactNode } from 'react';
+import { Children, isValidElement, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Icon, type IconName } from '../ui/Icon';
 import { SkeletonRows } from '../ui/Skeleton';
 import s from './tiles.module.css';
@@ -70,6 +70,26 @@ type FoldTileProps = {
   children: ReactNode;
 };
 
+// tokens.css --motion-fold 와 같은 값. 펼침이 끝난 뒤 위치를 잰다
+const FOLD_MS = 300;
+
+/**
+ * 연 카드가 스크롤 칸 아래로 잘리면 잘린 만큼만 올린다. 카드 머리줄이 칸 위로 넘어가지는 않게 한다.
+ * 스크롤 칸이 없으면(좁은 화면 쌓기) 문서 전체를 기준으로 한다.
+ */
+function revealInScroller(el: HTMLElement) {
+  let scroller: HTMLElement | null = el.parentElement;
+  while (scroller && !(scroller.scrollHeight > scroller.clientHeight && /(auto|scroll)/.test(getComputedStyle(scroller).overflowY))) {
+    scroller = scroller.parentElement;
+  }
+  const box = el.getBoundingClientRect();
+  const view = scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+  const delta = Math.min(box.bottom - view.bottom, box.top - view.top);
+  if (delta <= 0) return;
+  const behavior: ScrollBehavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+  (scroller ?? window).scrollBy({ top: delta, behavior });
+}
+
 /**
  * 얇은 테두리의 접는 카드. 머리줄 오른쪽에 요약을 두어 접어도 상태가 보인다. 쌓아서 쓴다.
  * 열고 닫을 때 높이가 미끄러지듯 바뀐다. 내용은 처음 열 때 그리고, 닫아도 남겨 두어 닫히는 동안에도 보인다.
@@ -77,12 +97,15 @@ type FoldTileProps = {
 export function FoldTile({ title, summary, defaultOpen = true, children }: FoldTileProps) {
   const [open, setOpen] = useState(defaultOpen);
   const [drawn, setDrawn] = useState(defaultOpen);
+  const ref = useRef<HTMLElement>(null);
   const toggle = () => {
     setDrawn(true);
     setOpen(!open);
+    // 칸 아래쪽에서 연 카드는 열린 내용이 보이도록 칸을 조금 올린다 (펼침이 끝난 뒤)
+    if (!open) window.setTimeout(() => ref.current && revealInScroller(ref.current), FOLD_MS);
   };
   return (
-    <section className={s.fold} data-open={open}>
+    <section ref={ref} className={s.fold} data-open={open}>
       <button type="button" className={s.foldHead} aria-expanded={open} onClick={toggle}>
         <span className={s.foldTitle}>
           <span className="t-label-md">{title}</span>

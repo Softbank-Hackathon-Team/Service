@@ -15,7 +15,7 @@ const LAYOUT: BentoLayout = { columns: ['fill', 'side'], areas: 'hero list' };
 const BUCKETS: { id: MigrationBucket; label: string }[] = [
   { id: 'human', label: '검토 필요' },
   { id: 'running', label: '진행 중' },
-  { id: 'done', label: '끝남' },
+  { id: 'done', label: '히스토리' },
 ];
 
 export function MigrationsPage() {

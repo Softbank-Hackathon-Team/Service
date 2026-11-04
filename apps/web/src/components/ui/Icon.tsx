@@ -11,6 +11,7 @@ const ICONS = {
     </>
   ),
   minus: <path d="M5 12h14" />,
+  circle: <circle cx="12" cy="12" r="8" />,
   'user-check': (
     <>
       <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />

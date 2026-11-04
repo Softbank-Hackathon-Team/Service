@@ -441,3 +441,53 @@ button.linkPill {
 .input[aria-invalid='true'] {
   border-color: var(--color-signal-fail);
 }
+
+/* 보안 카드: 펼치면 예전 보안 탭의 내용을 묶음마다 접어 담는다 */
+.secDetail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.secStats {
+  gap: var(--space-20);
+  padding: 0 var(--space-12) var(--space-8);
+}
+.sub {
+  border-top: 1px solid var(--color-border-default);
+}
+.subHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+  width: 100%;
+  min-height: var(--size-control-s);
+  padding: var(--space-8) var(--space-12);
+  border: 0;
+  border-radius: var(--radius-inner);
+  background: transparent;
+  color: var(--color-fg-primary);
+  text-align: left;
+  cursor: pointer;
+}
+.subHead:hover {
+  background: var(--color-bg-hover);
+}
+.subChevron {
+  display: inline-flex;
+  color: var(--color-fg-tertiary);
+  transition: transform var(--motion-fold) var(--ease-standard);
+}
+.subOpen {
+  transform: rotate(90deg);
+}
+.subBody {
+  padding: 0 var(--space-12) var(--space-12);
+}
+.secFoot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: var(--space-12);
+  border-top: 1px solid var(--color-border-default);
+}

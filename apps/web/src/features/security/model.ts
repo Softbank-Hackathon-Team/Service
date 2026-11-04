@@ -70,3 +70,27 @@ export function ledgerOrder<T extends Pick<LedgerRow, 'status' | 'expiredButActi
   const rank = (row: T) => (row.expiredButActive ? 0 : row.status === 'active' || row.status === 'revoke_requested' ? 1 : 2);
   return [...rows].sort((a, b) => rank(a) - rank(b) || b.issuedAt.localeCompare(a.issuedAt));
 }
+
+/**
+ * 이전 화면 "보안" 카드의 접힌 머리줄 요약과 스스로 펼칠지.
+ * 가드레일 멈춤·지금 일어나는 위협·만료됐는데 남은 권한은 사람이 바로 봐야 해서 펼친다. 위반·약점은 요약에만 쓴다.
+ */
+export function securityCardSummary(o: {
+  view: Pick<SecurityView, 'summary' | 'ledger'> | null;
+  threats: number;
+  stoppedByRule: boolean;
+  reading: boolean;
+}): { summary: string; open: boolean } {
+  const stale = o.view?.ledger ? ledgerSummary(o.view.ledger).stale : 0;
+  const parts = [
+    o.stoppedByRule ? '가드레일 멈춤' : null,
+    o.threats > 0 ? `위협 ${o.threats}` : null,
+    stale > 0 ? `만료된 권한 ${stale}` : null,
+    o.view && o.view.summary.fail > 0 ? `위반 ${o.view.summary.fail}` : null,
+    o.view && o.view.summary.warn > 0 ? `약점 ${o.view.summary.warn}` : null,
+  ].filter((part): part is string => !!part);
+  const open = o.stoppedByRule || o.threats > 0 || stale > 0;
+  if (parts.length > 0) return { summary: parts.slice(0, 2).join(' · '), open };
+  if (!o.view) return { summary: o.reading ? '읽는 중' : '아직 없음', open };
+  return { summary: o.view.summary.notImplemented > 0 ? `미구현 ${o.view.summary.notImplemented}` : '모두 지켜짐', open };
+}

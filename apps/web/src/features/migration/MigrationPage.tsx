@@ -22,6 +22,7 @@ import {
   ackState, approveLabel, canReplan, pollMs, screenOf, signalCovers, specRows, stepGate, stepName, usd, type MigrationScreen,
 } from './model';
 import { scopeLabel } from './source';
+import { SecurityFold } from './SecurityCard';
 import {
   accuracyView, boundaryRows, confirmChunks, confirmLabel, specRowsV2, specV2Of, type MigrationSpecViewV2, type SpecRowV2,
 } from './specV2';
@@ -409,6 +410,7 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
             </p>
           )}
         </FoldTile>
+        <SecurityFold migration={migration} />
         <ActionRow notice={error ?? (plan.error != null && !doc ? errorText(plan.error) : null)}>
           <ConfirmPill label="취소" confirmLabel="이전 취소" icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
           {doc && <ConfirmPill label="거절" confirmLabel="계획 거절" icon="ban" disabled={busy} onConfirm={() => void run(() => api.decide(doc.planId, 'reject', doc.planHash))} />}
@@ -458,6 +460,7 @@ function ApprovedScreen({ migration, route, onChanged }: ScreenProps) {
         {doc && <CodeValue value={doc.planHash} chip max={32} />}
       </Hero>
       <Stack area="side">
+        <SecurityFold migration={migration} />
         <ActionRow notice={waiting ? null : error}>
           <ConfirmPill label="취소" confirmLabel="이전 취소" icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
           {!(waiting && expired) && (
@@ -500,6 +503,7 @@ function StoppedScreen({ migration, route, onChanged, kind }: ScreenProps & { ki
         <FoldTile title="다음에 할 일">
           <p className={`${s.note} t-body-md c-secondary`}>{replan ? copy.next : '이 이전을 끝내고 새로 시작해 주세요.'}</p>
         </FoldTile>
+        <SecurityFold migration={migration} />
         <ActionRow notice={error}>
           {replan ? (
             <>
@@ -564,6 +568,7 @@ function FailedScreen({ migration, route, onChanged }: ScreenProps) {
       <Stack area="side">
         {replan ? stop : leftover}
         {replan ? leftover : stop}
+        <SecurityFold migration={migration} />
         <ActionRow notice={replan ? consent.notice(error) : error} before={replan ? consent.check : null}>
           {replan ? (
             <>
@@ -592,6 +597,7 @@ function CancelledScreen({ migration, route }: ScreenProps) {
       <Hero tone="run" meta="취소" title={'이 이전은\n여기서 끝났습니다'} foot="환경 잠금을 풀었습니다" />
       <Stack area="side">
         <LeftoverFold migration={migration} title="도착에 남은 자원" />
+        <SecurityFold migration={migration} />
       </Stack>
     </Frame>
   );

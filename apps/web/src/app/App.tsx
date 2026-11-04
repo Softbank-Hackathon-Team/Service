@@ -10,7 +10,6 @@ import { LoginPage } from '../features/login/LoginPage';
 import { MigrationPage } from '../features/migration/MigrationPage';
 import { MigrationsPage } from '../features/migration/MigrationsPage';
 import { NewMigrationPage } from '../features/migration/NewMigrationPage';
-import { SecurityPage } from '../features/security/SecurityPage';
 import { SettingsPage } from '../features/settings/SettingsPage';
 import { auth } from '../lib/api';
 import { live } from '../lib/live';
@@ -61,8 +60,6 @@ export function App() {
       return <DashboardPage />;
     case 'environments':
       return 'view' in route ? <ConnectPage key={route.id ?? 'new'} id={route.id} /> : <EnvironmentsPage id={route.id} />;
-    case 'security':
-      return <SecurityPage id={route.id} />;
     case 'audit':
       return <AuditPage id={route.id} />;
     case 'agent':

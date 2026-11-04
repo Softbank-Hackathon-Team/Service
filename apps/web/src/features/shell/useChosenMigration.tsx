@@ -16,7 +16,7 @@ export function chooseMigration(items: MigrationView[], id: string | null): Migr
 }
 
 /** 이전 한 건 기준으로 보는 화면들이 함께 쓴다. 상단 바의 선택 칸까지 돌려준다. */
-export function useChosenMigration(page: 'security' | 'audit' | 'agent', id: string | null) {
+export function useChosenMigration(page: 'audit' | 'agent', id: string | null) {
   const migrations = usePoll(api.listMigrations, 5_000, [], { signal: anyMigration });
   const envs = usePoll(api.listEnvironments, null, []);
   const items = migrations.data ?? [];
