@@ -40,8 +40,14 @@ helm upgrade --install db-tunnel deploy/helm/onprem-db-tunnel -n app-<앱> \
   --set forward.target=<RDS 엔드포인트>:5432
 kubectl -n app-<앱> rollout status deploy/db-tunnel   # 준비 = 정방향 입구가 열림
 
-# 5. 워커: 온프레 CNPG 가 구독할 출발 주소를 터널로
-#    REPL_SOURCE_PEER_URL=postgres://<복제 계정>:<비밀번호>@db-tunnel.app-<앱>.svc.cluster.local:5432/<DB>?sslmode=require
+# 5. 워커 복제 주소 (packages/replication endpointFromEnv)
+#    REPL_SOURCE_PEER_URL = 온프레 CNPG 가 구독할 출발 주소 = 정방향 터널
+#      postgres://<복제 계정>:<비밀번호>@db-tunnel.app-<앱>.svc.cluster.local:5432/<DB>?sslmode=require
+#    REPL_TARGET_URL      = 워커가 온프레 CNPG 에 관리 SQL 을 넣는 주소 = 역방향 터널 (reverse.enabled=true)
+#      postgres://<관리 계정>:<비밀번호>@<중계 사설 IP>:5432/<DB>   + REPL_TARGET_SSLMODE=require
+#    REPL_TARGET_PEER_URL = 컷오버 뒤 RDS 가 온프레를 구독할 주소(롤백 창 역복제) = 같은 역방향 터널
+#      postgres://<복제 계정>:<비밀번호>@<중계 사설 IP>:5432/<DB>?sslmode=require
+#    워커가 중계 5432 에 닿아야 한다: 같은 VPC 이거나 중계 extra_pg_cidrs_json 에 워커 나가는 IP/32
 
 # 끝나면: helm uninstall db-tunnel, Secret 삭제, 중계 destroy, 키 파일 폐기
 ```
@@ -50,7 +56,8 @@ kubectl -n app-<앱> rollout status deploy/db-tunnel   # 준비 = 정방향 입�
 
 ## 아직 안 된 것
 
-- 워커가 온프레 CNPG 에 관리 SQL(구독 만들기·울타리)을 넣는 길. 지금 복제 코드는 워커가 도착 DB 에 직접 붙는다 (`REPL_TARGET_URL`). 역방향 터널(`reverse.enabled`)로 중계 5432 에 온프레 CNPG 를 열 수는 있지만, 워커가 그 중계에 닿는 길(같은 VPC 또는 `extra_pg_cidrs_json`)은 환경마다 다르다. 원칙대로라면 클러스터 안 실행기(W7)다.
+- 워커가 관리 SQL 을 역방향 터널로 온프레 CNPG 에 넣는 것은 시연용이다 (ADR-005 원칙 위반: 플랫폼이 온프레 DB 관리자 접속을 쥔다). 원칙대로라면 클러스터 안 실행기(W7)다.
+- 워커가 중계 5432 에 닿는 길(같은 VPC 또는 `extra_pg_cidrs_json`)은 플랫폼 망 구성에 따라 다르다. 실제 플랫폼에서는 안 해 봤다.
 - 실제 AWS 에서 끝까지 (중계 EC2 + RDS) 는 안 해 봤다. 시험은 아래 VM 실측과 Terraform mock 까지다.
 
 ## 시험
@@ -63,3 +70,10 @@ kubectl -n app-<앱> rollout status deploy/db-tunnel   # 준비 = 정방향 입�
   - CNPG 가 아닌 파드에서 `db-tunnel:5432` 는 막힘, CNPG 파드에서는 닿음.
   - 역방향: 중계 0.0.0.0:5432 로 Postgres SSLRequest 를 보내면 온프레 CNPG 가 `S` 로 답함.
   - tunnel 계정으로 셸 실행 거부, 허가 안 된 목적지(kube API 443) `-L` 거부, 5432 아닌 `-R` 거부.
+- 같은 VM 에서 실제 복제 코드(`packages/replication` `Migration`)로 이전 한 번 전체 (2026-11-04):
+  워커 → 출발(가짜 RDS) 직접, 워커 → 중계 5432(역방향) → 온프레 CNPG, 온프레 CNPG → `db-tunnel`(정방향) → 출발.
+  - 사전 점검 통과 (경고 DB-06 `max_slot_wal_keep_size=-1` 하나, 터널과 무관한 CNPG 기본값)
+  - `sync`: 워커가 출발에 발행, 역방향 터널로 온프레에 구독을 만들고 1200줄 복사, 새 50줄 따라옴 (줄 수 일치)
+  - `cutover`: 쓰기 멈춤 96ms, 상태 reverse
+  - 롤백 창: 온프레(새 주인)에 넣은 20줄이 역방향 터널로 출발에 도착
+  - `rollback`: 출발로 되돌림 ok, `teardown` 뒤 남은 복제 객체 0개, 양쪽 1270줄
