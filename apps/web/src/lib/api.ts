@@ -32,7 +32,7 @@ export const API_BASE: string = import.meta.env.VITE_API_BASE ?? '/api';
 
 export const auth = createAuth({ base: API_BASE });
 
-const { get, post, patch, del, headers } = createClient({
+const { get, post, patch, headers } = createClient({
   base: API_BASE,
   token: () => auth.accessToken(),
   onUnauthorized: (code) => auth.onUnauthorized(code),
@@ -60,8 +60,6 @@ export const api = {
   createEnvironment: (body: CreateEnvironmentBody) => post<EnvironmentView>('/environments', body),
   connectionLink: (id: string) => post<ConnectionLink>(`/environments/${id}/connection-link`),
   agentToken: (id: string) => post<AgentEnrollToken>(`/environments/${id}/agent-token`),
-  /** 환경 해제 (DELETE /environments/:id). 서버는 줄을 지우지 않고 disconnected 로 둔다. Agent 키를 끊고 빌린 권한 회수를 요청한다 */
-  releaseEnvironment: (id: string) => del<null>(`/environments/${id}`),
   verifyEnvironment: (id: string, accountId: string, targetProjectId?: string) =>
     post<{ envId: string; status: 'verifying'; queued: boolean }>(`/environments/${id}/verify`, { accountId, ...(targetProjectId ? { targetProjectId } : {}) }),
   migrationSpec: (id: string) => get<MigrationSpecViewV2>(`/migrations/${id}/spec`),

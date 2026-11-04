@@ -34,7 +34,7 @@ export interface ClientOptions {
   onUnauthorized?: (code?: string) => Promise<boolean>;
 }
 
-export type Method = "GET" | "POST" | "PATCH" | "DELETE";
+export type Method = "GET" | "POST" | "PATCH";
 
 // Z38 REVIEW-4 W-4: crypto.randomUUID 는 보안 문맥(https·localhost)에서만 있다.
 //   심사 기기가 http://<맥 IP>:5173 로 붙으면 없어서 모든 POST(승인·롤백 포함)가 TypeError 로 죽는다.
@@ -107,8 +107,6 @@ export function createClient(o: ClientOptions) {
     post: <T>(path: string, body?: unknown) => request<T>("POST", path, body),
     // 명세 고치기(PATCH /migrations/:id/spec). 다시 보내기 규칙은 POST 와 같다 (409 RETRY 만 같은 키로 한 번 더)
     patch: <T>(path: string, body: unknown) => request<T>("PATCH", path, body),
-    // 해제처럼 지우는 요청 (DELETE). 다시 보내기 규칙은 POST 와 같다
-    del: <T>(path: string) => request<T>("DELETE", path),
   };
 }
 

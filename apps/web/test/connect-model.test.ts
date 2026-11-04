@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  CONNECTABLE, checkAccount, checkEnvForm, connectPollMs, connectSteps, envPath, isDiscardable, isLinked, phaseOf,
+  CONNECTABLE, checkAccount, checkEnvForm, connectPollMs, connectSteps, envPath, isLinked, phaseOf,
 } from "../src/features/environments/connect";
 import { parseRoute } from "../src/app/routes";
 import type { ConnectionStatus } from "../src/lib/types";
@@ -64,8 +64,7 @@ test("어디서 들어오든 같은 길: 연결됐으면 환경 화면, 아니�
   assert.deepEqual(parseRoute("#/environments/e1"), { page: "environments", id: "e1" });
 });
 
-test("끝나지 않은 등록: 목록에는 연결됨·불안정만, 떠나면 해제하는 것은 초안·고객 작업 대기·실패·만료 (확인 중은 워커가 끝내게 둔다)", () => {
+test("끝나지 않은 등록: 서버는 이력으로 갖고, 화면은 연결됨·불안정만 보인다", () => {
   const all = ["draft", "awaiting_customer", "verifying", "connected", "unstable", "failed", "expired", "disconnected"] as const;
   assert.deepEqual(all.filter((connectionStatus) => isLinked({ connectionStatus })), ["connected", "unstable"]);
-  assert.deepEqual(all.filter((connectionStatus) => isDiscardable({ connectionStatus })), ["draft", "awaiting_customer", "failed", "expired"]);
 });
