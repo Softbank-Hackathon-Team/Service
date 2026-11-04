@@ -97,7 +97,7 @@ export function listNote(groups: Record<MigrationBucket, MigrationView[]>): stri
 const HUMAN_ACTION: Partial<Record<MigrationStatus, string>> = {
   spec_review: '명세 확정',
   awaiting_approval: '계획 승인',
-  approved: '실행 시작',
+  approved: '실행 다시 시작',
   paused: '멈춘 마이그레이션 확인',
   failed: '실패 확인',
   rejected: '거절된 계획 처리',

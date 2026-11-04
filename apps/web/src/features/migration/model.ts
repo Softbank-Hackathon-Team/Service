@@ -121,18 +121,24 @@ export function approveLabel(o: { busy: boolean; expired: boolean; missing: numb
   if (o.busy) return '보내는 중';
   if (o.expired) return '승인 시간이 지났습니다';
   if (o.missing > 0) return `확인 ${o.missing}개 남음`;
-  return '이 계획 승인';
+  return '승인하고 실행 시작';
 }
 
 // human: 사람이 눌러야 다음으로 가는 칸. 그 칸에 있으면 도는 표시 대신 입력을 기다리는 표시를 쓴다
-const STEPS: { label: string; human?: boolean; through: MigrationStatus[] }[] = [
+type Step = { label: string; human?: boolean; through: MigrationStatus[] };
+
+// 진행 단계는 두 묶음이다. 실행 전(사람이 명세를 확정하고 계획을 승인)과 실행(승인하면 바로 시작해 워커가 옮김).
+// 카드는 지금 묶음 하나만 보여 준다. 묶음 번호는 보이지 않는다
+const PREPARE_STEPS: Step[] = [
   { label: '구성 읽기', through: ['draft', 'importing'] },
   { label: '명세 확정', human: true, through: ['spec_review'] },
   { label: '사전 점검', through: ['prechecking'] },
   { label: '계획 만들기', through: ['planning'] },
   { label: '계획 승인', human: true, through: ['awaiting_approval'] },
-  { label: '실행 시작', human: true, through: ['approved'] },
-  { label: LABEL.provisioning, through: ['provisioning'] },
+];
+// approved 는 승인 뒤 시작이 막혔을 때만(동시 진행 상한·환경 사용 중) 남는다. 그때는 자원 생성 칸이 사람 입력을 기다린다
+const RUN_STEPS: Step[] = [
+  { label: LABEL.provisioning, through: ['approved', 'provisioning'] },
   { label: LABEL.deploying, through: ['deploying'] },
   { label: LABEL.syncing, through: ['syncing'] },
   { label: LABEL.shifting, through: ['shifting'] },
@@ -140,6 +146,19 @@ const STEPS: { label: string; human?: boolean; through: MigrationStatus[] }[] = 
   { label: '롤백 대기', through: ['rollback_window'] },
   { label: LABEL.cleanup, through: ['cleanup'] },
 ];
+const RUN_STATES: readonly MigrationStatus[] = RUN_STEPS.flatMap((step) => step.through);
+
+/** 진행 단계 카드가 보여 줄 묶음. 멈춘·끝난 마이그레이션은 멈춘 칸이 어느 묶음인지로 정한다. */
+export function stepsPhase(migration: Pick<MigrationView, 'status' | 'pausedFrom' | 'failedAtStatus'>, anchor: MigrationStatus | null = null): 'prepare' | 'run' {
+  const { status } = migration;
+  if (status === 'completed' || status === 'paused' || status === 'rolling_back' || status === 'rolled_back') return 'run';
+  if (status === 'failed') {
+    const at = migration.failedAtStatus ?? anchor;
+    return at && RUN_STATES.includes(at) ? 'run' : 'prepare';
+  }
+  if (status === 'cancelled') return anchor && RUN_STATES.includes(anchor) ? 'run' : 'prepare';
+  return RUN_STATES.includes(status) ? 'run' : 'prepare';
+}
 
 /** 위치를 상태만으로 알 수 없는 이전. 타임라인에서 어느 칸에서 왔는지 찾는다. */
 export const needsStepAnchor = ({ status, failedAtStatus }: Pick<MigrationView, 'status' | 'failedAtStatus'>) =>
@@ -158,7 +177,7 @@ export function stepAnchorFrom(items: Pick<TimelineItem, 'kind' | 'from' | 'to'>
   return null;
 }
 
-/** 진행 단계 카드. 모든 이전 화면이 같은 13칸을 쓰고, 멈춘 이전은 멈춘 칸을 표시한다. */
+/** 진행 단계 카드. 실행 전 5칸 또는 실행 7칸 중 지금 묶음을 쓰고, 멈춘 마이그레이션은 멈춘 칸을 표시한다. */
 export function migrationSteps(
   migration: Pick<MigrationView, 'status' | 'pausedFrom' | 'failedAtStatus'>,
   anchor: MigrationStatus | null = null,
@@ -173,12 +192,15 @@ export function migrationSteps(
     : status === 'stale' ? { at: 'awaiting_approval', mark: 'paused' }
     : status === 'rolling_back' || status === 'rolled_back' || status === 'cancelled' ? { at: anchor, mark: 'paused' }
     : null;
+  const steps = stepsPhase(migration, anchor) === 'prepare' ? PREPARE_STEPS : RUN_STEPS;
   const current = stoppedAt ? stoppedAt.at : status;
-  const at = status === 'completed' ? STEPS.length : current ? STEPS.findIndex((step) => step.through.includes(current)) : -1;
-  return STEPS.map((step, index) => ({
+  const at = status === 'completed' ? steps.length : current ? steps.findIndex((step) => step.through.includes(current)) : -1;
+  // 승인했는데 시작이 막혀 approved 에 남았으면 자원 생성 칸은 사람이 다시 시작하기를 기다린다
+  const waits = (step: Step) => step.human || status === 'approved';
+  return steps.map((step, index) => ({
     label: step.label,
     detail: step.through.map((through) => notes[through]).find(Boolean) ?? (step.human ? '사람' : undefined),
-    status: index < at ? 'done' : index === at ? (stoppedAt?.mark ?? (step.human ? 'waiting' : 'active')) : 'pending',
+    status: index < at ? 'done' : index === at ? (stoppedAt?.mark ?? (waits(step) ? 'waiting' : 'active')) : 'pending',
   }));
 }
 
@@ -325,3 +347,23 @@ export const canPick = (env: EnvironmentView, sourceId?: string | null) =>
 
 export const usd = (value: number | null | undefined) =>
   value === null || value === undefined ? '계산 불가' : `$${value.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+
+
+/**
+ * 승인하면 바로 실행을 시작한다. 승인과 시작 사이에 상태가 잠깐 approved 로 보여도 승인 화면을 그대로 두고(autoStarting),
+ * 시작이 막히면 그 이유 코드를 남겨 실행 대기 화면이 이어 받는다(startBlocked). 탭 하나 안의 기억이다.
+ */
+const starting = new Set<string>();
+const blocked = new Map<string, string>();
+export const autoStart = {
+  begin: (id: string) => {
+    starting.add(id);
+    blocked.delete(id);
+  },
+  end: (id: string, code: string | null) => {
+    starting.delete(id);
+    if (code) blocked.set(id, code);
+  },
+  isStarting: (id: string) => starting.has(id),
+  blockedCode: (id: string) => blocked.get(id) ?? null,
+};

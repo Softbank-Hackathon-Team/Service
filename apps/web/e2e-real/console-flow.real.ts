@@ -18,7 +18,7 @@ const WORKER_MS = 10 * 60_000;
 const SCREEN = {
   spec: /확인하고 확정해 주세요|이 명세로 옮길까요/,
   specBlocked: /막힌 항목 \d+개를 풀어야 합니다/,
-  approve: /승인해 주세요|이대로만 실행합니다/,
+  approve: /승인해 주세요|이대로\s*바로 실행합니다/,
   approved: /승인했습니다/,
   running: /도착 환경을 만들고 있습니다|도착지에 띄우고 있습니다|DB를 따라잡고 있습니다|트래픽을 옮기고 있습니다|DB 쓰기 담당을 넘기고 있습니다/,
   shifting: /트래픽을 옮기고 있습니다/,
@@ -301,14 +301,10 @@ test("새 콘솔 · 실제 서버: 로그인부터 마이그레이션 완료까�
       const acks = page.locator("label").filter({ has: page.getByRole("checkbox") });
       ev.notes["승인 전에 확인"] = (await acks.allTextContents()).map(flat).join(" / ") || "없음";
       for (const box of await page.getByRole("checkbox").all()) await box.check();
-      const approve = page.getByRole("button", { name: "이 계획 승인", exact: true });
+      // 승인하면 바로 실행을 시작한다(버튼 한 번). 시작이 막혀 승인 상태에 남으면 실행 화면이 오지 않아 이 단계가 실패한다
+      const approve = page.getByRole("button", { name: "승인하고 실행 시작", exact: true });
       await expect(approve).toBeEnabled();
       await approve.click();
-      await waitForScreen(page, ev, SCREEN.approved, HUMAN_MS);
-    });
-
-    await step("실행 시작", async () => {
-      await page.getByRole("button", { name: "실행 시작", exact: true }).click();
       await waitForScreen(page, ev, anyOf(SCREEN.running, SCREEN.window, SCREEN.windowOver, SCREEN.cleanup, SCREEN.done), HUMAN_MS);
     });
 

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  ackState, approveLabel, canPick, canReplan, canRollback, formatClock, judgementRows, leftoversOf, leftoverValue, migrationSteps, needsStepAnchor,
+  ackState, approveLabel, canPick, canReplan, canRollback, formatClock, judgementRows, leftoversOf, leftoverValue, migrationSteps, needsStepAnchor, stepsPhase,
   pollMs, screenOf, shiftNote, signalCovers, specRows, stepAnchorFrom, stepGate, trafficPercent, trafficReportRows,
 } from "../src/features/migration/model";
 import { planResourceRows, runtimeChangeNote, type ResourceRow } from "../src/lib/resourceMap";
@@ -48,17 +48,39 @@ test("연결된 환경만, 도착은 출발과 다른 환경만 고른다", () =
 
 const marks = (items: { status: string }[]) => items.map((i) => i.status);
 
+const labels = (items: { label: string }[]) => items.map((i) => i.label);
+const PREPARE = ["구성 읽기", "명세 확정", "사전 점검", "계획 만들기", "계획 승인"];
+const RUN = ["자원 생성", "앱 배포", "DB 복제", "트래픽 이동", "DB 컷오버", "롤백 대기", "정리"];
+
+test("진행 단계: 실행 전에는 구성 읽기~계획 승인, 승인한 뒤에는 자원 생성~정리만 보인다", () => {
+  assert.deepEqual(labels(migrationSteps({ status: "spec_review" })), PREPARE);
+  assert.deepEqual(labels(migrationSteps({ status: "awaiting_approval" })), PREPARE);
+  assert.deepEqual(labels(migrationSteps({ status: "approved" })), RUN);
+  assert.deepEqual(labels(migrationSteps({ status: "provisioning" })), RUN);
+  assert.deepEqual(labels(migrationSteps({ status: "completed" })), RUN);
+  assert.ok(!labels(migrationSteps({ status: "approved" })).includes("실행 시작"), "실행 시작 칸은 없다 (승인하면 바로 시작)");
+  // 멈추거나 끝난 것은 멈춘 칸이 어느 묶음인지로
+  assert.equal(stepsPhase({ status: "failed", failedAtStatus: "planning" }), "prepare");
+  assert.equal(stepsPhase({ status: "failed", failedAtStatus: "provisioning" }), "run");
+  assert.equal(stepsPhase({ status: "paused", pausedFrom: "deploying" }), "run");
+  assert.equal(stepsPhase({ status: "rejected" }), "prepare");
+  assert.equal(stepsPhase({ status: "cancelled" }, "approved"), "run");
+  assert.equal(stepsPhase({ status: "cancelled" }), "prepare");
+});
+
 test("진행 단계: 지금 칸은 활성, 앞은 끝남, 뒤는 대기", () => {
   const items = migrationSteps({ status: "shifting" });
-  assert.equal(items.length, 13);
-  assert.deepEqual(marks(items).slice(8, 11), ["done", "active", "pending"]);
+  assert.equal(items.length, 7);
+  assert.deepEqual(marks(items).slice(2, 5), ["done", "active", "pending"]);
   assert.ok(marks(migrationSteps({ status: "completed" })).every((m) => m === "done"));
 });
 
 test("진행 단계: 사람이 눌러야 하는 칸은 도는 표시 대신 입력을 기다린다", () => {
   assert.deepEqual(marks(migrationSteps({ status: "spec_review" })).slice(0, 3), ["done", "waiting", "pending"]);
   assert.equal(migrationSteps({ status: "awaiting_approval" })[4]!.status, "waiting");
-  assert.equal(migrationSteps({ status: "approved" })[5]!.status, "waiting");
+  // 승인했는데 시작이 막혀 approved 에 남으면 자원 생성 칸이 다시 시작을 기다린다
+  assert.equal(migrationSteps({ status: "approved" })[0]!.status, "waiting");
+  assert.equal(migrationSteps({ status: "provisioning" })[0]!.status, "active");
   assert.equal(migrationSteps({ status: "prechecking" })[2]!.status, "active");
   // 멈춘 표시가 사람 칸보다 먼저다
   assert.equal(migrationSteps({ status: "stale" })[4]!.status, "paused");
@@ -66,12 +88,13 @@ test("진행 단계: 사람이 눌러야 하는 칸은 도는 표시 대신 입�
   assert.ok(marks(migrationSteps({ status: "shifting" })).every((m) => m !== "waiting"));
 });
 
-test("진행 단계: 멈춘 이전은 멈춘 칸을 표시한다", () => {
-  assert.equal(migrationSteps({ status: "paused", pausedFrom: "syncing" })[8]!.status, "paused");
-  assert.equal(migrationSteps({ status: "failed", failedAtStatus: "provisioning" })[6]!.status, "failed");
+test("진행 단계: 멈춘 마이그레이션은 멈춘 칸을 표시한다", () => {
+  assert.equal(migrationSteps({ status: "paused", pausedFrom: "syncing" })[2]!.status, "paused");
+  assert.equal(migrationSteps({ status: "failed", failedAtStatus: "provisioning" })[0]!.status, "failed");
+  assert.equal(migrationSteps({ status: "failed", failedAtStatus: "planning" })[3]!.status, "failed");
   assert.equal(migrationSteps({ status: "rejected" })[4]!.status, "failed");
   assert.equal(migrationSteps({ status: "stale" })[4]!.status, "paused");
-  assert.equal(migrationSteps({ status: "rolled_back" }, "shifting")[9]!.status, "paused");
+  assert.equal(migrationSteps({ status: "rolled_back" }, "shifting")[3]!.status, "paused");
 });
 
 test("진행 단계: 위치를 모르면 어떤 칸도 끝남으로 표시하지 않는다", () => {
@@ -192,7 +215,7 @@ test("승인 확인 항목: 다 체크해야 승인, 버튼은 남은 수를 말
   const all = ackState(acks, new Set(acks.map((a) => a.id)));
   assert.equal(all.ready, true);
   assert.deepEqual(all.ids, ["cost", "failure_cost_policy", "runtime_change:web"]);
-  assert.equal(approveLabel({ busy: false, expired: false, missing: 0 }), "이 계획 승인");
+  assert.equal(approveLabel({ busy: false, expired: false, missing: 0 }), "승인하고 실행 시작");
   assert.equal(approveLabel({ busy: true, expired: false, missing: 2 }), "보내는 중");
   assert.equal(approveLabel({ busy: false, expired: true, missing: 2 }), "승인 시간이 지났습니다");
   const old = ackState(undefined, new Set());

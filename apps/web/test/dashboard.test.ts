@@ -55,9 +55,9 @@ test("줄 이동 비교: 묶음이 바뀔 때만 값이 달라진다", () => {
   assert.notEqual(bucketSignature([mig("a", "paused")]), before);
 });
 
-test("사람 버튼 이름은 합의한 세 단계를 쓴다", () => {
+test("사람이 할 일 이름: 명세 확정·계획 승인. 승인하면 바로 시작하고, 시작이 막혀 승인 상태에 남을 때만 실행 다시 시작", () => {
   assert.equal(humanAction("spec_review"), "명세 확정");
   assert.equal(humanAction("awaiting_approval"), "계획 승인");
-  assert.equal(humanAction("approved"), "실행 시작");
+  assert.equal(humanAction("approved"), "실행 다시 시작");
   assert.equal(humanAction("shifting"), null);
 });

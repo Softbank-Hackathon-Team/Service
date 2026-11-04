@@ -19,7 +19,7 @@ import { useAgentReview } from '../agent/AgentResult';
 import { failureAnalysisOf } from '../agent/model';
 import { costCaveats, costNote, costSummary, planCostCaveats, planCostSummary } from '../cost/model';
 import {
-  ackState, approveLabel, canReplan, pollMs, screenOf, signalCovers, specRows, stepGate, stepName, usd, type MigrationScreen,
+  ackState, approveLabel, autoStart, canReplan, pollMs, screenOf, signalCovers, specRows, stepGate, stepName, usd, type MigrationScreen,
 } from './model';
 import { scopeLabel } from './source';
 import { SecurityFold } from './SecurityCard';
@@ -322,7 +322,7 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
       <Hero
         tone={expired ? 'stop' : 'run'}
         meta="계획서"
-        title={expired ? '승인 시간이\n지났습니다' : acks.missing.length > 0 ? `확인할 것 ${acks.missing.length}개를 보고\n승인해 주세요` : '승인하면\n이대로만 실행합니다'}
+        title={expired ? '승인 시간이\n지났습니다' : acks.missing.length > 0 ? `확인할 것 ${acks.missing.length}개를 보고\n승인해 주세요` : '승인하면 이대로\n바로 실행합니다'}
         foot={doc ? `유효 시각 ${new Date(doc.expiresAt).toLocaleString('ko-KR', { hour12: false })}` : undefined}
       >
         {doc && <CodeValue value={doc.planHash} chip max={32} />}
@@ -418,7 +418,26 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
             label={approveLabel({ busy, expired, missing: acks.missing.length })}
             icon="check"
             disabled={busy || !doc || expired || !acks.ready}
-            onClick={() => doc && void run(() => api.decide(doc.planId, 'approve', doc.planHash, acks.ids))}
+            onClick={() =>
+              doc &&
+              void run(async () => {
+                // 승인하면 바로 실행을 시작한다(버튼 한 번). 시작이 막히면 승인은 그대로 두고 실행 대기 화면이 이유를 이어 받는다
+                autoStart.begin(migration.id);
+                let blockedBy: string | null = null;
+                try {
+                  await api.decide(doc.planId, 'approve', doc.planHash, acks.ids);
+                  try {
+                    await api.start(migration.id, doc.planHash);
+                  } catch (reason) {
+                    blockedBy = errorCode(reason) ?? 'START_FAILED';
+                    throw reason;
+                  }
+                } finally {
+                  autoStart.end(migration.id, blockedBy);
+                  if (blockedBy) onChanged();
+                }
+              })
+            }
           />
         </ActionRow>
       </Stack>
@@ -433,9 +452,11 @@ function ApprovedScreen({ migration, route, onChanged }: ScreenProps) {
   });
   const doc = plan.data;
   const expired = doc ? Date.parse(doc.expiresAt) <= Date.now() : false;
+  // 승인 화면이 승인하고 바로 시작하다 막혔으면 그 이유를 이어 받는다. 이 화면에서 다시 누르면 그 결과를 본다
   // TENANT_BUSY: 회사 동시 진행 상한. 이전은 승인 상태 그대로라 계획이 유효한 동안 다시 시작할 수 있다
   // ENV_BUSY: 다른 이전이 같은 환경을 쓰는 중
-  const waiting = code === 'TENANT_BUSY' ? 'tenant' : code === 'ENV_BUSY' ? 'env' : null;
+  const blockedBy = code ?? (busy || error ? null : autoStart.blockedCode(migration.id));
+  const waiting = blockedBy === 'TENANT_BUSY' ? 'tenant' : blockedBy === 'ENV_BUSY' ? 'env' : null;
   const until = doc ? new Date(doc.expiresAt).toLocaleString('ko-KR', { hour12: false }) : null;
   return (
     <Frame migration={migration} route={route}>
@@ -447,7 +468,7 @@ function ApprovedScreen({ migration, route, onChanged }: ScreenProps) {
             ? '진행 중인 마이그레이션이 많아\n아직 시작하지 않았습니다'
             : waiting === 'env'
               ? '다른 마이그레이션이\n환경을 쓰고 있습니다'
-              : '승인했습니다.\n버튼 하나만 남았습니다'
+              : '승인했습니다.\n실행을 시작해 주세요'
         }
         foot={
           waiting === 'tenant'
@@ -603,6 +624,10 @@ function CancelledScreen({ migration, route }: ScreenProps) {
   );
 }
 
+/** 승인하고 바로 시작하는 사이에 잠깐 보이는 approved 는 승인 화면에 둔다 (시작이 끝나면 실행 화면으로) */
+const screenFor = (migration: MigrationView): MigrationScreen =>
+  migration.status === 'approved' && autoStart.isStarting(migration.id) ? 'approve' : screenOf(migration.status);
+
 const SCREENS: Record<Exclude<MigrationScreen, 'rejected' | 'stale'>, (props: ScreenProps) => ReactNode> = {
   importing: ImportingScreen,
   spec: SpecScreen,
@@ -637,7 +662,7 @@ export function MigrationPage({ id }: { id: string }) {
     const next = poll.data;
     if (!next) return;
     setStatus(next.status);
-    const screen = screenOf(next.status);
+    const screen = screenFor(next);
     // 처음 읽은 화면도 전환으로 들인다. 읽는 동안은 근거 칸이 없어서, 근거 칸이 있는 화면이면 칸이 열리는 것이 보인다
     const moved = shownScreen.current !== screen;
     shownScreen.current = screen;
@@ -665,7 +690,7 @@ export function MigrationPage({ id }: { id: string }) {
     route: `${shown.sourceScope && Object.keys(shown.sourceScope).length > 0 ? `${scopeLabel(shown.sourceScope)} · ` : ''}${name(shown.sourceEnvId)} → ${name(shown.targetEnvId)}`,
     onChanged: () => void poll.reload(),
   };
-  const screen = screenOf(shown.status);
+  const screen = screenFor(shown);
   if (screen === 'rejected' || screen === 'stale') return <StoppedScreen {...props} kind={screen} />;
   const Screen = SCREENS[screen];
   return <Screen {...props} />;
