@@ -14,7 +14,7 @@ export const MODULE_DIGEST = {
   "aws/kinds/queue": "content-1e7028cae57a",
   "aws/kinds/service-ecs": "content-9b757c20a096",
   "aws/kinds/vm": "content-000bdbd2b7f5",
-  "gcp/root": "content-684f033434b1",
+  "gcp/root": "content-685a94a456a4",
   "gcp/kinds/cache": "content-867835b51042",
   "gcp/kinds/identity": "content-6af09cab5ccf",
   "gcp/kinds/job": "content-1795757beabf",
