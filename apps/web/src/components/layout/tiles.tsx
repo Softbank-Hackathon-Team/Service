@@ -131,18 +131,21 @@ type HeroProps = {
   tone: HeroTone;
   meta: string;
   step?: string;
+  /** 머리줄 오른쪽 끝에 두는 작은 버튼 (예: 계정 화면의 환경 추가하기) */
+  action?: ReactNode;
   title: string;
   foot?: ReactNode;
   children?: ReactNode;
 };
 
 /** 화면의 주인공. 경고(stop)만 카드를 빨갛게 칠하고, 나머지는 머리줄의 글자와 원 색으로만 상태를 알린다. */
-export function Hero({ area = 'hero', tone, meta, step, title, foot, children }: HeroProps) {
+export function Hero({ area = 'hero', tone, meta, step, action, title, foot, children }: HeroProps) {
   return (
     <section className={`${s.hero} ${s[tone] ?? ''}`} style={areaStyle(area)}>
       <div className={s.heroMeta}>
         <span className="t-label-md">{meta}</span>
         {step && <span className={`${s.heroStep} t-label-md`}>{step}</span>}
+        {action}
       </div>
       <div className={s.heroContent}>
         <h2 className={`${s.heroTitle} t-display`}>{title}</h2>

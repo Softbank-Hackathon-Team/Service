@@ -18,7 +18,7 @@ import { realEnvs } from '../dashboard/model';
 import { envPath, REGISTER_PATH } from '../environments/connect';
 import { PLATFORM } from '../migration/source';
 import { ShellLayout } from '../shell/ShellLayout';
-import { allProvidersFilled, borrowedByEnv, borrowState, envsByProvider, PROVIDER_ORDER, type Borrowed } from './model';
+import { borrowedByEnv, borrowState, envsByProvider, isLinked, PROVIDER_ORDER, type Borrowed } from './model';
 import s from '../common/page.module.css';
 import own from './SettingsPage.module.css';
 import { t } from '../../lib/i18n';
@@ -99,7 +99,7 @@ function EnvLine({ env, borrowed }: { env: EnvironmentView; borrowed: Borrowed |
   );
 }
 
-/** 벤더 하나의 카드. 그 벤더로 연결한 환경(EKS·ECS·GKE·k3s …)이 이 안에 들어온다 */
+/** 벤더 하나의 카드. 그 벤더로 연결을 마친 환경(EKS·ECS·GKE·k3s …)이 이 안에 들어온다 */
 function ProviderCard({ provider, envs, borrowed }: { provider: Provider; envs: EnvironmentView[]; borrowed: Record<string, Borrowed> }) {
   return (
     <section className={own.card}>
@@ -110,26 +110,23 @@ function ProviderCard({ provider, envs, borrowed }: { provider: Provider; envs: 
         </span>
         <span className="t-caption c-tertiary">{t('{0}개', { 0: envs.length })}</span>
       </header>
-      {envs.length > 0 ? (
-        <ul className={own.envList}>
-          {envs.map((env) => (
-            <EnvLine key={env.id} env={env} borrowed={borrowed[env.id]} />
-          ))}
-        </ul>
-      ) : (
-        <p className="t-body-sm c-tertiary">{t('연결한 환경이 없습니다.')}</p>
-      )}
+      <ul className={own.envList}>
+        {envs.map((env) => (
+          <EnvLine key={env.id} env={env} borrowed={borrowed[env.id]} />
+        ))}
+      </ul>
     </section>
   );
 }
 
-/** 환경 등록하기. 벤더 카드와 같은 크기로 끝에 둔다 */
-function RegisterCard() {
+/** 환경 추가하기. 큰 카드 머리줄 오른쪽 끝의 작은 버튼 하나가 이 화면의 유일한 등록 입구다 */
+function AddBadge() {
   return (
-    <button type="button" className={`${own.card} ${own.addCard}`} onClick={() => go(REGISTER_PATH)}>
-      <Icon name="plus" size={20} />
-      <span className="t-h3">{t('환경 등록하기')}</span>
-      <span className="t-caption c-tertiary">{t('AWS·GCP 계정이나 온프레 클러스터')}</span>
+    <button type="button" className={own.addBadge} onClick={() => go(REGISTER_PATH)}>
+      <span className={own.addDot} aria-hidden>
+        <Icon name="plus" size={14} />
+      </span>
+      <span className="t-label-md">{t('환경 추가하기')}</span>
     </button>
   );
 }
@@ -195,22 +192,38 @@ export function SettingsPage({ user }: { user: AuthUser }) {
   const health = useLatency(api.health, 5_000);
   const ready = useLatency(api.ready, 10_000);
   const envs = usePoll(api.listEnvironments, 10_000, []);
-  const list = realEnvs(envs.data ?? []);
+  const list = realEnvs(envs.data ?? []).filter(isLinked);
   const groups = envsByProvider(list);
+  const providers = PROVIDER_ORDER.filter((provider) => groups[provider].length > 0);
   const borrowed = useBorrowed(list);
   const name = user.displayName ?? user.email;
   return (
     <ShellLayout layout={LAYOUT}>
-      <Hero tone="run" meta={user.tenantName ?? t('회사')} title={t('{0}\n계정입니다', { 0: name })} foot={t('회사 멤버면 승인까지 모두 할 수 있습니다')}>
+      <Hero
+        tone="run"
+        meta={user.tenantName ?? t('회사')}
+        action={<AddBadge />}
+        title={t('{0}\n계정입니다', { 0: name })}
+        foot={t('회사 멤버면 승인까지 모두 할 수 있습니다')}
+      >
         <p className="t-body-md c-secondary">{user.email}</p>
-        <div className={`${own.gridScroll} scroll-fade`}>
-          <div className={own.grid}>
-            {PROVIDER_ORDER.map((provider) => (
-              <ProviderCard key={provider} provider={provider} envs={groups[provider]} borrowed={borrowed} />
-            ))}
-            {!allProvidersFilled(groups) && <RegisterCard />}
+        {providers.length > 0 ? (
+          <div className={`${own.gridScroll} scroll-fade`}>
+            <div className={own.grid}>
+              {providers.map((provider) => (
+                <ProviderCard key={provider} provider={provider} envs={groups[provider]} borrowed={borrowed} />
+              ))}
+            </div>
           </div>
-        </div>
+        ) : (
+          // 처음 읽는 동안에는 비었다고 말하지 않는다
+          envs.data && (
+            <div className={own.empty}>
+              <p className="t-h3">{t('등록된 환경이 없습니다')}</p>
+              <p className="t-body-sm c-secondary">{t('오른쪽 위 환경 추가하기에서 AWS·GCP 계정이나 온프레 클러스터를 연결하면, 벤더별로 여기에 모입니다.')}</p>
+            </div>
+          )
+        )}
       </Hero>
       <Stack area="side">
         <DisplayFold user={user} />
