@@ -71,7 +71,7 @@ test("AWS 관찰 인라인 정책 = 표의 모든 동작을 포함, 읽기 동�
   const lacking = need.filter((a) => !actions.includes(a));
   assert.deepEqual(lacking, [], `관찰 역할에 없는 권한: ${lacking.join(", ")}`);
   assert.equal(new Set(actions).size, actions.length);
-  for (const a of actions) { assert.match(a, /:(Describe|Get|List)/, a); assert.ok(!a.includes("*"), a); }
+  for (const a of actions) { assert.match(a, /:(Describe|Get|List|BatchGet)/, a); assert.ok(!a.includes("*"), a); }
 });
 
 test("GCP 연결 스크립트의 관찰 역할 권한 = 표의 모든 권한을 포함, 읽기 접미사만·중복 0 (DRY_RUN 출력)", () => {
