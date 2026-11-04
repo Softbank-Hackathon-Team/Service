@@ -24,6 +24,8 @@ const result = await build({
   entryPoints: {
     main: `apps/${app}/src/main.ts`,
     healthcheck: "deploy/docker/healthcheck.mjs",
+    // api 이미지가 OTel 게이트웨이 입구도 겸한다 (node metrics-gateway.mjs)
+    ...(app === "api" ? { "metrics-gateway": "apps/api/src/metrics-gateway-main.ts" } : {}),
   },
   outdir,
   outExtension: { ".js": ".mjs" },

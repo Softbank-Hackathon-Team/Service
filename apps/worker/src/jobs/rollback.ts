@@ -30,7 +30,7 @@ export async function handleRollback(raw: unknown) {
       const { bundle } = loaded as { bundle: Awaited<ReturnType<typeof targetBundle>> };
       // 트래픽: 출발 100% 확인(shift 가 이미 긴급 되돌림을 했으면 PATCH 없이 확인만) + 출발 5xx ≤ 1%
       const traffic = await restoreSource({ switcher: trafficSwitcher(), lbId: TRAFFIC_LB_ID ?? j.migrationId,
-        metrics: trafficMetrics(), migrationId: j.migrationId });
+        metrics: trafficMetrics(j.tenantId), migrationId: j.migrationId });
       // 롤백이 끝나면 이 이전의 실행 역할은 더 쓸 일이 없다 (회수 결과는 감사에 남는다)
       const roles = await tempRoles().revokeForMigration(j.tenantId, j.migrationId, "rolled_back");
       const weights = traffic.detail.after;

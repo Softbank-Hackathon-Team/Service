@@ -19,9 +19,9 @@ export function trafficSwitcher(): TrafficSwitcher {
   return sw;
 }
 
-export function trafficMetrics(): MetricsSource {
+export function trafficMetrics(tenantId: string): MetricsSource {
   // DRAFT(ai): PROM_URL 이 없으면 가짜 정상 지표. TRAFFIC_STUB_SCENARIO=err|slow|down 으로 롤백 데모
-  if (process.env.PROM_URL) return prometheusMetrics({ baseUrl: process.env.PROM_URL, baselineP95Ms: envNumber(process.env.TRAFFIC_BASELINE_P95_MS, 200) });
+  if (process.env.PROM_URL) return prometheusMetrics({ baseUrl: process.env.PROM_URL, tenantId, baselineP95Ms: envNumber(process.env.TRAFFIC_BASELINE_P95_MS, 200) });
   const sc = (process.env.TRAFFIC_STUB_SCENARIO ?? "clean") as "clean" | "err" | "slow" | "down";
   return stubMetrics(sc, { failAt: envNumber(process.env.TRAFFIC_STUB_FAIL_AT, 50) });
 }

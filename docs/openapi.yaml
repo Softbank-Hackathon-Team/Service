@@ -1123,6 +1123,53 @@ paths:
         "500":
           $ref: "#/components/responses/E500"
           description: "INTERNAL"
+  "/api/v1/environments/{id}/metric-token":
+    post:
+      operationId: "postEnvironmentsByIdMetrictoken"
+      tags:
+        - "environments"
+      summary: "/api/v1/environments/{id}/metric-token"
+      description: "코드: apps/api/src/routes/environments.ts"
+      security:
+        - bearerAuth: []
+        - devTenant: []
+      parameters:
+        - name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+            pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        - $ref: "#/components/parameters/DevTenant"
+      responses:
+        "201":
+          description: "OK"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/MetricTokenCreated"
+        "400":
+          $ref: "#/components/responses/E400"
+          description: "BAD_REQUEST (Zod 검증 실패)"
+        "401":
+          $ref: "#/components/responses/E401"
+          description: "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+        "403":
+          $ref: "#/components/responses/E403"
+          description: "TUNNEL_READ_ONLY (개발 헤더 인증 + Cloudflare 터널로 온 쓰기, Z47)"
+        "404":
+          $ref: "#/components/responses/E404"
+          description: "ApiError"
+        "409":
+          $ref: "#/components/responses/E409"
+          description: "ApiError"
+        "429":
+          $ref: "#/components/responses/E429"
+          description: "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+        "500":
+          $ref: "#/components/responses/E500"
+          description: "INTERNAL"
   "/api/v1/environments/{id}/status":
     get:
       operationId: "getEnvironmentsByIdStatus"
@@ -8141,6 +8188,19 @@ components:
         - "unit"
         - "env"
         - "at"
+      additionalProperties: false
+    MetricTokenCreated:
+      type: "object"
+      properties:
+        envId:
+          type: "string"
+          format: "uuid"
+          pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        token:
+          type: "string"
+      required:
+        - "envId"
+        - "token"
       additionalProperties: false
     MigrationList:
       type: "object"

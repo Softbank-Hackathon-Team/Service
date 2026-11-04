@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import {
-  ApiError, ConnectionLink, ConnectionStatus, CreateEnvironmentBody, EnvironmentView, VerifyBody, checkAccountId,
+  ApiError, ConnectionLink, ConnectionStatus, CreateEnvironmentBody, EnvironmentView, MetricTokenCreated, VerifyBody, checkAccountId,
   type Provider,
 } from "@svc/contracts";
 import {
@@ -10,8 +10,9 @@ import {
 } from "@svc/core";
 import { cachedInventory, chooseRunner, inventoryToStatus } from "@svc/adapters";
 import { EnvironmentList, EnvironmentStatus, errors } from "./responses.js";
-import { IdParam, found, isoUtc } from "./kit.js";
+import { IdParam, auditOk, found, isoUtc } from "./kit.js";
 import { awsQuickCreateUrl, connectSettings, externalIdHint, newExternalId } from "../connect/link.js";
+import { hashMetricToken, newMetricToken } from "../auth/metric-token.js";
 
 // 입력층 L2: 환경 만들기 · 연결 링크 · 연결 확인 요청 · 해제. 상태 변경은 core advanceConnection() 하나로만 한다
 // (environments.connection_status 를 여기서 직접 UPDATE 하지 않는다)
@@ -168,6 +169,25 @@ export async function environmentRoutes(app: FastifyInstance) {
     });
   });
 
+  // 지표 토큰 발급 (연결된 환경만). 환경마다 살아 있는 토큰은 하나라 다시 받으면 이전 토큰은 끊긴다
+  // 원문은 이 응답 한 번뿐이다. req.idempotent 는 응답을 DB 에 남기므로 쓰지 않는다 (개인 토큰과 같다)
+  r.post("/environments/:id/metric-token", { schema: { params: IdParam,
+    response: { 201: MetricTokenCreated, ...errors(400, 401, 403, 404, 409, 500) } } }, async (req, reply) => {
+    const id = req.params.id;
+    const token = newMetricToken();
+    await withTenant(req.tenantId, async (tx) => {
+      const env = await lockEnv(tx, id);
+      if (env.connection_status !== "connected" && env.connection_status !== "unstable")
+        throw err(409, "ENV_NOT_CONNECTED", `environment ${id} is ${env.connection_status}`);
+      await tx.query("UPDATE metric_tokens SET revoked_at = now() WHERE env_id = $1 AND revoked_at IS NULL", [id]);
+      await tx.query("INSERT INTO metric_tokens (tenant_id, env_id, token_hash) VALUES ($1, $2, $3)",
+        [req.tenantId, id, hashMetricToken(token)]);
+      await writeAudit(tx, req.tenantId, auditOk(req, "env.metric_token_issued", id));
+    });
+    reply.header("cache-control", "no-store");
+    return reply.code(201).send({ envId: id, token });
+  });
+
   // 해제 (설계 IA 6.4). 진행 중 이전이 있으면 409. Agent 키 끊고, 임시 자격은 회수 요청(워커 청소가 실제 회수)
   r.delete("/environments/:id", { schema: { params: IdParam,
     response: { 204: z.null(), ...errors(400, 401, 403, 404, 409, 500) } } }, async (req, reply) => {
@@ -181,6 +201,7 @@ export async function environmentRoutes(app: FastifyInstance) {
       await advanceConnection(tx, req.tenantId, id, "disconnected", {
         audit: { actor: req.actor, action: "env.disconnected" } });
       await tx.query("UPDATE agent_keys SET revoked_at = now() WHERE env_id = $1 AND revoked_at IS NULL", [id]);
+      await tx.query("UPDATE metric_tokens SET revoked_at = now() WHERE env_id = $1 AND revoked_at IS NULL", [id]);
       await tx.query(`UPDATE temp_credentials SET status = 'revoke_requested', revoke_reason = 'env_disconnected'
                        WHERE env_id = $1 AND status = 'active'`, [id]);
       return { status: 204, body: null };

@@ -62,7 +62,7 @@ export async function handleShift(raw: unknown) {
           .catch(() => { /* 표시용. 쓰기 실패로 전환을 멈추지 않는다 */ });
       };
       const r = await runShift({
-        migrationId: j.migrationId, lbId, switcher: sw, metrics: trafficMetrics(), steps, onWeight, resumeFromPct,
+        migrationId: j.migrationId, lbId, switcher: sw, metrics: trafficMetrics(j.tenantId), steps, onWeight, resumeFromPct,
         sleep: () => new Promise((res) => setTimeout(res, trafficTickMs())),
         observeSec: OBSERVE_MIN_SEC,   // M7: 시계로 관찰. T22 전이 조건과 같은 값
         // z75-38: 단계마다 "최소 관찰(TRAFFIC_OBSERVE_SEC) 지남 + 실측 도착 몫이 목표 ±10%p" 라야 다음 단계. 못 미치면 2번 더 본 뒤 paused

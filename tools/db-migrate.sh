@@ -102,6 +102,7 @@ marker_sql() {
     0027) echo "to_regclass('public.agent_enroll_tokens') IS NOT NULL" ;;
     0033) echo "to_regclass('public.infra_ready') IS NOT NULL" ;;
     0034) echo "EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'github_id')" ;;
+    0035) echo "to_regclass('public.metric_tokens') IS NOT NULL" ;;
     *) echo "" ;;
   esac
 }

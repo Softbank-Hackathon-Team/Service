@@ -6,16 +6,19 @@ export interface MetricsSource {
   window(migrationId: string, targetPct: number): Promise<Window>;
 }
 
-// DRAFT(ai): 계약 문서 미정 2번 추천안. 두 클러스터에서 같은 이름을 쓰고 관측 표시 셋(env, tenant, migration)을 붙인다
+// DRAFT(ai): 계약 문서 미정 2번 추천안. 두 클러스터에서 같은 이름을 쓰고 관측 표시를 붙인다
+// tenant·environment 는 OTel 게이트웨이가 지표 토큰으로 덮어쓴다. env(source|target)·migration 은 보낸 쪽이 붙인다
 export const METRIC_NAMES = {
-  requests: "svc_ingress_requests_total",                 // 표시: env, tenant, migration, code
-  latency: "svc_ingress_request_duration_seconds_bucket", // 표시: env, tenant, migration, le
+  requests: "svc_ingress_requests_total",                 // 표시: tenant, environment, env, migration, code
+  latency: "svc_ingress_request_duration_seconds_bucket", // 표시: tenant, environment, env, migration, le
 } as const;
 
 // 순수 함수: 한 쪽(source|target)의 30초 창 PromQL 세 줄. 매개변수는 따옴표 안에 넣기 전에 걸러 낸다
-export function promQueries(migrationId: string, side: "source" | "target", windowSec = 30) {
+// tenant 조건: 다른 회사가 이 이전 번호를 붙여 밀어도 판정에 안 섞인다 (tenant 는 게이트웨이가 덮어쓴 값)
+export function promQueries(tenantId: string, migrationId: string, side: "source" | "target", windowSec = 30) {
+  if (!/^[0-9a-f-]{36}$/i.test(tenantId)) throw new Error("tenantId 형식이 아니다 (PromQL 주입 방지)");
   if (!/^[0-9a-f-]{36}$/i.test(migrationId)) throw new Error("migrationId 형식이 아니다 (PromQL 주입 방지)");
-  const sel = `migration="${migrationId}",env="${side}"`;
+  const sel = `tenant="${tenantId}",migration="${migrationId}",env="${side}"`;
   const w = `${windowSec}s`;
   return {
     total: `sum(increase(${METRIC_NAMES.requests}{${sel}}[${w}]))`,
@@ -27,7 +30,7 @@ export function promQueries(migrationId: string, side: "source" | "target", wind
 // Prometheus HTTP API (/api/v1/query) 로 창 하나를 읽는다.
 // p95 는 Prometheus 가 계산한 값을 p95Ms 로 넘긴다 (원래 지연 목록은 안 가져온다)
 // DRAFT(ai): 출발 쪽 표본이 모자랄 때 쓰는 기준 p95 는 전환 직전 10초 값을 부르는 쪽이 넣는다 (baselineP95Ms)
-export function prometheusMetrics(o: { baseUrl: string; fetch?: FetchLike; baselineP95Ms: number; windowSec?: number;
+export function prometheusMetrics(o: { baseUrl: string; tenantId: string; fetch?: FetchLike; baselineP95Ms: number; windowSec?: number;
   authHeader?: () => Promise<string | undefined> }): MetricsSource {
   const f = o.fetch ?? (globalThis.fetch as unknown as FetchLike);
   async function scalar(q: string): Promise<number> {
@@ -41,7 +44,7 @@ export function prometheusMetrics(o: { baseUrl: string; fetch?: FetchLike; basel
     return Number.isFinite(n) ? n : NaN;   // 표본 0 이면 histogram_quantile 이 NaN
   }
   async function side(id: string, s: "source" | "target") {
-    const q = promQueries(id, s, o.windowSec);
+    const q = promQueries(o.tenantId, id, s, o.windowSec);
     const [total, err, p95s] = await Promise.all([scalar(q.total), scalar(q.err5xx), scalar(q.p95)]);
     return { n: Math.round(total), err5xx: Math.round(err), latenciesMs: [], p95Ms: p95s * 1000 };
   }

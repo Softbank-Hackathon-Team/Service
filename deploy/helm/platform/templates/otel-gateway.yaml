@@ -1,0 +1,138 @@
+{{- $g := .Values.otelGateway }}
+{{- /* 이미지는 배포 파이프라인이 준다. 비어 있으면 게이트웨이를 안 만든다 (값 없이도 비밀·입구 차트는 검사된다) */}}
+{{- if $g.image }}
+# 고객 수집기 → (터널) → 입구 컨테이너(토큰 확인) → Collector(라벨 덮어쓰기) → Prometheus 가 긁어 간다
+# Collector 의 받는 포트는 127.0.0.1 이라 토큰 확인을 건너뛸 길이 없다
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-gateway
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          http:
+            endpoint: 127.0.0.1:4319
+            include_metadata: true
+    processors:
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 200
+      # 받기로 한 지표만. 다른 이름을 밀어 우리 대시보드·판정 지표를 흉내 내지 못한다
+      # 종류도 본다. 같은 이름을 다른 종류로 먼저 밀면 내보내기가 다른 회사 지표까지 버린다
+      filter/allowlist:
+        error_mode: ignore
+        metrics:
+          metric:
+            - 'not (name == "svc_ingress_requests_total" and type == METRIC_DATA_TYPE_SUM) and not (name == "svc_ingress_request_duration_seconds" and type == METRIC_DATA_TYPE_HISTOGRAM)'
+          datapoint:
+            - 'not IsMatch(attributes["env"], "^(source|target)$")'
+            - 'not IsMatch(attributes["migration"], "^[0-9a-fA-F-]{36}$")'
+            - 'attributes["replica"] != nil and not IsMatch(attributes["replica"], "^[A-Za-z0-9._-]{1,128}$")'
+      # 보낸 쪽이 붙인 tenant·environment 를 버리고 토큰에서 찾은 값으로 덮어쓴다 (헤더는 입구 컨테이너만 붙일 수 있다)
+      attributes/identity:
+        actions:
+          - { key: tenant, from_context: metadata.x-svc-tenant, action: upsert }
+          - { key: environment, from_context: metadata.x-svc-environment, action: upsert }
+      # 정한 라벨만 남긴다. 값이 끝없이 늘어나는 라벨로 Prometheus 를 터뜨리지 못한다
+      # replica: 고객 Ingress 가 여러 개면 파드마다 다른 값을 붙인다. 안 붙이면 같은 라벨끼리 누적 값을 덮어쓴다
+      transform/labels:
+        error_mode: ignore
+        metric_statements:
+          - context: resource
+            statements:
+              - 'keep_keys(attributes, [])'
+          - context: datapoint
+            statements:
+              - 'keep_keys(attributes, ["tenant", "environment", "env", "migration", "code", "replica"])'
+    exporters:
+      prometheus:
+        endpoint: 0.0.0.0:8889
+        add_metric_suffixes: false
+        metric_expiration: 5m
+    service:
+      telemetry:
+        metrics:
+          level: none
+      pipelines:
+        metrics:
+          receivers: [otlp]
+          processors: [memory_limiter, filter/allowlist, attributes/identity, transform/labels]
+          exporters: [prometheus]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-gateway
+  labels:
+    app.kubernetes.io/name: otel-gateway
+    app.kubernetes.io/part-of: platform
+spec:
+  # DRAFT(ai): 1개. 누적 값을 파드마다 따로 들고 있어서 늘리면 같은 지표가 파드 사이를 오가며 튄다. 파드가 죽으면 수집기가 다시 보낸다
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: otel-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: otel-gateway
+        app.kubernetes.io/part-of: platform
+    spec:
+      automountServiceAccountToken: false
+      nodeSelector:
+        pool: {{ $g.pool }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: gateway
+          image: {{ $g.image }}
+          command: ["node", "--enable-source-maps", "metrics-gateway.mjs"]
+          envFrom:
+            - secretRef: { name: otel-gateway-env }
+          ports:
+            - { name: otlp, containerPort: 4318 }
+          readinessProbe:
+            httpGet: { path: /healthz, port: otlp }
+          livenessProbe:
+            httpGet: { path: /healthz, port: otlp }
+            initialDelaySeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 20m, memory: 64Mi }
+            limits: { memory: 192Mi }
+        - name: collector
+          image: {{ $g.collectorImage }}
+          args: ["--config=/etc/otelcol/config.yaml"]
+          ports:
+            - { name: metrics, containerPort: 8889 }
+          volumeMounts:
+            - { name: config, mountPath: /etc/otelcol, readOnly: true }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { memory: 256Mi }
+      volumes:
+        - name: config
+          configMap: { name: otel-gateway }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-gateway
+spec:
+  selector:
+    app.kubernetes.io/name: otel-gateway
+  ports:
+    - { name: otlp, port: 4318, targetPort: otlp }
+{{- end }}
