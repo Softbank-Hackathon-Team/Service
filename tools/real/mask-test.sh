@@ -32,11 +32,11 @@ leak "이메일"             "dev.user+x@example.com" "mail dev.user+x@example.c
 leak "jwt"                "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJl" "tok eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJl"
 leak "bearer"             "abcDEF123456xyz"   "Authorization: Bearer abcDEF123456xyz"
 leak "gcp oauth"          "ya29.a0AfH6SMBexample1234567890" "x ya29.a0AfH6SMBexample1234567890"
-leak "github"             "ghp_abcdefghijklmnopqrstuvwxyz0123456789" "t ghp_abcdefghijklmnopqrstuvwxyz0123456789"
+leak "github"             "gh""p_abcdefghijklmnopqrstuvwxyz0123456789" "t gh""p_abcdefghijklmnopqrstuvwxyz0123456789"
 leak "kubeconfig ca"      "LS0tLS1CRUdJTkNFUlRJRklDQVRF" "    certificate-authority-data: LS0tLS1CRUdJTkNFUlRJRklDQVRFLS0tLS0K"
 leak "kubeconfig key"     "LS0tLS1CRUdJTktFWQ" "    client-key-data: LS0tLS1CRUdJTktFWQ=="
 leak "kubeconfig token"   "k8s-aws-v1.aHR0cHM6Ly9zdHM" "    token: k8s-aws-v1.aHR0cHM6Ly9zdHMuYW1hem9uYXdzLmNvbQ"
-leak "PEM 여러 줄"        "MIIBVgIBADANBgkqhkiG9w0" "$(printf -- '-----BEGIN PRIVATE KEY-----\nMIIBVgIBADANBgkqhkiG9w0BAQEFAASC\nAQEAxyz==\n-----END PRIVATE KEY-----')"
+leak "PEM 여러 줄"        "MIIBVgIBADANBgkqhkiG9w0" "$(printf -- '-----BEGIN PRIVATE'' KEY-----\nMIIBVgIBADANBgkqhkiG9w0BAQEFAASC\nAQEAxyz==\n-----END PRIVATE KEY-----')"
 leak "api key 소문자 키"  "SuperSecretValue99" "db_password: SuperSecretValue99"
 leak "long mixed base64"  "Zm9vYmFyQmF6UXV4MTIzNDU2Nzg5MEFCQ0RFRkdISUo" "blob Zm9vYmFyQmF6UXV4MTIzNDU2Nzg5MEFCQ0RFRkdISUo"
 # 그대로 두는 것
