@@ -59,8 +59,8 @@ test("정상: image_mirror 로 출발 관찰 역할을 빌려 출발 토큰만 �
   };
   const out = await mirror.mirrorImages({ tenantId: T, migrationId: M }, { id: M, status: "deploying", sourceEnvId: SRC, targetEnvId: DST },
     [{ ref: `x/api@${D}`, source: `111122223333.dkr.ecr.us-west-2.amazonaws.com/shop/api@${D}` }],
-    { exec, env: { ...process.env, SANDBOX_IMAGE_REGISTRY: "999999999999.dkr.ecr.ap-northeast-2.amazonaws.com/sbx", MOCK_SANDBOX: "" } });
-  assert.deepEqual(out, { ok: true, images: [{ ref: `x/api@${D}`, sandboxRef: `999999999999.dkr.ecr.ap-northeast-2.amazonaws.com/sbx/${T}/api@${D}` }] });
+    { exec, env: { ...process.env, SANDBOX_IMAGE_REGISTRY: "999999999999.dkr.ecr.ap-northeast-2.amazonaws.com/sandbox", MOCK_SANDBOX: "" } });
+  assert.deepEqual(out, { ok: true, images: [{ ref: `x/api@${D}`, sandboxRef: `999999999999.dkr.ecr.ap-northeast-2.amazonaws.com/sandbox/${T}/api@${D}` }] });
   assert.ok(borrowedFile && !existsSync(borrowedFile), "단계 끝에 자격 파일 삭제");
   const rows = (await owner.query("SELECT env_id, purpose, step, actions_count, stub, status, revoke_reason FROM temp_credentials WHERE migration_id=$1", [M])).rows;
   assert.deepEqual(rows, [{ env_id: SRC, purpose: "observe", step: "image_mirror", actions_count: 3, stub: false, status: "revoked", revoke_reason: "image_mirror_done" }]);

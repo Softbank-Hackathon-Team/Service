@@ -257,11 +257,14 @@ run "pod_identity" {
   }
   assert {
     condition = (
-      [for st in jsondecode(aws_iam_role_policy.worker.policy).Statement : st.Resource if anytrue([for a in st.Action : startswith(a, "ecr:") && a != "ecr:GetAuthorizationToken"])] == [["arn:aws:ecr:ap-northeast-2:123456789012:repository/sbx/*"]] &&
-      !anytrue([for st in jsondecode(aws_iam_role_policy.worker.policy).Statement : anytrue([for a in st.Action : startswith(a, "ecr:Delete") || startswith(a, "ecr:Set") || a == "ecr:*"])]) &&
-      output.sandbox_image_registry == "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/sbx"
+      [for st in jsondecode(aws_iam_role_policy.worker.policy).Statement : st.Resource if anytrue([for a in st.Action : startswith(a, "ecr:") && a != "ecr:GetAuthorizationToken"])] == [["arn:aws:ecr:ap-northeast-2:123456789012:repository/sandbox/*"]] &&
+      toset(flatten([for st in jsondecode(aws_iam_role_policy.worker.policy).Statement : [for a in st.Action : a if startswith(a, "ecr:")]])) == toset([
+        "ecr:GetAuthorizationToken", "ecr:CreateRepository", "ecr:BatchCheckLayerAvailability", "ecr:InitiateLayerUpload",
+        "ecr:UploadLayerPart", "ecr:CompleteLayerUpload", "ecr:PutImage", "ecr:BatchGetImage",
+      ]) &&
+      output.sandbox_image_registry == "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/sandbox"
     )
-    error_message = "worker ECR 쓰기는 sbx/* 저장소에만, 지우기·정책 바꾸기 없음. SANDBOX_IMAGE_REGISTRY 출력은 같은 접두어"
+    error_message = "worker ECR 은 로그인 토큰 + sandbox/* 저장소 만들기·올리기·매니페스트 읽기만 (층 받기·지우기·정책 없음). SANDBOX_IMAGE_REGISTRY 출력은 같은 접두어"
   }
   assert {
     condition     = !anytrue([for st in jsondecode(aws_iam_role_policy.worker.policy).Statement : anytrue([for r in st.Resource : strcontains(r, "tf-state")])])
