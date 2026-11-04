@@ -1,4 +1,4 @@
-import { boss, startBoss, startMetricsServerNear, workOptions, stepWorkOptions, LISTEN_NOTIFY } from "@svc/core";
+import { assertMigrations, pool, boss, startBoss, startMetricsServerNear, workOptions, stepWorkOptions, LISTEN_NOTIFY } from "@svc/core";
 import { HANDLERS } from "./jobs/index.js";
 import { jobAttempt } from "./jobs/_step.js";
 import { registerLeaseJobs } from "./lease/index.js";
@@ -43,6 +43,7 @@ if (!iacMockEnabled()) {
   else log.error({ reason: v.error }, "iac: real terraform 인데 실행 불가 → aws/gcp/onprem apply 는 TF_BIN_MISSING 으로 실패한다. 시험이면 MOCK_IAC=1");
 } else log.warn("iac: MOCK_IAC=1 → 도착 자원 흉내 (시험 전용)");
 
+await assertMigrations("worker", pool);   // PF FM-ORC-26: db:migrate 를 잊었으면 큐를 열기 전에 멈춘다
 await startBoss();
 // 큐 이름 → 처리 함수. 새 작업은 jobs/ 에 파일 하나 + jobs/index.ts에 한 줄
 // DRAFT(ai): 큐 확인 간격 0.5초 (pg-boss 기본 2초면 단계 9개가 smoke에서 너무 느리다). Z49: WORKER_POLL_SEC 로 바꿀 수 있다(최소 0.5)
