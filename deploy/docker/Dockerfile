@@ -10,6 +10,8 @@
 ARG NODE_IMAGE=node:22.23.4-alpine3.24
 # worker 의 git. 바탕(alpine 3.24)과 같은 alpine 판으로 만든 공식 git 이미지에서 꺼내 온다 (apk 저장소에 안 닿아도 빌드된다)
 ARG GIT_IMAGE=alpine/git:v2.54.0
+# agent-worker 의 helm (vCluster 차트를 sbx-* 네임스페이스에 올린다). git 과 같은 방식으로 이미지에서 꺼낸다. 다이제스트 고정
+ARG HELM_IMAGE=alpine/helm:3.22.1@sha256:8191701ad1f82ee3695c87211fcbfe6d7b1bb7df92ac1c8de9ccdb0995a6a2c1
 
 FROM ${NODE_IMAGE} AS manifests
 WORKDIR /src
@@ -61,6 +63,8 @@ RUN set -e; mkdir -p /out; \
     for l in $libs; do echo "$l"; readlink -f "$l"; done | sort -u > /tmp/libs; \
     tar -cf - /usr/bin/git /usr/libexec/git-core /usr/share/git-core $(cat /tmp/libs) 2>/dev/null | tar -xf - -C /out
 
+FROM ${HELM_IMAGE} AS helm
+
 # 세 이미지 공통 바탕
 FROM ${NODE_IMAGE} AS runtime
 ENV NODE_ENV=production
@@ -108,6 +112,10 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
   CMD ["node", "healthcheck.mjs", "db"]
 
 FROM runtime AS agent-worker
+# vCluster 리허설: helm(정적 바이너리) + 차트 묶음·CRD (apps/agent-worker/vendor). 체크섬이 다르면 빌드가 멈춘다
+COPY --from=helm /usr/bin/helm /usr/local/bin/helm
+COPY apps/agent-worker/vendor /app/vendor
+RUN cd /app/vendor && sha256sum -c SHA256SUMS && helm version --short
 COPY --from=build-agent-worker /src/dist/agent-worker/ ./
 USER node
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
