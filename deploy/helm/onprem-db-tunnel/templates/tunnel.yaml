@@ -1,0 +1,142 @@
+{{- include "dt.required" . }}
+{{- $v := .Values }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-known-hosts
+  labels: {{- include "dt.labels" . | nindent 4 }}
+data:
+  known_hosts: |
+{{ $v.relay.knownHosts | trim | indent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels: {{- include "dt.labels" . | nindent 4 }}
+spec:
+  replicas: 1   # 같은 중계 포트(-R 5432)를 두 파드가 잡으면 하나는 실패한다
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: db-tunnel, app.kubernetes.io/instance: {{ .Release.Name }} }
+  template:
+    metadata:
+      labels: {{- include "dt.labels" . | nindent 8 }}
+      annotations:
+        checksum/known-hosts: {{ $v.relay.knownHosts | sha256sum }}
+    spec:
+      automountServiceAccountToken: false   # 클러스터 API 를 안 쓴다
+      enableServiceLinks: false
+      securityContext:
+        # ssh 는 /etc/passwd 에 있는 사용자로만 돈다 (없으면 "No user exists for uid"). 이미지의 nobody
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534   # Secret 키 파일을 그룹으로 읽는다 (0440). 그대로 쓰면 ssh 가 "너무 열린 권한"으로 거부 → /tmp 로 0600 복사
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: ssh
+          image: {{ $v.image }}
+          imagePullPolicy: IfNotPresent
+          # 끊기면 2초 뒤 다시 붙는다 (파드 재시작 대기 시간이 길어지지 않게 파드 안에서 되붙음, tools/demo-tunnel.sh 와 같은 규칙)
+          #   비밀키는 0600 이어야 ssh 가 읽는다 → 쓰기 가능한 /tmp 로 복사
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -u
+              # 키를 못 읽으면 바로 끝낸다 (되붙기 루프가 실패를 가리지 않게. 파드 재시작으로 보인다)
+              install -m 600 /etc/db-tunnel/key/id /tmp/id || { echo "키 파일을 못 읽음: Secret {{ $v.keySecret }} 의 id" >&2; exit 1; }
+              n=0
+              while :; do
+                n=$((n + 1))
+                echo "$(date -u +%H:%M:%SZ) 터널 연결 ${n}번째"
+                ssh -N -i /tmp/id -p {{ $v.relay.port }} \
+                  -o BatchMode=yes -o IdentitiesOnly=yes \
+                  -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/db-tunnel/known_hosts \
+                  -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes \
+                  {{- if $v.forward.enabled }}
+                  -L 0.0.0.0:{{ $v.forward.port }}:{{ $v.forward.target }} \
+                  {{- end }}
+                  {{- if $v.reverse.enabled }}
+                  -R 0.0.0.0:5432:{{ $v.reverse.target }} \
+                  {{- end }}
+                  {{ $v.relay.user }}@{{ $v.relay.host }}
+                echo "$(date -u +%H:%M:%SZ) 끊김 (끝 코드 $?), 2초 뒤 다시"
+                sleep 2
+              done
+          env:
+            - { name: HOME, value: /tmp }
+          {{- if $v.forward.enabled }}
+          ports:
+            - { name: pg, containerPort: {{ $v.forward.port }} }
+          # 준비 = 이 파드가 정방향 입구를 열었다 (ssh 인증·전달 허가가 끝나야 열린다: ExitOnForwardFailure)
+          readinessProbe:
+            tcpSocket: { port: pg }
+            periodSeconds: 5
+          {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources: {{- toYaml $v.resources | nindent 12 }}
+          volumeMounts:
+            - { name: key, mountPath: /etc/db-tunnel/key, readOnly: true }
+            - { name: known-hosts, mountPath: /etc/db-tunnel/known_hosts, subPath: known_hosts, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: key
+          secret: { secretName: {{ $v.keySecret }}, defaultMode: 0440 }
+        - name: known-hosts
+          configMap: { name: {{ .Release.Name }}-known-hosts }
+        - name: tmp
+          emptyDir: { medium: Memory, sizeLimit: 1Mi }
+{{- if $v.forward.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}
+  labels: {{- include "dt.labels" . | nindent 4 }}
+spec:
+  type: ClusterIP   # 클러스터 밖에 안 연다
+  selector: { app.kubernetes.io/name: db-tunnel, app.kubernetes.io/instance: {{ .Release.Name }} }
+  ports:
+    - { name: pg, port: {{ $v.forward.port }}, targetPort: pg }
+{{- end }}
+---
+# 들어오는 것: 정방향 입구에 같은 네임스페이스 CNPG 만. 나가는 것: DNS, 중계 22, (역방향이면) CNPG 5432
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}
+  labels: {{- include "dt.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: db-tunnel, app.kubernetes.io/instance: {{ .Release.Name }} }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    {{- if $v.forward.enabled }}
+    - from:
+        - podSelector:
+            matchLabels: {{- toYaml $v.forward.allowFrom | nindent 14 }}
+      ports:
+        - { port: {{ $v.forward.port }}, protocol: TCP }
+    {{- else }} []
+    {{- end }}
+  egress:
+    - ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+    - ports:
+        - { port: {{ $v.relay.port }}, protocol: TCP }
+      {{- if $v.relay.cidr }}
+      to:
+        - ipBlock: { cidr: {{ $v.relay.cidr }} }
+      {{- end }}
+    {{- if $v.reverse.enabled }}
+    - to:
+        - podSelector:
+            matchLabels: {{- toYaml $v.reverse.toPods | nindent 14 }}
+      ports:
+        - { port: 5432, protocol: TCP }
+    {{- end }}

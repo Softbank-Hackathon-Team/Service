@@ -2,7 +2,7 @@ import type { AppSpecV2, ComponentV2, TargetBuilder, TfOutputs, TfRootCall } fro
 import { actionsFor, type PermTable } from "../common/actions.js";
 import { appNamespace } from "../common/base.js";
 import { hash6 } from "../common/names.js";
-import { regionOf, tenantOf, type Target } from "../common/target.js";
+import { envRef, regionOf, tenantOf, type Target } from "../common/target.js";
 import { onpremAdapter, PERMS as V1_PERMS } from "../onprem/index.js";
 import { asV1Name, assertRenderable, compact, k8sResources, instancesOf, K8S_RENDER_CAPS, kindJson, postgresOf, refV2, secretNamesOf, workloadsOf } from "./shared.js";
 import { secretStoreName } from "./capability-checks.js";
@@ -34,7 +34,7 @@ export function resourceTypesV2(spec: AppSpecV2): string[] {
 
 // CNPG Cluster 이름 = <앱>-<id> (id 가 "db" 면 v1 <앱>-db 그대로). 접속 서비스 = <cluster>-rw, 비밀 = <cluster>-app
 // VTA1: 50자 넘으면 앞 43자 + 해시6 (CNPG Pod 이름 접미어·접속 서비스 -rw 로 63자를 안 넘게). 짧으면 v1 이름 그대로
-const cnpgName = (spec: AppSpecV2, id: string) => {
+export const cnpgName = (spec: AppSpecV2, id: string) => {
   const base = `${spec.app.name}-${id}`;
   return base.length <= 50 ? base : `${base.slice(0, 43).replace(/-+$/, "")}-${hash6(spec.app.name, id)}`;
 };
@@ -58,6 +58,19 @@ function quota(spec: AppSpecV2): { cpu: number | null; mem: number | null } {
   }
   const db = postgresOf(spec).length;
   return { cpu: cpu === null ? null : cpu + db * 1000, mem: mem === null ? null : mem + db * 2048 };
+}
+
+// W3: 온프레 바닥(할당량)을 git 으로. 차트 floor.yaml 이 floor.enabled == "1" 일 때만 ResourceQuota(platform-quota, Terraform 과 같은 이름·값)를 그린다
+//   켜기는 배포 때 워커 envFacts 의 onpremFloorViaGit (ONPREM_FLOOR_VIA_GIT=1). 켜면 apply 가 온프레 Terraform 을 건너뛴다 (워커가 클러스터에 안 들어감)
+//   네임스페이스는 고객 Argo CD 가 CreateNamespace + managed-by=platform 라벨로 만든다 (deploy/helm/onprem-agent ApplicationSet)
+//   NetworkPolicy 는 더하지 않는다: 지금 규칙은 "정책 0개 = 출발처럼 열림"(toTerraformV2 netpol_json) 이고, 기본 차단은 팀 결정이다
+function floorValues(spec: AppSpecV2) {
+  const q = quota(spec);
+  return { enabled: envRef("onpremFloorViaGit"), quota: compact({ cpuMilli: q.cpu ?? undefined, memoryMi: q.mem ?? undefined }) };
+}
+// W3: 바닥을 git 으로 할 때 apply 가 Terraform 대신 내는 출력. onprem/root 모듈 출력과 같은 모양 (맵 출력은 JSON 글자, plan-v2 flattenTfOutputsV2)
+export function onpremGitFloorOutputs(spec: AppSpecV2): TfOutputs {
+  return { link_outputs: "{}", namespace: appNamespace(asV1Name(spec)) };
 }
 
 export const onpremTarget: TargetBuilder = {
@@ -88,6 +101,11 @@ export const onpremTarget: TargetBuilder = {
   },
   toWorkloadValues(spec: AppSpecV2, out: TfOutputs, t: Target) {
     assertRenderable(spec, CAPS);
+    return { ...workloadValues(spec, out, t), floor: floorValues(spec) };
+  },
+};
+
+function workloadValues(spec: AppSpecV2, out: TfOutputs, t: Target) {
     return buildWorkloadValues(spec, out, t, {
       imageRef: (src) => onpremAdapter.imageRef(src, t),
       secretStore: { kind: "ClusterSecretStore", name: secretStoreName("onprem", out) },   // CL-4: env 출력 secret_store_name 이 있으면 그것
@@ -110,5 +128,5 @@ export const onpremTarget: TargetBuilder = {
       })),
       link: cnpgLink(spec),
     });
-  },
-};
+}
+

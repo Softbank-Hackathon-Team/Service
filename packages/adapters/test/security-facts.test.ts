@@ -99,3 +99,35 @@ test("출발 DB 컴포넌트별: sourceDbsV2 는 postgres 마다 자기 사실·
   assert.equal(dbs[0]!.db.majorVersion.value, 16);
   assert.equal(sourceDbsV2(r.spec)[0]!.db.encryptedAtRest.origin, "unknown");
 });
+
+test("W5 온프레 도착: Agent facts 의 잰 값이 덮고(measured), null 칸·이름 안 맞는 DB 는 그대로", () => {
+  const { spec } = imported();
+  const id = spec.components.find((c) => c.kind === "postgres")!.id;
+  const t = { envId: "o", provider: "onprem" as const, region: null };
+  const base = targetFactsV2(t, spec).dbs[0]!.db;
+  // 고정값: CNPG Service 는 ClusterIP 만 (예전 근거 "netpol 기본 차단" 은 쓰지 않는다)
+  assert.equal(base.publicAccess.origin, "attested");
+  assert.match(base.publicAccess.source!, /cnpg\.yaml/);
+  assert.equal(base.tlsEnforced.origin, "unknown");
+  const facts = (cluster: string, d: Partial<{ tlsEnforced: boolean | null; exposed: boolean | null }> = {}) => ({
+    kind: "facts" as const, agentVersion: "t", sentAt: "2026-11-04T00:00:00Z", grants: { level: "L0" as const },
+    dbs: [{ namespace: "app-x", cluster, majorVersion: 16, tlsEnforced: false, authMethods: ["scram-sha-256"], exposed: false, ...d }],
+  });
+  const name = `${spec.app.name}-${id}`;
+  const m = targetFactsV2(t, spec, facts(name)).dbs[0]!.db;
+  assert.deepEqual([m.tlsEnforced.origin, m.tlsEnforced.value], ["measured", false]);
+  assert.deepEqual([m.publicAccess.origin, m.publicAccess.value], ["measured", false]);
+  assert.deepEqual(m.authMethods.value, ["scram-sha-256"]);
+  assert.match(m.tlsEnforced.source!, /agent facts .*app-x\//);
+  // null(못 읽음)은 덮지 않는다
+  assert.equal(targetFactsV2(t, spec, facts(name, { exposed: null })).dbs[0]!.db.publicAccess.origin, "attested");
+  // 이름이 다른 Cluster(다른 앱의 DB)는 이 구성요소 사실이 아니다
+  assert.equal(targetFactsV2(t, spec, facts("other-db")).dbs[0]!.db.tlsEnforced.origin, "unknown");
+  // 클라우드 도착에는 Agent 사실을 쓰지 않는다
+  assert.equal(targetFactsV2({ envId: "g", provider: "gcp", region: "asia-northeast3" }, spec, facts(name)).dbs[0]!.db.tlsEnforced.origin, "attested");
+});
+
+test("표류: 온프레 DB 비공개 근거(앱 차트가 CNPG 를 NodePort·LoadBalancer 로 열지 않음)가 차트에서 아직 참이다", () => {
+  const chart = tf("gitops/charts/app/templates/cnpg.yaml");
+  assert.doesNotMatch(chart, /NodePort|LoadBalancer/, "차트가 DB 를 밖에 열게 되면 security-facts.ts 온프레 publicAccess 근거를 고친다");
+});

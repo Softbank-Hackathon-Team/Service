@@ -1,0 +1,65 @@
+{{- include "oa.required" . }}
+# 고객 클러스터 안의 Argo CD core 가 이 회사의 gitops 경로만 당겨 적용한다 (ADR-005 D2, 플랫폼은 밀어 넣지 않는다)
+#   저장소 자격(읽기 전용)은 설치 스크립트가 argocd 네임스페이스에 저장소 Secret 으로 따로 만든다
+# 울타리: 이 회사 저장소에서, 이 클러스터의 app-* 네임스페이스에만. git 으로 클러스터 범위 자원·RBAC 를 만들 수 없다
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: {{ .Values.tenant }}
+  namespace: {{ .Values.argocd.namespace }}
+  labels: {{- include "oa.labels" . | nindent 4 }}
+spec:
+  description: "DRAFT(ai): 회사 {{ .Values.tenant }} 온프레 울타리. 이 클러스터의 app-* 네임스페이스에만 넣을 수 있다"
+  sourceRepos: [{{ .Values.gitops.repoURL | quote }}]
+  destinations:
+    - { server: "https://kubernetes.default.svc", namespace: "app-*" }
+  # 네임스페이스는 git 의 Namespace 객체가 아니라 CreateNamespace + managedNamespaceMetadata 로만 만든다 (다른 네임스페이스 라벨을 git 이 못 바꾸게)
+  # 클러스터 범위 자원은 Namespace 하나만 연다: Argo CD 는 CreateNamespace 로 만드는 Namespace 도 이 목록으로 검사한다
+  #   (비우면 "Namespace is not permitted in project" 로 첫 동기화가 실패한다, 2026-11-04 VM 실측). 어느 이름인지는 destinations app-* 가 묶는다
+  clusterResourceWhitelist:
+    - { group: "", kind: "Namespace" }
+  namespaceResourceBlacklist:
+    - { group: "rbac.authorization.k8s.io", kind: "Role" }
+    - { group: "rbac.authorization.k8s.io", kind: "RoleBinding" }
+---
+# 앱마다 Application 하나. 이름 = <회사>-<앱>-onprem-k3s (워커 argoAppName 과 같다 → Agent 배포 보고가 이 이름으로 짝지어진다)
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: {{ .Values.tenant }}-onprem
+  namespace: {{ .Values.argocd.namespace }}
+  labels: {{- include "oa.labels" . | nindent 4 }}
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: {{ .Values.gitops.repoURL | quote }}
+        revision: {{ .Values.gitops.revision | quote }}
+        # 새 앱 폴더를 찾는 주기. 앱의 첫 배포는 이 주기 뒤에 Application 이 생기고, 그다음 git 확인 주기를 또 기다린다
+        requeueAfterSeconds: {{ .Values.argocd.discoverSeconds | int }}
+        directories:
+          - path: "tenants/{{ .Values.tenant }}/apps/*/onprem-k3s"
+  template:
+    metadata:
+      name: '{{ .Values.tenant }}-{{`{{ index .path.segments 3 }}`}}-onprem-k3s'
+      labels:
+        svc.tenant: {{ .Values.tenant | quote }}
+        svc.app: '{{`{{ index .path.segments 3 }}`}}'
+    spec:
+      project: {{ .Values.tenant }}
+      source:
+        repoURL: {{ .Values.gitops.repoURL | quote }}
+        targetRevision: {{ .Values.gitops.revision | quote }}
+        path: '{{`{{ .path.path }}`}}/{{ .Values.gitops.manifestsDir }}'
+      destination:
+        server: "https://kubernetes.default.svc"
+        namespace: 'app-{{`{{ index .path.segments 3 }}`}}'
+      syncPolicy:
+        automated: { prune: true, selfHeal: true }
+        syncOptions: ["CreateNamespace=true"]
+        # managed-by=platform: 온프레 Kyverno 파드 보안 정책(infra/permissions/onprem-kyverno-platform.yaml 4번)이 이 라벨로 걸린다
+        managedNamespaceMetadata:
+          labels:
+            managed-by: platform
+            svc.tenant: {{ .Values.tenant | quote }}

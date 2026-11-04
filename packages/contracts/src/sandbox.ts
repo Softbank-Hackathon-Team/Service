@@ -23,10 +23,12 @@ export type SandboxIsolation = z.infer<typeof SandboxIsolation>;
 
 // 리허설은 도착과 같은 baseline 에서 돈다 (온프레 k3s Kyverno baseline, 호스트 sbx 네임스페이스 PSA 와 같은 수준).
 //   restricted 는 팀 3티어 예시(deploy/ci/values/v2-3tier-*.json, tools/real/flow/sample-3tier-eks.yaml.tpl)를 모두 거부해
-//   "실제 배포는 되는데 리허설만 실패"를 만든다. 리허설 격리는 전용 샌드박스 노드에 회사 하나씩 (core boss.ts sandbox-rehearsal 큐 정책)
-// 수정 고리는 LLM 이 쓴 매니페스트라 restricted + SANDBOX_RUNTIME_CLASS(gVisor 스위치, 비면 노드 기본)
+//   "실제 배포는 되는데 리허설만 실패"를 만든다. 리허설은 전용 샌드박스 노드에 한 번에 회사 하나 (core boss.ts sandbox-rehearsal 큐 정책)
+// 런타임은 둘 다 SANDBOX_RUNTIME_CLASS(gVisor 스위치, 비면 노드 기본 runc). ADR-006 Q7 11/04 재결정: 리허설도 고객 이미지를 실제로
+//   돌리니 커널을 나눈다. 대가는 도착(runc)과 런타임이 달라지는 것이라 충실도 표 runtime_isolation 줄에 드러낸다 (agent rehearsal/run.ts)
+// 수정 고리는 LLM 이 쓴 매니페스트라 파드 보안도 restricted
 const ISOLATION: Record<SandboxRunKind, (env: NodeJS.ProcessEnv) => SandboxIsolation> = {
-  rehearsal: () => ({ podSecurity: "baseline", runtimeClass: null }),
+  rehearsal: (env) => ({ podSecurity: "baseline", runtimeClass: env.SANDBOX_RUNTIME_CLASS?.trim() || null }),
   remediation: (env) => ({ podSecurity: "restricted", runtimeClass: env.SANDBOX_RUNTIME_CLASS?.trim() || null }),
 };
 export const sandboxIsolation = (kind: SandboxRunKind, env: NodeJS.ProcessEnv = process.env): SandboxIsolation => ISOLATION[kind](env);

@@ -65,9 +65,11 @@ export function withSandboxFidelity(f: FidelityMatrix, target: RehearsalInput["t
       },
       {
         id: "runtime_isolation", status: "substituted",
-        real: "도착 클러스터 노드",
-        sandbox: iso.runtimeClass ? `RuntimeClass ${iso.runtimeClass} (커널 분리)` : "전용 sandbox 노드, 같은 커널(runc), 한 번에 한 회사",
-        reason: "리허설은 플랫폼 안 일회용 가상 클러스터에서 돈다",
+        real: "도착 클러스터 노드 (노드 기본 런타임 runc)",
+        sandbox: iso.runtimeClass ? `전용 sandbox 노드, RuntimeClass ${iso.runtimeClass} (커널 분리), 한 번에 한 회사` : "전용 sandbox 노드, 같은 커널(runc), 한 번에 한 회사",
+        reason: iso.runtimeClass
+          ? "리허설은 플랫폼 안 일회용 가상 클러스터에서 돈다. 런타임이 도착과 달라, gVisor 가 지원하지 않는 시스템 호출을 쓰는 앱은 여기서만 실패할 수 있다"
+          : "리허설은 플랫폼 안 일회용 가상 클러스터에서 돈다",
         refs: [],
       },
     ],

@@ -33,7 +33,7 @@ flowchart LR
 | `SANDBOX_MODE` | `memory` / `k3d` / `vcluster` | `memory` | k3d = 맥 로컬 클러스터 `agent-sbx`. vcluster = 플랫폼 EKS (2-1절) |
 | `SANDBOX_KUBE_URL` | 주소 | k3d 는 `http://127.0.0.1:8001` | k3d: `kubectl proxy` 주소. 인증서는 kubectl 이 들고 있고 앱은 비밀을 안 받는다. vcluster: 플랫폼 클러스터 API. 비면 클러스터 안 서비스 계정 |
 | `SANDBOX_KUBE_TOKEN_FILE`, `SANDBOX_KUBE_CA_FILE` | 파일 경로 | 없음 | (선택) proxy 대신 토큰으로 붙을 때. 토큰 파일은 요청마다 다시 읽는다 |
-| `SANDBOX_RUNTIME_CLASS` | RuntimeClass 이름 | 없음 | vcluster 일 때 수정 고리 파드의 RuntimeClass (gVisor 스위치) |
+| `SANDBOX_RUNTIME_CLASS` | RuntimeClass 이름 | 없음 | vcluster 일 때 리허설·수정 고리 파드의 RuntimeClass (gVisor 스위치) |
 | `SANDBOX_NODE_PREFIX` | 글자 | `k3d-agent-sbx-` | 노드 이름이 이걸로 시작하지 않으면 아무것도 만들지 않는다 (운영 클러스터 오접속 방지) |
 
 - 명세 초안 에이전트(작업 K)는 따로 `AGENT_LLM_PROVIDER` 를 쓴다. 이 표의 샌드박스 변수는 점검·수정 경로에만 걸린다.
@@ -44,7 +44,7 @@ flowchart LR
 
 - 【사실】 실행마다 플랫폼 EKS 에 `sbx-remediation-<실행 번호 앞 12자>` 네임스페이스 하나와 그 안의 일회용 vCluster 하나를 만든다. 가상 클러스터 안에 k3d 와 같은 일회용 네임스페이스를 만들어서, 3절 흐름과 4절 막는 것은 그 안에서 같다.
 - 【사실】 가상 앱 파드 보안은 `restricted`, RuntimeClass 는 `SANDBOX_RUNTIME_CLASS` 다. 자원 상한은 고정값(요청 CPU 1000m·메모리 1536Mi, 파드 10개)이다. 노드 이름 접두어 검사는 하지 않는다. 가상 클러스터에는 노드가 없어서다.
-- 【사실】 gVisor 는 기본 꺼짐이다 (플랫폼 차트 `sandbox.gvisor.enabled`, Terraform `sandbox_gvisor_enabled`). 꺼져 있거나 `SANDBOX_RUNTIME_CLASS` 가 비면 수정 고리 파드는 호스트 가드 `sbx-runtimeclass-guard` 에 막힌다 (닫힌 쪽).
+- 【사실】 gVisor 는 기본 꺼짐이다 (플랫폼 차트 `sandbox.gvisor.enabled`, Terraform `sandbox_gvisor_enabled`). 꺼져 있거나 `SANDBOX_RUNTIME_CLASS` 가 비면 수정 고리 파드는 호스트 가드 `sbx-runtimeclass-guard` 에 막힌다 (닫힌 쪽). 켜면 리허설 파드도 같은 가드로 gVisor 만 뜬다.
 - 【사실】 LLM 도구는 아직 가상 클러스터 관리자 클라이언트로 돈다. 조회 전용 kubeconfig(`Vcluster.agent()`, 가상 SA `ai-agent`, ClusterRole `view`)로 옮기는 일은 다음 단계다 (`packages/agent/src/ai/select.ts`).
 - 【사실】 배포 직전 리허설(`sandbox-rehearsal` 큐)은 다른 길이다. LLM 을 쓰지 않고 `SANDBOX_MODE` 를 보지 않는다. 켜는 법·격리 층·실제 EKS 확인 순서는 `docs/SANDBOX-REHEARSAL.md`.
 - 호스트 쪽 권한·가드·라벨 계약은 `deploy/helm/platform/README.md` "샌드박스" 절.

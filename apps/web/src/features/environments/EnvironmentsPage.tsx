@@ -27,6 +27,12 @@ const STAGE = { before: t('마이그레이션 전'), changing: t('마이그레�
 function reportLine(report: AgentReportBody) {
   if (report.kind === 'heartbeat') return `k3s ${report.k3sVersion}${report.cnpg ? ` · DB ${report.cnpg.ready ? t('준비됨') : t('준비 안 됨')}` : ''}`;
   if (report.kind === 'deploy') return report.status === 'applied' ? t('배포 적용 · 자원 {0}개', { 0: report.resources.length }) : t('배포 실패{0}', { 0: report.reason ? ` · ${report.reason}` : '' });
+  if (report.kind === 'facts') {
+    const tls = report.dbs.filter((db) => db.tlsEnforced === false).length;
+    const open = report.dbs.filter((db) => db.exposed === true).length;
+    // 영어 단수·복수는 자리 0 으로 고르므로 DB 수를 {0} 에 둔다
+    return t('보안 사실 · 권한 {1} · DB {0}개 (TLS 강제 아님 {2}, 밖에 열림 {3})', { 0: report.dbs.length, 1: report.grants.level, 2: tls, 3: open });
+  }
   const failed = report.findings.filter((finding) => finding.status === 'fail');
   const threats = failed.filter((finding) => finding.kind === 'threat').length;
   return t('보안 보고 · 위반 {0}개 · 위협 {1}개', { 0: failed.length - threats, 1: threats });

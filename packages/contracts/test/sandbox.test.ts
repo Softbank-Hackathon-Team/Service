@@ -99,9 +99,10 @@ test("SandboxMode: vcluster 를 받고 모르는 값은 거부", () => {
   assert.equal(SandboxMode.safeParse("docker").success, false);
 });
 
-test("격리: 리허설은 baseline·RuntimeClass 없음 (gVisor 를 켜도), 수정 고리는 restricted + SANDBOX_RUNTIME_CLASS", () => {
+test("격리: 런타임은 둘 다 SANDBOX_RUNTIME_CLASS (비면 노드 기본), 파드 보안은 리허설 baseline·수정 고리 restricted", () => {
   const gvisor = { SANDBOX_RUNTIME_CLASS: " gvisor " };
-  assert.deepEqual(sandboxIsolation("rehearsal", gvisor), { podSecurity: "baseline", runtimeClass: null });
+  assert.deepEqual(sandboxIsolation("rehearsal", gvisor), { podSecurity: "baseline", runtimeClass: "gvisor" });
+  assert.deepEqual(sandboxIsolation("rehearsal", {}), { podSecurity: "baseline", runtimeClass: null }, "gVisor 없는 로컬 kind");
   assert.deepEqual(sandboxIsolation("remediation", gvisor), { podSecurity: "restricted", runtimeClass: "gvisor" });
   assert.deepEqual(sandboxIsolation("remediation", { SANDBOX_RUNTIME_CLASS: "" }), { podSecurity: "restricted", runtimeClass: null });
 });

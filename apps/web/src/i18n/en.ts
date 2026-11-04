@@ -570,6 +570,7 @@ export const EN: Table = {
   "보안": "Security",
   "보안 고객 확인": "Security customer check",
   "보안 보고 · 위반 {0}개 · 위협 {1}개": "Security report · violations: {0} · threats: {1}",
+  "보안 사실 · 권한 {1} · DB {0}개 (TLS 강제 아님 {2}, 밖에 열림 {3})": { one: "Security facts · privileges {1} · {0} DB (TLS not enforced: {2}, exposed: {3})", other: "Security facts · privileges {1} · {0} DBs (TLS not enforced: {2}, exposed: {3})" },
   "보안 설정": "Security context",
   "보안 수준": "Security level",
   "보안 요구사항": "Security requirements",
