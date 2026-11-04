@@ -12,6 +12,8 @@ ARG NODE_IMAGE=node:22.23.4-alpine3.24
 ARG GIT_IMAGE=alpine/git:v2.54.0
 # agent-worker 의 helm (vCluster 차트를 sbx-* 네임스페이스에 올린다). git 과 같은 방식으로 이미지에서 꺼낸다. 다이제스트 고정
 ARG HELM_IMAGE=alpine/helm:3.22.1@sha256:8191701ad1f82ee3695c87211fcbfe6d7b1bb7df92ac1c8de9ccdb0995a6a2c1
+# agent-worker 의 kubectl (플랫폼 클러스터 밖에서 돌 때 가상 API 로 port-forward). helm 과 같은 방식, 다이제스트 고정. 플랫폼 EKS 1.35 와 같은 마이너
+ARG KUBECTL_IMAGE=registry.k8s.io/kubectl:v1.35.10@sha256:4e1d541a3d62f74637974e4c71f3cea91b9a36ffd059ab45e355648898783837
 
 FROM ${NODE_IMAGE} AS manifests
 WORKDIR /src
@@ -64,6 +66,7 @@ RUN set -e; mkdir -p /out; \
     tar -cf - /usr/bin/git /usr/libexec/git-core /usr/share/git-core $(cat /tmp/libs) 2>/dev/null | tar -xf - -C /out
 
 FROM ${HELM_IMAGE} AS helm
+FROM ${KUBECTL_IMAGE} AS kubectl
 
 # 세 이미지 공통 바탕
 FROM ${NODE_IMAGE} AS runtime
@@ -112,10 +115,13 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
   CMD ["node", "healthcheck.mjs", "db"]
 
 FROM runtime AS agent-worker
-# vCluster 리허설: helm(정적 바이너리) + 차트 묶음·CRD (apps/agent-worker/vendor). 체크섬이 다르면 빌드가 멈춘다
+# vCluster 리허설: helm·kubectl(정적 바이너리) + 차트 묶음·CRD (apps/agent-worker/vendor). 체크섬이 다르면 빌드가 멈춘다
 COPY --from=helm /usr/bin/helm /usr/local/bin/helm
+COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl
 COPY apps/agent-worker/vendor /app/vendor
-RUN cd /app/vendor && sha256sum -c SHA256SUMS && helm version --short
+WORKDIR /app/vendor
+RUN sha256sum -c SHA256SUMS && helm version --short && kubectl version --client
+WORKDIR /app
 COPY --from=build-agent-worker /src/dist/agent-worker/ ./
 USER node
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \

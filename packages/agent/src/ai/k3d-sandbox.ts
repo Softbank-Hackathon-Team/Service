@@ -73,6 +73,7 @@ export async function createK3dSandbox(o: K3dSandboxOptions): Promise<K3dSandbox
       [SANDBOX_LABEL.sandbox]: "true", [SANDBOX_LABEL.purpose]: "remediation",
       [SANDBOX_LABEL.expiresAt]: String(Math.floor(now() / 1000) + (o.ttlSeconds ?? 1800)),
       [SANDBOX_LABEL.run]: o.runId.slice(0, 63),
+      [SANDBOX_LABEL.tenant]: o.tenantId,
       "pod-security.kubernetes.io/enforce": "restricted",
       "pod-security.kubernetes.io/enforce-version": "latest",
     } },

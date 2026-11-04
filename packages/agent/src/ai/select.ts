@@ -7,7 +7,9 @@ import { scriptedLlm } from "./llm.js";
 import { memorySandbox, type Sandbox, type WorkingCopy } from "./sandbox.js";
 import { asHostKube, kubeClient, KubeError, type HostKube, type KubeClient } from "./kube.js";
 import { createK3dSandbox } from "./k3d-sandbox.js";
-import { createVcluster, expiredSandbox, helmRunner, hostKubeconfig, leftoverRehearsal, sweepSandboxes, type VclusterHost } from "./vcluster.js";
+import {
+  createVcluster, expiredSandbox, helmRunner, hostKubeconfig, kubectlPortForward, leftoverRehearsal, sweepSandboxes, type VclusterHost,
+} from "./vcluster.js";
 import {
   agentLlmStatusFromEnv, sandboxIsolation, sandboxSettings, SandboxMode,
   type AgentLlmStatus, type RehearsalInput, type RehearsalResult,
@@ -26,9 +28,11 @@ import { llmCallOptionsFromEnv } from "../llm/select.js";
 //   AGENT_LLM=real     예전 이름. 지금은 기본이라 없어도 된다. scripted 는 무시하고 경고만 (가짜는 FAKE_LLM=1)
 //   SANDBOX_MODE       memory | k3d | vcluster  (기본 memory. 맥에서 k3d, 플랫폼 EKS 에서 vcluster)
 //   SANDBOX_KUBE_URL   샌드박스 클러스터 kube API. k3d 기본 http://127.0.0.1:8001 (kubectl proxy).
-//                      vcluster·리허설은 비면 클러스터 안 서비스 계정 (KUBERNETES_SERVICE_HOST + 토큰·CA 파일)
+//                      vcluster·리허설은 비면 클러스터 안 서비스 계정 (KUBERNETES_SERVICE_HOST + 토큰·CA 파일).
+//                      값이 있으면 클러스터 밖 실행으로 보고 가상 API 는 kubectl port-forward 로 닿는다
 //   SANDBOX_KUBE_TOKEN_FILE / SANDBOX_KUBE_CA_FILE  (선택) 토큰으로 붙을 때 파일 경로. 토큰 파일은 요청마다 다시 읽는다
 //   SANDBOX_HELM_BIN   vcluster 차트를 올리는 helm (기본 PATH 의 helm)
+//   SANDBOX_KUBECTL_BIN 클러스터 밖에서 port-forward 를 여는 kubectl (기본 PATH 의 kubectl)
 //   SANDBOX_NODE_PREFIX 오접속 방지 노드 접두어 (기본 k3d-agent-sbx-)
 type Env = Record<string, string | undefined>;
 
@@ -67,7 +71,7 @@ export function sandboxFromEnv(env: Env = process.env, o: { kube?: KubeClient; h
     return {
       mode, describe: `vcluster (${s.vclusterChart})`,
       create: async (ctx) => {
-        const vc = await createVcluster(host, { kind: "remediation", runId: ctx.runId, isolation: sandboxIsolation("remediation", env),
+        const vc = await createVcluster(host, { kind: "remediation", runId: ctx.runId, tenantId: ctx.tenantId, isolation: sandboxIsolation("remediation", env),
           k8sMinor: "1.35", quota: REMEDIATION_QUOTA, images: [], ttlSec: s.ttlSec });
         try {
           const inner = await createK3dSandbox({ kube: vc.admin, tenantId: ctx.tenantId, runId: ctx.runId, seed: ctx.seed, nodePrefix: null, ttlSeconds: s.ttlSec });
@@ -91,7 +95,8 @@ export function sandboxFromEnv(env: Env = process.env, o: { kube?: KubeClient; h
 
 // ── vCluster 호스트 (플랫폼 클러스터, agent-worker 서비스 계정) ──
 const SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount";
-export interface HostAccess { kube: HostKube; server: string; caFile?: string; tokenFile?: string }
+// outOfCluster: SANDBOX_KUBE_URL 을 준 실행 (플랫폼 클러스터 밖). 가상 API 의 서비스 주소에 못 닿는다
+export interface HostAccess { kube: HostKube; server: string; caFile?: string; tokenFile?: string; outOfCluster: boolean }
 // 접속 설정이 없으면 null (로컬 개발: 리허설은 MOCK_SANDBOX=1 로 돈다)
 export function hostAccessFromEnv(env: Env = process.env): HostAccess | null {
   const explicit = env.SANDBOX_KUBE_URL?.trim();
@@ -101,20 +106,20 @@ export function hostAccessFromEnv(env: Env = process.env): HostAccess | null {
   const tokenFile = env.SANDBOX_KUBE_TOKEN_FILE?.trim() || (explicit ? undefined : `${SA_DIR}/token`);
   const caFile = env.SANDBOX_KUBE_CA_FILE?.trim() || (explicit ? undefined : `${SA_DIR}/ca.crt`);
   const kube = asHostKube(kubeClient({ baseUrl: server, tokenFile, ca: caFile ? readFileSync(caFile, "utf8") : undefined, timeoutMs: 30_000 }));
-  return { kube, server, caFile, tokenFile };
+  return { kube, server, caFile, tokenFile, outOfCluster: !!explicit };
 }
 
-const whichHelm = (env: Env) => {
-  const set = env.SANDBOX_HELM_BIN?.trim();
-  if (set) return set;
+// 자식 프로세스 env 에는 PATH 가 없으니 절대 경로로 찾아 둔다
+const whichBin = (set: string | undefined, name: string) => {
+  if (set?.trim()) return set.trim();
   for (const d of (process.env.PATH ?? "").split(delimiter)) {
-    const p = join(d, "helm");
+    const p = join(d, name);
     try { accessSync(p, constants.X_OK); return p; } catch { /* 다음 */ }
   }
-  return "helm";
+  return name;
 };
 
-export function vclusterHostFromEnv(env: Env = process.env, o: Partial<Pick<VclusterHost, "connect" | "virtualUrl">> = {}): VclusterHost | null {
+export function vclusterHostFromEnv(env: Env = process.env, o: Partial<Pick<VclusterHost, "connect" | "reach">> = {}): VclusterHost | null {
   const access = hostAccessFromEnv(env);
   if (!access) return null;
   const home = mkdtempSync(join(tmpdir(), "svc-sandbox-"));
@@ -122,7 +127,11 @@ export function vclusterHostFromEnv(env: Env = process.env, o: Partial<Pick<Vclu
   mkdirSync(workDir, { mode: 0o700 });
   const kubeconfig = join(home, "host.kubeconfig");
   writeFileSync(kubeconfig, hostKubeconfig(access), { mode: 0o600 });
-  return { kube: access.kube, helm: helmRunner({ bin: whichHelm(env), kubeconfig, home }), chart: sandboxSettings(env).vclusterChart, workDir, ...o };
+  const reach = access.outOfCluster ? kubectlPortForward({ bin: whichBin(env.SANDBOX_KUBECTL_BIN, "kubectl"), kubeconfig, home }) : undefined;
+  return {
+    kube: access.kube, helm: helmRunner({ bin: whichBin(env.SANDBOX_HELM_BIN, "helm"), kubeconfig, home }), chart: sandboxSettings(env).vclusterChart, workDir,
+    ...(reach ? { reach } : {}), ...o,
+  };
 }
 
 // 이미지에 넣은 CRD (차트 묶음 옆 crds/). 원본의 ExternalSecret·CNPG Cluster 를 스키마로 dry-run 하려고 가상 클러스터에 넣는다

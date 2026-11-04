@@ -4,7 +4,8 @@ import { jobKey, wakeQueued, withTenant, writeAudit } from "@svc/core";
 // sandbox_runs 저장소 (db 0046). agent-worker 몫의 상태 옮기기만 한다: queued → running → passed | failed | error.
 // 모두 조건부 UPDATE 라 두 번 온 작업·워커의 기한 처리(REHEARSAL_TIMEOUT)와 겹쳐도 먼저 쓴 쪽이 이긴다.
 // 결과를 쓴 같은 트랜잭션에서 감사 한 줄과, RetryLater 로 기다리는 deploy 작업 깨우기 (설계 2.4)
-export interface SandboxRunRow { migrationId: string; status: SandboxRunStatus; input: unknown; deadlineAt: Date | null }
+// tenantId: 줄의 tenant_id (소문자 UUID 글). 샌드박스 네임스페이스 회사 라벨은 작업 내용이 아니라 이 값을 쓴다
+export interface SandboxRunRow { migrationId: string; tenantId: string; status: SandboxRunStatus; input: unknown; deadlineAt: Date | null }
 // 결과가 없는 끝: 입력이 계약에 안 맞거나 처리기가 결과를 못 만든 경우 (샌드박스 쪽 오류)
 export type RehearsalFinish = { result: RehearsalResult } | { failureCode: RehearsalFailureCode; reason: string };
 export interface SandboxRunStore {
@@ -21,8 +22,8 @@ export function pgSandboxRunStore(): SandboxRunStore {
   return {
     async load(tenantId, id) {
       const r = (await withTenant(tenantId, (tx) => tx.query(
-        "SELECT migration_id, status, input, deadline_at FROM sandbox_runs WHERE id = $1 AND purpose = 'rehearsal'", [id]))).rows[0];
-      return r ? { migrationId: r.migration_id, status: r.status, input: r.input, deadlineAt: r.deadline_at } : null;
+        "SELECT migration_id, tenant_id::text AS tenant_id, status, input, deadline_at FROM sandbox_runs WHERE id = $1 AND purpose = 'rehearsal'", [id]))).rows[0];
+      return r ? { migrationId: r.migration_id, tenantId: r.tenant_id, status: r.status, input: r.input, deadlineAt: r.deadline_at } : null;
     },
     async claim(tenantId, id, sandboxName) {
       return withTenant(tenantId, async (tx) => (await tx.query(

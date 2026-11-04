@@ -38,7 +38,8 @@ export interface RehearsalBackend {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 }
-export interface RehearsalRun { id: string; onPhase?: (p: SandboxRunPhase) => Promise<void> | void }
+// tenantId: sandbox_runs 줄의 회사. 호스트 네임스페이스 라벨 platform.svc/tenant 가 된다
+export interface RehearsalRun { id: string; tenantId: string; onPhase?: (p: SandboxRunPhase) => Promise<void> | void }
 
 class Stop { constructor(readonly code: RehearsalFailureCode) {} }
 const FIELD_MANAGER = "svc-rehearsal";
@@ -131,7 +132,7 @@ export async function runRehearsal(input: RehearsalInput, run: RehearsalRun, b: 
     try {
       const swept = await b.sweepLeftovers(name);
       if (swept.failed.length) throw new KubeError("SANDBOX_LEFTOVER", `남은 리허설 네임스페이스를 못 지움: ${swept.failed.map((f) => `${f.namespace} (${f.error})`).join(", ")}`);
-      vc = await b.create({ kind: "rehearsal", runId: run.id, isolation: iso, k8sMinor: input.k8sMinor, quota: plan.quota, images: input.images, ttlSec: b.ttlSec });
+      vc = await b.create({ kind: "rehearsal", runId: run.id, tenantId: run.tenantId, isolation: iso, k8sMinor: input.k8sMinor, quota: plan.quota, images: input.images, ttlSec: b.ttlSec });
       k8sVersion = vc.k8sVersion;
       add("sandbox_ready", name, true, now() - t,
         `가상 ${vc.k8sVersion} 준비 ${Math.round(vc.createMs / 1000)}초, 상한 CPU ${plan.quota.requests.cpuM}m·메모리 ${plan.quota.requests.memoryMi}Mi·파드 ${plan.quota.pods}개${swept.deleted.length ? `, 남은 것 ${swept.deleted.length}개 지움` : ""}`);

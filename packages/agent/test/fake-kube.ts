@@ -135,8 +135,9 @@ export async function startFakeKube(o: { nodes?: string[]; logText?: string } = 
 }
 
 // ── vCluster 백엔드 시험용 (메모리 안, HTTP 없음). KubeClient 를 그대로 흉내 낸다 ──
-// 호스트: 네임스페이스(라벨 선택)·RoleBinding·Secret. 가상: CRD·SSA(dryRun)·Deployment/Job 상태·파드·이벤트·검사 파드 로그.
-// 파드 상태는 이미지 이름으로 정한다: crash = 재시작이 목록을 읽을 때마다 +1, pull-fail = ImagePullBackOff, slow = 안 준비됨, job-fail = 잡 실패
+// 호스트: 네임스페이스(라벨 선택)·RoleBinding·NetworkPolicy·Secret. 가상: CRD·SSA(dryRun)·Deployment/Job 상태·파드·이벤트·검사 파드 로그.
+// 파드 상태는 이미지 이름으로 정한다: crash = 재시작이 목록을 읽을 때마다 +1, pull-fail = ImagePullBackOff, slow = 안 준비됨, job-fail = 잡 실패.
+//   이미지를 고를 수 없는 워크로드(플랫폼이 만든 DB 대체물)는 crash 에 워크로드 이름을 준다
 import { readFileSync } from "node:fs";
 import type { KubeClient, KubeResponse } from "../src/index.js";
 
@@ -148,13 +149,14 @@ export interface FakeHost {
   kube: KubeClient;
   namespaces: Map<string, Record<string, string>>;
   rolebindings: Array<{ namespace: string; body: any }>;
+  networkPolicies: Array<{ namespace: string; body: any }>;
   secrets: Map<string, any>;          // "<ns>/<name>"
   requests: string[];
   failDelete: Set<string>;
 }
 export function fakeHost(seed: Array<{ name: string; labels: Record<string, string> }> = []): FakeHost {
   const namespaces = new Map(seed.map((n) => [n.name, n.labels]));
-  const h: FakeHost = { namespaces, rolebindings: [], secrets: new Map(), requests: [], failDelete: new Set(), kube: null as unknown as KubeClient };
+  const h: FakeHost = { namespaces, rolebindings: [], networkPolicies: [], secrets: new Map(), requests: [], failDelete: new Set(), kube: null as unknown as KubeClient };
   h.kube = {
     async call(method, path, o = {}) {
       h.requests.push(`${method} ${path}`);
@@ -179,6 +181,11 @@ export function fakeHost(seed: Array<{ name: string; labels: Record<string, stri
       if ((m = /^\/apis\/rbac\.authorization\.k8s\.io\/v1\/namespaces\/([^/]+)\/rolebindings$/.exec(u.pathname)) && method === "POST") {
         if (!namespaces.has(m[1]!)) return failure(404, "namespace not found");
         h.rolebindings.push({ namespace: m[1]!, body: b });
+        return resp(201, b);
+      }
+      if ((m = /^\/apis\/networking\.k8s\.io\/v1\/namespaces\/([^/]+)\/networkpolicies$/.exec(u.pathname)) && method === "POST") {
+        if (!namespaces.has(m[1]!)) return failure(404, "namespace not found");
+        h.networkPolicies.push({ namespace: m[1]!, body: b });
         return resp(201, b);
       }
       if ((m = /^\/api\/v1\/namespaces\/([^/]+)\/secrets\/([^/]+)$/.exec(u.pathname)) && method === "GET") {
@@ -229,6 +236,7 @@ export function fakeVirtual(o: {
   reject?: (obj: any, dryRun: boolean) => string | null; // SSA 거부 흉내 (422)
   events?: any[];
   unreachable?: string[];                                // 검사 파드에서 연결 실패할 호스트
+  crash?: string[];                                      // 재시작을 반복할 워크로드 이름
   httpCode?: number;
   warning?: string;
 } = {}): FakeVirtual {
@@ -243,7 +251,7 @@ export function fakeVirtual(o: {
   const podFor = (name: string, labels: Record<string, string>, spec: any, bump: boolean) => {
     const img = imagesOf(spec);
     if (bump) lists.set(name, (lists.get(name) ?? 0) + 1);
-    const crash = /crash/.test(img), pull = /pull-fail/.test(img), slow = /slow/.test(img), cfg = /config-error/.test(img);
+    const crash = /crash/.test(img) || (o.crash ?? []).some((w) => name.startsWith(`${w}-`)), pull = /pull-fail/.test(img), slow = /slow/.test(img), cfg = /config-error/.test(img);
     const restarts = crash ? lists.get(name) ?? 0 : 0;
     return {
       metadata: { name, labels },

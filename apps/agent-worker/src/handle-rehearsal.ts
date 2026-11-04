@@ -30,7 +30,7 @@ export async function handleRehearsal(raw: unknown, d: RehearsalDeps): Promise<R
       reason: `리허설 입력이 계약에 안 맞음: ${input.error.issues.slice(0, 3).map((i) => `${i.path.join(".")} ${i.message}`).join("; ")}` };
   } else {
     try {
-      f = { result: await d.rehearse(input.data, { id, onPhase: (p) => d.store.phase(tenantId, id, p) }) };
+      f = { result: await d.rehearse(input.data, { id, tenantId: row.tenantId, onPhase: (p) => d.store.phase(tenantId, id, p) }) };
     } catch (e) {
       f = { failureCode: "REHEARSAL_SANDBOX_UNAVAILABLE", reason: `리허설 처리기 오류: ${(e as Error).message ?? String(e)}` };
     }

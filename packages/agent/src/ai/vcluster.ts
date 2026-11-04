@@ -7,11 +7,12 @@ import { LIMIT_RANGE, type SandboxQuota } from "../rehearsal/manifests.js";
 
 // vCluster 백엔드: 플랫폼 클러스터(호스트)의 sbx-<이름> 네임스페이스 하나에 일회용 가상 클러스터 하나.
 // 호스트 쪽 순서는 플랫폼 차트(deploy/helm/platform README "샌드박스")와 맞물린다
-//   1. 네임스페이스 + 라벨 넷 (VAP sbx-namespace-guard 가 본다) + 실행 번호 라벨
+//   1. 네임스페이스 + 라벨 (VAP sbx-namespace-guard 가 본다: 샌드박스·목적·만료·PSA, 회사) + 실행 번호 라벨
 //   2. RoleBinding sbx-operator → platform/agent-worker
-//   3. 이미지에 넣은 차트를 helm 으로 (ClusterRole 끔, 제어판 저장은 emptyDir)
-//   4. 가상 API /readyz → 관리자 클라이언트
-//   끝: helm uninstall → 네임스페이스 삭제. 남은 것은 만료 라벨로 청소(sweepSandboxes)
+//   3. NetworkPolicy sbx-default-deny (나가기 기본 거부)
+//   4. 이미지에 넣은 차트를 helm 으로 (ClusterRole 끔, 제어판 저장은 emptyDir)
+//   5. 가상 API 길(클러스터 안 = 서비스 주소, 밖 = kubectl port-forward) → /readyz → 관리자 클라이언트
+//   끝: port-forward 닫기 → helm uninstall → 네임스페이스 삭제. 남은 것은 만료 라벨로 청소(sweepSandboxes)
 
 export const VCLUSTER_CHART = "vcluster-0.37.6" as const;
 export const SANDBOX_LABEL = {
@@ -19,7 +20,10 @@ export const SANDBOX_LABEL = {
   purpose: "platform.svc/sandbox-purpose",
   expiresAt: "platform.svc/expires-at",
   run: "platform.svc/sandbox-run",
+  // 회사 번호 (소문자 UUID). 호스트 VAP 가 이 네임스페이스 파드 이미지를 그 회사 샌드박스 ECR 자리로 묶는다 (PR #194). 만든 뒤 못 바꾼다
+  tenant: "platform.svc/tenant",
 } as const;
+const TENANT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const POOL = "sandbox";
 const TOLERATION = { key: "dedicated", operator: "Equal", value: POOL, effect: "NoSchedule" } as const;
 
@@ -40,6 +44,7 @@ export const sandboxName = (kind: SandboxRunKind, runId: string) => `sbx-${kind}
 export interface VclusterSpec {
   kind: SandboxRunKind;
   runId: string;
+  tenantId: string;
   isolation: SandboxIsolation;
   k8sMinor: string;
   quota: SandboxQuota;
@@ -62,7 +67,8 @@ export function vclusterValues(s: VclusterSpec, name: string): Record<string, un
         persistence: { volumeClaim: { enabled: false } },
       },
       // 차트 기본 인증서에는 <이름>.<네임스페이스>.svc 가 없다 (측정). 클러스터 안에서 서비스 주소로 붙으려면 넣는다
-      proxy: { extraSANs: [`${name}.${name}`, svc, `${svc}.cluster.local`] },
+      // 클러스터 밖 agent-worker 는 port-forward 로 127.0.0.1 에 붙는다 (kubectlPortForward)
+      proxy: { extraSANs: [`${name}.${name}`, svc, `${svc}.cluster.local`, "127.0.0.1"] },
     },
     rbac: { clusterRole: { enabled: false }, enableVolumeSnapshotRules: { enabled: false } },
     sync: {
@@ -74,6 +80,7 @@ export function vclusterValues(s: VclusterSpec, name: string): Record<string, un
           translateImage: Object.fromEntries(s.images.map((i) => [i.ref, i.sandboxRef])),
           ...(s.isolation.runtimeClass ? { runtimeClassName: s.isolation.runtimeClass } : {}),
         },
+        // networkPolicies 는 끈다: 켜면 테넌트가 가상 안에서 쓴 허용 정책이 호스트로 내려와 sbx-default-deny 위에 더해진다
         persistentVolumes: { enabled: false }, ingresses: { enabled: false }, priorityClasses: { enabled: false }, networkPolicies: { enabled: false },
       },
       // 노드는 동기화하지 않고, 동기화된 파드에 nodeSelector pool=sandbox 만 붙는다 (sbx-pod-guard 가 본다)
@@ -102,7 +109,7 @@ export function vclusterValues(s: VclusterSpec, name: string): Record<string, un
   };
 }
 
-// ── helm ──
+// ── helm · kubectl (자식 프로세스) ──
 export interface HelmRunner { run(args: string[], timeoutMs: number): Promise<{ code: number | null; out: string }> }
 // 자식 프로세스에는 정해진 env 만 준다 (DATABASE_URL·ANTHROPIC_API_KEY 같은 agent-worker 비밀은 안 넘어간다).
 // kubeconfig 는 경로만 담는다 (서버 주소, CA 파일, 토큰 파일). bin 은 절대 경로
@@ -123,7 +130,34 @@ export function helmRunner(o: { bin: string; kubeconfig: string; home: string })
     }),
   };
 }
-// helm 이 읽을 호스트 kubeconfig (JSON 은 YAML 이다). 비밀은 없고 파일 경로만
+// 가상 API 에 닿는 주소. close 는 여러 번 불러도 된다
+export interface VirtualEndpoint { url: string; close(): void }
+// 클러스터 안 agent-worker: 서비스 주소로 바로
+const inCluster = async (name: string): Promise<VirtualEndpoint> => ({ url: `https://${name}.${name}.svc:443`, close: () => {} });
+// 클러스터 밖 agent-worker (SANDBOX_KUBE_URL): kubectl port-forward 로 127.0.0.1 의 빈 포트에. 서비스 → 제어판 파드 8443
+//   kubectl 도 helm 처럼 정해진 env 만 받는다. 권한은 sbx-operator 의 services get·pods list·pods/portforward create
+export function kubectlPortForward(o: { bin: string; kubeconfig: string; home: string; readyTimeoutMs?: number }): (name: string) => Promise<VirtualEndpoint> {
+  const env = { HOME: o.home, KUBECONFIG: o.kubeconfig };
+  const timeoutMs = o.readyTimeoutMs ?? 20_000;
+  return (name) => new Promise((resolve, reject) => {
+    const p = spawn(o.bin, ["port-forward", "-n", name, `svc/${name}`, "--address", "127.0.0.1", ":443"], { env, stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    let open = false;
+    const close = () => { if (p.exitCode === null && p.signalCode === null) p.kill("SIGTERM"); };
+    const fail = (why: string) => { clearTimeout(timer); close(); reject(new KubeError("SANDBOX_PORT_FORWARD", why)); };
+    const timer = setTimeout(() => fail(`port-forward 가 ${Math.round(timeoutMs / 1000)}초 안에 안 열림: ${out.trim().slice(-200)}`), timeoutMs);
+    // 열린 뒤에도 출력("Handling connection for …")을 계속 읽어 비운다 (파이프가 차면 kubectl 이 멈춘다)
+    const take = (d: Buffer) => {
+      if (out.length < 8000) out += d.toString("utf8");
+      const m = !open && /Forwarding from 127\.0\.0\.1:(\d+)/.exec(out);
+      if (m) { open = true; clearTimeout(timer); resolve({ url: `https://127.0.0.1:${m[1]}`, close }); }
+    };
+    p.stdout.on("data", take); p.stderr.on("data", take);
+    p.on("error", (e) => fail(`kubectl 실행 실패 (${o.bin}): ${e.message}`));
+    p.on("exit", (c, sig) => { if (!open) fail(`port-forward 끝남 (${c ?? sig}): ${out.trim().slice(-200)}`); });
+  });
+}
+// helm·kubectl 이 읽을 호스트 kubeconfig (JSON 은 YAML 이다). 비밀은 없고 파일 경로만
 export function hostKubeconfig(h: { server: string; caFile?: string; tokenFile?: string }): string {
   return JSON.stringify({
     apiVersion: "v1", kind: "Config", "current-context": "host",
@@ -141,7 +175,7 @@ export interface VclusterHost {
   chart: string;               // 차트 묶음 .tgz
   workDir: string;             // 실행마다 값 파일을 잠깐 쓰는 곳 (0700)
   connect?: (url: string, c: VirtualCreds) => KubeClient;
-  virtualUrl?: (name: string) => Promise<string>;   // 기본 https://<이름>.<이름>.svc:443. 로컬 시험은 port-forward
+  reach?: (name: string) => Promise<VirtualEndpoint>;   // 기본 클러스터 안 서비스 주소. 클러스터 밖은 kubectlPortForward
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 }
@@ -168,9 +202,10 @@ export async function createVcluster(h: VclusterHost, s: VclusterSpec, o: { read
   const now = h.now ?? Date.now;
   const sleep = h.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const connect = h.connect ?? defaultConnect;
-  const urlOf = h.virtualUrl ?? (async (n: string) => `https://${n}.${n}.svc:443`);
+  const reach = h.reach ?? inCluster;
   const t0 = now();
   const name = sandboxName(s.kind, s.runId);
+  if (!TENANT_ID.test(s.tenantId)) throw new KubeError("SANDBOX_CREATE", `회사 번호가 소문자 UUID 가 아님: ${s.tenantId.slice(0, 40)}`);
   const nsPath = `/api/v1/namespaces/${name}`;
   const must = async (what: string, method: string, path: string, body: unknown) => {
     const r = await h.kube.call(method, path, { body });
@@ -183,10 +218,13 @@ export async function createVcluster(h: VclusterHost, s: VclusterSpec, o: { read
       [SANDBOX_LABEL.expiresAt]: String(Math.floor(now() / 1000) + s.ttlSec),
       "pod-security.kubernetes.io/enforce": "baseline",
       [SANDBOX_LABEL.run]: s.runId.slice(0, 63),
+      [SANDBOX_LABEL.tenant]: s.tenantId,
     } },
   });
+  let endpoint: VirtualEndpoint | null = null;
   let disposed: Promise<DisposeReport> | null = null;
   const dispose = () => (disposed ??= (async () => {
+    endpoint?.close();
     await h.helm.run(["uninstall", name, "-n", name, "--wait", "--timeout", "60s"], 90_000);
     try {
       const r = await h.kube.call("DELETE", nsPath, { body: { kind: "DeleteOptions", apiVersion: "v1", propagationPolicy: "Background" } });
@@ -201,6 +239,12 @@ export async function createVcluster(h: VclusterHost, s: VclusterSpec, o: { read
       roleRef: { apiGroup: "rbac.authorization.k8s.io", kind: "ClusterRole", name: "sbx-operator" },
       subjects: [{ kind: "ServiceAccount", name: "agent-worker", namespace: "platform" }],
     });
+    // 나가기 기본 거부. 정책은 더해지므로 차트의 vc-work(동기화 파드: 가상 안쪽만)·vc-cp(제어판)가 여는 길만 남고,
+    //   어느 라벨도 없는 파드는 아무 데도 못 나간다. 호스트 kube-dns 허용은 넣지 않는다 (작업 파드의 DNS 길이 넓어진다)
+    await must("NetworkPolicy", "POST", `/apis/networking.k8s.io/v1/namespaces/${name}/networkpolicies`, {
+      apiVersion: "networking.k8s.io/v1", kind: "NetworkPolicy", metadata: { name: "sbx-default-deny" },
+      spec: { podSelector: {}, policyTypes: ["Egress"] },
+    });
     const values = join(h.workDir, `${name}.values.json`);
     await writeFile(values, JSON.stringify(vclusterValues(s, name)), { mode: 0o600 });
     const helm = await h.helm.run(["upgrade", "--install", name, h.chart, "-n", name, "-f", values, "--timeout", "120s"], 150_000)
@@ -214,7 +258,9 @@ export async function createVcluster(h: VclusterHost, s: VclusterSpec, o: { read
       if (!admin) {
         const sec = await h.kube.call("GET", `${nsPath}/secrets/vc-${name}`);
         const creds = ok2xx(sec.status) ? credsOf(sec.body) : null;
-        if (creds) admin = connect(await urlOf(name), creds);
+        // 비밀이 생겼으면 제어판 파드가 떠 있다. port-forward 는 그 뒤에야 열린다 (못 열면 다음 바퀴에 다시)
+        if (creds) endpoint ??= await reach(name).catch((e: Error) => { last = e.message; return null; });
+        if (creds && endpoint) admin = connect(endpoint.url, creds);
       }
       if (admin) {
         const r = await admin.call("GET", "/readyz").catch((e: Error) => ({ status: 0, text: e.message }));
@@ -233,7 +279,7 @@ export async function createVcluster(h: VclusterHost, s: VclusterSpec, o: { read
         const sec = await h.kube.call("GET", `${nsPath}/secrets/vc-agent-${name}`);
         const creds = ok2xx(sec.status) ? credsOf(sec.body) : null;
         if (!creds?.token) throw new KubeError("SANDBOX_AGENT_KUBECONFIG", `vc-agent-${name} 비밀이 없음 (${sec.status})`);
-        return connect(await urlOf(name), { ca: creds.ca, token: creds.token }) as VirtualAgentKube;
+        return connect(endpoint!.url, { ca: creds.ca, token: creds.token }) as VirtualAgentKube;
       },
     };
   } catch (e) {

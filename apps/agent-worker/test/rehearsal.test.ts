@@ -21,7 +21,7 @@ const input: RehearsalInput = {
 function store(row: { status: SandboxRunStatus; input: unknown; deadlineAt?: Date | null } | null) {
   const s = { claimed: [] as string[], phases: [] as SandboxRunPhase[], finished: [] as RehearsalFinish[], claimOk: true };
   const st: SandboxRunStore = {
-    load: async () => (row ? { migrationId: "m", status: row.status, input: row.input, deadlineAt: row.deadlineAt ?? null } : null),
+    load: async () => (row ? { migrationId: "m", tenantId: T, status: row.status, input: row.input, deadlineAt: row.deadlineAt ?? null } : null),
     claim: async (_t, _id, name) => { s.claimed.push(name); return s.claimOk; },
     phase: async (_t, _id, p) => { s.phases.push(p); },
     finish: async (_t, _id, f) => { s.finished.push(f); return { status: "result" in f ? f.result.verdict : "error", woken: 1 }; },
@@ -32,10 +32,13 @@ const job = { tenantId: T, requestId: "r", sandboxRunId: ID };
 
 test("리허설 작업: 줄을 잡고(running) 단계를 남기고 결과를 쓴 뒤 deploy 작업을 깨운다", async () => {
   const { st, s } = store({ status: "queued", input });
+  const tenants: string[] = [];
   const r = await handleRehearsal(job, { store: st, rehearse: async (i, run) => {
+    tenants.push(run.tenantId);
     await run.onPhase?.("creating"); await run.onPhase?.("checking");
     return mockRehearsalResult(i, run.id, "fail");
   } });
+  assert.deepEqual(tenants, [T], "샌드박스 회사 라벨은 줄의 회사");
   assert.deepEqual(r, { skipped: false, status: "failed", failureCode: "REHEARSAL_CRASHLOOP", woken: 1 });
   assert.deepEqual(s.claimed, ["sbx-rehearsal-222222222222"]);
   assert.deepEqual(s.phases, ["creating", "checking"]);

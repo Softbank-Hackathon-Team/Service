@@ -1,25 +1,29 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  asHostKube, createVcluster, cpuMilli, expiredSandbox, helmRunner, KubeError, leftoverRehearsal, memoryMi,
+  asHostKube, createVcluster, cpuMilli, expiredSandbox, helmRunner, KubeError, kubectlPortForward, leftoverRehearsal, memoryMi,
   originalLimits, parseManifests, sandboxQuotaPlan, sweepSandboxes, vclusterValues, type VclusterSpec,
 } from "../src/index.js";
 import { fakeHelm, fakeHost, fakeVirtual } from "./fake-kube.js";
 
 const RUN = "0f1e2d3c-4b5a-4968-8776-655443322110";
+const TENANT = "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4";
 const spec = (o: Partial<VclusterSpec> = {}): VclusterSpec => ({
-  kind: "rehearsal", runId: RUN, isolation: { podSecurity: "baseline", runtimeClass: null }, k8sMinor: "1.35",
+  kind: "rehearsal", runId: RUN, tenantId: TENANT, isolation: { podSecurity: "baseline", runtimeClass: null }, k8sMinor: "1.35",
   quota: { requests: { cpuM: 900, memoryMi: 1200 }, limitsMemoryMi: 3000, pods: 9, storageMi: 1024 },
   images: [{ ref: "reg.example/platform/t1/web@sha256:aa", sandboxRef: "ecr.example/sbx/t1/web@sha256:aa" }], ttlSec: 1800, ...o,
 });
 const clock = () => { let t = 1_800_000_000_000; return { now: () => t, sleep: async (ms: number) => { t += ms; } }; };
 
-test("vCluster 만들기: 라벨 넷 네임스페이스 → sbx-operator 묶기 → helm → 준비 → 지우기 (helm uninstall 뒤 네임스페이스)", async () => {
+test("vCluster 만들기: 라벨 네임스페이스 → sbx-operator 묶기 → 나가기 기본 거부 → helm → 준비 → 지우기 (helm uninstall 뒤 네임스페이스)", async () => {
   const host = fakeHost();
   const helm = fakeHelm(host);
+  const install = helm.run;
+  let policiesAtInstall: unknown[] = [];
+  helm.run = async (args) => { if (args[0] === "upgrade") policiesAtInstall = host.networkPolicies.map((p) => ({ ...p })); return install(args); };
   const virtual = fakeVirtual({ readyAfter: 3 });
   const seen: Array<{ url: string; cert?: string; token?: string }> = [];
   const c = clock();
@@ -35,12 +39,16 @@ test("vCluster 만들기: 라벨 넷 네임스페이스 → sbx-operator 묶기 
   assert.match(labels["platform.svc/expires-at"]!, /^\d{10}$/);
   assert.equal(Number(labels["platform.svc/expires-at"]), 1_800_000_000 + 1800);
   assert.equal(labels["pod-security.kubernetes.io/enforce"], "baseline");
+  assert.equal(labels["platform.svc/tenant"], TENANT, "회사 라벨 (호스트 이미지 가드 VAP 가 본다)");
+  // 규칙 없는 Egress = 모든 나가기 거부. 파드가 하나라도 뜨기 전(helm 전)에 있어야 한다
+  assert.deepEqual(policiesAtInstall, [{ namespace: vc.name, body: { apiVersion: "networking.k8s.io/v1", kind: "NetworkPolicy",
+    metadata: { name: "sbx-default-deny" }, spec: { podSelector: {}, policyTypes: ["Egress"] } } }]);
   const rb = host.rolebindings[0]!;
   assert.deepEqual([rb.namespace, rb.body.roleRef.kind, rb.body.roleRef.name], [vc.name, "ClusterRole", "sbx-operator"]);
   assert.deepEqual(rb.body.subjects, [{ kind: "ServiceAccount", name: "agent-worker", namespace: "platform" }]);
-  const install = helm.calls[0]!;
-  assert.deepEqual(install.slice(0, 6), ["upgrade", "--install", vc.name, "/app/vendor/vcluster-0.37.6.tgz", "-n", vc.name]);
-  assert.equal(existsSync(install[install.indexOf("-f") + 1]!), false, "값 파일은 설치 뒤 지운다");
+  const upgrade = helm.calls[0]!;
+  assert.deepEqual(upgrade.slice(0, 6), ["upgrade", "--install", vc.name, "/app/vendor/vcluster-0.37.6.tgz", "-n", vc.name]);
+  assert.equal(existsSync(upgrade[upgrade.indexOf("-f") + 1]!), false, "값 파일은 설치 뒤 지운다");
   assert.deepEqual(helm.values[0].sync.toHost.pods.translateImage, { "reg.example/platform/t1/web@sha256:aa": "ecr.example/sbx/t1/web@sha256:aa" });
   assert.deepEqual(seen[0], { url: `https://${vc.name}.${vc.name}.svc:443`, cert: "CERT", token: undefined });
   assert.equal(vc.k8sVersion, "v1.35.0");
@@ -69,6 +77,77 @@ test("helm 실패·준비 시간 초과면 만든 네임스페이스를 지우�
     assert.equal(err.code, code, name);
     assert.equal(host.namespaces.size, 0, `${name}: 남은 네임스페이스 0`);
   }
+});
+
+test("회사 번호가 소문자 UUID 가 아니면 호스트에 아무것도 만들지 않는다", async () => {
+  for (const tenantId of ["", "t1", TENANT.toUpperCase(), `${TENANT}x`]) {
+    const host = fakeHost();
+    const err = await createVcluster({ kube: asHostKube(host.kube), helm: fakeHelm(host), chart: "c.tgz", workDir: mkdtempSync(join(tmpdir(), "vc-")), ...clock(),
+      connect: () => fakeVirtual().kube }, spec({ tenantId })).then(() => null, (e) => e);
+    assert.equal(err?.code, "SANDBOX_CREATE", JSON.stringify(tenantId));
+    assert.equal(host.requests.length, 0, `${JSON.stringify(tenantId)}: 호스트 요청 0`);
+  }
+});
+
+test("클러스터 밖(port-forward): 길이 열릴 때까지 다시 열고, 관리자·조회 전용 모두 그 주소로, 지우기·실패에서 닫는다", async () => {
+  const opened: string[] = [];
+  let closed = 0;
+  const reachOk = (fails: number) => async (name: string) => {
+    opened.push(name);
+    if (opened.length <= fails) throw new KubeError("SANDBOX_PORT_FORWARD", "unable to forward port because pod is not running");
+    return { url: "https://127.0.0.1:40123", close: () => { closed++; } };
+  };
+  const seen: string[] = [];
+  const host = fakeHost();
+  const vc = await createVcluster({ kube: asHostKube(host.kube), helm: fakeHelm(host), chart: "c.tgz", workDir: mkdtempSync(join(tmpdir(), "vc-")), ...clock(),
+    reach: reachOk(1), connect: (url) => { seen.push(url); return fakeVirtual().kube; } }, spec());
+  await vc.agent();
+  assert.deepEqual(seen, ["https://127.0.0.1:40123", "https://127.0.0.1:40123"]);
+  assert.equal(opened.length, 2, "처음 실패한 뒤 한 번 더 열고, 열린 뒤에는 다시 안 연다");
+  assert.equal(closed, 0);
+  await vc.dispose();
+  await vc.dispose();
+  assert.equal(closed, 1, "지우기에서 한 번 닫는다");
+
+  closed = 0; opened.length = 0;
+  const h2 = fakeHost();
+  const err = await createVcluster({ kube: asHostKube(h2.kube), helm: fakeHelm(h2), chart: "c.tgz", workDir: mkdtempSync(join(tmpdir(), "vc-")), ...clock(),
+    reach: reachOk(0), connect: () => fakeVirtual({ readyAfter: 10_000 }).kube }, spec(), { readyTimeoutMs: 10_000 }).then(() => null, (e) => e);
+  assert.equal(err?.code, "SANDBOX_NOT_READY");
+  assert.equal(closed, 1, "준비 실패에서도 닫는다");
+  assert.equal(h2.namespaces.size, 0);
+});
+
+test("kubectl port-forward: 정해진 env 만 받고, 127.0.0.1 빈 포트를 읽고, 닫으면 끝난다. 열기 전에 끝나면 SANDBOX_PORT_FORWARD", async () => {
+  process.env.DATABASE_URL = "postgres://app:pw@db/app";
+  process.env.ANTHROPIC_API_KEY = "sk-ant-test";
+  const home = mkdtempSync(join(tmpdir(), "pf-"));
+  const bin = join(home, "kubectl");
+  writeFileSync(bin, `#!/bin/sh
+env > "$HOME/env.txt"
+echo "$@" > "$HOME/args.txt"
+echo "Forwarding from 127.0.0.1:41234 -> 8443"
+echo "Forwarding from [::1]:41234 -> 8443"
+exec sleep 30
+`);
+  chmodSync(bin, 0o755);
+  const ep = await kubectlPortForward({ bin, kubeconfig: join(home, "k"), home })("sbx-rehearsal-abc");
+  assert.equal(ep.url, "https://127.0.0.1:41234");
+  assert.deepEqual(readFileSync(join(home, "env.txt"), "utf8").trim().split("\n").map((l) => l.split("=")[0]).filter((k) => k !== "PWD" && k !== "SHLVL" && k !== "_").sort(), ["HOME", "KUBECONFIG"]);
+  assert.equal(readFileSync(join(home, "args.txt"), "utf8").trim(), "port-forward -n sbx-rehearsal-abc svc/sbx-rehearsal-abc --address 127.0.0.1 :443");
+  ep.close();
+  ep.close();
+
+  const bad = join(home, "kubectl-bad");
+  writeFileSync(bad, `#!/bin/sh
+echo 'error: unable to forward port because pod is not running. Current status=Pending' >&2
+exit 1
+`);
+  chmodSync(bad, 0o755);
+  const err = await kubectlPortForward({ bin: bad, kubeconfig: join(home, "k"), home })("sbx-x").then(() => null, (e) => e);
+  assert.ok(err instanceof KubeError);
+  assert.equal(err.code, "SANDBOX_PORT_FORWARD");
+  assert.match(err.message, /not running/);
 });
 
 test("만료 청소: 지난 것만 지우고, 지우기 실패는 실행 번호·네임스페이스와 함께 돌려준다 (#177)", async () => {
@@ -116,6 +195,8 @@ test("차트 값: 도착 마이너에 맞는 제어판, 수정 고리만 Runtime
   assert.deepEqual(v.sync.fromHost.nodes.selector.labels, { pool: "sandbox" });
   assert.equal(v.rbac.clusterRole.enabled, false);
   assert.equal(v.policies.networkPolicy.workload.publicEgress.enabled, false);
+  assert.equal(v.sync.toHost.networkPolicies.enabled, false, "테넌트 NetworkPolicy 가 호스트로 내려와 sbx-default-deny 를 넓히지 못한다");
+  assert.ok(v.controlPlane.proxy.extraSANs.includes("127.0.0.1"), "클러스터 밖 port-forward 주소도 인증서에");
   assert.equal(v.policies.podSecurityStandard, "baseline");
   assert.equal("runtimeClassName" in v.sync.toHost.pods, false);
   assert.ok(v.controlPlane.proxy.extraSANs.includes("sbx-x.sbx-x.svc"));

@@ -14,6 +14,7 @@ import { fakeHelm, fakeHost, fakeVirtual } from "./fake-kube.js";
 
 const CRDS = loadVendorCrds(fileURLToPath(new URL("../../../apps/agent-worker/vendor/crds", import.meta.url)));
 const RUN = "7a6b5c4d-3e2f-4a1b-9c8d-7e6f5a4b3c2d";
+const TENANT = "0a1b2c3d-4e5f-4061-8283-a4b5c6d7e8f9";
 const NAME = "sbx-rehearsal-7a6b5c4d3e2f";
 const REG = "reg.onprem.example/platform/t1";
 
@@ -79,7 +80,7 @@ function backend(o: { virtual?: Parameters<typeof fakeVirtual>[0]; helm?: Parame
     create: (spec) => createVcluster(h, spec), sweepLeftovers: (keep) => sweepSandboxes(h.kube, leftoverRehearsal(keep)),
     crds: CRDS, ttlSec: 1800, now, sleep, allocatable: o.allocatable,
   };
-  return { b, host, helm, virtual, phases, run: (input: RehearsalInput) => runRehearsal(input, { id: RUN, onPhase: (p) => { phases.push(p); } }, b), elapsed: () => t - 1_800_000_000_000 };
+  return { b, host, helm, virtual, phases, run: (input: RehearsalInput) => runRehearsal(input, { id: RUN, tenantId: TENANT, onPhase: (p) => { phases.push(p); } }, b), elapsed: () => t - 1_800_000_000_000 };
 }
 
 test("리허설 통과: 만들기 → dry-run → 도착 정책 → DB 먼저 적용 → 롤아웃·잡 → 재시작 → 준비 → 연결 → 지우기", async () => {
