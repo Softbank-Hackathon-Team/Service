@@ -71,7 +71,89 @@ test("M4: 컷오버 뒤 롤백 → rolled_back 이고, 출발·도착 어디에�
   assert.equal(await repl.phase(), "idle");
   const a = (await owner.query(`SELECT detail FROM audit_events WHERE target=$1 AND action='rollback.rolled_back'`, [M])).rows[0];
   assert.equal(a.detail.replication.kind, "after_cutover");
+  // PF-E6 (FM-TRF-19): 컷오버 뒤면 DB 를 먼저 출발로 되돌리고 그다음 트래픽 (트래픽 먼저면 사용자가 울타리 친 출발 DB 로 감)
+  assert.equal(a.detail.replication.order, "db_then_traffic");
   assert.ok(a.detail.replication.removed.length > 0, JSON.stringify(a.detail.replication));
   assert.deepEqual(a.detail.replication.leftovers, []);
   console.log("    rollback(after_cutover)+teardown ms", ms, "removed", a.detail.replication.removed.length);
+});
+
+test("PF-E17: 지난 시도가 DB 를 이미 되돌리고 트래픽에서 실패했으면, 재시도도 컷오버 뒤 롤백으로 이어 간다 (activeWriter·순서)", { skip }, async () => {
+  const M2 = randomUUID();
+  await resetAndSeed(200);
+  const repl = new Migration({ key: M2, source: SOURCE, target: TARGET, tables: TABLES });
+  assert.equal((await repl.sync()).gate.ready, true);
+  assert.equal((await repl.cutover()).ok, true);
+  // 1번째 시도: DB 되돌리기까지 끝 (phase 가 reverse 가 아니게 됨), 그다음 트래픽에서 실패했다고 친다
+  const r1 = await repl.rollback({ teardown: false });
+  assert.equal(r1.kind, "after_cutover");
+  assert.notEqual(await repl.phase(), "reverse");
+  const src = randomUUID(), dst = randomUUID();
+  await owner.query(`INSERT INTO environments (id, tenant_id, provider, name, connection_status) VALUES
+    ($1,$3,'aws','s2','connected'), ($2,$3,'gcp','g2','connected')`, [src, dst, T]);
+  await owner.query(`INSERT INTO migrations (id, tenant_id, source_env_id, target_env_id, status) VALUES ($1,$2,$3,$4,'rolling_back')`, [M2, T, src, dst]);
+  await owner.query(`INSERT INTO env_locks (env_id, tenant_id, migration_id, holder, lease_expires_at)
+    VALUES ($1,$3,$4,'reserved', now() + interval '10 minutes'), ($2,$3,$4,'reserved', now() + interval '10 minutes')`, [src, dst, T, M2]);
+  await core.withTenant(T, (tx) => core.writeAudit(tx, T, { actor: "worker", action: "rollback.db_reverted", target: M2, result: "ok", detail: { requestId: "r-pfe17-1" } }));
+  try {
+    assert.equal(await rollback.handleRollback({ tenantId: T, requestId: "r-pfe17-2", migrationId: M2 }), "advanced");
+    const a = (await owner.query(`SELECT detail FROM audit_events WHERE target=$1 AND action='rollback.rolled_back'`, [M2])).rows[0];
+    assert.equal(a.detail.replication.kind, "after_cutover", "예전: before_cutover 로 빠져 activeWriter 를 안 되돌림");
+    assert.equal(a.detail.replication.order, "db_then_traffic");
+    assert.deepEqual(await repl.leftovers(), []);
+  } finally { await repl.teardown().catch(() => {}); }
+});
+
+async function seedRollingBack(id: string) {
+  const src = randomUUID(), dst = randomUUID();
+  await owner.query(`INSERT INTO environments (id, tenant_id, provider, name, connection_status) VALUES
+    ($1,$3,'aws','s-${id.slice(0, 4)}','connected'), ($2,$3,'gcp','g-${id.slice(0, 4)}','connected')`, [src, dst, T]);
+  await owner.query(`INSERT INTO migrations (id, tenant_id, source_env_id, target_env_id, status) VALUES ($1,$2,$3,$4,'rolling_back')`, [id, T, src, dst]);
+  await owner.query(`INSERT INTO env_locks (env_id, tenant_id, migration_id, holder, lease_expires_at)
+    VALUES ($1,$3,$4,'reserved', now() + interval '10 minutes'), ($2,$3,$4,'reserved', now() + interval '10 minutes')`, [src, dst, T, id]);
+}
+
+test("PF-E33 (RV-21): 다시 롤백(updated_at 이 바뀜)해도 db_reverted 기록을 잃지 않는다", { skip }, async () => {
+  const M3 = randomUUID();
+  await resetAndSeed(200);
+  const repl = new Migration({ key: M3, source: SOURCE, target: TARGET, tables: TABLES });
+  assert.equal((await repl.sync()).gate.ready, true);
+  assert.equal((await repl.cutover()).ok, true);
+  assert.equal((await repl.rollback({ teardown: false })).kind, "after_cutover");
+  await seedRollingBack(M3);
+  await core.withTenant(T, (tx) => core.writeAudit(tx, T, { actor: "worker", action: "rollback.db_reverted", target: M3, result: "ok", detail: { requestId: "r-pfe33-1" } }));
+  // rolling_back → failed → rolling_back 처럼 updated_at 이 기록 뒤로 바뀜
+  await owner.query(`UPDATE migrations SET updated_at = now() + interval '1 minute' WHERE id=$1`, [M3]);
+  try {
+    assert.equal(await rollback.handleRollback({ tenantId: T, requestId: "r-pfe33-2", migrationId: M3 }), "advanced");
+    const a = (await owner.query(`SELECT detail FROM audit_events WHERE target=$1 AND action='rollback.rolled_back'`, [M3])).rows[0];
+    assert.equal(a.detail.replication.kind, "after_cutover");
+  } finally { await repl.teardown().catch(() => {}); }
+});
+
+test("PF-E32 (RV-19): 컷오버 전, 복제 주소를 못 만들어도({tf:} 빔) 트래픽은 되돌리고 rolled_back + cleanup_incomplete", { skip }, async () => {
+  const M4 = randomUUID();
+  await seedRollingBack(M4);
+  const saved = process.env.REPL_TARGET_URL;
+  process.env.REPL_TARGET_URL = "postgres://u:p@{tf:pfe32_no_key}:5432/app";
+  try {
+    assert.equal(await rollback.handleRollback({ tenantId: T, requestId: "r-pfe32", migrationId: M4 }), "advanced");
+    assert.equal((await owner.query("SELECT status FROM migrations WHERE id=$1", [M4])).rows[0].status, "rolled_back");
+    const w = (await owner.query(`SELECT detail FROM audit_events WHERE target=$1 AND action='rollback.cleanup_incomplete'`, [M4])).rows[0];
+    assert.match(String(w?.detail?.warning), /pfe32_no_key/);
+  } finally { process.env.REPL_TARGET_URL = saved; }
+});
+
+test("PF-E32 거부: 컷오버 뒤면 복제 주소 없이 트래픽을 옮기지 않고 실패(재시도)", { skip }, async () => {
+  const M5 = randomUUID();
+  await seedRollingBack(M5);
+  await core.withTenant(T, (tx) => core.writeAudit(tx, T, { actor: "worker", action: "migration.advanced", target: M5, result: "ok", detail: { from: "cutover", to: "rollback_window" } }));
+  const saved = process.env.REPL_TARGET_URL;
+  process.env.REPL_TARGET_URL = "postgres://u:p@{tf:pfe32_no_key}:5432/app";
+  try {
+    await rollback.handleRollback({ tenantId: T, requestId: "r-pfe32b", migrationId: M5 }).catch(() => "threw");
+    assert.equal((await owner.query("SELECT status FROM migrations WHERE id=$1", [M5])).rows[0].status, "rolling_back");
+    const f = (await owner.query(`SELECT detail FROM audit_events WHERE target=$1 AND action='rollback.attempt_failed'`, [M5])).rows[0];
+    assert.match(String(f?.detail?.error), /needs the replication endpoints/);
+  } finally { process.env.REPL_TARGET_URL = saved; }
 });
