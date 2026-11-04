@@ -125,3 +125,16 @@ test("FM-OPS-04 real-session: caffeinate -i -m -s -w <회차 pid> 로 회차 전
   writeFileSync(rec, ""); go({ REAL_NO_AWAKE: "1" }); spawnSync("sleep", ["0.5"]);
   assert.equal(readFileSync(rec, "utf8"), "");
 });
+
+test("FM-CLD-hunt-cloud-25 real-session: cloud-zero 에 GCP_PROJECT·GCP_ZONE·TARGET_PROJECT_ID(.env) 를 넘김 → gcloud 기본 프로젝트로 거짓 OK zero 안 남", () => {
+  const f = mkdtempSync(join(tmpdir(), "rz-")); mkdirSync(join(f, "tools"));
+  writeFileSync(join(f, "tools/cloud-zero.sh"), 'echo "zero P=${GCP_PROJECT:-없음} Z=${GCP_ZONE:-없음} T=${TARGET_PROJECT_ID:-없음}" >> "$ZREC"; echo "OK zero"\n');
+  writeFileSync(join(f, ".env"), 'TARGET_PROJECT_ID="tgt-proj-01"\n'); writeFileSync(join(f, "package.json"), "{}");
+  const env: Record<string, string> = { ...process.env, HOME: f, ZREC: join(f, "rec"), RESULTS_DIR: join(f, "res"), REAL_NO_AWAKE: "1", STOP_AFTER: "zero" } as Record<string, string>;
+  delete env.GCP_PROJECT; delete env.GCP_ZONE; delete env.TARGET_PROJECT_ID;
+  let r = spawnSync("bash", ["tools/real/real-session.sh", f, "zero"], { cwd: ROOT, encoding: "utf8", timeout: 60_000, env });
+  assert.equal(r.status, 0, r.stdout.slice(-500));
+  assert.equal(readFileSync(join(f, "rec"), "utf8").trim(), "zero P=finals-demo Z=asia-northeast3-a T=tgt-proj-01");
+  r = spawnSync("bash", ["tools/real/real-session.sh", f, "zero"], { cwd: ROOT, encoding: "utf8", timeout: 60_000, env: { ...env, GCP_PROJECT: "cust-proj", TARGET_PROJECT_ID: "tp-env-01" } });
+  assert.match(readFileSync(join(f, "rec"), "utf8"), /zero P=cust-proj Z=asia-northeast3-a T=tp-env-01$/m);
+});
