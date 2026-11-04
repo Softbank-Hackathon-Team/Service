@@ -29,6 +29,17 @@ variable "node_machine_type" {
   type    = string
   default = "e2-standard-2"
 }
+# FM-CLD-21 DRAFT(ai): 시연 중 GKE 자동 업그레이드(제어부 몇 분 API 끊김·노드 재시작)를 막는다. 만든 때부터 이 시간 동안 NO_UPGRADES 제외 기간.
+#   날짜는 레포에 안 적는다: 만들 때 시각(plantimestamp) 기준으로 정하고, 뒤 plan 에서 안 바뀌게 ignore_changes. 0 이면 끔. 최대 720시간(30일, GKE 한도)
+#   기본 0(끔): 시작 시각이 apply 때 이미 지난 값이 되는데 GKE 가 받는지 실클라우드로 확인 못 함 【미확인】. 확인 뒤 -var upgrade_freeze_hours=48
+variable "upgrade_freeze_hours" {
+  type    = number
+  default = 0
+  validation {
+    condition     = var.upgrade_freeze_hours >= 0 && var.upgrade_freeze_hours <= 720
+    error_message = "upgrade_freeze_hours 는 0~720"
+  }
+}
 
 provider "google" {
   project = var.project_id
@@ -98,12 +109,26 @@ resource "google_compute_router" "r" {
   region  = var.region
 }
 
+# APP-22: 컷오버 전까지 도착 앱이 출발 DB 에 붙는다 → 출발 쪽 보안 그룹이 허용할 "고정" 출구 IP 가 있어야 한다.
+#   노드는 사설(enable_private_nodes)이라 밖으로 나가는 길은 이 NAT 하나 → NAT 에 고정 외부 주소 1개를 붙이고 nat_egress_ips 로 내보낸다.
+#   (예전 AUTO_ONLY 는 IP 가 바뀔 수 있어 허용 목록에 못 씀)
+# DRAFT(ai): 주소 1개 (노드 2대·연결 수 작음. 포트 모자라면 늘림). 이름 <name>-nat-ip, 지역 = var.region
+resource "google_compute_address" "nat" {
+  count        = var.create_gke ? 1 : 0
+  name         = "${var.name}-nat-ip"
+  region       = var.region
+  address_type = "EXTERNAL"
+  network_tier = "PREMIUM"
+  depends_on   = [google_project_service.apis]
+}
+
 resource "google_compute_router_nat" "nat" {
   count                              = var.create_gke ? 1 : 0
   name                               = "${var.name}-nat"
   router                             = google_compute_router.r[0].name
   region                             = var.region
-  nat_ip_allocate_option             = "AUTO_ONLY"
+  nat_ip_allocate_option             = "MANUAL_ONLY"
+  nat_ips                            = [google_compute_address.nat[0].self_link]
   source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
 }
 
@@ -128,6 +153,27 @@ resource "google_container_cluster" "this" {
     enable_private_nodes    = true
     enable_private_endpoint = false
     master_ipv4_cidr_block  = "172.16.0.0/28"
+  }
+  dynamic "maintenance_policy" {
+    for_each = var.upgrade_freeze_hours > 0 ? [1] : []
+    content {
+      # DRAFT(ai): 제외 기간에는 창이 있어야 한다. UTC 19:00(한국 04:00) 매일 4시간 창 — 제외 기간 동안은 이 창에서도 업그레이드 안 함
+      daily_maintenance_window {
+        start_time = "19:00"
+      }
+      maintenance_exclusion {
+        exclusion_name = "demo-freeze"
+        start_time     = plantimestamp()
+        end_time       = timeadd(plantimestamp(), "${var.upgrade_freeze_hours}h")
+        exclusion_options {
+          scope = "NO_UPGRADES"
+        }
+      }
+    }
+  }
+  lifecycle {
+    # 만들 때 정한 제외 기간을 뒤 plan 이 매번 바꾸지 않게
+    ignore_changes = [maintenance_policy]
   }
 }
 
@@ -156,6 +202,8 @@ resource "google_artifact_registry_repository" "platform" {
 }
 
 output "network_id" { value = google_compute_network.vpc.id }
+# APP-22: 도착 GKE 가 밖으로 나갈 때 쓰는 고정 IP 목록 (/32 없이 IP 만). 출발 SG 허용은 워커가 /32 를 붙인다. GKE 없으면 빈 목록
+output "nat_egress_ips" { value = var.create_gke ? [google_compute_address.nat[0].address] : [] }
 output "cluster_name" { value = var.create_gke ? google_container_cluster.this[0].name : "" }
 output "cluster_location" { value = var.create_gke ? google_container_cluster.this[0].location : var.zone }
 output "cluster_endpoint" { value = var.create_gke ? google_container_cluster.this[0].endpoint : "" }
