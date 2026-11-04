@@ -488,7 +488,10 @@
                     "route53:ListHostedZones",
                     "s3:GetBucketNotification",
                     "sns:ListTopics",
-                    "sns:ListSubscriptionsByTopic"
+                    "sns:ListSubscriptionsByTopic",
+                    "ecr:BatchGetImage",
+                    "ecr:GetAuthorizationToken",
+                    "ecr:GetDownloadUrlForLayer"
                   ],
                   "Resource": "*"
                 }
