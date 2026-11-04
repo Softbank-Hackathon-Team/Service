@@ -12,6 +12,7 @@ export * from "./traffic-target.js";
 export * from "./migrations-check.js";
 export * from "./idempotency.js";
 export * from "./jobs.js";
+export * from "./queue-wake.js";
 export * from "./plans.js";
 export * from "./advance.js";
 export * from "./timeline.js";
