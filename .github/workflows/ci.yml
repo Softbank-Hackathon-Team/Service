@@ -274,6 +274,8 @@ jobs:
         run: bash deploy/ci/check-gitops.sh
       - name: platform chart lint + template + kubeconform
         run: bash deploy/ci/check-platform.sh
+      - name: onprem db tunnel chart lint + template + security shape
+        run: bash deploy/ci/check-onprem-db-tunnel.sh
 
   docker:
     if: github.event_name != 'schedule'

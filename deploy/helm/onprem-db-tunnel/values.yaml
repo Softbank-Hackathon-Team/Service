@@ -1,0 +1,42 @@
+# 온프레 DB 복제 터널. 이 클러스터에서 중계 EC2(infra/modules/aws/demo-relay, tunnel 계정)로 SSH 를 밖으로 연다.
+#   정방향(-L): 이 파드의 Service:5432 → 중계 → VPC 안 RDS. 온프레 CNPG 의 구독이 여기로 붙는다 (클라우드 → 온프레 이전)
+#   역방향(-R): 중계 0.0.0.0:5432 → 이 파드 → 온프레 CNPG. 클라우드 쪽이 온프레 DB 에 붙는다 (온프레가 출발·롤백 창 역복제)
+# 이전이 끝나면 helm uninstall + 중계 destroy + 키 폐기 (ADR-005 중계 보안 통제)
+# 비밀키는 값에 넣지 않는다 (Helm 기록에 남는다). 설치 전에 Secret 을 만든다:
+#   kubectl -n <ns> create secret generic db-tunnel-key --from-file=id=<개인키 파일>
+
+relay:
+  host: ""          # 필수. 중계 EC2 공개 IP (terraform output public_ip)
+  port: 22
+  user: tunnel      # 중계의 포트 전달 전용 계정 (셸 없음)
+  # 필수. 중계 호스트 키 고정 (known_hosts 한 줄 이상: "<host> ssh-ed25519 AAAA..."). 처음 보는 키는 거부한다 (accept-new 안 씀)
+  knownHosts: ""
+  # 선택. 중계 IP 대역 (예 "3.35.10.20/32"). 주면 파드가 나가는 22 를 이 대역으로만 연다. 비우면 22 는 어디로든
+  cidr: ""
+
+keySecret: db-tunnel-key   # 키 이름 id = 개인키 (ed25519)
+
+# ssh 클라이언트. 팀 Dockerfile 의 GIT_IMAGE 와 같은 이미지(openssh-client 포함), 다이제스트 고정 = 여러 아키텍처 index
+# DRAFT(ai): 따로 이미지를 만들지 않고 이미 쓰는 이미지를 다시 쓴다. ssh 만 실행한다
+image: alpine/git:v2.54.0@sha256:ac6c828f15d82775d204d3d75112e1d34af8945da80ccf922713c9891ba68e7a
+
+forward:
+  enabled: true
+  # 필수(켜면). 중계가 넘길 목적지 "<RDS 엔드포인트>:5432". 중계 forward_pg_targets_json 의 글자와 같아야 한다 (sshd PermitOpen)
+  target: ""
+  port: 5432
+  # 이 Service 에 붙어도 되는 파드 (온프레 CNPG 인스턴스). 같은 네임스페이스 안에서만
+  allowFrom:
+    cnpg.io/podRole: instance
+
+reverse:
+  enabled: false
+  # 필수(켜면). 중계 0.0.0.0:5432 로 온 연결을 넘길 이 클러스터 안 주소 "<CNPG>-rw:5432"
+  target: ""
+  # 넘길 대상 파드 (나가는 NetworkPolicy). 같은 네임스페이스 안
+  toPods:
+    cnpg.io/podRole: instance
+
+resources:
+  requests: { cpu: 10m, memory: 16Mi }
+  limits: { memory: 64Mi }
