@@ -4,6 +4,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { X509Certificate, createPrivateKey } from "node:crypto";
+import type { AddressInfo } from "node:net";
+import { connect, createServer } from "node:tls";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +17,7 @@ import { buildPlanDoc } from "../src/jobs/plan.js";
 import { stubPrecheck } from "../src/jobs/precheck.js";
 import { approvedWeights, bundleRefOf, filledValues, withServedBy, withTraffic, type DeployInput } from "../src/gitops/index.js";
 import { buildRehearsalInput, imagePairs, parseManifests } from "../src/rehearsal/input.js";
-import { docIdOf, podImages, quantity, refOf, unsupportedOf, type K8sDoc } from "../src/rehearsal/substitute.js";
+import { docIdOf, podImages, quantity, refOf, substitute, unsupportedOf, type K8sDoc } from "../src/rehearsal/substitute.js";
 
 const hasHelm = (() => { try { execFileSync("helm", ["version", "--short"], { stdio: "ignore" }); return true; } catch { return false; } })();
 const skip = hasHelm ? false : "helm 이 있어야 한다";
@@ -214,3 +217,28 @@ test("수량 읽기와 이미지 짝: 명세 다이제스트 원본, 명세 밖 
   assert.deepEqual(pairs[1], { ref: "cloudflare/cloudflared:2025.9.1", source: "cloudflare/cloudflared:2025.9.1" });
 });
 
+test("TLS 비밀: 가짜 값이 자체 서명 인증서·키라 앱이 그대로 TLS 를 연다. 같은 지문·이름이면 같은 글자", async () => {
+  const es = (name: string) => ({ path: `manifests/externalsecret-${name}.yaml`, doc: { apiVersion: "external-secrets.io/v1", kind: "ExternalSecret", metadata: { name },
+    spec: { secretStoreRef: { kind: "ClusterSecretStore", name: "s" }, target: { name, template: { type: "kubernetes.io/tls" } },
+      data: [{ secretKey: "tls.crt", remoteRef: { key: name } }, { secretKey: "tls.key", remoteRef: { key: name } }] } } as K8sDoc });
+  const run = () => substitute([es("shop-tls"), es("admin-tls")], { namespace: "app-shop", images: new Map(), managedDbs: [], seed: "a".repeat(64) });
+  const sec = (name: string) => run().apply.find((m) => m.doc.kind === "Secret" && m.doc.metadata.name === name)!.doc.stringData as Record<string, string>;
+  const tls = sec("shop-tls");
+  const cert = new X509Certificate(tls["tls.crt"]!);
+  assert.ok(cert.checkPrivateKey(createPrivateKey(tls["tls.key"]!)));
+  assert.ok(cert.verify(cert.publicKey), "자체 서명");
+  assert.equal(cert.subject, "CN=shop-tls");
+  // 앱 자리: 그 인증서·키로 TLS 서버를 열고 붙어 본다
+  const server = createServer({ cert: tls["tls.crt"], key: tls["tls.key"] }, (sock) => sock.end("ok"));
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  try {
+    const got = await new Promise<string>((res, rej) => {
+      const c = connect({ host: "127.0.0.1", port: (server.address() as AddressInfo).port, rejectUnauthorized: false });
+      let d = "";
+      c.on("data", (x) => { d += x; }).on("end", () => res(d)).on("error", rej);
+    });
+    assert.equal(got, "ok");
+  } finally { server.close(); }
+  assert.deepEqual(sec("shop-tls"), tls, "같은 입력이면 같은 글자 (치환은 순수 함수)");
+  assert.notEqual(sec("admin-tls")["tls.key"], tls["tls.key"], "비밀마다 다른 키");
+});
