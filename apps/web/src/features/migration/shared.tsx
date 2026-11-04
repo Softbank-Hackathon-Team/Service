@@ -11,6 +11,8 @@ import type { MigrationView } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
 import { ShellLayout } from '../shell/ShellLayout';
 import { migrationSteps, needsStepAnchor, stepAnchorFrom } from './model';
+import { rehearsalStepDetail } from './rehearsal';
+import { useRehearsal } from './RehearsalFold';
 import s from '../common/page.module.css';
 
 // 큰 카드 다음으로 중요한 것이 진행 단계라서, 어느 화면이든 바로 옆 칸을 그대로 차지한다.
@@ -32,10 +34,13 @@ function StepsTile({ migration }: { migration: MigrationView }) {
     [migration.id, migration.version, located],
   );
   const anchor = timeline.data ? stepAnchorFrom(timeline.data.items, migration.status) : null;
+  // 앱 배포 칸에 리허설 한 마디 (리허설 중·통과·건너뜀·멈춤). 배포 단계 전에는 읽지 않는다
+  const rehearsal = useRehearsal(migration);
+  const deploying = rehearsalStepDetail(rehearsal.run, rehearsal.stale);
   return (
     <Tile area="steps" compact scroll>
       <TileHeader title="진행 단계" />
-      <Checklist items={migrationSteps(migration, anchor)} />
+      <Checklist items={migrationSteps(migration, anchor, deploying ? { deploying } : {})} />
     </Tile>
   );
 }

@@ -24,6 +24,21 @@ const RULES: Rule[] = [
   { match: /^TRAFFIC_METRICS_UNAVAILABLE$/, kind: "system", label: "지표 못 읽음", title: "지표를 읽지 못해\n멈췄습니다", hint: "오류율과 응답 시간 지표를 읽지 못해 더 옮기지 않았습니다." },
   { match: /^TRAFFIC_(SWITCH_FAILED|PROVIDER_ERROR|LB_MISCONFIGURED|PREFLIGHT_FAILED)$/, kind: "step", label: "비율 변경 실패", title: "트래픽 비율을\n바꾸지 못했습니다", hint: "로드 밸런서 가중치를 바꾸거나 바뀐 값을 확인하지 못했습니다." },
   { match: /^TRAFFIC_/, kind: "guardrail", label: "트래픽 이동 멈춤", title: "트래픽 이동이\n멈췄습니다", hint: "트래픽 판정이 다음 단계로 넘어가지 않았습니다." },
+  // vCluster 리허설 (워커 deploy 리허설 문). 실패하면 GitOps 에 커밋하지 않고 deploying → paused. 고객 클러스터에는 아무것도 반영하지 않았다.
+  // 문장은 contracts REHEARSAL_FAILURE_CLASS 로 갈린다: 실제도 실패(would_fail) / 샌드박스가 보증 못 함(cannot_vouch) / 플랫폼 문제(platform)
+  { match: /^REHEARSAL_DRY_RUN_REJECTED$/, kind: "step", label: "리허설 · 도착이 거부", title: "도착 클러스터가\n매니페스트를 거부합니다", hint: "쿠버네티스 API 서버가 원본 매니페스트를 받지 않았습니다. 실제 배포도 거부됩니다. 고객 클러스터에는 아무것도 반영하지 않았습니다." },
+  { match: /^REHEARSAL_TARGET_POLICY_DENIED$/, kind: "step", label: "리허설 · 도착 파드 보안", title: "도착 클러스터 규칙이\n이 파드를 막습니다", hint: "도착 환경의 파드 보안 규칙이 이 파드를 거부합니다. 실제 배포도 같은 이유로 실패합니다." },
+  { match: /^REHEARSAL_QUOTA_EXCEEDED$/, kind: "step", label: "리허설 · 한도 넘음", title: "도착 네임스페이스 한도를\n넘습니다", hint: "요청한 CPU·메모리 합이 도착 네임스페이스 한도를 넘습니다. 실제 배포도 같은 이유로 실패합니다." },
+  { match: /^REHEARSAL_CRASHLOOP$/, kind: "step", label: "리허설 · 계속 재시작", title: "리허설에서 앱이\n계속 다시 시작합니다", hint: "실제 배포와 같은 매니페스트를 샌드박스에 올렸더니 앱이 재시작을 멈추지 않았습니다. 고객 클러스터에는 아무것도 반영하지 않았습니다." },
+  { match: /^REHEARSAL_(ROLLOUT_FAILED|NOT_READY)$/, kind: "step", label: "리허설 · 준비 안 됨", title: "리허설에서 앱이\n준비되지 않았습니다", hint: "실제 배포와 같은 매니페스트를 샌드박스에 올렸더니 앱이 정해진 시간 안에 준비 상태가 되지 않았습니다. 고객 클러스터에는 아무것도 반영하지 않았습니다." },
+  { match: /^REHEARSAL_JOB_FAILED$/, kind: "step", label: "리허설 · Job 실패", title: "리허설에서 작업(Job)이\n실패했습니다", hint: "샌드박스에서 돌린 Job 이 실패로 끝났습니다. 실제 배포도 같은 이유로 실패할 것입니다." },
+  { match: /^REHEARSAL_CONNECTIVITY_FAILED$/, kind: "step", label: "리허설 · 연결 실패", title: "리허설에서 서비스끼리\n닿지 않았습니다", hint: "샌드박스 안에서 서비스 사이 연결이나 서비스 응답을 확인하지 못했습니다. 실제 배포도 같은 이유로 실패할 것입니다." },
+  { match: /^REHEARSAL_POLICY_DENIED$/, kind: "step", label: "리허설 · 보증 못 함", title: "샌드박스가 이 앱을\n보증하지 못했습니다", hint: "샌드박스 보안 규칙(root 실행 금지 등)이 파드를 막았습니다. 앱이 고장 났다는 뜻은 아닙니다." },
+  { match: /^REHEARSAL_UNSUPPORTED_KIND$/, kind: "step", label: "리허설 · 모르는 종류", title: "리허설이 모르는 자원이\n있어 멈췄습니다", hint: "리허설이 지원하지 않는 쿠버네티스 종류가 배포 묶음에 있어 보증하지 못했습니다. 앱이 고장 났다는 뜻은 아닙니다." },
+  { match: /^REHEARSAL_IMAGE_MIRROR_FAILED$/, kind: "system", label: "리허설 · 이미지 복사 실패", title: "이미지를 샌드박스로\n복사하지 못했습니다", hint: "출발 레지스트리에서 샌드박스 자리로 이미지를 복사하지 못했습니다. 고객 클러스터에는 아무것도 반영하지 않았습니다." },
+  { match: /^REHEARSAL_SANDBOX_UNAVAILABLE$/, kind: "system", label: "리허설 · 샌드박스 없음", title: "샌드박스를\n띄우지 못했습니다", hint: "플랫폼 샌드박스가 바쁘거나 없습니다. 재개하면 새 샌드박스에서 처음부터 돕니다." },
+  { match: /^REHEARSAL_TIMEOUT$/, kind: "system", label: "리허설 · 시간 초과", title: "리허설이 정해진 시간 안에\n끝나지 않았습니다", hint: "샌드박스가 바쁘거나 멈췄습니다. 다시 재개하면 새 샌드박스에서 처음부터 돕니다." },
+  { match: /^REHEARSAL_BUNDLE_MISMATCH$/, kind: "system", label: "리허설 · 묶음 다름", title: "리허설한 내용과\n올릴 내용이 달랐습니다", hint: "커밋 직전에 다시 만든 배포 묶음이 리허설한 것과 달라 올리지 않았습니다." },
   { match: /^(GITOPS|ARGO)_NOT_CONFIGURED$/, kind: "system", label: "배포 설정 없음", title: "배포 설정이\n없습니다", hint: "서버에 GitOps 저장소나 Argo CD 설정이 없어 배포를 시작하지 못했습니다." },
   // 승인 뒤 바뀜 (워커 gitops approvedValues): 앱을 올리기 전에 멈춘다. 도착 자원(앞 단계)은 이미 만들어져 있다
   { match: /^GITOPS_VALUES_DRIFT$/, kind: "step", label: "승인 뒤 배포 값 바뀜", title: "승인한 뒤 계획이 바뀌어\n앱을 올리지 않았습니다", hint: "승인한 배포 값과 지금 만든 값이 달라 앱을 올리기 전에 멈췄습니다. 도착 자원은 앞 단계에서 이미 만들었습니다." },

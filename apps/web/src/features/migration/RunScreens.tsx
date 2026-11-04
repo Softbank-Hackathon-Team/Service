@@ -14,6 +14,8 @@ import { AgentFold, useAgentReview } from '../agent/AgentResult';
 import { failureAnalysisOf } from '../agent/model';
 import { LeftoverFold, StopFold, TrafficReportFold } from './EvidenceFolds';
 import { canRollback, formatClock, runTitle, shiftNote, trafficPercent } from './model';
+import { isRehearsalCode, rehearsalHeroLine } from './rehearsal';
+import { RehearsalFolds, useRehearsal } from './RehearsalFold';
 import { ConfirmPill, Frame, useAction, useCostConsent, type ScreenProps } from './shared';
 import s from '../common/page.module.css';
 
@@ -128,13 +130,18 @@ export function RunningScreen({ migration, route, onChanged }: ScreenProps) {
   const { source, target } = routeEnds(route);
   const traffic = useTraffic(migration);
   const { busy, error, run } = useAction(onChanged);
+  const rehearsal = useRehearsal(migration);
+  const deploying = migration.status === 'deploying';
+  const rehearsalLine = deploying ? rehearsalHeroLine(rehearsal.run, rehearsal.stale) : null;
   return (
     <Frame migration={migration} route={route}>
       <Hero tone="run" meta={LABEL[migration.status]} title={runTitle(migration.status)}>
         <TrafficBar source={source} target={target} targetPercent={traffic.percent} />
         {traffic.note && <p className="t-body-md c-secondary">{traffic.note}</p>}
+        {rehearsalLine && <p className="t-body-md c-secondary">{rehearsalLine}</p>}
       </Hero>
       <Stack area="side">
+        <RehearsalFolds migration={migration} run={rehearsal.run} stale={rehearsal.stale} defaultOpen={deploying} />
         <LiveFold migration={migration} />
         <MeasureFold migration={migration} />
         <TimelineFold migration={migration} />
@@ -208,6 +215,7 @@ export function PausedScreen({ migration, route, onChanged }: ScreenProps) {
   //   실패 코드로 멈춘 경우만 재시도 한도를 센다 → 넘으면 비용 동의(useCostConsent) 뒤 다시 보낸다
   const byRule = !migration.failureCode;
   const reason = stopReasonOf(migration.failureCode, migration.status);
+  const rehearsal = useRehearsal(migration);
   return (
     <Frame migration={migration} route={route}>
       <Hero
@@ -222,6 +230,7 @@ export function PausedScreen({ migration, route, onChanged }: ScreenProps) {
       </Hero>
       <Stack area="side">
         {reason && <StopFold migration={migration} reason={reason} into="paused" analysis={failureAnalysisOf(review.data)} />}
+        <RehearsalFolds migration={migration} run={rehearsal.run} stale={rehearsal.stale} defaultOpen={isRehearsalCode(migration.failureCode)} />
         <AgentFold migrationId={migration.id} review={review} />
         <LiveFold migration={migration} />
         <TimelineFold migration={migration} />

@@ -161,6 +161,8 @@ export function stepAnchorFrom(items: Pick<TimelineItem, 'kind' | 'from' | 'to'>
 export function migrationSteps(
   migration: Pick<MigrationView, 'status' | 'pausedFrom' | 'failedAtStatus'>,
   anchor: MigrationStatus | null = null,
+  /** 칸 오른쪽에 붙일 한 마디 (예: 앱 배포 칸의 "리허설 통과") */
+  notes: Partial<Record<MigrationStatus, string>> = {},
 ): ChecklistEntry[] {
   const { status } = migration;
   const stoppedAt: { at: MigrationStatus | null | undefined; mark: ChecklistEntry['status'] } | null =
@@ -174,7 +176,7 @@ export function migrationSteps(
   const at = status === 'completed' ? STEPS.length : current ? STEPS.findIndex((step) => step.through.includes(current)) : -1;
   return STEPS.map((step, index) => ({
     label: step.label,
-    detail: step.detail,
+    detail: step.through.map((through) => notes[through]).find(Boolean) ?? step.detail,
     status: index < at ? 'done' : index === at ? (stoppedAt?.mark ?? 'active') : 'pending',
   }));
 }
