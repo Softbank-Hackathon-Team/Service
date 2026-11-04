@@ -51,7 +51,7 @@ function sample(s: Shape = {}): RehearsalInput {
   return {
     version: 1, target: "onprem-k3s", app: "shop", namespace: "app-shop", bundleSha256: "b".repeat(64), k8sMinor: "1.35",
     original: toDocs(original), apply: toDocs(apply),
-    images: [{ ref: `${REG}/shop-web@sha256:cd`, sandboxRef: "ecr.example/sbx/t1/shop-web@sha256:cd" }],
+    images: [{ ref: `${REG}/shop-web@sha256:cd`, sandboxRef: "ecr.example/sandbox/t1/shop-web@sha256:cd" }],
     databases: [{ service: "shop-db-rw", majorVersion: s.dbMajor ?? "16", database: "shop", owner: "app", secretName: "shop-db-app", secretKeys: ["password", "username"] }],
     targetPodSecurity: "baseline", targetQuota: null,
     edges: [{ from: "web", host: "shop-api", port: 80 }, { from: "api", host: "shop-db-rw", port: 5432 }],
@@ -105,7 +105,7 @@ test("리허설 통과: 만들기 → dry-run → 도착 정책 → DB 대체물
   const applies = k.virtual.requests.filter((x) => x.startsWith("PATCH") && !x.includes("dryRun") && x.includes("/deployments/"));
   assert.ok(applies.findIndex((x) => x.includes("/shop-db-rw?")) >= 0, "DB 대체물을 적용");
   assert.ok(applies.findIndex((x) => x.includes("/shop-db-rw?")) < applies.findIndex((x) => x.includes("/web?")), "DB 대체물을 먼저 적용");
-  assert.deepEqual(k.helm.values[0].sync.toHost.pods.translateImage, { [`${REG}/shop-web@sha256:cd`]: "ecr.example/sbx/t1/shop-web@sha256:cd" });
+  assert.deepEqual(k.helm.values[0].sync.toHost.pods.translateImage, { [`${REG}/shop-web@sha256:cd`]: "ecr.example/sandbox/t1/shop-web@sha256:cd" });
   assert.equal(k.virtual.namespaces.get("app-shop")?.["pod-security.kubernetes.io/enforce"], "baseline");
   assert.ok(r.warnings.some((w) => /restricted/.test(w)), "PSA warn 경고를 모은다");
 

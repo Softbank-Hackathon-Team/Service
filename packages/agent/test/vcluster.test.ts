@@ -14,7 +14,7 @@ const TENANT = "9e8d7c6b-5a49-4382-a1b0-c9d8e7f6a5b4";
 const spec = (o: Partial<VclusterSpec> = {}): VclusterSpec => ({
   kind: "rehearsal", runId: RUN, tenantId: TENANT, isolation: { podSecurity: "baseline", runtimeClass: null }, k8sMinor: "1.35",
   quota: { requests: { cpuM: 900, memoryMi: 1200 }, limitsMemoryMi: 3000, pods: 9, storageMi: 1024 },
-  images: [{ ref: "reg.example/platform/t1/web@sha256:aa", sandboxRef: "ecr.example/sbx/t1/web@sha256:aa" }], ttlSec: 1800, ...o,
+  images: [{ ref: "reg.example/platform/t1/web@sha256:aa", sandboxRef: "ecr.example/sandbox/t1/web@sha256:aa" }], ttlSec: 1800, ...o,
 });
 const clock = () => { let t = 1_800_000_000_000; return { now: () => t, sleep: async (ms: number) => { t += ms; } }; };
 
@@ -49,7 +49,7 @@ test("vCluster 만들기: 라벨 네임스페이스 → sbx-operator 묶기 → 
   const upgrade = helm.calls[0]!;
   assert.deepEqual(upgrade.slice(0, 6), ["upgrade", "--install", vc.name, "/app/vendor/vcluster-0.37.6.tgz", "-n", vc.name]);
   assert.equal(existsSync(upgrade[upgrade.indexOf("-f") + 1]!), false, "값 파일은 설치 뒤 지운다");
-  assert.deepEqual(helm.values[0].sync.toHost.pods.translateImage, { "reg.example/platform/t1/web@sha256:aa": "ecr.example/sbx/t1/web@sha256:aa" });
+  assert.deepEqual(helm.values[0].sync.toHost.pods.translateImage, { "reg.example/platform/t1/web@sha256:aa": "ecr.example/sandbox/t1/web@sha256:aa" });
   assert.deepEqual(seen[0], { url: `https://${vc.name}.${vc.name}.svc:443`, cert: "CERT", token: undefined });
   assert.equal(vc.k8sVersion, "v1.35.0");
   const agent = await vc.agent();
