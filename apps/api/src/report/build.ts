@@ -1,4 +1,4 @@
-import { Measurement, MigrationStatus, PrecheckItem, DeployResult, TrafficJudgement } from "@svc/contracts";
+import { Measurement, MigrationStatus, PrecheckItem, DeployResult, TrafficSummary } from "@svc/contracts";
 import { canonical, sha256 } from "@svc/core";
 import type { CostEstimate } from "@svc/cost";
 import { verifyAuditChain } from "./chain.js";
@@ -45,6 +45,23 @@ export function summarizeCost(c: CostEstimate): CostSummary {
   };
 }
 
+// shift 를 여러 번 했으면(멈춤 뒤 다시, 롤백 뒤 재시도) 기록마다 남은 요약을 합친다. 판정이 하나도 없으면 null
+function mergeTraffic(xs: TrafficSummary[]): TrafficSummary | null {
+  const judgements = xs.reduce((n, s) => n + s.judgements, 0);
+  if (!judgements) return null;
+  const max = (vs: (number | null)[]) => {
+    const ns = vs.filter((v): v is number => v !== null);
+    return ns.length ? Math.max(...ns) : null;
+  };
+  return {
+    judgements,
+    steps: [...new Set(xs.flatMap((s) => s.steps))],
+    bad: xs.reduce((n, s) => n + s.bad, 0),
+    maxTargetErrorRatePct: max(xs.map((s) => s.maxTargetErrorRatePct)),
+    maxTargetP95Ms: max(xs.map((s) => s.maxTargetP95Ms)),
+  };
+}
+
 export function buildEvidenceReport(inp: ReportInput): EvidenceReport {
   const now = (inp.now ?? (() => new Date()))();
   const ev = inp.events;
@@ -61,19 +78,12 @@ export function buildEvidenceReport(inp: ReportInput): EvidenceReport {
 
   // 2. 측정값·트래픽 판정·사전 점검·배포 결과 (각 작업이 감사 detail에 남긴 것)
   const measurements = ev.flatMap((e) => pick(e.detail.measurements, safe(Measurement)));
-  const judgements = ev.flatMap((e) => pick(e.detail.judgements, safe(TrafficJudgement)));
+  // 예전 shift 기록(판정 개수 숫자만, trafficSummary 없음)은 요약이 없어 건너뛴다
+  const traffic = mergeTraffic(ev.map((e) => safe(TrafficSummary)(e.detail.trafficSummary)).filter((s) => s !== null));
   const prechecks = ev.filter((e) => Array.isArray(e.detail.precheck));
   const precheck = prechecks.length ? pick(prechecks.at(-1)!.detail.precheck, safe(PrecheckItem)) : [];
   const deploys = ev.map((e) => safe(DeployResult)(e.detail.deploy)).filter((d) => d !== null);
   const deploy = deploys.at(-1) ?? null;
-
-  const traffic = judgements.length ? {
-    judgements: judgements.length,
-    steps: [...new Set(judgements.map((j) => j.stepPct))],
-    bad: judgements.filter((j) => j.verdict === "bad" || j.verdict === "bad_shortcut").length,
-    maxTargetErrorRatePct: Math.max(...judgements.map((j) => j.targetErrorRatePct)),
-    maxTargetP95Ms: Math.max(...judgements.map((j) => j.targetP95Ms)),
-  } : null;
 
   // 3. 승인: 사람이 본 지문과 저장된 계획서 지문이 같은가
   const planHashById = new Map(inp.plans.map((p) => [p.planId, p.planHash]));

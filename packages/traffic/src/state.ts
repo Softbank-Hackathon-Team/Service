@@ -1,5 +1,5 @@
-import type { MigrationStatus } from "@svc/contracts";
-import type { ShiftResult } from "./controller.js";
+import type { MigrationStatus, TrafficSummary } from "@svc/contracts";
+import type { Judgement, ShiftResult } from "./controller.js";
 import type { MetricsSource } from "./metrics.js";
 import { setAndVerify, sameWeights, type TrafficSwitcher } from "./switcher.js";
 
@@ -29,10 +29,21 @@ export const EXPECTED_TARGET_PCT: Partial<Record<MigrationStatus, string>> = {
   cleanup: "100", completed: "100", rolling_back: "0", rolled_back: "0", paused: "멈춘 때 그대로",
 };
 
+function summarizeJudgements(js: Judgement[]): TrafficSummary {
+  const max = (xs: number[]) => (xs.length ? Math.max(...xs) : null);
+  return {
+    judgements: js.length,
+    steps: [...new Set(js.map((j) => j.stepPct))],
+    bad: js.filter((j) => j.verdict === "bad" || j.verdict === "bad_shortcut").length,
+    maxTargetErrorRatePct: max(js.map((j) => j.targetErrorRatePct)),
+    maxTargetP95Ms: max(js.map((j) => j.targetP95Ms)),
+  };
+}
+
 export function shiftTransition(r: ShiftResult, o: { targetLogsSeen: boolean; pauseRule?: string }): TrafficTransition {
   const detail = {
     outcome: r.outcome, reachedPct: r.reachedPct, observedSecAt100: r.observedSecAt100,
-    judgements: r.judgements.length, lastJudgement: r.judgements.at(-1) ?? null,
+    trafficSummary: summarizeJudgements(r.judgements), lastJudgement: r.judgements.at(-1) ?? null,
     rollbackReason: r.rollbackReason, finalWeights: r.finalWeights,
   };
   switch (r.outcome) {

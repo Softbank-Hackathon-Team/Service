@@ -3,6 +3,7 @@ export type Page = 'dashboard' | 'environments' | 'migrations' | 'security' | 'a
 export type Route =
   | { page: 'dashboard' | 'settings' | 'designSystem' }
   | { page: 'environments' | 'security' | 'audit' | 'agent'; id: string | null }
+  | { page: 'environments'; view: 'connect'; id: string | null }
   | { page: 'migrations'; view: 'list' }
   | { page: 'migrations'; view: 'new' }
   | { page: 'migrations'; view: 'detail'; id: string }
@@ -21,6 +22,8 @@ const PICK_PAGES = ['environments', 'security', 'audit', 'agent'] as const;
 
 export function parseRoute(hash: string): Route {
   const [first, second, third] = hash.replace(/^#\/?/, '').split('/').filter(Boolean);
+  // 환경 등록·연결 이어 하기. 상단 메뉴는 "환경"에 머문다
+  if (first === 'environments' && second === 'connect') return { page: 'environments', view: 'connect', id: third ?? null };
   const pick = PICK_PAGES.find((page) => page === first);
   if (pick) return { page: pick, id: second ?? null };
   if (first === 'settings') return { page: 'settings' };

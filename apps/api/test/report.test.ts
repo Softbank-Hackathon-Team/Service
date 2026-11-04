@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import Fastify from "fastify";
 import { serializerCompiler, validatorCompiler } from "fastify-type-provider-zod";
 import { canonical, sha256, NotFound } from "@svc/core";
+import type { TrafficJudgement } from "@svc/contracts";
+import { shiftTransition, type ShiftOutcome } from "@svc/traffic";
 import { errorsPlugin } from "../src/plugins/errors.js";
 import { authPlugin } from "../src/plugins/auth.js";
 import { reportRoutes } from "../src/routes/report.js";
@@ -40,8 +42,13 @@ const mv = (from: string, to: string, s: number, extra: Record<string, unknown> 
   ({ actor, action: `x.${to}`, at: at(s), detail: { from, to, ...extra } });
 const meas = (name: string, value: number) =>
   ({ migrationId: M, name, value, unit: "ms", env: "gcp", at: at(40) });
-const judge = (stepPct: number, verdict = "ok") => ({ migrationId: M, stepPct, samples: 120, target5xx: 0,
-  targetErrorRatePct: 0.2, sourceErrorRatePct: 0.1, targetP95Ms: 85, sourceP95Ms: 70, verdict, at: at(30) });
+const judge = (stepPct: number, verdict: TrafficJudgement["verdict"] = "ok", targetP95Ms = 85): TrafficJudgement => ({ migrationId: M, stepPct, samples: 120, target5xx: 0,
+  targetErrorRatePct: verdict === "ok" ? 0.2 : 4.5, sourceErrorRatePct: 0.1, targetP95Ms, sourceP95Ms: 70, verdict, at: at(30) });
+// 워커 shift 가 감사 detail 에 남기는 모양 그대로 (packages/traffic shiftTransition)
+const shiftDetail = (judgements: TrafficJudgement[], outcome: ShiftOutcome = "reached_100") => shiftTransition({
+  outcome, judgements, rollbackReason: null, failureCode: null, reachedPct: judgements.at(-1)?.stepPct ?? 0,
+  observedSecAt100: 30, observeRequiredSec: 30, metricsSource: "stub", finalWeights: { source: 0, target: 1 },
+}, { targetLogsSeen: true }).detail;
 
 function happy(): AuditRow[] {
   return chainOf([
@@ -53,7 +60,7 @@ function happy(): AuditRow[] {
     mv("awaiting_approval", "approved", 9, {}, "user:dev"),
     mv("deploying", "syncing", 20, { deploy: { bundleHash: "b", status: "synced_healthy", resources: [] } }),
     mv("syncing", "shifting", 25, { measurements: [meas("replication_lag_ms", 12.5)] }),
-    mv("shifting", "cutover", 35, { judgements: [judge(10), judge(50), judge(100)] }),
+    mv("shifting", "cutover", 35, shiftDetail([judge(10), judge(50), judge(100)])),
     mv("cutover", "rollback_window", 36, { measurements: [meas("cutover_pause_ms", 62)] }),
     { actor: "worker", action: "other", at: at(37), target: "env-x" }, // 다른 대상 줄 (detail 없음)
   ]);
@@ -119,6 +126,24 @@ test("리포트: 시간표·측정값·트래픽·승인·거부 줄을 감사�
   assert.deepEqual(r.incidents.map((i) => [i.seq, i.note]), [[2, "import"]]);
   assert.equal(r.integrity.ok, true);
   assert.deepEqual(r.gaps, ["비용 추정 없음"]);
+});
+
+test("리포트: 멈췄다가 다시 옮긴 이전은 shift 기록 두 줄의 판정을 합친다", () => {
+  const rows = chainOf([
+    mv("syncing", "shifting", 25),
+    mv("shifting", "paused", 30, shiftDetail([judge(10), judge(50, "bad", 400)], "paused")),
+    mv("paused", "shifting", 31, {}, "user:dev"),
+    mv("shifting", "cutover", 35, shiftDetail([judge(50), judge(100, "ok", 120)])),
+  ]);
+  assert.deepEqual(buildEvidenceReport(input(rows)).traffic, { judgements: 4, steps: [10, 50, 100], bad: 1,
+    maxTargetErrorRatePct: 4.5, maxTargetP95Ms: 400 });
+});
+
+test("리포트: 요약 없이 판정 개수만 남은 예전 shift 기록은 traffic 없음으로 읽는다", () => {
+  const rows = chainOf([mv("shifting", "cutover", 35, { judgements: 67, lastJudgement: judge(100) })]);
+  const r = buildEvidenceReport(input(rows));
+  assert.equal(r.traffic, null);
+  assert.ok(r.gaps.includes("트래픽 판정 기록 없음"));
 });
 
 test("리포트: 승인 지문이 저장 계획서와 다르면 불일치로 드러난다", () => {

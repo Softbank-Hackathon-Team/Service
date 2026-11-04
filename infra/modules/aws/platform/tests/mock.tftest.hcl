@@ -134,6 +134,58 @@ run "node_groups" {
     condition     = alltrue([for sg in aws_security_group.node : length(sg.ingress) == 0 && length(sg.egress) == 0])
     error_message = "노드 SG 3개에는 규칙이 없어야 함 (표식 전용)"
   }
+  assert {
+    condition     = aws_eks_node_group.this["sandbox"].scaling_config[0].min_size >= 1 && aws_eks_node_group.this["sandbox"].scaling_config[0].desired_size >= 1
+    error_message = "sandbox 노드는 데모 전에 떠 있어야 함 (min·desired 1 이상)"
+  }
+  assert {
+    condition     = alltrue([for lt in aws_launch_template.node : lt.user_data == null])
+    error_message = "sandbox_gvisor_enabled 기본(끔)이면 어느 launch template 에도 user data(runsc 설치)가 없어야 함"
+  }
+}
+
+run "sandbox_gvisor_on" {
+  command = plan
+  variables {
+    sandbox_gvisor_enabled = true
+  }
+  assert {
+    condition     = aws_launch_template.node["general"].user_data == null && aws_launch_template.node["cred"].user_data == null
+    error_message = "켜도 general·cred 에는 runsc 를 깔지 않아야 함"
+  }
+  assert {
+    condition = strcontains(
+      base64decode(aws_launch_template.node["sandbox"].user_data),
+      "curl -fsSL --retry 5 -o \"$work/gvisor.tar.bz2\" \"https://storage.googleapis.com/gvisor/releases/release/20261026.0/x86_64/gvisor.tar.bz2\""
+    )
+    error_message = "sandbox user data 는 고정한 판(20261026.0)의 공식 gVisor 묶음을 받아야 함"
+  }
+  assert {
+    condition = strcontains(
+      base64decode(aws_launch_template.node["sandbox"].user_data),
+      "echo \"26e4a327565f5da0f73261a6387e2c20f4695a232e330095a3111b70efd604fdf09d734e8cc8f714dbb5c5607ce8c87ea80b26df549d83a146f2efd5a1af448a  $work/gvisor.tar.bz2\" | sha512sum -c -"
+    )
+    error_message = "받은 묶음은 설치 전에 고정한 sha512 와 맞춰야 함"
+  }
+  assert {
+    condition     = strcontains(base64decode(aws_launch_template.node["sandbox"].user_data), "install -m 0755 \"$work/runsc\" \"$work/containerd-shim-runsc-v1\" /usr/local/bin/")
+    error_message = "runsc 와 containerd-shim-runsc-v1 을 containerd PATH(/usr/local/bin)에 깔아야 함"
+  }
+  # NodeConfig 문서가 YAML 로 읽혀야 nodeadm 이 받는다. 핸들러 이름 runsc 는 차트 RuntimeClass 의 handler 와 같아야 한다
+  assert {
+    condition = (
+      yamldecode(split("\n---\n", split("--==SBXGVISOR==", base64decode(aws_launch_template.node["sandbox"].user_data))[1])[1]).kind == "NodeConfig" &&
+      strcontains(
+        yamldecode(split("\n---\n", split("--==SBXGVISOR==", base64decode(aws_launch_template.node["sandbox"].user_data))[1])[1]).spec.containerd.config,
+        "[plugins.\"io.containerd.grpc.v1.cri\".containerd.runtimes.runsc]\nruntime_type = \"io.containerd.runsc.v1\""
+      )
+    )
+    error_message = "NodeConfig containerd.config 에 runsc 런타임(io.containerd.runsc.v1)이 등록돼야 함"
+  }
+  assert {
+    condition     = !strcontains(base64decode(aws_launch_template.node["sandbox"].user_data), "io.containerd.cri.v1")
+    error_message = "v3 경로(io.containerd.cri.v1.*)가 있으면 nodeadm 이 containerd 1.x 에서 부팅을 멈춘다. v2 경로만 써야 함"
+  }
 }
 
 run "cni_and_pod_identity" {

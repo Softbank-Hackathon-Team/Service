@@ -124,13 +124,14 @@ export function approveLabel(o: { busy: boolean; expired: boolean; missing: numb
   return '이 계획 승인';
 }
 
-const STEPS: { label: string; detail?: string; through: MigrationStatus[] }[] = [
+// human: 사람이 눌러야 다음으로 가는 칸. 그 칸에 있으면 도는 표시 대신 입력을 기다리는 표시를 쓴다
+const STEPS: { label: string; human?: boolean; through: MigrationStatus[] }[] = [
   { label: '구성 읽기', through: ['draft', 'importing'] },
-  { label: '명세 확정', detail: '사람', through: ['spec_review'] },
+  { label: '명세 확정', human: true, through: ['spec_review'] },
   { label: '사전 점검', through: ['prechecking'] },
   { label: '계획 만들기', through: ['planning'] },
-  { label: '계획 승인', detail: '사람', through: ['awaiting_approval'] },
-  { label: '실행 시작', detail: '사람', through: ['approved'] },
+  { label: '계획 승인', human: true, through: ['awaiting_approval'] },
+  { label: '실행 시작', human: true, through: ['approved'] },
   { label: LABEL.provisioning, through: ['provisioning'] },
   { label: LABEL.deploying, through: ['deploying'] },
   { label: LABEL.syncing, through: ['syncing'] },
@@ -176,8 +177,8 @@ export function migrationSteps(
   const at = status === 'completed' ? STEPS.length : current ? STEPS.findIndex((step) => step.through.includes(current)) : -1;
   return STEPS.map((step, index) => ({
     label: step.label,
-    detail: step.through.map((through) => notes[through]).find(Boolean) ?? step.detail,
-    status: index < at ? 'done' : index === at ? (stoppedAt?.mark ?? 'active') : 'pending',
+    detail: step.through.map((through) => notes[through]).find(Boolean) ?? (step.human ? '사람' : undefined),
+    status: index < at ? 'done' : index === at ? (stoppedAt?.mark ?? (step.human ? 'waiting' : 'active')) : 'pending',
   }));
 }
 

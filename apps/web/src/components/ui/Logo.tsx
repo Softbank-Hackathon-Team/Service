@@ -1,16 +1,18 @@
 import s from './Logo.module.css';
 
-// DRAFT(ai): 프로토타입용 가칭과 임시 로고다. 제품 이름이 정해지면 이 파일만 바꾼다.
-const PRODUCT_NAME = 'Kross AI';
+// 가칭이다 (팀 합의 전). 제품 이름이 정해지면 이 값과 index.html 의 <title> 을 바꾼다.
+export const PRODUCT_NAME = 'Iron platform';
 
-/** 세로 막대와 꺾쇠가 만나는 모양. */
+/**
+ * 철골 I빔의 단면. 글자 I 로도 읽힌다.
+ * DRAFT(ai): 가칭에 맞춘 임시 로고다. public/favicon.svg 가 같은 모양이라 바꾸면 둘 다 바꾼다.
+ */
 export function Logo() {
   return (
     <span className={s.root}>
       <svg className={s.mark} viewBox="0 0 40 40" role="img" aria-label={`${PRODUCT_NAME} 로고`}>
         <rect width="40" height="40" rx="11" fill="#365FCE" />
-        <path d="M12 10v20" stroke="#fff" strokeWidth="4" strokeLinecap="round" />
-        <path d="M28 10 17.5 20 28 30" fill="none" stroke="#fff" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M11 10h18v5h-6.5v10H29v5H11v-5h6.5V15H11z" fill="#fff" stroke="#fff" strokeWidth="1.5" strokeLinejoin="round" />
       </svg>
       <span className={s.name}>{PRODUCT_NAME}</span>
     </span>

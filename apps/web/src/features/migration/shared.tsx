@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { Children, isValidElement, useState, type ReactNode } from 'react';
 import type { BentoLayout } from '../../components/layout/ConsoleLayout';
 import { SkeletonTile, Tile, TileHeader } from '../../components/layout/tiles';
 import { Checklist } from '../../components/ui/Checklist';
@@ -15,9 +15,15 @@ import { rehearsalStepDetail } from './rehearsal';
 import { useRehearsal } from './RehearsalFold';
 import s from '../common/page.module.css';
 
-// 큰 카드 다음으로 중요한 것이 진행 단계라서, 어느 화면이든 바로 옆 칸을 그대로 차지한다.
-// 근거 칸이 없는 상태에서도 칸은 비워 둔 채 그대로 두어, 상태가 바뀔 때 진행 단계가 옮겨 다니지 않는다.
-const LAYOUT: BentoLayout = { columns: ['fill', 'narrow', 'side'], areas: 'hero steps side' };
+// 큰 카드 다음으로 중요한 것이 진행 단계라서, 어느 화면이든 큰 카드 바로 옆 칸을 차지한다.
+// 근거 칸(side)에 놓을 것이 없는 단계(구성 읽기·점검·계획)는 빈 칸을 두지 않고 큰 카드가 그 너비를 채운다.
+// 근거 칸이 생기는 단계로 넘어가면 화면 전환(view transition)이 큰 카드를 줄이고 근거 칸을 오른쪽에서 들인다 (base.css)
+const WITH_SIDE: BentoLayout = { columns: ['fill', 'narrow', 'side'], areas: 'hero steps side' };
+const HERO_ONLY: BentoLayout = { columns: ['fill', 'narrow'], areas: 'hero steps' };
+
+/** 화면이 근거 칸(area="side")을 그리는지. 칸 수는 화면마다 정해져 있어 자식에서 바로 읽는다. */
+const hasSide = (children: ReactNode) =>
+  Children.toArray(children).some((child) => isValidElement<{ area?: string }>(child) && child.props.area === 'side');
 
 export type ScreenProps = {
   migration: MigrationView;
@@ -53,7 +59,7 @@ type FrameProps = {
 
 export function Frame({ route, migration, children }: FrameProps) {
   return (
-    <ShellLayout layout={LAYOUT} barLeft={<BarPill label={route} />}>
+    <ShellLayout layout={hasSide(children) ? WITH_SIDE : HERO_ONLY} barLeft={<BarPill label={route} />}>
       {children}
       {migration ? (
         <StepsTile migration={migration} />
