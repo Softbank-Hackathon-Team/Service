@@ -35,6 +35,8 @@ helm install external-secrets external-secrets/external-secrets -n external-secr
 
 # 2. 비밀값 넣기 (값은 채팅·레포에 남기지 않는다)
 aws secretsmanager put-secret-value --secret-id platform/app --secret-string file://<레포 밖 app.json>
+#    app.json 키: DATABASE_URL, JWT_SECRET, PLATFORM_PRINCIPAL_ARN, AGENT_REPORT_MASTER_KEY, PUBLIC_API_URL, GITOPS_REPO_URL, GITOPS_WRITE_TOKEN, GITOPS_PUSH, ANTHROPIC_API_KEY
+#    values.yaml secretKeys 에 적힌 키가 JSON 에 하나라도 없으면 그 컴포넌트의 비밀 동기화가 멈춘다 → 키를 더할 때는 값부터 넣고 helm upgrade
 aws secretsmanager put-secret-value --secret-id platform/cloudflared --secret-string file://<레포 밖 cf.json>
 
 # 3. 이 차트 (샌드박스 끔이 기본). 워커 Argo CD 권한이 argocd 네임스페이스에 생기므로 아래 "Argo CD 허브" 1번을 먼저 한다
@@ -127,7 +129,8 @@ exporters:
 
 ## 아직 없는 것
 
-- TODO(human): worker 의 비밀 아닌 설정(`GITOPS_REPO_URL`, `PROM_URL`, `TF_WORK_DIR` 등)을 차트로 넘기는 길. 지금 앱 Deployment 는 `<이름>-env` 비밀과 포트·`HOME` 만 준다. 없으면 배포 작업이 `GITOPS_NOT_CONFIGURED` 로 멈춘다
+- TODO(human): worker 의 비밀 아닌 설정(`PROM_URL`, `TF_WORK_DIR` 등)을 차트로 넘기는 길. 지금 앱 Deployment 는 `<이름>-env` 비밀과 포트·`HOME` 만 준다
+  - 배포에 꼭 필요한 `GITOPS_REPO_URL`·`GITOPS_PUSH` 는 우선 `GITOPS_WRITE_TOKEN` 과 같이 `platform/app` JSON 으로 받는다 (`values.yaml` worker `secretKeys`). 없으면 배포 작업이 `GITOPS_NOT_CONFIGURED` 로 멈춘다
 - 고객 쪽 Collector 설치와 Ingress 지표(`svc_ingress_*`) 만들기. 게이트웨이는 받을 준비만 되어 있다
 - 지표 토큰을 콘솔 화면에서 받는 길. 지금은 API 만 있다
 - TODO(human): Collector 설정(`templates/otel-gateway.yaml`)을 실제 Collector 0.164.0 으로 돌려 보지 않았다. 첫 설치 때 파드 로그와 라벨 덮어쓰기를 확인한다
