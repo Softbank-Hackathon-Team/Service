@@ -1,9 +1,12 @@
+import { alertStuckOnce } from "./stuck.js";
 import { QUEUES, type MigrationStatus } from "@svc/contracts";
 import {
-  boss, scrubValue, withTenant, advance, listExpiredEnvLocks, cleanupIdempotencyKeys,
+  boss, asBossDb, jobKey, tenantGroup, scrubValue, withTenant, writeAudit, advance, listExpiredEnvLocks, cleanupIdempotencyKeys,
   releaseEnvLocks, failureEdge, INACTIVE_STATES, STEP_QUEUES, LEASE, type ExpiredLock, type Tx,
 } from "@svc/core";
+import { randomUUID } from "node:crypto";
 import { replicationFromEnv, type FenceRecovery } from "@svc/replication";
+import { ROLLBACK_MAX_ATTEMPTS } from "../jobs/rollback.js";
 
 // 청소 작업(60초마다): 기한이 지난 환경 잠금을 찾아 상태를 정리한다.
 // pg-boss 감시자도 같은 이동을 시도할 수 있지만 둘 다 ifStill이라 한 번만 적용된다.
@@ -12,6 +15,7 @@ export type ReapAction =
   | { kind: "stale" }                                           // 승인됐는데 시작 못 함 → 낡음, 잠금 해제
   | { kind: "fail"; to: "failed" | "paused"; code: ReapCode }
   | { kind: "release" }                                         // 이전이 이미 끝났는데 잠금만 남음
+  | { kind: "retry"; code: ReapCode; attempt: number; max: number }   // F8-2: 롤백 중 워커 사망 → 상태 그대로, 롤백 작업 다시
   | { kind: "skip"; why: string };
 
 // JOB_NOT_PICKED = 반납 뒤 아무도 안 집음, STEP_FAILED = 집혔는데 실패하고 반납(재시도도 끝남, Z12-6), WORKER_LOST = 쥔 채 생존 신호 끊김
@@ -22,7 +26,8 @@ const DONE: readonly string[] = INACTIVE_STATES;
 
 // 순수 함수: 잠금 하나를 보고 무엇을 할지 정한다
 // stepFailed: 이 단계에 들어온 뒤 job.failed(또는 *.attempt_failed) 감사가 있나 (reapLock이 DB에서 읽어 넣는다)
-export function decideReap(l: Pick<ExpiredLock, "holder" | "status"> & { stepFailed?: boolean }): ReapAction {
+// rollbackFailures: rolling_back 에 들어온 뒤 rollback.attempt_failed 감사 줄 수 (F8-2)
+export function decideReap(l: Pick<ExpiredLock, "holder" | "status"> & { stepFailed?: boolean; rollbackFailures?: number }): ReapAction {
   const status = l.status as MigrationStatus;
   if (DONE.includes(status)) return { kind: "release" };
   if (l.holder === "reserved" && status === "approved") return { kind: "stale" };
@@ -30,6 +35,13 @@ export function decideReap(l: Pick<ExpiredLock, "holder" | "status"> & { stepFai
   // DRAFT(ai): failed로 갈 길이 없는 상태(deploying·syncing·shifting·cleanup)는 일시정지로 보낸다.
   //            사람이 원인을 보고 재개(같은 단계 작업 다시 넣기)하거나 롤백한다. 팀 합의 전
   // 규칙은 워커 죽은 작업 처리(Z19 H4)와 같은 core failureEdge (Z43)
+  // F8-2: 롤백은 "안전망"이라 워커 한 번 죽은 것(배포 롤링 재시작 등)으로 failed 막다른 길에 보내지 않는다.
+  //   롤백은 phase 를 DB 에서 다시 읽어 처음부터 다시 불러도 되는 구조 → 같은 상태로 롤백 작업을 한 번 더 넣는다.
+  //   횟수는 처리기 예외와 같은 ROLLBACK_MAX_ATTEMPTS 로 같이 센다. STEP_FAILED 는 처리기 onError 가 이미 셌다 → 예전 그대로
+  if (status === "rolling_back" && code !== "STEP_FAILED") {
+    const attempt = (l.rollbackFailures ?? 0) + 1;
+    if (attempt < ROLLBACK_MAX_ATTEMPTS) return { kind: "retry", code, attempt, max: ROLLBACK_MAX_ATTEMPTS };
+  }
   const to = failureEdge(status);
   return to ? { kind: "fail", to, code } : { kind: "skip", why: `no failed/paused edge from ${status}` };
 }
@@ -54,7 +66,9 @@ export async function reapOnce(): Promise<ReapReport> {
 // 진짜 복제(REPL_*)가 있을 때만. STUB이면 걷을 울타리가 없다 → null. 실패해도 청소는 계속(결과는 감사 detail.fence)
 export async function recoverFence(l: Pick<ExpiredLock, "migrationId" | "status">): Promise<FenceRecovery | { error: string } | null> {
   if (l.status !== "cutover" && l.status !== "rolling_back") return null;
-  const repl = replicationFromEnv(l.migrationId);
+  let repl: ReturnType<typeof replicationFromEnv>;
+  try { repl = replicationFromEnv(l.migrationId); }
+  catch (e) { return { error: (e as Error).message.slice(0, 300) }; }   // PF-E22: 주소를 못 만들면(빈 {tf:}) 청소는 계속
   if (!repl) return null;
   const r = await repl.recoverInterruptedSwitch(l.status).catch((e) => ({ error: (e as Error).message.slice(0, 300) }));
   console.log("[lease-reaper] fence recovery", l.migrationId, JSON.stringify(r));
@@ -68,6 +82,15 @@ export async function stepFailedSinceEntry(tx: Tx, migrationId: string): Promise
       WHERE a.target = $1 AND (a.action = 'job.failed' OR a.action LIKE '%.attempt_failed')
         AND a.at >= (SELECT updated_at FROM migrations WHERE id = $2) LIMIT 1`, [migrationId, migrationId]);
   return (q.rowCount ?? 0) > 0;
+}
+
+// F8-2: rolling_back 에 들어온 뒤 롤백 시도 실패 수 (처리기 onError 와 리퍼가 같은 감사 줄을 쓴다 = _step failedAttempts 와 같은 셈)
+export async function rollbackFailuresSinceEntry(tx: Tx, migrationId: string): Promise<number> {
+  const q = await tx.query(
+    `SELECT count(*)::int AS n FROM audit_events a
+      WHERE a.target = $1 AND a.action = 'rollback.attempt_failed'
+        AND a.at >= (SELECT updated_at FROM migrations WHERE id = $2)`, [migrationId, migrationId]);
+  return q.rows[0].n as number;
 }
 
 // Z32 (맥 int5-4 kill 실측, paused 8): 반납(reserved, 10분) 뒤 다음 단계 작업이 "큐에서 차례를 기다리는 중"이면 JOB_NOT_PICKED가 아니다.
@@ -94,6 +117,7 @@ export async function reapLock(l: ExpiredLock): Promise<{ action: ReapAction; ap
   let act: ReapAction = { kind: "skip", why: "not decided" };
   let fence: Awaited<ReturnType<typeof recoverFence>> = null;
   let lost = false;
+  let requeued = false;
   const done = await withTenant(l.tenantId, async (tx) => {
     // Z38-5: 목록(트랜잭션 밖)과 처리 사이에 워커가 기한 지난 잠금을 다시 인수할 수 있다.
     //   이전 행 → 잠금 줄 순서(advance 와 같은 잠금 순서)로 잠그고 "아직 기한 지남"을 다시 본다 (release 는 제외)
@@ -116,8 +140,22 @@ export async function reapLock(l: ExpiredLock): Promise<{ action: ReapAction; ap
     //   대가: 복제 DB 두 곳에 붙는 몇백 ms 동안 이 트랜잭션이 열려 있다 【추정】
     fence = await recoverFence(l);
     const stepFailed = l.holder === "reserved" && !DONE.includes(l.status) ? await stepFailedSinceEntry(tx, l.migrationId) : false;
-    act = decideReap({ holder: l.holder, status: l.status, stepFailed });
+    const rollbackFailures = l.status === "rolling_back" ? await rollbackFailuresSinceEntry(tx, l.migrationId) : 0;
+    act = decideReap({ holder: l.holder, status: l.status, stepFailed, rollbackFailures });
     if (act.kind === "skip") return false;
+    if (act.kind === "retry") {
+      // 시도 1번으로 센다 → 잠금을 예약으로 돌린다(새 작업이 인수) → 롤백 작업 하나 더 (같은 트랜잭션). 상태는 rolling_back 그대로
+      await writeAudit(tx, l.tenantId, { ...audit("rollback.attempt_failed"), result: "error",
+        detail: { ...audit("").detail, attempts: act.attempt, max: act.max, error: act.code, ...(fence ? { fence } : {}) } });
+      await tx.query(`UPDATE env_locks SET holder = 'reserved', job_id = NULL, job_queue = NULL,
+                       lease_expires_at = now() + make_interval(secs => $2) WHERE migration_id = $1`, [l.migrationId, LEASE.handBackSec]);
+      const id = await boss.send(QUEUES.rollback, { tenantId: l.tenantId, migrationId: l.migrationId, requestId: randomUUID() },
+        { singletonKey: jobKey(QUEUES.rollback, { migrationId: l.migrationId }), ...tenantGroup(QUEUES.rollback, l.tenantId), db: asBossDb(tx) });
+      // 같은 키 작업이 이미 줄 서 있으면(null: pg-boss 가 죽은 작업을 이미 retry 로 돌렸다 등) 그 작업이 인수한다 → 옛 작업은 그대로 둔다
+      requeued = !!id;
+      await writeAudit(tx, l.tenantId, { ...audit("rollback.requeued"), detail: { ...audit("").detail, code: act.code, attempt: act.attempt, jobQueued: !!id } });
+      return true;
+    }
     if (act.kind === "release") return (await releaseEnvLocks(tx, l.migrationId)) > 0;
     if (act.kind === "stale")
       return advance(tx, m, "approved", "stale", { mode: "ifStill", audit: audit("migration.stale") });
@@ -133,6 +171,11 @@ export async function reapLock(l: ExpiredLock): Promise<{ action: ReapAction; ap
   if (done && a.kind === "fail" && l.jobId && l.jobQueue) {
     await boss.fail(l.jobQueue, l.jobId, { reason: a.code }).then(() => { jobFailed = true; },
       (e) => console.error("[lease-reaper] boss.fail", scrubValue(e)));
+  }
+  // F8-2: 새 롤백 작업을 넣었으면 죽은 작업은 취소 (fail 이면 pg-boss 재시도가 또 생겨 둘이 된다)
+  if (done && a.kind === "retry" && requeued && l.jobId && l.jobQueue) {
+    await boss.cancel(l.jobQueue, l.jobId).then(() => { jobFailed = true; },
+      (e) => console.error("[lease-reaper] boss.cancel", scrubValue(e)));
   }
   return { action: a, applied: done, jobFailed, lost };
 }
@@ -154,6 +197,8 @@ export async function registerLeaseJobs() {
   await boss.work(QUEUES.leaseReaper, async () => {
     const r = await reapOnce();
     if (r.applied || r.jobsFailed) console.log("[lease-reaper]", r);
+    // PF FM-ORC-15: 오래 멈춘 이전 알림 (실패해도 리퍼 본업은 끝남)
+    await alertStuckOnce().catch((e) => console.error("[stuck-alert]", (e as Error).message));
   });
   await boss.work(QUEUES.idempotencyCleanup, async () => {
     const n = await cleanupIdempotencyKeys(24);

@@ -1,4 +1,4 @@
-import { boss, startBoss, startMetricsServer, onShutdown, assertConfig, logEffectiveConfig } from "@svc/core";
+import { assertMigrations, pool, boss, startBoss, startMetricsServer, onShutdown, assertConfig, logEffectiveConfig } from "@svc/core";
 import { buildApp } from "./app.js";
 import { envNumber } from "@svc/contracts";
 import { jwtSecretProblem } from "./auth/jwt.js";
@@ -16,6 +16,7 @@ logEffectiveConfig("api");
 // 앱 등록(플러그인·경로 순서)은 app.ts buildApp 한 곳 (Z81)
 const { app, metrics } = await buildApp();
 
+await assertMigrations("api", pool);   // PF FM-ORC-26: db:migrate 를 잊었으면 큐를 열기 전에 멈춘다
 await startBoss(); // api도 작업을 "넣기" 때문에 큐가 필요하다
 await startApiReaper(); // API_REAPER=1 일 때만: 워커가 다 죽어도 청소 담당이 돈다 (reaper.ts)
 const METRICS_PORT = envNumber(process.env.METRICS_PORT, 9464);

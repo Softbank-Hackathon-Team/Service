@@ -64,14 +64,26 @@ const strictFail = (id: string, o: { analyze?: boolean; failureCode?: string } =
     ...(o.failureCode === undefined ? { failureCode: "APPLY_FAILED" } : o.failureCode ? { failureCode: o.failureCode } : {}),
     analyze: o.analyze ?? true, audit: { actor: "worker", action: "apply.failed", target: id, result: "error" } }));
 
-test("깃발 값 경계: '1' 만 켜짐 — 0·true·빈 값·없음은 분석 0, 감사도 0", { skip }, async () => {
-  for (const v of ["0", "true", "", " 1", undefined]) {
+test("깃발 값 경계 (G5-1 기본 켬): '0'·' 0' 만 꺼짐 — 분석 0, 감사도 0", { skip }, async () => {
+  for (const v of ["0", " 0"]) {
     env({ FAILURE_ANALYSIS: v, FAKE_LLM: "1" });
     const id = await migrationAt("provisioning");
     await strictFail(id);
     assert.equal(await statusOf(id), "failed", `FAILURE_ANALYSIS=${JSON.stringify(v)}`);
     assert.equal((await runs(id)).length, 0, `FAILURE_ANALYSIS=${JSON.stringify(v)}`);
     assert.equal((await audits(id, "agent.failure_analysis.requested")).length + (await audits(id, "failure_analysis.skipped")).length, 0);
+  }
+});
+
+test("G5-1(01:53Z 개정): 깃발 없음·빈 값·'1'·'true' 는 켜짐 → failed 진입 때 분석 1개 (부르는 쪽이 analyze 를 안 줘도)", { skip }, async () => {
+  for (const v of [undefined, "", "1", "true"]) {
+    env({ FAILURE_ANALYSIS: v, FAKE_LLM: "1" });
+    const id = await migrationAt("provisioning");
+    await core.withTenant(T, (tx) => core.advance(tx, { id, tenantId: T }, "provisioning", "failed",
+      { failureCode: "APPLY_FAILED", audit: { actor: "worker", action: "apply.failed", target: id, result: "error" } }));
+    assert.equal((await runs(id)).length, 1, `FAILURE_ANALYSIS=${JSON.stringify(v)}`);
+    // Jeong 11/4 01:53Z (ADR-066 개정): 실패 때 자동 지우기 없음 → 사람에게 재시도를 묻고, 거절 → 롤백 끝에서 지운다
+    assert.equal((await audits(id, "target_teardown.requested")).length, 0);
   }
 });
 

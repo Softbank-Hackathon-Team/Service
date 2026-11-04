@@ -128,8 +128,8 @@ test("거부: 이미 분석 중이면 새 실패에도 건너뜀(busy) — pause
   assert.equal((await audits(id, "failure_analysis.skipped"))[0].detail.reason, "busy");
 });
 
-test("깃발 off(기본)·analyze 없음 → 분석 안 넣음, 감사도 없음 (예전 동작)", { skip }, async () => {
-  env({ FAILURE_ANALYSIS: undefined, FAKE_LLM: "1" });
+test("깃발 off(FAILURE_ANALYSIS=0)·analyze:false → 분석 안 넣음, 감사도 없음 (G5-1 뒤 기본은 켬)", { skip }, async () => {
+  env({ FAILURE_ANALYSIS: "0", FAKE_LLM: "1" });
   const off = await migrationAt("provisioning");
   assert.equal(await fail(off), true);
   env({ FAILURE_ANALYSIS: "1", FAKE_LLM: "1" });
