@@ -26,23 +26,21 @@ test("SA 2개(svc-observe·svc-operate), 커스텀 역할 3개", () => {
     assert.ok(out.includes(`roles create ${r}`), r);
   assert.ok(out.includes("gcp-operate-custom-role.yaml") && out.includes("gcp-operate-iam-custom-role.yaml"));
   // IAM 정책 변경 역할은 조건부 바인딩
-  assert.match(out, /roles\/platform_operate_iam --condition-from-file=\.\/permissions\/gcp-operate-iam-binding-condition\.json/);
+  assert.match(out, /roles\/platform_operate_iam --condition-from-file=\S*permissions\/gcp-operate-iam-binding-condition\.json/);
   // ID-4: 실행 역할도 조건부 (플랫폼 이름 규칙 자원만)
-  assert.match(out, /roles\/platform_operate --condition-from-file=\.\/permissions\/gcp-operate-binding-condition\.json/);
+  assert.match(out, /roles\/platform_operate --condition-from-file=\S*permissions\/gcp-operate-binding-condition\.json/);
 });
 
-test("ID-4 조건식: 이름 규칙 자원만 통과, 남의 자원은 막힘 (CEL 을 단순 흉내로 평가해 고정)", () => {
-  const c = JSON.parse(readFileSync(new URL("../../../infra/permissions/gcp-operate-binding-condition.json", import.meta.url), "utf8"));
-  const x: string = c.expression;
-  // 조건식이 다루는 자원 종류를 고정 (실행 역할 권한 계열마다 하나 이상)
+test("ID-4 조건식: 이름 규칙 자원만 통과, 남의 자원은 막힘 (두 파일 합쳐서)", () => {
+  const rd = (f: string) => JSON.parse(readFileSync(new URL(`../../../infra/permissions/${f}`, import.meta.url), "utf8")).expression as string;
+  const x = rd("gcp-operate-binding-condition.json") + " || " + rd("gcp-operate-binding-condition-2.json");
   for (const t of ["sqladmin.googleapis.com/Instance", "redis.googleapis.com/Instance", "iam.googleapis.com/ServiceAccount", "secretmanager.googleapis.com/Secret",
     "secretmanager.googleapis.com/SecretVersion", "storage.googleapis.com/Bucket", "pubsub.googleapis.com/Topic", "pubsub.googleapis.com/Subscription"])
     assert.ok(x.includes(`resource.type == "${t}"`), t);
   assert.ok(x.includes('resource.service == "container.googleapis.com"'));
-  // Cloud SQL 이름 규칙: dbInstanceName = <앱>-pg-<해시6>
-  const re = new RegExp(x.match(/matches\("([^"]+)"\)/)![1]!);
-  assert.ok(re.test("shop-pg-a1b2c3")); assert.ok(!re.test("prod-main-db")); assert.ok(!re.test("shop-pg-a1b2c3-x"));
-  // 접두어 규칙은 app- 하나뿐
+  // Cloud SQL 이름 규칙: <앱>-pg-<해시6>. IAM 조건엔 matches(정규식)가 없어 extract("/instances/{name}-pg-") != "" 로 ("-pg-" 앞에 앱 이름이 있어야 함)
+  assert.ok(x.includes('resource.name.extract("/instances/{name}-pg-") != ""'));
+  assert.doesNotMatch(x, /matches\(/);
   assert.deepEqual([...new Set([...x.matchAll(/startsWith\("([^"]+)"\)/g)].map((m) => m[1]))].sort(), ["app-", "projects/_/buckets/app-"]);
 });
 
@@ -85,4 +83,27 @@ test("ID-7: plan SA 는 읽기 동사(get·list·getIamPolicy)만 가진 plan �
   assert.equal(perms.filter((p) => /\.(create|delete|update|setIamPolicy|access)$/.test(p)).length, 0, perms.join(","));
   assert.equal(new Set(perms).size, perms.length, "중복 없음");
   assert.ok(out.some((l) => l.includes("--member=serviceAccount:svc-plan@cust-prj.iam.gserviceaccount.com") && l.includes("roles/platform_plan")));
+});
+
+// FM-CON-03: 연결 명령이 infra 기준 상대 경로라 레포 루트에서 치면 역할 파일을 못 찾았다 → 스크립트 옆 permissions 로 잡고, 그래도 없으면 만들기 전에 멈춤
+test("FM-CON-03: 레포 루트에서 ROLE_DIR 없이(또는 틀린 ./permissions 로) 쳐도 infra/permissions 파일로 실행 역할까지 만든다", () => {
+  const repo = new URL("../../../", import.meta.url).pathname;
+  for (const extra of [{}, { ROLE_DIR: "./permissions" }] as Record<string, string>[]) {
+    const r = spawnSync("bash", ["infra/onboarding/gcp-connect.sh"], { cwd: repo, encoding: "utf8",
+      env: { PATH: process.env.PATH, PLATFORM_SA: SA, PROJECT_ID: "cust-prj", DRY_RUN: "1", ...extra } });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /roles create platform_operate --project=cust-prj --file=\S*infra\/permissions\/gcp-operate-custom-role\.yaml/);
+    assert.match(r.stdout, /roles\/platform_operate --condition-from-file=\S*infra\/permissions\/gcp-operate-binding-condition\.json/);
+  }
+});
+test("FM-CON-03 거부: 역할 파일을 어디서도 못 찾으면 exit 2, SA·역할 만들기 명령이 하나도 안 나간다", async () => {
+  const { mkdtempSync, copyFileSync, mkdirSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const d = mkdtempSync(`${tmpdir()}/gcp-connect-`); mkdirSync(`${d}/onboarding`);
+  copyFileSync(path.pathname, `${d}/onboarding/gcp-connect.sh`);   // 옆에 permissions 없는 사본
+  const r = spawnSync("bash", [`${d}/onboarding/gcp-connect.sh`], { cwd: d, encoding: "utf8",
+    env: { PATH: process.env.PATH, PLATFORM_SA: SA, PROJECT_ID: "cust-prj", DRY_RUN: "1", ROLE_DIR: "./permissions" } });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /역할 파일 없음/);
+  assert.doesNotMatch(r.stdout, /create|add-iam-policy-binding/);
 });

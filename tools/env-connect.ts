@@ -69,6 +69,8 @@ function boundaryPolicyExists(run: (args: string[]) => string = (a) =>
 const linkPath = (envId: string, provider: string) =>
   `/environments/${envId}/connection-link${provider === "aws" && boundaryPolicyExists() ? "?boundaryPolicyExists=true" : ""}`;
 
+// FM-CON-03: infra 기준 명령 → 레포 루트 기준 (ROLE_DIR 을 빼면 스크립트가 옆 폴더 permissions 를 잡는다)
+const gcpRootCommand = (c: string) => c.replace(/ ROLE_DIR=\.\/permissions/, "").replace("bash onboarding/gcp-connect.sh", "bash infra/onboarding/gcp-connect.sh");
 function printLink(l: Record<string, unknown>) {
   console.log(`링크 종류  ${l.kind}`);
   console.log(`만료       ${l.expiresAt}`);
@@ -76,6 +78,11 @@ function printLink(l: Record<string, unknown>) {
   if (l.createBoundaryPolicy === false) console.log("경계 정책  이미 있음 → 템플릿이 만들지 않음 (CreateBoundaryPolicy=false)");
   if (l.url) console.log(`\n아래 주소를 고객 AWS 콘솔에서 열고 IAM 확인 체크 → 스택 만들기:\n${l.url}\n`);
   if (l.command) console.log(`\n명령:\n${l.command}\n`);
+  // FM-CON-03: 화면 명령은 Cloud Shell(infra 폴더) 기준. 레포 루트에서 칠 때 쓸 판을 같이 찍는다
+  if (typeof l.command === "string" && l.command.includes("bash onboarding/gcp-connect.sh")) console.log(`레포 루트에서 칠 때:\n${gcpRootCommand(l.command)}\n`);
+  // 6회차(운영자 실수): 회사 SA 를 다른 회사 번호로 만들었는지 고객에게 넘기기 전에 확인하는 명령 (읽기만)
+  const sa = typeof l.command === "string" ? /PLATFORM_SA='([^']+)'/.exec(l.command)?.[1] : undefined;
+  if (sa) console.log(`고객에게 넘기기 전 회사 SA 고리 확인 (읽기만):\nGCP_TENANT_SA=${sa} bash tools/gcp-account-check.sh\n`);
 }
 
 const cmd = process.argv[2];
