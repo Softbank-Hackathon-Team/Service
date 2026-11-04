@@ -13,6 +13,7 @@ import { usePoll } from '../../lib/usePoll';
 import { ShellLayout } from '../shell/ShellLayout';
 import { useChosenMigration } from '../shell/useChosenMigration';
 import s from '../common/page.module.css';
+import { t } from '../../lib/i18n';
 
 const LAYOUT: BentoLayout = { columns: ['fill', 'side', 'side'], areas: 'hero log side' };
 
@@ -26,7 +27,7 @@ export function auditEntry(item: TimelineItem): TimelineEntry {
   return {
     kind: denied ? 'denied' : human ? 'human' : 'system',
     title: item.kind === 'transition' ? `${statusName(item.from)} → ${statusName(item.to)}` : item.action,
-    detail: [human ? item.actor : item.actor === 'worker' ? '워커' : '시스템', item.failureCode].filter(Boolean).join(' · '),
+    detail: [human ? item.actor : item.actor === 'worker' ? t('워커') : t('시스템'), item.failureCode].filter(Boolean).join(' · '),
     time: time(item.at),
   };
 }
@@ -53,61 +54,61 @@ function AuditBody({ migration }: { migration: MigrationView }) {
     <>
       <Hero
         tone={broken ? 'stop' : 'run'}
-        meta="감사 기록"
-        title={!data ? (report.loading ? '감사 기록을\n읽고 있습니다' : '아직 감사 기록이\n없습니다') : broken ? '감사 기록이\n끊겼습니다' : '감사 기록이\n온전합니다'}
-        foot="줄마다 앞 줄의 지문을 품습니다. 한 줄이라도 고치면 여기서 드러납니다"
+        meta={t('감사 기록')}
+        title={!data ? (report.loading ? t('감사 기록을\n읽고 있습니다') : t('아직 감사 기록이\n없습니다')) : broken ? t('감사 기록이\n끊겼습니다') : t('감사 기록이\n온전합니다')}
+        foot={t('줄마다 앞 줄의 지문을 품습니다. 한 줄이라도 고치면 여기서 드러납니다')}
       >
         {!data && report.loading && <SkeletonStats count={3} />}
         {data && (
           <ul className={`${s.heroStats} ${broken ? s.onAlert : ''}`}>
-            <li><span className="t-metric-lg">{data.integrity.checked}</span><span className="t-caption">검증한 줄</span></li>
-            <li><span className="t-metric-lg">{data.summary.transitions}</span><span className="t-caption">상태 이동</span></li>
-            <li><span className="t-metric-lg">{data.summary.deniedOrError}</span><span className="t-caption">거부·오류</span></li>
+            <li><span className="t-metric-lg">{data.integrity.checked}</span><span className="t-caption">{t('검증한 줄')}</span></li>
+            <li><span className="t-metric-lg">{data.summary.transitions}</span><span className="t-caption">{t('상태 이동')}</span></li>
+            <li><span className="t-metric-lg">{data.summary.deniedOrError}</span><span className="t-caption">{t('거부·오류')}</span></li>
           </ul>
         )}
-        {data?.integrity.brokenAtSeq != null && <code className={`${s.code} t-code-md`}>{data.integrity.brokenAtSeq}번 줄 · {data.integrity.reason}</code>}
+        {data?.integrity.brokenAtSeq != null && <code className={`${s.code} t-code-md`}>{t('{0}번 줄 · {1}', { 0: data.integrity.brokenAtSeq, 1: data.integrity.reason })}</code>}
       </Hero>
       <Tile area="log" compact scroll>
-        <TileHeader title="타임라인" />
+        <TileHeader title={t('타임라인')} />
         {entries.length > 0 ? (
           <Timeline items={entries} />
         ) : !timeline.data && timeline.loading ? (
           <SkeletonRows count={8} />
         ) : (
-          <p className="t-body-sm c-tertiary">아직 기록이 없습니다.</p>
+          <p className="t-body-sm c-tertiary">{t('아직 기록이 없습니다.')}</p>
         )}
       </Tile>
       <Stack area="side">
-        <FoldTile title="승인 기록" summary={`${data?.approvals.length ?? 0}건`}>
+        <FoldTile title={t('승인 기록')} summary={t('{0}건', { 0: data?.approvals.length ?? 0 })}>
           {data && data.approvals.length > 0 ? (
             <ul className={s.rows}>
               {data.approvals.map((item) => (
                 <li key={`${item.planId}-${item.at}`} className={s.row}>
-                  <span className="t-body-sm">{item.decision === 'approve' ? '승인' : '거절'} · {item.approvedBy}</span>
-                  <Badge tone={item.hashMatches ? 'success' : 'danger'}>{item.hashMatches ? '지문 일치' : '지문 다름'}</Badge>
+                  <span className="t-body-sm">{item.decision === 'approve' ? t('승인') : t('거절')} · {item.approvedBy}</span>
+                  <Badge tone={item.hashMatches ? 'success' : 'danger'}>{item.hashMatches ? t('지문 일치') : t('지문 다름')}</Badge>
                 </li>
               ))}
             </ul>
           ) : (
-            <p className={`${s.note} t-body-sm c-tertiary`}>아직 승인 기록이 없습니다.</p>
+            <p className={`${s.note} t-body-sm c-tertiary`}>{t('아직 승인 기록이 없습니다.')}</p>
           )}
         </FoldTile>
-        <FoldTile key={`incident-${(data?.incidents.length ?? 0) > 0}`} title="거부·오류" summary={`${data?.incidents.length ?? 0}건`} defaultOpen={(data?.incidents.length ?? 0) > 0}>
+        <FoldTile key={`incident-${(data?.incidents.length ?? 0) > 0}`} title={t('거부·오류')} summary={t('{0}건', { 0: data?.incidents.length ?? 0 })} defaultOpen={(data?.incidents.length ?? 0) > 0}>
           {data && data.incidents.length > 0 ? (
             <ul className={s.rows}>
               {data.incidents.map((item) => (
                 <li key={item.seq} className={s.row}>
                   <span className="t-body-sm">{item.note || item.action}</span>
-                  <Badge tone={item.result === 'denied' ? 'warning' : 'danger'}>{item.result === 'denied' ? '거부' : '오류'}</Badge>
+                  <Badge tone={item.result === 'denied' ? 'warning' : 'danger'}>{item.result === 'denied' ? t('거부') : t('오류')}</Badge>
                 </li>
               ))}
             </ul>
           ) : (
-            <p className={`${s.note} t-body-sm c-tertiary`}>거부되거나 실패한 기록이 없습니다.</p>
+            <p className={`${s.note} t-body-sm c-tertiary`}>{t('거부되거나 실패한 기록이 없습니다.')}</p>
           )}
         </FoldTile>
         {data && data.gaps.length > 0 && (
-          <FoldTile title="리포트에 비어 있는 것" summary={`${data.gaps.length}건`} defaultOpen={false}>
+          <FoldTile title={t('리포트에 비어 있는 것')} summary={t('{0}건', { 0: data.gaps.length })} defaultOpen={false}>
             <ul className={`${s.note} t-body-sm c-secondary`}>
               {data.gaps.map((gap) => (
                 <li key={gap}>{gap}</li>
@@ -116,7 +117,7 @@ function AuditBody({ migration }: { migration: MigrationView }) {
           </FoldTile>
         )}
         <ActionRow notice={error}>
-          <ActionPill label="증적 리포트" icon="download" onClick={() => void open()} />
+          <ActionPill label={t('증적 리포트')} icon="download" onClick={() => void open()} />
         </ActionRow>
       </Stack>
     </>
@@ -128,8 +129,8 @@ export function AuditPage({ id }: { id: string | null }) {
   if (!chosen) {
     return (
       <ShellLayout layout={LAYOUT}>
-        <Hero tone="run" meta="감사 기록" title={loading ? '마이그레이션을\n읽고 있습니다' : '확인할 마이그레이션이\n없습니다'} />
-        {loading && <SkeletonTile area="log" title="타임라인" rows={8} />}
+        <Hero tone="run" meta={t('감사 기록')} title={loading ? t('마이그레이션을\n읽고 있습니다') : t('확인할 마이그레이션이\n없습니다')} />
+        {loading && <SkeletonTile area="log" title={t('타임라인')} rows={8} />}
       </ShellLayout>
     );
   }

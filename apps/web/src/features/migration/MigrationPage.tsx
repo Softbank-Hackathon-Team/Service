@@ -32,17 +32,18 @@ import { RequirementsFold, SourceFactsFold, VerdictFold } from './SecurityFolds'
 import { isSecItem, precheckLine, secAckLabel, type SecuritySpecV2 } from './securityV2';
 import { ConfirmPill, Frame, useAction, useCostConsent, type ScreenProps } from './shared';
 import s from '../common/page.module.css';
+import { t } from '../../lib/i18n';
 
 const LEVEL: Record<PrecheckItem['level'], { label: string; tone: 'danger' | 'warning' | 'neutral' }> = {
-  block: { label: '막힘', tone: 'danger' },
-  warn: { label: '주의', tone: 'warning' },
-  info: { label: '참고', tone: 'neutral' },
+  block: { label: t('막힘'), tone: 'danger' },
+  warn: { label: t('주의'), tone: 'warning' },
+  info: { label: t('참고'), tone: 'neutral' },
 };
 
 function ImportingScreen({ migration, route }: ScreenProps) {
   return (
     <Frame migration={migration} route={route}>
-      <Hero tone="run" meta="구성 읽기" title={'운영 중인 앱을\n읽고 있습니다'} foot="읽기만 합니다. 아무것도 바꾸지 않습니다" />
+      <Hero tone="run" meta={t('구성 읽기')} title={t('운영 중인 앱을\n읽고 있습니다')} foot={t('읽기만 합니다. 아무것도 바꾸지 않습니다')} />
     </Frame>
   );
 }
@@ -120,15 +121,15 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
     <Frame migration={migration} route={route}>
       <Hero
         tone={blocks.length > 0 ? 'stop' : 'run'}
-        meta={blocks.length > 0 ? '사전 점검에서 돌아옴' : `명세 v${view?.version ?? ''}`}
+        meta={blocks.length > 0 ? t('사전 점검에서 돌아옴') : t('명세 v{0}', { 0: view?.version ?? '' })}
         title={
           blocks.length > 0
-            ? `막힌 항목 ${blocks.length}개를\n풀어야 합니다`
+            ? t('막힌 항목 {0}개를\n풀어야 합니다', { 0: blocks.length })
             : reviewCount > 0
-              ? `${reviewCount}칸을 확인하고\n확정해 주세요`
-              : '이 명세로\n옮길까요?'
+              ? t('{0}칸을 확인하고\n확정해 주세요', { 0: reviewCount })
+              : t('이 명세로\n옮길까요?')
         }
-        foot={view?.source === 'ai_draft' ? 'AI가 추측한 초안입니다. 사람이 확정하기 전에는 계획에 쓰지 않습니다' : '확정하면 사전 점검을 시작합니다'}
+        foot={view?.source === 'ai_draft' ? t('AI가 추측한 초안입니다. 사람이 확정하기 전에는 계획에 쓰지 않습니다') : t('확정하면 사전 점검을 시작합니다')}
       >
         {blocks.map((item) => {
           const line = precheckLine(item);
@@ -158,11 +159,11 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
             </div>
           ))}
         {blocks.length === 0 && heroRows.length > HERO_REVIEW_ROWS && (
-          <p className="t-body-md c-secondary">외 {heroRows.length - HERO_REVIEW_ROWS}칸</p>
+          <p className="t-body-md c-secondary">{t('외 {0}칸', { 0: heroRows.length - HERO_REVIEW_ROWS })}</p>
         )}
       </Hero>
       <Stack area="side">
-        <FoldTile title="읽은 값" summary={view ? `${v2 ? rowsV2.length : rows.length}칸` : '읽는 중'}>
+        <FoldTile title={t('읽은 값')} summary={view ? t('{0}칸', { 0: v2 ? rowsV2.length : rows.length }) : t('읽는 중')}>
           {view && v2 ? (
             <ul className={s.rows}>
               {rowsV2.map((row) => (
@@ -185,7 +186,7 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
               ))}
             </ul>
           ) : (
-            <p className={`${s.note} t-body-sm c-secondary`}>{spec.loading ? '명세를 읽고 있습니다.' : '아직 명세가 없습니다.'}</p>
+            <p className={`${s.note} t-body-sm c-secondary`}>{spec.loading ? t('명세를 읽고 있습니다.') : t('아직 명세가 없습니다.')}</p>
           )}
         </FoldTile>
         {view && v2 && (
@@ -200,7 +201,7 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
         )}
         {view && v2 && <SourceFactsFold facts={view.securityFacts} />}
         {accuracy && (
-          <FoldTile title="가져오기 정확도" summary={accuracy.summary} defaultOpen={false}>
+          <FoldTile title={t('가져오기 정확도')} summary={accuracy.summary} defaultOpen={false}>
             <ul className={s.rows}>
               {accuracy.rows.map((row) => (
                 <li key={row.name} className={s.row}>
@@ -211,15 +212,15 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
               {accuracy.mismatches.map((row, index) => (
                 <li key={`${index}:${row.name}`} className={s.row}>
                   <span className="t-label-md c-warning">{row.name}</span>
-                  <span className={`${s.rowValue} t-body-sm c-secondary`}>{row.value || '불일치'}</span>
+                  <span className={`${s.rowValue} t-body-sm c-secondary`}>{row.value || t('불일치')}</span>
                 </li>
               ))}
             </ul>
-            <p className={`${s.note} t-caption c-tertiary`}>가져올 때 잰 값입니다. 명세를 고쳐도 다시 재지 않습니다.</p>
+            <p className={`${s.note} t-caption c-tertiary`}>{t('가져올 때 잰 값입니다. 명세를 고쳐도 다시 재지 않습니다.')}</p>
           </FoldTile>
         )}
         {boundary && (
-          <FoldTile title="이 앱 밖 자원" summary={boundary.length > 0 ? `${boundary.length}개` : '없음'} defaultOpen={false}>
+          <FoldTile title={t('이 앱 밖 자원')} summary={boundary.length > 0 ? t('{0}개', { 0: boundary.length }) : t('없음')} defaultOpen={false}>
             {boundary.length > 0 ? (
               <>
                 <ul className={s.rows}>
@@ -232,22 +233,22 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
                       <p className={`${s.rowCaption} t-caption c-tertiary`}>{item.reason}</p>
                       {item.pullable && (
                         <div className={s.rowAction}>
-                          <BarPill label="이 앱으로 가져오기" icon="plus" onClick={busy ? undefined : () => void pull(item.resource)} />
+                          <BarPill label={t('이 앱으로 가져오기')} icon="plus" onClick={busy ? undefined : () => void pull(item.resource)} />
                         </div>
                       )}
                     </li>
                   ))}
                 </ul>
-                <p className={`${s.note} t-caption c-tertiary`}>옮기지 않고 출발에 그대로 둡니다. DB·캐시·저장소·큐는 이 앱으로 가져올 수 있습니다.</p>
+                <p className={`${s.note} t-caption c-tertiary`}>{t('옮기지 않고 출발에 그대로 둡니다. DB·캐시·저장소·큐는 이 앱으로 가져올 수 있습니다.')}</p>
               </>
             ) : (
-              <p className={`${s.note} t-body-sm c-secondary`}>이 앱의 서비스·잡이 닿지 않는 자원이 없습니다.</p>
+              <p className={`${s.note} t-body-sm c-secondary`}>{t('이 앱의 서비스·잡이 닿지 않는 자원이 없습니다.')}</p>
             )}
           </FoldTile>
         )}
         <ActionRow notice={error}>
-          <ConfirmPill label="취소" confirmLabel="마이그레이션 취소" icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
-          <ActionPill label={v2 ? confirmLabel(busy, reviewCount) : busy ? '보내는 중' : '명세 확정'} icon="check" disabled={busy || !view} onClick={() => void run(confirm)} />
+          <ConfirmPill label={t('취소')} confirmLabel={t('마이그레이션 취소')} icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
+          <ActionPill label={v2 ? confirmLabel(busy, reviewCount) : busy ? t('보내는 중') : t('명세 확정')} icon="check" disabled={busy || !view} onClick={() => void run(confirm)} />
         </ActionRow>
       </Stack>
     </Frame>
@@ -261,8 +262,8 @@ function PreparingScreen({ migration, route }: ScreenProps) {
       <Hero
         tone="run"
         meta={LABEL[migration.status]}
-        title={checking ? '이 앱을\n옮길 수 있는지 봅니다' : '계획서를\n만들고 있습니다'}
-        foot="끝나면 계획서와 승인 버튼이 나옵니다"
+        title={checking ? t('이 앱을\n옮길 수 있는지 봅니다') : t('계획서를\n만들고 있습니다')}
+        foot={t('끝나면 계획서와 승인 버튼이 나옵니다')}
       />
     </Frame>
   );
@@ -270,12 +271,12 @@ function PreparingScreen({ migration, route }: ScreenProps) {
 
 // 승인 확인 항목 종류 (contracts PlanAckKind). 항목 글은 서버가 쓴 문장 그대로 보여 주고, 종류는 작게 붙인다
 const ACK_KIND: Record<PlanAckKind, string> = {
-  cost: '비용',
-  failure_cost_policy: '실패했을 때 비용',
-  runtime_change: '실행 방식 바뀜',
-  build: '도착에서 이미지 빌드',
-  precheck_warn: '사전 점검 주의',
-  low_confidence: '낮은 신뢰도',
+  cost: t('비용'),
+  failure_cost_policy: t('실패했을 때 비용'),
+  runtime_change: t('실행 방식 바뀜'),
+  build: t('도착에서 이미지 빌드'),
+  precheck_warn: t('사전 점검 주의'),
+  low_confidence: t('낮은 신뢰도'),
 };
 
 // 승인·시작이 이 코드로 막히면 계획서가 바뀌었거나 시간이 지난 것이다 → 계획서를 다시 읽고 체크는 새 지문에서 처음부터
@@ -321,20 +322,20 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
     <Frame migration={migration} route={route}>
       <Hero
         tone={expired ? 'stop' : 'run'}
-        meta="계획서"
-        title={expired ? '승인 시간이\n지났습니다' : acks.missing.length > 0 ? `확인할 것 ${acks.missing.length}개를 보고\n승인해 주세요` : '승인하면 이대로\n바로 실행합니다'}
-        foot={doc ? `유효 시각 ${new Date(doc.expiresAt).toLocaleString('ko-KR', { hour12: false })}` : undefined}
+        meta={t('계획서')}
+        title={expired ? t('승인 시간이\n지났습니다') : acks.missing.length > 0 ? t('확인할 것 {0}개를 보고\n승인해 주세요', { 0: acks.missing.length }) : t('승인하면 이대로\n바로 실행합니다')}
+        foot={doc ? t('유효 시각 {0}', { 0: new Date(doc.expiresAt).toLocaleString('ko-KR', { hour12: false }) }) : undefined}
       >
         {doc && <CodeValue value={doc.planHash} chip max={32} />}
         {doc && (
           <p className="t-body-md c-secondary">
-            오류율이 {doc.rollbackCriteria.errorRatePct}%를 넘거나 응답 시간이 {doc.rollbackCriteria.p95Multiplier}배를 넘으면 자동으로 되돌립니다
+            {t('오류율이 {0}%를 넘거나 응답 시간이 {1}배를 넘으면 자동으로 되돌립니다', { 0: doc.rollbackCriteria.errorRatePct, 1: doc.rollbackCriteria.p95Multiplier })}
           </p>
         )}
       </Hero>
       <Stack area="side">
         {doc && acks.total > 0 && (
-          <FoldTile title="승인 전에 확인" summary={acks.missing.length > 0 ? `${acks.missing.length}개 남음` : '모두 확인함'}>
+          <FoldTile title={t('승인 전에 확인')} summary={acks.missing.length > 0 ? t('{0}개 남음', { 0: acks.missing.length }) : t('모두 확인함')}>
             <ul className={s.rows}>
               {(doc.acknowledgements ?? []).map((ack) => (
                 <li key={ack.id}>
@@ -350,7 +351,7 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
             </ul>
           </FoldTile>
         )}
-        <FoldTile title="월 비용" summary={planCost ? planCostSummary(planCost) : cost.data ? costSummary(cost.data) : '읽는 중'}>
+        <FoldTile title={t('월 비용')} summary={planCost ? planCostSummary(planCost) : cost.data ? costSummary(cost.data) : t('읽는 중')}>
           <div className={s.costLine}>
             <span className="t-metric-lg">{usd(planCost ? planCost.monthlySource : pair?.sourceMonthlyUsd)}</span>
             <Icon name="arrow-right" />
@@ -361,10 +362,10 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
           ))}
           <p className={`${s.note} t-body-sm c-secondary`}>{costNote(planCost?.priceAsOf)}</p>
           <div className={s.note}>
-            <BarPill label="비용 자세히" icon="chevron" onClick={() => go(`migrations/${migration.id}/cost`)} />
+            <BarPill label={t('비용 자세히')} icon="chevron" onClick={() => go(`migrations/${migration.id}/cost`)} />
           </div>
         </FoldTile>
-        <FoldTile title="실행 단계" summary={doc ? `${doc.steps.length}단계` : '읽는 중'}>
+        <FoldTile title={t('실행 단계')} summary={doc ? t('{0}단계', { 0: doc.steps.length }) : t('읽는 중')}>
           <ul className={s.rows}>
             {doc?.steps.map((step) => (
               <li key={step.id} className={s.row}>
@@ -374,7 +375,7 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
             ))}
           </ul>
         </FoldTile>
-        <FoldTile key={`precheck-${warns > 0}`} title="사전 점검" summary={warns > 0 ? `확인 ${warns}건` : `${checks.length}건`} defaultOpen={warns > 0}>
+        <FoldTile key={`precheck-${warns > 0}`} title={t('사전 점검')} summary={warns > 0 ? t('확인 {0}건', { 0: warns }) : t('{0}건', { 0: checks.length })} defaultOpen={warns > 0}>
           <ul className={s.rows}>
             {checks.map((item) => (
               <li key={item.id} className={s.row}>
@@ -386,8 +387,8 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
         </FoldTile>
         {doc && <VerdictFold items={doc.precheck} />}
         <FoldTile
-          title="자원 대응"
-          summary={resources.data ? `${mapped.listed.length}개${mapped.runtimeChanges > 0 ? ` · 실행 방식 바뀜 ${mapped.runtimeChanges}` : ''}` : ''}
+          title={t('자원 대응')}
+          summary={resources.data ? t('{0}개{1}', { 0: mapped.listed.length, 1: mapped.runtimeChanges > 0 ? t(' · 실행 방식 바뀜 {0}', { 0: mapped.runtimeChanges }) : '' }) : ''}
           defaultOpen={false}
         >
           <ul className={s.rows}>
@@ -396,7 +397,7 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
                 <div className={s.row}>
                   <span className="t-label-md">{row.label}</span>
                   <span className={`${s.rowValue} t-caption c-tertiary`}>
-                    {row.source?.service ?? '없음'} → {row.target?.service ?? '없음'}
+                    {row.source?.service ?? t('없음')} → {row.target?.service ?? t('없음')}
                   </span>
                 </div>
                 {runtimeChangeNote(row) && <p className={`${s.rowCaption} t-caption c-warning`}>{runtimeChangeNote(row)}</p>}
@@ -406,14 +407,14 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
           {/* 경계 밖 자원은 옮기는 자원이 아니라 "건드리지 않는 것" 안내라 표 밖에 한 줄로 둔다 */}
           {mapped.boundary && (
             <p className={`${s.note} t-caption c-tertiary`}>
-              {mapped.boundary.label} · {mapped.boundary.afterSource ?? '옮기지 않음'}
+              {mapped.boundary.label} · {mapped.boundary.afterSource ?? t('옮기지 않음')}
             </p>
           )}
         </FoldTile>
         <SecurityFold migration={migration} />
         <ActionRow notice={error ?? (plan.error != null && !doc ? errorText(plan.error) : null)}>
-          <ConfirmPill label="취소" confirmLabel="마이그레이션 취소" icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
-          {doc && <ConfirmPill label="거절" confirmLabel="계획 거절" icon="ban" disabled={busy} onConfirm={() => void run(() => api.decide(doc.planId, 'reject', doc.planHash))} />}
+          <ConfirmPill label={t('취소')} confirmLabel={t('마이그레이션 취소')} icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
+          {doc && <ConfirmPill label={t('거절')} confirmLabel={t('계획 거절')} icon="ban" disabled={busy} onConfirm={() => void run(() => api.decide(doc.planId, 'reject', doc.planHash))} />}
           <ActionPill
             label={approveLabel({ busy, expired, missing: acks.missing.length })}
             icon="check"
@@ -462,20 +463,20 @@ function ApprovedScreen({ migration, route, onChanged }: ScreenProps) {
     <Frame migration={migration} route={route}>
       <Hero
         tone={waiting ? 'stop' : 'run'}
-        meta={waiting === 'tenant' ? '동시 진행 상한' : waiting === 'env' ? '환경 사용 중' : '승인됨'}
+        meta={waiting === 'tenant' ? t('동시 진행 상한') : waiting === 'env' ? t('환경 사용 중') : t('승인됨')}
         title={
           waiting === 'tenant'
-            ? '진행 중인 마이그레이션이 많아\n아직 시작하지 않았습니다'
+            ? t('진행 중인 마이그레이션이 많아\n아직 시작하지 않았습니다')
             : waiting === 'env'
-              ? '다른 마이그레이션이\n환경을 쓰고 있습니다'
-              : '승인했습니다.\n실행을 시작해 주세요'
+              ? t('다른 마이그레이션이\n환경을 쓰고 있습니다')
+              : t('승인했습니다.\n실행을 시작해 주세요')
         }
         foot={
           waiting === 'tenant'
             ? expired
-              ? '계획 유효 시간이 지나 다시 시작할 수 없습니다'
-              : `승인은 그대로입니다. ${until ?? '유효 시각'}까지 다시 시작할 수 있습니다`
-            : '이 지문의 계획만 실행합니다'
+              ? t('계획 유효 시간이 지나 다시 시작할 수 없습니다')
+              : t('승인은 그대로입니다. {0}까지 다시 시작할 수 있습니다', { 0: until ?? t('유효 시각') })
+            : t('이 지문의 계획만 실행합니다')
         }
       >
         {doc && <CodeValue value={doc.planHash} chip max={32} />}
@@ -483,10 +484,10 @@ function ApprovedScreen({ migration, route, onChanged }: ScreenProps) {
       <Stack area="side">
         <SecurityFold migration={migration} />
         <ActionRow notice={waiting ? null : error}>
-          <ConfirmPill label="취소" confirmLabel="마이그레이션 취소" icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
+          <ConfirmPill label={t('취소')} confirmLabel={t('마이그레이션 취소')} icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
           {!(waiting && expired) && (
             <ActionPill
-              label={busy ? '보내는 중' : waiting ? '다시 시작' : '실행 시작'}
+              label={busy ? t('보내는 중') : waiting ? t('다시 시작') : t('실행 시작')}
               icon="play"
               disabled={busy || plan.loading}
               onClick={() => void run(() => api.start(migration.id, doc?.planHash))}
@@ -500,16 +501,16 @@ function ApprovedScreen({ migration, route, onChanged }: ScreenProps) {
 
 const STOPPED: Record<'rejected' | 'stale', { meta: string; title: string; foot: string; next: string }> = {
   rejected: {
-    meta: '거절',
-    title: '고객 환경에는\n아무것도 안 바꿨습니다',
-    foot: '거절한 사람을 감사 기록에 남겼습니다',
-    next: '같은 명세로 계획을 다시 만들거나, 명세부터 고칩니다. 그만두려면 이 마이그레이션을 끝냅니다.',
+    meta: t('거절'),
+    title: t('고객 환경에는\n아무것도 안 바꿨습니다'),
+    foot: t('거절한 사람을 감사 기록에 남겼습니다'),
+    next: t('같은 명세로 계획을 다시 만들거나, 명세부터 고칩니다. 그만두려면 이 마이그레이션을 끝냅니다.'),
   },
   stale: {
-    meta: '낡은 계획',
-    title: '승인 시간이\n지났습니다',
-    foot: '본 것과 다른 내용이 실행되지 않도록 막았습니다',
-    next: '계획을 다시 만들어 새 계획서로 승인합니다. 그만두려면 이 마이그레이션을 끝냅니다.',
+    meta: t('낡은 계획'),
+    title: t('승인 시간이\n지났습니다'),
+    foot: t('본 것과 다른 내용이 실행되지 않도록 막았습니다'),
+    next: t('계획을 다시 만들어 새 계획서로 승인합니다. 그만두려면 이 마이그레이션을 끝냅니다.'),
   },
 };
 
@@ -521,22 +522,22 @@ function StoppedScreen({ migration, route, onChanged, kind }: ScreenProps & { ki
     <Frame migration={migration} route={route}>
       <Hero tone="stop" meta={copy.meta} title={copy.title} foot={copy.foot} />
       <Stack area="side">
-        <FoldTile title="다음에 할 일">
-          <p className={`${s.note} t-body-md c-secondary`}>{replan ? copy.next : '이 마이그레이션을 끝내고 새로 시작해 주세요.'}</p>
+        <FoldTile title={t('다음에 할 일')}>
+          <p className={`${s.note} t-body-md c-secondary`}>{replan ? copy.next : t('이 마이그레이션을 끝내고 새로 시작해 주세요.')}</p>
         </FoldTile>
         <SecurityFold migration={migration} />
         <ActionRow notice={error}>
           {replan ? (
             <>
-              <ConfirmPill label="이 마이그레이션 끝내기" confirmLabel="마이그레이션 끝내기" icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
+              <ConfirmPill label={t('이 마이그레이션 끝내기')} confirmLabel={t('마이그레이션 끝내기')} icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
               {/* TODO(human): 거절 뒤 주 행동을 "계획 다시 만들기"로 둘지 "명세부터 고치기"로 둘지. 지금은 다시 계획하기가 주 행동 */}
               {kind === 'rejected' && (
-                <BarPill label="명세부터 고치기" icon="list" onClick={busy ? undefined : () => void run(() => api.reopenSpec(migration.id))} />
+                <BarPill label={t('명세부터 고치기')} icon="list" onClick={busy ? undefined : () => void run(() => api.reopenSpec(migration.id))} />
               )}
-              <ActionPill label={busy ? '보내는 중' : '계획 다시 만들기'} icon="refresh" disabled={busy} onClick={() => void run(() => api.replan(migration.id))} />
+              <ActionPill label={busy ? t('보내는 중') : t('계획 다시 만들기')} icon="refresh" disabled={busy} onClick={() => void run(() => api.replan(migration.id))} />
             </>
           ) : (
-            <ActionPill label={busy ? '보내는 중' : '이 마이그레이션 끝내기'} icon="x" disabled={busy} onClick={() => void run(() => api.cancel(migration.id))} />
+            <ActionPill label={busy ? t('보내는 중') : t('이 마이그레이션 끝내기')} icon="x" disabled={busy} onClick={() => void run(() => api.cancel(migration.id))} />
           )}
         </ActionRow>
       </Stack>
@@ -565,10 +566,10 @@ function FailedScreen({ migration, route, onChanged }: ScreenProps) {
     />
   );
   const leftover = (
-    <LeftoverFold migration={migration} title="끝내기 전에">
+    <LeftoverFold migration={migration} title={t('끝내기 전에')}>
       <label className={`${s.check} t-body-md`}>
         <input type="checkbox" checked={cleaned} onChange={(event) => setCleaned(event.target.checked)} />
-        남은 자원을 정리했습니다
+        {t('남은 자원을 정리했습니다')}
       </label>
     </LeftoverFold>
   );
@@ -576,9 +577,9 @@ function FailedScreen({ migration, route, onChanged }: ScreenProps) {
     <Frame migration={migration} route={route}>
       <Hero
         tone="stop"
-        meta={migration.failedAtStatus ? `${LABEL[migration.failedAtStatus]}에서 실패` : '실패'}
-        title={reason?.title ?? '작업이\n끝나지 못했습니다'}
-        foot={replan ? '계획을 다시 만들면 승인부터 다시 합니다' : '남은 자원을 직접 정리한 뒤 이 마이그레이션을 끝냅니다'}
+        meta={migration.failedAtStatus ? t('{0}에서 실패', { 0: LABEL[migration.failedAtStatus] }) : t('실패')}
+        title={reason?.title ?? t('작업이\n끝나지 못했습니다')}
+        foot={replan ? t('계획을 다시 만들면 승인부터 다시 합니다') : t('남은 자원을 직접 정리한 뒤 이 마이그레이션을 끝냅니다')}
       >
         {reason && (
           <div className={s.heroPanel}>
@@ -594,17 +595,17 @@ function FailedScreen({ migration, route, onChanged }: ScreenProps) {
           {replan ? (
             <>
               {cleaned && (
-                <ConfirmPill label="이 마이그레이션 끝내기" confirmLabel="정리했고 끝내기" icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id, true))} />
+                <ConfirmPill label={t('이 마이그레이션 끝내기')} confirmLabel={t('정리했고 끝내기')} icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id, true))} />
               )}
               <ActionPill
-                label={busy ? '보내는 중' : consent.accept ? '고객 부담으로 다시 계획' : '계획 다시 만들기'}
+                label={busy ? t('보내는 중') : consent.accept ? t('고객 부담으로 다시 계획') : t('계획 다시 만들기')}
                 icon="refresh"
                 disabled={busy || consent.waiting}
                 onClick={() => void run(() => api.replan(migration.id, consent.accept))}
               />
             </>
           ) : (
-            <ActionPill label={busy ? '보내는 중' : '이 마이그레이션 끝내기'} icon="x" disabled={busy || !cleaned} onClick={() => void run(() => api.cancel(migration.id, true))} />
+            <ActionPill label={busy ? t('보내는 중') : t('이 마이그레이션 끝내기')} icon="x" disabled={busy || !cleaned} onClick={() => void run(() => api.cancel(migration.id, true))} />
           )}
         </ActionRow>
       </Stack>
@@ -615,9 +616,9 @@ function FailedScreen({ migration, route, onChanged }: ScreenProps) {
 function CancelledScreen({ migration, route }: ScreenProps) {
   return (
     <Frame migration={migration} route={route}>
-      <Hero tone="run" meta="취소" title={'이 마이그레이션은\n여기서 끝났습니다'} foot="환경 잠금을 풀었습니다" />
+      <Hero tone="run" meta={t('취소')} title={t('이 마이그레이션은\n여기서 끝났습니다')} foot={t('환경 잠금을 풀었습니다')} />
       <Stack area="side">
-        <LeftoverFold migration={migration} title="도착에 남은 자원" />
+        <LeftoverFold migration={migration} title={t('도착에 남은 자원')} />
         <SecurityFold migration={migration} />
       </Stack>
     </Frame>
@@ -673,11 +674,11 @@ export function MigrationPage({ id }: { id: string }) {
   if (!shown) {
     const missing = is404(poll.error);
     return (
-      <Frame route="마이그레이션">
+      <Frame route={t('마이그레이션')}>
         <Hero
           tone={poll.error ? 'stop' : 'run'}
-          meta="마이그레이션"
-          title={poll.error ? (missing ? '이 마이그레이션을\n찾을 수 없습니다' : '마이그레이션을\n읽지 못했습니다') : '마이그레이션을\n읽고 있습니다'}
+          meta={t('마이그레이션')}
+          title={poll.error ? (missing ? t('이 마이그레이션을\n찾을 수 없습니다') : t('마이그레이션을\n읽지 못했습니다')) : t('마이그레이션을\n읽고 있습니다')}
         />
       </Frame>
     );

@@ -33,6 +33,7 @@ import {
   type EnvForm,
 } from './connect';
 import s from '../common/page.module.css';
+import { t } from '../../lib/i18n';
 
 // 큰 카드는 지금 할 한 가지, 오른쪽은 등록 단계와 권한을 빌리는 방식.
 const LAYOUT: BentoLayout = { columns: ['fill', 'side'], areas: 'hero side' };
@@ -44,7 +45,7 @@ function StepsFold({ at, provider, name }: { at: Parameters<typeof connectSteps>
   const items = connectSteps(at, { provider, name });
   const done = items.filter((item) => item.status === 'done').length;
   return (
-    <FoldTile title="환경 등록" summary={`${done}/${items.length}`}>
+    <FoldTile title={t('환경 등록')} summary={`${done}/${items.length}`}>
       <div className={s.agent}>
         <Checklist items={items} />
       </div>
@@ -55,32 +56,32 @@ function StepsFold({ at, provider, name }: { at: Parameters<typeof connectSteps>
 /** 연결이 무엇을 여는지. 비밀 키가 아니라 빌리는 권한이라는 것을 등록하는 내내 옆에 둔다. */
 function HowFold({ provider }: { provider?: Provider }) {
   return (
-    <FoldTile title="권한을 빌리는 방식" summary="비밀 키 0개">
+    <FoldTile title={t('권한을 빌리는 방식')} summary={t('비밀 키 0개')}>
       {provider === 'onprem' ? (
         <ul className={s.rows}>
           <li className={s.row}>
             <span className="t-label-md">Agent</span>
-            <span className="t-caption c-tertiary">고객 클러스터 안에서 상태를 보고</span>
+            <span className="t-caption c-tertiary">{t('고객 클러스터 안에서 상태를 보고')}</span>
           </li>
           <li className={s.row}>
-            <span className="t-label-md">등록 토큰</span>
-            <span className="t-caption c-tertiary">10분 동안 한 번만 씀</span>
+            <span className="t-label-md">{t('등록 토큰')}</span>
+            <span className="t-caption c-tertiary">{t('10분 동안 한 번만 씀')}</span>
           </li>
         </ul>
       ) : (
         <>
           <ul className={s.rows}>
             <li className={s.row}>
-              <span className="t-label-md">관찰 역할</span>
-              <span className="t-caption c-tertiary">읽기만 · 가져오기와 점검</span>
+              <span className="t-label-md">{t('관찰 역할')}</span>
+              <span className="t-caption c-tertiary">{t('읽기만 · 가져오기와 점검')}</span>
             </li>
             <li className={s.row}>
-              <span className="t-label-md">실행 역할</span>
-              <span className="t-caption c-tertiary">도착 자원 만들기와 배포</span>
+              <span className="t-label-md">{t('실행 역할')}</span>
+              <span className="t-caption c-tertiary">{t('도착 자원 만들기와 배포')}</span>
             </li>
           </ul>
           <p className={`${s.note} t-body-sm c-secondary`}>
-            플랫폼은 비밀 키를 받지 않습니다. 고객 계정에 만든 역할을 마이그레이션 단계마다 필요한 만큼만 짧게 빌리고(실행 단계는 15분), 끝나면 돌려줍니다.
+            {t('플랫폼은 비밀 키를 받지 않습니다. 고객 계정에 만든 역할을 마이그레이션 단계마다 필요한 만큼만 짧게 빌리고(실행 단계는 15분), 끝나면 돌려줍니다.')}
           </p>
         </>
       )}
@@ -101,7 +102,7 @@ function NewEnvironment() {
   if (!provider) {
     return (
       <ShellLayout layout={LAYOUT}>
-        <Hero tone="run" meta="환경 등록" title={'어디를\n연결할까요?'}>
+        <Hero tone="run" meta={t('환경 등록')} title={t('어디를\n연결할까요?')}>
           <div className={s.pickList}>
             {CONNECTABLE.map((item) => (
               <button key={item.provider} type="button" className={s.pickRow} onClick={() => withTransition(() => setProvider(item.provider))}>
@@ -152,7 +153,7 @@ function NewEnvironment() {
       layout={LAYOUT}
       barLeft={
         <BarPill
-          label={`${providerLabel(provider)} · 다시 고르기`}
+          label={t('{0} · 다시 고르기', { 0: providerLabel(provider) })}
           onClick={() =>
             withTransition(() => {
               setProvider(null);
@@ -163,13 +164,13 @@ function NewEnvironment() {
         />
       }
     >
-      <Hero tone="run" meta={`${providerLabel(provider)} 환경 등록`} title={'이 환경을\n뭐라고 부를까요?'}>
+      <Hero tone="run" meta={t('{0} 환경 등록', { 0: providerLabel(provider) })} title={t('이 환경을\n뭐라고 부를까요?')}>
         <form className={s.fieldGrid} onSubmit={(event) => void create(event)} noValidate>
-          <Field label="환경 이름" hint="목록과 마이그레이션 화면에 보이는 이름입니다" placeholder={NAME_PLACEHOLDER[provider]} autoFocus value={form.name} error={shown.name} onChange={set('name')} />
+          <Field label={t('환경 이름')} hint={t('목록과 마이그레이션 화면에 보이는 이름입니다')} placeholder={NAME_PLACEHOLDER[provider]} autoFocus value={form.name} error={shown.name} onChange={set('name')} />
           {provider === 'aws' && (
             <>
-              <Field label="리전" hint="EKS 클러스터가 있는 리전" value={form.region} error={shown.region} onChange={set('region')} />
-              <Field label="EKS 클러스터 이름" hint="연결 확인이 이 클러스터에 들어갈 수 있는지 봅니다" value={form.clusterName} error={shown.clusterName} onChange={set('clusterName')} />
+              <Field label={t('리전')} hint={t('EKS 클러스터가 있는 리전')} value={form.region} error={shown.region} onChange={set('region')} />
+              <Field label={t('EKS 클러스터 이름')} hint={t('연결 확인이 이 클러스터에 들어갈 수 있는지 봅니다')} value={form.clusterName} error={shown.clusterName} onChange={set('clusterName')} />
             </>
           )}
           {/* Enter 로도 보낸다 */}
@@ -180,7 +181,7 @@ function NewEnvironment() {
         <StepsFold at="details" provider={provider} />
         <HowFold provider={provider} />
         <ActionRow notice={error}>
-          <ActionPill label={busy ? '만드는 중' : '다음'} disabled={busy} onClick={() => void create()} />
+          <ActionPill label={busy ? t('만드는 중') : t('다음')} disabled={busy} onClick={() => void create()} />
         </ActionRow>
       </Stack>
     </ShellLayout>
@@ -209,24 +210,24 @@ function CustomerTodo({
   onAccount: (key: keyof AccountForm) => (value: string) => void;
   onReissue: () => void;
 }) {
-  const pending = <span className="t-caption c-tertiary">{issuing ? '받는 중' : '아직 받지 못함'}</span>;
+  const pending = <span className="t-caption c-tertiary">{issuing ? t('받는 중') : t('아직 받지 못함')}</span>;
   if (env.provider === 'onprem') {
     return (
       <>
         <ol className={s.todo}>
           <li>
-            <span className="t-body-md">고객 클러스터에 닿는 터미널에서 이 명령을 실행합니다.</span>
+            <span className="t-body-md">{t('고객 클러스터에 닿는 터미널에서 이 명령을 실행합니다.')}</span>
             {token ? <CodeValue value={token.command} chip max={56} /> : pending}
           </li>
           <li>
-            <span className="t-body-md">Agent 가 붙으면 이 화면이 저절로 넘어갑니다.</span>
-            {token && <span className="t-caption c-tertiary">명령의 토큰은 {until(token.expiresAt)}까지 한 번만 씁니다</span>}
+            <span className="t-body-md">{t('Agent 가 붙으면 이 화면이 저절로 넘어갑니다.')}</span>
+            {token && <span className="t-caption c-tertiary">{t('명령의 토큰은 {0}까지 한 번만 씁니다', { 0: until(token.expiresAt) })}</span>}
           </li>
         </ol>
         {issueError && <p className={`${s.error} t-body-md`}>{issueError}</p>}
         <button type="button" className={s.linkPill} disabled={issuing} onClick={onReissue}>
           <Icon name="refresh" />
-          <span className="t-label-md">{issuing ? '받는 중' : '새 명령 받기'}</span>
+          <span className="t-label-md">{issuing ? t('받는 중') : t('새 명령 받기')}</span>
         </button>
       </>
     );
@@ -236,11 +237,11 @@ function CustomerTodo({
     <>
       <ol className={s.todo}>
         <li>
-          <span className="t-body-md">{aws ? 'AWS 콘솔에서 스택을 만듭니다. 관찰 역할과 실행 역할이 생깁니다.' : 'Cloud Shell 을 엽니다.'}</span>
+          <span className="t-body-md">{aws ? t('AWS 콘솔에서 스택을 만듭니다. 관찰 역할과 실행 역할이 생깁니다.') : t('Cloud Shell 을 엽니다.')}</span>
           {link?.url ? (
             <a className={s.linkPill} href={link.url} target="_blank" rel="noopener noreferrer">
               <Icon name="external" />
-              <span className="t-label-md">{aws ? 'AWS 콘솔에서 스택 만들기' : 'Cloud Shell 열기'}</span>
+              <span className="t-label-md">{aws ? t('AWS 콘솔에서 스택 만들기') : t('Cloud Shell 열기')}</span>
             </a>
           ) : (
             pending
@@ -248,21 +249,21 @@ function CustomerTodo({
         </li>
         {aws ? (
           <li>
-            <span className="t-body-md">스택 화면에 이 확인 문구(ExternalId)가 채워져 있는지 봅니다.</span>
+            <span className="t-body-md">{t('스택 화면에 이 확인 문구(ExternalId)가 채워져 있는지 봅니다.')}</span>
             {link?.externalId ? <CodeValue value={link.externalId} chip max={44} /> : pending}
           </li>
         ) : (
           <li>
-            <span className="t-body-md">이 명령을 붙여 넣어 실행합니다. 플랫폼이 빌려 쓸 역할이 생깁니다.</span>
+            <span className="t-body-md">{t('이 명령을 붙여 넣어 실행합니다. 플랫폼이 빌려 쓸 역할이 생깁니다.')}</span>
             {link?.command ? <CodeValue value={link.command} chip max={56} /> : pending}
           </li>
         )}
         <li>
-          <span className="t-body-md">{aws ? '스택을 만든 계정 번호를 적고 연결을 확인합니다.' : '프로젝트 ID 를 적고 연결을 확인합니다.'}</span>
+          <span className="t-body-md">{aws ? t('스택을 만든 계정 번호를 적고 연결을 확인합니다.') : t('프로젝트 ID 를 적고 연결을 확인합니다.')}</span>
           <div className={s.fieldGrid}>
             <Field
-              label={aws ? 'AWS 계정 번호' : '읽을 프로젝트 ID'}
-              hint={aws ? '숫자 12자리. 대시가 있어도 됩니다' : '지금 서비스가 돌고 있는 프로젝트'}
+              label={aws ? t('AWS 계정 번호') : t('읽을 프로젝트 ID')}
+              hint={aws ? t('숫자 12자리. 대시가 있어도 됩니다') : t('지금 서비스가 돌고 있는 프로젝트')}
               placeholder={aws ? '1111-2222-3333' : 'shop-prod'}
               numeric={aws}
               value={account.accountId}
@@ -271,8 +272,8 @@ function CustomerTodo({
             />
             {!aws && (
               <Field
-                label="마이그레이션 전용 프로젝트 ID"
-                hint="도착 자원이 생기는 곳. 비우면 실행 단계에서 막힐 수 있습니다"
+                label={t('마이그레이션 전용 프로젝트 ID')}
+                hint={t('도착 자원이 생기는 곳. 비우면 실행 단계에서 막힐 수 있습니다')}
                 placeholder="shop-migration"
                 value={account.targetProjectId}
                 error={accountErrors.targetProjectId}
@@ -282,7 +283,7 @@ function CustomerTodo({
           </div>
         </li>
       </ol>
-      {link && <span className="t-caption c-tertiary">링크는 {until(link.expiresAt)}까지 씁니다</span>}
+      {link && <span className="t-caption c-tertiary">{t('링크는 {0}까지 씁니다', { 0: until(link.expiresAt) })}</span>}
       {issueError && <p className={`${s.error} t-body-md`}>{issueError}</p>}
     </>
   );
@@ -334,14 +335,14 @@ function ContinueConnect({ id }: { id: string }) {
     const missing = !envs.loading && envs.data;
     return (
       <ShellLayout layout={LAYOUT}>
-        <Hero tone="run" meta="환경 등록" title={missing ? '환경을\n찾지 못했습니다' : '환경을\n읽고 있습니다'}>
+        <Hero tone="run" meta={t('환경 등록')} title={missing ? t('환경을\n찾지 못했습니다') : t('환경을\n읽고 있습니다')}>
           {envs.error != null && !envs.data && <p className={`${s.error} t-body-md`}>{errorText(envs.error)}</p>}
         </Hero>
         <Stack area="side">
           <StepsFold at="details" />
           {missing && (
             <ActionRow>
-              <ActionPill label="새로 등록하기" icon="plus" onClick={() => go(REGISTER_PATH)} />
+              <ActionPill label={t('새로 등록하기')} icon="plus" onClick={() => go(REGISTER_PATH)} />
             </ActionRow>
           )}
         </Stack>
@@ -382,7 +383,7 @@ function ContinueConnect({ id }: { id: string }) {
     const onprem = env.provider === 'onprem';
     return (
       <ShellLayout layout={LAYOUT}>
-        <Hero tone="run" meta={meta} title={onprem ? '클러스터에서\n이 명령을 실행해 주세요' : env.provider === 'aws' ? 'AWS 계정에\n역할을 만들어 주세요' : 'GCP 프로젝트에\n권한을 열어 주세요'}>
+        <Hero tone="run" meta={meta} title={onprem ? t('클러스터에서\n이 명령을 실행해 주세요') : env.provider === 'aws' ? t('AWS 계정에\n역할을 만들어 주세요') : t('GCP 프로젝트에\n권한을 열어 주세요')}>
           <CustomerTodo
             env={env}
             link={link}
@@ -400,9 +401,9 @@ function ContinueConnect({ id }: { id: string }) {
             <ActionRow notice={verifyError}>
               {/* 링크를 받기 전(draft)에는 서버가 확인 요청을 받지 않는다. 링크부터 받게 한다 */}
               {env.connectionStatus === 'awaiting_customer' ? (
-                <ActionPill label={busy ? '보내는 중' : '연결 확인'} disabled={busy} onClick={() => void verify()} />
+                <ActionPill label={busy ? t('보내는 중') : t('연결 확인')} disabled={busy} onClick={() => void verify()} />
               ) : (
-                <ActionPill label={issuing ? '링크 받는 중' : '링크 다시 받기'} icon="refresh" disabled={issuing} onClick={() => void issue()} />
+                <ActionPill label={issuing ? t('링크 받는 중') : t('링크 다시 받기')} icon="refresh" disabled={issuing} onClick={() => void issue()} />
               )}
             </ActionRow>
           ),
@@ -414,8 +415,8 @@ function ContinueConnect({ id }: { id: string }) {
   if (phase === 'verifying') {
     return (
       <ShellLayout layout={LAYOUT}>
-        <Hero tone="run" meta={meta} title={'연결을\n확인하고 있습니다'}>
-          <p className="t-body-md c-secondary">고객 계정의 관찰 역할을 빌려 읽기 권한과 클러스터 접근을 봅니다. 끝나면 이 화면이 저절로 넘어갑니다.</p>
+        <Hero tone="run" meta={meta} title={t('연결을\n확인하고 있습니다')}>
+          <p className="t-body-md c-secondary">{t('고객 계정의 관찰 역할을 빌려 읽기 권한과 클러스터 접근을 봅니다. 끝나면 이 화면이 저절로 넘어갑니다.')}</p>
         </Hero>
         {side()}
       </ShellLayout>
@@ -432,8 +433,8 @@ function ContinueConnect({ id }: { id: string }) {
         <Hero
           tone="stop"
           meta={`${vendorLine(env.provider)} · ${CONN_LABEL[env.connectionStatus]}`}
-          title={expired ? '연결 링크가\n만료됐습니다' : `${env.name}\n연결하지 못했습니다`}
-          foot={env.lastVerifiedAt ? `마지막 확인 ${ago(env.lastVerifiedAt)}` : undefined}
+          title={expired ? t('연결 링크가\n만료됐습니다') : t('{0}\n연결하지 못했습니다', { 0: env.name })}
+          foot={env.lastVerifiedAt ? t('마지막 확인 {0}', { 0: ago(env.lastVerifiedAt) }) : undefined}
         >
           {(reason || env.needsHuman?.length) && (
             <div className={s.heroPanel}>
@@ -448,11 +449,11 @@ function ContinueConnect({ id }: { id: string }) {
           {issueError && <p className={`${s.onAlert} t-body-md`}>{issueError}</p>}
         </Hero>
         {side(
-          <ActionRow notice={verifyError} before={canVerify ? <BarPill label={issuing ? '받는 중' : env.provider === 'onprem' ? '새 명령 받기' : '링크 다시 받기'} onClick={issuing ? undefined : () => void issue()} /> : undefined}>
+          <ActionRow notice={verifyError} before={canVerify ? <BarPill label={issuing ? t('받는 중') : env.provider === 'onprem' ? t('새 명령 받기') : t('링크 다시 받기')} onClick={issuing ? undefined : () => void issue()} /> : undefined}>
             {canVerify ? (
-              <ActionPill label={busy ? '보내는 중' : '같은 계정으로 다시 확인'} icon="refresh" disabled={busy} onClick={() => void verify()} />
+              <ActionPill label={busy ? t('보내는 중') : t('같은 계정으로 다시 확인')} icon="refresh" disabled={busy} onClick={() => void verify()} />
             ) : (
-              <ActionPill label={issuing ? '받는 중' : env.provider === 'onprem' ? '새 명령 받기' : '링크 다시 받기'} icon="refresh" disabled={issuing} onClick={() => void issue()} />
+              <ActionPill label={issuing ? t('받는 중') : env.provider === 'onprem' ? t('새 명령 받기') : t('링크 다시 받기')} icon="refresh" disabled={issuing} onClick={() => void issue()} />
             )}
           </ActionRow>,
         )}
@@ -463,10 +464,10 @@ function ContinueConnect({ id }: { id: string }) {
   if (phase === 'gone') {
     return (
       <ShellLayout layout={LAYOUT}>
-        <Hero tone="stop" meta={`${vendorLine(env.provider)} · 해제됨`} title={`${env.name}\n해제된 환경입니다`} foot="해제한 환경은 다시 연결할 수 없습니다. 새로 등록해 주세요." />
+        <Hero tone="stop" meta={t('{0} · 해제됨', { 0: vendorLine(env.provider) })} title={t('{0}\n해제된 환경입니다', { 0: env.name })} foot={t('해제한 환경은 다시 연결할 수 없습니다. 새로 등록해 주세요.')} />
         {side(
           <ActionRow>
-            <ActionPill label="새로 등록하기" icon="plus" onClick={() => go(REGISTER_PATH)} />
+            <ActionPill label={t('새로 등록하기')} icon="plus" onClick={() => go(REGISTER_PATH)} />
           </ActionRow>,
         )}
       </ShellLayout>
@@ -475,29 +476,29 @@ function ContinueConnect({ id }: { id: string }) {
 
   return (
     <ShellLayout layout={LAYOUT}>
-      <Hero tone="done" meta={`${vendorLine(env.provider)} · ${CONN_LABEL[env.connectionStatus]}`} title={`${env.name}\n연결했습니다`}>
+      <Hero tone="done" meta={`${vendorLine(env.provider)} · ${CONN_LABEL[env.connectionStatus]}`} title={t('{0}\n연결했습니다', { 0: env.name })}>
         <ul className={s.heroStats}>
           {env.accountId && (
             <li>
               <span className="t-metric-lg">{env.accountId}</span>
-              <span className="t-caption c-tertiary">{env.provider === 'gcp' ? '프로젝트' : '계정'}</span>
+              <span className="t-caption c-tertiary">{env.provider === 'gcp' ? t('프로젝트') : t('계정')}</span>
             </li>
           )}
           {env.lastVerifiedAt && (
             <li>
               <span className="t-metric-lg">{ago(env.lastVerifiedAt)}</span>
-              <span className="t-caption c-tertiary">마지막 확인</span>
+              <span className="t-caption c-tertiary">{t('마지막 확인')}</span>
             </li>
           )}
         </ul>
-        {env.mock && <p className="t-body-md c-secondary">흉내 자격으로 확인했습니다. 클라우드는 읽지 않았습니다.</p>}
+        {env.mock && <p className="t-body-md c-secondary">{t('흉내 자격으로 확인했습니다. 클라우드는 읽지 않았습니다.')}</p>}
         {env.missingPermissions && env.missingPermissions.length > 0 && (
-          <p className="t-body-md c-warning">관찰 역할에 선택 권한 {env.missingPermissions.length}개가 빠졌습니다: {env.missingPermissions.slice(0, 3).join(', ')}</p>
+          <p className="t-body-md c-warning">{t('관찰 역할에 선택 권한 {0}개가 빠졌습니다: {1}', { 0: env.missingPermissions.length, 1: env.missingPermissions.slice(0, 3).join(', ') })}</p>
         )}
       </Hero>
       {side(
-        <ActionRow before={<BarPill label="환경 보기" onClick={() => go(`environments/${env.id}`)} />}>
-          <ActionPill label="이 환경에서 새 마이그레이션" onClick={() => go('migrations/new')} />
+        <ActionRow before={<BarPill label={t('환경 보기')} onClick={() => go(`environments/${env.id}`)} />}>
+          <ActionPill label={t('이 환경에서 새 마이그레이션')} onClick={() => go('migrations/new')} />
         </ActionRow>,
       )}
     </ShellLayout>

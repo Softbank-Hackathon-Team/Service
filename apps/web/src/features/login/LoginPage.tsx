@@ -6,6 +6,7 @@ import { PRODUCT_NAME } from '../../components/ui/Logo';
 import { API_BASE, auth } from '../../lib/api';
 import { AuthError, githubErrorText, githubStartUrl, takeGithubError } from '../../lib/auth';
 import s from './LoginPage.module.css';
+import { t } from '../../lib/i18n';
 
 const LOGIN: BentoLayout = { columns: ['fill', 'side'], areas: 'hero form' };
 
@@ -41,7 +42,7 @@ export function LoginPage({ notice }: { notice: string | null }) {
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (!email.trim() || !password) {
-      setError('이메일과 비밀번호를 모두 입력해 주세요.');
+      setError(t('이메일과 비밀번호를 모두 입력해 주세요.'));
       return;
     }
     setBusy(true);
@@ -49,17 +50,17 @@ export function LoginPage({ notice }: { notice: string | null }) {
     try {
       await auth.login(email.trim(), password);
     } catch (reason) {
-      setError(reason instanceof AuthError ? reason.message : '서버에 연결하지 못했습니다. 잠시 뒤 다시 시도해 주세요.');
+      setError(reason instanceof AuthError ? reason.message : t('서버에 연결하지 못했습니다. 잠시 뒤 다시 시도해 주세요.'));
       setBusy(false);
     }
   };
 
   return (
     <ConsoleLayout layout={LOGIN}>
-      <Hero tone="run" meta={`${PRODUCT_NAME} 콘솔`} title={'돌고 있는 앱을\n멈추지 않고 옮깁니다'} />
+      <Hero tone="run" meta={t('{0} 콘솔', { 0: PRODUCT_NAME })} title={t('돌고 있는 앱을\n멈추지 않고 옮깁니다')} />
       <Tile area="form">
-        <form className={s.form} onSubmit={submit} noValidate aria-label="로그인">
-          <TileHeader title="로그인" />
+        <form className={s.form} onSubmit={submit} noValidate aria-label={t('로그인')}>
+          <TileHeader title={t('로그인')} />
           {notice && (
             <p className={`${s.notice} t-body-md`} role="status">
               {notice}
@@ -67,7 +68,7 @@ export function LoginPage({ notice }: { notice: string | null }) {
           )}
           <div className={s.fields}>
             <label className={s.field}>
-              <span className="t-label-md c-secondary">이메일</span>
+              <span className="t-label-md c-secondary">{t('이메일')}</span>
               <input
                 ref={emailRef}
                 className={`${s.input} t-body-md`}
@@ -81,7 +82,7 @@ export function LoginPage({ notice }: { notice: string | null }) {
               />
             </label>
             <label className={s.field}>
-              <span className="t-label-md c-secondary">비밀번호</span>
+              <span className="t-label-md c-secondary">{t('비밀번호')}</span>
               <input
                 className={`${s.input} t-body-md`}
                 type="password"
@@ -98,8 +99,8 @@ export function LoginPage({ notice }: { notice: string | null }) {
             </div>
           </div>
           <div className={s.submit}>
-            {github && <BarPill label="GitHub로 로그인" icon="github" onClick={busy ? undefined : () => window.location.assign(githubStartUrl(API_BASE))} />}
-            <ActionPill type="submit" label={busy ? '확인 중' : '로그인'} disabled={busy} />
+            {github && <BarPill label={t('GitHub로 로그인')} icon="github" onClick={busy ? undefined : () => window.location.assign(githubStartUrl(API_BASE))} />}
+            <ActionPill type="submit" label={busy ? t('확인 중') : t('로그인')} disabled={busy} />
           </div>
         </form>
       </Tile>

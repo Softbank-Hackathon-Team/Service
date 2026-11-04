@@ -1,5 +1,6 @@
 import type { BadgeTone } from '../../components/ui/controls';
 import type { PlanAcknowledgement, PrecheckItem } from '../../lib/types';
+import { t } from '../../lib/i18n';
 
 // 보안 이식성 판정이 화면에 닿는 세 곳 (contracts portability.ts · security portability · 워커 precheck.ts):
 //   1) 명세 v2 의 security.requirements: 가져오기는 비워 두고 고객이 명세 검토에서 정한다. PATCH changes path "security" 로 통째, null = 지움
@@ -26,29 +27,29 @@ export interface SourceDbFacts { encryptedAtRest: Fact<boolean>; keyOwner: Fact<
 export const DATA_CLASSES: readonly DataClass[] = ['public', 'internal', 'personal', 'sensitive'];
 export const OPERATORS: readonly Operator[] = ['customer', 'aws', 'gcp', 'azure'];
 export const KEY_OWNERS: readonly KeyOwner[] = ['provider', 'customer'];
-export const DATA_CLASS_LABEL: Record<DataClass, string> = { public: '공개', internal: '내부', personal: '개인정보', sensitive: '민감 정보' };
-export const KEY_OWNER_LABEL: Record<KeyOwner, string> = { provider: '제공자 키', customer: '고객 키' };
-export const OPERATOR_LABEL: Record<Operator, string> = { customer: '고객(온프레)', aws: 'AWS', gcp: 'GCP', azure: 'Azure' };
+export const DATA_CLASS_LABEL: Record<DataClass, string> = { public: t('공개'), internal: t('내부'), personal: t('개인정보'), sensitive: t('민감 정보') };
+export const KEY_OWNER_LABEL: Record<KeyOwner, string> = { provider: t('제공자 키'), customer: t('고객 키') };
+export const OPERATOR_LABEL: Record<Operator, string> = { customer: t('고객(온프레)'), aws: 'AWS', gcp: 'GCP', azure: 'Azure' };
 
 // ---- 1) 요구사항 ----
 
 const operatorsText = (list: Operator[] | undefined) =>
-  list === undefined ? '제한 없음' : list.length === 0 ? '허용한 곳 없음' : list.map((op) => OPERATOR_LABEL[op]).join(', ');
+  list === undefined ? t('제한 없음') : list.length === 0 ? t('허용한 곳 없음') : list.map((op) => OPERATOR_LABEL[op]).join(', ');
 
 /** 요구사항 카드 줄. 없으면 빈 목록 */
 export function requirementRows(r: SecurityRequirements | null) {
   if (!r) return [];
   return [
-    { name: '데이터 등급', value: DATA_CLASS_LABEL[r.dataClass] ?? r.dataClass },
-    { name: '허용 국가', value: r.residency.length > 0 ? r.residency.join(', ') : '제한 없음' },
-    { name: '키 소유', value: KEY_OWNER_LABEL[r.keyOwnership] ?? r.keyOwnership },
-    { name: '운영 주체', value: operatorsText(r.operatorAllow) },
+    { name: t('데이터 등급'), value: DATA_CLASS_LABEL[r.dataClass] ?? r.dataClass },
+    { name: t('허용 국가'), value: r.residency.length > 0 ? r.residency.join(', ') : t('제한 없음') },
+    { name: t('키 소유'), value: KEY_OWNER_LABEL[r.keyOwnership] ?? r.keyOwnership },
+    { name: t('운영 주체'), value: operatorsText(r.operatorAllow) },
   ];
 }
 
 /** 카드 머리줄 요약. 없으면 "정하지 않음" (판정이 P-REQ-0 으로 고객 확인을 요청한다) */
 export const requirementsSummary = (r: SecurityRequirements | null) =>
-  r ? [DATA_CLASS_LABEL[r.dataClass] ?? r.dataClass, r.residency.length > 0 ? r.residency.join(', ') : '국가 제한 없음', KEY_OWNER_LABEL[r.keyOwnership] ?? r.keyOwnership].join(' · ') : '정하지 않음';
+  r ? [DATA_CLASS_LABEL[r.dataClass] ?? r.dataClass, r.residency.length > 0 ? r.residency.join(', ') : t('국가 제한 없음'), KEY_OWNER_LABEL[r.keyOwnership] ?? r.keyOwnership].join(' · ') : t('정하지 않음');
 
 /** 고치는 중인 값. 고르지 않은 칸은 null 로 두고 기본값을 지어내지 않는다 */
 export interface RequirementsDraft { dataClass: DataClass | null; residency: string; keyOwnership: KeyOwner | null; operatorAllow: Operator[] }
@@ -75,14 +76,14 @@ export function requirementsFrom(d: RequirementsDraft): { requirements: Security
 
 // ---- 2) 출발 DB 보안 사실 ----
 
-const FACT_NAME: Record<keyof SourceDbFacts, string> = { encryptedAtRest: '저장 암호화', keyOwner: '키 소유', tlsEnforced: 'TLS 강제' };
+const FACT_NAME: Record<keyof SourceDbFacts, string> = { encryptedAtRest: t('저장 암호화'), keyOwner: t('키 소유'), tlsEnforced: t('TLS 강제') };
 // attested 는 고객 선언이거나 제공자 문서 근거다 (어느 쪽인지는 source 글이 말한다)
-const ORIGIN_LABEL: Record<FactOrigin, string> = { measured: '읽음', attested: '선언', unknown: '모름' };
+const ORIGIN_LABEL: Record<FactOrigin, string> = { measured: t('읽음'), attested: t('선언'), unknown: t('모름') };
 
 function factValue(field: keyof SourceDbFacts, value: unknown): string {
   if (field === 'keyOwner') return KEY_OWNER_LABEL[value as KeyOwner] ?? String(value);
-  if (field === 'tlsEnforced') return value ? '강제함' : '강제 안 함';
-  return value ? '켜짐' : '꺼짐';
+  if (field === 'tlsEnforced') return value ? t('강제함') : t('강제 안 함');
+  return value ? t('켜짐') : t('꺼짐');
 }
 
 export type FactRow = { key: string; name: string; /** null = 모름 */ value: string | null; origin: string | null };
@@ -106,7 +107,7 @@ export function factRows(facts: Record<string, SourceDbFacts> | undefined) {
     }),
   );
   const unknown = rows.filter((row) => row.value === null).length;
-  return { rows, summary: rows.length === 0 ? '없음' : unknown > 0 ? `모름 ${unknown}칸` : `${rows.length}칸 읽음` };
+  return { rows, summary: rows.length === 0 ? t('없음') : unknown > 0 ? t('모름 {0}칸', { 0: unknown }) : t('{0}칸 읽음', { 0: rows.length }) };
 }
 
 // ---- 3) 사전 점검 SEC:* ----
@@ -114,10 +115,10 @@ export function factRows(facts: Record<string, SourceDbFacts> | undefined) {
 export type SecLevel = 'block' | 'warn' | 'attest' | 'advise';
 // 무거운 것부터 (security portability evaluate.ts ORDER 와 같은 순서). need = 그 단계에서 사람이 할 일
 export const SEC_LEVEL: Record<SecLevel, { label: string; tone: BadgeTone; need: string }> = {
-  block: { label: '막힘', tone: 'danger', need: '승인할 수 없습니다. 명세나 도착 환경을 바꾼 뒤 다시 점검합니다' },
-  warn: { label: '주의', tone: 'warning', need: '승인하는 사람이 위험을 받아들인다고 체크해야 승인됩니다' },
-  attest: { label: '고객 확인', tone: 'info', need: '고객이 값을 확인해 줘야 합니다. 확인받았으면 승인 전에 체크합니다' },
-  advise: { label: '참고', tone: 'neutral', need: '권장 사항입니다. 승인을 막지 않습니다' },
+  block: { label: t('막힘'), tone: 'danger', need: t('승인할 수 없습니다. 명세나 도착 환경을 바꾼 뒤 다시 점검합니다') },
+  warn: { label: t('주의'), tone: 'warning', need: t('승인하는 사람이 위험을 받아들인다고 체크해야 승인됩니다') },
+  attest: { label: t('고객 확인'), tone: 'info', need: t('고객이 값을 확인해 줘야 합니다. 확인받았으면 승인 전에 체크합니다') },
+  advise: { label: t('참고'), tone: 'neutral', need: t('권장 사항입니다. 승인을 막지 않습니다') },
 };
 const LEVEL_ORDER: readonly SecLevel[] = ['block', 'warn', 'attest', 'advise'];
 
@@ -128,7 +129,7 @@ export const isSecItem = (item: Pick<PrecheckItem, 'id'>) => item.id.startsWith(
 // DRAFT(ai): 서버 PrecheckItem 에는 판정 단계·제목·이유 칸이 따로 없다. 워커가 message 하나에 "머리말 + 제목. 이유. 근거: …" 로 싣는다
 //   (security portability/precheck.ts HEAD). 고객 확인(attest)은 level 이 warn 이라 머리말로만 구분된다. 모양이 다르면 message 를 그대로 제목으로 쓴다
 const HEAD = /^(?:FAIL|WARN|INFO) 보안( 고객 확인)? — /;
-const EVIDENCE = '. 근거: ';
+const EVIDENCE = t('. 근거: ');
 
 const levelOf = (level: PrecheckItem['level'], text: string): SecLevel =>
   level === 'block' ? 'block' : level === 'info' ? 'advise' : HEAD.exec(text)?.[1] ? 'attest' : 'warn';
@@ -168,5 +169,5 @@ export function precheckLine(item: PrecheckItem): { title: string; detail: strin
 /** 승인 확인 항목 종류 글자. SEC 경고는 위험을 받아들이는 것인지 고객 확인인지 나눠 말한다. 그 밖은 null (기본 종류 글자) */
 export function secAckLabel(ack: Pick<PlanAcknowledgement, 'kind' | 'ref' | 'text'>): string | null {
   if (ack.kind !== 'precheck_warn' || !ack.ref?.startsWith('SEC:')) return null;
-  return HEAD.exec(ack.text)?.[1] ? '보안 고객 확인' : '보안 주의';
+  return HEAD.exec(ack.text)?.[1] ? t('보안 고객 확인') : t('보안 주의');
 }

@@ -1,5 +1,6 @@
 import type { ChecklistEntry } from '../../components/ui/Checklist';
 import type { ConnectionStatus, EnvironmentView, Provider } from '../../lib/types';
+import { t } from '../../lib/i18n';
 
 // 환경 등록 흐름의 판단. 화면(ConnectPage)은 이 파일만 보고 단계를 고른다. 시험은 test/connect-model.test.ts
 // 서버 흐름: POST /environments(draft) → 연결 링크(AWS·GCP) 또는 Agent 등록 토큰(온프레) → 고객이 역할·Agent 를 만듦
@@ -9,9 +10,9 @@ export type ConnectableProvider = Exclude<Provider, 'azure_mock'>;
 
 /** 등록할 수 있는 곳. Azure 는 모의만 있어 등록하지 않는다. */
 export const CONNECTABLE: { provider: ConnectableProvider; label: string; detail: string }[] = [
-  { provider: 'aws', label: 'AWS', detail: '계정에 스택 하나를 만들어 관찰 역할과 실행 역할을 엽니다' },
-  { provider: 'gcp', label: 'GCP', detail: 'Cloud Shell 에서 명령 한 줄로 프로젝트 권한을 엽니다' },
-  { provider: 'onprem', label: '온프레 k3s', detail: '고객 클러스터에 Agent 를 설치해 연결합니다' },
+  { provider: 'aws', label: 'AWS', detail: t('계정에 스택 하나를 만들어 관찰 역할과 실행 역할을 엽니다') },
+  { provider: 'gcp', label: 'GCP', detail: t('Cloud Shell 에서 명령 한 줄로 프로젝트 권한을 엽니다') },
+  { provider: 'onprem', label: t('온프레 k3s'), detail: t('고객 클러스터에 Agent 를 설치해 연결합니다') },
 ];
 
 export const providerLabel = (provider: Provider) => CONNECTABLE.find((item) => item.provider === provider)?.label ?? provider;
@@ -32,11 +33,11 @@ export type FormCheck<K extends string> = { ok: boolean; errors: Partial<Record<
 export function checkEnvForm(provider: ConnectableProvider, form: EnvForm): FormCheck<keyof EnvForm> {
   const errors: Partial<Record<keyof EnvForm, string>> = {};
   const name = form.name.trim();
-  if (!name) errors.name = '이름을 적어 주세요';
-  else if (name.length > 64) errors.name = '64자까지입니다';
+  if (!name) errors.name = t('이름을 적어 주세요');
+  else if (name.length > 64) errors.name = t('64자까지입니다');
   if (provider === 'aws') {
-    if (!AWS_REGION_RE.test(form.region.trim())) errors.region = '예: ap-northeast-2';
-    if (!EKS_CLUSTER_RE.test(form.clusterName.trim())) errors.clusterName = '영문·숫자로 시작하고 영문·숫자·-·_ 로 100자까지입니다';
+    if (!AWS_REGION_RE.test(form.region.trim())) errors.region = t('예: ap-northeast-2');
+    if (!EKS_CLUSTER_RE.test(form.clusterName.trim())) errors.clusterName = t('영문·숫자로 시작하고 영문·숫자·-·_ 로 100자까지입니다');
   }
   return { ok: Object.keys(errors).length === 0, errors };
 }
@@ -48,11 +49,11 @@ export function checkAccount(provider: ConnectableProvider, form: AccountForm): 
   const errors: Partial<Record<keyof AccountForm, string>> = {};
   const accountId = provider === 'aws' ? form.accountId.replace(/[\s-]/g, '') : form.accountId.trim();
   const target = form.targetProjectId.trim();
-  if (provider === 'aws' && !AWS_ACCOUNT_RE.test(accountId)) errors.accountId = '숫자 12자리입니다';
+  if (provider === 'aws' && !AWS_ACCOUNT_RE.test(accountId)) errors.accountId = t('숫자 12자리입니다');
   if (provider === 'gcp') {
-    if (!GCP_PROJECT_RE.test(accountId)) errors.accountId = '프로젝트 ID 모양이 아닙니다 (소문자로 시작, 6~30자)';
-    if (target && !GCP_PROJECT_RE.test(target)) errors.targetProjectId = '프로젝트 ID 모양이 아닙니다 (소문자로 시작, 6~30자)';
-    else if (target && target === accountId) errors.targetProjectId = '읽을 프로젝트와 다른 프로젝트여야 합니다';
+    if (!GCP_PROJECT_RE.test(accountId)) errors.accountId = t('프로젝트 ID 모양이 아닙니다 (소문자로 시작, 6~30자)');
+    if (target && !GCP_PROJECT_RE.test(target)) errors.targetProjectId = t('프로젝트 ID 모양이 아닙니다 (소문자로 시작, 6~30자)');
+    else if (target && target === accountId) errors.targetProjectId = t('읽을 프로젝트와 다른 프로젝트여야 합니다');
   }
   return { ok: Object.keys(errors).length === 0, errors, accountId, ...(target ? { targetProjectId: target } : {}) };
 }
@@ -98,11 +99,11 @@ export function connectSteps(
     return human ? 'waiting' : 'active';
   };
   return [
-    { status: mark(0, true), label: '어디를 연결할지', detail: o.provider ? providerLabel(o.provider) : undefined },
-    { status: mark(1, true), label: '환경 이름', detail: o.name },
-    { status: mark(2, true), label: onprem ? 'Agent 설치' : '권한 열기', detail: '고객 쪽' },
+    { status: mark(0, true), label: t('어디를 연결할지'), detail: o.provider ? providerLabel(o.provider) : undefined },
+    { status: mark(1, true), label: t('환경 이름'), detail: o.name },
+    { status: mark(2, true), label: onprem ? t('Agent 설치') : t('권한 열기'), detail: t('고객 쪽') },
     // 온프레는 Agent 가 붙는 순간 연결되므로 확인 칸을 따로 기다리지 않는다
-    { status: onprem && at === 'link' ? 'pending' : mark(3, false), label: '연결 확인' },
+    { status: onprem && at === 'link' ? 'pending' : mark(3, false), label: t('연결 확인') },
   ];
 }
 

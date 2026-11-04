@@ -29,19 +29,20 @@ import {
 } from './model';
 import { ShellLayout } from '../shell/ShellLayout';
 import s from './DashboardPage.module.css';
+import { t } from '../../lib/i18n';
 
 const DASHBOARD: BentoLayout = { columns: ['fill', 'side'], areas: 'hero migrations' };
 
 const HEALTH: Record<Health, { label: string; tone: 'success' | 'warning' | 'neutral' }> = {
-  healthy: { label: '정상', tone: 'success' },
-  degraded: { label: '불안정', tone: 'warning' },
-  unknown: { label: '확인 불가', tone: 'neutral' },
+  healthy: { label: t('정상'), tone: 'success' },
+  degraded: { label: t('불안정'), tone: 'warning' },
+  unknown: { label: t('확인 불가'), tone: 'neutral' },
 };
 
 // 검토를 기다리는 마이그레이션도 진행 중이다(사람 검토 때문에 멈춰 있을 뿐). 그래서 한 카드에 두고, 검토가 필요한 줄을 위에 둔다
 const CARDS: { id: 'active' | 'done'; label: string; buckets: MigrationBucket[]; defaultOpen: boolean }[] = [
-  { id: 'active', label: '진행 중', buckets: ['human', 'running'], defaultOpen: true },
-  { id: 'done', label: '히스토리', buckets: ['done'], defaultOpen: false },
+  { id: 'active', label: t('진행 중'), buckets: ['human', 'running'], defaultOpen: true },
+  { id: 'done', label: t('히스토리'), buckets: ['done'], defaultOpen: false },
 ];
 
 async function observe(env: EnvironmentView): Promise<EnvObservation> {
@@ -56,7 +57,7 @@ async function observe(env: EnvironmentView): Promise<EnvObservation> {
 function EnvRow({ env, seen }: { env: EnvironmentView; seen: EnvObservation | undefined }) {
   const connected = env.connectionStatus === 'connected';
   const problem = connected ? seen?.problem : connectionReasonText(env.failureReason);
-  const detail = !seen ? (connected ? '확인 중' : null) : seen.health === 'unknown' ? null : [`자원 ${seen.resources}개`, seen.region].filter(Boolean).join(' · ');
+  const detail = !seen ? (connected ? t('확인 중') : null) : seen.health === 'unknown' ? null : [t('자원 {0}개', { 0: seen.resources }), seen.region].filter(Boolean).join(' · ');
   return (
     <li>
       <button type="button" className={s.envRow} onClick={() => go(`environments/${env.id}`)}>
@@ -69,7 +70,7 @@ function EnvRow({ env, seen }: { env: EnvironmentView; seen: EnvObservation | un
         <span className={s.badges}>
           <Badge tone={connected ? 'neutral' : 'danger'}>{CONN_LABEL[env.connectionStatus]}</Badge>
           {connected && seen && <Badge tone={HEALTH[seen.health].tone}>{HEALTH[seen.health].label}</Badge>}
-          {seen?.mock && <Badge>모의</Badge>}
+          {seen?.mock && <Badge>{t('모의')}</Badge>}
         </span>
       </div>
       {detail && <p className="t-body-sm c-secondary">{detail}</p>}
@@ -91,7 +92,7 @@ export function MigrationRow({ migration, envName, reviewTag = false }: { migrat
         <span className={s.migrationText}>
           <span className={s.titleRow}>
             <span className="t-label-md">{action ?? LABEL[migration.status]}</span>
-            {reviewTag && bucketOf(migration) === 'human' && <span className={`${s.reviewTag} t-caption`}>검토 필요</span>}
+            {reviewTag && bucketOf(migration) === 'human' && <span className={`${s.reviewTag} t-caption`}>{t('검토 필요')}</span>}
           </span>
           <span className="t-caption c-tertiary">
             {envName(migration.sourceEnvId)} → {envName(migration.targetEnvId)}
@@ -151,18 +152,18 @@ export function DashboardPage() {
     <ShellLayout layout={DASHBOARD}>
       <Hero
         tone="run"
-        meta="현재 환경"
+        meta={t('현재 환경')}
         step={String(list.length)}
         title={
           loadingEnvs
-            ? '환경을\n확인하고 있습니다'
+            ? t('환경을\n확인하고 있습니다')
             : envs.error && !envs.data
-              ? '환경을\n읽지 못했습니다'
+              ? t('환경을\n읽지 못했습니다')
               : envHeadline(list, seen)
         }
       >
         {envs.error && !envs.data ? (
-          <BarPill label="다시 시도" icon="refresh" onClick={() => void envs.reload()} />
+          <BarPill label={t('다시 시도')} icon="refresh" onClick={() => void envs.reload()} />
         ) : (
           list.length > 0 && (
             <ul className={`${s.envList} scroll-fade`}>
@@ -175,17 +176,17 @@ export function DashboardPage() {
       </Hero>
       <Stack area="migrations">
         {migrations.error && !migrations.data ? (
-          <FoldTile title="마이그레이션 목록">
+          <FoldTile title={t('마이그레이션 목록')}>
             <div className={s.listError}>
-              <p className="t-body-md c-secondary">마이그레이션 목록을 읽지 못했습니다.</p>
-              <BarPill label="다시 시도" icon="refresh" onClick={() => void migrations.reload()} />
+              <p className="t-body-md c-secondary">{t('마이그레이션 목록을 읽지 못했습니다.')}</p>
+              <BarPill label={t('다시 시도')} icon="refresh" onClick={() => void migrations.reload()} />
             </div>
           </FoldTile>
         ) : (
           CARDS.map(({ id, label, buckets, defaultOpen }) => {
             const items = buckets.flatMap((bucket) => groups[bucket]);
             return (
-              <FoldTile key={id} title={label} summary={`${items.length}건`} defaultOpen={defaultOpen}>
+              <FoldTile key={id} title={label} summary={t('{0}건', { 0: items.length })} defaultOpen={defaultOpen}>
                 {items.length > 0 ? (
                   <ul className={s.migrationList}>
                     {items.map((migration) => (
@@ -194,7 +195,7 @@ export function DashboardPage() {
                   </ul>
                 ) : (
                   <p className={`${s.empty} t-body-sm c-tertiary`}>
-                    {id === 'active' ? ((migrations.data && note) || '돌아가는 마이그레이션이 없습니다.') : '아직 없습니다.'}
+                    {id === 'active' ? ((migrations.data && note) || t('돌아가는 마이그레이션이 없습니다.')) : t('아직 없습니다.')}
                   </p>
                 )}
               </FoldTile>
@@ -202,7 +203,7 @@ export function DashboardPage() {
           })
         )}
         <ActionRow>
-          <ActionPill label="새 마이그레이션 시작" icon="plus" onClick={() => go('migrations/new')} />
+          <ActionPill label={t('새 마이그레이션 시작')} icon="plus" onClick={() => go('migrations/new')} />
         </ActionRow>
       </Stack>
     </ShellLayout>

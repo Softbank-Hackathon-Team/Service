@@ -1,3 +1,4 @@
+import { t } from '../lib/i18n';
 export type Page = 'dashboard' | 'environments' | 'migrations' | 'audit' | 'agent' | 'settings' | 'designSystem';
 
 export type Route =
@@ -10,11 +11,11 @@ export type Route =
   | { page: 'migrations'; view: 'cost'; id: string };
 
 export const NAV_ITEMS: { id: Page; label: string }[] = [
-  { id: 'dashboard', label: '대시보드' },
-  { id: 'environments', label: '환경' },
-  { id: 'migrations', label: '마이그레이션' },
-  { id: 'audit', label: '감사' },
-  { id: 'agent', label: '에이전트' },
+  { id: 'dashboard', label: t('대시보드') },
+  { id: 'environments', label: t('환경') },
+  { id: 'migrations', label: t('마이그레이션') },
+  { id: 'audit', label: t('감사') },
+  { id: 'agent', label: t('에이전트') },
 ];
 
 const PICK_PAGES = ['environments', 'audit', 'agent'] as const;

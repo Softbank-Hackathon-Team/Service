@@ -10,19 +10,20 @@ import { useChosenMigration } from '../shell/useChosenMigration';
 import { agentSummary, isRunning, RemediateBody, useAgentReview } from './AgentResult';
 import { agentBlock, spendRows, spendText } from './model';
 import s from '../common/page.module.css';
+import { t } from '../../lib/i18n';
 
 const LAYOUT: BentoLayout = { columns: ['fill', 'side', 'side'], areas: 'hero steps side' };
 
 const TOOL_LABEL: Record<string, string> = {
-  sandbox_get: '샌드박스 상태 보기',
-  sandbox_logs: '로그 읽기',
-  repo_read: '배포 파일 읽기',
-  repo_edit: '배포 파일 고치기',
-  sandbox_apply: '샌드박스에 적용',
-  run_check: '안정성 확인',
-  finish: '결론',
+  sandbox_get: t('샌드박스 상태 보기'),
+  sandbox_logs: t('로그 읽기'),
+  repo_read: t('배포 파일 읽기'),
+  repo_edit: t('배포 파일 고치기'),
+  sandbox_apply: t('샌드박스에 적용'),
+  run_check: t('안정성 확인'),
+  finish: t('결론'),
 };
-const RISK = { high: { label: '높음', tone: 'danger' }, medium: { label: '중간', tone: 'warning' }, low: { label: '낮음', tone: 'neutral' } } as const;
+const RISK = { high: { label: t('높음'), tone: 'danger' }, medium: { label: t('중간'), tone: 'warning' }, low: { label: t('낮음'), tone: 'neutral' } } as const;
 
 function AgentBody({ migrationId }: { migrationId: string }) {
   const review = useAgentReview(migrationId);
@@ -44,28 +45,28 @@ function AgentBody({ migrationId }: { migrationId: string }) {
   const title = block
     ? block.title
     : running
-      ? '샌드박스에서\n점검하고 있습니다'
+      ? t('샌드박스에서\n점검하고 있습니다')
       : result?.outcome === 'proposed'
-        ? '수정안을\n찾았습니다'
+        ? t('수정안을\n찾았습니다')
         : result?.outcome === 'no_change'
-          ? '고칠 것을\n찾지 못했습니다'
+          ? t('고칠 것을\n찾지 못했습니다')
           : result?.outcome === 'gave_up'
-            ? '원인을\n찾지 못했습니다'
-            : '격리된 곳에서\n점검하고 제안합니다';
+            ? t('원인을\n찾지 못했습니다')
+            : t('격리된 곳에서\n점검하고 제안합니다');
   return (
     <>
-      <Hero tone={blocked ? 'stop' : 'run'} meta="AI 에이전트" title={title} foot="운영 환경은 읽지 않습니다. 적용은 사람이 합니다" />
+      <Hero tone={blocked ? 'stop' : 'run'} meta={t('AI 에이전트')} title={title} foot={t('운영 환경은 읽지 않습니다. 적용은 사람이 합니다')} />
       <Tile area="steps" compact scroll>
-        <TileHeader title="에이전트가 한 일" />
-        {steps.length > 0 ? <Timeline items={steps} /> : <p className="t-body-sm c-tertiary">아직 돌린 기록이 없습니다.</p>}
+        <TileHeader title={t('에이전트가 한 일')} />
+        {steps.length > 0 ? <Timeline items={steps} /> : <p className="t-body-sm c-tertiary">{t('아직 돌린 기록이 없습니다.')}</p>}
       </Tile>
       <Stack area="side">
-        <FoldTile title="장애 점검 결과" summary={agentSummary(result)}>
+        <FoldTile title={t('장애 점검 결과')} summary={agentSummary(result)}>
           <div className={s.agent}>
             <RemediateBody view={view} />
           </div>
         </FoldTile>
-        <FoldTile title="명세 초안" summary={draft ? `위험 ${draft.risks.length}건` : '아직 없음'} defaultOpen={false}>
+        <FoldTile title={t('명세 초안')} summary={draft ? t('위험 {0}건', { 0: draft.risks.length }) : t('아직 없음')} defaultOpen={false}>
           <div className={s.agent}>
             {draft?.risks.map((risk) => (
               <div key={risk.id} className={s.formRow}>
@@ -75,12 +76,12 @@ function AgentBody({ migrationId }: { migrationId: string }) {
             ))}
             {draft?.planExplanation && <p className="t-body-sm c-secondary">{draft.planExplanation}</p>}
             <div>
-              <BarPill label="명세 초안 다시 만들기" icon="refresh" onClick={busy || blocked ? undefined : () => void run(() => api.agentRun(migrationId, undefined, 'spec_draft'))} />
+              <BarPill label={t('명세 초안 다시 만들기')} icon="refresh" onClick={busy || blocked ? undefined : () => void run(() => api.agentRun(migrationId, undefined, 'spec_draft'))} />
             </div>
           </div>
         </FoldTile>
         {spend && (
-          <FoldTile key={`spend-${spend.exceeded}`} title="AI 지출" summary={spendText(spend)} defaultOpen={spend.exceeded}>
+          <FoldTile key={`spend-${spend.exceeded}`} title={t('AI 지출')} summary={spendText(spend)} defaultOpen={spend.exceeded}>
             <ul className={s.rows}>
               {spendRows(spend).map((row) => (
                 <li key={row.name} className={s.row}>
@@ -89,24 +90,24 @@ function AgentBody({ migrationId }: { migrationId: string }) {
                 </li>
               ))}
             </ul>
-            <p className={`${s.note} t-caption c-tertiary`}>실제 AI 호출로 낸 추정 금액입니다. 상한에 닿으면 서버가 새 점검을 받지 않습니다.</p>
+            <p className={`${s.note} t-caption c-tertiary`}>{t('실제 AI 호출로 낸 추정 금액입니다. 상한에 닿으면 서버가 새 점검을 받지 않습니다.')}</p>
           </FoldTile>
         )}
-        <FoldTile title="점검 지시" summary="선택" defaultOpen={false}>
+        <FoldTile title={t('점검 지시')} summary={t('선택')} defaultOpen={false}>
           <div className={s.form}>
             <textarea
               className={`${s.textarea} t-body-md`}
-              aria-label="점검 지시"
+              aria-label={t('점검 지시')}
               maxLength={2000}
               value={task}
-              placeholder="예: 도착 쪽 앱이 502를 냅니다. 원인을 찾아 주세요."
+              placeholder={t('예: 도착 쪽 앱이 502를 냅니다. 원인을 찾아 주세요.')}
               onChange={(event) => setTask(event.target.value)}
             />
           </div>
         </FoldTile>
         <ActionRow notice={error}>
           <ActionPill
-            label={block ? block.button : busy || running ? '점검 중' : result ? '다시 점검' : '수정안 받기'}
+            label={block ? block.button : busy || running ? t('점검 중') : result ? t('다시 점검') : t('수정안 받기')}
             icon="bot"
             disabled={busy || running || blocked}
             onClick={() => void run(() => api.agentRun(migrationId, task.trim() || undefined))}
@@ -122,8 +123,8 @@ export function AgentPage({ id }: { id: string | null }) {
   if (!chosen) {
     return (
       <ShellLayout layout={LAYOUT}>
-        <Hero tone="run" meta="AI 에이전트" title={loading ? '마이그레이션을\n읽고 있습니다' : '점검할 마이그레이션이\n없습니다'} />
-        {loading && <SkeletonTile area="steps" title="에이전트가 한 일" rows={6} />}
+        <Hero tone="run" meta={t('AI 에이전트')} title={loading ? t('마이그레이션을\n읽고 있습니다') : t('점검할 마이그레이션이\n없습니다')} />
+        {loading && <SkeletonTile area="steps" title={t('에이전트가 한 일')} rows={6} />}
       </ShellLayout>
     );
   }

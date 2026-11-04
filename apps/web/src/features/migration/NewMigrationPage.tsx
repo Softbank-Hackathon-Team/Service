@@ -30,6 +30,7 @@ import {
   type ScopeInput,
 } from './source';
 import s from '../common/page.module.css';
+import { t } from '../../lib/i18n';
 
 // 출발을 고르기 전에도 칸은 그대로 두고, 고른 뒤에 찾은 자원과 빌릴 권한이 오른쪽 칸을 채운다.
 const LAYOUT: BentoLayout = { columns: ['fill', 'side'], areas: 'hero found' };
@@ -40,13 +41,13 @@ const LAYOUT: BentoLayout = { columns: ['fill', 'side'], areas: 'hero found' };
  */
 function CreateSteps({ source, reading, scope, target }: { source?: string; reading?: boolean; scope?: string; target?: string }) {
   const items: ChecklistEntry[] = [
-    { status: source ? 'done' : 'waiting', label: '출발 환경', detail: source },
-    { status: !source ? 'pending' : scope ? 'done' : reading ? 'active' : 'waiting', label: '옮길 서비스', detail: scope },
-    { status: !scope ? 'pending' : target ? 'done' : 'waiting', label: '도착 환경', detail: target },
+    { status: source ? 'done' : 'waiting', label: t('출발 환경'), detail: source },
+    { status: !source ? 'pending' : scope ? 'done' : reading ? 'active' : 'waiting', label: t('옮길 서비스'), detail: scope },
+    { status: !scope ? 'pending' : target ? 'done' : 'waiting', label: t('도착 환경'), detail: target },
   ];
   const current = items.findIndex((item) => item.status !== 'done');
   return (
-    <FoldTile title="새 마이그레이션" summary={`${current === -1 ? items.length : current + 1}/${items.length}`}>
+    <FoldTile title={t('새 마이그레이션')} summary={`${current === -1 ? items.length : current + 1}/${items.length}`}>
       <div className={s.agent}>
         <Checklist items={items} />
       </div>
@@ -99,7 +100,7 @@ function SourceRow({ env, onPick }: { env: EnvironmentView; onPick: () => void }
     <PickRow
       icon={envIcon(env)}
       title={title ?? env.name}
-      caption={title ? where : `${vendorLine(env.provider)} · ${inventory.loading ? '서비스를 읽는 중' : '서비스를 아직 읽지 못함'}`}
+      caption={title ? where : `${vendorLine(env.provider)} · ${inventory.loading ? t('서비스를 읽는 중') : t('서비스를 아직 읽지 못함')}`}
       label={`${title ?? env.name} · ${where}`}
       onPick={onPick}
       transitionName={`env-${env.id}`}
@@ -110,8 +111,8 @@ function SourceRow({ env, onPick }: { env: EnvironmentView; onPick: () => void }
 export function FoundResources({ cloud }: { cloud: CloudInventory }) {
   if (cloud.status === 'unavailable') {
     return (
-      <FoldTile title="찾은 자원" summary="읽지 못함">
-        <p className={`${s.note} t-body-sm c-secondary`}>{cloud.reason ?? '자원을 읽지 못했습니다.'} 마이그레이션을 만들면 다시 읽습니다.</p>
+      <FoldTile title={t('찾은 자원')} summary={t('읽지 못함')}>
+        <p className={`${s.note} t-body-sm c-secondary`}>{t('{0} 마이그레이션을 만들면 다시 읽습니다.', { 0: cloud.reason ?? t('자원을 읽지 못했습니다.') })}</p>
       </FoldTile>
     );
   }
@@ -120,8 +121,8 @@ export function FoundResources({ cloud }: { cloud: CloudInventory }) {
       {cloud.groups.filter((group) => group.items.length > 0 || group.error).map((group, index) => (
         <FoldTile
           key={`${group.category ?? ''}-${index}`}
-          title={group.category ? CATEGORY_LABEL[group.category] : (group.service ?? '자원')}
-          summary={group.error ? '읽지 못함' : `${group.items.length}개`}
+          title={group.category ? CATEGORY_LABEL[group.category] : (group.service ?? t('자원'))}
+          summary={group.error ? t('읽지 못함') : t('{0}개', { 0: group.items.length })}
         >
           {group.error ? (
             <p className={`${s.note} t-body-sm c-warning`}>{group.error}</p>
@@ -158,10 +159,10 @@ function ScopeForm({ input, errors, onChange }: { input: ScopeInput; errors: Ret
   );
   return (
     <div className={s.fieldGrid}>
-      {field('cluster', '클러스터', 'EKS·GKE 클러스터 이름', 'shop-eks')}
-      {field('namespaces', '네임스페이스', '여럿이면 쉼표로', 'shop')}
-      {field('database', 'DB', 'RDS·Cloud SQL 인스턴스 또는 CNPG 네임스페이스/이름', 'shop-db')}
-      {field('appName', '앱 이름', '도착 자원 이름의 뿌리. 비우면 자동', 'shop')}
+      {field('cluster', t('클러스터'), t('EKS·GKE 클러스터 이름'), 'shop-eks')}
+      {field('namespaces', t('네임스페이스'), t('여럿이면 쉼표로'), 'shop')}
+      {field('database', 'DB', t('RDS·Cloud SQL 인스턴스 또는 CNPG 네임스페이스/이름'), 'shop-db')}
+      {field('appName', t('앱 이름'), t('도착 자원 이름의 뿌리. 비우면 자동'), 'shop')}
     </div>
   );
 }
@@ -199,14 +200,14 @@ export function NewMigrationPage() {
     const unfinished = all.filter((env) => env.connectionStatus !== 'connected' && env.connectionStatus !== 'disconnected').length;
     return (
       <ShellLayout layout={LAYOUT}>
-        <Hero tone="run" meta="새 마이그레이션" title={empty ? '연결된 환경이\n없습니다' : '어디에서\n옮길까요?'}>
+        <Hero tone="run" meta={t('새 마이그레이션')} title={empty ? t('연결된 환경이\n없습니다') : t('어디에서\n옮길까요?')}>
           {envs.error != null && !envs.data && <p className={`${s.error} t-body-md`}>{errorText(envs.error)}</p>}
           <div className={s.pickList}>
             {connected.map((env) => (
               <SourceRow key={env.id} env={env} onPick={() => withTransition(() => setSourceId(env.id))} />
             ))}
             {unfinished > 0 && (
-              <p className={`${s.pickNote} t-caption c-tertiary`}>연결이 끝나지 않은 환경 {unfinished}개는 여기 보이지 않습니다. 환경 화면에서 이어서 연결합니다.</p>
+              <p className={`${s.pickNote} t-caption c-tertiary`}>{t('연결이 끝나지 않은 환경 {0}개는 여기 보이지 않습니다. 환경 화면에서 이어서 연결합니다.', { 0: unfinished })}</p>
             )}
             {!envs.loading && <RegisterEnvEntry />}
           </div>
@@ -220,18 +221,18 @@ export function NewMigrationPage() {
 
   const software = softwareTitle(softwareOf(source.provider, inventory.data));
   // 서비스 이름을 모르면 환경 이름만 (같은 이름을 두 번 쓰지 않는다)
-  const departure = software ? `${software} · ${source.name}에서 출발` : `${source.name}에서 출발`;
+  const departure = software ? t('{0} · {1}에서 출발', { 0: software, 1: source.name }) : t('{0}에서 출발', { 0: source.name });
   // 상단 바에는 한 단계 뒤로 가는 알약 하나만 둔다 (둘을 두면 1280px 에서 바가 넘친다)
-  const sourcePill = <BarPill label={`${source.name}에서 출발 · 다시 고르기`} onClick={reset} />;
+  const sourcePill = <BarPill label={t('{0}에서 출발 · 다시 고르기', { 0: source.name })} onClick={reset} />;
   const found = inventory.loading ? (
-    <FoldTile title="찾은 자원" summary="읽는 중">
-      <p className={`${s.note} t-body-sm c-secondary`}>{source.name}의 자원을 읽고 있습니다.</p>
+    <FoldTile title={t('찾은 자원')} summary={t('읽는 중')}>
+      <p className={`${s.note} t-body-sm c-secondary`}>{t('{0}의 자원을 읽고 있습니다.', { 0: source.name })}</p>
     </FoldTile>
   ) : inventory.data ? (
     <FoundResources cloud={inventory.data.cloud} />
   ) : (
-    <FoldTile title="찾은 자원" summary="읽지 못함">
-      <p className={`${s.note} t-body-sm c-secondary`}>{errorText(inventory.error)} 마이그레이션을 만들면 다시 읽습니다.</p>
+    <FoldTile title={t('찾은 자원')} summary={t('읽지 못함')}>
+      <p className={`${s.note} t-body-sm c-secondary`}>{t('{0} 마이그레이션을 만들면 다시 읽습니다.', { 0: errorText(inventory.error) })}</p>
     </FoldTile>
   );
 
@@ -248,7 +249,7 @@ export function NewMigrationPage() {
     };
     return (
       <ShellLayout layout={LAYOUT} barLeft={sourcePill}>
-        <Hero tone="run" meta={`${vendorLine(source.provider)} · ${source.name}`} title={'무엇을\n옮길까요?'}>
+        <Hero tone="run" meta={`${vendorLine(source.provider)} · ${source.name}`} title={t('무엇을\n옮길까요?')}>
           <div className={s.pickList}>
             <PickRow icon="list" title={AUTO_SCOPE.label} caption={AUTO_SCOPE.detail} onPick={() => pickScope(AUTO_SCOPE)} />
             {choices.map((choice) => (
@@ -256,13 +257,13 @@ export function NewMigrationPage() {
             ))}
             {!inventory.loading && choices.length === 0 && (
               <p className={`${s.pickNote} t-caption c-tertiary`}>
-                {inventory.data?.cloud.status === 'unavailable' ? '자원을 읽지 못해 후보가 없습니다.' : '고를 클러스터·네임스페이스를 찾지 못했습니다.'} 자동으로 고르거나 직접 적어 주세요.
+                {t('{0} 자동으로 고르거나 직접 적어 주세요.', { 0: inventory.data?.cloud.status === 'unavailable' ? t('자원을 읽지 못해 후보가 없습니다.') : t('고를 클러스터·네임스페이스를 찾지 못했습니다.') })}
               </p>
             )}
             <PickRow
               icon="list"
-              title="직접 적기"
-              caption="클러스터·네임스페이스·DB 이름을 압니다"
+              title={t('직접 적기')}
+              caption={t('클러스터·네임스페이스·DB 이름을 압니다')}
               selected={manual}
               onPick={() => withTransition(() => setManual(!manual))}
             />
@@ -274,7 +275,7 @@ export function NewMigrationPage() {
           {found}
           {manual && (
             <ActionRow>
-              <ActionPill label="이 범위로 다음" onClick={useManual} />
+              <ActionPill label={t('이 범위로 다음')} onClick={useManual} />
             </ActionRow>
           )}
         </Stack>
@@ -302,7 +303,7 @@ export function NewMigrationPage() {
       layout={LAYOUT}
       barLeft={
         <BarPill
-          label={`${source.name} · ${scope.key === 'auto' ? '자동 범위' : scope.label} · 다시 고르기`}
+          label={t('{0} · {1} · 다시 고르기', { 0: source.name, 1: scope.key === 'auto' ? t('자동 범위') : scope.label })}
           onClick={() =>
             withTransition(() => {
               setScope(null);
@@ -313,7 +314,7 @@ export function NewMigrationPage() {
         />
       }
     >
-      <Hero tone="run" meta={departure} title={options.length === 0 ? '옮겨 갈 환경이\n없습니다' : '어디로 옮길까요?'}>
+      <Hero tone="run" meta={departure} title={options.length === 0 ? t('옮겨 갈 환경이\n없습니다') : t('어디로 옮길까요?')}>
         <div className={s.pickList}>
           {options.map((env) => {
             const note = borrowNote(env);
@@ -332,7 +333,7 @@ export function NewMigrationPage() {
           })}
           {sameVendor.length > 0 && (
             <p className={`${s.pickNote} t-caption c-tertiary`}>
-              같은 {vendorLine(source.provider)} 안의 마이그레이션은 지금 지원하지 않아 {sameVendor.map((env) => env.name).join(', ')}은(는) 뺐습니다.
+              {t('같은 {0} 안의 마이그레이션은 지금 지원하지 않아 {1}은(는) 뺐습니다.', { 0: vendorLine(source.provider), 1: sameVendor.map((env) => env.name).join(', ') })}
             </p>
           )}
           <RegisterEnvEntry />
@@ -341,28 +342,28 @@ export function NewMigrationPage() {
       <Stack area="found">
         <CreateSteps source={source.name} scope={scope.label} target={target?.name} />
         {Object.keys(scope.scope).length > 0 && (
-          <FoldTile title="옮길 서비스" summary={scope.label}>
+          <FoldTile title={t('옮길 서비스')} summary={scope.label}>
             <p className={`${s.note} t-body-sm c-secondary`}>{scopeSummary(scope.scope)}</p>
           </FoldTile>
         )}
-        <FoldTile title="빌릴 권한" summary="단계마다 짧게">
+        <FoldTile title={t('빌릴 권한')} summary={t('단계마다 짧게')}>
           <ul className={s.rows}>
             <li className={s.row}>
-              <span className="t-label-md">출발 · {source.name}</span>
-              <span className="t-caption c-tertiary">관찰 역할 · 읽기만</span>
+              <span className="t-label-md">{t('출발 · {0}', { 0: source.name })}</span>
+              <span className="t-caption c-tertiary">{t('관찰 역할 · 읽기만')}</span>
             </li>
             <li className={s.row}>
-              <span className="t-label-md">도착 · {target?.name ?? '고르면 보임'}</span>
-              <span className="t-caption c-tertiary">실행 역할 · 자원 만들기와 배포</span>
+              <span className="t-label-md">{t('도착 · {0}', { 0: target?.name ?? t('고르면 보임') })}</span>
+              <span className="t-caption c-tertiary">{t('실행 역할 · 자원 만들기와 배포')}</span>
             </li>
           </ul>
           <p className={`${s.note} t-body-sm c-secondary`}>
-            마이그레이션을 만들면 가져오기가 바로 출발 관찰 역할을 빌려 읽습니다. 실행 역할은 승인한 뒤 단계마다 15분씩 빌리고, 마이그레이션 화면 "보안" 카드의 임시 권한에 남습니다.
+            {t('마이그레이션을 만들면 가져오기가 바로 출발 관찰 역할을 빌려 읽습니다. 실행 역할은 승인한 뒤 단계마다 15분씩 빌리고, 마이그레이션 화면 "보안" 카드의 임시 권한에 남습니다.')}
           </p>
         </FoldTile>
         <ActionRow notice={error}>
           <ActionPill
-            label={busy ? '만드는 중' : target ? `${target.name}로 옮기기` : '도착지를 고르세요'}
+            label={busy ? t('만드는 중') : target ? t('{0}로 옮기기', { 0: target.name }) : t('도착지를 고르세요')}
             disabled={!target || busy}
             onClick={() => void create()}
           />

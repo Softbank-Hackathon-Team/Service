@@ -33,7 +33,8 @@ const TAG: Record<Locale, string> = { ko: 'ko-KR', en: 'en-US', ja: 'ja-JP' };
 export const localeTag = () => TAG[current];
 
 /** 원문(한국어)을 지금 언어로. params 의 값으로 {이름} 자리를 채운다 */
-export function t(source: string, params?: Record<string, string | number>): string {
+// 자리값은 템플릿 문자열과 같게 String() 으로 바꾼다 (null·undefined 도 예전과 같은 글자)
+export function t(source: string, params?: Record<string, unknown>): string {
   let text = source;
   if (current !== 'ko') {
     const entry = TABLES[current][source];

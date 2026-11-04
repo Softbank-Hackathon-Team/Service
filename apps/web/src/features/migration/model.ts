@@ -15,6 +15,7 @@ import {
   type TrafficSummary,
 } from '../../lib/types';
 import type { ChecklistEntry } from '../../components/ui/Checklist';
+import { t } from '../../lib/i18n';
 
 export type MigrationSpec = {
   app?: { name?: string };
@@ -118,10 +119,10 @@ export function ackState(acks: readonly { id: string }[] | undefined, checked: R
 
 /** 승인 버튼 글자. 모자라면 무엇이 모자란지 말한다. */
 export function approveLabel(o: { busy: boolean; expired: boolean; missing: number }): string {
-  if (o.busy) return '보내는 중';
-  if (o.expired) return '승인 시간이 지났습니다';
-  if (o.missing > 0) return `확인 ${o.missing}개 남음`;
-  return '승인하고 실행 시작';
+  if (o.busy) return t('보내는 중');
+  if (o.expired) return t('승인 시간이 지났습니다');
+  if (o.missing > 0) return t('확인 {0}개 남음', { 0: o.missing });
+  return t('승인하고 실행 시작');
 }
 
 // human: 사람이 눌러야 다음으로 가는 칸. 그 칸에 있으면 도는 표시 대신 입력을 기다리는 표시를 쓴다
@@ -130,11 +131,11 @@ type Step = { label: string; human?: boolean; through: MigrationStatus[] };
 // 진행 단계는 두 묶음이다. 실행 전(사람이 명세를 확정하고 계획을 승인)과 실행(승인하면 바로 시작해 워커가 옮김).
 // 카드는 지금 묶음 하나만 보여 준다. 묶음 번호는 보이지 않는다
 const PREPARE_STEPS: Step[] = [
-  { label: '구성 읽기', through: ['draft', 'importing'] },
-  { label: '명세 확정', human: true, through: ['spec_review'] },
-  { label: '사전 점검', through: ['prechecking'] },
-  { label: '계획 만들기', through: ['planning'] },
-  { label: '계획 승인', human: true, through: ['awaiting_approval'] },
+  { label: t('구성 읽기'), through: ['draft', 'importing'] },
+  { label: t('명세 확정'), human: true, through: ['spec_review'] },
+  { label: t('사전 점검'), through: ['prechecking'] },
+  { label: t('계획 만들기'), through: ['planning'] },
+  { label: t('계획 승인'), human: true, through: ['awaiting_approval'] },
 ];
 // approved 는 승인 뒤 시작이 막혔을 때만(동시 진행 상한·환경 사용 중) 남는다. 그때는 자원 생성 칸이 사람 입력을 기다린다
 const RUN_STEPS: Step[] = [
@@ -143,7 +144,7 @@ const RUN_STEPS: Step[] = [
   { label: LABEL.syncing, through: ['syncing'] },
   { label: LABEL.shifting, through: ['shifting'] },
   { label: LABEL.cutover, through: ['cutover'] },
-  { label: '롤백 대기', through: ['rollback_window'] },
+  { label: t('롤백 대기'), through: ['rollback_window'] },
   { label: LABEL.cleanup, through: ['cleanup'] },
 ];
 const RUN_STATES: readonly MigrationStatus[] = RUN_STEPS.flatMap((step) => step.through);
@@ -199,7 +200,7 @@ export function migrationSteps(
   const waits = (step: Step) => step.human || status === 'approved';
   return steps.map((step, index) => ({
     label: step.label,
-    detail: step.through.map((through) => notes[through]).find(Boolean) ?? (step.human ? '사람' : undefined),
+    detail: step.through.map((through) => notes[through]).find(Boolean) ?? (step.human ? t('사람') : undefined),
     status: index < at ? 'done' : index === at ? (stoppedAt?.mark ?? (waits(step) ? 'waiting' : 'active')) : 'pending',
   }));
 }
@@ -213,20 +214,20 @@ export function shiftNote(
   shift: Pick<TrafficShiftProgress, 'available' | 'targetWeightPct' | 'observedWeightPct' | 'reached'> | null,
 ): string | null {
   if (status !== 'shifting' || !shift?.available || shift.targetWeightPct === null) return null;
-  if (shift.observedWeightPct === null) return `목표 ${shift.targetWeightPct}% · 실측 아직 없음`;
-  if (shift.reached === false) return `목표 ${shift.targetWeightPct}%로 퍼지는 중 · 지금 ${shift.observedWeightPct}%`;
-  return `목표 ${shift.targetWeightPct}% · 실측 ${shift.observedWeightPct}%`;
+  if (shift.observedWeightPct === null) return t('목표 {0}% · 실측 아직 없음', { 0: shift.targetWeightPct });
+  if (shift.reached === false) return t('목표 {0}%로 퍼지는 중 · 지금 {1}%', { 0: shift.targetWeightPct, 1: shift.observedWeightPct });
+  return t('목표 {0}% · 실측 {1}%', { 0: shift.targetWeightPct, 1: shift.observedWeightPct });
 }
 
 const LEFT_STATES: FootprintState[] = ['left', 'unknown', 'running', 'standby', 'creating', 'stopping'];
 
 export const FOOTPRINT_LABEL: Partial<Record<FootprintState, string>> = {
-  left: '남음',
-  unknown: '생겼을 수 있음',
-  running: '돌고 있음',
-  standby: '대기 중',
-  creating: '만드는 중',
-  stopping: '걷는 중',
+  left: t('남음'),
+  unknown: t('생겼을 수 있음'),
+  running: t('돌고 있음'),
+  standby: t('대기 중'),
+  creating: t('만드는 중'),
+  stopping: t('걷는 중'),
 };
 
 /**
@@ -241,7 +242,7 @@ export function leftoversOf(apps: EnvApp[] | null | undefined, migrationId: stri
 
 /** 남은 자원 한 줄의 오른쪽 값. 만든 척(stub)만 한 자원은 그렇다고 붙인다. */
 export const leftoverValue = (resource: Pick<FootprintResource, 'state' | 'evidence'>) =>
-  [FOOTPRINT_LABEL[resource.state] ?? resource.state, resource.evidence === 'stub' ? '흉내' : null].filter(Boolean).join(' · ');
+  [FOOTPRINT_LABEL[resource.state] ?? resource.state, resource.evidence === 'stub' ? t('흉내') : null].filter(Boolean).join(' · ');
 
 const pct = (value: number) => `${Number(value.toFixed(2))}%`;
 
@@ -249,25 +250,25 @@ const pct = (value: number) => `${Number(value.toFixed(2))}%`;
 export function judgementRows(judgement: Judgement, criteria?: PlanDoc['rollbackCriteria'] | null): { name: string; value: string }[] {
   return [
     {
-      name: '도착 오류율',
-      value: `${pct(judgement.targetErrorRatePct)} (출발 ${pct(judgement.sourceErrorRatePct)}${criteria ? ` · 기준 ${criteria.errorRatePct}%` : ''})`,
+      name: t('도착 오류율'),
+      value: t('{0} (출발 {1}{2})', { 0: pct(judgement.targetErrorRatePct), 1: pct(judgement.sourceErrorRatePct), 2: criteria ? t(' · 기준 {0}%', { 0: criteria.errorRatePct }) : '' }),
     },
     {
-      name: '도착 p95',
-      value: `${Math.round(judgement.targetP95Ms)}ms (출발 ${Math.round(judgement.sourceP95Ms)}ms${criteria ? ` · 기준 ${criteria.p95Multiplier}배` : ''})`,
+      name: t('도착 p95'),
+      value: t('{0}ms (출발 {1}ms{2})', { 0: Math.round(judgement.targetP95Ms), 1: Math.round(judgement.sourceP95Ms), 2: criteria ? t(' · 기준 {0}배', { 0: criteria.p95Multiplier }) : '' }),
     },
-    { name: '그때 도착 비율', value: `${judgement.stepPct}%` },
-    { name: '판정에 쓴 요청', value: `${judgement.samples.toLocaleString('en-US')}건` },
+    { name: t('그때 도착 비율'), value: `${judgement.stepPct}%` },
+    { name: t('판정에 쓴 요청'), value: t('{0}건', { 0: judgement.samples.toLocaleString('en-US') }) },
   ];
 }
 
 /** 증적 리포트의 트래픽 판정 요약을 근거 줄로. 서버가 값을 못 낸 칸(null)은 "아직 없음"으로 둔다. */
 export function trafficReportRows(summary: TrafficSummary): { name: string; value: string }[] {
   return [
-    { name: '거친 비율', value: summary.steps.length > 0 ? summary.steps.map((step) => `${step}%`).join(' → ') : '아직 없음' },
-    { name: '판정', value: `${summary.judgements}번 · 나쁨 ${summary.bad}번` },
-    { name: '최대 도착 오류율', value: summary.maxTargetErrorRatePct === null ? '아직 없음' : pct(summary.maxTargetErrorRatePct) },
-    { name: '최대 도착 p95', value: summary.maxTargetP95Ms === null ? '아직 없음' : `${Math.round(summary.maxTargetP95Ms)}ms` },
+    { name: t('거친 비율'), value: summary.steps.length > 0 ? summary.steps.map((step) => `${step}%`).join(' → ') : t('아직 없음') },
+    { name: t('판정'), value: t('{0}번 · 나쁨 {1}번', { 0: summary.judgements, 1: summary.bad }) },
+    { name: t('최대 도착 오류율'), value: summary.maxTargetErrorRatePct === null ? t('아직 없음') : pct(summary.maxTargetErrorRatePct) },
+    { name: t('최대 도착 p95'), value: summary.maxTargetP95Ms === null ? t('아직 없음') : `${Math.round(summary.maxTargetP95Ms)}ms` },
   ];
 }
 
@@ -279,14 +280,14 @@ export function trafficPercent(status: MigrationStatus, shift: Pick<TrafficShift
 }
 
 const RUN_TITLE: Partial<Record<MigrationStatus, string>> = {
-  provisioning: '도착 환경을\n만들고 있습니다',
-  deploying: '같은 앱을\n도착지에 띄우고 있습니다',
-  syncing: 'DB를\n따라잡고 있습니다',
-  shifting: '트래픽을\n옮기고 있습니다',
-  cutover: 'DB 쓰기 담당을\n넘기고 있습니다',
+  provisioning: t('도착 환경을\n만들고 있습니다'),
+  deploying: t('같은 앱을\n도착지에 띄우고 있습니다'),
+  syncing: t('DB를\n따라잡고 있습니다'),
+  shifting: t('트래픽을\n옮기고 있습니다'),
+  cutover: t('DB 쓰기 담당을\n넘기고 있습니다'),
 };
 
-export const runTitle = (status: MigrationStatus) => RUN_TITLE[status] ?? `${LABEL[status]}\n단계입니다`;
+export const runTitle = (status: MigrationStatus) => RUN_TITLE[status] ?? t('{0}\n단계입니다', { 0: LABEL[status] });
 
 /** 서버 상태 표 기준으로 지금 롤백할 수 있는지. 창이 끝났으면 서버도 막는다. */
 export function canRollback(migration: Pick<MigrationView, 'status' | 'rollbackWindowEndsAt'>, now = Date.now()): boolean {
@@ -307,23 +308,23 @@ export function specRows(view: Pick<MigrationSpecView, 'spec' | 'needsReview'>):
   const row = (path: string, name: string, value: string | number | undefined): SpecRow => ({
     path,
     name,
-    value: value === undefined ? '비어 있음' : String(value),
+    value: value === undefined ? t('비어 있음') : String(value),
     review: view.needsReview.some((field) => field === path || field.startsWith(`${path}.`)),
   });
   return [
-    row('app.name', '앱 이름', app?.name),
-    row('service.image', '이미지', service?.image),
-    row('service.replicas', '복제 수', service?.replicas),
+    row('app.name', t('앱 이름'), app?.name),
+    row('service.image', t('이미지'), service?.image),
+    row('service.replicas', t('복제 수'), service?.replicas),
     row('service.cpu', 'CPU', service?.cpu),
-    row('service.memory', '메모리', service?.memory),
-    row('service.port', '포트', service?.port),
-    row('service.healthPath', '상태 확인 경로', service?.healthPath),
+    row('service.memory', t('메모리'), service?.memory),
+    row('service.port', t('포트'), service?.port),
+    row('service.healthPath', t('상태 확인 경로'), service?.healthPath),
     row(
       'database',
-      '데이터베이스',
+      t('데이터베이스'),
       database ? `${database.engine ?? 'postgres'} ${database.majorVersion ?? ''} · ${database.storageGb ?? '?'}GB` : undefined,
     ),
-    row('ingress.hostname', '도메인', ingress?.hostname),
+    row('ingress.hostname', t('도메인'), ingress?.hostname),
   ];
 }
 
@@ -331,12 +332,12 @@ export const stepName = (id: PlanStep['id']) =>
   ({ provision: LABEL.provisioning, deploy: LABEL.deploying, sync: LABEL.syncing, shift: LABEL.shifting, cutover: LABEL.cutover, cleanup: LABEL.cleanup })[id];
 
 const GATE_LABEL: Record<string, string> = {
-  synced_healthy: '앱이 정상으로 뜸',
-  'replication_lag_ms < 1000': '복제 지연 1초 미만',
+  synced_healthy: t('앱이 정상으로 뜸'),
+  'replication_lag_ms < 1000': t('복제 지연 1초 미만'),
 };
 
 export function stepGate(step: Pick<PlanStep, 'gate' | 'weights' | 'holdSec'>): string {
-  return [step.gate ? (GATE_LABEL[step.gate] ?? step.gate) : null, step.weights?.length ? `${step.weights.join(' → ')}%` : null, step.holdSec ? `단계마다 ${step.holdSec}초` : null]
+  return [step.gate ? (GATE_LABEL[step.gate] ?? step.gate) : null, step.weights?.length ? `${step.weights.join(' → ')}%` : null, step.holdSec ? t('단계마다 {0}초', { 0: step.holdSec }) : null]
     .filter(Boolean)
     .join(' · ');
 }
@@ -346,7 +347,7 @@ export const canPick = (env: EnvironmentView, sourceId?: string | null) =>
   env.connectionStatus === 'connected' && env.id !== sourceId;
 
 export const usd = (value: number | null | undefined) =>
-  value === null || value === undefined ? '계산 불가' : `$${value.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
+  value === null || value === undefined ? t('계산 불가') : `$${value.toLocaleString('en-US', { maximumFractionDigits: 0 })}`;
 
 
 /**

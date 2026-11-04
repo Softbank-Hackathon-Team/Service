@@ -10,6 +10,7 @@ import {
   type SourceScope,
 } from '../../lib/types';
 import type { CloudInventory } from '../dashboard/model';
+import { t } from '../../lib/i18n';
 
 // 새 이전의 세 층: 연결된 환경(빌려 올 수 있는 계정) → 그 안에서 서비스 중인 것(출발 범위) → 옮겨 갈 환경(빌려 올 실행 권한).
 // 화면은 이 파일의 판단만 쓴다. 시험은 test/source-scope.test.ts
@@ -58,14 +59,14 @@ export function softwareOf(provider: Provider, inventory: EnvInventory | null | 
 
 /** 고르는 줄의 제목: "shop-api", "shop-api 외 2개". 모르면 null. */
 export const softwareTitle = (names: string[]) =>
-  names.length === 0 ? null : names.length === 1 ? names[0]! : `${names[0]} 외 ${names.length - 1}개`;
+  names.length === 0 ? null : names.length === 1 ? names[0]! : t('{0} 외 {1}개', { 0: names[0], 1: names.length - 1 });
 
 export type ScopeChoice = { key: string; label: string; detail: string; scope: SourceScope };
 
 export const AUTO_SCOPE: ScopeChoice = {
   key: 'auto',
-  label: '자동으로 고르기',
-  detail: '가져오기가 찾고, 애매한 칸은 명세 확정에서 묻습니다',
+  label: t('자동으로 고르기'),
+  detail: t('가져오기가 찾고, 애매한 칸은 명세 확정에서 묻습니다'),
   scope: {},
 };
 
@@ -80,7 +81,7 @@ export function scopeChoices(provider: Provider, cloud: CloudInventory | null | 
     return [...namespacesOf(cloud)].map(([namespace, names]) => {
       const own = databases.filter((db) => db.startsWith(`${namespace}/`) && SCOPE_NAME_RE.test(db));
       const database = own.length === 1 ? own[0] : undefined;
-      const detail = [`Deployment ${names.length}개 · ${names.slice(0, 3).join(', ')}${names.length > 3 ? ' …' : ''}`, database && `DB ${database}`];
+      const detail = [t('Deployment {0}개 · {1}{2}', { 0: names.length, 1: names.slice(0, 3).join(', '), 2: names.length > 3 ? ' …' : '' }), database && `DB ${database}`];
       return {
         key: `ns:${namespace}`,
         label: namespace,
@@ -109,21 +110,21 @@ export function checkScopeInput(input: ScopeInput): ScopeCheck {
   const cluster = input.cluster.trim();
   if (cluster) {
     if (SCOPE_NAME_RE.test(cluster)) scope.cluster = cluster;
-    else errors.cluster = '영문·숫자로 시작하고 . _ / : - 만 씁니다';
+    else errors.cluster = t('영문·숫자로 시작하고 . _ / : - 만 씁니다');
   }
   const namespaces = [...new Set(input.namespaces.split(/[\s,]+/).filter(Boolean))];
-  if (namespaces.length > 10) errors.namespaces = '네임스페이스는 10개까지입니다';
-  else if (namespaces.some((namespace) => !SCOPE_NAMESPACE_RE.test(namespace))) errors.namespaces = '소문자·숫자·- 로 63자까지입니다';
+  if (namespaces.length > 10) errors.namespaces = t('네임스페이스는 10개까지입니다');
+  else if (namespaces.some((namespace) => !SCOPE_NAMESPACE_RE.test(namespace))) errors.namespaces = t('소문자·숫자·- 로 63자까지입니다');
   else if (namespaces.length > 0) scope.namespaces = namespaces;
   const database = input.database.trim();
   if (database) {
     if (SCOPE_NAME_RE.test(database)) scope.database = database;
-    else errors.database = '영문·숫자로 시작하고 . _ / : - 만 씁니다';
+    else errors.database = t('영문·숫자로 시작하고 . _ / : - 만 씁니다');
   }
   const appName = input.appName.trim();
   if (appName) {
     if (SCOPE_APP_RE.test(appName)) scope.appName = appName;
-    else errors.appName = '소문자로 시작하고 소문자·숫자·- 로 40자까지입니다';
+    else errors.appName = t('소문자로 시작하고 소문자·숫자·- 로 40자까지입니다');
   }
   return { scope, errors };
 }
@@ -135,16 +136,16 @@ export function scopeLabel(scope: SourceScope): string {
 
 /** 출발 범위 한 줄. 비었으면 "자동으로 고름". */
 export function scopeSummary(scope: SourceScope | null | undefined): string {
-  if (!scope) return '자동으로 고름';
+  if (!scope) return t('자동으로 고름');
   const parts = [
-    scope.appName && `앱 ${scope.appName}`,
-    scope.cluster && `클러스터 ${scope.cluster}`,
+    scope.appName && t('앱 {0}', { 0: scope.appName }),
+    scope.cluster && t('클러스터 {0}', { 0: scope.cluster }),
     scope.ecsCluster && `ECS ${scope.ecsCluster}`,
-    scope.namespaces?.length && `네임스페이스 ${scope.namespaces.join(', ')}`,
-    scope.partOf && `앱 묶음 ${scope.partOf}`,
+    scope.namespaces?.length && t('네임스페이스 {0}', { 0: scope.namespaces.join(', ') }),
+    scope.partOf && t('앱 묶음 {0}', { 0: scope.partOf }),
     scope.database && `DB ${scope.database}`,
   ].filter(Boolean);
-  return parts.length > 0 ? parts.join(' · ') : '자동으로 고름';
+  return parts.length > 0 ? parts.join(' · ') : t('자동으로 고름');
 }
 
 /**
@@ -163,9 +164,9 @@ export function targetOptions(envs: EnvironmentView[], source: EnvironmentView) 
 /** 도착 환경 줄의 한 줄 설명: 실행 권한을 빌릴 수 있는지. warn 이면 실행 단계에서 막힐 수 있다. */
 export function borrowNote(env: EnvironmentView, now = Date.now()): { text: string; warn: boolean } {
   if (env.provider === 'gcp' && !env.targetProjectId && !env.mock)
-    return { text: '마이그레이션 전용 프로젝트가 없어 실행 단계에서 막힐 수 있습니다', warn: true };
+    return { text: t('마이그레이션 전용 프로젝트가 없어 실행 단계에서 막힐 수 있습니다'), warn: true };
   if (env.missingPermissions && env.missingPermissions.length > 0)
-    return { text: `관찰 역할에 권한 ${env.missingPermissions.length}개가 빠졌습니다`, warn: true };
-  const checked = env.lastVerifiedAt ? ` · 확인 ${ago(env.lastVerifiedAt, now)}` : '';
-  return { text: `${env.mock ? '흉내 자격으로 확인됨' : '실행 역할 빌릴 수 있음'}${checked}`, warn: false };
+    return { text: t('관찰 역할에 권한 {0}개가 빠졌습니다', { 0: env.missingPermissions.length }), warn: true };
+  const checked = env.lastVerifiedAt ? t(' · 확인 {0}', { 0: ago(env.lastVerifiedAt, now) }) : '';
+  return { text: `${env.mock ? t('흉내 자격으로 확인됨') : t('실행 역할 빌릴 수 있음')}${checked}`, warn: false };
 }

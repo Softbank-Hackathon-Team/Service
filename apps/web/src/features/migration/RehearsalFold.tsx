@@ -29,6 +29,7 @@ import {
   remainingSec,
 } from './rehearsal';
 import s from '../common/page.module.css';
+import { t } from '../../lib/i18n';
 
 /** 이 이전의 리허설 줄과 지난 시도인지. 배포 단계에 닿기 전에는 부르지 않는다. 서버에 경로가 없으면(404) 줄 없음으로 본다. */
 export function useRehearsal(migration: MigrationView) {
@@ -58,7 +59,7 @@ function FidelityFold({ run, defaultOpen }: { run: RehearsalRun; defaultOpen: bo
   if (groups.length === 0) return null;
   const count = (status: string) => groups.find((group) => group.status === status)?.items.length ?? 0;
   return (
-    <FoldTile title="충실도" summary={`같음 ${count('identical')} · 바꿈 ${count('substituted')} · 못 봄 ${count('not_checked')}`} defaultOpen={defaultOpen}>
+    <FoldTile title={t('충실도')} summary={t('같음 {0} · 바꿈 {1} · 못 봄 {2}', { 0: count('identical'), 1: count('substituted'), 2: count('not_checked') })} defaultOpen={defaultOpen}>
       {groups.map((group) => (
         <div key={group.status}>
           <p className={`${s.note} t-label-sm c-tertiary`}>{group.title}</p>
@@ -68,7 +69,7 @@ function FidelityFold({ run, defaultOpen }: { run: RehearsalRun; defaultOpen: bo
                 <span className={s.formRow}>
                   <span className="t-label-md">{FIDELITY_LABEL[item.id] ?? item.id}</span>
                   <span className={`${s.rowValue} t-caption c-secondary`}>
-                    {item.status === 'substituted' ? `${item.real} → ${item.sandbox}` : item.status === 'identical' ? item.real : '리허설에서 안 봄'}
+                    {item.status === 'substituted' ? `${item.real} → ${item.sandbox}` : item.status === 'identical' ? item.real : t('리허설에서 안 봄')}
                   </span>
                 </span>
                 {item.reason && <span className="t-caption c-tertiary">{item.reason}</span>}
@@ -97,12 +98,11 @@ export function RehearsalFolds({ migration, run, stale, defaultOpen }: { migrati
   const moving = !stale && (state === 'running' || state === 'waiting');
   return (
     <>
-      <FoldTile title="리허설" summary={rehearsalSummary(run, stale)} defaultOpen={defaultOpen}>
+      <FoldTile title={t('리허설')} summary={rehearsalSummary(run, stale)} defaultOpen={defaultOpen}>
         {state === 'skipped' && run.skip && <p className={`${s.note} t-body-sm c-secondary`}>{SKIP_TEXT[run.skip]}</p>}
         {stale && (
           <p className={`${s.note} t-body-sm c-secondary`}>
-            {STALE_TEXT} 그때 결과: {rehearsalSummary(run)}
-            {run.failureCode ? ` (${stopReasonOf(run.failureCode, 'paused')?.label ?? run.failureCode})` : ''}
+            {t('{0} 그때 결과: {1}{2}', { 0: STALE_TEXT, 1: rehearsalSummary(run), 2: run.failureCode ? ` (${stopReasonOf(run.failureCode, 'paused')?.label ?? run.failureCode})` : '' })}
           </p>
         )}
         {moving && (
@@ -114,16 +114,16 @@ export function RehearsalFolds({ migration, run, stale, defaultOpen }: { migrati
           <ul className={s.rows}>
             {sandbox && (
               <li className={s.row}>
-                <span className="t-label-md">샌드박스</span>
+                <span className="t-label-md">{t('샌드박스')}</span>
                 <CodeValue value={sandbox} className={s.rowValue} />
               </li>
             )}
-            <Row name={moving ? '지금까지' : '걸린 시간'}>{formatSec(elapsedSec(run))}</Row>
-            {left !== null && !stale && deadlineLabel(run) && <Row name={deadlineLabel(run)!}>{`${formatSec(left)} 남음`}</Row>}
-            {state === 'reused' && <Row name="재사용">같은 계획·같은 묶음의 앞선 통과</Row>}
-            {result && <Row name="격리">{isolationLine(result.sandbox)}</Row>}
-            {result && <Row name="샌드박스 쿠버네티스">{result.sandbox.k8sVersion}</Row>}
-            {result && !result.deleted && <Row name="지우기">아직 남음 · 청소가 지웁니다</Row>}
+            <Row name={moving ? t('지금까지') : t('걸린 시간')}>{formatSec(elapsedSec(run))}</Row>
+            {left !== null && !stale && deadlineLabel(run) && <Row name={deadlineLabel(run)!}>{t('{0} 남음', { 0: formatSec(left) })}</Row>}
+            {state === 'reused' && <Row name={t('재사용')}>{t('같은 계획·같은 묶음의 앞선 통과')}</Row>}
+            {result && <Row name={t('격리')}>{isolationLine(result.sandbox)}</Row>}
+            {result && <Row name={t('샌드박스 쿠버네티스')}>{result.sandbox.k8sVersion}</Row>}
+            {result && !result.deleted && <Row name={t('지우기')}>{t('아직 남음 · 청소가 지웁니다')}</Row>}
           </ul>
         )}
         {checks && checks.failed.length > 0 && (
@@ -140,7 +140,7 @@ export function RehearsalFolds({ migration, run, stale, defaultOpen }: { migrati
         {checks && !stale && checks.items.length > 0 && (
           <div className={s.agent}>
             <Checklist items={checks.items} />
-            {checks.more > 0 && <span className="t-caption c-tertiary">검사 {checks.more}개 더</span>}
+            {checks.more > 0 && <span className="t-caption c-tertiary">{t('검사 {0}개 더', { 0: checks.more })}</span>}
           </div>
         )}
         {result && result.warnings.length > 0 && (

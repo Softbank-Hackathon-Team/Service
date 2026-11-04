@@ -14,6 +14,7 @@ import { migrationSteps, needsStepAnchor, stepAnchorFrom } from './model';
 import { rehearsalStepDetail } from './rehearsal';
 import { useRehearsal } from './RehearsalFold';
 import s from '../common/page.module.css';
+import { t } from '../../lib/i18n';
 
 // 큰 카드 다음으로 중요한 것이 진행 단계라서, 어느 화면이든 큰 카드 바로 옆 칸을 차지한다.
 // 근거 칸(side)에 놓을 것이 없는 단계(구성 읽기·점검·계획)는 빈 칸을 두지 않고 큰 카드가 그 너비를 채운다.
@@ -45,7 +46,7 @@ function StepsTile({ migration }: { migration: MigrationView }) {
   const deploying = rehearsal.loading ? undefined : rehearsalStepDetail(rehearsal.run, rehearsal.stale, migration.status);
   return (
     <Tile area="steps" compact scroll>
-      <TileHeader title="진행 단계" />
+      <TileHeader title={t('진행 단계')} />
       <Checklist items={migrationSteps(migration, anchor, deploying ? { deploying } : {})} />
     </Tile>
   );
@@ -64,7 +65,7 @@ export function Frame({ route, migration, children }: FrameProps) {
       {migration ? (
         <StepsTile migration={migration} />
       ) : (
-        <SkeletonTile area="steps" title="진행 단계" rows={8} />
+        <SkeletonTile area="steps" title={t('진행 단계')} rows={8} />
       )}
     </ShellLayout>
   );
@@ -109,7 +110,7 @@ export function useCostConsent(code: string | null) {
   const check = asked ? (
     <label className={`${s.resumeCheck} t-body-md`}>
       <input type="checkbox" checked={agreed} onChange={(event) => setAgreed(event.target.checked)} />
-      무료 재시도를 다 썼습니다. 이번 재시도 비용은 고객이 부담합니다
+      {t('무료 재시도를 다 썼습니다. 이번 재시도 비용은 고객이 부담합니다')}
     </label>
   ) : null;
   return {
@@ -134,7 +135,7 @@ export function ConfirmPill({ label, confirmLabel, icon, tone, disabled, onConfi
   return (
     <span className={s.confirm}>
       <BarPill label={confirmLabel} icon={icon} tone="danger" onClick={onConfirm} />
-      <BarPill label="그만두기" onClick={() => setAsking(false)} />
+      <BarPill label={t('그만두기')} onClick={() => setAsking(false)} />
     </span>
   );
 }

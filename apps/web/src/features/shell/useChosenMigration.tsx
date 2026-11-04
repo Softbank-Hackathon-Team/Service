@@ -5,6 +5,7 @@ import { isTerminal, LABEL } from '../../lib/status';
 import type { MigrationView } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
 import s from '../common/page.module.css';
+import { t } from '../../lib/i18n';
 
 const byRecent = (a: MigrationView, b: MigrationView) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '');
 
@@ -26,7 +27,7 @@ export function useChosenMigration(page: 'audit' | 'agent', id: string | null) {
   const picker = items.length > 0 && (
     <select
       className={`${s.select} t-label-md`}
-      aria-label="마이그레이션 고르기"
+      aria-label={t('마이그레이션 고르기')}
       value={chosen?.id ?? ''}
       onChange={(event) => go(`${page}/${event.target.value}`)}
     >

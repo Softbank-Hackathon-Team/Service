@@ -9,6 +9,7 @@ import {
 } from './securityV2';
 import { ConfirmPill } from './shared';
 import s from '../common/page.module.css';
+import { t } from '../../lib/i18n';
 
 type RequirementsFoldProps = {
   requirements: SecurityRequirements | null;
@@ -34,10 +35,10 @@ export function RequirementsFold({ requirements, version, busy, defaultOpen, onS
   if (draft) {
     const { requirements: next, badCountries } = requirementsFrom(draft);
     return (
-      <FoldTile title="보안 요구사항" summary="고치는 중">
+      <FoldTile title={t('보안 요구사항')} summary={t('고치는 중')}>
         <div className={s.form}>
           <div className={s.field}>
-            <span className="t-label-md">데이터 등급</span>
+            <span className="t-label-md">{t('데이터 등급')}</span>
             <div className={s.options}>
               {DATA_CLASSES.map((value) => (
                 <OptionPill key={value} label={DATA_CLASS_LABEL[value]} selected={draft.dataClass === value} onClick={() => set({ dataClass: value })} />
@@ -45,7 +46,7 @@ export function RequirementsFold({ requirements, version, busy, defaultOpen, onS
             </div>
           </div>
           <label className={s.field}>
-            <span className="t-label-md">허용 국가</span>
+            <span className="t-label-md">{t('허용 국가')}</span>
             <input
               className={`${s.input} t-body-md`}
               value={draft.residency}
@@ -54,11 +55,11 @@ export function RequirementsFold({ requirements, version, busy, defaultOpen, onS
               aria-invalid={badCountries.length > 0 ? true : undefined}
               onChange={(event) => set({ residency: event.target.value })}
             />
-            <span className="t-caption c-tertiary">두 글자 국가 코드를 쉼표로 나눠 적습니다. 비우면 국가를 제한하지 않습니다</span>
+            <span className="t-caption c-tertiary">{t('두 글자 국가 코드를 쉼표로 나눠 적습니다. 비우면 국가를 제한하지 않습니다')}</span>
           </label>
-          {badCountries.length > 0 && <p className={`${s.error} t-body-sm`}>국가 코드가 아닙니다: {badCountries.join(', ')}</p>}
+          {badCountries.length > 0 && <p className={`${s.error} t-body-sm`}>{t('국가 코드가 아닙니다: {0}', { 0: badCountries.join(', ') })}</p>}
           <div className={s.field}>
-            <span className="t-label-md">키 소유</span>
+            <span className="t-label-md">{t('키 소유')}</span>
             <div className={s.options}>
               {KEY_OWNERS.map((value) => (
                 <OptionPill key={value} label={KEY_OWNER_LABEL[value]} selected={draft.keyOwnership === value} onClick={() => set({ keyOwnership: value })} />
@@ -66,7 +67,7 @@ export function RequirementsFold({ requirements, version, busy, defaultOpen, onS
             </div>
           </div>
           <div className={s.field}>
-            <span className="t-label-md">운영 주체</span>
+            <span className="t-label-md">{t('운영 주체')}</span>
             <div className={s.options}>
               {OPERATORS.map((value) => (
                 <OptionPill
@@ -77,11 +78,11 @@ export function RequirementsFold({ requirements, version, busy, defaultOpen, onS
                 />
               ))}
             </div>
-            <span className="t-caption c-tertiary">고르지 않으면 운영 주체를 제한하지 않습니다</span>
+            <span className="t-caption c-tertiary">{t('고르지 않으면 운영 주체를 제한하지 않습니다')}</span>
           </div>
           <div className={s.options}>
-            <BarPill label="그만두기" onClick={busy ? undefined : () => setEditing(null)} />
-            <BarPill label={busy ? '보내는 중' : '저장'} icon="check" onClick={next && !busy ? () => onSave({ requirements: next }) : undefined} />
+            <BarPill label={t('그만두기')} onClick={busy ? undefined : () => setEditing(null)} />
+            <BarPill label={busy ? t('보내는 중') : t('저장')} icon="check" onClick={next && !busy ? () => onSave({ requirements: next }) : undefined} />
           </div>
         </div>
       </FoldTile>
@@ -89,7 +90,7 @@ export function RequirementsFold({ requirements, version, busy, defaultOpen, onS
   }
 
   return (
-    <FoldTile title="보안 요구사항" summary={requirementsSummary(requirements)} defaultOpen={defaultOpen}>
+    <FoldTile title={t('보안 요구사항')} summary={requirementsSummary(requirements)} defaultOpen={defaultOpen}>
       {rows.length > 0 ? (
         <>
           <ul className={s.rows}>
@@ -100,16 +101,16 @@ export function RequirementsFold({ requirements, version, busy, defaultOpen, onS
               </li>
             ))}
           </ul>
-          <p className={`${s.note} t-caption c-tertiary`}>고객이 정한 값입니다. 사전 점검이 출발·도착의 보안 사실과 맞대어 봅니다.</p>
+          <p className={`${s.note} t-caption c-tertiary`}>{t('고객이 정한 값입니다. 사전 점검이 출발·도착의 보안 사실과 맞대어 봅니다.')}</p>
         </>
       ) : (
         <p className={`${s.note} t-body-sm c-secondary`}>
-          데이터 등급, 허용 국가, 키 소유를 정하지 않으면 위치·키 규칙을 판정하지 못하고 계획 승인 때 고객 확인 항목이 됩니다.
+          {t('데이터 등급, 허용 국가, 키 소유를 정하지 않으면 위치·키 규칙을 판정하지 못하고 계획 승인 때 고객 확인 항목이 됩니다.')}
         </p>
       )}
       <div className={`${s.rowAction} ${s.options}`}>
-        <BarPill label={requirements ? '고치기' : '정하기'} icon={requirements ? 'list' : 'plus'} onClick={busy ? undefined : () => setEditing({ version, draft: draftOf(requirements) })} />
-        {requirements && <ConfirmPill label="지우기" confirmLabel="요구사항 지우기" icon="x" disabled={busy} onConfirm={() => onSave(null)} />}
+        <BarPill label={requirements ? t('고치기') : t('정하기')} icon={requirements ? 'list' : 'plus'} onClick={busy ? undefined : () => setEditing({ version, draft: draftOf(requirements) })} />
+        {requirements && <ConfirmPill label={t('지우기')} confirmLabel={t('요구사항 지우기')} icon="x" disabled={busy} onConfirm={() => onSave(null)} />}
       </div>
     </FoldTile>
   );
@@ -120,19 +121,19 @@ export function SourceFactsFold({ facts }: { facts: Record<string, SourceDbFacts
   const view = factRows(facts);
   if (!view) return null;
   return (
-    <FoldTile title="출발 DB 보안" summary={view.summary} defaultOpen={false}>
+    <FoldTile title={t('출발 DB 보안')} summary={view.summary} defaultOpen={false}>
       <ul className={s.rows}>
         {view.rows.map((row) => (
           <li key={row.key}>
             <div className={s.row}>
               <span className={`${s.rowName} t-label-md`}>{row.name}</span>
-              {row.value === null ? <Badge tone="warning">모름</Badge> : <span className={`${s.rowValue} t-body-sm c-secondary`}>{row.value}</span>}
+              {row.value === null ? <Badge tone="warning">{t('모름')}</Badge> : <span className={`${s.rowValue} t-body-sm c-secondary`}>{row.value}</span>}
             </div>
             {row.origin && <p className={`${s.rowCaption} t-caption c-tertiary`}>{row.origin}</p>}
           </li>
         ))}
       </ul>
-      <p className={`${s.note} t-caption c-tertiary`}>가져올 때 출발 DB에서 읽은 값입니다. 명세에서 고칠 수 없고, 모름은 통과로 보지 않습니다.</p>
+      <p className={`${s.note} t-caption c-tertiary`}>{t('가져올 때 출발 DB에서 읽은 값입니다. 명세에서 고칠 수 없고, 모름은 통과로 보지 않습니다.')}</p>
     </FoldTile>
   );
 }
@@ -143,7 +144,7 @@ export function VerdictFold({ items }: { items: readonly PrecheckItem[] }) {
   if (groups.length === 0) return null;
   const heavy = groups.some((group) => group.level !== 'advise');
   return (
-    <FoldTile key={`sec-${heavy}`} title="보안 판정" summary={secSummary(groups)} defaultOpen={heavy}>
+    <FoldTile key={`sec-${heavy}`} title={t('보안 판정')} summary={secSummary(groups)} defaultOpen={heavy}>
       {groups.map((group) => (
         <div key={group.level}>
           <p className={`${s.note} t-caption c-tertiary`}>{group.need}</p>
@@ -155,7 +156,7 @@ export function VerdictFold({ items }: { items: readonly PrecheckItem[] }) {
                   <Badge tone={group.tone}>{group.label}</Badge>
                 </div>
                 {verdict.reason && <p className={`${s.rowCaption} t-caption c-secondary`}>{verdict.reason}</p>}
-                {verdict.fix && <p className={`${s.rowCaption} t-caption c-tertiary`}>조치: {verdict.fix}</p>}
+                {verdict.fix && <p className={`${s.rowCaption} t-caption c-tertiary`}>{t('조치: {0}', { 0: verdict.fix })}</p>}
               </li>
             ))}
           </ul>

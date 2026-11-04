@@ -20,6 +20,7 @@ import { ShellLayout } from '../shell/ShellLayout';
 import { borrowedByEnv, envsByProvider, minutesLeft, PROVIDER_ORDER, type Borrowed } from './model';
 import s from '../common/page.module.css';
 import own from './SettingsPage.module.css';
+import { t } from '../../lib/i18n';
 
 const LAYOUT: BentoLayout = { columns: ['fill', 'side'], areas: 'hero side' };
 
@@ -36,12 +37,12 @@ function ProbeRow({ name, state }: { name: string; state: { data: number | null;
   return (
     <li className={s.row}>
       <span className="t-label-md">{name}</span>
-      {state.loading ? <Badge>확인 중</Badge> : <Badge tone={up ? 'success' : 'danger'}>{up ? `${state.data}ms` : '응답 없음'}</Badge>}
+      {state.loading ? <Badge>{t('확인 중')}</Badge> : <Badge tone={up ? 'success' : 'danger'}>{up ? `${state.data}ms` : t('응답 없음')}</Badge>}
     </li>
   );
 }
 
-const PURPOSE: Record<Borrowed['purpose'], string> = { observe: '관찰 역할', operate: '실행 역할' };
+const PURPOSE: Record<Borrowed['purpose'], string> = { observe: t('관찰 역할'), operate: t('실행 역할') };
 
 /**
  * 진행 중인 마이그레이션의 임시 권한 장부를 읽어 환경마다 지금 빌린 권한을 낸다.
@@ -68,16 +69,16 @@ function EnvLine({ env, borrowed }: { env: EnvironmentView; borrowed: Borrowed |
         {!connected && <Badge tone="warning">{CONN_LABEL[env.connectionStatus]}</Badge>}
       </button>
       <span className="t-caption c-tertiary">
-        {PLATFORM[env.provider]} · 연결 확인 {ago(env.lastVerifiedAt)}
+        {t('{0} · 연결 확인 {1}', { 0: PLATFORM[env.provider], 1: ago(env.lastVerifiedAt) })}
       </span>
       <span className={own.borrowRow}>
         <span className={`t-caption ${borrowed ? 'c-secondary' : 'c-tertiary'}`}>
-          {borrowed ? `${PURPOSE[borrowed.purpose]}${borrowed.step ? ` · ${borrowed.step}` : ''} · ${minutesLeft(borrowed.expiresAt)}분 남음` : '빌린 권한 없음'}
+          {borrowed ? t('{0}{1} · {2}분 남음', { 0: PURPOSE[borrowed.purpose], 1: borrowed.step ? ` · ${borrowed.step}` : '', 2: minutesLeft(borrowed.expiresAt) }) : t('빌린 권한 없음')}
         </span>
         {/* TODO(human): 빌린 권한을 사람이 갱신하는 서버 API 가 아직 없다. 생기면 이 버튼을 켠다 */}
-        <button type="button" className={own.refresh} disabled title="권한 갱신은 서버 기능이 생기면 켜집니다">
+        <button type="button" className={own.refresh} disabled title={t('권한 갱신은 서버 기능이 생기면 켜집니다')}>
           <Icon name="refresh" size={12} />
-          갱신
+          {t('갱신')}
         </button>
       </span>
     </li>
@@ -93,7 +94,7 @@ function ProviderCard({ provider, envs, borrowed }: { provider: Provider; envs: 
           <Icon name={provider === 'onprem' ? 'server' : 'cloud'} />
           <span className="t-h3">{PROVIDER_SHORT[provider]}</span>
         </span>
-        <span className="t-caption c-tertiary">{`${envs.length}개`}</span>
+        <span className="t-caption c-tertiary">{t('{0}개', { 0: envs.length })}</span>
       </header>
       {envs.length > 0 ? (
         <ul className={own.envList}>
@@ -102,7 +103,7 @@ function ProviderCard({ provider, envs, borrowed }: { provider: Provider; envs: 
           ))}
         </ul>
       ) : (
-        <p className="t-body-sm c-tertiary">연결한 환경이 없습니다.</p>
+        <p className="t-body-sm c-tertiary">{t('연결한 환경이 없습니다.')}</p>
       )}
     </section>
   );
@@ -113,8 +114,8 @@ function RegisterCard() {
   return (
     <button type="button" className={`${own.card} ${own.addCard}`} onClick={() => go(REGISTER_PATH)}>
       <Icon name="plus" size={20} />
-      <span className="t-h3">환경 등록하기</span>
-      <span className="t-caption c-tertiary">AWS·GCP 계정이나 온프레 클러스터</span>
+      <span className="t-h3">{t('환경 등록하기')}</span>
+      <span className="t-caption c-tertiary">{t('AWS·GCP 계정이나 온프레 클러스터')}</span>
     </button>
   );
 }
@@ -130,22 +131,22 @@ function DisplayFold({ user }: { user: AuthUser }) {
   const pickLocale = (next: Locale) => {
     if (savePrefs(user.id, { locale: next })) window.location.reload();
   };
-  const themeLabel = theme === 'dark' ? '다크' : '라이트';
+  const themeLabel = theme === 'dark' ? t('다크') : t('라이트');
   return (
-    <FoldTile title="화면" summary={`${themeLabel} · ${LOCALES.find((item) => item.id === current)?.label ?? current}`}>
+    <FoldTile title={t('화면')} summary={`${themeLabel} · ${LOCALES.find((item) => item.id === current)?.label ?? current}`}>
       <div className={s.agent}>
-        <span className="t-label-sm c-tertiary">테마</span>
+        <span className="t-label-sm c-tertiary">{t('테마')}</span>
         <div className={own.options}>
-          <OptionPill label="라이트 (기본)" selected={theme === 'light'} onClick={() => pickTheme('light')} />
-          <OptionPill label="다크" selected={theme === 'dark'} onClick={() => pickTheme('dark')} />
+          <OptionPill label={t('라이트 (기본)')} selected={theme === 'light'} onClick={() => pickTheme('light')} />
+          <OptionPill label={t('다크')} selected={theme === 'dark'} onClick={() => pickTheme('dark')} />
         </div>
-        <span className="t-label-sm c-tertiary">언어</span>
+        <span className="t-label-sm c-tertiary">{t('언어')}</span>
         <div className={own.options}>
           {LOCALES.map((item) => (
             <OptionPill key={item.id} label={item.label} selected={current === item.id} onClick={() => pickLocale(item.id)} />
           ))}
         </div>
-        <p className="t-caption c-tertiary">이 브라우저에 이 계정의 설정으로 남깁니다.</p>
+        <p className="t-caption c-tertiary">{t('이 브라우저에 이 계정의 설정으로 남깁니다.')}</p>
       </div>
     </FoldTile>
   );
@@ -164,13 +165,13 @@ function GithubFold() {
     };
   }, []);
   return (
-    <FoldTile title="GitHub 로그인" summary={enabled === null ? '확인 중' : enabled ? '켜짐' : '꺼짐'} defaultOpen={false}>
+    <FoldTile title={t('GitHub 로그인')} summary={enabled === null ? t('확인 중') : enabled ? t('켜짐') : t('꺼짐')} defaultOpen={false}>
       <p className={`${s.note} t-body-sm c-secondary`}>
         {enabled === null
-          ? '서버 설정을 읽고 있습니다.'
+          ? t('서버 설정을 읽고 있습니다.')
           : enabled
-            ? '이 서버는 GitHub 계정으로 로그인할 수 있습니다. 이 계정에 GitHub 계정이 이어져 있는지는 서버가 아직 알려 주지 않습니다.'
-            : '이 서버는 GitHub 로그인을 꺼 두었습니다. 이메일과 비밀번호로 로그인합니다.'}
+            ? t('이 서버는 GitHub 계정으로 로그인할 수 있습니다. 이 계정에 GitHub 계정이 이어져 있는지는 서버가 아직 알려 주지 않습니다.')
+            : t('이 서버는 GitHub 로그인을 꺼 두었습니다. 이메일과 비밀번호로 로그인합니다.')}
       </p>
     </FoldTile>
   );
@@ -186,7 +187,7 @@ export function SettingsPage({ user }: { user: AuthUser }) {
   const name = user.displayName ?? user.email;
   return (
     <ShellLayout layout={LAYOUT}>
-      <Hero tone="run" meta={user.tenantName ?? '회사'} title={`${name}\n계정입니다`} foot="회사 멤버면 승인까지 모두 할 수 있습니다">
+      <Hero tone="run" meta={user.tenantName ?? t('회사')} title={t('{0}\n계정입니다', { 0: name })} foot={t('회사 멤버면 승인까지 모두 할 수 있습니다')}>
         <p className="t-body-md c-secondary">{user.email}</p>
         <div className={`${own.grid} scroll-fade`}>
           {PROVIDER_ORDER.map((provider) => (
@@ -198,21 +199,21 @@ export function SettingsPage({ user }: { user: AuthUser }) {
       <Stack area="side">
         <DisplayFold user={user} />
         <GithubFold />
-        <FoldTile title="서비스 상태" summary="자동 확인" defaultOpen={false}>
+        <FoldTile title={t('서비스 상태')} summary={t('자동 확인')} defaultOpen={false}>
           <ul className={s.rows}>
-            <ProbeRow name="API 서버" state={health} />
-            <ProbeRow name="데이터베이스" state={ready} />
+            <ProbeRow name={t('API 서버')} state={health} />
+            <ProbeRow name={t('데이터베이스')} state={ready} />
           </ul>
         </FoldTile>
-        <FoldTile title="개발자 문서" summary="OpenAPI" defaultOpen={false}>
+        <FoldTile title={t('개발자 문서')} summary="OpenAPI" defaultOpen={false}>
           <ul className={s.rows}>
-            <li className={s.row}><a className={`${s.link} t-label-md`} href={`${API_BASE}/docs`} target="_blank" rel="noopener">API 문서</a></li>
+            <li className={s.row}><a className={`${s.link} t-label-md`} href={`${API_BASE}/docs`} target="_blank" rel="noopener">{t('API 문서')}</a></li>
             <li className={s.row}><a className={`${s.link} t-label-md`} href={`${API_BASE}/docs/openapi.json`} target="_blank" rel="noopener">openapi.json</a></li>
             <li className={s.row}><a className={`${s.link} t-label-md`} href={`${API_BASE}/docs/openapi.yaml`} target="_blank" rel="noopener">openapi.yaml</a></li>
           </ul>
         </FoldTile>
         <ActionRow>
-          <ActionPill label="로그아웃" icon="rollback" onClick={() => void auth.logout()} />
+          <ActionPill label={t('로그아웃')} icon="rollback" onClick={() => void auth.logout()} />
         </ActionRow>
       </Stack>
     </ShellLayout>

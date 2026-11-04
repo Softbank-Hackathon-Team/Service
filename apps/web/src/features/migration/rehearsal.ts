@@ -15,89 +15,90 @@ import {
   type SandboxRunPhase,
 } from '../../lib/rehearsal-types';
 import type { MigrationStatus, MigrationView } from '../../lib/types';
+import { t } from '../../lib/i18n';
 
 // vCluster 리허설: deploying 안, GitOps 커밋 직전에 같은 매니페스트를 일회용 가상 클러스터에 먼저 올린다.
 // 화면은 이 파일의 판단만 쓴다. 시험은 test/rehearsal-model.test.ts
 
 /** 격리 문구. 사람이 승인한 문장이라 화면과 발표에 그대로 쓴다. 바꾸지 않는다. */
 export const ISOLATION_TEXT =
-  '리허설은 플랫폼 안의 일회용 가상 클러스터에서 돕니다. 전용 노드에 한 번에 한 회사만 올라가고, 인터넷·클라우드 메타데이터·플랫폼 DB에 닿지 못하며, 고객 자격 증명은 들어가지 않습니다.';
+  t('리허설은 플랫폼 안의 일회용 가상 클러스터에서 돕니다. 전용 노드에 한 번에 한 회사만 올라가고, 인터넷·클라우드 메타데이터·플랫폼 DB에 닿지 못하며, 고객 자격 증명은 들어가지 않습니다.');
 
 /** 지난 시도 줄 머리 문장. 줄 내용은 그대로 보이되 지금 판정이 아니라고 먼저 말한다. */
-export const STALE_TEXT = '지난 배포 시도의 기록입니다. 이번 시도의 판정이 아닙니다.';
+export const STALE_TEXT = t('지난 배포 시도의 기록입니다. 이번 시도의 판정이 아닙니다.');
 
 /** 빌린 권한 한 줄. 리허설 자체는 고객 권한을 쓰지 않고, 이미지 복사만 출발 관찰 역할을 빌린다. */
-export const BORROW_TEXT = '리허설은 고객 권한을 쓰지 않습니다. 이미지 복사만 출발 관찰 역할을 15분 빌립니다.';
+export const BORROW_TEXT = t('리허설은 고객 권한을 쓰지 않습니다. 이미지 복사만 출발 관찰 역할을 15분 빌립니다.');
 
 export const PHASE_LABEL: Record<SandboxRunPhase, string> = {
-  creating: '샌드박스 만들기',
-  applying: '같은 매니페스트 올리기',
-  checking: '검사',
-  deleting: '샌드박스 지우기',
-  done: '끝',
+  creating: t('샌드박스 만들기'),
+  applying: t('같은 매니페스트 올리기'),
+  checking: t('검사'),
+  deleting: t('샌드박스 지우기'),
+  done: t('끝'),
 };
 const PHASES: SandboxRunPhase[] = ['creating', 'applying', 'checking', 'deleting'];
 /** 단계 이름. 화면이 모르는 단계(옛 서버의 mirroring 등)는 비운다 */
 export const phaseLabel = (phase: string | null | undefined) => (phase && phase in PHASE_LABEL ? PHASE_LABEL[phase as SandboxRunPhase] : '');
 
 export const CHECK_LABEL: Record<RehearsalCheckId, string> = {
-  sandbox_ready: '샌드박스 준비',
-  dry_run: '원본 미리 적용(dry-run)',
-  target_policy: '도착 파드 보안 규칙',
-  quota: '도착 네임스페이스 한도',
-  apply: '적용',
-  rollout: '롤아웃',
-  restarts: '재시작 없음',
-  ready: '준비 상태',
-  job_complete: 'Job 끝남',
-  service_http: '서비스 응답',
-  edge_http: '서비스 사이 연결',
-  db_seen: 'DB 닿음',
-  unsupported_kind: '지원하는 종류만',
+  sandbox_ready: t('샌드박스 준비'),
+  dry_run: t('원본 미리 적용(dry-run)'),
+  target_policy: t('도착 파드 보안 규칙'),
+  quota: t('도착 네임스페이스 한도'),
+  apply: t('적용'),
+  rollout: t('롤아웃'),
+  restarts: t('재시작 없음'),
+  ready: t('준비 상태'),
+  job_complete: t('Job 끝남'),
+  service_http: t('서비스 응답'),
+  edge_http: t('서비스 사이 연결'),
+  db_seen: t('DB 닿음'),
+  unsupported_kind: t('지원하는 종류만'),
 };
 
 export const FIDELITY_LABEL: Record<FidelityItemId, string> = {
-  manifests: '매니페스트',
-  namespace: '네임스페이스',
-  k8s_version: '쿠버네티스 버전',
-  objects: '객체 목록',
-  target_pod_security: '도착 파드 보안',
-  sandbox_pod_security: '샌드박스 파드 보안',
-  images: '이미지',
-  replicas: '복제 수',
-  requests: '요청 자원',
-  scheduling: '배치 규칙',
-  service_type: '서비스 종류',
-  storage: '저장소',
-  secrets: '비밀 이름',
-  secret_values: '비밀 값',
+  manifests: t('매니페스트'),
+  namespace: t('네임스페이스'),
+  k8s_version: t('쿠버네티스 버전'),
+  objects: t('객체 목록'),
+  target_pod_security: t('도착 파드 보안'),
+  sandbox_pod_security: t('샌드박스 파드 보안'),
+  images: t('이미지'),
+  replicas: t('복제 수'),
+  requests: t('요청 자원'),
+  scheduling: t('배치 규칙'),
+  service_type: t('서비스 종류'),
+  storage: t('저장소'),
+  secrets: t('비밀 이름'),
+  secret_values: t('비밀 값'),
   database: 'DB',
-  ingress: '진입',
-  tunnel: '터널',
-  cloud_identity: '클라우드 권한(ID)',
-  network: '네트워크',
-  quota: '한도',
-  runtime_isolation: '런타임 격리',
-  hpa_scaling: '자동 늘리기(HPA)',
-  cronjob_runs: '예약 작업 실행',
-  daemonsets: '데몬셋',
-  data: '데이터',
-  traffic: '실제 트래픽',
-  node_arch: '노드 아키텍처',
+  ingress: t('진입'),
+  tunnel: t('터널'),
+  cloud_identity: t('클라우드 권한(ID)'),
+  network: t('네트워크'),
+  quota: t('한도'),
+  runtime_isolation: t('런타임 격리'),
+  hpa_scaling: t('자동 늘리기(HPA)'),
+  cronjob_runs: t('예약 작업 실행'),
+  daemonsets: t('데몬셋'),
+  data: t('데이터'),
+  traffic: t('실제 트래픽'),
+  node_arch: t('노드 아키텍처'),
 };
 
 export const FIDELITY_GROUP: Record<FidelityStatus, string> = {
-  identical: '같게 확인한 것',
-  substituted: '바꿔서 확인한 것',
-  not_checked: '확인하지 못한 것',
+  identical: t('같게 확인한 것'),
+  substituted: t('바꿔서 확인한 것'),
+  not_checked: t('확인하지 못한 것'),
 };
 
 export const SKIP_TEXT: Record<RehearsalSkip, string> = {
-  non_k8s: '도착이 쿠버네티스가 아니라(ECS·Cloud Run·VM) 리허설하지 않았습니다.',
-  no_cluster: '도착 클러스터 정보가 아직 없어 리허설하지 않았습니다.',
-  unsupported_target: '리허설을 지원하지 않는 도착입니다. EKS·GKE·온프레 k3s 도착만 리허설합니다.',
-  disabled: '이 플랫폼에서 리허설이 꺼져 있어 리허설 없이 배포했습니다.',
-  mock: '흉내 배포라 리허설하지 않았습니다.',
+  non_k8s: t('도착이 쿠버네티스가 아니라(ECS·Cloud Run·VM) 리허설하지 않았습니다.'),
+  no_cluster: t('도착 클러스터 정보가 아직 없어 리허설하지 않았습니다.'),
+  unsupported_target: t('리허설을 지원하지 않는 도착입니다. EKS·GKE·온프레 k3s 도착만 리허설합니다.'),
+  disabled: t('이 플랫폼에서 리허설이 꺼져 있어 리허설 없이 배포했습니다.'),
+  mock: t('흉내 배포라 리허설하지 않았습니다.'),
 };
 
 export const isRehearsalCode = (code: string | null | undefined): code is RehearsalFailureCode =>
@@ -138,39 +139,39 @@ export function rehearsalStepDetail(run: RehearsalRun | null | undefined, stale 
   const state = rehearsalState(run, stale);
   switch (state) {
     case 'none':
-      return status === 'deploying' ? '리허설 준비' : undefined;
+      return status === 'deploying' ? t('리허설 준비') : undefined;
     case 'stale':
-      return status === 'deploying' ? '리허설 준비' : undefined;
+      return status === 'deploying' ? t('리허설 준비') : undefined;
     case 'waiting':
-      return '리허설 준비';
+      return t('리허설 준비');
     case 'running':
-      return '리허설 중';
+      return t('리허설 중');
     case 'passed':
-      return '리허설 통과';
+      return t('리허설 통과');
     case 'reused':
-      return '리허설 재사용';
+      return t('리허설 재사용');
     case 'skipped':
-      return '리허설 건너뜀';
+      return t('리허설 건너뜀');
     case 'failed':
     case 'error':
-      return '리허설에서 멈춤';
+      return t('리허설에서 멈춤');
   }
 }
 
 /** 리허설 카드 머리줄 오른쪽 요약. */
 export function rehearsalSummary(run: RehearsalRun | null | undefined, stale = false): string {
   const state = rehearsalState(run, stale);
-  if (state === 'running' && phaseLabel(run?.phase)) return `도는 중 · ${phaseLabel(run?.phase)}`;
+  if (state === 'running' && phaseLabel(run?.phase)) return t('도는 중 · {0}', { 0: phaseLabel(run?.phase) });
   const SUMMARY: Record<RehearsalState, string> = {
-    none: '아직 없음',
-    waiting: '차례 기다림',
-    running: '도는 중',
-    passed: '통과',
-    reused: '앞선 통과 재사용',
-    skipped: '건너뜀',
-    failed: '실패',
-    error: '오류',
-    stale: '지난 시도 기록',
+    none: t('아직 없음'),
+    waiting: t('차례 기다림'),
+    running: t('도는 중'),
+    passed: t('통과'),
+    reused: t('앞선 통과 재사용'),
+    skipped: t('건너뜀'),
+    failed: t('실패'),
+    error: t('오류'),
+    stale: t('지난 시도 기록'),
   };
   return SUMMARY[state];
 }
@@ -189,7 +190,7 @@ export function phaseEntries(run: Pick<RehearsalRun, 'status' | 'phase'>): Check
 const checkLabel = (check: RehearsalResult['checks'][number]) => {
   const name = CHECK_LABEL[check.id] ?? check.id;
   const subject = check.subject && check.subject !== name ? ` · ${check.subject}` : '';
-  return `${name}${subject}${check.required ? '' : ' (참고)'}`;
+  return `${name}${subject}${check.required ? '' : t(' (참고)')}`;
 };
 
 /**
@@ -219,8 +220,8 @@ export function fidelityGroups(matrix: FidelityMatrix | null | undefined): { sta
 
 /** 커널 격리 한 줄. gVisor 같은 RuntimeClass 가 있으면 커널 분리, 없으면 같은 커널에 전용 노드. */
 export function isolationLine(sandbox: Pick<RehearsalResult['sandbox'], 'runtimeClass' | 'podSecurity' | 'mock'>): string {
-  const kernel = sandbox.runtimeClass ? `커널 분리(${sandbox.runtimeClass})` : '같은 커널, 전용 노드';
-  return [kernel, `파드 보안 ${sandbox.podSecurity}`, sandbox.mock ? '흉내 샌드박스' : null].filter(Boolean).join(' · ');
+  const kernel = sandbox.runtimeClass ? t('커널 분리({0})', { 0: sandbox.runtimeClass }) : t('같은 커널, 전용 노드');
+  return [kernel, t('파드 보안 {0}', { 0: sandbox.podSecurity }), sandbox.mock ? t('흉내 샌드박스') : null].filter(Boolean).join(' · ');
 }
 
 /** 걸린 시간(초). 끝났으면 시작부터 끝까지, 도는 중이면 지금까지. */
@@ -235,15 +236,15 @@ export function elapsedSec(run: Pick<RehearsalRun, 'createdAt' | 'startedAt' | '
  * agent-worker 가 집으면 실행 기한(REHEARSAL_TIMEOUT_SEC)으로 바뀐다. 그래서 남은 시간이 집히는 순간 다른 값으로 뛸 수 있다.
  */
 export function deadlineLabel(run: Pick<RehearsalRun, 'status'>): string | null {
-  if (run.status === 'queued') return '줄 서기 기한';
-  if (run.status === 'running') return '실행 기한';
+  if (run.status === 'queued') return t('줄 서기 기한');
+  if (run.status === 'running') return t('실행 기한');
   return null;
 }
 
 /** REHEARSAL_TIMEOUT 이 어디서 났는지 (감사 detail.rehearsal.stage): 줄 서기(queue) / 실행(run) */
 export function timeoutStageText(stage: string | null | undefined): string | null {
-  if (stage === 'queue') return '샌드박스가 아직 돌지 못함 (줄 서기 기한 넘김)';
-  if (stage === 'run') return '실행 중 시간 초과';
+  if (stage === 'queue') return t('샌드박스가 아직 돌지 못함 (줄 서기 기한 넘김)');
+  if (stage === 'run') return t('실행 중 시간 초과');
   return null;
 }
 
@@ -253,7 +254,7 @@ export function remainingSec(run: Pick<RehearsalRun, 'deadlineAt' | 'finishedAt'
   return Math.max(0, Math.round((Date.parse(run.deadlineAt) - now) / 1000));
 }
 
-export const formatSec = (sec: number) => (sec < 1 ? '1초 미만' : sec < 60 ? `${sec}초` : `${Math.floor(sec / 60)}분 ${sec % 60}초`);
+export const formatSec = (sec: number) => (sec < 1 ? t('1초 미만') : sec < 60 ? t('{0}초', { 0: sec }) : t('{0}분 {1}초', { 0: Math.floor(sec / 60), 1: sec % 60 }));
 
 // 리허설 줄이 있을 수 있는 상태: deploying 과 그 뒤. 멈춘·실패한 이전은 멈춘 칸으로 본다
 const AFTER_DEPLOY = ['deploying', 'syncing', 'shifting', 'cutover', 'rollback_window', 'cleanup', 'completed'];
@@ -271,11 +272,11 @@ export const rehearsalPollMs = (status: MigrationView['status']) => (status === 
 /** 큰 카드 한 줄 (deploying 일 때). 줄이 없으면 null. */
 export function rehearsalHeroLine(run: RehearsalRun | null | undefined, stale = false): string | null {
   const state = rehearsalState(run, stale);
-  if (state === 'none') return '고객 클러스터에 올리기 전에 리허설을 준비하고 있습니다 · 이미지 복사';
+  if (state === 'none') return t('고객 클러스터에 올리기 전에 리허설을 준비하고 있습니다 · 이미지 복사');
   if (state === 'running' || state === 'waiting')
-    return `고객 클러스터에 올리기 전에 일회용 가상 클러스터에서 먼저 리허설하고 있습니다${phaseLabel(run?.phase) ? ` · ${phaseLabel(run?.phase)}` : ''}`;
-  if (state === 'passed' || state === 'reused') return '리허설을 통과해 같은 매니페스트를 도착 클러스터에 올리고 있습니다';
+    return t('고객 클러스터에 올리기 전에 일회용 가상 클러스터에서 먼저 리허설하고 있습니다{0}', { 0: phaseLabel(run?.phase) ? ` · ${phaseLabel(run?.phase)}` : '' });
+  if (state === 'passed' || state === 'reused') return t('리허설을 통과해 같은 매니페스트를 도착 클러스터에 올리고 있습니다');
   if (state === 'skipped' && run?.skip) return SKIP_TEXT[run.skip];
-  if (state === 'stale') return '이번 배포 시도의 리허설을 준비하고 있습니다. 옆의 리허설 카드는 지난 시도의 기록입니다';
+  if (state === 'stale') return t('이번 배포 시도의 리허설을 준비하고 있습니다. 옆의 리허설 카드는 지난 시도의 기록입니다');
   return null;
 }

@@ -1,6 +1,7 @@
 import type { ResourceCategory } from '../../lib/resourceMap';
 import { HUMAN_STEP, HUMAN_WAIT, isTerminal, toneOf, type Tone } from '../../lib/status';
 import type { EnvironmentView, EnvStatus, MigrationStatus, MigrationView } from '../../lib/types';
+import { t } from '../../lib/i18n';
 
 export type Health = EnvStatus['health'];
 export type BadgeTone = 'neutral' | 'warning' | 'success' | 'info' | 'danger';
@@ -37,7 +38,7 @@ export const fromStatus = (status: EnvStatus): EnvObservation => ({
   mock: status.mock,
   resources: status.resources.length,
   region: status.region,
-  problem: status.health === 'degraded' ? '자원 상태가 불안정합니다' : null,
+  problem: status.health === 'degraded' ? t('자원 상태가 불안정합니다') : null,
 });
 
 export function fromInventory(cloud: CloudInventory): EnvObservation {
@@ -48,11 +49,11 @@ export function fromInventory(cloud: CloudInventory): EnvObservation {
   const first = bad[0];
   const problem =
     cloud.status === 'unavailable'
-      ? (cloud.reason ?? '자원을 읽지 못했습니다')
+      ? (cloud.reason ?? t('자원을 읽지 못했습니다'))
       : first
-        ? `${first.name} ${first.status}${bad.length > 1 ? ` 외 ${bad.length - 1}개` : ''}`
+        ? `${first.name} ${first.status}${bad.length > 1 ? t(' 외 {0}개', { 0: bad.length - 1 }) : ''}`
         : cloud.status === 'partial'
-          ? (cloud.reason ?? '일부만 읽었습니다')
+          ? (cloud.reason ?? t('일부만 읽었습니다'))
           : null;
   return { health, mock: cloud.source === 'azure-mock', resources: items.length, region: cloud.region, problem };
 }
@@ -61,9 +62,9 @@ const needsLook = (env: EnvironmentView, seen: EnvObservation | undefined) =>
   env.connectionStatus !== 'connected' || seen?.health !== 'healthy';
 
 export function envHeadline(envs: EnvironmentView[], observed: Record<string, EnvObservation>): string {
-  if (envs.length === 0) return '연결된 환경이\n없습니다';
+  if (envs.length === 0) return t('연결된 환경이\n없습니다');
   const issues = envs.filter((env) => needsLook(env, observed[env.id])).length;
-  return issues > 0 ? `환경 ${envs.length}개 중\n${issues}개를 확인해 주세요` : `환경 ${envs.length}개가\n정상입니다`;
+  return issues > 0 ? t('환경 {0}개 중\n{1}개를 확인해 주세요', { 0: envs.length, 1: issues }) : t('환경 {0}개가\n정상입니다', { 0: envs.length });
 }
 
 export type MigrationBucket = 'human' | 'running' | 'done';
@@ -90,18 +91,18 @@ export const bucketSignature = (items: MigrationView[]) =>
 /** 큰 소식이 없을 때 목록 맨 위에 쓰는 한 줄. 검토가 필요한 이전이 있으면 쓰지 않는다. */
 export function listNote(groups: Record<MigrationBucket, MigrationView[]>): string | null {
   if (groups.human.length > 0) return null;
-  if (groups.running.length > 0) return '지금 사람이 할 일은 없습니다.';
-  return groups.done.length > 0 ? '진행 중인 마이그레이션이 없습니다.' : '아직 마이그레이션이 없습니다. 새 마이그레이션을 시작해 보세요.';
+  if (groups.running.length > 0) return t('지금 사람이 할 일은 없습니다.');
+  return groups.done.length > 0 ? t('진행 중인 마이그레이션이 없습니다.') : t('아직 마이그레이션이 없습니다. 새 마이그레이션을 시작해 보세요.');
 }
 
 const HUMAN_ACTION: Partial<Record<MigrationStatus, string>> = {
-  spec_review: '명세 확정',
-  awaiting_approval: '계획 승인',
-  approved: '실행 다시 시작',
-  paused: '멈춘 마이그레이션 확인',
-  failed: '실패 확인',
-  rejected: '거절된 계획 처리',
-  stale: '낡은 계획 처리',
+  spec_review: t('명세 확정'),
+  awaiting_approval: t('계획 승인'),
+  approved: t('실행 다시 시작'),
+  paused: t('멈춘 마이그레이션 확인'),
+  failed: t('실패 확인'),
+  rejected: t('거절된 계획 처리'),
+  stale: t('낡은 계획 처리'),
 };
 
 export const humanAction = (status: MigrationStatus) => HUMAN_ACTION[status] ?? null;
