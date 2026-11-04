@@ -276,6 +276,8 @@ jobs:
         run: bash deploy/ci/check-platform.sh
       - name: onprem install chart lint + template + kubeconform + 권한 단언 (W2)
         run: bash deploy/ci/check-onprem-agent.sh
+      - name: onprem db tunnel chart lint + template + security shape
+        run: bash deploy/ci/check-onprem-db-tunnel.sh
 
   docker:
     if: github.event_name != 'schedule'
