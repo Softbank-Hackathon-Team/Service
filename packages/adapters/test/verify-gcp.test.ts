@@ -134,24 +134,3 @@ test("클러스터 이름이 없는 환경(Cloud Run·VM 만)은 can-i 를 안 �
   assert.equal((await verifyGcpObserve({ exec: f.exec, env: {} }, { ...input, clusterName: null })).ok, true);
   assert.equal(f.calls.some((c) => /kubectl|get-credentials/.test(c.line)), false);
 });
-
-test("GKE can-i: 쿠버네티스 읽기 권한이 없으면(can-i no) K8S_ACCESS_MISSING, 임시 KUBECONFIG 만 쓰고 빌린 토큰으로 부름", async () => {
-  const f = fakeExec(table([[/^kubectl .* auth can-i/, { code: 1, out: "no\n" }]]));
-  assert.deepEqual(await verifyGcpObserve({ exec: f.exec, env: {} }, input), { ok: false, reason: "K8S_ACCESS_MISSING" });
-  const gc = f.calls.find((c) => c.line.includes("get-credentials"))!;
-  assert.match(gc.env.KUBECONFIG ?? "", /svc-verify-gcp-.*kubeconfig$/);
-  assert.equal(gc.env.CLOUDSDK_AUTH_ACCESS_TOKEN, "ya29.secret");
-});
-
-test("GKE can-i 거부: get-credentials 가 권한 거절이면 PERMISSION_MISSING:container.clusters.get, 클러스터 위치를 모르면 K8S_ACCESS_MISSING", async () => {
-  const f = fakeExec(table([[/get-credentials/, denied]]));
-  assert.deepEqual(await verifyGcpObserve({ exec: f.exec, env: {} }, input), { ok: false, reason: "PERMISSION_MISSING:container.clusters.get" });
-  const g = fakeExec(table([[/^gcloud container clusters list/, { out: [{ name: "shop" }] }]]));
-  assert.deepEqual(await verifyGcpObserve({ exec: g.exec, env: {} }, input), { ok: false, reason: "K8S_ACCESS_MISSING" });
-});
-
-test("클러스터 이름이 없는 환경(Cloud Run·VM 만)은 can-i 를 안 부름", async () => {
-  const f = fakeExec(table());
-  assert.equal((await verifyGcpObserve({ exec: f.exec, env: {} }, { ...input, clusterName: null })).ok, true);
-  assert.equal(f.calls.some((c) => /kubectl|get-credentials/.test(c.line)), false);
-});

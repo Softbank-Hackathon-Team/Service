@@ -32,7 +32,7 @@ subjects:
     kind: Group
     name: platform:operate
 ---
-# ID-1·ID-4 울타리 (EKS 에는 Kyverno 가 없어서 k8s 내장 ValidatingAdmissionPolicy, v1 = k8s 1.30+. 도착 EKS 기본 1.33)
+# ID-1·ID-4 울타리 (EKS 에는 Kyverno 가 없어서 k8s 내장 ValidatingAdmissionPolicy, v1 = k8s 1.30+. 도착 EKS 기본 1.35)
 # 위 RBAC 만으로는 실행 그룹이 아무 네임스페이스(kube-system 포함)에, 아무 주체에게 RoleBinding 을 만들 수 있고,
 # 고객 기존 네임스페이스도 지울 수 있다. 아래 정책이 실행 그룹의 요청만 골라 막는다:
 #   1) RoleBinding = managed-by=platform 표시가 있는 네임스페이스에만, ClusterRole platform-deploy-app 만, 주체는 그룹 platform:deploy 만

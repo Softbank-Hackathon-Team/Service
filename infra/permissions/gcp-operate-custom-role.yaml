@@ -15,6 +15,7 @@ includedPermissions:
 - cloudsql.users.list
 - cloudsql.users.update
 - container.clusters.get
+- container.clusters.update
 - container.namespaces.create
 - container.namespaces.delete
 - container.namespaces.get
