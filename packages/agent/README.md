@@ -13,6 +13,19 @@ DRAFT(ai): 나중에 `@svc/onprem-agent`와 `@svc/agent`로 쪼갤지 팀이 정
 | 부작용 | 없음 (키 저장소는 주입, STUB은 메모리) | 없음 (LLM·샌드박스 주입, STUB은 대본 LLM·메모리 샌드박스) |
 | 실패 코드 | 401 `AGENT_AUTH_MISSING`, `AGENT_KEY_UNKNOWN`, `AGENT_TS_SKEW`, `AGENT_BAD_SIGNATURE` / 400 `AGENT_BAD_JSON`, `AGENT_BAD_SHAPE` | 실행 실패는 예외가 아니라 `state: "failed"` + 이유(예산 초과, finish 없음, 모델 거부) |
 
+vCluster 백엔드와 리허설 (`ai/vcluster.ts`, `rehearsal/`):
+
+| 항목 | 내용 |
+|---|---|
+| 목적 | 플랫폼 클러스터 `sbx-*` 네임스페이스 하나에 일회용 vCluster 하나. 리허설은 렌더 결과를 올려 보고 판정한다 |
+| 받는 것 | `HostKube`(agent-worker 서비스 계정), `HelmRunner`, 차트 묶음, `VclusterSpec` / 리허설은 `RehearsalInput` + `RehearsalBackend` |
+| 넘기는 것 | `Vcluster {name, admin: VirtualAdminKube, agent(): VirtualAgentKube, dispose()}` / `RehearsalResult` (검사 줄, 충실도 표의 agent-worker 몫 두 줄, 시간) |
+| 부작용 | 호스트: 네임스페이스·RoleBinding·helm 릴리스 만들고 지움. 가상: CRD·앱 네임스페이스·적용·검사 파드 |
+| 실패 코드 | `KubeError` `SANDBOX_CREATE`·`SANDBOX_HELM`·`SANDBOX_NOT_READY`·`SANDBOX_NO_HOST` → 리허설은 `REHEARSAL_SANDBOX_UNAVAILABLE`. 그 밖은 `RehearsalFailureCode` 와 판정 표 `DIAGNOSES` |
+
+- 관리자 클라이언트(`VirtualAdminKube`)는 결정 코드만. LLM 도구 자리에는 타입이 달라 넘길 수 없다
+- 청소: `sweepSandboxes` + `expiredSandbox`(만료) / `leftoverRehearsal`(리허설 시작 전). 실패는 실행 번호·네임스페이스와 함께 돌려준다 (#177)
+
 - 서명: HMAC-SHA256(secret, "시각.본문"), 시계 차이 5분. 본문에 `tenantId`를 넣으면 strict 검사에서 거부
 - 도구 7개: sandbox_get, sandbox_logs, sandbox_apply, repo_read, repo_edit, run_check, finish. PR 만들기는 도구가 아니다
 - 게이트는 STUB(줄 단위 4개 규칙). 설계 v1의 GATE-01~12(YAML 경로 비교)로 바꿀 자리
