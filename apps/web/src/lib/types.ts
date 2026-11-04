@@ -197,7 +197,7 @@ export interface EvidenceReport {
     approvedPlanHash: string; storedPlanHash: string | null; hashMatches: boolean }[];
   incidents: { seq: number; at: string; actor: string; action: string; result: "denied" | "error"; note: string }[];
   measurements: { name: string; value: number; unit: string; env: string; at: string }[];
-  // 트래픽 판정 요약 (apps/api/src/report/schema.ts TrafficSummary). 전환을 한 번도 안 했으면 null
+  // 트래픽 판정 요약 (packages/contracts/src/results.ts TrafficSummary). 전환을 한 번도 안 했으면 null
   traffic: TrafficSummary | null;
   gaps: string[];
   reportHash: string;
