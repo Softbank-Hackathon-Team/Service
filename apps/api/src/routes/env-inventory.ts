@@ -6,6 +6,7 @@ import { SPEC_DRAFT_KEY, withTenant } from "@svc/core";
 import { cachedInventory, chooseRunner, gcp, onprem, resourceTypesV2For, serviceMapV2, stubStatus, type RunnerStatus } from "@svc/adapters";
 import { EnvironmentStatus, errors } from "./responses.js";
 import { IdParam, found, isoUtc } from "./kit.js";
+import { onpremInventoryDeps } from "./agent-reports.js";
 
 // Z86: 읽기 전용 GET 2개
 //   GET /api/v1/environments/:id/inventory   — "이 환경에 지금 무엇이 돌고 있고, 이전 때문에 무엇이 생기고 걷혔나"
@@ -59,7 +60,7 @@ export const CloudInventory = z.object({
   provider: Provider,
   status: z.enum(["ok", "partial", "unavailable"]),
   reason: z.string().nullable(),
-  source: z.enum(["aws-cli", "gcloud", "kubectl", "azure-mock", "none"]),
+  source: z.enum(["aws-cli", "gcloud", "kubectl", "agent", "azure-mock", "none"]),
   scope: z.string().nullable(), region: z.string().nullable(), checkedAt: z.string(), elapsedMs: z.number().int(),
   groups: z.array(z.object({
     category: InventoryCategory, service: z.string(),
@@ -389,7 +390,7 @@ export async function envInventoryRoutes(app: FastifyInstance) {
     const runner = c.kind === "runner" ? c.runner : null;
     const [base, cloud] = await Promise.all([
       runner ? runner.status(target) : Promise.resolve(stubStatus(target)),
-      cachedInventory(env.id, env.provider, runner ? { azureStatus: () => runner.status(target) } : {}),
+      cachedInventory(env.id, env.provider, { ...(runner ? { azureStatus: () => runner.status(target) } : {}), ...onpremInventoryDeps(req.tenantId, env.id, env.provider) }),
     ]);
     return buildEnvResources(env, base, normPct(rows), cloud);
   });

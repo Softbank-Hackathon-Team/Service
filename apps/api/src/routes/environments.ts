@@ -11,6 +11,7 @@ import {
 import { cachedInventory, chooseRunner, inventoryToStatus, EKS_CLUSTER_NAME_RE } from "@svc/adapters";
 import { EnvironmentList, EnvironmentStatus, errors } from "./responses.js";
 import { IdParam, auditOk, found, isoUtc } from "./kit.js";
+import { onpremInventoryDeps } from "./agent-reports.js";
 import { awsQuickCreateUrl, connectSettings, externalIdHint, gcpCloudShellLink, gcpConnectSettings, newExternalId, shouldCreateBoundary } from "../connect/link.js";
 import { hashMetricToken, newMetricToken } from "../auth/metric-token.js";
 
@@ -276,7 +277,7 @@ export async function environmentRoutes(app: FastifyInstance) {
     const target = { envId: env.id, provider: env.provider, region: "default" };
     const c = chooseRunner(env.provider);
     if (c.kind === "unavailable") throw c.error;
-    if (c.kind === "stub") return inventoryToStatus(await cachedInventory(env.id, env.provider), target);
+    if (c.kind === "stub") return inventoryToStatus(await cachedInventory(env.id, env.provider, onpremInventoryDeps(req.tenantId, env.id, env.provider)), target);
     return c.runner.status(target);
   });
 }

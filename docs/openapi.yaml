@@ -842,6 +842,7 @@ paths:
                           - "aws-cli"
                           - "gcloud"
                           - "kubectl"
+                          - "agent"
                           - "azure-mock"
                           - "none"
                       scope:

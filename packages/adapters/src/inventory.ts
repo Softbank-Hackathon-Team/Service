@@ -7,7 +7,8 @@ import { arr, str as s, get, lastLine, maskAccount, awsRegion, gcpRegion, onprem
 // Z86: 환경 실자원 읽기 (읽기 전용). 클라우드 SDK 를 새로 넣지 않고 맥에 이미 있는 CLI 를 쓴다 — tools/cloud-zero.sh 와 같은 명령 묶음
 //   AWS  : aws sts get-caller-identity → eks list-clusters · rds describe-db-instances · ec2 describe-vpcs · elbv2 describe-load-balancers · ecr describe-repositories
 //   GCP  : gcloud container clusters list · sql instances list · compute networks list · compute forwarding-rules list · artifacts repositories list
-//   온프레: kubectl --context <ONPREM_KUBE_CONTEXT, 기본 k3d-onprem> get nodes · clusters.postgresql.cnpg.io · deployments · services
+//   온프레: pull 모드(기본)는 Agent 가 보낸 마지막 보고(하트비트·facts). 플랫폼은 고객 클러스터에 붙을 길이 없다 (들어오는 포트 0)
+//          push 시연(ONPREM_FLOOR_VIA_GIT=0, 로컬 k3d)만 kubectl --context <ONPREM_KUBE_CONTEXT, 기본 k3d-onprem> get nodes · clusters.postgresql.cnpg.io · deployments · services
 //   Azure: Mock 실행기 상태 (진짜 Azure 는 만들지 않기로 함)
 // 규칙: 쓰기 명령 0개(인자 배열 고정, 셸 없음, 사용자 입력이 인자에 안 들어감). 자격·CLI 가 없으면 가짜 값 없이 status "unavailable" + 이유.
 // 명령 하나가 실패하면 그 묶음만 error 로 두고 나머지는 보여 준다. 결과는 환경별 30초 캐시 (INVENTORY_CACHE_SEC)
@@ -22,7 +23,7 @@ export interface CloudInventory {
   provider: Provider;
   status: "ok" | "partial" | "unavailable";
   reason: string | null;            // unavailable·partial 일 때 사람이 읽는 이유
-  source: "aws-cli" | "gcloud" | "kubectl" | "azure-mock" | "none";
+  source: "aws-cli" | "gcloud" | "kubectl" | "agent" | "azure-mock" | "none";
   scope: string | null;             // 계정·프로젝트·kube context
   region: string | null;
   checkedAt: string;
@@ -87,7 +88,34 @@ function kubeCmds(ctx: string): Cmd[] {
   ];
 }
 
-export interface InventoryDeps { exec?: Exec; env?: NodeJS.ProcessEnv; now?: () => Date; azureStatus?: () => Promise<RunnerStatus> }
+// 온프레 pull 모드에서 api 가 DB(agent_keys·agent_reports)에서 읽어 넘기는 값. 판정 기준은 연결 확인·사전 점검과 같다 (살아 있는 키, AGENT_STALE_SEC)
+export interface AgentInventory {
+  keys: number; heartbeatAgeSec: number | null; staleSec: number; k3sVersion: string | null;
+  cnpg: { cluster: string; ready: boolean } | null;   // 마지막 하트비트
+  dbs: { namespace: string; cluster: string; majorVersion: number | null; tlsEnforced: boolean | null; exposed: boolean | null }[] | null;   // 마지막 facts (없으면 null)
+}
+export interface InventoryDeps { exec?: Exec; env?: NodeJS.ProcessEnv; now?: () => Date; azureStatus?: () => Promise<RunnerStatus>; agent?: () => Promise<AgentInventory> }
+
+/** 온프레 pull 모드 실자원 = Agent 마지막 보고. Agent 가 보내지 않는 것(Deployment·Service 목록)은 지어내지 않고 묶음을 안 만든다 */
+export function agentInventory(a: AgentInventory, t0: number, now: Date): CloudInventory {
+  const scope = `Agent 키 ${a.keys}개`;
+  if (a.keys <= 0) return unavailable("onprem", "agent", "확인 불가: Agent 키 없음 (AGENT_KEY_MISSING) — 콘솔 등록 토큰으로 onprem-agent --enroll", t0, now, scope);
+  if (a.heartbeatAgeSec == null) return unavailable("onprem", "agent", "확인 불가: Agent 하트비트가 한 번도 안 옴 (AGENT_HEARTBEAT_STALE)", t0, now, scope);
+  if (a.heartbeatAgeSec > a.staleSec)
+    return unavailable("onprem", "agent", `확인 불가: 마지막 Agent 하트비트 ${a.heartbeatAgeSec}초 전 (기준 ${a.staleSec}초, AGENT_HEARTBEAT_STALE)`, t0, now, scope);
+  const yn = (v: boolean | null, y: string, n: string) => v == null ? null : v ? y : n;
+  const dbs: InventoryItem[] = a.dbs
+    ? a.dbs.map((d) => ({ name: `${d.namespace}/${d.cluster}`, status: null,
+        detail: [d.majorVersion ? `PostgreSQL ${d.majorVersion}` : null, yn(d.tlsEnforced, "TLS 강제", "TLS 미강제"), yn(d.exposed, "바깥 노출", "클러스터 안만")].filter(Boolean).join(" · ") || null }))
+    : a.cnpg ? [{ name: a.cnpg.cluster, status: a.cnpg.ready ? "Ready" : "NotReady", detail: null }] : [];
+  const groups: InventoryGroup[] = [
+    { category: "cluster", service: SERVICE_NAME.onprem.cluster, error: null,
+      items: [{ name: "k3s", status: "Ready", detail: [a.k3sVersion, `하트비트 ${a.heartbeatAgeSec}초 전`].filter(Boolean).join(" · ") }] },
+    { category: "database", service: SERVICE_NAME.onprem.database, error: null, items: dbs },
+  ];
+  return { provider: "onprem", status: "ok", reason: "Agent 보고 기준 (플랫폼은 클러스터에 직접 붙지 않음). Deployment·Service 목록은 Agent 가 보내지 않아 없음",
+    source: "agent", scope, region: "local", checkedAt: now.toISOString(), elapsedMs: Math.round(performance.now() - t0), groups };
+}
 
 async function runGroups(bin: string, cmds: Cmd[], provider: Provider, exec: Exec, env: NodeJS.ProcessEnv): Promise<InventoryGroup[]> {
   const timeoutMs = envNumber(env.INVENTORY_TIMEOUT_MS, 10000);
@@ -125,6 +153,8 @@ export async function readInventory(provider: Provider, d: InventoryDeps = {}): 
       checkedAt: now().toISOString(), elapsedMs: Math.round(performance.now() - t0),
       groups: [...by].map(([category, items]) => ({ category, service: SERVICE_NAME.azure_mock[category], items, error: null })) };
   }
+  // Agent 보고는 CLI 가 아니라서 INVENTORY_CLI=0 과 상관없이 읽는다
+  if (provider === "onprem" && d.agent) return agentInventory(await d.agent(), t0, now());
   if (env.INVENTORY_CLI === "0") return unavailable(provider, "none", "INVENTORY_CLI=0 (실자원 읽기 끔)", t0, now());
 
   if (provider === "aws") {
@@ -149,7 +179,7 @@ export async function readInventory(provider: Provider, d: InventoryDeps = {}): 
     const region = gcpRegion(env);
     return done(provider, "gcloud", `프로젝트 ${project}`, region, await runGroups("gcloud", gcpCmds(project), provider, exec, env), t0, now());
   }
-  // onprem
+  // onprem push 시연 (d.agent 없음): kubectl
   const ctx = onpremContext(env);
   const v = await exec("kubectl", ["version", "--client", "-o", "json"], { cwd: process.cwd(), env, timeoutMs: 5000 });
   if (v.code === 127) return unavailable(provider, "kubectl", "확인 불가: kubectl 명령이 없음", t0, now(), `context ${ctx}`);
