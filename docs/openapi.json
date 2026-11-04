@@ -16503,6 +16503,9 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "stale": {
+                    "type": "boolean"
                   }
                 },
                 "required": [
@@ -16518,7 +16521,8 @@
                   "finishedAt",
                   "deadlineAt",
                   "fidelity",
-                  "result"
+                  "result",
+                  "stale"
                 ],
                 "additionalProperties": false
               },

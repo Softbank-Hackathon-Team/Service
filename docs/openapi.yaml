@@ -11314,6 +11314,8 @@ components:
                   anyOf:
                     - $ref: "#/components/schemas/RehearsalResult"
                     - type: "null"
+                stale:
+                  type: "boolean"
               required:
                 - "id"
                 - "status"
@@ -11328,6 +11330,7 @@ components:
                 - "deadlineAt"
                 - "fidelity"
                 - "result"
+                - "stale"
               additionalProperties: false
             - type: "null"
       required:
