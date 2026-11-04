@@ -60,7 +60,9 @@ export type RehearsalTarget = z.infer<typeof RehearsalTarget>;
 
 export const SandboxRunStatus = z.enum(["queued", "running", "passed", "failed", "error", "skipped"]);
 export type SandboxRunStatus = z.infer<typeof SandboxRunStatus>;
-export const SandboxRunPhase = z.enum(["mirroring", "creating", "applying", "checking", "deleting", "done"]);
+// agent-worker 가 도는 동안의 단계 + 끝난 줄은 누가 닫든 done. 이미지 복사는 줄을 만들기 전 워커 일이라 단계가 아니다
+//   (db 0046 CHECK 는 예전 값 mirroring 도 받지만 쓰는 곳이 없다)
+export const SandboxRunPhase = z.enum(["creating", "applying", "checking", "deleting", "done"]);
 export type SandboxRunPhase = z.infer<typeof SandboxRunPhase>;
 export const RehearsalSkip = z.enum(["non_k8s", "no_cluster", "unsupported_target", "disabled", "mock"]);
 export type RehearsalSkip = z.infer<typeof RehearsalSkip>;

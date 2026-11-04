@@ -166,7 +166,7 @@ test("끔(기본): 예전처럼 커밋 → syncing, 근거 rehearsal=disabled �
   const a = (await lastAudit(id, "deploy.syncing"))!;
   assert.equal(a.evidence.rehearsal, "disabled");
   assert.ok(a.gitops.commit && a.gitops.argoApp && !("rehearsal" in a.gitops), "gitops detail 은 예전 칸 그대로");
-  assert.deepEqual((await runs(id)).map((r) => [r.status, r.skip_reason, r.epoch]), [["skipped", "disabled", (await mig(id)).version - 1]]);
+  assert.deepEqual((await runs(id)).map((r) => [r.status, r.skip_reason, r.epoch, r.phase]), [["skipped", "disabled", (await mig(id)).version - 1, "done"]]);
 });
 
 test("켬: 줄 queued + sandbox-rehearsal 작업(노드 키) → 기다림(RetryLater), 두 번 배달해도 줄·작업 하나 → agent-worker 통과 + 깨우기 → 같은 지문으로 커밋 → syncing(passed)", { skip }, async () => {
@@ -206,7 +206,7 @@ test("켬: 줄 queued + sandbox-rehearsal 작업(노드 키) → 기다림(Retry
   assert.equal(await dp.handleDeploy(job(id)), "advanced");
   const all = await runs(id);
   assert.equal(all.length, 2);
-  assert.deepEqual([all[1]!.status, all[1]!.reused_from], ["passed", run!.id]);
+  assert.deepEqual([all[1]!.status, all[1]!.reused_from, all[1]!.phase], ["passed", run!.id, "done"]);
   assert.equal((await lastAudit(id, "deploy.syncing"))!.evidence.rehearsal, "reused");
   assert.equal((await owner.query(`SELECT count(*)::int AS n FROM pgboss.job WHERE name='sandbox-rehearsal' AND data->>'sandboxRunId' = $1`, [all[1]!.id])).rows[0].n, 0);
 });
@@ -240,7 +240,7 @@ test("켬: 기한이 지나면 error(REHEARSAL_TIMEOUT) → paused, 늦게 온 a
   await dp.handleDeploy(job(id));
   assert.deepEqual([(await mig(id)).status, (await mig(id)).failure_code], ["paused", "REHEARSAL_TIMEOUT"]);
   const [after] = await runs(id);
-  assert.deepEqual([after!.status, after!.failure_code], ["error", "REHEARSAL_TIMEOUT"]);
+  assert.deepEqual([after!.status, after!.failure_code, after!.phase], ["error", "REHEARSAL_TIMEOUT", "done"]);
   const late = await owner.query(`UPDATE sandbox_runs SET status='passed' WHERE id=$1 AND status IN ('queued','running')`, [run!.id]);
   assert.equal(late.rowCount, 0);
 });
@@ -295,7 +295,7 @@ test("켬: 치환 표 밖 종류 → failed(REHEARSAL_UNSUPPORTED_KIND), 이미�
   const a = await seed();
   await dp.handleDeploy(job(a));
   assert.deepEqual([(await mig(a)).status, (await mig(a)).failure_code], ["paused", "REHEARSAL_UNSUPPORTED_KIND"]);
-  assert.deepEqual((await runs(a)).map((r) => [r.status, r.failure_code]), [["failed", "REHEARSAL_UNSUPPORTED_KIND"]]);
+  assert.deepEqual((await runs(a)).map((r) => [r.status, r.failure_code, r.phase]), [["failed", "REHEARSAL_UNSUPPORTED_KIND", "done"]]);
   assert.match((await lastAudit(a, "deploy.paused"))!.deploy.reason, /NetworkPolicy/);
   setExtra([]);
   // 진짜 복사 길인데 샌드박스 레지스트리 설정이 없음
@@ -303,7 +303,7 @@ test("켬: 치환 표 밖 종류 → failed(REHEARSAL_UNSUPPORTED_KIND), 이미�
   const b = await seed();
   await dp.handleDeploy(job(b));
   assert.deepEqual([(await mig(b)).status, (await mig(b)).failure_code], ["paused", "REHEARSAL_IMAGE_MIRROR_FAILED"]);
-  assert.deepEqual((await runs(b)).map((r) => [r.status, r.failure_code]), [["error", "REHEARSAL_IMAGE_MIRROR_FAILED"]]);
+  assert.deepEqual((await runs(b)).map((r) => [r.status, r.failure_code, r.phase]), [["error", "REHEARSAL_IMAGE_MIRROR_FAILED", "done"]]);
   assert.equal((await lastAudit(b, "deploy.paused"))!.rehearsal.mirror.reason, "registry_unset");
 });
 
@@ -322,7 +322,7 @@ test("켬: 건너뜀 표 — ECS 도착 non_k8s, 클러스터 없음 no_cluster,
     const m = await mig(id);
     assert.equal(m.status, "syncing", `${want}: ${m.failure_code} ${JSON.stringify((await lastAudit(id, "deploy.paused"))?.deploy)}`);
     assert.equal((await lastAudit(id, "deploy.syncing"))!.evidence.rehearsal, want);
-    assert.deepEqual((await runs(id)).map((r) => [r.status, r.skip_reason]), [["skipped", want]]);
+    assert.deepEqual((await runs(id)).map((r) => [r.status, r.skip_reason, r.phase]), [["skipped", want, "done"]]);
   }
   process.env.GITOPS_REPO_DIR = gitDir;
 });

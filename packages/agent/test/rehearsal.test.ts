@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { stringify } from "yaml";
-import { RehearsalResult, type RehearsalInput } from "@svc/contracts";
+import { RehearsalResult, SandboxRunPhase, type RehearsalInput } from "@svc/contracts";
 import {
   asHostKube, createVcluster, leftoverRehearsal, loadVendorCrds, mockRehearsalResult, REHEARSAL_KINDS, runRehearsal, STAND_IN_LABEL, sweepSandboxes,
   type RehearsalBackend,
@@ -198,6 +198,12 @@ test("재시작이 쌓이거나 컨테이너를 못 만들면 롤아웃 기한(3
     assert.ok(k.elapsed() < 60_000, `${code}: 걸린 시간 ${k.elapsed()}ms`);
     if (code === "REHEARSAL_CRASHLOOP") assert.ok(r.timingsMs.check > 0, `실패한 단계의 시간도 남긴다 ${JSON.stringify(r.timingsMs)}`);
   }
+});
+
+test("단계 목록 = 실제로 쓰는 단계 (실행기가 알리는 단계 + 끝난 줄의 done). 아무도 안 쓰는 값이 계약에 없다", async () => {
+  const k = backend();
+  await k.run(sample());
+  assert.deepEqual(new Set([...k.phases, "done"]), new Set(SandboxRunPhase.options));
 });
 
 test("dry-run 전용 종류마다 이미지에 넣은 CRD 가 있다", () => {
