@@ -21,7 +21,7 @@ const STATUS_ICON: Record<SecurityStatus, IconName> = {
 
 /**
  * 색만으로 구분하지 않도록 상태마다 모양이 다르다. 타임라인 표시처럼 엷은 바탕 위 기호로 그린다.
- * 통과 = 엷은 파랑 위 O, 실패 = 엷은 빨강 위 X, 모름 = 회색 위 ?, 사람 확인 = 파랑 위 체크, 해당 없음 = 회색 줄.
+ * 통과 = 엷은 파랑 위 O, 사람 확인 = 엷은 파랑 위 체크(둘 다 지켜진 쪽이라 같은 색), 실패 = 엷은 빨강 위 X, 모름 = 회색 위 ?, 해당 없음 = 회색 줄.
  */
 export function SecurityDot({ status, title }: { status: SecurityStatus; title?: string }) {
   const mark =

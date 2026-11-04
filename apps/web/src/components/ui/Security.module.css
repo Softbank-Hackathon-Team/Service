@@ -17,7 +17,7 @@
   content: '';
   width: 8px;
   height: 8px;
-  border: 2px solid var(--color-fg-tone-info);
+  border: 1.5px solid var(--color-fg-tone-info);
   border-radius: var(--radius-full);
 }
 .failMark {
@@ -52,8 +52,8 @@
   width: 16px;
   height: 16px;
   border-radius: var(--radius-full);
-  background: var(--color-bg-action-primary);
-  color: var(--color-fg-on-action);
+  background: var(--color-bg-tone-info);
+  color: var(--color-fg-tone-info);
 }
 
 .map {
@@ -114,6 +114,6 @@
   color: var(--color-fg-secondary);
 }
 .cell-attested {
-  background: var(--color-bg-action-primary);
-  color: var(--color-fg-on-action);
+  background: var(--color-bg-tone-info);
+  color: var(--color-fg-tone-info);
 }
