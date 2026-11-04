@@ -67,8 +67,9 @@ export function targetQuotaOf(i: DeployInput): RehearsalInput["targetQuota"] {
   } catch { return null; }
 }
 
-const TARGET_POD_SECURITY: Record<RehearsalTarget, RehearsalInput["targetPodSecurity"]> = {
-  "aws-eks": "privileged", "gcp-gke": "privileged", "onprem-k3s": "baseline",   // k3s = Kyverno baseline (onprem-kyverno-platform.yaml)
+// k3s = Kyverno platform-namespace-pod-security (infra/permissions/onprem-kyverno-platform.yaml). 어긋나면 rehearsal-pod-security 시험이 깨진다
+export const TARGET_POD_SECURITY: Record<RehearsalTarget, RehearsalInput["targetPodSecurity"]> = {
+  "aws-eks": "privileged", "gcp-gke": "privileged", "onprem-k3s": "baseline",
 };
 
 export interface BuildArgs {
