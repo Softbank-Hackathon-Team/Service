@@ -2,7 +2,7 @@
 # 띄우기: docker compose -f docker-compose.observability.yml up -d
 # api(지표 9464)·worker(지표 9465)는 맥에서 npm 으로 띄운 것을 host.docker.internal 로 긁는다
 # Prometheus http://localhost:9090 , Grafana http://localhost:3001 (익명 보기 허용, 로그인 없이 대시보드)
-# DRAFT(ai): 데모·리허설용. 클러스터에서는 kube-prometheus-stack 의 ServiceMonitor 로 바꾼다
+# DRAFT(ai): 데모·리허설용. 클러스터판은 deploy/observability/kube-prometheus-stack.values.yaml
 services:
   prometheus:
     image: prom/prometheus:v3.15.1
