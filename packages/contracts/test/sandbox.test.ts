@@ -19,7 +19,7 @@ const matrix = () => ({
 const doc = { path: "manifests/web.yaml", yaml: "kind: Deployment" };
 const input = () => ({
   version: 1, target: "onprem-k3s", app: "shop", namespace: "app-shop", bundleSha256: SHA, k8sMinor: "1.35",
-  original: [doc], apply: [doc], images: [{ ref: "r/web@sha256:1", sandboxRef: "sbx/web@sha256:1" }],
+  original: [doc], apply: [doc], images: [{ ref: "r/web@sha256:1", sandboxRef: "sandbox/web@sha256:1" }],
   databases: [{ service: "db", majorVersion: "16", database: "shop", owner: "app", secretName: "db-app", secretKeys: ["password"] }],
   targetPodSecurity: "baseline", targetQuota: { limitsCpuM: 4000, limitsMemoryMi: null },
   edges: [{ from: "web", host: "api", port: 8080 }], fidelity: matrix(),
