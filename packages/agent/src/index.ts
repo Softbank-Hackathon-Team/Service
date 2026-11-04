@@ -2,6 +2,8 @@
 export * from "./onprem/report.js";
 // Z92: 진짜 Agent = kubectl 로 모으기(collect) + 서명해 보내기(sender). stub-agent 는 시험용 고정 보고만 남김
 export * from "./onprem/collect.js";
+export * from "./onprem/facts.js";
+export * from "./onprem/deploys.js";
 export * from "./onprem/sender.js";
 export * from "./onprem/stub-agent.js";
 // AI 에이전트 루프 (agent-worker 가 쓴다)

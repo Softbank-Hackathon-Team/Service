@@ -1,17 +1,20 @@
 // Z92: 온프레 Agent 실행기. k3s(k3d) 를 kubectl 로 읽어 보고를 만들고, 서명해 플랫폼 API 로 보낸다 (밖으로만 나감)
 //   npm run agent:onprem -- heartbeat                한 번 보내기
 //   npm run agent:onprem -- security
+//   npm run agent:onprem -- facts                    W5: 보안 사실 (TLS 강제·DB 버전·바깥 노출·권한 단계)
+//   npm run agent:onprem -- deploys                  W4: 클러스터 안 Argo Application 이 끝났으면 deploy 보고 (app + 적용 커밋)
 //   npm run agent:onprem -- deploy --migration <uuid> --bundle <해시>
-//   npm run agent:onprem -- loop [--every 30]         heartbeat 30초마다 + security 10번에 1번 (Ctrl+C 로 멈춤)
+//   npm run agent:onprem -- loop [--every 30]         heartbeat·deploys 30초마다 + security·facts 10번에 1번 (Ctrl+C 로 멈춤)
+//     deploys 는 앱마다 (커밋, 결과)가 바뀔 때만 보낸다
 //   SVC_ENROLL_TOKEN=<토큰> AGENT_REPORT_URL=<API> npm run agent:onprem -- --enroll [--out .agent-key.env]
 //     L6: 화면에서 받은 10분 일회용 토큰으로 Agent 키를 받아 --out 파일(권한 600)에 쓰고 heartbeat 한 번 보낸다
 //     토큰은 argv 대신 환경변수로 받는다 (ps·셸 기록에 덜 남는다)
 // 필요한 .env: AGENT_REPORT_URL, AGENT_KEY_ID, AGENT_KEY_SECRET (agent:key 가 만든 .agent-key.env 를 --env-file 로 더 읽어도 된다)
-//   선택: AGENT_NAMESPACE(app), AGENT_CNPG_CLUSTER(app-db), AGENT_KUBE_CONTEXT
+//   선택: AGENT_NAMESPACE(app), AGENT_CNPG_CLUSTER(app-db), AGENT_KUBE_CONTEXT, AGENT_ARGOCD_NAMESPACE(argocd), AGENT_TENANT(svc.tenant 라벨로 거름)
 // 출력: 보낼 때마다 JSON 한 줄 {kind, status, ok, body}
 import { chmodSync, writeFileSync } from "node:fs";
 import {
-  collectDeploy, collectHeartbeat, collectSecurity, kubectlExec, sendAgentReport, type AgentReport,
+  collectArgoDeploys, collectDeploy, collectFacts, collectHeartbeat, collectSecurity, kubectlExec, sendAgentReport, type AgentReport,
 } from "@svc/agent";
 
 const VERSION = "onprem-agent/0.1.0";
@@ -29,6 +32,19 @@ const send = async (r: AgentReport) => {
 };
 const heartbeat = async () => send(await collectHeartbeat({ ...base, namespace: ns, cnpgCluster: process.env.AGENT_CNPG_CLUSTER || "app-db" }));
 const security = async () => send(await collectSecurity(base));
+const facts = async () => send(await collectFacts(base));
+// W4: 앱마다 마지막으로 보낸 (커밋, 결과). 같은 상태를 30초마다 다시 보내지 않는다 (재시작하면 한 번 다시 보낸다 = 해롭지 않음)
+const lastDeploy = new Map<string, string>();
+const deploys = async () => {
+  const reps = await collectArgoDeploys({ ...base, argocdNamespace: process.env.AGENT_ARGOCD_NAMESPACE || "argocd", tenant: process.env.AGENT_TENANT || undefined });
+  let ok = true;
+  for (const r of reps) {
+    const k = `${r.bundleHash}:${r.status}`;
+    if (lastDeploy.get(r.app!) === k) continue;
+    if (await send(r)) lastDeploy.set(r.app!, k); else ok = false;
+  }
+  return ok;
+};
 
 // L6: 등록. 받은 키는 파일에만 쓰고 화면엔 키 번호만. 이 프로세스의 환경에도 넣어 바로 heartbeat 를 보낸다
 async function enroll(): Promise<boolean> {
@@ -51,11 +67,17 @@ async function enroll(): Promise<boolean> {
   return heartbeat();
 }
 
+const USAGE = "사용: onprem-agent --enroll [--out 파일] | heartbeat | security | facts | deploys | deploy --migration <uuid> --bundle <해시> | loop [--every 초]";
+
 async function main(): Promise<boolean> {
+  // W1: 이미지 빌드 스모크(CI)가 부른다. 환경변수·kubectl 없이 끝나야 한다
+  if (args[0] === "--help" || args[0] === "help") { console.log(`${VERSION}\n${USAGE}`); return true; }
   if (args.includes("--enroll")) return enroll();
   switch (args[0]) {
     case "heartbeat": return heartbeat();
     case "security": return security();
+    case "facts": return facts();
+    case "deploys": return deploys();
     case "deploy": {
       const migrationId = opt("migration"), bundleHash = opt("bundle");
       if (!migrationId || !bundleHash) throw new Error("deploy --migration <uuid> --bundle <해시> 필요");
@@ -69,12 +91,16 @@ async function main(): Promise<boolean> {
       while (!stop) {
         // 한 번 실패해도 멈추지 않는다 (API 재시작·네트워크 끊김). 다음 차례에 다시 보낸다
         await heartbeat().catch((e) => console.error(JSON.stringify({ kind: "heartbeat", ok: false, error: (e as Error).message })));
-        if (n++ % 10 === 0) await security().catch((e) => console.error(JSON.stringify({ kind: "security", ok: false, error: (e as Error).message })));
+        await deploys().catch((e) => console.error(JSON.stringify({ kind: "deploy", ok: false, error: (e as Error).message })));
+        if (n++ % 10 === 0) {
+          await security().catch((e) => console.error(JSON.stringify({ kind: "security", ok: false, error: (e as Error).message })));
+          await facts().catch((e) => console.error(JSON.stringify({ kind: "facts", ok: false, error: (e as Error).message })));
+        }
         for (let w = 0; w < every && !stop; w += 500) await new Promise((r) => setTimeout(r, 500));
       }
       return true;
     }
-    default: throw new Error("사용: onprem-agent.ts --enroll | heartbeat | security | deploy --migration <uuid> --bundle <해시> | loop [--every 초]");
+    default: throw new Error(USAGE);
   }
 }
 main().then((ok) => process.exit(ok ? 0 : 1), (e) => { console.error(JSON.stringify({ ok: false, error: (e as Error).message })); process.exit(1); });

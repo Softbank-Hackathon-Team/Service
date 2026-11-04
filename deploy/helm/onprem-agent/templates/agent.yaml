@@ -1,0 +1,77 @@
+{{- include "oa.required" . }}
+# Agent: 클러스터를 읽고(kubectl, 이 ServiceAccount 토큰으로 자동 인증) 서명한 보고를 플랫폼 API 로 보낸다
+#   쓰기 권한 0 (rbac.yaml). kubeconfig 를 넣지 않는다. 키는 설치 스크립트가 만든 Secret 에서만 읽는다
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: onprem-agent
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "oa.labels" . | nindent 4 }}
+automountServiceAccountToken: true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: onprem-agent
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "oa.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  # 보고는 하나만 나가야 한다 (두 개가 같은 키로 보내면 재전송 차단에 걸린다)
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: onprem-agent }
+  template:
+    metadata:
+      labels: {{- include "oa.labels" . | nindent 8 }}
+    spec:
+      serviceAccountName: onprem-agent
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: agent
+          image: {{ .Values.agent.image | quote }}
+          imagePullPolicy: IfNotPresent
+          args: ["loop", "--every", {{ .Values.agent.every | toString | quote }}]
+          env:
+            - { name: AGENT_REPORT_URL, value: {{ .Values.agent.reportURL | quote }} }
+            - { name: AGENT_TENANT, value: {{ .Values.tenant | quote }} }
+            - { name: AGENT_ARGOCD_NAMESPACE, value: {{ .Values.argocd.namespace | quote }} }
+            {{- with .Values.agent.appNamespace }}
+            - { name: AGENT_NAMESPACE, value: {{ . | quote }} }
+            {{- end }}
+            - { name: AGENT_CNPG_CLUSTER, value: {{ .Values.agent.cnpgCluster | quote }} }
+            - name: AGENT_KEY_ID
+              valueFrom: { secretKeyRef: { name: {{ .Values.agent.keySecret | quote }}, key: AGENT_KEY_ID } }
+            - name: AGENT_KEY_SECRET
+              valueFrom: { secretKeyRef: { name: {{ .Values.agent.keySecret | quote }}, key: AGENT_KEY_SECRET } }
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+          resources: {{- toYaml .Values.agent.resources | nindent 12 }}
+---
+# Agent 는 들어오는 연결이 없고, 나가는 곳은 DNS · 쿠버네티스 API · 플랫폼 API(443) 뿐이다
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: onprem-agent
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "oa.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: onprem-agent }
+  policyTypes: ["Ingress", "Egress"]
+  ingress: []
+  egress:
+    - ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # 443 = 플랫폼 API · kubernetes 서비스 주소, 6443 = k3s API 서버(서비스 주소가 노드 6443 으로 바뀐 뒤)
+    - ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 6443 }

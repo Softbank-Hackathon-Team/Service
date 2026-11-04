@@ -10,6 +10,8 @@
 .env
 .env.*
 !.env.example
+# W1: 온프레 Agent 등록 키(onprem-agent --enroll 이 쓰는 파일). .gitignore 와 같은 규칙. manifests 단계가 COPY . . 라 빌드 캐시에 남지 않게
+.agent-key*.env
 **/*.tfstate
 **/*.tfstate.*
 **/*.tfvars

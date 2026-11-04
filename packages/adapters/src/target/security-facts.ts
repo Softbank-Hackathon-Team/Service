@@ -2,8 +2,9 @@
 // 도착: 우리 모듈이 고정으로 박은 값 → attested (계획 단계에는 아직 만들어진 자원이 없어 실측 불가)
 // 출발: 가져오기가 읽은 securityFacts + 명세 값. 못 읽은 칸은 unknown 그대로 (모름은 판정이 경고·고객 확인으로 바꾼다)
 // 판정 자체는 packages/security (adapters 는 security 를 모른다)
-import { regionCountry, type AppSpecV2, type EnvFacts, type Provider, type SourceDbFacts } from "@svc/contracts";
+import { regionCountry, type AgentReport, type AppSpecV2, type EnvFacts, type Provider, type SourceDbFacts } from "@svc/contracts";
 import { postgresOf, postureOfComponent } from "./shared.js";
+import { cnpgName } from "./onprem.js";
 
 type Fact<T> = { value: T | null; origin: "measured" | "attested" | "unknown"; source: string | null };
 type Db = EnvFacts["db"];
@@ -66,8 +67,26 @@ function country(provider: Provider, region: string | null): EnvFacts["country"]
 
 export interface EnvSide { envId: string; provider: Provider; region: string | null }
 
-/** 도착 환경 사실 + 도착 postgres 구성요소마다 DB 사실 (env.db 는 판정에 안 쓰여 빈 칸) */
-export function targetFactsV2(t: EnvSide, spec: AppSpecV2): { env: EnvFacts; dbs: { componentId: string; db: Db }[] } {
+// W5: 온프레 Agent 가 보낸 최근 보안 사실 (kind "facts"). 워커가 신선한 것만 골라 넘긴다 (precheck.ts latestAgentFacts)
+export type AgentFacts = Extract<AgentReport, { kind: "facts" }>;
+
+// 온프레 postgres 구성요소 하나에 Agent 가 잰 CNPG 사실을 덮는다. 앱 차트가 만든 Cluster 이름(cnpgName)으로 짝짓는다
+//   null(못 읽음)인 칸은 덮지 않는다. 짝이 없으면(아직 안 만든 도착 DB) 그대로
+function agentDb(spec: AppSpecV2, componentId: string, f: AgentFacts | undefined): Partial<Db> {
+  const d = f?.dbs.find((x) => x.cluster === cnpgName(spec, componentId));
+  if (!f || !d) return {};
+  const src = (what: string) => `agent facts ${f.sentAt} ${d.namespace}/${d.cluster} ${what}`;
+  return {
+    ...(d.tlsEnforced !== null ? { tlsEnforced: measured(d.tlsEnforced, src("pg_hba (hostnossl reject 여부)")) } : {}),
+    ...(d.majorVersion !== null ? { majorVersion: measured(d.majorVersion, src("image")) } : {}),
+    ...(d.authMethods !== null ? { authMethods: measured(d.authMethods, src("pg_hba 인증 방식")) } : {}),
+    ...(d.exposed !== null ? { publicAccess: measured(d.exposed, src("NodePort·LoadBalancer Service")) } : {}),
+  };
+}
+
+/** 도착 환경 사실 + 도착 postgres 구성요소마다 DB 사실 (env.db 는 판정에 안 쓰여 빈 칸)
+ *  agent: 온프레 도착이면 Agent 의 최근 facts 보고 (W5). 있으면 잰 칸이 고정값·모름을 덮는다 */
+export function targetFactsV2(t: EnvSide, spec: AppSpecV2, agent?: AgentFacts): { env: EnvFacts; dbs: { componentId: string; db: Db }[] } {
   const mod = MODULE_DB_FACTS[t.provider];
   const dbs = postgresOf(spec).map((c) => ({
     componentId: c.id,
@@ -79,10 +98,13 @@ export function targetFactsV2(t: EnvSide, spec: AppSpecV2): { env: EnvFacts; dbs
       // BK-1: 출발 백업을 그대로 옮기므로 출발이 백업 끔(0일)·PITR 끔이면 도착도 PITR 아님
       ...((t.provider === "aws" || t.provider === "gcp") && (c.props.backup?.retentionDays === 0 || (t.provider === "gcp" && c.props.backup?.pitr === false))
         ? { pitr: attested(false, `${t.provider === "aws" ? AWS_PG : GCP_PG}: 출발 백업 설정 그대로 (BK-1, 백업 ${c.props.backup?.retentionDays ?? "?"}일·PITR ${String(c.props.backup?.pitr)})`) } : {}),
-      // 클라우드: 모듈 public = postureOfComponent (aws.ts·gcp.ts 와 같은 함수). 온프레: 기본 차단 NetworkPolicy, DB 를 밖에 열지 않음
+      // 클라우드: 모듈 public = postureOfComponent (aws.ts·gcp.ts 와 같은 함수)
+      // 온프레: 앱 차트가 CNPG Service 를 ClusterIP 로만 만든다 (NodePort·LoadBalancer 없음) → 클러스터 밖에서 안 닿음
+      //   예전 근거("netpol 기본 차단")는 틀렸다: 어댑터가 NetworkPolicy 를 0개 넘겨 만들어지지 않는다 (W3 에서 기본 차단을 더한다)
       publicAccess: t.provider === "aws" || t.provider === "gcp"
         ? attested(postureOfComponent(spec, c.id).public, `target ${t.provider} postgres public (postureOfComponent)`)
-        : t.provider === "onprem" ? attested(false, "infra/modules/onprem netpol 기본 차단") : unknown(),
+        : t.provider === "onprem" ? attested(false, "gitops/charts/app/templates/cnpg.yaml: CNPG 기본 Service(ClusterIP)만, NodePort·LoadBalancer 없음") : unknown(),
+      ...(t.provider === "onprem" ? agentDb(spec, c.id, agent) : {}),
     },
   }));
   return { env: { provider: t.provider, envId: t.envId, country: country(t.provider, t.region), db: blankDb(), platform: PLATFORM[t.provider] }, dbs };

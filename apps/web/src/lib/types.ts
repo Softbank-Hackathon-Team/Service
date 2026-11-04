@@ -261,7 +261,9 @@ export interface Finding {
 export type AgentReportBody =
   | { kind: "security"; findings: Finding[] }
   | { kind: "deploy"; status: "applied" | "failed"; resources: string[]; reason?: string }
-  | { kind: "heartbeat"; k3sVersion: string; cnpg: { cluster: string; ready: boolean; replicationLagBytes: number | null } | null };
+  | { kind: "heartbeat"; k3sVersion: string; cnpg: { cluster: string; ready: boolean; replicationLagBytes: number | null } | null }
+  // W5: 온프레 보안 사실 (contracts agent.ts facts). null = Agent 가 못 읽음
+  | { kind: "facts"; grants: { level: "L0" | "L1" }; dbs: { namespace: string; cluster: string; majorVersion: number | null; tlsEnforced: boolean | null; authMethods: string[] | null; exposed: boolean | null }[] };
 export interface AgentReportList {
   envId: string; lastHeartbeatAt: string | null; stale: boolean;
   items: { id: string; kind: AgentReportBody["kind"]; receivedAt: string; migrationId: string | null; report: AgentReportBody }[];

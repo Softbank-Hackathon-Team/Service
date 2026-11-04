@@ -38,6 +38,8 @@ export function envFacts(i: DeployInput): Record<string, string | undefined> {
     accountId: i.target.accountId ?? undefined,
     projectId: i.target.accountId ?? undefined,
     registryHost: process.env.ONPREM_REGISTRY_HOST,
+    // W3: 온프레 바닥(할당량)을 git 으로 그릴지. 차트 floor.yaml 이 "1" 일 때만 그린다. 값이 늘 있어야 자리표시가 비지 않는다
+    onpremFloorViaGit: process.env.ONPREM_FLOOR_VIA_GIT === "1" ? "1" : "0",
     acrHost: process.env.AZURE_MOCK_ACR_HOST ?? "mock.azurecr.io",
   };
 }

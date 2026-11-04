@@ -47,11 +47,11 @@ export { verifyAwsObserve, envFor, EKS_CLUSTER_NAME_RE, trustHasExternalId, type
 export { normalizeV2, KIND_MAPPERS, EVIDENCE_TYPES, ENVIRONMENT_TYPES } from "./import/pipeline.js";
 export type { SourceReader, KindMapper, RawItem, MappedComponent, NativeRef, NormalizeV2Options, NormalizeV2Output } from "./import/types.js";
 // TA1: 도착 Builder (공통 명세 → 고정 루트 Terraform 변수 + workloads[] Helm 값)
-export { renderViewV2, isInClusterData, targetBuilderFor, awsTarget, gcpTarget, onpremTarget, azureMockTarget, rdsClassFor, cloudSqlTierFor, requirementsV2, v2Blockers, V2_FIELD_COVERAGE,
+export { renderViewV2, isInClusterData, targetBuilderFor, awsTarget, gcpTarget, onpremTarget, onpremGitFloorOutputs, azureMockTarget, rdsClassFor, cloudSqlTierFor, requirementsV2, v2Blockers, V2_FIELD_COVERAGE,
   K8S_RENDER_CAPS, UNSUPPORTED_V2, LINK_OUTPUT_UNKNOWN, identitiesOf, targetNamespace, sourceNamespacesOf, meshesOf, RESERVED_NAMESPACES, resourceTypesV2For, type FieldRule, type IdentityPlan,
   managedBlockers, managedServicesOf, managedServiceVars, managedSecretName, managedJobsOf, managedJobVars,
   dbWriterVar, dbLinkSecretName, type DbWriter, type SourceDbLinkRef } from "./target/index.js";   // TA13 · JOBBUILD · APP-22 (가)
-export { targetFactsV2, sourceFactsV2, sourceDbsV2, appEnvV2, workloadSecurityV2, MODULE_DB_FACTS, type EnvSide } from "./target/security-facts.js";   // 보안 판정용 환경 사실
+export { targetFactsV2, sourceFactsV2, sourceDbsV2, appEnvV2, workloadSecurityV2, MODULE_DB_FACTS, type EnvSide, type AgentFacts } from "./target/security-facts.js";   // 보안 판정용 환경 사실
 export { verifyGcpObserve, OPTIONAL_PROBES, gcpEnvFor, gcpReasonOf, type VerifyGcpInput, type VerifyGcpResult } from "./verify/gcp.js";   // L7i
 export { freezeGkeUpgrades, releaseGkeUpgrades, freezeArgs, releaseArgs, freezeExclusionName, FREEZE_DEFAULT_HOURS, FREEZE_MAX_HOURS, type GkeFreezeTarget, type GkeFreezeResult } from "./gcp/upgrade-freeze.js";
 // L5b: 빌린 AWS 실행 자격 → terraform 자식 프로세스 (credential_process 임시 파일)

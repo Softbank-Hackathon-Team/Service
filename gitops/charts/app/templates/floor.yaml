@@ -1,0 +1,24 @@
+{{- /* W3: 온프레 바닥을 git 으로 (ONPREM_FLOOR_VIA_GIT=1 → floor.enabled "1"). 고객 클러스터 안 Argo CD 가 적용한다.
+       Terraform onprem/kinds/namespace 의 할당량과 같은 이름(platform-quota)·같은 값 (어댑터 onprem.ts quota() 한 함수)
+       네임스페이스는 Argo CD CreateNamespace + managed-by=platform 라벨이 만든다 (deploy/helm/onprem-agent ApplicationSet)
+       값이 없으면(클라우드·꺼짐) 아무것도 안 그린다. 한도 값이 하나도 없으면 할당량을 안 만든다 (Terraform 과 같은 규칙) */}}
+{{- $f := .Values.floor | default dict }}
+{{- if eq (toString ($f.enabled | default "0")) "1" }}
+{{- $q := $f.quota | default dict }}
+{{- if or $q.cpuMilli $q.memoryMi }}
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: platform-quota
+  labels: {{- include "app.labels" . | nindent 4 }}
+spec:
+  hard:
+    {{- with $q.cpuMilli }}
+    requests.cpu: {{ printf "%dm" (int .) | quote }}
+    {{- end }}
+    {{- with $q.memoryMi }}
+    requests.memory: {{ printf "%dMi" (int .) | quote }}
+    {{- end }}
+{{- end }}
+{{- end }}

@@ -109,6 +109,7 @@ marker_sql() {
     0043) echo "to_regprocedure('public.maint_stuck_migrations(interval,integer)') IS NOT NULL" ;;
     0044) echo "EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'environments' AND column_name = 'gcp_target_project')" ;;
     0046) echo "to_regclass('public.sandbox_runs') IS NOT NULL" ;;
+    0047) echo "EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agent_reports_kind_check' AND pg_get_constraintdef(oid) LIKE '%facts%')" ;;
     *) echo "" ;;
   esac
 }
