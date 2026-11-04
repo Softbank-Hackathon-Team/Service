@@ -34,8 +34,8 @@ export function loadFileInputs(dir = PERMISSIONS_DIR, chartDir = CHART_DIR): Fil
     .map((s) => [s, f(`aws-session-policy-${s}.json`)]).filter(([, v]) => v !== null)) as Record<string, string>;
   const gcp = f("gcp-operate-custom-role.yaml");
   const onprem = f("onprem-operate-clusterrole.yaml");
-  const dep = tryRead(join(chartDir, "templates/deployment.yaml"));
-  const sa = tryRead(join(chartDir, "templates/serviceaccount.yaml")) ?? "";
+  const dep = tryRead(join(chartDir, "templates/_helpers.tpl"));   // PB-1: 파드 모양(app.wpod)
+  const sa = tryRead(join(chartDir, "templates/workloads.yaml")) ?? "";   // PB-1: SA 도 workloads.yaml
   return {
     permissions: {
       dir: shown(dir),

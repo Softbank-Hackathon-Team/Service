@@ -198,7 +198,7 @@ export function buildSecurityView(inp: SecurityInput): SecurityView {
     row({ id: "SE-CHART-ENV", area: "secrets", item: "앱 비밀번호는 시크릿 참조로만", scope: "차트",
       state: c.literalSecretEnv.length ? "fail" : c.dbPasswordFromSecret === false ? "fail" : "ok",
       value: `DB_PASSWORD ${c.dbPasswordFromSecret === null ? "없음" : c.dbPasswordFromSecret ? "secretKeyRef" : "평문"} · 직접 쓴 비밀 env ${c.literalSecretEnv.length}`,
-      source: `${inp.chartDir}/templates/deployment.yaml`, ref: null });
+      source: `${inp.chartDir}/templates/_helpers.tpl`, ref: null });
   }
   const pw = inp.config.replPeerPassword;
   row({ id: "SE-REPL", area: "secrets", item: "복제 구독 접속 문자열 비밀번호", scope: "DB 복제",
@@ -225,7 +225,7 @@ export function buildSecurityView(inp: SecurityInput): SecurityView {
       state: c.privilegedTrue ? "fail" : c.securityContext && c.runAsNonRoot ? "ok" : "warn",
       value: c.privilegedTrue ? "privileged: true 있음"
         : c.securityContext ? `securityContext 있음 · runAsNonRoot ${c.runAsNonRoot ? "true" : "없음"}` : "securityContext 없음 (root 실행을 막지 않음)",
-      source: `${inp.chartDir}/templates/deployment.yaml`, ref: "SEC-VIO-03" });
+      source: `${inp.chartDir}/templates/_helpers.tpl`, ref: "SEC-VIO-03" });
     row({ id: "RT-SATOKEN", area: "runtime", item: "기본 서비스 계정 토큰 자동 마운트 끔", scope: tScope,
       state: c.automountTokenOff ? "ok" : "warn", value: c.automountTokenOff ? "automountServiceAccountToken: false" : "설정 없음 (토큰이 Pod 에 붙음)",
       source: `${inp.chartDir}/templates/{deployment,serviceaccount}.yaml`, ref: "SEC-IAM-03" });
