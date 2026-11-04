@@ -10,6 +10,7 @@ import {
   apiPath, originalLimits, parseManifests, podTemplates, PROBE_RESOURCES, sandboxQuotaPlan, subjectOf,
   type Manifest, type Resources,
 } from "./manifests.js";
+import { databaseStandIns } from "./stand-in.js";
 
 // 리허설 한 번: 워커가 준 렌더 결과(original)와 치환본(apply)을 일회용 vCluster 에 올려 본다.
 // 순서는 설계 3장 표. 한 단계라도 필수 검사가 실패하면 그 단계의 코드로 끝내고, 지우기는 언제나 한다
@@ -105,9 +106,12 @@ export async function runRehearsal(input: RehearsalInput, run: RehearsalRun, b: 
     let t = now();
     const orig = parseManifests(input.original, "original");
     const appl = parseManifests(input.apply, "apply");
-    const problems = [...orig.problems, ...appl.problems];
+    const standIns = databaseStandIns(input.databases, appl.manifests);
+    const db = standIns.manifests;
+    const problems = [...orig.problems, ...appl.problems, ...standIns.problems];
     add("unsupported_kind", "묶음", problems.length === 0, now() - t,
-      problems.length ? problems.slice(0, 5).join("; ") : `원본 ${orig.manifests.length}개, 적용 ${appl.manifests.length}개 모두 지원 목록 안`);
+      problems.length ? problems.slice(0, 5).join("; ")
+        : `원본 ${orig.manifests.length}개, 적용 ${appl.manifests.length}개 모두 지원 목록 안, DB 대체물 ${db.length}개`);
     gate(problems.length ? "REHEARSAL_UNSUPPORTED_KIND" : null);
 
     const lim = originalLimits(orig.manifests);
@@ -120,7 +124,7 @@ export async function runRehearsal(input: RehearsalInput, run: RehearsalRun, b: 
       tq ? (over.length ? over.join(", ") : `한도 합 CPU ${lim.cpuM}m, 메모리 ${lim.memoryMi}Mi (도착 안)`) : "도착 네임스페이스 한도 없음");
     gate(over.length ? "REHEARSAL_QUOTA_EXCEEDED" : null);
 
-    const plan = sandboxQuotaPlan(appl.manifests, b.allocatable);
+    const plan = sandboxQuotaPlan([...db, ...appl.manifests], b.allocatable);
     if (!plan.fits) {
       add("sandbox_ready", name, false, 0, `리허설에 필요한 요청량 CPU ${plan.need.cpuM}m·메모리 ${plan.need.memoryMi}Mi 가 sandbox 노드 할당량 CPU ${plan.cap.cpuM}m·메모리 ${plan.cap.memoryMi}Mi 를 넘는다`);
       gate("REHEARSAL_SANDBOX_UNAVAILABLE");
@@ -147,17 +151,16 @@ export async function runRehearsal(input: RehearsalInput, run: RehearsalRun, b: 
     await prepare(kube, orig.manifests);
     gate(await dryRun(kube, orig.manifests));
     gate(await targetPolicy(kube, orig.manifests));
-    const db = databaseManifests(appl.manifests);
-    const rest = appl.manifests.filter((m) => !db.includes(m));
-    gate(await apply(kube, db));
+    // DB 대체물이 먼저 준비돼야 앱이 붙는다
+    gate(await apply(kube, db, true));
     if (db.length) gate(await converge(kube, db, true));
-    gate(await apply(kube, rest));
+    gate(await apply(kube, appl.manifests, false));
 
     // 3. 롤아웃 · 잡 · 재시작 · 준비 · 연결
     await phase("checking", "check");
-    gate(await converge(kube, rest, false));
-    gate(await restarts(kube, appl.manifests, db));
-    gate(await ready(kube, appl.manifests, db));
+    gate(await converge(kube, appl.manifests, false));
+    gate(await restarts(kube, [...db, ...appl.manifests], db));
+    gate(await ready(kube, [...db, ...appl.manifests], db));
     gate(await connectivity(kube, appl.manifests));
   } catch (e) {
     if (e instanceof Stop) failure = e.code;
@@ -260,29 +263,16 @@ export async function runRehearsal(input: RehearsalInput, run: RehearsalRun, b: 
     return code;
   }
 
-  // 샌드박스 DB 대체물: databases[].service 이름의 Service, 그 Service 가 고르는 워크로드, 비밀번호 Secret
-  function databaseManifests(ms: Manifest[]): Manifest[] {
-    const out: Manifest[] = [];
-    for (const d of input.databases) {
-      const svc = ms.find((m) => m.obj.kind === "Service" && m.obj.metadata.name === d.service);
-      const sel: Record<string, string> = svc?.obj.spec?.selector ?? {};
-      const picked = ms.filter((m) =>
-        m === svc || (m.obj.kind === "Secret" && m.obj.metadata.name === d.secretName)
-        || (m.info.wait === "rollout" && Object.keys(sel).length > 0 && matches(sel, m.obj.spec?.template?.metadata?.labels)));
-      for (const m of picked) if (!out.includes(m)) out.push(m);
-    }
-    return out;
-  }
-
-  async function apply(kube: VirtualAdminKube, ms: Manifest[]): Promise<RehearsalFailureCode | null> {
+  // isDb: 플랫폼이 만든 DB 대체물. 거부되면 우리 쪽 문제다
+  async function apply(kube: VirtualAdminKube, ms: Manifest[], isDb: boolean): Promise<RehearsalFailureCode | null> {
     let code: RehearsalFailureCode | null = null;
     for (const m of ms) {
       const t0 = now();
       const r = await ssa(kube, apiPath(m, ns, m.obj.metadata.name), inNs(m), false);
       const ok = ok2xx(r.status);
       const msg = statusMessage(r);
-      add("apply", subjectOf(m), ok, now() - t0, ok ? "적용함" : `거부 (${r.status}): ${msg}`);
-      if (!ok) code ??= /exceeded quota/i.test(msg) ? "REHEARSAL_SANDBOX_UNAVAILABLE" : "REHEARSAL_DRY_RUN_REJECTED";
+      add("apply", subjectOf(m), ok, now() - t0, `${ok ? "적용함" : `거부 (${r.status}): ${msg}`}${isDb ? " (샌드박스 DB 대체물)" : ""}`);
+      if (!ok) code ??= isDb || /exceeded quota/i.test(msg) ? "REHEARSAL_SANDBOX_UNAVAILABLE" : "REHEARSAL_DRY_RUN_REJECTED";
     }
     return code;
   }
@@ -310,14 +300,14 @@ export async function runRehearsal(input: RehearsalInput, run: RehearsalRun, b: 
           let code = diag?.code ?? fallback;
           if (w.m.info.wait === "job" && code === "REHEARSAL_CRASHLOOP") code = "REHEARSAL_JOB_FAILED";
           if (isDb && REHEARSAL_FAILURE_CLASS[code] === "would_fail") code = "REHEARSAL_SANDBOX_UNAVAILABLE";
-          w.done = { code, detail: `${state === "failed" ? "Failed" : expired ? `${Math.round((w.deadline - t0) / 1000)}초 안에 안 끝남` : "멈춤"}${diag ? `: ${diag.detail}` : ""}${isDb ? " (샌드박스 DB 대체물)" : ""}`, ms: now() - t0 };
+          w.done = { code, detail: `${state === "failed" ? "Failed" : expired ? `${Math.round((w.deadline - t0) / 1000)}초 안에 안 끝남` : "멈춤"}${diag ? `: ${diag.detail}` : ""}`, ms: now() - t0 };
         }
       }
       if (items.some((w) => !w.done)) await sleep(T.pollMs);
     }
     let code: RehearsalFailureCode | null = null;
     for (const w of items) {
-      add(w.m.info.wait === "job" ? "job_complete" : "rollout", subjectOf(w.m), w.done!.code === null, w.done!.ms, w.done!.detail);
+      add(w.m.info.wait === "job" ? "job_complete" : "rollout", subjectOf(w.m), w.done!.code === null, w.done!.ms, `${w.done!.detail}${isDb ? " (샌드박스 DB 대체물)" : ""}`);
       code ??= w.done!.code;
     }
     return code;
@@ -336,7 +326,7 @@ export async function runRehearsal(input: RehearsalInput, run: RehearsalRun, b: 
       const mine = after.filter((p) => matches(m.obj.spec?.selector?.matchLabels, p.metadata?.labels));
       const delta = mine.reduce((n, p) => n + Math.max(0, restartsOf(p) - (before.get(String(p.metadata?.name)) ?? 0)), 0);
       const why = [...new Set(mine.flatMap((p) => (p.status?.containerStatuses ?? []).map((c: any) => c.lastState?.terminated?.reason ?? c.state?.waiting?.reason).filter(Boolean)))];
-      const ok = add("restarts", subjectOf(m), delta === 0, now() - t0, `${Math.round(T.restartWindowMs / 1000)}초 관찰: 재시작 +${delta}${why.length ? `, 이유 ${why.join(", ")}` : ""}`);
+      const ok = add("restarts", subjectOf(m), delta === 0, now() - t0, `${Math.round(T.restartWindowMs / 1000)}초 관찰: 재시작 +${delta}${why.length ? `, 이유 ${why.join(", ")}` : ""}${db.includes(m) ? " (샌드박스 DB 대체물)" : ""}`);
       if (!ok) code ??= db.includes(m) ? "REHEARSAL_SANDBOX_UNAVAILABLE" : "REHEARSAL_CRASHLOOP";
     }
     return code;
@@ -348,7 +338,7 @@ export async function runRehearsal(input: RehearsalInput, run: RehearsalRun, b: 
     for (const m of ms.filter((x) => x.info.wait === "rollout")) {
       const mine = pods.filter((p) => matches(m.obj.spec?.selector?.matchLabels, p.metadata?.labels));
       const readyN = mine.filter(podReady).length;
-      const ok = add("ready", subjectOf(m), mine.length > 0 && readyN === mine.length, 0, `Ready ${readyN}/${mine.length}`);
+      const ok = add("ready", subjectOf(m), mine.length > 0 && readyN === mine.length, 0, `Ready ${readyN}/${mine.length}${db.includes(m) ? " (샌드박스 DB 대체물)" : ""}`);
       if (!ok) code ??= db.includes(m) ? "REHEARSAL_SANDBOX_UNAVAILABLE" : "REHEARSAL_NOT_READY";
     }
     return code;

@@ -18,6 +18,7 @@ export * from "./ai/select.js";
 // vCluster 백엔드와 리허설 (sandbox-rehearsal 큐): 만들기·지우기·청소, 매니페스트 모델·자원 상한, 검사 순서, MOCK_SANDBOX 결과
 export * from "./ai/vcluster.js";
 export * from "./rehearsal/manifests.js";
+export * from "./rehearsal/stand-in.js";
 export * from "./rehearsal/run.js";
 export * from "./rehearsal/mock.js";
 // LLM 공급자 (Anthropic 진짜 / 키 없이 도는 가짜)

@@ -9,8 +9,9 @@
 //   helm·kubectl 은 SANDBOX_HELM_BIN·SANDBOX_KUBECTL_BIN 또는 PATH
 //   --map: 이미지 받는 곳 하나를 바꾼다 (예: 일부러 고장 난 이미지로 실패 경우 만들기)
 // 입력 예: scripts/fixtures/rehearsal-3tier-onprem.json = 팀 3티어 예시(deploy/ci/values/v2-3tier-onprem.json)를 지금 차트 값 모양으로 옮겨
-//   gitops/charts/app 로 렌더한 원본 15개 + 워커 치환을 손으로 흉내 낸 적용본 17개 (CNPG → Postgres 16 emptyDir, ExternalSecret → 가짜 Secret,
-//   복제 1, PVC sbx-standard). 이미지는 도착 주소@다이제스트 그대로 두고 translateImage 로 공개 이미지(같은 다이제스트)를 받는다
+//   gitops/charts/app 로 렌더한 원본 15개 + 워커 치환(apps/worker rehearsal substitute·buildRehearsalInput)이 만든 적용본.
+//   Postgres 객체는 적용본에 없다. databases[] 한 줄로 agent-worker 가 DB 대체물을 만든다.
+//   이미지는 도착 주소@다이제스트를 공개 이미지(같은 다이제스트)로 바꿔 둔 표로 받는다
 // kind 준비: 플랫폼 차트 sandbox 부분(RBAC·VAP·StorageClass, kind 는 provisioner rancher.io/local-path)을 올린다.
 //   제어판 저장 emptyDir 이면 차트가 Deployment 를 그리므로 ClusterRole sbx-operator 에 apps/deployments create·delete 가 있어야 한다
 import { randomUUID } from "node:crypto";
