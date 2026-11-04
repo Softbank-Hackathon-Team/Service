@@ -1,0 +1,565 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "migrationId": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+    },
+    "run": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "queued",
+                "running",
+                "passed",
+                "failed",
+                "error",
+                "skipped"
+              ]
+            },
+            "phase": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "mirroring",
+                    "creating",
+                    "applying",
+                    "checking",
+                    "deleting",
+                    "done"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "skip": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "non_k8s",
+                    "no_cluster",
+                    "unsupported_target",
+                    "disabled",
+                    "mock"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "reusedFrom": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid",
+                  "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "sandboxName": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "createdAt": {
+              "type": "string"
+            },
+            "startedAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "finishedAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "deadlineAt": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "fidelity": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "version": {
+                      "type": "number",
+                      "const": 1
+                    },
+                    "target": {
+                      "type": "string",
+                      "enum": [
+                        "aws-eks",
+                        "gcp-gke",
+                        "onprem-k3s"
+                      ]
+                    },
+                    "bundleSha256": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "items": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "enum": [
+                              "manifests",
+                              "namespace",
+                              "k8s_version",
+                              "objects",
+                              "target_pod_security",
+                              "sandbox_pod_security",
+                              "images",
+                              "replicas",
+                              "requests",
+                              "scheduling",
+                              "service_type",
+                              "storage",
+                              "secrets",
+                              "secret_values",
+                              "database",
+                              "ingress",
+                              "tunnel",
+                              "cloud_identity",
+                              "network",
+                              "quota",
+                              "runtime_isolation",
+                              "hpa_scaling",
+                              "cronjob_runs",
+                              "daemonsets",
+                              "data",
+                              "traffic",
+                              "node_arch"
+                            ]
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "identical",
+                              "substituted",
+                              "not_checked"
+                            ]
+                          },
+                          "real": {
+                            "type": "string",
+                            "maxLength": 200
+                          },
+                          "sandbox": {
+                            "type": "string",
+                            "maxLength": 200
+                          },
+                          "reason": {
+                            "type": "string",
+                            "maxLength": 300
+                          },
+                          "refs": {
+                            "maxItems": 50,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "maxLength": 200
+                            }
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "status",
+                          "real",
+                          "sandbox",
+                          "reason",
+                          "refs"
+                        ],
+                        "additionalProperties": false
+                      }
+                    }
+                  },
+                  "required": [
+                    "version",
+                    "target",
+                    "bundleSha256",
+                    "items"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "result": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "verdict": {
+                      "type": "string",
+                      "enum": [
+                        "passed",
+                        "failed",
+                        "error"
+                      ]
+                    },
+                    "failureCode": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "REHEARSAL_DRY_RUN_REJECTED",
+                            "REHEARSAL_TARGET_POLICY_DENIED",
+                            "REHEARSAL_QUOTA_EXCEEDED",
+                            "REHEARSAL_ROLLOUT_FAILED",
+                            "REHEARSAL_CRASHLOOP",
+                            "REHEARSAL_NOT_READY",
+                            "REHEARSAL_JOB_FAILED",
+                            "REHEARSAL_CONNECTIVITY_FAILED",
+                            "REHEARSAL_POLICY_DENIED",
+                            "REHEARSAL_UNSUPPORTED_KIND",
+                            "REHEARSAL_IMAGE_MIRROR_FAILED",
+                            "REHEARSAL_SANDBOX_UNAVAILABLE",
+                            "REHEARSAL_TIMEOUT",
+                            "REHEARSAL_BUNDLE_MISMATCH"
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "sandbox": {
+                      "type": "object",
+                      "properties": {
+                        "podSecurity": {
+                          "type": "string",
+                          "enum": [
+                            "baseline",
+                            "restricted"
+                          ]
+                        },
+                        "runtimeClass": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "minLength": 1
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "hostNamespace": {
+                          "type": "string"
+                        },
+                        "chart": {
+                          "type": "string",
+                          "const": "vcluster-0.37.6"
+                        },
+                        "k8sVersion": {
+                          "type": "string"
+                        },
+                        "mock": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "podSecurity",
+                        "runtimeClass",
+                        "name",
+                        "hostNamespace",
+                        "chart",
+                        "k8sVersion",
+                        "mock"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "bundleSha256": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "checks": {
+                      "maxItems": 300,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "enum": [
+                              "sandbox_ready",
+                              "dry_run",
+                              "target_policy",
+                              "quota",
+                              "apply",
+                              "rollout",
+                              "restarts",
+                              "ready",
+                              "job_complete",
+                              "service_http",
+                              "edge_http",
+                              "db_seen",
+                              "unsupported_kind"
+                            ]
+                          },
+                          "subject": {
+                            "type": "string",
+                            "maxLength": 200
+                          },
+                          "required": {
+                            "type": "boolean"
+                          },
+                          "ok": {
+                            "type": "boolean"
+                          },
+                          "ms": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          "detail": {
+                            "type": "string",
+                            "maxLength": 500
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "subject",
+                          "required",
+                          "ok",
+                          "ms",
+                          "detail"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "fidelity": {
+                      "type": "object",
+                      "properties": {
+                        "version": {
+                          "type": "number",
+                          "const": 1
+                        },
+                        "target": {
+                          "type": "string",
+                          "enum": [
+                            "aws-eks",
+                            "gcp-gke",
+                            "onprem-k3s"
+                          ]
+                        },
+                        "bundleSha256": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "items": {
+                          "minItems": 1,
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "enum": [
+                                  "manifests",
+                                  "namespace",
+                                  "k8s_version",
+                                  "objects",
+                                  "target_pod_security",
+                                  "sandbox_pod_security",
+                                  "images",
+                                  "replicas",
+                                  "requests",
+                                  "scheduling",
+                                  "service_type",
+                                  "storage",
+                                  "secrets",
+                                  "secret_values",
+                                  "database",
+                                  "ingress",
+                                  "tunnel",
+                                  "cloud_identity",
+                                  "network",
+                                  "quota",
+                                  "runtime_isolation",
+                                  "hpa_scaling",
+                                  "cronjob_runs",
+                                  "daemonsets",
+                                  "data",
+                                  "traffic",
+                                  "node_arch"
+                                ]
+                              },
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "identical",
+                                  "substituted",
+                                  "not_checked"
+                                ]
+                              },
+                              "real": {
+                                "type": "string",
+                                "maxLength": 200
+                              },
+                              "sandbox": {
+                                "type": "string",
+                                "maxLength": 200
+                              },
+                              "reason": {
+                                "type": "string",
+                                "maxLength": 300
+                              },
+                              "refs": {
+                                "maxItems": 50,
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "maxLength": 200
+                                }
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "status",
+                              "real",
+                              "sandbox",
+                              "reason",
+                              "refs"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "version",
+                        "target",
+                        "bundleSha256",
+                        "items"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "warnings": {
+                      "maxItems": 50,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "maxLength": 300
+                      }
+                    },
+                    "timingsMs": {
+                      "type": "object",
+                      "properties": {
+                        "create": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "apply": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "check": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "delete": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "create",
+                        "apply",
+                        "check",
+                        "delete"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "deleted": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "verdict",
+                    "failureCode",
+                    "sandbox",
+                    "bundleSha256",
+                    "checks",
+                    "fidelity",
+                    "warnings",
+                    "timingsMs",
+                    "deleted"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "stale": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "status",
+            "phase",
+            "skip",
+            "reusedFrom",
+            "sandboxName",
+            "createdAt",
+            "startedAt",
+            "finishedAt",
+            "deadlineAt",
+            "fidelity",
+            "result",
+            "stale"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "migrationId",
+    "run"
+  ],
+  "additionalProperties": false
+}

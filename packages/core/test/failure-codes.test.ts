@@ -6,6 +6,7 @@ import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { FAILURE_CODES, isKnownFailureCode, jobFailedCode } from "../src/failure-codes.js";
+import { RehearsalFailureCode } from "@svc/contracts";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const DIRS = ["packages/core/src", "apps/worker/src", "packages/traffic/src", "packages/adapters/src"];
@@ -52,4 +53,10 @@ test("목록에 중복이 없고, JOB_FAILED_<단계>는 대문자로 만든다"
   assert.equal(jobFailedCode("deploy"), "JOB_FAILED_DEPLOY");
   assert.ok(isKnownFailureCode("JOB_FAILED_SYNC"));
   assert.ok(!isKnownFailureCode("NOPE_NOT_A_CODE"));
+});
+
+test("리허설 실패 코드: core 목록의 REHEARSAL_* = contracts RehearsalFailureCode (빠짐·남음 없음)", () => {
+  const core = FAILURE_CODES.filter((c) => c.startsWith("REHEARSAL_")).sort();
+  assert.deepEqual(core, [...RehearsalFailureCode.options].sort());
+  for (const c of RehearsalFailureCode.options) assert.ok(isKnownFailureCode(c), c);
 });

@@ -94,6 +94,11 @@ export const POLICY: Record<string, QueuePolicy> = {
   [QUEUES.leaseReaper]: { policy: "singleton", retryLimit: 0 },
   [QUEUES.idempotencyCleanup]: { policy: "singleton", retryLimit: 0 },
   [QUEUES.verifySweep]: { policy: "singleton", retryLimit: 0 },   // L4b: 다음 일정이 다시 훑는다
+  // 리허설 격리 = 전용 샌드박스 노드에 회사 하나씩. singleton + 모든 작업이 같은 키(KEY_BY)라 실행 중 1건이 pg-boss 고유 인덱스로 막힌다
+  //   (agent-worker 를 몇 개 띄워도, localConcurrency 를 올려도 같다). 대기는 줄 수 제한 없음
+  // DRAFT(ai): 동시 1건 (샌드박스 노드 1대). 재시도 없음(워커가 기한 뒤 REHEARSAL_TIMEOUT), 만료 30분, 생존 신호 10초(STEP_HEARTBEAT_SEC 와 같은 값)
+  //   생존 신호가 없으면 죽은 agent-worker 의 작업이 만료(30분)까지 자리를 쥐어 뒤 리허설이 모두 기한을 넘긴다
+  [QUEUES.sandboxRehearsal]: { policy: "singleton", retryLimit: 0, expireInSeconds: 1800, heartbeatSeconds: 10 },
 };
 
 // Z32 (Z6-2): 워커가 kill -9 로 죽으면 쥐고 있던 작업이 expireInSeconds(기본 900초, apply 3600초) 동안 active로 남았다.
@@ -180,6 +185,8 @@ const KEY_BY: Partial<Record<QueueName, (i: JobKeyIds) => string | undefined>> =
   "verify-connection": (i) => i.envId,
   "security-scan": (i) => i.envId,
   "agent-run": (i) => i.agentRunId,
+  // DRAFT(ai): 샌드박스 노드 하나 = 키 하나 (위 POLICY 의 동시 1건). 노드를 늘리면 노드마다 키를 나누고 vCluster 를 그 노드에 묶는다
+  "sandbox-rehearsal": () => "sandbox-node",
 };
 export function jobKey(queue: QueueName, ids: JobKeyIds): string | undefined {
   const k = (KEY_BY[queue] ?? ((i: JobKeyIds) => i.migrationId))(ids);
