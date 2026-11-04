@@ -7,7 +7,7 @@ JSELF=tools/jeong-down.sh
 . tools/jeong-lib.sh
 # UPREV-B: 이미 도는 down 이 있으면 두 번째를 띄우지 않는다 (같은 terraform 상태에 destroy 두 개 → 잠금 오류·터널 중복 종료). 잠금 파일의 pid 가 살아 있고 이 스크립트일 때만
 JLOCK="$JSTATE/down.lock"
-if [ -z "${JEONG_CHILD:-}" ] && [ -f "$JLOCK" ]; then
+if ! j_is_child down && [ -f "$JLOCK" ]; then
   LP=$(cat "$JLOCK" 2>/dev/null)
   if [ -n "$LP" ] && kill -0 "$LP" 2>/dev/null && ps -p "$LP" -o command= 2>/dev/null | grep -q "jeong-down"; then
     echo "이미 내리는 중 (pid $LP). 진행: tail -f $JPROG   끝 줄 'JEONG down end' 를 기다린다"; exit 0
