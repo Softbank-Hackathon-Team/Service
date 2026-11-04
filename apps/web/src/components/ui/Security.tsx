@@ -1,15 +1,15 @@
 import { Icon, type IconName } from './Icon';
 import s from './Security.module.css';
-import { t } from '../../lib/i18n';
+import { t, tc } from '../../lib/i18n';
 
 export type SecurityStatus = 'pass' | 'fail' | 'unknown' | 'na' | 'attested';
 
 export const STATUS_LABEL: Record<SecurityStatus, string> = {
-  pass: t('통과'),
-  fail: t('실패'),
-  unknown: t('모름'),
-  na: t('해당 없음'),
-  attested: t('사람 확인'),
+  pass: tc('보안', '통과'),
+  fail: tc('보안', '실패'),
+  unknown: tc('보안', '모름'),
+  na: tc('보안', '해당 없음'),
+  attested: tc('보안', '사람 확인'),
 };
 
 const STATUS_ICON: Record<SecurityStatus, IconName> = {

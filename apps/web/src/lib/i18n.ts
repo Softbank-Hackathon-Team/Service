@@ -42,3 +42,13 @@ export function t(source: string, params?: Record<string, unknown>): string {
   }
   return params ? text.replace(/\{(\w+)\}/g, (whole, key: string) => (key in params ? String(params[key]) : whole)) : text;
 }
+
+/**
+ * 같은 원문이 자리마다 다른 말이 되어야 할 때 (예: 버튼 "취소" = Cancel, 상태 "취소" = Cancelled).
+ * 표의 열쇠는 "맥락|원문". 한국어는 원문 그대로, 표에 맥락 열쇠가 없으면 원문 열쇠를 쓴다
+ */
+export function tc(context: string, source: string, params?: Record<string, unknown>): string {
+  if (current === 'ko') return t(source, params);
+  const key = `${context}|${source}`;
+  return TABLES[current][key] !== undefined ? t(key, params) : t(source, params);
+}

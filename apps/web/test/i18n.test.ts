@@ -18,19 +18,23 @@ const unescape = (s: string) => s.replace(/\\(n|\\|'|")/g, (_, c: string) => (c 
 // 화면 소스의 t('원문') 열쇠 (코드 바꾸기가 쓴 작은따옴표 모양)
 const KEYS = [...new Set(walk(SRC).flatMap((file) =>
   [...readFileSync(file, "utf8").matchAll(/\bt\('((?:\\.|[^'\\])*)'/g)].map((m) => unescape(m[1]!))))];
+// tc('맥락', '원문') 은 "맥락|원문" 열쇠
+const CONTEXT_KEYS = [...new Set(walk(SRC).flatMap((file) =>
+  [...readFileSync(file, "utf8").matchAll(/\btc\('([^']*)', '((?:\\.|[^'\\])*)'/g)].map((m) => `${m[1]}|${unescape(m[2]!)}`)))];
 const slots = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort().join(",");
 const lines = (s: string) => s.split("\n").length;
 
 for (const [name, table] of [["영어", EN], ["일본어", JA]] as const) {
   test(`${name} 표가 화면의 모든 문장을 같은 자리·같은 줄 수로 갖는다`, () => {
     assert.ok(KEYS.length > 1000, "화면 문장을 찾았다");
-    const missing = KEYS.filter((key) => table[key] === undefined);
+    const missing = [...KEYS, ...CONTEXT_KEYS].filter((key) => table[key] === undefined);
     assert.deepEqual(missing.slice(0, 10), [], `빠진 문장 ${missing.length}개`);
-    for (const key of KEYS) {
+    for (const key of [...KEYS, ...CONTEXT_KEYS]) {
       const entry = table[key]!;
+      const source = key.includes("|") && CONTEXT_KEYS.includes(key) ? key.slice(key.indexOf("|") + 1) : key;
       for (const value of typeof entry === "string" ? [entry] : [entry.one, entry.other]) {
-        assert.equal(slots(value), slots(key), `자리 다름: ${key} → ${value}`);
-        assert.equal(lines(value), lines(key), `줄 수 다름: ${key} → ${value}`);
+        assert.equal(slots(value), slots(source), `자리 다름: ${key} → ${value}`);
+        assert.equal(lines(value), lines(source), `줄 수 다름: ${key} → ${value}`);
         assert.ok(value.trim().length > 0, `빈 번역: ${key}`);
       }
     }

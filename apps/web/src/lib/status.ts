@@ -1,16 +1,16 @@
 import type { ConnectionStatus, MigrationStatus, MigrationView, PlanStep, Provider } from "./types";
 import { TERMINAL } from "./types";
-import { t } from './i18n';
+import { t, tc } from './i18n';
 
 // 화면에 쓰는 한국어 이름 (E의 state-machine.md 표 기준, 용어표 GLOSSARY.md 2절이 이 표를 따른다)
 // 상태 이름은 화면 어디서든 이 표 하나에서 꺼낸다 (목록 칩·상세 칩·진행 막대·계획서 단계·오류 설명·버튼 안내)
 export const LABEL: Record<MigrationStatus, string> = {
-  draft: t('초안'), importing: t('가져오기'), spec_review: t('명세 검토'), prechecking: t('사전 점검'),
-  planning: t('계획'), awaiting_approval: t('승인 대기'), approved: t('승인됨'),
-  provisioning: t('자원 생성'), deploying: t('앱 배포'), syncing: t('DB 복제'), shifting: t('트래픽 이동'),
-  cutover: t('DB 컷오버'), rollback_window: t('롤백 가능 창'), cleanup: t('정리'), completed: t('완료'),
-  paused: t('일시 정지'), rolling_back: t('롤백 중'), rolled_back: t('롤백 완료'), failed: t('실패'),
-  cancelled: t('취소'), rejected: t('거절'), stale: t('계획 낡음'),
+  draft: tc('상태', '초안'), importing: tc('상태', '가져오기'), spec_review: tc('상태', '명세 검토'), prechecking: tc('상태', '사전 점검'),
+  planning: tc('상태', '계획'), awaiting_approval: tc('상태', '승인 대기'), approved: tc('상태', '승인됨'),
+  provisioning: tc('상태', '자원 생성'), deploying: tc('상태', '앱 배포'), syncing: tc('상태', 'DB 복제'), shifting: tc('상태', '트래픽 이동'),
+  cutover: tc('상태', 'DB 컷오버'), rollback_window: tc('상태', '롤백 가능 창'), cleanup: tc('상태', '정리'), completed: tc('상태', '완료'),
+  paused: tc('상태', '일시 정지'), rolling_back: tc('상태', '롤백 중'), rolled_back: tc('상태', '롤백 완료'), failed: tc('상태', '실패'),
+  cancelled: tc('상태', '취소'), rejected: tc('상태', '거절'), stale: tc('상태', '계획 낡음'),
 };
 
 // 상세 칩 글자: "명세 검토 · spec_review" (e2e helpers.ts 가 "· 영어" 부분을 읽는다)

@@ -129,7 +129,8 @@ export const isSecItem = (item: Pick<PrecheckItem, 'id'>) => item.id.startsWith(
 // DRAFT(ai): 서버 PrecheckItem 에는 판정 단계·제목·이유 칸이 따로 없다. 워커가 message 하나에 "머리말 + 제목. 이유. 근거: …" 로 싣는다
 //   (security portability/precheck.ts HEAD). 고객 확인(attest)은 level 이 warn 이라 머리말로만 구분된다. 모양이 다르면 message 를 그대로 제목으로 쓴다
 const HEAD = /^(?:FAIL|WARN|INFO) 보안( 고객 확인)? — /;
-const EVIDENCE = t('. 근거: ');
+// 서버(한국어) 문장을 가르는 표지라 번역하지 않는다
+const EVIDENCE = '. 근거: ';
 
 const levelOf = (level: PrecheckItem['level'], text: string): SecLevel =>
   level === 'block' ? 'block' : level === 'info' ? 'advise' : HEAD.exec(text)?.[1] ? 'attest' : 'warn';
