@@ -33,7 +33,7 @@ const result = (over: Partial<RehearsalResult> = {}): RehearsalResult => ({
 const row = (over: Partial<RehearsalRow> = {}): RehearsalRow => ({
   id: RUN, status: "passed", failure_code: null, phase: "done", skip_reason: null, reused_from: null, sandbox_name: "sbx-abc123",
   created_at: "2026-11-07T03:00:00.000Z", started_at: "2026-11-07T03:00:05.000Z", finished_at: "2026-11-07T03:01:30.000Z",
-  deadline_at: "2026-11-07T03:20:00.000Z", input_fidelity: workerMatrix, result: result(),
+  deadline_at: "2026-11-07T03:20:00.000Z", input_fidelity: workerMatrix, result: result(), stale: false,
   ...over,
 });
 
@@ -82,6 +82,15 @@ test("진행 중: 결과가 오기 전에는 워커가 넣은 충실도 표를 �
   assert.equal(v.run?.phase, "applying");
   assert.equal(v.run?.result, null);
   assert.deepEqual(v.run?.fidelity, workerMatrix);
+});
+
+test("지난 시도의 줄: 결과·실패 코드는 그대로 두고 run.stale 이 true", () => {
+  const failed = result({ verdict: "failed", failureCode: "REHEARSAL_CRASHLOOP" });
+  const v = RehearsalView.parse(buildRehearsalView(M, row({ status: "failed", failure_code: "REHEARSAL_CRASHLOOP", result: failed, stale: true })));
+  assert.equal(v.run?.stale, true);
+  assert.equal(v.run?.failureCode, "REHEARSAL_CRASHLOOP");
+  assert.equal(v.run?.result?.verdict, "failed");
+  assert.equal(RehearsalView.parse(buildRehearsalView(M, row())).run?.stale, false);
 });
 
 test("줄이 없으면 run 이 null", () => {
