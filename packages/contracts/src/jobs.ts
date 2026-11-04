@@ -7,6 +7,8 @@ export const QUEUES = {
   import: "import",
   precheck: "precheck",
   plan: "plan",
+  // G7-1: 승인 대기 계획의 만료 시각에 깨어나 awaiting_approval → stale(expired). 예전엔 이 전이(T11)를 부르는 곳이 없어 막다른 길이었다
+  planExpiry: "plan-expiry",
   apply: "apply",
   deploy: "deploy",
   sync: "sync",
@@ -14,6 +16,8 @@ export const QUEUES = {
   cutover: "cutover",
   cleanup: "cleanup",
   rollback: "rollback",
+  targetDestroy: "target-destroy",      // G5-1: 실패한 이전이 도착에 만든 자원 지우기 (상태 안 바꿈, ADR-066 자동)
+  replCleanup: "repl-cleanup",          // F8-5: 끝난 이전의 남은 복제 객체 다시 걷기 (사람 버튼, 상태 안 바꿈)
   imageBuild: "image-build",
   securityScan: "security-scan",
   agentRun: "agent-run",
@@ -80,6 +84,7 @@ export const JOB_SCHEMAS = {
   "import": MigrationJob,
   "precheck": MigrationJob,
   "plan": PlanJob,
+  "plan-expiry": PlanJob,
   "apply": ApplyJob,
   "deploy": MigrationJob,
   "sync": MigrationJob,
@@ -87,6 +92,8 @@ export const JOB_SCHEMAS = {
   "cutover": MigrationJob,
   "cleanup": MigrationJob,
   "rollback": MigrationJob,
+  "target-destroy": MigrationJob,
+  "repl-cleanup": MigrationJob,
   "image-build": ImageBuildJob,
   "security-scan": EnvJob,
   "agent-run": AgentRunJob,

@@ -5,10 +5,11 @@
 //   - 실패 로그에 비밀값 모양이 없다 (감사 기록에 그대로 들어가므로)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AppSpec, type TargetEnv } from "@svc/contracts";
+import type { TargetEnv } from "@svc/contracts";
+import { oneService } from "./one-service.js";
 import { adapterFor, azureRunner, runnerFor, DEMO_INVENTORY } from "../src/index.js";
 
-const spec = AppSpec.parse(adapterFor("aws").normalize(DEMO_INVENTORY.aws).spec);
+const spec = oneService();   // DB 있는 API 하나 (Azure Mock 은 신원 하나만 그림)
 const t: TargetEnv = { envId: "44444444-4444-4444-8444-444444444444", provider: "azure_mock", region: "default" };
 
 test("장애 주입 destroy: ok:false, 지운 수 0, 실패 로그 1줄", async () => {

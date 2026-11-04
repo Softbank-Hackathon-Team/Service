@@ -98,12 +98,11 @@ flowchart LR
 | `TF_BIN` | terraform 실행 파일 경로 | PATH에서 찾음. 없으면 `TF_BIN_MISSING` |
 | `TF_WORK_DIR` | state·출력 작업 폴더 | `~/.svc-tf` |
 | `TF_APPLY_TIMEOUT_SEC`, `TF_LOCK_TIMEOUT_SEC` | apply·잠금 기다리는 시간 | 기본값 |
-| `TF_DESTROY_ON_FAIL` | apply 실패 시 자동 destroy (1) | 기본 켬 |
+| `TF_DESTROY_ON_FAIL` | 1 이면 apply 실패 즉시 destroy | 기본 0 (실패 질문 → 거절·롤백 때 target-destroy) |
 | `TF_FACT_<키>` | env 모듈 출력·계정 사실. `<env:vpcId>` → `TF_FACT_VPC_ID` | 그 자리표시가 안 채워짐 |
 | `DB_DISPOSABLE` | `1`이면 DB 삭제 보호·마지막 스냅샷을 끔 (그날 파기하는 데모 DB만) | 삭제 보호가 켜져 destroy가 막힘 |
 | `ONPREM_KUBE_CONTEXT`, `ONPREM_REGISTRY_HOST` | 온프레 kubectl 컨텍스트·레지스트리 | 온프레 읽기·배포 실패 |
 | `IMPORT_AWS_EKS_CLUSTER`, `IMPORT_AWS_DB_ID`, `IMPORT_GCP_GKE_CLUSTER`, `IMPORT_GCP_SQL_INSTANCE`, `IMPORT_APP`, `IMPORT_NAMESPACE` | 출발 환경에 후보가 여럿일 때 고르는 이름 | 하나뿐이면 자동 |
-| `IMPORT_IR` | 가져오기 공통 명세 판 `v1`·`v2`. `v2`면 네임스페이스 전체를 읽어 `spec_versions.spec_v2`도 저장 (v1 `spec`은 그대로) | `v1` (지금 동작) |
 
 ### 3-3. GitOps·Argo CD
 

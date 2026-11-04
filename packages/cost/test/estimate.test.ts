@@ -61,7 +61,7 @@ test("PoC 장면 4: 스타트업은 GCP 기본, 금융은 GCP 강화 (월 $110.8
 });
 
 test("전수 탐색: 노드 종류를 전부 계산하고, 메모리가 크면 노드 수가 늘어난다", () => {
-  const r = estimateCost({ spec: spec({ replicas: 10, memory: "2Gi" }), traffic: { peakRps: 10 } },
+  const r = estimateCost({ spec: spec({ replicas: 10, memMiB: 2048 }), traffic: { peakRps: 10 } },
     catalog, { breakpoints: false });
   const aws = byP(r, "aws");
   assert.equal(aws.candidatesEvaluated, 3);
@@ -79,8 +79,8 @@ test("DB 없는 명세는 DB·스토리지 0원", () => {
 });
 
 test("거부: 명세에 모르는 칸이 있거나 rps가 음수면 parse 오류", () => {
-  const bad = spec() as Record<string, unknown>;
-  (bad["service"] as Record<string, unknown>)["privileged"] = true;
+  const bad = structuredClone(spec()) as unknown as { components: Array<{ props: Record<string, unknown> }> };
+  bad.components[0]!.props["privileged"] = true;
   assert.throws(() => estimateCost({ spec: bad as never, traffic: { peakRps: 1 } }, catalog));
   assert.throws(() => estimateCost({ spec: spec(), traffic: { peakRps: -1 } }, catalog));
 });

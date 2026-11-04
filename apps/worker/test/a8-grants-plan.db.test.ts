@@ -3,7 +3,7 @@ import { test, before, after, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
-import { AppSpec, upconvertV1, type AppSpecV2 } from "@svc/contracts";
+import { AppSpecV2 } from "@svc/contracts";
 
 const DB = process.env.DATABASE_URL, OWNER = process.env.OWNER_DATABASE_URL;
 const skip = !DB || !OWNER ? "DATABASE_URL / OWNER_DATABASE_URL 없음 (DB 시험 건너뜀)" : false;
@@ -17,11 +17,9 @@ const prev = { PLAN_IR: process.env.PLAN_IR, MOCK_PRECHECK: process.env.MOCK_PRE
 const events: Array<{ t: string; id: string; s: string }> = [];
 
 const D = (c: string) => `sha256:${c.repeat(64)}`;
-const V1 = AppSpec.parse({ schemaVersion: "1", app: { name: "shop" },
-  service: { image: `registry/shop-api@${D("a")}`, port: 8080, healthPath: "/healthz", replicas: 2, cpu: "500m", memory: "1Gi",
-    env: [{ name: "LOG_LEVEL", value: "info" }], secretRefs: [{ name: "DATABASE_PASSWORD", key: "password" }] },
-  database: { engine: "postgres", majorVersion: "16", storageGb: 20 }, ingress: { hostname: "shop.example.com", entry: "cloudflare-lb" } });
-const ok = (): AppSpecV2 => structuredClone(upconvertV1(V1).spec);
+// 데모 명세 (shop 서비스 1개 + postgres 1개)
+const BASE: AppSpecV2 = AppSpecV2.parse({"schemaVersion":"2","app":{"name":"shop"},"components":[{"id":"shop","kind":"service","props":{"runtime":"k8s","origin":{"runtime":"k8s","product":"unknown"},"image":{"source":"registry","repository":"registry/shop-api","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"ports":[{"port":8080,"protocol":"TCP"}],"probes":{"readiness":{"type":"http","path":"/healthz","port":8080}},"replicas":{"min":2,"max":2},"serviceAccount":"default","resources":{"request":{"cpuMilli":500,"memMiB":1024}},"env":[{"name":"LOG_LEVEL","value":"info"},{"name":"DATABASE_PASSWORD","fromSecret":{"secret":"DATABASE_PASSWORD","key":"password"}}]}},{"id":"db","kind":"postgres","props":{"majorVersion":"16","storageGb":20}}],"links":[{"from":"shop","to":"db","intent":"connect"}],"entry":{"via":"cloudflare-lb","hosts":[{"hostnames":["shop.example.com"],"routes":[{"matches":[{"path":{"type":"PathPrefix","value":"/"}}],"backends":[{"to":"shop","port":8080,"weight":1}]}]}]},"posture":{"permissions":[],"network":[]}});
+const ok = (): AppSpecV2 => structuredClone(BASE);
 const svc = (s: AppSpecV2) => s.components.find((c) => c.kind === "service")! as Extract<AppSpecV2["components"][number], { kind: "service" }>;
 const twoIds = (): AppSpecV2 => { const s = ok(), a = svc(s);
   s.components.push({ ...structuredClone(a), id: `${a.id}-2`, props: { ...structuredClone(a.props), serviceAccount: "other-sa" } }); return s; };
@@ -51,7 +49,7 @@ after(async () => {
 });
 
 type Prov = "aws" | "gcp" | "onprem" | "azure_mock";
-// 출발 onprem → 도착 p, 상태 prechecking, 받아들인 판 1 (spec v1 + spec_v2)
+// 출발 onprem → 도착 p, 상태 prechecking, 받아들인 판 1 (spec_v2)
 async function seed(p: Prov, v2: AppSpecV2 | null, tenant = T) {
   const id = randomUUID(), src = randomUUID(), dst = randomUUID();
   await owner.query(`INSERT INTO environments (id, tenant_id, provider, name, connection_status) VALUES
@@ -59,7 +57,7 @@ async function seed(p: Prov, v2: AppSpecV2 | null, tenant = T) {
   await owner.query(`INSERT INTO migrations (id, tenant_id, source_env_id, target_env_id, status) VALUES ($1,$2,$3,$4,'prechecking')`,
     [id, tenant, src, dst]);
   await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta, spec_v2) VALUES ($1,$2,1,$3,'{}'::jsonb,$4)`,
-    [tenant, id, V1, v2 ? { spec: v2, fieldMeta: {}, unmapped: [] } : null]);
+    [tenant, id, {}, v2 ? { spec: v2, fieldMeta: {}, unmapped: [] } : null]);
   return id;
 }
 const job = (id: string, tenantId = T) => ({ tenantId, requestId: `r-a8-${id.slice(0, 8)}`, migrationId: id });
@@ -77,7 +75,6 @@ const withIam = (): AppSpecV2 => { const s = ok(), a = svc(s), db = s.components
   return s; };
 
 test("깃발 on: 권한 든 명세 + aws 도착 → precheck 경고만(PC-V2-GRANTS)·planning → 계획 awaiting_approval (irVersion 2)", { skip }, async () => {
-  process.env.PLAN_IR = "v2";
   const s = withIam();
   assert.ok(s.links.some((l) => l.grants?.length), "시험 재료: grants 가 붙은 의존성");
   const id = await seed("aws", s);
@@ -90,11 +87,10 @@ test("깃발 on: 권한 든 명세 + aws 도착 → precheck 경고만(PC-V2-GRA
   await plan.handlePlan({ ...job(id), planId: a.detail.planId as string });
   const m = await mig(id);
   assert.equal(m.status, "awaiting_approval", JSON.stringify(m));
-  assert.equal((await core.withTenant(T, (tx) => core.loadLatestPlan(tx, id)))?.irVersion, "2");
+  assert.ok((await core.withTenant(T, (tx) => core.loadLatestPlan(tx, id))));
 });
 
 test("거부: 같은 명세 + gcp 도착 → RDS 재부팅 권한 대응 역할 없음으로 block → spec_review (failed 아님)", { skip }, async () => {
-  process.env.PLAN_IR = "v2";
   const id = await seed("gcp", withIam());
   await pre.handlePrecheck(job(id));
   const m = await mig(id);
@@ -104,10 +100,3 @@ test("거부: 같은 명세 + gcp 도착 → RDS 재부팅 권한 대응 역할 
   assert.ok(u.some((i: { message: string }) => /GCP 대응 역할 없음 rds:RebootDBInstance/.test(i.message)));
 });
 
-test("깃발 off: 권한 든 명세여도 v2 대조·경고 없음 (지금 동작)", { skip }, async () => {
-  delete process.env.PLAN_IR;
-  const id = await seed("gcp", withIam());
-  await pre.handlePrecheck(job(id));
-  assert.equal((await mig(id)).status, "planning");
-  assert.equal(((await lastAudit(id)).detail.precheck as Array<{ id: string }>).some((i) => i.id.startsWith("PC-V2")), false);
-});

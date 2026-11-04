@@ -114,8 +114,8 @@ test("onprem STUB·azure_mock: 권한 있어도 block 0, 변수는 권한 없는
   for (const p of ["onprem", "azure_mock"] as const) {
     assert.deepEqual(grantBlockers(p, s), []);
     if (p === "onprem") assert.equal(JSON.stringify(tfVars(p, s)), JSON.stringify(tfVars(p, plain)), `${p}: 변수가 권한에 따라 변함`);   // azure_mock 은 신원 1개만 받는 가짜라 이 명세는 변수 비교에서 뺌
-    assert.equal(v2PrecheckItems(p, { spec: {}, specV2: s, hadV2Before: false }).filter((i) => i.id.startsWith("PC-V2-GRANTS")).length, 1, p);
-    assert.equal(v2PrecheckItems(p, { spec: {}, specV2: plain, hadV2Before: false }).filter((i) => i.id.startsWith("PC-V2-GRANTS")).length, 0, `${p}: 권한 없는데 경고`);
+    assert.equal(v2PrecheckItems(p, { specV2: s }).filter((i) => i.id.startsWith("PC-V2-GRANTS")).length, 1, p);
+    assert.equal(v2PrecheckItems(p, { specV2: plain }).filter((i) => i.id.startsWith("PC-V2-GRANTS")).length, 0, `${p}: 권한 없는데 경고`);
   }
 });
 

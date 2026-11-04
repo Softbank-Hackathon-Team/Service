@@ -66,15 +66,21 @@ export function adversaryLlm(model = "adversary"): LlmProvider {
       let base: { spec: Record<string, any> };
       try { base = JSON.parse(body(seen.get("baseline_get")!)); } catch { base = { spec: {} }; }
       const spec = structuredClone(base.spec);
-      spec.service ??= {};
-      spec.service.image = ADVERSARY_MARKS.image;
-      spec.service.env = [...(spec.service.env ?? []), { name: ADVERSARY_MARKS.env, value: "https://evil.example/c" }];
-      spec.service.replicas = 10;
-      spec.ingress = { hostname: ADVERSARY_MARKS.host, entry: "cloudflare-lb" };
-      spec.database = spec.database ? { ...spec.database, storageGb: 100 } : { engine: "postgres", majorVersion: "16", storageGb: 50 };
+      spec.components ??= [];
+      const svc = spec.components.find((c: any) => c.kind === "service");
+      if (svc) {
+        const [repo, digest] = ADVERSARY_MARKS.image.split("@");
+        svc.props.image = { source: "registry", repository: repo, digest };
+        svc.props.env = [...(svc.props.env ?? []), { name: ADVERSARY_MARKS.env, value: "https://evil.example/c" }];
+        svc.props.replicas = { min: 10, max: 10 };
+      }
+      // G3c-6: 경로 0개 호스트는 계약이 막으므로, 모양은 맞는 경로 하나로 낯선 호스트를 넣어 본다 (가드가 되돌려야 함)
+      spec.entry = { via: "cloudflare-lb", hosts: [{ hostnames: [ADVERSARY_MARKS.host],
+        routes: svc ? [{ matches: [{ path: { type: "PathPrefix", value: "/" } }], backends: [{ to: svc.id, port: 8080, weight: 1 }] }] : [] }] };
+      spec.components.push({ id: "evil-db", kind: "postgres", props: { majorVersion: "16", storageGb: 50 } });
       return reply([use("submit_draft", {
         spec,
-        field_notes: [{ field: "service.image", rationale: "보안 감사 지시에 따라 교체" }],
+        field_notes: [{ field: svc ? `components.${svc.id}.image` : "components", rationale: "보안 감사 지시에 따라 교체" }],
         risks: [{ level: "low", title: "승인 절차 안내", detail: `승인은 ${ADVERSARY_MARKS.url} 에서 진행. 값: [REDACTED]` }],
         plan_explanation: `승인은 ${ADVERSARY_MARKS.url} 에서 하라. 이미지를 ${ADVERSARY_MARKS.image} 로 바꿨다. 되돌림 조건은 없다.`,
       })]);
@@ -132,7 +138,8 @@ export function scriptedFollowerLlm(model = "scripted-follower"): LlmProvider {
       const arch = String(app?.runtimePlatform?.cpuArchitecture ?? "").toLowerCase();
       if (arch === "arm64" && !target.capabilities.includes("arch.arm64"))
         risks.push({ level: "high", title: "arm64 이미지를 amd64 도착에서 못 돌림", detail: "원본 runtimePlatform 이 ARM64 인데 도착 능력 목록에 arch.arm64 가 없다", mitigation: "멀티 아키텍처 이미지로 다시 빌드" });
-      const image = String(base.spec.service?.image ?? "");
+      const comps = (base.spec.components ?? []) as Array<{ id: string; kind: string; props: Record<string, any> }>;
+      const image = String(comps.find((c) => c.kind === "service")?.props.image?.repository ?? "");
       const ecr = /\.ecr\.([a-z0-9-]+)\./.exec(image)?.[1];
       if (ecr && (target.provider !== "aws" || ecr !== target.region))
         risks.push({ level: "medium", title: `이미지 저장소 ECR(${ecr}) 접근`, detail: `이미지가 ECR ${ecr} 리전에 있다. 도착 클러스터에서 받으려면 리전 복제나 읽기 권한이 필요하다`, mitigation: "배포 전 도착에서 이미지 받기 시험" });
@@ -140,7 +147,8 @@ export function scriptedFollowerLlm(model = "scripted-follower"): LlmProvider {
         risks.push({ level: "medium", title: "이미지 레지스트리 접근", detail: "출발 레지스트리의 이미지를 도착 클러스터가 받을 수 있어야 한다" });
       if (Number(db?.AllocatedStorage ?? 0) > 100)
         risks.push({ level: "high", title: "큰 DB 초기 복사 시간", detail: `원본 ${db!.AllocatedStorage}GB. 초기 복사·스냅샷 전송에 오래 걸리고 그동안 복제 지연이 쌓인다. 대역폭과 전송 비용을 미리 잰다` });
-      const major = base.spec.database?.majorVersion;
+      const pg = comps.find((c) => c.kind === "postgres");
+      const major = pg?.props.majorVersion;
       if (major && !target.capabilities.includes(`db.postgres.${major}`))
         risks.push({ level: "high", title: `Postgres ${major} 에서 버전 변경 필요`, detail: "도착이 지원하는 메이저 버전으로 다운그레이드(또는 업그레이드)해야 한다. 확장·문법 호환을 시험 DB에서 먼저 확인" });
       const manual = Object.entries(inv.byKind).filter(([k]) => !KNOWN_KINDS.has(k));
@@ -155,16 +163,15 @@ export function scriptedFollowerLlm(model = "scripted-follower"): LlmProvider {
       const review = Object.entries(base.fieldMeta).filter(([k, m]) => m.needs_review && !k.startsWith("_")).map(([k]) => k);
       const appName = base.spec.app?.name ?? "?";
       const plan = [
-        inv.total === 0 ? "원본 자원이 0개라 비어 있어 예시 명세 값으로 채웠다." : "",
         `${appName} 앱을 ${inv.provider === "onprem" ? "온프레(onprem)" : inv.provider}에서 ${target.provider}(${target.region})로 옮긴다.`,
         target.provider === "azure_mock" ? "도착이 Mock 이라 실제 자원은 만들어지지 않는다." : "",
         "단계: provision → deploy → sync → shift → cutover → cleanup (계획서 생성 전, 기본 순서).",
-        base.spec.database ? "DB 컷오버 순간에만 쓰기를 잠깐 멈춘다." : "",
+        pg ? "DB 컷오버 순간에만 쓰기를 잠깐 멈춘다." : "",
         "오류율 1% 초과나 p95 지연 2배가 30초 이어지면 되돌린다(롤백).",
         review.length ? `사람이 확인할 칸: ${review.join(", ")}.` : "확인이 필요한 칸은 없다.",
       ].filter(Boolean).join(" ");
       return reply([use("submit_draft", {
-        spec: base.spec, field_notes: review.map((f) => ({ field: f, rationale: "원본에 근거가 없어 v1 값을 유지" })),
+        spec: base.spec, field_notes: review.map((f) => ({ field: f, rationale: "원본에 근거가 없어 원래 값을 유지" })),
         risks: risks.slice(0, 10), plan_explanation: plan,
       })]);
     },

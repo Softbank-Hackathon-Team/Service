@@ -152,6 +152,12 @@ export function cloudflareLb(c: CloudflareLbConfig): TrafficSwitcher & { describ
     describe,
     async get(lbId) { return cloudflareWeightsOf(c, await describe(lbId)); },
     async set(lbId, w) { await cfRequest(req, "PATCH", await path(lbId), cloudflarePatchBody(c, w)); },
+    // pf-d FM-TRF-13: fallback_pool 만 바꾼다 (부분 PATCH, 가중치는 그대로)
+    async setFallback(lbId, side) { await cfRequest(req, "PATCH", await path(lbId), { fallback_pool: side === "target" ? c.targetPoolId : c.sourcePoolId }); },
+    async getFallback(lbId) {
+      const f = (await describe(lbId)).fallback_pool;
+      return f === c.targetPoolId ? "target" : f === c.sourcePoolId ? "source" : f ? "other" : null;
+    },
     // 막아야 하는 문제만 돌려준다 (CF_EXTRA_POOLS 같은 경고는 뺀다)
     async preflight(lbId) { return cloudflarePreflight(c, await describe(lbId)).filter((x) => !CF_PREFLIGHT_WARN_ONLY.has(x)); },
   };

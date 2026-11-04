@@ -55,6 +55,10 @@ async function seed(s: string, o: { plan?: boolean; holder?: string; envs?: [str
       VALUES ($1,$2,$3,$4,'hp',$5)`, [planId, T, id, JSON.stringify(doc), EXPIRES]);
     await owner.query(`INSERT INTO plan_approvals (tenant_id, plan_id, migration_id, decision, approved_by, plan_hash)
       VALUES ($1,$2,$3,'approve','user:dev','hp')`, [T, planId, id]);
+    // 적용은 받아들인 판의 명세를 다시 읽는다 (없으면 TF_PLAN_DRIFT)
+    const { ONE } = await import("./demo-one.js");
+    await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta, spec_v2) VALUES ($1,$2,1,'{}','{}',$3)`,
+      [T, id, JSON.stringify({ spec: ONE, fieldMeta: {}, unmapped: [], ids: {} })]);
   }
   await owner.query(`INSERT INTO env_locks (env_id, tenant_id, migration_id, holder, lease_expires_at)
     VALUES ($1,$3,$4,$5, now() + interval '2 hours'), ($2,$3,$4,$5, now() + interval '2 hours')`,

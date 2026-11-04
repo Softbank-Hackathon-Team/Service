@@ -1,11 +1,12 @@
 // PA4 (계획 26 · A4): 계획서 비용 요약 + 확인 항목
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AppSpec, PlanDoc, type PlanCostSummary } from "@svc/contracts";
+import { ONE } from "./demo-one.js";
+import { AppSpecV2, PlanDoc, type PlanCostSummary } from "@svc/contracts";
 import { adapterFor } from "@svc/adapters";
 import { buildAcknowledgements, buildPlanDoc, estimatePlanCost } from "../src/jobs/plan.js";
 
-const spec = AppSpec.parse(adapterFor("aws").normalize({ provider: "aws", items: [], coverage: {} }).spec);
+const spec = ONE;
 const now = new Date("2026-11-07T00:00:00Z");
 const base = {
   planId: "7f000000-0000-4000-8000-0000000000a4",
@@ -67,7 +68,7 @@ test("진짜 가격표로 출발·도착 월 비용을 계산하고, 같은 입�
 });
 
 test("거부: 비용 계산이 실패해도 던지지 않고 unknownFields=['*'] 로 남긴다 (계획을 막지 않음)", () => {
-  const broken = { ...spec, service: { ...spec.service, cpu: "not-a-cpu" } } as unknown as AppSpec;
+  const broken = { ...spec, components: [] } as unknown as AppSpecV2;
   const c = estimatePlanCost(broken, "aws", "gcp");
   assert.deepEqual(c.unknownFields, ["*"]);
   assert.equal(c.monthlyTarget, null);

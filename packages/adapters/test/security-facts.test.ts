@@ -10,11 +10,14 @@ const tf = (p: string) => readFileSync(new URL(`../../../${p}`, import.meta.url)
 test("표류: 사실표가 근거로 든 도착 모듈 줄이 실제 .tf 에 있다 (모듈이 바뀌면 사실표도 고쳐야 함)", () => {
   const aws = tf("infra/modules/aws/kinds/postgres/main.tf"), gcp = tf("infra/modules/gcp/kinds/postgres/main.tf");
   assert.match(aws, /storage_encrypted\s*=\s*true/);
-  assert.match(aws, /"rds\.force_ssl"\s*=\s*"1"/);
-  assert.match(aws, /backup_retention_period\s*=\s*[1-9]/);
+  // SSL-1: TLS 강제는 require_tls 칸(기본 true)으로. 기본값과 켜짐 값이 모듈에 그대로 있어야 사실표가 맞음
+  assert.match(aws, /require_tls\s*=\s*optional\(bool, true\)/);
+  assert.match(aws, /"rds\.force_ssl"\s*=\s*var\.cfg\.require_tls \? "1" : "0"/);
+  assert.match(aws, /backup_retention_period\s*=\s*coalesce\(var\.cfg\.backup_retention_days, [1-9]\)/);   // BK-1: 출발 그대로, 모르면 1일 이상
   assert.doesNotMatch(aws, /kms_key_id/, "고객 키를 쓰게 되면 keyOwner 사실을 고친다");
-  assert.match(gcp, /ssl_mode\s*=\s*"ENCRYPTED_ONLY"/);
-  assert.match(gcp, /point_in_time_recovery_enabled\s*=\s*true/);
+  assert.match(gcp, /require_tls\s*=\s*optional\(bool, true\)/);
+  assert.match(gcp, /ssl_mode\s*=\s*var\.cfg\.require_tls \? "ENCRYPTED_ONLY" : /);
+  assert.match(gcp, /point_in_time_recovery_enabled\s*=\s*var\.cfg\.backup_retention_days != 0 && coalesce\(var\.cfg\.pitr, true\)/);   // BK-1
   assert.doesNotMatch(gcp, /encryption_key_name/, "CMEK 를 쓰게 되면 keyOwner 사실을 고친다");
   // 사실표의 근거 문자열이 같은 파일을 가리킨다
   assert.match(MODULE_DB_FACTS.aws.tlsEnforced.source!, /infra\/modules\/aws\/kinds\/postgres\/main\.tf/);

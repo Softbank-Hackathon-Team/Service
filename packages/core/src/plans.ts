@@ -1,6 +1,7 @@
 import { PlanDoc, InfraReady } from "@svc/contracts";
 import type { Tx } from "./db.js";
 import { writeAudit } from "./audit.js";
+import { advance } from "./advance.js";
 
 // 계획서·승인·"도착 자원 준비됨"을 읽고 쓰는 곳 (api 경로와 워커 작업이 같이 쓴다).
 // 계획서·승인은 plans·plan_approvals 표(0004). 전이 조건 T07·T09가 이 표를 다시 읽는다.
@@ -83,4 +84,28 @@ export async function loadInfraReady(tx: Tx, migrationId: string): Promise<Infra
       WHERE action = 'infra.ready' AND target = $1 AND detail ? 'infraReady' ORDER BY seq DESC LIMIT 1`, [migrationId]);
   const raw = q.rows[0]?.v;
   return raw ? InfraReady.parse(raw) : null;
+}
+
+// G7-3: 환경을 다른 계정으로 다시 연결하면, 그 환경을 쓰는 승인 대기·승인됨 이전은 사람이 본 계획과 실행할 곳이 달라진다.
+//   그 이전들을 stale(env_changed)로 옮긴다 (T11·T16). 다시 계획하면 사전 점검부터 새로 돈다(G7-2).
+//   예전: 계약에 staleReason "env_changed" 는 있는데 만드는 코드가 0건이라 승인한 지문 그대로 다른 계정에 apply 됐다
+//   이전 행은 advance 가 하나씩 잠근다 (이전 행 → 잠금 줄 → 감사 순서 그대로). 돌려주는 값 = 옮긴 이전 번호
+export async function staleMigrationsForEnvChange(tx: Tx, tenantId: string, envId: string, actor: string,
+  detail: Record<string, unknown> = {}): Promise<string[]> {
+  const q = await tx.query(
+    `SELECT id, status FROM migrations
+      WHERE (source_env_id = $1 OR target_env_id = $1) AND status IN ('awaiting_approval', 'approved')
+      ORDER BY id`, [envId]);
+  const moved: string[] = [];
+  for (const m of q.rows as { id: string; status: "awaiting_approval" | "approved" }[]) {
+    const ok = await advance(tx, { id: m.id, tenantId }, m.status, "stale", {
+      mode: "ifStill", evidence: { staleReason: "env_changed" },
+      audit: { actor, action: "migration.stale", target: m.id, result: "ok", detail: { ...detail, envId, staleReason: "env_changed" } },
+    });
+    if (ok) {
+      await tx.query(`UPDATE plans SET status = 'stale' WHERE migration_id = $1 AND status IN ('proposed', 'approved')`, [m.id]);
+      moved.push(m.id);
+    }
+  }
+  return moved;
 }

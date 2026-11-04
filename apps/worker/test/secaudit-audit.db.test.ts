@@ -122,10 +122,8 @@ test("정상: 어떤 경로의 오류 문구·detail 이든 저장 전에 가린
 
 test("한 바퀴: v2 가져오기 → 계획 → apply(흉내) 뒤 감사에 tfOutputs 값이 하나도 없다, 배포가 읽을 값은 표에 있다", { skip }, async () => {
   const m = await migration("importing");
-  process.env.IMPORT_IR = "v2";
   await imp.handleImport({ tenantId: T, requestId: `r-sa-i-${m.id.slice(0, 8)}`, migrationId: m.id });
   await owner.query(`UPDATE migrations SET status='planning' WHERE id=$1`, [m.id]);
-  process.env.PLAN_IR = "v2";
   const planId = randomUUID();
   await plan.handlePlan({ tenantId: T, requestId: `r-sa-p-${m.id.slice(0, 8)}`, migrationId: m.id, planId });
   const p = (await core.withTenant(T, (tx) => core.loadLatestPlan(tx, m.id)))!;

@@ -102,7 +102,9 @@ export async function acquireEnvLock(
         SET holder = $3, job_id = $4, job_queue = $5,
             lease_expires_at = now() + make_interval(secs => $6)
       WHERE env_id = $1 AND migration_id = $2
-        AND (holder = 'reserved' OR holder = $3 OR lease_expires_at < now()
+        AND (holder = 'reserved' OR lease_expires_at < now()
+             -- F8-6: 같은 주인(같은 프로세스)이어도 다른 작업 번호가 기한 안에 쥐고 있으면 거부 (만료·재시도된 shift 둘이 같은 LB 를 바꾸지 않게)
+             OR (holder = $3 AND (job_id IS NULL OR $4::uuid IS NULL OR job_id = $4::uuid))
              OR ($4::uuid IS NOT NULL AND job_id = $4::uuid
                  AND lease_expires_at < now() + make_interval(secs => $7)))
       RETURNING 1`,
@@ -184,4 +186,17 @@ export async function cleanupIdempotencyKeys(maxAgeHours = 24): Promise<number> 
   const r = await pool.query("SELECT maint_cleanup_idempotency(make_interval(hours => $1)) AS n",
     [maxAgeHours]);
   return r.rows[0]?.n ?? 0;
+}
+
+// PF FM-ORC-10: 트래픽 LB 주인 (db 0040). LB 가 워커 전역 하나라 환경 잠금으로는 다른 이전의 shift·롤백을 못 막는다.
+//   shift 는 가중치를 바꾸기 전에 take, 롤백은 state 가 'other' 면 LB 를 건드리지 않는다. 끝 상태에서 advance 가 release
+export type TrafficLeaseState = "mine" | "other" | "none" | "denied";
+export async function takeTrafficLease(tx: Tx, lbId: string, migrationId: string): Promise<TrafficLeaseState> {
+  return (await tx.query<{ s: TrafficLeaseState }>("SELECT traffic_lease_take($1, $2) AS s", [lbId, migrationId])).rows[0]!.s;
+}
+export async function trafficLeaseState(tx: Tx, lbId: string, migrationId: string): Promise<TrafficLeaseState> {
+  return (await tx.query<{ s: TrafficLeaseState }>("SELECT traffic_lease_state($1, $2) AS s", [lbId, migrationId])).rows[0]!.s;
+}
+export async function releaseTrafficLease(tx: Tx, migrationId: string): Promise<number> {
+  return (await tx.query<{ n: number }>("SELECT traffic_lease_release($1) AS n", [migrationId])).rows[0]!.n;
 }

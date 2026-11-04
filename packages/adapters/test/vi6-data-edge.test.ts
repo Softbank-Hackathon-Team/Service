@@ -153,9 +153,10 @@ test("ElastiCache: 인증 토큰 값이 원본에 섞여 있어도 명세·메�
 });
 
 test("Memorystore: 모르는 버전 문자열·tier 없음·암호화 DISABLED", () => {
-  const r = normalizeV2(inv([{ kind: "memorystore.instance", name: "projects/p/locations/l/instances/m1", redisVersion: "REDIS_6_X", memorySizeGb: 0, transitEncryptionMode: "DISABLED", authEnabled: false, host: "10.0.0.5", port: 6379 }], "gcp")).result;
+  const r = normalizeV2(inv([{ kind: "memorystore.instance", name: "projects/p/locations/l/instances/m1", redisVersion: "REDIS_NEXT", memorySizeGb: 0, transitEncryptionMode: "DISABLED", authEnabled: false, host: "10.0.0.5", port: 6379 }], "gcp")).result;
   const c = comp(r, "m1")!;
-  assert.equal(c.props.version, undefined);
+  assert.equal(c.props.version, undefined);   // CV-1 (fc2): REDIS_6_X 는 이제 "6.x" 로 읽음 → 정말 모르는 글자로 시험
+  assert.equal(meta(r, "components.m1.version")?.needs_review, true);   // DM-8: 못 읽은 판은 검토 표시
   assert.equal(c.props.memoryMiB, null);
   assert.equal(c.props.tls, false);
   assert.equal(c.props.ha, undefined);
@@ -243,6 +244,7 @@ const KC: Array<[RegExp, Reply]> = [
     template: { metadata: { labels: { app: "shop-api" } }, spec: { containers: [{ name: "api", image: "ghcr.io/demo/shop-api:1.0", ports: [{ containerPort: 8080 }] }] } } } }] } }],
   [/^kubectl get pods/, { out: { items: [{ metadata: { name: "p1", namespace: "shop", labels: { app: "shop-api" } }, status: { containerStatuses: [{ name: "api", imageID: "ghcr.io/demo/shop-api@sha256:" + "ab".repeat(32) }] } }] } }],
   [/^kubectl get nodes/, { out: { items: [] } }],
+  [/^kubectl get (services|ingresses|configmaps) /, { out: { items: [] } }],   // F-1: 핵심 종류는 못 읽으면 멈추므로 빈 목록으로 응답
 ];
 const AWS_BASE: Array<[RegExp, Reply]> = [
   [/^aws sts get-caller-identity/, { out: { Account: ACC } }], [/^aws eks list-clusters/, { out: { clusters: ["c1"] } }],
@@ -258,24 +260,11 @@ const GCP_BASE: Array<[RegExp, Reply]> = [
 const itemsOf = (raw: any): Raw[] => (raw.inventory?.items ?? raw.items ?? []) as Raw[];
 const DATA_CMD = /^aws (s3api|sqs|elasticache|cloudwatch)|^gcloud (storage|pubsub|redis)/;
 
-test("discover v1(깃발 없음·ir:v1): AWS·GCP 모두 데이터 자원 명령 0번, 원본에 데이터 종류 없음", async () => {
-  for (const opts of [undefined, { ir: "v1" as const }]) {
-    const a = fakeExec(AWS_BASE);
-    const rawA = await discoverAws({ exec: a.exec, env: { AWS_REGION: "ap-northeast-1" } }, opts);
-    assert.deepEqual(a.calls.filter((c) => DATA_CMD.test(c)), []);
-    assert.ok(!itemsOf(rawA).some((i) => /^(s3|sqs|elasticache)\./.test(String(i.kind))));
-    const g = fakeExec(GCP_BASE);
-    const rawG = await discoverGcp({ exec: g.exec, env: { GCP_PROJECT: "p" } }, opts);
-    assert.deepEqual(g.calls.filter((c) => DATA_CMD.test(c)), []);
-    assert.ok(!itemsOf(rawG).some((i) => /^(gcs|pubsub|memorystore)\./.test(String(i.kind))));
-  }
-});
-
 test("discover AWS v2: 버킷 목록이 비어(출력 없음·Buckets 없음) 있어도 오류 없이 계속, 정렬은 이름순, 비밀 안 읽음", async () => {
   for (const out of [null, {}, { Buckets: [] }] as unknown[]) {
     const { exec, calls } = fakeExec([[/^aws s3api list-buckets/, { out }], [/^aws sqs list-queues/, { out: {} }],
       [/^aws elasticache describe-replication-groups/, { out: { ReplicationGroups: [] } }], ...AWS_BASE]);
-    const raw: any = await discoverAws({ exec, env: { AWS_REGION: "ap-northeast-1" } }, { ir: "v2" });
+    const raw: any = await discoverAws({ exec, env: { AWS_REGION: "ap-northeast-1" } }, {});
     assert.ok(!itemsOf(raw).some((i) => i.kind === "s3.bucket" || i.kind === "sqs.queue"));
     assert.ok(!calls.some((c) => /get-bucket-policy |get-secret|get-parameter|receive-message|get-object/.test(c)), calls.join("\n"));
   }
@@ -288,7 +277,7 @@ test("discover AWS v2: 큐 하나의 속성 읽기가 실패해도 그 큐만 �
     [/get-queue-attributes.*\/z/, { code: 254, err: `AccessDenied arn:aws:sqs:x:${ACC}:z` }],
     [/get-queue-attributes.*\/a/, { out: { Attributes: { QueueArn: `arn:aws:sqs:x:${ACC}:a` } } }],
     [/^aws elasticache describe-replication-groups/, { out: { ReplicationGroups: [] } }], ...AWS_BASE]);
-  const raw: any = await discoverAws({ exec, env: { AWS_REGION: "ap-northeast-1" } }, { ir: "v2" });
+  const raw: any = await discoverAws({ exec, env: { AWS_REGION: "ap-northeast-1" } }, {});
   const qs = itemsOf(raw).filter((i) => i.kind === "sqs.queue");
   assert.equal(qs.length, 1);
   assert.match(qs[0]!.QueueUrl, /\/a$/);
@@ -302,10 +291,10 @@ test("discover GCP v2: 버킷 IAM 정책 읽기 실패 → allUsersBinding null(
     [/gcloud storage buckets list/, { out: [{ name: "b" }] }], [/gcloud storage buckets get-iam-policy/, { code: 1, err: "403" }],
     [/gcloud pubsub topics list/, { out: [{ name: "projects/p/topics/t" }] }], [/gcloud pubsub subscriptions list/, { code: 1, err: "403" }],
     [/gcloud redis instances list/, { out: [] }], ...GCP_BASE]);
-  const raw: any = await discoverGcp({ exec, env: { GCP_PROJECT: "p" } }, { ir: "v2" });
+  const raw: any = await discoverGcp({ exec, env: { GCP_PROJECT: "p" } }, {});
   const it = itemsOf(raw);
   assert.equal(it.find((i) => i.kind === "gcs.bucket")!.allUsersBinding, null);
-  assert.equal(it.find((i) => i.kind === "pubsub.topic")!.subscription, null);
+  assert.equal(it.find((i) => i.kind === "pubsub.topic")!.subscriptions, null, "구독 목록을 못 읽음 = null (없음 [] 과 다름)");
   // BOUNDARY: 서비스가 env 로 버킷 b 를 가리켜야 경계 안 (안 가리키면 outOfBoundary)
   const api = { kind: "k8s.deployment", imageDigest: "sha256:" + "ab".repeat(32), metadata: { name: "api", namespace: "shop", labels: { app: "api" } },
     spec: { replicas: 1, selector: { matchLabels: { app: "api" } }, template: { metadata: { labels: { app: "api" } }, spec: { containers: [{

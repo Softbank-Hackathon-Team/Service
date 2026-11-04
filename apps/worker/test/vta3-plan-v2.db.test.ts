@@ -1,4 +1,4 @@
-// VTA3 DB 시험: PLAN_IR=v2 계획 작업 끝까지 (TA3 는 고르기까지만 시험) + 사전 점검 깃발 + PA4 확인 항목이 v2 승인 행을 읽는지
+// VTA3 DB 시험: 계획 작업 끝까지 (TA3 는 고르기까지만 시험) + PA4 확인 항목이 v2 승인 행을 읽는지
 import { test, before, after, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -13,7 +13,7 @@ let plan: typeof import("../src/jobs/plan.js");
 let pre: typeof import("../src/jobs/precheck.js");
 let owner: pg.Client;
 const T = randomUUID(), OTHER = randomUUID();
-const prev = { PLAN_IR: process.env.PLAN_IR, IMPORT_IR: process.env.IMPORT_IR };
+const prev: Record<string, string | undefined> = {};
 
 before(async () => {
   if (skip) return;
@@ -40,9 +40,7 @@ async function importedPlanning(provider: "aws" | "gcp") {
     ($1,$3,$4,'s','connected'), ($2,$3,'gcp','d','connected')`, [src, dst, T, provider]);
   await owner.query(`INSERT INTO migrations (id, tenant_id, source_env_id, target_env_id, status)
     VALUES ($1,$2,$3,$4,'importing')`, [id, T, src, dst]);
-  process.env.IMPORT_IR = "v2";
   await imp.handleImport({ tenantId: T, requestId: `r-vta3-${id.slice(0, 8)}`, migrationId: id });
-  delete process.env.IMPORT_IR;
   await owner.query(`UPDATE migrations SET status='planning' WHERE id=$1`, [id]);
   return { id, dst };
 }
@@ -51,34 +49,20 @@ const mig = async (id: string) => (await owner.query(`SELECT status, failure_cod
   { status: string; failure_code: string | null };
 const savedPlan = async (id: string) => core.withTenant(T, (tx) => core.loadLatestPlan(tx, id));
 
-test("정상: PLAN_IR=v2 + gcp v2 가져오기 판 → 계획서 irVersion 2·specSource spec_v2·instances, 확인 항목도 같이", { skip }, async () => {
+test("정상: gcp 가져오기 판 → 계획서 instances(postgres 포함)·확인 항목", { skip }, async () => {
   const m = await importedPlanning("gcp");
-  process.env.PLAN_IR = "v2";
   await plan.handlePlan(job(m.id));
   assert.equal((await mig(m.id)).status, "awaiting_approval");
   const p = (await savedPlan(m.id))!;
-  assert.equal(p.irVersion, "2");
-  assert.equal(p.specSource, "spec_v2");
   assert.ok((p.instances ?? []).some((x) => x.kind === "postgres"));
   assert.match(p.adapterVersion, /-target@/);
   assert.deepEqual(p.acknowledgements?.slice(0, 2).map((a) => a.id), ["cost", "failure_cost_policy"]);
 });
 
-test("깃발 off: 같은 v2 판이어도 계획서에 v2 칸이 없다 (지금 동작 그대로)", { skip }, async () => {
-  const m = await importedPlanning("gcp");
-  delete process.env.PLAN_IR;
-  await plan.handlePlan(job(m.id));
-  assert.equal((await mig(m.id)).status, "awaiting_approval");
-  const p = (await savedPlan(m.id))!;
-  assert.equal(p.irVersion, undefined);
-  assert.equal(p.specSource, undefined);
-});
-
 test("거부: 사람이 고친 판에 spec_v2 가 없으면 계획 작업이 재시도 없이 failed(NEEDS_HUMAN), 계획서 없음", { skip }, async () => {
   const m = await importedPlanning("gcp");
   await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta)
-    SELECT tenant_id, migration_id, 2, spec, '{}'::jsonb FROM spec_versions WHERE migration_id=$1 AND version=1`, [m.id]);
-  process.env.PLAN_IR = "v2";
+    SELECT tenant_id, migration_id, 2, '{}', '{}'::jsonb FROM spec_versions WHERE migration_id=$1 AND version=1`, [m.id]);
   await plan.handlePlan(job(m.id));
   const s = await mig(m.id);
   assert.equal(s.status, "failed");
@@ -86,14 +70,13 @@ test("거부: 사람이 고친 판에 spec_v2 가 없으면 계획 작업이 재
   assert.equal(await savedPlan(m.id), null);
 });
 
-test("사전 점검 v2 대조: 깃발 off 면 빈 목록, on 이면 출처 줄, 남의 회사면 빈 목록", { skip }, async () => {
+test("사전 점검 명세 대조: 늘 출처 줄(PASS 명세), 남의 회사면 빈 목록", { skip }, async () => {
   const m = await importedPlanning("gcp");
   const row = { id: m.id, status: "prechecking", sourceEnvId: randomUUID(), targetEnvId: m.dst } as never;
-  assert.deepEqual(await pre.v2PrecheckFor(T, row, {}), []);
-  const on = await pre.v2PrecheckFor(T, row, { PLAN_IR: "v2" });
+  const on = await pre.v2PrecheckFor(T, row);
   assert.equal(on[0]!.id, "PC-V2-SOURCE");
-  assert.match(on[0]!.message, /spec_v2/);
-  assert.deepEqual(await pre.v2PrecheckFor(OTHER, row, { PLAN_IR: "v2" }), []);
+  assert.match(on[0]!.message, /PASS 명세/);
+  assert.deepEqual(await pre.v2PrecheckFor(OTHER, row), []);
 });
 
 // 찾은 버그 재현: spec_v2 칸은 ImportResultV2({ spec, fieldMeta, … }) 라 AppSpecV2 로 바로 parse 하면 늘 실패 → 승인 행이 늘 빈 목록이었다

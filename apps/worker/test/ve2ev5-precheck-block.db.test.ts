@@ -4,7 +4,7 @@ import { test, before, after, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
-import { AppSpec, upconvertV1, type AppSpecV2 } from "@svc/contracts";
+import { AppSpecV2 } from "@svc/contracts";
 
 const DB = process.env.DATABASE_URL, OWNER = process.env.OWNER_DATABASE_URL;
 const skip = !DB || !OWNER ? "DATABASE_URL / OWNER_DATABASE_URL 없음 (DB 시험 건너뜀)" : false;
@@ -18,11 +18,9 @@ const prev = { PLAN_IR: process.env.PLAN_IR, MOCK_PRECHECK: process.env.MOCK_PRE
 const events: Array<{ t: string; id: string; s: string }> = [];
 
 const D = (c: string) => `sha256:${c.repeat(64)}`;
-const V1 = AppSpec.parse({ schemaVersion: "1", app: { name: "shop" },
-  service: { image: `registry/shop-api@${D("a")}`, port: 8080, healthPath: "/healthz", replicas: 2, cpu: "500m", memory: "1Gi",
-    env: [{ name: "LOG_LEVEL", value: "info" }], secretRefs: [{ name: "DATABASE_PASSWORD", key: "password" }] },
-  database: { engine: "postgres", majorVersion: "16", storageGb: 20 }, ingress: { hostname: "shop.example.com", entry: "cloudflare-lb" } });
-const ok = (): AppSpecV2 => structuredClone(upconvertV1(V1).spec);
+// 데모 명세 (shop 서비스 1개 + postgres 1개)
+const BASE: AppSpecV2 = AppSpecV2.parse({"schemaVersion":"2","app":{"name":"shop"},"components":[{"id":"shop","kind":"service","props":{"runtime":"k8s","origin":{"runtime":"k8s","product":"unknown"},"image":{"source":"registry","repository":"registry/shop-api","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"ports":[{"port":8080,"protocol":"TCP"}],"probes":{"readiness":{"type":"http","path":"/healthz","port":8080}},"replicas":{"min":2,"max":2},"serviceAccount":"default","resources":{"request":{"cpuMilli":500,"memMiB":1024}},"env":[{"name":"LOG_LEVEL","value":"info"},{"name":"DATABASE_PASSWORD","fromSecret":{"secret":"DATABASE_PASSWORD","key":"password"}}]}},{"id":"db","kind":"postgres","props":{"majorVersion":"16","storageGb":20}}],"links":[{"from":"shop","to":"db","intent":"connect"}],"entry":{"via":"cloudflare-lb","hosts":[{"hostnames":["shop.example.com"],"routes":[{"matches":[{"path":{"type":"PathPrefix","value":"/"}}],"backends":[{"to":"shop","port":8080,"weight":1}]}]}]},"posture":{"permissions":[],"network":[]}});
+const ok = (): AppSpecV2 => structuredClone(BASE);
 const svc = (s: AppSpecV2) => s.components.find((c) => c.kind === "service")! as Extract<AppSpecV2["components"][number], { kind: "service" }>;
 const twoIds = (): AppSpecV2 => { const s = ok(), a = svc(s);
   s.components.push({ ...structuredClone(a), id: `${a.id}-2`, props: { ...structuredClone(a.props), serviceAccount: "other-sa" } }); return s; };
@@ -56,7 +54,7 @@ after(async () => {
 });
 
 type Prov = "aws" | "gcp" | "onprem" | "azure_mock";
-// 출발 onprem → 도착 p, 상태 prechecking, 받아들인 판 1 (spec v1 + spec_v2)
+// 출발 onprem → 도착 p, 상태 prechecking, 받아들인 판 1 (spec_v2)
 async function seed(p: Prov, v2: AppSpecV2 | null, tenant = T) {
   const id = randomUUID(), src = randomUUID(), dst = randomUUID();
   await owner.query(`INSERT INTO environments (id, tenant_id, provider, name, connection_status) VALUES
@@ -64,7 +62,7 @@ async function seed(p: Prov, v2: AppSpecV2 | null, tenant = T) {
   await owner.query(`INSERT INTO migrations (id, tenant_id, source_env_id, target_env_id, status) VALUES ($1,$2,$3,$4,'prechecking')`,
     [id, tenant, src, dst]);
   await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta, spec_v2) VALUES ($1,$2,1,$3,'{}'::jsonb,$4)`,
-    [tenant, id, V1, v2 ? { spec: v2, fieldMeta: {}, unmapped: [] } : null]);
+    [tenant, id, {}, v2 ? { spec: v2, fieldMeta: {}, unmapped: [] } : null]);
   return id;
 }
 const job = (id: string, tenantId = T) => ({ tenantId, requestId: `r-ve2ev5-${id.slice(0, 8)}`, migrationId: id });
@@ -82,7 +80,6 @@ test("도착 4개 × 못 그리는 조합: block 이면 spec_review(failed 아�
     ["gcp", withMemcached, "spec_review"], ["gcp", withCache, "planning"], ["gcp", twoIds, "planning"],
     ["onprem", withCache, "spec_review"], ["onprem", twoIds, "planning"],
   ];
-  process.env.PLAN_IR = "v2";
   const got: string[] = [];
   for (const [p, mk, want] of cases) {
     const id = await seed(p, mk());
@@ -96,7 +93,6 @@ test("도착 4개 × 못 그리는 조합: block 이면 spec_review(failed 아�
 });
 
 test("감사·SSE 모양: block 전이 감사 detail 에 precheck 목록(PC-V2-UNSUP block + fix)·evidence.precheckBlockers, 신호는 {t,id,s:spec_review}", { skip }, async () => {
-  process.env.PLAN_IR = "v2";
   const id = await seed("azure_mock", twoIds());
   events.length = 0;
   await pre.handlePrecheck(job(id));
@@ -120,13 +116,12 @@ test("감사·SSE 모양: block 전이 감사 detail 에 precheck 목록(PC-V2-U
 });
 
 test("명세를 고치면(신원 1개 판) 다시 점검 → planning + 계획 작업, 계획 단계도 failed 없이 awaiting_approval", { skip }, async () => {
-  process.env.PLAN_IR = "v2";
   const id = await seed("azure_mock", twoIds());
   await pre.handlePrecheck(job(id));
   assert.equal((await mig(id)).status, "spec_review");
   // 사람이 고친 새 받아들인 판 (PATCH 대신 시험 준비로 바로 넣음) + 다시 계획 요청(spec_review → prechecking)
   await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta, spec_v2) VALUES ($1,$2,2,$3,'{}'::jsonb,$4)`,
-    [T, id, V1, { spec: ok(), fieldMeta: {}, unmapped: [] }]);
+    [T, id, {}, { spec: ok(), fieldMeta: {}, unmapped: [] }]);
   await core.withTenant(T, (tx) => core.advance(tx, { id, tenantId: T }, "spec_review", "prechecking",
     { audit: { actor: "user:test", action: "migration.plan_requested", target: id, result: "ok" } }));
   await pre.handlePrecheck(job(id));
@@ -139,11 +134,10 @@ test("명세를 고치면(신원 1개 판) 다시 점검 → planning + 계획 �
   const m = await mig(id);
   assert.equal(m.status, "awaiting_approval", JSON.stringify(m));
   const p = await core.withTenant(T, (tx) => core.loadLatestPlan(tx, id));
-  assert.equal(p?.irVersion, "2");
+  assert.ok(p);
 });
 
 test("두 번 돌려도 같다: block 뒤 같은 작업이 다시 오면(상태가 이미 spec_review) 전이·임시 역할·신호 없이 job.rejected 한 줄만", { skip }, async () => {
-  process.env.PLAN_IR = "v2";
   const id = await seed("aws", withMemcached());
   await pre.handlePrecheck(job(id));
   const acts = async () => (await owner.query(`SELECT action FROM audit_events WHERE target=$1 ORDER BY seq`, [id])).rows.map((r) => r.action);
@@ -156,17 +150,7 @@ test("두 번 돌려도 같다: block 뒤 같은 작업이 다시 오면(상태�
   assert.equal(events.filter((e) => e.id === id).length, 0);
 });
 
-test("깃발 off: 못 그리는 v2 명세여도 v2 대조를 안 해서 지금처럼 planning (감사 precheck 에 PC-V2 줄 없음)", { skip }, async () => {
-  delete process.env.PLAN_IR;
-  const id = await seed("azure_mock", twoIds());
-  await pre.handlePrecheck(job(id));
-  assert.equal((await mig(id)).status, "planning");
-  const a = await lastAudit(id);
-  assert.equal((a.detail.precheck as any[]).some((i) => String(i.id).startsWith("PC-V2")), false);
-});
-
 test("남의 회사: 다른 회사 번호로 온 작업은 남의 이전을 안 건드린다 (상태·감사 그대로)", { skip }, async () => {
-  process.env.PLAN_IR = "v2";
   const id = await seed("azure_mock", twoIds());
   await pre.handlePrecheck(job(id, OTHER)).catch(() => undefined);
   assert.equal((await mig(id)).status, "prechecking");

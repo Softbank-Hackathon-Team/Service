@@ -47,7 +47,6 @@ test("끌어오기 정상: 구성요소·fieldMeta 가 들어가고 경계 밖 �
   assert.deepEqual(out.result.included, ["rds.dbInstance:analytics-db", "s3.bucket:shop-uploads"]);
   const b = out.result.fieldMeta["components.shop-uploads.boundary"]!;
   assert.equal(b.source, "human"); assert.equal(b.needs_review, true); assert.equal(b.confidence, 1);
-  assert.deepEqual(out.postgres, { "analytics-db": { nativeType: "rds.dbInstance" } });
   assert.deepEqual(checkV2(out.result.spec).errors, []);
   assert.ok(ImportResultV2.safeParse(out.result).success);
   // 입력은 안 바뀐다

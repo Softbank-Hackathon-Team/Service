@@ -6,13 +6,13 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AppSpecV2, ModuleKind, ServiceEnvVar, ServiceSecretVar, ServiceTfVars, TF_KIND_VARS } from "@svc/contracts";
 import {
-  AdapterError, DEMO_INVENTORY_V2, flattenTfOutputsV2, managedBlockers, normalizeV2, resourceTypesV2For, targetBuilderFor, UNSUPPORTED_V2,
+  AdapterError, DEMO_INVENTORY, flattenTfOutputsV2, managedBlockers, normalizeV2, resourceTypesV2For, targetBuilderFor, UNSUPPORTED_V2,
   v2PrecheckItems,
 } from "../src/index.js";
 
 const T = { envId: "33333333-3333-4333-8333-333333333333", region: "default", tenantId: "11111111-1111-4111-8111-111111111111", migrationId: "22222222-2222-4222-8222-222222222222" };
 const at = (p: "aws" | "gcp" | "onprem" | "azure_mock") => ({ ...T, provider: p }) as never;
-const ECS = (): AppSpecV2 => AppSpecV2.parse(normalizeV2(DEMO_INVENTORY_V2.aws!).result.spec);
+const ECS = (): AppSpecV2 => AppSpecV2.parse(normalizeV2(DEMO_INVENTORY.aws!).result.spec);
 const services = (vars: Record<string, unknown>) => (JSON.parse(vars.service_json as string) as unknown[]).map((x) => ServiceTfVars.parse(x));
 const byId = (vars: Record<string, unknown>, id: string) => services(vars).find((s) => s.id === id)!;
 const throwsUnsupported = (f: () => unknown, re: RegExp) =>
@@ -66,7 +66,7 @@ test("gcp: ECS 3티어 → service-cloudrun 3개, 이름 49자·SA 30자 규칙,
   assert.ok(ModuleKind.safeParse("service").success);
   assert.equal(TF_KIND_VARS.service, ServiceTfVars);
   // precheck: Cloud Run 주소(https·443) 경고 + 입구 미연결 경고 (막지는 않음)
-  const items = v2PrecheckItems("gcp", { spec: null, specV2: ECS(), hadV2Before: false });
+  const items = v2PrecheckItems("gcp", { specV2: ECS() });
   // 막는 줄은 출발 DB 방화벽을 못 읽은 것(사람 확인)뿐 — 관리형 렌더 미지원 줄 없음
   assert.deepEqual(items.filter((i) => i.level === "block").map((i) => i.id), ["PC-V2-HUMAN-1"]);
   assert.ok(items.some((i) => i.level === "warn" && /shop-web\.API_URL: Cloud Run/.test(i.message)));
@@ -120,7 +120,7 @@ test("거부: k8s 워크로드와 섞음 · 사이드카·볼륨·fromField · �
   });
   assert.deepEqual(managedBlockers(bad), ["도착 렌더 미지원: shop-api 관리형 서비스에 volumes·env(fromConfig·fromField·fromResource)·ports 2개 이상 못 그림"]);
   throwsUnsupported(() => targetBuilderFor("aws").toTerraformV2(bad, at("aws")), /shop-api 관리형 서비스에 volumes/);
-  assert.ok(v2PrecheckItems("aws", { spec: null, specV2: bad, hadV2Before: false }).some((i) => i.level === "block" && /volumes/.test(i.message)));
+  assert.ok(v2PrecheckItems("aws", { specV2: bad }).some((i) => i.level === "block" && /volumes/.test(i.message)));
   const granted = AppSpecV2.parse({ ...base, links: base.links.map((l) => (l.from === "shop-api" ? { ...l, grants: [{ effect: "Allow", actions: ["s3:GetObject"], resources: ["*"] }] } : l)) });
   assert.ok(managedBlockers(granted).some((m) => /권한 대응/.test(m)));
   assert.deepEqual(managedBlockers(ECS()), []);

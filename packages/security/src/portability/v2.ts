@@ -26,6 +26,14 @@ export function evaluatePortabilityV2(i: PortabilityInputV2, rules: PortabilityR
       if (hit) items.push({ ruleId: r.id, title: r.title, ...hit, componentId: null });
       continue;
     }
+    // SG-1: IR 컨테이너마다 (입력 순서 = 명세 순서)
+    if (r.scope === "workload") {
+      for (const w of i.workloads ?? []) {
+        const hit = r.check({ ...i, workload: w });
+        if (hit) items.push({ ruleId: r.id, title: r.title, ...hit, componentId: w.componentId });
+      }
+      continue;
+    }
     for (const d of dbs) {
       const hit = r.check({ ...i, source: { ...i.source, db: src.get(d.componentId) ?? i.source.db }, target: { ...i.target, db: d.db } });
       if (hit) items.push({ ruleId: r.id, title: r.title, ...hit, componentId: d.componentId });

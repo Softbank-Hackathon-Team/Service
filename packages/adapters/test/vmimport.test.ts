@@ -49,7 +49,7 @@ function awsExec(opts: { instances?: unknown[]; deny?: boolean; eks?: string[] }
 const FIX2 = () => [inst("i-web", "shop-web-1", "t3.medium", ["sg-web"], { pub: true, profile: "shop-web-role" }), inst("i-api", "shop-api-1", "m5.large", ["sg-api"], { profile: "shop-api-role" })];
 const importAws = async (opts: Parameters<typeof awsExec>[0] = {}, env: Record<string, string> = {}) => {
   const { exec, calls } = awsExec({ instances: FIX2(), ...opts });
-  const inv = await discoverAws({ exec: exec as never, env: { AWS_REGION: "ap-northeast-2", ...env } }, { ir: "v2" });
+  const inv = await discoverAws({ exec: exec as never, env: { AWS_REGION: "ap-northeast-2", ...env } }, {});
   return { inv, calls, out: normalizeV2(inv) };
 };
 
@@ -121,29 +121,20 @@ test("거부(쓰기 권한): 관찰 역할 요청에 EC2 쓰기·와일드카드
   assert.deepEqual(actionsOfCommands("aws", ["ec2 describe-instances", "ec2 describe-instance-types"]), ["ec2:DescribeInstances", "ec2:DescribeInstanceTypes"]);
   assert.deepEqual(actionsOfCommands("gcp", ["compute instances list"]), ["compute.instances.list"]);
   const { importObserveActions } = await import("../../../apps/worker/src/jobs/import.js");
-  const prev = process.env.IMPORT_IR;
-  try {
-    process.env.IMPORT_IR = "v2";
-    assert.ok(EC2_OBSERVE_ACTIONS.every((a) => importObserveActions("aws").includes(a)));
-    assert.ok(importObserveActions("gcp").includes("compute.instances.list"));
-    assert.doesNotThrow(() => checkLeastPrivilege(req(importObserveActions("aws"))));
-    process.env.IMPORT_IR = "v1";
-    assert.ok(!importObserveActions("aws").includes("ec2:DescribeInstances"), "v1 은 지금 목록 그대로");
-  } finally { if (prev === undefined) delete process.env.IMPORT_IR; else process.env.IMPORT_IR = prev; }
+  assert.ok(EC2_OBSERVE_ACTIONS.every((a) => importObserveActions("aws").includes(a)));
+  assert.ok(importObserveActions("gcp").includes("compute.instances.list"));
+  assert.doesNotThrow(() => checkLeastPrivilege(req(importObserveActions("aws"))));
 });
 
-test("권한 없음·VM 없음: EC2 읽기가 거부되면 멈추지 않고 이유를 들고 SOURCE_INCOMPLETE, EKS 가 있으면 VM 은 읽지 않음(호출 수 안 늘림), 깃발 v1 도 안 읽음", async () => {
+test("권한 없음·VM 없음: EC2 읽기가 거부되면 멈추지 않고 이유를 들고 SOURCE_INCOMPLETE, EKS 가 있으면 VM 은 읽지 않음(호출 수 안 늘림)", async () => {
   const d = awsExec({ deny: true });
-  await assert.rejects(() => discoverAws({ exec: d.exec as never, env: { AWS_REGION: "ap-northeast-2" } }, { ir: "v2" }), (e: unknown) => /SOURCE_INCOMPLETE|VM 도 없음/.test(String((e as Error).message) + String((e as { code?: string }).code)) && /UnauthorizedOperation|못 읽음/.test((e as Error).message));
+  await assert.rejects(() => discoverAws({ exec: d.exec as never, env: { AWS_REGION: "ap-northeast-2" } }, {}), (e: unknown) => /SOURCE_INCOMPLETE|VM 도 없음/.test(String((e as Error).message) + String((e as { code?: string }).code)) && /UnauthorizedOperation|못 읽음/.test((e as Error).message));
   const eks = awsExec({ eks: ["prod"], instances: FIX2() });
-  await discoverAws({ exec: eks.exec as never, env: { AWS_REGION: "ap-northeast-2" } }, { ir: "v2" }).catch(() => undefined);
+  await discoverAws({ exec: eks.exec as never, env: { AWS_REGION: "ap-northeast-2" } }, {}).catch(() => undefined);
   assert.ok(!eks.calls.some((c) => c.includes("ec2 describe-instances")), "EKS 가 있는데 VM 을 읽음");
-  const v1 = awsExec({ instances: FIX2() });
-  await discoverAws({ exec: v1.exec as never, env: { AWS_REGION: "ap-northeast-2", IMPORT_VM: "1" } }, {}).catch(() => undefined);
-  assert.ok(!v1.calls.some((c) => c.includes("ec2 describe-instances")), "v1 에서 VM 을 읽음");
   // 명시(IMPORT_VM=1·태그)면 EKS 가 있어도 읽고, 태그는 필터로 넘어감
   const ex = awsExec({ eks: ["prod"], instances: FIX2() });
-  await discoverAws({ exec: ex.exec as never, env: { AWS_REGION: "ap-northeast-2", IMPORT_AWS_VM_TAG: "app=shop" } }, { ir: "v2" }).catch(() => undefined);
+  await discoverAws({ exec: ex.exec as never, env: { AWS_REGION: "ap-northeast-2", IMPORT_AWS_VM_TAG: "app=shop" } }, {}).catch(() => undefined);
   assert.ok(ex.calls.some((c) => c.includes("ec2 describe-instances") && c.includes("Name=tag:app,Values=shop")), ex.calls.filter((c) => c.includes("ec2")).join("\n"));
 });
 
@@ -166,7 +157,7 @@ test("GCP: GCE 2묶음 → origin vm/gce, 머신 크기·방화벽·태그 매�
       { name: "off", direction: "INGRESS", disabled: true, allowed: [{ IPProtocol: "tcp", ports: ["9999"] }], sourceRanges: ["0.0.0.0/0"], targetTags: ["web"] }]);
     return ok([]);
   };
-  const inv = await discoverGcp({ exec: exec as never, env: { GCP_PROJECT: "cust-prj" } }, { ir: "v2" });
+  const inv = await discoverGcp({ exec: exec as never, env: { GCP_PROJECT: "cust-prj" } }, {});
   const out = normalizeV2(inv);
   assert.deepEqual(out.result.unmapped, []);
   const web = out.result.spec.components.find((c) => c.id === "shop-web")!, api = out.result.spec.components.find((c) => c.id === "shop-api")!;
@@ -181,7 +172,7 @@ test("GCP: GCE 2묶음 → origin vm/gce, 머신 크기·방화벽·태그 매�
   assert.equal(api.props.serviceAccount, "shop-api");
   const all = JSON.stringify([inv, out.result]);
   for (const s of ["label-secret-value", "meta-secret-1", "198.51.100.7", "10.1.0.4", "123456789012", "team-x"]) assert.ok(!all.includes(s), `새는 값: ${s}`);
-  assert.ok(calls.filter((c) => c.startsWith("gcloud compute")).every((c) => /compute (instances|firewall-rules|networks|forwarding-rules) list/.test(c)));
+  assert.ok(calls.filter((c) => c.startsWith("gcloud compute")).every((c) => /compute (instances|firewall-rules|networks|forwarding-rules|routers|addresses) list/.test(c)));   // E-1: Cloud NAT 나가는 IP 읽기
   AppSpecV2.parse(out.result.spec);
 });
 

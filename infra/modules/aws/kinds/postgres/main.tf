@@ -18,6 +18,13 @@ variable "cfg" {
     ha                     = optional(bool)
     read_replicas          = optional(number)
     parameters_json        = optional(string, "{}")
+    db_name                = optional(string)        # DBN-1: 앱 DB 이름 그대로 (null = <앱 이름 - → _>)
+    app_user               = optional(string, "app") # DBN-1·E10-2: 앱 계정 이름 그대로. 링크 user·root db_username 이 이 값
+    backup_retention_days  = optional(number)        # BK-1: 출발 백업 보관 그대로 (0 = 끔, null = 상품 기본)
+    pitr                   = optional(bool)          # BK-1
+    maintenance_window     = optional(string)        # BK-1: "ddd:hh:mm-ddd:hh:mm" UTC. null = 상품이 고름
+    port                   = optional(number)        # DM-7: 출발 포트 그대로. null = 5432
+    require_tls            = optional(bool, true)    # SSL-1: 출발이 평문 허용이면 false (DRAFT(ai))
     logical_replication    = optional(bool, true)
     allow_from_json        = optional(string, "[]")
     public                 = optional(bool, false)
@@ -34,12 +41,17 @@ variable "cfg" {
     error_message = "RDS 식별자는 63자 이하."
   }
   validation {
+    condition     = var.cfg.backup_retention_days == null || (var.cfg.backup_retention_days >= 0 && var.cfg.backup_retention_days <= 35)
+    error_message = "RDS 자동 백업 보관은 0~35일 (줄이지 않음 — Builder 가 계획 전에 막음)."
+  }
+  validation {
     condition     = var.cfg.logical_replication
     error_message = "logical_replication 은 항상 true (CDC 이전 요구)."
   }
   validation {
-    condition     = alltrue([for c in jsondecode(var.cfg.peer_cidrs_json) : can(cidrhost(c, 0)) && tonumber(split("/", c)[1]) >= 24])
-    error_message = "peer_cidrs_json: IPv4 CIDR 이고 /24 보다 좁아야 한다 (0.0.0.0/0 금지)."
+    # DECISION(team): 출발 DB 허용 주소는 넓어도 그대로 옮긴다 — /24 거부 같은 우리 쪽 임의 제한 없음 (TF4-2, 2026-11-03 결정). 모양(CIDR)만 본다
+    condition     = alltrue([for c in jsondecode(var.cfg.peer_cidrs_json) : can(cidrhost(c, 0))])
+    error_message = "peer_cidrs_json: 항목은 CIDR 이어야 한다."
   }
 }
 variable "app_name" { type = string }
@@ -56,12 +68,13 @@ locals {
   replicas          = coalesce(var.cfg.read_replicas, 0)
   peer_cidrs        = jsondecode(var.cfg.peer_cidrs_json)
   public_subnet_ids = var.cfg.public_subnet_ids_json == null ? [] : jsondecode(var.cfg.public_subnet_ids_json)
-  # IR 파라미터 그대로 + 플랫폼 요구(논리 복제·TLS 강제)가 이긴다
+  # IR 파라미터 그대로 + 플랫폼 요구(논리 복제)가 이긴다. TLS 강제는 require_tls (SSL-1: 출발이 평문 허용이면 도착도 같게)
   parameters = merge(
     { for k, v in jsondecode(var.cfg.parameters_json) : k => tostring(v) },
-    { "rds.logical_replication" = "1", "rds.force_ssl" = "1" },
+    { "rds.logical_replication" = "1", "rds.force_ssl" = var.cfg.require_tls ? "1" : "0" },
   )
-  db_name = replace(var.app_name, "-", "_")
+  db_name = coalesce(var.cfg.db_name, replace(var.app_name, "-", "_"))
+  port    = coalesce(var.cfg.port, 5432)
 }
 
 resource "aws_db_subnet_group" "db" {
@@ -84,8 +97,8 @@ resource "aws_security_group" "db" {
     for_each = var.cluster_sg_id == "" ? [] : [var.cluster_sg_id]
     content {
       description     = "Postgres from EKS nodes/pods"
-      from_port       = 5432
-      to_port         = 5432
+      from_port       = local.port
+      to_port         = local.port
       protocol        = "tcp"
       security_groups = [ingress.value]
     }
@@ -94,8 +107,8 @@ resource "aws_security_group" "db" {
     for_each = var.cfg.public ? local.peer_cidrs : []
     content {
       description = "Postgres from demo peer ${ingress.value}"
-      from_port   = 5432
-      to_port     = 5432
+      from_port   = local.port
+      to_port     = local.port
       protocol    = "tcp"
       cidr_blocks = [ingress.value]
     }
@@ -105,8 +118,8 @@ resource "aws_security_group" "db" {
     for_each = var.cfg.public ? local.peer_cidrs : []
     content {
       description = "Postgres to demo peer ${egress.value} (subscription)"
-      from_port   = 5432
-      to_port     = 5432
+      from_port   = local.port
+      to_port     = local.port
       protocol    = "tcp"
       cidr_blocks = [egress.value]
     }
@@ -133,17 +146,19 @@ resource "aws_db_instance" "db" {
   instance_class              = local.instance_class
   allocated_storage           = var.cfg.storage_gb
   max_allocated_storage       = var.cfg.storage_max_gb
+  port                        = local.port
   multi_az                    = var.cfg.ha == true
   storage_encrypted           = true
   db_name                     = local.db_name
-  username                    = "app"
+  username                    = var.cfg.app_user
   manage_master_user_password = true # 비밀번호는 RDS 가 Secrets Manager 에 직접 관리 (state 에 비밀 0)
   db_subnet_group_name        = aws_db_subnet_group.db.name
   vpc_security_group_ids      = [aws_security_group.db.id]
   parameter_group_name        = aws_db_parameter_group.db.name
   publicly_accessible         = var.cfg.public
   ca_cert_identifier          = "rds-ca-rsa2048-g1"
-  backup_retention_period     = 1
+  backup_retention_period     = coalesce(var.cfg.backup_retention_days, 1) # BK-1: 출발 그대로. DRAFT(ai): 모르면 1일 (예전 값). RDS 는 자동 백업 = PITR
+  maintenance_window          = var.cfg.maintenance_window                 # BK-1: null = AWS 가 고름. TODO(human): 이전 창 동안 자동 마이너 업그레이드를 끌지
   deletion_protection         = var.cfg.deletion_protection
   skip_final_snapshot         = !var.cfg.deletion_protection
   final_snapshot_identifier   = var.cfg.deletion_protection ? "${var.cfg.name}-final" : null
@@ -164,9 +179,9 @@ resource "aws_db_instance" "replica" {
 
 output "address" { value = aws_db_instance.db.address }
 output "arn" { value = aws_db_instance.db.arn } # A8: 옮긴 IAM 권한의 Resource (root grants.tf)
-output "port" { value = 5432 }
+output "port" { value = local.port }
 output "db_name" { value = local.db_name }
-output "user" { value = "app" }
+output "user" { value = var.cfg.app_user }
 output "public" { value = var.cfg.public }
 output "ca_cert_identifier" { value = aws_db_instance.db.ca_cert_identifier }
 # 비밀 "이름"만 (값 아님). KIND_INTERNAL_OUTPUTS.postgres = ["password_secret"]
@@ -176,8 +191,10 @@ output "replica_addresses" { value = [for r in aws_db_instance.replica : r.addre
 output "link" {
   value = {
     host = aws_db_instance.db.address
-    port = "5432"
-    url  = "postgresql://app@${aws_db_instance.db.address}:5432/${local.db_name}"
-    user = "app"
+    port = tostring(local.port)
+    url  = "postgresql://${var.cfg.app_user}@${aws_db_instance.db.address}:${local.port}/${local.db_name}"
+    user = var.cfg.app_user
+    # CNPG-RO: 읽기 전용 주소 = 첫 읽기 복제본 (없으면 주 서버)
+    reader = length(aws_db_instance.replica) > 0 ? aws_db_instance.replica[0].address : aws_db_instance.db.address
   }
 }

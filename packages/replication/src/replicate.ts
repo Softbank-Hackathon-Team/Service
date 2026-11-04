@@ -54,9 +54,22 @@ export async function ensureSubscription(to: pg.Client, from: Endpoint, name: st
   if (!row) throw new Error(`ensureSubscription(${name}): no result row for subscription/version check`);
   const v = Number(row.v);
   const runAsOwner = v >= 160000 && process.env.REPL_RUN_AS_OWNER !== "0" ? ", run_as_owner = true" : "";
-  await to.query(`CREATE SUBSCRIPTION ${ident(name)} CONNECTION ${lit(conninfo)} PUBLICATION ${ident(name)}
-    WITH (copy_data = ${o.copyData}, create_slot = ${o.createSlot}, slot_name = ${lit(name)}${runAsOwner})`);
+  await withPeerTimeout(to, () => to.query(`CREATE SUBSCRIPTION ${ident(name)} CONNECTION ${lit(conninfo)} PUBLICATION ${ident(name)}
+    WITH (copy_data = ${o.copyData}, create_slot = ${o.createSlot}, slot_name = ${lit(name)}${runAsOwner})`));
   return true;
+}
+
+/** PF-E28 (hdd-06): 구독 서버가 발행자에 접속하는 문장(CREATE SUBSCRIPTION·슬롯 지우는 DROP SUBSCRIPTION)은 PG16 이 접속 문자열의
+ *  connect_timeout 을 안 지켜, 응답 없는 출발이면 TCP 시간 초과(~134초)까지 막혔다 → 이 문장만 세션 statement_timeout 을 건다.
+ *  CREATE SUBSCRIPTION(create_slot)은 트랜잭션 블록 안에서 못 돌아 SET LOCAL 대신 SET 뒤 RESET.
+ *  DRAFT(ai): 기본 60초(REPL_SUBSCRIBE_TIMEOUT_SEC, 0 = 끔). 슬롯 만들기는 출발의 진행 중 트랜잭션이 끝나길 기다리므로 너무 짧으면 바쁜 DB 에서 거짓 실패 */
+export async function withPeerTimeout<T>(c: pg.Client, fn: () => Promise<T>, env: NodeJS.ProcessEnv = process.env): Promise<T> {
+  const raw = env.REPL_SUBSCRIBE_TIMEOUT_SEC;
+  const sec = raw === undefined || raw.trim() === "" ? 60 : Number(raw);
+  if (!Number.isFinite(sec) || sec <= 0) return fn();
+  await c.query(`SET statement_timeout = ${Math.floor(sec * 1000)}`);
+  try { return await fn(); }
+  finally { await c.query(`RESET statement_timeout`).catch(() => {}); }
 }
 
 /** 구독이 있으면 끈다(왕복 1번). 있었으면 true. 끄기는 이 문장으로 커밋돼 적용 프로세스가 바로 끝나기 시작한다 */
@@ -78,7 +91,7 @@ export const detachSubscriptionSql = (name: string) =>
 export async function dropSubscription(to: pg.Client, name: string): Promise<{ dropped: boolean; slotLeft: boolean }> {
   if (!(await disableSubscription(to, name))) return { dropped: false, slotLeft: false };
   try {
-    await to.query(`DROP SUBSCRIPTION ${ident(name)}`);
+    await withPeerTimeout(to, () => to.query(`DROP SUBSCRIPTION ${ident(name)}`));
     return { dropped: true, slotLeft: false };
   } catch {
     await to.query(`ALTER SUBSCRIPTION ${ident(name)} SET (slot_name = NONE)`);
@@ -108,5 +121,9 @@ export async function dropSlotIfIdle(c: pg.Client, name: string, o: { waitMs?: n
  *  Z80 06: 이미 연 두 연결로 (순서 그대로: 발행 먼저, 그다음 구독). Z104: 연결을 직접 여는 감싸개 startForward 는 부르는 곳 0 이라 지움 */
 export async function startForwardOn(s: pg.Client, d: pg.Client, source: Endpoint, name: string, tables: TableRef[]) {
   await ensurePublication(s, name, tables);
+  // RV-07 DRAFT(ai): CREATE SUBSCRIPTION(create_slot=true) 은 출발에 슬롯을 먼저 만들고 도착에서 커밋한다. 그 사이 연결이 끊기면
+  //   출발에 슬롯만 남고 구독은 없다 → 재시도마다 "replication slot already exists"(42710) 로 SYNC_FAILED, 남은 슬롯은 출발 WAL 을 계속 붙잡는다.
+  //   도착에 같은 이름 구독이 없을 때만, 쓰는 사람 없는(active=false) 같은 이름 슬롯을 지우고 만든다 (이름에 이전 id 가 들어 있어 남의 슬롯이 아님)
+  if (!(await subscriptionExists(d, name))) await dropSlotIfIdle(s, name, { waitMs: 0 });
   return ensureSubscription(d, source, name, { copyData: true, createSlot: true });
 }

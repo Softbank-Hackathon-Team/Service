@@ -56,6 +56,51 @@
     "parameters_json": {
       "type": "string"
     },
+    "db_name": {
+      "type": "string"
+    },
+    "app_user": {
+      "type": "string"
+    },
+    "backup_retention_days": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "pitr": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "maintenance_window": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "port": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "require_tls": {
+      "type": "boolean"
+    },
     "logical_replication": {
       "type": "boolean",
       "const": true
@@ -89,6 +134,13 @@
     "ha",
     "read_replicas",
     "parameters_json",
+    "db_name",
+    "app_user",
+    "backup_retention_days",
+    "pitr",
+    "maintenance_window",
+    "port",
+    "require_tls",
     "logical_replication",
     "allow_from_json",
     "public",

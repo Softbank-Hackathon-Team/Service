@@ -1,7 +1,7 @@
 import { ServiceEnvVar, ServiceSecretVar, type AppSpecV2, type HelmValues, type TfOutputs } from "@svc/contracts";
 import { appNamespace } from "../common/base.js";
 import { boundedName } from "../common/names.js";
-import { fromOut, nameSeed, tenantOf, type Target } from "../common/target.js";
+import { fromOut, nameSeed, migrationSeed, tenantOf, type Target } from "../common/target.js";
 import { compact, identityOf, kindJson, vmServicesOf } from "./shared.js";
 import { entryTargets, envParts, managedSecretName, type ManagedProvider } from "./managed.js";
 
@@ -17,7 +17,7 @@ export function vmServiceVars(p: ManagedProvider, spec: AppSpecV2, t: Target, im
   const pub = entryTargets(spec);
   return vmServicesOf(spec).map((w: Service) => {
     const x = w.props;
-    const seed = [nameSeed(t), spec.app.name, w.id, "vm"];
+    const seed = [nameSeed(t), spec.app.name, w.id, "vm", ...migrationSeed(t)];
     const env = x.env.filter((e) => !("fromSecret" in e)).map((e) => ({ name: e.name, parts: envParts(spec, e) }));
     const secrets = x.env.flatMap((e) => "fromSecret" in e
       ? [{ name: e.name, secret: managedSecretName(p, spec, t, e.fromSecret.secret, e.fromSecret.key), key: e.fromSecret.key }] : []);
@@ -72,11 +72,18 @@ export function vmWarnings(p: ManagedProvider, spec: AppSpecV2): string[] {
   const out: string[] = [];
   if (spec.entry) out.push("입구(entry) → VM 연결은 아직 없음: VM 은 뜨지만 외부 트래픽 전환 전에 앞단(로드밸런서·원점) 연결이 필요");
   for (const w of m) {
+    // TF4-3: VM 모듈은 health_path·public 을 받기만 하고 안 씀 → 알림
+    const ready = w.props.probes?.readiness;
+    if (ready?.type === "http") out.push(`${w.id}: 준비 확인 경로 ${ready.path} 는 VM 도착에서 아직 안 씀 (상태 확인 없이 뜸)`);
     if (w.props.replicas.max > w.props.replicas.min || w.props.scale)
       out.push(`${w.id}: 자동 확장(ASG·MIG)은 아직 없음 → VM ${Math.max(1, w.props.replicas.min)}대 고정 (출발 최대 ${w.props.replicas.max}대)`);
     // VRUNTIMEMAP2: 출발 최소 0대(사람이 고친 명세)는 VM 1대로 올려 그림(vmServiceVars) → 출발과 달라지는 것이라 알림
     if (w.props.replicas.min < 1) out.push(`${w.id}: 출발 최소 대수 0 → VM 은 0대로 둘 수 없어 1대로 띄움`);
     if (w.props.image.source === "registry" && !/@sha256:[0-9a-f]{64}$/.test(srcOf(w.props.image))) out.push(`${w.id}: 이미지 digest 가 없음`);
+    // TF4-3: VM 모듈(aws·gcp kinds/vm)은 health_path·public 칸을 받기만 하고 안 쓴다 → 알림
+    const r = w.props.probes?.readiness;
+    if (r?.type === "http") out.push(`${w.id}: 준비 확인 http ${r.path} 는 VM 모듈이 아직 안 씀 (상태 검사 없이 뜸)`);
+    if (entryTargets(spec).has(w.id)) out.push(`${w.id}: 입구 대상(public)이지만 VM 모듈이 공개 설정을 아직 안 씀`);
   }
   out.push(`앱 설치는 컨테이너 이미지를 VM 위에서 docker 로 돌림 (${p === "aws" ? "user-data" : "startup-script"}). 출발 VM 의 설치 방식(패키지·스크립트)은 안 읽음`);
   return out.sort();

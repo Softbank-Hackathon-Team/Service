@@ -56,10 +56,10 @@ const CASES: Array<{ gke: Gke; vm: boolean; run: Run; ok: boolean; want: string[
 for (const c of CASES) {
   test(`discover gcp v2 조합: GKE ${c.gke} · VM ${c.vm ? "있음" : "없음"} · Cloud Run ${c.run} → ${c.ok ? "읽음" : "SOURCE_INCOMPLETE"}`, async () => {
     const { exec, calls } = gcpExec(c);
-    const run = discoverGcp({ exec: exec as never, env: { GCP_PROJECT: P } }, { ir: "v2" });
+    const run = discoverGcp({ exec: exec as never, env: { GCP_PROJECT: P } }, {});
     if (!c.ok) {
       await assert.rejects(run, (e: unknown) => (e as { code?: string }).code === "SOURCE_INCOMPLETE");
-      if (c.run === "fail") await assert.rejects(discoverGcp({ exec: gcpExec(c).exec as never, env: { GCP_PROJECT: P } }, { ir: "v2" }), /Cloud Run 서비스도 없음: Cloud Run 못 읽음: .*PERMISSION_DENIED/);
+      if (c.run === "fail") await assert.rejects(discoverGcp({ exec: gcpExec(c).exec as never, env: { GCP_PROJECT: P } }, {}), /Cloud Run 서비스도 없음: Cloud Run 못 읽음: .*PERMISSION_DENIED/);
       return;
     }
     const inv = await run;
@@ -71,7 +71,8 @@ for (const c of CASES) {
     // 모든 명령이 권한 표에 있는 읽기 명령 (kubectl 은 get 만)
     for (const s of calls) {
       const [bin, ...a] = s.split(" ");
-      if (bin === "kubectl") { assert.equal(a[0], "get", s); continue; }
+      // N12: CRD 종류 목록(api-resources)도 읽기
+      if (bin === "kubectl") { assert.ok(a[0] === "get" || a[0] === "api-resources", s); continue; }
       const words = a.filter((w) => !w.startsWith("-"));
       const hit = [4, 3, 2].map((n) => words.slice(0, n).join(" ")).find((k) => k in GCP_COMMAND_PERMISSIONS);
       assert.ok(hit, `권한 표에 없는 명령: ${s}`);
@@ -82,12 +83,6 @@ for (const c of CASES) {
     if (c.gke === "empty") assert.ok(kinds.includes("import.note") && JSON.stringify(inv.items).includes("앱 Deployment 없음 → Cloud Run 만 가져옴"));
   });
 }
-
-test("거부: v1 은 빈 GKE 에 Cloud Run 이 있어도 지금처럼 멈춘다 (Cloud Run 안 부름)", async () => {
-  const { exec, calls } = gcpExec({ gke: "empty", vm: false, run: "svc" });
-  await assert.rejects(discoverGcp({ exec: exec as never, env: { GCP_PROJECT: P } }, {}), (e: unknown) => (e as { code?: string }).code === "SOURCE_INCOMPLETE");
-  assert.ok(!calls.some((s) => /^gcloud run /.test(s)));
-});
 
 test("aws 같은 규칙: 빈 EKS + ECS 서비스면 ECS 만, 빈 EKS 뿐이면 멈춤", async () => {
   const ecsTable = (withSvc: boolean) => async (bin: string, args: string[]) => {
@@ -106,11 +101,11 @@ test("aws 같은 규칙: 빈 EKS + ECS 서비스면 ECS 만, 빈 EKS 뿐이면 �
     if (/ecs list-tasks/.test(s)) return j({ taskArns: [] });
     return j({});
   };
-  const inv = await discoverAws({ exec: ecsTable(true) as never, env: { AWS_REGION: "ap-northeast-2" } }, { ir: "v2" });
+  const inv = await discoverAws({ exec: ecsTable(true) as never, env: { AWS_REGION: "ap-northeast-2" } }, {});
   const kinds = kindsOf(inv.items);
   assert.ok(kinds.includes("ecs.service") && !kinds.includes("k8s.deployment"), kinds.join(","));
   assert.ok(JSON.stringify(inv.items).includes("EKS eks-1 에 앱 Deployment 없음 → ECS 만 가져옴"));
-  await assert.rejects(discoverAws({ exec: ecsTable(false) as never, env: { AWS_REGION: "ap-northeast-2" } }, { ir: "v2" }), (e: unknown) => (e as { code?: string }).code === "SOURCE_INCOMPLETE");
+  await assert.rejects(discoverAws({ exec: ecsTable(false) as never, env: { AWS_REGION: "ap-northeast-2" } }, {}), (e: unknown) => (e as { code?: string }).code === "SOURCE_INCOMPLETE");
   assert.ok(Object.keys(AWS_COMMAND_ACTIONS).includes("ecs list-services"));
 });
 

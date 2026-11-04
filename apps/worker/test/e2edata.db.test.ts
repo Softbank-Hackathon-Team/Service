@@ -1,5 +1,5 @@
 // DB 시험 (E2EDATA): 데이터 자원(S3·SQS+DLQ·ElastiCache / GCS·Pub/Sub·Memorystore)이 낀 v2 끝-끝.
-//   가짜 aws·gcloud·kubectl(PATH 앞에 둔 실행 파일, 읽기 명령만 답함) → handleImport(MOCK_SEED 끔) → 계획(PLAN_IR=v2) → 사전 점검.
+//   가짜 aws·gcloud·kubectl(PATH 앞에 둔 실행 파일, 읽기 명령만 답함) → handleImport(MOCK_SEED 끔) → 계획 → 사전 점검.
 //   각 단계에서 데이터 자원이 빠지거나 지어낸 값이 생기지 않는지 본다. 실클라우드 호출 0
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
@@ -8,7 +8,6 @@ import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pg from "pg";
-import { AppSpec as AppSpecC } from "@svc/contracts";
 
 const DB = process.env.DATABASE_URL, OWNER = process.env.OWNER_DATABASE_URL;
 const skip = !DB || !OWNER ? "DATABASE_URL / OWNER_DATABASE_URL 없음 (DB 시험 건너뜀)" : false;
@@ -20,7 +19,7 @@ let pre: typeof import("../src/jobs/precheck.js");
 let owner: pg.Client;
 let dir = "";
 const T = randomUUID(), OTHER = randomUUID();
-const KEYS = ["MOCK_IAC", "PATH", "MOCK_SEED", "IMPORT_IR", "PLAN_IR", "AWS_REGION", "GCP_PROJECT", "FAKE_CLI_LOG"];
+const KEYS = ["MOCK_IAC", "PATH", "MOCK_SEED", "AWS_REGION", "GCP_PROJECT", "FAKE_CLI_LOG"];
 const prev = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
 
 type Reply = { code?: number; out?: unknown; err?: string };
@@ -119,17 +118,16 @@ const specRow = async (id: string) => (await owner.query(`SELECT spec, field_met
   { spec: any; field_meta: any; spec_v2: any };
 const pjob = (id: string) => ({ tenantId: T, requestId: `r-e2ed-${id.slice(0, 8)}`, migrationId: id });
 const job = (id: string) => ({ ...pjob(id), planId: randomUUID() });
-const contractsAppSpec = (x: unknown) => AppSpecC.parse(x);
 const comps = (v2: any, kind: string) => (v2.spec.components as Array<{ id: string; kind: string; props: any }>).filter((c) => c.kind === kind);
 
 async function importWith(provider: "aws" | "gcp", dst: "aws" | "gcp") {
   installFakeClis(provider === "aws" ? AWS : GCP);
   process.env.PATH = `${dir}:${prev.PATH}`;
   delete process.env.MOCK_SEED;
-  process.env.IMPORT_IR = "v2"; process.env.AWS_REGION = "ap-northeast-1"; process.env.GCP_PROJECT = "p";
+ process.env.AWS_REGION = "ap-northeast-1"; process.env.GCP_PROJECT = "p";
   const id = await seed(provider, dst);
   await imp.handleImport({ tenantId: T, requestId: `r-e2ed-i-${id.slice(0, 8)}`, migrationId: id });
-  process.env.MOCK_SEED = "1"; delete process.env.IMPORT_IR;
+  process.env.MOCK_SEED = "1";
   return id;
 }
 
@@ -184,12 +182,16 @@ async function humanFix(id: string) {
   const posture = { ...v2.spec.posture, network: v2.spec.posture.network.map((n: any) =>
     n.scope === "component" && n.ingress === "unknown" ? { ...n, ingress: [{ from: "10.0.0.0/16" }], public: false } : n) };
   const confirm = Object.entries(v2.fieldMeta as Record<string, { needs_review: boolean }>).filter(([, m]) => m.needs_review).map(([k]) => k);
-  const next = core.applySpecV2Patch({ spec: v2.spec, fieldMeta: v2.fieldMeta }, { changes: [{ path: "links", value: links }, { path: `components.${svc.id}.env`, value: env }, { path: "posture", value: posture }], confirm });
+  // ④ CA-1: 출발 캐시 AUTH 여부를 못 읽었으면 사람이 정함 (여기선 AUTH 없이 = 출발 흉내 원본과 같게)
+  const authFix = comps(v2, "cache").filter((c) => c.props.auth === null).map((c) => ({ path: `components.${c.id}.auth`, value: false }));
+  // ④ 도착 범위 밖 큐 보관 기간은 사람이 7일(두 클라우드 모두 받는 값)로 정함
+  const retention = comps(v2, "queue").filter((q) => typeof q.props.retentionSec === "number" && q.props.retentionSec > 604800)
+    .map((q) => ({ path: `components.${q.id}.retentionSec`, value: 604800 }));
+  const next = core.applySpecV2Patch({ spec: v2.spec, fieldMeta: v2.fieldMeta }, { changes: [{ path: "links", value: links }, { path: `components.${svc.id}.env`, value: env }, { path: "posture", value: posture }, ...authFix, ...retention], confirm });
   const parsed = contracts.AppSpecV2.parse(next.spec);
   assert.deepEqual(contracts.checkV2(parsed).errors, []);
   const result = contracts.ImportResultV2.parse({ ...v2, spec: parsed, fieldMeta: next.fieldMeta });
-  const v1 = adapters.rebuildFromV2(result, contracts.AppSpec.parse(cur.spec), { confirmed: [...next.changed, ...confirm], prevMeta: cur.field_meta });
-  await core.withTenant(T, async (tx) => { await core.saveSpecRevision(tx, { tenantId: T, migrationId: id, spec: v1.spec, fieldMeta: v1.fieldMeta, specV2: result }); });
+  await core.withTenant(T, async (tx) => { await core.saveSpecRevision(tx, { tenantId: T, migrationId: id, specV2: result }); });
   return dataIds;
 }
 
@@ -199,7 +201,6 @@ for (const [src, dst] of [["aws", "gcp"], ["aws", "aws"], ["gcp", "aws"], ["gcp"
     // 도착 환경의 계정/프로젝트 (연결 확인이 채우는 값. 시험용 가짜)
     await owner.query(`UPDATE environments SET account_id = $2 WHERE id = (SELECT target_env_id FROM migrations WHERE id=$1)`, [id, dst === "aws" ? "000000000000" : "demo-project"]);
     await owner.query(`UPDATE migrations SET status='prechecking' WHERE id=$1`, [id]);
-    process.env.PLAN_IR = "v2";
     await pre.handlePrecheck(pjob(id));
     let m = await mig(id);
     const blocksOf = async () => ((await owner.query(`SELECT detail FROM audit_events WHERE target=$1 AND detail ? 'precheck' ORDER BY seq DESC LIMIT 1`, [id])).rows[0]?.detail?.precheck as
@@ -208,7 +209,8 @@ for (const [src, dst] of [["aws", "gcp"], ["aws", "aws"], ["gcp", "aws"], ["gcp"
     const first = await blocksOf();
     console.log(`E2EDATA2 ${src}->${dst}: 첫 점검 ${m.status}; ${first.join(" | ")}`);
     assert.equal(m.status, "spec_review");
-    assert.ok(first.length > 0 && first.every((x) => /link\.|방화벽/.test(x)), `예상 밖 막힘: ${first.join(" | ")}`);
+    // 통합: 도착 범위 밖 큐 보관 기간(예: SQS DLQ 14일 → Pub/Sub 최대 7일)도 사람이 정할 것으로 나옴
+    assert.ok(first.length > 0 && first.every((x) => /link\.|방화벽|AUTH 사용 여부|범위 .*밖/.test(x)), `예상 밖 막힘: ${first.join(" | ")}`);
     // ② 사람 수정 → 새 판
     const dataIds = await humanFix(id);
     assert.ok(dataIds.size >= 3, `데이터 자원 ${[...dataIds]}`);
@@ -240,13 +242,13 @@ for (const [src, dst] of [["aws", "gcp"], ["aws", "aws"], ["gcp", "aws"], ["gcp"
     const adapters = await import("@svc/adapters");
     const gitops = await import("../src/gitops/index.js");
     const loaded = await core.withTenant(T, async (tx) => ({
-      plan: (await core.loadPlanById(tx, infra.planId))!, spec: (await core.latestAcceptedSpec(tx, id))!, row: (await core.latestAcceptedSpecV2(tx, id))!,
+      plan: (await core.loadPlanById(tx, infra.planId))!, row: (await core.latestAcceptedSpecV2(tx, id))!,
       env: (await tx.query(`SELECT provider, account_id AS "accountId" FROM environments WHERE id=$1`, [mg.d])).rows[0] as { provider: "aws" | "gcp"; accountId: string | null } }));
     const commits: unknown[] = [];
     const repo = { chartVersion: async () => "0.1.0", commitBundle: async (_k: string, _b: unknown, values: unknown) => {
       commits.push(structuredClone(values)); return { commit: "c1", bundleSha256: "sha", resources: ["Deployment/x"], changed: true }; } } as unknown as import("../src/gitops/index.js").GitopsRepo;
-    const out = await gitops.deployToGitops(repo, { tenantId: T, spec: contractsAppSpec(loaded.spec), plan: loaded.plan, tfOutputs: infra.tfOutputs,
-      specV2: adapters.specV2ForPlan(loaded.row, loaded.plan.specSource), target: { envId: mg.d, provider: loaded.env.provider, region: "default", accountId: loaded.env.accountId } }, { wait: async () => ({ ok: true }) });
+    const out = await gitops.deployToGitops(repo, { tenantId: T, spec: adapters.specV2ForPlan(loaded.row), plan: loaded.plan, tfOutputs: infra.tfOutputs,
+      target: { envId: mg.d, provider: loaded.env.provider, region: "default", accountId: loaded.env.accountId } }, { wait: async () => ({ ok: true }) });
     assert.equal(out.result.status, loaded.env.provider === "aws" || loaded.env.provider === "gcp" ? out.result.status : "synced_healthy");
     const text = JSON.stringify(commits[0]);
     assert.ok(!/<tf-output|<env:/.test(text), "자리표시가 값에 남음");

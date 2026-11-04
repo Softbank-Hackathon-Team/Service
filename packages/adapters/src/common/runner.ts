@@ -1,4 +1,4 @@
-import type { AppSpec, Provider, TargetEnv, TfOutputs, TfVars } from "@svc/contracts";
+import type { AppSpecV2, Provider, TargetEnv, TfOutputs, TfVars } from "@svc/contracts";
 
 // 실행기(InfraRunner) = 어댑터가 만든 Terraform 입력을 "실제로 돌리는" 쪽.
 // 어댑터(EnvironmentAdapter)는 순수 번역 함수만 갖고, 네트워크·시간이 드는 일은 여기로 모은다.
@@ -52,9 +52,9 @@ export interface RunnerStatus {
 export interface InfraRunner {
   readonly provider: Provider;
   readonly mock: boolean;
-  plan(spec: AppSpec, t: TargetEnv): Promise<RunnerPlan>;
-  apply(spec: AppSpec, t: TargetEnv): Promise<RunnerApplyResult>;
-  destroy(spec: AppSpec, t: TargetEnv): Promise<RunnerDestroyResult>;
+  plan(spec: AppSpecV2, t: TargetEnv): Promise<RunnerPlan>;
+  apply(spec: AppSpecV2, t: TargetEnv): Promise<RunnerApplyResult>;
+  destroy(spec: AppSpecV2, t: TargetEnv): Promise<RunnerDestroyResult>;
   // 환경 단위 상태 (이전 하나가 아니라 연결된 환경 자체: 리소스 그룹·클러스터 등)
   status(t: TargetEnv): Promise<RunnerStatus>;
 }

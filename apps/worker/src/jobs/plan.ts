@@ -1,18 +1,21 @@
-import { AppSpec, ApprovalRowV2, PlanDoc, PlanJob, PrecheckItem, checkV2, AppSpecV2,
+import { ApprovalRowV2, PlanDoc, PlanJob, PrecheckItem, QUEUES, checkV2, AppSpecV2,
   type PlanAcknowledgement, type PlanCostSummary, type PlanStep, type PriceCatalog, type Provider } from "@svc/contracts";
-import { latestAcceptedSpec, latestAcceptedSpecV2, retryBudget, SPEC_DRAFT_KEY, type AcceptedSpecV2Row, type Tx } from "@svc/core";
-import { estimateCost, estimateCostV2, loadCatalog } from "@svc/cost";
-import { adapterFor, DbNetworkError, isAdapterError, NEEDS_HUMAN, specV2OrThrow, UNSUPPORTED_V2, withDbNetwork } from "@svc/adapters";
+import { PLAN_ROLLBACK_WINDOW_SEC, latestAcceptedSpecV2, retryBudget, SPEC_DRAFT_KEY, type AcceptedSpecV2Row, type Tx } from "@svc/core";
+import { estimateCostV2, loadCatalog } from "@svc/cost";
+import { DbNetworkError, isAdapterError, NEEDS_HUMAN, specV2OrThrow, UNSUPPORTED_V2 } from "@svc/adapters";
 import type { z } from "zod";
-import { runStep, stableHash, stubWait, type StepOutcome } from "./_step.js";
+import { failedAttempts, jobData, recordAttemptFailure, RetryLater, runStep, stableHash, stubWait, type StepOutcome } from "./_step.js";
 import { savePlan } from "./plan-store.js";
 import { withStepRoles } from "./_roles.js";
-import { builderVersion, helmValuesV2, planIrV2, tfCallV2 } from "./plan-v2.js";
+import { builderVersion, helmValuesV2, tfCallV2 } from "./plan-v2.js";
+import { importedFor, provisionOf, targetFactsOf } from "./plan-facts.js";
+import type { ImportedInfra } from "@svc/adapters";
+import { TARGET_ACCOUNT_SQL } from "./target-account.js";
 
 type Step = z.infer<typeof PlanStep>;
 
 export interface PlanInput {
-  planId: string; migrationId: string; spec: AppSpec;
+  planId: string; migrationId: string; spec: AppSpecV2;
   target: { envId: string; provider: Provider; region: string };
   precheck: PrecheckItem[]; now: Date;
   // PA4: 아래 셋은 계획 작업(handlePlan)이 채운다. costSummary 가 없으면 예전 계획서 모양·지문 그대로
@@ -20,8 +23,9 @@ export interface PlanInput {
   specVersion?: number;
   costSummary?: PlanCostSummary;
   v2Approvals?: ApprovalRowV2[];
-  // TA3: PLAN_IR=v2 일 때만. 있으면 도착 Builder v2 로 지문을 만들고 계획서에 irVersion·specSource·instances 를 싣는다
-  specV2?: { spec: AppSpecV2; source: "spec_v2" | "upconvert" };
+  // G7-3·G7-4: 계획 작업(handlePlan)이 채운다. 없으면 칸 없음 = 예전 지문
+  accountId?: string | null;          // 환경 표 account_id (aws 계정 / gcp 프로젝트) → targetFacts
+  imported?: ImportedInfra | null;    // 작업 폴더 imported.json → provision: reuse
 }
 
 // ---- PA4 (계획 26 · A4): 비용 고지 + 확인 항목 ----
@@ -32,31 +36,13 @@ export const PLAN_COST_PEAK_RPS = 10;
 //   예전엔 상수 3 이라 RETRY_BUDGET=5 로 켜면 고지(3번)와 실제(5번)가 어긋났다. 0 = 한도 꺼짐(횟수 제한 없음)
 //   같은 RETRY_BUDGET 이면 문구·지문은 그대로. 계획 만들 때의 값이 지문에 들어가므로 승인 뒤 환경변수가 바뀌어도 본 문구는 그대로다
 
-type CostEstimator = (spec: AppSpec, from: Provider, to: Provider) => PlanCostSummary;
-
 const r1 = (x: number) => Math.round(x * 10) / 10;
 
-// 출발·도착 월 비용. 순수 계산(가격표는 파일). 실패해도 던지지 않는다: 계획을 막지 않고 unknownFields 에 남긴다 (계획 26 A4 함정)
-// 시간에 따라 바뀌는 값(priceStale)은 넣지 않는다 → 같은 입력이면 같은 지문
-export const estimatePlanCost: CostEstimator = (spec, from, to) => {
-  try {
-    const est = estimateCost({ spec, from, targets: [to], traffic: { peakRps: PLAN_COST_PEAK_RPS }, profile: "startup" },
-      loadCatalog(), { breakpoints: false });
-    const src = est.envs.find((e) => e.provider === from)?.monthlyUsd ?? null;
-    const dst = est.envs.find((e) => e.provider === to)?.monthlyUsd ?? null;
-    const unknownFields = [...(src === null ? ["monthlySource"] : []), ...(dst === null ? ["monthlyTarget"] : [])];
-    return { currency: "USD", monthlyTarget: dst, monthlySource: src,
-      deltaMonthly: src !== null && dst !== null ? r1(dst - src) : null, unknownFields, priceAsOf: est.priceAsOf };
-  } catch {
-    return { currency: "USD", monthlyTarget: null, monthlySource: null, deltaMonthly: null, unknownFields: ["*"] };
-  }
-};
-
-// TA3 비용: v2 계획서의 비용은 v2 명세(구성요소 전부)로 센다. v1 투영(서비스 1개 + Postgres 1개)으로 세면
-//   v2 Terraform 루트가 만드는 캐시·큐·버킷·관리형 컨테이너·VM 이 고지에서 조용히 빠진다.
-//   가격표에 없는 구성요소·칸은 unknownFields 에 "<종류>:<id>[.<칸>]" 로 남긴다 (출발·도착 합집합, 이름순). 그 밖의 규칙은 estimatePlanCost 와 같다
-//   catalog 는 시험용 (안 주면 estimatePlanCost 와 같은 loadCatalog)
-export const estimatePlanCostV2 = (spec: AppSpecV2, from: Provider, to: Provider, catalog?: PriceCatalog): PlanCostSummary => {
+// 출발·도착 월 비용. 명세(구성요소 전부)로 센다. 순수 계산(가격표는 파일). 실패해도 던지지 않는다: 계획을 막지 않고 unknownFields 에 남긴다 (계획 26 A4 함정)
+//   시간에 따라 바뀌는 값(priceStale)은 넣지 않는다 → 같은 입력이면 같은 지문
+//   가격표에 없는 구성요소·칸은 unknownFields 에 "<종류>:<id>[.<칸>]" 로 남긴다 (출발·도착 합집합, 이름순)
+//   catalog 는 시험용 (안 주면 loadCatalog)
+export const estimatePlanCost = (spec: AppSpecV2, from: Provider, to: Provider, catalog?: PriceCatalog): PlanCostSummary => {
   try {
     const est = estimateCostV2({ spec, providers: [from, to], peakRps: PLAN_COST_PEAK_RPS }, catalog ?? loadCatalog());
     const env = (p: Provider) => est.envs.find((e) => e.provider === p)!;
@@ -72,7 +58,7 @@ export const estimatePlanCostV2 = (spec: AppSpecV2, from: Provider, to: Provider
 };
 
 const usd = (v: number | null) => (v === null ? "계산 못 함" : `$${v}`);
-// 콜론 있는 칸 = 금액에 반영 안 된 구성요소·칸 (v2 만 냄). v1 은 monthlySource·monthlyTarget·* 만 내므로 v1 문구는 그대로
+// 콜론 있는 칸 = 금액에 반영 안 된 구성요소·칸. 콜론 없는 칸 = monthlySource·monthlyTarget·*
 const isUnpriced = (f: string) => f.includes(":");
 
 // 확인 항목 목록. cost·failure_cost_policy 는 항상, 그다음 사전 점검 warn, IR v2 승인 행 (같은 id 는 하나로)
@@ -129,17 +115,19 @@ export async function loadPlanSpecExtras(tx: Tx, migrationId: string): Promise<{
 
 // DRAFT(ai): 승인 유효 시간 2시간 (설계 5.4 "승인 유효 2시간"을 따름)
 export const PLAN_TTL_MS = 2 * 60 * 60 * 1000;
+// G7-1: 만료 깨우기 작업의 대기(초). 만료 시각 + 1초 (작업이 일찍 깨면 남은 만큼 다시 미룬다)
+export const planExpiryDelaySec = (expiresAt: string, now = Date.now()) =>
+  Math.max(1, Math.ceil((Date.parse(expiresAt) - now) / 1000) + 1);
 
-// 계획서 만들기. 어댑터의 toTerraform / toHelmValues를 진짜로 부른다 (어댑터는 순수 함수)
+// 계획서 만들기. 도착 Builder 의 Terraform 루트 호출·Helm 값(workloads[])을 진짜로 만든다 (Builder 는 순수 함수)
 // 같은 입력이면 같은 planHash가 나와야 한다 (사람이 본 계획 = 실행할 계획)
-// Z77: 데모 DB 네트워크 변수(DB_PUBLIC 등, env 기본 process.env)도 지문에 넣는다. 안 켜면 예전과 같은 지문
+// Z77: 데모 DB 네트워크 변수(DB_PUBLIC 등, env 기본 process.env)도 지문에 넣는다
 export function buildPlanDoc(i: PlanInput, env: NodeJS.ProcessEnv = process.env): PlanDoc {
-  const a = adapterFor(i.target.provider);
-  // TA3: v2 면 고정 루트 + workloads[] (v1 함수는 안 부름). v1 이면 예전 그대로
-  const v2 = i.specV2;
-  const tf = v2 ? tfCallV2(v2.spec, i.target, env) : withDbNetwork(a.toTerraform(i.spec, i.target), i.target.provider, env);
+  // G8-1: 자원 이름 seed 에 이전 번호를 넣는다 (apply-real·gitops approvedValues 와 같은 규칙)
+  const target = { ...i.target, migrationId: i.migrationId };
+  const tf = tfCallV2(i.spec, target, env);
   // STUB: 진짜 Terraform 출력값은 apply 뒤에 생긴다. 계획 단계에서는 빈 값으로 Helm 값 모양만 고정한다
-  const helm = v2 ? helmValuesV2(v2.spec, i.target) : a.toHelmValues(i.spec, {}, i.target);
+  const helm = helmValuesV2(i.spec, target);
   // DRAFT(ai): 단계별 예상 시간·게이트는 설계 문서 수치가 정해지기 전 임시값
   const steps: Step[] = [
     { id: "provision", owner: "terraform", estSec: 300, rollback: "terraform destroy (사람 승인)" },
@@ -152,15 +140,17 @@ export function buildPlanDoc(i: PlanInput, env: NodeJS.ProcessEnv = process.env)
   const body = {
     planId: i.planId,
     migrationId: i.migrationId,
-    adapterVersion: v2 ? builderVersion(i.target.provider) : a.version,
+    adapterVersion: builderVersion(i.target.provider),
     steps,
     precheck: i.precheck,
     // DECISION(team): 롤백 기준 5xx>1% 또는 p95>2배, 30초 창 (decisions 2026-10-30)
     rollbackCriteria: { errorRatePct: 1, p95Multiplier: 2, windowSec: 30 },
+    // F8-4: 롤백 가능 창 길이를 승인 대상으로 (DRAFT(ai) 기본 120초, core PLAN_ROLLBACK_WINDOW_SEC)
+    rollbackWindowSec: PLAN_ROLLBACK_WINDOW_SEC,
     tfPlanHash: stableHash(tf),
     helmValuesHash: stableHash(helm),
-    // TA3: v2 계획서만 세 칸. v1 body 엔 키 자체를 안 넣는다 (canonical 이 undefined 도 키로 남겨 v1 지문이 바뀌므로)
-    ...(v2 ? { irVersion: "2" as const, specSource: v2.source, instances: "instances" in tf ? tf.instances : [] } : {}),
+    // 매트릭스 줄 = module.<종류>["<id>"] (apply 가 이 목록으로 상태 주소를 고른다)
+    instances: tf.instances,
     // PA4: 비용 요약이 있을 때만 새 칸을 싣는다 (없으면 예전 지문 그대로)
     ...(i.specVersion !== undefined ? { specVersion: i.specVersion } : {}),
     ...(i.costSummary ? {
@@ -169,6 +159,16 @@ export function buildPlanDoc(i: PlanInput, env: NodeJS.ProcessEnv = process.env)
         to: i.target.provider, precheck: i.precheck, v2Approvals: i.v2Approvals, env }),
     } : {}),
   };
+  // G7-3·G7-4: 도착 사실·재사용 — 있을 때만 칸 (없으면 예전 지문)
+  const targetFacts = i.accountId !== undefined ? targetFactsOf(tf.vars, env, i.target.provider, i.accountId) : undefined;
+  const provision = provisionOf(i.imported ?? null);
+  Object.assign(body, {
+    ...(targetFacts ? { targetFacts } : {}),
+    ...(provision ? { provision } : {}),
+  });
+  if (provision && "acknowledgements" in body && Array.isArray(body.acknowledgements))
+    body.acknowledgements.push({ id: "provision_reuse", kind: "provision_reuse", ref: provision.source,
+      text: `도착 자원을 새로 만들지 않고 이미 있는 자원 ${provision.resources.length}개(${provision.resources.join(", ") || "목록 없음"})를 다시 씁니다. 비용 고지는 새로 만드는 기준이라 실제와 다를 수 있습니다` });
   // planHash는 만료 시각을 뺀 내용 전체의 지문이다 (같은 계획을 다시 만들어도 같은 지문)
   const planHash = stableHash(body);
   return PlanDoc.parse({ ...body, planHash,
@@ -182,30 +182,35 @@ export async function handlePlan(raw: unknown) {
     expect: "planning",
     // ① 재확인: 명세가 있고, 도착 환경이 연결돼 있어야 한다 (설계 5.2 plan 행)
     load: async (tx, _j, m) => {
-      // Z19 H1: AI 초안 판(_draft)은 계획 입력이 아니다. 사람·규칙이 만든 최신 판만 쓴다
-      const spec = await latestAcceptedSpec(tx, m.id);
+      // Z19 H1: AI 초안 판(_draft)은 계획 입력이 아니다. 사람·규칙이 만든 최신 판만 쓴다. 모양 확인(resolve)은 work 에서 (NEEDS_HUMAN 이면 바로 failed)
+      const specRow = await latestAcceptedSpecV2(tx, m.id);
       const e = await tx.query(
-        `SELECT id, provider, connection_status FROM environments WHERE id=$1`, [m.targetEnvId]);
+        `SELECT id, provider, connection_status, ${TARGET_ACCOUNT_SQL} AS account_id FROM environments WHERE id=$1`, [m.targetEnvId]);   // A안: GCP = 전용 프로젝트
       const env = e.rows[0];
       // PA4: 출발 환경 종류 (비용 비교의 출발)
       const se = await tx.query(`SELECT provider FROM environments WHERE id=$1`, [m.sourceEnvId]);
-      if (!spec || !env || env.connection_status !== "connected") return null;
+      // E10-4: 예전엔 여기서 null → job.rejected 로 조용히 끝나고 이전이 planning 에 영원히 남았다 (planning 은 잠금 단계가 아니라 청소도 안 봄).
+      //   이제 명세·환경이 없으면 바로 failed(PLAN_RECHECK_FAILED, 다시 계획 가능). 도착이 잠깐 unstable 이면 정해진 간격으로 몇 번 기다린 뒤 failed
+      if (!specRow || !env || env.connection_status !== "connected")
+        return { recheckFailed: !specRow ? "no accepted spec" : !env ? "target environment missing" : `target ${env.connection_status}`,
+                 retryable: !!specRow && !!env && env.connection_status === "unstable" } as PlanRecheckFailed;
       // Z97: 계획서의 사전 점검 칸 = 바로 앞 precheck 단계가 실조회로 남긴 결과 (감사 precheck.planning detail). 예전엔 STUB 고정값
       const pc = await tx.query(
         `SELECT detail->'precheck' AS items FROM audit_events WHERE target=$1 AND action='precheck.planning' ORDER BY seq DESC LIMIT 1`, [m.id]);
       const precheck = PrecheckItem.array().safeParse(pc.rows[0]?.items ?? []);
       const extras = await loadPlanSpecExtras(tx, m.id);
-      // TA3: 깃발 v2 면 같은 판의 spec_v2 + "앞 판에 있었나". 고르기(resolve)는 work 에서 (NEEDS_HUMAN 이면 바로 failed)
-      const specRowV2 = planIrV2() ? await latestAcceptedSpecV2(tx, m.id) : null;
-      return { spec: AppSpec.parse(spec), provider: env.provider as Provider, precheck: precheck.success ? precheck.data : [],
-               sourceProvider: (se.rows[0]?.provider ?? env.provider) as Provider, ...extras, specRowV2 };
+      return { specRow, provider: env.provider as Provider, precheck: precheck.success ? precheck.data : [],
+               accountId: (env.account_id as string | null) ?? null,
+               sourceProvider: (se.rows[0]?.provider ?? env.provider) as Provider, ...extras };
     },
-    work: async (j, m, loaded) => withStepRoles("plan", j, m, async () => {
-      const { spec, provider, precheck, sourceProvider, specVersion, v2Approvals, specRowV2 } = loaded as {
-        spec: AppSpec; provider: Provider; precheck: PrecheckItem[];
-        sourceProvider: Provider; specVersion?: number; v2Approvals: ApprovalRowV2[]; specRowV2: AcceptedSpecV2Row | null };
+    work: async (j, m, loaded) => "recheckFailed" in (loaded as object)
+      ? planRecheckOutcome(j, loaded as PlanRecheckFailed)
+      : withStepRoles("plan", j, m, async () => {
+      const { specRow, provider, precheck, sourceProvider, specVersion, v2Approvals, accountId } = loaded as {
+        specRow: AcceptedSpecV2Row; provider: Provider; precheck: PrecheckItem[]; accountId: string | null;
+        sourceProvider: Provider; specVersion?: number; v2Approvals: ApprovalRowV2[] };
       await stubWait();
-      const specV2 = specRowV2 ? specV2OrThrow(specRowV2) : undefined;
+      const { spec } = specV2OrThrow(specRow);
       const plan = buildPlanDoc({
         planId: job.planId, migrationId: m.id, spec,
         // TODO(human): 환경별 리전은 environments 표에 칸이 없다. 연결 정보에서 가져올지 정해야 한다
@@ -213,15 +218,34 @@ export async function handlePlan(raw: unknown) {
         precheck, now: new Date(),
         // PA4: 비용 고지·확인 항목은 항상 싣는다 (승인 때 확인을 강제하는 건 api 깃발 PLAN_ACKS)
         source: { provider: sourceProvider }, specVersion, v2Approvals,
-        // TA3 비용: v2 계획서는 Terraform 루트와 같은 v2 명세로 센다. v1 계획서는 예전 그대로 (지문 그대로)
-        costSummary: specV2 ? estimatePlanCostV2(specV2.spec, sourceProvider, provider) : estimatePlanCost(spec, sourceProvider, provider),
-        ...(specV2 ? { specV2 } : {}),
+        // TA3 비용: Terraform 루트와 같은 명세로 센다
+        costSummary: estimatePlanCost(spec, sourceProvider, provider),
+        accountId, imported: importedFor(process.env, m.id, job.tenantId),
       });
       return { to: "awaiting_approval", detail: { planId: plan.planId, planHash: plan.planHash },
-               inTx: (tx) => savePlan(tx, job.tenantId, plan) };
+               inTx: (tx) => savePlan(tx, job.tenantId, plan),
+               // G7-1: 만료 시각에 깨어나 stale 로 옮길 작업. 키는 계획마다 (다시 계획하면 새 계획의 작업이 따로 선다)
+               next: { queue: QUEUES.planExpiry, data: { ...jobData(j), planId: plan.planId },
+                 opts: { singletonKey: `${QUEUES.planExpiry}:${plan.planId}`, startAfter: planExpiryDelaySec(plan.expiresAt) } } };
     }),
     onError: planOnError,
   });
+}
+
+// E10-4: 계획 재확인 실패. 도착이 unstable 이면 PLAN_RECHECK_RETRY_SEC 간격으로 PLAN_RECHECK_MAX 번까지 다시 (감사 plan.attempt_failed 로 셈)
+// DRAFT(ai): 30초 × 4번 = 2분. 주기 재확인(1시간)이 흔들림을 되돌리는 데 그보다 오래 걸리면 failed 로 끝나고 사람이 다시 계획한다
+interface PlanRecheckFailed { recheckFailed: string; retryable: boolean }
+export const PLAN_RECHECK_RETRY_SEC = 30;
+export const PLAN_RECHECK_MAX = 4;
+async function planRecheckOutcome(j: z.infer<typeof PlanJob>, f: PlanRecheckFailed): Promise<StepOutcome> {
+  if (f.retryable) {
+    const n = await failedAttempts(j, "plan");
+    if (n + 1 < PLAN_RECHECK_MAX) {
+      await recordAttemptFailure(j, "plan", { attempts: n + 1, max: PLAN_RECHECK_MAX, error: f.recheckFailed });
+      throw new RetryLater(QUEUES.plan, { ...jobData(j), planId: j.planId }, PLAN_RECHECK_RETRY_SEC, { recheck: f.recheckFailed });
+    }
+  }
+  return { to: "failed", failureCode: "PLAN_RECHECK_FAILED", detail: { planId: j.planId, recheck: f.recheckFailed } };
 }
 
 // Z38 REVIEW-5 Z77-1: DB_PEER_CIDRS 가 틀리면 재시도해도 같다 → 바로 failed(DB_NETWORK_INVALID).

@@ -36,7 +36,8 @@ export type PlanCostSummary = z.infer<typeof PlanCostSummary>;
 
 // PA4: 승인할 때 사람이 하나씩 확인해야 하는 항목 종류 (계획 26 3.1)
 //   cost·failure_cost_policy = 항상 / runtime_change·build = IR v2 승인 행 / precheck_warn = 사전 점검 warn / low_confidence = 문턱값(A3)
-export const PlanAckKind = z.enum(["cost", "failure_cost_policy", "runtime_change", "build", "precheck_warn", "low_confidence"]);
+// G7-4: provision_reuse = 새로 만들지 않고 이미 있는 도착 자원을 다시 씀 (imported.json). 사람이 그 사실을 보고 확인
+export const PlanAckKind = z.enum(["cost", "failure_cost_policy", "runtime_change", "build", "precheck_warn", "low_confidence", "tls_relaxed", "host_access", "public_bucket", "provision_reuse"]);   // SSL-1: tls_relaxed, HN-1: host_access, B-2: public_bucket
 export type PlanAckKind = z.infer<typeof PlanAckKind>;
 export const PlanAcknowledgement = z.object({
   id: z.string().min(1),                // 승인 본문 acks 가 이 id 를 덮어야 한다 (예: cost, runtime_change:<자원 id>)
@@ -64,12 +65,20 @@ export const PlanDoc = z.object({
   specVersion: z.number().int().positive().optional(),
   costSummary: PlanCostSummary.optional(),
   acknowledgements: z.array(PlanAcknowledgement).optional(),
-  // TA3 (설계 27번 3.5, A3): PLAN_IR=v2 로 만든 계획서만 이 세 칸을 싣는다. v1 계획서 body 엔 키 자체가 없다(지문 보존).
-  //   apply·deploy 는 깃발이 아니라 이 칸으로 길을 고른다 (승인 뒤 깃발을 바꿔도 승인한 길 그대로)
-  //   specSource: spec_v2 = 가져오기가 저장한 v2, upconvert = v1 판을 올린 것 (spec_v2 없음)
-  irVersion: z.literal("2").optional(),
-  specSource: z.enum(["spec_v2", "upconvert"]).optional(),
+  // F8-4: 롤백 가능 창 길이(초). 사람이 계획을 승인할 때 같이 본다 (지문에 들어간다). 컷오버가 이 값으로 창 끝·정리 시작을 정한다.
+  //   옛 계획서엔 없다 → core rollbackWindowSecFor 기본값. 환경변수 ROLLBACK_WINDOW_SEC 는 개발·시험용 덮어쓰기만
+  rollbackWindowSec: z.number().int().min(0).max(7 * 86400).optional(),
   instances: z.array(ModuleInstance).optional(),   // 매트릭스 줄 module.<종류>["<id>"] (비용 고지·화면용)
+  // G7-3 DRAFT(ai): 어느 계정·VPC·클러스터에 만드나 = Terraform 자리표시(<env:키>)에 들어갈 비밀 아닌 도착 사실. 계획 때 채운 값이 지문에 들어가고
+  //   apply 가 다시 채운 값과 다르면 TF_PLAN_DRIFT. 계획 때 아무 값도 없으면(흉내 길) 칸 없음 = 예전 지문
+  targetFacts: z.record(z.string().max(100), z.string().max(2000)).optional(),
+  // G7-4: 이미 있는 도착 자원 재사용 (작업 폴더 imported.json). 있을 때만 칸. 자원 목록·출력 지문이 지문에 들어가고 apply 가 다시 읽어 비교
+  provision: z.object({
+    mode: z.literal("reuse"),
+    source: z.string().max(100),
+    resources: z.array(z.string().max(300)).max(200),
+    outputsHash: z.string(),
+  }).strict().optional(),
   planHash: z.string(),
   expiresAt: z.string(),
 }).strict();

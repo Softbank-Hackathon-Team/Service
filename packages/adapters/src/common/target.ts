@@ -35,6 +35,9 @@ export function regionOf(t: Target): string {
 // tenantId가 없으면 envId로 대신한다 (envId도 테넌트 안에서 유일)
 export const tenantOf = (t: Target) => t.tenantId ?? envRef("tenantId");
 export const nameSeed = (t: Target) => t.tenantId ?? t.envId;
+// G8-1: 이전 번호가 있으면 이름 seed 끝에 붙인다 → 같은 앱을 같은 환경으로 다시 옮겨도 IAM 역할·SA·관리형 서비스 이름이 안 겹침.
+//   워커 plan·apply·deploy 가 같은 migrationId 를 넣는다. 없으면(시험·api 상태 조회) 예전 이름 그대로
+export const migrationSeed = (t: Target): string[] => (t.migrationId ? [t.migrationId] : []);
 
 // apply 전(계획 단계)에는 out이 비어 있다 → 자리표시. apply 뒤엔 진짜 값
 export const fromOut = (out: TfOutputs, k: string) => out[k] ?? tfOut(k);

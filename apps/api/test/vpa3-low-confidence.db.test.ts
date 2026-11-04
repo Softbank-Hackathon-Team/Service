@@ -11,12 +11,8 @@ const skip = !DB || !OWNER ? "DATABASE_URL / OWNER_DATABASE_URL 없음 (DB 시�
 const P = "/api/v1";
 const T = randomUUID(), OTHER = randomUUID();
 const prev = process.env.SPEC_MIN_CONFIDENCE;
-const SPEC = {
-  schemaVersion: "1", app: { name: "shop" },
-  service: { image: `ghcr.io/demo/shop@sha256:${"a".repeat(64)}`, port: 8080, healthPath: "/healthz", replicas: 2, cpu: "250m", memory: "512Mi",
-             env: [], secretRefs: [] },
-  ingress: { hostname: "shop.example.com", entry: "cloudflare-lb" },
-};
+// 명세 한 벌 (spec_v2 칸): 서비스 shop + postgres db
+const SPEC = {"schemaVersion":"2","app":{"name":"shop"},"components":[{"id":"shop","kind":"service","props":{"runtime":"k8s","origin":{"runtime":"k8s","product":"unknown"},"image":{"source":"registry","repository":"r/shop","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"ports":[{"port":8080,"protocol":"TCP"}],"probes":{"readiness":{"type":"http","path":"/healthz","port":8080}},"replicas":{"min":1,"max":1},"serviceAccount":"default","resources":{"request":{"cpuMilli":500,"memMiB":1024}},"env":[]}},{"id":"db","kind":"postgres","props":{"majorVersion":"16","storageGb":20}}],"links":[{"from":"shop","to":"db","intent":"connect"}],"entry":{"via":"cloudflare-lb","hosts":[{"hostnames":["s.example.com"],"routes":[{"matches":[{"path":{"type":"PathPrefix","value":"/"}}],"backends":[{"to":"shop","port":8080,"weight":1}]}]}]},"posture":{"permissions":[],"network":[]}};
 
 let core: typeof import("@svc/core");
 let owner: pg.Client;
@@ -55,9 +51,12 @@ async function seed(versions: { v: number; meta: Record<string, unknown>; spec?:
     ($1,$3,'onprem','k3s','connected'), ($2,$3,'aws','eks','connected')`, [src, dst, tenant]);
   await owner.query(`INSERT INTO migrations (id, tenant_id, source_env_id, target_env_id, status) VALUES ($1,$2,$3,$4,'spec_review')`,
     [id, tenant, src, dst]);
-  for (const x of versions)
-    await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta) VALUES ($1,$2,$3,$4,$5)`,
-      [tenant, id, x.v, JSON.stringify(x.spec ?? SPEC), JSON.stringify(x.meta)]);
+  // 칸 표시는 spec_v2.fieldMeta, AI 초안 표시(_draft)만 옛 칸 field_meta
+  for (const x of versions) {
+    const { _draft, ...meta } = x.meta;
+    await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta, spec_v2) VALUES ($1,$2,$3,'{}',$4,$5)`,
+      [tenant, id, x.v, JSON.stringify(_draft ? { _draft } : {}), JSON.stringify({ spec: x.spec ?? SPEC, fieldMeta: meta, unmapped: [], ids: {} })]);
+  }
   return id;
 }
 const plan = (id: string, tenant = T) => app.inject({ method: "POST", url: `${P}/migrations/${id}/plan`, payload: {}, headers: { "x-dev-tenant": tenant } });
@@ -103,23 +102,23 @@ test("AI 초안 판(_draft)은 세지 않는다: 받아들인 판이 깨끗하�
   assert.equal((await plan(id)).statusCode, 202);
 });
 
-test("연동: 문턱값 0.7 + 가져오기 모양(healthPath 기본값·평문 비밀 env 칸) → 409, PATCH confirm 두 칸 → POST /plan 202", { skip }, async () => {
+test("연동: 문턱값 0.7 + 가져오기 모양(프로브 기본값·평문 비밀 env 칸) → 409, PATCH confirm 두 칸 → POST /plan 202", { skip }, async () => {
   flag("0.7");
-  const meta = { "service.healthPath": { source: "default", confidence: 0.6, needs_review: true },
-                 "service.env.DB_PASSWORD": { source: "source.env", confidence: 0.6, needs_review: true, rationale: "평문 비밀" } };
+  const meta = { "components.shop.probes": { source: "default", confidence: 0.6, needs_review: true },
+                 "components.shop.env.DB_PASSWORD": { source: "source.env", confidence: 0.6, needs_review: true, rationale: "평문 비밀" } };
   const id = await seed([{ v: 1, meta }]);
   assert.equal((await plan(id)).statusCode, 409);
-  const r = await patch(id, { baseVersion: 1, confirm: ["service.healthPath", "service.env.DB_PASSWORD"] });
-  assert.equal(r.statusCode, 200, r.body);   // 버그 수정 전: service.env.<이름> 이 400 이라 영원히 못 넘어감
+  const r = await patch(id, { baseVersion: 1, confirm: ["components.shop.probes", "components.shop.env.DB_PASSWORD"] });
+  assert.equal(r.statusCode, 200, r.body);   
   assert.deepEqual(r.json().needsReview, []);
   const ok = await plan(id);
   assert.equal(ok.statusCode, 202, ok.body);
 });
 
-test("연동: changes 로 service.env 를 다시 쓰면 그 아래 env 칸 표시도 처리됨 → 202", { skip }, async () => {
+test("연동: changes 로 components.<id>.env 를 다시 쓰면 그 아래 env 칸 표시도 처리됨 → 202", { skip }, async () => {
   flag("0.7");
-  const id = await seed([{ v: 1, meta: { "service.env.API_TOKEN": { source: "source.env", confidence: 0.6, needs_review: true } } }]);
-  const r = await patch(id, { baseVersion: 1, changes: [{ path: "service.env", value: [] }] });
+  const id = await seed([{ v: 1, meta: { "components.shop.env.API_TOKEN": { source: "source.env", confidence: 0.6, needs_review: true } } }]);
+  const r = await patch(id, { baseVersion: 1, changes: [{ path: "components.shop.env", value: [] }] });
   assert.equal(r.statusCode, 200, r.body);
   assert.deepEqual(r.json().needsReview, []);
   assert.equal((await plan(id)).statusCode, 202);

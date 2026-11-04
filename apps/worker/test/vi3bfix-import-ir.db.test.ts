@@ -1,4 +1,4 @@
-// VI3bfix DB 시험: IMPORT_IR 값 판정이 시작 설정 검사(configProblems)와 가져오기 처리기에서 같다 + 깃발 off 그대로
+// VI3bfix DB 시험: 옛 깃발 IMPORT_IR 은 없어졌다. 값이 남아 있어도 설정 검사·가져오기 둘 다 무시하고 늘 명세(spec_v2) 판을 만든다
 import { test, before, after, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -12,7 +12,7 @@ let core: typeof import("@svc/core");
 let imp: typeof import("../src/jobs/import.js");
 let owner: pg.Client;
 const T = randomUUID();
-const prev = process.env.IMPORT_IR;
+const prev = process.env.IMPORT_IR;   // 옛 .env 에 남은 값 흉내
 
 before(async () => {
   if (skip) return;
@@ -41,35 +41,22 @@ const result = async (id: string) => {
   const v = (await owner.query("SELECT spec_v2 IS NOT NULL AS v2 FROM spec_versions WHERE migration_id=$1", [id])).rows[0];
   return { status: m.status as string, failure: m.failure_code as string | null, v2: v ? v.v2 === true : null };
 };
-const configRejects = (v: string | undefined) =>
-  configProblems("worker", { DATABASE_URL: "postgres://u@h/db", ...(v === undefined ? {} : { IMPORT_IR: v }) })
-    .some((p) => p.includes("IMPORT_IR"));
-
-test("IMPORT_IR 값 표: 설정 검사가 막는 값 = 가져오기가 영구 실패하는 값, 통과 값은 같은 판으로", { skip }, async () => {
-  const table: Array<[string | undefined, "v1" | "v2" | "reject"]> = [
-    [undefined, "v1"], ["", "v1"], ["   ", "v1"], ["v1", "v1"], ["v2", "v2"], [" v2 ", "v2"], ["\tv2\n", "v2"],
-    ["V2", "reject"], ["v3", "reject"], ["2", "reject"], ["true", "reject"],
-  ];
-  for (const [val, want] of table) {
+test("옛 IMPORT_IR 값(없음·v1·v2·모르는 값)이 남아 있어도 설정 검사는 안 막고, 가져오기는 늘 spec_v2 판으로 spec_review", { skip }, async () => {
+  for (const val of [undefined, "", "v1", "v2", "V2", "v3"]) {
     const label = JSON.stringify(val);
-    assert.equal(configRejects(val), want === "reject", `config ${label}`);
+    assert.equal(configProblems("worker", { DATABASE_URL: "postgres://u@h/db", ...(val === undefined ? {} : { IMPORT_IR: val }) })
+      .some((p) => p.includes("IMPORT_IR")), false, `config ${label}`);
     if (val === undefined) delete process.env.IMPORT_IR; else process.env.IMPORT_IR = val;
     const id = await seed();
     await imp.handleImport({ tenantId: T, requestId: `r-vi3bfix-${id.slice(0, 8)}`, migrationId: id });
-    const r = await result(id);
-    if (want === "reject") assert.deepEqual(r, { status: "failed", failure: "IMPORT_SPEC_INVALID", v2: null }, label);
-    else assert.deepEqual(r, { status: "spec_review", failure: null, v2: want === "v2" }, label);
+    assert.deepEqual(await result(id), { status: "spec_review", failure: null, v2: true }, label);
   }
 });
 
-test("모르는 값 영구 실패: 재시도 안 함(1번에 failed), 감사 detail 은 permanent·이유에 값 앞 20자만", { skip }, async () => {
-  process.env.IMPORT_IR = "V2-" + "x".repeat(40);
+test("거부: 명세 저장 칸은 spec_v2 하나. 옛 칸 spec 은 '{}', field_meta 는 초안 표시 자리라 가져오기 판엔 비어 있다", { skip }, async () => {
   const id = await seed();
-  await imp.handleImport({ tenantId: T, requestId: `r-vi3bfix-p-${id.slice(0, 8)}`, migrationId: id });
-  const a = (await owner.query(`SELECT detail FROM audit_events WHERE target=$1 AND action='migration.failed'`, [id])).rows;
-  assert.equal(a.length, 1);
-  assert.equal(a[0].detail.permanent, true);
-  assert.equal(a[0].detail.attempts, 1);
-  assert.match(a[0].detail.error, /IMPORT_IR/);
-  assert.ok(!a[0].detail.error.includes("x".repeat(30)), "받은 값을 길게 남기지 않음");
+  await imp.handleImport({ tenantId: T, requestId: `r-vi3bfix-c-${id.slice(0, 8)}`, migrationId: id });
+  const v = (await owner.query("SELECT spec, field_meta FROM spec_versions WHERE migration_id=$1", [id])).rows[0];
+  assert.deepEqual(v.spec, {});
+  assert.deepEqual(v.field_meta, {});
 });

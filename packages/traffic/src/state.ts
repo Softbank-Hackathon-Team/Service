@@ -56,6 +56,12 @@ export async function restoreSource(o: { switcher: TrafficSwitcher; lbId: string
   const alreadyRestored = before !== null && sameWeights(before, { source: 1, target: 0 });
   if (!alreadyRestored) await setAndVerify(o.switcher, o.lbId, { source: 1, target: 0 }, { sleep: o.sleep });
   const after = await o.switcher.get(o.lbId);
+  // pf-d FM-TRF-13: 컷오버 뒤 롤백이면 fallback 이 도착으로 바뀌어 있다 → 출발로 되돌린다 (실패해도 가중치 100/0 은 이미 확인됨, 기록만)
+  let fallback: { ok: boolean; error?: string } | undefined;
+  if (o.switcher.setFallback) {
+    try { await o.switcher.setFallback(o.lbId, "source"); fallback = { ok: true }; }
+    catch (e) { fallback = { ok: false, error: (e as Error).message.slice(0, 200) }; }
+  }
   let sourceHealthy = true, sourceErrPct: number | null = null;
   if (o.metrics) {
     const w = await o.metrics.window(o.migrationId, 0);
@@ -63,6 +69,6 @@ export async function restoreSource(o: { switcher: TrafficSwitcher; lbId: string
   }
   return {
     evidence: { sourceWeight100: sameWeights(after, { source: 1, target: 0 }), sourceHealthy },
-    detail: { before, after, alreadyRestored, sourceErrPct },
+    detail: { before, after, alreadyRestored, sourceErrPct, ...(fallback ? { fallback: { to: "source", ...fallback } } : {}) },
   };
 }

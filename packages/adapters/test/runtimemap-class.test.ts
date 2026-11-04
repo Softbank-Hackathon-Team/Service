@@ -5,12 +5,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { AppSpecV2, checkV2, VmTfVars, type Provider } from "@svc/contracts";
 import { applySpecV2Patch } from "@svc/core";
-import { AdapterError, DEMO_INVENTORY_V2, managedBlockers, normalizeV2, targetBuilderFor, UNSUPPORTED_V2, v2Blockers } from "../src/index.js";
+import { AdapterError, DEMO_INVENTORY, managedBlockers, normalizeV2, targetBuilderFor, UNSUPPORTED_V2, v2Blockers } from "../src/index.js";
 
 const T = { envId: "33333333-3333-4333-8333-333333333333", region: "default", tenantId: "11111111-1111-4111-8111-111111111111", migrationId: "22222222-2222-4222-8222-222222222222" };
 const at = (p: Provider) => ({ ...T, provider: p }) as never;
 type Raw = Record<string, any>;
-const spec = (k: "aws" | "gcp" | "onprem") => normalizeV2(DEMO_INVENTORY_V2[k]!).result.spec as AppSpecV2;
+const spec = (k: "aws" | "gcp" | "onprem") => normalizeV2(DEMO_INVENTORY[k]!).result.spec as AppSpecV2;
 const K8S = () => spec("gcp");          // 출발 k8s (GKE) — 서비스·잡
 const ECS = () => spec("aws");          // 출발 ECS — 서비스 3개
 function withOrigin(s: AppSpecV2, runtime: string, product: string): AppSpecV2 {
@@ -100,7 +100,7 @@ test("한 명세에서 일부 서비스만 종류를 바꾸면 섞임으로 거�
 
 // ── 우회 막기: origin 은 사람이 못 고친다 (고칠 수 있으면 runtime 을 바꾼 뒤 origin 도 맞춰 승인 줄을 지울 수 있음) ──
 test("PATCH: runtime 은 바꿀 수 있고(승인 줄이 따라옴) origin 은 거부 (SPEC_PATCH_INVALID)", () => {
-  const r = normalizeV2(DEMO_INVENTORY_V2.aws!).result;
+  const r = normalizeV2(DEMO_INVENTORY.aws!).result;
   const base = { spec: r.spec, fieldMeta: r.fieldMeta as never };
   const ok = applySpecV2Patch(base, { changes: [{ path: "components.shop-api.runtime", value: "k8s" }] });
   assert.deepEqual(checkV2(AppSpecV2.parse(ok.spec)).approvals.filter((a) => a.kind === "runtime_change").map((a) => a.subject), ["shop-api"]);

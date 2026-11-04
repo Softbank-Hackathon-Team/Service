@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import pg from "pg";
 import Fastify, { type FastifyInstance } from "fastify";
 import { serializerCompiler, validatorCompiler } from "fastify-type-provider-zod";
-import { DEMO_INVENTORY_V2, DEMO_SPEC, normalizeV2 } from "@svc/adapters";
+import { DEMO_INVENTORY, DEMO_SPEC, normalizeV2 } from "@svc/adapters";
 
 const DB = process.env.DATABASE_URL, OWNER = process.env.OWNER_DATABASE_URL;
 const skip = !DB || !OWNER ? "DATABASE_URL / OWNER_DATABASE_URL 없음 (DB 시험 건너뜀)" : false;
@@ -47,7 +47,7 @@ async function seed(src: "aws" | "gcp" | "onprem", dst: "aws" | "gcp" | "onprem"
 const get = (id: string, tenant = T) => app.inject({ method: "GET", url: `${P}/migrations/${id}/plan/resources`, headers: { "x-dev-tenant": tenant } });
 
 test("정상: v2 판(ECS 출발) → ECS 이름·Cloudflare LB 줄·경계 밖 개수 줄, 응답이 스키마를 통과", { skip }, async () => {
-  const r2 = normalizeV2(DEMO_INVENTORY_V2.aws!).result;
+  const r2 = normalizeV2(DEMO_INVENTORY.aws!).result;
   const oob = [{ resource: "sqs:other", kind: "queue", reason: "경계 밖" }, { resource: "s3:other", kind: "objectStore", reason: "경계 밖" }];
   const id = await seed("aws", "aws", { spec: r2.spec, fieldMeta: {}, unmapped: [], ids: {}, outOfBoundary: oob });
   const res = await get(id);
@@ -61,12 +61,13 @@ test("정상: v2 판(ECS 출발) → ECS 이름·Cloudflare LB 줄·경계 밖 �
   assert.ok(!JSON.stringify(b).includes("Application Load Balancer"));
 });
 
-test("불변: spec_v2 가 NULL 인 v1 판은 예전 응답 그대로", { skip }, async () => {
+test("명세 없는 예전 판(spec_v2 NULL): specKnown false, irVersion 없음 (지어내지 않음)", { skip }, async () => {
   const id = await seed("aws", "gcp", null);
-  const b = (await get(id)).json();
+  const r = await get(id);
+  assert.equal(r.statusCode, 200, r.body);
+  const b = r.json();
+  assert.equal(b.specKnown, false);
   assert.equal("irVersion" in b, false);
-  assert.equal(b.rows.find((x: { category: string }) => x.category === "workload").source.service, "Amazon ECS 서비스");
-  assert.equal(b.rows.find((x: { category: string }) => x.category === "ingress").target.service, "Cloud Load Balancing");
 });
 
 test("거부: 남의 회사 이전은 404", { skip }, async () => {

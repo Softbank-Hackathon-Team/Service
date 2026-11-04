@@ -7,6 +7,9 @@ export interface TrafficSwitcher {
   set(lbId: string, w: Weights): Promise<void>;
   // Z14: 전환 전 설정 점검. 문제 코드 목록(빈 배열 = 통과). 제공자가 없으면 생략 (mock·GCLB·ALB)
   preflight?(lbId: string): Promise<string[]>;
+  // pf-d FM-TRF-13: 무게 있는 쪽이 다 죽었을 때 갈 곳(fallback). 컷오버 뒤 = 도착(출발은 울타리), 롤백 = 출발. 없으면 그 제공자는 모름(mock 은 기억만)
+  setFallback?(lbId: string, side: "source" | "target"): Promise<void>;
+  getFallback?(lbId: string): Promise<"source" | "target" | "other" | null>;
 }
 
 export type TrafficProvider = "cloudflare" | "aws_alb" | "gcp_gclb" | "mock";
@@ -51,15 +54,22 @@ export const sameWeights = (a: Weights, b: Weights) =>
 
 // 바꾸고 → 다시 읽어 확인. 다르거나 실패하면 다시 시도한다.
 // DRAFT(ai): 3번, 대기 0.5→1→2초. Cloudflare PATCH 는 보통 1초 안에 반영된다는 PoC 관찰 기준 (【추정】 실제 API에선 미측정)
+// pf-d RV-11: guard 를 주면 PATCH(set) 한 번만 그 안에서 한다. 읽어 확인(get)·재시도 대기는 guard 밖.
+//   예전엔 shift 가 setAndVerify 전체(시도 3번 × 요청 10초 + 대기)를 이전 행 FOR SHARE 안에서 돌려 그동안 API 롤백·멈춤이 최대 ~61초 막혔다.
+//   guard 가 던진 오류(MigrationMoved·플랫폼 DB 오류)는 재시도로 삼키지 않고 그대로 밖으로 보낸다
 export async function setAndVerify(sw: TrafficSwitcher, lbId: string, w: Weights,
-  o: { attempts?: number; sleep?: (ms: number) => Promise<void>; baseDelayMs?: number } = {}): Promise<{ attempts: number }> {
+  o: { attempts?: number; sleep?: (ms: number) => Promise<void>; baseDelayMs?: number;
+       guard?: (set: () => Promise<void>) => Promise<void> } = {}): Promise<{ attempts: number }> {
   checkWeights(w);
   const attempts = o.attempts ?? 3;
   const sleep = o.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   let last = "";
   for (let i = 1; i <= attempts; i++) {
+    let setErr: unknown = null;
+    const set = async () => { try { await sw.set(lbId, w); } catch (e) { setErr = e; } };
+    if (o.guard) await o.guard(set); else await set();
     try {
-      await sw.set(lbId, w);
+      if (setErr) throw setErr;
       const got = await sw.get(lbId);
       if (sameWeights(got, w)) return { attempts: i };
       last = `읽은 값 ${JSON.stringify(got)} ≠ 원하는 값 ${JSON.stringify(w)}`;

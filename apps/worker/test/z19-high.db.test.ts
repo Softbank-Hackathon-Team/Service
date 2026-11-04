@@ -69,11 +69,11 @@ const auditOf = async (id: string, action: string) => (await owner.query(
   "SELECT detail FROM audit_events WHERE target=$1 AND action=$2 ORDER BY at", [id, action])).rows.map((r) => r.detail);
 // spec v1 = 가져오기가 만든 판(검토 끝), v2 = AI 초안(_draft + needs_review 칸 하나, 명세 모양도 깨짐)
 async function seedSpecs(id: string) {
-  const a = adapters.adapterFor("aws");
-  const { spec } = a.normalize(await a.discover({ accountId: "dev", expiresAt: "" }, { kind: "container", selector: "*" }));
-  await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta) VALUES
-    ($1,$2,1,$3,'{}'), ($1,$2,2,'{"draft":"not an AppSpec"}', '{"_draft":{"by":"agent"},"services.0.cpu":{"needs_review":true}}')`,
-    [T, id, JSON.stringify(spec)]);
+  const { ONE } = await import("./demo-one.js");
+  await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta, spec_v2) VALUES
+    ($1,$2,1,'{}','{}',$3), ($1,$2,2,'{}', '{"_draft":{"by":"agent"}}', $4)`,
+    [T, id, JSON.stringify({ spec: ONE, fieldMeta: {}, unmapped: [], ids: {} }),
+     JSON.stringify({ spec: { draft: "not an AppSpec" }, fieldMeta: { "components.shop-api.resources": { source: "agent", confidence: 0.5, needs_review: true } }, unmapped: [], ids: {} })]);
 }
 
 // ── H1 ─────────────────────────────────────────────────────────────

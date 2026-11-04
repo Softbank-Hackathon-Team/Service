@@ -2,10 +2,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { AppSpecV2 } from "@svc/contracts";
-import { checkTerraformRuntime, DEMO_INVENTORY_V2, normalizeV2, stubTfOutputsV2, targetBuilderFor, terraformRuntimeOf, v2Blockers, type Exec } from "../src/index.js";
+import { checkTerraformRuntime, DEMO_INVENTORY, normalizeV2, stubTfOutputsV2, targetBuilderFor, terraformRuntimeOf, v2Blockers, type Exec } from "../src/index.js";
 
 type Raw = Record<string, any>;
-const ecs = () => normalizeV2(DEMO_INVENTORY_V2.aws!).result.spec as AppSpecV2;
+const ecs = () => normalizeV2(DEMO_INVENTORY.aws!).result.spec as AppSpecV2;
 
 test("기본 재시도: 20번, 사이 15초 → 잠은 19번 합 285초. 건강 조회가 모두 즉시 끝난다면 deploy 큐 만료(기본 900초) 안", async () => {
   const sleeps: number[] = [];
@@ -41,5 +41,5 @@ test("섞인 명세(k8s 서비스 + ECS 서비스): terraformRuntimeOf 는 비k8
 });
 
 test("k8s 명세는 null: Helm 워크로드가 있으면 gitops 길", () => {
-  assert.equal(terraformRuntimeOf(normalizeV2(DEMO_INVENTORY_V2.gcp!).result.spec as AppSpecV2), null);
+  assert.equal(terraformRuntimeOf(normalizeV2(DEMO_INVENTORY.gcp!).result.spec as AppSpecV2), null);
 });

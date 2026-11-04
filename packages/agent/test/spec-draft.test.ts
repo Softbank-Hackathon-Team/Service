@@ -3,11 +3,13 @@ import assert from "node:assert/strict";
 import { estimateUsd, llmErrorCode, type LlmCallLog } from "../src/llm/anthropic.js";
 import {
   anthropicProvider, execDraftTool, llmFromEnv, mockDraftLlm, runSpecDraft, ruleRisks, scriptedLlm,
-  DRAFT_MARKER_KEY, type LlmProvider, type SpecDraftInput,
+  DRAFT_MARKER_KEY, draftMarker, type LlmProvider, type SpecDraftInput,
 } from "../src/index.js";
 
 const MIG = "44444444-4444-4444-8444-444444444444";
-const IMG = "123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/shop-api@sha256:" + "ab".repeat(32);
+const IMG_REPO = "123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/shop-api";
+const IMG_DIGEST = "sha256:" + "ab".repeat(32);
+const IMG = `${IMG_REPO}@${IMG_DIGEST}`;
 const ok1 = (source: string) => ({ source, confidence: 1 as const, needs_review: false });
 
 // AWS(ECS+RDS) → GCP. 어댑터 normalize 결과와 같은 모양을 손으로 옮겼다 (패키지가 adapters 에 기대지 않게)
@@ -25,16 +27,27 @@ function input(over: Partial<SpecDraftInput> = {}): SpecDraftInput {
       { kind: "elasticache.cluster", name: "shop-cache", note: "AKIAABCDEFGHIJKLMNOP" },
     ] },
     baseline: { version: 1, spec: {
-      schemaVersion: "1", app: { name: "shop-api" },
-      service: { image: IMG, port: 8080, healthPath: "/healthz", replicas: 2, cpu: "500m", memory: "1Gi",
-        env: [{ name: "LOG_LEVEL", value: "info" }], secretRefs: [{ name: "DATABASE_PASSWORD", key: "password" }] },
-      ingress: { hostname: "shop.example.com", entry: "cloudflare-lb" },
-      database: { engine: "postgres", majorVersion: "16", storageGb: 20 },
+      schemaVersion: "2", app: { name: "shop-api" },
+      components: [
+        { id: "shop-api", kind: "service", props: {
+          runtime: "managedContainer", origin: { runtime: "managedContainer", product: "ecs" },
+          image: { source: "registry", repository: IMG_REPO, digest: IMG_DIGEST },
+          ports: [{ port: 8080, protocol: "TCP" }], probes: { readiness: { type: "http", path: "/healthz", port: 8080 } },
+          replicas: { min: 2, max: 2 }, serviceAccount: "default",
+          resources: { request: { cpuMilli: 512, memMiB: 1024 } },
+          env: [{ name: "LOG_LEVEL", value: "info" }, { name: "DATABASE_PASSWORD", fromSecret: { secret: "shop-db", key: "password" } }],
+        } },
+        { id: "db", kind: "postgres", props: { majorVersion: "16", storageGb: 20 } },
+      ],
+      links: [{ from: "shop-api", to: "db", intent: "connect" }],
+      entry: { via: "cloudflare-lb", hosts: [{ hostnames: ["shop.example.com"], routes: [{
+        matches: [{ path: { type: "PathPrefix", value: "/" } }], backends: [{ to: "shop-api", port: 8080, weight: 1 }] }] }] },
+      posture: { permissions: [], network: [] },
     }, fieldMeta: {
-      "app.name": ok1("ecs"), "service.image": ok1("ecs"), "service.port": ok1("ecs"), "service.replicas": ok1("ecs"),
-      "service.cpu": { source: "ecs:cpu", confidence: 0.9, needs_review: true, rationale: "명세 단계로 올림" },
-      "service.memory": ok1("ecs"), "service.healthPath": ok1("ecs"), "ingress.hostname": ok1("ecs"), database: ok1("rds"),
-    } },
+      "components.shop-api.image": ok1("ecs"), "components.shop-api.ports": ok1("ecs"), "components.shop-api.replicas": ok1("ecs"),
+      "components.shop-api.resources": { source: "ecs:cpu", confidence: 0.9, needs_review: true, rationale: "작업 정의 단위를 그대로 옮김" },
+      "components.shop-api.probes": ok1("ecs"), "components.db.majorVersion": ok1("rds"), "components.db.storageGb": ok1("rds"),
+    }, unmapped: [{ resource: "elasticache.cluster:shop-cache", grade: "C", reason: "시험용: 명세 밖" }] },
     plan: null,
     ...over,
   };
@@ -44,8 +57,9 @@ test("가짜 공급자로 끝까지: 초안 표시, 규칙 위험 + AI 위험, �
   const r = await runSpecDraft({ llm: mockDraftLlm(), input: input() });
   assert.equal(r.state, "finished");
   if (r.state !== "finished") return;
-  assert.deepEqual(r.result.spec, input().baseline.spec);                 // 가짜는 v1을 그대로 낸다
-  assert.equal(r.result.fieldMeta[DRAFT_MARKER_KEY]?.needs_review, true);  // DRAFT(ai) 표시
+  assert.deepEqual(r.result.spec, input().baseline.spec);                 // 가짜는 규칙 기반 명세를 그대로 낸다
+  assert.equal(DRAFT_MARKER_KEY in r.result.fieldMeta, false);             // 초안 표시는 명세 칸이 아니라 저장소가 field_meta 칸에 넣는다
+  assert.equal(draftMarker(r.result.model).needs_review, true);
   const ids = r.result.risks.map((x) => x.id);
   for (const id of ["RISK-01", "RISK-04", "RISK-06", "RISK-08", "RISK-09", "AI-01"]) assert.ok(ids.includes(id), id);
   assert.match(r.result.planExplanation, /aws에서 gcp/);
@@ -54,38 +68,49 @@ test("가짜 공급자로 끝까지: 초안 표시, 규칙 위험 + AI 위험, �
   assert.equal(r.result.usage.input, 2700);
 });
 
-test("가드: 잠긴 칸(이미지·환경변수·복제본 수) 변경은 되돌리고, 검토 필요 칸(cpu)만 AI 값으로 받는다", async () => {
+test("가드: 잠긴 칸(이미지·환경변수·정확히 읽은 복제본 수) 변경은 되돌리고, 검토 필요 칸(resources)만 AI 값으로 받는다", async () => {
   const bad = structuredClone(input().baseline.spec) as any;
-  bad.service.image = "evil.example/x@sha256:" + "cd".repeat(32);
-  bad.service.env.push({ name: "EXFIL_URL", value: "https://evil.example" });
-  bad.service.replicas = 9;
-  bad.service.cpu = "1";
+  const svc = bad.components[0].props;
+  svc.image = { source: "registry", repository: "evil.example/x", digest: "sha256:" + "cd".repeat(32) };
+  svc.env.push({ name: "EXFIL_URL", value: "https://evil.example" });
+  svc.replicas = { min: 9, max: 9 };
+  svc.resources = { request: { cpuMilli: 1000, memMiB: 1024 } };
   const llm = scriptedLlm([{ name: "submit_draft", input: { spec: bad,
-    field_notes: [{ field: "service.cpu", rationale: "원본 512 단위라 1코어가 맞음" }], risks: [],
+    field_notes: [{ field: "components.shop-api.resources", rationale: "원본 512 단위라 1코어가 맞음" }], risks: [],
     plan_explanation: "시험용 설명입니다. 스무 글자를 넘겨야 한다." } }]);
   const r = await runSpecDraft({ llm, input: input() });
   assert.equal(r.state, "finished");
   if (r.state !== "finished") return;
-  assert.equal(r.result.spec.service.image, IMG);
-  assert.deepEqual(r.result.spec.service.env, [{ name: "LOG_LEVEL", value: "info" }]);
-  assert.equal(r.result.spec.service.replicas, 2);
-  assert.equal(r.result.spec.service.cpu, "1");
-  assert.equal(r.result.fieldMeta["service.cpu"]?.source, "ai:stub-scripted");
-  assert.equal(r.result.fieldMeta["service.cpu"]?.confidence, 0.6);
-  assert.deepEqual(r.result.rejectedChanges.map((x) => x.field).sort(), ["service.env", "service.image", "service.replicas"]);
+  const out = r.result.spec.components[0]!;
+  assert.equal(out.kind, "service");
+  if (out.kind !== "service") return;
+  assert.equal(out.props.image.repository, IMG_REPO);
+  assert.deepEqual(out.props.env, (input().baseline.spec.components[0] as any).props.env);
+  assert.deepEqual(out.props.replicas, { min: 2, max: 2 });
+  assert.deepEqual(out.props.resources, { request: { cpuMilli: 1000, memMiB: 1024 } });
+  const m = r.result.fieldMeta["components.shop-api.resources"];
+  assert.deepEqual([m?.source, m?.confidence, m?.needs_review, m?.rationale], ["ai:stub-scripted", 0.6, true, "원본 512 단위라 1코어가 맞음"]);
+  assert.deepEqual(r.result.rejectedChanges.map((x) => x.field).sort(),
+    ["components.shop-api.env", "components.shop-api.image", "components.shop-api.replicas"]);
 });
 
-test("가드: 원본에 없는 DB를 지어내면 지운다", async () => {
+test("가드: 원본에 없는 자원(DB)을 지어내면 지우고, 원본 자원을 빼면 되돌리고, 맨 위 칸(links·entry)은 못 바꾼다", async () => {
+  const llmOf = (spec: unknown) => scriptedLlm([{ name: "submit_draft", input: { spec,
+    field_notes: [], risks: [], plan_explanation: "자원을 바꿔 본다. 이건 되돌려져야 한다." } }]);
   const base = structuredClone(input().baseline.spec) as any;
-  delete base.database;
-  const i = input({ baseline: { ...input().baseline, spec: base } });
-  const llm = scriptedLlm([{ name: "submit_draft", input: { spec: { ...base, database: { engine: "postgres", majorVersion: "17", storageGb: 50 } },
-    field_notes: [], risks: [], plan_explanation: "DB를 추가해 본다. 이건 지워져야 한다." } }]);
-  const r = await runSpecDraft({ llm, input: i });
-  assert.equal(r.state, "finished");
-  if (r.state === "finished") {
-    assert.equal(r.result.spec.database, undefined);
-    assert.deepEqual(r.result.rejectedChanges, [{ field: "database", reason: "원본에 없는 DB를 추가할 수 없음" }]);
+  const added = { ...base, components: [...base.components, { id: "db2", kind: "postgres", props: { majorVersion: "17", storageGb: 50 } }] };
+  const r1 = await runSpecDraft({ llm: llmOf(added), input: input() });
+  assert.equal(r1.state, "finished");
+  if (r1.state === "finished") {
+    assert.deepEqual(r1.result.spec.components.map((c) => c.id), ["shop-api", "db"]);
+    assert.deepEqual(r1.result.rejectedChanges, [{ field: "components.db2", reason: "원본에 없는 자원을 추가할 수 없음" }]);
+  }
+  const removed = { ...base, components: [base.components[0]], links: [], entry: undefined };
+  const r2 = await runSpecDraft({ llm: llmOf(removed), input: input() });
+  assert.equal(r2.state, "finished");
+  if (r2.state === "finished") {
+    assert.deepEqual(r2.result.spec, input().baseline.spec);
+    assert.deepEqual(r2.result.rejectedChanges.map((x) => x.field).sort(), ["components.db", "entry", "links"]);
   }
 });
 
@@ -109,11 +134,14 @@ test("도구 결과에서 비밀처럼 보이는 값은 가리고, 비밀 참조
   assert.equal(execDraftTool("sandbox_apply", { path: "deploy/x.yaml" }, input()).ok, false);
 });
 
-test("규칙 위험: Postgres 버전 미지원·Azure 흉내·용량 초과는 high", () => {
+test("규칙 위험: Postgres 버전 미지원·Azure 흉내는 high, 큰 DB(500GB)는 상한이 없어 위험이 아니다", () => {
   const i = input({ target: { provider: "azure_mock", region: "default", capabilities: [] } });
   (i.inventory.items[1] as any).AllocatedStorage = 500;
-  const high = ruleRisks(i).filter((r) => r.level === "high").map((r) => r.id);
-  assert.deepEqual(high, ["RISK-02", "RISK-03", "RISK-10"]);
+  (i.baseline.spec.components[1] as any).props.storageGb = 500;
+  const risks = ruleRisks(i);
+  assert.deepEqual(risks.filter((r) => r.level === "high").map((r) => r.id), ["RISK-03", "RISK-10"]);
+  assert.equal(risks.find((r) => r.id === "RISK-03")?.field, "components.db.majorVersion");
+  assert.ok(!risks.some((r) => r.id === "RISK-02"));
 });
 
 test("거부·예산·호출 실패는 예외가 아니라 failed + 이유", async () => {
@@ -207,7 +235,8 @@ test("글 소독(Z72): 도메인만 쓴 주소·서브도메인·포트·경로�
   }
 });
 test("글 소독(Z72): 오탐 없음 — 사설 호스트·칸 이름·버전·파일 이름·클라우드 도메인·원본 호스트는 그대로", () => {
-  const allow = baselineHosts({ ingress: { hostname: "shop.softbank-team-iron.com", entry: "cloudflare-lb" }, service: { image: IMG } } as never);
+  const allow = baselineHosts({ entry: { via: "cloudflare-lb", hosts: [{ hostnames: ["shop.softbank-team-iron.com"], routes: [] }] },
+    components: [{ id: "a", kind: "service", props: { image: { source: "registry", repository: IMG_REPO, digest: IMG_DIGEST } } }] } as never);
   for (const t of ["DB 호스트 shop-db.internal:5432", "api.svc.cluster.local", "10.0.0.5", "192.168.1.20",
     "service.image·ingress.hostname·app.name·pg.schema·rds.dbInstance 칸", "Postgres 16.4 → 17", "docs/README.md 와 infra/main.tf, scripts/collect.sh", "scripts/my-tool.sh·./infra/stack.tf", "끝。다음 문장",
     IMG, "asia-northeast3-docker.pkg.dev/p/r/app", "shop.softbank-team-iron.com", "Node.js 앱", "버전 v1.2.3"]) {

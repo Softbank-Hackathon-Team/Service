@@ -43,7 +43,8 @@ export const AWS_QUOTAS = [
   { key: "rds", svc: "rds", code: "L-7B6409FD", label: "RDS 인스턴스", need: 1, usage: ["rds", "describe-db-instances", "--query", "length(DBInstances)"] },
 ] as const;
 // GCP 도착 모듈(gcp/app)이 쓰는 API
-export const GCP_APIS = ["compute.googleapis.com", "container.googleapis.com", "sqladmin.googleapis.com", "artifactregistry.googleapis.com"];
+// FM-CLD-14: iam = 3티어 IR identity(google_service_account) 가 쓰고 apply 가 안 켬. iamcredentials = 고객 SA 빌리기(verify·plan·apply·destroy)
+export const GCP_APIS = ["compute.googleapis.com", "container.googleapis.com", "sqladmin.googleapis.com", "artifactregistry.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com"];
 // 도착이 받을 수 있는 PostgreSQL 주 번호.
 // 【사실】RDS 는 describe-db-engine-versions 로 실조회한다. Cloud SQL 은 목록 API 가 없어 문서 값을 쓴다
 // (cloud.google.com/sql/docs/postgres/db-versions, 2026-10 확인 기준 9.6~17) — CLOUDSQL_PG_MAJORS 로 덮을 수 있다
@@ -91,7 +92,10 @@ async function credCheck(c: Ctx, e: PrecheckEnvInfo): Promise<CloudCheck> {
     return { id, side, item, verdict: "PASS", reason: `STS GetCallerIdentity 성공 — 계정 ${maskAccount(acct)}`, ms: Math.round(r.ms) };
   }
   if (e.provider === "gcp") {
-    const t = await run(c, "gcloud", ["auth", "print-access-token"]);
+    // RV-27: 빌린 관찰 토큰(sideEnv 의 CLOUDSDK_AUTH_ACCESS_TOKEN)이 있으면 그것을 본다. 없으면 워커 자기 gcloud 로그인 → 이유 글에 그렇게 적는다
+    const borrowed = c.env.CLOUDSDK_AUTH_ACCESS_TOKEN?.trim();
+    const whose = borrowed ? "빌린 고객 관찰 자격" : "워커 자기 gcloud 로그인 (빌린 자격 아님)";
+    const t = borrowed ? { code: 0, stdout: borrowed, stderr: "", ms: 0 } : await run(c, "gcloud", ["auth", "print-access-token"]);
     if (t.code !== 0 || !t.stdout.trim()) { const p = cliProblem("gcloud", t); return { id, side, item, verdict: "FAIL", reason: p.kind === "missing" ? `자격 없음 — ${p.reason}` : (t.code === 0 ? "자격 없음 (빈 토큰)" : p.reason), fix: "gcloud auth login (또는 서비스 계정 활성화) 뒤 다시 점검" }; }
     const f = c.deps.fetch ?? fetch;
     try {
@@ -102,7 +106,7 @@ async function credCheck(c: Ctx, e: PrecheckEnvInfo): Promise<CloudCheck> {
       if (!res.ok) return { id, side, item, verdict: "FAIL", reason: `자격 없음 — tokeninfo 거절 (${short(j.error_description ?? String(res.status), 80)})`, fix: "gcloud auth login 다시" };
       const left = Number(j.expires_in ?? 0);
       if (left < 300) return { id, side, item, verdict: "WARN", reason: `토큰 남은 시간 ${left}초 — 이전 도중 만료될 수 있음 (${j.email ?? "계정 모름"})`, fix: "gcloud 가 자동 갱신하지만 장시간 단계 전에 다시 로그인 권장" };
-      return { id, side, item, verdict: "PASS", reason: `tokeninfo 확인 — ${j.email ?? "서비스 계정"}, 남은 ${left}초${c.gcpProject ? `, 프로젝트 ${c.gcpProject}` : ""}` };
+      return { id, side, item, verdict: "PASS", reason: `tokeninfo 확인 — ${whose}, ${j.email ?? "서비스 계정"}, 남은 ${left}초${c.gcpProject ? `, 프로젝트 ${c.gcpProject}` : ""}` };
     } catch (err) {
       return { id, side, item, verdict: "FAIL", reason: `tokeninfo 조회 실패 (${short((err as Error).message, 80)})`, fix: "네트워크(oauth2.googleapis.com:443) 확인" };
     }
@@ -301,7 +305,12 @@ export async function runCloudPrecheck(i: PrecheckInput, deps: PrecheckDeps): Pr
   const c: Ctx = { deps, env, region: awsRegion(env), gcpRegion: gcpRegion(env),
     gcpProject: projOf(i.target) ?? projOf(i.source), kubeCtx: onpremContext(env) };
   // L5c: 출발·도착 클라우드 조회는 그쪽 빌린 자격으로 (TCP·디스크는 워커 자신의 것이라 기본 env)
-  const sideCtx = (side: "source" | "target"): Ctx => deps.sideEnv?.[side] ? { ...c, env: deps.sideEnv[side]! } : c;
+  // RV-27: 빌린 GCP 토큰 env 는 그쪽 프로젝트(CLOUDSDK_CORE_PROJECT)도 들고 온다 → 그쪽 조회의 --project 를 그것으로 (GCP_PROJECT 덮어쓰기보다 앞)
+  const sideCtx = (side: "source" | "target"): Ctx => {
+    const se = deps.sideEnv?.[side];
+    if (!se) return c;
+    return { ...c, env: se, ...(se.CLOUDSDK_AUTH_ACCESS_TOKEN && se.CLOUDSDK_CORE_PROJECT ? { gcpProject: se.CLOUDSDK_CORE_PROJECT } : {}) };
+  };
   const cS = sideCtx("source"), cT = sideCtx("target");
   const t0 = Date.now();
   const [cs, ct] = await Promise.all([credCheck(cS, i.source), credCheck(cT, i.target)]);

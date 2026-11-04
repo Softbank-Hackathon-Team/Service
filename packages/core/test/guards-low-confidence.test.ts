@@ -35,12 +35,12 @@ test("문턱값 읽기 경계: 1 은 켜짐, 1.0001 은 꺼짐, ' 0.5 ' 는 0.5"
   assert.equal(specMinConfidence({ SPEC_MIN_CONFIDENCE: " 0.5 " }), 0.5);
 });
 
-test("applySpecPatch(VPA3): service.env 를 다시 쓰면 service.env.<이름> 표시도 사람 처리, 다른 칸은 그대로", async () => {
-  const { applySpecPatch } = await import("../src/specs.js");
-  const out = applySpecPatch({ spec: {}, fieldMeta: {
-    "service.env.TOKEN": { source: "source.env", confidence: 0.6, needs_review: true },
-    "service.envx": { source: "x", confidence: 0.6, needs_review: true } } },
-  { changes: [{ path: "service.env", value: [] }] });
-  assert.deepEqual(out.fieldMeta["service.env.TOKEN"], { source: "human", confidence: 1, needs_review: false });
-  assert.equal((out.fieldMeta["service.envx"] as { needs_review: boolean }).needs_review, true);
+test("applySpecV2Patch(VPA3): env 를 다시 쓰면 env.<이름> 표시도 사람 처리, 이름이 비슷한 다른 칸은 그대로", async () => {
+  const { applySpecV2Patch } = await import("../src/specs.js");
+  const out = applySpecV2Patch({ spec: { components: [{ id: "a", kind: "service", props: { env: [{ name: "TOKEN", value: "x" }] } }] }, fieldMeta: {
+    "components.a.env.TOKEN": { source: "source.env", confidence: 0.6, needs_review: true },
+    "components.a.envx": { source: "x", confidence: 0.6, needs_review: true } } },
+  { changes: [{ path: "components.a.env", value: [] }] });
+  assert.deepEqual(out.fieldMeta["components.a.env.TOKEN"], { source: "human", confidence: 1, needs_review: false });
+  assert.equal((out.fieldMeta["components.a.envx"] as { needs_review: boolean }).needs_review, true);
 });

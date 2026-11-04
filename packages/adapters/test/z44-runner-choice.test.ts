@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AppSpec, type TargetEnv } from "@svc/contracts";
+import type { TargetEnv } from "@svc/contracts";
+import { oneService } from "./one-service.js";
 import {
   adapterFor, aws, chooseRunner, runnerFor, stubStatus, STUB_TF_OUTPUTS, AdapterError, RunnerUnavailable,
   isAdapterError, DEMO_INVENTORY,
@@ -9,7 +10,7 @@ import { actionsFor } from "../src/common/actions.js";
 import { boundedName } from "../src/common/names.js";
 
 // Z44: 실행기/STUB/막힘 판단 한 곳(chooseRunner) + 어댑터 오류 한 종류(AdapterError)
-const spec = AppSpec.parse(adapterFor("aws").normalize(DEMO_INVENTORY.aws).spec);
+const spec = oneService();   // DB 있는 API 하나 (Azure Mock 은 신원 하나만 그림)
 
 test("chooseRunner: aws·gcp·onprem = stub, azure = runner, AZURE_MOCK=0 = unavailable", () => {
   for (const p of ["aws", "gcp", "onprem"] as const) assert.deepEqual(chooseRunner(p, {}), { kind: "stub", provider: p });
@@ -42,16 +43,10 @@ test("어댑터 오류는 전부 AdapterError + 코드, 메시지는 예전 글�
     [() => actionsFor({}, ["x"], "apply"), "PERM_TABLE_MISSING", /^권한표에 없는 자원 종류: x$/],
     [() => boundedName({ app: "a", seed: ["s"], max: 3 }), "NAME_SPACE_EXHAUSTED", /^이름 공간 부족: max=3$/],
     [() => adapterFor("aws").imageRef("ghcr.io/x/y:1", { envId: "e", provider: "aws", region: "default" }), "IMAGE_DIGEST_MISSING", /^digest 없는 이미지/],
-    [() => adapterFor("aws").normalize({ provider: "aws", coverage: {}, items: [DEMO_INVENTORY.aws.items[0]!,
-      { kind: "rds.dbInstance", DBInstanceIdentifier: "d", Engine: "postgres", EngineVersion: "12.1", AllocatedStorage: 5 }] }),
-     "PG_VERSION_UNSUPPORTED", /^지원하지 않는 Postgres 버전: 12\.1$/],
-    [() => adapterFor("aws").normalize({ provider: "aws", coverage: {}, items: [DEMO_INVENTORY.aws.items[0]!,
-      { kind: "rds.dbInstance", DBInstanceIdentifier: "d", Engine: "mysql", EngineVersion: "8", AllocatedStorage: 5 }] }),
-     "DB_ENGINE_UNSUPPORTED", /^RDS 엔진 mysql은/],
   ];
   for (const [f, code, msg] of cases)
     assert.throws(f, (e) => isAdapterError(e) && e.code === code && msg.test(e.message), code);
-  assert.ok(aws.sessionPolicy(spec, "apply").length <= 2048);
+  assert.ok(aws.sessionPolicy({ database: true, secrets: true }, "apply").length <= 2048);
 });
 
 test("aws.repoName 은 옮긴 뒤에도 같은 이름으로 보인다", () => {

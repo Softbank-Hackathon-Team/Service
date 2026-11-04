@@ -24,7 +24,7 @@ before(async () => {
 });
 after(async () => {
   if (skip) return;
-  delete process.env.IMPORT_IR; delete process.env.IMPORT_APP;
+ delete process.env.IMPORT_APP;
   await core.boss.stop({ graceful: false }); await core.pool.end(); await owner.end();
 });
 
@@ -48,10 +48,10 @@ async function patchLikeUi(id: string, changes: Array<{ path: string; value: unk
   const cur = await last(id);
   const next = core.applySpecV2Patch({ spec: cur.spec_v2.spec, fieldMeta: cur.spec_v2.fieldMeta }, { changes, confirm });
   const result = { ...cur.spec_v2, spec: next.spec, fieldMeta: next.fieldMeta };
-  await core.withTenant(T, (tx) => core.saveSpecRevision(tx, { tenantId: T, migrationId: id, spec: cur.spec, fieldMeta: cur.field_meta, specV2: result }));
+  await core.withTenant(T, (tx) => core.saveSpecRevision(tx, { tenantId: T, migrationId: id, specV2: result }));
 }
 const withLabels = async (fn: () => Promise<void>) => {
-  const src = adapters.DEMO_INVENTORY_V2.onprem!, orig = src.items;
+  const src = adapters.DEMO_INVENTORY.onprem!, orig = src.items;
   src.items = (orig as any[]).map((i) => {
     if (i.kind !== "k8s.deployment" && i.kind !== "k8s.cronjob") return i;
     const c = structuredClone(i); c.metadata.labels = { ...(c.metadata.labels ?? {}), "app.kubernetes.io/part-of": ["shop-worker", "shop-cleanup"].includes(i.metadata.name) ? "shop-worker" : "shop-api" }; return c;
@@ -61,7 +61,6 @@ const withLabels = async (fn: () => Promise<void>) => {
 const HUMAN = { min: 5, max: 9 };
 
 test("실제 PATCH 경로: 사람이 고친 칸(changes)·확인한 칸(confirm)이 재가져오기 뒤에도 그대로, 두 번 연속 해도 같다 (멱등)", { skip }, async () => {
-  process.env.IMPORT_IR = "v2";
   const id = await seed();
   await imp.handleImport(job(id));
   const first = await last(id);
@@ -86,7 +85,7 @@ test("실제 PATCH 경로: 사람이 고친 칸(changes)·확인한 칸(confirm)
 });
 
 test("PARTOF 와 같이: IMPORT_APP 이 같으면 사람이 고친 칸 유지, 묶음 밖 자원은 그대로 밖", { skip }, async () => {
-  process.env.IMPORT_IR = "v2"; process.env.IMPORT_APP = "shop-api";
+ process.env.IMPORT_APP = "shop-api";
   try {
     await withLabels(async () => {
       const id = await seed();
@@ -106,7 +105,6 @@ test("PARTOF 와 같이: IMPORT_APP 이 같으면 사람이 고친 칸 유지, �
 });
 
 test("경계 밖으로 빠진 자원: IMPORT_APP 이 바뀌어 사람이 고친 자원이 새 판에 없으면 던지지 않고, 그 값이 다른 자원으로 새지 않는다", { skip }, async () => {
-  process.env.IMPORT_IR = "v2";
   try {
     await withLabels(async () => {
       const id = await seed();
@@ -127,7 +125,6 @@ test("경계 밖으로 빠진 자원: IMPORT_APP 이 바뀌어 사람이 고친 
 
 // PREVIDS3: 판 창(최근 10판)으로 고침 — 예전엔 todo(앞 판 하나만 봐서 사라짐)
 test("경계 밖에 한 판 있다가 돌아와도 사람이 고친 값 유지", { skip }, async () => {
-  process.env.IMPORT_IR = "v2";
   try {
     await withLabels(async () => {
       const id = await seed();
@@ -142,7 +139,6 @@ test("경계 밖에 한 판 있다가 돌아와도 사람이 고친 값 유지",
 
 // PREVIDS3: links·entry·posture 도 유지 — 예전엔 todo
 test("사람이 고친 posture·links 도 재가져오기 뒤 유지 (두 번 연속 멱등)", { skip }, async () => {
-  process.env.IMPORT_IR = "v2";
   const id = await seed();
   await imp.handleImport(job(id));
   const cur = await last(id);
@@ -162,7 +158,6 @@ test("사람이 고친 posture·links 도 재가져오기 뒤 유지 (두 번 �
 });
 
 test("남의 회사: 다른 회사 이름으로 부른 재가져오기는 앞 판을 읽지도 바꾸지도 않는다", { skip }, async () => {
-  process.env.IMPORT_IR = "v2";
   const id = await seed();
   await imp.handleImport(job(id));
   await patchLikeUi(id, [{ path: "components.shop-api.replicas", value: HUMAN }]);
@@ -174,7 +169,6 @@ test("남의 회사: 다른 회사 이름으로 부른 재가져오기는 앞 �
 });
 
 test("PREVIDS3 합친 명세가 구조 검증을 못 통과하면(사람이 지운 링크를 부품 env 가 아직 가리킴) 가져오기를 막지 않고 합치기를 건너뛴다", { skip }, async () => {
-  process.env.IMPORT_IR = "v2";
   const id = await seed();
   await imp.handleImport(job(id));
   const first = await last(id);
@@ -183,6 +177,7 @@ test("PREVIDS3 합친 명세가 구조 검증을 못 통과하면(사람이 지�
   const a = await last(id);
   assert.deepEqual(a.spec_v2.spec.links, first.spec_v2.spec.links, "새로 읽은 값 그대로");
   const d = (await owner.query("SELECT detail FROM audit_events WHERE target=$1 AND action='migration.spec_review' ORDER BY seq DESC LIMIT 1", [id])).rows[0].detail;
-  assert.match(d.note, /건너뜀/);
-  assert.ok(d.carry.dropped.some((x: string) => x === "links"), JSON.stringify(d.carry));
+  // 통합(fa 1a9ce6d): 검증을 못 넘는 사람 값은 보류 + 다시 검토(flagged)
+  assert.match(d.note, /검증을 못 넘어 뺀/);
+  assert.ok(d.carry.flagged.some((x: string) => x === "links"), JSON.stringify(d.carry));
 });

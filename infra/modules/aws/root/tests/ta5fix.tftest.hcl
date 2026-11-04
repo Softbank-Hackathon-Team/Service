@@ -35,7 +35,7 @@ run "contract_shaped_items" {
   command = plan
   variables {
     cache_json        = jsonencode([{ id = "sessions", name = "shop-sessions", engine = "redis", version = "7.1", memory_mib = 2048, cluster_mode = false, shards = null, tls = true, auth = null, ha = true, allow_from_json = jsonencode(["api"]) }])
-    object_store_json = jsonencode([{ id = "uploads", name = "shop-uploads-ab12", versioning = true, public = null, size_gb = 12.5, lifecycle_json = jsonencode([{ prefix = "tmp/", expireDays = 7 }, { prefix = "", toColdAfterDays = 30 }]), cors_json = jsonencode([{ allowedOrigins = ["https://shop.example.com"], allowedMethods = ["GET", "PUT"] }]), allow_from_json = jsonencode(["api"]), force_destroy = false }])
+    object_store_json = jsonencode([{ id = "uploads", name = "shop-uploads-ab12", versioning = true, public = null, size_gb = 12.5, lifecycle_json = jsonencode([{ prefix = "tmp/", expireDays = 7 }, { prefix = "", toColdAfterDays = 30 }]), cors_json = jsonencode([{ origins = ["https://shop.example.com"], methods = ["GET", "PUT"], allowedHeaders = ["Content-Type"], maxAgeSec = 3000 }]), allow_from_json = jsonencode(["api"]), force_destroy = false }])
     queue_json        = jsonencode([{ id = "jobs", name = "shop-jobs", model = "queue", ordered = null, retention_sec = 86400, ack_timeout_sec = 30, dead_letter_to = null, dead_letter_max_receive = null, allow_from_json = "[]" }])
   }
   assert {

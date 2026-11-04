@@ -50,9 +50,13 @@ export async function readEc2(d: CliDeps, region: string, env: NodeJS.ProcessEnv
   let droppedTags = 0;
   for (const i of insts) {
     const tags = tagMap(i);
-    droppedTags += Object.keys(tags).filter((k) => k !== "Name" && k !== groupTag).length;
+    droppedTags += Object.keys(tags).filter((k) => k !== "Name" && k !== groupTag && k !== "aws:autoscaling:groupName").length;
+    // VM-1 DRAFT(ai): 묶는 열쇠 순서 = ASG 이름(aws:autoscaling:groupName, AWS 가 붙임) → 지정 태그 → Name(끝 번호 뗌) → 인스턴스 ID.
+    //   ASG 인스턴스는 교체돼도 같은 묶음·같은 id 로 이어진다 (carry 가 열쇠로 찾음)
+    const asg = tags["aws:autoscaling:groupName"];
     const raw = groupTag ? tags[groupTag] : tags.Name;
-    const name = raw && !secretLooking(raw) ? groupNameOf(raw, !!groupTag) : String(i.InstanceId);
+    const name = asg && !secretLooking(asg) ? groupNameOf(asg, true)
+      : raw && !secretLooking(raw) ? groupNameOf(raw, !!groupTag) : String(i.InstanceId);
     groups.set(name, [...(groups.get(name) ?? []), i]);
   }
   if (droppedTags) notes.push(`VM 태그 ${droppedTags}개는 가져오지 않음 (묶는 이름 말고는 안 읽음 — 비밀이 태그에 있을 수 있음)`);
@@ -67,7 +71,9 @@ export async function readEc2(d: CliDeps, region: string, env: NodeJS.ProcessEnv
     let ingressKnown = myGroups.length > 0 && myGroups.every((g) => sgs.has(g));
     for (const g of myGroups) for (const p of arr(sgs.get(g)?.IpPermissions)) {
       const proto = str(p.IpProtocol);
-      const sources = [...arr(p.IpRanges).map((x) => String(x.CidrIp)), ...arr(p.UserIdGroupPairs).map((x) => `sg:${String(x.GroupId)}`)].sort();
+      // FW-1: IPv6 대역·접두어 목록(pl-…: CloudFront·사내 대역)도 출발지. 예전엔 버려서 그 포트가 통째로 사라졌다
+      const sources = [...arr(p.IpRanges).map((x) => String(x.CidrIp)), ...arr(p.Ipv6Ranges).map((x) => String(x.CidrIpv6)),
+        ...arr(p.PrefixListIds).map((x) => `pl:${String(x.PrefixListId)}`), ...arr(p.UserIdGroupPairs).map((x) => `sg:${String(x.GroupId)}`)].sort();
       if (proto === "-1") { rules.push({ protocol: "tcp", fromPort: 0, toPort: 65535, sources }); continue; }
       if (proto !== "tcp" && proto !== "udp") continue;
       rules.push({ protocol: proto, fromPort: Number(p.FromPort), toPort: Number(p.ToPort), sources });
@@ -81,6 +87,7 @@ export async function readEc2(d: CliDeps, region: string, env: NodeJS.ProcessEnv
       zones: [...new Set(list.map((i) => str(get(i, "Placement", "AvailabilityZone"))).filter((x): x is string => !!x))].sort(),
       cpuMilli: biggest?.cpuMilli ?? null, memMiB: biggest?.memMiB ?? null, identity: profiles[0] ?? null,
       hasPublicIp: list.some((i) => !!str(i.PublicIpAddress)), ingress: ingressKnown ? rules : null,
+      ...(myGroups.length ? { securityGroups: myGroups } : {}),   // FM-IR-C06
     };
     items.push(raw as unknown as Obj);
   }

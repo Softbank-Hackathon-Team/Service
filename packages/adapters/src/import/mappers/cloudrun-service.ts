@@ -1,3 +1,4 @@
+import { SPEC_LIMITS } from "@svc/contracts";
 import { cpuMilliOf, mibOf, splitImage } from "./k8s-deployment.js";
 import { CLOUDRUN_RAW_KINDS, type RawCloudRunContainer, type RawCloudRunJob, type RawCloudRunProbe, type RawCloudRunService } from "../raw-cloudrun.js";
 import type { KindMapper, MappedComponent, MetaTuple, RawItem } from "../types.js";
@@ -68,8 +69,8 @@ export const cloudRunServiceMapper: KindMapper = {
     const liveness = probeOf(c.livenessProbe, port);
     // DRAFT(ai): Cloud Run startupProbe = "준비됐나"(트래픽 받기 전) → readiness 자리 (도착 관리형 모듈의 health_path 재료)
     const probes = { ...(readiness ? { readiness } : {}), ...(liveness ? { liveness } : {}) };
-    // DRAFT(ai): 최소 인스턴스 기본 0, 최대 기본 100 (Cloud Run 기본값). IR replicas 상한 100 에 맞춰 자름
-    const min = Math.max(0, Math.min(100, s.minScale ?? 0)), max = Math.max(min, Math.min(100, s.maxScale ?? 100));
+    // DRAFT(ai): 최소 인스턴스 기본 0, 최대 기본 100 (Cloud Run 기본값). IR replicas 상한(SPEC_LIMITS.replicas, L-1 로 100 → 10000)에 맞춰 자름. Cloud Run maxScale 100 넘는 값도 그대로
+    const min = Math.max(0, Math.min(SPEC_LIMITS.replicas, s.minScale ?? 0)), max = Math.max(min, Math.min(SPEC_LIMITS.replicas, s.maxScale ?? 100));
     const sidecars = others.map((x) => {
       const xi = splitImage(x.image, null);
       return { name: x.name ?? "sidecar", image: { source: "registry", repository: xi.repository, digest: xi.digest }, env: envOf(x), resources: {} };
@@ -102,7 +103,8 @@ export const cloudRunServiceMapper: KindMapper = {
       ...(routes.length ? { routes } : {}),
       meta: {
         origin: m(src, 1, "Cloud Run 출발 → 도착도 관리형 컨테이너 (재현성 기본, N8 미정)"),
-        image: c.image.includes("@") ? m(`${src}.image`) : m(`${src}.image + revision imageDigest`),
+        image: s.trafficSplit?.length ? m(`${src}.status.traffic`, 0.6, `트래픽이 판 ${s.trafficSplit.length}개에 나뉨(${s.trafficSplit.map((t) => `${t.revision} ${t.percent}%`).join(", ")}) → 가장 큰 판 하나만 옮김. 나머지 판은 사람이 확인`)
+          : c.image.includes("@") ? m(`${src}.image`) : m(`${src}.image + revision imageDigest`),
         resources: m(`${src}.resources.limits`, 0.9, "Cloud Run 은 한도(limits)만 있음 → limit 으로 옮김, 요청량은 비움"),
         probes: Object.keys(probes).length ? m(`${src}.startupProbe·livenessProbe`, 0.9, "startupProbe 를 readiness 자리로 옮김")
           : m(`${src}.probes`, 0.9, "출발에 확인 없음 → 만들지 않음"),
@@ -113,18 +115,6 @@ export const cloudRunServiceMapper: KindMapper = {
         ...(s.invokerAllUsers == null ? { network: m(`${src}.iam`, 0.6, "호출 권한(run.invoker)을 못 읽어 공개 여부 모름 → 사람이 확인") } : {}),
         ...(pins.length ? { env: m(`${src}.env.secretKeyRef`, 0.9, `비밀 버전을 고정해 씀(${pins.join(",")}) → 도착은 최신 값 하나로 옮김`) } : {}),
         ...(others.some((x) => !splitImage(x.image, null).digest) ? { sidecars: m(`${src}.containers`, 0.6, "태그만 있는 보조 컨테이너는 digest 를 못 박아 뺐다 → 사람이 확인") } : {}),
-      },
-      projection: {
-        name: s.name,
-        env: (c.env ?? []).filter((e) => !e.secret).map((e) => ({ name: e.name, value: e.value ?? "" })),
-        plainSecretNames: [],
-        secretRefs: (c.env ?? []).filter((e) => e.secret).map((e) => ({ name: e.name, key: e.name })),
-        specReplicas: min,
-        port: port ?? null,
-        hostname: (s.domains ?? [])[0] ?? null,
-        image: c.image,
-        imageDigest: digest,
-        healthPath: c.startupProbe?.httpGet?.path ?? null,
       },
     };
   },

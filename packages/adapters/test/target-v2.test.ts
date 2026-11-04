@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AppSpec, AppSpecV2, ComponentV2, ModuleInstance, TF_KIND_VARS, upconvertV1, type TargetEnv } from "@svc/contracts";
+import { AppSpecV2, ChartValues, ComponentV2, ModuleInstance, TF_KIND_VARS, type TargetEnv } from "@svc/contracts";
+import { PINNED_TARGET_V1 } from "./pinned-target-v1.js";
 import {
   targetBuilderFor, requirementsV2, v2Blockers, V2_FIELD_COVERAGE, UNSUPPORTED_V2, AdapterError, aws, gcp, onprem,
   rdsClassFor, cloudSqlTierFor, type Target,
@@ -13,13 +14,8 @@ const T = (p: TargetEnv["provider"], extra: Partial<Target> = {}): Target =>
 const D = (c: string) => `sha256:${c.repeat(64)}`;
 
 // v1 데모 (DB·시크릿 있는 API 층)
-const V1: AppSpec = AppSpec.parse({
-  schemaVersion: "1", app: { name: "shop" },
-  service: { image: `registry/shop-api@${D("a")}`, port: 8080, healthPath: "/healthz", replicas: 2, cpu: "500m", memory: "1Gi",
-    env: [{ name: "LOG_LEVEL", value: "info" }], secretRefs: [{ name: "DATABASE_PASSWORD", key: "password" }] },
-  database: { engine: "postgres", majorVersion: "16", storageGb: 20 },
-  ingress: { hostname: "shop.example.com", entry: "cloudflare-lb" },
-});
+// 데모 명세 (shop 서비스 1개 + postgres 1개)
+const BASE: AppSpecV2 = AppSpecV2.parse({"schemaVersion":"2","app":{"name":"shop"},"components":[{"id":"shop","kind":"service","props":{"runtime":"k8s","origin":{"runtime":"k8s","product":"unknown"},"image":{"source":"registry","repository":"registry/shop-api","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"ports":[{"port":8080,"protocol":"TCP"}],"probes":{"readiness":{"type":"http","path":"/healthz","port":8080}},"replicas":{"min":2,"max":2},"serviceAccount":"default","resources":{"request":{"cpuMilli":500,"memMiB":1024}},"env":[{"name":"LOG_LEVEL","value":"info"},{"name":"DATABASE_PASSWORD","fromSecret":{"secret":"DATABASE_PASSWORD","key":"password"}}]}},{"id":"db","kind":"postgres","props":{"majorVersion":"16","storageGb":20}}],"links":[{"from":"shop","to":"db","intent":"connect"}],"entry":{"via":"cloudflare-lb","hosts":[{"hostnames":["shop.example.com"],"routes":[{"matches":[{"path":{"type":"PathPrefix","value":"/"}}],"backends":[{"to":"shop","port":8080,"weight":1}]}]}]},"posture":{"permissions":[],"network":[]}});
 
 // 3티어 v2: web → api → db, + 예약 잡 (api 와 같은 SA)
 const svc = (id: string, extra: Record<string, unknown> = {}) => ({
@@ -66,11 +62,11 @@ const parseJson = (v: unknown) => JSON.parse(String(v));
 const CLOUD = ["aws", "gcp"] as const;
 
 test("대응표: 데모 v1 → upconvertV1 → v2 Terraform 변수가 v1 변수와 뜻이 같다 (aws·gcp·onprem)", () => {
-  const v2 = upconvertV1(V1).spec;
+  const v2 = structuredClone(BASE);
   // aws
   {
     const t = T("aws", { accountId: "000000000000" });
-    const a = aws.awsAdapter.toTerraform(V1, t).vars, b = awsBuilder().toTerraformV2(v2, t).vars;
+    const a = PINNED_TARGET_V1.aws, b = awsBuilder().toTerraformV2(v2, t).vars;
     for (const k of ["expected_account_id", "region", "app_name", "tenant_id", "cluster_name", "vpc_id", "db_subnet_ids_json", "k8s_namespace", "app_role_boundary_arn"])
       assert.equal(b[k], a[k], `aws ${k}`);
     const [pg] = parseJson(b.postgres_json), [id] = parseJson(b.identity_json);
@@ -79,7 +75,9 @@ test("대응표: 데모 v1 → upconvertV1 → v2 Terraform 변수가 v1 변수�
     assert.equal(pg.storage_gb, a.db_allocated_storage);
     assert.equal(pg.instance_class, null, "v1 db.t4g.micro = 모듈 기본 (null)");
     assert.equal(a.db_instance_class, "db.t4g.micro");
-    assert.equal(id.name, a.name_app_role, "앱 이름 = 서비스 id 면 v1 역할 이름 그대로");
+    // G8-1: 역할 이름 seed 에 이전 번호가 붙는다 → v1 고정값과 다르고, 이전 번호를 빼면 v1 이름 그대로
+    assert.notEqual(id.name, a.name_app_role, "이전마다 다른 역할 이름");
+    assert.equal(parseJson(awsBuilder().toTerraformV2(v2, { ...t, migrationId: undefined }).vars.identity_json)[0].name, a.name_app_role, "앱 이름 = 서비스 id 면 (이전 번호 없을 때) v1 역할 이름 그대로");
     assert.equal(id.secret_names_json, a.secret_names_json);
     assert.equal(parseJson(b.postgres_json).length > 0, a.db_enabled);
     assert.deepEqual(parseJson(pg.allow_from_json), [id.id], "connect 의존성 신원 = DB 비밀 읽기");
@@ -87,20 +85,21 @@ test("대응표: 데모 v1 → upconvertV1 → v2 Terraform 변수가 v1 변수�
   // gcp
   {
     const t = T("gcp", { projectId: "p-1" });
-    const a = gcp.gcpAdapter.toTerraform(V1, t).vars, b = targetBuilderFor("gcp").toTerraformV2(v2, t).vars;
+    const a = PINNED_TARGET_V1.gcp, b = targetBuilderFor("gcp").toTerraformV2(v2, t).vars;
     for (const k of ["project_id", "region", "app_name", "tenant_id", "k8s_namespace", "network_id", "cluster_name", "cluster_location"])
       assert.equal(b[k], a[k], `gcp ${k}`);
     const [pg] = parseJson(b.postgres_json), [id] = parseJson(b.identity_json);
     assert.equal(pg.name, a.name_db_instance);
     assert.equal(`POSTGRES_${pg.major_version}`, a.db_version);
     assert.equal(pg.storage_gb, a.db_disk_gb);
-    assert.equal(id.name, a.name_app_sa);
+    assert.notEqual(id.name, a.name_app_sa, "G8-1: 이전마다 다른 SA 이름");
+    assert.equal(parseJson(targetBuilderFor("gcp").toTerraformV2(v2, { ...t, migrationId: undefined }).vars.identity_json)[0].name, a.name_app_sa, "이전 번호 없으면 v1 SA 이름 그대로");
     assert.equal(id.secret_names_json, a.secret_ids_json);
   }
   // onprem
   {
     const t = T("onprem");
-    const a = onprem.onpremAdapter.toTerraform(V1, t).vars, b = targetBuilderFor("onprem").toTerraformV2(v2, t).vars;
+    const a = PINNED_TARGET_V1.onprem, b = targetBuilderFor("onprem").toTerraformV2(v2, t).vars;
     for (const k of ["kube_context", "app_name", "tenant_id", "k8s_namespace"]) assert.equal(b[k], a[k], `onprem ${k}`);
     const [ns] = parseJson(b.namespace_json);
     assert.equal(ns.quota_cpu_m, a.quota_cpu_m);
@@ -141,9 +140,9 @@ test("3티어 스냅숏 (aws): 루트 변수·인스턴스·workloads 값", () =
     for (const x of parseJson(tf.vars[k])) schema.parse(x);
 
   const v = b.toWorkloadValues(s, {}, t) as Record<string, any>;
-  assert.equal(v.irVersion, "2");
+  assert.equal("irVersion" in v, false, "IR 하나라 판 표시 없음");
   assert.equal(v.namespace, "app-shop");
-  assert.deepEqual(v.workloads.map((w: { id: string; kind: string }) => `${w.kind}:${w.id}`), ["service:api", "job:nightly", "service:web"]);
+  assert.deepEqual(v.workloads.map((w: { name: string; kind: string }) => `${w.kind}:${w.name}`), ["service:api", "job:nightly", "service:web"]);
   const api = v.workloads[0];
   assert.deepEqual(api.env, [
     { name: "DB_HOST", value: "<tf-output:link.db.host>" },
@@ -151,22 +150,25 @@ test("3티어 스냅숏 (aws): 루트 변수·인스턴스·workloads 값", () =
     { name: "DATABASE_PASSWORD", valueFrom: { secretKeyRef: { name: "shop-db", key: "password" } } },
     { name: "LOG_LEVEL", value: "info" },
   ]);
-  assert.deepEqual(api.replicas, { min: 2, max: 4 });
-  assert.deepEqual(api.scale, { targetCpuPct: 70 });
+  assert.equal("replicas" in api, false, "HPA 가 있으면 고정 복제 수 없음");
+  assert.deepEqual(api.scale, { min: 2, max: 4, cpuPct: 70 });
   assert.deepEqual(api.resources, { requests: { cpu: "250m", memory: "512Mi" } });
-  assert.match(api.image.ref, /^000000000000\.dkr\.ecr\.ap-northeast-2\.amazonaws\.com\/platform\/11111111-1111-4111-8111-111111111111\/api@sha256:c{64}$/);
+  assert.match(api.image, /^ghcr\.io\/demo\/api@sha256:c{64}$/);   // FM-APP-01: 공개 레지스트리 = 출발 주소 그대로
   const web = v.workloads[2];
   assert.deepEqual(web.env, [{ name: "API_URL", value: "http://api.app-shop.svc" }], "서비스끼리 주소 = 도착 Service DNS (80 이면 포트 생략)");
   const job = v.workloads[1];
-  assert.equal(job.schedule, "0 3 * * *");
-  assert.equal(job.concurrencyPolicy, "Forbid");
+  assert.equal(job.job.schedule, "0 3 * * *");
+  assert.equal(job.job.concurrencyPolicy, "Forbid");
   assert.equal("resources" in job, false, "요청량 없으면 resources 키 없음");
-  assert.deepEqual(v.externalSecrets.secrets, [{ name: "shop-db", remoteKey: "platform/11111111-1111-4111-8111-111111111111/shop/shop-db", keys: ["password"] }]);
-  assert.deepEqual(v.postgres, [{ id: "db", mode: "external", host: "<tf-output:link.db.host>", port: 5432, passwordSecret: "<tf-output:db_master_secret_arn>", passwordProperty: "password" }]);
+  // pf-d FM-TRF-23: entry 가 있어 cloudflared 입구 → 터널 토큰 Secret 도 같은 길로
+  assert.deepEqual(v.externalSecrets.secrets, [
+    { name: "cloudflared-token", remoteKey: "platform/11111111-1111-4111-8111-111111111111/shop/cloudflared-token", keys: ["token"] },
+    { name: "shop-db", remoteKey: "platform/11111111-1111-4111-8111-111111111111/shop/shop-db", keys: ["password"] }]);
+  assert.deepEqual(v.postgres, [{ id: "db", mode: "external", host: "<tf-output:link.db.host>", port: 5432, passwordSecret: "<tf-output:db_master_secret_arn>", passwordProperty: "password", secretName: "shop-db-app" }]);
   assert.deepEqual(v.ingress.hosts, [{ hostnames: ["shop.example.com"], tls: true, paths: [
     { path: "/api", pathType: "Prefix", service: "api", port: 80, workload: "api" },
     { path: "/", pathType: "Prefix", service: "web", port: 80, workload: "web" }] }]);
-  assert.deepEqual(v.warnings, []);
+  assert.deepEqual(v.warnings, ["입구: cloudflared 터널 토큰을 비밀 저장소 platform/11111111-1111-4111-8111-111111111111/shop/cloudflared-token (키 token) 에 넣어야 도착 입구 파드가 뜸"]);
   // apply 뒤 진짜 값이 오면 자리표시 대신 값
   const filled = b.toWorkloadValues(s, { "link.db.host": "shop.rds.local" }, t) as Record<string, any>;
   assert.equal(filled.workloads[0].env[0].value, "shop.rds.local");
@@ -206,10 +208,10 @@ test("거부: 프로브·요청량이 없는 서비스에는 probes·resources �
   const s = TIER3();
   for (const p of ["aws", "gcp", "onprem"] as const) {
     const v = targetBuilderFor(p).toWorkloadValues(s, {}, T(p)) as Record<string, any>;
-    const api = v.workloads.find((w: { id: string }) => w.id === "api");
+    const api = v.workloads.find((w: { name: string }) => w.name === "api");
     assert.equal("probes" in api, false, p);
-    const web = v.workloads.find((w: { id: string }) => w.id === "web");
-    assert.deepEqual(web.probes, { readiness: { type: "http", path: "/", port: 8080 } }, "있으면 그대로");
+    const web = v.workloads.find((w: { name: string }) => w.name === "web");
+    assert.deepEqual(web.probes, { readiness: { httpGet: { path: "/", port: 8080 } } }, "있으면 그대로 (k8s 모양)");
     assert.equal(JSON.stringify(v).includes("/healthz"), false, "v1 기본 /healthz 를 안 넣음");
   }
 });
@@ -229,9 +231,9 @@ test("40자 IR id → 실행 역할·SA 이름은 boundedName (aws 64, gcp 30, a
 });
 
 test("권한: v2 operateActionsV2 = 켜진 종류 행의 합, upconvert 판은 v1 operateActions 와 같다 (세션 정책 파일 안 바뀜)", () => {
-  const v2 = upconvertV1(V1).spec;
+  const v2 = structuredClone(BASE);
   for (const p of ["aws", "gcp", "onprem"] as const) for (const purpose of ["plan", "apply", "destroy"] as const)
-    assert.deepEqual(targetBuilderFor(p).operateActionsV2(v2, purpose), (p === "aws" ? aws.operateActions(V1, purpose) : p === "gcp" ? gcp.operateActions(V1, purpose) : onprem.operateActions(V1, purpose)), `${p} ${purpose}`);
+    assert.deepEqual(targetBuilderFor(p).operateActionsV2(v2, purpose), PINNED_TARGET_V1.ops[`${p}:${purpose}`], `${p} ${purpose}`);
   // 잡이 있으면 온프레는 CronJob 권한이 더 생김
   assert.ok(targetBuilderFor("onprem").operateActionsV2(TIER3(), "apply").includes("batch/cronjobs:create"));
 });
@@ -260,14 +262,22 @@ test("사람 확인: 출발 DB 방화벽을 못 읽었거나 CIDR 이 아닌 원
   assert.equal(pg.public_subnet_ids_json, "<env:dbPublicSubnetIdsJson>");
 });
 
-test("라우팅: 가중치 나누기·헤더 매치·와일드카드는 경고 줄로 남는다", () => {
+test("라우팅(T2): 다른 Service 로 가는 가중치 나누기·헤더 매치는 경고가 아니라 계획에서 막고, 와일드카드만 경고", () => {
   const s = TIER3();
   s.entry!.hosts[0]!.hostnames.push("*.shop.example.com");
   s.entry!.hosts[0]!.routes[1] = { matches: [{ path: { type: "Exact", value: "/" }, headers: [{ name: "x", value: "1" }] }],
     backends: [{ to: "web", port: 80, weight: 9 }, { to: "api", port: 80, weight: 1 }] };
-  const v = targetBuilderFor("gcp").toWorkloadValues(s, {}, T("gcp")) as Record<string, any>;
-  assert.equal(v.warnings.length, 3);
-  assert.equal(v.ingress.hosts[0].paths[1].pathType, "Exact");
+  const caps = targetBuilderFor("gcp").capabilities();
+  const b = v2Blockers(s, caps);
+  assert.ok(b.unsupported.some((x) => x.includes("entry.weighted")), "가중치 = 막기");
+  assert.ok(b.unsupported.some((x) => x.includes("entry.match")), "헤더 매치 = 막기");
+  assert.throws(() => targetBuilderFor("gcp").toWorkloadValues(s, {}, T("gcp")), /entry\.(match|weighted)/);
+  // 와일드카드만 있으면 막지 않고 경고
+  const w = TIER3();
+  w.entry!.hosts[0]!.hostnames.push("*.shop.example.com");
+  const v = targetBuilderFor("gcp").toWorkloadValues(w, {}, T("gcp")) as Record<string, any>;
+  assert.deepEqual(v.warnings.filter((x: string) => x.startsWith("라우팅")).length, 1);   // 와일드카드 1줄 (+ pf-d 입구 토큰 안내 1줄)
+  assert.ok(v.warnings.some((x: string) => x.startsWith("입구: cloudflared 터널 토큰")));
   assert.equal(v.ingress.className, "gce");
 });
 
@@ -280,4 +290,18 @@ test("DB 등급 고르기 (H-A6 기본): compute 없으면 null, 있으면 같�
   assert.equal(cloudSqlTierFor({ cpuMilli: 2000, memMiB: 4096 }), "db-custom-2-4096");
   assert.equal(cloudSqlTierFor({ cpuMilli: 3000, memMiB: 100 }), "db-custom-4-3840");
   for (const p of CLOUD) assert.ok(targetBuilderFor(p).capabilities().includes("kind.postgres.16"));
+});
+
+// pf-d FM-TRF-23: cloudflared 입구 파드가 읽는 Secret(cloudflared-token, 키 token)을 ExternalSecret 으로 같이 만든다
+test("FM-TRF-23: entry 가 있으면 터널 토큰 ExternalSecret(키 token) + 저장소 안내, entry 없으면 안 만든다", () => {
+  const v = ChartValues.parse(targetBuilderFor("gcp").toWorkloadValues(TIER3(), {}, T("gcp")));
+  assert.equal(v.ingress?.mode, "cloudflared");
+  const s = v.externalSecrets.secrets.find((x) => x.name === v.ingress!.tunnelTokenSecret);
+  assert.deepEqual(s?.keys, ["token"]);
+  assert.ok(v.warnings.some((w) => w.includes(s!.remoteKey)));
+  const noEntry = AppSpecV2.parse({ ...TIER3(), entry: undefined });
+  const n = ChartValues.parse(targetBuilderFor("gcp").toWorkloadValues(noEntry, {}, T("gcp")));
+  assert.equal(n.ingress, undefined);
+  assert.ok(!n.externalSecrets.secrets.some((x) => x.name === "cloudflared-token"));
+  assert.ok(!n.warnings.some((w) => w.startsWith("입구:")));
 });

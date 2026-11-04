@@ -115,8 +115,9 @@ test("읽기 호출은 전부 IMPORT_OBSERVE_ACTIONS 안이고 쓰기 동작은 
     used.add(`${svc[s] ?? s}:${op === "update-kubeconfig" ? "DescribeCluster" : camel(op === "list-secrets" ? "list-secrets" : op)}`);
   }
   assert.ok(used.size >= 8, [...used].join(","));
-  const allowed = new Set(["sts:GetCallerIdentity", "eks:ListClusters", "eks:DescribeCluster", "rds:DescribeDBInstances", "ec2:DescribeVpcs",
-    "elasticloadbalancing:DescribeLoadBalancers", "ecr:DescribeRepositories", "secretsmanager:ListSecrets"]);
+  const allowed = new Set(["sts:GetCallerIdentity", "eks:ListClusters", "eks:DescribeCluster", "rds:DescribeDBInstances", "rds:DescribeDBParameters", "ec2:DescribeVpcs",
+    "elasticloadbalancing:DescribeLoadBalancers", "ecr:DescribeRepositories", "secretsmanager:ListSecrets",
+    "ec2:DescribeSecurityGroups"]);   // FM-IR-02: RDS 보안 그룹 (발급 목록엔 EC2_OBSERVE_ACTIONS 로 이미 들어감)
   const allowedLower = new Set([...allowed].map((a) => a.toLowerCase()));   // CLI 이름(describe-db-instances)과 IAM 이름(DescribeDBInstances)의 대소문자 차이
   for (const a of used) assert.ok(allowedLower.has(a.toLowerCase()), `발급 동작 목록에 없는 호출: ${a}`);
   assert.ok(!src.includes("GetSecretValue") || src.includes("부르지 않는다"));

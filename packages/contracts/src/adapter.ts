@@ -1,4 +1,3 @@
-import type { AppSpec, FieldMeta } from "./spec.js";
 import type { Provider } from "./common.js";
 
 export type Capability = string;      // 예: "db.postgres.16"
@@ -46,9 +45,6 @@ export interface EnvironmentAdapter {
   readonly version: string;                          // 계획 지문에 들어감
   capabilities(): Capability[];
   discover(s: ObserveSession, scope: ImportScope): Promise<RawInventory>;
-  normalize(raw: RawInventory): { spec: Partial<AppSpec>; fieldMeta: FieldMeta };
-  requiredOperateActions(spec: AppSpec): string[];
-  toTerraform(spec: AppSpec, t: TargetEnv): { moduleRef: ModuleRef; vars: TfVars };
-  toHelmValues(spec: AppSpec, out: TfOutputs, t: TargetEnv): HelmValues;
+  // 명세 → 도착 Terraform·Helm 값은 TargetBuilder(target.ts)가 한다
   imageRef(srcImage: string, t: TargetEnv): string;  // digest는 그대로
 }

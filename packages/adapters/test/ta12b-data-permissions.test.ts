@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { upconvertV1, AppSpec, AppSpecV2, LINK_OUTPUTS, type TargetEnv } from "@svc/contracts";
+import { AppSpecV2, LINK_OUTPUTS, type TargetEnv } from "@svc/contracts";
 import { targetBuilderFor } from "../src/index.js";
 import { stubTfOutputsV2 } from "../src/target/plan-v2.js";
 
@@ -33,7 +33,8 @@ test("AWS 세션 정책: 단계별로 맞는 동작만 (plan 은 읽기뿐, dest
   const role = acts("aws-operate-role-policy.json");
   for (const p of ["plan", "apply", "destroy"]) {
     const f = `aws-session-policy-${p}.json`;
-    assert.ok(JSON.stringify(JSON.parse(read(f))).length <= 2048, `${p} 길이`);
+    // 보내는 판(security compactSessionPolicy)이 2,048자 - 여유 300 이내인지는 security z39-evidence 시험이 본다. 파일(하나하나 적은 판)은 6,144자 상한
+    assert.ok(JSON.stringify(JSON.parse(read(f))).length <= 6144, `${p} 길이`);
     assert.deepEqual([...acts(f)].filter((a) => !role.has(a)), [], `${p} 부분집합`);
   }
   const plan = acts("aws-session-policy-plan.json"), apply = acts("aws-session-policy-apply.json"), destroy = acts("aws-session-policy-destroy.json");
@@ -61,12 +62,11 @@ test("GCP 천장: 데이터 자원 권한이 들어 있고 와일드카드·금�
 });
 
 // ── 가짜 tf 출력 ──
-const V1 = AppSpec.parse({ schemaVersion: "1", app: { name: "shop" },
-  service: { image: `r/shop@sha256:${"a".repeat(64)}`, port: 8080, healthPath: "/healthz", replicas: 1, cpu: "500m", memory: "1Gi", env: [], secretRefs: [] },
-  database: { engine: "postgres", majorVersion: "16", storageGb: 20 }, ingress: { hostname: "s.example.com", entry: "cloudflare-lb" } });
+// 데모 명세 (shop 서비스 1개 + postgres 1개)
+const BASE: AppSpecV2 = AppSpecV2.parse({"schemaVersion":"2","app":{"name":"shop"},"components":[{"id":"shop","kind":"service","props":{"runtime":"k8s","origin":{"runtime":"k8s","product":"unknown"},"image":{"source":"registry","repository":"r/shop","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"ports":[{"port":8080,"protocol":"TCP"}],"probes":{"readiness":{"type":"http","path":"/healthz","port":8080}},"replicas":{"min":1,"max":1},"serviceAccount":"default","resources":{"request":{"cpuMilli":500,"memMiB":1024}},"env":[]}},{"id":"db","kind":"postgres","props":{"majorVersion":"16","storageGb":20}}],"links":[{"from":"shop","to":"db","intent":"connect"}],"entry":{"via":"cloudflare-lb","hosts":[{"hostnames":["s.example.com"],"routes":[{"matches":[{"path":{"type":"PathPrefix","value":"/"}}],"backends":[{"to":"shop","port":8080,"weight":1}]}]}]},"posture":{"permissions":[],"network":[]}});
 const T = (p: TargetEnv["provider"]) => ({ envId: "33333333-3333-4333-8333-333333333333", provider: p, region: "default", migrationId: "44444444-4444-4444-8444-444444444444" }) as TargetEnv;
 function dataSpec(): AppSpecV2 {
-  const s: any = structuredClone(upconvertV1(V1).spec);
+  const s: any = structuredClone(BASE);
   const svc = s.components.find((c: any) => c.kind === "service");
   svc.props.env.push({ name: "REDIS_URL", template: "${shop-cache.url}" }, { name: "BUCKET", fromLink: { to: "shop-assets", output: "name" } },
     { name: "QUEUE_URL", fromLink: { to: "orders", output: "url" } }, { name: "REDIS_HOST", fromLink: { to: "shop-cache", output: "host" } });
@@ -95,7 +95,7 @@ for (const p of ["aws", "gcp"] as const) {
   test(`${p}: stub 출력 → 앱 env 에 꽂힘 (template·fromLink 모두 실제 값으로, 자리표시 안 남음)`, () => {
     const spec = dataSpec(), out = stubTfOutputsV2(spec);
     const v: any = targetBuilderFor(p).toWorkloadValues(spec, out, T(p));
-    const env = v.workloads.find((w: any) => w.id === spec.components.find((c) => c.kind === "service")!.id).env as Array<{ name: string; value?: string }>;
+    const env = v.workloads.find((w: any) => w.name === spec.components.find((c) => c.kind === "service")!.id).env as Array<{ name: string; value?: string }>;
     const val = (n: string) => env.find((e) => e.name === n)?.value;
     assert.equal(val("REDIS_URL"), out["link.shop-cache.url"]);
     assert.equal(val("REDIS_HOST"), out["link.shop-cache.host"]);

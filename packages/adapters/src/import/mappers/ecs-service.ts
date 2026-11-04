@@ -27,7 +27,6 @@ export function secretRefOf(envName: string, valueFrom: string): { secret: strin
   return { secret: valueFrom.split("/").filter(Boolean).pop() ?? valueFrom, key: envName };
 }
 /** v1 normalize.ts 와 같은 key 규칙 (투영이 지금 v1 과 같은 값을 내게) */
-const v1SecretKey = (valueFrom: string) => valueFrom.split(":").pop()!;
 
 /** 작업 역할 ARN → 이름 (신원 묶기용). 없으면 "default" (k8s 규칙과 같은 자리) */
 export const roleNameOf = (arn: string | null | undefined): string | null => {
@@ -101,7 +100,7 @@ export const ecsServiceMapper: KindMapper = {
     };
     // 라우팅 재료: ALB 규칙(host·path) → 없으면 v1 데모 원본 hostname 의 "/" 한 줄. 포트 = 대상 그룹 컨테이너 포트
     const rport = lb?.containerPort ?? c.portMappings?.[0]?.containerPort;
-    const routes = rport == null ? [] : (s.routes?.length ? [...s.routes].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0)).map((r) => ({ host: r.host, path: r.path ?? null, port: rport }))
+    const routes = rport == null ? [] : (s.routes?.length ? [...s.routes].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0)).map((r) => ({ host: r.host, path: r.path ?? null, port: rport, ...(r.hostUnknown ? { hostUnknown: true } : {}), ...(r.listenerProtocol === "HTTPS" ? { tls: true } : {}) }))
       : s.hostname ? [{ host: s.hostname, path: null, port: rport }] : []);
     const aliases = [...new Set((s.serviceConnect?.aliases ?? []).map((a) => a.dnsName.toLowerCase()))].sort();
     return {
@@ -120,19 +119,6 @@ export const ecsServiceMapper: KindMapper = {
         ports: ports.length ? m(`${src}.portMappings`) : m(`${src}.portMappings`, 0.9, "포트 없음 (워커)"),
         replicas: as ? m(`${src}.autoscaling.min/max`) : m(`${src}.desiredCount`),
         ...(others.some((x) => !splitImage(x.image, null).digest) ? { sidecars: m(`${src}.containerDefinitions`, 0.6, "태그만 있는 보조 컨테이너는 digest 를 못 박아 뺐다 → 사람이 확인") } : {}),
-      },
-      projection: {
-        name: s.serviceName,
-        env: (c.environment ?? []).map((e) => ({ name: e.name, value: e.value })),
-        plainSecretNames: [],
-        secretRefs: (c.secrets ?? []).map((e) => ({ name: e.name, key: v1SecretKey(e.valueFrom) })),
-        specReplicas: s.desiredCount,
-        port: c.portMappings?.[0]?.containerPort ?? null,
-        // v1 데모 원본 칸 → ALB 규칙 첫 호스트 → (모름) null 이면 투영이 기본 이름
-        hostname: s.hostname ?? [...(s.routes ?? [])].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0))[0]?.host ?? null,
-        image: c.image,
-        imageDigest: digest,
-        healthPath,
       },
     };
   },

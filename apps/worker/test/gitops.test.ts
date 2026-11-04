@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, cpSync, mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AppSpec } from "@svc/contracts";
+import { ONE, apiImage } from "./demo-one.js";
 import { adapterFor } from "@svc/adapters";
 import { buildPlanDoc } from "../src/jobs/plan.js";
 import { stubPrecheck } from "../src/jobs/precheck.js";
@@ -16,7 +16,7 @@ import {
 
 const TENANT = "9f8e7d6c-0000-4000-8000-000000000001";
 const ENV_ID = "33333333-3333-4333-8333-333333333333";
-const spec = AppSpec.parse(adapterFor("gcp").normalize({ provider: "gcp", items: [], coverage: {} }).spec);
+const spec = ONE;
 const plan = buildPlanDoc({
   planId: "7f000000-0000-4000-8000-000000000001", migrationId: "4a8c0000-0000-4000-8000-000000000001",
   spec, target: { envId: ENV_ID, provider: "gcp", region: "default" }, precheck: stubPrecheck(), now: new Date(),
@@ -43,7 +43,7 @@ test("manifest 한 파일에서 Kind/namespace/name", () => {
 
 test("승인 뒤 명세가 바뀌면 GITOPS_VALUES_DRIFT", () => {
   assert.ok(approvedValues(input));
-  const changed = { ...spec, service: { ...spec.service, image: "registry/demo@sha256:" + "2".repeat(64) } };
+  const changed = apiImage(spec, "2");
   assert.throws(() => approvedValues({ ...input, spec: changed }), (e: GitopsError) => e.code === "GITOPS_VALUES_DRIFT");
 });
 

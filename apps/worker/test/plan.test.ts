@@ -1,11 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AppSpec, PlanDoc } from "@svc/contracts";
+import { ONE, apiImage, withApi } from "./demo-one.js";
+import { PlanDoc } from "@svc/contracts";
 import { adapterFor, DbNetworkError } from "@svc/adapters";
 import { buildPlanDoc, planOnError } from "../src/jobs/plan.js";
 import { stubPrecheck } from "../src/jobs/precheck.js";
 
-const spec = AppSpec.parse(adapterFor("aws").normalize({ provider: "aws", items: [], coverage: {} }).spec);
+const spec = ONE;
 const base = {
   planId: "7f000000-0000-4000-8000-000000000001",
   migrationId: "4a8c0000-0000-4000-8000-000000000001",
@@ -25,12 +26,12 @@ test("계획서는 PlanDoc 계약을 통과하고, 같은 입력이면 같은 pl
 test("명세가 바뀌면 planHash도 바뀐다 (사람이 본 계획 ≠ 실행할 계획을 막는 근거)", () => {
   const now = new Date("2026-11-07T00:00:00Z");
   const a = buildPlanDoc({ ...base, now });
-  const changed = { ...spec, service: { ...spec.service, replicas: spec.service.replicas + 1 } };
+  const changed = withApi(spec, { replicas: { min: 3, max: 9 } });
   const b = buildPlanDoc({ ...base, spec: changed, now });
   // 계획 지문은 명세 전체가 아니라 번역 결과(Terraform 변수·Helm 값)로 정해진다.
   // STUB 어댑터는 replicas를 번역에 안 넣으니 지문도 같아야 한다. 진짜 어댑터가 넣으면 둘 다 달라진다
   assert.equal(a.planHash === b.planHash, a.helmValuesHash === b.helmValuesHash && a.tfPlanHash === b.tfPlanHash);
-  const img = { ...spec, service: { ...spec.service, image: "registry/demo@sha256:" + "1".repeat(64) } };
+  const img = apiImage(spec, "1");
   assert.notEqual(buildPlanDoc({ ...base, spec: img, now }).planHash, a.planHash); // 이미지는 Helm 값에 들어간다
 });
 

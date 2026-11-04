@@ -6,12 +6,12 @@ import {
   CostEstimateRequest, type CostParts, type EnvEstimate, type LoadParams, type PriceCatalog, type PriceItem, type PriceRow,
 } from "./schema.js";
 
-// DRAFT(ai): 공통 명세 v2 → 환경별 월 비용 (PLAN_IR=v2 계획서의 비용 고지용).
+// DRAFT(ai): 공통 명세 v2 → 환경별 월 비용 (계획서의 비용 고지용).
 //   원칙: 가격표(PriceItem)에 줄이 있는 덩어리만 합계에 넣는다. 단가를 지어내지 않고, 못 넣은 구성요소·칸은 unknown 에 이름을 남긴다.
 //   넣는 것   = k8s 서비스(노드 수 + 클러스터 관리비·크레딧), postgres(DB 단가 + 스토리지 GB), 온프레 고정비
 //   못 넣는 것 = cache·objectStore·queue·job·관리형 컨테이너(ECS Fargate·Cloud Run)·VM 서비스 → "<종류>:<id>"
 //               postgres ha·readReplicas·compute, 요청량을 모르는 k8s 서비스 → "<종류>:<id>.<칸>"
-//   식은 v1 estimateEnv 와 같다 → upconvertV1 판은 v1 과 같은 금액
+//   식은 estimateEnv(estimate.ts) 와 같다 → 노드·DB 만 있는 명세는 두 계산이 같은 금액
 
 type Svc = Extract<ComponentV2, { kind: "service" }>;
 type Pg = Extract<ComponentV2, { kind: "postgres" }>;
@@ -45,18 +45,18 @@ function podDemand(s: Svc): { cpuMilli: number; memMiB: number; known: boolean }
   return { cpuMilli: cpu * n, memMiB: mem * n, known };
 }
 
-// 환경 하나. v1 estimateEnv 와 같은 순서·같은 식 (노드 종류 전수 탐색, 온프레 용량, 크레딧)
+// 환경 하나. estimateEnv 와 같은 순서·같은 식 (노드 종류 전수 탐색, 온프레 용량, 크레딧)
 export function estimateEnvV2(provider: Provider, spec: AppSpecV2, rps: number, c: EnvCtxV2): EnvCalc {
   const unknown = new Set<string>();
   const unverified = new Set<string>();
   const pick = (item: PriceItem) => rowsFor(c.catalog, provider, c.region, item);
-  // 실제로 쓴 줄의 근거만 본다 (v1 과 같음)
+  // 실제로 쓴 줄의 근거만 본다 (estimate.ts 와 같음)
   const used = (r: PriceRow | undefined) => {
     if (r && r.evidence !== "fact") unverified.add(r.item);
     return r;
   };
 
-  // DRAFT(ai): 출발도 같은 명세·같은 실행 방식(props.runtime)으로 센다. v1 과 같은 "같은 앱을 두 환경에 놓으면" 비교이고,
+  // DRAFT(ai): 출발도 같은 명세·같은 실행 방식(props.runtime)으로 센다. estimate.ts 와 같은 "같은 앱을 두 환경에 놓으면" 비교이고,
   //   출발의 실제 실행 방식(origin)으로 따로 세지 않는다 → 두 환경의 못 넣은 목록이 같아 고지 한 줄로 합칠 수 있다
   const k8s: Svc[] = [];
   const pgs: Pg[] = [];
@@ -66,7 +66,7 @@ export function estimateEnvV2(provider: Provider, spec: AppSpecV2, rps: number, 
     else unknown.add(unpricedLabel(x.kind, x.id));   // 가격표에 줄 없음 (k8s CronJob 도 노드 수에 안 넣으니 여기)
   }
 
-  // k8s 수요 = v1 requiredVcpu·requiredMemGiB 를 서비스 합으로. 부하식은 앱 전체에 한 번 (들어오는 트래픽은 하나)
+  // k8s 수요 = requiredVcpu·requiredMemGiB 를 서비스 합으로. 부하식은 앱 전체에 한 번 (들어오는 트래픽은 하나)
   let cpuMilli = 0, memMiB = 0;
   for (const s of k8s) {
     const d = podDemand(s);
@@ -99,7 +99,7 @@ export function estimateEnvV2(provider: Provider, spec: AppSpecV2, rps: number, 
   const base: Omit<CostParts, "nodes"> = { cluster: 0, db: 0, storage: 0, fixed: 0 };
   let credit = 0;
   if (provider === "onprem") {
-    // 온프레: 고정비에 클러스터·DB(CloudNativePG)·스토리지가 다 들어 있다 【추정】 (v1 과 같음)
+    // 온프레: 고정비에 클러스터·DB(CloudNativePG)·스토리지가 다 들어 있다 【추정】 (estimate.ts 와 같음)
     if (used(fixedRow)) base.fixed = fixedRow!.usd; else unknown.add("fixed");
   } else {
     // k8s 워크로드가 없으면(관리형·VM 만) 클러스터·노드를 안 쓴다 → 관리비도 안 센다

@@ -102,19 +102,21 @@ test("M3: 컷오버(STUB)가 적는 롤백 창 = core 기본값 하나 (cutover 
   assert.ok(Math.abs(r.s - core.DEFAULT_ROLLBACK_WINDOW_SEC) < 5, `창 ${r.s}초, 기대 ${core.DEFAULT_ROLLBACK_WINDOW_SEC}초`);
 });
 
-test("M8: apply 큐 만료 3600초, 이미 있던 큐(예전 DB)도 startBoss가 정책 표로 덮어쓴다", { skip }, async () => {
+test("M8: apply 큐 만료(PF RV-09 tfBudget, 기본 7200초), 이미 있던 큐(예전 DB)도 startBoss가 정책 표로 덮어쓴다", { skip }, async () => {
   const exp = async () => (await owner.query("SELECT expire_seconds FROM pgboss.queue WHERE name='apply'")).rows[0].expire_seconds as number;
-  assert.equal(await exp(), 3600);
+  const want = core.POLICY.apply?.expireInSeconds;
+  assert.ok(want && want >= 3600);
+  assert.equal(await exp(), want);
   await owner.query("UPDATE pgboss.queue SET expire_seconds=900 WHERE name='apply'");   // 고치기 전 DB 흉내
   await core.startBoss();
-  assert.equal(await exp(), 3600);
+  assert.equal(await exp(), want);
   const other = (await owner.query("SELECT expire_seconds FROM pgboss.queue WHERE name='sync'")).rows[0].expire_seconds;
   assert.equal(other, 900, "나머지 큐는 기본 15분 그대로");
 });
 
 test("M10: import가 discover(바깥 호출) 동안 DB 트랜잭션을 열어 두지 않는다 (idle in transaction 0)", { skip }, async () => {
   const m = await seed("importing");
-  const a = adapters.adapterFor("aws");
+  const a = imp.importDeps;
   const orig = a.discover;
   let during = -1;
   a.discover = async (...args: Parameters<typeof orig>) => {
@@ -122,7 +124,7 @@ test("M10: import가 discover(바깥 호출) 동안 DB 트랜잭션을 열어 �
     during = (await owner.query(`SELECT count(*)::int n FROM pg_stat_activity
       WHERE datname = current_database() AND usename='app_user' AND state LIKE 'idle in transaction%'
         AND query LIKE '%JOIN environments e ON e.id = m.source_env_id%'`)).rows[0].n;   // import ①의 마지막 쿼리
-    return orig.apply(a, args);
+    return orig(...args);
   };
   try { await imp.handleImport(job(m.id)); } finally { a.discover = orig; }
   assert.equal(during, 0, "discover 중 열린 트랜잭션 수");
@@ -133,11 +135,11 @@ test("M10: import가 discover(바깥 호출) 동안 DB 트랜잭션을 열어 �
 
 test("M10: discover 동안 취소되면 저장·전이 없이 끝난다 (③에서 상태 다시 확인)", { skip }, async () => {
   const m = await seed("importing");
-  const a = adapters.adapterFor("aws");
+  const a = imp.importDeps;
   const orig = a.discover;
   a.discover = async (...args: Parameters<typeof orig>) => {
     await owner.query("UPDATE migrations SET status='cancelled' WHERE id=$1", [m.id]);
-    return orig.apply(a, args);
+    return orig(...args);
   };
   try { await imp.handleImport(job(m.id)); } finally { a.discover = orig; }
   assert.equal(await st(m.id), "cancelled");

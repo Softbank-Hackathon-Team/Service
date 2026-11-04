@@ -33,8 +33,8 @@ export const EVIDENCE_FILES = {
   gcpIamRole: "infra/permissions/gcp-operate-iam-custom-role.yaml",
   onpremRole: "infra/permissions/onprem-operate-clusterrole.yaml",
   onpremKyverno: "infra/permissions/onprem-kyverno-platform.yaml",
-  chartDeploy: "gitops/charts/app/templates/deployment.yaml",
-  chartSa: "gitops/charts/app/templates/serviceaccount.yaml",
+  chartDeploy: "gitops/charts/app/templates/_helpers.tpl",   // PB-1: 파드 모양(app.wpod)이 여기. Deployment 는 workloads.yaml
+  chartSa: "gitops/charts/app/templates/workloads.yaml",     // PB-1: ServiceAccount 도 workloads.yaml 이 그림
   chartIngress: "gitops/charts/app/templates/ingress.yaml",
   chartValues: "gitops/charts/app/values.yaml",
 } as const;

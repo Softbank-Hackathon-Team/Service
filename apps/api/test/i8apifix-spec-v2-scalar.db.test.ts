@@ -1,4 +1,4 @@
-// DB 시험 (I8apifix): spec_v2 가 JSON 스칼라·배열이면 GET /spec 이 v1 판처럼 200 이 아니라 409 SPEC_INVALID, DB 는 0031 CHECK 로 거부
+// DB 시험 (I8apifix): spec_v2 가 JSON 스칼라·배열이면 GET /spec 이 409 SPEC_INVALID, DB 는 0031 CHECK 로 거부
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -57,15 +57,14 @@ test("0031: 스칼라·배열 spec_v2 INSERT·UPDATE 는 DB 가 거부, NULL·�
   assert.equal(c.convalidated, true, "NOT VALID 없이 기존 줄까지 검사");
 });
 
-test("toSpecView: spec_v2 가 JSON 스칼라면 409 SPEC_INVALID (CHECK 전 옛 줄 대비), NULL 은 v1 판 그대로", { skip }, () => {
+test("toSpecView: spec_v2 가 JSON 스칼라면 409 SPEC_INVALID (CHECK 전 옛 줄 대비), NULL 도 409", { skip }, () => {
   const row = { version: 1, createdAt: "2026-11-02T00:00:00.000Z", spec: {}, fieldMeta: {}, draft: false };
   for (const s of ["x", 1, true, 0, "", false]) {
     assert.throws(() => toSpecView("m", { ...row, specV2: s }),
       (e: unknown) => e instanceof DomainError && e.status === 409 && e.code === "SPEC_INVALID", String(s));
   }
   assert.throws(() => toSpecView("m", { ...row, specV2: [] }), (e: unknown) => e instanceof DomainError && e.code === "SPEC_INVALID");
-  for (const s of [null, undefined]) {
-    const v = toSpecView("m", { ...row, specV2: s });
-    assert.ok(!("specV2" in v) && !("needsReviewV2" in v));
-  }
+  // 명세 칸이 없는 예전 판(NULL)도 409 SPEC_INVALID (다시 가져와야 함, 가짜 기본값으로 안 채움)
+  for (const s of [null, undefined])
+    assert.throws(() => toSpecView("m", { ...row, specV2: s }), (e: unknown) => e instanceof DomainError && e.code === "SPEC_INVALID");
 });

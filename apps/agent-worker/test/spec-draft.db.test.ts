@@ -4,7 +4,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
-import { adapterFor, DEMO_INVENTORY } from "@svc/adapters";
+import { normalizeV2, DEMO_INVENTORY } from "@svc/adapters";
 import { mockDraftLlm } from "@svc/agent";
 
 const DB = process.env.DATABASE_URL, OWNER = process.env.OWNER_DATABASE_URL;
@@ -28,17 +28,17 @@ before(async () => {
 });
 after(async () => { if (skip) return; await core.pool.end(); await owner.end(); });
 
-// 가져오기가 끝난 이전 하나(spec v1)와 queued 실행 한 건을 만든다 (시험 준비는 표 주인 계정)
+// 가져오기가 끝난 이전 하나(명세 1판, spec_v2 칸)와 queued 실행 한 건을 만든다 (시험 준비는 표 주인 계정)
 async function setup() {
   const m = randomUUID(), run = randomUUID();
-  const { spec, fieldMeta } = adapterFor("aws").normalize(DEMO_INVENTORY.aws);
+  const { result } = normalizeV2(DEMO_INVENTORY.aws);
   await owner.query(`INSERT INTO migrations (id, tenant_id, source_env_id, target_env_id, status) VALUES ($1,$2,$3,$4,'spec_review')`, [m, T, S, G]);
-  await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta) VALUES ($1,$2,1,$3,$4)`, [T, m, spec, fieldMeta]);
+  await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta, spec_v2) VALUES ($1,$2,1,'{}','{}',$3)`, [T, m, result]);
   await owner.query(`INSERT INTO agent_runs (id, tenant_id, migration_id, kind) VALUES ($1,$2,$3,'spec_draft')`, [run, T, m]);
   return { m, run };
 }
 
-test("Postgres: 초안이 spec_versions v2(_draft 표시)로 저장, 실행·단계·감사 기록, 남의 회사는 못 봄", { skip }, async () => {
+test("Postgres: 초안이 spec_versions 2판(_draft 표시)으로 저장, 실행·단계·감사 기록, 남의 회사는 못 봄", { skip }, async () => {
   const { m, run } = await setup();
   const store = st.pgSpecDraftStore();
   assert.equal(await store.load(OTHER, run), null);                         // 회사 벽: 남의 실행은 안 보인다
@@ -47,8 +47,12 @@ test("Postgres: 초안이 spec_versions v2(_draft 표시)로 저장, 실행·단
   assert.equal(r.skipped, false);
   if (r.skipped || r.state !== "finished") throw new Error(JSON.stringify(r));
   assert.equal(r.version, 2);
-  const v = (await owner.query(`SELECT version, field_meta ? '_draft' AS draft FROM spec_versions WHERE migration_id=$1 ORDER BY version`, [m])).rows;
-  assert.deepEqual(v, [{ version: 1, draft: false }, { version: 2, draft: true }]);
+  const v = (await owner.query(`SELECT version, field_meta ? '_draft' AS draft, spec, spec_v2 FROM spec_versions WHERE migration_id=$1 ORDER BY version`, [m])).rows;
+  assert.deepEqual(v.map((x) => [x.version, x.draft]), [[1, false], [2, true]]);
+  // 초안 판 = 기준 판 한 벌(unmapped·ids…)에 AI 의 spec·fieldMeta 만 바꿔 끼움. 옛 spec 칸은 비움
+  assert.deepEqual(v[1].spec, {});
+  assert.deepEqual(v[1].spec_v2.ids, v[0].spec_v2.ids);
+  assert.deepEqual(v[1].spec_v2.spec, v[0].spec_v2.spec);   // 가짜 공급자는 명세를 그대로 낸다
   const ar = (await owner.query(`SELECT status, model, jsonb_array_length(result->'risks') AS risks FROM agent_runs WHERE id=$1`, [run])).rows[0];
   assert.equal(ar.status, "finished"); assert.equal(ar.model, "mock-draft"); assert.ok(ar.risks >= 4);
   const steps = (await owner.query(`SELECT count(*)::int AS n FROM agent_steps WHERE run_id=$1`, [run])).rows[0].n;
@@ -59,7 +63,7 @@ test("Postgres: 초안이 spec_versions v2(_draft 표시)로 저장, 실행·단
   assert.deepEqual(await h.handleSpecDraft(job, { store, llm: mockDraftLlm() }), { skipped: true });
 });
 
-test("Postgres: 다음 초안은 AI 판이 아니라 규칙 판(v1)을 기준으로 v3 에 저장, 실패는 failed + 감사 error", { skip }, async () => {
+test("Postgres: 다음 초안은 AI 판이 아니라 규칙 판(1판)을 기준으로 v3 에 저장, 실패는 failed + 감사 error", { skip }, async () => {
   const { m, run } = await setup();
   const store = st.pgSpecDraftStore();
   await h.handleSpecDraft({ tenantId: T, requestId: "a", agentRunId: run }, { store, llm: mockDraftLlm() });

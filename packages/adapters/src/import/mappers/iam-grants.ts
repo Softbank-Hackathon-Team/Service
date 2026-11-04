@@ -16,9 +16,12 @@ export interface RawAwsIamPolicy {
   roleName: string;
   serviceAccount: string;
   namespace?: string;
-  source?: "pod-identity" | "irsa";
+  source?: "pod-identity" | "irsa" | "ecs-task" | "gke-workload-identity";   // RF-3: ecs-task = ECS 작업 역할 (네임스페이스 없음, serviceAccount = 역할 이름), WI-1: GKE GSA
   policies?: string[];              // 붙은 정책 이름 (관리형 ARN · 인라인 이름). 근거 표시용
   statements: unknown;              // IAM Statement 배열 (문자열 하나·객체 하나도 받는다)
+  boundary?: { arn: string; statements: unknown[] };   // IB-1: 권한 경계 (있으면 grants 를 이 안으로 좁힘)
+  boundaryUnread?: true;            // IB-1: 권한 경계를 못 읽음
+  scp?: "unread";                   // IB-1: 조직 SCP 를 못 읽음 (TODO(human), discover/aws-iam.ts)
 }
 
 type Intent = LinkV2["intent"];
@@ -43,6 +46,8 @@ const ACCOUNT_LEVEL = /^(s3:(ListAllMyBuckets|CreateBucket|GetAccountPublicAcces
 // DRAFT(ai): RDS IAM DB 인증(rds-db:connect)은 자원 ARN 이 리소스 ID(db-XXXX) 라 이름으로 못 맞춤 → 기준선(IR 밖 자원)으로 남김
 export const ARN_SERVICE_BY_TYPE: Readonly<Record<string, string>> = {
   "rds.dbInstance": "rds", "s3.bucket": "s3", "sqs.queue": "sqs", "elasticache.replicationGroup": "elasticache",
+  // WI-1 DRAFT(ai): GCP 출발 자원도 공통 동작 이름(s3:·sqs:)으로 grants 를 단다 (gcpBindingToPolicy 가 역할을 이 이름으로 바꿈)
+  "gcs.bucket": "s3", "pubsub.topic": "sqs",
 };
 
 /** ARN 풀기: arn:aws:<service>:<region>:<account>:<resource>. 이름 칸은 서비스마다 다르다 */
@@ -59,6 +64,19 @@ export function parseArn(r: string): { service: string; name: string; path: stri
 const glob = (pat: string) => new RegExp(`^${pat.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".")}$`);
 const wildName = (r: string) => r === "*" || parseArn(r).name.includes("*");
 const sortStr = (xs: string[]) => [...xs].sort();
+
+// IB-1: 권한 경계가 이 동작을 허용하나 (경계 Allow 중 하나가 동작을 덮고, 경계 Deny 가 안 막음). 자원·조건은 grants 원문 쪽 검토로 남김
+function boundaryAllows(b: { statements: unknown[] } | undefined, action: string): boolean {
+  if (!b) return true;
+  const sts = b.statements.filter((x): x is Record<string, unknown> => !!x && typeof x === "object");
+  const hit = (st: Record<string, unknown>) => {
+    const acts = arr(st.Action), nacts = arr(st.NotAction);
+    const m = (p: string) => glob(p.toLowerCase()).test(action.toLowerCase()) || (action === "*" && p === "*");
+    return acts.length ? acts.some(m) : nacts.length ? !nacts.some(m) : false;
+  };
+  if (sts.some((st) => (st.Effect ?? "Allow") === "Deny" && hit(st))) return false;
+  return sts.some((st) => (st.Effect ?? "Allow") === "Allow" && hit(st));
+}
 
 /** links.ts 의 add() 와 같은 모양으로 넘긴다 */
 export interface IamLinkAdd {
@@ -81,16 +99,27 @@ export function iamGrants(components: MappedComponent[], policies: RawAwsIamPoli
 
   for (const p of sorted) {
     // 네임스페이스 없는 정책은 어느 파드 신원인지 모른다 → 아무 데도 안 붙인다 (모든 네임스페이스에 붙이면 넓어진다)
-    if (!p.namespace) {
+    // RF-3: ECS 작업 역할은 네임스페이스가 없다 → ECS 워크로드 중 같은 역할 이름(serviceAccount)을 쓰는 것에만
+    const ecs = p.source === "ecs-task";
+    if (!p.namespace && !ecs) {
       unmapped.push({ resource: `aws.iamPolicy:${p.roleName}`, grade: "B", reason: "신원의 네임스페이스를 모름 → 어느 서비스 권한인지 사람이 확인" });
       continue;
     }
-    const subs = workloads.filter((w) => w.props.serviceAccount === p.serviceAccount && w.native.namespace === p.namespace);
+    const subs = workloads.filter((w) => w.props.serviceAccount === p.serviceAccount && (ecs ? w.native.type === "ecs.service" : w.native.namespace === p.namespace));
     if (!subs.length) {
-      unmapped.push({ resource: `aws.iamPolicy:${p.roleName}`, grade: "B", reason: `${p.namespace}/${p.serviceAccount} 를 쓰는 워크로드가 없음 → 이전 대상 밖 신원` });
+      unmapped.push({ resource: `aws.iamPolicy:${p.roleName}`, grade: "B", reason: `${ecs ? "ECS 작업 역할 " : `${p.namespace}/`}${p.serviceAccount} 를 쓰는 워크로드가 없음 → 이전 대상 밖 신원` });
       continue;
     }
     const source = `iam:${p.roleName}`;
+    // IB-1: 경계가 막은 동작은 grants 에서 빠진다 → 무엇이 빠졌는지 기준선에 남김. SCP 는 못 읽음 표시
+    if (p.boundary) {
+      const cut = [...new Set(arr<Record<string, unknown>>(p.statements).filter((x) => x && typeof x === "object" && (x.Effect ?? "Allow") === "Allow")
+        .flatMap((x) => arr(x.Action)).filter((a) => !boundaryAllows(p.boundary, a)))].sort();
+      for (const sub of subs) permissions.push({ subject: sub.id!, source: `${source}:boundary`, effect: "Allow", actions: sortStr(arr(p.boundary.statements.flatMap((x) => arr((x as Record<string, unknown>)?.Action)))),
+        resources: ["*"], mode: "mirror", note: `권한 경계 ${p.boundary.arn.split("/").pop()} → 도착 역할에도 같은 경계.${cut.length ? ` 경계 밖이라 grants 에서 뺀 동작: ${cut.join(",")}` : ""}` });
+    }
+    if (p.boundaryUnread) unmapped.push({ resource: `aws.iamPolicy:${p.roleName}.boundary`, grade: "B", reason: "권한 경계를 못 읽음(iam:GetRole) → 경계가 있으면 출발 실제 권한이 grants 보다 좁음. 사람이 확인" });
+    if (p.scp === "unread") unmapped.push({ resource: `aws.iamPolicy:${p.roleName}.scp`, grade: "B", reason: `조직 SCP 를 못 읽음 → ${subs.map((x) => x.id).sort().join(",")} 의 출발 실제 권한이 정책보다 좁을 수 있음. 사람이 확인` });
     for (const st0 of arr<Record<string, unknown>>(p.statements)) {
       if (!st0 || typeof st0 !== "object") continue;
       const st = {
@@ -103,7 +132,7 @@ export function iamGrants(components: MappedComponent[], policies: RawAwsIamPoli
       const covered = new Map<string, string[]>();   // targetId → 그 대상을 가리키는 resources
       const coverOf = new Map<string, string[]>();   // resource → 덮는 targetId 들 (기준선 covers 를 자원마다)
       // 대상에 쓸 수 있는 동작만: 서비스가 같고 계정 단위 동작이 아닌 것
-      const actsFor = (t: MappedComponent) => st.Action.filter((a) => (a === "*" || a.split(":")[0] === svcOf(t)) && !ACCOUNT_LEVEL.test(a));
+      const actsFor = (t: MappedComponent) => st.Action.filter((a) => (a === "*" || a.split(":")[0] === svcOf(t)) && !ACCOUNT_LEVEL.test(a) && boundaryAllows(p.boundary, a));
       if (!odd) for (const r of st.Resource) {
         const a = parseArn(r);
         for (const t of targets) {
@@ -163,4 +192,33 @@ export function iamGrants(components: MappedComponent[], policies: RawAwsIamPoli
   const pk = (x: PermissionV2) => `${x.subject}\0${x.source}\0${x.effect}\0${x.resources.join(",")}\0${x.actions.join(",")}`;
   permissions.sort((a, b) => (pk(a) < pk(b) ? -1 : pk(a) > pk(b) ? 1 : 0));
   return { adds, permissions, unmapped };
+}
+
+// ---- WI-1: GCP 역할 → IR grants 공통어(AWS 동작 이름) ----
+// DRAFT(ai): 도착 GCP Builder 의 GCP_ROLE 표(target/grants.ts)를 거꾸로 읽은 것 + 기본 역할. 프로젝트 바인딩이라 Resource "*"
+//   (= 다른 근거로 이미 이어진 버킷·큐에만 붙는다, AWS "*" 와 같은 규칙). 표 밖 역할은 동작 이름 "gcp:<역할>" 로 기준선에만 남긴다
+const GCP_ROLE_ACTIONS: Record<string, string[]> = {
+  "roles/storage.objectViewer": ["s3:GetObject", "s3:ListBucket"],
+  "roles/storage.objectCreator": ["s3:PutObject"],
+  "roles/storage.objectUser": ["s3:GetObject", "s3:ListBucket", "s3:PutObject", "s3:DeleteObject"],
+  "roles/storage.objectAdmin": ["s3:*Object", "s3:ListBucket"],
+  "roles/storage.admin": ["s3:*"],
+  "roles/pubsub.publisher": ["sqs:SendMessage"],
+  "roles/pubsub.subscriber": ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:ChangeMessageVisibility"],
+  "roles/pubsub.viewer": ["sqs:GetQueueAttributes"],
+  "roles/pubsub.editor": ["sqs:*"],
+  "roles/pubsub.admin": ["sqs:*"],
+  "roles/editor": ["s3:*", "sqs:*"],
+  "roles/owner": ["s3:*", "sqs:*"],
+};
+export interface RawGcpIamBindingLike { gsa: string; namespace: string; serviceAccount: string; roles: string[]; conditional?: string[] }
+export function gcpBindingToPolicy(b: RawGcpIamBindingLike): RawAwsIamPolicy {
+  const known = b.roles.flatMap((r) => GCP_ROLE_ACTIONS[r] ?? []);
+  const unknown = [...b.roles.filter((r) => !GCP_ROLE_ACTIONS[r]), ...(b.conditional ?? [])].map((r) => `gcp:${r}`);
+  const statements = [
+    ...(known.length ? [{ Effect: "Allow", Action: [...new Set(known)].sort(), Resource: "*" }] : []),
+    ...(unknown.length ? [{ Effect: "Allow", Action: unknown.sort(), Resource: "*" }] : []),
+  ];
+  return { kind: "aws.iamPolicy", roleName: b.gsa, serviceAccount: b.serviceAccount, namespace: b.namespace, source: "gke-workload-identity",
+    policies: b.roles.map((r) => `project:${r}`), statements };
 }

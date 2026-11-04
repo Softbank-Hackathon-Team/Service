@@ -12,6 +12,7 @@ export type MockCall = { op: "get" | "set"; lbId: string; w?: Weights; failed?: 
 
 export function mockLb(initial: Weights = { source: 1, target: 0 }, o: MockLbOpts = {}) {
   const state = new Map<string, Weights>();
+  const fallback = new Map<string, "source" | "target">();
   const prev = new Map<string, Weights>();
   const calls: MockCall[] = [];
   let failSets = o.failSets ?? 0, staleGets = o.staleGets ?? 0;
@@ -34,6 +35,8 @@ export function mockLb(initial: Weights = { source: 1, target: 0 }, o: MockLbOpt
       prev.set(lbId, state.get(lbId) ?? initial);
       state.set(lbId, { ...w });
     },
+    async setFallback(lbId, side) { fallback.set(lbId, side); },
+    async getFallback(lbId) { return fallback.get(lbId) ?? "source"; },
   };
   return sw;
 }

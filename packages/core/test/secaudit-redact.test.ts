@@ -38,3 +38,11 @@ test("거부(안 가림): id·코드·숫자·CIDR·상태·출력 이름은 그
     seq: 123456789012345, token: null };
   assert.deepEqual(redactAuditValue(d), d);
 });
+
+test("IA-1: 명령 꼴 비밀(redis-cli -a, mysqladmin -p붙임, --password) 가림, 포트(-p 6379·-P 3306)는 남김", () => {
+  assert.equal(redactText("redis-cli -h 10.0.0.0/8 -a s3cr3t ping"), `redis-cli -h 10.0.0.0/8 -a ${AUDIT_REDACTED} ping`);
+  assert.equal(redactText("mysqladmin -uroot -ps3cr3t ping"), `mysqladmin -uroot -p${AUDIT_REDACTED} ping`);
+  assert.equal(redactText("app --password s3cr3t"), `app --password ${AUDIT_REDACTED}`);
+  assert.equal(redactText("redis-cli -p 6379 ping"), "redis-cli -p 6379 ping");
+  assert.equal(redactText("mysqladmin ping -P 3306"), "mysqladmin ping -P 3306");
+});
