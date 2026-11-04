@@ -2,7 +2,7 @@
 
 # vCluster 배포 리허설
 
-상태: AI 초안. 코드 기준은 main(#194·#198·#201·#204·#206)과 #207(agent-worker 백엔드, 머지 직전). 실제 EKS 에서는 아직 돌리지 않았다 (2026-11-04).
+상태: AI 초안. 코드 기준은 main(#194·#198·#201·#204·#206·#207)과 #214(줄 서기 기한과 실행 기한 나눔). #214 가 먼저 머지돼야 이 문서가 코드와 맞는다. 실제 EKS 에서는 아직 돌리지 않았다 (2026-11-04).
 
 ## 0. 한눈에 보기
 
@@ -43,16 +43,22 @@ flowchart LR
 | 없음, 같은 이전·같은 계획·같은 지문의 통과 줄이 24시간 안에 있음 | 재사용 줄(`passed`, `reused_from`)을 넣고 커밋 |
 | 없음, 치환 표에 없는 종류가 묶음에 있음 | `failed`(`REHEARSAL_UNSUPPORTED_KIND`) → paused |
 | 없음, 이미지 복사 실패 | `error`(`REHEARSAL_IMAGE_MIRROR_FAILED`) → paused |
-| 없음, 그 밖 | `queued` 줄과 `sandbox-rehearsal` 작업을 한 트랜잭션에 넣고 기다림 |
-| `queued`·`running`, 기한 전 | 다시 기다림 (`REHEARSAL_POLL_SEC` 또는 남은 기한 중 짧은 쪽) |
-| `queued`·`running`, 기한 지남 | `error`(`REHEARSAL_TIMEOUT`) → paused |
+| 없음, 그 밖 | `queued` 줄, `sandbox-rehearsal` 작업, 다시 넣는 deploy 작업을 한 트랜잭션에 넣고 기다림 |
+| `queued`·`running`, 지금 단계 기한 전 | 다시 기다림 (`REHEARSAL_POLL_SEC` 또는 남은 기한 중 짧은 쪽) |
+| `queued`·`running`, 지금 단계 기한 지남 | `error`(`REHEARSAL_TIMEOUT`) → paused. 감사 `deploy.paused` 의 `detail.rehearsal.stage` 가 `queue`(줄 서기) 또는 `run`(실행) |
 | `passed` | 그 지문으로 커밋. 커밋 직전 렌더 지문이 다르면 `REHEARSAL_BUNDLE_MISMATCH` → paused |
 | `failed`·`error` | paused (줄의 실패 코드) |
 | `skipped` | 커밋 |
 
-- 기다리는 동안 deploy 작업을 붙잡지 않는다. agent-worker 가 결과를 쓰면서 core `wakeQueued` 로 deploy 작업을 깨운다.
+- 기한은 둘이다. 줄의 `deadline_at` 칸에는 지금 단계의 기한 하나만 들어간다.
+  - 줄 서기 기한: 워커가 줄을 넣을 때 쓴다. 만든 때 + `REHEARSAL_QUEUE_TIMEOUT_SEC`(기본 3600초)다. 리허설 큐는 한 번에 1건이라, 앞 리허설을 기다린 시간이 실행 기한을 먹지 않게 나눴다.
+  - 실행 기한: agent-worker 가 줄을 잡으면서 다시 쓴다. 잡은 때 + 입력 `runBudgetSec` 다. `runBudgetSec` 는 워커의 `REHEARSAL_TIMEOUT_SEC`(기본 1200초)를 입력에 실은 값이다.
+  - 워커는 두 단계 모두 기한이 지나면 줄을 `REHEARSAL_TIMEOUT` 으로 닫는다. agent-worker 는 줄 서기 기한이 지난 줄을 잡지 않는다. 둘 다 조건부 `UPDATE` 라 먼저 쓴 쪽이 이긴다.
+- 기다리는 동안 deploy 작업을 붙잡지 않는다. agent-worker 가 결과를 쓰면서 core `wakeQueued` 로 deploy 작업을 깨운다. 깨울 deploy 작업은 줄과 같은 트랜잭션에 들어가서, 리허설이 아무리 빨리 끝나도 이미 있다.
+- 리허설 기다림은 예정된 일이라 감사 `deploy.retry_scheduled` 의 result 가 `ok` 이고, 로그는 info `job waiting` 이다. 다른 재시도는 그대로 `error` 다.
 - 다른 길에서 남는 `skipped` 줄도 있다. ECS·Cloud Run·VM 도착은 `non_k8s`, 클러스터 없이 만든 이전은 `no_cluster`, GitOps 설정 없이 `MOCK_ARGO=1` 로 흉내 낸 배포는 `mock` 이다.
-- 같은 차례에 작업이 두 번 와도 줄은 하나다. 넣기는 `ON CONFLICT DO NOTHING`, 상태 바꾸기는 조건부 `UPDATE` 다 (`apps/worker/src/rehearsal/store.ts`).
+- 같은 차례에 작업이 두 번 와도 줄은 하나다 (`apps/worker/src/rehearsal/store.ts`). 끝난 줄 넣기는 `ON CONFLICT DO NOTHING` 이다. `queued` 줄 넣기는 고유 키 위반으로 트랜잭션째 취소되고, 작업 재시도가 앞 줄을 읽어 따라간다. 상태 바꾸기는 조건부 `UPDATE` 다.
+- 끝난 줄(`skipped`·`passed`·`failed`·`error`)은 누가 닫든 `phase` 가 `done` 이다.
 
 ### 1-2. 워커: 이미지 복사
 
@@ -73,6 +79,8 @@ flowchart LR
 - 원본(`original`): 렌더 결과 그대로. 서버 dry-run 에만 쓴다.
 - 치환본(`apply`): 아래 표대로 바꾼 사본. 실제로 적용한다. 표에 없는 바꿈은 없다 (`apps/worker/src/rehearsal/substitute.ts`).
 
+입력에는 워커가 이미지를 복사했는지(`imagesMirrored`)와 실행 기한 초(`runBudgetSec`)도 들어간다. `MOCK_SANDBOX=1` 워커는 복사를 건너뛰고 `imagesMirrored: false` 를 싣는다.
+
 | 원본 | 리허설 | 충실도 항목 |
 |---|---|---|
 | 복제 수 2 이상 (HPA 최소 포함) | 1 | `replicas` |
@@ -80,19 +88,21 @@ flowchart LR
 | nodeSelector·affinity·tolerations·topologySpread·priorityClass | 지움 | `scheduling` |
 | LoadBalancer·NodePort Service | ClusterIP | `service_type` |
 | PVC | emptyDir | `storage` |
-| ExternalSecret | 같은 이름·같은 키의 Secret, 가짜 값 | `secrets` |
+| ExternalSecret | 같은 이름·같은 키의 Secret, 가짜 값. `kubernetes.io/tls` 면 `tls.crt`·`tls.key` 는 Ed25519 자체 서명 인증서와 키 | `secrets` |
 | 관리형 DB (RDS, Cloud SQL), CNPG Cluster | agent-worker 가 만드는 빈 Postgres 대체물 | `database` |
 | Ingress | 적용 안 함. 백엔드 Service 를 직접 확인 | `ingress` |
 | IRSA·GKE Workload Identity 주석 | 지움 | `cloud_identity` |
 | 이미지 주소 | 플랫폼 ECR 샌드박스 자리, 같은 다이제스트 | `images` |
 
+TLS 가짜 값은 묶음 지문과 비밀 이름에서 정해져서, 같은 입력이면 같은 글자다 (`apps/worker/src/rehearsal/dummy-tls.ts`). 인증서를 읽어 TLS 를 여는 앱이 16진 가짜 값 때문에 리허설에서만 죽는 일을 막는다. RSA 키만 읽는 앱은 여전히 리허설에서만 실패할 수 있다 (`DRAFT(ai)`).
+
 치환 표가 아는 종류는 ServiceAccount, ConfigMap, Secret, PersistentVolumeClaim, Deployment, StatefulSet, DaemonSet, Job, CronJob, Service, HorizontalPodAutoscaler, PodDisruptionBudget, ExternalSecret(`external-secrets.io`), Ingress, Cluster(`postgresql.cnpg.io`) 다. 그 밖의 종류가 하나라도 있으면 `REHEARSAL_UNSUPPORTED_KIND` 로 닫는다.
 
 ### 1-4. agent-worker: 검사 순서
 
-`sandbox-rehearsal` 큐 한 건을 받으면 `packages/agent/src/rehearsal/run.ts` 순서대로 돈다. 필수 검사가 하나라도 실패하면 그 단계의 코드로 멈춘다. 지우기는 언제나 한다.
+`sandbox-rehearsal` 큐 한 건을 받으면 줄을 잡고(`running`, 실행 기한을 다시 씀) `packages/agent/src/rehearsal/run.ts` 순서대로 돈다. 필수 검사가 하나라도 실패하면 그 단계의 코드로 멈춘다. 지우기는 언제나 한다.
 
-1. 순수 검사. 지원 종류, DB 대체물 판(Postgres 15·16·17), 도착 네임스페이스 한도(원본 한도 합)를 본다. sandbox 노드 자리(CPU 1930m, 메모리 3400Mi)에 들어가는지도 미리 센다.
+1. 순수 검사. 입력 `imagesMirrored` 가 `false` 면 샌드박스를 만들기 전에 `REHEARSAL_IMAGE_MIRROR_FAILED` 로 멈춘다. 진짜 샌드박스는 고객 원본 주소에서 이미지를 받지 않는다. 그다음 지원 종류, DB 대체물 판(Postgres 15·16·17), 도착 네임스페이스 한도(원본 한도 합)를 본다. sandbox 노드 자리(CPU 1930m, 메모리 3400Mi)에 들어가는지도 미리 센다.
 2. 샌드박스 만들기. 지금 실행이 아닌 리허설 네임스페이스를 먼저 지운다. 그다음 `sbx-rehearsal-<실행 번호 앞 12자>` 네임스페이스, RoleBinding `sbx-operator`, NetworkPolicy `sbx-default-deny`, vCluster 차트를 차례로 만든다. `/readyz` 가 200 이 될 때까지 최대 180초 기다린다.
 3. 가상 앱 네임스페이스를 만든다. enforce 는 `baseline`, warn·audit 는 `restricted` 다. 원본에 필요한 CRD(ExternalSecret, CNPG Cluster)를 넣는다.
 4. 원본 서버 dry-run (`REHEARSAL_DRY_RUN_REJECTED`).
@@ -103,6 +113,8 @@ flowchart LR
 9. 검사 파드(curl) 하나에서 Service 와 서비스 사이 연결(edges)마다 요청을 한 번 보낸다. 4xx 도 "닿았다"로 본다 (`REHEARSAL_CONNECTIVITY_FAILED`).
 10. 지우기. port-forward 를 닫고, `helm uninstall`, 네임스페이스 삭제. 못 지우면 경고를 남기고 만료 청소가 마무리한다.
 
+- 실행 기한: `run.ts` 안의 기다림(CRD 준비, 롤아웃 폴링, 60초 재시작 관찰, 검사 파드 폴링)마다 먼저 본다. 기다린 뒤가 실행 기한 120초 전을 넘으면 기다리지 않고 `REHEARSAL_TIMEOUT` 으로 멈춘다. 검사 줄 `sandbox_ready` 에 멈춘 단계를 남기고 지우기를 한다. 120초는 지우기와 결과 쓰기 몫이다 (`DEADLINE_RESERVE_MS`, `DRAFT(ai)`). 그래서 `REHEARSAL_TIMEOUT_SEC` 하한이 300초다.
+- vCluster 만들기(helm 설치 최대 150초, `/readyz` 최대 180초)는 이 확인을 지나지 않는다. 만들기가 기한을 넘기면 agent-worker 대신 워커가 줄을 닫는다.
 - 판정: 코드 없음이면 `passed`, 코드의 갈래가 `platform` 이면 `error`, 그 밖은 `failed` 다.
 - 가상 쿠버네티스 판은 도착 마이너를 따른다 (apply 출력 `cluster_version`). 모르면 1.35 다. 표에 있는 마이너는 1.33~1.36 이다.
 - 만료 청소: agent-worker 가 시작할 때와 5분마다, `platform.svc/expires-at` 이 지난 `sbx-*` 네임스페이스를 지운다 (`apps/agent-worker/src/sweeper.ts`).
@@ -112,7 +124,8 @@ flowchart LR
 | 어디 | 이름 | 값 | 기본 | 뜻 |
 |---|---|---|---|---|
 | worker | `SANDBOX_REHEARSAL` | `off` \| `on` | `off` | 리허설 문을 켠다. 꺼지면 `skipped`(`disabled`) 줄만 남기고 커밋 |
-| worker | `REHEARSAL_TIMEOUT_SEC` | 정수, 120 이상 | 1200 | 줄을 만든 때부터 결과까지 기한. 넘으면 `REHEARSAL_TIMEOUT` |
+| worker | `REHEARSAL_QUEUE_TIMEOUT_SEC` | 정수, 60 이상 | 3600 | 줄 서기 기한. 줄을 만든 때부터 agent-worker 가 잡을 때까지. 넘으면 `REHEARSAL_TIMEOUT` (샌드박스는 돌지 않음) |
+| worker | `REHEARSAL_TIMEOUT_SEC` | 정수, 300 이상 | 1200 | 실행 기한. agent-worker 가 줄을 잡은 때부터 결과까지. 입력 `runBudgetSec` 로 넘긴다. 넘으면 `REHEARSAL_TIMEOUT` |
 | worker | `REHEARSAL_POLL_SEC` | 정수, 5 이상 | 60 | 깨우기가 안 왔을 때 다시 보는 간격 |
 | worker | `SANDBOX_IMAGE_REGISTRY` | `<호스트>/<접두어>` | 없음 | 이미지 복사 자리. `on` 이면 꼭 있어야 하고, 없으면 워커가 뜨지 않는다 |
 | agent-worker | `SANDBOX_KUBE_URL` | 주소 | 없음 | 있으면 플랫폼 클러스터 밖 실행. 가상 API 는 `kubectl port-forward` 로 닿는다. 없으면 클러스터 안 서비스 계정 |
@@ -122,7 +135,7 @@ flowchart LR
 | agent-worker | `SANDBOX_VCLUSTER_CHART` | `.tgz` 경로 | `/app/vendor/vcluster-0.37.6.tgz` | 차트 묶음. CRD 는 옆 폴더 `crds/` 에서 읽는다 |
 | agent-worker | `SANDBOX_TTL_SEC` | 정수, 300 이상 | 1800 | 호스트 `sbx-*` 네임스페이스 만료 (청소 기준) |
 | agent-worker | `SANDBOX_RUNTIME_CLASS` | RuntimeClass 이름 | 없음 | gVisor 스위치. 수정 고리만 쓴다. 리허설은 보지 않는다 |
-| worker, agent-worker | `MOCK_SANDBOX` | `1` | 없음 | 시험 전용. 워커는 이미지를 복사하지 않고, agent-worker 는 클러스터 없이 정해진 결과를 낸다 |
+| worker, agent-worker | `MOCK_SANDBOX` | `1` | 없음 | 시험 전용. 워커는 이미지를 복사하지 않고(`imagesMirrored: false`), agent-worker 는 클러스터 없이 정해진 결과를 낸다. 워커에만 켜면 진짜 agent-worker 가 `REHEARSAL_IMAGE_MIRROR_FAILED` 로 거부한다 |
 | agent-worker | `MOCK_SANDBOX_RESULT` | `pass` \| `fail` | `pass` | `MOCK_SANDBOX=1` 일 때만. `fail` 이면 `REHEARSAL_CRASHLOOP` |
 | api | 없음 | | | `GET /api/v1/migrations/:id/rehearsal` 는 늘 켜져 있다. 줄이 없으면 `run: null` |
 | 플랫폼 차트 | `sandbox.enabled` | `true` \| `false` | `false` | agent-worker 호스트 권한, VAP 6개, StorageClass |
@@ -135,7 +148,7 @@ flowchart LR
 - agent-worker 에 호스트 접속 설정이 없으면(`SANDBOX_KUBE_URL` 없음, 클러스터 밖) 리허설마다 `REHEARSAL_SANDBOX_UNAVAILABLE` 이다. 조용히 통과하는 길은 없다.
 - `MOCK_SANDBOX`·`MOCK_SANDBOX_RESULT` 는 시험 스위치다. `DEMO_MODE=1` 이면 하나라도 켜져 있을 때 서비스가 뜨지 않는다. `MOCK_SANDBOX_RESULT` 만 있고 `MOCK_SANDBOX=1` 이 없으면 agent-worker 가 뜨지 않는다.
 - 맥에서 돌릴 때는 `SANDBOX_VCLUSTER_CHART`·토큰·CA 경로를 절대 경로로 쓴다. `npm run dev -w @svc/agent-worker` 는 `apps/agent-worker` 폴더에서 돌아서 상대 경로가 어긋난다.
-- 차트 묶음 `vcluster-0.37.6.tgz` 는 git 에 없다 (`*.tgz` 무시). 받는 법은 5-2절.
+- 차트 묶음 `vcluster-0.37.6.tgz` 와 CRD 두 개는 레포 `apps/agent-worker/vendor` 에 있다 (`.gitignore` 예외 `!apps/agent-worker/vendor/*.tgz`). 그 폴더에서 `sha256sum -c SHA256SUMS` 가 세 줄 모두 `OK` 여야 한다. agent-worker 이미지 빌드도 같은 확인을 한다 (`deploy/docker/Dockerfile`).
 
 ## 3. 격리 층
 
@@ -186,9 +199,9 @@ flowchart LR
 | | | `REHEARSAL_CONNECTIVITY_FAILED` | Service 나 서비스 사이 연결에 요청이 안 닿거나 5xx 가 옴 |
 | `cannot_vouch` | `failed` | `REHEARSAL_POLICY_DENIED` | 샌드박스만의 규칙(호스트 VAP, 가상 PSA)이 막음. 앱 고장이라는 뜻이 아님 |
 | | | `REHEARSAL_UNSUPPORTED_KIND` | 치환 표 밖 종류가 묶음에 있음 |
-| `platform` | `error` | `REHEARSAL_IMAGE_MIRROR_FAILED` | 이미지 복사 실패, 또는 샌드박스에서 이미지를 못 받음 |
+| `platform` | `error` | `REHEARSAL_IMAGE_MIRROR_FAILED` | 이미지 복사 실패, 샌드박스에서 이미지를 못 받음, 또는 복사하지 않은 입력(워커 `MOCK_SANDBOX=1`) |
 | | | `REHEARSAL_SANDBOX_UNAVAILABLE` | 샌드박스를 못 만들거나 못 씀 (helm·port-forward·준비·상한·DB 대체물) |
-| | | `REHEARSAL_TIMEOUT` | 기한(`REHEARSAL_TIMEOUT_SEC`) 안에 결과가 없음 |
+| | | `REHEARSAL_TIMEOUT` | 줄 서기 기한(`REHEARSAL_QUEUE_TIMEOUT_SEC`) 안에 agent-worker 가 잡지 않았거나, 실행 기한(`REHEARSAL_TIMEOUT_SEC`) 안에 검사가 끝나지 않음 |
 | | | `REHEARSAL_BUNDLE_MISMATCH` | 커밋 직전 렌더 지문이 리허설 지문과 다름 |
 
 - `would_fail`: 실제 배포도 실패한다. 매니페스트·이미지·값을 고치고 재개한다.
@@ -204,11 +217,12 @@ flowchart LR
 |---|---|
 | `run` | `null` 이면 이 이전에 아직 리허설 줄이 없다 |
 | `run.status` | `queued`·`running`·`passed`·`failed`·`error`·`skipped` |
-| `run.phase` | `mirroring`·`creating`·`applying`·`checking`·`deleting`·`done` |
+| `run.phase` | `creating`·`applying`·`checking`·`deleting`·`done`. 끝난 줄은 모두 `done` |
 | `run.skip` | 건너뛴 이유 (`non_k8s`·`no_cluster`·`unsupported_target`·`disabled`·`mock`) |
 | `run.failureCode` | 실패 코드. 결과 없이 끝난 줄(예: `REHEARSAL_TIMEOUT`)도 이 칸으로 이유를 보인다 |
 | `run.reusedFrom` | 재사용한 앞 통과 줄 |
-| `run.sandboxName`, `createdAt`·`startedAt`·`finishedAt`·`deadlineAt` | 샌드박스 이름과 시각 |
+| `run.sandboxName`, `createdAt`·`startedAt`·`finishedAt` | 샌드박스 이름과 시각 |
+| `run.deadlineAt` | 지금 단계의 기한. `queued` 면 줄 서기 기한, `running` 이면 실행 기한 |
 | `run.fidelity` | 충실도 표. 결과가 오기 전에는 워커 몫만 보인다 |
 | `run.result` | 검사 줄(`checks`), 경고, 단계 시간(`timingsMs`), 지웠는지(`deleted`), 흉내였는지(`sandbox.mock`) |
 | `run.stale` | `true` 면 이 줄은 지난 배포 시도의 것이다 |
@@ -234,7 +248,7 @@ flowchart LR
 
 ### 5-1. 흉내 (클러스터 없음)
 
-화면 작업용이다. 워커는 렌더·치환까지 진짜로 하고 이미지 복사만 건너뛴다. agent-worker 는 클러스터 없이 정해진 결과를 쓴다.
+화면 작업용이다. 워커는 렌더·치환까지 진짜로 하고 이미지 복사만 건너뛴다. agent-worker 는 클러스터 없이 정해진 결과를 쓴다. 둘 다 `MOCK_SANDBOX=1` 로 띄운다. 진짜 agent-worker 는 복사하지 않은 입력을 `REHEARSAL_IMAGE_MIRROR_FAILED` 로 거부한다.
 
 - GitOps 설정이 있어야 한다. 없으면 배포가 `MOCK_ARGO=1` 흉내로 가서 리허설은 `skipped`(`mock`) 줄만 남는다. `GITOPS_REPO_DIR` 는 gitops 레포의 로컬 git 복사본이다 (`tools/render.mjs` 로 렌더한다). push 는 `GITOPS_PUSH=1` 일 때만 해서 원격은 안 바뀐다.
 - 스위치는 명령줄에만 붙인다 (`docs/START-DRILL.md` 4-1절).
@@ -267,11 +281,10 @@ kind 는 맥 로컬 클러스터다. 실제 클라우드가 아니다. 두 가�
 준비는 한 번이다. 명령은 레포 맨 위에서 친다.
 
 1. control-plane 하나와 worker 하나인 kind 클러스터를 만든다. worker 에 라벨 `pool=sandbox`, taint `dedicated=sandbox:NoSchedule` 을 단다. 이미지는 `kindest/node:v1.35.8` (`deploy/ci/sandbox-kind-e2e.sh` 머리).
-2. 차트 묶음을 받고 체크섬을 확인한다.
+2. 레포에 있는 차트 묶음과 CRD 의 체크섬을 확인한다.
 
 ```bash
-curl -fsSLo apps/agent-worker/vendor/vcluster-0.37.6.tgz https://charts.loft.sh/charts/vcluster-0.37.6.tgz
-(cd apps/agent-worker/vendor && shasum -a 256 -c SHA256SUMS)
+(cd apps/agent-worker/vendor && sha256sum -c SHA256SUMS)
 ```
 
 기대 출력: 세 줄 모두 `OK`.
@@ -309,7 +322,8 @@ npx tsx apps/agent-worker/scripts/rehearse-kind.ts --server "$SERVER" --ca-file 
 
 - 기대 출력: `phase creating` → `applying` → `checking` → `deleting` 줄, 그다음 `verdict=passed failureCode=null sandbox=sbx-rehearsal-… k8s=v1.35.0 deleted=true`. 마지막 줄 `teardown:` 에 남은 네임스페이스가 없거나 `Terminating` 만 있다.
 - 실패 경우: `--map <이미지 ref>=<없는 이미지>` 로 이미지 하나를 바꾸면 `REHEARSAL_IMAGE_MIRROR_FAILED` 가 나온다.
-- 입력 `rehearsal-3tier-onprem.json` 은 팀 3티어 예시를 렌더한 원본 15개와 워커 치환본이다. 이미지는 같은 다이제스트의 공개 이미지로 바꿔 두었다.
+- 입력 `rehearsal-3tier-onprem.json` 은 팀 3티어 예시를 렌더한 원본 15개와 워커 치환본이다. 이미지는 같은 다이제스트의 공개 이미지로 바꿔 두었고, `imagesMirrored` 는 `true` 다.
+- 이 스크립트는 `rehearse` 에 실행 기한(`deadlineAt`)을 주지 않는다. 그래서 기한 120초 전 멈춤은 kind 에서 돌지 않는다.
 - 이 스크립트는 kind 전용이다. 실제 EKS 에서는 돌리지 않는다. EKS 는 7절처럼 실제 이전 하나로 본다.
 
 ## 6. 시험 명령 (클라우드 없음)
@@ -317,10 +331,10 @@ npx tsx apps/agent-worker/scripts/rehearse-kind.ts --server "$SERVER" --ca-file 
 ```bash
 node --import tsx --test packages/agent/test/rehearsal.test.ts packages/agent/test/vcluster.test.ts \
   packages/agent/test/sandbox-select.test.ts apps/agent-worker/test/rehearsal.test.ts packages/contracts/test/sandbox.test.ts
-npm run test:db      # apps/worker/test/rehearsal-gate.db.test.ts 포함 (로컬 Postgres)
+npm run test:db      # apps/worker/test/rehearsal-gate.db.test.ts, apps/agent-worker/test/sandbox-run.db.test.ts 포함 (로컬 Postgres)
 ```
 
-- 기대 출력: `# fail 0`. #207 머리(`bf861bf`)에서 첫 명령은 `# pass 40`.
+- 기대 출력: `# fail 0`. main(`0a0847e`)에 #214(`a07bb47`)를 합친 트리에서 첫 명령은 `# pass 43` 이다.
 - 차트 쪽: `bash deploy/ci/check-platform.sh` (렌더 세 벌, kubeconform, `sandbox.imageRegistry` 없음·틀린 모양 거부).
 
 ## 7. 실제 EKS 확인 (최종 시험)
@@ -353,13 +367,13 @@ OTHER=<TENANT 와 다른 아무 소문자 UUID>
 
 | 확인 | 명령 | 기대 | 안 되면 |
 |---|---|---|---|
-| #207 이 main 에 있고 의존성 설치 | `cd $REPO && git log --oneline -1 && npm ci` | 끝까지 성공 | main 을 받는다 |
+| #214 가 main 에 있고 의존성 설치 | `cd $REPO && grep -q REHEARSAL_QUEUE_TIMEOUT_SEC packages/contracts/src/config.ts && npm ci` | 끝까지 성공. `grep` 이 실패하면 `npm ci` 가 돌지 않는다 | main 을 받는다 |
 | AWS 자격 | `aws sts get-caller-identity --query Account --output text` | 플랫폼 계정 12자리 | `AWS_PROFILE` 을 맞춘다 |
 | 플랫폼 스택 | `$TF output -raw cluster_name` | `platform` (또는 정한 이름) | `$TF init -backend-config=$HOME/.svc-tf/backend.hcl`. 스택이 없으면 `infra/README.md` 실행 순서 (사람 승인, 비용 시작) |
 | kubeconfig | `aws eks update-kubeconfig --name "$($TF output -raw cluster_name)" --region ap-northeast-2 --alias $CTX` | `Added new context platform-eks` | 위 자격 |
 | 노드 | `$K get nodes -L pool` | `general` 2, `cred` 1, `sandbox` 1, 모두 `Ready` | 노드 그룹 상태를 콘솔에서 본다 |
 | 도구 | `helm version --short; kubectl version --client; crane version; aws --version` | helm 3, kubectl 1.34~1.36, crane, aws v2 | `brew install helm kubectl crane awscli`. kubectl 은 서버(1.35)와 마이너 하나 차이까지 |
-| 차트 묶음 | 5-2절 준비 2번 명령 | 세 줄 `OK` | 다시 받는다 |
+| 차트 묶음 | 5-2절 준비 2번 명령 | 세 줄 `OK` | 레포 파일이 바뀌었다. `git status apps/agent-worker/vendor` 로 보고 main 것으로 되돌린다 |
 | ESO 와 `argocd` 네임스페이스 | `$K get crd secretstores.external-secrets.io; $K get ns argocd` | 둘 다 있음 | 플랫폼 차트가 SecretStore 와 `argocd` 안 Role 을 그려서 없으면 helm 이 멈춘다. ESO 는 `deploy/helm/platform/README.md` 순서 1. TODO(human): Argo CD 허브를 이 클러스터에 둘지. 리허설만 볼 거면 `$K create namespace argocd` 로 자리만 만든다 (쓰기) |
 | 시험 스위치 없음 | `grep -nE '^(MOCK_SANDBOX\|MOCK_SANDBOX_RESULT\|SANDBOX_MODE)=' $REPO/.env` | 아무것도 안 나옴 | 그 줄을 지운다 |
 | 리허설할 이전 | 실클라우드 회차와 같은 설정(GitOps·Argo·자격)으로 `deploying` 까지 갈 이전 하나 | 출발 이미지가 ECR 또는 공개, 명세에 다이제스트 고정. 도착은 EKS·GKE·k3s | TODO(human): 어느 이전으로 할지 |
@@ -495,8 +509,8 @@ SANDBOX_KUBE_CA_FILE=<WORK 절대 경로>/eks-ca.crt
 SANDBOX_VCLUSTER_CHART=<REPO 절대 경로>/apps/agent-worker/vendor/vcluster-0.37.6.tgz
 ```
 
-- 넣지 않는다: `MOCK_SANDBOX`, `MOCK_SANDBOX_RESULT`, `SANDBOX_MODE` (비우면 수정 고리는 `memory`. 리허설은 이 값을 보지 않는다).
-- `REHEARSAL_TIMEOUT_SEC`(1200)·`REHEARSAL_POLL_SEC`(60)·`SANDBOX_TTL_SEC`(1800) 는 기본값 그대로 둔다.
+- 넣지 않는다: `MOCK_SANDBOX`, `MOCK_SANDBOX_RESULT`, `SANDBOX_MODE` (비우면 수정 고리는 `memory`. 리허설은 이 값을 보지 않는다). 워커에 `MOCK_SANDBOX=1` 이 남으면 이미지를 복사하지 않고, agent-worker 가 그 입력을 `REHEARSAL_IMAGE_MIRROR_FAILED` 로 거부한다.
+- `REHEARSAL_QUEUE_TIMEOUT_SEC`(3600)·`REHEARSAL_TIMEOUT_SEC`(1200)·`REHEARSAL_POLL_SEC`(60)·`SANDBOX_TTL_SEC`(1800) 는 기본값 그대로 둔다.
 - 워커 셸에는 플랫폼 계정 AWS 프로필이 있어야 한다. 플랫폼 ECR `sandbox/*` 에 저장소를 만들고 올리는 권한이 필요하다 (`ecr:CreateRepository`, 올리기 동작, `ecr:BatchGetImage`, `ecr:GetAuthorizationToken`). TODO(human): 맥 프로필이 이 권한을 가졌는지. 클러스터 안 워커라면 `platform-worker` 역할에 이미 있다 (`pod-identity.tf`).
 - `crane`·`aws` 가 워커 셸의 PATH 에 있어야 한다. 없으면 `REHEARSAL_IMAGE_MIRROR_FAILED`(`tool_missing`).
 
@@ -554,6 +568,9 @@ docker compose exec db psql -U platform_owner -d platform -c \
  "SELECT c->>'id' AS id, c->>'subject' AS subject, c->>'detail' AS detail
     FROM (SELECT result FROM sandbox_runs ORDER BY created_at DESC LIMIT 1) r, jsonb_array_elements(r.result->'checks') c
    WHERE (c->>'ok')::boolean = false AND (c->>'required')::boolean;"
+docker compose exec db psql -U platform_owner -d platform -c \
+ "SELECT at, detail->'deploy'->>'reason' AS reason, detail->'rehearsal' AS rehearsal
+    FROM audit_events WHERE action = 'deploy.paused' ORDER BY seq DESC LIMIT 1;"
 ```
 
 | 증상 | 뜻 | 할 일 |
@@ -561,10 +578,13 @@ docker compose exec db psql -U platform_owner -d platform -c \
 | `REHEARSAL_IMAGE_MIRROR_FAILED`, 이유 `tool_missing` | 워커 셸에 `crane`·`aws` 없음 | 설치 뒤 재개 |
 | 같은 코드, `auth_failed`·`copy_failed` | 플랫폼 ECR 로그인·쓰기 실패 | 워커 셸 프로필 권한 (7-5) |
 | 같은 코드, `not_by_digest`·`unsupported_registry` | 출발 이미지가 다이제스트 고정이 아니거나 ECR·공개가 아님 | 다른 이전을 고른다 |
+| 같은 코드, 검사 줄 `sandbox_ready` 에 `복사하지 않은 입력` | 워커에 `MOCK_SANDBOX=1` 이 남았다 | 워커 `.env`·명령줄에서 지우고 재개 |
 | `REHEARSAL_SANDBOX_UNAVAILABLE`, 검사 줄 `SANDBOX_HELM` 과 403 | `sbx-operator` 규칙이 차트에 모자람 | helm 출력의 자원 이름을 이슈로 남긴다 |
 | 같은 코드, `SANDBOX_NOT_READY` | 제어판이 180초 안에 안 뜸. 첫 이미지 받기(ghcr.io)가 느렸을 수 있다 | `$K -n $SBX_NS get events` 를 남기고 재개한다 |
 | 같은 코드, `SANDBOX_PORT_FORWARD` | 맥에서 가상 API 로 port-forward 실패 | `SANDBOX_KUBECTL_BIN`·토큰을 본다 |
-| `REHEARSAL_TIMEOUT` | 기한 1200초 안에 결과 없음 | agent-worker 가 떠 있었는지, 큐를 받았는지 로그를 본다 |
+| `REHEARSAL_TIMEOUT`, 감사 `deploy.paused` 의 `detail.rehearsal.stage` 가 `queue` | 줄 서기 기한 3600초 안에 agent-worker 가 줄을 잡지 않았다. 샌드박스는 돌지 않았다 | agent-worker 가 떠 있었는지, 큐를 받았는지 로그를 본다 |
+| 같은 코드, 검사 줄 `sandbox_ready` 에 `120초 전이라 … 단계에서 멈춤` | 실행 기한 1200초 안에 검사가 안 끝나 agent-worker 가 스스로 멈췄다 | 멈춘 단계와 `timingsMs` 를 기록표에 적는다 |
+| 같은 코드, `stage` 가 `run` | 실행 기한까지 agent-worker 가 결과를 쓰지 못했다 (죽었거나 vCluster 만들기가 길었다) | agent-worker 로그를 본다 |
 | `would_fail` 갈래 | 앱이 실제 도착에서도 실패한다 | 4-1절 |
 
 이미지 경로가 실제로 만든 것 (읽기만):
