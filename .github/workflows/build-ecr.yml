@@ -1,0 +1,66 @@
+# 태그(v*)를 밀면 이미지 4개를 AWS ECR에 올린다.
+#   이름: <계정>.dkr.ecr.<리전>.amazonaws.com/svc-<app>:<버전>  (+ sha-<짧은 커밋>)
+#   예)   git tag v0.1.0 && git push origin v0.1.0
+# 이 레포는 use_immutable_subject 라 OIDC sub 가 ID 형태(repo:<org>@<id>/<repo>@<id>:ref:...)이며 github_oidc.tf 의 github_sub_prefix 와 맞아야 한다
+name: build-ecr
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [api, worker, agent-worker, web]
+        # build.yml 과 같다: 서버 앱 3개는 Dockerfile 하나의 단계(target), web 만 따로
+        include:
+          - { app: api, file: deploy/docker/Dockerfile, target: api }
+          - { app: worker, file: deploy/docker/Dockerfile, target: worker }
+          - { app: agent-worker, file: deploy/docker/Dockerfile, target: agent-worker }
+          - { app: web, file: apps/web/Dockerfile, target: "" }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: image name
+        id: name
+        run: echo "image=${{ steps.login-ecr.outputs.registry }}/svc-${{ matrix.app }}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v4
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.name.outputs.image }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=sha,prefix=sha-
+      - name: build + push
+        id: push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          target: ${{ matrix.target }}
+          # DRAFT(ai): amd64 만 (build.yml 과 같음). EKS 노드를 arm(Graviton)으로 고르면 linux/arm64 추가
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: true
+          sbom: true
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+      - name: digest (gitops 값에는 태그 대신 이 다이제스트를 쓴다)
+        run: echo "${{ steps.name.outputs.image }}@${{ steps.push.outputs.digest }}" | tee -a "$GITHUB_STEP_SUMMARY"
