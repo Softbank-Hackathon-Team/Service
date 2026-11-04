@@ -48,6 +48,37 @@ run "plan_all_kinds" {
   }
 }
 
+run "hub_deploy_in_app_namespace_only" {
+  command = plan
+  variables {
+    hub_principal = "t-0123456789abcdef0123456789ab@platform-proj.iam.gserviceaccount.com"
+  }
+  assert {
+    condition     = module.namespace["app-shop"].hub_subject == var.hub_principal
+    error_message = "앱 구역 RoleBinding 주체는 회사 전용 플랫폼 SA"
+  }
+  assert {
+    condition     = !contains(module.namespace["app-shop"].hub_role_resources, "secrets") && !contains(module.namespace["app-shop"].hub_role_resources, "rolebindings")
+    error_message = "허브 Role 에 Secret·RBAC 쓰기가 없어야 함"
+  }
+}
+
+run "hub_deploy_off_by_default" {
+  command = plan
+  assert {
+    condition     = module.namespace["app-shop"].hub_subject == null
+    error_message = "hub_principal 이 비면 허브 권한을 만들지 않음"
+  }
+}
+
+run "hub_principal_rejects_other_identity" {
+  command = plan
+  variables {
+    hub_principal = "someone@example.com"
+  }
+  expect_failures = [var.hub_principal]
+}
+
 run "plan_cluster_less_db_only" {
   command = plan
   variables {

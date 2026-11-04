@@ -95,7 +95,7 @@ kubectl create configmap argocd-gcp-creds -n argocd --from-file=gcp-creds/ --dry
 ```
 
 - ponytail: 3번은 회사마다 손으로 한다. 회사가 늘면 환경 연결 때 워커가 이 ConfigMap 을 고치게 한다.
-- TODO(human): 고객 GKE 쪽 허용(앱 구역 RoleBinding, `container.clusters.get`). 이게 없으면 로그인은 돼도 배포가 거절된다.
+- 고객 GKE 쪽 허용: `gcp-connect.sh` 가 회사 SA 에 `container.clusters.get` 만 주고, 앱 구역 Role·RoleBinding 은 apply 때 Terraform 이 만든다. 워커에 `GCP_PLATFORM_PROJECT` 가 있어야 회사 SA 를 넘긴다. 이미 연결한 고객은 `infra/onboarding/README.md` "이미 연결한 고객의 Argo CD 허브 권한" 을 따른다.
 - TODO(human): 허브가 고객 EKS 에 들어가는 권한과 cluster Secret. 이게 없으면 EKS 고객 Application 은 동기화되지 않는다.
 
 ## 관측 기본판 (이 차트와 따로 설치)

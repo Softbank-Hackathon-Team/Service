@@ -17,6 +17,11 @@ variable "cfg" {
 }
 variable "app_name" { type = string }
 variable "tenant_label" { type = string } # 라벨에 넣을 수 있게 root가 정리해서 넘김
+# Argo CD 허브가 들어오는 회사 전용 플랫폼 SA. 빈 값이면 허브 권한을 만들지 않는다
+variable "hub_principal" {
+  type    = string
+  default = ""
+}
 
 resource "kubernetes_namespace_v1" "this" {
   metadata {
@@ -40,4 +45,71 @@ resource "kubernetes_resource_quota_v1" "this" {
   }
 }
 
+# 허브는 이 구역 안에서만 앱을 배포한다. 클러스터 전체 권한(ClusterRoleBinding)은 없다.
+# 목록은 infra/permissions/eks-deploy-rbac.yaml 과 같다. Secret 은 External Secrets 가 만들어서 없다
+# DRAFT(ai): EKS 와 달리 고객이 kubectl 을 돌리지 않게 Role 도 Terraform 이 만든다. 그래서 실행 역할에 container.roles.escalate·bind 가 필요하다
+resource "kubernetes_role_v1" "hub_deploy" {
+  count = var.hub_principal != "" ? 1 : 0
+  metadata {
+    name      = "platform-deploy-app"
+    namespace = kubernetes_namespace_v1.this.metadata[0].name
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["services", "configmaps", "serviceaccounts", "persistentvolumeclaims"]
+    verbs      = ["get", "list", "watch", "create", "update", "patch", "delete"]
+  }
+  rule {
+    api_groups = [""]
+    resources  = ["pods", "events"]
+    verbs      = ["get", "list", "watch"]
+  }
+  rule {
+    api_groups = ["apps"]
+    resources  = ["deployments", "statefulsets", "replicasets"]
+    verbs      = ["get", "list", "watch", "create", "update", "patch", "delete"]
+  }
+  rule {
+    api_groups = ["batch"]
+    resources  = ["jobs", "cronjobs"]
+    verbs      = ["get", "list", "watch", "create", "update", "patch", "delete"]
+  }
+  rule {
+    api_groups = ["networking.k8s.io"]
+    resources  = ["ingresses"]
+    verbs      = ["get", "list", "watch", "create", "update", "patch", "delete"]
+  }
+  rule {
+    api_groups = ["autoscaling"]
+    resources  = ["horizontalpodautoscalers"]
+    verbs      = ["get", "list", "watch", "create", "update", "patch", "delete"]
+  }
+  rule {
+    api_groups = ["external-secrets.io"]
+    resources  = ["externalsecrets"]
+    verbs      = ["get", "list", "watch", "create", "update", "patch", "delete"]
+  }
+}
+
+resource "kubernetes_role_binding_v1" "hub_deploy" {
+  count = var.hub_principal != "" ? 1 : 0
+  metadata {
+    name      = "platform-deploy-app"
+    namespace = kubernetes_namespace_v1.this.metadata[0].name
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Role"
+    name      = kubernetes_role_v1.hub_deploy[0].metadata[0].name
+  }
+  # GKE 는 구글 서비스 계정 이메일을 사용자 이름으로 본다
+  subject {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "User"
+    name      = var.hub_principal
+  }
+}
+
 output "name" { value = kubernetes_namespace_v1.this.metadata[0].name }
+output "hub_subject" { value = one(kubernetes_role_binding_v1.hub_deploy[*].subject[0].name) }
+output "hub_role_resources" { value = flatten(kubernetes_role_v1.hub_deploy[*].rule[*].resources) }

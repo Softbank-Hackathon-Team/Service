@@ -74,11 +74,11 @@ function env() {
 const MUTATING = /^(services enable|iam service-accounts create|iam roles create|iam roles update|iam roles undelete|projects add-iam-policy-binding|projects remove-iam-policy-binding|iam service-accounts add-iam-policy-binding)/;
 const mutations = (calls: string[]) => calls.filter((c) => MUTATING.test(c));
 
-test("처음 실행 (A안 두 프로젝트): API 2 + SA 3 + 역할 8(원래 2·전용 6) + 프로젝트 바인딩 8(원래 2·전용 6) + tokenCreator 3 = 변경 24번", () => {
+test("처음 실행 (A안 두 프로젝트): API 2 + SA 3 + 역할 9(원래 2·전용 7) + 프로젝트 바인딩 9(원래 2·전용 7) + tokenCreator 3 = 변경 26번", () => {
   const e = env();
   const r = e.run();
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(mutations(e.calls()).length, 24);
+  assert.equal(mutations(e.calls()).length, 26);
   assert.match(r.stdout, /123456/);
   assert.deepEqual(r.stdout.split("\n").filter((l) => l.includes("건너뜀")), ["= 이미 있음, 건너뜀: 전용 프로젝트 cust-mig"]);   // A안: 전용 프로젝트는 고객이 먼저 고름
 });
@@ -91,7 +91,7 @@ test("재실행: 변경 명령 0번, 전부 '건너뜀', 종료 0 (확인 명령
   assert.equal(r.status, 0, r.stderr);
   const second = e.calls().slice(before);
   assert.equal(mutations(second).length, 0, "재실행에서 변경 명령: " + mutations(second).join(" | "));
-  assert.equal((r.stdout.match(/이미 있음, 건너뜀/g) ?? []).length, 25);   // + 전용 프로젝트 있음
+  assert.equal((r.stdout.match(/이미 있음, 건너뜀/g) ?? []).length, 27);   // + 전용 프로젝트 있음
   assert.ok(second.length >= 10, "각 항목을 먼저 확인");
 });
 
@@ -238,7 +238,7 @@ test("DRY_RUN 은 확인 명령도 안 부르고, 이미 있어도 전부 출력
   const r = e.run({ DRY_RUN: "1" });
   assert.equal(r.status, 0);
   assert.equal(e.calls().length, before, "DRY_RUN 중 gcloud 호출 없음");
-  assert.equal((r.stdout.match(/^\+ gcloud/gm) ?? []).length, 24);
+  assert.equal((r.stdout.match(/^\+ gcloud/gm) ?? []).length, 26);
 });
 
 // ── OBSROLE3: 이미 만든 관찰 역할 권한 갱신 ──
@@ -360,7 +360,7 @@ test("VOBSROLE3 거부: 권한 추가(update)가 거절돼도 나머지 연결 �
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stderr, /권한 추가 실패/);
   const calls = e.calls();
-  assert.equal(calls.filter((c) => c.startsWith("projects add-iam-policy-binding")).length, 8);   // A안: 원래 2(관찰) + 전용 6(관찰 2·plan·실행·_iam·_db_secret)
+  assert.equal(calls.filter((c) => c.startsWith("projects add-iam-policy-binding")).length, 9);   // A안: 원래 2(관찰) + 전용 7(관찰 2·plan·실행·_iam·_db_secret·허브)
   assert.equal(calls.filter((c) => c.startsWith("iam service-accounts add-iam-policy-binding")).length, 3);
   assert.deepEqual(permsOf(e).sort(), OLD7.split(",").sort(), "실패했으니 권한은 그대로");
 });

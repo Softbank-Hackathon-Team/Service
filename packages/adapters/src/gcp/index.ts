@@ -12,6 +12,16 @@ export const PERMS: PermTable = {
     read: ["container.namespaces.get"],
     write: ["container.namespaces.create", "container.namespaces.update"],
     remove: ["container.namespaces.delete"] },
+  // Argo CD 허브의 앱 구역 권한 (kinds/namespace). GKE RBAC 은 내가 가진 것보다 큰 Role 을 막아서 escalate·bind 가 필요하다
+  // DRAFT(ai): 프로젝트 전체에 걸리지만 도착은 전용 프로젝트이고 실행 역할은 이전 때만 빌린다. 첫 실측에서 권한 이름 확인
+  kubernetes_role_v1: {
+    read: ["container.roles.get"],
+    write: ["container.roles.create", "container.roles.update", "container.roles.escalate"],
+    remove: ["container.roles.delete"] },
+  kubernetes_role_binding_v1: {
+    read: ["container.roleBindings.get"],
+    write: ["container.roleBindings.create", "container.roleBindings.update", "container.roles.bind"],
+    remove: ["container.roleBindings.delete"] },
   google_sql_database_instance: {
     read: ["cloudsql.instances.get"],
     write: ["cloudsql.instances.create", "cloudsql.instances.update"],
@@ -86,7 +96,7 @@ export const PERMS: PermTable = {
 };
 
 // FM-CLD-hunt-cloud-23: 앱 모듈 밖에서 실행 역할이 늘 하는 일 (gcp/root API 켜기, 이전 중 GKE 업그레이드 멈춤). 권한 파일·plan 역할에는 들어가야 함
-export const ROOT_TYPES = ["google_project_service", "gke_upgrade_freeze"] as const;
+export const ROOT_TYPES = ["google_project_service", "gke_upgrade_freeze", "kubernetes_role_v1", "kubernetes_role_binding_v1"] as const;
 export function resourceTypes(need: PermNeeds): string[] {
   const t = ["data.google_client_config", "data.google_container_cluster", "kubernetes_namespace_v1",
     "google_service_account", "google_service_account_iam_member"];
