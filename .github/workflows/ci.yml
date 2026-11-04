@@ -316,6 +316,12 @@ jobs:
         run: |
           u=$(docker run --rm --entrypoint id svc-${{ matrix.app }}:ci -u)
           echo "uid=$u"; test "$u" != "0"
+      - name: worker 클라우드 CLI 스모크 (읽기 전용 뿌리 + HOME=/tmp 에서 도는지, 차트와 같은 조건)
+        if: matrix.app == 'worker'
+        run: |
+          for c in "aws --version" "gcloud --version" "kubectl version --client" "gke-gcloud-auth-plugin --version"; do
+            docker run --rm --read-only --tmpfs /tmp -e HOME=/tmp --entrypoint sh svc-worker:ci -c "$c" >/dev/null || { echo "실패: $c"; exit 1; }
+          done
       - name: 온프레 Agent 스모크 (묶음이 뜨고 kubectl 이 들어 있는지)
         if: matrix.app == 'onprem-agent'
         run: |

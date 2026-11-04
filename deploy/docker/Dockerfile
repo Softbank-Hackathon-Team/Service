@@ -24,6 +24,13 @@ ARG ONPREM_KUBECTL_IMAGE=registry.k8s.io/kubectl:v1.36.5@sha256:0667e3f3e6ef435d
 ARG HELM_IMAGE=alpine/helm:3.22.1@sha256:8191701ad1f82ee3695c87211fcbfe6d7b1bb7df92ac1c8de9ccdb0995a6a2c1
 # agent-worker 의 kubectl (플랫폼 클러스터 밖에서 돌 때 가상 API 로 port-forward). helm 과 같은 방식, 다이제스트 고정. 플랫폼 EKS 1.35 와 같은 마이너
 ARG KUBECTL_IMAGE=registry.k8s.io/kubectl:v1.35.10@sha256:4e1d541a3d62f74637974e4c71f3cea91b9a36ffd059ab45e355648898783837
+# worker 의 gcloud (GCP 출발 가져오기: projects describe·container clusters list·get-credentials). 진짜 플랫폼 worker 에 클라우드 CLI 가 없어
+#   출발이 무엇이든 가져오기가 IMPORT_SOURCE_UNAVAILABLE 로 멈췄다 (2026-11-05 실측). 공식 alpine 판은 musl 용 python 을 SDK 안에 담고 있어 바탕에 python 을 따로 안 넣는다
+#   판 592.0.0, 다이제스트 = 여러 아키텍처 index (amd64·arm64)
+ARG GCLOUD_IMAGE=gcr.io/google.com/cloudsdktool/google-cloud-cli:592.0.0-alpine@sha256:9040d28a6512f32c495322a3af6ea000f803a0ae001cec055937154efe5a2230
+# worker 의 aws CLI (AWS 출발 가져오기·STS). 공식 설치본은 glibc 전용이라 musl 바탕에서 못 돈다 → alpine community 패키지
+# DRAFT(ai): 2.34 계열로 고정. alpine 저장소는 같은 가지의 최신 판만 남겨서 정확한 판(-rN)으로 묶으면 나중에 빌드가 깨진다
+ARG AWS_CLI_APK=aws-cli~2.34
 
 FROM ${NODE_IMAGE} AS manifests
 WORKDIR /src
@@ -84,6 +91,13 @@ FROM ${CRANE_IMAGE} AS crane
 FROM ${HELM_IMAGE} AS helm
 FROM ${KUBECTL_IMAGE} AS kubectl
 FROM ${ONPREM_KUBECTL_IMAGE} AS onprem-kubectl
+# GKE 클러스터 kubeconfig(get-credentials)는 gke-gcloud-auth-plugin 을 부른다. 기본 묶음에 없어 여기서 더한다.
+#   bq·gsutil 은 가져오기가 안 쓴다 → 뺀다 (약 80MB). __pycache__ 는 남긴다 (worker 뿌리 파일 시스템이 읽기 전용이라 실행 때 못 만든다)
+FROM ${GCLOUD_IMAGE} AS gcloud
+RUN gcloud components install gke-gcloud-auth-plugin --quiet \
+ && gcloud components remove bq gsutil --quiet \
+ && rm -rf /google-cloud-sdk/.install/.backup \
+ && gke-gcloud-auth-plugin --version
 
 # 세 이미지 공통 바탕
 FROM ${NODE_IMAGE} AS runtime
@@ -125,6 +139,19 @@ RUN --mount=type=bind,from=git,source=/out,target=/g set -e; [ "$WITH_GIT" = "1"
     ! ldd /usr/libexec/git-core/git-remote-https 2>&1 | grep -q "not found"
 # 리허설 이미지 복사 도구. 정적 Go 바이너리라 라이브러리가 필요 없다 (TLS 루트는 바탕의 /etc/ssl/certs)
 COPY --from=crane /ko-app/crane /usr/local/bin/crane
+# 가져오기(discover)·사전 점검·역할 빌리기가 부르는 클라우드 CLI (packages/adapters/src/discover/index.ts, precheck/cloud-precheck.ts)
+#   kubectl = EKS·GKE 안의 Deployment·Service 읽기 (플랫폼 EKS 와 같은 판 단계를 같이 쓴다)
+#   설정·캐시는 HOME(/tmp, 차트가 emptyDir 로 준다) 아래에 쓴다. 사용 통계·업데이트 확인은 끈다 (바깥으로 나가는 호출을 줄인다)
+COPY --from=gcloud /google-cloud-sdk /opt/google-cloud-sdk
+COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl
+ENV PATH=/opt/google-cloud-sdk/bin:$PATH \
+    CLOUDSDK_CORE_DISABLE_USAGE_REPORTING=true \
+    CLOUDSDK_COMPONENT_MANAGER_DISABLE_UPDATE_CHECK=true \
+    AWS_CLI_AUTO_PROMPT=off
+ARG AWS_CLI_APK
+# hadolint ignore=DL3018
+RUN apk add --no-cache "$AWS_CLI_APK" \
+ && aws --version && gcloud --version >/dev/null && kubectl version --client >/dev/null && gke-gcloud-auth-plugin --version >/dev/null
 # 최소 권한 파일(J2): 묶음 파일 하나에는 안 들어가서 따로 복사. 없으면 실행 역할 발급이 전부 거부된다
 COPY infra/permissions /app/infra/permissions
 ENV PERMISSIONS_DIR=/app/infra/permissions
