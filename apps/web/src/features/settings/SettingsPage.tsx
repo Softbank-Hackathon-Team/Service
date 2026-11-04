@@ -189,11 +189,13 @@ export function SettingsPage({ user }: { user: AuthUser }) {
     <ShellLayout layout={LAYOUT}>
       <Hero tone="run" meta={user.tenantName ?? t('회사')} title={t('{0}\n계정입니다', { 0: name })} foot={t('회사 멤버면 승인까지 모두 할 수 있습니다')}>
         <p className="t-body-md c-secondary">{user.email}</p>
-        <div className={`${own.grid} scroll-fade`}>
-          {PROVIDER_ORDER.map((provider) => (
-            <ProviderCard key={provider} provider={provider} envs={groups[provider]} borrowed={borrowed} />
-          ))}
-          <RegisterCard />
+        <div className={`${own.gridScroll} scroll-fade`}>
+          <div className={own.grid}>
+            {PROVIDER_ORDER.map((provider) => (
+              <ProviderCard key={provider} provider={provider} envs={groups[provider]} borrowed={borrowed} />
+            ))}
+            <RegisterCard />
+          </div>
         </div>
       </Hero>
       <Stack area="side">

@@ -32,7 +32,7 @@ import { RequirementsFold, SourceFactsFold, VerdictFold } from './SecurityFolds'
 import { isSecItem, precheckLine, secAckLabel, type SecuritySpecV2 } from './securityV2';
 import { ConfirmPill, Frame, useAction, useCostConsent, type ScreenProps } from './shared';
 import s from '../common/page.module.css';
-import { t } from '../../lib/i18n';
+import { localeTag, t } from '../../lib/i18n';
 
 const LEVEL: Record<PrecheckItem['level'], { label: string; tone: 'danger' | 'warning' | 'neutral' }> = {
   block: { label: t('막힘'), tone: 'danger' },
@@ -324,7 +324,7 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
         tone={expired ? 'stop' : 'run'}
         meta={t('계획서')}
         title={expired ? t('승인 시간이\n지났습니다') : acks.missing.length > 0 ? t('확인할 것 {0}개를 보고\n승인해 주세요', { 0: acks.missing.length }) : t('승인하면 이대로\n바로 실행합니다')}
-        foot={doc ? t('유효 시각 {0}', { 0: new Date(doc.expiresAt).toLocaleString('ko-KR', { hour12: false }) }) : undefined}
+        foot={doc ? t('유효 시각 {0}', { 0: new Date(doc.expiresAt).toLocaleString(localeTag(), { hour12: false }) }) : undefined}
       >
         {doc && <CodeValue value={doc.planHash} chip max={32} />}
         {doc && (
@@ -458,7 +458,7 @@ function ApprovedScreen({ migration, route, onChanged }: ScreenProps) {
   // ENV_BUSY: 다른 이전이 같은 환경을 쓰는 중
   const blockedBy = code ?? (busy || error ? null : autoStart.blockedCode(migration.id));
   const waiting = blockedBy === 'TENANT_BUSY' ? 'tenant' : blockedBy === 'ENV_BUSY' ? 'env' : null;
-  const until = doc ? new Date(doc.expiresAt).toLocaleString('ko-KR', { hour12: false }) : null;
+  const until = doc ? new Date(doc.expiresAt).toLocaleString(localeTag(), { hour12: false }) : null;
   return (
     <Frame migration={migration} route={route}>
       <Hero

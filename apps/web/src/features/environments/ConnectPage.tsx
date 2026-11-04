@@ -33,13 +33,13 @@ import {
   type EnvForm,
 } from './connect';
 import s from '../common/page.module.css';
-import { t } from '../../lib/i18n';
+import { localeTag, t } from '../../lib/i18n';
 
 // 큰 카드는 지금 할 한 가지, 오른쪽은 등록 단계와 권한을 빌리는 방식.
 const LAYOUT: BentoLayout = { columns: ['fill', 'side'], areas: 'hero side' };
 
 const until = (iso: string) =>
-  new Date(iso).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  new Date(iso).toLocaleString(localeTag(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 
 function StepsFold({ at, provider, name }: { at: Parameters<typeof connectSteps>[0]; provider?: Provider; name?: string }) {
   const items = connectSteps(at, { provider, name });
