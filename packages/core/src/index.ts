@@ -4,6 +4,7 @@ export * from "./states.js";
 export * from "./failure-codes.js";
 export * from "./hash.js";
 export * from "./boss.js";
+export * from "./queue-wake.js";
 export * from "./audit.js";
 export * from "./redact.js";
 export * from "./guards.js";

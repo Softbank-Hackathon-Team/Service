@@ -3,7 +3,7 @@ import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { QUEUES, VALID, TERMINAL, FailureDecisionInput, FailureDecisionResult, RETRYABLE_FAILURES, ROLLBACK_ON_REJECT, type MigrationStatus, type QueueName } from "@svc/contracts";
 import { randomUUID } from "node:crypto";
-import { advance, boss, asBossDb, checkRetryBudget, reclaimEnvLocks, reserveEnvLocks, LEASE, targetTeardownPending, writeAudit, NotFound, DomainError, LOCKED_STAGES, type Tx } from "@svc/core";
+import { advance, boss, asBossDb, wakeQueued, checkRetryBudget, reclaimEnvLocks, reserveEnvLocks, LEASE, targetTeardownPending, writeAudit, NotFound, DomainError, LOCKED_STAGES, type Tx } from "@svc/core";
 import { loadLatestApproval } from "./plan-store.js";
 import { RollbackResult, ReclaimResult, CancelResult, errors } from "./responses.js";
 import { IdParam, RetryBody, auditOk, found, nextJob } from "./kit.js";
@@ -97,15 +97,13 @@ export async function controlRoutes(app: FastifyInstance) {
         `UPDATE migrations SET rollback_window_ends_at = LEAST(rollback_window_ends_at, now()), updated_at = now()
           WHERE id = $1 RETURNING to_char(rollback_window_ends_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS at`, [id]);
       const singletonKey = `${QUEUES.cleanup}:${id}`;
-      const woken = await tx.query(
-        `UPDATE pgboss.job SET start_after = now() WHERE name = $1 AND singleton_key = $2 AND state IN ('created', 'retry')`,
-        [QUEUES.cleanup, singletonKey]);
-      if (woken.rowCount === 0) {
+      const woken = await wakeQueued(tx, QUEUES.cleanup, singletonKey);
+      if (woken === 0) {
         await boss.send(QUEUES.cleanup, { tenantId: req.tenantId, requestId: req.id, migrationId: id },
           { singletonKey, db: asBossDb(tx) });
       }
       await writeAudit(tx, req.tenantId, { actor: req.actor, action: "migration.reclaim_requested", target: id, result: "ok",
-        detail: { reason: req.body?.reason, jobWoken: (woken.rowCount ?? 0) > 0 } });
+        detail: { reason: req.body?.reason, jobWoken: woken > 0 } });
       return { status: 202, body: { id, status: "rollback_window" as const, windowEndsAt: ended.rows[0]!.at } };
     });
   });
