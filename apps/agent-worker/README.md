@@ -22,10 +22,10 @@ LLM 을 쓰지 않는 결정 코드다. deploying 안, GitOps 커밋 바로 앞�
 |---|---|
 | 목적 | 커밋할 렌더 결과(원본)와 치환본을 일회용 vCluster 에 올려 보고 `RehearsalResult` 를 쓴다 |
 | 받는 것 | 큐 작업 `SandboxRunJob {tenantId, requestId, sandboxRunId}` → `sandbox_runs` 줄(회사 벽 안)과 그 `input`(`RehearsalInput`) |
-| 넘기는 것 | `sandbox_runs` queued → running(phase creating·applying·checking·deleting) → passed·failed·error + `result`·`failure_code`·`deleted_at`, phase done |
+| 넘기는 것 | `sandbox_runs` queued → running(phase creating·applying·checking·deleting, `deadline_at` = 잡은 때 + 입력 `runBudgetSec`) → passed·failed·error + `result`·`failure_code`·`deleted_at`, phase done |
 | 부작용 | 플랫폼 클러스터 `sbx-rehearsal-<번호>` 네임스페이스·helm 릴리스(끝나면 지움), 감사 `sandbox.rehearsal`(actor `agent_worker`), 기다리는 deploy 작업 깨우기(core `wakeQueued`). 이전 상태(advance)는 안 바꿈 |
-| 백엔드 | `MOCK_SANDBOX=1` 이면 정해진 결과(`MOCK_SANDBOX_RESULT=fail` = `REHEARSAL_CRASHLOOP`). 그 밖은 `SANDBOX_KUBE_URL`(클러스터 밖: `SANDBOX_KUBE_TOKEN_FILE`·`SANDBOX_KUBE_CA_FILE`, 가상 API 는 `kubectl port-forward`, `SANDBOX_KUBECTL_BIN`) 또는 클러스터 안 서비스 계정. 둘 다 없으면 `REHEARSAL_SANDBOX_UNAVAILABLE` |
-| 실패 | `RehearsalFailureCode` (contracts). 입력이 계약에 안 맞거나 처리기가 던지면 결과 없이 `REHEARSAL_SANDBOX_UNAVAILABLE`. 두 번 온 작업·기한 지난 줄·워커가 먼저 닫은 줄은 건너뜀 |
+| 백엔드 | `MOCK_SANDBOX=1` 이면 정해진 결과(`MOCK_SANDBOX_RESULT=fail` = `REHEARSAL_CRASHLOOP`). 그 밖은 진짜 vCluster: 입력 `imagesMirrored=false`(흉내 워커)면 만들기 전에 `REHEARSAL_IMAGE_MIRROR_FAILED`, 실행 기한 120초 전이면 스스로 멈춰 `REHEARSAL_TIMEOUT`. 접속은 `SANDBOX_KUBE_URL`(클러스터 밖: `SANDBOX_KUBE_TOKEN_FILE`·`SANDBOX_KUBE_CA_FILE`, 가상 API 는 `kubectl port-forward`, `SANDBOX_KUBECTL_BIN`) 또는 클러스터 안 서비스 계정. 둘 다 없으면 `REHEARSAL_SANDBOX_UNAVAILABLE` |
+| 실패 | `RehearsalFailureCode` (contracts). 입력이 계약에 안 맞거나 처리기가 던지면 결과 없이 `REHEARSAL_SANDBOX_UNAVAILABLE`. 두 번 온 작업은 건너뜀(`not_queued`·`claimed_elsewhere`), 줄 서기 기한이 지난 줄·워커가 기한으로 먼저 닫은 줄도 건너뜀(`expired`) |
 
 - `src/handle-rehearsal.ts` 큐 처리기, `src/pg-sandbox-run-store.ts` 저장소, `src/sweeper.ts` 만료 샌드박스 청소(#177, 시작 때 + 5분마다)
 - 리허설 순서와 판정은 `packages/agent/src/rehearsal/run.ts`, vCluster 만들기·지우기는 `packages/agent/src/ai/vcluster.ts`

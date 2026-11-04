@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { stringify } from "yaml";
 import { RehearsalResult, SandboxRunPhase, type RehearsalInput } from "@svc/contracts";
 import {
-  asHostKube, createVcluster, leftoverRehearsal, loadVendorCrds, mockRehearsalResult, REHEARSAL_KINDS, runRehearsal, STAND_IN_LABEL, sweepSandboxes,
+  asHostKube, createVcluster, DEADLINE_RESERVE_MS, leftoverRehearsal, loadVendorCrds, mockRehearsalResult, REHEARSAL_KINDS, runRehearsal, STAND_IN_LABEL, sweepSandboxes,
   type RehearsalBackend,
 } from "../src/index.js";
 import { fakeHelm, fakeHost, fakeVirtual } from "./fake-kube.js";
@@ -51,7 +51,7 @@ function sample(s: Shape = {}): RehearsalInput {
   return {
     version: 1, target: "onprem-k3s", app: "shop", namespace: "app-shop", bundleSha256: "b".repeat(64), k8sMinor: "1.35",
     original: toDocs(original), apply: toDocs(apply),
-    images: [{ ref: `${REG}/shop-web@sha256:cd`, sandboxRef: "ecr.example/sandbox/t1/shop-web@sha256:cd" }],
+    images: [{ ref: `${REG}/shop-web@sha256:cd`, sandboxRef: "ecr.example/sandbox/t1/shop-web@sha256:cd" }], imagesMirrored: true, runBudgetSec: 1200,
     databases: [{ service: "shop-db-rw", majorVersion: s.dbMajor ?? "16", database: "shop", owner: "app", secretName: "shop-db-app", secretKeys: ["password", "username"] }],
     targetPodSecurity: "baseline", targetQuota: null,
     edges: [{ from: "web", host: "shop-api", port: 80 }, { from: "api", host: "shop-db-rw", port: 5432 }],
@@ -62,9 +62,10 @@ function sample(s: Shape = {}): RehearsalInput {
   };
 }
 
+const T0 = 1_800_000_000_000;
 function backend(o: { virtual?: Parameters<typeof fakeVirtual>[0]; helm?: Parameters<typeof fakeHelm>[1]; seed?: Parameters<typeof fakeHost>[0];
   failDelete?: string[]; allocatable?: RehearsalBackend["allocatable"] } = {}) {
-  let t = 1_800_000_000_000;
+  let t = T0;
   const now = () => t;
   const sleep = async (ms: number) => { t += ms; };
   const host = fakeHost(o.seed);
@@ -78,7 +79,8 @@ function backend(o: { virtual?: Parameters<typeof fakeVirtual>[0]; helm?: Parame
     create: (spec) => createVcluster(h, spec), sweepLeftovers: (keep) => sweepSandboxes(h.kube, leftoverRehearsal(keep)),
     crds: CRDS, ttlSec: 1800, now, sleep, allocatable: o.allocatable,
   };
-  return { b, host, helm, virtual, phases, run: (input: RehearsalInput) => runRehearsal(input, { id: RUN, tenantId: TENANT, onPhase: (p) => { phases.push(p); } }, b), elapsed: () => t - 1_800_000_000_000 };
+  return { b, host, helm, virtual, phases, elapsed: () => t - T0,
+    run: (input: RehearsalInput, deadlineAt?: Date) => runRehearsal(input, { id: RUN, tenantId: TENANT, deadlineAt, onPhase: (p) => { phases.push(p); } }, b) };
 }
 
 test("리허설 통과: 만들기 → dry-run → 도착 정책 → DB 대체물 먼저 → 롤아웃·잡 → 재시작 → 준비 → 연결 → 지우기", async () => {
@@ -175,6 +177,8 @@ test("실패는 정해진 코드로 끝나고, 샌드박스는 언제나 지운�
     { name: "DB 대체물 요청량도 센다", input: sample(), k: { allocatable: { cpuM: 560, memoryMi: 3400 } }, code: "REHEARSAL_SANDBOX_UNAVAILABLE", verdict: "error", created: false, detail: /CPU 580m/ },
     { name: "도착 한도 초과", input: { ...sample(), targetQuota: { limitsCpuM: null, limitsMemoryMi: 100 } }, code: "REHEARSAL_QUOTA_EXCEEDED", verdict: "failed", created: false },
     { name: "지원 목록 밖 종류", input: sample({ extraOriginal: [{ apiVersion: "v1", kind: "Pod", metadata: { name: "debug" } }] }), code: "REHEARSAL_UNSUPPORTED_KIND", verdict: "failed", created: false },
+    // 흉내 워커(MOCK_SANDBOX=1)는 이미지를 복사하지 않는다. 진짜 샌드박스가 고객 원본 주소로 받으러 가지 않게 만들기 전에 멈춘다
+    { name: "이미지를 복사하지 않은 입력", input: { ...sample(), imagesMirrored: false }, code: "REHEARSAL_IMAGE_MIRROR_FAILED", verdict: "error", created: false },
   ];
   for (const c of cases) {
     const k = backend(c.k);
@@ -198,6 +202,18 @@ test("재시작이 쌓이거나 컨테이너를 못 만들면 롤아웃 기한(3
     assert.ok(k.elapsed() < 60_000, `${code}: 걸린 시간 ${k.elapsed()}ms`);
     if (code === "REHEARSAL_CRASHLOOP") assert.ok(r.timingsMs.check > 0, `실패한 단계의 시간도 남긴다 ${JSON.stringify(r.timingsMs)}`);
   }
+});
+
+test("실행 기한: 기한 전에 스스로 멈춰(REHEARSAL_TIMEOUT) 지우고 결과를 낸다. 롤아웃 기한(300초)이 남아도 기다리지 않는다", async () => {
+  const k = backend();
+  const r = await k.run(sample({ web: `${REG}/shop-web-slow@sha256:cd` }), new Date(T0 + 200_000));
+  assert.deepEqual([r.verdict, r.failureCode], ["error", "REHEARSAL_TIMEOUT"], JSON.stringify(r.checks.filter((c) => !c.ok)));
+  assert.ok(k.elapsed() <= 200_000 - DEADLINE_RESERVE_MS, `기한 ${DEADLINE_RESERVE_MS / 1000}초 전까지 멈춤: ${k.elapsed()}ms`);
+  assert.equal(r.deleted, true);
+  assert.equal(k.host.namespaces.has(NAME), false);
+  assert.match(r.checks.find((c) => c.required && !c.ok)!.detail, /실행 기한/);
+  // 기한이 넉넉하면 같은 입력이 롤아웃 기한까지 기다려 앱 쪽 코드로 끝난다
+  assert.equal((await backend().run(sample({ web: `${REG}/shop-web-slow@sha256:cd` }), new Date(T0 + 3_600_000))).failureCode, "REHEARSAL_ROLLOUT_FAILED");
 });
 
 test("단계 목록 = 실제로 쓰는 단계 (실행기가 알리는 단계 + 끝난 줄의 done). 아무도 안 쓰는 값이 계약에 없다", async () => {

@@ -32,11 +32,14 @@ const ISOLATION: Record<SandboxRunKind, (env: NodeJS.ProcessEnv) => SandboxIsola
 export const sandboxIsolation = (kind: SandboxRunKind, env: NodeJS.ProcessEnv = process.env): SandboxIsolation => ISOLATION[kind](env);
 
 // 설정 키 값 읽기 (검사는 config.ts CONFIG_RULES 가 시작 때 한다). 기본값은 여기 한 곳
-// 워커: 리허설 문. DRAFT(ai): 기본 꺼짐, 기한 1200초(줄을 만든 때부터 결과까지), 깨우기가 안 왔을 때 다시 보기 60초
+// 워커: 리허설 문. 기한은 둘로 나눈다. 큐가 한 번에 1건이라 앞 리허설이 길면 줄 선 시간이 실행 기한을 먹지 않게
+//   queueTimeoutSec = 줄을 만든 때부터 agent-worker 가 잡을 때까지, timeoutSec = 잡은 때부터 결과까지 (RehearsalInput.runBudgetSec 로 넘김)
+// DRAFT(ai): 기본 꺼짐, 실행 1200초, 줄 서기 3600초(앞에 리허설 셋), 깨우기가 안 왔을 때 다시 보기 60초
 export function rehearsalSettings(env: NodeJS.ProcessEnv = process.env) {
   return {
     enabled: env.SANDBOX_REHEARSAL?.trim() === "on",
     timeoutSec: envNumber(env.REHEARSAL_TIMEOUT_SEC, 1200),
+    queueTimeoutSec: envNumber(env.REHEARSAL_QUEUE_TIMEOUT_SEC, 3600),
     pollSec: envNumber(env.REHEARSAL_POLL_SEC, 60),
     imageRegistry: env.SANDBOX_IMAGE_REGISTRY?.trim() || null,   // 플랫폼 ECR 샌드박스 자리 <호스트>/<접두어>
     mock: env.MOCK_SANDBOX?.trim() === "1",                       // 시험 전용: 이미지 복사 없이 줄을 넣는다
@@ -140,6 +143,9 @@ export const RehearsalInput = z.object({
   original: z.array(Doc).min(1),                     // 렌더 그대로. dry-run 에만 쓴다
   apply: z.array(Doc).min(1),                        // 치환 뒤. 실제 적용
   images: z.array(z.object({ ref: z.string(), sandboxRef: z.string() }).strict()),   // translateImage 표
+  // false = 워커가 복사하지 않음 (MOCK_SANDBOX=1). 진짜 샌드박스는 이런 입력을 REHEARSAL_IMAGE_MIRROR_FAILED 로 거부한다
+  imagesMirrored: z.boolean(),
+  runBudgetSec: z.number().int().positive(),        // 실행 기한. agent-worker 가 줄을 잡은 때부터 (워커 REHEARSAL_TIMEOUT_SEC)
   databases: z.array(z.object({ service: z.string(), majorVersion: z.string(), database: z.string(),
     owner: z.string(), secretName: z.string(), secretKeys: z.array(z.string()) }).strict()),
   targetPodSecurity: z.enum(["privileged", "baseline", "restricted"]),
@@ -183,6 +189,7 @@ export const RehearsalView = z.object({
   run: z.object({
     id: z.uuid(), status: SandboxRunStatus, failureCode: RehearsalFailureCode.nullable(), phase: SandboxRunPhase.nullable(), skip: RehearsalSkip.nullable(),
     reusedFrom: z.uuid().nullable(), sandboxName: z.string().nullable(),
+    // deadlineAt = 지금 단계의 기한. queued 면 줄 서기 기한, running 이면 실행 기한 (agent-worker 가 잡을 때 다시 씀)
     createdAt: z.string(), startedAt: z.string().nullable(), finishedAt: z.string().nullable(), deadlineAt: z.string().nullable(),
     fidelity: FidelityMatrix.nullable(), result: RehearsalResult.nullable(),
     // true = 이 줄을 쓴 배포 시도 뒤에 deploying 에 다시 들어왔다. 지금 시도는 리허설 전에 멈췄거나(SECRET_VALUES_MISSING 등) 아직 줄이 없다.

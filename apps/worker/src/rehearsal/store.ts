@@ -9,7 +9,7 @@ export interface RunKey { tenantId: string; migrationId: string; epoch: number; 
 export interface RunRow {
   id: string; status: SandboxRunStatus; skipReason: RehearsalSkip | null; failureCode: RehearsalFailureCode | null;
   bundleSha256: string | null; reusedFrom: string | null; sandboxName: string | null;
-  leftSec: number | null;                 // 기한까지 남은 초 (DB 시계). 음수면 지남
+  leftSec: number | null;                 // 지금 단계(queued = 줄 서기, running = 실행) 기한까지 남은 초 (DB 시계). 음수면 지남
   result: RehearsalResult | null;
 }
 
@@ -57,20 +57,20 @@ export async function insertFinished(tx: Tx, k: RunKey, x: { status: "failed" | 
     [k.tenantId, k.migrationId, k.epoch, x.status, x.code, k.planId, x.bundleSha256]);
 }
 
-/** queued 줄 + sandbox-rehearsal 작업을 한 트랜잭션에.
+/** queued 줄 + sandbox-rehearsal 작업을 한 트랜잭션에. 기한은 줄 서기 기한 (실행 기한은 agent-worker 가 잡을 때 다시 쓴다).
  *  ON CONFLICT 없음: 같은 차례 줄이 이미 있으면 고유 키 위반으로 트랜잭션째 취소되고, 작업 재시도가 그 줄을 읽어 따라간다 */
-export async function insertQueued(tx: Tx, k: RunKey & { id: string; requestId: string }, input: RehearsalInput, timeoutSec: number): Promise<void> {
+export async function insertQueued(tx: Tx, k: RunKey & { id: string; requestId: string }, input: RehearsalInput, queueTimeoutSec: number): Promise<void> {
   await tx.query(
     `INSERT INTO sandbox_runs (id, tenant_id, migration_id, epoch, status, plan_id, bundle_sha256, input, deadline_at)
      VALUES ($1, $2, $3, $4, 'queued', $5, $6, $7, now() + make_interval(secs => $8))`,
-    [k.id, k.tenantId, k.migrationId, k.epoch, k.planId, input.bundleSha256, JSON.stringify(input), timeoutSec]);
+    [k.id, k.tenantId, k.migrationId, k.epoch, k.planId, input.bundleSha256, JSON.stringify(input), queueTimeoutSec]);
   // 리허설 격리: 모든 작업이 같은 키 = 샌드박스 노드에 한 번에 1건 (core boss.ts sandbox-rehearsal 정책)
   const job = await boss.send(QUEUES.sandboxRehearsal, { tenantId: k.tenantId, requestId: k.requestId, sandboxRunId: k.id },
     { singletonKey: jobKey(QUEUES.sandboxRehearsal, {}), db: asBossDb(tx) });
   if (!job) throw new Error("sandbox-rehearsal job not created");
 }
 
-/** 기한이 지난 queued·running 줄을 error(REHEARSAL_TIMEOUT) 로. agent-worker 가 먼저 썼으면 0줄 (먼저 쓴 쪽이 이긴다) */
+/** 지금 단계 기한이 지난 queued·running 줄을 error(REHEARSAL_TIMEOUT) 로. agent-worker 가 먼저 잡거나 썼으면 0줄 (먼저 쓴 쪽이 이긴다) */
 export async function expireRun(tx: Tx, id: string): Promise<boolean> {
   const r = await tx.query(
     `UPDATE sandbox_runs SET status = 'error', phase = 'done', failure_code = 'REHEARSAL_TIMEOUT', finished_at = now()

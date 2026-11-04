@@ -23,7 +23,7 @@ let owner: pg.Client;
 let gitDir = "";
 const T = randomUUID();
 const KEYS = ["MOCK_IAC", "MOCK_ARGO", "GITOPS_DISABLE", "GITOPS_REPO_DIR", "GITOPS_REPO_URL", "GITOPS_PUSH", "STUB_DELAY_MS",
-  "SANDBOX_REHEARSAL", "MOCK_SANDBOX", "SANDBOX_IMAGE_REGISTRY", "REHEARSAL_POLL_SEC", "REHEARSAL_TIMEOUT_SEC"];
+  "SANDBOX_REHEARSAL", "MOCK_SANDBOX", "SANDBOX_IMAGE_REGISTRY", "REHEARSAL_POLL_SEC", "REHEARSAL_TIMEOUT_SEC", "REHEARSAL_QUEUE_TIMEOUT_SEC"];
 const prev = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
 type Raw = Record<string, any>;
 
@@ -177,7 +177,8 @@ test("켬: 줄 queued + sandbox-rehearsal 작업(노드 키) → 기다림(Retry
   assert.equal((await mig(id)).status, "deploying");
   const [run] = await runs(id);
   assert.equal(run!.status, "queued");
-  assert.ok(run!.deadline_at > new Date(Date.now() + 1100_000), "기한 = 만든 때 + REHEARSAL_TIMEOUT_SEC(1200)");
+  assert.ok(run!.deadline_at > new Date(Date.now() + 3500_000), "queued 줄의 기한 = 줄 서기 기한 REHEARSAL_QUEUE_TIMEOUT_SEC(3600)");
+  assert.deepEqual([run!.input.runBudgetSec, run!.input.imagesMirrored], [1200, false], "실행 기한은 agent-worker 가 잡을 때부터, 흉내 복사는 입력에 남는다");
   assert.deepEqual(await rehearsalJobs(run!.id), [{ singleton_key: "sandbox-rehearsal:sandbox-node" }]);
   assert.deepEqual(await deployJobs(id), [{ state: "created", later: true }], "deploy 작업이 REHEARSAL_POLL_SEC 뒤로 다시 들어감");
   assert.deepEqual(await retryAudits(id), ["ok"], "리허설 기다림은 오류가 아니다");
@@ -231,18 +232,38 @@ test("켬: 리허설 실패 → paused + 줄의 코드, detail 에 실패한 검
   assert.deepEqual(all.map((r) => r.status), ["failed", "queued"]);
 });
 
-test("켬: 기한이 지나면 error(REHEARSAL_TIMEOUT) → paused, 늦게 온 agent-worker 결과는 조건부 UPDATE 가 막는다", { skip }, async () => {
+test("켬: 그 단계 기한(줄 서기·실행)이 지나면 error(REHEARSAL_TIMEOUT) → paused, 어느 단계였는지 남는다. 늦게 온 agent-worker 결과는 조건부 UPDATE 가 막는다", { skip }, async () => {
   Object.assign(process.env, { SANDBOX_REHEARSAL: "on", MOCK_SANDBOX: "1" });
-  const id = await seed();
-  await dp.handleDeploy(job(id));
-  const [run] = await runs(id);
-  await owner.query(`UPDATE sandbox_runs SET deadline_at = now() - interval '1 second' WHERE id=$1`, [run!.id]);
-  await dp.handleDeploy(job(id));
-  assert.deepEqual([(await mig(id)).status, (await mig(id)).failure_code], ["paused", "REHEARSAL_TIMEOUT"]);
-  const [after] = await runs(id);
-  assert.deepEqual([after!.status, after!.failure_code, after!.phase], ["error", "REHEARSAL_TIMEOUT", "done"]);
-  const late = await owner.query(`UPDATE sandbox_runs SET status='passed' WHERE id=$1 AND status IN ('queued','running')`, [run!.id]);
-  assert.equal(late.rowCount, 0);
+  for (const [status, stage] of [["queued", "queue"], ["running", "run"]] as const) {
+    const id = await seed();
+    await dp.handleDeploy(job(id));
+    const [run] = await runs(id);
+    await owner.query(`UPDATE sandbox_runs SET status=$2, started_at = CASE WHEN $2 = 'running' THEN now() END, deadline_at = now() - interval '1 second' WHERE id=$1`, [run!.id, status]);
+    await dp.handleDeploy(job(id));
+    assert.deepEqual([(await mig(id)).status, (await mig(id)).failure_code], ["paused", "REHEARSAL_TIMEOUT"], status);
+    assert.equal((await lastAudit(id, "deploy.paused"))!.rehearsal.stage, stage);
+    const [after] = await runs(id);
+    assert.deepEqual([after!.status, after!.failure_code, after!.phase], ["error", "REHEARSAL_TIMEOUT", "done"], status);
+    const late = await owner.query(`UPDATE sandbox_runs SET status='passed' WHERE id=$1 AND status IN ('queued','running')`, [run!.id]);
+    assert.equal(late.rowCount, 0);
+  }
+});
+
+test("켬: 앞 리허설 때문에 실행 기한(300초)보다 오래 줄을 서도 줄 서기 기한 안이면 REHEARSAL_TIMEOUT 이 아니라 계속 기다린다", { skip }, async () => {
+  Object.assign(process.env, { SANDBOX_REHEARSAL: "on", MOCK_SANDBOX: "1", REHEARSAL_TIMEOUT_SEC: "300", REHEARSAL_QUEUE_TIMEOUT_SEC: "3600" });
+  try {
+    const id = await seed();
+    await dp.handleDeploy(job(id));
+    const [run] = await runs(id);
+    // 10분이 지났다 (앞 회사 리허설이 도는 동안 줄에서 기다림)
+    await owner.query(`UPDATE sandbox_runs SET created_at = created_at - interval '600 seconds', deadline_at = deadline_at - interval '600 seconds' WHERE id=$1`, [run!.id]);
+    await owner.query(`DELETE FROM pgboss.job WHERE name='deploy' AND singleton_key=$1`, [`deploy:${id}`]);
+    assert.equal(await dp.handleDeploy(job(id)), "skipped");
+    assert.deepEqual([(await mig(id)).status, (await runs(id))[0]!.status], ["deploying", "queued"]);
+    assert.deepEqual(await deployJobs(id), [{ state: "created", later: true }]);
+  } finally {
+    delete process.env.REHEARSAL_TIMEOUT_SEC; delete process.env.REHEARSAL_QUEUE_TIMEOUT_SEC;
+  }
 });
 
 test("켬: 리허설이 넣자마자 끝나도 기다리던 deploy 작업을 깨운다 (줄·작업·다시 넣는 deploy 작업이 한 트랜잭션)", { skip }, async () => {
