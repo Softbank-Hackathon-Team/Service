@@ -111,8 +111,6 @@ type LeftoverFoldProps = {
   migration: MigrationView;
   title: string;
   defaultOpen?: boolean;
-  /** 남은 자원이 없으면 카드를 그리지 않는다 (취소 화면처럼 대개 아무것도 안 만든 경우) */
-  hideWhenNone?: boolean;
   children?: ReactNode;
 };
 
@@ -120,10 +118,9 @@ type LeftoverFoldProps = {
  * 도착 환경에 남은 이 이전의 자원. 서버가 도착 환경 재고(GET /environments/:id/inventory)에서
  * 이전 상태와 감사 기록으로 낸 목록이라, 클라우드에서 직접 센 값이 아니라고 함께 적는다.
  */
-export function LeftoverFold({ migration, title, defaultOpen = true, hideWhenNone, children }: LeftoverFoldProps) {
+export function LeftoverFold({ migration, title, defaultOpen = true, children }: LeftoverFoldProps) {
   const inventory = usePoll(() => or404(api.envInventory(migration.targetEnvId)), null, [migration.targetEnvId, migration.version]);
   const left = inventory.data ? leftoversOf(inventory.data.apps, migration.id) : null;
-  if (hideWhenNone && (!left || left.length === 0)) return null;
   const summary = inventory.loading ? '확인 중' : left === null ? '모름' : left.length > 0 ? `남은 자원 ${left.length}개` : '남은 자원 없음';
   return (
     <FoldTile title={title} summary={summary} defaultOpen={defaultOpen}>
