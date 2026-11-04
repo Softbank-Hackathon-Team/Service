@@ -13673,47 +13673,7 @@
           "traffic": {
             "anyOf": [
               {
-                "type": "object",
-                "properties": {
-                  "judgements": {
-                    "type": "integer",
-                    "minimum": -9007199254740991,
-                    "maximum": 9007199254740991
-                  },
-                  "steps": {
-                    "type": "array",
-                    "items": {
-                      "type": "integer",
-                      "minimum": -9007199254740991,
-                      "maximum": 9007199254740991
-                    }
-                  },
-                  "bad": {
-                    "type": "integer",
-                    "minimum": -9007199254740991,
-                    "maximum": 9007199254740991
-                  },
-                  "maxTargetErrorRatePct": {
-                    "type": [
-                      "number",
-                      "null"
-                    ]
-                  },
-                  "maxTargetP95Ms": {
-                    "type": [
-                      "number",
-                      "null"
-                    ]
-                  }
-                },
-                "required": [
-                  "judgements",
-                  "steps",
-                  "bad",
-                  "maxTargetErrorRatePct",
-                  "maxTargetP95Ms"
-                ],
-                "additionalProperties": false
+                "$ref": "#/components/schemas/TrafficSummary"
               },
               {
                 "type": "null"
@@ -16769,6 +16729,49 @@
           "reobserve",
           "stepStartedAt",
           "observedAt"
+        ],
+        "additionalProperties": false
+      },
+      "TrafficSummary": {
+        "type": "object",
+        "properties": {
+          "judgements": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          },
+          "bad": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "maxTargetErrorRatePct": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "maxTargetP95Ms": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "judgements",
+          "steps",
+          "bad",
+          "maxTargetErrorRatePct",
+          "maxTargetP95Ms"
         ],
         "additionalProperties": false
       },
