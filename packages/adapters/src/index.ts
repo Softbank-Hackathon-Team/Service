@@ -28,7 +28,7 @@ export { realTerraformEnabled, iacMockEnabled, findWorkDir, readImported, type I
   workRootOf, workDirOf, PLAN_ONLY_ID, planOnlyId, spawnExec, REAL_MODULE_BASE, ROOT_DIR, layoutOf, type TfLayout, DEFAULT_MODULE_ROOT, type Exec, type ExecResult, type RealApplyResult, type RealTerraformRunner } from "./terraform/real-runner.js";
 export { dbNetworkFromEnv, withDbNetworkV2, cidrProblem, DbNetworkError, type DbNetworkSummary } from "./terraform/db-network.js";
 // Z86: 환경 실자원 읽기(읽기 전용 CLI) + 클라우드 서비스 대응표
-export { readInventory, cachedInventory, clearInventoryCache, inventoryToStatus, itemState, type CloudInventory, type InventoryGroup, type InventoryItem, type InventoryDeps } from "./inventory.js";
+export { readInventory, cachedInventory, clearInventoryCache, inventoryToStatus, itemState, agentInventory, type AgentInventory, type CloudInventory, type InventoryGroup, type InventoryItem, type InventoryDeps } from "./inventory.js";
 export { SERVICE_NAME, METHOD_LABEL, type ServiceMapRow, type ServiceCategory, type MoveMethod, type PlanStepId } from "./common/service-map.js";
 // Z88: 출발 환경 진짜 읽기 (가져오기). MOCK_SEED=1 이면 어댑터 discover 는 데모 원본
 export { discoverSource, inventoryForAudit, discoverAws, discoverGcp, discoverOnprem, discoverForImport, type DiscoverOpts } from "./discover/index.js";

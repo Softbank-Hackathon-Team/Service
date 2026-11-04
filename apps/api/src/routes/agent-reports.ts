@@ -6,6 +6,7 @@ import {
   type AgentReport, type ConnectionStatus, type Provider,
 } from "@svc/contracts";
 import { advanceConnection, DomainError, pool, withTenant, type Tx } from "@svc/core";
+import type { AgentInventory, InventoryDeps } from "@svc/adapters";
 import {
   acceptAgentReport, AgentReportRejected, AGENT_HEADERS, deriveAgentSecret, MIN_MASTER_KEY_LEN,
   type AgentKeyRegistry,
@@ -67,6 +68,34 @@ async function heartbeatConnection(tx: Tx, a: { tenantId: string; envId: string;
 }
 
 export const staleSec = (env: NodeJS.ProcessEnv = process.env) => Math.max(1, envNumber(env.AGENT_STALE_SEC, 120) || 120);
+
+// 온프레 pull 모드 실자원 화면(GET /environments/:id/inventory·status)용 Agent 마지막 보고.
+//   플랫폼은 고객 클러스터에 kubectl 로 붙을 길이 없다(들어오는 포트 0) → 하트비트(k3s·CNPG)와 facts(DB 목록)로 채운다.
+//   폐기된 키의 보고는 세지 않는다. 키 수·하트비트 나이 기준은 연결 확인(worker verify-connection)·사전 점검과 같다
+const AGENT_INVENTORY_SQL = `
+  SELECT (SELECT count(*)::int FROM agent_keys WHERE env_id = $1 AND revoked_at IS NULL) AS keys, h.age, h.body AS hb, f.body AS facts
+    FROM (SELECT 1) one
+    LEFT JOIN LATERAL (SELECT GREATEST(0, floor(extract(epoch FROM now() - r.received_at)))::int AS age, r.body
+                         FROM agent_reports r JOIN agent_keys k ON k.id = r.key_id AND k.revoked_at IS NULL
+                        WHERE r.env_id = $1 AND r.kind = 'heartbeat' ORDER BY r.received_at DESC LIMIT 1) h ON true
+    LEFT JOIN LATERAL (SELECT r.body
+                         FROM agent_reports r JOIN agent_keys k ON k.id = r.key_id AND k.revoked_at IS NULL
+                        WHERE r.env_id = $1 AND r.kind = 'facts' ORDER BY r.received_at DESC LIMIT 1) f ON true`;
+export function agentInventoryFor(tenantId: string, envId: string, env: NodeJS.ProcessEnv = process.env): Promise<AgentInventory> {
+  return withTenant(tenantId, async (tx) => {
+    const r = (await tx.query<{ keys: number; age: number | null; hb: Record<string, unknown> | null; facts: Record<string, unknown> | null }>(AGENT_INVENTORY_SQL, [envId])).rows[0];
+    // 본문은 받을 때 AgentReport 로 검사했다. 그래도 모양이 다르면 지어내지 않고 빈 값으로
+    const hb = r?.hb ?? null, cnpg = hb?.cnpg as { cluster?: unknown; ready?: unknown } | null | undefined;
+    const dbs = Array.isArray(r?.facts?.dbs) ? (r!.facts!.dbs as AgentInventory["dbs"]) : null;
+    return { keys: r?.keys ?? 0, heartbeatAgeSec: r?.age ?? null, staleSec: staleSec(env),
+      k3sVersion: typeof hb?.k3sVersion === "string" ? hb.k3sVersion : null,
+      cnpg: cnpg && typeof cnpg.cluster === "string" ? { cluster: cnpg.cluster, ready: cnpg.ready === true } : null, dbs };
+  });
+}
+/** 인벤토리 읽기 의존성. 온프레 pull 모드(ONPREM_FLOOR_VIA_GIT≠0, 워커 apply 와 같은 기준)면 Agent 보고, push 시연이면 지금처럼 kubectl */
+export function onpremInventoryDeps(tenantId: string, envId: string, provider: string, env: NodeJS.ProcessEnv = process.env): Pick<InventoryDeps, "agent"> {
+  return provider === "onprem" && env.ONPREM_FLOOR_VIA_GIT !== "0" ? { agent: () => agentInventoryFor(tenantId, envId, env) } : {};
+}
 
 export function pgAgentReportStore(env: NodeJS.ProcessEnv = process.env): AgentReportStore {
   return {

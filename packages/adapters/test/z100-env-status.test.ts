@@ -75,3 +75,42 @@ test("자격·CLI 없음 → 가짜 값 없이 unknown + 빈 목록 (예전 stub
   assert.equal(st.region, "default");
   EnvironmentStatus.parse(st);
 });
+
+// 온프레 pull 모드: 플랫폼은 고객 클러스터에 kubectl 로 못 붙는다 → Agent 마지막 보고로 채운다. kubectl 은 한 번도 안 부른다
+const AGENT = { keys: 1, heartbeatAgeSec: 20, staleSec: 120, k3sVersion: "v1.36.5+k3s1", cnpg: { cluster: "shop-db", ready: true },
+  dbs: [{ namespace: "app-shop", cluster: "shop-db", majorVersion: 16, tlsEnforced: false, exposed: false }] };
+const noExec = (seen: string[]) => async (cmd: string, args: string[]) => { seen.push(`${cmd} ${args.join(" ")}`); return { code: 127, stdout: "", stderr: "", ms: 0 }; };
+
+test("onprem pull: Agent 하트비트·facts 로 클러스터·DB 를 채우고 healthy, kubectl 안 부름 (INVENTORY_CLI=0 이어도), 응답 스키마 통과", async () => {
+  const seen: string[] = [];
+  const inv = await readInventory("onprem", { env: { INVENTORY_CLI: "0" }, exec: noExec(seen), agent: async () => AGENT });
+  assert.equal(inv.status, "ok"); assert.equal(inv.source, "agent"); assert.deepEqual(seen, []);
+  const cl = inv.groups.find((g) => g.category === "cluster")!, db = inv.groups.find((g) => g.category === "database")!;
+  assert.match(cl.items[0]!.detail!, /v1\.36\.5\+k3s1 · 하트비트 20초 전/);
+  assert.deepEqual(db.items.map((i) => [i.name, i.detail]), [["app-shop/shop-db", "PostgreSQL 16 · TLS 미강제 · 클러스터 안만"]]);
+  const st = inventoryToStatus(inv, T("onprem"));
+  assert.equal(st.health, "healthy");
+  EnvironmentStatus.parse(st);
+});
+
+test("onprem pull: facts 가 없으면 하트비트의 CNPG 로, 그것도 없으면 DB 0개 (지어내지 않음)", async () => {
+  const a = await readInventory("onprem", { agent: async () => ({ ...AGENT, dbs: null, cnpg: { cluster: "shop-db", ready: false } }) });
+  assert.deepEqual(a.groups.find((g) => g.category === "database")!.items, [{ name: "shop-db", status: "NotReady", detail: null }]);
+  assert.equal(inventoryToStatus(a, T("onprem")).health, "degraded");
+  const b = await readInventory("onprem", { agent: async () => ({ ...AGENT, dbs: null, cnpg: null }) });
+  assert.deepEqual(b.groups.find((g) => g.category === "database")!.items, []);
+});
+
+test("거부: onprem pull 에서 키 없음·하트비트 없음·오래됨이면 unavailable + 사유, health unknown", async () => {
+  for (const [a, why] of [
+    [{ ...AGENT, keys: 0 }, /AGENT_KEY_MISSING/],
+    [{ ...AGENT, heartbeatAgeSec: null }, /한 번도/],
+    [{ ...AGENT, heartbeatAgeSec: 121 }, /121초 전 \(기준 120초/],
+  ] as const) {
+    const inv = await readInventory("onprem", { agent: async () => a });
+    assert.equal(inv.status, "unavailable"); assert.equal(inv.source, "agent"); assert.match(inv.reason!, why);
+    assert.equal(inventoryToStatus(inv, T("onprem")).health, "unknown");
+  }
+  // 경계: 정확히 staleSec 초면 아직 새것
+  assert.equal((await readInventory("onprem", { agent: async () => ({ ...AGENT, heartbeatAgeSec: 120 }) })).status, "ok");
+});
