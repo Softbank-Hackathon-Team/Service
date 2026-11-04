@@ -31,7 +31,7 @@ const exec: Exec = async (cmd, args) => {
   if (/^gcloud sql instances list/.test(line)) return denySql ? out(null, 1, "PERMISSION_DENIED") : out([]);
   return out({});
 };
-const run: import("@svc/security").GcloudRun = async (args) => { delegates.push(args.find((a) => a.startsWith("--delegates="))!); return { code: 0, stdout: "ya29." + "x".repeat(40), stderr: "" }; };
+const run: import("@svc/security").GcloudRun = async (args) => { delegates.push(args.find((a) => a.startsWith("--impersonate-service-account="))!.split("=")[1]!.split(",")[0]!); return { code: 0, stdout: "ya29." + "x".repeat(40), stderr: "" }; };
 
 function broker() {
   return security.createTempRoleBroker({
@@ -78,7 +78,7 @@ test("정상: verifying → connected, 프로젝트 번호 고정, 위임 SA 는
   assert.equal(e.gcp_project_number, "123456789012");
   assert.deepEqual(e.verify_detail.clusters, ["shop"]);
   const sa = (await owner.query("SELECT gcp_platform_sa FROM tenants WHERE id=$1", [T])).rows[0].gcp_platform_sa;
-  assert.deepEqual(delegates, [`--delegates=${sa}@svc-platform.iam.gserviceaccount.com`]);
+  assert.deepEqual(delegates, [`${sa}@svc-platform.iam.gserviceaccount.com`]);
   const c = (await owner.query("SELECT status, revoke_reason FROM temp_credentials WHERE env_id=$1", [id])).rows;
   assert.equal(c.length, 1); assert.equal(c[0].status, "revoked");
 });

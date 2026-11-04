@@ -26,8 +26,8 @@ test("회사마다 다른 플랫폼 SA 로 위임, 토큰은 bearer 로 돌려�
   assert.equal(a.ttlSec, 900);
   assert.deepEqual(f.calls[0]!.args, gcloudImpersonateArgs({ target: "svc-observe@cust-proj-123.iam.gserviceaccount.com",
     delegate: `${SA[T1]}@svc-platform.iam.gserviceaccount.com`, lifetimeSec: 900 }));
-  assert.ok(f.calls[0]!.args.includes(`--delegates=${SA[T1]}@svc-platform.iam.gserviceaccount.com`));
-  assert.ok(f.calls[1]!.args.includes(`--delegates=${SA[T2]}@svc-platform.iam.gserviceaccount.com`));
+  assert.ok(f.calls[0]!.args.includes(`--impersonate-service-account=${SA[T1]}@svc-platform.iam.gserviceaccount.com,svc-observe@cust-proj-123.iam.gserviceaccount.com`));
+  assert.ok(f.calls[1]!.args[2]!.startsWith(`--impersonate-service-account=${SA[T2]}@svc-platform.iam.gserviceaccount.com,`));
   assert.equal(f.calls[0]!.env.CLOUDSDK_AUTH_ACCESS_TOKEN, undefined);
   assert.ok(!JSON.stringify(b.detail).includes(TOKEN));
 });
@@ -62,7 +62,17 @@ test("시드(stub) 프로젝트는 mock 으로, 진짜 모양 SA 는 진짜로",
 });
 
 const OPR = "svc-operate@cust-proj-123.iam.gserviceaccount.com", PLAN = "svc-plan@cust-proj-123.iam.gserviceaccount.com";
-const target = (args: string[]) => args.find((a) => a.startsWith("--impersonate-service-account="))!.split("=")[1];
+const target = (args: string[]) => args.find((a) => a.startsWith("--impersonate-service-account="))!.split("=")[1]!.split(",").at(-1);
+
+// 실측 11/4: gcloud auth print-access-token 에는 --delegates 가 없다 (Cloud SDK 558, unrecognized arguments). 쉼표 체인 하나로만
+test("FM-GCP-13: print-access-token 인자에 --delegates 가 없고, 위임 SA,대상 SA 쉼표 체인(마지막이 대상)으로만 넘긴다", () => {
+  const a = gcloudImpersonateArgs({ target: "svc-operate@c-prj.iam.gserviceaccount.com", delegate: "t-1@p-prj.iam.gserviceaccount.com", lifetimeSec: 900 });
+  assert.deepEqual(a, ["auth", "print-access-token", "--impersonate-service-account=t-1@p-prj.iam.gserviceaccount.com,svc-operate@c-prj.iam.gserviceaccount.com", "--lifetime=900"]);
+  assert.ok(!a.some((x) => x.startsWith("--delegates")));
+  // print-access-token 이 받는 플래그만 (gcloud auth print-access-token --help: --lifetime, --impersonate-service-account, 전역 플래그)
+  const ALLOWED = /^--(impersonate-service-account|lifetime)=/;
+  assert.ok(a.slice(2).every((x) => ALLOWED.test(x)), a.join(" "));
+});
 
 test("ID-7: 실행 역할의 plan 단계는 svc-plan(읽기만)을 빌리고, apply·destroy 는 svc-operate 그대로", async () => {
   const f = fake();
@@ -87,4 +97,19 @@ test("ID-7 거부: 예전 스크립트 고객(svc-plan 없음)만 svc-operate �
   const denied: GcloudRun = async () => ({ code: 1, stdout: "", stderr: "PERMISSION_DENIED: iam.serviceAccounts.getAccessToken" });
   await assert.rejects(issuer(denied).issue(ctx(T1, OPR, { purpose: "operate", stage: "plan", migrationId: "44444444-4444-4444-8444-444444444444" })),
     (e: unknown) => e instanceof GcpIssueError && e.reason === "ROLE_ASSUME_DENIED");
+});
+
+// FM-GCP-02: 네트워크·프록시 실패는 사유(끝)가 아니라 재시도 (null). 진짜 거부·없음은 그대로
+test("FM-GCP-02: 연결·프록시·DNS·시간 초과 글은 null(재시도), 권한 거부·SA 없음은 그대로", async () => {
+  const { gcloudFailure } = await import("../src/gcp-cli.js");
+  for (const net of [
+    "ERROR: (gcloud.auth.print-access-token) HTTPSConnectionPool(host='iamcredentials.googleapis.com', port=443): Max retries exceeded (Caused by ProxyError('Unable to connect to proxy', OSError('Tunnel connection failed: 403 Forbidden')))",
+    "Failed to establish a new connection: [Errno 8] nodename nor servname provided, or not known",
+    "TransportError: ('Connection aborted.', ConnectionResetError(54, 'Connection reset by peer'))",
+    "ERROR: gcloud crashed (SSLError): [SSL: CERTIFICATE_VERIFY_FAILED]",
+    "Read timed out. (read timeout=30)",
+  ]) assert.equal(gcloudFailure(net), null, net.slice(0, 60));
+  assert.equal(gcloudFailure("ERROR: (gcloud.auth.print-access-token) Failed to impersonate [svc-observe@p.iam.gserviceaccount.com]. Make sure the account that's trying to impersonate it has access"), "ROLE_ASSUME_DENIED");
+  assert.equal(gcloudFailure("PERMISSION_DENIED: Permission 'iam.serviceAccounts.getAccessToken' denied"), "ROLE_ASSUME_DENIED");
+  assert.equal(gcloudFailure("NOT_FOUND: Requested entity was not found."), "ROLE_NOT_FOUND");
 });

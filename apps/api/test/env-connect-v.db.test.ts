@@ -125,7 +125,7 @@ test("순서: draft 에서 바로 verify → 409(링크 먼저), verifying 중 �
   assert.equal((await dbRow(env.id)).connection_status, "verifying");
 });
 
-test("실패 뒤 다시: failed → 링크 다시 받기는 failure_reason 을 지우고 새 확인 문구", { skip }, async () => {
+test("실패 뒤 다시: failed → 링크 다시 받기는 failure_reason 을 지우고 같은 확인 문구 (PF01: 이미 만든 스택이 그대로 열리게)", { skip }, async () => {
   const env = await create("retry-failed");
   const first = (await post(`/environments/${env.id}/connection-link`)).json().externalId;
   await owner.query("UPDATE environments SET connection_status='failed', failure_reason='ROLE_ASSUME_DENIED' WHERE id=$1", [env.id]);
@@ -133,7 +133,7 @@ test("실패 뒤 다시: failed → 링크 다시 받기는 failure_reason 을 �
   assert.equal(list.json().items.find((x: { id: string }) => x.id === env.id).failureReason, "ROLE_ASSUME_DENIED");
   const again = await post(`/environments/${env.id}/connection-link`);
   assert.equal(again.statusCode, 200);
-  assert.notEqual(again.json().externalId, first);
+  assert.equal(again.json().externalId, first);
   const row = await dbRow(env.id);
   assert.equal(row.connection_status, "awaiting_customer");
   assert.equal(row.failure_reason, null);
@@ -150,13 +150,13 @@ test("비밀 노출: 목록 응답에 externalId 없음, 감사에는 앞 4자 �
   assert.ok(a.rows.some((r) => (r.d as string).includes(ext.slice(0, 4))));
 });
 
-test("링크 모양: 스택 이름·ARN 인코딩·리전", { skip }, async () => {
-  const env = await create("url-shape", { clusterName: "shop eks/1", region: "us-east-1" });
+test("링크 모양: 스택 이름·ARN 인코딩·리전 (클러스터 이름은 PF02 부터 EKS 모양만)", { skip }, async () => {
+  const env = await create("url-shape", { clusterName: "shop-eks_1", region: "us-east-1" });
   const url = new URL((await post(`/environments/${env.id}/connection-link`)).json().url);
   assert.equal(url.hostname, "us-east-1.console.aws.amazon.com");
   const q = new URLSearchParams(url.hash.split("?")[1]);
   assert.equal(q.get("param_PlatformPrincipalArn"), ARN);
-  assert.equal(q.get("param_EksClusterName"), "shop eks/1");
+  assert.equal(q.get("param_EksClusterName"), "shop-eks_1");
   assert.equal(q.get("templateURL"), TEMPLATE);
   assert.match(q.get("stackName")!, /^svc-connect-[A-Za-z0-9]{8}$/);
   assert.ok((q.get("param_ExternalId") ?? "").length >= 32);
@@ -172,4 +172,20 @@ test("입력 검사(400: 모르는 제공자·빈 이름) + 해제 후 disconnec
   assert.equal(d.statusCode, 204, d.body);
   const row = await dbRow(env.id);
   assert.equal(row.connection_status, "disconnected");
+});
+
+test("PF01 FM-CLD-03: AWS 리전 오타는 400 BAD_REGION, 앞뒤 빈칸은 지워서 저장", { skip }, async () => {
+  const bad = await post("/environments", { provider: "aws", name: "pf01-bad-region", region: "seoul", clusterName: "shop-eks" });
+  assert.equal(bad.statusCode, 400); assert.equal(bad.json().code, "BAD_REGION");
+  const ok = await post("/environments", { provider: "aws", name: "pf01-ok-region", region: " ap-northeast-2 ", clusterName: " shop-eks " });
+  assert.equal(ok.statusCode, 201, ok.body);
+  const r = (await owner.query("SELECT region, cluster_name FROM environments WHERE id=$1", [ok.json().id])).rows[0];
+  assert.deepEqual(r, { region: "ap-northeast-2", cluster_name: "shop-eks" });
+});
+
+test("PF02 거부: AWS 클러스터 이름이 EKS 모양이 아니면 400 BAD_CLUSTER_NAME (CLI 인자·템플릿 파라미터로 들어감)", { skip }, async () => {
+  for (const clusterName of ["--endpoint-url=http://x", "a b"]) {
+    const r = await post("/environments", { provider: "aws", name: `pf02-${clusterName.length}`, clusterName });
+    assert.equal(r.statusCode, 400); assert.equal(r.json().code, "BAD_CLUSTER_NAME");
+  }
 });

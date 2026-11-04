@@ -35,7 +35,7 @@ const exec: Exec = async (cmd, args) => {
   if (/^gcloud sql instances list/.test(line)) return denySql ? out(null, 1, "PERMISSION_DENIED") : out([]);
   return out({});
 };
-const run: import("@svc/security").GcloudRun = async (args) => { delegates.push(args.find((a) => a.startsWith("--delegates="))!); return { code: 0, stdout: "ya29." + "x".repeat(40), stderr: "" }; };
+const run: import("@svc/security").GcloudRun = async (args) => { delegates.push(args.find((a) => a.startsWith("--impersonate-service-account="))!.split("=")[1]!.split(",")[0]!); return { code: 0, stdout: "ya29." + "x".repeat(40), stderr: "" }; };
 
 function broker() {
   return security.createTempRoleBroker({

@@ -3,7 +3,7 @@
 # 상태: AI 초안. 이 레포의 세션에서는 실행하지 않는다 (DRY_RUN=1이면 명령만 출력)
 #
 # 빌리는 길: 워커 gcloud 로그인(WORKER_PRINCIPAL) → 회사 전용 SA(t-<28자>, 여기서 만듦) → 고객 svc-observe|svc-plan|svc-operate
-#   (packages/security/src/gcp-cli.ts --delegates). 고객 연결 스크립트(gcp-connect.sh)는 회사 전용 SA 에 고객 SA 의 tokenCreator 를 준다.
+#   (packages/security/src/gcp-cli.ts --impersonate-service-account=<회사 SA>,<고객 SA>). 고객 연결 스크립트(gcp-connect.sh)는 회사 전용 SA 에 고객 SA 의 tokenCreator 를 준다.
 #   이 스크립트는 그 앞 고리: 워커가 회사 전용 SA 의 tokenCreator 가 되게 한다. 키 파일은 만들지 않는다
 # 회사 전용 SA 이름 = "t-" + md5(회사 UUID) 16진 앞 28자 (DB tenants.gcp_platform_sa 와 같은 규칙, 0029_gcp_platform_sa.sql)
 #
@@ -25,8 +25,8 @@ if ! [[ "${PLATFORM_PROJECT}" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then echo "P
 TENANT_ID="$(printf '%s' "${TENANT_ID}" | tr 'A-F' 'a-f')"
 if ! [[ "${TENANT_ID}" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]]; then echo "TENANT_ID 가 UUID 가 아님" >&2; exit 1; fi
 # 전체 공개·그룹·도메인 주체에게는 안 연다. 워커 SA(serviceAccount:) 또는 사람 계정 하나(user:<이메일>)만
-# DRAFT(ai) FM-CON-02: 맥 데모 워커는 사람 gcloud 로그인으로 돈다. 워커 gcloud 는 --impersonate-service-account=<고객 SA>
-#   --delegates=<회사 SA> 라 시작 주체가 사람 계정이어도 체인이 같고 키 파일이 없다. 그래서 user: 도 받는다(경고 한 줄).
+# DRAFT(ai) FM-CON-02: 맥 데모 워커는 사람 gcloud 로그인으로 돈다. 워커 gcloud 는 --impersonate-service-account=<회사 SA>,<고객 SA>
+#   (쉼표 위임 체인) 라 시작 주체가 사람 계정이어도 체인이 같고 키 파일이 없다. 그래서 user: 도 받는다(경고 한 줄).
 #   ALLOW_HUMAN_WORKER=0 이면 예전처럼 serviceAccount: 만 (운영: EKS 워커는 Workload Identity 로 워커 SA)
 # TODO(human): 운영에서 사람 계정을 막을지(기본값을 0 으로 바꿀지) 결정
 SA_RE='^serviceAccount:[a-z0-9-]+@[a-z0-9-]+\.iam\.gserviceaccount\.com$'

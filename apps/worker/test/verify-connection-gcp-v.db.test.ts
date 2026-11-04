@@ -69,13 +69,13 @@ before(async () => {
 });
 after(async () => { if (skip) return; await core.pool.end(); await owner.end(); });
 
-test("회사마다 다른 위임 SA: 두 회사가 같은 프로젝트 이름의 환경을 확인해도 --delegates 는 각자 DB 값", { skip }, async () => {
+test("회사마다 다른 위임 SA: 두 회사가 같은 프로젝트 이름의 환경을 확인해도 위임 SA(쉼표 체인 앞) 는 각자 DB 값", { skip }, async () => {
   reset();
   await run1(await env(T)); await run1(await env(T2), T2);
   const sas = (await owner.query("SELECT id, gcp_platform_sa FROM tenants WHERE id = ANY($1)", [[T, T2]])).rows;
   const sa = (id: string) => sas.find((r) => r.id === id).gcp_platform_sa;
-  assert.deepEqual(issueArgs.map((a) => a.find((x) => x.startsWith("--delegates="))),
-    [`--delegates=${sa(T)}@svc-platform.iam.gserviceaccount.com`, `--delegates=${sa(T2)}@svc-platform.iam.gserviceaccount.com`]);
+  assert.deepEqual(issueArgs.map((a) => a.find((x) => x.startsWith("--impersonate-service-account="))!.split("=")[1]!.split(",")[0]),
+    [`${sa(T)}@svc-platform.iam.gserviceaccount.com`, `${sa(T2)}@svc-platform.iam.gserviceaccount.com`]);
   assert.notEqual(sa(T), sa(T2));
 });
 
