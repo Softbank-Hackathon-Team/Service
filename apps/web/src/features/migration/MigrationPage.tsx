@@ -590,7 +590,7 @@ function CancelledScreen({ migration, route }: ScreenProps) {
     <Frame migration={migration} route={route}>
       <Hero tone="run" meta="취소" title={'이 이전은\n여기서 끝났습니다'} foot="환경 잠금을 풀었습니다" />
       <Stack area="side">
-        <LeftoverFold migration={migration} title="도착에 남은 자원" hideWhenNone />
+        <LeftoverFold migration={migration} title="도착에 남은 자원" />
       </Stack>
     </Frame>
   );
@@ -631,7 +631,8 @@ export function MigrationPage({ id }: { id: string }) {
     if (!next) return;
     setStatus(next.status);
     const screen = screenOf(next.status);
-    const moved = shownScreen.current !== null && shownScreen.current !== screen;
+    // 처음 읽은 화면도 전환으로 들인다. 읽는 동안은 근거 칸이 없어서, 근거 칸이 있는 화면이면 칸이 열리는 것이 보인다
+    const moved = shownScreen.current !== screen;
     shownScreen.current = screen;
     if (moved) withTransition(() => setShown(next));
     else setShown(next);
