@@ -243,16 +243,17 @@ export function fakeVirtual(o: {
   const podFor = (name: string, labels: Record<string, string>, spec: any, bump: boolean) => {
     const img = imagesOf(spec);
     if (bump) lists.set(name, (lists.get(name) ?? 0) + 1);
-    const crash = /crash/.test(img), pull = /pull-fail/.test(img), slow = /slow/.test(img);
+    const crash = /crash/.test(img), pull = /pull-fail/.test(img), slow = /slow/.test(img), cfg = /config-error/.test(img);
     const restarts = crash ? lists.get(name) ?? 0 : 0;
     return {
       metadata: { name, labels },
       status: {
         phase: pull ? "Pending" : "Running",
-        conditions: [{ type: "Ready", status: crash || pull || slow ? "False" : "True" }],
+        conditions: [{ type: "Ready", status: crash || pull || slow || cfg ? "False" : "True" }],
         containerStatuses: (spec?.containers ?? []).map((c: any) => ({
           name: c.name, restartCount: restarts,
-          state: crash ? { waiting: { reason: "CrashLoopBackOff" } } : pull ? { waiting: { reason: "ImagePullBackOff" } } : { running: {} },
+          state: crash ? { waiting: { reason: "CrashLoopBackOff" } } : pull ? { waiting: { reason: "ImagePullBackOff" } }
+            : cfg ? { waiting: { reason: "CreateContainerConfigError", message: "container has runAsNonRoot and image has non-numeric user (app), cannot verify user is non-root" } } : { running: {} },
           lastState: restarts > 0 ? { terminated: { reason: "Error", exitCode: 1 } } : {},
         })),
       },

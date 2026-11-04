@@ -120,6 +120,7 @@ test("실패는 정해진 코드로 끝나고, 샌드박스는 언제나 지운�
     { name: "적용 거부", input: sample(), k: { virtual: { reject: (o, dry) => (!dry && o.metadata.name === "web" ? "admission webhook denied the request" : null) } }, code: "REHEARSAL_DRY_RUN_REJECTED", verdict: "failed" },
     { name: "원본 dry-run 거부", input: sample(), k: { virtual: { reject: (o, dry) => (dry && o.metadata.name === "api" ? 'Deployment.apps "api" is invalid: spec.template.spec.containers[0].ports[0].containerPort: Invalid value: 70000' : null) } }, code: "REHEARSAL_DRY_RUN_REJECTED", verdict: "failed" },
     { name: "롤아웃 시간 초과", input: sample({ web: `${REG}/shop-web-slow@sha256:cd` }), code: "REHEARSAL_ROLLOUT_FAILED", verdict: "failed" },
+    { name: "컨테이너 설정 오류", input: sample({ web: `${REG}/shop-web-config-error@sha256:cd` }), code: "REHEARSAL_ROLLOUT_FAILED", verdict: "failed" },
     { name: "재시작 반복", input: sample({ api: `${REG}/shop-api-crash@sha256:ab` }), code: "REHEARSAL_CRASHLOOP", verdict: "failed" },
     { name: "연결 실패", input: sample(), k: { virtual: { unreachable: ["shop-api"] } }, code: "REHEARSAL_CONNECTIVITY_FAILED", verdict: "failed" },
     { name: "이미지 받기 실패", input: sample({ web: `${REG}/shop-web-pull-fail@sha256:cd` }), code: "REHEARSAL_IMAGE_MIRROR_FAILED", verdict: "error" },
@@ -146,11 +147,14 @@ test("실패는 정해진 코드로 끝나고, 샌드박스는 언제나 지운�
   }
 });
 
-test("재시작이 쌓이면 롤아웃 기한(300초)을 다 기다리지 않고 끝낸다", async () => {
-  const k = backend();
-  const r = await k.run(sample({ api: `${REG}/shop-api-crash@sha256:ab` }));
-  assert.equal(r.failureCode, "REHEARSAL_CRASHLOOP");
-  assert.ok(k.elapsed() < 60_000, `걸린 시간 ${k.elapsed()}ms`);
+test("재시작이 쌓이거나 컨테이너를 못 만들면 롤아웃 기한(300초)을 다 기다리지 않고 끝낸다", async () => {
+  for (const [shape, code] of [[{ api: `${REG}/shop-api-crash@sha256:ab` }, "REHEARSAL_CRASHLOOP"], [{ web: `${REG}/shop-web-config-error@sha256:cd` }, "REHEARSAL_ROLLOUT_FAILED"]] as const) {
+    const k = backend();
+    const r = await k.run(sample(shape));
+    assert.equal(r.failureCode, code);
+    assert.ok(k.elapsed() < 60_000, `${code}: 걸린 시간 ${k.elapsed()}ms`);
+    if (code === "REHEARSAL_CRASHLOOP") assert.ok(r.timingsMs.check > 0, `실패한 단계의 시간도 남긴다 ${JSON.stringify(r.timingsMs)}`);
+  }
 });
 
 test("dry-run 전용 종류마다 이미지에 넣은 CRD 가 있다", () => {

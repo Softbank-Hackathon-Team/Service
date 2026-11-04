@@ -89,7 +89,14 @@ export async function runRehearsal(input: RehearsalInput, run: RehearsalRun, b: 
   };
   // 단계 하나의 검사 줄을 다 쓴 뒤 부른다. 실패 줄이 있으면 그 코드로 멈춘다
   const gate = (failed: RehearsalFailureCode | null) => { if (failed) throw new Stop(failed); };
-  const phase = async (p: SandboxRunPhase) => { await run.onPhase?.(p); };
+  // 단계 시간: 단계가 바뀔 때와 끝날 때(실패 포함) 지금 단계를 닫는다
+  let open: { key: keyof typeof timings; at: number } | null = null;
+  const close = () => { if (open) timings[open.key] += now() - open.at; open = null; };
+  const phase = async (p: SandboxRunPhase, key?: keyof typeof timings) => {
+    close();
+    if (key) open = { key, at: now() };
+    await run.onPhase?.(p);
+  };
   const note = (r: KubeResponse) => { for (const w of r.warnings) if (warnings.size < 50) warnings.add(w.slice(0, 300)); };
 
   try {
@@ -119,7 +126,7 @@ export async function runRehearsal(input: RehearsalInput, run: RehearsalRun, b: 
     }
 
     // 1. 샌드박스
-    await phase("creating");
+    await phase("creating", "create");
     t = now();
     try {
       const swept = await b.sweepLeftovers(name);
@@ -132,12 +139,10 @@ export async function runRehearsal(input: RehearsalInput, run: RehearsalRun, b: 
       add("sandbox_ready", name, false, now() - t, e instanceof KubeError ? `${e.code}: ${e.message}` : String((e as Error).message ?? e));
       gate("REHEARSAL_SANDBOX_UNAVAILABLE");
     }
-    timings.create = now() - t;
     const kube = vc!.admin;
 
     // 2. dry-run · 도착 정책 · 적용
-    await phase("applying");
-    t = now();
+    await phase("applying", "apply");
     await prepare(kube, orig.manifests);
     gate(await dryRun(kube, orig.manifests));
     gate(await targetPolicy(kube, orig.manifests));
@@ -146,16 +151,13 @@ export async function runRehearsal(input: RehearsalInput, run: RehearsalRun, b: 
     gate(await apply(kube, db));
     if (db.length) gate(await converge(kube, db, true));
     gate(await apply(kube, rest));
-    timings.apply = now() - t;
 
     // 3. 롤아웃 · 잡 · 재시작 · 준비 · 연결
-    await phase("checking");
-    t = now();
+    await phase("checking", "check");
     gate(await converge(kube, rest, false));
     gate(await restarts(kube, appl.manifests, db));
     gate(await ready(kube, appl.manifests, db));
     gate(await connectivity(kube, appl.manifests));
-    timings.check = now() - t;
   } catch (e) {
     if (e instanceof Stop) failure = e.code;
     else {
@@ -163,13 +165,13 @@ export async function runRehearsal(input: RehearsalInput, run: RehearsalRun, b: 
       failure = "REHEARSAL_SANDBOX_UNAVAILABLE";
     }
   } finally {
+    close();
     if (vc) {
-      await phase("deleting");
-      const t = now();
+      await phase("deleting", "delete");
       const r = await vc.dispose();
       deleted = r.deleted;
       if (!r.deleted) warnings.add(`샌드박스 지우기 실패 (만료 청소가 마무리): ${r.detail}`.slice(0, 300));
-      timings.delete = now() - t;
+      close();
     }
   }
 
@@ -485,6 +487,13 @@ export const DIAGNOSES: ReadonlyArray<{ code: RehearsalFailureCode; find(e: Evid
     if (!p) return null;
     const why = waitingReasons(p).find((r) => /Image/.test(r))!;
     return { detail: `${p.metadata?.name}: ${why}`, terminal: why !== "ErrImagePull" };
+  } },
+  // 컨테이너를 만들 수조차 없음 (없는 Secret 키, 이름뿐인 USER 로 runAsNonRoot 확인 불가 등). 기다려도 안 풀린다 (kind 실측)
+  { code: "REHEARSAL_ROLLOUT_FAILED", find: (e) => {
+    const p = e.pods.find((x) => waitingReasons(x).some((r) => /CreateContainerConfigError|CreateContainerError|RunContainerError/.test(r)));
+    if (!p) return null;
+    const c = [...(p.status?.initContainerStatuses ?? []), ...(p.status?.containerStatuses ?? [])].find((x: any) => /Create|Run/.test(x.state?.waiting?.reason ?? ""));
+    return { detail: `${p.metadata?.name}: ${c?.state?.waiting?.reason}: ${String(c?.state?.waiting?.message ?? "").slice(0, 200)}`, terminal: true };
   } },
   { code: "REHEARSAL_CRASHLOOP", find: (e) => {
     const p = e.pods.find((x) => restartsOf(x) > 0 || waitingReasons(x).includes("CrashLoopBackOff"));
