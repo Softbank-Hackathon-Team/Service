@@ -5,6 +5,7 @@
 #   bash tools/cloud-zero.sh                AWS + GCP
 #   bash tools/cloud-zero.sh aws            AWS 만
 #   bash tools/cloud-zero.sh gcp            GCP 만
+#   bash tools/cloud-zero.sh cf             Cloudflare 만 (cf-check 가 만든 LB·pool·모니터. 토큰 없으면 건너뜀 줄)
 # 환경 변수
 #   AWS_PROFILE        그대로 쓴다 (.env 의 finals)
 #   AWS_REGION         기본 ap-northeast-2 (서울)
@@ -257,8 +258,17 @@ gcp_checks() {
   info "앱 서비스 계정(app-*)" gcloud --project "$P" iam service-accounts list --filter='email~^app-' --format='value(email)'
 }
 
+# pf-d FM-TRF-09: Cloudflare LB·pool·모니터 (cf-check 이름). 토큰은 환경 변수 또는 레포 .env (값은 안 찍음)
+CF_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+# shellcheck disable=SC2329
+cf_list() { ( cd "$CF_ROOT" || exit 2; if [ -f .env ]; then node --env-file=.env --import tsx scripts/cf-check.ts --list; else node --import tsx scripts/cf-check.ts --list; fi ); }
+cf_has_token() { [ -n "${CLOUDFLARE_API_TOKEN:-}${CF_API_TOKEN:-}" ] || grep -Eq '^(CLOUDFLARE|CF)_API_TOKEN=.' "$CF_ROOT/.env" 2>/dev/null; }
+
 run_checks() {
   TOTAL=0; FAILED=0; LEFT=""; IGNORED=0
+  if [ "$WHAT" = all ] || [ "$WHAT" = cf ]; then
+    if cf_has_token; then count "Cloudflare LB·pool·모니터(cf-check)" cf_list; else row "Cloudflare" "건너뜀 (토큰 없음, 참고)"; fi
+  fi
   if [ "$WHAT" = all ] || [ "$WHAT" = aws ]; then
     if ! command -v aws >/dev/null 2>&1; then row "AWS" "조회 실패 (aws 명령 없음)"; FAILED=1; else aws_checks; fi
   fi
