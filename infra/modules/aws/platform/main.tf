@@ -66,6 +66,18 @@ variable "admin_principal_arn" {
     error_message = "admin_principal_arn 은 비우거나 IAM role/user ARN 이어야 한다 (arn:aws:sts::…:assumed-role/… 은 안 됨)."
   }
 }
+variable "team_admin_arns" {
+  description = "팀원 kubectl admin. cluster creator와 admin_principal_arn에 들어간 ARN은 넣지 말 것(중복 에러)"
+  type        = list(string)
+  default = [
+    "arn:aws:iam::725072160743:user/Jeong",
+    "arn:aws:iam::725072160743:user/jeong-cli",
+    "arn:aws:iam::725072160743:user/lee-jeong",
+    "arn:aws:iam::725072160743:user/oh-chaegeon",
+    "arn:aws:iam::725072160743:user/park-seungjun",
+    "arn:aws:iam::725072160743:user/park-sojeong",
+  ]
+}
 # 노드 그룹 3개. 바깥 입력을 받는 파드가 뚫려 노드가 털려도 고객 자격(cred)에 못 닿게 나눈다
 # DRAFT(ai): 크기는 전부 최소값. 원래 기준은 "서버 2대(2vCPU/4GB) + 샌드박스 1대", 늘어난 비용은 팀 미결
 # general: 웹 콘솔·API·cloudflared·Kyverno·ESO·Prometheus·Grafana·OTel·AI 워커.
@@ -461,6 +473,24 @@ resource "aws_eks_access_policy_association" "admin" {
   count         = var.admin_principal_arn != "" ? 1 : 0
   cluster_name  = aws_eks_cluster.this.name
   principal_arn = aws_eks_access_entry.admin[0].principal_arn
+  policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+  access_scope {
+    type = "cluster"
+  }
+}
+
+# --- 팀원 kubectl 접근: 전원 클러스터 admin
+resource "aws_eks_access_entry" "team" {
+  for_each      = toset(var.team_admin_arns)
+  cluster_name  = aws_eks_cluster.this.name
+  principal_arn = each.value
+  type          = "STANDARD"
+}
+
+resource "aws_eks_access_policy_association" "team" {
+  for_each      = aws_eks_access_entry.team
+  cluster_name  = aws_eks_cluster.this.name
+  principal_arn = each.value.principal_arn
   policy_arn    = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
   access_scope {
     type = "cluster"
