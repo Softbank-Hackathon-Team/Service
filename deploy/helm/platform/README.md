@@ -36,7 +36,7 @@ helm install external-secrets external-secrets/external-secrets -n external-secr
 aws secretsmanager put-secret-value --secret-id platform/app --secret-string file://<레포 밖 app.json>
 aws secretsmanager put-secret-value --secret-id platform/cloudflared --secret-string file://<레포 밖 cf.json>
 
-# 3. 이 차트 (샌드박스 끔이 기본)
+# 3. 이 차트 (샌드박스 끔이 기본). 워커 Argo CD 권한이 argocd 네임스페이스에 생기므로 아래 "Argo CD 허브" 1번을 먼저 한다
 helm upgrade --install platform deploy/helm/platform -n platform --create-namespace
 
 # 3-1. 리허설 샌드박스를 켤 때. imageRegistry 는 Terraform 출력 sandbox_image_registry 그대로 (없거나 모양이 틀리면 렌더가 멈춘다)
@@ -48,6 +48,32 @@ helm upgrade --install platform deploy/helm/platform -n platform --create-namesp
 `platform/app` JSON 에 넣을 키: `components.*.secretKeys` 에 적은 것 전부 (`DATABASE_URL`, `JWT_SECRET`, `PLATFORM_PRINCIPAL_ARN`, `ANTHROPIC_API_KEY`). 키를 늘리면 JSON 과 `secretKeys` 를 같이 고친다.
 
 Cloudflare 쪽: Zero Trust 에서 원격 관리 터널을 만들고 토큰을 `platform/cloudflared` 에 넣는다. 공개 호스트 이름의 서비스는 `http://web.platform.svc.cluster.local:8080` (web 배포가 올라온 뒤), 지표 주소(예: metrics.<도메인>)는 `http://otel-gateway.platform.svc.cluster.local:4318`.
+
+## Argo CD 허브 (이 차트와 따로 설치)
+
+공식 차트 argo-cd 를 `argocd` 네임스페이스의 `cred` 노드에 올린다. 값은 `deploy/argocd/argo-cd.values.yaml`. 공개 주소 없이 port-forward 로만 본다.
+
+```
+# 1. Argo CD
+helm upgrade --install argocd oci://ghcr.io/argoproj/argo-helm/argo-cd --version 10.11.7 -n argocd --create-namespace -f deploy/argocd/argo-cd.values.yaml
+
+# 2. gitops 레포 읽기 (비공개 레포). 토큰은 GITOPS_READ_TOKEN 값. 입력은 화면에 안 보인다 (값은 채팅·레포에 남기지 않는다)
+read -rs TOKEN; kubectl create secret generic gitops-repo -n argocd --from-literal=type=git --from-literal=url=https://github.com/Softbank-Hackathon-Team/gitops.git --from-literal=username=x-access-token --from-literal=password="$TOKEN"; unset TOKEN
+kubectl label secret gitops-repo -n argocd argocd.argoproj.io/secret-type=repository
+
+# 3. 루트 앱 (gitops 레포에서). 루트 앱이 쓰는 울타리가 platform/ 안에 있어 먼저 넣는다
+kubectl apply -f platform/project-platform-root.yaml
+kubectl apply -f bootstrap/root-app.yaml
+
+# 4. 확인: platform-root 가 Synced, ApplicationSet 4개, AppProject 가 보이면 된다
+kubectl get applications,applicationsets,appprojects -n argocd
+
+# 5. 보기. 아이디 admin, 비밀번호는 아래 값 → https://localhost:8443
+kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath='{.data.password}' | base64 -d
+kubectl port-forward svc/argocd-server -n argocd 8443:443
+```
+
+- TODO(human): 허브가 고객 클러스터에 들어가는 권한(Pod Identity, GKE WIF)과 cluster Secret. 이게 없으면 고객 Application 은 동기화되지 않는다.
 
 ## 관측 기본판 (이 차트와 따로 설치)
 
