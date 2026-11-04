@@ -91,7 +91,7 @@ const EXTRA: K8sDoc[] = [
     dataFrom: [{ extract: { key: "regcred" } }] } },
 ];
 
-const sandboxImages = (refs: string[]) => refs.map((ref) => ({ ref, sandboxRef: `sbx.example/sbx/${TENANT}/${ref.split("/").pop()!}` }));
+const sandboxImages = (refs: string[]) => refs.map((ref) => ({ ref, sandboxRef: `ecr.example/sandbox/${TENANT}/${ref.split("/").pop()!}` }));
 const items = (x: RehearsalInput) => Object.fromEntries(x.fidelity.items.map((i) => [i.id, i]));
 const applyDoc = (x: RehearsalInput, id: string) => x.apply.map((m) => parse(m.yaml) as K8sDoc).find((d) => docIdOf(d) === id);
 
@@ -139,7 +139,7 @@ test("aws: RDS 주소·비밀·터널·Ingress·이미지·복제 수·요청량
   assert.equal(it.ingress!.status, "substituted");
   // 이미지는 다이제스트 그대로 샌드박스 자리. 복제 수 1, HPA 최소 1, 요청량 상한, 한도 그대로
   const api = applyDoc(x, `Deployment/${ns}/shop-api`)!.spec as any;
-  assert.match(api.template.spec.containers[0].image, /^sbx\.example\/sbx\/.+\/shop-api@sha256:(ab){32}$/);
+  assert.match(api.template.spec.containers[0].image, /^ecr\.example\/sandbox\/.+\/shop-api@sha256:(ab){32}$/);
   assert.equal((applyDoc(x, `Deployment/${ns}/shop-web`)!.spec as any).replicas, 1);
   assert.equal((applyDoc(x, `HorizontalPodAutoscaler/${ns}/shop-api`)!.spec as any).minReplicas, 1);
   const redis = applyDoc(x, `StatefulSet/${ns}/cache`)!.spec as any;
