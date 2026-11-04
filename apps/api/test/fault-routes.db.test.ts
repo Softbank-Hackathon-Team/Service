@@ -228,7 +228,7 @@ test("【P-3 재현】 apply가 일하는 동안 환경 잠금 주인은 worker:
     .finally(() => { done = true; });
   while (!done) {
     for (const r of (await owner.query("SELECT holder FROM env_locks WHERE migration_id=$1", [m.id])).rows) holders.add(r.holder);
-    await new Promise((r) => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 5));
   }
   assert.equal(await run, "advanced");
   assert.ok([...holders].some((h) => h.startsWith("worker:")), `일하는 동안 본 잠금 주인: ${[...holders]}`);

@@ -156,7 +156,7 @@ test("PF FM-OPS-05 거부: apply 가 작업 폴더를 적었는데 지금 못 �
   assert.match(a.detail.recordedWorkDir, /elsewhere/);
 });
 
-test("PF FM-ORC-10: destroy 실패 원인 갈래 — 삭제 보호는 재시도 없이 blocked + 힌트, 잠금은 재시도(예외)", { skip }, async () => {
+test("PF FM-ORC-P01: destroy 실패 원인 갈래 — 삭제 보호는 재시도 없이 blocked + 힌트, 잠금은 재시도(예외)", { skip }, async () => {
   assert.equal(job.destroyFailureCause(["Error: cannot destroy instance without setting deletion_protection=false"]), "DELETION_PROTECTED");
   assert.equal(job.destroyFailureCause(["Error: InvalidParameterCombination: Cannot delete protected DB Instance"]), "DELETION_PROTECTED");
   assert.equal(job.destroyFailureCause(["Error: Error acquiring the state lock"]), "STATE_LOCKED");

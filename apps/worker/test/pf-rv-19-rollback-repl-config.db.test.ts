@@ -57,11 +57,13 @@ test("PF RV-19 거부: 컷오버 뒤 + 복제 설정 오류 → 트래픽 안 �
   assert.equal((await owner.query("SELECT 1 FROM audit_events WHERE target=$1 AND action='rollback.traffic_restored'", [M])).rowCount, 0);
 });
 
-test("PF RV-19 정상: 컷오버 전 + 복제 설정 오류 → 트래픽을 먼저 출발로 되돌린 기록을 남기고 복제 오류로 재시도", { skip }, async () => {
+// FM-INT-12: E PF-E32 와 합침 — 컷오버 전이면 트래픽 되돌림 기록을 남기고 재시도 대신 rolled_back + rollback.cleanup_incomplete (z20-rollback-repl PF-E32 와 같은 결과)
+test("PF RV-19 정상: 컷오버 전 + 복제 설정 오류 → 트래픽을 먼저 출발로 되돌린 기록을 남기고 rolled_back(복제 걷기는 cleanup_incomplete)", { skip }, async () => {
   const M = await mig(false);
   await rollback.handleRollback({ tenantId: T, requestId: "r-rv19b", migrationId: M }).catch(() => {});
   const a = (await owner.query("SELECT detail FROM audit_events WHERE target=$1 AND action='rollback.traffic_restored'", [M])).rows[0];
   assert.ok(a, "트래픽 되돌림 기록");
   assert.match(a.detail.replicationError, /tf:|REPL_TF_FACTS_MISSING|db_address/);
-  assert.equal((await owner.query("SELECT status FROM migrations WHERE id=$1", [M])).rows[0].status, "rolling_back");
+  assert.equal((await owner.query("SELECT status FROM migrations WHERE id=$1", [M])).rows[0].status, "rolled_back");
+  assert.equal((await owner.query("SELECT 1 FROM audit_events WHERE target=$1 AND action='rollback.cleanup_incomplete'", [M])).rowCount, 1);
 });

@@ -53,25 +53,6 @@ export function redactSecretShapes(s: string): string {
   return out;
 }
 
-// PF FM-ORC-18: terraform·gcloud·aws 오류 꼬리에 실리는 비밀 모양 (감사·로그 둘 다 이 목록을 쓴다: core obs/log scrubString)
-//   예전 규칙은 "password=" 처럼 낱말 경계가 앞에 있어야 해서 aws_secret_access_key = …, TF_VAR_db_password=…, db_password = "…" 를 놓쳤다
-export const SECRET_SHAPE_RULES: Array<[RegExp, string | ((...m: string[]) => string)]> = [
-  // PEM 개인 키 (JSON 안에서 \n 으로 이스케이프된 것도). 끝 줄이 잘렸으면 글 끝까지
-  [/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|$)/g, AUDIT_REDACTED],
-  // 사용자 이름 없는 URL 비밀번호 (redis://:pw@host)
-  [/\b([a-z][a-z0-9+.-]*:\/\/):([^\s@/]+)@/gi, (_m, sc) => `${sc}:${AUDIT_REDACTED}@`],
-  // 이름 안에 비밀 낱말이 든 키 = 값 (aws_secret_access_key = …, TF_VAR_db_password=…, db_password = "…", "client_secret": "…")
-  [/(["']?\b[A-Za-z0-9_.-]*(?:password|passwd|secret|token(?!s)|api[_-]?key|private[_-]?key|access[_-]?key)[A-Za-z0-9_.-]*["']?)(\s*=\s*|\s*:\s+|["']?\s*:\s*(?=["']))("[^"]*"|'[^']*'|[^\s,;&"'}]+)/gi,
-    (_m, k, sep) => `${k}${sep}${AUDIT_REDACTED}`],
-  // "token" 뒤 가까이(20자 안) 오는 긴 토큰 (Cloudflare API 토큰 40자 등). git 커밋 번호처럼 맥락 없는 40자, "token:<uuid>" 같은 감사 대상 이름은 남긴다
-  [/(\btoken\b[^A-Za-z0-9\n]{1,20}(?:[A-Za-z]+[^A-Za-z0-9\n]{1,5}){0,2})(?![0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b)[A-Za-z0-9_-]{32,}/gi, (_m, pre) => `${pre}${AUDIT_REDACTED}`],
-];
-export function redactSecretShapes(s: string): string {
-  let out = s;
-  for (const [re, rep] of SECRET_SHAPE_RULES) out = out.replace(re, rep as never);
-  return out;
-}
-
 const RULES: Array<[RegExp, string | ((...m: string[]) => string)]> = [
   ...SECRET_SHAPE_RULES,
   // URL 안 사용자:비밀번호@ (postgres://, redis://, https:// 다)
