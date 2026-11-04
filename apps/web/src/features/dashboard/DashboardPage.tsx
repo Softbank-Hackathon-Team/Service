@@ -79,7 +79,8 @@ function EnvRow({ env, seen }: { env: EnvironmentView; seen: EnvObservation | un
   );
 }
 
-export function MigrationRow({ migration, envName }: { migration: MigrationView; envName: (id: string) => string }) {
+/** reviewTag: 검토를 기다리는 줄 제목 옆에 작은 회색 "검토 필요" 표시 (진행 중과 섞어 보여 주는 대시보드용) */
+export function MigrationRow({ migration, envName, reviewTag = false }: { migration: MigrationView; envName: (id: string) => string; reviewTag?: boolean }) {
   const action = humanAction(migration.status);
   // 검토를 기다리는 줄도 진행 중이라 진행 막대를 보인다. 어느 칸에서 멈췄는지 모르면(목록에 멈춘 칸이 없을 때) 0% 로 오해하지 않게 그리지 않는다
   const pct = bucketOf(migration) !== 'done' ? progressPct(migration) : 0;
@@ -88,7 +89,10 @@ export function MigrationRow({ migration, envName }: { migration: MigrationView;
     <li style={{ viewTransitionName: `migration-${migration.id}` }}>
       <button type="button" className={s.migrationRow} onClick={() => go(`migrations/${migration.id}`)}>
         <span className={s.migrationText}>
-          <span className="t-label-md">{action ?? LABEL[migration.status]}</span>
+          <span className={s.titleRow}>
+            <span className="t-label-md">{action ?? LABEL[migration.status]}</span>
+            {reviewTag && bucketOf(migration) === 'human' && <span className={`${s.reviewTag} t-caption`}>검토 필요</span>}
+          </span>
           <span className="t-caption c-tertiary">
             {envName(migration.sourceEnvId)} → {envName(migration.targetEnvId)}
           </span>
@@ -180,13 +184,12 @@ export function DashboardPage() {
         ) : (
           CARDS.map(({ id, label, buckets, defaultOpen }) => {
             const items = buckets.flatMap((bucket) => groups[bucket]);
-            const review = id === 'active' ? groups.human.length : 0;
             return (
-              <FoldTile key={id} title={label} summary={review > 0 ? `${items.length}건 · 검토 필요 ${review}` : `${items.length}건`} defaultOpen={defaultOpen}>
+              <FoldTile key={id} title={label} summary={`${items.length}건`} defaultOpen={defaultOpen}>
                 {items.length > 0 ? (
                   <ul className={s.migrationList}>
                     {items.map((migration) => (
-                      <MigrationRow key={migration.id} migration={migration} envName={envName} />
+                      <MigrationRow key={migration.id} migration={migration} envName={envName} reviewTag />
                     ))}
                   </ul>
                 ) : (
