@@ -65,10 +65,13 @@ test("RehearsalView: 줄 없음(null)·줄 있음 정상 / 모르는 상태는 �
   const run = {
     id: randomUUID(), status: "passed", phase: "done", skip: null, reusedFrom: null, sandboxName: "sbx-1",
     createdAt: "2026-11-04T00:00:00Z", startedAt: "2026-11-04T00:00:01Z", finishedAt: "2026-11-04T00:03:00Z", deadlineAt: "2026-11-04T00:20:00Z",
-    fidelity: matrix(), result: result(),
+    fidelity: matrix(), result: result(), stale: false,
   };
   assert.ok(RehearsalView.safeParse({ migrationId, run }).success);
+  assert.ok(RehearsalView.safeParse({ migrationId, run: { ...run, stale: true } }).success, "지난 시도의 줄도 그대로 보인다");
   assert.equal(RehearsalView.safeParse({ migrationId, run: { ...run, status: "done" } }).success, false);
+  const { stale: _, ...noStale } = run;
+  assert.equal(RehearsalView.safeParse({ migrationId, run: noStale }).success, false, "stale 칸은 빠질 수 없다");
 });
 
 test("sandbox-rehearsal 큐: 작업 내용은 줄 번호 하나 / 줄 번호 없거나 다른 칸이 있으면 거부", () => {
