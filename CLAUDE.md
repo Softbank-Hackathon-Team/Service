@@ -50,7 +50,7 @@ AI가 쓴 내용이 팀 결정처럼 굳어지는 걸 막기 위한 규칙이다
 | 5 | 트래픽 전환 · 자동 롤백 | 10→50→100% 가중치 전환(Cloudflare LB), 지표가 나쁘면 되돌림 | `apps/worker/src/jobs/traffic*`, 결과 모양은 `packages/contracts/src/results.ts` |
 | 6 | GitOps · 여러 클러스터 배포 | 같은 Helm 차트를 Argo CD로 세 환경에 배포. Argo CD가 읽는 렌더 결과는 **별도 gitops 레포** | `gitops/`(차트 원본), 별도 gitops 레포 |
 | 7 | 보안 · 거버넌스 | 이전 중 가드레일, 보안 수집기(규칙 기반) → 통제 항목 한 표 | `apps/worker/src/jobs/security*`, `Finding` 계약 |
-| 8 | AI 에이전트 · 샌드박스 | 격리된 샌드박스(vCluster)에서만 점검·수정, 결과는 사람이 승인 | `apps/agent-worker`(`agent-run` 큐), `AgentFinish` 계약 |
+| 8 | AI 에이전트 · 샌드박스 | 배포 직전 리허설(커밋할 매니페스트를 일회용 vCluster 에 먼저 올려 보고, 실패면 멈춤)과 격리된 샌드박스 안에서만 하는 AI 점검·수정(결과는 사람이 승인) | `apps/agent-worker`(`agent-run`·`sandbox-rehearsal` 큐), `RehearsalResult`·`AgentFinish` 계약 |
 | 9 | 플랫폼 운영 · 관측 | 우리 플랫폼 자체(EKS 위 api/worker/web) 배포, 지표, 장애 대응 | `deploy/` |
 
 이전 한 번의 정상 흐름: 연결(1) → 가져오기·명세(3) → 계획·승인(4) → 자원 생성(3, Terraform) → 배포(6) → DB 복제·트래픽 이동(4, 5) → 컷오버(4) → 롤백 가능 창 → 정리.
