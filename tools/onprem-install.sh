@@ -67,7 +67,10 @@ K -n "$NS" create secret generic agent-key --from-env-file="$AGENT_KEY_FILE" --d
 
 echo "3/5 gitops 저장소 Secret (읽기 전용)"
 repo_secret="svc-gitops-$TENANT"
-args=(--from-literal=type=git --from-literal="url=$GITOPS_REPO_URL" --from-literal="project=$TENANT")
+# project 칸을 넣지 않는다 (전역 저장소 자격): ApplicationSet git 생성기는 프로젝트 전용 자격을 안 쓴다 →
+#   비공개 저장소에서 "authentication required" 로 앱 폴더를 못 찾는다 (2026-11-05 VM 실측, Argo CD v2.13.3. 공개 저장소에선 안 드러남)
+#   어느 저장소를 쓸 수 있는지는 AppProject sourceRepos 가 정한다 (이 클러스터는 한 회사 전용)
+args=(--from-literal=type=git --from-literal="url=$GITOPS_REPO_URL")
 [ -n "${GITOPS_SSH_KEY_FILE:-}" ] && args+=(--from-file=sshPrivateKey="$GITOPS_SSH_KEY_FILE")
 tok=""
 if [ -n "${GITOPS_TOKEN_FILE:-}" ]; then
@@ -81,7 +84,10 @@ K -n "$ARGO_NS" create secret generic "$repo_secret" "${args[@]}" --dry-run=clie
   | K label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | K apply -f - >/dev/null
 
 echo "4/5 설치 차트"
-helm ${KUBE_CONTEXT:+--kube-context "$KUBE_CONTEXT"} upgrade --install onprem-agent deploy/helm/onprem-agent -n "$NS" \
+# helm 4 는 server-side apply 다. Argo ApplicationSet 컨트롤러가 .spec.generators 를 다시 쓰므로 두 번째 실행부터 충돌로 실패한다
+#   (2026-11-05 VM 실측, helm v4.3.1). 이 차트가 그 칸의 주인이라 충돌은 차트 쪽으로 덮는다. helm 3 에는 이 플래그가 없다
+ssa=(); helm upgrade --help 2>/dev/null | grep -q -- '--force-conflicts' && ssa=(--force-conflicts)
+helm ${KUBE_CONTEXT:+--kube-context "$KUBE_CONTEXT"} upgrade --install onprem-agent deploy/helm/onprem-agent -n "$NS" "${ssa[@]}" \
   --set tenant="$TENANT" --set gitops.repoURL="$GITOPS_REPO_URL" \
   --set agent.reportURL="$AGENT_REPORT_URL" --set agent.image="$AGENT_IMAGE" \
   --set grants.cluster="$([ "${GRANTS_CLUSTER:-0}" = 1 ] && echo true || echo false)" >/dev/null
