@@ -68,7 +68,7 @@ test("AWS 관찰 역할 템플릿: 데이터 읽기 13개(DM-8 ListMetrics)가 �
 test("GCP 연결 스크립트: 관찰 역할 --permissions 에 데이터 읽기 5개가 들어가고 객체·메시지 권한과 쓰기는 0 (DRY_RUN 출력)", () => {
   const SA = "t-" + "0123456789abcdef0123456789ab" + "@platform-prj.iam.gserviceaccount.com";
   const out = spawnSync("bash", [new URL("../../../infra/onboarding/gcp-connect.sh", import.meta.url).pathname], {
-    env: { PATH: process.env.PATH, PLATFORM_SA: SA, PROJECT_ID: "cust-prj", DRY_RUN: "1" }, encoding: "utf8" }).stdout;
+    env: { PATH: process.env.PATH, PLATFORM_SA: SA, PROJECT_ID: "cust-prj", TARGET_PROJECT_ID: "cust-mig", DRY_RUN: "1" }, encoding: "utf8" }).stdout;
   const line = out.split("\n").find((l) => l.includes("roles create platform_observe"));
   assert.ok(line, out);
   const perms = /--permissions=(\S+)/.exec(line!)![1]!.replace(/^["']|["']$/g, "").split(",");

@@ -77,8 +77,8 @@ export const GCP_COMMAND_PERMISSIONS: Record<string, string[] | null> = {
   "container clusters list": ["container.clusters.list"],
   "container clusters describe": ["container.clusters.get"],
   "container clusters get-credentials": ["container.clusters.get"],
-  "sql instances list": ["sql.instances.list"],
-  "sql instances describe": ["sql.instances.get"],
+  "sql instances list": ["cloudsql.instances.list"],
+  "sql instances describe": ["cloudsql.instances.get"],
   "sql databases list": ["cloudsql.databases.list"],   // N8: 데이터베이스 이름 목록만 (내용 아님)
   "compute networks list": ["compute.networks.list"],
   // E-1·E-2 (discover/net.ts)
@@ -96,7 +96,6 @@ export const GCP_COMMAND_PERMISSIONS: Record<string, string[] | null> = {
   "storage buckets list": ["storage.buckets.list"],
   "storage buckets get-iam-policy": ["storage.buckets.getIamPolicy"],
   "pubsub topics list": ["pubsub.topics.list"],
-  "pubsub topics get-iam-policy": ["pubsub.topics.getIamPolicy"],   // WI-1: 앱 신원(GSA) 바인딩만 본다
   "pubsub subscriptions list": ["pubsub.subscriptions.list"],
   "redis instances list": ["redis.instances.list"],
   // CRIMPORT: Cloud Run 출발 읽기(import/readers/gcp-cloudrun.ts). CLOUDRUN_OBSERVE_PERMISSIONS 와 같은 목록 (시험이 대조)

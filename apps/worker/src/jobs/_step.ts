@@ -3,7 +3,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { hostname } from "node:os";
 import type { MigrationStatus, QueueName } from "@svc/contracts";
 import {
-  withTenant, advance, acquireEnvLock, handBackEnvLock, sameJobTakeoverWaitSec, LeaseLost, GuardFailed, boss, asBossDb, jobKey, writeAudit, START_ONLY_RETRY,
+  withTenant, advance, acquireEnvLock, tenantGroup, handBackEnvLock, sameJobTakeoverWaitSec, LeaseLost, GuardFailed, boss, asBossDb, jobKey, writeAudit, START_ONLY_RETRY,
   currentLogContext, failureEdge, jobFailedCode, LOCKED_STAGES,
   type Tx, type TransitionEvidence, type FailureCodeLike,
 } from "@svc/core";
@@ -55,6 +55,8 @@ export interface StepDef<J extends StepJob, L = undefined> {
   // ②가 예외로 끝났을 때 상태로 바꿀지. StepOutcome을 주면 ③을 그대로 한다 (예: apply 실패 → failed).
   // null이면 예외를 다시 던져 pg-boss 재시도에 맡긴다
   onError?: (e: unknown, job: J) => Promise<StepOutcome | null>;
+  // Jeong 11/4 01:53Z: ②의 결과(onError 포함)가 failed 면 ③ 전에 한 번 부른다 (트래픽 출발로 되돌리기 등 바깥 일). 던지지 말 것
+  beforeFail?: (out: StepOutcome, job: J) => Promise<StepOutcome>;
 }
 
 export type StepResult = "advanced" | "skipped";
@@ -99,6 +101,9 @@ export class RetryLater extends Error {
     super(`retry ${queue} in ${delaySec}s`);
   }
 }
+// SD-1: 실패·재시도 이유 한 줄 (detail.error, 500자). 로그용. 감사에는 원문이 그대로 남는다
+const reasonOf = (d: Record<string, unknown> | undefined) =>
+  typeof d?.error === "string" && d.error ? { reason: d.error.slice(0, 500), ...(d.attempts !== undefined ? { attempts: d.attempts } : {}) } : {};
 const isMoved = (e: unknown) => (e as { code?: string } | null)?.code === "MIGRATION_MOVED";
 
 
@@ -214,11 +219,12 @@ async function handleStepError<J extends StepJob, L>(run: StepRun<J, L>, e: unkn
     // Z19 H4: 정해진 대기 뒤 다시. 잠금은 workAndFinish가 이미 reserved로 반납했다
     await withTenant(job.tenantId, async (tx) => {
       const key = jobKey(e.queue, { migrationId: job.migrationId });
-      await boss.send(e.queue, e.data, { ...(key ? { singletonKey: key } : {}), startAfter: e.delaySec, db: asBossDb(tx) });
+      await boss.send(e.queue, e.data, { ...(key ? { singletonKey: key } : {}), ...tenantGroup(e.queue, job.tenantId), startAfter: e.delaySec, db: asBossDb(tx) });
       await writeAudit(tx, job.tenantId, { actor: "worker", action: `${def.name}.retry_scheduled`, target: job.migrationId,
         result: "error", detail: { requestId: job.requestId, delaySec: e.delaySec, ...e.detail } });
     });
-    log.info({ delay_sec: e.delaySec }, "job retry scheduled");
+    // SD-1: 재시도 이유도 로그에 (예전엔 감사 detail.error 에만 있어 맥 로그로 원인을 못 봤다). 로거가 비밀값을 가린다
+    log.warn({ delay_sec: e.delaySec, ...reasonOf(e.detail) }, "job retry scheduled");
     return "skipped";
   }
   if (isMoved(e)) {
@@ -237,7 +243,11 @@ async function handleStepError<J extends StepJob, L>(run: StepRun<J, L>, e: unkn
 }
 
 async function workAndFinish<J extends StepJob, L>(run: StepRun<J, L>): Promise<StepResult> {
-  const out = await doWork(run);
+  let out = await doWork(run);
+  if (out.to === "failed" && run.def.beforeFail) {
+    const before = out;
+    out = await run.def.beforeFail(out, run.job).catch((e) => ({ ...before, detail: { ...(before.detail ?? {}), beforeFailError: errorMessage(e, 300) } }));
+  }
   return finish(run, out);
 }
 
@@ -249,8 +259,12 @@ async function doWork<J extends StepJob, L>(run: StepRun<J, L>): Promise<StepOut
   let out: StepOutcome;
   try {
     out = await def.work(job, run.m, run.loaded, { signal: hb?.signal });
-  } catch (e) {
-    const alt = hb?.signal.aborted || !def.onError || e instanceof RetryLater || isMoved(e) ? null : await def.onError(e, job);
+  } catch (caught) {
+    let e = caught;
+    let alt: StepOutcome | null = null;
+    // PF FM-ORC-13: onError 가 RetryLater 를 던질 수 있다 (롤백 중 Cloudflare 429 등) → 아래 "상태 안 바꿈" 길(잠금 반납 뒤 던짐)로
+    if (!(hb?.signal.aborted || !def.onError || e instanceof RetryLater || isMoved(e)))
+      try { alt = await def.onError(e, job); } catch (x) { e = x; alt = null; }
     if (!alt) {
       hb?.stop();
       // Z19 H3: 상태가 이미 옮겨졌으면(MigrationMoved) 잠금도 옮긴 쪽 것이다. 같은 프로세스의 rollback 작업은 같은 주인 이름이라
@@ -275,7 +289,10 @@ async function finish<J extends StepJob, L>(run: StepRun<J, L>, out: StepOutcome
   //   그대로 확정하면 진 쪽의 쓰기가 남는다. 예: plan 이 두 번 배달되면 늦은 쪽의 새 plans 행이 남아 최신 계획이 바뀌고,
   //   화면이 든 첫 계획 승인이 409 PLAN_SUPERSEDED 가 된다. 이제 졌으면 이 트랜잭션을 통째로 취소하고 잠금 반납만 따로 한다
   let rolledBack = false;
-  const moved = await withTenant(job.tenantId, async (tx) => {
+  // PF FM-ORC-21: 바깥 일(apply·sync·cutover)이 성공한 뒤 이 트랜잭션이 일시 DB 오류(연결 끊김·교착 40P01 등) 한 번에 실패하면
+  //   예전엔 재시도 없이 failed(provisioning 이면 방금 만든 자원 자동 삭제, cutover 면 DB 는 넘어갔는데 failed) 였다.
+  //   이제 일시 오류면 같은 트랜잭션을 다시 한다. advance 가 ifStill 이라 앞 시도가 실은 커밋됐으면 두 번째는 skipped 로 끝난다
+  const moved = await retryTransient(() => withTenant(job.tenantId, async (tx) => {
     // M2: 잠금 순서(이전 행 → 환경 잠금 → 큐 → 감사)를 지키려고 inTx보다 먼저 행을 잠근다.
     // inTx가 writeAudit(회사 감사 자문 잠금)를 부르면, 예전엔 감사 잠금 → 행 잠금 순서가 되어
     // API 롤백·취소(행 → 감사)와 교착(40P01)할 수 있었다. advance가 같은 행을 다시 잠가도 같은 트랜잭션이라 괜찮다
@@ -297,7 +314,7 @@ async function finish<J extends StepJob, L>(run: StepRun<J, L>, out: StepOutcome
     if (useLock) for (const envId of envIds)
       await handBackEnvLock(tx, { migrationId: job.migrationId, envId, holder: WORKER_HOLDER });
     return ok;
-  }).catch(async (e) => {
+  }), { migrationId: job.migrationId, step: def.name }).catch(async (e) => {
     if (!(e instanceof LostRaceRollback)) throw e;
     rolledBack = true;
     if (useLock) await handBack(job, envIds);   // 취소된 트랜잭션 밖에서 잠금만 반납 (안 하면 기한 90초 뒤 청소가 WORKER_LOST)
@@ -305,10 +322,32 @@ async function finish<J extends StepJob, L>(run: StepRun<J, L>, out: StepOutcome
   });
   // 상태 이동 로그 한 줄. prev_state → state 로 api·worker 로그를 이어 읽는다 (T)
   log.info({ prev_state: def.expect, state: moved ? out.to : def.expect,
-    result: moved ? "advanced" : "skipped", ...(out.failureCode ? { failure_code: out.failureCode } : {}),
+    result: moved ? "advanced" : "skipped", ...(out.failureCode ? { failure_code: out.failureCode, ...reasonOf(out.detail) } : {}),
     ...(rolledBack ? { in_tx_rolled_back: true } : {}) },
     moved ? "transition" : "transition lost race");
   return moved ? "advanced" : "skipped";
+}
+
+// PF FM-ORC-21: 다시 하면 될 DB 오류 (연결 끊김·서버 재시작·교착·직렬화 실패·연결 수 초과)
+const TRANSIENT_PG = new Set(["40P01", "40001", "08000", "08001", "08003", "08006", "57P01", "57P02", "57P03", "53300"]);
+export function isTransientDbError(e: unknown): boolean {
+  const x = e as { code?: string; message?: string } | null;
+  if (!x) return false;
+  if (x.code && TRANSIENT_PG.has(x.code)) return true;
+  if (x.code && ["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "EPIPE"].includes(x.code)) return true;
+  return /Connection terminated|connection timeout|Client has encountered a connection error/i.test(x.message ?? "");
+}
+// DRAFT(ai): 1·2·4·8·15초 (합 30초, 환경 잠금 기한 90초 안). FINISH_RETRY_SEC="…" 로 바꿈
+export async function retryTransient<T>(fn: () => Promise<T>, ctx: Record<string, unknown>,
+  delaysSec: number[] = (process.env.FINISH_RETRY_SEC ?? "1,2,4,8,15").split(",").map(Number).filter((n) => Number.isFinite(n) && n >= 0)): Promise<T> {
+  for (let i = 0; ; i++) {
+    try { return await fn(); }
+    catch (e) {
+      if (!isTransientDbError(e) || i >= delaysSec.length) throw e;
+      log.warn({ ...ctx, attempt: i + 1, code: (e as { code?: string }).code, err: (e as Error).message }, "finish: transient db error, retrying");
+      await new Promise((r) => setTimeout(r, (delaysSec[i] ?? 1) * 1000));
+    }
+  }
 }
 
 // 잠금 반납. failed를 주면 같은 트랜잭션에 job.failed 감사 1줄 (Z12-6). runStep의 catch에서 실패 한 번에 한 번만 부른다

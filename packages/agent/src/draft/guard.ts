@@ -1,4 +1,4 @@
-import { AppSpecV2, checkV2, type FieldMetaV2 } from "@svc/contracts";
+import { AppSpecV2, checkV2, hasRedactionPlaceholder, type FieldMetaV2 } from "@svc/contracts";
 import type { MigrationRisk } from "./contracts.js";
 
 // 에이전트가 낸 명세를 그대로 믿지 않는다. 규칙 기반 명세(baseline)와 칸 단위로 비교해
@@ -67,6 +67,11 @@ export function guardDraft(o: {
       if (!AI_EDITABLE.has(k) || exact(key)) {
         if (b.props[k] !== undefined) props[k] = structuredClone(b.props[k]);
         rejected.push({ field: key, reason: "잠긴 칸: 원본 값으로 되돌림" }); continue;
+      }
+      // LLM-1: 에이전트는 가린 글을 본다. 가린 자리 표시를 베껴 쓴 값은 원래 값이 아니다 → 원본 값으로 되돌림(원본에 없으면 뺌)
+      if (a.props[k] !== undefined && hasRedactionPlaceholder(JSON.stringify(a.props[k]))) {
+        if (b.props[k] !== undefined) props[k] = structuredClone(b.props[k]);
+        rejected.push({ field: key, reason: "가린 값 자리 표시를 베낌: 원본 값으로 되돌림" }); continue;
       }
       // 여기까지 오면 원본에서 못 읽었거나 검토 필요였던 크기·개수 칸이다. AI 값을 쓰되 반드시 사람 검토
       if (a.props[k] !== undefined) props[k] = structuredClone(a.props[k]);

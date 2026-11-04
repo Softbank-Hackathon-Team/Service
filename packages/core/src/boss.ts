@@ -1,7 +1,7 @@
 import { PgBoss } from "pg-boss";
 import type { Tx } from "./db.js";
 import { QUEUES, JOB_SCHEMAS, type QueueName } from "@svc/contracts";
-import { envNumber } from "@svc/contracts";
+import { envNumber, tfBudget } from "@svc/contracts";
 import { createLogger } from "./obs/log.js";
 
 export const LISTEN_NOTIFY = process.env.BOSS_LISTEN_NOTIFY === "1";
@@ -60,16 +60,26 @@ export const POLICY: Record<string, QueuePolicy> = {
   [QUEUES.import]: { policy: "stately", retryLimit: 3, retryDelay: 10, retryBackoff: true },
   [QUEUES.precheck]: { policy: "stately", retryLimit: 2 },
   [QUEUES.plan]: { policy: "stately", retryLimit: 2 },
+  // G7-1: 계획 만료 깨우기. 작업 키 = plan-expiry:<계획 번호> (다시 계획하면 새 키). 실패해도 다음 승인 시도가 stale 로 옮긴다
+  [QUEUES.planExpiry]: { policy: "stately", retryLimit: 2, retryDelay: 30 },
+  // G5-1 DRAFT(ai): terraform destroy 는 여러 번 불러도 안전(state 에 있는 것만). 잠깐 실패(잠금·네트워크)를 넘기게 2번 더, 1분 뒤. 만료 1시간(RDS 삭제가 10분+)
+  // PF RV-09: 기한 = terraform 지우기 예산 + 정지 유예 + 여유 (contracts tfBudget). 재시도는 처리기가 직접 늦춰 다시 넣는다 (PF FM-ORC-12·25)
+  [QUEUES.targetDestroy]: { policy: "stately", retryLimit: 2, retryDelay: 60, expireInSeconds: tfBudget().destroyExpireSec },
+  // F8-5 DRAFT(ai): 걷기는 여러 번 불러도 안전. 연결이 잠깐 안 될 때만 넘기는 정도
+  [QUEUES.replCleanup]: { policy: "stately", retryLimit: 2, retryDelay: 30 },
   // M8 DRAFT(ai): 진짜 Terraform apply(EKS·RDS 생성)는 15분을 넘기 쉽다 → 1시간. 대안 "apply를 여러 작업으로 쪼개기"는 범위가 커서 버림.
   // TODO(human): 실행기(packages/adapters runner)에 대기 상한이 아직 없다. 넣는다면 이것보다 짧게. 값은 실측 apply 시간으로 확정
   // Z32: retryLimit 1 = "앞 시도가 일을 시작하기 전에 워커가 죽었을 때만" 한 번 더 (START_ONLY_RETRY). 처리기 예외는 예전처럼 재시도 없음
-  [QUEUES.apply]: { policy: "stately", retryLimit: 1, expireInSeconds: 3600 },
+  // PF RV-09: 1시간 고정이면 init·plan·apply 단계 상한 합 + 실패 즉시 지우기가 기한을 넘었다 → tfBudget 합 (기본 7200초)
+  [QUEUES.apply]: { policy: "stately", retryLimit: 1, expireInSeconds: tfBudget().applyExpireSec },
   // DRAFT(ai) Z19: 아래 대기는 초. 바깥 시스템(Argo·LB)이 잠깐 안 될 때를 넘기는 정도
   [QUEUES.deploy]: { policy: "stately", retryLimit: 2, retryDelay: 10 },
   // sync는 pg-boss 재시도를 안 쓴다: 처리기가 5·15·45초 간격으로 스스로 다시 넣는다(SYNC_RETRY_DELAYS_SEC). 0 = 예상 못 한 예외는 바로 죽은 작업 처리
   [QUEUES.sync]: { policy: "stately", retryLimit: 1 },     // Z32: 위 apply 와 같은 뜻 (START_ONLY_RETRY)
   // shift는 판정 도중 상태를 다시 읽고 시작하므로 한 번 더 해도 안전 (지표 오류는 컨트롤러 안에서 처리)
-  [QUEUES.shift]: { policy: "stately", retryLimit: 1, retryDelay: 5 },
+  // F8-6 DRAFT(ai): 만료 1시간. 기본 900초면 관찰 시간(TRAFFIC_OBSERVE_SEC)을 분 단위로 올린 shift 가 15분을 넘겨 만료·재시도 → 같은 워커가 둘을 돌렸다.
+  //   단계 3개 × 관찰 + 재관찰·hold 여유. 같은 주인 다른 작업 번호의 잠금 인수 거부(envlock.ts)가 두 번째 방어
+  [QUEUES.shift]: { policy: "stately", retryLimit: 1, retryDelay: 5, expireInSeconds: 3600 },
   // H2: 반쯤 한 컷오버는 재시도하지 않는다. 처리기 onError가 failed로 보낸다
   [QUEUES.cutover]: { policy: "stately", retryLimit: 1 },  // Z32: 위 apply 와 같은 뜻 (START_ONLY_RETRY)
   [QUEUES.cleanup]: { policy: "stately", retryLimit: 3, retryDelay: 10, retryBackoff: true },
@@ -77,7 +87,8 @@ export const POLICY: Record<string, QueuePolicy> = {
   [QUEUES.rollback]: { policy: "stately", retryLimit: 1, retryDelay: 5 },
   // DRAFT(ai): 빌드는 실패하면 같은 입력으로 다시 해도 같다 → pg-boss 재시도 없음(실패하면 apply 단계가 failed 로 보냄). 빌드 시간 상한 30분
   [QUEUES.imageBuild]: { policy: "stately", retryLimit: 0, expireInSeconds: 1800 },
-  [QUEUES.verifyConnection]: { policy: "stately", retryLimit: 3 },
+  // PF03 FM-NET DRAFT(ai): 재시도 5·10·20초 (예전 대기 0 → 몇 초 끊김에 4번을 다 쓰고 PLATFORM_ERROR). 마지막 시도 예외는 처리기가 failed 로 닫음
+  [QUEUES.verifyConnection]: { policy: "stately", retryLimit: 3, retryDelay: 5, retryBackoff: true },
   // 재시도하면 LLM 비용이 또 든다. 실패하면 사람이 다시 실행한다
   [QUEUES.agentRun]: { policy: "stately", retryLimit: 0 },
   [QUEUES.leaseReaper]: { policy: "singleton", retryLimit: 0 },
@@ -104,12 +115,29 @@ export const START_ONLY_RETRY: ReadonlySet<string> = new Set([QUEUES.apply, QUEU
 // 이제 shift 큐만 워커 하나가 한 번에 5건까지 (pg-boss localConcurrency = 같은 큐를 집는 루프 5개, 작업마다 성공·실패·생존 신호가 따로).
 //   batchSize 는 쓰지 않는다: 한 처리기가 여러 건을 받으면 한 건 실패를 따로 표시하기 어렵다
 // DRAFT(ai): 5 (Cloudflare API 429 우려로 10 아닌 5부터). SHIFT_CONCURRENCY 로 바꿀 수 있다. 다른 큐는 1 그대로
+// G9-5 DRAFT(ai): 나머지 이전 단계 큐도 워커 하나가 4건까지 (STEP_CONCURRENCY). 예전 1건이면 한 회사의 45분 apply 가
+//   다른 회사 apply·deploy 를 전부 세워 1시간 넘게 밀리고 청소가 JOB_NOT_PICKED 로 멈췄다. 같은 이전은 stately 작업 키라 여전히 1건씩
+const STEP_CONCURRENCY = Math.max(1, Number(process.env.STEP_CONCURRENCY) || 4);
 export const WORK_CONCURRENCY: Readonly<Record<string, number>> = {
   [QUEUES.shift]: Math.max(1, Number(process.env.SHIFT_CONCURRENCY) || 5),
   // Z32 7a: cleanup 도 5. 같은 이전의 cleanup 은 stately 작업 키라 동시에 1건만 돈다. 쌓인 대기(고아 500건)를 5배 빨리 비운다
   [QUEUES.cleanup]: Math.max(1, Number(process.env.CLEANUP_CONCURRENCY) || 5),
+  [QUEUES.import]: STEP_CONCURRENCY, [QUEUES.precheck]: STEP_CONCURRENCY, [QUEUES.plan]: STEP_CONCURRENCY,
+  [QUEUES.apply]: STEP_CONCURRENCY, [QUEUES.deploy]: STEP_CONCURRENCY, [QUEUES.sync]: STEP_CONCURRENCY,
+  [QUEUES.cutover]: STEP_CONCURRENCY, [QUEUES.rollback]: STEP_CONCURRENCY,
 };
 export const concurrencyOf = (name: string): number => WORK_CONCURRENCY[name] ?? 1;
+// G9-5 DRAFT(ai): 회사 공평 배분. 이전 단계 작업은 group = 회사 번호로 넣고(advance enqueueNext), 큐마다 한 회사가 동시에
+//   TENANT_QUEUE_SHARE(기본 2)건까지만 돈다 (pg-boss groupConcurrency = 모든 워커 합산, DB 로 셈). 0 이면 끔.
+//   한 회사가 이전을 몰아넣어도 다른 회사 작업이 자리를 얻는다. 그룹이 없는 옛 작업은 제한 없음
+export const TENANT_QUEUE_SHARE = Math.max(0, Math.floor(envNumber(process.env.TENANT_QUEUE_SHARE, 2)));
+export const tenantGroup = (queue: string, tenantId: string | undefined) =>
+  TENANT_QUEUE_SHARE > 0 && tenantId && STEP_QUEUES.includes(queue) ? { group: { id: tenantId } } : {};
+/** 단계 큐 boss.work 옵션 (워커 main). 회사 몫이 켜져 있으면 groupConcurrency 를 얹는다 */
+export function stepWorkOptions(queue: string) {
+  return { ...workOptions(), localConcurrency: concurrencyOf(queue),
+    ...(TENANT_QUEUE_SHARE > 0 && STEP_QUEUES.includes(queue) ? { groupConcurrency: TENANT_QUEUE_SHARE } : {}) };
+}
 export const policyOf = (name: string): QueuePolicy => {
   const p = POLICY[name] ?? { policy: "stately", retryLimit: 1 };
   return STEP_QUEUES.includes(name) ? { heartbeatSeconds: STEP_HEARTBEAT_SEC, ...p } : p;
@@ -146,6 +174,8 @@ const KEY_BY: Partial<Record<QueueName, (i: JobKeyIds) => string | undefined>> =
   // Z43 F3: 예전엔 여기가 도착 환경(plan:<envId>)인데 실제로 plan 작업을 넣는 유일한 곳(precheck)이 plan:<이전>으로 덮어썼다.
   //   큐에 쌓인 작업이 다 plan:<이전>이라 그쪽으로 맞춘다. 같은 환경에 계획이 겹치는 건 승인 때 환경 잠금 예약(ENV_BUSY)이 막는다
   "plan": (i) => i.migrationId,
+  // G7-1: 계획마다 하나 (넣는 쪽이 singletonKey 를 plan-expiry:<계획 번호>로 준다). 여기 값은 그게 없을 때만
+  "plan-expiry": (i) => i.migrationId,
   "apply": (i) => i.targetEnvId,
   "verify-connection": (i) => i.envId,
   "security-scan": (i) => i.envId,

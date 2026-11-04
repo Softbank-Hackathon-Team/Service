@@ -64,6 +64,52 @@ const alterDbReadOnly = (on: boolean) =>
 // Z80: marker 를 주면 같은 왕복 끝에 C3 표지를 넣는다. 단 L4 검사가 깨끗할 때만 (새는 표가 있으면 표지 없이 C6' 되돌림 = 예전과 같다).
 //   pg_terminate_backend(pid, timeout) 으로 세션이 정말 끝나길 기다리는 판도 재 봤으나 서버가 100ms 단위로 다시 봐서 멈춤이 ~100ms 늘었다(로컬 실측 112.6ms) → 버림.
 //   끊긴 앱 세션의 "커밋 중이던" 쓰기가 표지보다 늦게 들어갈 틈은 예전과 같고, C3 행 수 비교가 잡는다(ROW_COUNT_MISMATCH → C6' 되돌림)
+// APP-22 (가) DECISION(team): 컷오버 전까지 도착 앱이 출발 DB 에 붙는다 (11/4 01:57Z Jeong 결정, 관리 스레드 전달).
+//   도착 앱은 출발에 전용 최소 권한 계정(source-db-link 가 만드는 svc_link_<이전 앞 8자>)으로 붙으므로, 울타리가 앱 계정만 막으면
+//   C2~C5 사이 도착 앱 쓰기가 출발에 들어가 표지(C3) 뒤로 새어 잃는다. → 끝점의 fenceRoles 도 같은 울타리(저장·회수·세션 끊기·L4 검사)에 넣는다.
+//   추가 계정은 없을 수 있다(링크를 안 연 이전·도착 DB): 없으면 건너뛴다. 걷기는 저장본이 있을 때만 되돌린다 (기본 "읽기·쓰기 전체"는 앱 계정만)
+export const extraRoles = (e: Endpoint): string[] => [...new Set((e.fenceRoles ?? []).filter((x) => x && x !== e.appRole))];
+const roleExists = (role: string) => `EXISTS (SELECT 1 FROM pg_roles WHERE rolname = ${lit(role)})`;
+/** 앱 계정 또는 추가 계정 중 하나라도 표 t 에 쓸 수 있나 (없는 계정은 has_table_privilege 가 에러라 CASE 로 감싼다) */
+function anyRoleCanWrite(e: Endpoint, t: string): string {
+  return [e.appRole, ...extraRoles(e)].map((x, i) => i === 0
+    ? `has_table_privilege(${lit(x)}, ${t}, 'INSERT, UPDATE, DELETE')`
+    : `(CASE WHEN ${roleExists(x)} THEN has_table_privilege(${lit(x)}, ${t}, 'INSERT, UPDATE, DELETE') ELSE false END)`).join(" OR ");
+}
+function fenceExtraSql(schema: string, role: string): string {
+  const body = `BEGIN
+    IF NOT ${roleExists(role)} THEN RETURN; END IF;
+    INSERT INTO ${SAVED} (schema_name, app_role, grants)
+      SELECT ${lit(schema)}, ${lit(role)}, COALESCE(jsonb_agg(to_jsonb(g) ORDER BY g.kind, g.name, g.privilege), '[]'::jsonb)
+        FROM (${directWriteGrantsSql(schema, role, asLiteral)}) g
+      ON CONFLICT (schema_name, app_role) DO NOTHING;
+    EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA %I FROM %I', ${lit(schema)}, ${lit(role)});
+    EXECUTE format('REVOKE USAGE, UPDATE ON ALL SEQUENCES IN SCHEMA %I FROM %I', ${lit(schema)}, ${lit(role)});
+  END`;
+  const tag = dollarTag(body);
+  return `DO ${tag} ${body} ${tag}`;
+}
+/** 추가 계정 걷기: 저장본이 있을 때만 그 권한을 되돌리고 저장본을 지운다 (계정·저장본 표가 없으면 아무것도 안 함) */
+function unfenceExtraSql(schema: string, role: string): string {
+  const tk = REVOKED.table.map(lit).join(", "), sq = REVOKED.sequence.map(lit).join(", ");
+  const body = `DECLARE saved jsonb; g jsonb; obj text; kind text; priv text; BEGIN
+    IF NOT ${roleExists(role)} OR to_regclass(${lit(`${MARKER_SCHEMA}.fence_saved`)}) IS NULL THEN RETURN; END IF;
+    EXECUTE ${lit(`SELECT grants FROM ${SAVED} WHERE schema_name = $1 AND app_role = $2`)} INTO saved USING ${lit(schema)}, ${lit(role)};
+    IF saved IS NULL THEN RETURN; END IF;
+    FOR g IN SELECT * FROM jsonb_array_elements(saved) LOOP
+      kind := g->>'kind'; priv := g->>'privilege';
+      CONTINUE WHEN NOT ((kind = 'table' AND priv IN (${tk})) OR (kind = 'sequence' AND priv IN (${sq})));
+      obj := format('%I.%I', ${lit(schema)}, g->>'name');
+      CONTINUE WHEN to_regclass(obj) IS NULL;
+      EXECUTE format('GRANT %s ON %s %s TO %I%s', priv, CASE kind WHEN 'sequence' THEN 'SEQUENCE' ELSE 'TABLE' END, obj, ${lit(role)},
+                     CASE WHEN (g->>'grantable')::boolean THEN ' WITH GRANT OPTION' ELSE '' END);
+    END LOOP;
+    EXECUTE ${lit(`DELETE FROM ${SAVED} WHERE schema_name = $1 AND app_role = $2`)} USING ${lit(schema)}, ${lit(role)};
+  END`;
+  const tag = dollarTag(body);
+  return `DO ${tag} ${body} ${tag}`;
+}
+
 export interface FenceOptions {
   /** 주면 같은 왕복 끝에 L4 검사(writableTables 와 같은 질의)를 붙인다 */
   check?: { schema: string; name: string }[];
@@ -74,7 +120,8 @@ export async function fence(c: pg.Client, e: Endpoint, o: FenceOptions = {}):
     Promise<{ terminated: number; leaky: string[]; markerInserted: boolean }> {
   const s = ident(schemaOf(e)), r = ident(e.appRole);
   const names = (o.check ?? []).map((t) => `${ident(t.schema)}.${ident(t.name)}`);
-  const leakyFrom = `FROM unnest(${textArray(names)}) t WHERE has_table_privilege(${lit(e.appRole)}, t, 'INSERT, UPDATE, DELETE')`;
+  const extras = extraRoles(e);
+  const leakyFrom = `FROM unnest(${textArray(names)}) t WHERE ${anyRoleCanWrite(e, "t")}`;
   const leakySql = names.length ? `;\n    SELECT t AS leaky ${leakyFrom}` : "";
   const markerSql = o.marker === undefined ? "" : `;\n    INSERT INTO ${qualified(MARKER_SCHEMA, MARKER_TABLE)} (token) SELECT ${lit(o.marker)}` +
     (names.length ? ` WHERE NOT EXISTS (SELECT 1 ${leakyFrom})` : "");
@@ -85,10 +132,10 @@ export async function fence(c: pg.Client, e: Endpoint, o: FenceOptions = {}):
         FROM (${directWriteGrantsSql(schemaOf(e), e.appRole, asLiteral)}) g
       ON CONFLICT (schema_name, app_role) DO NOTHING;
     REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA ${s} FROM ${r};
-    REVOKE USAGE, UPDATE ON ALL SEQUENCES IN SCHEMA ${s} FROM ${r};
+    REVOKE USAGE, UPDATE ON ALL SEQUENCES IN SCHEMA ${s} FROM ${r};${extras.map((x) => `\n    ${fenceExtraSql(schemaOf(e), x)};`).join("")}
     COMMIT;
     SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-     WHERE datname = current_database() AND usename = ${lit(e.appRole)} AND pid <> pg_backend_pid();
+     WHERE datname = current_database() AND usename = ANY(${textArray([e.appRole, ...extras])}) AND pid <> pg_backend_pid();
     ${alterDbReadOnly(true)}${leakySql}${markerSql}`;
   try {
     const res = results(await c.query(sql));
@@ -145,8 +192,9 @@ export function unfenceSql(e: Endpoint, { writable = true } = {}): string {
     PERFORM set_config(${lit(UNFENCE_GUC)}, 'saved:' || jsonb_array_length(saved), true);
   END`;
   const tag = dollarTag(body);
+  const extras = extraRoles(e).map((x) => `${unfenceExtraSql(schemaOf(e), x)}; `).join("");
   // set_config(..., true) 는 이 트랜잭션 안에서만 보인다. 여러 문장 묶음 = 한 트랜잭션이라 뒤 SELECT 가 읽는다
-  return `DO ${tag} ${body} ${tag}; SELECT current_setting(${lit(UNFENCE_GUC)}, true) AS r`;
+  return `${extras}DO ${tag} ${body} ${tag}; SELECT current_setting(${lit(UNFENCE_GUC)}, true) AS r`;
 }
 
 export type UnfenceResult = { restored: "none" | "saved" | "default"; grants: number };
@@ -176,7 +224,6 @@ export async function appCanWrite(c: pg.Client, e: Endpoint, table: string): Pro
 export async function writableTables(c: pg.Client, e: Endpoint, tables: { schema: string; name: string }[]): Promise<string[]> {
   if (!tables.length) return [];
   const names = tables.map((t) => `${ident(t.schema)}.${ident(t.name)}`);
-  const r = await c.query<{ t: string }>(
-    `SELECT t FROM unnest($2::text[]) t WHERE has_table_privilege($1, t, 'INSERT, UPDATE, DELETE')`, [e.appRole, names]);
+  const r = await c.query<{ t: string }>(`SELECT t FROM unnest($1::text[]) t WHERE ${anyRoleCanWrite(e, "t")}`, [names]);
   return r.rows.map((x) => x.t);
 }

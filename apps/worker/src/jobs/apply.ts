@@ -1,4 +1,4 @@
-import { ApplyJob, QUEUES, type AppSpecV2, type PlanDoc, type Provider, type TfOutputs } from "@svc/contracts";
+import { ApplyJob, QUEUES, redactText, type AppSpecV2, type PlanDoc, type Provider, type TfOutputs } from "@svc/contracts";
 import { azureMockOutputsV2, chooseRunner, iacMockEnabled, specV2ForPlan, STUB_TF_OUTPUTS, stubTfOutputsV2 } from "@svc/adapters";
 import { asFailureCode, latestAcceptedSpecV2, planExpired, type Tx } from "@svc/core";
 import { errorMessage, nextJob, runStep, stubWait } from "./_step.js";
@@ -6,6 +6,7 @@ import { loadLatestApproval, loadLatestPlan, saveInfraReady } from "./plan-store
 import { failedOnRenewFailure, withStepRoles } from "./_roles.js";
 import { realApply } from "./apply-real.js";
 import { runImageBuilds } from "./image-build.js";
+import { TARGET_ACCOUNT_SQL } from "./target-account.js";
 
 // TA3: spec = 받아들인 최신 판의 명세. 없거나 모양이 틀리면 null (→ TF_PLAN_DRIFT)
 interface ApplyLoaded { plan: PlanDoc; provider: Provider; spec: AppSpecV2 | null; accountId: string | null }
@@ -15,7 +16,8 @@ interface ApplyRecheckFailed { recheckFailed: string }
 
 // 도착 환경의 클라우드와 최신 명세. 실행기(Azure Mock·Terraform)가 번역 함수를 다시 부를 때 쓴다
 async function loadTarget(tx: Tx, migrationId: string, targetEnvId: string) {
-  const e = await tx.query(`SELECT provider, account_id FROM environments WHERE id=$1`, [targetEnvId]);
+  // 결정 3번 A안: GCP 도착 자원은 이전 전용 프로젝트에 만든다 → 도착 쪽 "계정" = gcp_target_project (비면 예전처럼 account_id)
+  const e = await tx.query(`SELECT provider, ${TARGET_ACCOUNT_SQL} AS account_id FROM environments WHERE id=$1`, [targetEnvId]);
   const row = await latestAcceptedSpecV2(tx, migrationId);
   return { provider: e.rows[0]?.provider as Provider | undefined, accountId: (e.rows[0]?.account_id as string | null) ?? null,
            spec: row ? specV2ForPlan(row) : null };
@@ -111,6 +113,6 @@ export async function handleApply(raw: unknown) {
     // 이제 provisioning → failed(APPLY_FAILED). failed는 다시 계획(T37)하거나 취소한다. 잠금은 advance 규칙대로 해제
     // 임시 자격 재발급 실패(Z61)도 failed 로, 실패 코드만 CRED_RENEW_FAILED (Z38 REVIEW-4 Z43-1: paused → 롤백은 만들다 만 자원을 안 지운 채 끝남)
     onError: async (e) => failedOnRenewFailure(e) ?? ({ to: "failed", failureCode: "APPLY_FAILED",
-      detail: { error: ((e as Error)?.message ?? String(e)).slice(0, 500) } }),
+      detail: { error: redactText((e as Error)?.message ?? String(e)).slice(0, 500) } }),   // RV-16
   });
 }

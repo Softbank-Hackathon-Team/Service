@@ -19,19 +19,19 @@ export const snsMapper: KindMapper = {
     const meta: Record<string, MetaTuple> = { model: [`sns:${name}`, 1] };
     if (name.endsWith(".fifo")) { props.ordered = true; meta.ordered = [src("FifoTopic"), 1]; }
     const refs: NonNullable<MappedComponent["notifyRefs"]> = [];
-    if (t.Subscriptions === null) meta.subscriptions = [src("Subscriptions"), 0.6, "구독을 못 읽음 (관찰 권한 sns:ListSubscriptionsByTopic 확인) → 토픽 → 큐 연결이 빠졌을 수 있음"];
+    if (t.Subscriptions === null) meta.topicSubscriptions = [src("Subscriptions"), 0.6, "구독을 못 읽음 (관찰 권한 sns:ListSubscriptionsByTopic 확인) → 토픽 → 큐 연결이 빠졌을 수 있음"];
     else if (t.Subscriptions?.length) {
       const subs: Array<{ protocol: string; to?: string }> = [];
       let odd = 0;
       for (const s of t.Subscriptions) {
         const protocol = String(s.Protocol ?? "").toLowerCase();
         if (!PROTOCOLS.has(protocol)) { odd++; continue; }
-        if (protocol === "sqs" && s.Endpoint) refs.push({ field: "subscriptions", index: subs.length, uid: s.Endpoint });
+        if (protocol === "sqs" && s.Endpoint) refs.push({ field: "topicSubscriptions", index: subs.length, uid: s.Endpoint });
         subs.push({ protocol });
       }
-      props.subscriptions = subs;
+      props.topicSubscriptions = subs;
       const outside = subs.filter((x) => x.protocol !== "sqs").length;
-      meta.subscriptions = outside || odd
+      meta.topicSubscriptions = outside || odd
         ? [src("Subscriptions"), 0.6, `구독 ${t.Subscriptions.length}개 중 ${outside + odd}개는 IR 밖 대상(http·함수·메일 등) → 도착에서 사람이 정함`]
         : [src("Subscriptions"), 1];
     }

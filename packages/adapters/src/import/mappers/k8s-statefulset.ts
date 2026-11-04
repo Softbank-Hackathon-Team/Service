@@ -55,7 +55,7 @@ export const k8sStatefulSetMapper: KindMapper = {
     }).filter(([, x]) => x !== undefined)) : undefined;
     return serviceFromPodOwner({ type: K8S_RAW_KINDS.statefulset, label: "statefulset", name: it.metadata.name, namespace: ns,
       labels: it.metadata.labels, podLabels: it.spec.template.metadata?.labels ?? {}, pod: it.spec.template.spec,
-      imageDigest: it.imageDigest ?? null, replicas: it.spec.replicas ?? 1 }, {
+      imageDigest: it.imageDigest ?? null, replicas: it.spec.replicas ?? 1, nodeArch: it.nodeArch }, {
       props: { workloadKind: "statefulset", ...(sts ? { statefulSet: sts } : {}), ...(volumes.length ? { volumes } : {}) },
       meta: {
         workloadKind: [src, 1, "StatefulSet → 도착도 StatefulSet"],
@@ -77,7 +77,7 @@ export const k8sDaemonSetMapper: KindMapper = {
     const n = it.status?.desiredNumberScheduled ?? 1;
     return serviceFromPodOwner({ type: K8S_RAW_KINDS.daemonset, label: "daemonset", name: it.metadata.name, namespace: ns,
       labels: it.metadata.labels, podLabels: it.spec.template.metadata?.labels ?? {}, pod: it.spec.template.spec,
-      imageDigest: it.imageDigest ?? null, replicas: n }, {
+      imageDigest: it.imageDigest ?? null, replicas: n, nodeArch: it.nodeArch }, {
       props: { workloadKind: "daemonset" },
       meta: {
         workloadKind: [src, 1, "DaemonSet → 도착도 DaemonSet (노드마다 하나)"],

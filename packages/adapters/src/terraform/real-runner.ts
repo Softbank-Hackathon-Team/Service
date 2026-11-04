@@ -3,7 +3,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, wr
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Provider, TfOutputs, TfVars } from "@svc/contracts";
-import { envNumber } from "@svc/contracts";
+import { envNumber, tfBudget } from "@svc/contracts";
 
 // Z70 DRAFT(ai): aws/gcp/onprem 의 "진짜 terraform 실행기".
 // Z89: 기본이 진짜다. 흉내(예전 STUB)는 시험 전용 스위치 MOCK_IAC=1 하나로만 켠다 (test:db·e2e·prod-e2e 가 붙인다).
@@ -99,14 +99,19 @@ export function childEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return out;
 }
 
-// 기본 exec: spawn. 잠금을 잃으면(signal abort) SIGINT → terraform 이 state 를 정리하며 멈춘다. 10초 뒤에도 살아 있으면 SIGKILL
+// 기본 exec: spawn. 잠금을 잃으면(signal abort) SIGINT → terraform 이 state 를 정리하며 멈춘다. 유예 뒤에도 살아 있으면 SIGKILL
+// PF FM-ORC-14: 예전 유예 10초는 terraform 이 진행 중 생성(GKE 5~10분·RDS 10분+)을 기다리며 state 를 쓰기 전에 죽여 state 밖 고아 자원을 남겼다.
+//   SIGINT 를 받은 terraform 은 새 자원을 시작하지 않고 진행 중인 것만 끝낸 뒤 state 를 쓴다 → 그만큼 기다린다.
+//   DRAFT(ai): 기본 20분(TF_STOP_GRACE_SEC). apply 큐 만료 1시간·실행기 상한 45분 안
+export const stopGraceMs = (env: NodeJS.ProcessEnv = process.env) => envNumber(env.TF_STOP_GRACE_SEC, 1200) * 1000;
 export const spawnExec: Exec = (cmd, args, o) => new Promise((res) => {
   const t0 = performance.now();
   const p = spawn(cmd, args, { cwd: o.cwd, env: o.env, stdio: ["ignore", "pipe", "pipe"] });
   let stdout = "", stderr = "";
   p.stdout.on("data", (b: Buffer) => { stdout += b.toString(); });
   p.stderr.on("data", (b: Buffer) => { stderr += b.toString(); });
-  const stop = () => { p.kill("SIGINT"); setTimeout(() => p.kill("SIGKILL"), 10_000).unref(); };
+  // 유예는 워커 env 에서 (childEnv 는 TF_STOP_GRACE_SEC 를 안 넘김)
+  const stop = () => { p.kill("SIGINT"); setTimeout(() => p.kill("SIGKILL"), stopGraceMs()).unref(); };
   const timer = setTimeout(() => { stderr += `\n[z70] timeout ${o.timeoutMs}ms → SIGINT`; stop(); }, o.timeoutMs);
   o.signal?.addEventListener("abort", stop, { once: true });
   p.on("error", (e) => { clearTimeout(timer); res({ code: 127, stdout, stderr: `${stderr}\n${e.message}`, ms: performance.now() - t0 }); });
@@ -131,7 +136,7 @@ export interface RealApplyResult {
   log: string[];          // 마지막 줄 몇 개 (비밀 없음: terraform 은 sensitive 값을 (sensitive value) 로 가린다)
   failedStep?: RealStep["step"];
   secretFetched?: boolean;
-  /** Z89: apply 단계가 실패해 만들다 만 자원을 바로 destroy 했는지 (TF_DESTROY_ON_FAIL, 기본 1) */
+  /** Z89: apply 단계가 실패해 만들다 만 자원을 바로 destroy 했는지 (TF_DESTROY_ON_FAIL=1 일 때만, 기본 0: Jeong 11/4 01:53Z) */
   destroyedAfterFail?: { ok: boolean; ms: number };
 }
 
@@ -192,7 +197,11 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
   const workRoot = o.workRoot ?? workRootOf(env);
   const tf = o.terraformBin ?? env.TF_BIN ?? "terraform";
   // M8: apply 큐 expireInSeconds 3600 보다 짧게. 실측 전 기본 45분 (RDS 생성 10분대 + 여유)
-  const timeoutMs = envNumber(env.TF_APPLY_TIMEOUT_SEC, 2700) * 1000;
+  const budget = tfBudget(env);
+  const timeoutMs = budget.stepSec * 1000;
+  // PF RV-09: 작업 전체 예산. 단계 상한은 남은 예산을 넘지 않는다 (apply 길 = jobSec, 지우기 = destroySec 따로)
+  let deadline = Number.POSITIVE_INFINITY;
+  const startBudget = (sec: number) => { deadline = Date.now() + sec * 1000; };
   const cenv = childEnv(env);
 
   // *.tf 만 복사 (tests/ 는 terraform test 용, .terraform 은 각자 init). state·tfplan 은 작업 폴더에 남는다
@@ -203,7 +212,9 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
 
   function prepare(provider: Provider, migrationId: string, tenant?: string): string {
     const dir = workDirOf(workRoot, migrationId, tenant);
-    mkdirSync(dir, { recursive: true });
+    // RV-15: 작업 폴더에 terraform.tfstate(GCP random_password 원문)·outputs.json 이 생긴다 → 다른 로컬 사용자가 못 읽게 0700
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    try { chmodSync(dir, 0o700); } catch { /* 이미 있는 폴더·권한 없는 파일 시스템이면 그대로 */ }
     const base = REAL_MODULE_BASE[provider];
     if (!base) throw new Error(`no real terraform module for ${provider}`);
     const src = join(moduleRoot, base);
@@ -219,7 +230,13 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
 
   // quiet: 성공 출력 본문을 log 에 안 넣는다 (output -json 값은 tfOutputs 로만)
   async function run(step: RealStep["step"], args: string[], cwd: string, steps: RealStep[], log: string[], signal?: AbortSignal, quiet = false) {
-    const r = await exec(tf, args, { cwd, env: cenv, signal, timeoutMs });
+    const left = deadline - Date.now();
+    if (left <= 0) {
+      steps.push({ step, code: 124, ms: 0 });
+      log.push(`$ terraform ${args.join(" ")} → 안 돌림 (작업 시간 예산 다 씀, TF_JOB_BUDGET_SEC·TF_DESTROY_BUDGET_SEC)`);
+      return { code: 124, stdout: "", stderr: "terraform job budget exhausted", ms: 0 };
+    }
+    const r = await exec(tf, args, { cwd, env: cenv, signal, timeoutMs: Math.min(timeoutMs, left) });
     steps.push({ step, code: r.code, ms: round(r.ms) });
     log.push(`$ terraform ${args.join(" ")} → exit ${r.code} (${round(r.ms)}ms)`);
     if (r.code !== 0) log.push(...tail(`${r.stdout}\n${r.stderr}`, 15));
@@ -254,7 +271,9 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
 
   // Z89: state 잠금을 기다리는 시간 (같은 폴더에서 사람이 tf:real destroy 를 돌리는 중일 때). 기본 60초
   const lockTimeout = `-lock-timeout=${envNumber(env.TF_LOCK_TIMEOUT_SEC, 60)}s`;
-  const destroyOnFail = (env.TF_DESTROY_ON_FAIL ?? "1") !== "0";
+  // DECISION(team) Jeong 11/4 01:53Z: 실패하면 사람에게 "재시도할까?"를 먼저 묻고, 지우기는 거절 → 롤백(rolled_back → target-destroy) 길에서만.
+  //   그래서 apply 실패 즉시 destroy 는 기본 꺼짐(재시도는 같은 state 에서 이어 만든다). TF_DESTROY_ON_FAIL=1 이면 예전처럼 바로 지움
+  const destroyOnFail = (env.TF_DESTROY_ON_FAIL ?? "0") === "1";
 
   return {
     workRoot,
@@ -265,8 +284,10 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
       try { return { ok: true, version: (JSON.parse(r.stdout) as { terraform_version?: string }).terraform_version }; }
       catch { return { ok: true, version: r.stdout.split("\n")[0]?.trim() }; }
     },
-    async apply(provider: Provider, migrationId: string, vars: TfVars, signal?: AbortSignal, tenant?: string): Promise<RealApplyResult> {
+    // APP-22 (가): keepOnFail = 이미 서비스 중인 자원을 다시 apply 할 때(컷오버·롤백의 앱 DB 주소 바꾸기). 실패해도 destroy 하지 않는다 (도착 DB·앱이 지워짐)
+    async apply(provider: Provider, migrationId: string, vars: TfVars, signal?: AbortSignal, tenant?: string, o: { keepOnFail?: boolean } = {}): Promise<RealApplyResult> {
       const t0 = performance.now();
+      startBudget(budget.jobSec);
       const steps: RealStep[] = []; const log: string[] = [];
       const dir = prepare(provider, migrationId, tenant);
       const layout: TfLayout = "root";
@@ -281,7 +302,8 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
         //   잠금을 잃어 멈춘 경우(signal abort)는 다른 워커가 이어받을 수 있으니 지우지 않는다.
         //   대안 "사람이 tf:real destroy": 버림(Z70 방식). 데모 중 잊으면 RDS 가 밤새 남는다(작업 뒤 자원 0 규칙)
         const r = fail("apply");
-        if (destroyOnFail && !signal?.aborted) {
+        if (destroyOnFail && !o.keepOnFail && !signal?.aborted) {
+          startBudget(budget.destroySec);   // PF RV-09: 지우기는 apply 가 다 쓴 예산과 따로 (고아가 안 남게)
           const d = await run("destroy", [...G, "destroy", "-input=false", "-no-color", lockTimeout, "-auto-approve", vf], dir, steps, log);
           r.destroyedAfterFail = { ok: d.code === 0, ms: round(d.ms) };
           r.elapsedMs = round(performance.now() - t0);
@@ -297,7 +319,7 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
         delete tfOutputs.db_server_ca_cert;
         tfOutputs.db_ca_file = join(dir, "db-ca.pem");
       }
-      writeFileSync(join(dir, "outputs.json"), JSON.stringify(tfOutputs, null, 2));
+      writeFileSync(join(dir, "outputs.json"), JSON.stringify(tfOutputs, null, 2), { mode: 0o600 });
       const secretFetched = (env.TF_FETCH_DB_SECRET ?? "1") === "1" ? await fetchSecret(provider, tfOutputs, dir, steps, log, signal) : false;
       return { ok: true, tfOutputs, workDir: dir, steps, elapsedMs: round(performance.now() - t0), log, secretFetched };
     },
@@ -315,6 +337,7 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
     },
     async destroy(migrationId: string, signal?: AbortSignal) {
       const t0 = performance.now();
+      startBudget(budget.destroySec);
       const steps: RealStep[] = []; const log: string[] = [];
       // Z89: 회사 폴더 아래(<뿌리>/t-xxxxxxxx/<이전>) 먼저, 없으면 예전 폴더
       const found = findWorkDir(workRoot, migrationId);

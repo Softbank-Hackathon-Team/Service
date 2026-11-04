@@ -19,6 +19,7 @@ export const FAILURE_CODES = [
   "TF_BIN_MISSING",              // Z89: 진짜 Terraform 이 기본인데 실행 파일이 없음 (MOCK_IAC=1 이 아닌데 terraform 미설치)
   "CRED_RENEW_FAILED",           // 임시 자격 재발급 실패 (Z61)
   "APP_LINK_UPSTREAM_FAILED",    // 앱 연결 상류 실패 (int5-3)
+  "PLAN_RECHECK_FAILED",         // E10-4: 계획 작업 재확인 실패 (받아들인 명세 없음·도착 환경 없음·연결 안 됨이 계속됨)
   "APPLY_RECHECK_FAILED",        // apply 실행 직전 재확인 실패 (Z38-3: 지문 다름·만료·도착 환경 없음)
   "AZURE_MOCK_APPLY_FAILED",     // Azure Mock 실행기 결과 실패
   "AZURE_MOCK_DISABLED",         // @svc/adapters RunnerUnavailable (AZURE_MOCK=0)
@@ -31,9 +32,12 @@ export const FAILURE_CODES = [
   "CUTOVER_HALFWAY",             //   C5 뒤 예외
   "CUTOVER_ERROR_UNFENCED",      //   C5 전 예외, 출발 울타리 걷음
   "CUTOVER_UNFENCE_FAILED",      //   C5 전 예외, 울타리 걷기도 실패 (긴급)
+  "APP_LINK_UNAVAILABLE",        // APP-22 (가): 컷오버 때 도착 앱 DB 주소를 바꿀 길(GitOps 묶음·붙잡기 프록시)이 없음 → 울타리 전에 멈춤 (출발이 그대로 주인)
+  "APP_LINK_SOURCE_MISSING", "APP_LINK_SECRET_FAILED", "APP_LINK_STATE_MISSING", "APP_LINK_REAPPLY_FAILED",   // APP-22 (가) Terraform 실행 방식: 출발 경로 없음 / 도착 그릇에 비밀번호 못 넣음 / apply 가 남긴 경로 상태 없음
   "ROLLBACK_FAILED",             // 롤백 재시도 소진
   // gitops 배포 (apps/worker/src/gitops GitopsError.code) → deploy가 paused로
   "RUNTIME_OUTPUT_MISSING", "RUNTIME_UNHEALTHY", "RUNTIME_CHECK_FAILED",   // DEPLOYNONK8S: ECS·Cloud Run·VM 도착 배포 확인 (출력 빠짐 / 시간 안에 안 뜸 / 읽기 CLI 실패)
+  "SECRET_VALUES_MISSING", "SECRET_VALUES_UNKNOWN",   // APP-20: deploy 커밋 전 도착 비밀 그릇에 값(버전)이 없음 / 못 읽음 → paused
   "GITOPS_NOT_CONFIGURED",       // Z89: GitOps 레포 설정 없음인데 MOCK_ARGO=1 도 아님 (예전엔 조용히 STUB 성공)
   "GITOPS_ERROR", "GITOPS_GIT_FAILED", "GITOPS_NO_CHECKOUT", "GITOPS_PLACEHOLDER_MISSING", "GITOPS_PUSH_FAILED", "GITOPS_PUSH_CONFLICT",
   "GITOPS_VALUES_DRIFT", "GITOPS_VALIDATE_FAILED", "GITOPS_RENDER_FAILED", "GITOPS_WEIGHT_NOT_APPROVED", "GITOPS_FENCE_MANUAL",
@@ -41,6 +45,11 @@ export const FAILURE_CODES = [
   "TRAFFIC_PAUSED", "TRAFFIC_SWITCH_FAILED", "TRAFFIC_INSUFFICIENT_SAMPLES", "TRAFFIC_METRICS_UNAVAILABLE",
   "TRAFFIC_LATENCY", "TRAFFIC_ERROR_RATE",
   "TRAFFIC_SHARE_NOT_REACHED",   // z75-38: 실측 도착 몫이 재관찰 2번 뒤에도 목표 ±10%p 밖 → paused
+  "TRAFFIC_OBSERVE_TOO_LONG",    // pf-d hunt-traffic-ops-02: 관찰 초 × 단계 × 재관찰 최악이 shift 작업 만료를 넘음 → 가중치 안 건드리고 paused
+  "TRAFFIC_LB_BUSY",             // PF RV-20: 같은 LB 를 다른 이전이 상한 넘게 쥠 → 가중치 안 건드리고 paused (npm run ops:lb-release)
+  "TRAFFIC_RESTORE_FAILED",      // Jeong 01:53Z: 실패 진입 때 트래픽 출발 100% 되돌리기가 재시도 뒤에도 실패
+  "TRAFFIC_PLATFORM_ERROR",      // pf-d RV-11: 전환 도중 플랫폼 DB 오류가 이어짐 → 출발 100% 로 되돌린 뒤 paused
+  "TRAFFIC_PREFLIGHT_FAILED", "TRAFFIC_LB_MISCONFIGURED",   // Z14-06: LB 점검 실패 / 전환 조건 안 맞음 → paused
 ] as const;
 
 // 마지막 재시도까지 실패한 작업 (Z19 H4 죽은 작업 처리): JOB_FAILED_<단계 이름 대문자>

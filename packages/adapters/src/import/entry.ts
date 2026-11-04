@@ -114,7 +114,15 @@ export function buildEntry(components: MappedComponent[], svcObjs: RawK8sService
   const ings = [...ingresses].sort((a, b) => `${a.metadata.namespace ?? ""}/${a.metadata.name}`.localeCompare(`${b.metadata.namespace ?? ""}/${b.metadata.name}`));
   for (const ing of ings) {
     const ns = ing.metadata.namespace;
-    const tlsHosts = new Set((ing.spec.tls ?? []).flatMap((t) => t.hosts ?? []));
+    // TL-1 DRAFT(ai): tls 호스트 맞추기 = 같은 이름, 또는 와일드카드 한 단계(*.a.com ↔ x.a.com, k8s·인증서 규칙과 같음).
+    //   hosts 없는 tls 줄(컨트롤러 기본 인증서)은 이 Ingress 의 모든 규칙 호스트에 tls 를 붙이고 검토(0.9). secretName 은 source 에 남김
+    const tlsOf = (host: string): { source: string; sure: boolean } | undefined => {
+      const wild = host.includes(".") ? `*.${host.slice(host.indexOf(".") + 1)}` : undefined;
+      const t = (ing.spec.tls ?? []).find((x) => (x.hosts ?? []).some((h) => h.toLowerCase() === host.toLowerCase() || (!!wild && h.toLowerCase() === wild.toLowerCase())))
+        ?? (ing.spec.tls ?? []).find((x) => !x.hosts?.length);
+      if (!t) return undefined;
+      return { source: `ingress.spec.tls${t.secretName ? `(secret ${t.secretName})` : ""}`, sure: !!t.hosts?.length };
+    };
     const own = new Set<string>();
     type Be = { service?: { name: string; port?: { number?: number; name?: string } } } | undefined;
     const toBackend = (b: Be | Record<string, unknown>, where: string, i: number, hostKey: string): Backend[] | null => {
@@ -132,7 +140,14 @@ export function buildEntry(components: MappedComponent[], svcObjs: RawK8sService
     };
     for (const r of ing.spec.rules ?? []) {
       if (!r.host) { unmapped.push({ resource: `k8s.ingress.rule:${ing.metadata.name}(호스트 없음)`, grade: "B", reason: "호스트 없는 규칙 = 모든 호스트. 도착 호스트 이름을 사람이 정함" }); continue; }
-      const h: Host = hosts.get(r.host) ?? { hostnames: [r.host], ...(tlsHosts.has(r.host) ? { tls: { mode: "terminate" as const, source: "ingress.spec.tls" } } : {}), routes: [] };
+      const tl = tlsOf(r.host);
+      const h: Host = hosts.get(r.host) ?? { hostnames: [r.host], routes: [] };
+      // 같은 호스트를 여러 Ingress 가 받으면 하나라도 tls 면 tls (HTTPS 를 받던 호스트를 HTTP 로 내리지 않음)
+      if (tl && !h.tls) {
+        h.tls = { mode: "terminate", source: tl.source };
+        if (!tl.sure) fieldMeta[`entry.${r.host}.tls`] = { source: `k8s:ingress/${ing.metadata.name}.spec.tls`, confidence: 0.9, needs_review: true,
+          rationale: "hosts 없는 tls 줄(컨트롤러 기본 인증서) → 이 호스트도 HTTPS 로 둠. 도착 인증서를 사람이 확인" };
+      }
       hosts.set(r.host, h); own.add(r.host);
       // ENT-1: 같은 호스트를 공개·내부 Ingress 가 같이 받으면 안전한 쪽(internal) + 검토
       const ex = exposureOf(ing);

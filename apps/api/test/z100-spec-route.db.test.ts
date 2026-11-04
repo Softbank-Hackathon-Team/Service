@@ -70,6 +70,7 @@ test("받아들인 최신 판을 돌려준다 (그보다 새 AI 초안 판이 �
   assert.equal(b.complete, true);
   assert.deepEqual(b.spec.components.find((c: { id: string }) => c.id === "shop").props.replicas, { min: 2, max: 2 });
   assert.deepEqual(b.needsReview, ["components.shop.ports"]);
+  assert.deepEqual(b.reviewLabels, { "components.shop.ports": "구성요소 shop 의 ports" });
   assert.match(b.createdAt, /Z$/);
 });
 

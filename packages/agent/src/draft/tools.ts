@@ -98,10 +98,10 @@ export function execDraftTool(name: string, input: unknown, ctx: SpecDraftInput)
       return { ok: true, note: ctx.target.provider, text: wrapResult("target", ctx.target) };
     case "risk_rules": {
       const r = ruleRisks(ctx);
-      return { ok: true, note: `${r.length}`, text: wrapResult("risk_rules", r) };
+      return { ok: true, note: `${r.length}`, text: wrapResult("risk_rules", redact(r)) };
     }
     case "plan_get":
-      return { ok: true, note: ctx.plan ? "plan" : "none", text: wrapResult("plan", ctx.plan) };
+      return { ok: true, note: ctx.plan ? "plan" : "none", text: wrapResult("plan", redact(ctx.plan)) };
     case "validate_spec": {
       const v = AppSpecV2.safeParse(a.spec);
       const errs = v.success ? checkV2(v.data).errors.slice(0, 10)

@@ -102,12 +102,14 @@ test("M3: 컷오버(STUB)가 적는 롤백 창 = core 기본값 하나 (cutover 
   assert.ok(Math.abs(r.s - core.DEFAULT_ROLLBACK_WINDOW_SEC) < 5, `창 ${r.s}초, 기대 ${core.DEFAULT_ROLLBACK_WINDOW_SEC}초`);
 });
 
-test("M8: apply 큐 만료 3600초, 이미 있던 큐(예전 DB)도 startBoss가 정책 표로 덮어쓴다", { skip }, async () => {
+test("M8: apply 큐 만료(PF RV-09 tfBudget, 기본 7200초), 이미 있던 큐(예전 DB)도 startBoss가 정책 표로 덮어쓴다", { skip }, async () => {
   const exp = async () => (await owner.query("SELECT expire_seconds FROM pgboss.queue WHERE name='apply'")).rows[0].expire_seconds as number;
-  assert.equal(await exp(), 3600);
+  const want = core.POLICY.apply?.expireInSeconds;
+  assert.ok(want && want >= 3600);
+  assert.equal(await exp(), want);
   await owner.query("UPDATE pgboss.queue SET expire_seconds=900 WHERE name='apply'");   // 고치기 전 DB 흉내
   await core.startBoss();
-  assert.equal(await exp(), 3600);
+  assert.equal(await exp(), want);
   const other = (await owner.query("SELECT expire_seconds FROM pgboss.queue WHERE name='sync'")).rows[0].expire_seconds;
   assert.equal(other, 900, "나머지 큐는 기본 15분 그대로");
 });

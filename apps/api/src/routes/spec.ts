@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { AppSpecV2, FieldMetaV2, ImportAccuracy, OutOfBoundaryV2, ImportResultV2, MigrationSpecView, SpecPatchInput, checkV2, checkV2Reviews, specIssueLines, syncCheckReviews } from "@svc/contracts";
+import { AppSpecV2, FieldMetaV2, ImportAccuracy, OutOfBoundaryV2, ImportResultV2, MigrationSpecView, SpecPatchInput, checkV2, checkV2Reviews, reviewLabels, specIssueLines, syncCheckReviews } from "@svc/contracts";
 import { applyInclude, IncludeError } from "@svc/adapters";
 import { BadRequest, DomainError, SPEC_DRAFT_KEY, applySpecV2Patch, notifyMigration, saveSpecRevision, withTenant, writeAudit,
          type SpecMeta, type Tx } from "@svc/core";
@@ -33,7 +33,7 @@ export function toSpecView(migrationId: string, row: Row): MigrationSpecView {
   const needsReview = reviewKeys(meta.data);
   // DRAFT(ai): complete = 구조 검증(checkV2 errors) 통과. 화면이 "계획을 만들 수 있는 판인가"를 본다
   return { migrationId, version: row.version, createdAt: row.createdAt, source: row.draft ? "ai_draft" : "accepted",
-           complete: checkV2(spec.data).errors.length === 0, spec: spec.data, fieldMeta: meta.data, needsReview,
+           complete: checkV2(spec.data).errors.length === 0, spec: spec.data, fieldMeta: meta.data, needsReview, reviewLabels: reviewLabels(needsReview),
            ...(oob?.success ? { outOfBoundary: oob.data } : {}),
            specV2: spec.data, fieldMetaV2: meta.data, needsReviewV2: needsReview };
 }
@@ -89,14 +89,15 @@ export async function specRoutes(app: FastifyInstance) {
       let base: Row = current;
       if (b.acceptDraft !== undefined) {
         const d = (await tx.query(
-          `SELECT version, ${isoUtc("created_at")} AS "createdAt", true AS draft, spec_v2 AS "specV2"
+          `SELECT version, ${isoUtc("created_at")} AS "createdAt", true AS draft, spec_v2 AS "specV2",
+                  field_meta->$3->'baseVersion' AS "draftBase"
              FROM spec_versions sv WHERE migration_id = $1 AND version = $2 AND (field_meta ? $3)`,
-          [id, b.acceptDraft, SPEC_DRAFT_KEY])).rows[0] as Row | undefined;
+          [id, b.acceptDraft, SPEC_DRAFT_KEY])).rows[0] as (Row & { draftBase: unknown }) | undefined;
         // DRAFT(ai): 없는 초안 번호 → 400. 받아들인 판보다 옛 초안 → 409 (사람이 고친 판을 옛 AI 판으로 덮지 않게)
         if (!d) throw new BadRequest("SPEC_DRAFT_NOT_FOUND", `no AI draft version ${b.acceptDraft}`);
-        if (!current.draft && d.version < current.version)
-          throw new DomainError(409, "SPEC_DRAFT_STALE", `draft ${d.version} is older than accepted ${current.version}`);
-        base = d;
+        const stale = draftStale(current.draft ? null : current.version, d.version, d.draftBase);
+        if (stale) throw new DomainError(409, "SPEC_DRAFT_STALE", stale);
+        base = { version: d.version, createdAt: d.createdAt, draft: true, specV2: d.specV2 };
       } else if (current.draft) {
         // DRAFT(ai): 받아들인 판이 없고 AI 초안만 있으면 acceptDraft 로 먼저 받아들여야 한다 (모르고 AI 값을 사람 판으로 굳히지 않게)
         throw new DomainError(409, "SPEC_DRAFT_NOT_ACCEPTED", `version ${current.version} is an AI draft; send acceptDraft`);
@@ -105,6 +106,21 @@ export async function specRoutes(app: FastifyInstance) {
       return patchSpec(tx, req, id, b, base, base.specV2 as Record<string, unknown>);
     });
   });
+}
+
+/**
+ * G5-2 DRAFT(ai): 초안을 받아들여도 되나. 안 되면 이유 글, 되면 null (순수 함수).
+ *   accepted = 지금 받아들인 최신 판 번호(없으면 null), draftBase = 초안 표시의 baseVersion(초안이 기준으로 읽은 판).
+ *   기준 판이 있으면 "기준 판 = 지금 받아들인 최신 판"이어야 한다 (AI 가 도는 동안 사람이 고친 판이 생겼으면 그 값을 덮지 않게).
+ *   기준 판 번호가 없는 옛 초안은 예전 규칙(받아들인 판보다 옛 초안만 막음)
+ */
+export function draftStale(accepted: number | null, draftVersion: number, draftBase: unknown): string | null {
+  if (typeof draftBase === "number") {
+    if (accepted !== null && draftBase !== accepted) return `draft ${draftVersion} was made from version ${draftBase}, but the latest accepted version is ${accepted}`;
+    return null;
+  }
+  if (accepted !== null && draftVersion < accepted) return `draft ${draftVersion} is older than accepted ${accepted}`;
+  return null;
 }
 
 // ---- PA2v2: 명세 고치기 (계획 26 A2 v2 분기·함정 표) ----

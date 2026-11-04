@@ -60,5 +60,7 @@ export type SpecDraftResult = z.infer<typeof SpecDraftResult>;
 // spec_versions.field_meta 칸에 넣는 초안 표시 키. 이 키가 있으면 "AI 초안 판, 사람 검토 전" 이다
 export const DRAFT_MARKER_KEY = "_draft";
 /** 초안 표시 값 (field_meta._draft) */
-export const draftMarker = (model: string) => ({ source: `ai:${model}`, confidence: 0.6, needs_review: true,
-  rationale: "DRAFT(ai) 에이전트 초안 판. 사람이 검토·승인하기 전에는 계획에 쓰지 않는다" });
+//   G5-2: baseVersion = 초안을 만들 때 기준으로 읽은 받아들인 판 번호. 받아들일 때 그 판이 아직 최신인지 본다 (그사이 사람이 고친 값을 덮지 않게)
+export const draftMarker = (model: string, baseVersion?: number) => ({ source: `ai:${model}`, confidence: 0.6, needs_review: true,
+  rationale: "DRAFT(ai) 에이전트 초안 판. 사람이 검토·승인하기 전에는 계획에 쓰지 않는다",
+  ...(baseVersion !== undefined ? { baseVersion } : {}) });

@@ -5,19 +5,26 @@
     "ExternalId": {
       "Type": "String",
       "MinLength": 32,
-      "AllowedPattern": "^[A-Za-z0-9+=,.@:/-]+$",
+      "AllowedPattern": "^[A-Za-z0-9_+=,.@:/-]+$",
       "Description": "플랫폼이 알려 준 값 그대로. 역할을 빌릴 때 같이 내야 하는 비밀 아닌 확인값"
     },
     "PlatformPrincipalArn": {
       "Type": "String",
-      "AllowedPattern": "^arn:aws:iam::\\d{12}:role/.+$",
-      "ConstraintDescription": "플랫폼 워커 역할 ARN(arn:aws:iam::<12자리>:role/...)만. 사용자·:root는 거부",
+      "AllowedPattern": "^arn:aws:iam::\\d{12}:(role|user)/.+$",
+      "ConstraintDescription": "플랫폼 워커 역할·사용자 ARN(arn:aws:iam::<12자리>:role/... 또는 :user/...)만. :root·assumed-role 은 거부",
       "Description": "역할을 빌릴 수 있는 플랫폼 쪽 역할 하나"
     },
     "EksClusterName": {
       "Type": "String",
       "MinLength": 1,
       "Description": "이전 대상 EKS 클러스터 이름"
+    },
+    "ArgoHubRoleArn": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "^$|arn:aws:iam::\\d{12}:role/.+$",
+      "ConstraintDescription": "비우거나 Argo CD 허브 역할 ARN(arn:aws:iam::<12자리>:role/...)만",
+      "Description": "도착 클러스터에 앱을 배포할 플랫폼 Argo CD 허브 역할 (비우면 배포 역할 없음)"
     },
     "CreateBoundaryPolicy": {
       "Type": "String",
@@ -36,6 +43,18 @@
           "Ref": "CreateBoundaryPolicy"
         },
         "true"
+      ]
+    },
+    "HasArgoHub": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "ArgoHubRoleArn"
+            },
+            ""
+          ]
+        }
       ]
     }
   },
@@ -100,44 +119,81 @@
           "Version": "2012-10-17",
           "Statement": [
             {
-              "Sid": "AppModule",
+              "Sid": "AppRead",
               "Effect": "Allow",
               "Action": [
-                "ec2:AuthorizeSecurityGroupIngress",
-                "ec2:CreateSecurityGroup",
-                "ec2:CreateTags",
-                "ec2:DeleteSecurityGroup",
                 "ec2:DescribeSecurityGroupRules",
                 "ec2:DescribeSecurityGroups",
-                "ec2:RevokeSecurityGroupEgress",
-                "eks:CreatePodIdentityAssociation",
-                "eks:DeletePodIdentityAssociation",
                 "eks:DescribeCluster",
                 "eks:DescribePodIdentityAssociation",
-                "rds:AddTagsToResource",
-                "rds:CreateDBInstance",
-                "rds:CreateDBParameterGroup",
-                "rds:CreateDBSubnetGroup",
-                "rds:DeleteDBInstance",
-                "rds:DeleteDBParameterGroup",
-                "rds:DeleteDBSubnetGroup",
                 "rds:DescribeDBInstances",
                 "rds:DescribeDBParameterGroups",
                 "rds:DescribeDBParameters",
                 "rds:DescribeDBSubnetGroups",
                 "rds:ListTagsForResource",
-                "rds:ModifyDBInstance",
-                "rds:ModifyDBParameterGroup",
-                "secretsmanager:CreateSecret",
-                "secretsmanager:DeleteSecret",
                 "secretsmanager:DescribeSecret",
-                "secretsmanager:GetResourcePolicy",
+                "secretsmanager:GetResourcePolicy"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestedRegion": "ap-northeast-2"
+                }
+              }
+            },
+            {
+              "Sid": "AppCreate",
+              "Effect": "Allow",
+              "Action": [
+                "ec2:CreateSecurityGroup",
+                "eks:CreatePodIdentityAssociation",
+                "rds:CreateDBInstance",
+                "rds:CreateDBParameterGroup",
+                "rds:CreateDBSubnetGroup",
+                "secretsmanager:CreateSecret"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestedRegion": "ap-northeast-2"
+                }
+              }
+            },
+            {
+              "Sid": "AppTag",
+              "Effect": "Allow",
+              "Action": [
+                "ec2:CreateTags",
+                "rds:AddTagsToResource",
                 "secretsmanager:TagResource"
               ],
               "Resource": "*",
               "Condition": {
                 "StringEquals": {
                   "aws:RequestedRegion": "ap-northeast-2"
+                }
+              }
+            },
+            {
+              "Sid": "AppOwned",
+              "Effect": "Allow",
+              "Action": [
+                "ec2:AuthorizeSecurityGroupIngress",
+                "ec2:DeleteSecurityGroup",
+                "ec2:RevokeSecurityGroupEgress",
+                "eks:DeletePodIdentityAssociation",
+                "rds:DeleteDBInstance",
+                "rds:DeleteDBParameterGroup",
+                "rds:DeleteDBSubnetGroup",
+                "rds:ModifyDBInstance",
+                "rds:ModifyDBParameterGroup",
+                "secretsmanager:DeleteSecret"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestedRegion": "ap-northeast-2",
+                  "aws:ResourceTag/managed-by": "platform"
                 }
               }
             },
@@ -170,19 +226,24 @@
                 "elasticache:AddTagsToResource",
                 "elasticache:CreateCacheSubnetGroup",
                 "elasticache:CreateReplicationGroup",
-                "elasticache:DeleteCacheSubnetGroup",
-                "elasticache:DeleteReplicationGroup",
                 "elasticache:ListTagsForResource",
-                "elasticache:ModifyReplicationGroup",
                 "s3:CreateBucket",
                 "s3:DeleteBucket",
+                "s3:GetAccelerateConfiguration",
+                "s3:GetBucketAcl",
                 "s3:GetBucketCORS",
                 "s3:GetBucketLocation",
+                "s3:GetBucketLogging",
+                "s3:GetBucketObjectLockConfiguration",
+                "s3:GetBucketPolicy",
                 "s3:GetBucketPublicAccessBlock",
+                "s3:GetBucketRequestPayment",
                 "s3:GetBucketTagging",
                 "s3:GetBucketVersioning",
+                "s3:GetBucketWebsite",
                 "s3:GetEncryptionConfiguration",
                 "s3:GetLifecycleConfiguration",
+                "s3:GetReplicationConfiguration",
                 "s3:ListBucket",
                 "s3:PutBucketCORS",
                 "s3:PutBucketPublicAccessBlock",
@@ -191,17 +252,13 @@
                 "s3:PutEncryptionConfiguration",
                 "s3:PutLifecycleConfiguration",
                 "sns:CreateTopic",
-                "sns:DeleteTopic",
                 "sns:GetTopicAttributes",
                 "sns:ListTagsForResource",
-                "sns:SetTopicAttributes",
                 "sns:TagResource",
                 "sqs:CreateQueue",
-                "sqs:DeleteQueue",
                 "sqs:GetQueueAttributes",
                 "sqs:GetQueueUrl",
                 "sqs:ListQueueTags",
-                "sqs:SetQueueAttributes",
                 "sqs:TagQueue"
               ],
               "Resource": [
@@ -217,6 +274,50 @@
               "Condition": {
                 "StringEquals": {
                   "aws:RequestedRegion": "ap-northeast-2"
+                }
+              }
+            },
+            {
+              "Sid": "DataOwned",
+              "Effect": "Allow",
+              "Action": [
+                "elasticache:DeleteCacheSubnetGroup",
+                "elasticache:DeleteReplicationGroup",
+                "elasticache:ModifyReplicationGroup",
+                "sns:DeleteTopic",
+                "sns:SetTopicAttributes",
+                "sqs:DeleteQueue",
+                "sqs:SetQueueAttributes"
+              ],
+              "Resource": [
+                "arn:aws:elasticache:*:*:replicationgroup:app-*",
+                "arn:aws:elasticache:*:*:cluster:app-*",
+                "arn:aws:elasticache:*:*:subnetgroup:app-*",
+                "arn:aws:elasticache:*:*:parametergroup:*",
+                "arn:aws:sqs:*:*:app-*",
+                "arn:aws:sns:*:*:app-*"
+              ],
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestedRegion": "ap-northeast-2",
+                  "aws:ResourceTag/managed-by": "platform"
+                }
+              }
+            },
+            {
+              "Sid": "AppDbSecretRead",
+              "Effect": "Allow",
+              "Action": [
+                "secretsmanager:GetSecretValue"
+              ],
+              "Resource": "arn:aws:secretsmanager:*:*:secret:rds!db-*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestedRegion": "ap-northeast-2",
+                  "aws:ResourceTag/aws:secretsmanager:owningService": "rds"
+                },
+                "StringLike": {
+                  "aws:ResourceTag/aws:rds:primaryDBInstanceArn": "arn:aws:rds:*:*:db:*-pg-??????"
                 }
               }
             },
@@ -238,15 +339,28 @@
               "Sid": "AppRolesOnly",
               "Effect": "Allow",
               "Action": [
-                "iam:DeleteRole",
-                "iam:DeleteRolePolicy",
                 "iam:GetRole",
                 "iam:GetRolePolicy",
                 "iam:ListAttachedRolePolicies",
+                "iam:ListInstanceProfilesForRole",
                 "iam:ListRolePolicies",
                 "iam:TagRole"
               ],
               "Resource": "arn:aws:iam::*:role/app-*"
+            },
+            {
+              "Sid": "AppRolesOwnedDelete",
+              "Effect": "Allow",
+              "Action": [
+                "iam:DeleteRole",
+                "iam:DeleteRolePolicy"
+              ],
+              "Resource": "arn:aws:iam::*:role/app-*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:ResourceTag/managed-by": "platform"
+                }
+              }
             },
             {
               "Sid": "PassOnlyAppRoles",
@@ -272,17 +386,14 @@
           "Version": "2012-10-17",
           "Statement": [
             {
+              "Sid": "AssumeWithExternalId",
               "Effect": "Allow",
               "Principal": {
                 "AWS": {
                   "Ref": "PlatformPrincipalArn"
                 }
               },
-              "Action": [
-                "sts:AssumeRole",
-                "sts:TagSession",
-                "sts:SetSourceIdentity"
-              ],
+              "Action": "sts:AssumeRole",
               "Condition": {
                 "StringEquals": {
                   "sts:ExternalId": {
@@ -290,6 +401,19 @@
                   }
                 }
               }
+            },
+            {
+              "Sid": "SessionTagsAndSourceIdentity",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Ref": "PlatformPrincipalArn"
+                }
+              },
+              "Action": [
+                "sts:TagSession",
+                "sts:SetSourceIdentity"
+              ]
             }
           ]
         },
@@ -360,7 +484,11 @@
                     "application-autoscaling:DescribeScalingPolicies",
                     "ecr:DescribeRepositories",
                     "secretsmanager:ListSecrets",
-                    "servicequotas:GetServiceQuota"
+                    "servicequotas:GetServiceQuota",
+                    "route53:ListHostedZones",
+                    "s3:GetBucketNotification",
+                    "sns:ListTopics",
+                    "sns:ListSubscriptionsByTopic"
                   ],
                   "Resource": "*"
                 }
@@ -379,17 +507,14 @@
           "Version": "2012-10-17",
           "Statement": [
             {
+              "Sid": "AssumeWithExternalId",
               "Effect": "Allow",
               "Principal": {
                 "AWS": {
                   "Ref": "PlatformPrincipalArn"
                 }
               },
-              "Action": [
-                "sts:AssumeRole",
-                "sts:TagSession",
-                "sts:SetSourceIdentity"
-              ],
+              "Action": "sts:AssumeRole",
               "Condition": {
                 "StringEquals": {
                   "sts:ExternalId": {
@@ -397,6 +522,19 @@
                   }
                 }
               }
+            },
+            {
+              "Sid": "SessionTagsAndSourceIdentity",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Ref": "PlatformPrincipalArn"
+                }
+              },
+              "Action": [
+                "sts:TagSession",
+                "sts:SetSourceIdentity"
+              ]
             }
           ]
         },
@@ -445,6 +583,46 @@
           "platform:operate"
         ]
       }
+    },
+    "DeployRole": {
+      "Type": "AWS::IAM::Role",
+      "Condition": "HasArgoHub",
+      "Properties": {
+        "RoleName": "svc-deploy",
+        "MaxSessionDuration": 3600,
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Ref": "ArgoHubRoleArn"
+                }
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        }
+      }
+    },
+    "DeployAccess": {
+      "Type": "AWS::EKS::AccessEntry",
+      "Condition": "HasArgoHub",
+      "Properties": {
+        "ClusterName": {
+          "Ref": "EksClusterName"
+        },
+        "PrincipalArn": {
+          "Fn::GetAtt": [
+            "DeployRole",
+            "Arn"
+          ]
+        },
+        "KubernetesGroups": [
+          "platform:deploy"
+        ]
+      }
     }
   },
   "Outputs": {
@@ -460,6 +638,15 @@
       "Value": {
         "Fn::GetAtt": [
           "OperateRole",
+          "Arn"
+        ]
+      }
+    },
+    "DeployRoleArn": {
+      "Condition": "HasArgoHub",
+      "Value": {
+        "Fn::GetAtt": [
+          "DeployRole",
           "Arn"
         ]
       }

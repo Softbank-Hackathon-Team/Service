@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { QUEUES, agentLlmStatusFromEnv, llmBudgetFromEnv, llmSpendView, type AgentRunKind } from "@svc/contracts";
+import { QUEUES, envNumber, agentLlmStatusFromEnv, llmBudgetFromEnv, llmSpendView, type AgentRunKind } from "@svc/contracts";
 import type { Tx } from "./db.js";
 import { boss, asBossDb, jobKey, parseJobData } from "./boss.js";
 
@@ -25,9 +25,13 @@ export async function queueAgentRun(tx: Tx, o: {
   checkLlm?: boolean;                    // 키·지출 상한을 여기서 볼지. API 경로는 tx 밖에서 먼저 봐서 false
   send?: SendAgentJob; env?: Record<string, string | undefined>;
 }): Promise<QueueAgentResult> {
+  // PF FM-ORC-19: 에이전트 워커가 안 떠서 queued 로 오래 남은 줄은 busy 로 치지 않는다 (DRAFT(ai): AGENT_RUN_STALE_SEC 기본 1800초).
+  //   running 은 시간과 상관없이 busy (진짜 돌고 있을 수 있다)
+  const staleSec = envNumber((o.env ?? process.env).AGENT_RUN_STALE_SEC, 1800);
   const busy = (await tx.query(
-    `SELECT id FROM agent_runs WHERE migration_id=$1 AND kind=$2 AND status IN ('queued','running')
-      ORDER BY created_at DESC LIMIT 1`, [o.migrationId, o.kind])).rows[0] as { id: string } | undefined;
+    `SELECT id FROM agent_runs WHERE migration_id=$1 AND kind=$2
+        AND (status = 'running' OR (status = 'queued' AND created_at > now() - make_interval(secs => $3)))
+      ORDER BY created_at DESC LIMIT 1`, [o.migrationId, o.kind, staleSec])).rows[0] as { id: string } | undefined;
   if (busy) return { skipped: "busy", busyRunId: busy.id };
   if (o.checkLlm) {
     const why = await llmBlocked(tx, o.env ?? process.env);

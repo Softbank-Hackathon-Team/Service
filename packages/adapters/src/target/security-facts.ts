@@ -124,3 +124,25 @@ export function appEnvV2(spec: AppSpecV2): { name: string; value: string }[] {
   }
   return out;
 }
+
+/** SG-1: IR 서비스·잡의 보안 칸 → 이식성 workload 규칙 입력(packages/security WorkloadSecurity 와 같은 모양, adapters 는 security 를 모름).
+ *  컨테이너(주·사이드카·init) securityContext 원문 + 파드 host·hostPath */
+export interface WorkloadSecurity {
+  componentId: string;
+  containers: { name: string; securityContext: Record<string, unknown> | null }[];
+  host: { network?: boolean; pid?: boolean; ipc?: boolean } | null;
+  hostPaths: string[];
+}
+export function workloadSecurityV2(spec: AppSpecV2): WorkloadSecurity[] {
+  const obj = (v: unknown) => (v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : null);
+  return spec.components.filter((c) => c.kind === "service" || c.kind === "job").map((c) => {
+    const p = c.props as { securityContext?: unknown; sidecars?: unknown; initContainers?: unknown; host?: unknown; podVolumes?: unknown };
+    const more = (label: string, list: unknown) => (Array.isArray(list) ? list : [])
+      .map((x) => ({ name: `${label}.${String((x as { name?: unknown }).name)}`, securityContext: obj((x as { securityContext?: unknown }).securityContext) }));
+    const host = obj(p.host) as WorkloadSecurity["host"];
+    const hostPaths = (Array.isArray(p.podVolumes) ? p.podVolumes : []).filter((v) => (v as { type?: unknown }).type === "hostPath")
+      .map((v) => String(obj((v as { source?: unknown }).source)?.path ?? (v as { name?: unknown }).name));
+    return { componentId: c.id, containers: [{ name: "main", securityContext: obj(p.securityContext) }, ...more("sidecars", p.sidecars), ...more("initContainers", p.initContainers)],
+      host, hostPaths };
+  });
+}

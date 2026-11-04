@@ -35,8 +35,8 @@ test("B-1b·B-2 정상(AWS): 버킷 → 큐·토픽 알림, 토픽 → SQS 구�
     { target: "topic", events: ["s3:ObjectRemoved:*"], to: "shop-events" }]);
   const topic = comp(result.spec, "shop-events")!;
   assert.equal(topic.props.model, "topic");
-  assert.deepEqual(topic.props.subscriptions, [{ protocol: "sqs", to: "audit-q" }, { protocol: "https" }]);
-  assert.equal(result.fieldMeta["components.shop-events.subscriptions"]?.needs_review, true, "https 구독(IR 밖)은 검토");
+  assert.deepEqual(topic.props.topicSubscriptions, [{ protocol: "sqs", to: "audit-q" }, { protocol: "https" }]);
+  assert.equal(result.fieldMeta["components.shop-events.topicSubscriptions"]?.needs_review, true, "https 구독(IR 밖)은 검토");
   assert.ok(result.spec.links.some((l) => l.from === "shop-api" && l.to === "shop-events"), "env 토픽 ARN → 링크");
   assert.equal(result.fieldMeta["components.shop-api.env.EVENTS_TOPIC"]?.needs_review, true, "ARN 은 값 그대로 + 검토");
   for (const id of ["upload-jobs", "audit-q"]) assert.ok(comp(result.spec, id), `${id} 경계 안으로 따라옴`);
@@ -45,7 +45,7 @@ test("B-1b·B-2 정상(AWS): 버킷 → 큐·토픽 알림, 토픽 → SQS 구�
   // 도착 렌더는 아직 없음 → capability 로 막음
   for (const p of ["aws", "gcp", "onprem"] as const) {
     const u = v2Blockers(result.spec, caps(p)).unsupported.join("\n");
-    assert.match(u, /objectStore\.notifications/, p); assert.match(u, /queue\.subscriptions/, p);
+    assert.match(u, /objectStore\.notifications/, p); assert.match(u, /queue\.topicSubscriptions/, p);
   }
 });
 

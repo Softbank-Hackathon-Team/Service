@@ -34,7 +34,7 @@ export function effectiveConfig(env: NodeJS.ProcessEnv = process.env): Record<st
   return {
     // Z81-11: floorApplied = PROM_URL 이 있어 guards.ts observeMinSec 가 값을 30 으로 올렸는가 (명시한 값이 있었는데 덮였는지 한눈에)
     TRAFFIC_OBSERVE_SEC: { value: obs, source: obsSource, floorApplied: Boolean(env.PROM_URL) && (obsOk ? Number(rawObs) : 30) < 30 },
-    ROLLBACK_WINDOW_SEC: { value: envNumber(env.ROLLBACK_WINDOW_SEC, 3), source: blank(env.ROLLBACK_WINDOW_SEC) ? "default" : "env" },
+    ROLLBACK_WINDOW_SEC: { value: envNumber(env.ROLLBACK_WINDOW_SEC, 120), source: blank(env.ROLLBACK_WINDOW_SEC) ? "default" : "env" },
     RATE_LIMIT: { value: env.RATE_LIMIT !== "0" ? "on" : "off", source: env.RATE_LIMIT === undefined ? "default" : "env" },
     AGENT_LLM_PROVIDER: { value: llm, source: llmSource },
     GITOPS: { value: gitopsOff ? "off" : "on", source: gitopsSource },

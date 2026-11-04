@@ -33,7 +33,8 @@ test("AWS 세션 정책: 단계별로 맞는 동작만 (plan 은 읽기뿐, dest
   const role = acts("aws-operate-role-policy.json");
   for (const p of ["plan", "apply", "destroy"]) {
     const f = `aws-session-policy-${p}.json`;
-    assert.ok(JSON.stringify(JSON.parse(read(f))).length <= 2048, `${p} 길이`);
+    // 보내는 판(security compactSessionPolicy)이 2,048자 - 여유 300 이내인지는 security z39-evidence 시험이 본다. 파일(하나하나 적은 판)은 6,144자 상한
+    assert.ok(JSON.stringify(JSON.parse(read(f))).length <= 6144, `${p} 길이`);
     assert.deepEqual([...acts(f)].filter((a) => !role.has(a)), [], `${p} 부분집합`);
   }
   const plan = acts("aws-session-policy-plan.json"), apply = acts("aws-session-policy-apply.json"), destroy = acts("aws-session-policy-destroy.json");
@@ -94,7 +95,7 @@ for (const p of ["aws", "gcp"] as const) {
   test(`${p}: stub 출력 → 앱 env 에 꽂힘 (template·fromLink 모두 실제 값으로, 자리표시 안 남음)`, () => {
     const spec = dataSpec(), out = stubTfOutputsV2(spec);
     const v: any = targetBuilderFor(p).toWorkloadValues(spec, out, T(p));
-    const env = v.workloads.find((w: any) => w.id === spec.components.find((c) => c.kind === "service")!.id).env as Array<{ name: string; value?: string }>;
+    const env = v.workloads.find((w: any) => w.name === spec.components.find((c) => c.kind === "service")!.id).env as Array<{ name: string; value?: string }>;
     const val = (n: string) => env.find((e) => e.name === n)?.value;
     assert.equal(val("REDIS_URL"), out["link.shop-cache.url"]);
     assert.equal(val("REDIS_HOST"), out["link.shop-cache.host"]);

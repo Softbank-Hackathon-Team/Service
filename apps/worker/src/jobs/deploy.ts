@@ -4,8 +4,10 @@ import { checkTerraformRuntime, envFor, factsFromEnv, iacMockEnabled, specV2ForP
 import { nextJob, runStep, stubWait, stubFailIfAsked, type StepOutcome } from "./_step.js";
 import { withStepRoles, type StepRoles } from "./_roles.js";
 import { loadInfraReady, loadPlanById } from "./plan-store.js";
-import { configFromEnv, deployToGitops, GitopsError, GitopsRepo } from "../gitops/index.js";
+import { approvedValues, configFromEnv, deployToGitops, envFacts, fillPlaceholders, GitopsError, GitopsRepo, type DeployInput } from "../gitops/index.js";
+import { checkSecretValues } from "../gitops/secret-values.js";
 import { argoWatcherFromEnv } from "../gitops/argo-watch.js";
+import { TARGET_ACCOUNT_SQL } from "./target-account.js";
 
 // GitOps 배포. deploying → syncing
 // GITOPS_REPO_DIR가 있으면 gitops 레포에 묶음을 커밋한다 (계약: parallel/N/gitops/WORKER-CONTRACT.md).
@@ -39,7 +41,7 @@ export async function handleDeploy(raw: unknown) {
       const plan = await loadPlanById(tx, infra.planId);
       const row = await latestAcceptedSpecV2(tx, m.id);
       const e = await tx.query(
-        `SELECT provider, account_id AS "accountId" FROM environments WHERE id=$1`, [m.targetEnvId]);
+        `SELECT provider, ${TARGET_ACCOUNT_SQL} AS "accountId" FROM environments WHERE id=$1`, [m.targetEnvId]);   // A안: GCP = 전용 프로젝트
       if (!plan || !row || !e.rows[0]) return null;
       return { infra, plan, spec: specV2ForPlan(row), env: e.rows[0] };
     },
@@ -70,11 +72,15 @@ export async function handleDeploy(raw: unknown) {
         gitops = noCluster ? { skipped: "no_cluster" } : { mock: true };   // Z89: 흉내였다는 사실을 감사 detail 에 남긴다
       } else {
         try {
-          const out = await deployToGitops(new GitopsRepo(cfg), {
+          const input: DeployInput = {
             tenantId: j.tenantId, spec: l.spec, plan: l.plan!, tfOutputs: l.infra.tfOutputs,
             // 계획 처리기와 같은 target이어야 Helm 값 지문이 같다 (region "default")
             target: { envId: m.targetEnvId, provider: l.env!.provider, region: "default", accountId: l.env!.accountId },
-          }, argoWatcherFromEnv());
+          };
+          // APP-20: 커밋 전에 도착 비밀 그릇에 값이 들었나 (흉내 IaC 면 그릇이 없으니 안 본다)
+          const sv = await secretValuesGate(input);
+          if (sv) return sv;
+          const out = await deployToGitops(new GitopsRepo(cfg), input, argoWatcherFromEnv());
           result = DeployResult.parse(out.result);
           gitops = { commit: out.commit, argoApp: out.app, ...(out.argo ? { argo: out.argo } : {}) };
         } catch (e) {
@@ -102,12 +108,41 @@ export async function handleDeploy(raw: unknown) {
   });
 }
 
+// APP-20 (지휘 결정 11/4 00:51Z, ADR-072 유지): 값이 빈 비밀 그릇이 있으면 커밋하지 않고 paused. paused → deploying 재개 가능(값 넣고 재개)
+//   시험이 CLI 를 가짜로 바꾼다
+let secretExec: Parameters<typeof checkSecretValues>[1] | undefined;
+export const setSecretValueExec = (e: typeof secretExec) => { secretExec = e; };
+export async function secretValuesGate(i: DeployInput): Promise<StepOutcome | null> {
+  const p = i.target.provider;
+  if ((p !== "aws" && p !== "gcp") || (iacMockEnabled() && !secretExec)) return null;
+  // 원격 키는 회사 번호(<env:tenantId>)만 채우면 정해진다. tf 출력 자리표시가 빠진 건 deployToGitops 가 따로 막는다
+  const named = fillPlaceholders(approvedValues(i), { tf: {}, env: envFacts(i) }).values;
+  const secrets = ((named.externalSecrets as { secrets?: Array<{ name: string; remoteKey: string }> } | undefined)?.secrets ?? []);
+  if (!secrets.length) return null;
+  const r = await checkSecretValues({ provider: p, keys: secrets.map((s) => s.remoteKey), projectId: i.target.accountId,
+    // 도착 리전: "default" 면 adapters regionOf 와 같은 서울 리전 (DECISION(team) 10/31)
+    region: i.target.region && i.target.region !== "default" ? i.target.region : "ap-northeast-2" }, secretExec);
+  if (r.ok) return null;
+  const code = r.missing.length ? "SECRET_VALUES_MISSING" : "SECRET_VALUES_UNKNOWN";
+  return { to: "paused", failureCode: code, detail: { deploy: { error: code,
+    reason: r.missing.length ? `도착 비밀 그릇에 값이 없음: ${r.missing.join(", ")} → 고객 도구로 값을 넣고 재개 (플랫폼은 값을 복사하지 않음)`
+      : `도착 비밀 그릇 버전을 못 읽음 → 자격·권한 확인 뒤 재개`, missing: r.missing, unknown: r.unknown.map((u) => ({ key: u.key, error: scrubString(u.error) })), checked: r.checked.length } } };
+}
+
 /** Z77: apply 출력의 cluster_name 이 빈 문자열이면 "클러스터 없이 만든 이전". 키가 없으면(STUB·Mock) 아니다 */
 export function isNoCluster(tfOutputs: Record<string, string> | undefined | null): boolean {
   return !!tfOutputs && Object.prototype.hasOwnProperty.call(tfOutputs, "cluster_name") && tfOutputs.cluster_name === "";
 }
 
 type Tx = Parameters<Parameters<typeof runStep>[1]["load"] & {}>[0];
+
+/** APP-22 (가): 도착 앱이 GitOps(차트 values.database.activeWriter)로 DB 주소를 고르는 배포인가.
+ *  아님 = 앱을 안 올림(클러스터 없음·MOCK_ARGO 흉내) 또는 Terraform 실행 방식(ECS·Cloud Run·VM: 주소가 tf 출력에 박힘) */
+export async function appDbSwitchKind(tx: Tx, m: { id: string; targetEnvId: string }): Promise<"gitops" | "no_app" | "terraform_runtime"> {
+  const infra = await loadInfraReady(tx, m.id);
+  if (!infra || isNoCluster(infra.tfOutputs) || process.env.MOCK_ARGO === "1") return "no_app";
+  return (await terraformRuntimeLoad(tx, infra, m)) ? "terraform_runtime" : "gitops";
+}
 
 /** DEPLOYNONK8S: 승인 명세가 ECS·Cloud Run·VM 이면 그 Loaded, 아니면 null (k8s 는 gitops 길) */
 async function terraformRuntimeLoad(tx: Tx, infra: InfraReady, m: { id: string; targetEnvId: string }): Promise<Loaded | null> {
@@ -117,7 +152,7 @@ async function terraformRuntimeLoad(tx: Tx, infra: InfraReady, m: { id: string; 
   const spec = row ? specV2ForPlan(row) : null;
   const runtime = terraformRuntimeOf(spec);
   if (!runtime) return null;
-  const e = await tx.query(`SELECT provider, account_id AS "accountId" FROM environments WHERE id=$1`, [m.targetEnvId]);
+  const e = await tx.query(`SELECT provider, ${TARGET_ACCOUNT_SQL} AS "accountId" FROM environments WHERE id=$1`, [m.targetEnvId]);   // A안: GCP = 전용 프로젝트
   if (!e.rows[0]) return null;
   return { infra, plan, spec, env: e.rows[0], runtime };
 }

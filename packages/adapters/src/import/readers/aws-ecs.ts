@@ -1,6 +1,6 @@
-import { arr, get, runJson, str, type CliDeps } from "../../common/cli.js";
+import { arr, get, incomplete, runJson, str, type CliDeps } from "../../common/cli.js";
 import { ECS_RAW_KIND, type RawEcsService } from "../raw-ecs.js";
-import { unreadItem, unreadOrThrow } from "../../common/unread.js";
+import { pickItem, unreadItem, unreadOrThrow } from "../../common/unread.js";
 
 // DRAFT(ai) I9: AWS ECS 출발 읽기 (설계 23번 2장 ② 갈래, 7장 권한 표). 읽기 명령만, 인자 배열(셸 없음).
 //   ecs list-clusters → list-services → describe-services(10개씩) → describe-task-definition → list-tasks·describe-tasks(digest)
@@ -77,10 +77,15 @@ export async function readEcs(d: CliDeps, region: string, env: NodeJS.ProcessEnv
   const want = env.IMPORT_AWS_ECS_CLUSTER;
   const cluster = want ? names.find((n) => n === want) : names[0];
   if (!cluster) {
-    if (want) notes.push(`ECS 클러스터 ${want} 없음`);
+    // K-1: 지정한 클러스터가 없으면 "ECS 없음"이 아니다 → 부르는 쪽이 검토 줄로 (discover/index.ts)
+    if (want) throw incomplete(`ECS 클러스터 ${want} 없음 (출발 범위 확인)`);
     return { items: [], counts: {}, notes };
   }
-  if (!want && names.length > 1) notes.push(`ECS 클러스터 ${names.length}개 중 ${cluster} 를 골랐다`);
+  const picked: Obj[] = [];
+  if (!want && names.length > 1) {
+    notes.push(`ECS 클러스터 ${names.length}개 중 ${cluster} 를 골랐다`);
+    picked.push(pickItem("ecs-cluster", `ECS 클러스터 ${names.length}개(${names.slice(0, 5).join(", ")}${names.length > 5 ? " …" : ""}) 중 이름순 첫 번째 ${cluster}`));   // K-1
+  }
   const svcArns = strs(get(await runJson(d, "aws", ["ecs", "list-services", "--cluster", cluster, ...r]), "serviceArns"));
   const services: Obj[] = [];
   for (const part of chunks([...svcArns].sort(), 10))
@@ -89,7 +94,7 @@ export async function readEcs(d: CliDeps, region: string, env: NodeJS.ProcessEnv
   const tgArns = [...new Set(live.flatMap((s) => arr(s.loadBalancers).map((l) => str(l.targetGroupArn)).filter((x): x is string => !!x)))].sort();
   const alb = await routesByTargetGroup(d, r, tgArns, notes);
 
-  const items: Obj[] = [];
+  const items: Obj[] = [...picked];
   for (const s of live) {
     const name = String(s.serviceName);
     const tdArn = String(s.taskDefinition);

@@ -1,7 +1,7 @@
 import type { Provider } from "@svc/contracts";
 import { saveSpecRevision, withTenant, writeAudit } from "@svc/core";
 import { llmCacheAuditDetail } from "@svc/agent";
-import { adapterFor } from "@svc/adapters";
+import { adapterFor, inventoryForAudit } from "@svc/adapters";
 import { DRAFT_MARKER_KEY, SpecDraftInput, draftMarker } from "@svc/agent";
 import type { SpecDraftStore } from "./handle-spec-draft.js";
 
@@ -37,7 +37,8 @@ export function pgSpecDraftStore(): SpecDraftStore {
       // STUB: discover 를 다시 부른다 (지금 어댑터 discover 는 데모 원본을 돌려주는 STUB 이라 네트워크를 안 쓴다).
       // TODO(human): 진짜 discover 가 되면 agent-worker 는 고객 계정에 닿으면 안 된다(운영 권한 없음).
       // import 작업이 가린(redact) 원본을 표(inventories 등)에 남기고 여기서는 그 표를 읽게 바꾼다
-      const inventory = await src.discover({ accountId: "dev", expiresAt: "" }, { kind: "container", selector: "*" });
+      // LLM-1: LLM 으로 가는 원본은 감사 사본과 같은 모양(env 값·명령·인자 지움)으로 줄인다. 글 안 계정·주소·비밀은 도구 결과에서 redact 가 한 번 더 가림
+      const inventory = inventoryForAudit(await src.discover({ accountId: "dev", expiresAt: "" }, { kind: "container", selector: "*" }));
       const input = SpecDraftInput.parse({
         migrationId: r.migration_id,
         source: { provider: m.sp },
@@ -68,7 +69,7 @@ export function pgSpecDraftStore(): SpecDraftStore {
           [migrationId, baseVersion])).rows[0]?.spec_v2 as Record<string, unknown> | undefined;
         if (!base) throw new Error(`기준 판 ${baseVersion} 이 없음`);
         const { version } = await saveSpecRevision(tx, { tenantId, migrationId,
-          specV2: { ...base, spec: r.spec, fieldMeta: r.fieldMeta }, draftMarker: draftMarker(r.model) });
+          specV2: { ...base, spec: r.spec, fieldMeta: r.fieldMeta }, draftMarker: draftMarker(r.model, baseVersion) });   // G5-2: 기준 판 번호를 초안 표시에
         await tx.query(
           `UPDATE agent_runs SET status='finished', model=$2, usage=$3, finished_at=now(),
              result=$4 WHERE id=$1`,

@@ -105,7 +105,7 @@ test("읽기 동작 보강: ElastiCache 복제그룹 plan 에 멤버 클러스�
   for (const f of SESSIONS) {
     assert.ok(acts(f).has("elasticache:DescribeCacheClusters"), f);   // plan·apply·destroy 모두 상태를 읽음
     assert.deepEqual([...acts(f)].filter((a) => !acts(ROLE).has(a)), [], f);
-    assert.ok(JSON.stringify(JSON.parse(readFileSync(new URL(f, dir), "utf8"))).length <= 2048, `${f} 길이`);
+    assert.ok(JSON.stringify(JSON.parse(readFileSync(new URL(f, dir), "utf8"))).length <= 6144, `${f} 길이 (보내는 판 2,048자는 security 시험)`);
   }
   assert.ok([...acts("aws-session-policy-plan.json")].every((a) => /:(Describe|Get|List)/.test(a)));
 });
@@ -127,7 +127,7 @@ test("가짜 tf 출력 → 앱 env: 긴 id 에서도 template·fromLink 가 같�
     s.links.push({ from: svc.id, to: cache.id, intent: "connect" });
     const sp = AppSpecV2.parse(s), out = stubTfOutputsV2(sp);
     const v: any = targetBuilderFor(p).toWorkloadValues(sp, out, T(p));
-    const env = v.workloads.find((w: any) => w.id === svc.id).env as Array<{ name: string; value?: string }>;
+    const env = v.workloads.find((w: any) => w.name === svc.id).env as Array<{ name: string; value?: string }>;
     assert.equal(env.find((e) => e.name === "LONG_REDIS")?.value, out[`link.${cache.id}.url`]);
     assert.equal(env.find((e) => e.name === "LONG_HOST")?.value, out[`link.${cache.id}.host`]);
     assert.ok(!JSON.stringify(v).includes(`<tf-output:link.${cache.id}`), p);

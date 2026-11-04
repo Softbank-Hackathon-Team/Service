@@ -60,12 +60,7 @@ export interface SyncWatcher { wait(b: BundleRef, c: CommitResult): Promise<Sync
 export async function deployToGitops(repo: GitopsRepo, i: DeployInput, watcher: SyncWatcher):
   Promise<{ result: DeployResult; commit: string; app: string; argo?: SyncWatchResult["observed"] }> {
   const b = bundleRefOf(i);
-  // TA3: 값은 <tf-output:link.<id>.<출력>> 를 찾는다 → 맵 출력(link_outputs 등)을 펼친 표로 채운다
-  const tf = flattenTfOutputsV2(i.tfOutputs);
-  const filled = fillPlaceholders(approvedValues(i), { tf, env: envFacts(i) });
-  if (filled.missing.length) {
-    throw new GitopsError("GITOPS_PLACEHOLDER_MISSING", `채우지 못한 자리표시: ${filled.missing.join(", ")}`);
-  }
+  const filled = { values: filledValues(i) };
   const plan = planFile(b, i.plan, await repo.chartVersion());
   const values = withServedBy(withTraffic(filled.values, plan.approvedWeights, 0), b);
   const c = await repo.commitBundle("deploy", b, values, plan, `plan ${i.plan.planId.slice(0, 8)}`);
@@ -75,6 +70,17 @@ export async function deployToGitops(repo: GitopsRepo, i: DeployInput, watcher: 
     result: { bundleHash: c.bundleSha256, status, resources: c.resources, ...(w.reason ? { reason: w.reason } : {}) },
     commit: c.commit, app: argoAppName(b), ...(w.observed ? { argo: w.observed } : {}),
   };
+}
+
+// 승인 값 + 자리표시 채움 (deploy 의 비밀 값 확인도 같은 값을 본다)
+// TA3: 값은 <tf-output:link.<id>.<출력>> 를 찾는다 → 맵 출력(link_outputs 등)을 펼친 표로 채운다
+export function filledValues(i: DeployInput): HelmValues {
+  const tf = flattenTfOutputsV2(i.tfOutputs);
+  const filled = fillPlaceholders(approvedValues(i), { tf, env: envFacts(i) });
+  if (filled.missing.length) {
+    throw new GitopsError("GITOPS_PLACEHOLDER_MISSING", `채우지 못한 자리표시: ${filled.missing.join(", ")}`);
+  }
+  return filled.values;
 }
 
 // Z70 DRAFT(ai): 앱이 응답 헤더 x-served-by 로 돌려줄 이름 = <클라우드>-<구역> (예: aws-app-shop).

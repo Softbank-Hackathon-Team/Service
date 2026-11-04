@@ -39,20 +39,23 @@ export { mockSeed, CliError, classifyCliError, sourceFail, type CliErrorKind, ty
 export { runCloudPrecheck, toPrecheckItems, mockPrecheckEnabled, mockChecks, cliProblem, tcpProbe, apiEndpoint, AWS_QUOTAS, GCP_APIS, CLOUDSQL_PG_MAJORS_DEFAULT, MIN_REPL_PG_MAJOR,
   type CloudCheck, type Verdict, type PrecheckEnvInfo, type PrecheckInput, type PrecheckDeps, type CloudProvider } from "./precheck/cloud-precheck.js";
 // L4: 연결 확인 (빌린 관찰 역할로 고객 AWS 읽어 보기)
-export { verifyAwsObserve, envFor, trustHasExternalId, type VerifyAwsInput, type VerifyAwsResult } from "./verify/aws.js";
+export { verifyAwsObserve, envFor, EKS_CLUSTER_NAME_RE, trustHasExternalId, type VerifyAwsInput, type VerifyAwsResult } from "./verify/aws.js";
 // I3a: 가져오기 (원본 → 공통 명세)
 export { normalizeV2, KIND_MAPPERS, EVIDENCE_TYPES, ENVIRONMENT_TYPES } from "./import/pipeline.js";
 export type { SourceReader, KindMapper, RawItem, MappedComponent, NativeRef, NormalizeV2Options, NormalizeV2Output } from "./import/types.js";
 // TA1: 도착 Builder (공통 명세 → 고정 루트 Terraform 변수 + workloads[] Helm 값)
 export { renderViewV2, isInClusterData, targetBuilderFor, awsTarget, gcpTarget, onpremTarget, azureMockTarget, rdsClassFor, cloudSqlTierFor, requirementsV2, v2Blockers, V2_FIELD_COVERAGE,
   K8S_RENDER_CAPS, UNSUPPORTED_V2, LINK_OUTPUT_UNKNOWN, identitiesOf, targetNamespace, sourceNamespacesOf, meshesOf, RESERVED_NAMESPACES, resourceTypesV2For, type FieldRule, type IdentityPlan,
-  managedBlockers, managedServicesOf, managedServiceVars, managedSecretName, managedJobsOf, managedJobVars } from "./target/index.js";   // TA13 · JOBBUILD
-export { targetFactsV2, sourceFactsV2, sourceDbsV2, appEnvV2, MODULE_DB_FACTS, type EnvSide } from "./target/security-facts.js";   // 보안 판정용 환경 사실
+  managedBlockers, managedServicesOf, managedServiceVars, managedSecretName, managedJobsOf, managedJobVars,
+  dbWriterVar, dbLinkSecretName, type DbWriter, type SourceDbLinkRef } from "./target/index.js";   // TA13 · JOBBUILD · APP-22 (가)
+export { targetFactsV2, sourceFactsV2, sourceDbsV2, appEnvV2, workloadSecurityV2, MODULE_DB_FACTS, type EnvSide } from "./target/security-facts.js";   // 보안 판정용 환경 사실
 export { verifyGcpObserve, OPTIONAL_PROBES, gcpEnvFor, gcpReasonOf, type VerifyGcpInput, type VerifyGcpResult } from "./verify/gcp.js";   // L7i
+export { freezeGkeUpgrades, releaseGkeUpgrades, freezeArgs, releaseArgs, freezeExclusionName, FREEZE_DEFAULT_HOURS, FREEZE_MAX_HOURS, type GkeFreezeTarget, type GkeFreezeResult } from "./gcp/upgrade-freeze.js";
 // L5b: 빌린 AWS 실행 자격 → terraform 자식 프로세스 (credential_process 임시 파일)
 export { borrowedAwsCreds, type BorrowedAwsCreds, type AwsSessionKeys } from "./terraform/borrowed-aws.js";
 // DEPLOYNONK8S: Terraform 이 앱까지 띄우는 도착(ECS·Cloud Run·VM)의 배포 확인
 export { terraformRuntimeOf, checkTerraformRuntime, type TerraformRuntime, type RuntimeHealth, type RuntimeHealthCode, type RuntimeHealthInput, type RuntimeHealthDeps } from "./target/runtime-health.js";
+export { GCP_KIND_APIS, GCP_ENV_APIS, gcpRequiredApis, gcpKindsOfVars, type GcpApiKind } from "./target/gcp-apis.js";   // FM-CLD-14
 // TA10: Azure Mock 도착 Builder (capability 표 + mock plan)
 export { azureMockPlanV2, azureMockOutputsV2, azureResourceTypesV2, type AzureMockPlanV2 } from "./target/index.js";
 // TA3: 계획·적용 연결 — 명세 고르기·precheck 대조·출력 펼치기·흉내 출력

@@ -12,7 +12,7 @@
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Provider } from "@svc/contracts";
+import { Provider, redactText } from "@svc/contracts";
 import { createRealTerraformRunner, DEFAULT_MODULE_ROOT, DEMO_INVENTORY, dbNetworkFromEnv, factEnvName, factsFromEnv, fillTfVars, normalizeV2, REAL_MODULE_BASE, ROOT_DIR, targetBuilderFor, withDbNetworkV2 } from "@svc/adapters";
 
 const [cmd, arg, arg2] = process.argv.slice(2).filter((a) => a !== "--v2");
@@ -44,7 +44,7 @@ async function main() {
     const dir = mkdtempSync(join(tmpdir(), "svc-tf-plan-"));
     const r = createRealTerraformRunner({ workRoot: dir });
     const out = await r.planOnly(p, f.vars);
-    for (const l of out.log) console.log(l);
+    for (const l of out.log) console.log(redactText(l));   // RV-14: 화면 출력도 감사와 같은 가리기 (붙여 넣는 길)
     writeFileSync(join(dir, "README.txt"), "plan only. no state. safe to delete\n");
     console.log(out.ok ? `OK plan 끝 (자원 안 만듦) ${out.summary ?? ""}` : "plan 실패 (위 로그)");
     process.exit(out.ok ? 0 : 1);
@@ -92,11 +92,11 @@ async function main() {
   if (cmd === "destroy") {
     if (!arg) throw new Error("이전 id 가 필요하다");
     const d = await r.destroy(arg);
-    for (const l of d.log) console.log(l);
+    for (const l of d.log) console.log(redactText(l));
     console.log(d.ok ? `OK destroy ${arg} (${d.elapsedMs}ms)` : `실패 destroy ${arg} → 클라우드 콘솔에서 남은 자원 확인`);
     process.exit(d.ok ? 0 : 1);
   }
   console.log("사용: npm run tf:real -- check|plan <aws|gcp|onprem> | export <aws|gcp> <폴더> [--no-identity] | list | destroy <이전 id>");
   process.exit(2);
 }
-main().catch((e) => { console.error((e as Error).message); process.exit(1); });
+main().catch((e) => { console.error(redactText((e as Error).message)); process.exit(1); });

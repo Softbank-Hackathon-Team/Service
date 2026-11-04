@@ -49,6 +49,10 @@ export const PERMS: PermTable = {
     write: ["secretmanager.versions.add"],
     remove: ["secretmanager.versions.destroy"] },
   random_password: { read: [], write: [], remove: [] },   // 로컬 자원 (클라우드 권한 불필요)
+  // FM-CLD-hunt-cloud-23: gcp/root 가 IR 종류에 맞춰 API 를 켠다(FM-CLD-14 google_project_service). provider 는 켜진 목록을 읽고(get·list) 없으면 enable.
+  //   disable_on_destroy=false 라 지울 때는 아무것도 안 부른다. 결정 3번 A안: 전용 프로젝트 안에서만
+  google_project_service: {
+    read: ["serviceusage.services.get", "serviceusage.services.list"], write: ["serviceusage.services.enable"], remove: [] },
   google_secret_manager_secret_iam_member: {
     read: ["secretmanager.secrets.getIamPolicy"],
     write: ["secretmanager.secrets.setIamPolicy"],
@@ -76,8 +80,13 @@ export const PERMS: PermTable = {
     read: ["cloudscheduler.jobs.get"], write: ["cloudscheduler.jobs.create", "cloudscheduler.jobs.update"], remove: ["cloudscheduler.jobs.delete"] },
   google_cloud_run_v2_service_iam_member: {
     read: ["run.services.getIamPolicy"], write: ["run.services.setIamPolicy"], remove: ["run.services.setIamPolicy"] },
+  // 이전 중 도착 GKE 업그레이드 멈춤 (gcp/upgrade-freeze.ts). terraform 자원이 아니라 워커가 gcloud 로 거는 maintenance exclusion
+  // DRAFT(ai): container.clusters.update 는 필드 단위로 못 좁힌다 (IAM 조건이 요청 필드를 못 봄) → 실행 SA 가 전용 프로젝트에만 있는 것(A안)으로 범위를 막는다
+  gke_upgrade_freeze: { read: ["container.clusters.get"], write: ["container.clusters.update"], remove: [] },
 };
 
+// FM-CLD-hunt-cloud-23: 앱 모듈 밖에서 실행 역할이 늘 하는 일 (gcp/root API 켜기, 이전 중 GKE 업그레이드 멈춤). 권한 파일·plan 역할에는 들어가야 함
+export const ROOT_TYPES = ["google_project_service", "gke_upgrade_freeze"] as const;
 export function resourceTypes(need: PermNeeds): string[] {
   const t = ["data.google_client_config", "data.google_container_cluster", "kubernetes_namespace_v1",
     "google_service_account", "google_service_account_iam_member"];

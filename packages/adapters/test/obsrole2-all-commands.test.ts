@@ -77,7 +77,7 @@ test("AWS 관찰 인라인 정책 = 표의 모든 동작을 포함, 읽기 동�
 test("GCP 연결 스크립트의 관찰 역할 권한 = 표의 모든 권한을 포함, 읽기 접미사만·중복 0 (DRY_RUN 출력)", () => {
   const SA = "t-" + "0123456789abcdef0123456789ab" + "@platform-prj.iam.gserviceaccount.com";
   const out = spawnSync("bash", [new URL("infra/onboarding/gcp-connect.sh", root).pathname], {
-    env: { PATH: process.env.PATH, PLATFORM_SA: SA, PROJECT_ID: "cust-prj", DRY_RUN: "1" }, encoding: "utf8" }).stdout;
+    env: { PATH: process.env.PATH, PLATFORM_SA: SA, PROJECT_ID: "cust-prj", TARGET_PROJECT_ID: "cust-mig", DRY_RUN: "1" }, encoding: "utf8" }).stdout;
   const line = out.split("\n").find((l) => l.includes("roles create platform_observe"))!;
   const perms = /--permissions=(\S+)/.exec(line)![1]!.replace(/^["']|["']$/g, "").split(",");
   const need = actionsOfCommands("gcp", Object.keys(GCP_COMMAND_PERMISSIONS));

@@ -20,6 +20,7 @@ export { mockPlanV2 as azureMockPlanV2, mockOutputsV2 as azureMockOutputsV2, res
 export { rdsClassFor } from "./aws.js";
 export { cloudSqlTierFor } from "./gcp.js";
 export { managedServiceVars, managedSecretName, managedJobVars } from "./managed.js";
+export { dbWriterVar, dbLinkSecretName, type DbWriter, type SourceDbLinkRef } from "./db-writer.js";
 export { renderViewV2, isInClusterData, requirementsV2, v2Blockers, V2_FIELD_COVERAGE, K8S_RENDER_CAPS, UNSUPPORTED_V2, LINK_OUTPUT_UNKNOWN, identitiesOf, targetNamespace, sourceNamespacesOf, meshesOf, RESERVED_NAMESPACES, managedBlockers, managedJobsOf, managedServicesOf, type FieldRule, type IdentityPlan } from "./shared.js";
 
 // TA11: v2 Builder 가 만들 자원 종류 (화면 "생길 자원"이 v2 계획서면 이걸 씀). azure_mock 은 v2 렌더 없음 → 빈 목록

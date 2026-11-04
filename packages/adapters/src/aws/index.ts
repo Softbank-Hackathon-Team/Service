@@ -40,8 +40,12 @@ export const PERMS: PermTable = {
     read: ["elasticache:DescribeCacheSubnetGroups"],
     write: ["elasticache:CreateCacheSubnetGroup", "elasticache:AddTagsToResource"],
     remove: ["elasticache:DeleteCacheSubnetGroup"] },
+  // ID-6 DRAFT(ai): 【추정】 Terraform AWS provider 는 aws_s3_bucket 을 읽을 때 정책·ACL·웹사이트·가속·요청자 지불·로그·복제·객체 잠금 설정도 부른다.
+  //   빠지면 빌린 자격 plan 이 AccessDenied. 읽기라 천장에 더함. 첫 실측(CloudTrail 실제 호출 목록)으로 확인
   aws_s3_bucket: {
-    read: ["s3:GetBucketLocation", "s3:GetBucketTagging", "s3:ListBucket"],
+    read: ["s3:GetBucketLocation", "s3:GetBucketTagging", "s3:ListBucket",
+      "s3:GetBucketPolicy", "s3:GetBucketAcl", "s3:GetBucketWebsite", "s3:GetAccelerateConfiguration", "s3:GetBucketRequestPayment",
+      "s3:GetBucketLogging", "s3:GetReplicationConfiguration", "s3:GetBucketObjectLockConfiguration"],
     write: ["s3:CreateBucket", "s3:PutBucketTagging"],
     remove: ["s3:DeleteBucket"] },
   aws_s3_bucket_public_access_block: {
@@ -77,7 +81,8 @@ export const PERMS: PermTable = {
   aws_iam_role: {
     read: ["iam:GetRole", "iam:ListRolePolicies", "iam:ListAttachedRolePolicies"],
     write: ["iam:CreateRole", "iam:TagRole"],
-    remove: ["iam:DeleteRole"] },
+    // ID-6 DRAFT(ai): 【추정】 역할을 지우기 전에 provider 가 인스턴스 프로파일 목록을 본다
+    remove: ["iam:DeleteRole", "iam:ListInstanceProfilesForRole"] },
   aws_iam_role_policy: {
     read: ["iam:GetRolePolicy"],
     write: ["iam:PutRolePolicy"],

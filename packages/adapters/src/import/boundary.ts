@@ -58,7 +58,7 @@ export function applyBoundary(components: MappedComponent[], links: LinkV2[], fi
       const tos = [
         ["deadLetter", (c.props.deadLetter as { to?: string } | undefined)?.to],
         ...((c.props.notifications ?? []) as Array<{ to?: string }>).map((x) => ["notifications", x.to] as const),
-        ...((c.props.subscriptions ?? []) as Array<{ to?: string }>).map((x) => ["subscriptions", x.to] as const),
+        ...((c.props.topicSubscriptions ?? []) as Array<{ to?: string }>).map((x) => ["topicSubscriptions", x.to] as const),
       ] as Array<readonly [string, string | undefined]>;
       for (const [field, to] of tos) {
         if (!to || !why.has(c.id!) || why.has(to)) continue;

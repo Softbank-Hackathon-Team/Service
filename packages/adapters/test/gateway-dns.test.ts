@@ -113,7 +113,7 @@ test("GW-1 discover: Gateway API 가 있으면 라우트를 읽고, 다른 네�
     return { code: 1, stdout: "", stderr: `no fake for: ${line}`, ms: 1 };
   };
   const r = await readK8sNamespace({ exec, env: { IMPORT_NAMESPACE: "shop" } }, []);
-  assert.deepEqual(r.items.filter((i) => i.kind.startsWith("k8s.g") || i.kind === "k8s.httpRoute").map((i) => `${i.kind}:${i.metadata.namespace}/${i.metadata.name}`).sort(),
+  assert.deepEqual(r.items.filter((i) => i.kind.startsWith("k8s.g") || i.kind === "k8s.httpRoute").map((i) => `${i.kind}:${(i as any).metadata.namespace}/${(i as any).metadata.name}`).sort(),
     ["k8s.gateway:infra/shared", "k8s.httpRoute:shop/api"]);
   assert.ok(!r.items.some((i) => i.kind === "k8s.crdObject"), "Gateway API 는 CRD 목록(unmapped C)에 안 들어감");
 });

@@ -182,13 +182,13 @@ export const azureMockTarget: TargetBuilder = {
       // DRAFT(ai): Key Vault 비밀 이름은 영숫자·- 만 → 소문자·_ 를 - 로
       remoteKey: (s) => `${spec.app.name}-${s.toLowerCase().replace(/[^a-z0-9-]/g, "-")}`,
       saAnnotations: () => ({}),   // 아래에서 앱 SA 하나로 바꿔 씀
-      postgres: pg ? [{ id: pg.id, mode: "external", host: fromOut(out, `link.${pg.id}.host`), port: 5432, passwordSecret: "db-password" }] : [],
-    }) as { workloads: Array<{ id: string; serviceAccount: { name: string } }>; warnings: string[] };
+      postgres: pg ? [{ id: pg.id, mode: "external", host: fromOut(out, `link.${pg.id}.host`), port: 5432, passwordSecret: "db-password", secretName: `${spec.app.name}-${pg.id}-app` }] : [],
+    }) as { workloads: Array<{ name: string; serviceAccount: { name: string } }>; warnings: string[] };
     // v1 모듈의 연합 자격 subject = system:serviceaccount:<ns>:<앱 이름> → k8s SA 이름을 앱 이름으로 맞춘다 (출발과 달라짐 줄)
     // DRAFT(ai): Mock 이라 진짜로 붙진 않지만 값 모양은 실제 Azure 와 같게. 출발 SA 그대로 쓰려면 azure/root(A10 다음)가 SA 이름 변수를 받아야 함
     const sa = { name: spec.app.name, create: true, annotations: { "azure.workload.identity/client-id": fromOut(out, "app_identity_client_id") } };
     for (const w of v.workloads) {
-      if (w.serviceAccount.name !== spec.app.name) v.warnings.push(`${w.id}: 서비스 계정 ${w.serviceAccount.name} → ${spec.app.name} (Azure 연합 자격 규칙, 출발과 달라짐)`);
+      if (w.serviceAccount.name !== spec.app.name) v.warnings.push(`${w.name}: 서비스 계정 ${w.serviceAccount.name} → ${spec.app.name} (Azure 연합 자격 규칙, 출발과 달라짐)`);
       w.serviceAccount = sa;
     }
     v.warnings = [...new Set(v.warnings)].sort();

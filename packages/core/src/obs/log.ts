@@ -1,3 +1,4 @@
+import { redactSecretShapes } from "@svc/contracts";
 import { AsyncLocalStorage } from "node:async_hooks";
 
 // 구조화 로그: 한 줄 = JSON 하나. api(Fastify 내장 pino)와 worker·agent-worker(이 파일)가 같은 모양을 쓴다
@@ -49,9 +50,14 @@ const TOKEN_SHAPES: Array<[RegExp, string]> = [
   [/\b(AKIA|ASIA)[0-9A-Z]{16}\b/g, REDACTED],
   [/(svc_refresh=)[^;\s"]+/g, `$1${REDACTED}`],
   [/([?&](?:access_?token|token|api_?key|key|secret|password|signature|sig|code|state)=)[^&\s"]+/gi, `$1${REDACTED}`],
+  // RV-13: 감사 규칙(contracts redact)에는 있는데 로그에 빠졌던 모양 — GCP 접근 토큰, GitHub 토큰, ARN 안 계정 번호 (키=값은 FM-ORC-18 redactSecretShapes 가 맡음)
+  [/\bya29\.[A-Za-z0-9._-]{10,}/g, REDACTED],
+  [/\bgh[pousr]_[A-Za-z0-9]{20,}/g, REDACTED],
+  [/\bgithub_pat_[A-Za-z0-9_]{20,}/g, REDACTED],
+  [/\b(arn:aws[a-z-]*:[a-z0-9-]*:[a-z0-9-]*:)\d{12}(?=:|\/)/g, "$1<account>"],
 ];
 export function scrubString(s: string): string {
-  let out = s;
+  let out = redactSecretShapes(s);   // PF FM-ORC-18: 감사와 같은 비밀 모양 (contracts)
   for (const [re, to] of TOKEN_SHAPES) out = out.replace(re, to);
   return out;
 }

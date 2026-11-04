@@ -1,12 +1,16 @@
 import type { AppSpecV2, PlanDoc, Provider, TfOutputs } from "@svc/contracts";
 import { existsSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { createRealTerraformRunner, envFor, readImported, workRootOf, dbNetworkFromEnv, DbNetworkError, factEnvName, factsFromEnv, fillTfVars, flattenTfOutputsV2, type RealTerraformRunner } from "@svc/adapters";
+import { createRealTerraformRunner, envFor, dbNetworkFromEnv, DbNetworkError, factEnvName, factsFromEnv, fillTfVars, flattenTfOutputsV2, type RealTerraformRunner } from "@svc/adapters";
 import { tfCallV2 } from "./plan-v2.js";
+import { specV2ForPlan, terraformRuntimeOf } from "@svc/adapters";
+import { latestAcceptedSpecV2, loadLatestApproval, loadPlanById } from "@svc/core";
+import { DbWriterError, dbWriterApplies, loadWriterState, prepareSourceWriter, saveWriterState, writerVar, type ManagedProvider, type SecretPut } from "../db-writer.js";
+import { factsDrift, importedFor, targetFactsOf } from "./plan-facts.js";
 import { appLinkFromEnv } from "@svc/dbproxy";
 import { tenantSlug } from "../gitops/bundle.js";
 import { stableHash } from "./_step.js";
-import { envNumber } from "@svc/contracts";
+import { envNumber, redactText } from "@svc/contracts";
 
 // Z70 DRAFT(ai): apply 작업의 "진짜 terraform" 길. Z89: 기본이 이 길이다 (MOCK_IAC=1 인 시험만 흉내 길).
 // apply.ts 는 이 함수 하나만 부른다.
@@ -33,9 +37,16 @@ export interface RealApplyDeps {
   signal?: AbortSignal;
   // L5b: 빌린 자격 env (borrowedAwsCreds().env). 있으면 실행기 env 에서 워커 자기 자격(AWS_PROFILE·키)을 지우고 이것만 덮는다
   credEnv?: Record<string, string>;
+  /** APP-22: 출발 전용 계정 비밀번호를 도착 그릇에 넣기 (시험이 가짜로 바꿈) */
+  putSecret?: SecretPut;
 }
 
-export async function realApply(i: RealApplyInput, d: RealApplyDeps = {}): Promise<RealApplyOutcome> {
+interface Prepared {
+  env: NodeJS.ProcessEnv; base: Record<string, unknown>; target: { envId: string; provider: Provider; region: string; migrationId: string };
+  imp: ReturnType<typeof importedFor>; facts: Record<string, string>; noCluster: boolean; vars: Record<string, unknown>;
+}
+/** ①② 계획과 같은 입력 다시 만들기 → 지문·사실 대조 → 자리표시 채우기. apply 와 APP-22 다시 apply 가 같이 쓴다 */
+async function prepare(i: RealApplyInput, d: RealApplyDeps): Promise<Prepared | Extract<RealApplyOutcome, { ok: false }>> {
   const env = d.env ?? process.env;
   const base: Record<string, unknown> = { planId: i.plan.planId, provider: i.provider, real: true };
   // ① 계획 단계와 똑같은 대상 (plan.ts buildPlanDoc: region "default" + G8-1 이름 seed 인 migrationId)
@@ -54,6 +65,11 @@ export async function realApply(i: RealApplyInput, d: RealApplyDeps = {}): Promi
   if (stableHash(tf) !== i.plan.tfPlanHash)
     return { ok: false, failureCode: "TF_PLAN_DRIFT", detail: { ...base, error: "승인한 Terraform 입력 지문과 지금 만든 지문이 다르다 (어댑터·명세가 승인 뒤 바뀜)" } };
 
+  // G7-3·G7-4: 사람이 본 도착 사실(계정·VPC·클러스터)·재사용 여부가 지금과 같은가. 다르면 만들지 않는다
+  const imp = importedFor(env, i.migrationId, i.tenantId);
+  const drift = factsDrift(i.plan, targetFactsOf(tf.vars, env, i.provider, i.accountId), imp);
+  if (drift) return { ok: false, failureCode: "TF_PLAN_DRIFT", detail: { ...base, error: drift } };
+
   // ② 자리표시. deploy 의 envFacts 와 같은 규칙 (tenantId = tenantSlug, gcp projectId = account_id)
   const facts = factsFromEnv(env, {
     tenantId: tenantSlug(i.tenantId), migrationId: i.migrationId,
@@ -68,10 +84,32 @@ export async function realApply(i: RealApplyInput, d: RealApplyDeps = {}): Promi
   if (filled.missing.length)
     return { ok: false, failureCode: "TF_FACTS_MISSING", detail: { ...base, missing: filled.missing.map(factEnvName) } };
 
+  return { env, base, target, imp, facts, noCluster, vars: filled.vars as Record<string, unknown> };
+}
+
+export async function realApply(i: RealApplyInput, d: RealApplyDeps = {}): Promise<RealApplyOutcome> {
+  const p = await prepare(i, d);
+  if ("ok" in p) return p;
+  const { env, base, imp, facts, noCluster } = p;
+  // APP-22 (가) DECISION(team): Terraform 이 앱을 띄우는 도착은 컷오버 전까지 출발 DB 에 붙게 띄운다 (db_writer_json active=source)
+  let vars = p.vars;
+  if (!imp && dbWriterApplies(env, i.provider, i.spec, !!terraformRuntimeOf(i.spec))) {
+    try {
+      const w = await prepareSourceWriter({ env, provider: i.provider as ManagedProvider, spec: i.spec, tenantId: i.tenantId, tenant: tenantSlug(i.tenantId),
+        migrationId: i.migrationId, target: p.target, projectId: i.provider === "gcp" ? i.accountId ?? facts.projectId : undefined,
+        region: typeof vars.region === "string" ? vars.region : undefined, put: d.putSecret });
+      vars = { ...vars, db_writer_json: w.var };
+      base.dbWriter = { active: "source", components: Object.keys(w.state.links), secret: w.state.secret };
+    } catch (e) {
+      if (e instanceof DbWriterError) return { ok: false, failureCode: e.code, detail: { ...base, error: e.message } };
+      throw e;
+    }
+  }
+  const filled = { vars };
   // ③ 실행
   const runner = d.runner ?? createRealTerraformRunner({ env: d.credEnv ? envFor(d.credEnv, env) : env });
   // Z89 (Z62 주제 57): 가져오기가 이미 찾은 도착 자원이면 만들지 않고 그 출력으로 넘어간다 ("이미 있음")
-  const imported = readImported(workRootOf(env), i.migrationId, tenantSlug(i.tenantId));
+  const imported = imp;
   if (imported) {
     // Z89-03: 복제 끝점 {tf:키} 는 outputs.json(+db-secret.json)을 읽는다 → imported 출력도 outputs.json 으로 남긴다.
     //   비밀번호(db-secret.json)는 imported.json 에 넣지 않는다: 가져온 쪽이 같은 폴더에 0600 파일로 따로 둔다
@@ -82,7 +120,7 @@ export async function realApply(i: RealApplyInput, d: RealApplyDeps = {}): Promi
                        dbSecret: existsSync(join(dirname(imported.file), "db-secret.json")) } };
   }
   // Z89: state 는 회사별 폴더 (<TF_WORK_DIR>/<회사 slug>/<이전>). 다른 회사 state 와 같은 폴더를 쓸 길이 없다
-  const r = await runner.apply(i.provider, i.migrationId, filled.vars, d.signal, tenantSlug(i.tenantId));
+  const r = await runner.apply(i.provider, i.migrationId, filled.vars as never, d.signal, tenantSlug(i.tenantId));
   const runDetail = { workDir: r.workDir, steps: r.steps, elapsedMs: r.elapsedMs, log: r.log, secretFetched: r.secretFetched ?? false };
   if (!r.ok) {
     // Z89: init 이 127(실행 파일 없음)이면 따로 알린다 — 화면에서 "terraform 설치/ MOCK_IAC" 가 바로 보이게
@@ -119,6 +157,38 @@ export async function realApply(i: RealApplyInput, d: RealApplyDeps = {}): Promi
     ...(noCluster ? { noCluster: true } : {}) } };
 }
 
+/** APP-22 (가) DECISION(team): Terraform 이 앱을 띄우는 도착의 앱 DB 주소 바꾸기 = db_writer_json active 만 바꿔 같은 입력으로 다시 apply.
+ *  컷오버(C6 뒤) = target, 컷오버 뒤 롤백 = source. 경로 사실은 apply 때 남긴 db-writer.json (비밀번호는 그릇에 이미 있음).
+ *  흉내 판(MOCK_IAC=1)은 apply 를 안 돌리고 상태 파일만 바꾼다 */
+export async function reapplyDbWriter(i: RealApplyInput, writer: "source" | "target", d: RealApplyDeps & { mock?: boolean } = {}):
+    Promise<{ ok: true; active: "source" | "target"; mock?: boolean; elapsedMs?: number } | { ok: false; failureCode: string; error: string; workDir?: string }> {
+  const env = d.env ?? process.env, tenant = tenantSlug(i.tenantId);
+  const st = loadWriterState(env, tenant, i.migrationId);
+  if (!st) return { ok: false, failureCode: "APP_LINK_STATE_MISSING", error: "db-writer.json not found in the migration work dir (apply did not set up the source DB link)" };
+  if (d.mock) { saveWriterState(env, tenant, i.migrationId, { ...st, active: writer }); return { ok: true, active: writer, mock: true }; }
+  const p = await prepare(i, d);
+  if ("ok" in p) return { ok: false, failureCode: p.failureCode, error: String((p.detail as { error?: unknown }).error ?? p.failureCode) };
+  const vars = { ...p.vars, db_writer_json: writerVar(st, i.spec, { ...p.target, tenantId: tenant }, writer) };
+  const runner = d.runner ?? createRealTerraformRunner({ env: d.credEnv ? envFor(d.credEnv, env) : env });
+  const r = await runner.apply(i.provider, i.migrationId, vars as never, d.signal, tenant, { keepOnFail: true });
+  if (!r.ok) return { ok: false, failureCode: "APP_LINK_REAPPLY_FAILED", error: `terraform ${r.failedStep ?? "apply"} failed`, workDir: r.workDir };
+  saveWriterState(env, tenant, i.migrationId, { ...st, active: writer });
+  return { ok: true, active: writer, elapsedMs: r.elapsedMs };
+}
+
+/** 다시 apply 에 쓸 입력 (승인한 계획서·받아들인 최신 명세·도착 환경). 없으면 null */
+export async function loadReapplyInput(tx: { query: (sql: string, args: unknown[]) => Promise<{ rows: Record<string, unknown>[] }> },
+    m: { id: string; tenantId: string; targetEnvId: string }): Promise<RealApplyInput | null> {
+  const ap = await loadLatestApproval(tx as never, m.id);
+  const plan = ap ? await loadPlanById(tx as never, ap.planId) : null;
+  const row = await latestAcceptedSpecV2(tx as never, m.id);
+  const spec = row ? specV2ForPlan(row) : null;
+  const e = await tx.query(`SELECT provider, account_id FROM environments WHERE id=$1`, [m.targetEnvId]);
+  if (!plan || !spec || !e.rows[0]) return null;
+  return { migrationId: m.id, tenantId: m.tenantId, envId: m.targetEnvId, provider: e.rows[0].provider as Provider,
+           accountId: (e.rows[0].account_id as string | null) ?? null, spec, plan };
+}
+
 async function setTargetUpstream(urls: string[], host: string, port: number, token: string | undefined, f: typeof fetch, timeoutMs: number) {
   return Promise.all(urls.map(async (u) => {
     try {
@@ -129,6 +199,6 @@ async function setTargetUpstream(urls: string[], host: string, port: number, tok
         signal: AbortSignal.timeout(timeoutMs),
       });
       return { url: u, ok: r.ok, status: r.status };
-    } catch (e) { return { url: u, ok: false, error: (e as Error).message.slice(0, 120) }; }
+    } catch (e) { return { url: u, ok: false, error: redactText((e as Error).message).slice(0, 120) }; }   // RV-16
   }));
 }

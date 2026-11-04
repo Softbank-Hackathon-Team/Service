@@ -1,6 +1,6 @@
 import type { MigrationStatus, TransitionEvidence } from "@svc/contracts";
 import type { Tx } from "./db.js";
-import { REPLANNABLE_FAILURES } from "./states.js";
+import { ROLLBACK_ON_REJECT, RETRYABLE_FAILURES } from "@svc/contracts";
 import { envNumber } from "@svc/contracts";
 
 // 전이 조건(guard). VALID는 "갈 수 있는 길"만 보고, 여기서는 "지금 그 길을 가도 되나"를 본다.
@@ -89,8 +89,9 @@ const GUARDS: Partial<Record<`${MigrationStatus}>${MigrationStatus}`, Guard>> = 
     need(facts.locks.reservedLive === envCount(facts) || facts.locks.live === envCount(facts),
       `env lock not held (live=${facts.locks.live}/${envCount(facts)})`) ??
     bothConnected(facts),
-  "approved>stale": ({ facts }) =>                                                          // T16
-    need(facts.locks.live < envCount(facts) || facts.plan?.expired === true,
+  // G7-3: 승인 뒤 환경을 다른 계정으로 다시 연결하면(env_changed) 잠금·만료와 상관없이 낡음
+  "approved>stale": ({ facts, ev }) =>                                                      // T16
+    need(facts.locks.live < envCount(facts) || facts.plan?.expired === true || ev.staleReason === "env_changed",
       "lock still valid and plan not expired"),
   "provisioning>deploying": ({ ev }) => need(ev.applyOk === true, "applyOk required"),      // T17
 
@@ -124,11 +125,17 @@ const GUARDS: Partial<Record<`${MigrationStatus}>${MigrationStatus}`, Guard>> = 
   "rolling_back>rolled_back": ({ ev }) =>                                                   // T35
     need(ev.sourceWeight100 === true, "source weight not 100") ??
     need(ev.sourceHealthy === true, "source not healthy"),
-  "failed>planning": ({ facts }) =>                                                         // T37
-    need(facts.failedAtStatus !== null && REPLANNABLE_FAILURES.includes(facts.failedAtStatus),
-      `failed at ${facts.failedAtStatus ?? "?"}: replan only if failed at provisioning or earlier`),
-  "failed>cancelled": ({ ev }) =>                                                           // T38
-    need(ev.manualCleanupConfirmed === true, "manual cleanup not confirmed"),
+  // DECISION(team) Jeong 11/4 01:53Z (ADR-066 개정): failed = "재시도할까?" 질문 대기. 다시 계획(failed>prechecking, 예전 T37)은 없앴다.
+  //   failed → 실패 지점(재시도)은 checkGuard 가 한 곳에서 본다. 여기는 롤백·취소만
+  // F8-1 + 01:53Z: 자원을 만든 뒤(provisioning·cutover·rolling_back) 실패면 거절 = 롤백, rolling_back 실패는 재시도도 같은 길
+  "failed>rolling_back": ({ facts }) =>
+    need(facts.failedAtStatus !== null && ROLLBACK_ON_REJECT.includes(facts.failedAtStatus),
+      `failed at ${facts.failedAtStatus ?? "?"}: rollback only if failed at ${ROLLBACK_ON_REJECT.join("/")}`),
+  // T38: 수동 정리 확인, 또는 01:53Z 거절인데 만든 자원이 없는 실패(가져오기·점검·계획)
+  "failed>cancelled": ({ facts, ev }) =>
+    ev.manualCleanupConfirmed === true ? null
+      : need(ev.failureDecision === "rollback" && facts.failedAtStatus !== null && !ROLLBACK_ON_REJECT.includes(facts.failedAtStatus),
+          "manual cleanup not confirmed"),
 };
 
 // 이동 하나의 조건을 본다. null = 통과
@@ -145,6 +152,10 @@ export function checkGuard(from: MigrationStatus, to: MigrationStatus, g: GuardI
   if (from === "paused" && to !== "rolling_back")
     return need(g.facts.pausedFrom === to, `resume only to paused_from (${g.facts.pausedFrom ?? "?"})`) ??
       need(g.ev.ruleCleared === true, "guardrail rule not cleared");
+  // DRAFT(ai) Jeong 11/4 01:53Z 재시도: failed 에서 실패 지점 상태로만, 사람이 "재시도"를 고른 증거가 있어야 (POST .../failure-decision)
+  if (from === "failed" && RETRYABLE_FAILURES.includes(to) && to !== "rolling_back")
+    return need(g.facts.failedAtStatus === to, `retry only to failed_at_status (${g.facts.failedAtStatus ?? "?"})`) ??
+      need(g.ev.failureDecision === "retry", "failureDecision retry required");
   const guard = GUARDS[`${from}>${to}`];
   return guard ? guard(g) : null;
 }

@@ -89,6 +89,9 @@ test("apply: init → plan -out → apply tfplan → output → 비밀번호 꺼
   assert.equal(JSON.parse(readFileSync(sf, "utf8")).db_password, PASSWORD);
   assert.equal(JSON.stringify(res).includes(PASSWORD), false);
   assert.equal(readFileSync(join(root, MID, "outputs.json"), "utf8").includes(PASSWORD), false);
+  // RV-15: 작업 폴더(tfstate 에 GCP DB 비밀번호 원문)·outputs.json 도 나만 읽게
+  assert.equal(statSync(join(root, MID)).mode & 0o777, 0o700);
+  assert.equal(statSync(join(root, MID, "outputs.json")).mode & 0o777, 0o600);
 });
 
 test("plan 이 실패하면 apply 를 부르지 않고 failedStep=plan, 로그에 오류 줄", async () => {
@@ -202,10 +205,10 @@ test("Z89: 같은 이전 id 가 두 회사 폴더에 있으면 찾기를 멈춘�
   await assert.rejects(r.destroy(MID), /2 tenants/);
 });
 
-test("Z89: apply 단계 실패 → 같은 폴더에서 바로 destroy (TF_DESTROY_ON_FAIL=0 이면 안 함, abort 면 안 함)", async () => {
+test("Z89: TF_DESTROY_ON_FAIL=1 이면 apply 단계 실패 → 같은 폴더에서 바로 destroy (기본·0 이면 안 함 = Jeong 11/4 01:53Z, abort 면 안 함)", async () => {
   const root = tmp();
   let f = fakeExec("apply");
-  let res = await createRealTerraformRunner({ exec: f.exec, workRoot: root, env: {} }).apply("aws", MID, {}, undefined, TEN);
+  let res = await createRealTerraformRunner({ exec: f.exec, workRoot: root, env: { TF_DESTROY_ON_FAIL: "1" } }).apply("aws", MID, {}, undefined, TEN);
   assert.equal(res.ok, false); assert.equal(res.failedStep, "apply");
   assert.deepEqual(f.calls.map((c) => subOf(c.args)), ["init", "plan", "apply", "destroy"]);
   assert.ok(f.calls[3]!.args.includes("-var-file=../terraform.tfvars.json") && f.calls[3]!.args.includes("-auto-approve"));
@@ -214,8 +217,11 @@ test("Z89: apply 단계 실패 → 같은 폴더에서 바로 destroy (TF_DESTRO
   res = await createRealTerraformRunner({ exec: f.exec, workRoot: tmp(), env: { TF_DESTROY_ON_FAIL: "0" } }).apply("aws", MID, {});
   assert.deepEqual(f.calls.map((c) => subOf(c.args)), ["init", "plan", "apply"]);
   assert.equal(res.destroyedAfterFail, undefined);
+  f = fakeExec("apply");
+  res = await createRealTerraformRunner({ exec: f.exec, workRoot: tmp(), env: {} }).apply("aws", MID, {});
+  assert.deepEqual(f.calls.map((c) => subOf(c.args)), ["init", "plan", "apply"], "기본은 지우지 않고 사람 답을 기다림");
   f = fakeExec("apply"); const ac = new AbortController(); ac.abort();
-  res = await createRealTerraformRunner({ exec: f.exec, workRoot: tmp(), env: {} }).apply("aws", MID, {}, ac.signal);
+  res = await createRealTerraformRunner({ exec: f.exec, workRoot: tmp(), env: { TF_DESTROY_ON_FAIL: "1" } }).apply("aws", MID, {}, ac.signal);
   assert.equal(f.calls.some((c) => subOf(c.args) === "destroy"), false);
   // plan 실패는 만든 것이 없으니 destroy 도 안 부른다
   f = fakeExec("plan");

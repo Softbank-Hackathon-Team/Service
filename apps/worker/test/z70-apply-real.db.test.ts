@@ -6,7 +6,7 @@ import { test, before, after, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -94,8 +94,21 @@ test("Z70 승인 지문과 다른 Terraform 입력 → failed(TF_PLAN_DRIFT), te
   assert.equal(existsSync(join(work, TSLUG, m.id)), false);
 });
 
-test("Z70 terraform apply 실패 → failed(TF_APPLY_FAILED), 잠금 해제, 감사에 파기 명령·작업 폴더", { skip }, async (t) => {
+test("Jeong 11/4 01:53Z: terraform apply 실패 → failed(TF_APPLY_FAILED), 기본은 바로 지우지 않음(사람 답 대기)", { skip }, async (t) => {
   withEnv(t, REAL);
+  rmSync(join(work, "calls.log"), { force: true });
+  const m = await seed(true);
+  assert.equal(await apply.handleApply(job(m.id, m.planId)), "advanced");
+  assert.deepEqual(await st(m.id), { status: "failed", failure_code: "TF_APPLY_FAILED", failed_at_status: "provisioning" });
+  assert.deepEqual(calls().map((l) => l.split(" ").find((a) => !a.startsWith("-"))), ["init", "plan", "apply"]);
+  const a = await owner.query(`SELECT detail FROM audit_events WHERE target=$1 ORDER BY seq`, [m.id]);
+  assert.doesNotMatch(JSON.stringify(a.rows), /"destroyedAfterFail"/);
+  assert.equal((await owner.query(`SELECT count(*)::int n FROM pgboss.job WHERE name='target-destroy' AND data->>'migrationId'=$1`, [m.id])).rows[0].n, 0);
+});
+
+test("Z70 terraform apply 실패 (TF_DESTROY_ON_FAIL=1) → failed(TF_APPLY_FAILED), 잠금 해제, 감사에 파기 명령·작업 폴더", { skip }, async (t) => {
+  withEnv(t, { ...REAL, TF_DESTROY_ON_FAIL: "1" });
+  rmSync(join(work, "calls.log"), { force: true });   // 앞 시험(기본 = 안 지움)의 호출 기록을 지움
   const m = await seed(true);
   assert.equal(await apply.handleApply(job(m.id, m.planId)), "advanced");
   assert.deepEqual(await st(m.id), { status: "failed", failure_code: "TF_APPLY_FAILED", failed_at_status: "provisioning" });

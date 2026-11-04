@@ -39,7 +39,7 @@ test("RDS 가 postgres 가 아니면(unmapped) 칸을 안 만들고 던지지도
 test("복제 수: HPA 에 minReplicas 가 없으면 최소 1, replicas 0 인 Deployment 는 0 으로 비교", () => {
   const i = gcp();
   delete items(i).find((x) => x.kind === "k8s.hpa")!.spec.minReplicas;
-  const { a } = measure(i, "aws", (r) => { r.workloads.find((w: O) => w.id === "shop-api").replicas = { min: 1, max: 6 }; });
+  const { a } = measure(i, "aws", (r) => { const w = r.workloads.find((x: O) => x.name === "shop-api"); w.scale = { min: 1, max: 6 }; delete w.replicas; });
   assert.equal(f(a, "shop-api", "replicas")?.result, "match");
   const z = gcp(); dep(z, "shop-web").spec.replicas = 0;
   const m = measure(z, null);
@@ -75,7 +75,7 @@ test("프로브: 포트가 이름(문자열)이어도 같은 값이면 일치, t
   const { a } = measure(i, null);
   assert.equal(f(a, "shop-api", "probes.readiness")?.result, "match");
   assert.equal(f(a, "shop-api", "probes.liveness")?.result, "match");
-  const m = measure(i, "aws", (r) => { r.workloads.find((w: O) => w.id === "shop-api").probes.liveness = { type: "http", path: "/", port: 8080 }; });
+  const m = measure(i, "aws", (r) => { r.workloads.find((w: O) => w.name === "shop-api").probes.liveness = { httpGet: { path: "/", port: 8080 } }; });
   assert.equal(f(m.a, "shop-api", "probes.liveness")?.result, "mismatch");
 });
 

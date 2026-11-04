@@ -98,7 +98,7 @@ flowchart LR
 | `TF_BIN` | terraform 실행 파일 경로 | PATH에서 찾음. 없으면 `TF_BIN_MISSING` |
 | `TF_WORK_DIR` | state·출력 작업 폴더 | `~/.svc-tf` |
 | `TF_APPLY_TIMEOUT_SEC`, `TF_LOCK_TIMEOUT_SEC` | apply·잠금 기다리는 시간 | 기본값 |
-| `TF_DESTROY_ON_FAIL` | apply 실패 시 자동 destroy (1) | 기본 켬 |
+| `TF_DESTROY_ON_FAIL` | 1 이면 apply 실패 즉시 destroy | 기본 0 (실패 질문 → 거절·롤백 때 target-destroy) |
 | `TF_FACT_<키>` | env 모듈 출력·계정 사실. `<env:vpcId>` → `TF_FACT_VPC_ID` | 그 자리표시가 안 채워짐 |
 | `DB_DISPOSABLE` | `1`이면 DB 삭제 보호·마지막 스냅샷을 끔 (그날 파기하는 데모 DB만) | 삭제 보호가 켜져 destroy가 막힘 |
 | `ONPREM_KUBE_CONTEXT`, `ONPREM_REGISTRY_HOST` | 온프레 kubectl 컨텍스트·레지스트리 | 온프레 읽기·배포 실패 |

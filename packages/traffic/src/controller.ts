@@ -29,6 +29,11 @@ export function observedTargetPct(w: { target: { n: number }; source: { n: numbe
   return total > 0 ? Math.round((w.target.n / total) * 100) : null;
 }
 
+/** pf-d RV-11: 전환 도중 플랫폼 쪽(우리 DB 등) 오류가 여러 번 이어짐. 출발 100% 로 되돌린 뒤 paused 로 끝낸다 */
+export const TRAFFIC_PLATFORM_ERROR = "TRAFFIC_PLATFORM_ERROR";
+// DRAFT(ai) pf-d RV-11: guardSet(상태 확인 트랜잭션)이 플랫폼 오류로 실패하면 한 번 더 해 본다. 그래도면 되돌림
+export const GUARD_ATTEMPTS = 2;
+
 /** Z19 H3: 가중치를 바꾸기 직전 "아직 이 이전이 shifting인가" 를 확인했더니 아니었다 (롤백·일시정지가 먼저 확정됨) */
 export class MigrationMoved extends Error {
   readonly code = "MIGRATION_MOVED";
@@ -54,6 +59,8 @@ export interface ShiftResult {
   // z75-38: 실측 몫 확인을 켰을 때만. 단계마다 마지막 실측 몫, 처음 목표 안에 든 초(못 들면 null), 재관찰 횟수
   stepShares?: Array<{ stepPct: number; observedPct: number | null; reachedAfterSec: number | null; reobserve: number }>;
   observeRequiredSec: number;        // 이번 전환이 요구한 관찰 초 (기본 30, 압축 데모면 더 짧다)
+  // pf-d FM-TRF-10: 판정·몫에 쓴 지표 출처. "stub" 이면 stepShares 의 observedPct 는 가중치로 계산한 값 (실측 아님)
+  metricsSource: "prometheus" | "stub" | "unknown";
   finalWeights: { source: number; target: number };
 }
 
@@ -73,6 +80,7 @@ export async function runShift(o: {
   switchAttempts?: number;
   // Z19 H3: 도착 쪽으로 가중치를 올리는 PATCH 를 감싼다. 워커는 "이전 행 FOR SHARE + 상태 확인" 트랜잭션 안에서 apply() 를 부르고,
   // 상태가 바뀌었으면 MigrationMoved 를 던진다 → 가중치를 안 바꾸고 paused 로 끝낸다. 출발 100% 로 되돌리는 PATCH 는 감싸지 않는다(늘 안전)
+  // pf-d RV-11: apply 는 PATCH 한 번이다(확인 GET·재시도 대기는 밖). 다른 오류(플랫폼 DB)를 던지면 GUARD_ATTEMPTS 번 뒤 출발 100% + paused
   guardSet?: (apply: () => Promise<void>) => Promise<void>;
   maxMetricErrors?: number;
   observeSec?: number;               // 100%에서 시계로 관찰할 초. 기본 OBSERVE_AFTER_100
@@ -94,13 +102,14 @@ export async function runShift(o: {
   const elapsed100 = () => (t100 === null ? 0 : Math.round((now().getTime() - t100) / 100) / 10);
   const verify = { attempts: o.switchAttempts ?? 3, sleep };
   const maxMetricErrors = o.maxMetricErrors ?? MAX_METRIC_ERRORS;
-  let metricErrors = 0;
+  let metricErrors = 0, platformErrors = 0;
   const shareOn = o.shareTolPct !== undefined;
   const stepShares: NonNullable<ShiftResult["stepShares"]> = [];
 
-  // Z14-06: 처음 시작할 때만 LB 설정 점검 (cloudflarePreflight 가 있었지만 아무도 부르지 않았다)
-  // 문제가 있으면 가중치를 건드리지 않고 paused (도착 0% 그대로라 안전). 사람이 LB 를 고치고 재개한다
-  if (from === 0 && o.switcher.preflight) {
+  // Z14-06: LB 설정 점검 (cloudflarePreflight 가 있었지만 아무도 부르지 않았다)
+  // 문제가 있으면 가중치를 건드리지 않고 paused (지금 가중치 그대로). 사람이 LB 를 고치고 재개한다
+  // pf-d FM-TRF-17: 재개(from>0)에도 점검한다. 예전엔 처음만 봐서, 멈춘 사이 LB 가 꺼지거나 쿠키 고정이 켜지면 그대로 50→100 을 올렸다
+  if (o.switcher.preflight) {
     let issues: string[];
     try { issues = await o.switcher.preflight(o.lbId); }
     catch (e) { return done("paused", `LB 점검 실패: ${(e as Error).message}`, "TRAFFIC_PREFLIGHT_FAILED"); }
@@ -110,13 +119,20 @@ export async function runShift(o: {
   for (const pct of steps) {
     try {
       if (pct !== reachedPct || from === 0) {
-        const apply = async () => { await setAndVerify(o.switcher, o.lbId, pctWeights(pct), verify); };
-        await (o.guardSet ? o.guardSet(apply) : apply());
+        for (let g = 1; ; g++) {
+          try { await setAndVerify(o.switcher, o.lbId, pctWeights(pct), { ...verify, ...(o.guardSet ? { guard: o.guardSet } : {}) }); break; }
+          catch (e) {
+            if (e instanceof MigrationMoved || e instanceof SwitchFailed || g >= GUARD_ATTEMPTS) throw e;
+            await sleep(TICK_MS);
+          }
+        }
       }
     } catch (e) {
       if (e instanceof MigrationMoved) return done("paused", null, null);
       if (e instanceof SwitchFailed) return rollback(`단계 ${pct}% 가중치 전환 실패: ${e.message}`, "TRAFFIC_SWITCH_FAILED");
-      throw e;
+      // pf-d RV-11: 예전엔 그대로 던져 작업이 죽고 가중치가 10~50% 인 채 판단 주체가 없었다(재시도는 5초 뒤, 그 사이 지표 안 봄).
+      //   이제 출발 100% 로 되돌린 뒤 paused. 재개하면 LB 의 지금 값(출발 100%)부터 다시 오른다. DB 가 아직 죽어 상태를 못 옮기면 작업 재시도·죽은 작업 처리가 paused 로 옮긴다
+      return platformFail(`단계 ${pct}% 플랫폼 오류: ${(e as Error).message}`);
     }
     reachedPct = pct;
     await o.onWeight?.(pct);
@@ -146,7 +162,16 @@ export async function runShift(o: {
       }
       // 판정이 모자란 채로 너무 오래 돌면 되돌린다. 판정은 다 찼고 시계만 기다리는 중이면 세지 않는다
       if (okCount < need && tick >= (o.maxTicksPerStep ?? 600)) return rollback(`단계 ${pct}% 판정 부족 (표본 모자람)`, "TRAFFIC_INSUFFICIENT_SAMPLES");
-      if (await o.shouldPause?.()) return done("paused", null, null);
+      // pf-d RV-11: 상태 읽기(플랫폼 DB) 실패는 지표 실패처럼 보류 한 번으로 센다. 연속 maxMetricErrors 번이면 출발 100% + paused
+      let pause = false;
+      try { pause = (await o.shouldPause?.()) === true; platformErrors = 0; }
+      catch (e) {
+        if (++platformErrors >= maxMetricErrors) return platformFail(`상태 확인 ${platformErrors}번 연속 실패 @${pct}%: ${(e as Error).message}`);
+        // 상태를 확인 못 한 틱은 판정에 안 넣는다 (그 사이 사람이 멈췄을 수도 있으니 다음 단계로 가지 않음)
+        await sleep(TICK_MS);
+        continue;
+      }
+      if (pause) return done("paused", null, null);
       await sleep(TICK_MS);
       // Z19 H5: 예전엔 예외가 그대로 작업 밖으로 나가 가중치가 10~50%인 채 판단 주체가 사라졌다.
       // 이제 실패는 "보류" 한 번으로 세고(판정 수에 안 들어감), 연속 maxMetricErrors 번이면 긴급 롤백한다
@@ -186,7 +211,19 @@ export async function runShift(o: {
     let finalWeights = pctWeights(reachedPct);
     try { finalWeights = await o.switcher.get(o.lbId); } catch { /* 읽기 실패면 마지막으로 확인된 값 */ }
     return { outcome, judgements, rollbackReason: reason, failureCode: code, reachedPct, observedSecAt100, observeRequiredSec: observeSec, finalWeights,
-             ...(shareOn ? { stepShares } : {}) };
+             metricsSource: o.metrics.source ?? "unknown", ...(shareOn ? { stepShares } : {}) };
+  }
+
+  // pf-d RV-11: 플랫폼 오류 → 출발 100% (가드 없이, 늘 안전) 뒤 paused. 되돌리기도 실패하면 rollback_failed (rollback 작업이 다시 시도)
+  async function platformFail(reason: string): Promise<ShiftResult> {
+    try {
+      await setAndVerify(o.switcher, o.lbId, { source: 1, target: 0 }, verify);
+      reachedPct = 0;
+      await o.onWeight?.(0);
+      return done("paused", `${reason} → 출발 100% 로 되돌림`, TRAFFIC_PLATFORM_ERROR);
+    } catch (e) {
+      return done("rollback_failed", `${reason} / 되돌리기 실패: ${(e as Error).message}`, TRAFFIC_PLATFORM_ERROR);
+    }
   }
 
   // 긴급 롤백 = PATCH(출발 100%) + GET 확인. 실패해도 던지지 않고 rollback_failed 로 알린다 → rollback 작업이 다시 시도

@@ -20,3 +20,9 @@ export function unreadOrThrow(e: unknown, what: string, label: string): RawUnrea
   if (e instanceof CliError && classifyCliError(e) === "transient") throw sourceFail(e, `${label} (${e.message.slice(0, 160)})`);
   return unreadItem(what, `${label} 못 읽음: ${(e as Error)?.message?.slice(0, 200) ?? String(e)}`);
 }
+
+// K-1 DRAFT(ai): 출발 범위를 안 정해 여러 개 중 자동으로 고른 것(클러스터·네임스페이스·ECS 클러스터) → 검토 줄(check.pick.<what>).
+//   이전마다 범위(SourceScope)를 정하면 생기지 않는다. 예전엔 notes(환경 종류)에만 남아 사람이 모른 채 엉뚱한 클러스터를 옮길 수 있었다
+export const PICK_KIND = "import.pick";
+export type RawPick = { kind: typeof PICK_KIND; what: string; reason: string };
+export const pickItem = (what: string, reason: string): RawPick => ({ kind: PICK_KIND, what: keyOf(what), reason: reason.slice(0, 300) });

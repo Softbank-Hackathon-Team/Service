@@ -1,13 +1,16 @@
-import { ApprovalRowV2, PlanDoc, PlanJob, PrecheckItem, checkV2, AppSpecV2,
+import { ApprovalRowV2, PlanDoc, PlanJob, PrecheckItem, QUEUES, checkV2, AppSpecV2,
   type PlanAcknowledgement, type PlanCostSummary, type PlanStep, type PriceCatalog, type Provider } from "@svc/contracts";
-import { latestAcceptedSpecV2, retryBudget, SPEC_DRAFT_KEY, type AcceptedSpecV2Row, type Tx } from "@svc/core";
+import { PLAN_ROLLBACK_WINDOW_SEC, latestAcceptedSpecV2, retryBudget, SPEC_DRAFT_KEY, type AcceptedSpecV2Row, type Tx } from "@svc/core";
 import { estimateCostV2, loadCatalog } from "@svc/cost";
 import { DbNetworkError, isAdapterError, NEEDS_HUMAN, specV2OrThrow, UNSUPPORTED_V2 } from "@svc/adapters";
 import type { z } from "zod";
-import { runStep, stableHash, stubWait, type StepOutcome } from "./_step.js";
+import { failedAttempts, jobData, recordAttemptFailure, RetryLater, runStep, stableHash, stubWait, type StepOutcome } from "./_step.js";
 import { savePlan } from "./plan-store.js";
 import { withStepRoles } from "./_roles.js";
 import { builderVersion, helmValuesV2, tfCallV2 } from "./plan-v2.js";
+import { importedFor, provisionOf, targetFactsOf } from "./plan-facts.js";
+import type { ImportedInfra } from "@svc/adapters";
+import { TARGET_ACCOUNT_SQL } from "./target-account.js";
 
 type Step = z.infer<typeof PlanStep>;
 
@@ -20,6 +23,9 @@ export interface PlanInput {
   specVersion?: number;
   costSummary?: PlanCostSummary;
   v2Approvals?: ApprovalRowV2[];
+  // G7-3·G7-4: 계획 작업(handlePlan)이 채운다. 없으면 칸 없음 = 예전 지문
+  accountId?: string | null;          // 환경 표 account_id (aws 계정 / gcp 프로젝트) → targetFacts
+  imported?: ImportedInfra | null;    // 작업 폴더 imported.json → provision: reuse
 }
 
 // ---- PA4 (계획 26 · A4): 비용 고지 + 확인 항목 ----
@@ -109,6 +115,9 @@ export async function loadPlanSpecExtras(tx: Tx, migrationId: string): Promise<{
 
 // DRAFT(ai): 승인 유효 시간 2시간 (설계 5.4 "승인 유효 2시간"을 따름)
 export const PLAN_TTL_MS = 2 * 60 * 60 * 1000;
+// G7-1: 만료 깨우기 작업의 대기(초). 만료 시각 + 1초 (작업이 일찍 깨면 남은 만큼 다시 미룬다)
+export const planExpiryDelaySec = (expiresAt: string, now = Date.now()) =>
+  Math.max(1, Math.ceil((Date.parse(expiresAt) - now) / 1000) + 1);
 
 // 계획서 만들기. 도착 Builder 의 Terraform 루트 호출·Helm 값(workloads[])을 진짜로 만든다 (Builder 는 순수 함수)
 // 같은 입력이면 같은 planHash가 나와야 한다 (사람이 본 계획 = 실행할 계획)
@@ -136,6 +145,8 @@ export function buildPlanDoc(i: PlanInput, env: NodeJS.ProcessEnv = process.env)
     precheck: i.precheck,
     // DECISION(team): 롤백 기준 5xx>1% 또는 p95>2배, 30초 창 (decisions 2026-10-30)
     rollbackCriteria: { errorRatePct: 1, p95Multiplier: 2, windowSec: 30 },
+    // F8-4: 롤백 가능 창 길이를 승인 대상으로 (DRAFT(ai) 기본 120초, core PLAN_ROLLBACK_WINDOW_SEC)
+    rollbackWindowSec: PLAN_ROLLBACK_WINDOW_SEC,
     tfPlanHash: stableHash(tf),
     helmValuesHash: stableHash(helm),
     // 매트릭스 줄 = module.<종류>["<id>"] (apply 가 이 목록으로 상태 주소를 고른다)
@@ -148,6 +159,16 @@ export function buildPlanDoc(i: PlanInput, env: NodeJS.ProcessEnv = process.env)
         to: i.target.provider, precheck: i.precheck, v2Approvals: i.v2Approvals, env }),
     } : {}),
   };
+  // G7-3·G7-4: 도착 사실·재사용 — 있을 때만 칸 (없으면 예전 지문)
+  const targetFacts = i.accountId !== undefined ? targetFactsOf(tf.vars, env, i.target.provider, i.accountId) : undefined;
+  const provision = provisionOf(i.imported ?? null);
+  Object.assign(body, {
+    ...(targetFacts ? { targetFacts } : {}),
+    ...(provision ? { provision } : {}),
+  });
+  if (provision && "acknowledgements" in body && Array.isArray(body.acknowledgements))
+    body.acknowledgements.push({ id: "provision_reuse", kind: "provision_reuse", ref: provision.source,
+      text: `도착 자원을 새로 만들지 않고 이미 있는 자원 ${provision.resources.length}개(${provision.resources.join(", ") || "목록 없음"})를 다시 씁니다. 비용 고지는 새로 만드는 기준이라 실제와 다를 수 있습니다` });
   // planHash는 만료 시각을 뺀 내용 전체의 지문이다 (같은 계획을 다시 만들어도 같은 지문)
   const planHash = stableHash(body);
   return PlanDoc.parse({ ...body, planHash,
@@ -164,22 +185,29 @@ export async function handlePlan(raw: unknown) {
       // Z19 H1: AI 초안 판(_draft)은 계획 입력이 아니다. 사람·규칙이 만든 최신 판만 쓴다. 모양 확인(resolve)은 work 에서 (NEEDS_HUMAN 이면 바로 failed)
       const specRow = await latestAcceptedSpecV2(tx, m.id);
       const e = await tx.query(
-        `SELECT id, provider, connection_status FROM environments WHERE id=$1`, [m.targetEnvId]);
+        `SELECT id, provider, connection_status, ${TARGET_ACCOUNT_SQL} AS account_id FROM environments WHERE id=$1`, [m.targetEnvId]);   // A안: GCP = 전용 프로젝트
       const env = e.rows[0];
       // PA4: 출발 환경 종류 (비용 비교의 출발)
       const se = await tx.query(`SELECT provider FROM environments WHERE id=$1`, [m.sourceEnvId]);
-      if (!specRow || !env || env.connection_status !== "connected") return null;
+      // E10-4: 예전엔 여기서 null → job.rejected 로 조용히 끝나고 이전이 planning 에 영원히 남았다 (planning 은 잠금 단계가 아니라 청소도 안 봄).
+      //   이제 명세·환경이 없으면 바로 failed(PLAN_RECHECK_FAILED, 다시 계획 가능). 도착이 잠깐 unstable 이면 정해진 간격으로 몇 번 기다린 뒤 failed
+      if (!specRow || !env || env.connection_status !== "connected")
+        return { recheckFailed: !specRow ? "no accepted spec" : !env ? "target environment missing" : `target ${env.connection_status}`,
+                 retryable: !!specRow && !!env && env.connection_status === "unstable" } as PlanRecheckFailed;
       // Z97: 계획서의 사전 점검 칸 = 바로 앞 precheck 단계가 실조회로 남긴 결과 (감사 precheck.planning detail). 예전엔 STUB 고정값
       const pc = await tx.query(
         `SELECT detail->'precheck' AS items FROM audit_events WHERE target=$1 AND action='precheck.planning' ORDER BY seq DESC LIMIT 1`, [m.id]);
       const precheck = PrecheckItem.array().safeParse(pc.rows[0]?.items ?? []);
       const extras = await loadPlanSpecExtras(tx, m.id);
       return { specRow, provider: env.provider as Provider, precheck: precheck.success ? precheck.data : [],
+               accountId: (env.account_id as string | null) ?? null,
                sourceProvider: (se.rows[0]?.provider ?? env.provider) as Provider, ...extras };
     },
-    work: async (j, m, loaded) => withStepRoles("plan", j, m, async () => {
-      const { specRow, provider, precheck, sourceProvider, specVersion, v2Approvals } = loaded as {
-        specRow: AcceptedSpecV2Row; provider: Provider; precheck: PrecheckItem[];
+    work: async (j, m, loaded) => "recheckFailed" in (loaded as object)
+      ? planRecheckOutcome(j, loaded as PlanRecheckFailed)
+      : withStepRoles("plan", j, m, async () => {
+      const { specRow, provider, precheck, sourceProvider, specVersion, v2Approvals, accountId } = loaded as {
+        specRow: AcceptedSpecV2Row; provider: Provider; precheck: PrecheckItem[]; accountId: string | null;
         sourceProvider: Provider; specVersion?: number; v2Approvals: ApprovalRowV2[] };
       await stubWait();
       const { spec } = specV2OrThrow(specRow);
@@ -192,12 +220,32 @@ export async function handlePlan(raw: unknown) {
         source: { provider: sourceProvider }, specVersion, v2Approvals,
         // TA3 비용: Terraform 루트와 같은 명세로 센다
         costSummary: estimatePlanCost(spec, sourceProvider, provider),
+        accountId, imported: importedFor(process.env, m.id, job.tenantId),
       });
       return { to: "awaiting_approval", detail: { planId: plan.planId, planHash: plan.planHash },
-               inTx: (tx) => savePlan(tx, job.tenantId, plan) };
+               inTx: (tx) => savePlan(tx, job.tenantId, plan),
+               // G7-1: 만료 시각에 깨어나 stale 로 옮길 작업. 키는 계획마다 (다시 계획하면 새 계획의 작업이 따로 선다)
+               next: { queue: QUEUES.planExpiry, data: { ...jobData(j), planId: plan.planId },
+                 opts: { singletonKey: `${QUEUES.planExpiry}:${plan.planId}`, startAfter: planExpiryDelaySec(plan.expiresAt) } } };
     }),
     onError: planOnError,
   });
+}
+
+// E10-4: 계획 재확인 실패. 도착이 unstable 이면 PLAN_RECHECK_RETRY_SEC 간격으로 PLAN_RECHECK_MAX 번까지 다시 (감사 plan.attempt_failed 로 셈)
+// DRAFT(ai): 30초 × 4번 = 2분. 주기 재확인(1시간)이 흔들림을 되돌리는 데 그보다 오래 걸리면 failed 로 끝나고 사람이 다시 계획한다
+interface PlanRecheckFailed { recheckFailed: string; retryable: boolean }
+export const PLAN_RECHECK_RETRY_SEC = 30;
+export const PLAN_RECHECK_MAX = 4;
+async function planRecheckOutcome(j: z.infer<typeof PlanJob>, f: PlanRecheckFailed): Promise<StepOutcome> {
+  if (f.retryable) {
+    const n = await failedAttempts(j, "plan");
+    if (n + 1 < PLAN_RECHECK_MAX) {
+      await recordAttemptFailure(j, "plan", { attempts: n + 1, max: PLAN_RECHECK_MAX, error: f.recheckFailed });
+      throw new RetryLater(QUEUES.plan, { ...jobData(j), planId: j.planId }, PLAN_RECHECK_RETRY_SEC, { recheck: f.recheckFailed });
+    }
+  }
+  return { to: "failed", failureCode: "PLAN_RECHECK_FAILED", detail: { planId: j.planId, recheck: f.recheckFailed } };
 }
 
 // Z38 REVIEW-5 Z77-1: DB_PEER_CIDRS 가 틀리면 재시도해도 같다 → 바로 failed(DB_NETWORK_INVALID).
