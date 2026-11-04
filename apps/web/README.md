@@ -43,15 +43,16 @@
 | 주소 | 화면 | 이 화면이 맡는 기능 (기능 명세 번호) |
 |---|---|---|
 | `#/` | 대시보드 | 환경 목록·상태 67·68, 이전 목록 72, 이전 시작 69 |
-| `#/environments/:id` | 환경 | 환경 상태 67·68, 환경 쪽 이전과 끝난 이전이 남긴 자원 수, Agent 보고 99 (보안 보고는 위반·위협을 나눠 셈) |
+| `#/environments/:id` | 환경 | 환경 상태 67·68, 환경 쪽 이전과 끝난 이전이 남긴 자원 수, Agent 보고 99 (보안 보고는 위반·위협을 나눠 셈), 연결이 끝나지 않은 환경은 "연결 이어 하기" |
+| `#/environments/connect`, `#/environments/connect/:id` | 환경 등록 | 환경 연결 링크 113, Agent 등록 114. 어디를 연결할지 → 이름(AWS 는 리전·EKS 클러스터) → 고객 쪽 역할·Agent → 연결 확인. 이미 만든 환경은 연결 상태로 단계를 고른다 (`features/environments/connect.ts`) |
 | `#/migrations` | 이전 목록 | 이전 목록 72 |
-| `#/migrations/new` | 새 이전 | 이전 만들기 69 (출발 → 자원 확인 → 도착) |
+| `#/migrations/new` | 새 이전 | 이전 만들기 69. 세 질문: 출발 환경(연결된 환경만, 줄 제목은 그 환경에서 서비스 중인 소프트웨어) → 옮길 서비스(출발 범위 `sourceScope`) → 도착 환경(실행 역할을 빌릴 수 있는지). 출발·도착 목록 끝에 환경 등록하기 (`features/migration/source.ts`) |
 | `#/migrations/:id` | 이전 한 건 | 상태 73, 가져오기 70, AI 초안 71, 명세 확정 74, 점검 75, 계획 76, 승인 77, 실행 78, 진행 79~82 (트래픽 목표·실측), 앱 숫자 83 (컷오버 때 붙잡은 요청), 컷오버 84, 롤백 창 85, 롤백 86, 취소 87, 재개 88, 멈춘 이유 (실패 코드 → 사람 말, 트래픽 판정·규칙 번호, AI 실패 분석), 실패·롤백·취소 뒤 도착에 남은 자원, 전환 판정 요약, 계획 다시 만들기·명세부터 고치기, 재시도 비용 동의 |
 | `#/migrations/:id/cost` | 비용 | 추정 95, 비교 96, 성장 122, 보안 프로필 123, 가격 근거 (출처·기준일·오래됨, 예시 앱 기준 표시) |
 | `#/security/:id` | 보안 | 보안 표 91, 전후 비교 92, 가드레일 상태 108, 위협 106, 임시 권한 장부 |
 | `#/audit/:id` | 감사 | 타임라인 93, 증적 리포트 94, 사슬 재검증 |
 | `#/agent/:id` | 에이전트 | 결과 97, 실행 98, 명세 초안 71, AI 지출과 상한 |
-| `#/settings` | 계정 | 로그아웃, 서비스 상태 103, API 문서 104 |
+| `#/settings` | 계정 | 연결한 환경과 환경 등록하기, 로그아웃, 서비스 상태 103, API 문서 104 |
 | `#/design-system` | 디자인 시스템 | 메뉴에는 없는 개발용 화면. 토큰과 컴포넌트를 실제 코드로 보여 준다 |
 
 이전 한 건은 주소가 하나이고, 서버 상태가 바뀌면 화면이 바뀐다 (`features/migration/model.ts`의 `screenOf`). 진행 단계 카드는 모든 상태에서 큰 카드 바로 옆에 있다.
@@ -76,7 +77,9 @@
 | `GET /agent-review` 의 `failureAnalysis` | 멈춘 이유 접는 카드 | 끝난 분석만 원인·고칠 것·근거로. 칸이 없거나 진행 중이면 아무것도 그리지 않는다 |
 | `GET /plan/resources` v2 (`irVersion`, `cache`·`queue`·`boundary`, `runtimeChange`) | 계획 승인 · "자원 대응" | 같은 칸 여러 줄(앱마다)도 그린다. "실행 방식 바뀜"은 그 줄 아래. 경계 밖은 옮기는 자원이 아니라 표 밖 한 줄. 머리줄 건수는 그린 줄 수 (`lib/resourceMap.ts`) |
 | 실패 코드 `UNSUPPORTED_V2`·`NEEDS_HUMAN`·`RUNTIME_*`·`TF_PLAN_DRIFT`·`GITOPS_VALUES_DRIFT` | 멈춘 이유 문장 | `lib/failure.ts`. 승인 뒤 바뀜 두 줄은 "일부만 생겼을 수 있음"으로 떨어지지 않는다 |
-| 환경 `failureReason` 코드 | 대시보드 환경 줄·환경 화면 큰 카드 | 코드를 사람 말로 (`connectionReasonText`). 권한 이름은 문장에 넣고, 모르는 코드는 코드 그대로 |
+| 환경 `failureReason` 코드 | 대시보드 환경 줄·환경 화면 큰 카드·환경 등록 실패 | 코드를 사람 말로 (`connectionReasonText`). 권한 이름은 문장에 넣고, 모르는 코드는 코드 그대로. 플랫폼 쪽 실패(`PLATFORM_*`)는 고객이 고칠 것이 없다고 쓴다 |
+| `POST /migrations` 의 `sourceScope`, `MigrationView.sourceScope` | 새 이전 · "무엇을 옮길까요?", 이전 화면 상단 알약 | 온프레는 네임스페이스(그 안 DB 가 하나면 함께), 클라우드는 클러스터를 인벤토리에서 고른다. 못 읽으면 자동 또는 직접 적기(서버 정규식을 화면에서 먼저 봄). 비면 본문에 칸을 싣지 않는다 |
+| `EnvironmentView` 의 `targetProjectId`·`missingPermissions`·`needsHuman`·`mock` | 새 이전 도착 줄, 환경 등록 결과 | GCP 전용 프로젝트가 없거나 권한이 빠지면 도착 줄에 경고 한 줄. 흉내 자격 확인은 그렇다고 쓴다 |
 
 ## 서버에 없어서 화면이 일부만 맡는 기능
 
@@ -87,7 +90,6 @@
 | 108 | 가드레일 엔진 | 멈춘 상태, 되돌리기 기준, 거부 기록, 멈춘 이유(실패 코드), 마지막 트래픽 판정을 보여 줌. 규칙 번호는 워커가 전이 근거(evidence.guardrailRule)에 남길 때만 보임 |
 | 109·110·111 | 샌드박스, 수정안 PR, 주입 차단 시연 | 점검 결과까지만. 적용은 사람이 함 |
 | 112 | GitHub 로그인, 멤버 초대 | 서버가 켜 두면(`/auth/config` 의 `github.enabled`) 로그인 화면에 "GitHub로 로그인"이 생기고, 실패해 돌아오면(`?github_error=`) 사람 말로 보인 뒤 주소에서 지운다. 쓰던 중 계정이 꺼지면(401 `USER_DISABLED`) 그 이유를 로그인 화면에 쓴다. 멤버 화면 없음 |
-| 113·114 | 환경 연결 링크, Agent 등록 | 연결 상태와 실패 이유만. 연결 버튼 없음 |
 | 121 | 플랫폼 상태 | API·DB 응답만. 워커·큐 숫자 API 없음 |
 | 130 | 온프레 동등 기능 표 | 통제 표에서 온프레 칸으로만 보임 |
 | 131 | 부하 기반 사이징 | 없음. 비용 화면의 피크 요청 입력으로 대신함 |
@@ -108,9 +110,9 @@
 | 비용 `recommendations`, `load` | 비용 화면은 출발·도착 비교와 조건 바꿔 보기만 맡는다 |
 | 보안 `tempRoleAudit`, 실점검 `durationMs` | 장부와 항목별 근거 카드가 같은 사실을 사람 말로 보여 준다 |
 | 화면 신호 `weight_changed`·`rollback_*`·`matrix_changed`·`agent.step` | 서버가 아직 내지 않는다. 지금 오는 신호는 `migration.status_changed`와 `reload_all` 뿐이다 |
-| 환경 연결 마법사: `POST /environments`, 연결 링크·ExternalId, `POST /environments/:id/verify`, Agent 등록 토큰, `missingPermissions`·`needsHuman`, `unstable` 상태 | 이번에는 연결된 환경을 보는 화면만 맡는다. 만들기·연결·확인 흐름은 한 번에 한 질문으로 따로 설계해야 해서 남겼다 (실패 이유 코드 문장은 이미 화면에 있다) |
+| 환경 해제 `DELETE /environments/:id`, 연결 링크 `boundaryPolicyExists` | 해제는 되돌릴 수 없어(다시 연결 불가) 버튼을 두지 않았다. 경계 정책이 이미 있는 계정은 아직 화면에서 묻지 않는다 |
 | `POST/GET/DELETE /tokens` (CLI 토큰) | 사람 화면이 아니라 CLI 용이다. 토큰 목록·발급 화면은 아직 없다 |
 | 다시 가져오기 | 서버에 경로가 없다. 명세 화면에 버튼을 두지 않는다 |
-| 이전마다 가져오기 옵션(클러스터·라벨) | 서버가 워커 환경변수로만 읽는다. 이전 만들기 본문에 칸이 없어 화면에 입력을 두지 않는다 |
+| 출발 범위 `partOf`·`ecsCluster` | 지금 지원 범위가 k8s 라 클러스터·네임스페이스·DB·앱 이름만 고르거나 적는다 |
 | 계획서 `irVersion`·`specSource`·`instances`·`specVersion` | 감사·증적 쪽 원자료(L3)라 기본 화면에 두지 않는다. 화면은 자원 대응 v2 줄과 확인 항목으로 같은 사실을 사람 말로 보인다 |
 | 명세 PATCH `changes`(값 고치기)·`acceptDraft` 단독 | 화면은 아직 값을 고치는 입력이 없다. 검토 칸 확인(`confirm`)과 경계 밖 끌어오기(`include`)만 보낸다. AI 초안 판이면 확인과 함께 `acceptDraft`를 싣는다 |
