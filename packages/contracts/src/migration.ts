@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RehearsalEvidence } from "./sandbox.js";
 
 // 이전 한 건의 상태 22개
 export const MIGRATION_STATUSES = [
@@ -100,6 +101,7 @@ export const TransitionEvidence = z.object({
   staleReason: z.enum(["expired", "env_changed"]).optional(),   // T11
   applyOk: z.boolean().optional(),   // T17 Terraform apply 성공
   argoHealthy: z.boolean().optional(),   // T20 Argo Synced+Healthy (온프레는 Agent "넣었음")
+  rehearsal: RehearsalEvidence.optional(),   // T20 커밋 전 vCluster 리허설 (통과·재사용·건너뜀 이유)
   securityParity: z.boolean().optional(),   // T20 보안 동등성 MG-2-07
   replicationLagBytes: z.number().optional(),   // T21 복제 지연
   rowCountMatch: z.boolean().optional(),

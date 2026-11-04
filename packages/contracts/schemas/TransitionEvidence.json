@@ -21,6 +21,18 @@
     "argoHealthy": {
       "type": "boolean"
     },
+    "rehearsal": {
+      "type": "string",
+      "enum": [
+        "passed",
+        "reused",
+        "non_k8s",
+        "no_cluster",
+        "unsupported_target",
+        "disabled",
+        "mock"
+      ]
+    },
     "securityParity": {
       "type": "boolean"
     },

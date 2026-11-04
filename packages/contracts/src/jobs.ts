@@ -24,6 +24,7 @@ export const QUEUES = {
   leaseReaper: "lease-reaper",
   idempotencyCleanup: "idempotency-cleanup",
   verifySweep: "verify-sweep",          // L4b: 연결 주기 재확인 훑기 (일정이 냄 → 환경마다 verify-connection periodic)
+  sandboxRehearsal: "sandbox-rehearsal", // deploying 리허설 한 건 (워커가 냄 → agent-worker 가 vCluster 에서 돌림)
 } as const;
 export type QueueName = typeof QUEUES[keyof typeof QUEUES];
 
@@ -78,6 +79,12 @@ export const AgentRunJob = JobBase.extend({
   agentRunId: z.uuid(),
 }).strict();
 
+// 리허설 작업은 sandbox_runs 줄 번호 하나뿐. 입력(RehearsalInput)은 그 줄에서 다시 읽는다
+export const SandboxRunJob = JobBase.extend({
+  sandboxRunId: z.uuid(),
+}).strict();
+export type SandboxRunJob = z.infer<typeof SandboxRunJob>;
+
 // 큐 이름 → 작업 내용 모양
 export const JOB_SCHEMAS = {
   "verify-connection": VerifyConnectionJob,
@@ -97,4 +104,5 @@ export const JOB_SCHEMAS = {
   "image-build": ImageBuildJob,
   "security-scan": EnvJob,
   "agent-run": AgentRunJob,
+  "sandbox-rehearsal": SandboxRunJob,
 } as const;

@@ -160,7 +160,7 @@ flowchart LR
 
 ### 3-7. 시험 스위치 (실제 데모 `.env`에 두지 않는다)
 
-`MOCK_SEED`, `MOCK_IAC`, `MOCK_ARGO`, `MOCK_PRECHECK`, `MOCK_CREDS`, `MOCK_REPL`, `MOCK_TRAFFIC`, `FAKE_LLM`, `DEV_AUTH`.
+`MOCK_SEED`, `MOCK_IAC`, `MOCK_ARGO`, `MOCK_PRECHECK`, `MOCK_CREDS`, `MOCK_REPL`, `MOCK_TRAFFIC`, `FAKE_LLM`, `DEV_AUTH`, `MOCK_SANDBOX`, `MOCK_SANDBOX_RESULT`.
 켜면 해당 바깥 호출을 흉내 낸다. 시험·드릴에서는 명령줄에만 붙인다(`docs/START-DRILL.md` 4절).
 
 ## 4. 어댑터 계약

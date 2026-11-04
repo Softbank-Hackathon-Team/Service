@@ -17,7 +17,7 @@ import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import pg from "pg";
 import { cfRequest, cfZoneByName } from "@svc/traffic";
-import { agentLlmStatusFromEnv, testSwitchesOn } from "@svc/contracts";
+import { agentLlmStatusFromEnv, testSwitchesOn, TEST_ONLY_SWITCHES } from "@svc/contracts";
 
 type Result = { name: string; status: "OK" | "FAIL" | "SKIP"; detail: string };
 const env = process.env;
@@ -73,7 +73,7 @@ const checks: Array<[string, () => Promise<string>]> = [
   ["시험 전용 스위치 꺼짐", async () => {
     const on = testSwitchesOn(env);
     if (on.length) throw new Error(`켜져 있음: ${on.join(", ")} → .env 에서 지우거나 0`);
-    return "MOCK_SEED·MOCK_IAC·MOCK_ARGO·MOCK_PRECHECK·FAKE_LLM·DEV_AUTH·MOCK_CREDS·MOCK_REPL·MOCK_TRAFFIC 모두 꺼짐";
+    return `${TEST_ONLY_SWITCHES.join("·")} 모두 꺼짐`;
   }],
   ["API /healthz", async () => {
     const r = await get(`${API}/healthz`);

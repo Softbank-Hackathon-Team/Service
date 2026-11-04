@@ -1,29 +1,25 @@
 import { go } from '../../app/routes';
 import type { BentoLayout } from '../../components/layout/ConsoleLayout';
-import { FoldTile, Hero, Stack, Tile, TileHeader } from '../../components/layout/tiles';
-import { Badge } from '../../components/ui/controls';
+import { ActionRow, FoldTile, Hero, Stack, Tile, TileHeader } from '../../components/layout/tiles';
+import { ActionPill, Badge } from '../../components/ui/controls';
 import { api } from '../../lib/api';
 import { errorText } from '../../lib/errors';
 import { connectionReasonText } from '../../lib/failure';
 import { or404 } from '../../lib/http';
-import { CONN_LABEL, LABEL, PROVIDER_SHORT } from '../../lib/status';
+import { ago } from '../../lib/text';
+import { CONN_LABEL, LABEL } from '../../lib/status';
 import type { AgentReportBody, EnvironmentView } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
 import { fromInventory, realEnvs } from '../dashboard/model';
 import { leftoversOf } from '../migration/model';
 import { FoundResources } from '../migration/NewMigrationPage';
+import { vendorLine } from '../migration/source';
 import { ShellLayout } from '../shell/ShellLayout';
+import { envPath } from './connect';
+import { RegisterEnvEntry } from './EnvEntry';
 import s from '../common/page.module.css';
 
 const LAYOUT: BentoLayout = { columns: ['narrow', 'fill', 'side'], areas: 'list hero side' };
-
-const ago = (iso: string | null) => {
-  if (!iso) return '기록 없음';
-  const seconds = Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 1000));
-  if (seconds < 60) return '방금';
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}분 전`;
-  return seconds < 86400 ? `${Math.floor(seconds / 3600)}시간 전` : `${Math.floor(seconds / 86400)}일 전`;
-};
 
 const STAGE = { before: '이전 전', changing: '이전 중', after: '이전 끝', undone: '되돌림' } as const;
 
@@ -66,7 +62,7 @@ function ConnectedEnv({ env }: { env: EnvironmentView }) {
     : seen?.health === 'healthy' ? `${env.name}\n정상입니다` : unknown ? `${env.name}\n확인할 수 없습니다` : `${env.name}\n불안정합니다`;
   return (
     <>
-      <Hero tone="run" meta={`${PROVIDER_SHORT[env.provider]}${seen?.mock ? ' · 모의' : ''}`} title={title}>
+      <Hero tone="run" meta={`${vendorLine(env.provider)}${seen?.mock ? ' · 모의' : ''}`} title={title}>
         {seen && !unknown && (
           <ul className={s.heroStats}>
             <li><span className="t-metric-lg">{seen.resources}</span><span className="t-caption c-tertiary">자원</span></li>
@@ -112,12 +108,19 @@ function ConnectedEnv({ env }: { env: EnvironmentView }) {
 }
 
 function DisconnectedEnv({ env }: { env: EnvironmentView }) {
+  // 해제된 환경은 다시 연결할 수 없다(새로 등록). 나머지는 등록 흐름에서 이어 한다
+  const gone = env.connectionStatus === 'disconnected';
   return (
     <>
-      <Hero tone="stop" meta={`${PROVIDER_SHORT[env.provider]} · ${CONN_LABEL[env.connectionStatus]}`} title={`${env.name}\n연결되어 있지 않습니다`} foot={env.lastVerifiedAt ? `마지막 확인 ${ago(env.lastVerifiedAt)}` : undefined}>
+      <Hero tone="stop" meta={`${vendorLine(env.provider)} · ${CONN_LABEL[env.connectionStatus]}`} title={`${env.name}\n연결되어 있지 않습니다`} foot={env.lastVerifiedAt ? `마지막 확인 ${ago(env.lastVerifiedAt)}` : undefined}>
         {env.failureReason && <div className={s.heroPanel}><span className="t-body-md">{connectionReasonText(env.failureReason)}</span></div>}
       </Hero>
-      <Stack area="side">{env.provider === 'onprem' && <AgentReports envId={env.id} />}</Stack>
+      <Stack area="side">
+        {env.provider === 'onprem' && <AgentReports envId={env.id} />}
+        <ActionRow>
+          <ActionPill label={gone ? '새로 등록하기' : '연결 이어 하기'} icon={gone ? 'plus' : 'arrow-right'} onClick={() => go(gone ? 'environments/connect' : envPath(env))} />
+        </ActionRow>
+      </Stack>
     </>
   );
 }
@@ -139,10 +142,13 @@ export function EnvironmentsPage({ id }: { id: string | null }) {
                   <span className="t-label-md">{item.name}</span>
                   {item.connectionStatus !== 'connected' && <Badge tone="danger">{CONN_LABEL[item.connectionStatus]}</Badge>}
                 </span>
-                <span className="t-caption c-tertiary">{PROVIDER_SHORT[item.provider]}</span>
+                <span className="t-caption c-tertiary">{vendorLine(item.provider)}</span>
               </button>
             </li>
           ))}
+          <li>
+            <RegisterEnvEntry variant="list" />
+          </li>
         </ul>
       </Tile>
       {!env ? (
