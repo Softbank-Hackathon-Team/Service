@@ -1,5 +1,5 @@
-# Terraform 장부(state) 버킷 + 장부 전용 역할(tf-state). 사람이 맨 처음 한 번, backend 없이 로컬 state 로 돌린다. 정리 때는 맨 마지막
-# 증거 버킷(../platform)과 따로 둔다: 장부 권한은 워커 역할에 넣지 않고 tf-state 역할로만 빌린다
+# 플랫폼 계정의 Terraform 장부(state) 버킷. 사람이 맨 처음 한 번, backend 없이 로컬 state 로 돌린다. 정리 때는 맨 마지막
+# 증거 버킷(../platform)과 따로 둔다: 장부는 사람이 자기 자격 증명으로 읽고 쓴다. 워커 역할에는 장부 권한을 넣지 않는다
 terraform {
   required_version = ">= 1.11"
   required_providers {
@@ -12,29 +12,22 @@ variable "region" {
   type    = string
   default = "ap-northeast-2"
 }
-variable "name" {
+# S3 버킷 이름은 전 세계 하나라 겹치면 apply 가 BucketAlreadyExists 로 실패한다 → 이름을 바꾸면 platform/backend.tf 의 bucket 도 같이 바꿔야 한다
+variable "bucket_name" {
   type    = string
-  default = "tfstate"
-}
-# tf-state 역할을 빌릴 IAM 주체. 비우면 계정 루트 (데모 계정은 전원 AdministratorAccess 라 비워도 막히는 것은 없다)
-variable "state_admin_principal_arns" {
-  type    = list(string)
-  default = []
+  default = "sb-iron-platform-tfstate"
 }
 
 provider "aws" {
   region              = var.region
   allowed_account_ids = [var.expected_account_id]
   default_tags {
-    tags = { managed-by = "platform", stack = var.name }
+    tags = { managed-by = "platform", stack = "tfstate" }
   }
 }
 
 locals {
-  bucket     = "${var.name}-${var.expected_account_id}" # 버킷 이름은 전 세계 하나라 계정 번호를 붙인다
-  bucket_arn = "arn:aws:s3:::${local.bucket}"           # plan 때 값이 정해지게 이름으로 만든다 (시험이 정책을 본다)
-  # TODO(human): 계정 루트면 그 계정에서 sts:AssumeRole 권한이 있는 주체 누구나 빌린다. 주체를 정하면 좁힌다
-  state_admins = length(var.state_admin_principal_arns) > 0 ? var.state_admin_principal_arns : ["arn:aws:iam::${var.expected_account_id}:root"]
+  bucket = var.bucket_name
 }
 
 # --- 장부 버킷: service/<스택>/terraform.tfstate. 버전 관리로 덮어써도 이전 판이 남는다
@@ -94,47 +87,17 @@ resource "aws_s3_bucket_lifecycle_configuration" "state" {
     noncurrent_version_expiration {
       noncurrent_days = 30
     }
+    # use_lockfile 이 매번 .tflock 을 지워 쌓이는 삭제 마커(가리킬 버전이 없는 것)를 치운다
+    expiration {
+      expired_object_delete_marker = true
+    }
+    # 끊긴 멀티파트 업로드 조각은 보이지 않게 요금만 쌓이니 7일 뒤 버린다
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
   }
   depends_on = [aws_s3_bucket_versioning.state]
 }
 
-# --- tf-state 역할: 이 버킷만 읽고 쓴다
-resource "aws_iam_role" "tf_state" {
-  name        = "tf-state"
-  description = "Terraform remote state read/write on ${local.bucket} only"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Principal = { AWS = local.state_admins }
-      Action    = "sts:AssumeRole"
-    }]
-  })
-}
-
-resource "aws_iam_role_policy" "tf_state" {
-  name = "tf-state-bucket"
-  role = aws_iam_role.tf_state.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid      = "ListStateBucket"
-        Effect   = "Allow"
-        Action   = "s3:ListBucket"
-        Resource = local.bucket_arn
-      },
-      {
-        # DeleteObject: use_lockfile 이 잠금 파일(<key>.tflock)을 끝나면 지운다
-        Sid      = "ReadWriteStateObjects"
-        Effect   = "Allow"
-        Action   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
-        Resource = "${local.bucket_arn}/*"
-      },
-    ]
-  })
-}
-
 output "state_bucket" { value = aws_s3_bucket.state.id }
 output "state_bucket_arn" { value = aws_s3_bucket.state.arn }
-output "tf_state_role_arn" { value = aws_iam_role.tf_state.arn }

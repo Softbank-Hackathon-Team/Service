@@ -10,15 +10,16 @@ packages/adapters  toTerraform(spec, target) ──► infra/modules/<환경>/ap
 
 | 폴더 | 무엇을 만드나 | 누가 돌리나 |
 |---|---|---|
-| `modules/aws/bootstrap` | Terraform state 버킷(S3, 퍼블릭 차단·버전 관리·암호화·TLS 강제) + 이 버킷만 쓰는 `tf-state` 역할 | 사람, 로컬 state, 맨 처음 한 번 |
-| `modules/aws/env` | VPC(공개2·사설2) + NAT 1 + EKS + Pod Identity 애드온 + ECR `platform` | 사람, 로컬 세션, 한 번 |
+| `modules/aws/bootstrap` | 플랫폼 계정 Terraform state 버킷(S3, 퍼블릭 차단·버전 관리·암호화·TLS 강제). 이름은 고정 `sb-iron-platform-tfstate`(겹치면 `-var bucket_name=...` 으로 바꾸고 `aws/platform/backend.tf` 의 `bucket` 도 같이 바꾼다). state 는 사람이 자기 자격 증명으로 읽고 쓴다 | 사람, 로컬 state, 맨 처음 한 번 |
+| `modules/aws/env` | VPC(공개2·사설2) + NAT 1 + EKS + Pod Identity 애드온 + ECR `platform` + ESO·ClusterSecretStore | 사람, 로컬 세션, 한 번 |
 | `modules/aws/platform` | VPC·EKS(노드 그룹 3개: general·cred·sandbox. sandbox 노드 gVisor(runsc) 설치는 `sandbox_gvisor_enabled`, 기본 끔)·ECR·RDS·증거 S3 + Pod Identity(worker·api·ESO, `pod-identity.tf`. 고객 이전 state 위치가 정해지지 않아 워커 state 권한은 넣지 않음)·비밀 그릇 `platform/app`·`platform/cloudflared`. 비밀 연동·입구 차트는 `deploy/helm/platform` | 사람, 한 번 |
 | `modules/aws/app` | RDS Postgres(논리 복제 켬, 비밀번호는 RDS가 Secrets Manager에 관리) + 보안 그룹 + 시크릿 그릇 + 앱 IAM 역할(Pod Identity) | worker, 승인된 plan만 |
-| `modules/gcp/env` | VPC + Cloud SQL 사설 연결(PSA) + Cloud NAT + GKE(Workload Identity) + Artifact Registry | 사람, 한 번 |
+| `modules/gcp/env` | VPC + Cloud SQL 사설 연결(PSA) + Cloud NAT + GKE(Workload Identity) + Artifact Registry + ESO·ClusterSecretStore | 사람, 한 번 |
 | `modules/gcp/app` | Cloud SQL Postgres(사설 IP, logical_decoding) + DB 사용자·비밀번호 시크릿 + 시크릿 그릇 + 앱 SA(Workload Identity) | worker |
 | `modules/onprem/app` | k3s 네임스페이스 + 할당량 + 기본 차단 네트워크 정책 (DB는 차트의 CNPG Cluster) | worker |
 | `modules/azure/app` | Mock: Postgres Flexible + Key Vault + 관리 ID. validate·mock plan까지만, apply 안 함 | 없음 |
 | `onprem/bootstrap.sh` | k3s + CloudNativePG 오퍼레이터 + ESO + 플랫폼 RBAC | 사람, 한 번 |
+| `charts/` | Terraform `helm_release` 가 쓰는 작은 차트 (`cluster-secret-store`: env 모듈이 ESO 뒤에 설치). 사람·Argo CD 가 직접 설치하지 않음 | env 모듈(Terraform) |
 | `permissions/` | 앱 모듈 plan/apply/destroy 최소 권한 (AWS 정책 JSON, GCP 커스텀 역할, k8s ClusterRole). 자동 생성 | 계정 세팅 때 |
 
 ## 규칙
@@ -30,23 +31,18 @@ packages/adapters  toTerraform(spec, target) ──► infra/modules/<환경>/ap
 
 ## 실행 순서
 `aws/bootstrap` → `aws/env`·`aws/platform` → 앱(worker). 정리는 역순, bootstrap 맨 마지막.
+- bootstrap destroy 전에 버킷의 모든 버전·삭제 마커를 비워야 한다 (`force_destroy=false` + 버전 관리).
+- `aws/env`·`gcp/env`: ESO·ClusterSecretStore 는 기본으로 안 만든다(`create_eso=false`). 클러스터가 뜬 뒤 같은 `-var` 에 `-var create_eso=true` 를 더해 apply 한다. 그 뒤 기본값으로 다시 apply 하면(up 스크립트 등) ESO 가 지워진다.
 
 ```
 cd infra/modules/aws/bootstrap
 terraform init
 terraform apply -var expected_account_id=$(aws sts get-caller-identity --query Account --output text)
-#   주체를 좁힐 때만: -var 'state_admin_principal_arns=["arn:aws:iam::<계정>:user/<이름>"]'
-
-# 다른 스택: backend.s3.tf.example 을 backend.tf 로 복사하고, bootstrap 출력값을 레포 밖 파일로 넘긴다
-#   ~/.svc-tf/backend.hcl:  bucket = "<state_bucket>"
-#                           assume_role = { role_arn = "<tf_state_role_arn>" }
-terraform init -backend-config=$HOME/.svc-tf/backend.hcl
-
-# aws/platform (backend.tf 있음)
 cd ../platform
-terraform init -backend-config=$HOME/.svc-tf/backend.hcl
+terraform init
 terraform apply -var expected_account_id=$(aws sts get-caller-identity --query Account --output text)
 ```
+- 이미 로컬 state 로 platform 을 apply 한 적이 있으면 `terraform init -migrate-state` 로 옮긴다.
 - bootstrap 의 로컬 `terraform.tfstate` 는 레포 밖에 보관한다. 잃어버려도 버킷은 남고 `terraform import` 로 다시 잡는다.
 
 ## 검증 명령
@@ -65,7 +61,15 @@ terraform init -backend=false
 terraform validate
 terraform test
 ```
-기대 출력: `Success! The configuration is valid.` 그리고 `Success! 3 passed, 0 failed.` (kubectl admin 두 갈래 + 잘못된 ARN 거부)
+기대 출력: `Success! The configuration is valid.` 그리고 `Success! 8 passed, 0 failed.` (access 5: kubectl admin 두 갈래 + 잘못된 ARN 거부 + EKS 끔/켬, eso 3: create_eso=true / create_eks=false 면 켜도 0개 / 기본은 0개)
+
+```
+cd infra/modules/gcp/env
+terraform init -backend=false
+terraform validate
+terraform test
+```
+기대 출력: `Success! The configuration is valid.` 그리고 `Success! 5 passed, 0 failed.` (mock 2: GKE 켬/끔, eso 3: create_eso=true / create_gke=false 면 켜도 0개 / 기본은 0개)
 
 ```
 cd infra/modules/aws/bootstrap
@@ -73,4 +77,4 @@ terraform init -backend=false
 terraform validate
 terraform test
 ```
-기대 출력: `Success! The configuration is valid.` 그리고 `Success! 4 passed, 0 failed.` (버킷 보호 + 역할 범위 + 주체 목록 있음/빔)
+기대 출력: `Success! The configuration is valid.` 그리고 `Success! 1 passed, 0 failed.` (버킷 이름·보호 설정)

@@ -1,0 +1,152 @@
+{{- $apps := .Values.apps }}
+{{- /* 플랫폼 앱 4개. 이미지 registry·tag 는 배포 때 준다. 둘 중 하나라도 비어 있으면 앱을 하나도 안 만든다 (값 없이도 비밀·입구 차트는 검사된다) */}}
+{{- if and $apps.image.registry $apps.image.tag }}
+{{- /* 앱마다 고정인 것: 실행 사용자(이미지 USER), 검사 경로, 쓰기 자리. 값으로 빼지 않는다 (이미지와 같이 바뀐다)
+       api·worker·agent-worker: deploy/docker/Dockerfile USER node(1000). web: apps/web/Dockerfile USER 101 (nginx-unprivileged) */}}
+{{- $fixed := dict
+      "api"          (dict "uid" 1000 "node" true)
+      "worker"       (dict "uid" 1000 "node" true)
+      "agent-worker" (dict "uid" 1000 "node" true)
+      "web"          (dict "uid" 101  "node" false) }}
+{{- range $name := list "api" "worker" "agent-worker" "web" }}
+{{- $a := index $apps $name }}
+{{- $f := index $fixed $name }}
+{{- if $a.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    app.kubernetes.io/name: {{ $name }}
+    app.kubernetes.io/part-of: platform
+spec:
+  replicas: {{ $a.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ $name }}
+        app.kubernetes.io/part-of: platform
+    spec:
+      {{- with $a.serviceAccount }}
+      serviceAccountName: {{ . }}
+      {{- end }}
+      automountServiceAccountToken: {{ $a.automountServiceAccountToken }}
+      {{- with $a.terminationGracePeriodSeconds }}
+      terminationGracePeriodSeconds: {{ . }}
+      {{- end }}
+      nodeSelector:
+        pool: {{ $a.pool }}
+      {{- /* general 만 taint 가 없다. 나머지는 dedicated=<pool>:NoSchedule (infra/modules/aws/platform/main.tf aws_eks_node_group.this) */}}
+      {{- if ne $a.pool "general" }}
+      tolerations:
+        - { key: dedicated, operator: Equal, value: {{ $a.pool }}, effect: NoSchedule }
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: {{ $f.uid }}
+        runAsGroup: {{ $f.uid }}
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: {{ $name }}
+          image: {{ printf "%s/svc-%s:%s" $apps.image.registry $name $apps.image.tag }}
+          {{- /* 실행 명령은 이미지 CMD 그대로 (node --enable-source-maps main.mjs / nginx) */}}
+          {{- if hasKey $.Values.components $name }}
+          envFrom:
+            - secretRef: { name: {{ $name }}-env }
+          {{- end }}
+          env:
+            {{- if $f.node }}
+            # DRAFT(ai): 뿌리 파일 시스템이 읽기 전용이라 /home/node 에 못 쓴다. git·helm·kubectl 캐시와 작업 폴더가 /tmp(emptyDir) 아래로 가게
+            - { name: HOME, value: /tmp }
+            {{- end }}
+            {{- if eq $name "api" }}
+            - { name: API_PORT, value: {{ $a.port | quote }} }
+            - { name: METRICS_PORT, value: {{ $a.metricsPort | quote }} }
+            {{- else if eq $name "worker" }}
+            - { name: WORKER_METRICS_PORT, value: {{ $a.metricsPort | quote }} }
+            {{- else if eq $name "web" }}
+            # nginx 템플릿(deploy/docker/web-nginx.conf.template)이 /api/* 를 여기로 보낸다
+            - { name: API_UPSTREAM, value: {{ printf "http://api:%v" $apps.api.port | quote }} }
+            - { name: API_PREFIX, value: /api/v1 }
+            {{- end }}
+          {{- if or $a.port $a.metricsPort }}
+          ports:
+            {{- with $a.port }}
+            - { name: http, containerPort: {{ . }} }
+            {{- end }}
+            {{- with $a.metricsPort }}
+            - { name: metrics, containerPort: {{ . }} }
+            {{- end }}
+          {{- end }}
+          {{- if eq $name "api" }}
+          # /healthz·/readyz 는 인증 훅이 건너뛴다 (apps/api/src/plugins/auth.ts). readyz 는 DB SELECT 1
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          {{- else if eq $name "worker" }}
+          # 워커는 업무 HTTP 포트가 없다. 지표 서버는 작업 등록보다 먼저 연다 (apps/worker/src/main.ts)
+          livenessProbe:
+            httpGet: { path: /metrics, port: metrics }
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          {{- else if eq $name "agent-worker" }}
+          # HTTP 포트가 없다. 이미지 HEALTHCHECK 와 같은 DB SELECT 1 (deploy/docker/healthcheck.mjs, 2초 제한)
+          livenessProbe:
+            exec: { command: ["node", "healthcheck.mjs", "db"] }
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+          {{- else if eq $name "web" }}
+          readinessProbe:
+            httpGet: { path: /nginx-health, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /nginx-health, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            {{- toYaml $a.resources | nindent 12 }}
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            {{- if eq $name "web" }}
+            # nginx 이미지가 시작 때 템플릿을 채워 여기에 default.conf 를 쓴다 (docker-compose.prod.yml 의 tmpfs 와 같다)
+            - { name: nginx-conf, mountPath: /etc/nginx/conf.d }
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if eq $name "web" }}
+        - name: nginx-conf
+          emptyDir: {}
+        {{- end }}
+{{- if $a.service }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    app.kubernetes.io/name: {{ $name }}
+    app.kubernetes.io/part-of: platform
+spec:
+  selector:
+    app.kubernetes.io/name: {{ $name }}
+  ports:
+    - { name: http, port: {{ $a.port }}, targetPort: http }
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

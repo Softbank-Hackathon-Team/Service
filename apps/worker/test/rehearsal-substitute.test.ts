@@ -4,6 +4,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { X509Certificate, createPrivateKey } from "node:crypto";
+import type { AddressInfo } from "node:net";
+import { connect, createServer } from "node:tls";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +17,7 @@ import { buildPlanDoc } from "../src/jobs/plan.js";
 import { stubPrecheck } from "../src/jobs/precheck.js";
 import { approvedWeights, bundleRefOf, filledValues, withServedBy, withTraffic, type DeployInput } from "../src/gitops/index.js";
 import { buildRehearsalInput, imagePairs, parseManifests } from "../src/rehearsal/input.js";
-import { docIdOf, podImages, quantity, refOf, unsupportedOf, type K8sDoc } from "../src/rehearsal/substitute.js";
+import { docIdOf, podImages, quantity, refOf, substitute, unsupportedOf, type K8sDoc } from "../src/rehearsal/substitute.js";
 
 const hasHelm = (() => { try { execFileSync("helm", ["version", "--short"], { stdio: "ignore" }); return true; } catch { return false; } })();
 const skip = hasHelm ? false : "helm 이 있어야 한다";
@@ -102,8 +105,9 @@ for (const provider of ["aws", "gcp", "onprem"] as const) {
     const docs = parseManifests(rendered);
     assert.deepEqual(unsupportedOf(docs), []);
     const target = ({ aws: "aws-eks", gcp: "gcp-gke", onprem: "onprem-k3s" } as const)[provider];
-    const x = buildRehearsalInput({ target, i, values, rendered, docs, images: sandboxImages(podImages(docs)), mirrored: true });
+    const x = buildRehearsalInput({ target, i, values, rendered, docs, images: sandboxImages(podImages(docs)), mirrored: true, runBudgetSec: 1200 });
     assert.ok(RehearsalInput.safeParse(x).success);
+    assert.deepEqual([x.imagesMirrored, x.runBudgetSec], [true, 1200]);
     const refs = x.fidelity.items.flatMap((it) => it.refs).sort();
     assert.deepEqual(refs, diffPaths(x.original, x.apply));
     assert.equal(new Set(refs).size, refs.length, "한 자리는 한 항목에만");
@@ -115,7 +119,7 @@ test("aws: RDS 주소·비밀·터널·Ingress·이미지·복제 수·요청량
   const i = inputFor("aws");
   const { values, rendered } = render(i, EXTRA);
   const docs = parseManifests(rendered);
-  const x = buildRehearsalInput({ target: "aws-eks", i, values, rendered, docs, images: sandboxImages(podImages(docs)), mirrored: true });
+  const x = buildRehearsalInput({ target: "aws-eks", i, values, rendered, docs, images: sandboxImages(podImages(docs)), mirrored: true, runBudgetSec: 1200 });
   const ns = x.namespace, it = items(x);
   assert.equal(ns, "app-shop-api");
   const sbxHost = `sbx-db-shop-db.${ns}.svc.cluster.local`;
@@ -163,20 +167,21 @@ test("gcp: Cloud SQL 사설 IP 를 바꾸고 Workload Identity 주석을 뺀다"
   const i = inputFor("gcp");
   const { values, rendered } = render(i);
   const docs = parseManifests(rendered);
-  const x = buildRehearsalInput({ target: "gcp-gke", i, values, rendered, docs, images: [], mirrored: false });
+  const x = buildRehearsalInput({ target: "gcp-gke", i, values, rendered, docs, images: [], mirrored: false, runBudgetSec: 1200 });
   assert.ok(!x.apply.some((m) => m.yaml.includes(CLOUDSQL)));
   assert.ok(x.original.some((m) => m.yaml.includes(CLOUDSQL)));
   const sa = applyDoc(x, `ServiceAccount/${x.namespace}/shop-api`)!;
   assert.equal(sa.metadata.annotations?.["iam.gke.io/gcp-service-account"], undefined);
   assert.ok(items(x).cloud_identity!.refs.some((r) => r.includes('["iam.gke.io/gcp-service-account"]')));
   assert.equal(items(x).images!.status, "identical", "흉내(복사 안 함)면 이미지 주소는 그대로");
+  assert.equal(x.imagesMirrored, false, "복사하지 않았다는 사실이 입력에 실린다 (진짜 agent-worker 가 거부할 근거)");
 });
 
 test("onprem: CNPG Cluster → 같은 메이저 Postgres 자리 + <이름>-app Secret, 도착 파드 보안 baseline, 비밀 값은 확인 못 함", { skip }, () => {
   const i = inputFor("onprem");
   const { values, rendered } = render(i);
   const docs = parseManifests(rendered);
-  const x = buildRehearsalInput({ target: "onprem-k3s", i, values, rendered, docs, images: [], mirrored: true });
+  const x = buildRehearsalInput({ target: "onprem-k3s", i, values, rendered, docs, images: [], mirrored: true, runBudgetSec: 1200 });
   const ns = x.namespace;
   assert.equal(applyDoc(x, `Cluster/${ns}/shop-api-shop-db`), undefined);
   assert.deepEqual(x.databases, [{ service: "shop-api-shop-db-rw", majorVersion: "16", database: "shop_api", owner: "app",
@@ -210,4 +215,30 @@ test("수량 읽기와 이미지 짝: 명세 다이제스트 원본, 명세 밖 
   const pairs = imagePairs(i, [`${api.image.repository}@${api.image.digest}`, "cloudflare/cloudflared:2025.9.1"]);
   assert.deepEqual(pairs[0], { ref: `${api.image.repository}@${api.image.digest}`, source: `${api.image.repository}@${api.image.digest}` });
   assert.deepEqual(pairs[1], { ref: "cloudflare/cloudflared:2025.9.1", source: "cloudflare/cloudflared:2025.9.1" });
+});
+
+test("TLS 비밀: 가짜 값이 자체 서명 인증서·키라 앱이 그대로 TLS 를 연다. 같은 지문·이름이면 같은 글자", async () => {
+  const es = (name: string) => ({ path: `manifests/externalsecret-${name}.yaml`, doc: { apiVersion: "external-secrets.io/v1", kind: "ExternalSecret", metadata: { name },
+    spec: { secretStoreRef: { kind: "ClusterSecretStore", name: "s" }, target: { name, template: { type: "kubernetes.io/tls" } },
+      data: [{ secretKey: "tls.crt", remoteRef: { key: name } }, { secretKey: "tls.key", remoteRef: { key: name } }] } } as K8sDoc });
+  const run = () => substitute([es("shop-tls"), es("admin-tls")], { namespace: "app-shop", images: new Map(), managedDbs: [], seed: "a".repeat(64) });
+  const sec = (name: string) => run().apply.find((m) => m.doc.kind === "Secret" && m.doc.metadata.name === name)!.doc.stringData as Record<string, string>;
+  const tls = sec("shop-tls");
+  const cert = new X509Certificate(tls["tls.crt"]!);
+  assert.ok(cert.checkPrivateKey(createPrivateKey(tls["tls.key"]!)));
+  assert.ok(cert.verify(cert.publicKey), "자체 서명");
+  assert.equal(cert.subject, "CN=shop-tls");
+  // 앱 자리: 그 인증서·키로 TLS 서버를 열고 붙어 본다
+  const server = createServer({ cert: tls["tls.crt"], key: tls["tls.key"] }, (sock) => sock.end("ok"));
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  try {
+    const got = await new Promise<string>((res, rej) => {
+      const c = connect({ host: "127.0.0.1", port: (server.address() as AddressInfo).port, rejectUnauthorized: false });
+      let d = "";
+      c.on("data", (x) => { d += x; }).on("end", () => res(d)).on("error", rej);
+    });
+    assert.equal(got, "ok");
+  } finally { server.close(); }
+  assert.deepEqual(sec("shop-tls"), tls, "같은 입력이면 같은 글자 (치환은 순수 함수)");
+  assert.notEqual(sec("admin-tls")["tls.key"], tls["tls.key"], "비밀마다 다른 키");
 });

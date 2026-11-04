@@ -3,17 +3,16 @@ import type { Sandbox, WorkingCopy } from "./sandbox.js";
 import { KubeError, statusMessage, type KubeClient } from "./kube.js";
 import { checkManifest, redact, redactText, type ApplyKind, type ManifestDoc, imagesOf } from "./guard.js";
 import { allowedPath } from "./tools.js";
+import { SANDBOX_LABEL } from "./vcluster.js";
 
 // k3d 구현: 맥 로컬 k3d 클러스터(agent-sbx) 안에 실행마다 일회용 네임스페이스를 만든다.
 //   만들기: 네임스페이스(PSS restricted 라벨) + 자원 상한(ResourceQuota·LimitRange) + 망 정책(DNS 말고 밖으로 못 나감)
 //   씨앗:  작업 복사본 deploy/*.yaml 을 그대로 적용해 문제 상황을 재현 (플랫폼이 한다, 에이전트 도구 아님)
 //   적용:  코드 정책 검사 → 서버 dry-run(dryRun=All) → 진짜 적용 (server-side apply)
-//   끝:    네임스페이스 삭제 (처리기가 finally 로 부른다. 남은 것은 라벨로 일괄 삭제)
+//   끝:    네임스페이스 삭제 (처리기가 finally 로 부른다. 남은 것은 만료 라벨로 청소, vcluster.ts sweepSandboxes)
 // 운영 클러스터에는 닿지 않는다: 노드 이름이 k3d-agent-sbx- 로 시작하지 않으면 만들기 전에 멈춘다.
 // DRAFT(ai): 다음 단계(설계 v1)는 vCluster + gVisor + Kyverno. 지금은 네임스페이스 격리만이라 "같은 커널" 이라고 밝힌다
 
-export const SANDBOX_LABEL = "app.kubernetes.io/managed-by";
-export const SANDBOX_LABEL_VALUE = "svc-agent-sandbox";
 const FIELD_MANAGER = "svc-agent-sandbox";
 
 const RES: Record<ApplyKind, { api: string; plural: string; apiVersion: string }> = {
@@ -70,8 +69,11 @@ export async function createK3dSandbox(o: K3dSandboxOptions): Promise<K3dSandbox
   await must("네임스페이스", "POST", "/api/v1/namespaces", {
     apiVersion: "v1", kind: "Namespace",
     metadata: { name: ns, labels: {
-      [SANDBOX_LABEL]: SANDBOX_LABEL_VALUE,
-      "svc.sandbox/expires-at": String(Math.floor(now() / 1000) + (o.ttlSeconds ?? 1800)),
+      // vCluster 샌드박스와 같은 라벨 계약 (청소 하나가 둘 다 본다)
+      [SANDBOX_LABEL.sandbox]: "true", [SANDBOX_LABEL.purpose]: "remediation",
+      [SANDBOX_LABEL.expiresAt]: String(Math.floor(now() / 1000) + (o.ttlSeconds ?? 1800)),
+      [SANDBOX_LABEL.run]: o.runId.slice(0, 63),
+      [SANDBOX_LABEL.tenant]: o.tenantId,
       "pod-security.kubernetes.io/enforce": "restricted",
       "pod-security.kubernetes.io/enforce-version": "latest",
     } },

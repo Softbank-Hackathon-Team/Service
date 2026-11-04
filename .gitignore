@@ -59,6 +59,8 @@ crash.*.log
 outputs.json
 # 포장·전달용 묶음
 *.tgz
+# agent-worker 이미지에 넣는 vCluster 차트 (SHA256SUMS 로 확인). .dockerignore 와 같은 예외
+!apps/agent-worker/vendor/*.tgz
 *.tar.gz
 *.b64
 *.zip

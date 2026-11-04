@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { WorkcopyError, type OpenWorkcopy, type Proposal, type WorkcopyFactory } from "./gitops-workcopy.js";
 import { AgentRunJob, type AgentFinish } from "@svc/contracts";
+import { createLogger, type Logger } from "@svc/core";
 import {
   gateChanges, llmErrorCode, runAgent, scriptedLlm, stubSandbox, KubeError,
   type LlmProvider, type RunResult, type Sandbox, type SandboxFactoryCtx, type StepRecord, type WorkingCopy,
@@ -29,7 +30,9 @@ export interface RemediateFinish {
 export interface Deps {
   store: AgentRunStore; llm: LlmProvider; sandbox: (ctx: SandboxFactoryCtx) => Sandbox | Promise<Sandbox>;
   workcopy?: WorkcopyFactory;
+  log?: Pick<Logger, "warn">;
 }
+const defaultLog = createLogger("agent-worker");
 
 export async function handleAgentRun(raw: unknown, d: Deps) {
   const job = AgentRunJob.parse(raw);
@@ -61,8 +64,9 @@ export async function handleAgentRun(raw: unknown, d: Deps) {
     const code = e instanceof KubeError ? e.code : llmErrorCode(e);
     r = { state: "failed", reason: code, finish: null, steps: [], usage: { input: 0, output: 0 }, changedFiles: [] };
   } finally {
-    // 일회용 샌드박스는 성공·실패와 상관없이 지운다. 지우기 실패는 라벨로 나중에 일괄 청소 (CHANGES.md)
-    await sandbox?.dispose?.().catch(() => {});
+    // 일회용 샌드박스는 성공·실패와 상관없이 지운다. 지우기 실패는 경고로 남기고, 만료 청소(sweeper.ts)가 마무리한다 (#177)
+    await sandbox?.dispose?.().catch((e: unknown) => (d.log ?? defaultLog).warn(
+      { agent_run_id: job.agentRunId, namespace: sandbox?.namespace ?? null, err: (e as Error).message ?? String(e) }, "sandbox 지우기 실패"));
   }
   // PR은 에이전트가 아니라 플랫폼이 만든다. 게이트를 통과한 제안만 PR 후보가 된다
   const gate = r.finish?.outcome === "proposed" ? gateChanges(before, repo) : { ok: true, violations: [] };
