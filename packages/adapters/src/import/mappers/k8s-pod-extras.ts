@@ -60,15 +60,19 @@ export function podExtrasOf(pod: RawK8sPodSpec, c: RawK8sContainer, digests: Rec
   const dg = (x: RawK8sContainer) => (x.name ? digests?.[x.name] : undefined) ?? null;
 
   // 사이드카·init
+  // DRAFT(ai): digest 를 못 박는 컨테이너(태그만 있고 실행 중 Pod 에도 없음)는 0.6 검토와 이유를 남긴다 (ECS·Cloud Run 과 같은 표시).
+  //   ECS·Cloud Run 과 달리 빼지는 않는다: 인자가 DB 연결 근거(Cloud SQL Auth Proxy 등)라 빼면 연결이 조용히 사라짐. 사전 점검이 그리기 전에 막는다.
+  //   메시 주입형은 도착이 그리지 않고 도착 메시가 다시 넣으므로 검토 이유가 아니다
   const others = pod.containers.filter((x) => x !== c);
-  if (others.length) {
-    props.sidecars = others.map((x) => containerIR(x, dg(x), false));
-    meta.sidecars = [`${src}.containers[1..]`, 1];
-  }
-  if (pod.initContainers?.length) {
-    props.initContainers = pod.initContainers.map((x) => containerIR(x, dg(x), true));
-    meta.initContainers = [`${src}.initContainers`, 1];
-  }
+  const extras = (key: "sidecars" | "initContainers", xs: RawK8sContainer[], init: boolean, path: string) => {
+    if (!xs.length) return;
+    const ir = xs.map((x) => containerIR(x, dg(x), init));
+    props[key] = ir;
+    const unpinned = ir.filter((x) => x.injected !== true && !(x.image as { digest: string | null }).digest).map((x) => String(x.name));
+    meta[key] = unpinned.length ? [path, 0.6, `태그만 있고 digest 를 못 찾은 ${unpinned.join(",")} 은 도착에 같은 이미지를 못 박음 → digest 를 넣거나 빼야 계획이 통과 (사람이 확인)`] : [path, 1];
+  };
+  extras("sidecars", others, false, `${src}.containers[1..]`);
+  extras("initContainers", pod.initContainers ?? [], true, `${src}.initContainers`);
 
   // 볼륨
   const mountsOf = (name: string) => [c, ...others, ...(pod.initContainers ?? [])].flatMap((x) => (x.volumeMounts ?? []).filter((m) => m.name === name));
