@@ -96,6 +96,37 @@ export function resourceId(yamlText: string): string | null {
   return ns ? `${kind}/${ns}/${name}` : `${kind}/${name}`;
 }
 
+// 허브가 고객 GKE 에 들어가는 접속 정보 (tenants/<t>/argocd/cluster-gcp-gke.yaml). 비밀값은 없다:
+// argocd-k8s-auth 가 회사별 설정 파일(ConfigMap argocd-gcp-creds, deploy/helm/platform/README.md)로 그때그때 구글 토큰을 받는다.
+// namespaces 가 필수다: 허브 권한은 앱 구역 안뿐이라, 없으면 Argo 가 클러스터 전체를 읽으려다 실패한다
+export interface GkeAccess { endpoint: string; caData: string }
+export const GKE_SECRET_FILE = "cluster-gcp-gke.yaml";
+
+export function gkeAccess(env: GitopsEnv, tf: Record<string, string>): GkeAccess | undefined {
+  const endpoint = tf.cluster_endpoint, caData = tf.cluster_ca_certificate;
+  return env === "gcp-gke" && endpoint && caData ? { endpoint, caData } : undefined;
+}
+
+export function gkeClusterSecret(tenant: string, a: GkeAccess, namespaces: string[]) {
+  const name = `${tenant}-gcp-gke`;
+  return {
+    apiVersion: "v1", kind: "Secret",
+    metadata: { name, namespace: "argocd", labels: { "argocd.argoproj.io/secret-type": "cluster", tenant } },
+    stringData: {
+      name,
+      server: `https://${a.endpoint}`,
+      namespaces: [...new Set(namespaces)].sort().join(","),
+      config: JSON.stringify({
+        execProviderConfig: {
+          command: "argocd-k8s-auth", args: ["gcp"], apiVersion: "client.authentication.k8s.io/v1beta1",
+          env: { GOOGLE_APPLICATION_CREDENTIALS: `/var/run/gcp-cred/${tenant}.json` },
+        },
+        tlsClientConfig: { insecure: false, caData: a.caData },
+      }),
+    },
+  };
+}
+
 // 회사 울타리 (tenants/<t>/argocd/appproject.yaml). 처음 배포 때 워커가 만들고, 새 클러스터가 오면 목적지를 더한다.
 // JSON으로 쓴다 (JSON은 그대로 YAML)
 export function fenceDoc(tenant: string, repoUrl: string, clusters: string[]) {

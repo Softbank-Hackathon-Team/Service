@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { STUB_TF_OUTPUTS, stubTfOutputsV2 } from "@svc/adapters";
@@ -12,7 +12,7 @@ import { ONE } from "./demo-one.js";
 import { buildPlanDoc } from "../src/jobs/plan.js";
 import { stubPrecheck } from "../src/jobs/precheck.js";
 import { mockArgoWatcher } from "../src/gitops/argo-watch.js";
-import { bundlePath, bundleRefOf, deployToGitops, GitopsError, GitopsRepo, renderForRehearsal, type DeployInput } from "../src/gitops/index.js";
+import { bundlePath, bundleRefOf, deployToGitops, GitopsError, GitopsRepo, GKE_SECRET_FILE, renderForRehearsal, type DeployInput } from "../src/gitops/index.js";
 
 const FIXTURE = process.env.GITOPS_FIXTURE_DIR;
 const hasHelm = (() => { try { execFileSync("helm", ["version", "--short"], { stdio: "ignore" }); return true; } catch { return false; } })();
@@ -53,6 +53,39 @@ test("렌더만: 지문과 manifests 글자를 돌려주고 작업 복사본·HE
     const b = await renderForRehearsal(repo, input);
     assert.equal(b.rendered.bundleSha256, a.rendered.bundleSha256);
     assert.equal(sh("status", "--porcelain"), "");
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+
+test("GKE 접속 정보: 배포 때 cluster Secret 을 같이 커밋하고, 다시 배포해도 다른 앱 구역을 안 지운다. 묶음 지문은 그대로", { skip }, async () => {
+  const { tmp, repo } = workRepo();
+  try {
+    const gke = { ...input, tfOutputs: { ...input.tfOutputs, cluster_endpoint: "34.0.0.1", cluster_ca_certificate: "Y2E=" } };
+    const b = bundleRefOf(gke);
+    const file = join(tmp, "tenants", b.tenant, "argocd", GKE_SECRET_FILE);
+    const plain = await renderForRehearsal(repo, gke);
+    const out = await deployToGitops(repo, gke, mockArgoWatcher, { expectBundleSha: plain.rendered.bundleSha256 });
+    assert.equal(out.result.bundleHash, plain.rendered.bundleSha256, "Secret 은 묶음 지문 밖");
+    const s = JSON.parse(readFileSync(file, "utf8"));
+    assert.equal(s.metadata.name, `${b.tenant}-gcp-gke`);
+    assert.equal(s.stringData.name, `${b.tenant}-gcp-gke`);
+    assert.equal(s.stringData.server, "https://34.0.0.1");
+    assert.equal(s.stringData.namespaces, `app-${b.app}`);
+    const cfg = JSON.parse(s.stringData.config);
+    assert.equal(cfg.execProviderConfig.env.GOOGLE_APPLICATION_CREDENTIALS, `/var/run/gcp-cred/${b.tenant}.json`);
+    assert.equal(cfg.tlsClientConfig.caData, "Y2E=");
+
+    s.stringData.namespaces = "app-other";
+    writeFileSync(file, JSON.stringify(s));
+    await deployToGitops(repo, gke, mockArgoWatcher);
+    assert.equal(JSON.parse(readFileSync(file, "utf8")).stringData.namespaces, `app-other,app-${b.app}`);
+  } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+
+test("GKE 출력이 없으면(흉내 길) cluster Secret 을 만들지 않는다", { skip }, async () => {
+  const { tmp, repo } = workRepo();
+  try {
+    await deployToGitops(repo, input, mockArgoWatcher);
+    assert.equal(existsSync(join(tmp, "tenants", bundleRefOf(input).tenant, "argocd", GKE_SECRET_FILE)), false);
   } finally { rmSync(tmp, { recursive: true, force: true }); }
 });
 

@@ -39,6 +39,20 @@ test("거부: allUsers·그룹·도메인·모양 틀린 주체, UUID 아닌 회
   }
 });
 
+test("허브 주체: 있으면 이 회사 SA 에 workloadIdentityUser 만 주고, 허브 argocd 계정이 아니면 종료", () => {
+  const hub = "principal://iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/platform-hub/subject/system:serviceaccount:argocd:argocd-server";
+  const base = { PLATFORM_PROJECT: "svc-platform", TENANT_ID: TENANT, WORKER_PRINCIPAL: WORKER, DRY_RUN: "1" };
+  const ok = run({ ...base, HUB_PRINCIPALS: hub });
+  assert.equal(ok.status, 0, ok.stderr);
+  const lines = ok.stdout.split("\n").filter((l) => l.includes("workloadIdentityUser"));
+  assert.equal(lines.length, 1);
+  assert.ok(lines[0]!.includes("service-accounts add-iam-policy-binding t-") && lines[0]!.includes(`--member=${hub}`));
+  for (const bad of ["allUsers", hub.replace("argocd:argocd-server", "default:x"), `${hub},allUsers`]) {
+    assert.notEqual(run({ ...base, HUB_PRINCIPALS: bad }).status, 0, bad);
+  }
+  assert.doesNotMatch(run(base).stdout, /workloadIdentityUser/);
+});
+
 // FM-CON-02: 맥 실검증 워커는 사람 gcloud 계정(user:)으로 돈다 → 그 계정에 회사 SA tokenCreator 를 준다
 test("FM-CON-02: user:<이메일> 주체는 통과, tokenCreator 멤버가 그 계정, 경고 한 줄", () => {
   const r = run({ PLATFORM_PROJECT: "svc-platform", TENANT_ID: TENANT, WORKER_PRINCIPAL: "user:demo.op@example.com", DRY_RUN: "1" });

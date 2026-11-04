@@ -12,6 +12,7 @@
 #   TENANT_ID         회사 UUID
 #   WORKER_PRINCIPAL  워커가 gcloud 로 로그인한 주체 (예: serviceAccount:svc-worker@<플랫폼>.iam.gserviceaccount.com, 맥 데모는 user:<gcloud 계정>)
 #   ALLOW_HUMAN_WORKER 0 이면 user: 를 거부 (기본 1)
+#   HUB_PRINCIPALS    (선택) Argo CD 허브 주체. 공백으로 구분. infra/modules/gcp/platform-wif 출력 hub_principals. 있으면 허브가 이 SA 를 가장할 수 있다
 # 다시 실행해도 된다(이미 있는 것은 건너뜀).
 set -euo pipefail
 
@@ -77,5 +78,13 @@ if ! dry; then have="$(gcloud iam service-accounts get-iam-policy "${SA}" --proj
 if [ -n "${have}" ]; then echo "= 이미 있음, 건너뜀: tokenCreator ${WORKER_PRINCIPAL} → ${SA_ID}"
 else run gcloud iam service-accounts add-iam-policy-binding "${SA}" --project="${PLATFORM_PROJECT}" \
   --member="${WORKER_PRINCIPAL}" --role="roles/iam.serviceAccountTokenCreator"; fi
+
+# 허브 → 회사 전용 SA. SA 자신의 정책이라 이 회사 SA 만 가장한다. 고객 쪽 허용이 회사마다 따로라 다른 회사 GKE 에는 못 들어간다
+HUB_RE='^principal://iam\.googleapis\.com/projects/[0-9]+/locations/global/workloadIdentityPools/[a-z0-9-]+/subject/system:serviceaccount:argocd:[a-z0-9-]+$'
+for hub in ${HUB_PRINCIPALS:-}; do
+  if ! [[ "${hub}" =~ ${HUB_RE} ]]; then echo "HUB_PRINCIPALS 는 허브 argocd 계정의 principal:// 주체만: ${hub}" >&2; exit 1; fi
+  run gcloud iam service-accounts add-iam-policy-binding "${SA}" --project="${PLATFORM_PROJECT}" \
+    --member="${hub}" --role="roles/iam.workloadIdentityUser"
+done
 
 echo "완료. 고객 연결 화면의 PLATFORM_SA = ${SA}"

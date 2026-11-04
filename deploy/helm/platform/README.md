@@ -73,7 +73,26 @@ kubectl get secret argocd-initial-admin-secret -n argocd -o jsonpath='{.data.pas
 kubectl port-forward svc/argocd-server -n argocd 8443:443
 ```
 
-- TODO(human): 허브가 고객 클러스터에 들어가는 권한(Pod Identity, GKE WIF)과 cluster Secret. 이게 없으면 고객 Application 은 동기화되지 않는다.
+허브의 고객 GKE 로그인. 저장되는 키 없이, 플랫폼 EKS 토큰을 구글 토큰으로 바꿔 회사 전용 플랫폼 SA(`t-<28자>@`)로 들어간다. cluster Secret 은 워커가 배포 때 gitops 레포에 같이 올린다.
+
+```
+# 1. 플랫폼 GCP 프로젝트에 교환 창구: infra/modules/gcp/platform-wif 적용.
+#    eks_oidc_issuer = aws/platform 출력 cluster_oidc_issuer. 출력 audience, provider_name, hub_principals 를 아래에 쓴다
+
+# 2. 허브에 구글용 토큰 파일 더하기 (이미 깔린 허브도 같은 명령)
+sed "s#<WIF_AUDIENCE>#$AUDIENCE#" deploy/argocd/argo-cd.gke-login.values.yaml > "$TMPDIR/gke-login.yaml"
+helm upgrade --install argocd oci://ghcr.io/argoproj/argo-helm/argo-cd --version 10.11.7 -n argocd --create-namespace -f deploy/argocd/argo-cd.values.yaml -f "$TMPDIR/gke-login.yaml"
+
+# 3. 회사마다: 허브에 그 회사 SA 가장 권한을 주고(HUB_PRINCIPALS = hub_principals 를 공백으로 이은 값, 나머지 값은 스크립트 머리말), 설정 파일을 하나 만든다
+#    설정 파일은 어느 SA 로 들어갈지 적은 파일이고 키가 아니다. SA = tenants.gcp_platform_sa, 파일 이름 = t-<회사 uuid 앞 8글자>.json
+HUB_PRINCIPALS="$HUB_PRINCIPALS" bash infra/onboarding/gcp-platform-tenant-sa.sh
+gcloud iam workload-identity-pools create-cred-config "$PROVIDER_NAME" --service-account="$SA" --credential-source-file=/var/run/secrets/tokens/gcp/token --credential-source-type=text --output-file="gcp-creds/$SLUG.json"
+kubectl create configmap argocd-gcp-creds -n argocd --from-file=gcp-creds/ --dry-run=client -o yaml | kubectl apply -f -
+```
+
+- ponytail: 3번은 회사마다 손으로 한다. 회사가 늘면 환경 연결 때 워커가 이 ConfigMap 을 고치게 한다.
+- TODO(human): 고객 GKE 쪽 허용(앱 구역 RoleBinding, `container.clusters.get`). 이게 없으면 로그인은 돼도 배포가 거절된다.
+- TODO(human): 허브가 고객 EKS 에 들어가는 권한과 cluster Secret. 이게 없으면 EKS 고객 Application 은 동기화되지 않는다.
 
 ## 관측 기본판 (이 차트와 따로 설치)
 
