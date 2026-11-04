@@ -21,6 +21,10 @@ const argVal = (k: string) => { const a = process.argv.find((x) => x.startsWith(
 const APPLY = argv.has("--apply");
 const CLEANUP_ONLY = argv.has("--cleanup");
 const KEEP = argv.has("--keep");
+// pf-d TRF-21: --register=<이전 번호> --tenant=<회사 번호> → 이 LB·풀을 그 이전에 등록 (DB, 워커가 trafficFor 로 읽음).
+//   --apply 없이 주면 이미 있는 cf-check LB·풀을 읽고 등록만 한다 (Cloudflare 는 안 바꿈). --apply 와 같이면 --keep 이 있어야 한다(끝에 지우면 등록이 죽은 LB 를 가리킴)
+const REGISTER = argVal("register");
+const REGISTER_TENANT = argVal("tenant");
 const HOLD_SEC = Number(argVal("hold-sec") ?? 5);              // 단계마다 기다리는 시간 (모니터·엣지 반영 관찰용)
 const PROBES = Number(argVal("probe") ?? 0);                  // 단계마다 LB 주소로 보낼 요청 수 (0 이면 안 보냄)
 const PROBE_HEADER = (argVal("probe-header") || process.env.CF_CHECK_PROBE_HEADER || "x-served-by").toLowerCase();
@@ -78,12 +82,41 @@ function plan(msg: string, body?: unknown) {
   console.log(`  할일 ${msg}${APPLY ? "" : " (dry-run: 안 보냄)"}`);
   if (body !== undefined && !APPLY) console.log(`       본문 ${JSON.stringify(body)}`);
 }
+async function register(zoneId: string, ids: { lbId: string; sourcePoolId: string; targetPoolId: string }): Promise<void> {
+  if (!REGISTER || !REGISTER_TENANT) fail("--register=<이전 번호> 와 --tenant=<회사 번호> 가 둘 다 필요하다");
+  if (!process.env.DATABASE_URL) fail("DATABASE_URL 이 비어 있다 (워커와 같은 플랫폼 DB)");
+  const { registerTrafficTarget } = await import("./cf-register.js");
+  const r = await registerTrafficTarget({ tenantId: REGISTER_TENANT, migrationId: REGISTER, target: { provider: "cloudflare", zoneId, ...ids } });
+  if (!r.ok) fail(`등록 실패: ${r.reason}`);
+  ok(`이전 ${mask(REGISTER)} 에 LB ${mask(ids.lbId)} · 풀 ${mask(ids.sourcePoolId)}/${mask(ids.targetPoolId)} 등록 → 워커는 다시 띄울 필요 없음`);
+  registered = true;
+}
+let registered = false;
+const probeSteps: import("./cf-register.js").ProbeStep[] = [];
+
 function fail(msg: string): never { console.error(`  실패 ${msg}`); process.exit(1); }
 
 interface Named { id: string; name?: string; description?: string }
 const median = (xs: number[]) => { const s = [...xs].sort((a, b) => a - b); return s[Math.floor(s.length / 2)] ?? NaN; };
 
+// pf-d FM-TRF-09: --list = 읽기만, 남은 cf-check 자원을 한 줄에 하나씩 stdout 으로 (tools/cloud-zero.sh 의 count 가 센다).
+//   조회 실패면 종료 코드 2 (0 이라고 말하지 않는다). 다른 줄은 stdout 에 안 찍는다
+async function listMine() {
+  if (!TOKEN || !ZONE_NAME) { console.error("CLOUDFLARE_API_TOKEN·CLOUDFLARE_ZONE_NAME 이 비어 있다"); process.exit(2); }
+  try {
+    const zone = await cfZoneByName(req, ZONE_NAME);
+    const accountId = zone.accountId || process.env.CF_ACCOUNT_ID;
+    if (!accountId) { console.error("계정 id 를 못 얻음 (CF_ACCOUNT_ID)"); process.exit(2); }
+    const A = `/accounts/${accountId}/load_balancers`;
+    const [m, p, l] = await Promise.all([cf<Named[]>("GET", `${A}/monitors`), cf<Named[]>("GET", `${A}/pools`), cf<Named[]>("GET", `/zones/${zone.id}/load_balancers`)]);
+    for (const x of l) if (x.name === LB_HOST || x.description === `${PREFIX} lb`) console.log(`lb ${x.name}`);
+    for (const x of p) if (x.name?.startsWith(`${PREFIX}-`)) console.log(`pool ${x.name}`);
+    for (const x of m) if (x.description === `${PREFIX}-monitor`) console.log(`monitor ${x.description}`);
+  } catch (e) { console.error(`조회 실패: ${(e as Error).message}`); process.exit(2); }
+}
+
 async function main() {
+  if (argv.has("--list")) return listMine();
   console.log(`cf-check 모드: ${APPLY ? (CLEANUP_ONLY ? "정리(실제 삭제)" : "실제 생성·전환") : "dry-run (읽기만)"}`);
   if (!TOKEN) fail("CLOUDFLARE_API_TOKEN 이 비어 있다 (.env 확인)");
   if (!ZONE_NAME) fail("CLOUDFLARE_ZONE_NAME 이 비어 있다 (.env 확인)");
@@ -139,10 +172,27 @@ async function main() {
     monitor: monitors.find((m) => m.description === `${PREFIX}-monitor`),
     src: pools.find((p) => p.name === `${PREFIX}-src`),
     tgt: pools.find((p) => p.name === `${PREFIX}-tgt`),
-    lb: lbs.find((l) => l.name === LB_HOST),
+    // pf-d FM-TRF-06: 만들 때와 정리할 때 CF_CHECK_LB_HOSTNAME 이 달라도 찾게 설명(cf-check lb)으로도 찾는다
+    lb: lbs.find((l) => l.name === LB_HOST) ?? lbs.find((l) => l.description === `${PREFIX} lb`),
   };
 
-  if (CLEANUP_ONLY) return cleanup(A, Z, mine);
+  if (CLEANUP_ONLY) {
+    // pf-d FM-TRF-22 DRAFT(ai): LB 가 도착으로 보내고 있으면(도착 몫 > 0) 이전이 진행 중일 수 있다 → --force 없이는 안 지운다.
+    //   이전 중 지우면 사용자 주소가 끊기고 워커 롤백(출발 100%)이 404 로 실패한다. down(demo-day)은 워커를 끈 뒤 --force 로 부른다
+    if (APPLY && mine.lb && mine.src && mine.tgt && !argv.has("--force")) {
+      const lbNow = await cf<CfLoadBalancer>("GET", `${Z}/${mine.lb.id}`);
+      const w = cloudflareWeightsOf({ sourcePoolId: mine.src.id, targetPoolId: mine.tgt.id }, lbNow);
+      if (w.target > 0) fail(`LB 가 지금 도착으로 ${Math.round(w.target * 100)}% 보내는 중 → 이전이 진행 중일 수 있다. 끝났거나 롤백한 뒤 다시, 정말 지우려면 --force (down 은 자동)`);
+    }
+    await cleanup(A, Z, mine); if (APPLY) await verifyGone(A, Z); return;
+  }
+
+  if (REGISTER !== undefined && !APPLY) {
+    if (!mine.lb || !mine.src || !mine.tgt) fail("등록할 cf-check LB·풀이 없다 → 먼저 npm run cf:check -- --apply --keep");
+    await register(zone.id, { lbId: mine.lb.id, sourcePoolId: mine.src.id, targetPoolId: mine.tgt.id });
+    return (await import("./cf-register.js")).closeDb();
+  }
+  if (REGISTER !== undefined && !KEEP) fail("--register 와 --apply 를 같이 쓰면 --keep 도 필요하다 (끝에 지우면 등록이 없는 LB 를 가리킴)");
 
   if (!SRC_ORIGIN || !TGT_ORIGIN) {
     console.log("\n  CF_CHECK_SOURCE_ORIGIN / CF_CHECK_TARGET_ORIGIN 이 비어 있어 4단계부터는 할 일만 보여 준다");
@@ -156,6 +206,14 @@ async function main() {
 
   // 4. 모니터 → pool 2개 → LB (이 순서여야 한다: pool 은 모니터 id, LB 는 pool id 를 가리킨다)
   step("4/7", "모니터·pool·LB 준비 (이름이 같은 게 있으면 다시 만들지 않는다)");
+  // pf-d FM-TRF-02·20: 계정 오리진 한도(엔드포인트 수)를 만들기 전에 센다. 넘치면 도착 pool POST 에서 실패하고 모니터·출발 pool 만 남는다
+  const budget = originBudget(pools as PoolLike[], { src: !mine.src, tgt: !mine.tgt });
+  if (budget.over) {
+    const msg = `오리진 한도 ${ORIGIN_LIMIT} 를 넘는다: 다른 pool ${budget.foreign.map((x) => `${x.name}(${x.origins})`).join(", ") || "없음"} + 이 검사 pool ${budget.mine} + 새로 ${budget.adding} = ${budget.total} → 다른 pool 을 먼저 지운다 (대시보드 Load Balancing → Pools, 또는 그 pool 을 만든 스크립트의 정리)`;
+    if (APPLY) fail(msg);
+    console.error(`  실패 ${msg} (dry-run: 만들지 않음)`);
+    process.exitCode = 1;
+  } else ok(`오리진 ${budget.total}/${ORIGIN_LIMIT} (다른 pool ${budget.foreign.reduce((a, x) => a + x.origins, 0)}, 이 검사 ${budget.mine + budget.adding})`);
   const monitorBody = {
     type: "https", method: "GET", path: MONITOR_PATH, expected_codes: "200", follow_redirects: false,
     // Z70-3 DRAFT(ai): 시험 오리진(served-by)은 자체 서명 인증서라 기본 allow_insecure true. 예전 false 면 모니터가 오리진을 늘 "나쁨"으로 봤다.
@@ -172,6 +230,10 @@ async function main() {
   });
   const srcId = mine.src?.id ?? await create("출발 pool", `${A}/pools`, poolBody(`${PREFIX}-src`, SRC_ORIGIN, SRC_HOST));
   const tgtId = mine.tgt?.id ?? await create("도착 pool", `${A}/pools`, poolBody(`${PREFIX}-tgt`, TGT_ORIGIN, TGT_HOST));
+  // pf-d FM-TRF-07: 이름이 같은 pool 을 다시 쓸 때 오리진 주소·Host 헤더가 이번 값과 다르면 바꾼다 (새 up 은 오리진 주소가 바뀐다.
+  //   예전엔 옛 주소 pool 을 그대로 써서 모니터가 죽은 주소를 보고 fallback=출발 → 전환해도 도착으로 안 감)
+  await refreshOrigins("출발 pool", `${A}/pools`, mine.src as PoolLike | undefined, `${PREFIX}-src`, SRC_ORIGIN, SRC_HOST);
+  await refreshOrigins("도착 pool", `${A}/pools`, mine.tgt as PoolLike | undefined, `${PREFIX}-tgt`, TGT_ORIGIN, TGT_HOST);
   const C = { sourcePoolId: srcId, targetPoolId: tgtId };
   const lbBody = {
     name: LB_HOST, description: `${PREFIX} lb`, enabled: true, proxied: true,
@@ -183,6 +245,7 @@ async function main() {
   if (mine.src) ok(`출발 pool 이미 있음 ${mask(srcId)}`);
   if (mine.tgt) ok(`도착 pool 이미 있음 ${mask(tgtId)}`);
   if (mine.lb) ok(`LB 이미 있음 ${mask(lbId)}`);
+  if (REGISTER !== undefined && APPLY) await register(zone.id, { lbId, sourcePoolId: srcId, targetPoolId: tgtId });
 
   if (!APPLY) {
     step("5/7", "전환 단계 (dry-run: 본문만)");
@@ -210,6 +273,9 @@ async function main() {
   const timings: Array<{ step: string; patchGetMs: number[]; settleMs?: number; settled?: boolean }> = [];
   // 엣지가 아직 보고 있을 수 있는 "옛 몫" 후보. 처음엔 LB 를 만들 때의 0 (100/0) 과, 만든 직후 엣지에 안 퍼졌을 때 맥에서 본 반반 (int5-6 1회차 90/10 → 40%)
   let prevShares: number[] = [0, 0.5];
+  // RV-08 DRAFT(ai): 단계 중간에 Cloudflare 오류(429·5xx·시간 초과)로 멈추면 LB 가 반쯤(50/50)·전부 도착(0/100)에 남는다.
+  //   --keep 으로 남긴 LB 는 워커가 이어 쓰는 진짜 입구라, 멈추기 전에 출발 100% 로 한 번 되돌려 본다 (실패해도 원래 오류를 던짐)
+  try {
   for (const w of STEPS) {
     const label = `${w.source * 100}/${w.target * 100}`;
     const t: number[] = [];
@@ -232,13 +298,19 @@ async function main() {
     prevShares = [w.target];
     if (HOLD_SEC > 0) await new Promise((r) => setTimeout(r, HOLD_SEC * 1000));
   }
+  } catch (e) {
+    console.error(`  단계 중 오류 → 출발 100% 로 되돌려 봄: ${(e as Error).message}`);
+    await restoreSourceBestEffort(() => setAndVerify(sw, lbId, { source: 1, target: 0 }));
+    throw e;
+  }
 
   // 6. 정리
   step("6/7", KEEP ? "정리 건너뜀 (--keep)" : "정리");
-  if (!KEEP) await cleanup(A, Z, { monitor: { id: monitorId }, src: { id: srcId }, tgt: { id: tgtId }, lb: { id: lbId } });
+  if (!KEEP) { await cleanup(A, Z, { monitor: { id: monitorId }, src: { id: srcId }, tgt: { id: tgtId }, lb: { id: lbId } }); await verifyGone(A, Z); }
   else {
+    // pf-d FM-TRF-11: 이름은 CLOUDFLARE_* 하나로 (워커·demo-preflight 둘 다 읽는 이름)
     console.log("  남긴 자원을 워커에 쓰려면 .env 에 아래 4줄 (채팅·공유 폴더에 붙이지 말 것):");
-    console.log(`  TRAFFIC_PROVIDER=cloudflare\n  TRAFFIC_LB_ID=${lbId}\n  CF_SOURCE_POOL_ID=${srcId}\n  CF_TARGET_POOL_ID=${tgtId}`);
+    console.log(`  TRAFFIC_PROVIDER=cloudflare\n  TRAFFIC_LB_ID=${lbId}\n  CLOUDFLARE_SOURCE_POOL_ID=${srcId}\n  CLOUDFLARE_TARGET_POOL_ID=${tgtId}`);
   }
 
   step("7/7", "측정 요약 (decisions 에 옮길 숫자)");
@@ -247,6 +319,22 @@ async function main() {
   // Z70-2: 분배 판정이 하나라도 틀리면 종료 코드 1 (연속 2회 같은 결과를 셸에서 바로 비교할 수 있게)
   if (probeFails.length) { console.error(`  분배 실패: ${probeFails.join(", ")}`); process.exitCode = 1; }
   else if (PROBES > 0 && PROBE_TARGET) ok(`분배 ${timings.length}단계 모두 기대 허용 폭 안 (±10%p 또는 표본 오차 2.58σ 중 큰 것)`);
+  // pf-d TRF-10: 등록한 이전이 있고 분배를 쟀으면 그 이전 감사에 요약 한 줄 (shift 가 가짜 지표일 때 결과에 붙임)
+  if (registered) {
+    const reg = await import("./cf-register.js");
+    if (probeSteps.length) {
+      const r = await reg.recordProbe({ tenantId: REGISTER_TENANT!, migrationId: REGISTER!, probeTarget: PROBE_TARGET, steps: probeSteps });
+      if (r.ok) ok(`분배 실측 ${probeSteps.length}단계를 이전 ${mask(REGISTER)} 감사(traffic.probe)에 남김`);
+      else { console.error(`  실패 분배 실측 기록: ${r.reason}`); process.exitCode = 1; }
+    }
+    await reg.closeDb();
+  }
+}
+
+/** RV-08: 되돌리기 한 번. 성공·실패를 찍고 예외는 삼킨다 (부른 쪽이 원래 오류를 던진다) */
+async function restoreSourceBestEffort(set: () => Promise<unknown>, log: (s: string) => void = (s) => console.error(s)): Promise<boolean> {
+  try { await set(); log("  출발 100% 로 되돌림 (확인됨)"); return true; }
+  catch (e) { log(`  되돌리기도 실패: ${(e as Error).message} → Cloudflare 대시보드에서 LB 가중치를 출발 100% 로 직접 바꿀 것`); return false; }
 }
 
 async function create(label: string, path: string, body: unknown): Promise<string> {
@@ -256,6 +344,49 @@ async function create(label: string, path: string, body: unknown): Promise<strin
   const r = await cf<{ id: string }>("POST", path, body);
   ok(`${label} 만듦 ${mask(r.id)}`);
   return r.id;
+}
+
+// pf-d FM-TRF-02·20 DRAFT(ai): 계정의 LB 오리진(엔드포인트) 한도. finals 계정 부가기능이 2 (출발·도착 pool 에 1개씩). 요금제를 바꾸면 CF_CHECK_ORIGIN_LIMIT
+const ORIGIN_LIMIT = Number.isFinite(Number(process.env.CF_CHECK_ORIGIN_LIMIT)) && process.env.CF_CHECK_ORIGIN_LIMIT ? Number(process.env.CF_CHECK_ORIGIN_LIMIT) : 2;
+interface PoolLike { id: string; name?: string; origins?: unknown[] }
+// 순수 함수: 지금 pool 들 + 새로 만들 pool(오리진 1개씩) 이 한도 안인가. 이 검사 pool(cf-check-src·tgt)은 다시 만들지 않으니 있는 그대로 센다
+function originBudget(pools: PoolLike[], add: { src: boolean; tgt: boolean }, limit = ORIGIN_LIMIT) {
+  const isMine = (p: PoolLike) => p.name === `${PREFIX}-src` || p.name === `${PREFIX}-tgt`;
+  const n = (p: PoolLike) => (Array.isArray(p.origins) ? p.origins.length : 0);
+  const foreign = pools.filter((p) => !isMine(p)).map((p) => ({ name: p.name ?? p.id.slice(0, 4), origins: n(p) }));
+  const mine = pools.filter(isMine).reduce((a, p) => a + n(p), 0);
+  const adding = (add.src ? 1 : 0) + (add.tgt ? 1 : 0);
+  const total = foreign.reduce((a, x) => a + x.origins, 0) + mine + adding;
+  return { foreign, mine, adding, total, over: total > limit };
+}
+
+type Origin = { name?: string; address?: string; enabled?: boolean; weight?: number; header?: { Host?: string[] } };
+// 순수 함수: 다시 쓸 pool 의 오리진이 이번 값과 같은가 (주소·Host 헤더). 이번 값이 없으면(dry-run 에 오리진 안 줌) 같다고 본다
+function originsMatch(p: PoolLike, address: string | undefined, host: string | undefined): boolean {
+  if (!address) return true;
+  const os = (p.origins ?? []) as Origin[];
+  return os.length === 1 && os[0]!.address === address && (os[0]!.header?.Host?.[0] ?? undefined) === host;
+}
+async function refreshOrigins(label: string, poolsPath: string, p: PoolLike | undefined, name: string, address: string | undefined, host: string | undefined) {
+  if (!p || originsMatch(p, address, host)) return;
+  const was = ((p.origins ?? []) as Origin[]).map((o) => o.address).join(",") || "(없음)";
+  const body = { origins: [{ name: `${name}-o1`, address, enabled: true, weight: 1, ...(host ? { header: { Host: [host] } } : {}) }] };
+  plan(`PATCH ${label} 오리진 ${was} → ${address}${host ? ` (Host ${host})` : ""}`, body);
+  if (!APPLY) return;
+  await cf("PATCH", `${poolsPath}/${p.id}`, body);
+  ok(`${label} 오리진 바꿈 → ${address}`);
+}
+
+// pf-d FM-TRF-08·09: 정리 뒤 다시 읽어 cf-check 자원이 0 인지 본다 (과금 0 증거). 남으면 종료 코드 1
+async function verifyGone(A: string, Z: string) {
+  const [m, p, l] = await Promise.all([cf<Named[]>("GET", `${A}/monitors`), cf<Named[]>("GET", `${A}/pools`), cf<Named[]>("GET", Z)]);
+  const left = [
+    ...m.filter((x) => x.description === `${PREFIX}-monitor`).map(() => "모니터"),
+    ...p.filter((x) => x.name?.startsWith(`${PREFIX}-`)).map((x) => `pool ${x.name}`),
+    ...l.filter((x) => x.name === LB_HOST || x.description === `${PREFIX} lb`).map((x) => `LB ${x.name}`),
+  ];
+  if (left.length) { console.error(`  실패 정리 뒤에도 남음: ${left.join(", ")} → 다시 --cleanup --apply, 안 되면 대시보드`); process.exitCode = 1; }
+  else ok(`정리 확인: cf-check 모니터·pool·LB 0 (다른 자원: 모니터 ${m.length}, pool ${p.length}, LB ${l.length})`);
 }
 
 // 지우는 순서: LB → pool → 모니터 (쓰는 쪽부터. 반대로 하면 "사용 중" 오류)
@@ -273,7 +404,7 @@ async function cleanup(A: string, Z: string, m: { monitor?: { id: string }; src?
     catch (e) {
       const pe = e as ProviderError;
       if (pe.status === 404) ok(`${label} 이미 없음 (다시 돌려도 안전)`);
-      else console.error(`  실패 ${label} 지우기 HTTP ${pe.status}: ${pe.message} → 대시보드에서 직접 지운다 (docs/CLOUDFLARE-CHECK.md 6장)`);
+      else { console.error(`  실패 ${label} 지우기 HTTP ${pe.status}: ${pe.message} → 대시보드에서 직접 지운다 (docs/CLOUDFLARE-CHECK.md 6장)`); process.exitCode = 1; }
     }
   }
 }
@@ -429,6 +560,7 @@ async function probe(label: string, expectedTarget: number) {
     const v = judgeShare(count, PROBE_TARGET, expectedTarget);
     const line = `${label} 도착(${PROBE_TARGET}) ${v.gotPct}% / 기대 ${v.wantPct}% ±${v.tolPct}%p, 오류 ${v.errors}/${v.total}, ${Math.round(performance.now() - t0)}ms${v.reason ? ` — ${v.reason}` : ""}`;
     if (v.ok) ok(line); else { console.error(`  실패 ${line}`); probeFails.push(label); }
+    probeSteps.push({ step: label, gotPct: v.gotPct, wantPct: v.wantPct, tolPct: v.tolPct, errors: v.errors, total: v.total, ok: v.ok });
   }
 }
 

@@ -140,6 +140,10 @@ npm run cf:check -- --cleanup --apply
 | `--apply` | 실제로 보낸다. 없으면 dry-run | 꺼짐 |
 | `--keep` | 끝나고 안 지운다 | 꺼짐 |
 | `--cleanup` | 만들지 않고 `cf-check` 자원만 지운다 (`--apply` 와 같이) | 꺼짐 |
+| `--force` | `--cleanup` 때 LB 가 도착으로 보내는 중(도착 몫 > 0)이어도 지운다. 없으면 이전 중일 수 있어 멈춘다. `demo-day down` 은 워커를 끈 뒤 이것으로 부른다 | 꺼짐 |
+| `--list` | 읽기만. 남은 `cf-check` LB·pool·모니터를 한 줄에 하나씩 찍는다 (`tools/cloud-zero.sh cf` 가 센다). 조회 실패면 끝 코드 2 | 꺼짐 |
+| `--register=<이전 번호> --tenant=<회사 번호>` | 이 LB·pool 을 그 이전에 등록한다 (플랫폼 DB `migration_traffic_targets`, `DATABASE_URL` 필요). 워커 shift·cutover·rollback 이 이 줄을 먼저 읽어서 `.env` 4줄을 고치거나 워커를 다시 띄우지 않아도 된다. `--apply` 없이 주면 이미 있는 `cf-check` LB·pool 을 읽고 등록만 한다 (Cloudflare 는 안 바꿈). `--apply` 와 같이 쓰면 `--keep` 이 있어야 한다. 그 회사에 없는 이전이나 끝난 이전에는 등록하지 않는다 (끝 코드 1). `--probe` 로 분배를 쟀으면 단계별 실측을 그 이전 감사 한 줄(`traffic.probe`)로 남기고, 가짜 지표로 돈 shift 결과가 그 줄을 `probe` 로 붙인다 (TRF-21·TRF-10) | 없음 |
+| `CF_CHECK_ORIGIN_LIMIT` | 계정 LB 오리진 한도. 만들기 전에 다른 pool 오리진 + 새로 만들 것이 이 수를 넘으면 아무것도 안 만들고 멈춘다 (DRAFT(ai) 기본 2) | 2 |
 | `--hold-sec=N` | 단계마다 N초 기다림 | 5 |
 | `--repeat=N` | 단계마다 PATCH+GET 몇 번 잴지 | 3 |
 | `--probe=N` | 단계마다 LB 주소로 요청 N번 보내 실제 분배 세기 | 0 |
