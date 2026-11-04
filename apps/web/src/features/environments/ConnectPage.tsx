@@ -104,7 +104,7 @@ function UnfinishedList() {
   if (drafts.length === 0) return null;
   return (
     <div className={s.draftList}>
-      <span className={`${s.draftHead} t-label-sm c-tertiary`}>{t('등록하다 만 환경')}</span>
+      <span className={`${s.draftHead} t-label-sm c-tertiary`}>{t('등록 중')}</span>
       {drafts.map((env) => (
         <button key={env.id} type="button" className={`${s.pickRow} ${s.pickDraft}`} onClick={() => go(`environments/connect/${env.id}`)}>
           <span className={s.pickText}>
