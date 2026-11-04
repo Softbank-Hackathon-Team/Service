@@ -528,7 +528,9 @@ function ContinueConnect({ id }: { id: string }) {
         )}
       </Hero>
       {side(
-        <ActionRow before={<BarPill label={t('환경 보기')} onClick={() => go(`environments/${env.id}`)} />}>
+        // 환경 보기는 새 마이그레이션 버튼 왼쪽, 같은 줄
+        <ActionRow>
+          <BarPill label={t('환경 보기')} onClick={() => go(`environments/${env.id}`)} />
           <ActionPill label={t('이 환경에서 새 마이그레이션')} onClick={() => go('migrations/new')} />
         </ActionRow>,
       )}
