@@ -18,3 +18,8 @@ export type TokenView = z.infer<typeof TokenView>;
 export const TokenCreated = TokenView.extend({ token: z.string() }).strict();
 export type TokenCreated = z.infer<typeof TokenCreated>;
 export const TokenList = z.object({ items: z.array(TokenView) }).strict();
+
+// 환경별 지표 토큰. 고객 수집기가 OTel 게이트웨이에 지표를 밀 때 쓴다. 원문은 발급 응답에서 한 번만 나간다
+export const METRIC_TOKEN_PREFIX = "svc_mt_";
+export const MetricTokenCreated = z.object({ envId: z.uuid(), token: z.string() }).strict();
+export type MetricTokenCreated = z.infer<typeof MetricTokenCreated>;
