@@ -2,13 +2,15 @@
 # 고객 온프레 k3s 에 설치 묶음(W2)을 까는 스크립트. 고객 서버에서 사람이 돌린다 (플랫폼이 원격으로 돌리지 않는다)
 #   1) Argo CD core v2.13.3 (레포에 고정한 파일, sha256 확인 뒤 server-side apply. 인터넷에서 직접 apply 하지 않는다)
 #   2) Agent 키 Secret (onprem-agent --enroll 이 만든 키 파일에서. 값을 화면·helm 기록에 남기지 않는다)
-#   3) gitops 저장소 Secret (회사 경로 읽기 전용 deploy key. 없으면 공개 저장소로 본다)
+#   3) gitops 저장소 Secret (읽기 전용 자격: deploy key 또는 HTTPS 읽기 토큰. 둘 다 없으면 공개 저장소로 본다)
 #   4) helm 차트 deploy/helm/onprem-agent (Agent + 권한 + 이 회사만 당기는 Argo 설정)
 #   5) 확인: Agent 가 읽기는 되고 쓰기·Secret 읽기는 안 되는지 (kubectl auth can-i)
 # 사용 (값은 환경변수로):
 #   TENANT=t-0a1b2c3d GITOPS_REPO_URL=git@github.com:org/gitops.git AGENT_REPORT_URL=https://api.example \
 #   AGENT_IMAGE=ghcr.io/org/svc-onprem-agent@sha256:... AGENT_KEY_FILE=.agent-key.env \
-#   [GITOPS_SSH_KEY_FILE=~/.ssh/gitops_ro] [GRANTS_CLUSTER=1] [KUBE_CONTEXT=...] bash tools/onprem-install.sh
+#   [GITOPS_SSH_KEY_FILE=~/.ssh/gitops_ro | GITOPS_TOKEN_FILE=~/gitops-read-token] [GRANTS_CLUSTER=1] [KUBE_CONTEXT=...] bash tools/onprem-install.sh
+#   GITOPS_TOKEN_FILE: https 주소 + 읽기 전용 토큰 (플랫폼 Argo CD 의 gitops-repo Secret 과 같은 방식, 사용자 x-access-token).
+#     조직 정책으로 deploy key 를 못 쓰는 레포용 (2026-11-05 Softbank-Hackathon-Team 실측). 토큰은 명령줄·화면에 안 남게 파일로만 받는다
 # 되돌리기: helm uninstall onprem-agent -n svc-agent; kubectl delete ns svc-agent; Argo 를 지우려면 같은 yaml 로 kubectl delete
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -27,6 +29,9 @@ command -v helm >/dev/null || die "helm 없음"
 [ -f "$AGENT_KEY_FILE" ] || die "AGENT_KEY_FILE 없음: $AGENT_KEY_FILE"
 grep -q '^AGENT_KEY_ID=' "$AGENT_KEY_FILE" && grep -q '^AGENT_KEY_SECRET=' "$AGENT_KEY_FILE" || die "키 파일에 AGENT_KEY_ID·AGENT_KEY_SECRET 이 없다"
 [ -z "${GITOPS_SSH_KEY_FILE:-}" ] || [ -f "$GITOPS_SSH_KEY_FILE" ] || die "GITOPS_SSH_KEY_FILE 없음"
+[ -z "${GITOPS_TOKEN_FILE:-}" ] || [ -f "$GITOPS_TOKEN_FILE" ] || die "GITOPS_TOKEN_FILE 없음"
+[ -z "${GITOPS_SSH_KEY_FILE:-}" ] || [ -z "${GITOPS_TOKEN_FILE:-}" ] || die "GITOPS_SSH_KEY_FILE 과 GITOPS_TOKEN_FILE 은 하나만"
+[ -z "${GITOPS_TOKEN_FILE:-}" ] || case "$GITOPS_REPO_URL" in https://*) ;; *) die "GITOPS_TOKEN_FILE 은 https 주소와 같이 쓴다";; esac
 got=$(sha256sum "$ARGO_YAML" 2>/dev/null | cut -d' ' -f1 || shasum -a 256 "$ARGO_YAML" | cut -d' ' -f1)
 [ "$got" = "$ARGO_SHA" ] || die "Argo 설치 파일 sha 불일치: $got"
 
@@ -64,6 +69,14 @@ echo "3/5 gitops 저장소 Secret (읽기 전용)"
 repo_secret="svc-gitops-$TENANT"
 args=(--from-literal=type=git --from-literal="url=$GITOPS_REPO_URL" --from-literal="project=$TENANT")
 [ -n "${GITOPS_SSH_KEY_FILE:-}" ] && args+=(--from-file=sshPrivateKey="$GITOPS_SSH_KEY_FILE")
+tok=""
+if [ -n "${GITOPS_TOKEN_FILE:-}" ]; then
+  # 줄바꿈을 뗀 사본을 600 임시 파일로 (끝 줄바꿈이 남으면 인증 실패). --from-literal 은 ps 에 값이 보여 안 쓴다
+  tok=$(umask 077; mktemp); trap 'rm -f "$tok"' EXIT
+  tr -d '\r\n' < "$GITOPS_TOKEN_FILE" > "$tok"
+  [ -s "$tok" ] || die "GITOPS_TOKEN_FILE 이 비어 있다"
+  args+=(--from-literal=username=x-access-token --from-file=password="$tok")
+fi
 K -n "$ARGO_NS" create secret generic "$repo_secret" "${args[@]}" --dry-run=client -o yaml \
   | K label --local -f - argocd.argoproj.io/secret-type=repository -o yaml | K apply -f - >/dev/null
 
