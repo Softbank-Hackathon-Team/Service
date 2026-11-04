@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ConsoleLayout, type BentoLayout } from '../../components/layout/ConsoleLayout';
 import { Hero, Tile, TileHeader } from '../../components/layout/tiles';
 import { ActionPill, BarPill } from '../../components/ui/controls';
+import { PRODUCT_NAME } from '../../components/ui/Logo';
 import { API_BASE, auth } from '../../lib/api';
 import { AuthError, githubErrorText, githubStartUrl, takeGithubError } from '../../lib/auth';
 import s from './LoginPage.module.css';
@@ -55,7 +56,7 @@ export function LoginPage({ notice }: { notice: string | null }) {
 
   return (
     <ConsoleLayout layout={LOGIN}>
-      <Hero tone="run" meta="Kross AI 콘솔" title={'돌고 있는 앱을\n멈추지 않고 옮깁니다'} />
+      <Hero tone="run" meta={`${PRODUCT_NAME} 콘솔`} title={'돌고 있는 앱을\n멈추지 않고 옮깁니다'} />
       <Tile area="form">
         <form className={s.form} onSubmit={submit} noValidate aria-label="로그인">
           <TileHeader title="로그인" />

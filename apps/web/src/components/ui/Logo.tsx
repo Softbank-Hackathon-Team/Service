@@ -1,7 +1,7 @@
 import s from './Logo.module.css';
 
-// DRAFT(ai): 프로토타입용 가칭과 임시 로고다. 제품 이름이 정해지면 이 파일만 바꾼다.
-const PRODUCT_NAME = 'Kross AI';
+// 가칭이다 (팀 합의 전). 제품 이름이 정해지면 이 값과 index.html 의 <title> 을 바꾼다. 로고 모양은 임시다.
+export const PRODUCT_NAME = 'Iron platform';
 
 /** 세로 막대와 꺾쇠가 만나는 모양. */
 export function Logo() {
