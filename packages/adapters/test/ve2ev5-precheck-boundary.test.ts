@@ -31,6 +31,8 @@ const VARIANTS: Record<string, (s: any) => void> = {
   "큐": (s) => { s.components.push({ id: "shop-q", kind: "queue", props: { model: "queue" } }); },
   "관리형 컨테이너 실행": (s) => { svcOf(s).props.runtime = "managedContainer"; },
   "이미지 digest 없음": (s) => { const i = svcOf(s).props.image; i.digest = null; },
+  "사이드카 이미지 digest 없음": (s) => { svcOf(s).props.sidecars = [{ name: "proxy", image: { source: "registry", repository: "registry/proxy", digest: null }, env: [], resources: {} }]; },
+  "init 컨테이너 이미지 digest 없음": (s) => { svcOf(s).props.initContainers = [{ name: "migrate", image: { source: "registry", repository: "registry/migrate", digest: null }, env: [], resources: {} }]; },
   "IAM grants(I4)": (s) => { const l = s.links.find((x: any) => typeof x.to === "string"); l.grants = [{ effect: "Allow", actions: ["rds:Describe*"], resources: ["*"] }]; },
   "posture.permissions(I4)": (s) => { s.posture.permissions = [{ subject: svcOf(s).id, source: "iam:r", effect: "Deny", actions: ["s3:*"], resources: ["*"], mode: "mirror" }]; },
 };
@@ -78,7 +80,7 @@ test("기대값 고정: 도착별로 어떤 조합이 막히나 (바뀌면 설�
   const blocked = (p: Provider) => Object.keys(VARIANTS).filter((n) => unsup(p, variant(n)!).some((b) => b.id.startsWith("PC-V2-UNSUP")));
   // TA12: 캐시·객체 저장소·큐는 이제 도착 Builder가 그린다 → 막힘 목록에서 빠짐 (환경별 실제 값은 아래 출력으로 고정)
   const common = ["postgres 2개", "postgres 14", "postgres 버전 모름", "postgres 크기 모름",
-    "이미지 digest 없음"];   // A8: IAM grants·posture.permissions 는 이제 네 도착 모두 그림(온프레는 STUB+warn)
+    "이미지 digest 없음", "사이드카 이미지 digest 없음", "init 컨테이너 이미지 digest 없음"];   // A8: IAM grants·posture.permissions 는 이제 네 도착 모두 그림(온프레는 STUB+warn)
   for (const p of ["aws", "gcp", "onprem"] as const) assert.deepEqual(blocked(p).sort(), [...common, ...(EXTRA[p] ?? [])].sort(), p);
   assert.deepEqual(blocked("azure_mock").sort(), [...common, "신원 2개", ...(EXTRA.azure_mock ?? [])].sort());
 });

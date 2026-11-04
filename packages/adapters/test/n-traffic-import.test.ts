@@ -97,6 +97,39 @@ test("N4 거부: hostPath 는 계획에서 막고, 모르는 볼륨 종류는 un
   assert.ok(requirementsV2(spec).includes("volume.hostPath"));
 });
 
+test("N4 거부: digest 를 못 찾은 태그만 사이드카·init 은 0.6 검토와 이유, 사전 점검이 막아 도착에 안 그림", () => {
+  const r = run([dep("api", {
+    initContainers: [{ name: "log", image: `ghcr.io/demo/log@${D2}` }, { name: "migrate", image: "ghcr.io/demo/migrate:1" }],
+    containers: [
+      { name: "api", image: `ghcr.io/demo/api@${D}`, ports: [{ containerPort: 8080 }], env: [] },
+      { name: "proxy", image: "ghcr.io/demo/proxy:2", env: [] },
+      { name: "istio-proxy", image: "docker.io/istio/proxyv2:1.22", env: [] },
+    ],
+  })]);
+  ok(r);
+  const p = comp(r, "api").props;
+  assert.deepEqual(p.sidecars.map((s: any) => s.name), ["proxy", "istio-proxy"], "빼지 않는다 (인자가 연결 근거일 수 있음)");
+  assert.deepEqual(p.initContainers.map((s: any) => s.name), ["log", "migrate"]);
+  for (const [k, name] of [["sidecars", "proxy"], ["initContainers", "migrate"]] as const) {
+    const f = r.fieldMeta[`components.api.${k}`];
+    assert.deepEqual([f?.confidence, f?.needs_review], [0.6, true], k);
+    assert.match(f?.rationale ?? "", new RegExp(`(^|[ ,])${name}([ ,]|$)`), k);
+  }
+  assert.doesNotMatch(r.fieldMeta["components.api.sidecars"]?.rationale ?? "", /istio-proxy/, "메시 주입형은 도착이 안 그려서 digest 가 없어도 검토 이유가 아님");
+  const blocks = v2Blockers(AppSpecV2.parse(r.spec), []).unsupported.filter((x) => x.includes("digest"));
+  assert.deepEqual(blocks.sort(), ["도착 렌더 미지원: api 이미지 digest 없음 (ghcr.io/demo/migrate)", "도착 렌더 미지원: api 이미지 digest 없음 (ghcr.io/demo/proxy)"]);
+});
+
+test("N4: 사이드카·init 이 전부 digest 로 박혀 있으면 검토 없이 신뢰도 1", () => {
+  const r = run([dep("api", {
+    initContainers: [{ name: "log", image: `ghcr.io/demo/log@${D2}` }],
+    containers: [{ name: "api", image: `ghcr.io/demo/api@${D}`, env: [] }, { name: "proxy", image: "ghcr.io/demo/proxy:2", env: [] }],
+  }, {}, { containerDigests: { proxy: D2 } })]);
+  ok(r);
+  assert.deepEqual(comp(r, "api").props.sidecars.map((s: any) => s.image.digest), [D2]);
+  for (const k of ["sidecars", "initContainers"]) assert.deepEqual([r.fieldMeta[`components.api.${k}`]?.confidence, r.fieldMeta[`components.api.${k}`]?.needs_review], [1, false], k);
+});
+
 // ── N5 배치·PDB ─────────────────────────────────────────
 test("N5: 배치 칸 원문 + PDB, 노드 이름 키는 0.6 검토", () => {
   const r = run([
