@@ -57,7 +57,7 @@ test("AWS 관찰 역할 템플릿: 데이터 읽기 13개(DM-8 ListMetrics)가 �
   for (const a of AWS_DATA_READ_ACTIONS) assert.ok(actions.includes(a), `템플릿에 없음: ${a}`);
   for (const a of actions) {
     assert.ok(!FORBIDDEN.some((r) => r.test(a)), `금지 동작 ${a}`);
-    assert.match(a, /:(Describe|Get|List)/, `읽기 아님 ${a}`);
+    assert.match(a, /:(Describe|Get|List|BatchGet)/, `읽기 아님 ${a}`);
     assert.ok(!a.includes("*"), `와일드카드 ${a}`);
   }
   assert.equal(new Set(actions).size, actions.length, "중복 동작");

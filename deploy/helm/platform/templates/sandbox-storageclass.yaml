@@ -1,0 +1,18 @@
+{{- if .Values.sandbox.enabled }}
+{{- $sc := .Values.sandbox.storageClass }}
+{{- /* 리허설 치환이 PVC storageClassName 을 이 이름으로 바꾼다. 지우면 볼륨도 지운다 (만료 청소 뒤 남는 디스크 없음) */}}
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ $sc.name }}
+  labels:
+    app.kubernetes.io/part-of: platform
+provisioner: {{ $sc.provisioner }}
+{{- with $sc.parameters }}
+parameters:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: false
+{{- end }}

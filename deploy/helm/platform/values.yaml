@@ -27,3 +27,28 @@ cloudflared:
 # 워커가 Application 을 읽고 새로고침 표시를 다는 Argo CD 네임스페이스 (Role·RoleBinding 이 여기 생긴다)
 argocd:
   namespace: argocd
+
+# 샌드박스(vCluster 리허설·수정 고리) 호스트 쪽 권한과 가드. agent-worker 가 sbx-* 네임스페이스에 vCluster 를 하나씩 만들고 지운다
+# 끄면 agent-worker 권한·VAP·StorageClass·RuntimeClass 가 모두 빠진다 (서비스 계정은 남는다)
+sandbox:
+  # DRAFT(ai): 기본 끔. 켜면 imageRegistry 가 꼭 있어야 해서, 값 없이 치는 기존 설치 명령이 그대로 돌게 한다.
+  #   켜면 권한은 agent-worker 서비스 계정 하나에만 묶이고 VAP 는 sbx 라벨 네임스페이스에만 걸린다
+  enabled: false
+  # 노드 그룹 라벨 pool 과 taint dedicated=<pool>:NoSchedule (infra/modules/aws/platform/main.tf aws_eks_node_group.this)
+  pool: sandbox
+  # 리허설 이미지 복사 자리 <계정>.dkr.ecr.<리전>.amazonaws.com/<접두어> (worker SANDBOX_IMAGE_REGISTRY 와 같은 값). sandbox.enabled 면 꼭 넣는다.
+  # sbx-pod-guard 가 이 계정의 ECR 이미지는 <이 값>/<네임스페이스 platform.svc/tenant>/ 아래만 받는다 (sandbox 노드 역할은 계정 ECR 전체를 읽는다)
+  imageRegistry: ""
+  # 리허설 치환이 PVC storageClassName 을 이 이름으로 바꾼다
+  storageClass:
+    name: sbx-standard
+    # DRAFT(ai): EBS CSI. 플랫폼 Terraform 에 aws-ebs-csi-driver addon 이 아직 없다 → TODO(human) README 참고
+    provisioner: ebs.csi.aws.com
+    parameters:
+      type: gp3
+  # gVisor 는 수정 고리(remediation) 샌드박스만 쓴다. 리허설은 전용 노드 + 한 번에 한 테넌트 + runc
+  gvisor:
+    # DRAFT(ai): 기본 끔. 노드에 runsc 를 까는 launch template 이 TODO(human) (main.tf). 끄면 수정 고리 샌드박스 워크로드는 뜨지 못한다 (닫힌 쪽)
+    enabled: false
+    runtimeClass: gvisor
+    handler: runsc

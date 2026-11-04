@@ -25,7 +25,6 @@ export const DEPLOY_K8S_GROUP = "platform:deploy";
 export const PRINCIPAL_PATTERN = "^arn:aws:iam::\\d{12}:(role|user)/.+$";
 
 // DRAFT(ai): 관찰 인라인 = GuardDuty 읽기 5 + EKS 읽기 3 + IAM 근거 읽기 6 + 데이터 자원 메타데이터 읽기 13 + 그 밖 모든 읽기 명령의 권한(표 원본 observe-permissions.ts). 쓰기 동작 0, 객체·메시지 내용 읽기 0
-// TODO(human): ecr:BatchGetImage 등 이미지 저장소 읽기는 ViewOnlyAccess에 없을 수 있음(미확인). 샌드박스 이미지 복사 때 추가
 export const OBSERVE_EXTRA_ACTIONS: string[] = [...new Set([
   "guardduty:ListDetectors", "guardduty:GetDetector", "guardduty:ListFindings", "guardduty:GetFindings", "guardduty:GetFindingsStatistics",
   "eks:DescribeCluster", "eks:ListPodIdentityAssociations", "eks:DescribePodIdentityAssociation",
@@ -37,6 +36,9 @@ export const OBSERVE_EXTRA_ACTIONS: string[] = [...new Set([
   ...actionsOfCommands("aws", Object.keys(AWS_COMMAND_ACTIONS)),
   // DRAFT(ai) 관찰 권한 넓힘 (가져오기 갈래 요청, 읽기 전용). 목록 원본 = adapters/src/common/observe-pending.ts
   ...AWS_OBSERVE_PENDING,
+  // 리허설 이미지 복사(worker rehearsal/image-mirror.ts)가 출발 ECR 에서 다이제스트로 받는 세 동작. 요청 원본 = security STEP_ROLES.image_mirror (시험이 대조)
+  //   ViewOnlyAccess 에 들어 있는지 【미확인】이라 인라인에 직접 적는다. 받기만 하고 올리기·지우기는 없다
+  "ecr:BatchGetImage", "ecr:GetAuthorizationToken", "ecr:GetDownloadUrlForLayer",
 ])];
 
 // 두 역할 공통 신뢰 정책. TagSession·SetSourceIdentity가 없으면 발급기의 AssumeRole(Tags·SourceIdentity 항상 포함)이 AccessDenied

@@ -62,7 +62,7 @@ export async function borrowStepRoles(step: RoleStep, j: { tenantId: string; mig
         // 관찰 역할도 이전 번호를 붙인다 (필수는 아님) → 이 이전의 장부·감사·보안 표에 같이 보인다
         tenantId: j.tenantId, envId, provider, purpose: r.purpose, migrationId: j.migrationId,
         ...(stage ? { stage } : {}),
-        actions: stepActions(perms, provider, r.purpose, stage), ttlSec: STEP_ROLE_TTL_SEC,
+        actions: "actions" in r ? [...r.actions] : stepActions(perms, provider, r.purpose, stage), ttlSec: STEP_ROLE_TTL_SEC,
       }, { step }));
       out.sides!.push(r.side);
     } catch (e) {

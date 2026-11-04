@@ -32,6 +32,9 @@ export function stepActions(p: PermissionSet | null, provider: Provider, purpose
   return cap(ceiling.filter((a) => !isDelete(a)));
 }
 
+// ECR 이미지 받기 (토큰 + 매니페스트 + 층). 고객 관찰 역할 인라인(infra/onboarding/aws-connect.json)에도 같은 세 동작이 있어야 한다 (시험이 대조)
+export const ECR_PULL_ACTIONS = ["ecr:BatchGetImage", "ecr:GetAuthorizationToken", "ecr:GetDownloadUrlForLayer"] as const;
+
 // 단계 → 어느 환경에서 무슨 목적으로 빌리나. 작업 단계 배선(worker jobs/_roles.ts)이 이 표를 따른다
 export const STEP_ROLES = {
   precheck: [{ side: "source", purpose: "observe" }, { side: "target", purpose: "observe" }],
@@ -49,5 +52,7 @@ export const STEP_ROLES = {
   gke_freeze: [{ side: "target", purpose: "operate", stage: "apply" }],
   // APP-22 (가): Terraform 이 앱을 띄우는 도착의 앱 DB 주소 바꾸기(컷오버·롤백 때 같은 입력으로 다시 apply). apply 와 같은 천장
   db_writer: [{ side: "target", purpose: "operate", stage: "apply" }],
-} as const satisfies Record<string, ReadonlyArray<{ side: "source" | "target"; purpose: "observe" | "operate"; stage?: Stage }>>;
+  // 리허설 이미지 복사 (worker rehearsal/image-mirror.ts). 출발 ECR 에서 다이제스트로 받기만 한다. 관찰 천장 전체가 아니라 이 세 동작만 요청
+  image_mirror: [{ side: "source", purpose: "observe", actions: ECR_PULL_ACTIONS }],
+} as const satisfies Record<string, ReadonlyArray<{ side: "source" | "target"; purpose: "observe" | "operate"; stage?: Stage; actions?: readonly string[] }>>;
 export type RoleStep = keyof typeof STEP_ROLES;

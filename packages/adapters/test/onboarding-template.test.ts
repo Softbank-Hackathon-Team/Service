@@ -70,7 +70,7 @@ test("관찰 역할: 관리형은 ViewOnlyAccess 하나, 인라인에 금지 동
   const forbidden = [/^secretsmanager:GetSecretValue$/, /^ssm:GetParameter/, /^s3:GetObject/, /^kms:Decrypt$/, /\*$/, /^\*$/];
   for (const a of actions) assert.ok(!forbidden.some((r) => r.test(a)), `금지 동작 ${a}`);
   // 쓰기 동사(Create/Put/Update/Delete/Attach/Pass...) 0 — 읽기 동사만
-  for (const a of actions) assert.match(a, /:(Describe|Get|List)/, `읽기 아님 ${a}`);
+  for (const a of actions) assert.match(a, /:(Describe|Get|List|BatchGet)/, `읽기 아님 ${a}`);
   for (const a of ["guardduty:ListDetectors", "guardduty:GetDetector", "guardduty:ListFindings", "guardduty:GetFindings", "guardduty:GetFindingsStatistics"])
     assert.ok(actions.includes(a), a);
   for (const s of stmts) assert.equal(s.Effect, "Allow");

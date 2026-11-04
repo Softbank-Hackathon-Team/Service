@@ -55,7 +55,7 @@
 - 이 레포 시험: `npm test` (`packages/adapters/test/onboarding-template.test.ts`가 모양·권한 범위를 고정, 클라우드 호출 없음)
 - 문법 확인(자원 안 만듦, 사람 환경에서): `aws cloudformation validate-template --template-body file://infra/onboarding/aws-connect.json`
 - STUB: `AmazonEKSViewPolicy` 이름과 `AWS::EKS::AccessEntry` 속성은 일반 지식 기준. 위 validate와 첫 실측으로 확인
-- TODO(human): 이미지 저장소 읽기(`ecr:BatchGetImage` 등)가 `ViewOnlyAccess`에 없을 수 있음(미확인). 샌드박스 이미지 복사 때 관찰 인라인에 추가
+- DRAFT(ai): 리허설 이미지 복사용 ECR 받기 세 동작(`ecr:GetAuthorizationToken`, `ecr:BatchGetImage`, `ecr:GetDownloadUrlForLayer`)을 관찰 인라인에 넣었다. `ViewOnlyAccess`에 이미 있는지는 미확인. 이미 연결한 고객은 템플릿을 다시 적용해야 복사가 된다
 
 # GCP 연결 (`gcp-connect.sh`)
 

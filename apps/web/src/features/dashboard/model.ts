@@ -87,7 +87,7 @@ export function groupMigrations(items: MigrationView[], doneLimit = DONE_LIMIT):
 export const bucketSignature = (items: MigrationView[]) =>
   items.map((item) => `${item.id}:${bucketOf(item)}`).sort().join('|');
 
-/** 큰 소식이 없을 때 목록 맨 위에 쓰는 한 줄. 사람 차례가 있으면 쓰지 않는다. */
+/** 큰 소식이 없을 때 목록 맨 위에 쓰는 한 줄. 검토가 필요한 이전이 있으면 쓰지 않는다. */
 export function listNote(groups: Record<MigrationBucket, MigrationView[]>): string | null {
   if (groups.human.length > 0) return null;
   if (groups.running.length > 0) return '지금 사람이 할 일은 없습니다.';
