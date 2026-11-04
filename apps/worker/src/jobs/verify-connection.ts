@@ -2,7 +2,7 @@ import { envNumber, nextAfterPeriodic, VerifyConnectionJob, type ConnectionStatu
 import { advanceConnection, withTenant } from "@svc/core";
 import { verifyAwsObserve, verifyGcpObserve, type CliDeps } from "@svc/adapters";
 import { GcpIssueError, StsCliError, TempRoleDenied, maskAccount, type TempRoleBroker } from "@svc/security";
-import { tempRoles } from "../platform.js";
+import { realStsEnabled, tempRoles } from "../platform.js";
 import { isLastAttempt } from "./_step.js";
 
 // PF01: 막 만든 역할·접근 항목이 퍼지는 동안 잠깐 나는 실패 (사람 확인 때만 다시 봄)
@@ -39,7 +39,7 @@ export const VERIFY_GCP_ACTIONS = ["resourcemanager.projects.get", "container.cl
 // DRAFT(ai): 관찰 역할 15분 (STS 최소값, 설계 IA 6.1 "15분 빌림")
 export const VERIFY_TTL_SEC = 900;
 
-export interface VerifyDeps { roles?: TempRoleBroker; cli?: CliDeps; delaysMs?: number[] }
+export interface VerifyDeps { roles?: TempRoleBroker; cli?: CliDeps; delaysMs?: number[]; realSts?: boolean }
 export interface VerifyOutcome { status: ConnectionStatus; reason?: string; skipped?: string }
 
 interface EnvRow {
@@ -115,6 +115,15 @@ export async function handleVerifyConnection(data: unknown, deps: VerifyDeps = {
           ref = null;
           // VL4fix DRAFT(ai): 사용자가 누른 확인(verifying)은 가짜 결과로 connected 로 닫는다 (verify_detail.mock=true, clusters 비움).
           //   그대로 두면 시드 환경이 verifying 에 영영 남는다. 주기 훑기는 상태를 안 건드림
+          // RV-24: 실측 판(REAL_STS 켬)에서 AWS·GCP 환경이 흉내 자격을 받았다 = 연결 링크를 안 거친 환경(확인 문구·고객 SA 없음).
+          //   클라우드를 한 번도 안 읽고 connected 로 닫으면 화면·API·실측 PASS 가 거짓 → 실패로 닫는다 (시험·로컬 REAL_STS=0 은 예전처럼)
+          const realMode = deps.realSts ?? realStsEnabled();
+          if (reason === "user" && realMode && (env.provider === "aws" || env.provider === "gcp")) return withTenant(tenantId, async (tx) => {
+            const failureReason = "PLATFORM_ERROR:MOCK_CREDENTIALS";
+            await advanceConnection(tx, tenantId, envId, "failed", { from: ["verifying"], failureReason,
+              audit: { actor: "worker", action: "env.verify_failed", detail: { reason: failureReason, mock: true, trigger: reason } } });
+            return { status: "failed" as const, reason: failureReason };
+          });
           if (reason === "user") return withTenant(tenantId, async (tx) => {
             await advanceConnection(tx, tenantId, envId, "connected", { from: ["verifying"], failures: 0, touchVerified: true,
               audit: { actor: "worker", action: "env.verified", detail: { mock: true, trigger: reason } } });
