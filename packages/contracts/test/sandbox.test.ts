@@ -19,7 +19,7 @@ const matrix = () => ({
 const doc = { path: "manifests/web.yaml", yaml: "kind: Deployment" };
 const input = () => ({
   version: 1, target: "onprem-k3s", app: "shop", namespace: "app-shop", bundleSha256: SHA, k8sMinor: "1.35",
-  original: [doc], apply: [doc], images: [{ ref: "r/web@sha256:1", sandboxRef: "sbx/web@sha256:1" }],
+  original: [doc], apply: [doc], images: [{ ref: "r/web@sha256:1", sandboxRef: "sandbox/web@sha256:1" }],
   databases: [{ service: "db", majorVersion: "16", database: "shop", owner: "app", secretName: "db-app", secretKeys: ["password"] }],
   targetPodSecurity: "baseline", targetQuota: { limitsCpuM: 4000, limitsMemoryMi: null },
   edges: [{ from: "web", host: "api", port: 8080 }], fidelity: matrix(),
@@ -65,13 +65,16 @@ test("RehearsalView: 줄 없음(null)·줄 있음 정상 / 모르는 상태는 �
   const run = {
     id: randomUUID(), status: "passed", failureCode: null, phase: "done", skip: null, reusedFrom: null, sandboxName: "sbx-1",
     createdAt: "2026-11-04T00:00:00Z", startedAt: "2026-11-04T00:00:01Z", finishedAt: "2026-11-04T00:03:00Z", deadlineAt: "2026-11-04T00:20:00Z",
-    fidelity: matrix(), result: result(),
+    fidelity: matrix(), result: result(), stale: false,
   };
   assert.ok(RehearsalView.safeParse({ migrationId, run }).success);
+  assert.ok(RehearsalView.safeParse({ migrationId, run: { ...run, stale: true } }).success, "지난 시도의 줄도 그대로 보인다");
   assert.equal(RehearsalView.safeParse({ migrationId, run: { ...run, status: "done" } }).success, false);
   const timedOut = { ...run, status: "error", failureCode: "REHEARSAL_TIMEOUT", result: null };
   assert.ok(RehearsalView.safeParse({ migrationId, run: timedOut }).success, "결과 없이 실패 코드만 있는 줄");
   assert.equal(RehearsalView.safeParse({ migrationId, run: { ...timedOut, failureCode: "ARGO_TIMEOUT" } }).success, false, "리허설 목록 밖 코드");
+  const { stale: _, ...noStale } = run;
+  assert.equal(RehearsalView.safeParse({ migrationId, run: noStale }).success, false, "stale 칸은 빠질 수 없다");
 });
 
 test("sandbox-rehearsal 큐: 작업 내용은 줄 번호 하나 / 줄 번호 없거나 다른 칸이 있으면 거부", () => {
