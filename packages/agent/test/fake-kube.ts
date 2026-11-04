@@ -299,7 +299,9 @@ export function fakeVirtual(o: {
         const c = crds.get(m[1]!);
         return c ? resp(200, { ...c, status: { conditions: [{ type: "Established", status: "True" }] } }) : failure(404, "not found");
       }
+      if (p === "/api/v1/namespaces" && method === "POST") { namespaces.set(b.metadata.name, b.metadata.labels ?? {}); return resp(201, b); }
       if ((m = /^\/api\/v1\/namespaces\/([^/]+)$/.exec(p)) && method === "PATCH") { namespaces.set(m[1]!, b.metadata.labels ?? {}); return resp(200, b); }
+      if ((m = /^\/api\/v1\/namespaces\/([^/]+)$/.exec(p)) && method === "DELETE") return namespaces.delete(m[1]!) ? resp(200, {}) : failure(404, "not found");
       m = /^\/(?:api\/v1|apis\/([^/]+)\/[^/]+)\/namespaces\/([^/]+)\/([^/]+)(?:\/([^/]+))?(?:\/(log))?$/.exec(p);
       if (!m) return failure(404, `fake virtual: ${method} ${p}`);
       const [, group, ns, plural, name, sub] = m as unknown as [string, string | undefined, string, string, string | undefined, string | undefined];
@@ -324,6 +326,7 @@ export function fakeVirtual(o: {
         objects.set(`${ns}/pods/${b.metadata.name}`, b);
         return resp(201, b);
       }
+      if (method === "POST") { objects.set(`${ns}/${plural}/${b.metadata.name}`, b); return resp(201, b); }
       if (plural === "pods" && method === "GET" && name) {
         const pod = objects.get(`${ns}/pods/${name}`);
         if (!pod) return failure(404, "not found");
