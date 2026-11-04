@@ -24,7 +24,7 @@ import {
 import { scopeLabel } from './source';
 import { SecurityFold } from './SecurityCard';
 import {
-  accuracyView, boundaryRows, confirmChunks, confirmLabel, specRowsV2, specV2Of, type MigrationSpecViewV2, type SpecRowV2,
+  accuracyView, boundaryRows, confirmChunks, confirmLabel, firewallDecision, firewallRows, isFirewallBlock, specRowsV2, specV2Of, type FirewallRow, type MigrationSpecViewV2, type SpecRowV2,
 } from './specV2';
 import { LeftoverFold, StopFold } from './EvidenceFolds';
 import { DoneScreen, CleanupScreen, PausedScreen, RolledBackScreen, RollingBackScreen, RunningScreen, WindowScreen } from './RunScreens';
@@ -58,6 +58,13 @@ function ValueV2({ row, className, max = 32 }: { row: SpecRowV2; className?: str
   return <CodeValue value={row.value} size={max < 32 ? 'sm' : 'md'} max={max} className={className} />;
 }
 
+const firewallReason = (row: FirewallRow) =>
+  row.reason === 'unknown'
+    ? t('출발 방화벽을 읽지 못했습니다')
+    : row.reason === 'uncopyable'
+      ? t('출발에서 허용하던 {0}은(는) 도착으로 옮길 수 없습니다', { 0: row.sources.join(', ') })
+      : t('출발은 공개였지만 허용 주소가 없습니다');
+
 function SpecScreen({ migration, route, onChanged }: ScreenProps) {
   const spec = usePoll(() => or404(api.migrationSpec(migration.id)), null, [migration.id, migration.version]);
   const timeline = usePoll(() => or404(api.timeline(migration.id)), null, [migration.id, migration.version]);
@@ -73,7 +80,8 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
   const boundary = boundaryRows(view?.outOfBoundary);
   const accuracy = view?.accuracy ? accuracyView(view.accuracy) : null;
   const bounce = timeline.data ? lastPrecheckBounce(timeline.data.items) : null;
-  const blocks = bounce?.items.filter((item) => item.level === 'block') ?? [];
+  const firewall = v2 ? firewallRows(v2.spec) : [];
+  const blocks = bounce?.items.filter((item) => item.level === 'block' && (firewall.length > 0 || !isFirewallBlock(item.message))) ?? [];
   // 보안 판정 막힘으로 돌아왔으면 보안 요구사항 카드를 열어 둔다 (요구사항을 고쳐 풀리는 막힘이 있다: 허용 국가·키 소유)
   const secBlocked = blocks.some(isSecItem);
   const requirements = v2?.spec.security?.requirements ?? null;
@@ -113,6 +121,13 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
     run(async () => {
       if (!view) return;
       await api.patchSpec(migration.id, { baseVersion: view.version, changes: [{ path: 'security', value }] });
+      await spec.reload();
+    });
+
+  const decideFirewall = (subject: string) =>
+    run(async () => {
+      if (!view || !v2) return;
+      await api.patchSpec(migration.id, { baseVersion: view.version, changes: [{ path: 'posture', value: firewallDecision(v2.spec.posture, subject) }] });
       await spec.reload();
     });
 
@@ -189,6 +204,24 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
             <p className={`${s.note} t-body-sm c-secondary`}>{spec.loading ? t('명세를 읽고 있습니다.') : t('아직 명세가 없습니다.')}</p>
           )}
         </FoldTile>
+        {firewall.length > 0 && (
+          <FoldTile title={t('출발 방화벽')} summary={t('{0}개 정해야 함', { 0: firewall.length })}>
+            <ul className={s.rows}>
+              {firewall.map((row) => (
+                <li key={row.subject}>
+                  <div className={s.row}>
+                    <span className="t-label-md c-warning">{row.subject}</span>
+                  </div>
+                  <p className={`${s.rowCaption} t-caption c-tertiary`}>{firewallReason(row)}</p>
+                  <div className={s.rowAction}>
+                    <BarPill label={row.kept.length > 0 ? t('허용 주소 {0}만 옮기기', { 0: row.kept.join(', ') }) : t('의존성 연결만 열기')} icon="check" onClick={busy ? undefined : () => void decideFirewall(row.subject)} />
+                  </div>
+                </li>
+              ))}
+            </ul>
+            <p className={`${s.note} t-caption c-tertiary`}>{t('이 앱의 서비스가 쓰는 연결은 따로 엽니다. 도착으로 옮길 수 없는 허용 원본은 빼고, 허용 주소가 없는 공개 자원은 비공개로 둡니다.')}</p>
+          </FoldTile>
+        )}
         {view && v2 && (
           <RequirementsFold
             key={`security-${secBlocked}`}

@@ -1,12 +1,46 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  accuracyView, boundaryRows, confirmChunks, confirmLabel, resolveKey, sourceText, specRowsV2, specV2Of,
+  accuracyView, boundaryRows, confirmChunks, confirmLabel, firewallDecision, firewallRows, isFirewallBlock, resolveKey, sourceText, specRowsV2, specV2Of,
   type AppSpecV2, type MigrationSpecViewV2,
 } from "../src/features/migration/specV2";
 import { createClient } from "../src/lib/http";
 
 // 명세 v2 검토 화면의 판단 (GET /migrations/:id/spec 의 v2 칸 → 검토 줄·근거·경계 밖·정확도)
+
+test("출발 방화벽: 서버가 막을 줄만 보이고, 결정하면 그 자원만 막힘이 풀린다", () => {
+  const network = [
+    { scope: "namespace", name: "app" },
+    { scope: "component", subject: "unread", mode: "mirror", ingress: "unknown" as const, public: null },
+    { scope: "component", subject: "sg", mode: "mirror", ingress: [{ from: "10.0.0.0/8", port: 5432 }, { from: "sg:sg-1" }], public: false },
+    { scope: "component", subject: "open", mode: "mirror", ingress: [], public: true },
+    { scope: "component", subject: "fine", mode: "mirror", ingress: [{ from: "10.0.0.0/8" }], public: true },
+  ];
+  const base = { schemaVersion: "2" as const, app: { name: "shop" }, components: [], links: [] };
+  const rows = firewallRows({ ...base, posture: { network } });
+  assert.deepEqual(rows.map((r) => [r.subject, r.reason]), [["unread", "unknown"], ["sg", "uncopyable"], ["open", "publicNoCidr"]]);
+  assert.deepEqual(rows[1]!.sources, ["sg:sg-1"]);
+  assert.deepEqual(rows[1]!.kept, ["10.0.0.0/8"], "결정해도 남는 주소를 사람에게 보인다");
+  assert.deepEqual(rows[0]!.kept, []);
+
+  const unread = firewallDecision({ network, egress: { source: "nat" } } as never, "unread");
+  assert.deepEqual(unread.network![1]!.ingress, []);
+  assert.equal(unread.network![2], network[2], "다른 자원은 그대로");
+  assert.deepEqual((unread as unknown as { egress: unknown }).egress, { source: "nat" }, "다른 칸도 그대로");
+  assert.deepEqual(firewallDecision({ network }, "sg").network![2]!.ingress, [{ from: "10.0.0.0/8", port: 5432 }], "CIDR 는 남김");
+  assert.equal(firewallDecision({ network }, "open").network![3]!.public, false, "허용 주소 없는 공개는 비공개로");
+
+  let posture: AppSpecV2["posture"] = { network };
+  for (const row of firewallRows({ ...base, posture })) posture = firewallDecision(posture, row.subject);
+  assert.deepEqual(firewallRows({ ...base, posture }), []);
+  assert.equal(firewallRows({ ...base }).length, 0, "posture 없는 명세는 줄 없음");
+});
+
+test("출발 방화벽 막힘 문구를 서버 문구로 알아본다 (다른 사람 확인 막힘은 아님)", () => {
+  assert.equal(isFirewallBlock("FAIL 사람 확인 필요 — shop-db: 출발 방화벽을 못 읽음 → 의존성만 열지 사람이 정함"), true);
+  assert.equal(isFirewallBlock("FAIL 사람 확인 필요 — db: 출발은 공개였는데 허용 주소(CIDR)가 없음 → 도착은 비공개로 두고 사람이 정함"), true);
+  assert.equal(isFirewallBlock("FAIL 사람 확인 필요 — cache: 출발 캐시 AUTH 사용 여부를 못 읽음"), false);
+});
 
 const spec: AppSpecV2 = {
   schemaVersion: "2", app: { name: "shop" },

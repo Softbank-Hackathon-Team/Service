@@ -1,10 +1,8 @@
 import { writeFileSync } from "node:fs";
 import { expect, test, type Page, type TestInfo } from "@playwright/test";
-import { smokePostureDecision } from "../../../tools/smoke-env";
 
 // 새 콘솔(src/)을 목업(dev-mock.ts) 없이 실제 API·워커·DB 로 끝까지 돈다 (playwright.real.config.ts).
 // 사람처럼 보이는 버튼만 누르고 API 를 직접 불러 상태를 넘기지 않는다. 화면이 깨지는 곳에서 이 시험도 실패한다.
-// 예외는 하나: 화면에 칸이 없는 출발 방화벽 결정 (decideFirewallOffScreen). 상태를 넘기지는 않고 명세만 고친다.
 // 다음 단계를 막는 실패는 그 자리에서 멈추고(expect), 막지 않는 실패는 끝까지 간 뒤 한꺼번에 남긴다(expect.soft).
 
 const EMAIL = process.env.E2E_LOGIN_EMAIL ?? "demo@dev-company.test";
@@ -190,25 +188,6 @@ async function waitForScreen(page: Page, ev: Evidence, want: RegExp, ms: number,
   }
 }
 
-// TODO(human): 새 콘솔에는 출발 방화벽(posture.network 의 ingress "unknown")을 정하는 칸이 없다. 사전 점검이 PC-V2-HUMAN 으로 막으면
-//   화면만으로는 풀 수 없어, 이 한 곳만 smoke 와 같은 값(빈 허용 목록)을 API 로 보낸다. 칸이 생기면 클릭으로 바꾸고 이 함수를 지운다
-async function decideFirewallOffScreen(page: Page, migrationId: string, authorization: string) {
-  const call = async (method: "GET" | "PATCH", body?: unknown) => {
-    const res = await page.request.fetch(`/api/migrations/${migrationId}/spec`, {
-      method,
-      headers: { authorization, ...(body ? { "idempotency-key": crypto.randomUUID() } : {}) },
-      ...(body ? { data: body } : {}),
-    });
-    expect(res.ok(), `${method} spec: ${res.status()}`).toBe(true);
-    return (await res.json()) as { version: number; specV2?: unknown };
-  };
-  const view = await call("GET");
-  const decision = smokePostureDecision(view.specV2);
-  expect(decision, "사전 점검이 막은 이유가 방화벽 모름이 아님").not.toBeNull();
-  await call("PATCH", { baseVersion: view.version, changes: [{ path: "posture", value: decision!.value }] });
-  return decision!.subjects;
-}
-
 async function writeEvidence(info: TestInfo, ev: Evidence) {
   const lines = [
     `마이그레이션 ${ev.migrationId ?? "(만들지 못함)"}`,
@@ -314,18 +293,19 @@ const flow = (ending: "회수" | "롤백") => async ({ page }: { page: Page }, i
 
     await step("명세 확정", async () => {
       await expect(page.getByRole("button", { name: /^읽은 값/ })).toContainText(/\d+칸/);
+      // 출발 방화벽을 못 읽은 자원은 사람이 정하기 전에는 사전 점검을 못 넘는다. 개발 seed 의 DB 가 그렇다
+      const decide = page.getByRole("button", { name: "의존성 연결만 열기", exact: true });
+      const undecided = await decide.count();
+      ev.notes["출발 방화벽 결정"] = `${undecided}개`;
+      for (let left = undecided; left > 0; left--) {
+        await decide.first().click();
+        await expect(decide).toHaveCount(left - 1);
+      }
       await page.getByRole("button", { name: /명세 확정$/ }).click();
     });
 
     await step("사전 점검 · 계획 만들기", async () => {
-      const checked = await waitForScreen(page, ev, anyOf(SCREEN.approve, SCREEN.specBlocked), WORKER_MS);
-      if (SCREEN.specBlocked.test(checked.title)) {
-        const subjects = await decideFirewallOffScreen(page, ev.migrationId!, authorization);
-        ev.notes["화면 밖 결정"] = `출발 방화벽 모름 ${subjects.join(",")} → 빈 허용 목록 (새 콘솔에 칸이 없어 API 로)`;
-        await page.reload();
-        await page.getByRole("button", { name: /명세 확정$/ }).click();
-      }
-      await waitForScreen(page, ev, SCREEN.approve, WORKER_MS);
+      await waitForScreen(page, ev, SCREEN.approve, WORKER_MS, SCREEN.specBlocked);
       await expect(page.getByRole("button", { name: /^실행 단계/ }), "계획서를 읽음").toContainText(/\d+단계/);
       await expect(page.getByRole("button", { name: /^사전 점검/ })).toContainText(/\d+건/);
       ev.notes["사전 점검"] = flat(await page.getByRole("button", { name: /^사전 점검/ }).textContent());
@@ -364,12 +344,15 @@ const flow = (ending: "회수" | "롤백") => async ({ page }: { page: Page }, i
         await expect(heroTitle(page)).toHaveText(SCREEN.rolledBack, { timeout: WORKER_MS });
         await expect(rollback, "되돌린 뒤에는 롤백 버튼이 없음").toHaveCount(0);
         await expect(page.getByRole("button", { name: "리소스 회수", exact: true })).toHaveCount(0);
-        // 화면 문구만 믿지 않고 워커가 남긴 전이 기록을 읽는다 (traffic-shift 는 전환 단계 기록이라 롤백이 안 바꾼다)
-        const timeline = await page.request.get(`/api/migrations/${ev.migrationId}/timeline`, { headers: { authorization } });
-        const { items } = (await timeline.json()) as { items: { to: string | null; detail: { weights?: unknown } }[] };
+        await expect(page.getByText("이 마이그레이션이 도착에 만든 자원은 자동으로 지웁니다", { exact: true })).toBeVisible();
+        // 화면 문구만 믿지 않고 워커가 남긴 전이 기록과 트래픽 진행 줄을 읽는다
+        const read = async <T>(what: string) => (await (await page.request.get(`/api/migrations/${ev.migrationId}/${what}`, { headers: { authorization } })).json()) as T;
+        const { items } = await read<{ items: { to: string | null; detail: { weights?: unknown } }[] }>("timeline");
         const weights = items.find((item) => item.to === "rolled_back")?.detail.weights;
         ev.notes["롤백 뒤 트래픽"] = JSON.stringify(weights);
         expect(weights, "트래픽이 출발 100%로 돌아옴").toEqual({ source: 1, target: 0 });
+        const shift = await read<{ targetWeightPct: number | null }>("traffic-shift");
+        expect(shift.targetWeightPct, "화면 막대가 읽는 값도 도착 0%").toBe(0);
       });
       return;
     }
