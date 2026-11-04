@@ -1,0 +1,24 @@
+# Argo CD 허브가 고객 GKE 에 키 없이 들어가는 설정. argo-cd.values.yaml 위에 겹쳐 쓴다
+# <WIF_AUDIENCE> = infra/modules/gcp/platform-wif 출력 audience. 설치 순서는 deploy/helm/platform/README.md
+# 구글용 토큰은 파드에 파일로 들어오고(1시간, 자동 갱신), 회사별 설정 파일은 ConfigMap argocd-gcp-creds 에 있다. 저장되는 키는 없다
+# optional: 설정 파일이 아직 없어도 허브는 뜬다. 그 회사 클러스터 로그인만 실패한다
+
+controller:
+  volumes: &volumes
+    - name: gcp-token
+      projected:
+        sources:
+          - serviceAccountToken:
+              audience: <WIF_AUDIENCE>
+              expirationSeconds: 3600
+              path: token
+    - name: gcp-cred
+      configMap:
+        name: argocd-gcp-creds
+        optional: true
+  volumeMounts: &mounts
+    - { name: gcp-token, mountPath: /var/run/secrets/tokens/gcp, readOnly: true }
+    - { name: gcp-cred, mountPath: /var/run/gcp-cred, readOnly: true }
+server:
+  volumes: *volumes
+  volumeMounts: *mounts

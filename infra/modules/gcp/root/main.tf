@@ -463,6 +463,9 @@ output "db_name" { value = local.repl_key != "" ? module.postgres[local.repl_key
 output "db_password_secret_id" { value = local.repl_key != "" ? module.postgres[local.repl_key].password_secret : "" }
 output "app_gsa_email" { value = local.first_identity != "" ? module.identity[local.first_identity].gsa_email : "" }
 output "namespace" { value = length(module.namespace) > 0 ? try(module.namespace[var.k8s_namespace].name, values(module.namespace)[0].name) : "" }
+# 허브 cluster Secret 재료 (apps/worker/src/gitops/bundle.ts gkeClusterSecret). GKE 없으면 빈 값
+output "cluster_endpoint" { value = try(data.google_container_cluster.this[0].endpoint, "") }
+output "cluster_ca_certificate" { value = try(data.google_container_cluster.this[0].master_auth[0].cluster_ca_certificate, "") }
 
 output "identity_gsa_emails" {
   value = { for id, m in module.identity : id => m.gsa_email }

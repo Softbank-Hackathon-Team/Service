@@ -2,7 +2,7 @@ import type { AppSpecV2, DeployResult, HelmValues, PlanDoc, Provider, TfOutputs 
 import { flattenTfOutputsV2 } from "@svc/adapters";
 import { helmValuesV2 } from "../jobs/plan-v2.js";
 import { stableHash } from "../jobs/_step.js";
-import { ENV_DIR, DELIVERY, appNamespace, fillPlaceholders, planFile, tenantSlug, withTraffic, argoAppName, type BundleRef, type PlanFile } from "./bundle.js";
+import { ENV_DIR, DELIVERY, appNamespace, fillPlaceholders, gkeAccess, planFile, tenantSlug, withTraffic, argoAppName, type BundleRef, type PlanFile } from "./bundle.js";
 import { GitopsError, GitopsRepo, type CommitOpts, type CommitResult, type RenderedBundle } from "./repo.js";
 
 export { configFromEnv, GitopsRepo, GitopsError, gitopsPreflight, type CommitOpts, type RenderedBundle } from "./repo.js";
@@ -78,7 +78,7 @@ export async function renderForRehearsal(repo: GitopsRepo, i: DeployInput): Prom
 export async function deployToGitops(repo: GitopsRepo, i: DeployInput, watcher: SyncWatcher, opts: CommitOpts = {}):
   Promise<{ result: DeployResult; commit: string; app: string; argo?: SyncWatchResult["observed"] }> {
   const { b, plan, values } = await bundleValues(i, repo);
-  const c = await repo.commitBundle("deploy", b, values, plan, `plan ${i.plan.planId.slice(0, 8)}`, opts);
+  const c = await repo.commitBundle("deploy", b, values, plan, `plan ${i.plan.planId.slice(0, 8)}`, { ...opts, gke: gkeAccess(b.env, i.tfOutputs) });
   const w = await watcher.wait(b, c);
   const status = !w.ok ? "failed" : DELIVERY[b.env] === "argocd-push" ? "synced_healthy" : "applied";
   return {

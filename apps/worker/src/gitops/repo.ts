@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import type { HelmValues } from "@svc/contracts";
-import { APP_NS_PREFIX, bundlePath, commitMessage, fenceDoc, resourceId, type BundleRef, type PlanFile } from "./bundle.js";
+import { APP_NS_PREFIX, GKE_SECRET_FILE, bundlePath, commitMessage, fenceDoc, gkeClusterSecret, resourceId, type BundleRef, type GkeAccess, type PlanFile } from "./bundle.js";
 
 const run = promisify(execFile);
 
@@ -59,6 +59,8 @@ export interface RenderedBundle { bundleSha256: string; manifests: Array<{ path:
 export interface CommitOpts {
   // 리허설한 지문. 렌더 결과가 다르면 커밋하지 않고 작업 복사본을 되돌린 뒤 REHEARSAL_BUNDLE_MISMATCH
   expectBundleSha?: string;
+  // 있으면 허브의 고객 GKE 접속 정보도 같이 커밋한다 (묶음 지문에는 안 들어간다)
+  gke?: GkeAccess;
 }
 
 // Z38-6: 자식 프로세스(git·npm·gitops 레포의 render/validate 스크립트)에는 워커 환경변수를 통째로 넘기지 않는다.
@@ -159,7 +161,7 @@ export class GitopsRepo {
     return serial(async () => {
       // 렌더·검사가 실패하면 쓴 파일을 되돌린다. 안 그러면 커밋 안 된 묶음이 작업 복사본에 남고,
       //   validate 는 디스크의 모든 회사를 보므로 같은 워커의 다음 배포(다른 회사 포함)가 전부 같은 이유로 실패한다 (2026-11-04 재현)
-      const { remote, rel, written } = await this.writeAndRender(b, values, plan).catch(async (e: unknown) => {
+      const { remote, rel, written } = await this.writeAndRender(b, values, plan, opts.gke).catch(async (e: unknown) => {
         await this.revert(b).catch(() => undefined);
         throw e;
       });
@@ -200,7 +202,7 @@ export class GitopsRepo {
     });
   }
 
-  private async writeAndRender(b: BundleRef, values: HelmValues, plan: PlanFile) {
+  private async writeAndRender(b: BundleRef, values: HelmValues, plan: PlanFile, gke?: GkeAccess) {
     await this.ensureCheckout();
     const remote = await this.hasRemote();
     if (remote) await this.git("pull", "--ff-only", "origin", this.cfg.branch);
@@ -212,6 +214,7 @@ export class GitopsRepo {
     // 온프레(agent-pull)는 목적지 클러스터가 없지만(null) gitops validate 는 묶음이 있는 회사마다 울타리 파일을 요구한다
     //   → 없을 때만 목적지 없는 울타리를 만든다 (안 그러면 온프레만 쓰는 회사의 첫 배포가 GITOPS_VALIDATE_FAILED)
     await this.ensureFence(b.tenant, plan.target.cluster);
+    if (gke) await this.writeGkeSecret(b.tenant, gke, plan.target.namespace);
     await this.tool("render.mjs", rel);
     await this.tool("validate.mjs");
     return { remote, rel, abs, written: await this.readPlan(b) };
@@ -253,6 +256,15 @@ export class GitopsRepo {
     }
     await mkdir(dirname(p), { recursive: true });
     await writeFile(p, JSON.stringify(fenceDoc(tenant, repoUrl, cluster === null ? clusters : [...clusters, cluster]), null, 2) + "\n");
+  }
+
+  // 같은 회사의 다른 앱 구역은 지우지 않고 더한다
+  // ponytail: 앱을 정리해도 구역은 안 뺀다. 앱 정리 코드가 생기면 거기서 뺀다 (RoleBinding 이 사라진 구역이 남으면 Argo 가 그 클러스터를 못 읽는다)
+  private async writeGkeSecret(tenant: string, gke: GkeAccess, namespace: string) {
+    const p = join(this.cfg.dir, "tenants", tenant, "argocd", GKE_SECRET_FILE);
+    const text = await readFile(p, "utf8").catch(() => null);
+    const seen = text === null ? [] : (JSON.parse(text) as { stringData: { namespaces: string } }).stringData.namespaces.split(",");
+    await writeFile(p, JSON.stringify(gkeClusterSecret(tenant, gke, [...seen, namespace]), null, 2) + "\n");
   }
 
   private async pushWithRetry() {
