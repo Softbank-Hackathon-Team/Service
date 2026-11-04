@@ -1,14 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { upconvertV1, AppSpec, type TargetEnv } from "@svc/contracts";
+import { AppSpecV2, type TargetEnv } from "@svc/contracts";
 import { DbNetworkError, fillTfVars, targetBuilderFor, withDbNetworkV2, resourceTypesV2For } from "../src/index.js";
 
 // VTA11: TA11 경계값·거부·멱등 (withDbNetworkV2 · fillTfVars JSON 자리표시 · 모르는 종류)
-const V1 = AppSpec.parse({ schemaVersion: "1", app: { name: "shop" },
-  service: { image: `r/shop@sha256:${"a".repeat(64)}`, port: 8080, healthPath: "/healthz", replicas: 1, cpu: "500m", memory: "1Gi", env: [], secretRefs: [] },
-  database: { engine: "postgres", majorVersion: "16", storageGb: 20 }, ingress: { hostname: "s.example.com", entry: "cloudflare-lb" } });
+// 데모 명세 (shop 서비스 1개 + postgres 1개)
+const BASE: AppSpecV2 = AppSpecV2.parse({"schemaVersion":"2","app":{"name":"shop"},"components":[{"id":"shop","kind":"service","props":{"runtime":"k8s","origin":{"runtime":"k8s","product":"unknown"},"image":{"source":"registry","repository":"r/shop","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"ports":[{"port":8080,"protocol":"TCP"}],"probes":{"readiness":{"type":"http","path":"/healthz","port":8080}},"replicas":{"min":1,"max":1},"serviceAccount":"default","resources":{"request":{"cpuMilli":500,"memMiB":1024}},"env":[]}},{"id":"db","kind":"postgres","props":{"majorVersion":"16","storageGb":20}}],"links":[{"from":"shop","to":"db","intent":"connect"}],"entry":{"via":"cloudflare-lb","hosts":[{"hostnames":["s.example.com"],"routes":[{"matches":[{"path":{"type":"PathPrefix","value":"/"}}],"backends":[{"to":"shop","port":8080,"weight":1}]}]}]},"posture":{"permissions":[],"network":[]}});
 const T = (p: TargetEnv["provider"]) => ({ envId: "33333333-3333-4333-8333-333333333333", provider: p, region: "default" }) as TargetEnv;
-const v2tf = (p: "aws" | "gcp") => targetBuilderFor(p).toTerraformV2(upconvertV1(V1).spec, T(p));
+const v2tf = (p: "aws" | "gcp") => targetBuilderFor(p).toTerraformV2(structuredClone(BASE), T(p));
 const FACTS = { dbPublicSubnetIdsJson: `["subnet-a","subnet-b"]`, accountId: "000000000000", clusterName: "c", vpcId: "vpc-1", dbSubnetIdsJson: `["subnet-c"]`, tenantId: "t" };
 
 test("withDbNetworkV2 멱등: 두 번 적용해도 허용 주소가 늘지 않고 결과가 같음", () => {
@@ -70,7 +69,7 @@ test("fillTfVars: 값이 JSON 문자열(서브넷 목록)이어도 JSON 안에�
 
 test("resourceTypesV2For: 아직 Builder 가 모르는 종류(cache·objectStore·queue)가 있어도 던지지 않고 같은 입력이면 같은 목록", () => {
   for (const p of ["aws", "gcp", "onprem", "azure_mock"] as const) {
-    const mk = () => { const s: any = upconvertV1(V1).spec; s.components.push({ id: "c1", kind: "cache", props: { engine: "redis", version: "7", memoryMiB: 512, clusterMode: false, tls: true, auth: true, ha: false } }); return s; };
+    const mk = () => { const s: any = structuredClone(BASE); s.components.push({ id: "c1", kind: "cache", props: { engine: "redis", version: "7", memoryMiB: 512, clusterMode: false, tls: true, auth: true, ha: false } }); return s; };
     assert.deepEqual(resourceTypesV2For(p, mk()), resourceTypesV2For(p, mk()), p);
   }
 });

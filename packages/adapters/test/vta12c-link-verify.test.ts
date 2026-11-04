@@ -2,14 +2,13 @@
 //   "checkV2 는 의도를 허용하는데 Builder 가 모른다"(E2EDATA2 설계 구멍)가 대상 종류 × 의도 × 도착 전체에서 다시 안 생기게 표로 고정
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { upconvertV1, AppSpec, AppSpecV2, checkV2, type TargetEnv } from "@svc/contracts";
+import { AppSpecV2, checkV2, type TargetEnv } from "@svc/contracts";
 import { targetBuilderFor, v2Blockers, stubTfOutputsV2 } from "../src/index.js";
 import { awsGrantPlan, gcpGrantPlan, grantBlockers } from "../src/target/grants.js";
 
 type Raw = Record<string, any>;
-const V1 = AppSpec.parse({ schemaVersion: "1", app: { name: "shop" },
-  service: { image: `r/shop@sha256:${"a".repeat(64)}`, port: 8080, healthPath: "/healthz", replicas: 1, cpu: "500m", memory: "1Gi", env: [], secretRefs: [] },
-  database: { engine: "postgres", majorVersion: "16", storageGb: 20 }, ingress: { hostname: "s.example.com", entry: "cloudflare-lb" } });
+// 데모 명세 (shop 서비스 1개 + postgres 1개)
+const BASE: AppSpecV2 = AppSpecV2.parse({"schemaVersion":"2","app":{"name":"shop"},"components":[{"id":"shop","kind":"service","props":{"runtime":"k8s","origin":{"runtime":"k8s","product":"unknown"},"image":{"source":"registry","repository":"r/shop","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"ports":[{"port":8080,"protocol":"TCP"}],"probes":{"readiness":{"type":"http","path":"/healthz","port":8080}},"replicas":{"min":1,"max":1},"serviceAccount":"default","resources":{"request":{"cpuMilli":500,"memMiB":1024}},"env":[]}},{"id":"db","kind":"postgres","props":{"majorVersion":"16","storageGb":20}}],"links":[{"from":"shop","to":"db","intent":"connect"}],"entry":{"via":"cloudflare-lb","hosts":[{"hostnames":["s.example.com"],"routes":[{"matches":[{"path":{"type":"PathPrefix","value":"/"}}],"backends":[{"to":"shop","port":8080,"weight":1}]}]}]},"posture":{"permissions":[],"network":[]}});
 const T = (p: TargetEnv["provider"]) => ({ envId: "33333333-3333-4333-8333-333333333333", provider: p, region: "default", migrationId: "44444444-4444-4444-8444-444444444444" }) as TargetEnv;
 const INTENTS = ["connect", "read", "write", "readwrite", "admin", "call"] as const;
 const TARGETS: Record<string, Raw> = {
@@ -19,7 +18,7 @@ const TARGETS: Record<string, Raw> = {
 };
 const ALLOWED: Record<string, string[]> = { cache: ["connect"], objectStore: ["read", "write", "readwrite", "admin"], queue: ["read", "write", "readwrite", "admin"] };
 function build(kind: string, intent: string, grants?: Raw[]): Raw {
-  const s: Raw = structuredClone(upconvertV1(V1).spec);
+  const s: Raw = structuredClone(BASE);
   const svc = s.components.find((c: Raw) => c.kind === "service");
   s.components.push(structuredClone(TARGETS[kind]));
   s.links.push({ from: svc.id, to: TARGETS[kind]!.id, intent, ...(grants ? { grants } : {}) });

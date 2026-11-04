@@ -1,31 +1,31 @@
-// 공통 명세 v2 비용 (PLAN_IR=v2 계획서 고지용). 가격표에 있는 덩어리만 합계, 나머지는 이름으로
+// 공통 명세 비용 (계획서 고지용). 가격표에 있는 덩어리만 합계, 나머지는 이름으로
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AppSpec, AppSpecV2, upconvertV1 } from "@svc/contracts";
+import { AppSpecV2 } from "@svc/contracts";
 import { estimateCost, estimateCostV2, loadSampleCatalog, type EnvEstimate, type PriceCatalog } from "../src/index.js";
 import { spec } from "./helpers.js";
 
 const catalog = loadSampleCatalog();
 const ALL = ["aws", "gcp", "onprem", "azure_mock"] as const;
 type Raw = Record<string, any>;
-const V1 = AppSpec.parse(spec({ cpu: "500m", memory: "1Gi" }));   // demo-shop: 1대 x 500m/1Gi + Postgres 20GB
+const BASE = spec({ cpuMilli: 500, memMiB: 1024 });   // demo-shop: 1대 x 500m/1Gi + Postgres 20GB
 const run = (s: AppSpecV2, peakRps = 10, cat: PriceCatalog = catalog) =>
   estimateCostV2({ spec: s, providers: [...ALL], peakRps }, cat);
 const by = (r: { envs: EnvEstimate[] }, p: string) => r.envs.find((e) => e.provider === p)!;
-/** upconvert 판을 고쳐 v2 명세를 만든다 */
+/** 기본 명세를 고쳐 새 명세를 만든다 */
 const v2 = (mut: (s: Raw) => void = () => {}): AppSpecV2 => {
-  const s: Raw = structuredClone(upconvertV1(V1).spec);
+  const s: Raw = structuredClone(BASE);
   mut(s);
   return AppSpecV2.parse(s);
 };
 const svc = (s: Raw) => s.components.find((c: Raw) => c.kind === "service");
 
-test("v1 과 같다: upconvertV1 판은 estimateCost 와 환경별 금액·덩어리·노드가 같고 못 넣은 칸이 없다", () => {
-  const cases = [V1, AppSpec.parse(spec({ replicas: 3, cpu: "1", memory: "2Gi" })), AppSpec.parse(spec({}, false))];
+test("estimateCost 와 같다: 노드·DB 네 덩어리 명세는 두 계산의 환경별 금액·덩어리·노드가 같고 못 넣은 칸이 없다", () => {
+  const cases = [BASE, spec({ replicas: 3, cpuMilli: 1000, memMiB: 2048 }), spec({}, false)];
   for (const s of cases) for (const rps of [10, 300]) {
     const a = estimateCost({ spec: s, targets: [...ALL], traffic: { peakRps: rps } }, catalog, { breakpoints: false });
-    const b = estimateCostV2({ spec: upconvertV1(s).spec, providers: [...ALL], peakRps: rps }, catalog);
-    assert.deepEqual(b.envs, a.envs, `${s.service.replicas}x${s.service.cpu} rps=${rps}`);
+    const b = estimateCostV2({ spec: s, providers: [...ALL], peakRps: rps }, catalog);
+    assert.deepEqual(b.envs, a.envs, `${JSON.stringify(s.components[0]!.props)} rps=${rps}`);
     assert.equal(b.priceAsOf, a.priceAsOf);
   }
 });
@@ -53,7 +53,7 @@ test("관리형 컨테이너(ECS·Cloud Run): 서비스는 못 넣고, k8s 워�
   assert.deepEqual(by(run(v2((s) => { svc(s).props.runtime = "vm"; })), "aws").unknown, ["service:demo-shop"]);
 });
 
-test("서비스 두 개: 요청량을 합쳐 노드 수를 정한다 (v1 투영은 주 서비스 하나만 셌다)", () => {
+test("서비스 두 개: 요청량을 합쳐 노드 수를 정한다 ", () => {
   const r = run(v2((s) => s.components.push({ id: "worker", kind: "service",
     props: { ...structuredClone(svc(s).props), replicas: { min: 2, max: 2 }, resources: { request: { cpuMilli: 1000, memMiB: 2048 } } } })));
   // 2.5 vCPU · 5GiB → t3.medium 3대

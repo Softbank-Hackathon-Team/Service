@@ -20,6 +20,7 @@ variable "cfg" {
     tls             = optional(bool)
     auth            = optional(bool)
     ha              = optional(bool)
+    port            = optional(number) # DM-7: Memorystore 는 상품이 포트를 정함(6379·TLS 6378) → 안 씀 (Builder 경고)
     allow_from_json = optional(string, "[]")
   })
   validation {
@@ -30,6 +31,11 @@ variable "cfg" {
     # TODO(human): memcached(Memorystore for Memcached)·클러스터 모드(Memorystore Redis Cluster)는 다른 자원이라 아직 없음. 지금은 거부
     condition     = contains(["redis", "valkey"], var.cfg.engine) && var.cfg.cluster_mode != true
     error_message = "GCP cache: engine 은 redis·valkey, cluster_mode 는 아직 안 됨."
+  }
+  validation {
+    # SZ-1: Memorystore 한 인스턴스 최대 300GB 【추정: 상품 한도】. 넘으면 줄이지 않고 거부
+    condition     = ceil(coalesce(var.cfg.memory_mib, 1024) / 1024) <= 300
+    error_message = "GCP cache: memory_mib 가 Memorystore 최대(300GB)보다 크다 (줄이지 않음)."
   }
   validation {
     # DRAFT(ai): allow_from_json(신원 목록)은 authorized_network(VPC) 하나로 막으므로 모양만 본다
@@ -45,10 +51,11 @@ variable "labels" { type = map(string) }
 locals {
   # DRAFT(ai): memory_mib → GB 올림(최소 1). 모르면 1GB
   memory_gb = max(1, ceil(coalesce(var.cfg.memory_mib, 1024) / 1024))
-  # DRAFT(ai): valkey 는 Memorystore Redis 7.2(프로토콜 호환)로 옮김. redis 는 버전 그대로, 모르면 7.0
-  redis_version = var.cfg.engine == "valkey" ? "REDIS_7_2" : "REDIS_${replace(coalesce(var.cfg.version, "7.0"), ".", "_")}"
+  # DRAFT(ai): 판은 Builder 가 Memorystore 가 받는 판(4.0·5.0·6.x·7.0·7.2)으로 바꿔 보낸다 (CV-1, target/data-fit.ts). 모르면 redis 7.0·valkey 7.2(프로토콜 호환)
+  redis_version = "REDIS_${upper(replace(coalesce(var.cfg.version, var.cfg.engine == "valkey" ? "7.2" : "7.0"), ".", "_"))}"
   tls           = var.cfg.tls != false
-  auth          = var.cfg.auth != false
+  # CA-1 DRAFT(ai): 출발 AUTH 그대로. 모름(null)은 켬으로 몰지 않는다 (계획 단계 사람 확인이 먼저 막음 → 여기 null 이면 끔)
+  auth          = var.cfg.auth == true
 }
 
 resource "google_redis_instance" "this" {

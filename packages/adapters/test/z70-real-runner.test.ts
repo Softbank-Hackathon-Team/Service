@@ -22,14 +22,17 @@ function fakeExec(fail?: string) {
   const exec: Exec = async (cmd, args, o) => {
     calls.push({ cmd, args, cwd: o.cwd, env: o.env, signal: o.signal });
     const r = (code: number, stdout = "", stderr = ""): ExecResult => ({ code, stdout, stderr, ms: 5 });
-    if (fail && args[0] === fail) return r(1, "", `Error: ${fail} broke`);
-    if (args[0] === "output") return r(0, OUTPUTS);
-    if (args[0] === "secretsmanager") return r(0, JSON.stringify({ username: "postgres", password: PASSWORD }));
-    if (args[0] === "plan") return r(0, "Plan: 7 to add, 0 to change, 0 to destroy.");
+    // 루트 배치는 -chdir=root 같은 전역 인자가 앞에 붙는다 → 첫 하위 명령으로 본다
+    const sub = args.find((a) => !a.startsWith("-"));
+    if (fail && sub === fail) return r(1, "", `Error: ${fail} broke`);
+    if (sub === "output") return r(0, OUTPUTS);
+    if (sub === "secretsmanager") return r(0, JSON.stringify({ username: "postgres", password: PASSWORD }));
+    if (sub === "plan") return r(0, "Plan: 7 to add, 0 to change, 0 to destroy.");
     return r(0, "ok");
   };
   return { exec, calls };
 }
+const subOf = (args: string[]) => args.find((a) => !a.startsWith("-"));
 const tmp = () => mkdtempSync(join(tmpdir(), "z70-"));
 
 test("Z89: 기본이 진짜 terraform, MOCK_IAC=1 일 때만 흉내 (예전 스위치 둘은 무시)", () => {
@@ -69,14 +72,14 @@ test("apply: init → plan -out → apply tfplan → output → 비밀번호 꺼
   const r = createRealTerraformRunner({ exec, workRoot: root, env: { PATH: "/bin", AWS_PROFILE: "finals", REPL_TARGET_URL: "postgres://x" } });
   const res = await r.apply("aws", MID, { app_name: "shop", db_enabled: true }, ac.signal);
   assert.equal(res.ok, true);
-  assert.deepEqual(calls.map((c) => `${c.cmd} ${c.args[0]}`), ["terraform init", "terraform plan", "terraform apply", "terraform output", "aws secretsmanager"]);
-  assert.ok(calls[1]!.args.includes("-out=tfplan") && calls[1]!.args.includes("-var-file=terraform.tfvars.json"));
-  assert.equal(calls[2]!.args.at(-1), "tfplan");
+  assert.deepEqual(calls.map((c) => `${c.cmd} ${subOf(c.args)}`), ["terraform init", "terraform plan", "terraform apply", "terraform output", "aws secretsmanager"]);
+  assert.ok(calls[1]!.args.includes("-out=../tfplan") && calls[1]!.args.includes("-var-file=../terraform.tfvars.json"));
+  assert.equal(calls[2]!.args.at(-1), "../tfplan");
   assert.ok(calls.every((c) => c.cwd === join(root, MID) && c.signal === ac.signal));
   assert.ok(calls.every((c) => c.env.REPL_TARGET_URL === undefined));
   // 모듈 파일이 복사되고 tests/ 는 빠진다
-  assert.ok(existsSync(join(root, MID, "main.tf")));
-  assert.equal(existsSync(join(root, MID, "tests")), false);
+  assert.ok(existsSync(join(root, MID, "root", "main.tf")));
+  assert.equal(existsSync(join(root, MID, "root", "tests")), false);
   assert.deepEqual(JSON.parse(readFileSync(join(root, MID, "terraform.tfvars.json"), "utf8")), { app_name: "shop", db_enabled: true });
   assert.equal(res.tfOutputs.db_address, "shop.abc.ap-northeast-2.rds.amazonaws.com");
   assert.equal(res.secretFetched, true);
@@ -93,7 +96,7 @@ test("plan 이 실패하면 apply 를 부르지 않고 failedStep=plan, 로그�
   const res = await createRealTerraformRunner({ exec, workRoot: root, env: {} }).apply("gcp", MID, { app_name: "shop" });
   assert.equal(res.ok, false);
   assert.equal(res.failedStep, "plan");
-  assert.deepEqual(calls.map((c) => c.args[0]), ["init", "plan"]);
+  assert.deepEqual(calls.map((c) => subOf(c.args)), ["init", "plan"]);
   assert.ok(res.log.some((l) => l.includes("plan broke")));
 });
 
@@ -117,8 +120,8 @@ test("destroy·list: 같은 작업 폴더에서 -var-file 로 파기, state 자�
   calls.length = 0;
   const d = await r.destroy(MID);
   assert.equal(d.ok, true);
-  assert.deepEqual(calls.map((c) => c.args[0]), ["init", "destroy"]);
-  assert.ok(calls[1]!.args.includes("-var-file=terraform.tfvars.json") && calls[1]!.args.includes("-auto-approve"));
+  assert.deepEqual(calls.map((c) => subOf(c.args)), ["init", "destroy"]);
+  assert.ok(calls[1]!.args.includes("-var-file=../terraform.tfvars.json") && calls[1]!.args.includes("-auto-approve"));
 });
 
 test("기본 exec(spawn): 잠금을 잃으면(abort) SIGINT 로 바로 멈춘다, 제한 시간도", async () => {
@@ -148,7 +151,7 @@ test("tf:real plan onprem: planOnly 가 init·plan 만 부르고 요약을 돌�
   assert.equal(r.ok, true);
   assert.equal(r.workDir, join(root, PLAN_ONLY_ID));
   assert.match(r.summary ?? "", /Plan: 7 to add/);
-  assert.deepEqual(calls.map((c) => c.args[0]), ["init", "plan"]);
+  assert.deepEqual(calls.map((c) => subOf(c.args)), ["init", "plan"]);
 });
 
 // Z38 REVIEW-6 R6-1: plan 전용 폴더가 프로바이더마다 달라서, aws plan 뒤 gcp plan 이 aws 파일과 섞이지 않는다
@@ -160,8 +163,8 @@ test("tf:real plan: 프로바이더마다 다른 작업 폴더 (onprem 은 예�
   assert.equal(new Set(dirs).size, 3);
   assert.equal(dirs[2], join(root, PLAN_ONLY_ID));
   for (const p of ["aws", "gcp", "onprem"] as const) assert.doesNotThrow(() => workDirOf(root, planOnlyId(p)));
-  const awsOnly = readdirSync(join(root, planOnlyId("aws"))).filter((f) => f.endsWith(".tf"));
-  const gcpOnly = readdirSync(join(root, planOnlyId("gcp"))).filter((f) => f.endsWith(".tf"));
+  const awsOnly = readdirSync(join(root, planOnlyId("aws"), "root")).filter((f) => f.endsWith(".tf"));
+  const gcpOnly = readdirSync(join(root, planOnlyId("gcp"), "root")).filter((f) => f.endsWith(".tf"));
   assert.ok(awsOnly.length > 0 && gcpOnly.length > 0);
   assert.equal(readFileSync(join(root, planOnlyId("gcp"), "provider.txt"), "utf8"), "gcp");
 });
@@ -177,7 +180,7 @@ test("Z89: 회사를 주면 state 폴더가 <뿌리>/<회사>/<이전>, 회사 �
   assert.equal(res.workDir, join(root, TEN, MID));
   assert.ok(calls.every((c) => c.cwd === join(root, TEN, MID)));
   assert.equal(readFileSync(join(root, TEN, MID, "tenant.txt"), "utf8"), TEN);
-  assert.ok(calls.find((c) => c.args[0] === "apply")!.args.includes("-lock-timeout=60s"));
+  assert.ok(calls.find((c) => subOf(c.args) === "apply")!.args.includes("-lock-timeout=60s"));
   await assert.rejects(r.apply("aws", MID, {}, undefined, "../x"), /bad tenant/);
   assert.throws(() => workDirOf(root, MID, "T-ABC"), /bad tenant/);
   // 찾기·목록·파기는 회사 폴더를 본다
@@ -187,7 +190,7 @@ test("Z89: 회사를 주면 state 폴더가 <뿌리>/<회사>/<이전>, 회사 �
   const d = await r.destroy(MID);
   assert.equal(d.ok, true);
   assert.equal(d.workDir, join(root, TEN, MID));
-  assert.deepEqual(calls.map((c) => c.args[0]), ["init", "destroy"]);
+  assert.deepEqual(calls.map((c) => subOf(c.args)), ["init", "destroy"]);
 });
 
 test("Z89: 같은 이전 id 가 두 회사 폴더에 있으면 찾기를 멈춘다 (남의 state 를 destroy 하지 않게)", async () => {
@@ -204,20 +207,20 @@ test("Z89: apply 단계 실패 → 같은 폴더에서 바로 destroy (TF_DESTRO
   let f = fakeExec("apply");
   let res = await createRealTerraformRunner({ exec: f.exec, workRoot: root, env: {} }).apply("aws", MID, {}, undefined, TEN);
   assert.equal(res.ok, false); assert.equal(res.failedStep, "apply");
-  assert.deepEqual(f.calls.map((c) => c.args[0]), ["init", "plan", "apply", "destroy"]);
-  assert.ok(f.calls[3]!.args.includes("-var-file=terraform.tfvars.json") && f.calls[3]!.args.includes("-auto-approve"));
+  assert.deepEqual(f.calls.map((c) => subOf(c.args)), ["init", "plan", "apply", "destroy"]);
+  assert.ok(f.calls[3]!.args.includes("-var-file=../terraform.tfvars.json") && f.calls[3]!.args.includes("-auto-approve"));
   assert.deepEqual(res.destroyedAfterFail, { ok: true, ms: 5 });
   f = fakeExec("apply");
   res = await createRealTerraformRunner({ exec: f.exec, workRoot: tmp(), env: { TF_DESTROY_ON_FAIL: "0" } }).apply("aws", MID, {});
-  assert.deepEqual(f.calls.map((c) => c.args[0]), ["init", "plan", "apply"]);
+  assert.deepEqual(f.calls.map((c) => subOf(c.args)), ["init", "plan", "apply"]);
   assert.equal(res.destroyedAfterFail, undefined);
   f = fakeExec("apply"); const ac = new AbortController(); ac.abort();
   res = await createRealTerraformRunner({ exec: f.exec, workRoot: tmp(), env: {} }).apply("aws", MID, {}, ac.signal);
-  assert.equal(f.calls.some((c) => c.args[0] === "destroy"), false);
+  assert.equal(f.calls.some((c) => subOf(c.args) === "destroy"), false);
   // plan 실패는 만든 것이 없으니 destroy 도 안 부른다
   f = fakeExec("plan");
   await createRealTerraformRunner({ exec: f.exec, workRoot: tmp(), env: {} }).apply("aws", MID, {});
-  assert.deepEqual(f.calls.map((c) => c.args[0]), ["init", "plan"]);
+  assert.deepEqual(f.calls.map((c) => subOf(c.args)), ["init", "plan"]);
 });
 
 test("Z89: version() — 실행 파일이 없으면 ok:false + 이유", async () => {

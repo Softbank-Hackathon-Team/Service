@@ -1,28 +1,27 @@
-// TA3 비용: PLAN_IR=v2 계획서의 비용 요약·확인 항목은 v2 명세로 센다. 가격표에 없는 구성요소는 unknownFields 와 고지 문구에 이름으로
+// TA3 비용: 계획서의 비용 요약·확인 항목은 v2 명세로 센다. 가격표에 없는 구성요소는 unknownFields 와 고지 문구에 이름으로
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AppSpec, AppSpecV2, PlanDoc, upconvertV1, type PlanCostSummary, type Provider } from "@svc/contracts";
+import { AppSpecV2, PlanDoc, type PlanCostSummary, type Provider } from "@svc/contracts";
 import { loadSampleCatalog } from "@svc/cost";
-import { buildAcknowledgements, buildPlanDoc, estimatePlanCost, estimatePlanCostV2 } from "../src/jobs/plan.js";
+import { buildAcknowledgements, buildPlanDoc, estimatePlanCost } from "../src/jobs/plan.js";
 
 type Raw = Record<string, any>;
 const catalog = loadSampleCatalog();   // 금액을 고정하려고 샘플 가격표 (진짜 계획은 loadCatalog)
-const V1 = AppSpec.parse({ schemaVersion: "1", app: { name: "shop" },
-  service: { image: `r/shop@sha256:${"a".repeat(64)}`, port: 8080, healthPath: "/healthz", replicas: 1, cpu: "500m", memory: "1Gi", env: [], secretRefs: [] },
-  database: { engine: "postgres", majorVersion: "16", storageGb: 20 }, ingress: { hostname: "s.example.com", entry: "cloudflare-lb" } });
+// 데모 명세 (shop 서비스 1개 + postgres 1개)
+const BASE: AppSpecV2 = AppSpecV2.parse({"schemaVersion":"2","app":{"name":"shop"},"components":[{"id":"shop","kind":"service","props":{"runtime":"k8s","origin":{"runtime":"k8s","product":"unknown"},"image":{"source":"registry","repository":"r/shop","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"ports":[{"port":8080,"protocol":"TCP"}],"probes":{"readiness":{"type":"http","path":"/healthz","port":8080}},"replicas":{"min":1,"max":1},"serviceAccount":"default","resources":{"request":{"cpuMilli":500,"memMiB":1024}},"env":[]}},{"id":"db","kind":"postgres","props":{"majorVersion":"16","storageGb":20}}],"links":[{"from":"shop","to":"db","intent":"connect"}],"entry":{"via":"cloudflare-lb","hosts":[{"hostnames":["s.example.com"],"routes":[{"matches":[{"path":{"type":"PathPrefix","value":"/"}}],"backends":[{"to":"shop","port":8080,"weight":1}]}]}]},"posture":{"permissions":[],"network":[]}});
 const v2 = (mut: (s: Raw) => void = () => {}): AppSpecV2 => {
-  const s: Raw = structuredClone(upconvertV1(V1).spec);
+  const s: Raw = structuredClone(BASE);
   mut(s);
   return AppSpecV2.parse(s);
 };
 const svc = (s: Raw) => s.components.find((c: Raw) => c.kind === "service");
 const base = {
-  planId: "7f000000-0000-4000-8000-0000000000c2", migrationId: "4a8c0000-0000-4000-8000-0000000000c2", spec: V1,
+  planId: "7f000000-0000-4000-8000-0000000000c2", migrationId: "4a8c0000-0000-4000-8000-0000000000c2", spec: BASE,
   precheck: [], now: new Date("2026-11-07T00:00:00Z"), source: { provider: "aws" as const }, specVersion: 3,
 };
 const tgt = (provider: Provider) => ({ envId: "33333333-3333-4333-8333-333333333333", provider, region: "default" });
 const planV2 = (spec: AppSpecV2, to: Provider, costSummary: PlanCostSummary) =>
-  buildPlanDoc({ ...base, target: tgt(to), specV2: { spec, source: "spec_v2" }, costSummary }, {});
+  buildPlanDoc({ ...base, spec, target: tgt(to), costSummary }, {});
 const HEAD = "도착 자원은 고객 클라우드 계정에 만들어지고 요금도 고객 계정에 청구됩니다";
 
 // 빠뜨림 없음: v2 Terraform 루트가 만드는 매트릭스 줄은 금액에 들어갔거나(postgres) 이름이 남았거나 요금 없는 줄(namespace·identity)이다
@@ -45,22 +44,20 @@ test("캐시·큐·버킷: 합계는 같은 서비스·DB 판과 같고, unknown
       { id: "orders", kind: "queue", props: { model: "queue" } });
     for (const to of ["shop-cache", "shop-assets", "orders"]) s.links.push({ from: "shop", to, intent: "connect" });
   });
-  const c = estimatePlanCostV2(spec, "aws", "gcp", catalog);
+  const c = estimatePlanCost(spec, "aws", "gcp", catalog);
   assert.deepEqual(c, { currency: "USD", monthlyTarget: 146.9, monthlySource: 227.5, deltaMonthly: -80.6,
     unknownFields: ["cache:shop-cache", "objectStore:shop-assets", "queue:orders"], priceAsOf: catalog.asOf });
-  assert.equal(c.monthlyTarget, estimatePlanCostV2(v2(), "aws", "gcp", catalog).monthlyTarget);
+  assert.equal(c.monthlyTarget, estimatePlanCost(v2(), "aws", "gcp", catalog).monthlyTarget);
   const p = planV2(spec, "gcp", c);
   assert.equal(PlanDoc.safeParse(p).success, true);
   assert.equal(p.acknowledgements![0]!.text, `예상 월 비용(USD): 도착 gcp $146.9 / 출발 aws $227.5 / 차이 $-80.6. ${HEAD}`
     + ". 일부 자원·설정은 위 금액에 포함되지 않았습니다: cache:shop-cache, objectStore:shop-assets, queue:orders");
   assert.equal(assertNoSilentOmission(p), 3);
-  // v1 투영 비용(서비스 1개 + Postgres 1개)을 실었다면 세 줄이 조용히 빠졌을 것
-  assert.throws(() => assertNoSilentOmission(planV2(spec, "gcp", estimatePlanCost(V1, "aws", "gcp"))));
 });
 
 test("관리형 컨테이너: 서비스는 금액에 없고(ECS Fargate·Cloud Run 가격 없음) 이름으로 남는다, 클러스터·노드는 안 센다", () => {
   const spec = v2((s) => { svc(s).props.runtime = "managedContainer"; svc(s).props.origin = { runtime: "managedContainer", product: "ecs" }; });
-  const c = estimatePlanCostV2(spec, "aws", "gcp", catalog);
+  const c = estimatePlanCost(spec, "aws", "gcp", catalog);
   assert.deepEqual([c.monthlySource, c.monthlyTarget, c.deltaMonthly], [78.6, 84.1, 5.5]);   // DB + 스토리지만
   assert.deepEqual(c.unknownFields, ["service:shop"]);
   for (const to of ["aws", "gcp"] as const) {
@@ -71,12 +68,12 @@ test("관리형 컨테이너: 서비스는 금액에 없고(ECS Fargate·Cloud R
   }
 });
 
-test("서비스 두 개: 둘 다 노드 수에 들어가고(v1 투영은 주 서비스 하나), 다 셌으면 '포함되지 않았습니다' 문장이 없다", () => {
+test("서비스 두 개: 둘 다 노드 수에 들어가고, 다 셌으면 '포함되지 않았습니다' 문장이 없다", () => {
   const spec = v2((s) => s.components.push({ id: "worker", kind: "service",
     props: { ...structuredClone(svc(s).props), replicas: { min: 2, max: 2 }, resources: { request: { cpuMilli: 1000, memMiB: 2048 } } } }));
-  const c = estimatePlanCostV2(spec, "aws", "gcp", catalog);
+  const c = estimatePlanCost(spec, "aws", "gcp", catalog);
   assert.deepEqual([c.monthlySource, c.monthlyTarget, c.deltaMonthly, c.unknownFields], [265.5, 178.3, -87.2, []]);
-  const one = estimatePlanCostV2(v2(), "aws", "gcp", catalog);
+  const one = estimatePlanCost(v2(), "aws", "gcp", catalog);
   assert.ok(c.monthlyTarget! > one.monthlyTarget! && c.monthlySource! > one.monthlySource!);
   const p = planV2(spec, "gcp", c);
   assert.equal(p.acknowledgements![0]!.text, `예상 월 비용(USD): 도착 gcp $178.3 / 출발 aws $265.5 / 차이 $-87.2. ${HEAD}`);
@@ -84,10 +81,7 @@ test("서비스 두 개: 둘 다 노드 수에 들어가고(v1 투영은 주 서
   assert.notEqual(p.planHash, planV2(spec, "gcp", one).planHash);
 });
 
-test("v1 은 그대로: upconvert 판의 v2 비용 = v1 비용, v1 계획서 고지 문구는 글자 그대로", () => {
-  // 진짜 가격표(loadCatalog)로 v1·v2 가 같은 값 → upconvert 출처 v2 계획서도 비용 숫자가 안 바뀜
-  for (const [f, t] of [["aws", "gcp"], ["gcp", "aws"], ["aws", "onprem"], ["onprem", "gcp"], ["aws", "aws"]] as const)
-    assert.deepEqual(estimatePlanCostV2(upconvertV1(V1).spec, f, t), estimatePlanCost(V1, f, t), `${f}->${t}`);
+test("고지 문구: 계산 못 한 칸·가짜 고정값 표시는 글자 그대로", () => {
   const cost = (unknownFields: string[], stub?: boolean): PlanCostSummary =>
     ({ currency: "USD", monthlyTarget: 80, monthlySource: null, deltaMonthly: null, unknownFields, ...(stub ? { stub } : {}) });
   const text = (c: PlanCostSummary) => buildAcknowledgements({ cost: c, from: "aws", to: "gcp", precheck: [], env: {} })[0]!.text;
@@ -96,15 +90,11 @@ test("v1 은 그대로: upconvert 판의 v2 비용 = v1 비용, v1 계획서 고
   assert.equal(text(cost(["monthlySource"])), `${head} (계산 못 한 칸: monthlySource)`);
   assert.equal(text(cost(["monthlySource", "monthlyTarget"], true)), `${head} (계산 못 한 칸: monthlySource, monthlyTarget) (가짜 고정값)`);
   assert.equal(text(cost(["*"])), `${head} (계산 못 한 칸: *)`);
-  // v1 계획서(specV2 없음)엔 v2 칸·문장이 없다
-  const p = buildPlanDoc({ ...base, target: tgt("gcp"), costSummary: estimatePlanCost(V1, "aws", "gcp") }, {});
-  assert.equal("irVersion" in p, false);
-  assert.doesNotMatch(p.acknowledgements![0]!.text, /포함되지 않았습니다/);
 });
 
 test("거부: v2 비용 계산이 실패해도 던지지 않고 unknownFields=['*'] (계획을 막지 않음), 섞인 칸은 따로 적는다", () => {
   const broken = { ...v2(), components: [] } as unknown as AppSpecV2;   // components 최소 1개 위반
-  assert.deepEqual(estimatePlanCostV2(broken, "aws", "gcp", catalog),
+  assert.deepEqual(estimatePlanCost(broken, "aws", "gcp", catalog),
     { currency: "USD", monthlyTarget: null, monthlySource: null, deltaMonthly: null, unknownFields: ["*"] });
   const t = buildAcknowledgements({ cost: { currency: "USD", monthlyTarget: null, monthlySource: 1, deltaMonthly: null,
     unknownFields: ["monthlyTarget", "queue:q"] }, from: "aws", to: "gcp", precheck: [], env: {} })[0]!.text;

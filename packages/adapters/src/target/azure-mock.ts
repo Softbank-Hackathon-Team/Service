@@ -3,11 +3,12 @@ import { appNamespace, dbInstanceName, moduleRefOf } from "../common/base.js";
 import { AdapterError } from "../common/errors.js";
 import { boundedName } from "../common/names.js";
 import type { RunnerResource, ResourceState } from "../common/runner.js";
-import { envRef, fromOut, nameSeed, regionOf, tenantOf, type Target } from "../common/target.js";
+import { envRef, fromOut, nameSeed, migrationSeed, regionOf, tenantOf, type Target } from "../common/target.js";
 import { azureMockAdapter } from "../azure-mock/index.js";
-import { fakeUuid, MOCK_SUBSCRIPTION, resourceGroupOf } from "../azure-mock/runner.js";
+import { fakeUuid, MOCK_SUBSCRIPTION, resourceGroupOf } from "../azure-mock/ids.js";
 import { asV1Name, assertRenderable, identitiesOf, K8S_RENDER_CAPS, postgresOf, UNSUPPORTED_V2 } from "./shared.js";
 import { cacheVars, cachesOf, objectStoreVars, objectStoresOf, queueVars, queuesOf } from "./data.js";
+import { secretStoreName } from "./capability-checks.js";
 import { buildWorkloadValues } from "./cloud.js";
 
 // TA10 (설계 27번 A10): Azure Mock 도착 Builder v2 = capability 표 + mock plan 만. 아키텍처 전제: Azure 는 모양 + Mock, apply 안 함.
@@ -19,7 +20,7 @@ import { buildWorkloadValues } from "./cloud.js";
 // TA12 STUB: 데이터 자원은 Mock 이라 "모양만" 그린다 (Azure Cache·Storage·Service Bus 이름·ARM id 를 결정적으로). 진짜 모듈 없음 — Azure 는 어댑터 모양과 Mock 만 (CLAUDE.md 0-1)
 // A8: 권한은 가짜 (역할 할당 모양만, resourceTypesV2). precheck warn
 // TA12c: link.* = 데이터 자원 링크의 의도 요약 (실제 권한은 grants 로 그림)
-const CAPS = [...K8S_RENDER_CAPS, "kind.postgres.15", "kind.postgres.16", "kind.postgres.17", "mock", "kind.cache.redis", "kind.cache.valkey", "kind.cache.cluster", "kind.objectStore", "kind.queue", "render.grants", "posture.permissions", "kind.queue.dlqMixedOrder", "kind.cache.auth", "link.read", "link.write", "link.readwrite", "link.admin"];
+const CAPS = [...K8S_RENDER_CAPS, "volume.pvc", "kind.postgres.15", "kind.postgres.16", "kind.postgres.17", "mock", "kind.cache.redis", "kind.cache.valkey", "kind.cache.cluster", "kind.objectStore", "kind.queue", "render.grants", "posture.permissions", "kind.queue.dlqMixedOrder", "kind.cache.auth", "link.read", "link.write", "link.readwrite", "link.admin"];
 
 // v1 통짜 모듈이 담지 못하는 모양 → UNSUPPORTED_V2 (capability 표 밖과 같은 오류)
 // E2E-v5: precheck(v2PrecheckItems)도 같은 검사를 불러 계획 단계 failed 대신 block(명세 검토로 되돌림)으로 먼저 알린다
@@ -48,11 +49,11 @@ export function resourceTypesV2(spec: AppSpecV2): string[] {
 
 const DATA_MOCK_TYPES = new Set(["azurerm_redis_cache", "azurerm_storage_account", "azurerm_servicebus_namespace", "azurerm_servicebus_queue", "azurerm_servicebus_topic"]);
 // 데이터 자원 이름 (data.ts 와 같은 규칙·같은 seed). Service Bus 네임스페이스는 앱 하나에 하나
-export const sbNamespaceName = (spec: AppSpecV2, t: Target) => boundedName({ prefix: "sb", app: spec.app.name, seed: [nameSeed(t), spec.app.name, "servicebus"], max: 50 });
+export const sbNamespaceName = (spec: AppSpecV2, t: Target) => boundedName({ prefix: "sb", app: spec.app.name, seed: [nameSeed(t), spec.app.name, "servicebus", ...migrationSeed(t)], max: 50 });
 
 const names = (spec: AppSpecV2, t: Target) => ({
   // Key Vault 이름은 전 세계 유일 3~24자 (v1 과 같은 규칙·같은 seed → 같은 이름)
-  keyVault: boundedName({ prefix: "kv", app: spec.app.name, seed: [nameSeed(t), spec.app.name], max: 24 }),
+  keyVault: boundedName({ prefix: "kv", app: spec.app.name, seed: [nameSeed(t), spec.app.name, ...migrationSeed(t)], max: 24 }),
   dbServer: dbInstanceName(asV1Name(spec), t, 63),
 });
 
@@ -111,6 +112,7 @@ export function mockOutputsV2(spec: AppSpecV2, t: Target): TfOutputs {
   if (pg) {
     out[`link.${pg.id}.host`] = out.db_fqdn!;
     out[`link.${pg.id}.port`] = "5432";
+    out[`link.${pg.id}.reader`] = out.db_fqdn!;   // CNPG-RO: 읽기 복제본 없음 → 주 서버
     // v1 모듈은 비밀번호 없이 Entra(AAD) 인증만 → 접속 사용자 = 앱 관리 신원 id-<앱>. DB 이름 = 앱 이름의 - 를 _ 로 (모듈 규칙)
     out[`link.${pg.id}.user`] = `id-${spec.app.name}`;
     out[`link.${pg.id}.url`] = `postgresql://id-${spec.app.name}@${out.db_fqdn}:5432/${spec.app.name.replace(/-/g, "_")}`;
@@ -176,7 +178,7 @@ export const azureMockTarget: TargetBuilder = {
     const [pg] = postgresOf(spec);
     const v = buildWorkloadValues(spec, out, t, {
       imageRef: (src) => azureMockAdapter.imageRef(src, t),
-      secretStore: { kind: "ClusterSecretStore", name: "azure-key-vault" },
+      secretStore: { kind: "ClusterSecretStore", name: secretStoreName("azure_mock", out) },   // CL-4: env 출력 secret_store_name 이 있으면 그것
       // DRAFT(ai): Key Vault 비밀 이름은 영숫자·- 만 → 소문자·_ 를 - 로
       remoteKey: (s) => `${spec.app.name}-${s.toLowerCase().replace(/[^a-z0-9-]/g, "-")}`,
       saAnnotations: () => ({}),   // 아래에서 앱 SA 하나로 바꿔 씀

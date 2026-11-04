@@ -22,14 +22,14 @@ export const MODULE_DB_FACTS: Record<Provider, ModuleDbFacts> = {
   aws: {
     encryptedAtRest: attested(true, `${AWS_PG}: storage_encrypted = true`),
     keyOwner: attested("provider" as const, `${AWS_PG}: kms_key_id 없음 (AWS 관리 키)`),
-    tlsEnforced: attested(true, `${AWS_PG}: rds.force_ssl = 1`),
-    pitr: attested(true, `${AWS_PG}: backup_retention_period >= 1`),
+    tlsEnforced: attested(true, `${AWS_PG}: rds.force_ssl = 1 (require_tls 기본 true)`),
+    pitr: attested(true, `${AWS_PG}: backup_retention_period = coalesce(backup_retention_days, 1) (출발이 0 이 아니면 켬)`),
   },
   gcp: {
     encryptedAtRest: attested(true, "GCP Cloud SQL 기본 저장 암호화 (제공자 문서)"),
     keyOwner: attested("provider" as const, `${GCP_PG}: encryption_key_name 없음 (Google 관리 키)`),
-    tlsEnforced: attested(true, `${GCP_PG}: ssl_mode = ENCRYPTED_ONLY`),
-    pitr: attested(true, `${GCP_PG}: point_in_time_recovery_enabled = true`),
+    tlsEnforced: attested(true, `${GCP_PG}: ssl_mode = ENCRYPTED_ONLY (require_tls 기본 true)`),
+    pitr: attested(true, `${GCP_PG}: point_in_time_recovery_enabled = coalesce(pitr, true) (출발이 끄지 않았으면 켬)`),
   },
   onprem: { encryptedAtRest: unknown(), keyOwner: unknown(), tlsEnforced: unknown(), pitr: unknown() },
   azure_mock: { encryptedAtRest: unknown(), keyOwner: unknown(), tlsEnforced: unknown(), pitr: unknown() },
@@ -73,6 +73,12 @@ export function targetFactsV2(t: EnvSide, spec: AppSpecV2): { env: EnvFacts; dbs
     componentId: c.id,
     db: {
       ...blankDb(), ...mod, ...specDb(c),
+      // SSL-1: 출발이 평문을 허용(tlsRequired false)이면 aws.ts·gcp.ts 가 require_tls = false 를 넘김 → 도착도 TLS 강제 아님
+      ...((t.provider === "aws" || t.provider === "gcp") && c.props.tlsRequired === false
+        ? { tlsEnforced: attested(false, `${t.provider === "aws" ? AWS_PG : GCP_PG}: require_tls = false (출발 평문 허용 그대로, SSL-1)`) } : {}),
+      // BK-1: 출발 백업을 그대로 옮기므로 출발이 백업 끔(0일)·PITR 끔이면 도착도 PITR 아님
+      ...((t.provider === "aws" || t.provider === "gcp") && (c.props.backup?.retentionDays === 0 || (t.provider === "gcp" && c.props.backup?.pitr === false))
+        ? { pitr: attested(false, `${t.provider === "aws" ? AWS_PG : GCP_PG}: 출발 백업 설정 그대로 (BK-1, 백업 ${c.props.backup?.retentionDays ?? "?"}일·PITR ${String(c.props.backup?.pitr)})`) } : {}),
       // 클라우드: 모듈 public = postureOfComponent (aws.ts·gcp.ts 와 같은 함수). 온프레: 기본 차단 NetworkPolicy, DB 를 밖에 열지 않음
       publicAccess: t.provider === "aws" || t.provider === "gcp"
         ? attested(postureOfComponent(spec, c.id).public, `target ${t.provider} postgres public (postureOfComponent)`)

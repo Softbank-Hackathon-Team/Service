@@ -10,8 +10,8 @@ export interface SpecDraftStore {
   // queued → running. 이미 다른 워커가 가져갔으면 false (두 번 온 작업)
   claim(tenantId: string, agentRunId: string): Promise<boolean>;
   step(tenantId: string, agentRunId: string, s: DraftStep): Promise<void>;
-  // 초안 저장: spec_versions 다음 판 + 위험·설명. 저장한 판 번호를 돌려준다
-  saveDraft(tenantId: string, agentRunId: string, migrationId: string, r: SpecDraftResult): Promise<{ version: number }>;
+  // 초안 저장: spec_versions 다음 판 + 위험·설명. baseVersion = 에이전트가 본 기준 판. 저장한 판 번호를 돌려준다
+  saveDraft(tenantId: string, agentRunId: string, migrationId: string, r: SpecDraftResult, baseVersion: number): Promise<{ version: number }>;
   fail(tenantId: string, agentRunId: string, reason: string, usage: { input: number; output: number }): Promise<void>;
 }
 export interface SpecDraftDeps { store: SpecDraftStore; llm: LlmProvider }
@@ -39,7 +39,7 @@ export async function handleSpecDraft(raw: unknown, d: SpecDraftDeps) {
   }
   let version: number;
   try {
-    ({ version } = await d.store.saveDraft(job.tenantId, job.agentRunId, run.migrationId, r.result));
+    ({ version } = await d.store.saveDraft(job.tenantId, job.agentRunId, run.migrationId, r.result, run.input.baseline.version));
   } catch (e) {
     await failQuietly(d, job, `초안 저장 실패: ${errName(e)}`, r.result.usage);
     throw e;

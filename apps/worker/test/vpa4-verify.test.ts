@@ -1,11 +1,12 @@
 // 검증 PA4: 확인 항목·비용 요약의 경계 (순수)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AppSpec, PlanDoc, type PlanCostSummary, type PrecheckItem } from "@svc/contracts";
+import { ONE } from "./demo-one.js";
+import { PlanDoc, type PlanCostSummary, type PrecheckItem } from "@svc/contracts";
 import { adapterFor } from "@svc/adapters";
 import { buildAcknowledgements, buildPlanDoc, estimatePlanCost } from "../src/jobs/plan.js";
 
-const spec = AppSpec.parse(adapterFor("aws").normalize({ provider: "aws", items: [], coverage: {} }).spec);
+const spec = ONE;
 const base = {
   planId: "7f000000-0000-4000-8000-0000000000b4", migrationId: "4a8c0000-0000-4000-8000-0000000000b4",
   spec, target: { envId: "33333333-3333-4333-8333-333333333333", provider: "gcp" as const, region: "default" },

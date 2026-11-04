@@ -2,11 +2,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ImportAccuracy, type AppSpecV2, type Provider, type RawInventory } from "@svc/contracts";
-import { DEMO_INVENTORY_V2, measureImportAccuracy, normalizeV2, targetBuilderFor } from "../src/index.js";
+import { DEMO_INVENTORY, measureImportAccuracy, normalizeV2, targetBuilderFor } from "../src/index.js";
 
 type O = Record<string, any>;
 const T = (p: Provider) => ({ envId: "33333333-3333-4333-8333-333333333333", provider: p, region: "default", tenantId: "11111111-1111-4111-8111-111111111111", migrationId: "22222222-2222-4222-8222-222222222222" }) as never;
-const inv = (): RawInventory => structuredClone(DEMO_INVENTORY_V2.gcp!);
+const inv = (): RawInventory => structuredClone(DEMO_INVENTORY.gcp!);
 const deploy = (i: RawInventory, name: string) => (i.items as O[]).find((x) => x.kind === "k8s.deployment" && x.metadata.name === name)!;
 const run = (i: RawInventory, mutate?: (spec: O) => void, target: Provider | null = "aws") => {
   const result = normalizeV2(i).result;

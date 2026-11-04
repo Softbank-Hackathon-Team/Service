@@ -55,7 +55,9 @@ boss.on("error", (err) => bossLog.error({ err }, "pg-boss error"));
 // expireInSeconds: 처리기가 이 시간 안에 안 끝나면 pg-boss가 작업을 만료(실패) 처리한다. 기본 900초(15분)
 export interface QueuePolicy { policy: "stately" | "singleton"; retryLimit: number; retryDelay?: number; retryBackoff?: boolean; expireInSeconds?: number; heartbeatSeconds?: number; notify?: boolean }
 export const POLICY: Record<string, QueuePolicy> = {
-  [QUEUES.import]: { policy: "stately", retryLimit: 3 },
+  // PF-A4 DRAFT(ai): 가져오기 일시 오류(SOURCE_TRANSIENT: API 연결 끊김·스로틀링)는 재시도. 예전엔 대기 0초라 첫 호출(sts)에서 끊기면 몇 초 안에 4번을 다 쓰고 failed.
+  //   10초부터 늘려 기다린다(10·20·40초 언저리) → 1분 남짓의 끊김을 넘긴다. 영구 오류(SOURCE_UNAVAILABLE·INCOMPLETE)는 처리기가 바로 failed 라 안 기다림
+  [QUEUES.import]: { policy: "stately", retryLimit: 3, retryDelay: 10, retryBackoff: true },
   [QUEUES.precheck]: { policy: "stately", retryLimit: 2 },
   [QUEUES.plan]: { policy: "stately", retryLimit: 2 },
   // M8 DRAFT(ai): 진짜 Terraform apply(EKS·RDS 생성)는 15분을 넘기 쉽다 → 1시간. 대안 "apply를 여러 작업으로 쪼개기"는 범위가 커서 버림.

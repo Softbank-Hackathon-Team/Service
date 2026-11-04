@@ -1,5 +1,5 @@
-import type { AppSpec, AppSpecV2, DeployResult, HelmValues, PlanDoc, Provider, TfOutputs } from "@svc/contracts";
-import { adapterFor, flattenTfOutputsV2 } from "@svc/adapters";
+import type { AppSpecV2, DeployResult, HelmValues, PlanDoc, Provider, TfOutputs } from "@svc/contracts";
+import { flattenTfOutputsV2 } from "@svc/adapters";
 import { helmValuesV2 } from "../jobs/plan-v2.js";
 import { stableHash } from "../jobs/_step.js";
 import { ENV_DIR, DELIVERY, appNamespace, fillPlaceholders, planFile, tenantSlug, withTraffic, argoAppName, type BundleRef } from "./bundle.js";
@@ -10,22 +10,21 @@ export * from "./bundle.js";
 
 export interface DeployInput {
   tenantId: string;
-  spec: AppSpec;
+  // TA3: 받아들인 최신 판의 명세. 없거나 모양이 틀리면 null → GITOPS_VALUES_DRIFT
+  spec: AppSpecV2 | null;
   plan: PlanDoc;
   target: { envId: string; provider: Provider; region: string; accountId: string | null };
   tfOutputs: TfOutputs;
-  // TA3: 계획서 irVersion "2" 일 때 계획서 specSource 와 같은 출처의 v2 명세. 없으면 GITOPS_VALUES_DRIFT
-  specV2?: AppSpecV2 | null;
 }
 
-// 승인 때 값과 같은지: 계획 처리기와 똑같이 toHelmValues(spec, {}, target)를 다시 만들어 지문을 비교한다.
-// 다르면 어댑터나 명세가 승인 뒤에 바뀐 것 → 배포하지 않는다
+// 승인 때 값과 같은지: 계획 처리기와 똑같이 helmValuesV2(spec, target)를 다시 만들어 지문을 비교한다.
+// 다르면 Builder 나 명세가 승인 뒤에 바뀐 것 → 배포하지 않는다
 export function approvedValues(i: DeployInput): HelmValues {
-  const t = { envId: i.target.envId, provider: i.target.provider, region: i.target.region };
-  // TA3: 길은 계획서 irVersion 으로 (깃발 아님). v2 인데 승인한 출처의 v2 명세가 없으면 upconvert 로 몰래 넘어가지 않는다
-  if (i.plan.irVersion === "2" && !i.specV2)
-    throw new GitopsError("GITOPS_VALUES_DRIFT", `승인한 v2 명세(${i.plan.specSource ?? "?"})가 지금 판에 없다`);
-  const v = i.plan.irVersion === "2" ? helmValuesV2(i.specV2!, t) : adapterFor(i.target.provider).toHelmValues(i.spec, {}, t);
+  // G8-1: 계획 때와 같은 이름 seed (계획서의 migrationId)
+  const t = { envId: i.target.envId, provider: i.target.provider, region: i.target.region, migrationId: i.plan.migrationId };
+  // TA3: 승인한 명세가 지금 판에 없으면 추측하지 않는다
+  if (!i.spec) throw new GitopsError("GITOPS_VALUES_DRIFT", "승인한 명세가 지금 판에 없다");
+  const v = helmValuesV2(i.spec, t);
   if (stableHash(v) !== i.plan.helmValuesHash) {
     throw new GitopsError("GITOPS_VALUES_DRIFT", "승인한 Helm 값 지문과 지금 만든 값 지문이 다르다 (어댑터·명세가 승인 뒤 바뀜)");
   }
@@ -44,6 +43,7 @@ export function envFacts(i: DeployInput): Record<string, string | undefined> {
 }
 
 export function bundleRefOf(i: DeployInput): BundleRef {
+  if (!i.spec) throw new GitopsError("GITOPS_VALUES_DRIFT", "승인한 명세가 지금 판에 없다");
   return { tenant: tenantSlug(i.tenantId), app: i.spec.app.name, env: ENV_DIR[i.target.provider] };
 }
 
@@ -60,8 +60,8 @@ export interface SyncWatcher { wait(b: BundleRef, c: CommitResult): Promise<Sync
 export async function deployToGitops(repo: GitopsRepo, i: DeployInput, watcher: SyncWatcher):
   Promise<{ result: DeployResult; commit: string; app: string; argo?: SyncWatchResult["observed"] }> {
   const b = bundleRefOf(i);
-  // TA3: v2 값은 <tf-output:link.<id>.<출력>> 를 찾는다 → 맵 출력(link_outputs 등)을 펼친 표로 채운다 (v1 은 그대로)
-  const tf = i.plan.irVersion === "2" ? flattenTfOutputsV2(i.tfOutputs) : i.tfOutputs;
+  // TA3: 값은 <tf-output:link.<id>.<출력>> 를 찾는다 → 맵 출력(link_outputs 등)을 펼친 표로 채운다
+  const tf = flattenTfOutputsV2(i.tfOutputs);
   const filled = fillPlaceholders(approvedValues(i), { tf, env: envFacts(i) });
   if (filled.missing.length) {
     throw new GitopsError("GITOPS_PLACEHOLDER_MISSING", `채우지 못한 자리표시: ${filled.missing.join(", ")}`);

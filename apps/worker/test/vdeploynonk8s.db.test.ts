@@ -40,7 +40,7 @@ after(async () => {
 
 /** 출발 aws 데모(ECS) / gcp 데모(GKE) 를 그대로 또는 VM 으로 */
 function specOf(kind: "ecs" | "vm" | "k8s") {
-  const r: Raw = structuredClone(adapters.normalizeV2(adapters.DEMO_INVENTORY_V2[kind === "k8s" ? "gcp" : "aws"]!).result);
+  const r: Raw = structuredClone(adapters.normalizeV2(adapters.DEMO_INVENTORY[kind === "k8s" ? "gcp" : "aws"]!).result);
   if (kind === "vm") {
     for (const c of r.spec.components) if (c.kind === "service") { c.props.origin = { runtime: "vm", product: "ec2" }; c.props.runtime = "vm"; }
     r.spec.components = r.spec.components.filter((c: Raw) => c.id !== "shop-web");
@@ -60,10 +60,10 @@ async function seed(kind: "ecs" | "vm" | "k8s", dst: "aws" | "gcp", outputs?: (o
   const result = specOf(kind);
   const base = { ...adapters.STUB_TF_OUTPUTS, ...adapters.stubTfOutputsV2(result.spec) };
   await core.withTenant(tenant, async (tx) => {
-    await core.saveSpecRevision(tx, { tenantId: tenant, migrationId: id, spec: adapters.DEMO_SPEC, fieldMeta: {}, specV2: result });
+    await core.saveSpecRevision(tx, { tenantId: tenant, migrationId: id, specV2: result });
     await core.savePlan(tx, tenant, contracts.PlanDoc.parse({
       planId, migrationId: id, adapterVersion: "test", steps: [], precheck: [], rollbackCriteria: { errorRatePct: 1, p95Multiplier: 2, windowSec: 30 },
-      tfPlanHash: "t", helmValuesHash: "h", irVersion: "2", specSource: "spec_v2", planHash: "p", expiresAt: new Date(Date.now() + 3600_000).toISOString() }));
+      tfPlanHash: "t", helmValuesHash: "h", planHash: "p", expiresAt: new Date(Date.now() + 3600_000).toISOString() }));
     await core.saveInfraReady(tx, { tenantId: tenant, migrationId: id, planId, tfOutputs: outputs ? outputs(base) : base, helmValuesKey: "k" });
   });
   return id;

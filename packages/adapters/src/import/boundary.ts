@@ -51,14 +51,20 @@ export function applyBoundary(components: MappedComponent[], links: LinkV2[], fi
       why.set(l.to, { source: `boundary:${l.from}:${HEURISTIC}`, confidence: 0.6,
         rationale: "근거로 닿은 DB 가 없어 이름 앞부분만 같은 DB 를 앱 DB 로 둠 (3티어 전제). 이 앱 DB 가 맞는지 사람 확인 필요" });
     }
-  // 경계 안 큐의 DLQ 대상 (따라가기)
+  // 경계 안 큐의 DLQ 대상 (따라가기). B-1b·B-2: 경계 안 버킷 알림·토픽 구독 대상 큐도 같이
   for (let grew = true; grew;) {
     grew = false;
     for (const c of data) {
-      const to = (c.props.deadLetter as { to?: string } | undefined)?.to;
-      if (!to || !why.has(c.id!) || why.has(to)) continue;
-      why.set(to, { source: `boundary:${c.id}:deadLetter`, confidence: why.get(c.id!)!.confidence });
-      grew = true;
+      const tos = [
+        ["deadLetter", (c.props.deadLetter as { to?: string } | undefined)?.to],
+        ...((c.props.notifications ?? []) as Array<{ to?: string }>).map((x) => ["notifications", x.to] as const),
+        ...((c.props.subscriptions ?? []) as Array<{ to?: string }>).map((x) => ["subscriptions", x.to] as const),
+      ] as Array<readonly [string, string | undefined]>;
+      for (const [field, to] of tos) {
+        if (!to || !why.has(c.id!) || why.has(to)) continue;
+        why.set(to, { source: `boundary:${c.id}:${field}`, confidence: why.get(c.id!)!.confidence });
+        grew = true;
+      }
     }
   }
   const keep = (c: MappedComponent) => isWorkload(c) || why.has(c.id!);

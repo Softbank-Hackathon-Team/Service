@@ -1,5 +1,5 @@
-import { AppSpec, MigrationJob, QUEUES, type Provider } from "@svc/contracts";
-import { latestAcceptedSpec, withTenant, OBSERVE_MIN_SEC } from "@svc/core";
+import { MigrationJob, QUEUES, type Provider } from "@svc/contracts";
+import { latestAcceptedAppName, withTenant, OBSERVE_MIN_SEC } from "@svc/core";
 import { runShift, shiftTransition, MigrationMoved, SHARE_TOL_PCT, type ShiftProgress } from "@svc/traffic";
 import { nextJob, readMigration, runStep, stubFailIfAsked } from "./_step.js";
 import { loadLatestPlan } from "./plan-store.js";
@@ -17,9 +17,9 @@ export async function handleShift(raw: unknown) {
       // gitops 기록용 묶음 위치 (설정이 없으면 안 읽는다)
       let bundle: BundleRef | null = null;
       if (configFromEnv()) {
-        const spec = await latestAcceptedSpec(tx, m.id);
+        const app = await latestAcceptedAppName(tx, m.id);
         const e = await tx.query("SELECT provider FROM environments WHERE id=$1", [m.targetEnvId]);
-        if (spec && e.rows[0]) bundle = { tenant: tenantSlug(j.tenantId), app: AppSpec.parse(spec).app.name,
+        if (app && e.rows[0]) bundle = { tenant: tenantSlug(j.tenantId), app,
                                                env: ENV_DIR[e.rows[0].provider as Provider] };
       }
       // R3-3: 이 이전이 전에 shifting 을 떠난 적이 있나 (재개 paused → shifting, 컷오버 되돌림 cutover → shifting).

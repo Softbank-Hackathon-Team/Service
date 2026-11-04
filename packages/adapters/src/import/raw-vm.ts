@@ -8,12 +8,14 @@ export interface RawVmIngress {
   protocol: "tcp" | "udp";
   fromPort: number;
   toPort: number;
-  /** 출발 허용 대상: CIDR(예 0.0.0.0/0) · 같은 방화벽 묶음 참조("sg:<id>"·"tag:<이름>") */
+  /** 출발 허용 대상: CIDR(IPv4·IPv6) · 같은 방화벽 묶음 참조("sg:<id>"·"tag:<이름>"·"sa:<서비스 계정 이름>") · 접두어 목록("pl:<id>", FW-1) */
   sources: string[];
 }
 
 export interface RawVmGroup {
   kind: typeof VM_RAW_KIND;
+  /** FW-1: 들어오는 규칙을 그대로 못 옮기는 이유 (예: GCE deny 규칙). 있으면 매퍼가 검토 0.6 */
+  ingressReview?: string;
   product: "ec2" | "gce";
   /** 묶음 이름 (Name 태그/인스턴스 이름에서 끝 번호를 뗀 것, 또는 지정한 묶음 태그 값) */
   name: string;
@@ -31,6 +33,8 @@ export interface RawVmGroup {
   memMiB?: number | null;
   /** 인스턴스 프로파일/서비스 계정 이름 (ARN·이메일의 이름 조각). 없으면 null */
   identity?: string | null;
+  /** FM-IR-C06: 묶음 VM 에 붙은 보안 그룹 id (AWS). RDS 방화벽에서 "옮기는 앱 자신" 을 가리는 데만 쓴다 (없으면 칸 없음) */
+  securityGroups?: string[];
   hasPublicIp?: boolean;
   /** 방화벽(보안 그룹/방화벽 규칙)이 허용한 들어오는 쪽. 읽지 못했으면 null */
   ingress?: RawVmIngress[] | null;

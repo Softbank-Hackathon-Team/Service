@@ -1,8 +1,8 @@
 // Z70: apply 작업의 진짜 terraform 길 (DB 없이 realApply 만). 실행기·fetch 는 가짜
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AppSpec } from "@svc/contracts";
-import { adapterFor, DEMO_INVENTORY, type RealApplyResult } from "@svc/adapters";
+import { ONE } from "./demo-one.js";
+import { type RealApplyResult } from "@svc/adapters";
 import { buildPlanDoc } from "../src/jobs/plan.js";
 import { stubPrecheck } from "../src/jobs/precheck.js";
 import { realApply, type RealApplyInput } from "../src/jobs/apply-real.js";
@@ -12,7 +12,7 @@ import { withServedBy, servedByName } from "../src/gitops/index.js";
 const ENV_ID = "33333333-3333-4333-8333-333333333333";
 const MID = "4a8c0000-0000-4000-8000-0000000000cc";
 const TENANT = "11111111-1111-4111-8111-111111111111";
-const spec = AppSpec.parse(adapterFor("aws").normalize(DEMO_INVENTORY.aws).spec);
+const spec = ONE;
 const plan = buildPlanDoc({ planId: "7f000000-0000-4000-8000-0000000000cc", migrationId: MID, spec,
   target: { envId: ENV_ID, provider: "aws", region: "default" }, precheck: stubPrecheck(), now: new Date() });
 const input: RealApplyInput = { migrationId: MID, tenantId: TENANT, envId: ENV_ID, provider: "aws", accountId: "111122223333", spec, plan };
@@ -113,10 +113,10 @@ test("Z77: 공개로 승인한 계획 → 공개 변수 + 공개 서브넷을 �
   const env = { ...FACTS, ...PUB, TF_FACT_DB_PUBLIC_SUBNET_IDS_JSON: '["subnet-p1","subnet-p2"]' };
   const r = await realApply({ ...input, plan: buildPlanDoc(planInput, env) }, { env, runner: f.runner });
   assert.equal(r.ok, true);
-  const vars = f.seen[0]!.vars;
-  assert.equal(vars.db_public, true);
-  assert.equal(vars.db_deletion_protection, false);
-  assert.equal(vars.db_public_subnet_ids_json, '["subnet-p1","subnet-p2"]');
+  const pg0 = JSON.parse(f.seen[0]!.vars.postgres_json as string)[0];
+  assert.equal(pg0.public, true);
+  assert.equal(pg0.deletion_protection, false);
+  assert.equal(pg0.public_subnet_ids_json, '["subnet-p1","subnet-p2"]');
   assert.deepEqual((r.detail.dbNetwork as { peerCidrs: string[] }).peerCidrs, ["203.0.113.7/32"]);
 });
 
@@ -158,7 +158,7 @@ test("Z77: 다른 사실의 빈 값은 여전히 모자란 것으로 본다 (TF_
 });
 
 test("Z77: gcp 는 클러스터 없이 안 된다 (TF_FACT_CLUSTER_NAME=\"\" → TF_FACTS_MISSING)", async () => {
-  const gspec = AppSpec.parse(adapterFor("gcp").normalize(DEMO_INVENTORY.gcp).spec);
+  const gspec = ONE;
   const gplan = buildPlanDoc({ ...planInput, spec: gspec, target: { envId: ENV_ID, provider: "gcp", region: "default" } }, {});
   const f = fakeRunner();
   const r = await realApply({ ...input, provider: "gcp", accountId: "finals-demo", spec: gspec, plan: gplan },

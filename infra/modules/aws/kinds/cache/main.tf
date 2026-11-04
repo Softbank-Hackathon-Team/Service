@@ -20,6 +20,7 @@ variable "cfg" {
     tls             = optional(bool)
     auth            = optional(bool)
     ha              = optional(bool)
+    port            = optional(number) # DM-7: 출발 포트 그대로. null = 6379
     allow_from_json = optional(string, "[]")
   })
   validation {
@@ -30,6 +31,11 @@ variable "cfg" {
     # TODO(human): memcached 는 복제 그룹이 아니라 aws_elasticache_cluster 라 따로 만들어야 한다. 지금은 거부
     condition     = contains(["redis", "valkey"], var.cfg.engine)
     error_message = "AWS cache: engine 은 redis·valkey 만 (memcached 는 아직 없음)."
+  }
+  validation {
+    # SZ-1: 가장 큰 급(cache.r7g.16xlarge)보다 크면 작은 급으로 줄이지 않고 거부
+    condition     = coalesce(var.cfg.memory_mib, 0) <= 429148
+    error_message = "AWS cache: memory_mib 가 가장 큰 노드 급(cache.r7g.16xlarge 429148MiB)보다 크다 (줄이지 않음)."
   }
   validation {
     # allow_from_json = IR 의존성 from 신원(id 목록). DRAFT(ai): 앱 신원은 모두 클러스터 SG 에서 나오므로 네트워크 허용은 클러스터 SG 하나. 목록은 모양만 본다
@@ -45,21 +51,30 @@ variable "cluster_sg_id" {
 }
 
 locals {
-  # DRAFT(ai): 못 고른 값의 상품 기본값. 버전 = 엔진별 최신 안정판
+  # DRAFT(ai): 못 고른 값의 상품 기본값. 버전 = 엔진별 최신 안정판. 출발 판은 Builder 가 도착이 받는 판으로 바꿔 보냄 (CV-1, target/data-fit.ts)
+  #   매개변수 그룹 계열: redis7·valkey7·valkey8, redis6.x, redis5.0 (AWS 이름 규칙)
   version = coalesce(var.cfg.version, var.cfg.engine == "valkey" ? "8.0" : "7.1")
-  family  = "${var.cfg.engine}${split(".", local.version)[0]}"
-  # DRAFT(ai): memory_mib → 노드 급. 각 급 메모리(GiB 0.5·1.37·3.09·6.38·12.93·26.04) 안에 드는 가장 작은 급. 모르면 가장 싼 급
+  major   = tonumber(split(".", local.version)[0])
+  family  = var.cfg.engine == "redis" && local.major == 6 ? "redis6.x" : var.cfg.engine == "redis" && local.major < 6 ? "redis${local.major}.0" : "${var.cfg.engine}${local.major}"
+  # DRAFT(ai): memory_mib → 노드 급. 각 급 메모리(GiB×1024 내림) 안에 드는 가장 작은 급. 모르면 가장 싼 급.
+  #   표 = target/data-fit.ts AWS_CACHE_NODES (시험이 대조). 표 밖은 줄이지 않고 validation 으로 거부 (SZ-1)
   mib = coalesce(var.cfg.memory_mib, 0)
   node_type = (local.mib <= 512 ? "cache.t4g.micro"
     : local.mib <= 1402 ? "cache.t4g.small"
     : local.mib <= 3164 ? "cache.t4g.medium"
     : local.mib <= 6533 ? "cache.m7g.large"
     : local.mib <= 13240 ? "cache.m7g.xlarge"
-  : "cache.m7g.2xlarge")
+    : local.mib <= 26664 ? "cache.m7g.2xlarge"
+    : local.mib <= 54087 ? "cache.r7g.2xlarge"
+    : local.mib <= 108349 ? "cache.r7g.4xlarge"
+    : local.mib <= 214579 ? "cache.r7g.8xlarge"
+    : local.mib <= 325396 ? "cache.r7g.12xlarge"
+  : "cache.r7g.16xlarge")
   ha      = var.cfg.ha == true
   cluster = var.cfg.cluster_mode == true
   shards  = local.cluster ? coalesce(var.cfg.shards, 1) : null
   tls     = var.cfg.tls != false # null = 상품 기본(켬)
+  port    = coalesce(var.cfg.port, 6379)
 }
 
 resource "aws_elasticache_subnet_group" "this" {
@@ -75,8 +90,8 @@ resource "aws_security_group" "this" {
     for_each = var.cluster_sg_id == "" ? [] : [var.cluster_sg_id]
     content {
       description     = "Cache from EKS nodes/pods"
-      from_port       = 6379
-      to_port         = 6379
+      from_port       = local.port
+      to_port         = local.port
       protocol        = "tcp"
       security_groups = [ingress.value]
     }
@@ -97,7 +112,7 @@ resource "aws_elasticache_replication_group" "this" {
   parameter_group_name       = local.cluster ? "default.${local.family}.cluster.on" : null
   automatic_failover_enabled = local.ha || local.cluster
   multi_az_enabled           = local.ha
-  port                       = 6379
+  port                       = local.port
   subnet_group_name          = aws_elasticache_subnet_group.this.name
   security_group_ids         = [aws_security_group.this.id]
   at_rest_encryption_enabled = true
@@ -111,14 +126,14 @@ locals {
 
 output "host" { value = local.endpoint }
 output "arn" { value = aws_elasticache_replication_group.this.arn } # A8: 옮긴 IAM 권한의 Resource (root grants.tf)
-output "port" { value = 6379 }
+output "port" { value = local.port }
 # TODO(human): auth=true 를 AWS 에서 어떻게 옮길지(auth token 은 state 에 남음). 지금은 SG(클러스터에서만)로만 막고 비밀은 없다 → 이름 출력은 빈 값
 output "auth_secret" { value = "" } # KIND_INTERNAL_OUTPUTS.cache = ["auth_secret"]
 # LINK_OUTPUTS.cache = host·port·url
 output "link" {
   value = {
     host = local.endpoint
-    port = "6379"
-    url  = "${local.tls ? "rediss" : "redis"}://${local.endpoint}:6379"
+    port = tostring(local.port)
+    url  = "${local.tls ? "rediss" : "redis"}://${local.endpoint}:${local.port}"
   }
 }

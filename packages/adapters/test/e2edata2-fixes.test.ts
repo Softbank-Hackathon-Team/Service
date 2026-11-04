@@ -1,7 +1,7 @@
 // E2EDATA2 고친 것 고정: ① Pub/Sub DLQ 토픽은 queue 로 ② 흉내 길 apply 출력에 데이터 자원 link.* ③ posture 를 사람이 고치는 경로
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AppSpecV2, SpecV2FieldPath, checkV2, type RawInventory } from "@svc/contracts";
+import { AppSpecV2, SpecFieldPath, checkV2, type RawInventory } from "@svc/contracts";
 import { normalizeV2 } from "../src/import/pipeline.js";
 import { stubTfOutputsV2, v2Blockers, targetBuilderFor } from "../src/index.js";
 
@@ -48,7 +48,9 @@ test("흉내 apply 출력(stubTfOutputsV2): cache·objectStore·queue 가 LINK_O
 });
 
 test("PATCH 경로: posture 통째는 받고, posture.network 같은 깊은 경로·모르는 경로는 거부", () => {
-  assert.ok(SpecV2FieldPath.safeParse("posture").success);
-  assert.ok(SpecV2FieldPath.safeParse("security").success);   // 보안 요구사항 통째 (보안 판정 연결)
-  for (const p of ["posture.network", "security.requirements", "securityFacts", "posture ", "app"]) assert.equal(SpecV2FieldPath.safeParse(p).success, false, p);
+  assert.ok(SpecFieldPath.safeParse("posture").success);
+  assert.ok(SpecFieldPath.safeParse("security").success);   // 보안 요구사항 통째 (보안 판정 연결)
+  // G3b-5 (팀 결정): 앱 이름은 "app.name" 으로만 고친다. 통째 "app"·다른 app 칸은 거부
+  assert.ok(SpecFieldPath.safeParse("app.name").success);
+  for (const p of ["posture.network", "security.requirements", "securityFacts", "posture ", "app", "app.owner"]) assert.equal(SpecFieldPath.safeParse(p).success, false, p);
 });

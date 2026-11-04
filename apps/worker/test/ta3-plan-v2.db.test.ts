@@ -24,7 +24,6 @@ before(async () => {
 });
 after(async () => {
   if (skip) return;
-  delete process.env.IMPORT_IR;
   await core.boss.stop({ graceful: false }); await core.pool.end(); await owner.end();
 });
 
@@ -34,36 +33,26 @@ async function imported(provider: "aws" | "gcp") {
     ($1,$3,$4,'s','connected'), ($2,$3,'gcp','d','connected')`, [src, dst, T, provider]);
   await owner.query(`INSERT INTO migrations (id, tenant_id, source_env_id, target_env_id, status)
     VALUES ($1,$2,$3,$4,'importing')`, [id, T, src, dst]);
-  process.env.IMPORT_IR = "v2";
   await imp.handleImport({ tenantId: T, requestId: `r-ta3-${id.slice(0, 8)}`, migrationId: id });
   return id;
 }
 const pick = (tenant: string, id: string) => core.withTenant(tenant, (tx) => core.latestAcceptedSpecV2(tx, id));
 
-test("정상: v2 가져오기 판 → spec_v2, v1 되돌아감 판 → upconvert", { skip }, async () => {
+test("정상: 가져오기 판 → 명세(spec_v2) 그대로, postgres 포함", { skip }, async () => {
   const g = await pick(T, await imported("gcp"));
   const rg = adapters.resolveSpecV2(g!);
-  assert.equal(rg.ok && rg.source, "spec_v2");
+  assert.equal(rg.ok, true);
   assert.equal(rg.ok && rg.spec.components.some((c) => c.kind === "postgres"), true);
   assert.equal(adapters.v2PrecheckItems("gcp", g!)[0]!.id, "PC-V2-SOURCE");
-  // I9: aws 데모가 ECS v2 가 됐다 → 워크로드 없는 원본(DB 만)으로 v1 되돌아감 판을 만든다
-  const src = adapters.DEMO_INVENTORY_V2.aws!, orig = src.items;
-  src.items = orig.filter((i) => (i as { kind: string }).kind !== "ecs.service");
-  let aid: string;
-  try { aid = await imported("aws"); } finally { src.items = orig; }
-  const a = await pick(T, aid);
-  assert.equal(a!.specV2, null);
-  const ra = adapters.resolveSpecV2(a!);
-  assert.equal(ra.ok && ra.source, "upconvert");
 });
 
 test("거부: 사람이 고친 새 판에 spec_v2 가 없으면 NEEDS_HUMAN, 다른 회사에선 판이 안 보인다", { skip }, async () => {
   const id = await imported("gcp");
   await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta)
-    SELECT tenant_id, migration_id, 2, spec, '{}'::jsonb FROM spec_versions WHERE migration_id=$1 AND version=1`, [id]);
+    SELECT tenant_id, migration_id, 2, '{}', '{}'::jsonb FROM spec_versions WHERE migration_id=$1 AND version=1`, [id]);
   const r = await pick(T, id);
   assert.equal(r!.version, 2);
-  assert.equal(r!.hadV2Before, true);
+  assert.equal(r!.specV2, null);
   const res = adapters.resolveSpecV2(r!);
   assert.equal(!res.ok && res.code, "NEEDS_HUMAN");
   assert.throws(() => adapters.specV2OrThrow(r!), (e: unknown) => e instanceof adapters.AdapterError && e.code === "NEEDS_HUMAN");

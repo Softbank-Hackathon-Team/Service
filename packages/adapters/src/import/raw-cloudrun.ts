@@ -41,7 +41,11 @@ export interface RawCloudRunService {
   minScale?: number | null;
   maxScale?: number | null;
   serviceAccount?: string | null;
-  imageDigest?: string | null;   // 최신 준비된 판(revision)의 status.imageDigest (주 컨테이너)
+  imageDigest?: string | null;   // CR-1: 옮길 판(트래픽 가장 큰 판, 없으면 최신 준비 판)의 status.imageDigest (주 컨테이너)
+  /** CR-1: 옮길 판 이름. containers·imageDigest 는 이 판에서 같이 읽음 */
+  revision?: string | null;
+  /** CR-1: 트래픽이 여러 판에 나뉨 (큰 순). 한 판 100% 면 칸 없음 */
+  trafficSplit?: Array<{ revision: string; percent: number }>;
   containers: RawCloudRunContainer[];
   /** 이 서비스로 가는 사용자 도메인 (domain-mappings) */
   domains?: string[];

@@ -71,6 +71,18 @@
         "null"
       ]
     },
+    "port": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "allow_from_json": {
       "type": "string"
     }
@@ -86,6 +98,7 @@
     "tls",
     "auth",
     "ha",
+    "port",
     "allow_from_json"
   ],
   "additionalProperties": false

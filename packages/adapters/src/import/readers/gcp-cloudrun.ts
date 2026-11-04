@@ -1,3 +1,4 @@
+import { unreadOrThrow } from "../../common/unread.js";
 import { arr, get, runJson, str, type CliDeps } from "../../common/cli.js";
 import { actionsOfCommands } from "../../common/observe-permissions.js";
 import { CLOUDRUN_RAW_KINDS, type RawCloudRunContainer, type RawCloudRunJob, type RawCloudRunProbe, type RawCloudRunService } from "../raw-cloudrun.js";
@@ -71,6 +72,10 @@ export function containersOf(spec: unknown): RawCloudRunContainer[] {
   });
 }
 
+/** RF-3: Scheduler httpTarget URI 에 적힌 Cloud Run 잡 지역. v2 ".../locations/<지역>/jobs/<이름>:run", v1 "https://<지역>-run.googleapis.com/.../jobs/<이름>:run" */
+export const schedJobRegion = (uri: string): string | null =>
+  /\/locations\/([a-z0-9-]+)\/jobs\//.exec(uri)?.[1] ?? /^https:\/\/([a-z0-9-]+)-run\.googleapis\.com\//.exec(uri)?.[1] ?? null;
+
 /** 라벨 고르기 "키=값" → 맞나. 깃발 없으면 늘 true */
 export function labelFilter(want: string | undefined): (labels: Record<string, string>) => boolean {
   const m = want ? /^([^=]+)=(.*)$/.exec(want.trim()) : null;
@@ -110,11 +115,23 @@ export async function readCloudRun(d: CliDeps, project: string, env: NodeJS.Proc
     const name = String(get(s, "metadata", "name"));
     const r = regionOf(s);
     const tpl = get(s, "spec", "template");
-    const containers = containersOf(get(tpl, "spec"));
+    // CR-1 DRAFT(ai): 옮길 판 = 지금 손님 트래픽을 가장 많이 받는 판 (status.traffic). latestRevision: true 줄은 최신 준비 판을 뜻함.
+    //   트래픽 표가 없으면 최신 준비 판. 컨테이너 칸과 digest 를 같은 판(revisions describe)에서 같이 읽어 틀·digest 가 섞이지 않게 한다.
+    //   판을 못 읽으면 틀(spec.template) 컨테이너로 두고 digest 없음 (매퍼가 B 로 뺌). 여러 판에 나뉘어 있으면 trafficSplit → 매퍼가 검토 0.6
+    const latestReady = str(get(s, "status", "latestReadyRevisionName"));
+    const traffic = arr(get(s, "status", "traffic")).map((t) => ({ revision: t.latestRevision === true ? latestReady : str(t.revisionName), percent: num(t.percent) ?? 0 }))
+      .filter((t): t is { revision: string; percent: number } => !!t.revision && t.percent > 0);
+    const byRev = new Map<string, number>();
+    for (const t of traffic) byRev.set(t.revision, (byRev.get(t.revision) ?? 0) + t.percent);
+    const split = [...byRev].map(([revision, percent]) => ({ revision, percent })).sort((a, b) => b.percent - a.percent || a.revision.localeCompare(b.revision));
+    const rev = split[0]?.revision ?? latestReady;
+    const revObj = !rev ? null : await soft(`${name} 판(revision) ${rev}`, notes, async () =>
+      await runJson(d, "gcloud", ["run", "revisions", "describe", rev, "--region", r, ...p]) as unknown, null as unknown);
+    const revContainers = revObj ? containersOf(get(revObj, "spec")) : [];
+    const containers = revContainers.length ? revContainers : containersOf(get(tpl, "spec"));
     if (!containers.length) { notes.push(`${name}: 컨테이너 없음 → 뺌`); continue; }
-    const rev = str(get(s, "status", "latestReadyRevisionName"));
-    const digest = !rev ? null : await soft(`${name} 판(revision) ${rev}`, notes, async () =>
-      str(get(await runJson(d, "gcloud", ["run", "revisions", "describe", rev, "--region", r, ...p]), "status", "imageDigest")), null);
+    const digest = revObj ? str(get(revObj, "status", "imageDigest")) : null;
+    if (rev && latestReady && rev !== latestReady) notes.push(`${name}: 트래픽을 받는 판 ${rev} 를 옮김 (최신 준비 판 ${latestReady} 은 트래픽 ${byRev.get(latestReady) ?? 0}%)`);
     const invokerAllUsers = await soft(`${name} 호출 권한(IAM)`, notes, async () =>
       arr(get(await runJson(d, "gcloud", ["run", "services", "get-iam-policy", name, "--region", r, ...p]), "bindings"))
         .some((b) => b.role === "roles/run.invoker" && strs(b.members).some((m) => m === "allUsers" || m === "allAuthenticatedUsers")), null as boolean | null);
@@ -131,21 +148,30 @@ export async function readCloudRun(d: CliDeps, project: string, env: NodeJS.Proc
       imageDigest: digest,
       containers,
       domains: domains.get(`${r}/${name}`) ?? [],
+      revision: rev ?? null,
+      ...(split.length > 1 ? { trafficSplit: split } : {}),
     };
     items.push(raw as unknown as Obj);
   }
 
   // 잡 + 일정. 잡 목록·일정 하나가 실패해도 서비스는 남긴다
-  const jobsAll = await soft("Cloud Run 잡", notes, async () => arr(await runJson(d, "gcloud", ["run", "jobs", "list", ...rg, ...p])), []);
+  // RF-1: 잡 목록을 못 읽음 ≠ 잡 없음 (일시 → 재시도, 아니면 검토 줄)
+  let jobsAll: Obj[] = [];
+  try { jobsAll = arr(await runJson(d, "gcloud", ["run", "jobs", "list", ...rg, ...p])); }
+  catch (e) { items.push(unreadOrThrow(e, "cloudrun.jobs", "Cloud Run 잡 목록")); notes.push(`Cloud Run 잡 못 읽음: ${(e as Error).message.slice(0, 160)}`); }
   const jobs = jobsAll.filter((j) => want(labelsOf(j))).sort((a, b) => String(get(a, "metadata", "name")).localeCompare(String(get(b, "metadata", "name"))));
   const schedules = new Map<string, { cron: string; timeZone: string | null; paused: boolean }>();
-  for (const r of [...new Set(jobs.map(regionOf).filter(Boolean))].sort()) {
+  // RF-3 DRAFT(ai): Scheduler 는 잡과 다른 지역에 둘 수 있다 → 잡 지역 + IMPORT_GCP_SCHEDULER_REGIONS(쉼표) 지역에서 찾고,
+  //   열쇠는 Scheduler 지역이 아니라 URI 에 적힌 잡 지역으로 만든다 (예전: 같은 지역만 찾아 다른 지역 일정은 "일정 없음")
+  const extraSched = (env.IMPORT_GCP_SCHEDULER_REGIONS ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+  for (const r of [...new Set([...jobs.map(regionOf).filter(Boolean), ...extraSched])].sort()) {
     const list = await soft(`Cloud Scheduler(${r})`, notes, async () => arr(await runJson(d, "gcloud", ["scheduler", "jobs", "list", "--location", r, ...p])), []);
     for (const sj of [...list].sort((a, b) => String(a.name).localeCompare(String(b.name)))) {
-      const target = /\/jobs\/([^/:]+):run\b/.exec(String(get(sj, "httpTarget", "uri") ?? ""))?.[1];
+      const uri = String(get(sj, "httpTarget", "uri") ?? "");
+      const target = /\/jobs\/([^/:]+):run\b/.exec(uri)?.[1];
       const cron = str(sj.schedule);
       if (!target || !cron) continue;
-      const key = `${r}/${target}`;
+      const key = `${schedJobRegion(uri) ?? r}/${target}`;
       // DRAFT(ai): 한 잡을 부르는 일정이 여럿이면 이름순 첫 번째만 (명세 job 하나 = 일정 하나) + notes
       if (schedules.has(key)) { notes.push(`잡 ${target}: 일정이 둘 이상 → 이름순 첫 번째만`); continue; }
       schedules.set(key, { cron, timeZone: str(sj.timeZone), paused: sj.state === "PAUSED" });
@@ -171,6 +197,6 @@ export async function readCloudRun(d: CliDeps, project: string, env: NodeJS.Proc
     };
     items.push(raw as unknown as Obj);
   }
-  const svcN = items.filter((i) => i.kind === CLOUDRUN_RAW_KINDS.service).length, jobN = items.length - svcN;
+  const svcN = items.filter((i) => i.kind === CLOUDRUN_RAW_KINDS.service).length, jobN = items.filter((i) => i.kind === CLOUDRUN_RAW_KINDS.job).length;
   return { items, counts: { ...(svcN ? { [CLOUDRUN_RAW_KINDS.service]: svcN } : {}), ...(jobN ? { [CLOUDRUN_RAW_KINDS.job]: jobN } : {}) }, notes };
 }

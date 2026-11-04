@@ -30,5 +30,8 @@ export const ImportAccuracy = z.object({
   /** 0~100, 소수 첫째 자리. comparable 이 0 이면 null (0% 로 속이지 않는다) */
   percent: z.number().min(0).max(100).nullable(),
   fields: z.array(AccuracyField).max(2000),
+  /** G3b-6: 이 숫자가 비교한 칸 이름들 / 안 본 칸 이름들 (값 없음). 옛 감사 기록에는 없다 */
+  compared: z.array(z.string().max(60)).max(100).optional(),
+  notCompared: z.array(z.string().max(60)).max(100).optional(),
 }).strict();
 export type ImportAccuracy = z.infer<typeof ImportAccuracy>;

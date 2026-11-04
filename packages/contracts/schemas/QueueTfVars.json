@@ -71,6 +71,39 @@
     },
     "allow_from_json": {
       "type": "string"
+    },
+    "idle_expiry_sec": {
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "retain_acked": {
+      "type": [
+        "boolean",
+        "null"
+      ]
+    },
+    "filter": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "push_endpoint": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "subscriptions_json": {
+      "type": "string"
     }
   },
   "required": [
@@ -82,7 +115,12 @@
     "ack_timeout_sec",
     "dead_letter_to",
     "dead_letter_max_receive",
-    "allow_from_json"
+    "allow_from_json",
+    "idle_expiry_sec",
+    "retain_acked",
+    "filter",
+    "push_endpoint",
+    "subscriptions_json"
   ],
   "additionalProperties": false
 }

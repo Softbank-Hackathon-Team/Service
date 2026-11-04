@@ -3,11 +3,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { AppSpec, type TargetEnv } from "@svc/contracts";
-import { adapterFor, azure, azureRunner, runnerFor, RunnerUnavailable, DEMO_INVENTORY } from "../src/index.js";
+import type { TargetEnv } from "@svc/contracts";
+import { oneService } from "./one-service.js";
+import { adapterFor, azure, azureRunner, azureResourceTypesV2, targetBuilderFor, runnerFor, RunnerUnavailable, DEMO_INVENTORY } from "../src/index.js";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "../../..");
-const spec = AppSpec.parse(adapterFor("aws").normalize(DEMO_INVENTORY.aws).spec);   // DB 있는 3티어 API
+const spec = oneService();   // DB 있는 API 하나 (Azure Mock 은 신원 하나만 그림)
 const t: TargetEnv = { envId: "44444444-4444-4444-8444-444444444444", provider: "azure_mock", region: "default" };
 const fast = azureRunner.createAzureMockRunner({ latencyMs: 0, now: () => new Date("2026-11-07T00:00:00Z") });
 
@@ -17,12 +18,14 @@ test("Azure Mock apply: 모듈 output 3개를 같은 키로 돌려주고, 같은
   assert.equal(a.ok, true); assert.equal(a.mock, true);
   const outputs = [...readFileSync(join(root, "infra/modules/azure/app/main.tf"), "utf8")
     .matchAll(/^output "([^"]+)"/gm)].map((m) => m[1]).sort();
-  assert.deepEqual(Object.keys(a.tfOutputs).sort(), outputs);
+  // 모듈 output 그대로 + 의존성 연결 값(link.<DB id>.*)
+  assert.deepEqual(Object.keys(a.tfOutputs).filter((k) => !k.startsWith("link.")).sort(), outputs);
+  assert.ok(a.tfOutputs["link.shop-db.host"]);
   assert.deepEqual(a.tfOutputs, b.tfOutputs);
   assert.match(a.tfOutputs.db_fqdn!, /\.postgres\.database\.azure\.com$/);
   assert.match(a.tfOutputs.app_identity_client_id!, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$/);
   // 자원 종류 = 번역 함수가 말한 종류. 전부 Succeeded, ID는 Azure 모양
-  assert.deepEqual(a.resources.map((r) => r.type), azure.resourceTypes(spec));
+  assert.deepEqual(a.resources.map((r) => r.type), azureResourceTypesV2(spec));
   for (const r of a.resources) {
     assert.equal(r.state, "Succeeded");
     assert.match(r.id, /^\/subscriptions\/0{8}-0{4}-0{4}-0{4}-0{12}\/resourceGroups\/rg-platform-[0-9a-f]{6}\/providers\/Microsoft\./);
@@ -31,7 +34,7 @@ test("Azure Mock apply: 모듈 output 3개를 같은 키로 돌려주고, 같은
 
 test("Azure Mock apply 출력을 Helm 값에 넣으면 자리표시가 사라진다", async () => {
   const { tfOutputs } = await fast.apply(spec, t);
-  const values = JSON.stringify(adapterFor("azure_mock").toHelmValues(spec, tfOutputs, t));
+  const values = JSON.stringify(targetBuilderFor("azure_mock").toWorkloadValues(spec, tfOutputs, { ...t, tenantId: "11111111-1111-4111-8111-111111111111", migrationId: "22222222-2222-4222-8222-222222222222" } as never));
   assert.doesNotMatch(values, /<tf-output:/);
 });
 

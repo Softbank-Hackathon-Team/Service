@@ -11,8 +11,17 @@ export function buildPosture(components: MappedComponent[], policies: RawK8sNetw
   const workloads = components.filter((c) => c.kind === "service" || c.kind === "job");
   const namespaces = [...new Set(workloads.map((c) => c.native.namespace).filter((x): x is string => Boolean(x)))].sort();
   for (const ns of namespaces) {
-    const pol = policies.filter((p) => p.metadata.namespace === ns).map((p) => p.metadata.name).sort();
-    network.push({ scope: "namespace", namespace: ns, mode: "mirror", policies: pol, default: pol.length ? "as-declared" : "allow-all" });
+    const own = policies.filter((p) => p.metadata.namespace === ns).sort((a, b) => a.metadata.name.localeCompare(b.metadata.name));
+    const pol = own.map((p) => p.metadata.name);
+    // N6 DRAFT(ai): 본문 원문도 담는다 (도착이 같은 이름·같은 규칙으로 그림). policyTypes 는 Ingress·Egress 만
+    const rules = own.map((p) => ({
+      name: p.metadata.name,
+      podSelector: (p.spec.podSelector ?? {}) as Record<string, unknown>,
+      ...(p.spec.policyTypes ? { policyTypes: p.spec.policyTypes.filter((t): t is "Ingress" | "Egress" => t === "Ingress" || t === "Egress") } : {}),
+      ...(p.spec.ingress ? { ingress: p.spec.ingress as Array<Record<string, unknown>> } : {}),
+      ...(p.spec.egress ? { egress: p.spec.egress as Array<Record<string, unknown>> } : {}),
+    }));
+    network.push({ scope: "namespace", namespace: ns, mode: "mirror", policies: pol, default: pol.length ? "as-declared" : "allow-all", ...(rules.length ? { rules } : {}) });
   }
   for (const t of [...components].filter((c) => c.network).sort((a, b) => (a.id! < b.id! ? -1 : 1)))
     network.push({ scope: "component", subject: t.id!, mode: "mirror", ingress: t.network!.ingress, public: t.network!.public });

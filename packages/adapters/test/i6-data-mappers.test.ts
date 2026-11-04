@@ -155,6 +155,7 @@ const KC: Array<[RegExp, Reply]> = [
     template: { metadata: { labels: { app: "shop-api" } }, spec: { containers: [{ name: "api", image: "ghcr.io/demo/shop-api:1.0", ports: [{ containerPort: 8080 }] }] } } } }] } }],
   [/^kubectl get pods/, { out: { items: [{ metadata: { name: "shop-api-1", namespace: "shop", labels: { app: "shop-api" } }, status: { containerStatuses: [{ name: "api", imageID: `ghcr.io/demo/shop-api@${D}` }] } }] } }],
   [/^kubectl get nodes/, { out: { items: [] } }],
+  [/^kubectl get (services|ingresses|configmaps) /, { out: { items: [] } }],   // F-1: 핵심 종류는 못 읽으면 멈추므로 빈 목록으로 응답
 ];
 const AWS_BASE: Array<[RegExp, Reply]> = [
   [/^aws sts get-caller-identity/, { out: { Account: "123456789012" } }],
@@ -176,7 +177,7 @@ const GCP_BASE: Array<[RegExp, Reply]> = [
 const READ_ONLY = /\b(list|describe|get|head)[-\w]*\b|sts get-caller-identity/;
 const WRITE = /\b(create|delete|put|update|modify|remove|set|add|tag|untag|purge|send|receive)-/;
 
-test("discover AWS v2: S3·SQS·ElastiCache 를 list·describe·get 으로만 읽고, 없는 설정은 빈 값", async () => {
+test("discover AWS: S3·SQS·ElastiCache 를 list·describe·get 으로만 읽고, 없는 설정은 빈 값", async () => {
   const { exec, calls } = fakeExec([
     [/^aws s3api list-buckets/, { out: { Buckets: [{ Name: "shop-assets" }] } }],
     [/get-bucket-versioning/, { out: { Status: "Enabled" } }],
@@ -193,7 +194,7 @@ test("discover AWS v2: S3·SQS·ElastiCache 를 list·describe·get 으로만 �
     [/^aws elasticache describe-cache-clusters/, { out: { CacheClusters: [{ Engine: "redis", EngineVersion: "7.1.0" }] } }],
     ...AWS_BASE,
   ]);
-  const raw: any = await discoverAws({ exec, env: { AWS_REGION: "ap-northeast-1" } }, { ir: "v2" });
+  const raw: any = await discoverAws({ exec, env: { AWS_REGION: "ap-northeast-1" } }, {});
   const items = (raw.items) as Raw[];
   const kinds = items.map((i) => i.kind);
   assert.ok(kinds.includes("s3.bucket") && kinds.includes("sqs.queue") && kinds.includes("elasticache.replicationGroup"), kinds.join());
@@ -208,20 +209,14 @@ test("discover AWS v2: S3·SQS·ElastiCache 를 list·describe·get 으로만 �
   }
 });
 
-test("discover AWS v1: 새 읽기를 부르지 않음 (지금 동작 그대로)", async () => {
-  const { exec, calls } = fakeExec(AWS_BASE);
-  await discoverAws({ exec, env: { AWS_REGION: "ap-northeast-1" } });
-  assert.ok(!calls.some((l) => /s3api|sqs |elasticache/.test(l)), calls.join("\n"));
-});
-
-test("discover AWS v2: 권한 없음(S3 목록 실패)이어도 중단 안 하고 나머지는 계속", async () => {
+test("discover AWS: 권한 없음(S3 목록 실패)이어도 중단 안 하고 나머지는 계속", async () => {
   const { exec } = fakeExec([
     [/^aws s3api list-buckets/, { code: 254, err: "AccessDenied" }],
     [/^aws sqs list-queues/, { out: { QueueUrls: [] } }],
     [/^aws elasticache describe-replication-groups/, { out: { ReplicationGroups: [] } }],
     ...AWS_BASE,
   ]);
-  const raw: any = await discoverAws({ exec, env: { AWS_REGION: "ap-northeast-1" } }, { ir: "v2" });
+  const raw: any = await discoverAws({ exec, env: { AWS_REGION: "ap-northeast-1" } }, {});
   const items = (raw.inventory?.items ?? raw.items ?? []) as Raw[];
   assert.ok(!items.some((i) => i.kind === "s3.bucket"));
 });
@@ -235,7 +230,7 @@ test("discover GCP v2: gcs·pubsub·memorystore 를 list·get-iam-policy 로만 
     [/gcloud redis instances list/, { out: [{ name: "projects/p/locations/l/instances/r", redisVersion: "REDIS_7_0", memorySizeGb: 2, tier: "STANDARD_HA" }] }],
     ...GCP_BASE,
   ]);
-  const raw: any = await discoverGcp({ exec, env: { GCP_PROJECT: "p" } }, { ir: "v2" });
+  const raw: any = await discoverGcp({ exec, env: { GCP_PROJECT: "p" } }, {});
   const items = (raw.inventory?.items ?? raw.items ?? []) as Raw[];
   const kinds = items.map((i) => i.kind);
   assert.ok(kinds.includes("gcs.bucket") && kinds.includes("pubsub.topic") && kinds.includes("memorystore.instance"), kinds.join());

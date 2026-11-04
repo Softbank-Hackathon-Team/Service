@@ -18,19 +18,21 @@ export { runnerFor, chooseRunner, azureMockEnabled, RunnerUnavailable, STUB_TF_O
 export { AdapterError, isAdapterError, type AdapterErrorCode } from "./common/errors.js";
 export type * from "./common/runner.js";
 export { unexpectedPlanTypes, type Purpose } from "./common/actions.js";
-export { DEMO_INVENTORY, DEMO_INVENTORY_V2, DEMO_SPEC } from "./common/fixtures.js";
+export { DEMO_INVENTORY } from "./common/fixtures.js";
+export { DEMO_SPEC } from "./common/demo-spec.js";
 export type { Target, TargetExtras } from "./common/target.js";
 export { realTerraformEnabled, iacMockEnabled, findWorkDir, readImported, type ImportedInfra, TENANT_DIR_RE, createRealTerraformRunner, fillTfVars, factsFromEnv, factEnvName, parseOutputs, childEnv,
-  workRootOf, workDirOf, PLAN_ONLY_ID, planOnlyId, spawnExec, REAL_MODULE_DIR, REAL_MODULE_BASE_V2, V2_ROOT_DIR, isV2WorkDir, type TfLayout, DEFAULT_MODULE_ROOT, type Exec, type ExecResult, type RealApplyResult, type RealTerraformRunner } from "./terraform/real-runner.js";
-export { dbNetworkFromEnv, withDbNetwork, withDbNetworkV2, cidrProblem, DbNetworkError, type DbNetworkSummary } from "./terraform/db-network.js";
+  workRootOf, workDirOf, PLAN_ONLY_ID, planOnlyId, spawnExec, REAL_MODULE_BASE, ROOT_DIR, layoutOf, type TfLayout, DEFAULT_MODULE_ROOT, type Exec, type ExecResult, type RealApplyResult, type RealTerraformRunner } from "./terraform/real-runner.js";
+export { dbNetworkFromEnv, withDbNetworkV2, cidrProblem, DbNetworkError, type DbNetworkSummary } from "./terraform/db-network.js";
 // Z86: 환경 실자원 읽기(읽기 전용 CLI) + 클라우드 서비스 대응표
 export { readInventory, cachedInventory, clearInventoryCache, inventoryToStatus, itemState, type CloudInventory, type InventoryGroup, type InventoryItem, type InventoryDeps } from "./inventory.js";
-export { serviceMap, categoryOfType, SERVICE_NAME, SOURCE_WORKLOAD, METHOD_LABEL, type ServiceMapRow, type ServiceCategory, type MoveMethod, type PlanStepId } from "./common/service-map.js";
+export { SERVICE_NAME, METHOD_LABEL, type ServiceMapRow, type ServiceCategory, type MoveMethod, type PlanStepId } from "./common/service-map.js";
 // Z88: 출발 환경 진짜 읽기 (가져오기). MOCK_SEED=1 이면 어댑터 discover 는 데모 원본
 export { discoverSource, inventoryForAudit, discoverAws, discoverGcp, discoverOnprem, discoverForImport, type DiscoverOpts } from "./discover/index.js";
+export { AWS_NET_READ_ACTIONS, GCP_NET_READ_PERMISSIONS } from "./discover/net.js";
 export { AWS_COMMAND_ACTIONS, GCP_COMMAND_PERMISSIONS, actionsOfCommands } from "./common/observe-permissions.js";
-export { AWS_DATA_READ_ACTIONS, GCP_DATA_READ_PERMISSIONS } from "./discover/data.js";
-export { readK8sApp, readK8sNamespace, type K8sRead, type K8sNamespaceRead, type K8sNamespaceOpts } from "./discover/k8s.js";
+export { AWS_DATA_READ_ACTIONS, GCP_DATA_READ_PERMISSIONS, AWS_DATA_READ_PENDING, GCP_DATA_READ_PENDING } from "./discover/data.js";
+export { readK8sNamespace, type K8sNamespaceRead, type K8sNamespaceOpts } from "./discover/k8s.js";
 // I2: k8s 원본 타입 + 종류 문자열
 export * from "./import/raw-k8s.js";
 export { mockSeed, CliError, classifyCliError, sourceFail, type CliErrorKind, type CliDeps } from "./common/cli.js";
@@ -38,13 +40,12 @@ export { runCloudPrecheck, toPrecheckItems, mockPrecheckEnabled, mockChecks, cli
   type CloudCheck, type Verdict, type PrecheckEnvInfo, type PrecheckInput, type PrecheckDeps, type CloudProvider } from "./precheck/cloud-precheck.js";
 // L4: 연결 확인 (빌린 관찰 역할로 고객 AWS 읽어 보기)
 export { verifyAwsObserve, envFor, trustHasExternalId, type VerifyAwsInput, type VerifyAwsResult } from "./verify/aws.js";
-// I3a: 공통 명세 v2 가져오기 (원본 → v2, v2 → v1 투영)
+// I3a: 가져오기 (원본 → 공통 명세)
 export { normalizeV2, KIND_MAPPERS, EVIDENCE_TYPES, ENVIRONMENT_TYPES } from "./import/pipeline.js";
-export { projectV1, rebuildFromV2 } from "./import/project-v1.js";
-export type { SourceReader, KindMapper, RawItem, MappedComponent, NativeRef, ProjectionEnv, ProjectionSource, NormalizeV2Options, NormalizeV2Output } from "./import/types.js";
-// TA1: 도착 Builder v2 (IR v2 → 고정 루트 Terraform 변수 + workloads[] Helm 값)
-export { targetBuilderFor, awsTarget, gcpTarget, onpremTarget, azureMockTarget, rdsClassFor, cloudSqlTierFor, requirementsV2, v2Blockers, V2_FIELD_COVERAGE,
-  K8S_RENDER_CAPS, UNSUPPORTED_V2, LINK_OUTPUT_UNKNOWN, identitiesOf, resourceTypesV2For, type FieldRule, type IdentityPlan,
+export type { SourceReader, KindMapper, RawItem, MappedComponent, NativeRef, NormalizeV2Options, NormalizeV2Output } from "./import/types.js";
+// TA1: 도착 Builder (공통 명세 → 고정 루트 Terraform 변수 + workloads[] Helm 값)
+export { renderViewV2, isInClusterData, targetBuilderFor, awsTarget, gcpTarget, onpremTarget, azureMockTarget, rdsClassFor, cloudSqlTierFor, requirementsV2, v2Blockers, V2_FIELD_COVERAGE,
+  K8S_RENDER_CAPS, UNSUPPORTED_V2, LINK_OUTPUT_UNKNOWN, identitiesOf, targetNamespace, sourceNamespacesOf, meshesOf, RESERVED_NAMESPACES, resourceTypesV2For, type FieldRule, type IdentityPlan,
   managedBlockers, managedServicesOf, managedServiceVars, managedSecretName, managedJobsOf, managedJobVars } from "./target/index.js";   // TA13 · JOBBUILD
 export { targetFactsV2, sourceFactsV2, sourceDbsV2, appEnvV2, MODULE_DB_FACTS, type EnvSide } from "./target/security-facts.js";   // 보안 판정용 환경 사실
 export { verifyGcpObserve, OPTIONAL_PROBES, gcpEnvFor, gcpReasonOf, type VerifyGcpInput, type VerifyGcpResult } from "./verify/gcp.js";   // L7i
@@ -52,9 +53,10 @@ export { verifyGcpObserve, OPTIONAL_PROBES, gcpEnvFor, gcpReasonOf, type VerifyG
 export { borrowedAwsCreds, type BorrowedAwsCreds, type AwsSessionKeys } from "./terraform/borrowed-aws.js";
 // DEPLOYNONK8S: Terraform 이 앱까지 띄우는 도착(ECS·Cloud Run·VM)의 배포 확인
 export { terraformRuntimeOf, checkTerraformRuntime, type TerraformRuntime, type RuntimeHealth, type RuntimeHealthCode, type RuntimeHealthInput, type RuntimeHealthDeps } from "./target/runtime-health.js";
-// TA10: Azure Mock 도착 Builder v2 (capability 표 + mock plan)
+// TA10: Azure Mock 도착 Builder (capability 표 + mock plan)
 export { azureMockPlanV2, azureMockOutputsV2, azureResourceTypesV2, type AzureMockPlanV2 } from "./target/index.js";
-// TA3: 계획·적용 연결 (PLAN_IR=v2) — v2 명세 출처 고르기·precheck 대조·출력 펼치기·흉내 출력
+// TA3: 계획·적용 연결 — 명세 고르기·precheck 대조·출력 펼치기·흉내 출력
+export { k8sRenderWarnings } from "./target/render-warnings.js";
 export { resolveSpecV2, specV2OrThrow, specV2ForPlan, v2PrecheckItems, flattenTfOutputsV2, stubTfOutputsV2, NEEDS_HUMAN, type SpecV2Source, type ResolvedSpecV2 } from "./target/plan-v2.js";
 // I9: ECS 출발 갈래 (Reader·매퍼). 원본 모양·관찰 권한 목록
 export { readEcs, ECS_OBSERVE_ACTIONS, type EcsRead } from "./import/readers/aws-ecs.js";
@@ -66,7 +68,7 @@ export { ECS_RAW_KIND, type RawEcsService, type RawEcsContainer } from "./import
 export { readEc2, EC2_OBSERVE_ACTIONS } from "./import/readers/aws-ec2.js";
 export { readGce, GCE_OBSERVE_PERMISSIONS } from "./import/readers/gcp-gce.js";
 export { VM_RAW_KIND, type RawVmGroup, type RawVmIngress } from "./import/raw-vm.js";
-export { measureImportAccuracy, type MeasureInput } from "./import/accuracy.js";   // ALIGN-v2 IR-10: 가져오기 정확도 %
+export { measureImportAccuracy, ACCURACY_COMPARED, ACCURACY_NOT_COMPARED, type MeasureInput } from "./import/accuracy.js";   // ALIGN-v2 IR-10: 가져오기 정확도 %
 export { carryHumanEdits, CARRY_NOTE, type PrevSpecV2, type CarryReport } from "./import/carry.js";
 export { applyInclude, IncludeError, type IncludeFailure, type IncludeOut } from "./import/include.js";
 export { serviceMapV2, categoryOfTypeV2, type ServiceMapRowV2, type ServiceCategoryV2 } from "./common/service-map-v2.js";

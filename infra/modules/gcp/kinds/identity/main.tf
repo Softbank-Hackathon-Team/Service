@@ -37,8 +37,9 @@ variable "extra_readable_secrets" {
 
 locals {
   secret_names = jsondecode(coalesce(var.cfg.secret_names_json, "[]"))
-  sid          = { for n in local.secret_names : n => "app-${var.app_name}-${lower(replace(n, "_", "-"))}" }
-  owned        = { for n in var.owned_secret_names : n => "app-${var.app_name}-${lower(replace(n, "_", "-"))}" }
+  # TF4-3: Secret Manager id 는 영문·숫자·_·- 만 → k8s 비밀 이름의 . 도 - 로 (Builder target/gcp.ts remoteKey 와 같은 규칙)
+  sid          = { for n in local.secret_names : n => "app-${var.app_name}-${lower(replace(n, "/[^A-Za-z0-9-]/", "-"))}" }
+  owned        = { for n in var.owned_secret_names : n => "app-${var.app_name}-${lower(replace(n, "/[^A-Za-z0-9-]/", "-"))}" }
   # 키는 이름·값은 전체 이름 (apply 전에 알 수 있는 값만 키로)
   readable = merge(
     { for n, id in local.sid : "own-${n}" => "projects/${var.project_id}/secrets/${id}" },

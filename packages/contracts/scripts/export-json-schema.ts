@@ -6,7 +6,6 @@ import * as C from "../src/index.js";
 const out = new URL("../schemas/", import.meta.url);
 mkdirSync(out, { recursive: true });
 const pick = {
-  AppSpec: C.AppSpec, FieldMeta: C.FieldMeta, ImportResult: C.ImportResult,
   MigrationView: C.MigrationView, PlanDoc: C.PlanDoc, ApprovalInput: C.ApprovalInput,
   PrecheckItem: C.PrecheckItem, MigrationJob: C.MigrationJob, ApplyJob: C.ApplyJob,
   SseEvent: C.SseEvent, InfraReady: C.InfraReady, DeployResult: C.DeployResult,
@@ -18,6 +17,8 @@ const pick = {
   CostEstimate: C.CostEstimate, PriceCatalog: C.PriceCatalog,
   AppSpecV2: C.AppSpecV2, ImportResultV2: C.ImportResultV2,
   SpecPatchInput: C.SpecPatchInput,
+  // G3c-6: GET·PATCH spec 응답과 그 조각 (화면 타입을 손으로 안 쓰게)
+  MigrationSpecView: C.MigrationSpecView, FieldMetaV2: C.FieldMetaV2, ApprovalRowV2: C.ApprovalRowV2,
   ModuleInstance: C.ModuleInstance,
   PostgresTfVars: C.PostgresTfVars, NamespaceTfVars: C.NamespaceTfVars, IdentityTfVars: C.IdentityTfVars,
   CacheTfVars: C.CacheTfVars, ObjectStoreTfVars: C.ObjectStoreTfVars, QueueTfVars: C.QueueTfVars, JobTfVars: C.JobTfVars,

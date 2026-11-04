@@ -1,12 +1,12 @@
 // PREVIDS3: 재가져오기 때 사람이 PATCH 한 links·entry·posture 유지, 판 창(묶음 밖 복귀), 대상 없음 보고, 멱등
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEMO_INVENTORY_V2, normalizeV2 } from "../src/index.js";
+import { DEMO_INVENTORY, normalizeV2 } from "../src/index.js";
 import { CARRY_NOTE, carryHumanEdits as carry } from "../src/import/carry.js";
 const carryHumanEdits = (f: any, h: any[]): { result: any; report: { kept: string[]; flagged: string[]; dropped: string[] } } => carry(f, h) as any;
 
 type O = Record<string, any>;
-const fresh = (): any => normalizeV2(structuredClone(DEMO_INVENTORY_V2.gcp!)).result;
+const fresh = (): any => normalizeV2(structuredClone(DEMO_INVENTORY.gcp!)).result;
 const HUMAN = { source: "human", confidence: 1, needs_review: false };
 // 사람이 고친 판: 바탕 판 위에 mutate 한 것 + 키 표시를 human 으로 (applySpecV2Patch 와 같은 모양)
 const edited = (keys: string[], mutate: (spec: O) => void, base: any = fresh()): any => {

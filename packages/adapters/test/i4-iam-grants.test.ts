@@ -9,7 +9,7 @@ import { normalizeV2 } from "../src/import/pipeline.js";
 import { parseArn, type RawAwsIamPolicy } from "../src/import/mappers/iam-grants.js";
 import type { MappedComponent } from "../src/import/types.js";
 import { discoverAws } from "../src/discover/index.js";
-import { appIdentities, readAwsIam } from "../src/discover/aws-iam.js";
+import { appIdentities, readAwsIam, readGcpIam } from "../src/discover/aws-iam.js";
 import type { Exec } from "../src/terraform/real-runner.js";
 
 type Raw = Record<string, any>;
@@ -180,6 +180,8 @@ const IAM_FAKES: Array<[RegExp, Reply]> = [
   [/^aws iam get-role-policy --role-name shop-api-role --policy-name inline-sqs/, { out: { PolicyDocument: { Statement: { Effect: "Allow", Action: "sqs:SendMessage", Resource: "arn:aws:sqs:r:0:q" } } } }],
   [/^aws iam list-attached-role-policies --role-name worker-irsa/, { out: { AttachedPolicies: [] } }],
   [/^aws iam list-role-policies --role-name worker-irsa/, { out: { PolicyNames: [] } }],
+  // IB-1: 권한 경계 없는 역할 (get-role 에 PermissionsBoundary 칸 없음)
+  [/^aws iam get-role --role-name (shop-api-role|worker-irsa) /, { out: { Role: { RoleName: "x" } } }],
 ];
 
 test("IAM 읽기: Pod Identity → 역할 → 관리형(기본 판, URL 인코딩 문서)·인라인 정책, IRSA 는 SA 주석, list·get 만", async () => {
@@ -218,16 +220,106 @@ const awsBase = (k8sItems: Raw): Array<[RegExp, Reply]> => [
 const k8sDep = { kind: "Deployment", metadata: { name: "shop-api", namespace: NS }, spec: { replicas: 1, selector: { matchLabels: { app: "a" } },
   template: { metadata: { labels: { app: "a" } }, spec: { serviceAccountName: "shop-api", containers: [{ name: "a", image: `x@${D}` }] } } } };
 
-test("discoverAws: iam 옵션 off(기본)면 IAM 명령 0번, on(v2)이면 aws.iamPolicy 항목", async () => {
+test("discoverAws: iam 옵션 off(기본)면 IAM 명령 0번, on 이면 aws.iamPolicy 항목", async () => {
   const off = fakeExec([...awsBase(k8sDep), ...IAM_FAKES]);
-  const a = await discoverAws({ exec: off.exec, env: {} }, { ir: "v2" });
+  const a = await discoverAws({ exec: off.exec, env: {} }, {});
   assert.ok(!off.calls.some((c) => / iam |pod-identity/.test(c)));
   assert.ok(!(a.items as Raw[]).some((i) => i.kind === "aws.iamPolicy"));
   const on = fakeExec([...awsBase(k8sDep), ...IAM_FAKES]);
-  const b = await discoverAws({ exec: on.exec, env: {} }, { ir: "v2", iam: true });
+  const b = await discoverAws({ exec: on.exec, env: {} }, { iam: true });
   const p = (b.items as Raw[]).filter((i) => i.kind === "aws.iamPolicy");
   assert.deepEqual(p.map((x) => x.roleName), ["shop-api-role"]);
-  const v1 = fakeExec([...awsBase(k8sDep), ...IAM_FAKES]);
-  await discoverAws({ exec: v1.exec, env: {} }, { iam: true }).catch(() => undefined);
-  assert.ok(!v1.calls.some((c) => / iam /.test(c)), "v1 경로는 iam 옵션을 봐도 안 읽는다");
+});
+
+// ID-5: 못 읽은 신원은 "권한 없음"이 아니라 "못 읽음" 검토 줄
+test("ID-5: 역할 정책을 못 읽으면 unread 항목 → unread.IAM.<ns>/<sa> 검토 줄 (source aws:iam)", async () => {
+  const { exec } = fakeExec([[/^aws iam get-policy /, { code: 254, err: "AccessDenied" }], ...IAM_FAKES]);
+  const notes: string[] = [], unread: Raw[] = [];
+  await readAwsIam({ exec, env: {} }, R, "prod", [{ namespace: NS, serviceAccount: "shop-api" }], notes, null, unread);
+  assert.deepEqual(unread.map((u) => [u.kind, u.resource, u.source]), [["k8s.unread", `IAM.${NS}/shop-api`, "aws:iam"]]);
+  const { result } = normalizeV2({ provider: "aws", coverage: {}, items: [dep("shop-api"), ...unread] } as never);
+  const m = result.fieldMeta[`unread.IAM.${NS}/shop-api`]!;
+  assert.equal(m.needs_review, true); assert.equal(m.source, "aws:iam"); assert.match(m.rationale ?? "", /403/);
+});
+test("ID-5 거부: 다 읽었으면 unread 없음", async () => {
+  const { exec } = fakeExec(IAM_FAKES);
+  const unread: Raw[] = [];
+  await readAwsIam({ exec, env: {} }, R, "prod", [{ namespace: NS, serviceAccount: "shop-api" }], [], null, unread);
+  assert.deepEqual(unread, []);
+});
+
+// WI-1: GKE Workload Identity — SA 주석 GSA → 프로젝트 IAM 바인딩 → grants (역할 → 공통 동작 이름, Resource "*" 라 이미 이어진 대상에만)
+const GSA = "shop-api@p1.iam.gserviceaccount.com";
+const gsaSa = { kind: "k8s.serviceAccount", metadata: { name: "shop-api", namespace: NS }, gcpServiceAccount: GSA };
+const gcs = { kind: "gcs.bucket", name: "shop-assets", versioning: false, publicAccessPrevention: "enforced", allUsersBinding: false };
+test("WI-1 정상: GSA 프로젝트 바인딩 objectViewer → 버킷 링크 grants s3:GetObject·ListBucket, 표 밖 역할은 기준선에만", async () => {
+  const ids = appIdentities([dep("shop-api"), gsaSa]);
+  assert.equal(ids[0]!.gsa, GSA);
+  const { exec, calls } = fakeExec([[/^gcloud projects get-iam-policy p1/, { out: { bindings: [
+    { role: "roles/storage.objectViewer", members: [`serviceAccount:${GSA}`] },
+    { role: "roles/cloudsql.client", members: [`serviceAccount:${GSA}`] },
+    { role: "roles/storage.admin", members: ["serviceAccount:other@p1.iam.gserviceaccount.com"] },
+  ] } }]]);
+  const notes: string[] = [];
+  const b = await readGcpIam({ exec, env: {} }, "p1", ids, notes);
+  assert.deepEqual(b.map((x) => x.roles), [["roles/cloudsql.client", "roles/storage.objectViewer"]]);
+  assert.ok(calls.every((c) => /^gcloud projects get-iam-policy/.test(c)));
+  const { result } = normalizeV2({ provider: "gcp", coverage: {}, items: [dep("shop-api", [{ name: "BUCKET", value: "gs://shop-assets/img" }]), gsaSa, gcs, ...b] } as never);
+  const l = result.spec.links.find((x) => x.from === "shop-api" && x.to === "shop-assets")!;
+  assert.deepEqual(l.grants?.[0]?.actions, ["s3:GetObject", "s3:ListBucket"]);
+  assert.equal(l.intent, "read");
+  assert.ok(JSON.stringify(result.spec.posture.permissions).includes("gcp:roles/cloudsql.client"), "표 밖 역할은 버리지 않고 기준선에");
+  assert.equal(result.fieldMeta["links.shop-api->shop-assets"]?.rationale?.includes("권한 원문 없음") ?? false, false);
+});
+test("WI-1 거부: 프로젝트 정책을 못 읽으면 바인딩 없음 + unread.IAM 검토 줄 / GSA 주석 없으면 안 부름", async () => {
+  const { exec } = fakeExec([[/^gcloud projects get-iam-policy/, { code: 1, err: "PERMISSION_DENIED" }]]);
+  const unread: Raw[] = [];
+  assert.deepEqual(await readGcpIam({ exec, env: {} }, "p1", appIdentities([dep("shop-api"), gsaSa]), [], unread), []);
+  assert.deepEqual(unread.map((u) => [u.resource, u.source]), [[`IAM.${NS}/shop-api`, "gcp:iam"]]);
+  const none = fakeExec([]);
+  assert.deepEqual(await readGcpIam({ exec: none.exec, env: {} }, "p1", appIdentities([dep("shop-api")]), [], []), []);
+  assert.equal(none.calls.length, 0);
+});
+
+// ── IB-1 권한 경계 ─────────────────────────────────────
+test("IB-1: 권한 경계를 읽어 grants 를 경계 안 동작으로 좁히고, 뺀 동작·경계·SCP 못 읽음을 기준선·unmapped 에 남긴다", async () => {
+  const BOUND = { Statement: [{ Effect: "Allow", Action: ["s3:Get*", "sqs:*"], Resource: "*" }] };
+  const { exec } = fakeExec([
+    [/^aws iam get-role --role-name shop-api-role /, { out: { Role: { PermissionsBoundary: { PermissionsBoundaryArn: "arn:aws:iam::000000000000:policy/app-boundary" } } } }],
+    [/^aws iam get-policy --policy-arn arn:aws:iam::000000000000:policy\/app-boundary/, { out: { Policy: { DefaultVersionId: "v1" } } }],
+    [/^aws iam get-policy-version --policy-arn arn:aws:iam::000000000000:policy\/app-boundary .*--version-id v1/, { out: { PolicyVersion: { Document: BOUND } } }],
+    ...IAM_FAKES,
+  ]);
+  const notes: string[] = [];
+  const out = await readAwsIam({ exec }, ["--output", "json"], "c", [{ namespace: "shop", serviceAccount: "shop-api" }], notes);
+  assert.deepEqual(notes, []);
+  assert.equal(out[0]!.boundary?.arn, "arn:aws:iam::000000000000:policy/app-boundary");
+  assert.equal(out[0]!.scp, "unread");
+});
+
+test("IB-1 거부: 경계를 못 읽으면 정책은 그대로 두고 note + boundaryUnread", async () => {
+  const { exec } = fakeExec([[/^aws iam get-role /, { code: 1, err: "AccessDenied" }], ...IAM_FAKES]);
+  const notes: string[] = [];
+  const out = await readAwsIam({ exec }, ["--output", "json"], "c", [{ namespace: "shop", serviceAccount: "shop-api" }], notes);
+  assert.equal(out.length, 1);
+  assert.equal(out[0]!.boundaryUnread, true);
+  assert.ok(notes.some((n) => n.includes("권한 경계 못 읽음")));
+});
+
+test("IB-1: 경계 밖 동작(s3:PutObject)은 grants 에서 빠지고, 경계는 기준선에 '같은 경계' 줄로", () => {
+  const p = { ...pol("shop-api", [{ Action: ["s3:GetObject", "s3:PutObject"], Resource: ["arn:aws:s3:::shop-uploads/*"] }]),
+    boundary: { arn: "arn:aws:iam::000000000000:policy/app-boundary", statements: [{ Effect: "Allow", Action: "s3:Get*", Resource: "*" }] } };
+  const out = run([wl("shop-api"), bucket("shop-uploads")], [p]);
+  const up = out.links.find((l) => l.to === "shop-uploads")!;
+  assert.deepEqual(up.grants?.[0]?.actions, ["s3:GetObject"]);
+  assert.equal(up.intent, "read");
+  const b = out.permissions.find((x) => x.source.endsWith(":boundary"))!;
+  assert.match(b.note!, /app-boundary/);
+  assert.match(b.note!, /s3:PutObject/);
+});
+
+test("IB-1 거부: 경계가 없으면 grants 는 그대로 (좁히지 않음)", () => {
+  const out = run([wl("shop-api"), bucket("shop-uploads")], [pol("shop-api", [{ Action: ["s3:GetObject", "s3:PutObject"], Resource: ["arn:aws:s3:::shop-uploads/*"] }])]);
+  assert.deepEqual(out.links.find((l) => l.to === "shop-uploads")!.grants?.[0]?.actions, ["s3:GetObject", "s3:PutObject"]);
+  assert.ok(!out.permissions.some((x) => x.source.endsWith(":boundary")));
 });

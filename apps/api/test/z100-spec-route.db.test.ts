@@ -10,12 +10,9 @@ const DB = process.env.DATABASE_URL, OWNER = process.env.OWNER_DATABASE_URL;
 const skip = !DB || !OWNER ? "DATABASE_URL / OWNER_DATABASE_URL 없음 (DB 시험 건너뜀)" : false;
 const P = "/api/v1";
 const T = randomUUID(), OTHER = randomUUID();
-const SPEC = {
-  schemaVersion: "1", app: { name: "shop" },
-  service: { image: `ghcr.io/demo/shop@sha256:${"a".repeat(64)}`, port: 8080, healthPath: "/healthz", replicas: 2, cpu: "250m", memory: "512Mi", env: [], secretRefs: [] },
-  database: { engine: "postgres", majorVersion: "16", storageGb: 20 },
-  ingress: { hostname: "shop.example.com", entry: "cloudflare-lb" },
-};
+// 명세 한 벌 (spec_v2 칸): 서비스 shop + postgres db
+const SPEC = {"schemaVersion":"2","app":{"name":"shop"},"components":[{"id":"shop","kind":"service","props":{"runtime":"k8s","origin":{"runtime":"k8s","product":"unknown"},"image":{"source":"registry","repository":"r/shop","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"ports":[{"port":8080,"protocol":"TCP"}],"probes":{"readiness":{"type":"http","path":"/healthz","port":8080}},"replicas":{"min":1,"max":1},"serviceAccount":"default","resources":{"request":{"cpuMilli":500,"memMiB":1024}},"env":[]}},{"id":"db","kind":"postgres","props":{"majorVersion":"16","storageGb":20}}],"links":[{"from":"shop","to":"db","intent":"connect"}],"entry":{"via":"cloudflare-lb","hosts":[{"hostnames":["s.example.com"],"routes":[{"matches":[{"path":{"type":"PathPrefix","value":"/"}}],"backends":[{"to":"shop","port":8080,"weight":1}]}]}]},"posture":{"permissions":[],"network":[]}};
+const withReplicas = (n: number) => ({ ...SPEC, components: SPEC.components.map((c) => c.id === "shop" ? { ...c, props: { ...c.props, replicas: { min: n, max: n } } } : c) });
 
 let core: typeof import("@svc/core");
 let owner: pg.Client;
@@ -49,17 +46,20 @@ async function seed(tenant: string, versions: { v: number; spec: unknown; meta: 
     ($1,$3,'onprem','k3s','connected'), ($2,$3,'aws','eks','connected')`, [src, dst, tenant]);
   await owner.query(`INSERT INTO migrations (id, tenant_id, source_env_id, target_env_id, status) VALUES ($1,$2,$3,$4,'spec_review')`,
     [id, tenant, src, dst]);
-  for (const x of versions)
-    await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta) VALUES ($1,$2,$3,$4,$5)`,
-      [tenant, id, x.v, x.spec, x.meta]);
+  // 칸 표시는 spec_v2.fieldMeta, AI 초안 표시(_draft)만 옛 칸 field_meta
+  for (const x of versions) {
+    const { _draft, ...m } = x.meta;
+    await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta, spec_v2) VALUES ($1,$2,$3,'{}',$4,$5)`,
+      [tenant, id, x.v, _draft ? { _draft } : {}, { spec: x.spec, fieldMeta: m, unmapped: [], ids: {} }]);
+  }
   return id;
 }
 const meta = (needs: string[]) => Object.fromEntries(needs.map((k) => [k, { source: "ai", confidence: 0.6, needs_review: true }]));
 
 test("받아들인 최신 판을 돌려준다 (그보다 새 AI 초안 판이 있어도)", { skip }, async () => {
   const id = await seed(T, [
-    { v: 1, spec: { ...SPEC, service: { ...SPEC.service, replicas: 1 } }, meta: {} },
-    { v: 2, spec: SPEC, meta: meta(["service.port"]) },
+    { v: 1, spec: withReplicas(1), meta: {} },
+    { v: 2, spec: withReplicas(2), meta: meta(["components.shop.ports"]) },
     { v: 3, spec: { ...SPEC, app: { name: "ai" } }, meta: { _draft: { by: "ai" } } },
   ]);
   const r = await get(T, id);
@@ -68,8 +68,8 @@ test("받아들인 최신 판을 돌려준다 (그보다 새 AI 초안 판이 �
   assert.equal(b.version, 2);
   assert.equal(b.source, "accepted");
   assert.equal(b.complete, true);
-  assert.equal(b.spec.service.replicas, 2);
-  assert.deepEqual(b.needsReview, ["service.port"]);
+  assert.deepEqual(b.spec.components.find((c: { id: string }) => c.id === "shop").props.replicas, { min: 2, max: 2 });
+  assert.deepEqual(b.needsReview, ["components.shop.ports"]);
   assert.match(b.createdAt, /Z$/);
 });
 
@@ -80,12 +80,14 @@ test("받아들인 판이 없으면 AI 초안 판 (source ai_draft)", { skip }, 
   assert.deepEqual(b.needsReview, []);
 });
 
-test("가져오기가 일부만 채운 판 → complete false, 채운 칸만", { skip }, async () => {
-  const id = await seed(T, [{ v: 1, spec: { schemaVersion: "1", app: { name: "half" } }, meta: {} }]);
-  const b = (await get(T, id)).json();
+test("구조 검증(checkV2)을 못 넘는 판 → complete false, 명세는 그대로 보임", { skip }, async () => {
+  const half = { ...SPEC, app: { name: "half" }, links: [...SPEC.links, { from: "shop", to: "nope", intent: "connect" }] };
+  const id = await seed(T, [{ v: 1, spec: half, meta: {} }]);
+  const r = await get(T, id);
+  assert.equal(r.statusCode, 200, r.body);
+  const b = r.json();
   assert.equal(b.complete, false);
   assert.equal(b.spec.app.name, "half");
-  assert.equal(b.spec.service, undefined);
 });
 
 test("명세가 없으면 404, 남의 회사 이전도 404", { skip }, async () => {

@@ -24,6 +24,10 @@ export interface NativeRef {
   appLabels?: Record<string, string>;
   endpoint?: string | null;        // 다른 워크로드가 값으로 적었을 주소 (연결 추론 근거)
   aliases?: string[];              // 같은 대상의 다른 주소 (예: CNPG …-rw.ns.svc.cluster.local)
+  /** DM-4: 호스트가 아닌 연결 식별자 (Cloud SQL 연결 이름·/cloudsql/<이름> 소켓). 연결 근거로는 쓰되, 주소 다시 쓰기는 안 하고 사람이 도착 연결 방식을 정한다 */
+  proxyAliases?: string[];
+  /** G3b-4: 주소(소문자)별 다시 쓰기 출력. null = 의존성 근거로만 쓰고 값은 안 바꿈(도착에 같은 모양 출력이 없음, 검토 줄). 없으면 종류 기본값 */
+  aliasOutputs?: Record<string, "host" | "url" | "name" | null>;
   uid?: string | null;             // 벤더 고유 ID (ARN, selfLink). 있으면 id 열쇠로 씀
   scope?: string;                  // 계정·리전·클러스터. 같은 이름이 둘일 때 가름
 }
@@ -42,14 +46,17 @@ export interface MappedComponent {
   /** 데이터 리소스의 출발 방화벽 (posture.network component 줄 재료) */
   network?: { ingress: Array<{ from: string; port?: number }> | "unknown"; public: boolean | null };
   /** I9: k8s Ingress 밖 라우팅 재료 (ECS 의 ALB 규칙). pipeline 이 entry 로 합친다 */
-  routes?: Array<{ host: string; path: string | null; port: number }>;
-  /** v1 투영 재료 (서비스만) */
-  projection?: ProjectionSource;
+  /** EA-1: hostUnknown = 출발 규칙에 호스트 조건이 없어 임시 호스트(ALB 주소)를 씀, tls = 출발 리스너가 HTTPS */
+  routes?: Array<{ host: string; path: string | null; port: number; hostUnknown?: boolean; tls?: boolean }>;
   /** I6: 큐의 DLQ 가 가리키는 다른 큐(ARN·토픽 이름). 파이프라인이 id 가 정해진 뒤 props.deadLetter.to 로 바꾼다 (저장 안 함) */
   deadLetterRef?: { arn: string; name: string };
+  /** B-1b·B-2: 버킷 알림·토픽 구독 대상 (props.notifications|topicSubscriptions[index].to 를 파이프라인이 uid 로 채움) */
+  notifyRefs?: Array<{ field: "notifications" | "topicSubscriptions"; index: number; uid: string }>;
   /** 파이프라인이 채움: 정한 id, 이 서비스를 고르는 k8s Service 이름들 */
   id?: string;
   svcNames?: string[];
+  /** N4: 매퍼가 리소스는 만들었지만 일부 칸(볼륨 종류 등)을 못 옮김 → 파이프라인이 unmapped B 로 */
+  partial?: Array<{ resource: string; reason: string }>;
 }
 
 /** 매퍼: 원본 종류 하나 → 리소스 하나 (순수). 못 옮기면 skip 이유 */
@@ -59,49 +66,19 @@ export interface KindMapper {
   map(item: RawItem): MappedComponent | { skip: string; grade?: "A" | "B" | "C" };
 }
 
-/** v1 투영에만 쓰는 출발 값. 저장하지 않는다(spec_v2 에 안 들어감) */
-export interface ProjectionSource {
-  /** 원래 이름 (v1 app.name) */
-  name: string;
-  namespace?: string;
-  /** 원래 env 값 (평문 비밀 가리기 뒤, 원래 순서, value 가 있는 것만) */
-  env: Array<{ name: string; value: string }>;
-  /** 평문 비밀로 보여 뺀 env 이름 (v1 field_meta 0.6 용) */
-  plainSecretNames: string[];
-  /** secretKeyRef env (원래 순서) */
-  secretRefs: Array<{ name: string; key: string }>;
-  /** Deployment.spec.replicas (HPA 와 상관없이) */
-  specReplicas: number;
-  /** 첫 컨테이너 포트 → 없으면 Service targetPort(숫자) */
-  port: number | null;
-  /** v1 호스트 (같은 네임스페이스 Ingress 중 이 서비스로 가는 첫 규칙 → LB 주소 → 클러스터 안 이름) */
-  hostname: string | null;
-  /** 이미지 원문 (v1 은 tag 를 split(":")[0] 으로 뗌) */
-  image: string;
-  imageDigest: string | null;
-  /** readinessProbe.httpGet.path 원문 (v1 healthPath) */
-  healthPath: string | null;
-}
-
-/** v1 투영용 보관 (저장 안 함). 키 = 리소스 id */
-export interface ProjectionEnv {
-  workloads: Record<string, ProjectionSource>;
-  /** postgres 원본 종류 (v1 이 못 읽은 값을 채우던 기본값이 종류마다 다름) */
-  postgres: Record<string, { nativeType: string }>;
-}
-
 export interface NormalizeV2Options {
   /** 이전 판 ImportResultV2.ids. 같은 자원 = 같은 id */
   previousIds?: Record<string, string>;
-  /** 앱 이름 (없으면 첫 서비스 id) */
+  /** 앱 이름 (G3b-5: 이전 만들 때 받은 값. 순서 = 앞 판에서 사람이 고친 이름 → 이것 → 앞 판 이름 → 고른 앱 묶음 값 → 첫 서비스 id) */
   appName?: string;
+  /** G3b-5: 같은 이전의 앞 판 앱 이름 (human = 사람이 PATCH 로 고친 이름). 다시 가져와도 이름이 안 바뀌게 */
+  previousApp?: { name: string; meta?: FieldMetaV2[string] };
   /** PARTOF: 연결 화면에서 고른 앱 묶음 값 (app.kubernetes.io/part-of 등). 없으면 라벨이 가장 많은 묶음 */
   partOf?: string;
 }
 
 export interface NormalizeV2Output {
   result: ImportResultV2;
-  projectionEnv: ProjectionEnv;
 }
 
 export type { FieldMetaV2 };

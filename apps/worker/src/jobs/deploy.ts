@@ -1,5 +1,5 @@
-import { AppSpec, DeployResult, MigrationJob, QUEUES, type AppSpecV2, type InfraReady, type PlanDoc, type Provider } from "@svc/contracts";
-import { asFailureCode, latestAcceptedSpec, latestAcceptedSpecV2, scrubString } from "@svc/core";
+import { DeployResult, MigrationJob, QUEUES, type AppSpecV2, type InfraReady, type PlanDoc, type Provider } from "@svc/contracts";
+import { asFailureCode, latestAcceptedSpecV2, scrubString } from "@svc/core";
 import { checkTerraformRuntime, envFor, factsFromEnv, iacMockEnabled, specV2ForPlan, terraformRuntimeOf, type RuntimeHealthDeps, type TerraformRuntime } from "@svc/adapters";
 import { nextJob, runStep, stubWait, stubFailIfAsked, type StepOutcome } from "./_step.js";
 import { withStepRoles, type StepRoles } from "./_roles.js";
@@ -13,9 +13,8 @@ import { argoWatcherFromEnv } from "../gitops/argo-watch.js";
 interface Loaded {
   infra: InfraReady;
   plan: PlanDoc | null;
-  spec: AppSpec | null;
+  spec: AppSpecV2 | null;      // TA3: 받아들인 최신 판 (없거나 모양이 틀리면 null → approvedValues 가 drift)
   env: { provider: Provider; accountId: string | null } | null;
-  specV2?: AppSpecV2 | null;   // TA3: 계획서 irVersion "2" 일 때만 (출처가 바뀌었으면 null → approvedValues 가 drift)
   runtime?: TerraformRuntime | null;   // DEPLOYNONK8S: 도착이 ECS·Cloud Run·VM 이면 그 실행 방식 (k8s 면 null·없음)
 }
 
@@ -33,24 +32,20 @@ export async function handleDeploy(raw: unknown) {
     load: async (tx, j, m): Promise<Loaded | null> => {
       const infra = await loadInfraReady(tx, j.migrationId);
       if (!infra) return null;
-      // DEPLOYNONK8S: v2 계획서면 도착 실행 방식을 먼저 본다. ECS·Cloud Run·VM 은 gitops 설정과 상관없이 Terraform 출력 + 건강 확인 길
+      // DEPLOYNONK8S: 도착 실행 방식을 먼저 본다. ECS·Cloud Run·VM 은 gitops 설정과 상관없이 Terraform 출력 + 건강 확인 길
       const nonK8s = await terraformRuntimeLoad(tx, infra, m);
       if (nonK8s) return nonK8s;
       if (!cfg) return { infra, plan: null, spec: null, env: null };
       const plan = await loadPlanById(tx, infra.planId);
-      const spec = await latestAcceptedSpec(tx, m.id);
+      const row = await latestAcceptedSpecV2(tx, m.id);
       const e = await tx.query(
         `SELECT provider, account_id AS "accountId" FROM environments WHERE id=$1`, [m.targetEnvId]);
-      if (!plan || !spec || !e.rows[0]) return null;
-      if (plan.irVersion === "2") {
-        const row = await latestAcceptedSpecV2(tx, m.id);
-        return { infra, plan, spec: AppSpec.parse(spec), env: e.rows[0], specV2: row ? specV2ForPlan(row, plan.specSource) : null };
-      }
-      return { infra, plan, spec: AppSpec.parse(spec), env: e.rows[0] };
+      if (!plan || !row || !e.rows[0]) return null;
+      return { infra, plan, spec: specV2ForPlan(row), env: e.rows[0] };
     },
     work: async (j, m, l): Promise<StepOutcome> => {
-      if (l.runtime && l.specV2 && l.env) {
-        const nl = l as Loaded & { runtime: TerraformRuntime; specV2: AppSpecV2; env: NonNullable<Loaded["env"]> };
+      if (l.runtime && l.spec && l.env) {
+        const nl = l as Loaded & { runtime: TerraformRuntime; spec: AppSpecV2; env: NonNullable<Loaded["env"]> };
         // VDEPLOYNONK8S 고침: 건강 조회는 도착 관찰 역할을 빌려서 한다(진짜 발급기면 그 자격 env, 워커 자기 자격은 지움). 단계가 끝나면 돌려준다
         return withStepRoles("deploy", j, m, (roles) => deployTerraformRuntime(j, nl, roles));
       }
@@ -76,8 +71,7 @@ export async function handleDeploy(raw: unknown) {
       } else {
         try {
           const out = await deployToGitops(new GitopsRepo(cfg), {
-            tenantId: j.tenantId, spec: l.spec!, plan: l.plan!, tfOutputs: l.infra.tfOutputs,
-            ...(l.plan!.irVersion === "2" ? { specV2: l.specV2 ?? null } : {}),
+            tenantId: j.tenantId, spec: l.spec, plan: l.plan!, tfOutputs: l.infra.tfOutputs,
             // 계획 처리기와 같은 target이어야 Helm 값 지문이 같다 (region "default")
             target: { envId: m.targetEnvId, provider: l.env!.provider, region: "default", accountId: l.env!.accountId },
           }, argoWatcherFromEnv());
@@ -115,28 +109,28 @@ export function isNoCluster(tfOutputs: Record<string, string> | undefined | null
 
 type Tx = Parameters<Parameters<typeof runStep>[1]["load"] & {}>[0];
 
-/** DEPLOYNONK8S: v2 계획서 + 승인 명세가 ECS·Cloud Run·VM 이면 그 Loaded, 아니면 null (k8s·v1 은 지금 길 그대로) */
+/** DEPLOYNONK8S: 승인 명세가 ECS·Cloud Run·VM 이면 그 Loaded, 아니면 null (k8s 는 gitops 길) */
 async function terraformRuntimeLoad(tx: Tx, infra: InfraReady, m: { id: string; targetEnvId: string }): Promise<Loaded | null> {
   const plan = await loadPlanById(tx, infra.planId);
-  if (plan?.irVersion !== "2") return null;
+  if (!plan) return null;
   const row = await latestAcceptedSpecV2(tx, m.id);
-  const specV2 = row ? specV2ForPlan(row, plan.specSource) : null;
-  const runtime = terraformRuntimeOf(specV2);
+  const spec = row ? specV2ForPlan(row) : null;
+  const runtime = terraformRuntimeOf(spec);
   if (!runtime) return null;
   const e = await tx.query(`SELECT provider, account_id AS "accountId" FROM environments WHERE id=$1`, [m.targetEnvId]);
   if (!e.rows[0]) return null;
-  return { infra, plan, spec: null, env: e.rows[0], specV2, runtime };
+  return { infra, plan, spec, env: e.rows[0], runtime };
 }
 
 /** DEPLOYNONK8S: Terraform 이 앱까지 띄운 도착 → gitops·Argo 건너뜀, apply 출력 + 건강 확인으로 DeployResult.
  *  흉내 길(MOCK_IAC=1)은 출력만 본다. 진짜 길은 읽기 CLI (프로세스·실행 역할 env 의 자격, 코드엔 없음).
  *  못 뜨면 paused (paused → deploying 재개 가능, 트래픽 0%·컷오버 전이라 출발이 그대로 주인) */
-async function deployTerraformRuntime(j: MigrationJob, l: Loaded & { runtime: TerraformRuntime; specV2: AppSpecV2; env: NonNullable<Loaded["env"]> }, roles?: Pick<StepRoles, "awsEnv">): Promise<StepOutcome> {
+async function deployTerraformRuntime(j: MigrationJob, l: Loaded & { runtime: TerraformRuntime; spec: AppSpecV2; env: NonNullable<Loaded["env"]> }, roles?: Pick<StepRoles, "awsEnv">): Promise<StepOutcome> {
   await stubFailIfAsked(j, "deploy");
   const gitops = { skipped: "terraform_runtime", runtime: l.runtime };
   const facts = factsFromEnv(process.env);
   const h = await checkTerraformRuntime({
-    provider: l.env.provider, runtime: l.runtime, spec: l.specV2, tfOutputs: l.infra.tfOutputs ?? {},
+    provider: l.env.provider, runtime: l.runtime, spec: l.spec, tfOutputs: l.infra.tfOutputs ?? {},
     live: !iacMockEnabled(), projectId: facts.projectId ?? null,   // region = 계획과 같은 "default" 규칙 (checkTerraformRuntime)
   }, { ...runtimeHealthDeps, ...(roles?.awsEnv?.target && !runtimeHealthDeps.env ? { env: envFor(roles.awsEnv.target) } : {}) });
   if (!h.ok)

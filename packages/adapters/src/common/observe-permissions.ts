@@ -20,6 +20,10 @@ export const AWS_COMMAND_ACTIONS: Record<string, string | null> = {
   "ec2 describe-security-groups": "ec2:DescribeSecurityGroups",
   "ec2 describe-regions": "ec2:DescribeRegions",
   "ec2 describe-addresses": "ec2:DescribeAddresses",
+  // E-1·E-2: 출발 나가는 IP·사설 DNS (discover/net.ts)
+  "ec2 describe-nat-gateways": "ec2:DescribeNatGateways",
+  "route53 list-hosted-zones-by-vpc": "route53:ListHostedZonesByVPC",
+  "route53 list-resource-record-sets": "route53:ListResourceRecordSets",
   // VMIMPORT: VM 출발 읽기(import/readers/aws-ec2.ts). user-data(describe-instance-attribute)·콘솔 출력은 부르지 않는다
   "ec2 describe-instances": "ec2:DescribeInstances",
   "ec2 describe-instance-types": "ec2:DescribeInstanceTypes",
@@ -55,6 +59,7 @@ export const AWS_COMMAND_ACTIONS: Record<string, string | null> = {
   "s3api get-bucket-lifecycle-configuration": "s3:GetLifecycleConfiguration",
   "s3api get-bucket-cors": "s3:GetBucketCORS",
   "cloudwatch get-metric-statistics": "cloudwatch:GetMetricStatistics",
+  "cloudwatch list-metrics": "cloudwatch:ListMetrics",   // DM-8: 버킷 저장 등급 찾기
   "sqs list-queues": "sqs:ListQueues",
   "sqs get-queue-attributes": "sqs:GetQueueAttributes",
   "elasticache describe-replication-groups": "elasticache:DescribeReplicationGroups",
@@ -74,7 +79,13 @@ export const GCP_COMMAND_PERMISSIONS: Record<string, string[] | null> = {
   "container clusters get-credentials": ["container.clusters.get"],
   "sql instances list": ["sql.instances.list"],
   "sql instances describe": ["sql.instances.get"],
+  "sql databases list": ["cloudsql.databases.list"],   // N8: 데이터베이스 이름 목록만 (내용 아님)
   "compute networks list": ["compute.networks.list"],
+  // E-1·E-2 (discover/net.ts)
+  "compute routers list": ["compute.routers.list"],
+  "compute addresses list": ["compute.addresses.list"],
+  "dns managed-zones list": ["dns.managedZones.list"],
+  "dns record-sets list": ["dns.resourceRecordSets.list"],
   "compute forwarding-rules list": ["compute.forwardingRules.list", "compute.globalForwardingRules.list"],   // 지역·전역 둘 다 나열
   "compute firewall-rules list": ["compute.firewalls.list"],
   "compute instances list": ["compute.instances.list"],   // VMIMPORT: GCE 출발 읽기(import/readers/gcp-gce.ts). metadata(startup-script)는 못 읽는 목록 권한만
@@ -85,6 +96,7 @@ export const GCP_COMMAND_PERMISSIONS: Record<string, string[] | null> = {
   "storage buckets list": ["storage.buckets.list"],
   "storage buckets get-iam-policy": ["storage.buckets.getIamPolicy"],
   "pubsub topics list": ["pubsub.topics.list"],
+  "pubsub topics get-iam-policy": ["pubsub.topics.getIamPolicy"],   // WI-1: 앱 신원(GSA) 바인딩만 본다
   "pubsub subscriptions list": ["pubsub.subscriptions.list"],
   "redis instances list": ["redis.instances.list"],
   // CRIMPORT: Cloud Run 출발 읽기(import/readers/gcp-cloudrun.ts). CLOUDRUN_OBSERVE_PERMISSIONS 와 같은 목록 (시험이 대조)

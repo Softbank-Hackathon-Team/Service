@@ -45,10 +45,9 @@ async function seed() {
     ($1,$3,'aws','s','connected'), ($2,$3,'azure_mock','az','connected')`, [src, dst, T]);
   await owner.query(`INSERT INTO migrations (id, tenant_id, source_env_id, target_env_id, status)
     VALUES ($1,$2,$3,$4,'provisioning')`, [id, T, src, dst]);
-  const { adapterFor, DEMO_INVENTORY } = await import("@svc/adapters");
-  const spec = adapterFor("aws").normalize(DEMO_INVENTORY.aws).spec;
-  await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta)
-    VALUES ($1,$2,1,$3,'{}')`, [T, id, JSON.stringify(spec)]);
+  const { ONE } = await import("./demo-one.js");
+  await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta, spec_v2)
+    VALUES ($1,$2,1,'{}','{}',$3)`, [T, id, JSON.stringify({ spec: ONE, fieldMeta: {}, unmapped: [], ids: {} })]);
   const doc = { planId, migrationId: id, adapterVersion: "test", steps: [], precheck: [],
     rollbackCriteria: { errorRatePct: 1, p95Multiplier: 2, windowSec: 30 },
     tfPlanHash: "tf", helmValuesHash: "hv", planHash: "hp", expiresAt: EXPIRES };

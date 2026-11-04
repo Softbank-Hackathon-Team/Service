@@ -1,9 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { AppSpec, AppSpecV2, MigrationStatus, Provider, type MigrationStatus as Status } from "@svc/contracts";
+import { AppSpecV2, MigrationStatus, Provider, type MigrationStatus as Status } from "@svc/contracts";
 import { SPEC_DRAFT_KEY, withTenant } from "@svc/core";
-import { aws, azure, cachedInventory, chooseRunner, gcp, onprem, resourceTypesV2For, serviceMap, serviceMapV2, stubStatus, type RunnerStatus } from "@svc/adapters";
+import { cachedInventory, chooseRunner, gcp, onprem, resourceTypesV2For, serviceMapV2, stubStatus, type RunnerStatus } from "@svc/adapters";
 import { EnvironmentStatus, errors } from "./responses.js";
 import { IdParam, found, isoUtc } from "./kit.js";
 
@@ -37,7 +37,8 @@ export const FootprintResource = z.object({
 export const SpecSummary = z.object({
   app: z.string(), image: z.string(), replicas: z.number().int(), cpu: z.string(), memory: z.string(), port: z.number().int(),
   hostname: z.string(), secrets: z.number().int(),
-  database: z.object({ engine: z.string(), majorVersion: z.string(), storageGb: z.number().int() }).strict().nullable(),
+  // DRAFT(ai): 출발에서 못 읽은 버전·크기는 null (지어내지 않음)
+  database: z.object({ engine: z.string(), majorVersion: z.string().nullable(), storageGb: z.number().int().nullable() }).strict().nullable(),
 }).strict();
 
 export const AppFootprint = z.object({
@@ -85,27 +86,16 @@ export interface MigrationRow {
   id: string; status: Status; pausedFrom: Status | null; failedAtStatus: Status | null; updatedAt: string;
   sourceEnvId: string; targetEnvId: string;
   sourceName: string; sourceProvider: Provider; targetName: string; targetProvider: Provider;
-  spec: unknown;                                   // 받아들인 최신 명세 원본 (없으면 null)
   applyEvidence: "runner" | "terraform" | "stub" | null;   // provisioning → deploying 감사 줄에 무엇이 있었나
   cleanupRemoved: string[] | null;                 // 정리(→completed)·롤백 때 걷었다고 적힌 것
   reachedPct: number | null;                       // 전환이 남긴 마지막 도달 % (0~100)
-  // TA11: 최신 계획서 irVersion(없으면 null = v1) + 같은 판의 spec_v2->'spec'(칸이 없거나 NULL 이면 null). 둘 다 선택 칸 → 예전 호출 그대로
-  planIrVersion?: string | null;
-  specV2?: unknown;
+  specV2?: unknown;                                // 받아들인 최신 판의 spec_v2->'spec' (없으면 null)
   outOfBoundary?: unknown;                         // MAPV2: 같은 판 spec_v2->'outOfBoundary' (없으면 null)
 }
 
-const TYPES: Record<Provider, (s: AppSpec) => string[]> = {
-  aws: aws.resourceTypes, gcp: gcp.resourceTypes, onprem: onprem.resourceTypes, azure_mock: azure.resourceTypes,
-};
-
-// TA11 (설계 27번 A11): 계획서가 v2(irVersion "2")이고 v2 명세가 있으면 "생길 자원"은 v2 Builder 기준. 아니면 v1 그대로 (깃발 off = 지금 동작)
-export function targetTypesOf(m: MigrationRow, s: AppSpec): string[] {
-  if (m.planIrVersion === "2") {
-    const v2 = AppSpecV2.safeParse(m.specV2);
-    if (v2.success) return resourceTypesV2For(m.targetProvider, v2.data);
-  }
-  return TYPES[m.targetProvider](s);
+// TA11 (설계 27번 A11): "생길 자원" = 도착 Builder 기준
+export function targetTypesOf(m: MigrationRow, s: AppSpecV2): string[] {
+  return resourceTypesV2For(m.targetProvider, s);
 }
 
 // 종류 → (분류, 이름표). 모르는 종류는 network 로 두고 종류 이름 그대로
@@ -165,19 +155,31 @@ export function targetPct(m: MigrationRow): number | null {
   return null;
 }
 
-function specSummary(raw: unknown): { spec: AppSpec; sum: z.infer<typeof SpecSummary> } | null {
-  const p = AppSpec.safeParse(raw);
+// 화면 요약 = 주 서비스(앱 이름과 같은 id, 없으면 첫 서비스) + 첫 Postgres. DRAFT(ai): 못 읽은 값은 "?" (지어내지 않음)
+type Summary = z.infer<typeof SpecSummary>;
+function specSummary(raw: unknown): { spec: AppSpecV2; sum: Summary } | null {
+  const p = AppSpecV2.safeParse(raw);
   if (!p.success) return null;
   const s = p.data;
-  return { spec: s, sum: { app: s.app.name, image: s.service.image, replicas: s.service.replicas, cpu: s.service.cpu,
-    memory: s.service.memory, port: s.service.port, hostname: s.ingress.hostname, secrets: s.service.secretRefs.length,
-    database: s.database ? { engine: s.database.engine, majorVersion: s.database.majorVersion, storageGb: s.database.storageGb } : null } };
+  const svcs = s.components.filter((c) => c.kind === "service");
+  const main = svcs.find((c) => c.id === s.app.name) ?? svcs[0];
+  const pg = s.components.find((c) => c.kind === "postgres");
+  const req = main?.props.resources.request;
+  let secrets = 0;
+  for (const c of s.components) if (c.kind === "service" || c.kind === "job")
+    secrets += c.props.env.filter((e) => "fromSecret" in e).length + (c.props.secretMounts?.length ?? 0);
+  return { spec: s, sum: { app: s.app.name,
+    image: main ? `${main.props.image.repository}${main.props.image.digest ? `@${main.props.image.digest}` : ""}` : "?",
+    replicas: main?.props.replicas.min ?? 0,
+    cpu: req?.cpuMilli != null ? `${req.cpuMilli}m` : "?", memory: req?.memMiB != null ? `${req.memMiB}Mi` : "?",
+    port: main?.props.ports?.[0]?.port ?? 0, hostname: s.entry?.hosts[0]?.hostnames[0] ?? "?", secrets,
+    database: pg ? { engine: "postgres", majorVersion: pg.props.majorVersion, storageGb: pg.props.storageGb } : null } };
 }
 
-const dbLabel = (base: string, s: AppSpec) => `${base} ${s.database?.majorVersion ?? ""} · ${s.database?.storageGb ?? 0}GB`.replace("  ", " ");
+const dbLabel = (base: string, s: Summary) => `${base} ${s.database?.majorVersion ?? "?"} · ${s.database?.storageGb ?? "?"}GB`.replace("  ", " ");
 
 // 도착 쪽: 어댑터가 만드는 자원 + Helm 으로 올라가는 앱 + 복제 받는 쪽
-export function targetResources(m: MigrationRow, s: AppSpec): Res[] {
+export function targetResources(m: MigrationRow, spec: AppSpecV2, s: Summary): Res[] {
   const st = effectiveStatus(m);
   const failed = m.status === "failed", cancelled = m.status === "cancelled";
   const applied = m.applyEvidence !== null;
@@ -193,7 +195,7 @@ export function targetResources(m: MigrationRow, s: AppSpec): Res[] {
   const evInfra: z.infer<typeof Evidence> = applied ? m.applyEvidence! : "adapter";
 
   const out: Res[] = [];
-  for (const type of targetTypesOf(m, s)) {
+  for (const type of targetTypesOf(m, spec)) {
     if (type.startsWith("data.")) continue;    // 읽기만 하는 data 원본은 자원이 아니다
     const [category, base] = KIND[type] ?? ["network", type];
     const label = category === "database" && /RDS PostgreSQL|Cloud SQL PostgreSQL|CNPG|Flexible Server$/.test(base) ? dbLabel(base, s) : base;
@@ -207,7 +209,7 @@ export function targetResources(m: MigrationRow, s: AppSpec): Res[] {
   else if (BEFORE.includes(st) || st === "provisioning") app = failed ? "none" : "planned";
   else if (st === "deploying") app = failed ? "unknown" : "creating";
   else app = failed ? "left" : "running";
-  out.push({ category: "compute", type: "helm.release", label: `앱 컨테이너 ${s.service.replicas}개 (${s.service.cpu} CPU · ${s.service.memory})`,
+  out.push({ category: "compute", type: "helm.release", label: `앱 컨테이너 ${s.replicas}개 (${s.cpu} CPU · ${s.memory})`,
              state: app, evidence: reached(st, "syncing") || m.status === "rolled_back" ? (applied ? m.applyEvidence! : "stub") : "adapter" });
   if (s.database) {
     // 논리 복제 받는 쪽(구독). syncing 에서 생기고 정리(cleanup)·롤백에서 걷는다
@@ -221,13 +223,13 @@ export function targetResources(m: MigrationRow, s: AppSpec): Res[] {
 }
 
 // 출발 쪽: 가져온 앱 + DB + 복제 보내는 쪽(슬롯·발행)
-export function sourceResources(m: MigrationRow, s: AppSpec): Res[] {
+export function sourceResources(m: MigrationRow, s: Summary): Res[] {
   const st = effectiveStatus(m);
   const k = SOURCE_KIND[m.sourceProvider];
   const done = m.status === "completed";
   const removedStub = (m.cleanupRemoved ?? []).some((x) => /source app scaled to 0/.test(x));
   const app: FState = done ? "stopped" : st === "rollback_window" ? "standby" : st === "cleanup" ? "stopping" : "running";
-  const out: Res[] = [{ category: "compute", type: k.app[0], label: `${k.app[1]} · 컨테이너 ${s.service.replicas}개`, state: app,
+  const out: Res[] = [{ category: "compute", type: k.app[0], label: `${k.app[1]} · 컨테이너 ${s.replicas}개`, state: app,
                         evidence: done && removedStub ? "audit" : "discovered" }];
   if (s.database) {
     // 컷오버 뒤 출발 DB 는 쓰기 권한을 회수한 채 남는다 (지울지는 TODO(human), 워커 cleanup.ts)
@@ -239,14 +241,14 @@ export function sourceResources(m: MigrationRow, s: AppSpec): Res[] {
     out.push({ category: "replication", type: "pg.replication_slot", label: "복제 슬롯·발행 (변경 보내기)", state: slot,
                evidence: gone && m.cleanupRemoved ? "audit" : "adapter" });
   }
-  if (s.service.secretRefs.length)
-    out.push({ category: "secret", type: "source.secrets", label: `비밀 ${s.service.secretRefs.length}개`, state: "running", evidence: "discovered" });
+  if (s.secrets)
+    out.push({ category: "secret", type: "source.secrets", label: `비밀 ${s.secrets}개`, state: "running", evidence: "discovered" });
   return out;
 }
 
 export function footprintOf(envId: string, m: MigrationRow): Footprint {
   const role = m.targetEnvId === envId ? "target" : "source";
-  const sp = specSummary(m.spec);
+  const sp = specSummary(m.specV2);
   const tPct = targetPct(m);
   return {
     migrationId: m.id, role,
@@ -255,7 +257,7 @@ export function footprintOf(envId: string, m: MigrationRow): Footprint {
     migrationStatus: m.status, updatedAt: m.updatedAt, stage: stageOf(m),
     trafficPct: tPct === null ? null : role === "target" ? tPct : 100 - tPct,
     spec: sp?.sum ?? null,
-    resources: sp ? (role === "target" ? targetResources(m, sp.spec) : sourceResources(m, sp.spec)) : [],
+    resources: sp ? (role === "target" ? targetResources(m, sp.spec, sp.sum) : sourceResources(m, sp.sum)) : [],
   };
 }
 
@@ -283,7 +285,7 @@ export function buildEnvResources(env: { id: string; name: string; provider: Pro
 
 const APP_LIMIT = 20;
 
-// MAPV2: v2 판은 캐시·큐·경계 밖 줄도 낸다 (v1 판은 InventoryCategory 9개 그대로)
+// MAPV2: 캐시·큐·경계 밖 줄도 낸다
 export const PlanCategory = z.enum([...InventoryCategory.options, "cache", "queue", "boundary"]);
 export const PlanResourceRow = z.object({
   category: PlanCategory, label: z.string(),
@@ -300,7 +302,8 @@ export const PlanResourceRow = z.object({
 const EnvRef = z.object({ envId: z.uuid(), name: z.string(), provider: Provider }).strict();
 export const PlanResources = z.object({
   migrationId: z.uuid(), status: MigrationStatus, source: EnvRef, target: EnvRef, specKnown: z.boolean(),
-  irVersion: z.literal("2").optional(),                       // MAPV2: 줄이 v2 명세로 만들어졌을 때만 "2" (v1 판엔 키가 없다)
+  // DRAFT(ai): 화면(apps/web)이 아직 이 키로 고른다. 명세가 하나뿐이라 명세를 알면 늘 "2". 화면이 옮기면 지운다
+  irVersion: z.literal("2").optional(),
   rows: z.array(PlanResourceRow),
 }).strict();
 
@@ -316,27 +319,16 @@ export function stepStateOf(step: string | null, m: Pick<MigrationRow, "status" 
 }
 
 export function buildPlanResources(m: MigrationRow): z.infer<typeof PlanResources> {
-  // MAPV2: 가장 새 받아들인 판에 spec_v2 가 있고 모양이 맞으면 v2 로 읽는다 (실행 방식 ECS·Cloud Run·VM 이름). 아니면 v1 그대로
+  // MAPV2: 가장 새 받아들인 판의 명세 (실행 방식 ECS·Cloud Run·VM 이름). 없거나 모양이 틀리면 specKnown=false + 빈 줄
   const v2 = AppSpecV2.safeParse(m.specV2);
-  if (v2.success) {
-    const oob = Array.isArray(m.outOfBoundary) ? m.outOfBoundary.length : 0;
-    return {
-      migrationId: m.id, status: m.status,
-      source: { envId: m.sourceEnvId, name: m.sourceName, provider: m.sourceProvider },
-      target: { envId: m.targetEnvId, name: m.targetName, provider: m.targetProvider },
-      specKnown: true, irVersion: "2" as const,
-      rows: serviceMapV2(m.sourceProvider, m.targetProvider, v2.data, { outOfBoundary: oob })
-        .map((r) => ({ ...r, stepState: r.method === "out_of_scope" ? "skipped" as const : stepStateOf(r.step, m) })),
-    };
-  }
-  const sp = AppSpec.safeParse(m.spec);
+  const oob = Array.isArray(m.outOfBoundary) ? m.outOfBoundary.length : 0;
   return {
     migrationId: m.id, status: m.status,
     source: { envId: m.sourceEnvId, name: m.sourceName, provider: m.sourceProvider },
     target: { envId: m.targetEnvId, name: m.targetName, provider: m.targetProvider },
-    specKnown: sp.success,
-    rows: serviceMap(m.sourceProvider, m.targetProvider, sp.success ? sp.data : null)
-      .map((r) => ({ ...r, stepState: r.method === "out_of_scope" ? "skipped" as const : stepStateOf(r.step, m) })),
+    specKnown: v2.success, ...(v2.success ? { irVersion: "2" as const } : {}),
+    rows: v2.success ? serviceMapV2(m.sourceProvider, m.targetProvider, v2.data, { outOfBoundary: oob })
+      .map((r) => ({ ...r, stepState: r.method === "out_of_scope" ? "skipped" as const : stepStateOf(r.step, m) })) : [],
   };
 }
 
@@ -346,14 +338,10 @@ const MIGRATION_SQL = (where: string, limit: string) =>
           ${isoUtc("m.updated_at")} AS "updatedAt",
           m.source_env_id AS "sourceEnvId", m.target_env_id AS "targetEnvId",
           se.name AS "sourceName", se.provider AS "sourceProvider", te.name AS "targetName", te.provider AS "targetProvider",
-          (SELECT s.spec FROM spec_versions s WHERE s.migration_id = m.id AND NOT (s.field_meta ? $2)
-            ORDER BY s.version DESC LIMIT 1) AS spec,
-          -- TA11: to_jsonb(s) 로 읽어 spec_v2 칸(0023)이 아직 없는 DB 에서도 NULL. 계획서 irVersion 은 PlanDoc 칸(A3)이 없으면 NULL
           (SELECT to_jsonb(s)->'spec_v2'->'spec' FROM spec_versions s WHERE s.migration_id = m.id AND NOT (s.field_meta ? $2)
             ORDER BY s.version DESC LIMIT 1) AS "specV2",
           (SELECT to_jsonb(s)->'spec_v2'->'outOfBoundary' FROM spec_versions s WHERE s.migration_id = m.id AND NOT (s.field_meta ? $2)
             ORDER BY s.version DESC LIMIT 1) AS "outOfBoundary",
-          (SELECT p.plan_doc->>'irVersion' FROM plans p WHERE p.migration_id = m.id ORDER BY p.created_at DESC LIMIT 1) AS "planIrVersion",
           (SELECT CASE WHEN a.detail ? 'terraform' THEN 'terraform' WHEN a.detail ? 'runner' THEN 'runner' ELSE 'stub' END
              FROM audit_events a WHERE a.target = m.id::text AND a.detail->>'from' = 'provisioning' AND a.detail->>'to' = 'deploying'
             ORDER BY a.seq DESC LIMIT 1) AS "applyEvidence",

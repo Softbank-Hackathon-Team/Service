@@ -1,7 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { AppSpec } from "@svc/contracts";
-import { adapterFor, aws, gcp, onprem, DEMO_INVENTORY } from "../src/index.js";
+import { aws, gcp, onprem } from "../src/index.js";
 import { actionsFor } from "../src/common/actions.js";
 import { DATA_TYPES } from "../src/target/data.js";
 import { GRANT_TYPES_GCP } from "../src/target/grants.js";
@@ -15,7 +14,8 @@ const out = process.argv[2] ?? "infra/permissions";
 const onboardingOut = process.argv[3] ?? join(out, "..", "onboarding");
 mkdirSync(out, { recursive: true });
 mkdirSync(onboardingOut, { recursive: true });
-const spec = (p: "aws" | "gcp" | "onprem") => AppSpec.parse(adapterFor(p).normalize(DEMO_INVENTORY[p]).spec);
+// 권한표가 보는 기본 앱 모양 = 서비스 + 비밀 + DB (PermNeeds). 데이터 자원 권한은 아래에서 따로 더한다
+const spec = (_p: "aws" | "gcp" | "onprem") => ({ secrets: true, database: true });
 const purposes = ["plan", "apply", "destroy"] as const;
 
 // AWS: 실행 역할에 붙이는 정책 = plan ∪ apply ∪ destroy. 호출마다 세션 정책으로 다시 좁힌다
@@ -63,7 +63,7 @@ writeFileSync(join(out, "aws-app-role-boundary.json"), JSON.stringify(awsBoundar
 // 고객 연결 템플릿(CloudFormation): 위 두 정책을 그대로 넣는다 → 실행 정책과 어긋나지 않음
 writeFileSync(join(onboardingOut, "aws-connect.json"), JSON.stringify(buildAwsConnectTemplate(awsOperatePolicy, awsBoundary), null, 2) + "\n");
 for (const p of purposes) {
-  // 세션 정책 = v1 데모 동작 + 데이터 자원 동작 (한 문장에 합침: 2,048자 제한). 실제 효력은 천장(역할 정책)과의 교집합이라 자원 접두어 제한이 같이 걸림
+  // 세션 정책 = 기본 앱 동작 + 데이터 자원 동작 (한 문장에 합침: 2,048자 제한). 실제 효력은 천장(역할 정책)과의 교집합이라 자원 접두어 제한이 같이 걸림
   const doc = JSON.parse(aws.sessionPolicy(spec("aws"), p)) as { Statement: Array<{ Action: string[] }> };
   doc.Statement[0]!.Action = [...new Set([...doc.Statement[0]!.Action, ...awsDataFor(p)])].sort();
   const compact = JSON.stringify(doc);

@@ -1,19 +1,18 @@
 // TA12: 도착 Builder 가 I6 데이터 자원(cache·objectStore·queue)을 그림. aws·gcp = 종류 변수 + 매트릭스 + 권한, onprem = 거부(TODO(human)), azure_mock = 모양만
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { upconvertV1, AppSpec, AppSpecV2, TF_KIND_VARS, type TargetEnv } from "@svc/contracts";
+import { AppSpecV2, TF_KIND_VARS, type TargetEnv } from "@svc/contracts";
 import { targetBuilderFor, v2Blockers, resourceTypesV2For } from "../src/index.js";
 import { mockPlanV2, mockOutputsV2 } from "../src/target/azure-mock.js";
 
-const V1 = AppSpec.parse({ schemaVersion: "1", app: { name: "shop" },
-  service: { image: `r/shop@sha256:${"a".repeat(64)}`, port: 8080, healthPath: "/healthz", replicas: 1, cpu: "500m", memory: "1Gi", env: [], secretRefs: [] },
-  database: { engine: "postgres", majorVersion: "16", storageGb: 20 }, ingress: { hostname: "s.example.com", entry: "cloudflare-lb" } });
+// 데모 명세 (shop 서비스 1개 + postgres 1개)
+const BASE: AppSpecV2 = AppSpecV2.parse({"schemaVersion":"2","app":{"name":"shop"},"components":[{"id":"shop","kind":"service","props":{"runtime":"k8s","origin":{"runtime":"k8s","product":"unknown"},"image":{"source":"registry","repository":"r/shop","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"ports":[{"port":8080,"protocol":"TCP"}],"probes":{"readiness":{"type":"http","path":"/healthz","port":8080}},"replicas":{"min":1,"max":1},"serviceAccount":"default","resources":{"request":{"cpuMilli":500,"memMiB":1024}},"env":[]}},{"id":"db","kind":"postgres","props":{"majorVersion":"16","storageGb":20}}],"links":[{"from":"shop","to":"db","intent":"connect"}],"entry":{"via":"cloudflare-lb","hosts":[{"hostnames":["s.example.com"],"routes":[{"matches":[{"path":{"type":"PathPrefix","value":"/"}}],"backends":[{"to":"shop","port":8080,"weight":1}]}]}]},"posture":{"permissions":[],"network":[]}});
 const T = (p: TargetEnv["provider"]) => ({ envId: "33333333-3333-4333-8333-333333333333", provider: p, region: "default", migrationId: "44444444-4444-4444-8444-444444444444" }) as TargetEnv;
 type Raw = Record<string, any>;
 
 /** 데이터 자원 4개가 붙은 v2 명세 (cache·bucket·orders·orders-dlq). 서비스 shop 이 앞 셋에 connect */
 function withData(mut?: (s: Raw) => void): AppSpecV2 {
-  const s: Raw = structuredClone(upconvertV1(V1).spec);
+  const s: Raw = structuredClone(BASE);
   const svc = s.components.find((c: Raw) => c.kind === "service").id as string;
   s.components.push(
     { id: "shop-cache", kind: "cache", props: { engine: "redis", version: "7.1", memoryMiB: 1024, tls: true, auth: true, ha: true } },
@@ -70,7 +69,7 @@ for (const p of ["aws", "gcp"] as const) {
   });
 
   test(`${p}: 데이터 자원 없는 명세는 새 변수가 빈 목록 (v1 같은 모양 그대로)`, () => {
-    const tf = targetBuilderFor(p).toTerraformV2(upconvertV1(V1).spec, T(p));
+    const tf = targetBuilderFor(p).toTerraformV2(structuredClone(BASE), T(p));
     for (const k of ["cache_json", "object_store_json", "queue_json"]) assert.equal(tf.vars[k], "[]");
   });
 }
@@ -110,7 +109,7 @@ test("거부: 온프레는 아직 데이터 자원을 못 그림 (TODO(human) �
   const spec = withData();
   assert.throws(() => targetBuilderFor("onprem").toTerraformV2(spec, T("onprem")), (e: any) => e.code === "UNSUPPORTED_V2" && /kind\.(cache|objectStore|queue)/.test(e.message));
   // 데이터 자원 없는 명세는 그대로 그려짐
-  targetBuilderFor("onprem").toTerraformV2(upconvertV1(V1).spec, T("onprem"));
+  targetBuilderFor("onprem").toTerraformV2(structuredClone(BASE), T("onprem"));
 });
 
 test("azure_mock: 모양만 — 데이터 자원 계획 줄·link 출력이 결정적, 순서 무관", () => {

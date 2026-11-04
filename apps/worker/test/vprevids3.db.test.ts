@@ -26,7 +26,7 @@ before(async () => {
 });
 after(async () => {
   if (skip) return;
-  delete process.env.IMPORT_IR; delete process.env.IMPORT_APP;
+ delete process.env.IMPORT_APP;
   await core.boss.stop({ graceful: false }); await core.pool.end(); await owner.end();
 });
 
@@ -46,7 +46,7 @@ const reimport = async (id: string) => { await owner.query("UPDATE migrations SE
 const audit = async (id: string) => (await owner.query("SELECT detail FROM audit_events WHERE target=$1 AND action='migration.spec_review' ORDER BY seq DESC LIMIT 1", [id])).rows[0].detail;
 
 function withOrphanBucket(gone = false): () => void {
-  const src = adapters.DEMO_INVENTORY_V2.onprem!, orig = src.items;
+  const src = adapters.DEMO_INVENTORY.onprem!, orig = src.items;
   src.items = gone ? orig : [...orig, { kind: "s3.bucket", Name: "orphan-bucket", Arn: "arn:aws:s3:::orphan-bucket" } as never];
   return () => { src.items = orig; };
 }
@@ -57,13 +57,12 @@ async function patchLikeUi(id: string, o: { include?: string[]; changes?: Array<
   if (o.include?.length) base = adapters.applyInclude(base, o.include).result;
   const next = core.applySpecV2Patch({ spec: base.spec, fieldMeta: base.fieldMeta ?? {} }, { changes: o.changes ?? [], confirm: o.confirm ?? [] });
   const result = { ...base, spec: next.spec, fieldMeta: next.fieldMeta };
-  await core.withTenant(tenant, (tx) => core.saveSpecRevision(tx, { tenantId: tenant, migrationId: id, spec: cur.spec, fieldMeta: cur.field_meta, specV2: result }));
+  await core.withTenant(tenant, (tx) => core.saveSpecRevision(tx, { tenantId: tenant, migrationId: id, specV2: result }));
 }
-const precheck = (row: { spec: any; spec_v2: any }) => adapters.v2PrecheckItems("aws", { spec: row.spec, specV2: row.spec_v2.spec, hadV2Before: true });
+const precheck = (row: { spec: any; spec_v2: any }) => adapters.v2PrecheckItems("aws", { specV2: row.spec_v2.spec });
 const humanIds = (items: Array<{ id: string }>) => items.map((i) => i.id).filter((i) => i.startsWith("PC-V2-HUMAN"));
 
 test("끌어온 버킷 + 그 버킷에 사람이 고친 칸 + 재가져오기 3번: 끌어온 채 + 사람 값 유지, 판마다 같다 (멱등)", { skip }, async () => {
-  process.env.IMPORT_IR = "v2";
   const restore = withOrphanBucket();
   const id = await seed();
   try {
@@ -94,7 +93,6 @@ test("끌어온 버킷 + 그 버킷에 사람이 고친 칸 + 재가져오기 3�
 });
 
 test("사전 점검: 버킷 공개 여부를 사람이 정하기 전엔 PC-V2-HUMAN, 정한 뒤 재가져오기 2번이 지나도 사라진 채로 (posture 도 같이 유지)", { skip }, async () => {
-  process.env.IMPORT_IR = "v2";
   const restore = withOrphanBucket();
   const id = await seed();
   try {
@@ -118,7 +116,6 @@ test("사전 점검: 버킷 공개 여부를 사람이 정하기 전엔 PC-V2-HU
 });
 
 test("carry 건너뜀 경로: 사람이 지운 링크 때문에 합치기가 검증을 못 넘어도 끌어온 자원은 유지된다 (사람 값만 보류)", { skip }, async () => {
-  process.env.IMPORT_IR = "v2";
   const restore = withOrphanBucket();
   const id = await seed();
   try {
@@ -133,8 +130,9 @@ test("carry 건너뜀 경로: 사람이 지운 링크 때문에 합치기가 검
     assert.ok(!a.spec_v2.outOfBoundary.some((o: { resource: string }) => o.resource === BUCKET));
     assert.deepEqual(a.spec_v2.spec.links, cur.spec_v2.spec.links, "링크는 새로 읽은 값");
     const d = await audit(id);
-    assert.match(d.note, /건너뜀/);
-    assert.ok(d.carry.dropped.includes("links"), JSON.stringify(d.carry));
+    // 통합(fa 1a9ce6d): 검증을 못 넘는 사람 값은 버리지 않고 보류 + 다시 검토(flagged). 명세 링크는 위처럼 새로 읽은 값
+    assert.match(d.note, /검증을 못 넘어 뺀/);
+    assert.ok(d.carry.flagged.includes("links") && !d.carry.dropped.includes("links"), JSON.stringify(d.carry));
     // 건너뛴 판에서 다시 재가져오기해도 끌어온 자원은 계속
     await reimport(id);
     const b = await last(id);
@@ -143,7 +141,6 @@ test("carry 건너뜀 경로: 사람이 지운 링크 때문에 합치기가 검
 });
 
 test("끌어온 자원이 원본에서 사라지면: 에러 없이 빠지고, 사람이 그 자원에 정한 값은 dropped 이름만 남고 값은 안 샌다", { skip }, async () => {
-  process.env.IMPORT_IR = "v2";
   const restore1 = withOrphanBucket();
   const id = await seed();
   try {
@@ -162,7 +159,6 @@ test("끌어온 자원이 원본에서 사라지면: 에러 없이 빠지고, �
 });
 
 test("남의 회사: 다른 회사 이름으로 부른 재가져오기는 끌어온 판을 읽지도 바꾸지도 않는다", { skip }, async () => {
-  process.env.IMPORT_IR = "v2";
   const restore = withOrphanBucket();
   const id = await seed();
   try {
@@ -177,10 +173,9 @@ test("남의 회사: 다른 회사 이름으로 부른 재가져오기는 끌어
 });
 
 test("같은 요청에서 끌어오기 + 고치기, IMPORT_APP 이 켜져 있어도 끌어온 자원·사람 값은 재가져오기 뒤 유지", { skip }, async () => {
-  process.env.IMPORT_IR = "v2";
   const restore = withOrphanBucket();
   const id = await seed();
-  const src = adapters.DEMO_INVENTORY_V2.onprem!, orig = src.items;
+  const src = adapters.DEMO_INVENTORY.onprem!, orig = src.items;
   src.items = (src.items as any[]).map((i) => {
     if (i.kind !== "k8s.deployment" && i.kind !== "k8s.cronjob") return i;
     const c = structuredClone(i); c.metadata.labels = { ...(c.metadata.labels ?? {}), "app.kubernetes.io/part-of": ["shop-worker", "shop-cleanup"].includes(i.metadata.name) ? "shop-worker" : "shop-api" }; return c;

@@ -12,11 +12,11 @@ import {
 
 const pg = () => ({
   id: "a".repeat(40), name: "n", major_version: "16", storage_gb: 1, storage_max_gb: 100,
-  instance_class: "db.t4g.micro", ha: true, read_replicas: 0, parameters_json: "{}", logical_replication: true as const,
+  instance_class: "db.t4g.micro", ha: true, read_replicas: 0, parameters_json: "{}", db_name: "shop", app_user: "app", backup_retention_days: null, pitr: null, maintenance_window: null, port: null, require_tls: true, logical_replication: true as const,
   allow_from_json: "[]", public: false, peer_cidrs_json: "[]", public_subnet_ids_json: "[]", deletion_protection: true,
 });
 const queue = () => ({ id: "q", name: "q", model: "topic" as const, ordered: null, retention_sec: null, ack_timeout_sec: null,
-  dead_letter_to: null, dead_letter_max_receive: null, allow_from_json: "[]" });
+  dead_letter_to: null, dead_letter_max_receive: null, allow_from_json: "[]", idle_expiry_sec: null, retain_acked: null, filter: null, push_endpoint: null, subscriptions_json: "[]" });
 
 test("경계: id 40자 통과, 41자·대문자·밑줄·숫자 시작 거부 (spec-v2 Id 와 같은 규칙)", () => {
   PostgresTfVars.parse(pg());

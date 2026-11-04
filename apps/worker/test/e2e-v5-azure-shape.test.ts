@@ -1,16 +1,16 @@
-// E2E-v5: PLAN_IR=v2 + azure_mock 도착. 신원 2개 명세는 계획 단계 failed(UNSUPPORTED_V2) 전에 precheck 가 block 으로 막아야 한다
+// E2E-v5: azure_mock 도착. 신원 2개 명세는 계획 단계 failed(UNSUPPORTED_V2) 전에 precheck 가 block 으로 막아야 한다
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AppSpec, AppSpecV2, upconvertV1 } from "@svc/contracts";
-import { adapterFor, DEMO_INVENTORY, v2PrecheckItems } from "@svc/adapters";
+import { AppSpecV2 } from "@svc/contracts";
+import { v2PrecheckItems } from "@svc/adapters";
+import { ONE } from "./demo-one.js";
 
-const spec = AppSpec.parse(adapterFor("aws").normalize(DEMO_INVENTORY.aws).spec);
-const v2 = upconvertV1(spec).spec;
+const v2: AppSpecV2 = ONE;
 const svc = v2.components.find((c) => c.kind === "service")!;
 if (svc.kind !== "service") throw new Error("service 없음");
 const twoIds = AppSpecV2.parse({ ...v2, components: [...v2.components,
   { ...svc, id: `${svc.id}-2`, props: { ...svc.props, serviceAccount: `${svc.props.serviceAccount}-2` } }] });
-const row = (s: AppSpecV2) => ({ spec, specV2: s, hadV2Before: false });
+const row = (s: AppSpecV2) => ({ specV2: s });
 const shape = (items: { id: string; message: string }[]) => items.filter((i) => i.message.includes("신원 1개만"));
 
 test("거부: azure_mock 도착 + 신원 2개 → precheck block (PC-V2-UNSUP)", () => {

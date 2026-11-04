@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { upconvertV1, AppSpec, AppSpecV2, type TargetEnv } from "@svc/contracts";
+import { AppSpecV2, type TargetEnv } from "@svc/contracts";
 import { targetBuilderFor } from "../src/index.js";
 import { stubTfOutputsV2 } from "../src/target/plan-v2.js";
 import { cacheVars, objectStoreVars, queueVars } from "../src/target/data.js";
@@ -16,14 +16,13 @@ const ROLE = "aws-operate-role-policy.json";
 const SESSIONS = ["plan", "apply", "destroy"].map((p) => `aws-session-policy-${p}.json`);
 const glob = (g: string) => new RegExp(`^${g.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*")}$`);
 
-const V1 = AppSpec.parse({ schemaVersion: "1", app: { name: "shop" },
-  service: { image: `r/shop@sha256:${"a".repeat(64)}`, port: 8080, healthPath: "/healthz", replicas: 1, cpu: "500m", memory: "1Gi", env: [], secretRefs: [] },
-  database: { engine: "postgres", majorVersion: "16", storageGb: 20 }, ingress: { hostname: "s.example.com", entry: "cloudflare-lb" } });
+// 데모 명세 (shop 서비스 1개 + postgres 1개)
+const BASE: AppSpecV2 = AppSpecV2.parse({"schemaVersion":"2","app":{"name":"shop"},"components":[{"id":"shop","kind":"service","props":{"runtime":"k8s","origin":{"runtime":"k8s","product":"unknown"},"image":{"source":"registry","repository":"r/shop","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"ports":[{"port":8080,"protocol":"TCP"}],"probes":{"readiness":{"type":"http","path":"/healthz","port":8080}},"replicas":{"min":1,"max":1},"serviceAccount":"default","resources":{"request":{"cpuMilli":500,"memMiB":1024}},"env":[]}},{"id":"db","kind":"postgres","props":{"majorVersion":"16","storageGb":20}}],"links":[{"from":"shop","to":"db","intent":"connect"}],"entry":{"via":"cloudflare-lb","hosts":[{"hostnames":["s.example.com"],"routes":[{"matches":[{"path":{"type":"PathPrefix","value":"/"}}],"backends":[{"to":"shop","port":8080,"weight":1}]}]}]},"posture":{"permissions":[],"network":[]}});
 const T = (p: TargetEnv["provider"]) => ({ envId: "33333333-3333-4333-8333-333333333333", provider: p, region: "default", migrationId: "44444444-4444-4444-8444-444444444444" }) as TargetEnv;
 // id 는 ID_RE(소문자 시작, 소문자·숫자·-, 40자 이하) 안에서 까다로운 것들
 const IDS = ["a", "shop-cache", "x".repeat(40), "a" + "-".repeat(39), "google", "goog-assets", "sthree", "n1234567890123456789012345678901234567890".slice(0, 40), "a-b-c-d-e-f-g-h-i-j-k-l-m-n-o-p-q-r-s-t".slice(0, 40)];
 function spec(ids: string[], appName = "shop"): AppSpecV2 {
-  const s: any = structuredClone(upconvertV1(V1).spec);
+  const s: any = structuredClone(BASE);
   s.app.name = appName;
   for (const id of ids) s.components.push(
     { id: `${id}`.slice(0, 40), kind: "cache", props: { engine: "redis", memoryMiB: 512, tls: true, auth: true } },
@@ -31,7 +30,7 @@ function spec(ids: string[], appName = "shop"): AppSpecV2 {
   return s;
 }
 function mixed(ids: string[]): AppSpecV2 {
-  const s: any = structuredClone(upconvertV1(V1).spec);
+  const s: any = structuredClone(BASE);
   ids.forEach((id, i) => {
     const suffix = ["c", "o", "q"][i % 3]!;
     const n = `${id.slice(0, 38)}-${suffix}`.slice(0, 40);   // 세 종류가 같은 id 를 쓰지 못하므로 접미어
@@ -81,7 +80,7 @@ test("이름 한도: 캐시 ≤40(+'-sg' 파생이름 ≤255), 버킷 3~63·소�
 
 test("이름 겹침 0: 같은 앞부분·같은 길이로 잘리는 긴 id 둘, 다른 이전·다른 환경이어도 이름이 서로 다름", () => {
   const a = "x".repeat(39) + "1", b = "x".repeat(39) + "2";
-  const s = (() => { const o: any = structuredClone(upconvertV1(V1).spec);
+  const s = (() => { const o: any = structuredClone(BASE);
     for (const id of [a, b]) o.components.push({ id, kind: "objectStore", props: { versioning: false, public: false, sizeGb: 1 } },
       { id: id.replace(/x$/, "y").slice(0, 40), kind: "queue", props: { model: "queue" } }); return AppSpecV2.parse(o); })();
   const n = names("aws", s);

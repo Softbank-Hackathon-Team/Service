@@ -1,5 +1,5 @@
 # kind: objectStore (GCP GCS). for_each 키 = IR id. 항목 모양 = contracts tf-kinds.ts ObjectStoreTfVars (TA5fix: 계약이 기준)
-# 공개 차단·균일 접근은 항상 켬 (public=true 여도 여기선 안 엶 — 사람 승인 뒤 따로)
+# 균일 접근은 항상 켬. 공개 차단은 출발이 공개(public=true)가 아니면 켬 (B-2: 공개면 그대로 공개, 승인 줄 public_bucket)
 terraform {
   required_version = ">= 1.11"
   required_providers {
@@ -28,6 +28,11 @@ variable "cfg" {
     condition     = can(tolist(jsondecode(var.cfg.lifecycle_json))) && can(tolist(jsondecode(var.cfg.cors_json))) && can(tolist(jsondecode(var.cfg.allow_from_json)))
     error_message = "objectStore lifecycle_json·cors_json·allow_from_json 은 JSON 배열."
   }
+  # DM-1·TF4-1: CORS 규칙은 IR 모양(origins·methods 필수). 빠지면 "*"·GET 으로 채우지 않고 거부 (출처를 넓히거나 메서드를 줄이지 않음)
+  validation {
+    condition     = alltrue([for r in try(jsondecode(var.cfg.cors_json), []) : length(try(r.origins, [])) > 0 && length(try(r.methods, [])) > 0])
+    error_message = "objectStore cors_json 의 규칙마다 origins·methods 가 있어야 함 (IR CorsRuleV2 모양)."
+  }
 }
 variable "region" { type = string }
 variable "labels" { type = map(string) }
@@ -40,16 +45,22 @@ locals {
     # DRAFT(ai): "차가운 저장" = COLDLINE (AWS 는 GLACIER_IR)
     [for r in local.lifecycle : { prefix = r.prefix, age = r.toColdAfterDays, action = "SetStorageClass", class = "COLDLINE" } if try(r.toColdAfterDays, null) != null],
   )
-  # DRAFT(ai): AWS 이름(allowedOrigins…)과 GCS 이름(origin…)을 둘 다 읽는다
-  cors = jsondecode(var.cfg.cors_json)
+  # IR cors = contracts CorsRuleV2 [{ origins, methods, allowedHeaders?, exposeHeaders?, maxAgeSec? }] (DM-1: 매퍼가 출발 칸 이름을 이 모양으로 바꿈)
+  # DRAFT(ai): GCS responseHeader 하나가 요청 허용 헤더·응답 노출 헤더를 같이 정한다 → 둘을 합친다
+  cors = [for r in jsondecode(var.cfg.cors_json) : {
+    origin          = r.origins
+    method          = r.methods
+    response_header = distinct(concat(try(r.allowedHeaders, []), try(r.exposeHeaders, [])))
+    max_age_seconds = try(r.maxAgeSec, null)
+  }]
 }
 
-# TODO(human): public=true 인 출발 버킷을 도착에서 공개로 열지 (보안 영역 승인). 지금은 항상 막음
+# B-2 DECISION(team): 출발이 공개 버킷이면 도착도 공개 ("그대로 이식, 예외 없음" decisions/2026-11-03 20:02Z). public=null·false 는 막음
 resource "google_storage_bucket" "this" {
   name                        = var.cfg.name
   location                    = var.region
   uniform_bucket_level_access = true
-  public_access_prevention    = "enforced"
+  public_access_prevention    = var.cfg.public == true ? "inherited" : "enforced"
   force_destroy               = var.cfg.force_destroy
   labels                      = var.labels
   versioning {
@@ -71,12 +82,20 @@ resource "google_storage_bucket" "this" {
   dynamic "cors" {
     for_each = local.cors
     content {
-      origin          = try(cors.value.origin, cors.value.allowedOrigins, ["*"])
-      method          = try(cors.value.method, cors.value.allowedMethods, ["GET"])
-      response_header = try(cors.value.responseHeader, cors.value.exposeHeaders, [])
-      max_age_seconds = try(cors.value.maxAgeSeconds, null)
+      origin          = cors.value.origin
+      method          = cors.value.method
+      response_header = length(cors.value.response_header) > 0 ? cors.value.response_header : null
+      max_age_seconds = cors.value.max_age_seconds
     }
   }
+}
+
+# DRAFT(ai): 출발 IAM 의 공개 역할 이름은 안 담는다 → 공개 = allUsers 객체 읽기(objectViewer). 쓰기 공개는 옮기지 않음 (승인 줄에 적음)
+resource "google_storage_bucket_iam_member" "public_read" {
+  count  = var.cfg.public == true ? 1 : 0
+  bucket = google_storage_bucket.this.name
+  role   = "roles/storage.objectViewer"
+  member = "allUsers"
 }
 
 output "name" { value = google_storage_bucket.this.name }

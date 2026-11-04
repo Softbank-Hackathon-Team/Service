@@ -2,7 +2,8 @@ import { DATA_RAW_KINDS, type RawElastiCache } from "../raw-data.js";
 import type { KindMapper, MappedComponent, MetaTuple, RawItem } from "../types.js";
 
 // DRAFT(ai): AWS ElastiCache 복제 그룹 → cache (설계 20번 6.5장). 캐시는 데이터를 옮기지 않고 비우고 시작한다.
-//   memoryMiB = 노드 종류 → 표. 표에 없으면 null + 0.6 (지어내지 않음). 표 값은 AWS 문서의 노드 메모리(GiB)×1024 반올림 【추정: 문서 대조 필요】
+//   memoryMiB = 노드 종류 → 표. 표에 없으면 null + 0.6 (지어내지 않음). 표 값은 AWS 문서의 노드 메모리(GiB)×1024 내림 【추정: 문서 대조 필요】
+//   DM-5: 반올림하면 t4g·t3.small(1.37GiB → 1403)이 도착 모듈 경계(1402)를 넘어 medium 이 된다 → 내림 (도착 표 target/data-fit.ts AWS_CACHE_NODES 와 같은 값)
 const NODE_GIB: Record<string, number> = {
   "cache.t4g.micro": 0.5, "cache.t4g.small": 1.37, "cache.t4g.medium": 3.09,
   "cache.t3.micro": 0.5, "cache.t3.small": 1.37, "cache.t3.medium": 3.09,
@@ -11,7 +12,7 @@ const NODE_GIB: Record<string, number> = {
 };
 export const memoryMiBOfNode = (t: string | null | undefined): number | null => {
   const g = t ? NODE_GIB[t] : undefined;
-  return g === undefined ? null : Math.round(g * 1024);
+  return g === undefined ? null : Math.floor(g * 1024);
 };
 
 export const elasticacheMapper: KindMapper = {
@@ -32,18 +33,22 @@ export const elasticacheMapper: KindMapper = {
     if (typeof c.ClusterEnabled === "boolean") props.clusterMode = c.ClusterEnabled;
     if (typeof c.NodeGroups === "number" && c.ClusterEnabled) props.shards = c.NodeGroups;
     if (typeof c.MultiAZ === "string") props.ha = c.MultiAZ === "enabled";
+    if (typeof c.Port === "number") props.port = c.Port;   // DM-7
     const meta: Record<string, MetaTuple> = {
       engine: [src("Engine"), 1],
       memoryMiB: mem === null ? [src("CacheNodeType"), 0.6, `노드 종류 ${String(c.CacheNodeType)} 가 메모리 표에 없음 (지어내지 않음)`] : [src("CacheNodeType"), 0.9, "노드 종류 → 메모리 표"],
       tls: tls === null ? [src("TransitEncryptionEnabled"), 0.6, "전송 암호화 여부 못 읽음"] : [src("TransitEncryptionEnabled"), 1],
       auth: auth === null ? [src("AuthTokenEnabled"), 0.6, "인증 여부 못 읽음"] : [src("AuthTokenEnabled"), 1],
     };
-    if (version) meta.version = [src("EngineVersion"), 1];
+    // DM-8: 버전을 못 읽으면 칸은 비우되 검토 표시 (Postgres 와 같게. 도착 기본 판이 확신 없이 들어가지 않게)
+    meta.version = version ? [src("EngineVersion"), 1] : [src("EngineVersion"), 0.6, `엔진 버전 ${String(c.EngineVersion ?? "없음")} 을 못 읽음 → 도착 기본 판. 사람이 확인`];
     if (typeof c.ClusterEnabled === "boolean") meta.clusterMode = [src("ClusterEnabled"), 1];
     if (typeof c.MultiAZ === "string") meta.ha = [src("MultiAZ"), 1];
+    if (typeof c.Port === "number") meta.port = [src("Endpoint.Port"), 1];
     // 클러스터 모드면 ConfigurationEndpoint, 아니면 PrimaryEndpoint (둘 다 연결 추론 근거)
     const endpoint = (c.ClusterEnabled ? c.ConfigurationEndpoint : c.PrimaryEndpoint) ?? c.PrimaryEndpoint ?? c.ConfigurationEndpoint ?? null;
-    const aliases = [c.PrimaryEndpoint, c.ConfigurationEndpoint].filter((x): x is string => typeof x === "string" && x.length > 0 && x !== endpoint);
+    // G3b-4: 읽기 주소(ReaderEndpoint)도 근거로
+    const aliases = [c.PrimaryEndpoint, c.ConfigurationEndpoint, c.ReaderEndpoint].filter((x): x is string => typeof x === "string" && x.length > 0 && x !== endpoint);
     return { name: id, kind: "cache", native: { type: DATA_RAW_KINDS.elasticache, name: id, endpoint, ...(aliases.length ? { aliases } : {}), uid: c.ARN ?? null },
       props, meta, network: { ingress: "unknown", public: null } };
   },

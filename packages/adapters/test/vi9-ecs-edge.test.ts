@@ -45,7 +45,7 @@ test("서비스 0개: 클러스터는 있는데 서비스 없음 → items = 클
   assert.deepEqual(r.counts, { "ecs.service": 0 });
   const { exec: e2 } = fakeExec([[/^aws sts get-caller-identity/, { out: { Account: A } }], [/^aws eks list-clusters/, { out: { clusters: [] } }],
     [/^aws rds describe-db-instances/, { out: { DBInstances: [] } }], [/^aws (ec2|elbv2 describe-load-balancers|ecr|secretsmanager)/, { out: {} }], ...common([])]);
-  await assert.rejects(discoverAws({ exec: e2, env: {} }, { ir: "v2" }),
+  await assert.rejects(discoverAws({ exec: e2, env: {} }, {}),
     (e: unknown) => e instanceof AdapterError && e.code === "SOURCE_INCOMPLETE" && /ECS 서비스도 없음/.test(e.message));
 });
 

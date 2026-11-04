@@ -185,7 +185,7 @@ test("감사 사본: Cloud Run 환경변수 값·명령·인자를 지우고 비
   assert.ok(JSON.stringify(r0.items).includes("sk-ant-"), "원본(매퍼 입력)은 그대로");
 });
 
-test("discover gcp: v2 는 GKE 없이 Cloud Run 만 있어도 읽고, v1 은 지금처럼 GKE 필수 (Cloud Run 안 부름)", async () => {
+test("discover gcp: GKE 없이 Cloud Run 만 있어도 읽는다", async () => {
   const base: Array<[RegExp, Reply]> = [
     [/^gcloud config get-value project/, { out: P }],
     [/^gcloud projects describe/, { out: { projectId: P } }],
@@ -193,7 +193,7 @@ test("discover gcp: v2 는 GKE 없이 Cloud Run 만 있어도 읽고, v1 은 지
     [/^gcloud (sql instances list|compute networks list|compute forwarding-rules list|artifacts repositories list|secrets list|storage buckets list|pubsub topics list|pubsub subscriptions list|redis instances list)/, { out: [] }],
   ];
   const { exec, calls } = fakeExec([...base, ...RUN_TABLE]);
-  const inv = await discoverGcp({ exec, env: { GCP_PROJECT: P, ...ENV } }, { ir: "v2" });
+  const inv = await discoverGcp({ exec, env: { GCP_PROJECT: P, ...ENV } }, {});
   const kinds = (inv.items as Array<{ kind: string }>).map((i) => i.kind);
   assert.deepEqual(kinds.filter((k) => k.startsWith("cloudrun.")), ["cloudrun.service", "cloudrun.service", "cloudrun.job", "cloudrun.job"]);
   assert.ok(!kinds.includes("gke.cluster"));
@@ -202,10 +202,19 @@ test("discover gcp: v2 는 GKE 없이 Cloud Run 만 있어도 읽고, v1 은 지
   assert.deepEqual(checkV2(n.spec).errors, []);
   assert.ok(n.spec.components.some((c) => c.id === "shop-api"));
 
-  const v1 = fakeExec([...base, ...RUN_TABLE]);
-  await assert.rejects(discoverGcp({ exec: v1.exec, env: { GCP_PROJECT: P } }, {}), (e: unknown) => e instanceof AdapterError && e.code === "SOURCE_INCOMPLETE");
-  assert.ok(!v1.calls.some((c) => /^gcloud run /.test(c)), "v1 은 Cloud Run 을 안 부름");
-  // Cloud Run 읽기가 통째로 실패하면 GKE 없는 v2 도 지금처럼 SOURCE_INCOMPLETE (원인은 notes)
+  // Cloud Run 읽기가 통째로 실패하면 GKE 없을 때 SOURCE_INCOMPLETE (원인은 notes)
   const bad = fakeExec(base);
-  await assert.rejects(discoverGcp({ exec: bad.exec, env: { GCP_PROJECT: P } }, { ir: "v2" }), /Cloud Run 서비스도 없음/);
+  await assert.rejects(discoverGcp({ exec: bad.exec, env: { GCP_PROJECT: P } }, {}), /Cloud Run 서비스도 없음/);
+});
+
+test("L-1: Cloud Run maxScale 100 을 넘는 값(1000)도 자르지 않고 그대로 옮김", async () => {
+  const big = { ...API, spec: { ...API.spec, template: { ...API.spec.template, metadata: { annotations: {
+    "autoscaling.knative.dev/minScale": "20", "autoscaling.knative.dev/maxScale": "1000" } } } } };
+  const table: Array<[RegExp, Reply]> = [[/^gcloud run services list/, { out: [WEB, big] }], ...RUN_TABLE.filter(([re]) => !/services list/.test(re.source))];
+  const { exec } = fakeExec(table);
+  const r0 = await readCloudRun({ exec, env: {} }, P, ENV);
+  const r = ImportResultV2.parse(normalizeV2({ provider: "gcp" as const, coverage: {}, items: r0.items as never }).result);
+  const api = r.spec.components.find((c) => c.id === "shop-api")!;
+  assert.ok(api.kind === "service");
+  assert.deepEqual(api.props.replicas, { min: 20, max: 1000 });
 });

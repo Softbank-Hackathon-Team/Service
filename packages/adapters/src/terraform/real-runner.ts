@@ -36,18 +36,18 @@ const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../../.."
 export const DEFAULT_MODULE_ROOT = join(REPO_ROOT, "infra/modules");
 
 // Azure 는 Mock 실행기만 (진짜 apply 안 함, 결정 그대로)
-export const REAL_MODULE_DIR: Partial<Record<Provider, string>> = { aws: "aws/app", gcp: "gcp/app", onprem: "onprem/app" };
-// DRAFT(ai): v2 = 고정 루트 + 종류 모듈 (설계 27번 3.2). infra/modules/<환경>/{root,kinds/*} 를 작업 폴더 안 root/·kinds/ 로 복사하고 -chdir=root 로 돈다.
-//   state·tfvars·outputs.json·db-secret.json 은 v1 처럼 작업 폴더 바로 아래 (루트의 backend "local" path = "../terraform.tfstate").
+// DRAFT(ai): 고정 루트 + 종류 모듈 (설계 27번 3.2). infra/modules/<환경>/{root,kinds/*} 를 작업 폴더 안 root/·kinds/ 로 복사하고 -chdir=root 로 돈다.
+//   state·tfvars·outputs.json·db-secret.json 은 작업 폴더 바로 아래 (루트의 backend "local" path = "../terraform.tfstate").
 //   루트는 kinds 폴더를 항상 참조하므로(없으면 init 실패) 있는 kinds 폴더는 전부 복사한다. 켜짐 여부는 종류 목록 변수가 비었는지로 표현.
-export const REAL_MODULE_BASE_V2: Partial<Record<Provider, string>> = { aws: "aws", gcp: "gcp", onprem: "onprem" };
-export type TfLayout = "v1" | "v2";
-export const V2_ROOT_DIR = "root";
-/** 작업 폴더가 v2 모양인지 (root/main.tf 가 있으면 v2). destroy·list 가 어느 모양이든 같은 폴더에서 찾게 */
-export const isV2WorkDir = (dir: string) => existsSync(join(dir, V2_ROOT_DIR, "main.tf"));
-// terraform 전역 옵션 (v2 만 -chdir). 경로 인자는 root/ 기준이라 한 칸 위(../)로 쓴다
-const chdirArgs = (layout: TfLayout) => (layout === "v2" ? [`-chdir=${V2_ROOT_DIR}`] : []);
-const up = (layout: TfLayout, f: string) => (layout === "v2" ? `../${f}` : f);
+export const REAL_MODULE_BASE: Partial<Record<Provider, string>> = { aws: "aws", gcp: "gcp", onprem: "onprem" };
+export const ROOT_DIR = "root";
+/** "root" = 지금 모양(root/main.tf). "flat" = 예전 통짜 app 모듈로 만든 작업 폴더 (만들지는 않고, 남은 것을 지울 때만 알아본다) */
+export type TfLayout = "root" | "flat";
+/** 작업 폴더 모양 (root/main.tf 가 있으면 root). destroy 가 예전 폴더도 같은 방법으로 지우게 */
+export const layoutOf = (dir: string): TfLayout => (existsSync(join(dir, ROOT_DIR, "main.tf")) ? "root" : "flat");
+// terraform 전역 옵션 (root 만 -chdir). 경로 인자는 root/ 기준이라 한 칸 위(../)로 쓴다
+const chdirArgs = (layout: TfLayout) => (layout === "root" ? [`-chdir=${ROOT_DIR}`] : []);
+const up = (layout: TfLayout, f: string) => (layout === "root" ? `../${f}` : f);
 
 // ---- 자리표시 채우기 ----
 // "<env:vpcId>" → TF_FACT_VPC_ID. 환경 표(environments)에 칸이 없는 env 모듈 출력·계정 사실을 환경변수로 받는다.
@@ -201,23 +201,17 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
     for (const f of readdirSync(src)) if (f.endsWith(".tf")) cpSync(join(src, f), join(dst, f));
   };
 
-  function prepare(provider: Provider, migrationId: string, tenant?: string, layout: TfLayout = "v1"): string {
+  function prepare(provider: Provider, migrationId: string, tenant?: string): string {
     const dir = workDirOf(workRoot, migrationId, tenant);
     mkdirSync(dir, { recursive: true });
-    if (layout === "v2") {
-      const base = REAL_MODULE_BASE_V2[provider];
-      if (!base) throw new Error(`no real terraform module for ${provider}`);
-      const src = join(moduleRoot, base);
-      if (!existsSync(join(src, V2_ROOT_DIR, "main.tf"))) throw new Error(`no v2 root for ${provider}: ${join(base, V2_ROOT_DIR)}`);
-      copyTf(join(src, V2_ROOT_DIR), join(dir, V2_ROOT_DIR));
-      const kindsSrc = join(src, "kinds");
-      if (existsSync(kindsSrc)) for (const k of readdirSync(kindsSrc, { withFileTypes: true }).filter((e) => e.isDirectory()).sort((a, b) => a.name.localeCompare(b.name)))
-        copyTf(join(kindsSrc, k.name), join(dir, "kinds", k.name));
-    } else {
-      const rel = REAL_MODULE_DIR[provider];
-      if (!rel) throw new Error(`no real terraform module for ${provider}`);
-      copyTf(join(moduleRoot, rel), dir);
-    }
+    const base = REAL_MODULE_BASE[provider];
+    if (!base) throw new Error(`no real terraform module for ${provider}`);
+    const src = join(moduleRoot, base);
+    if (!existsSync(join(src, ROOT_DIR, "main.tf"))) throw new Error(`no root module for ${provider}: ${join(base, ROOT_DIR)}`);
+    copyTf(join(src, ROOT_DIR), join(dir, ROOT_DIR));
+    const kindsSrc = join(src, "kinds");
+    if (existsSync(kindsSrc)) for (const k of readdirSync(kindsSrc, { withFileTypes: true }).filter((e) => e.isDirectory()).sort((a, b) => a.name.localeCompare(b.name)))
+      copyTf(join(kindsSrc, k.name), join(dir, "kinds", k.name));
     writeFileSync(join(dir, "provider.txt"), provider);
     if (tenant) writeFileSync(join(dir, "tenant.txt"), tenant);
     return dir;
@@ -271,10 +265,11 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
       try { return { ok: true, version: (JSON.parse(r.stdout) as { terraform_version?: string }).terraform_version }; }
       catch { return { ok: true, version: r.stdout.split("\n")[0]?.trim() }; }
     },
-    async apply(provider: Provider, migrationId: string, vars: TfVars, signal?: AbortSignal, tenant?: string, layout: TfLayout = "v1"): Promise<RealApplyResult> {
+    async apply(provider: Provider, migrationId: string, vars: TfVars, signal?: AbortSignal, tenant?: string): Promise<RealApplyResult> {
       const t0 = performance.now();
       const steps: RealStep[] = []; const log: string[] = [];
-      const dir = prepare(provider, migrationId, tenant, layout);
+      const dir = prepare(provider, migrationId, tenant);
+      const layout: TfLayout = "root";
       const G = chdirArgs(layout); const vf = `-var-file=${up(layout, "terraform.tfvars.json")}`; const planFile = up(layout, "tfplan");
       writeFileSync(join(dir, "terraform.tfvars.json"), JSON.stringify(vars, null, 2));
       const fail = (s: RealStep["step"]): RealApplyResult =>
@@ -307,9 +302,10 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
       return { ok: true, tfOutputs, workDir: dir, steps, elapsedMs: round(performance.now() - t0), log, secretFetched };
     },
     /** init + plan 만 (자원 안 만듦). tools/tf-real.ts plan 이 쓴다. 작업 폴더 이름은 planOnlyId(provider) */
-    async planOnly(provider: Provider, vars: TfVars, signal?: AbortSignal, layout: TfLayout = "v1") {
+    async planOnly(provider: Provider, vars: TfVars, signal?: AbortSignal) {
       const steps: RealStep[] = []; const log: string[] = [];
-      const dir = prepare(provider, planOnlyId(provider), undefined, layout);
+      const dir = prepare(provider, planOnlyId(provider), undefined);
+      const layout: TfLayout = "root";
       const G = chdirArgs(layout);
       writeFileSync(join(dir, "terraform.tfvars.json"), JSON.stringify(vars, null, 2));
       if ((await run("init", [...G, "init", "-input=false", "-no-color"], dir, steps, log, signal)).code !== 0) return { ok: false, steps, log, workDir: dir };
@@ -324,7 +320,7 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
       const found = findWorkDir(workRoot, migrationId);
       if (!found) return { ok: true, skipped: "no_work_dir", workDir: workDirOf(workRoot, migrationId), steps, log, elapsedMs: 0 };
       const dir = found;
-      const layout: TfLayout = isV2WorkDir(dir) ? "v2" : "v1";   // 작업 폴더 모양대로 (이전 도중 깃발이 바뀌어도 만든 모양으로 지움)
+      const layout = layoutOf(dir);   // 작업 폴더 모양대로 (예전 통짜 모듈로 만든 폴더가 남아 있어도 그 모양으로 지움)
       const G = chdirArgs(layout);
       if ((await run("init", [...G, "init", "-input=false", "-no-color"], dir, steps, log, signal)).code !== 0)
         return { ok: false, workDir: dir, steps, log, elapsedMs: round(performance.now() - t0) };

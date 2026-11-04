@@ -3,18 +3,16 @@
 //   → 도착 4개 × 못 그리는 조합마다 "precheck block 이 있다 ⇔ Builder 가 던진다" 를 고정
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AppSpec, AppSpecV2, upconvertV1, type Provider, type TargetEnv } from "@svc/contracts";
+import { AppSpecV2, type Provider, type TargetEnv } from "@svc/contracts";
 import { targetBuilderFor, v2PrecheckItems, AdapterError, UNSUPPORTED_V2, type Target } from "../src/index.js";
 
 const T = (p: TargetEnv["provider"]): Target => ({ envId: "33333333-3333-4333-8333-333333333333", provider: p, region: "default",
   tenantId: "11111111-1111-4111-8111-111111111111", migrationId: "22222222-2222-4222-8222-222222222222",
   ...(p === "aws" ? { accountId: "000000000000" } : p === "gcp" ? { projectId: "p-1" } : {}) }) as Target;
 const D = (c: string) => `sha256:${c.repeat(64)}`;
-const V1 = AppSpec.parse({ schemaVersion: "1", app: { name: "shop" },
-  service: { image: `registry/shop-api@${D("a")}`, port: 8080, healthPath: "/healthz", replicas: 2, cpu: "500m", memory: "1Gi",
-    env: [{ name: "LOG_LEVEL", value: "info" }], secretRefs: [{ name: "DATABASE_PASSWORD", key: "password" }] },
-  database: { engine: "postgres", majorVersion: "16", storageGb: 20 }, ingress: { hostname: "shop.example.com", entry: "cloudflare-lb" } });
-const base = (): any => structuredClone(upconvertV1(V1).spec);
+// 데모 명세 (shop 서비스 1개 + postgres 1개)
+const BASE: AppSpecV2 = AppSpecV2.parse({"schemaVersion":"2","app":{"name":"shop"},"components":[{"id":"shop","kind":"service","props":{"runtime":"k8s","origin":{"runtime":"k8s","product":"unknown"},"image":{"source":"registry","repository":"registry/shop-api","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"ports":[{"port":8080,"protocol":"TCP"}],"probes":{"readiness":{"type":"http","path":"/healthz","port":8080}},"replicas":{"min":2,"max":2},"serviceAccount":"default","resources":{"request":{"cpuMilli":500,"memMiB":1024}},"env":[{"name":"LOG_LEVEL","value":"info"},{"name":"DATABASE_PASSWORD","fromSecret":{"secret":"DATABASE_PASSWORD","key":"password"}}]}},{"id":"db","kind":"postgres","props":{"majorVersion":"16","storageGb":20}}],"links":[{"from":"shop","to":"db","intent":"connect"}],"entry":{"via":"cloudflare-lb","hosts":[{"hostnames":["shop.example.com"],"routes":[{"matches":[{"path":{"type":"PathPrefix","value":"/"}}],"backends":[{"to":"shop","port":8080,"weight":1}]}]}]},"posture":{"permissions":[],"network":[]}});
+const base = (): any => structuredClone(BASE);
 const svcOf = (s: any) => s.components.find((c: any) => c.kind === "service");
 const pgOf = (s: any) => s.components.find((c: any) => c.kind === "postgres");
 
@@ -43,7 +41,7 @@ function variant(name: string): AppSpecV2 | null {
   const p = AppSpecV2.safeParse(s);
   return p.success ? p.data : null;
 }
-const unsup = (p: Provider, s: AppSpecV2) => v2PrecheckItems(p, { spec: V1, specV2: s, hadV2Before: false }).filter((i) => i.level === "block");
+const unsup = (p: Provider, s: AppSpecV2) => v2PrecheckItems(p, { specV2: s }).filter((i) => i.level === "block");
 function builderThrows(p: Provider, s: AppSpecV2): string | null {
   const b = targetBuilderFor(p), t = T(p);
   try { b.toTerraformV2(s, t); b.toWorkloadValues(s, {}, t); return null; }
@@ -95,7 +93,7 @@ test("block 메시지는 PrecheckItem 모양 + 고칠 방법(fix) 이 있고, �
 
 test("v2 명세 출처가 막힘(NEEDS_HUMAN)이면 도착과 상관없이 PC-V2-HUMAN 하나만", () => {
   for (const p of PROVIDERS) {
-    const items = v2PrecheckItems(p, { spec: V1, specV2: null, hadV2Before: true });
+    const items = v2PrecheckItems(p, { specV2: null });
     assert.deepEqual(items.map((i) => [i.id, i.level]), [["PC-V2-HUMAN", "block"]], p);
   }
 });

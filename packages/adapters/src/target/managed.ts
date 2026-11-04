@@ -1,9 +1,9 @@
 import { ServiceEnvVar, ServiceSecretVar, type AppSpecV2, type EnvVarV2, type HelmValues, type TfOutputs } from "@svc/contracts";
 import { appNamespace } from "../common/base.js";
 import { boundedName } from "../common/names.js";
-import { fromOut, nameSeed, tenantOf, type Target } from "../common/target.js";
+import { fromOut, nameSeed, migrationSeed, tenantOf, type Target } from "../common/target.js";
 import { AdapterError } from "../common/errors.js";
-import { compact, identityOf, kindJson, linkTarget, managedCronProblem, managedJobEnvOk, managedJobsOf, managedServicesOf, TEMPLATE, UNSUPPORTED_V2 } from "./shared.js";
+import { compact, identityOf, kindJson, linkTarget, managedCronProblem, subOutput, managedJobEnvOk, managedJobsOf, managedServicesOf, TEMPLATE, UNSUPPORTED_V2 } from "./shared.js";
 
 // TA13 DRAFT(ai): 관리형 컨테이너(ECS Fargate · Cloud Run) 도착 = Terraform 이 서비스까지 만든다 (Helm 값 없음).
 //   Builder 는 순수 함수: IR 서비스 → ServiceTfVars(service_json). DB·서비스 주소는 같은 apply 안에서 생겨서 env 를 조각으로 넘기고 루트가 합친다.
@@ -19,7 +19,7 @@ const ref = (spec: AppSpecV2, to: string, out: string) => { linkTarget(spec, to,
 // IR env 한 줄 → 조각. 비밀은 따로 (값이 아니라 저장소 이름)
 export function envParts(spec: AppSpecV2, e: EnvVarV2): Array<{ lit: string | null; ref: string | null }> {
   if ("value" in e) return [lit(e.value)];
-  if ("fromLink" in e) return [ref(spec, e.fromLink.to, e.fromLink.output)];
+  if ("fromLink" in e) return [{ ...ref(spec, e.fromLink.to, e.fromLink.output), ref: `${e.fromLink.to}.${subOutput(e.fromLink.output, e.fromLink.subscription)}` }];
   if ("template" in e) {
     const parts: Array<{ lit: string | null; ref: string | null }> = [];
     let at = 0;
@@ -49,7 +49,7 @@ export function managedServiceVars(p: ManagedProvider, spec: AppSpecV2, t: Targe
   const pub = entryTargets(spec);
   return managedServicesOf(spec).map((w: Service) => {
     const x = w.props;
-    const seed = [nameSeed(t), spec.app.name, w.id, "svc"];
+    const seed = [nameSeed(t), spec.app.name, w.id, "svc", ...migrationSeed(t)];
     const env = x.env.filter((e) => !("fromSecret" in e)).map((e) => ({ name: e.name, parts: envParts(spec, e) }));
     const secrets = x.env.flatMap((e) => "fromSecret" in e
       ? [{ name: e.name, secret: managedSecretName(p, spec, t, e.fromSecret.secret, e.fromSecret.key), key: e.fromSecret.key }] : []);
@@ -88,7 +88,7 @@ const placeholder = (spec: AppSpecV2, to: string, out: string) => { linkTarget(s
 function jobEnvValue(spec: AppSpecV2, e: EnvVarV2): string {
   if (!managedJobEnvOk(e)) throw new AdapterError(UNSUPPORTED_V2, `관리형 잡 env 에 못 그리는 줄: ${e.name}`);
   if ("value" in e) return e.value;
-  if ("fromLink" in e) return placeholder(spec, e.fromLink.to, e.fromLink.output);
+  if ("fromLink" in e) { placeholder(spec, e.fromLink.to, e.fromLink.output); return `<tf-output:link.${e.fromLink.to}.${subOutput(e.fromLink.output, e.fromLink.subscription)}>`; }
   const m = new RegExp(`^${TEMPLATE.source}$`).exec((e as { template: string }).template)!;
   return placeholder(spec, m[1]!, m[2]!);
 }
@@ -106,7 +106,7 @@ export function managedJobVars(p: ManagedProvider, spec: AppSpecV2, t: Target, i
     return {
       id: j.id,
       // aws: 역할 이름 = 이름 + -task·-ex·-sch (64자) → 58자 / gcp: SA·스케줄러 이름 파생 → 49자 소문자
-      name: boundedName({ prefix: "app-", app: j.id, seed: [nameSeed(t), spec.app.name, j.id, "job"], max: p === "gcp" ? 49 : 58 }),
+      name: boundedName({ prefix: "app-", app: j.id, seed: [nameSeed(t), spec.app.name, j.id, "job", ...migrationSeed(t)], max: p === "gcp" ? 49 : 58 }),
       schedule: x.schedule.trim().split(/\s+/).join(" "),
       time_zone: x.timeZone ?? null,
       concurrency_policy: x.concurrencyPolicy ?? null,
@@ -153,6 +153,12 @@ export function managedWarnings(p: ManagedProvider, spec: AppSpecV2): string[] {
   if (!m.length) return [];
   const out: string[] = [];
   if (spec.entry) out.push("입구(entry) → 관리형 서비스 연결은 아직 없음: 서비스는 뜨지만 외부 트래픽 전환 전에 원점 연결이 필요");
+  // TF4-3: ECS 모듈(aws/kinds/service-ecs)은 health_path·public 칸을 받기만 하고 안 쓴다 → 조용히 버리지 않고 알림 (Cloud Run 은 씀)
+  if (p === "aws") for (const w of m) {
+    const r = w.props.probes?.readiness;
+    if (r?.type === "http") out.push(`${w.id}: 준비 확인 http ${r.path} 는 ECS 모듈이 아직 안 씀 (상태 검사 없이 뜸)`);
+    if (entryTargets(spec).has(w.id)) out.push(`${w.id}: 입구 대상(public)이지만 ECS 모듈이 공개 설정을 아직 안 씀`);
+  }
   if (p === "gcp") {
     // Cloud Run 주소는 https://<서비스>-<번호>.<리전>.run.app:443. 출발 env 가 host 에 스킴·포트를 붙였으면(http://${x.host}:8080) 앱이 못 부름
     const ids = new Set(m.map((x) => x.id));

@@ -4,8 +4,10 @@ import { appNamespace } from "../common/base.js";
 import { hash6 } from "../common/names.js";
 import { regionOf, tenantOf, type Target } from "../common/target.js";
 import { onpremAdapter, PERMS as V1_PERMS } from "../onprem/index.js";
-import { asV1Name, assertRenderable, instancesOf, K8S_RENDER_CAPS, kindJson, postgresOf, refV2, secretNamesOf, workloadsOf } from "./shared.js";
+import { asV1Name, assertRenderable, compact, k8sResources, instancesOf, K8S_RENDER_CAPS, kindJson, postgresOf, refV2, secretNamesOf, workloadsOf } from "./shared.js";
+import { secretStoreName } from "./capability-checks.js";
 import { buildWorkloadValues } from "./cloud.js";
+import { dbIdentityFor } from "./data-fit.js";
 
 // DRAFT(ai): 온프레(k3s) 도착 Builder v2 (설계 27번 A1·A2b). 클라우드 IAM 없음, DB = 차트 CNPG (Terraform 아님).
 //   루트 = infra/modules/onprem/root, 종류 = kinds/{namespace,netpol}. netpol 은 posture allow-all 이면 안 만듦(= mirror)
@@ -18,7 +20,7 @@ const PERMS: PermTable = {
 // TODO(human): 온프레(k3s)의 데이터 자원 대체물 선택 — cache(클러스터 안 Redis? Valkey?)·objectStore(MinIO?)·queue(NATS? RabbitMQ?)는 아직 안 정함.
 //   정하기 전까지 capability 를 안 줘서 v2Blockers 가 "도착 렌더 미지원: kind.cache.redis" 등으로 막는다 (조용히 빼먹지 않음). kinds/ 에도 해당 모듈 없음
 // A8 STUB: 온프레엔 클라우드 IAM 이 없다 → 권한은 안 그리고(k8s ServiceAccount 만) precheck warn 으로 검토 표시
-const CAPS = [...K8S_RENDER_CAPS, "kind.postgres.15", "kind.postgres.16", "kind.postgres.17", "db.cnpg", "render.grants", "posture.permissions"];
+const CAPS = [...K8S_RENDER_CAPS, "volume.pvc", "kind.postgres.15", "kind.postgres.16", "kind.postgres.17", "db.cnpg", "render.grants", "posture.permissions"];
 
 export function resourceTypesV2(spec: AppSpecV2): string[] {
   const r = new Set(["core/namespaces", "core/resourcequotas", "networking.k8s.io/networkpolicies", "core/serviceaccounts"]);
@@ -39,8 +41,10 @@ const cnpgName = (spec: AppSpecV2, id: string) => {
 const cnpgLink = (spec: AppSpecV2) => (c: ComponentV2, output: string): string | undefined => {
   if (c.kind !== "postgres") return undefined;
   const host = `${cnpgName(spec, c.id)}-rw`;
-  // CNPG 기본 소유자·DB = app 【사실: CNPG bootstrap initdb 기본값】
-  return ({ host, port: "5432", user: "app", url: `postgresql://app@${host}:5432/app` } as Record<string, string>)[output];
+  // DBN-1·E10-2: initdb 소유자·DB = IR 앱 계정·DB 이름 (클라우드 도착과 같은 규칙 dbIdentityFor). 못 읽으면 app·<앱>_ + 사전 점검 경고
+  const { db, user } = dbIdentityFor(spec, c);
+  // CNPG-RO: 읽기 전용 = CNPG 가 만드는 <cluster>-ro Service (대기·복제본이 없으면 주 서버로 감)
+  return ({ host, reader: `${cnpgName(spec, c.id)}-ro`, port: "5432", user, url: `postgresql://${user}@${host}:5432/${db}` } as Record<string, string>)[output];
 };
 
 // 할당량 = Σ(요청량 × 최대 레플리카 × 2) + DB 몫 (v1 과 같은 규칙). 요청량이 하나라도 없으면 null (지어내지 않음)
@@ -77,7 +81,7 @@ export const onpremTarget: TargetBuilder = {
         k8s_namespace: ns,
         namespace_json: kindJson("namespace", [{ name: ns, quota_cpu_m: q.cpu, quota_memory_mi: q.mem }]),
         // posture.networkPolicy(as-declared)는 capability 밖이라 여기 안 옴 → 정책 0개 = 출발처럼 다 열림
-        netpol_json: "[]",
+        netpol_json: kindJson("netpol", []),   // TF4-3: 계약(NetpolTfVars)을 거친다
       },
       instances,
     };
@@ -86,16 +90,23 @@ export const onpremTarget: TargetBuilder = {
     assertRenderable(spec, CAPS);
     return buildWorkloadValues(spec, out, t, {
       imageRef: (src) => onpremAdapter.imageRef(src, t),
-      secretStore: { kind: "ClusterSecretStore", name: "vault" },   // DRAFT(ai): v1 과 같음
+      secretStore: { kind: "ClusterSecretStore", name: secretStoreName("onprem", out) },   // CL-4: env 출력 secret_store_name 이 있으면 그것
       remoteKey: (s) => `${spec.app.name}-${s.toLowerCase().replace(/_/g, "-")}`,
       saAnnotations: () => ({}),
-      postgres: postgresOf(spec).map((c) => ({
-        id: c.id, mode: "cnpg", name: cnpgName(spec, c.id),
+      postgres: postgresOf(spec).map((c) => compact({
+        id: c.id, mode: "cnpg" as const, name: cnpgName(spec, c.id),
         // DRAFT(ai): instances = 주 1 + (ha 면 대기 1) + 읽기 복제본. 아무것도 없으면 1 (v1 과 같음)
         instances: 1 + (c.props.ha ? 1 : 0) + (c.props.readReplicas ?? 0),
         majorVersion: c.props.majorVersion, storageGb: c.props.storageGb,
+        ...(c.props.walStorageGb ? { walStorageGb: c.props.walStorageGb } : {}),   // DM-8 → 차트 cnpg.yaml walStorage (CNPG-V2)
+        // CNPG-V2 DRAFT(ai): IR compute → CNPG resources (요청=한도, 출발 DB 크기 그대로). 없으면 차트 기본(500m·1Gi, 할당량 DB 몫 안)
+        ...(c.props.compute && (c.props.compute.cpuMilli != null || c.props.compute.memMiB != null) ? { resources: {
+          requests: { ...(c.props.compute.cpuMilli != null ? { cpu: `${c.props.compute.cpuMilli}m` } : {}), ...(c.props.compute.memMiB != null ? { memory: `${c.props.compute.memMiB}Mi` } : {}) },
+          ...(c.props.compute.memMiB != null ? { limits: { memory: `${c.props.compute.memMiB}Mi` } } : {}) } } : {}),
         parameters: c.props.parameters,
         host: `${cnpgName(spec, c.id)}-rw`, port: 5432, passwordSecret: `${cnpgName(spec, c.id)}-app`,
+        // DBN-1·E10-2: CNPG bootstrap.initdb 의 database·owner (차트 cnpg.yaml v2 갈래가 읽음, CNPG-V2)
+        database: dbIdentityFor(spec, c).db, owner: dbIdentityFor(spec, c).user,
       })),
       link: cnpgLink(spec),
     });

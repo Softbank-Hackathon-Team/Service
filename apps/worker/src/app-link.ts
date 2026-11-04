@@ -7,8 +7,8 @@
 // APP_LINK_URLS 가 없으면 아무것도 안 한다 (지금까지와 같음)
 import type { Endpoint } from "@svc/replication";
 import { appLinkFromEnv, holdHooks, type AppLinkReport, type HoldHooks } from "@svc/dbproxy";
-import { AppSpec, type Provider } from "@svc/contracts";
-import { latestAcceptedSpec, type Tx } from "@svc/core";
+import type { Provider } from "@svc/contracts";
+import { latestAcceptedAppName, type Tx } from "@svc/core";
 import { configFromEnv, GitopsRepo, ENV_DIR, tenantSlug, type BundleRef } from "./gitops/index.js";
 
 export type Writer = "source" | "target";
@@ -35,10 +35,10 @@ export function appLinkMeasurements(rep: AppLinkReport | undefined, migrationId:
 /** 도착 환경 묶음 위치 (gitops 설정이 없으면 null). shift.ts 의 load 와 같은 방식 */
 export async function targetBundle(tx: Tx, tenantId: string, m: { id: string; targetEnvId: string }): Promise<BundleRef | null> {
   if (!configFromEnv()) return null;
-  const spec = await latestAcceptedSpec(tx, m.id);
+  const app = await latestAcceptedAppName(tx, m.id);
   const e = await tx.query("SELECT provider FROM environments WHERE id=$1", [m.targetEnvId]);
-  if (!spec || !e.rows[0]) return null;
-  return { tenant: tenantSlug(tenantId), app: AppSpec.parse(spec).app.name, env: ENV_DIR[e.rows[0].provider as Provider] };
+  if (!app || !e.rows[0]) return null;
+  return { tenant: tenantSlug(tenantId), app, env: ENV_DIR[e.rows[0].provider as Provider] };
 }
 
 /** GitOps 값 database.activeWriter 기록. 실패해도 컷오버는 되돌리지 않는다 (DB 는 이미 바뀜) → lag 로 남긴다 */

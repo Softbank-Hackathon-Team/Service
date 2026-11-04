@@ -1,7 +1,7 @@
-import type { AppSpec, AppSpecV2, PlanDoc, Provider, TfOutputs } from "@svc/contracts";
+import type { AppSpecV2, PlanDoc, Provider, TfOutputs } from "@svc/contracts";
 import { existsSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { adapterFor, createRealTerraformRunner, envFor, readImported, workRootOf, dbNetworkFromEnv, DbNetworkError, factEnvName, factsFromEnv, fillTfVars, flattenTfOutputsV2, withDbNetwork, type RealTerraformRunner } from "@svc/adapters";
+import { createRealTerraformRunner, envFor, readImported, workRootOf, dbNetworkFromEnv, DbNetworkError, factEnvName, factsFromEnv, fillTfVars, flattenTfOutputsV2, type RealTerraformRunner } from "@svc/adapters";
 import { tfCallV2 } from "./plan-v2.js";
 import { appLinkFromEnv } from "@svc/dbproxy";
 import { tenantSlug } from "../gitops/bundle.js";
@@ -10,16 +10,14 @@ import { envNumber } from "@svc/contracts";
 
 // Z70 DRAFT(ai): apply 작업의 "진짜 terraform" 길. Z89: 기본이 이 길이다 (MOCK_IAC=1 인 시험만 흉내 길).
 // apply.ts 는 이 함수 하나만 부른다.
-//   ① 승인 뒤 바뀌었나: 계획 처리기와 같은 입력으로 toTerraform 을 다시 만들어 tfPlanHash 비교 (deploy 의 approvedValues 와 같은 생각)
+//   ① 승인 뒤 바뀌었나: 계획 처리기와 같은 입력으로 Terraform 루트 호출을 다시 만들어 tfPlanHash 비교 (deploy 의 approvedValues 와 같은 생각)
 //   ② "<env:키>" 자리표시 채우기: 환경 표 account_id + TF_FACT_* 환경변수. 하나라도 비면 apply 하지 않는다
 //   ③ terraform init/plan/apply/output (실행기). 실패하면 failed, 작업 폴더를 detail 에 남긴다 → npm run tf:real -- destroy <이전 id>
 //   ④ (선택, APP_LINK_TARGET_FROM_TF=1) 붙잡기 프록시의 target upstream 을 새 DB 주소로 바꾼다 (Z31 프록시 POST /upstream)
 
 export interface RealApplyInput {
   migrationId: string; tenantId: string; envId: string;
-  provider: Provider; accountId: string | null; spec: AppSpec; plan: PlanDoc;
-  // TA3: 계획서 irVersion "2" 일 때 계획서 specSource 와 같은 출처의 v2 명세. 없으면(null) 승인 뒤 출처가 바뀐 것 → TF_PLAN_DRIFT
-  specV2?: AppSpecV2 | null;
+  provider: Provider; accountId: string | null; spec: AppSpecV2; plan: PlanDoc;
 }
 export type RealApplyOutcome =
   | { ok: true; tfOutputs: TfOutputs; detail: Record<string, unknown> }
@@ -40,16 +38,12 @@ export interface RealApplyDeps {
 export async function realApply(i: RealApplyInput, d: RealApplyDeps = {}): Promise<RealApplyOutcome> {
   const env = d.env ?? process.env;
   const base: Record<string, unknown> = { planId: i.plan.planId, provider: i.provider, real: true };
-  // ① 계획 단계와 똑같은 대상 (plan.ts handlePlan: region "default", 추가 칸 없음)
-  const target = { envId: i.envId, provider: i.provider, region: "default" };
+  // ① 계획 단계와 똑같은 대상 (plan.ts buildPlanDoc: region "default" + G8-1 이름 seed 인 migrationId)
+  const target = { envId: i.envId, provider: i.provider, region: "default", migrationId: i.migrationId };
   // Z77: 데모 DB 네트워크 변수(DB_PUBLIC 등)는 계획 단계와 같은 함수로 더한다 → 승인 뒤 .env 를 바꾸면 지문이 달라진다
   let tf; let dbNetwork: Record<string, unknown> | undefined;
-  // TA3: 길은 깃발이 아니라 계획서 irVersion 으로 고른다 (승인 뒤 PLAN_IR 을 바꿔도 승인한 길 그대로)
-  const v2 = i.plan.irVersion === "2";
-  if (v2 && !i.specV2)
-    return { ok: false, failureCode: "TF_PLAN_DRIFT", detail: { ...base, irVersion: "2", error: `승인한 v2 명세(${i.plan.specSource ?? "?"})가 지금 판에 없다 — upconvert 로 몰래 넘어가지 않음` } };
   try {
-    tf = v2 ? tfCallV2(i.specV2!, target, env) : withDbNetwork(adapterFor(i.provider).toTerraform(i.spec, target), i.provider, env);
+    tf = tfCallV2(i.spec, target, env);
     const n = dbNetworkFromEnv(i.provider, env);
     if (n) dbNetwork = { ...n.summary };
   } catch (e) {
@@ -88,7 +82,7 @@ export async function realApply(i: RealApplyInput, d: RealApplyDeps = {}): Promi
                        dbSecret: existsSync(join(dirname(imported.file), "db-secret.json")) } };
   }
   // Z89: state 는 회사별 폴더 (<TF_WORK_DIR>/<회사 slug>/<이전>). 다른 회사 state 와 같은 폴더를 쓸 길이 없다
-  const r = await runner.apply(i.provider, i.migrationId, filled.vars, d.signal, tenantSlug(i.tenantId), v2 ? "v2" : "v1");
+  const r = await runner.apply(i.provider, i.migrationId, filled.vars, d.signal, tenantSlug(i.tenantId));
   const runDetail = { workDir: r.workDir, steps: r.steps, elapsedMs: r.elapsedMs, log: r.log, secretFetched: r.secretFetched ?? false };
   if (!r.ok) {
     // Z89: init 이 127(실행 파일 없음)이면 따로 알린다 — 화면에서 "terraform 설치/ MOCK_IAC" 가 바로 보이게
@@ -101,9 +95,9 @@ export async function realApply(i: RealApplyInput, d: RealApplyDeps = {}): Promi
   }
   // cluster_name 은 app 모듈 출력이 아니라 env 모듈 사실 → 채워 둔다 (STUB 표와 같은 이름)
   // Z77: 클러스터 없이 만든 경우 cluster_name = "" 를 그대로 남긴다 → deploy 단계가 이 값을 보고 STUB 로 넘긴다
-  // TA3: v2 루트 출력의 맵(link_outputs·identity_*)은 자리표시 키(link.<id>.<출력>)로 펼쳐 둔다. v1 평평한 이름은 그대로
+  // TA3: 루트 출력의 맵(link_outputs·identity_*)은 자리표시 키(link.<id>.<출력>)로 펼쳐 둔다
   const raw: TfOutputs = { ...(facts.clusterName !== undefined ? { cluster_name: facts.clusterName } : {}), ...r.tfOutputs };
-  const tfOutputs: TfOutputs = v2 ? flattenTfOutputsV2(raw) : raw;
+  const tfOutputs: TfOutputs = flattenTfOutputsV2(raw);
 
   // ④ 앱 DB 연결의 도착 주소
   let appLink: Record<string, unknown> | undefined;

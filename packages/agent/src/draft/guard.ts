@@ -1,74 +1,84 @@
-import { AppSpec, type FieldMeta } from "@svc/contracts";
-import { DRAFT_MARKER_KEY, type MigrationRisk } from "./contracts.js";
+import { AppSpecV2, checkV2, type FieldMetaV2 } from "@svc/contracts";
+import type { MigrationRisk } from "./contracts.js";
 
-// 에이전트가 낸 명세를 그대로 믿지 않는다. 규칙 기반 v1과 칸 단위로 비교해
-//  - 잠긴 칸(원본에서 정확히 읽은 칸, 공급망·비밀·주소 칸)은 바꿔도 v1 값으로 되돌리고
-//  - 원본에 없던 DB를 지어내면 되돌리고
+// 에이전트가 낸 명세를 그대로 믿지 않는다. 규칙 기반 명세(baseline)와 칸 단위로 비교해
+//  - 리소스를 더하거나 빼거나 종류를 바꾸면 되돌리고 (원본에 없는 자원을 지어내지 않음, 있던 자원은 그대로 옮김)
+//  - AI 가 고쳐도 되는 칸(AI_EDITABLE) 밖이거나, 원본에서 정확히 읽은 칸(confidence 1, 검토 필요 아님)은 원본 값으로 되돌리고
 //  - 나머지 바뀐 칸은 출처 ai, 믿음 0.6, 검토 필요로 표시한다.
-// DRAFT(ai): 항상 잠그는 칸 목록. 이미지(digest)·환경변수·비밀 참조·호스트 이름은 원본 값만 쓴다 (주입·유출 방지)
-export const ALWAYS_LOCKED = new Set(["schemaVersion", "service.image", "service.env", "service.secretRefs", "ingress.hostname", "ingress.entry"]);
-export const FIELDS = [
-  "schemaVersion", "app.name", "service.image", "service.port", "service.healthPath", "service.replicas",
-  "service.cpu", "service.memory", "service.env", "service.secretRefs", "database", "ingress.hostname", "ingress.entry",
-] as const;
+// 칸 단위 = components.<id>.<props 맨 위 칸> + 맨 위 칸(schemaVersion·app·availability·links·entry·posture·security·secrets)
+// DRAFT(ai): AI 가 고칠 수 있는 칸은 "출발에서 못 읽었거나 어림한 크기·개수·검사" 뿐이다. 이미지·환경변수·비밀·설정·볼륨·배치·
+//   의존성·라우팅·보안 기준선은 출발 값만 쓴다 (주입·유출 방지 + 그대로 이식). 목록 밖 새 칸은 기본으로 잠긴다
+export const AI_EDITABLE = new Set(["resources", "probes", "replicas", "scale", "ports",
+  "majorVersion", "storageGb", "storageMaxGb", "compute", "memoryMiB", "sizeGb"]);
+// T1·SC-1: 비밀 표(secrets)도 잠김 (출발 값). 빠지면 AI 초안 판에서 비밀 표가 사라졌다
+export const TOP_FIELDS = ["schemaVersion", "app", "availability", "links", "entry", "posture", "security", "secrets"] as const;
 
-const get = (o: unknown, path: string): unknown =>
-  path.split(".").reduce<unknown>((x, k) => (x && typeof x === "object" ? (x as Record<string, unknown>)[k] : undefined), o);
-function set(o: Record<string, unknown>, path: string, v: unknown) {
-  const ks = path.split(".");
-  let cur = o;
-  for (const k of ks.slice(0, -1)) { cur[k] ??= {}; cur = cur[k] as Record<string, unknown>; }
-  const last = ks[ks.length - 1]!;
-  if (v === undefined) delete cur[last]; else cur[last] = v;
-}
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+type Comp = { id: string; kind: string; props: Record<string, unknown> };
+const issuesOf = (e: { issues: Array<{ path: PropertyKey[]; message: string }> }) =>
+  e.issues.slice(0, 10).map((x) => `${x.path.map(String).join(".")}: ${x.message}`);
 
 export interface GuardOut {
   ok: boolean;
-  spec?: AppSpec;
-  fieldMeta?: FieldMeta;
+  spec?: AppSpecV2;
+  fieldMeta?: FieldMetaV2;
   rejected: Array<{ field: string; reason: string }>;
-  issues: string[];                // AppSpec 검사 실패 내용 (ok=false 일 때)
+  issues: string[];                // 명세 검사 실패 내용 (ok=false 일 때)
 }
 
 export function guardDraft(o: {
-  baseline: { spec: Partial<AppSpec>; fieldMeta: FieldMeta };
+  baseline: { spec: AppSpecV2; fieldMeta: FieldMetaV2 };
   candidate: unknown;
   notes: Array<{ field: string; rationale: string }>;
   model: string;
 }): GuardOut {
-  const parsed = AppSpec.safeParse(o.candidate);
-  if (!parsed.success) {
-    return { ok: false, rejected: [], issues: parsed.error.issues.slice(0, 10).map((x) => `${x.path.join(".")}: ${x.message}`) };
-  }
-  const base = o.baseline.spec as Record<string, unknown>;
+  const parsed = AppSpecV2.safeParse(o.candidate);
+  if (!parsed.success) return { ok: false, rejected: [], issues: issuesOf(parsed.error) };
+  const base = o.baseline.spec as unknown as Record<string, unknown> & { components: Comp[] };
+  const cand = structuredClone(parsed.data) as unknown as Record<string, unknown> & { components: Comp[] };
   const meta = o.baseline.fieldMeta;
-  const out = structuredClone(parsed.data) as unknown as Record<string, unknown>;
-  const fieldMeta: FieldMeta = structuredClone(meta);
+  const fieldMeta: FieldMetaV2 = structuredClone(meta);
   const rejected: GuardOut["rejected"] = [];
-  const locked = (f: string) => ALWAYS_LOCKED.has(f) || (meta[f]?.confidence === 1 && !meta[f]?.needs_review);
-
-  for (const f of FIELDS) {
-    const b = get(base, f), a = get(out, f);
-    if (same(a, b)) continue;
-    if (b !== undefined && locked(f)) {
-      set(out, f, structuredClone(b)); rejected.push({ field: f, reason: "잠긴 칸: 원본 값으로 되돌림" }); continue;
-    }
-    if (f === "database" && b === undefined) {
-      set(out, f, undefined); rejected.push({ field: f, reason: "원본에 없는 DB를 추가할 수 없음" }); continue;
-    }
-    // 여기까지 오면 v1이 비었거나 검토 필요였던 칸이다. AI 값을 쓰되 반드시 사람 검토
-    const note = o.notes.find((n) => n.field === f)?.rationale;
-    fieldMeta[f] = { source: `ai:${o.model}`, confidence: 0.6, needs_review: true,
+  const exact = (k: string) => meta[k]?.confidence === 1 && !meta[k]?.needs_review;
+  const mark = (k: string) => {
+    const note = o.notes.find((n) => n.field === k)?.rationale;
+    fieldMeta[k] = { source: `ai:${o.model}`, confidence: 0.6, needs_review: true,
       rationale: (note ?? "에이전트가 바꿈 (이유 없음)").slice(0, 300) };
+  };
+
+  // 맨 위 칸: 전부 잠김 (출발 값)
+  const out: Record<string, unknown> = {};
+  for (const f of TOP_FIELDS) {
+    if (base[f] !== undefined) out[f] = structuredClone(base[f]);
+    if (!same(cand[f], base[f])) rejected.push({ field: f, reason: "잠긴 칸: 원본 값으로 되돌림" });
   }
-  // 되돌린 뒤에도 명세 모양이 맞는지 다시 확인한다
-  const final = AppSpec.safeParse(out);
-  if (!final.success) {
-    return { ok: false, rejected, issues: final.error.issues.slice(0, 10).map((x) => `${x.path.join(".")}: ${x.message}`) };
-  }
-  fieldMeta[DRAFT_MARKER_KEY] = { source: `ai:${o.model}`, confidence: 0.6, needs_review: true,
-    rationale: "DRAFT(ai) 에이전트 초안 판. 사람이 검토·승인하기 전에는 계획에 쓰지 않는다" };
+  // 리소스: 원본 순서·원본 목록 그대로. 칸별로 AI 값을 받을지 정한다
+  const byId = new Map(cand.components.map((c) => [c.id, c]));
+  for (const c of cand.components) if (!base.components.some((b) => b.id === c.id))
+    rejected.push({ field: `components.${c.id}`, reason: "원본에 없는 자원을 추가할 수 없음" });
+  out.components = base.components.map((b) => {
+    const a = byId.get(b.id);
+    if (!a) { rejected.push({ field: `components.${b.id}`, reason: "원본 자원을 뺄 수 없음: 되돌림" }); return structuredClone(b); }
+    if (a.kind !== b.kind) { rejected.push({ field: `components.${b.id}.kind`, reason: "종류를 바꿀 수 없음: 되돌림" }); return structuredClone(b); }
+    const props: Record<string, unknown> = {};
+    for (const k of [...new Set([...Object.keys(b.props), ...Object.keys(a.props)])]) {
+      const key = `components.${b.id}.${k}`;
+      if (same(a.props[k], b.props[k])) { if (b.props[k] !== undefined) props[k] = structuredClone(b.props[k]); continue; }
+      if (!AI_EDITABLE.has(k) || exact(key)) {
+        if (b.props[k] !== undefined) props[k] = structuredClone(b.props[k]);
+        rejected.push({ field: key, reason: "잠긴 칸: 원본 값으로 되돌림" }); continue;
+      }
+      // 여기까지 오면 원본에서 못 읽었거나 검토 필요였던 크기·개수 칸이다. AI 값을 쓰되 반드시 사람 검토
+      if (a.props[k] !== undefined) props[k] = structuredClone(a.props[k]);
+      mark(key);
+    }
+    return { id: b.id, kind: b.kind, props };
+  });
+  // 되돌린 뒤에도 명세 모양·의미가 맞는지 다시 확인한다
+  const final = AppSpecV2.safeParse(out);
+  if (!final.success) return { ok: false, rejected, issues: issuesOf(final.error) };
+  const errs = checkV2(final.data).errors;
+  if (errs.length) return { ok: false, rejected, issues: errs.slice(0, 10) };
   return { ok: true, spec: final.data, fieldMeta, rejected, issues: [] };
 }
 
@@ -82,7 +92,7 @@ export function mergeRisks(rule: MigrationRisk[], ai: Array<Omit<MigrationRisk, 
 // Z72(Z3-F2b): 스킴 없이 도메인만 쓴 글(login.evil.example, evil.example:8443/x, evil[.]example)도 지운다.
 //  - 끝 칸(TLD)이 공개 도메인 목록에 있을 때만 주소로 본다 → service.image·pg.schema 같은 칸 이름, 16.4 같은 버전은 안 건드림
 //  - 사설 이름(.internal .local .svc .cluster.local .lan .corp .localhost)은 TLD 목록에 없어서 남는다 (설정의 DB 호스트 등)
-//  - 클라우드·레지스트리 도메인(amazonaws.com, pkg.dev 등)과 원본 v1 명세에 이미 있던 호스트(allowHosts)는 남긴다
+//  - 클라우드·레지스트리 도메인(amazonaws.com, pkg.dev 등)과 원본 명세에 이미 있던 호스트(allowHosts)는 남긴다
 //  - 파일 확장자와 겹치는 TLD(.md .sh .py .tf .rs .pl …)로 끝나는 두 칸 이름은 경로 뒤(scripts/collect.sh, ./main.tf)일 때만
 //    파일로 보고 남긴다 (Z71 에서 흔한 파일 이름 허용을 뺐다, 아래)
 //  - 전각·반각 마침표(。．｡)도 점으로 본다 (evil。example)
@@ -161,13 +171,20 @@ export function sanitizeText(t: string, allowHosts: ReadonlySet<string> = new Se
   return { text, removed };
 }
 
-/** 원본 v1 명세에서 글에 적어도 되는 호스트(이미 사람이 운영하는 이름)를 모은다: ingress.hostname, 이미지 레지스트리 호스트.
+/** 원본 명세에서 글에 적어도 되는 호스트(이미 사람이 운영하는 이름)를 모은다: 입구 호스트 이름, 이미지 레지스트리 호스트.
  *  환경변수 값은 넣지 않는다 (주입 문장이 들어올 수 있는 자리라서, S13) */
-export function baselineHosts(spec: Partial<AppSpec>): Set<string> {
+export function baselineHosts(spec: AppSpecV2): Set<string> {
   const out = new Set<string>();
-  const h = (spec as { ingress?: { hostname?: unknown } }).ingress?.hostname;
-  if (typeof h === "string" && h) out.add(h.toLowerCase());
-  const img = (spec as { service?: { image?: unknown } }).service?.image;
-  if (typeof img === "string" && img.includes("/")) { const reg = img.split("/")[0]!; if (reg.includes(".")) out.add(reg.toLowerCase().replace(/:\d+$/, "")); }
+  for (const h of spec.entry?.hosts ?? []) for (const n of h.hostnames) if (n) out.add(n.toLowerCase());
+  const reg = (repo: string | undefined) => {
+    if (!repo || !repo.includes("/")) return;
+    const r = repo.split("/")[0]!;
+    if (r.includes(".")) out.add(r.toLowerCase().replace(/:\d+$/, ""));
+  };
+  for (const c of spec.components) {
+    if (c.kind !== "service" && c.kind !== "job") continue;
+    reg(c.props.image.repository);
+    for (const x of [...(c.props.sidecars ?? []), ...(c.props.initContainers ?? [])]) reg(x.image.repository);
+  }
   return out;
 }

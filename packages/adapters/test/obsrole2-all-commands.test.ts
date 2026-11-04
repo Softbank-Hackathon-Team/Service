@@ -16,6 +16,8 @@ function walk(dir: string): string[] {
 const SOURCES = [...walk("packages/adapters/src/"), "packages/security/src/live/aws.ts", "packages/security/src/live/gcp.ts", "packages/security/src/live/exec.ts"];
 const code = (p: string) => read(p).split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
 
+const PENDING_AWS = ["s3api get-bucket-notification-configuration", "sns list-topics", "sns list-subscriptions-by-topic"];
+const PENDING_GCP = ["storage buckets notifications"];
 /** 소스에서 부르는 명령 키 모음. aws: 서비스+동사 / gcloud: 동사 앞 단어들(옵션·이름 앞까지) */
 function found(): { aws: Set<string>; gcp: Set<string> } {
   const aws = new Set<string>(), gcp = new Set<string>();
@@ -38,6 +40,9 @@ function found(): { aws: Set<string>; gcp: Set<string> } {
   for (const m of awsAllowed.matchAll(/"([a-z0-9-]+ [a-z0-9-]+)"/g)) aws.add(m[1]!);
   const gAllowed = /GCLOUD_ALLOWED = \[([\s\S]*?)\n\];/.exec(ex)![1]!;
   for (const m of gAllowed.matchAll(/\[((?:"[a-z-]+",?\s*)+)\]/g)) gcp.add([...m[1]!.matchAll(/"([a-z-]+)"/g)].map((x) => x[1]).join(" "));
+  // TODO(human): B-1b·B-2 읽기(AWS_DATA_READ_PENDING·GCP_DATA_READ_PENDING)는 관찰 역할에 넣을지 안 정함 → 표·템플릿 대조에서 뺌. 못 읽으면 "못 읽음" 검토 줄
+  for (const k of PENDING_AWS) aws.delete(k);
+  for (const k of PENDING_GCP) gcp.delete(k);
   return { aws, gcp };
 }
 

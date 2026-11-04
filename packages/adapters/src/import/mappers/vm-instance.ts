@@ -41,7 +41,7 @@ export const vmInstanceMapper: KindMapper = {
     const ports = pp.ports;
     const cpu = g.cpuMilli ?? null, mem = g.memMiB ?? null;
     const resources = cpu != null || mem != null ? { request: { cpuMilli: cpu, memMiB: mem } } : {};
-    const publicRule = rules?.some((r) => r.sources.includes("0.0.0.0/0") && !(r.fromPort === r.toPort && ADMIN.has(r.fromPort)) && r.toPort - r.fromPort + 1 <= MAX_RANGE) ?? false;
+    const publicRule = rules?.some((r) => (r.sources.includes("0.0.0.0/0") || r.sources.includes("::/0")) && !(r.fromPort === r.toPort && ADMIN.has(r.fromPort)) && r.toPort - r.fromPort + 1 <= MAX_RANGE) ?? false;
     const props: Record<string, unknown> = {
       // RUNTIMEMAP v2 DECISION(team): VM 출발의 기본 도착은 VM (최대한 출발 환경과 같게, 2026-11-02 결정). 컨테이너로 옮기는 건 명세 검토에서
       //   runtime 을 k8s·managedContainer 로 바꾸는 opt-in 이고 그때 runtime_change 승인 줄이 생긴다
@@ -78,8 +78,8 @@ export const vmInstanceMapper: KindMapper = {
         ports: ports.length ? m(`${src}.securityGroup`, 0.9, pp.wide ? "넓은 포트 범위는 앱 포트로 안 봄" : "보안 규칙에서 읽음. 접속 포트(22·3389) 제외")
           : m(`${src}.securityGroup`, 0.6, rules ? (pp.adminOnly ? "접속 포트만 열려 있음 → 앱 포트 모름" : pp.wide ? "포트가 너무 넓게 열려 있음 → 앱 포트 모름" : "열린 포트 없음") : "보안 규칙을 못 읽음"),
         replicas: m(`${src}.count`, 0.9, `실행 중 VM ${g.count}대 → replicas. 오토스케일 그룹 여부는 안 읽음`),
+        ...(g.ingressReview ? { network: m(`${src}.firewall`, 0.6, g.ingressReview) } : {}),
       },
-      projection: { name: g.name, env: [], plainSecretNames: [], secretRefs: [], specReplicas: g.count, port: ports[0]?.port ?? null, hostname: null, image: g.name, imageDigest: null, healthPath: null },
     };
   },
 };

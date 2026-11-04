@@ -2,20 +2,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { upconvertV1, AppSpec, AppSpecV2, TF_KIND_VARS, type TargetEnv } from "@svc/contracts";
+import { AppSpecV2, TF_KIND_VARS, type TargetEnv } from "@svc/contracts";
 import { targetBuilderFor, v2Blockers } from "../src/index.js";
 import { bucketApp } from "../src/target/data.js";
 
-const V1 = AppSpec.parse({ schemaVersion: "1", app: { name: "shop" },
-  service: { image: `r/shop@sha256:${"a".repeat(64)}`, port: 8080, healthPath: "/healthz", replicas: 1, cpu: "500m", memory: "1Gi", env: [], secretRefs: [] },
-  database: { engine: "postgres", majorVersion: "16", storageGb: 20 }, ingress: { hostname: "s.example.com", entry: "cloudflare-lb" } });
+// 데모 명세 (shop 서비스 1개 + postgres 1개)
+const BASE: AppSpecV2 = AppSpecV2.parse({"schemaVersion":"2","app":{"name":"shop"},"components":[{"id":"shop","kind":"service","props":{"runtime":"k8s","origin":{"runtime":"k8s","product":"unknown"},"image":{"source":"registry","repository":"r/shop","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"ports":[{"port":8080,"protocol":"TCP"}],"probes":{"readiness":{"type":"http","path":"/healthz","port":8080}},"replicas":{"min":1,"max":1},"serviceAccount":"default","resources":{"request":{"cpuMilli":500,"memMiB":1024}},"env":[]}},{"id":"db","kind":"postgres","props":{"majorVersion":"16","storageGb":20}}],"links":[{"from":"shop","to":"db","intent":"connect"}],"entry":{"via":"cloudflare-lb","hosts":[{"hostnames":["s.example.com"],"routes":[{"matches":[{"path":{"type":"PathPrefix","value":"/"}}],"backends":[{"to":"shop","port":8080,"weight":1}]}]}]},"posture":{"permissions":[],"network":[]}});
 const T = (p: TargetEnv["provider"], mig = "44444444-4444-4444-8444-444444444444") =>
   ({ envId: "33333333-3333-4333-8333-333333333333", provider: p, region: "default", migrationId: mig }) as TargetEnv;
 type Raw = Record<string, any>;
 const P = ["aws", "gcp"] as const;
 
 function withData(mut?: (s: Raw) => void): AppSpecV2 {
-  const s: Raw = structuredClone(upconvertV1(V1).spec);
+  const s: Raw = structuredClone(BASE);
   const svc = s.components.find((c: Raw) => c.kind === "service").id as string;
   s.components.push(
     { id: "shop-cache", kind: "cache", props: { engine: "redis", memoryMiB: 1024, tls: true, auth: true } },
@@ -42,18 +41,18 @@ test("캐시 tls·auth: false 는 false 그대로, null 은 null 그대로 (모�
 });
 
 // ── 공개 버킷 ──
-test("공개 버킷(public=true): 변수엔 true 그대로(모듈이 공개 차단), 계획 전에 사람에게 알림 (찾은 구멍)", () => {
+test("공개 버킷(public=true): 변수엔 true 그대로, B-2 그대로 이식이라 막지 않음(모듈이 공개로 엶, 승인 줄은 checkV2 public_bucket)", () => {
   const spec = withData((s) => { comp(s, "shop-assets").props.public = true; });
   for (const p of [...P, "azure_mock"] as const) {
     const b = v2Blockers(spec, targetBuilderFor(p).capabilities());
     assert.deepEqual(b.unsupported, [], p);
-    assert.ok(b.needsHuman.some((x) => /shop-assets: 출발은 공개 버킷/.test(x)), `${p}: ${b.needsHuman.join(" | ")}`);
+    assert.ok(!b.needsHuman.some((x) => /shop-assets/.test(x)), `${p}: ${b.needsHuman.join(" | ")}`);
   }
   for (const p of P) assert.equal(items(render(p, spec), "object_store_json")[0]!.public, true);
   // 비공개 버킷은 아무 말 없음
   assert.ok(!v2Blockers(withData(), targetBuilderFor("aws").capabilities()).needsHuman.some((x) => /shop-assets/.test(x)));
   for (const f of ["aws", "gcp"]) assert.match(readFileSync(new URL(`../../../infra/modules/${f}/kinds/object-store/main.tf`, import.meta.url), "utf8"),
-    f === "aws" ? /block_public_policy\s*=\s*true/ : /public_access_prevention\s*=\s*"enforced"/, `${f} 모듈이 공개 차단을 늘 켬`);
+    f === "aws" ? /block_public_policy\s*=\s*!local\.open_public/ : /public_access_prevention\s*=\s*var\.cfg\.public == true \? "inherited" : "enforced"/, `${f} 모듈이 공개일 때만 공개 차단을 끔`);
 });
 
 // ── FIFO · DLQ ──
@@ -83,7 +82,8 @@ test("FIFO 이름: 40자 id 도 큐 이름 60자 이하 → .fifo 붙여도 SQS 
 
 // ── 크기 경계 ──
 test("크기 경계: sizeGb 0·아주 큼, memoryMiB 1·최대, retention 최소·최대 → 값 그대로 (반올림·자르기 없음), 범위 밖은 명세 parse 가 거부", () => {
-  for (const [size, mem, ret] of [[0, 1, 60], [1e12, 1048576, 2678400], [0.5, null, undefined]] as const) {
+  // SZ-1 (fc2): 도착 급 최대(AWS r7g.16xlarge 429148MiB · Memorystore 300GB)까지는 그대로, 넘으면 줄이지 않고 막음
+  for (const [size, mem, ret] of [[0, 1, 60], [1e12, 307200, 2678400], [0.5, null, undefined]] as const) {
     const spec = withData((s) => {
       comp(s, "shop-assets").props.sizeGb = size; comp(s, "shop-cache").props.memoryMiB = mem;
       if (ret !== undefined) comp(s, "orders").props.retentionSec = ret;
@@ -95,6 +95,7 @@ test("크기 경계: sizeGb 0·아주 큼, memoryMiB 1·최대, retention 최소
       assert.equal(items(tf, "queue_json").find((q) => q.id === "orders")!.retention_sec, ret ?? null);
     }
   }
+  for (const p of P) assert.throws(() => render(p, withData((s) => { comp(s, "shop-cache").props.memoryMiB = 1048576; })), /최대/);
   assert.throws(() => withData((s) => { comp(s, "shop-assets").props.sizeGb = -1; }));
   assert.throws(() => withData((s) => { comp(s, "shop-cache").props.memoryMiB = 0; }));
   assert.throws(() => withData((s) => { comp(s, "orders").props.retentionSec = 59; }));

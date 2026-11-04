@@ -8,6 +8,7 @@ terraform {
   }
 }
 
+# PS-1·DM-6·B-1: 받는 쪽(구독) 설정. AWS 는 같은 것이 없어 받기만 함 (push·filter·retain_acked·subscriptions 는 계획 전에 막힘, idle_expiry 는 SQS 가 안 지움)
 # 계약은 모든 칸을 보낸다. optional 은 옛 호출·시험 입력(id·name 만)을 받으려고
 variable "cfg" {
   type = object({
@@ -20,6 +21,11 @@ variable "cfg" {
     dead_letter_to          = optional(string)
     dead_letter_max_receive = optional(number)
     allow_from_json         = optional(string, "[]")
+    idle_expiry_sec         = optional(number)
+    retain_acked            = optional(bool)
+    filter                  = optional(string)
+    push_endpoint           = optional(string)
+    subscriptions_json      = optional(string, "[]")
   })
   validation {
     condition     = can(regex("^[A-Za-z0-9_-]{1,75}$", var.cfg.name))

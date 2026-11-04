@@ -85,9 +85,11 @@ test("Z38-3: apply 재확인 실패(승인 없음) → 조용히 skipped 가 아
 
 test("Z38-4: import 가 재시도를 다 쓰면 importing 에 남지 않고 failed(IMPORT_FAILED)", { skip }, async () => {
   const m = await setup("importing");
-  // 실패 원인 만들기: 판 1이 이미 있어 INSERT 가 23505 로 깨진다 (Zod 오류가 아닌 "다시 해 볼 만한" 실패)
-  await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta) VALUES ($1,$2,1,'{}','{}')`, [T, m.id]);
+  // 실패 원인 만들기: 바깥 읽기가 이름 없는 오류로 깨진다 (Zod·출발 못 읽음이 아닌 "다시 해 볼 만한" 실패)
+  const orig = imp.importDeps.discover;
+  imp.importDeps.discover = async () => { throw new Error("z38 boom"); };
   const job = { tenantId: T, requestId: "z38", migrationId: m.id };
+  try {
   // 첫 시도: 던져서 pg-boss 재시도에 맡기고, 시도 기록 1줄
   await assert.rejects(imp.handleImport(job));
   assert.equal(await step.failedAttempts(job, "import"), 1);
@@ -96,6 +98,7 @@ test("Z38-4: import 가 재시도를 다 쓰면 importing 에 남지 않고 fail
   await assert.rejects(imp.handleImport(job));
   // 네 번째(= 첫 시도 + retryLimit 3): 더 던지지 않고 failed
   await imp.handleImport(job);
+  } finally { imp.importDeps.discover = orig; }
   assert.deepEqual(await row(m.id), { status: "failed", failure_code: "IMPORT_FAILED" });
 });
 

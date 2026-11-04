@@ -8,7 +8,6 @@ import { endpointFromEnv, withClient } from "@svc/replication";
 import { runStep } from "./_step.js";
 import { withStepRoles, type StepRoles } from "./_roles.js";
 import type { MigrationRow } from "./_step.js";
-import { planIrV2 } from "./plan-v2.js";
 
 // 사전 점검: 이전해도 되는지 본다. block(FAIL)이 하나라도 있으면 명세 검토로 되돌린다
 // Z97: STUB(고정 "확인됨")을 실조회로 바꿨다 — 자격(STS·tokeninfo·kubectl)·도착 API·결제·할당량·DB 버전·TCP·디스크.
@@ -66,10 +65,8 @@ export async function realPrecheck(tenantId: string, m: MigrationRow, deps: Part
   return toPrecheckItems(checks).map((i) => PrecheckItem.parse(i));
 }
 
-// TA3 (설계 27번 3.6): PLAN_IR=v2 면 v2 명세를 도착 capability 와 대조한다. 못 그리는 칸·사람 확인 → block (명세 검토로 되돌림)
-//   깃발 off 면 빈 목록 (지금 점검 그대로)
-export async function v2PrecheckFor(tenantId: string, m: MigrationRow, env: NodeJS.ProcessEnv = process.env): Promise<PrecheckItem[]> {
-  if (!planIrV2(env)) return [];
+// TA3 (설계 27번 3.6): 명세를 도착 capability 와 대조한다. 못 그리는 칸·사람 확인 → block (명세 검토로 되돌림)
+export async function v2PrecheckFor(tenantId: string, m: MigrationRow, _env: NodeJS.ProcessEnv = process.env): Promise<PrecheckItem[]> {
   return withTenant(tenantId, async (tx) => {
     const row = await latestAcceptedSpecV2(tx, m.id);
     const e = await tx.query(`SELECT provider FROM environments WHERE id=$1`, [m.targetEnvId]);
@@ -90,9 +87,9 @@ export function securityPrecheckItems(i: { spec: AppSpecV2; securityFacts?: Reco
   return toSecurityPrecheckItems(r).map((x) => PrecheckItem.parse(x));
 }
 
-// PLAN_IR=v2 이고 SEC_PRECHECK=1 일 때만. 꺼져 있으면 지금 점검 그대로. 명세를 못 쓰면 [] (v2PrecheckFor·계획 단계가 막는다)
-// DRAFT(ai): 기본 꺼짐. 켜면 요구사항 없음(P-REQ-0)·도착 로그인 방식 모름·출발 확장 모름 경고가 모든 v2 계획서의 승인 항목이 되므로 보안 시연 환경에서만 켠다
-export const secPrecheckOn = (env: NodeJS.ProcessEnv = process.env) => planIrV2(env) && env.SEC_PRECHECK === "1";
+// SEC_PRECHECK=1 일 때만. 꺼져 있으면 지금 점검 그대로. 명세를 못 쓰면 [] (v2PrecheckFor·계획 단계가 막는다)
+// DRAFT(ai): 기본 꺼짐. 켜면 요구사항 없음(P-REQ-0)·도착 로그인 방식 모름·출발 확장 모름 경고가 모든 계획서의 승인 항목이 되므로 보안 시연 환경에서만 켠다
+export const secPrecheckOn = (env: NodeJS.ProcessEnv = process.env) => env.SEC_PRECHECK === "1";
 export async function securityPrecheckFor(tenantId: string, m: MigrationRow, env: NodeJS.ProcessEnv = process.env): Promise<PrecheckItem[]> {
   if (!secPrecheckOn(env)) return [];
   return withTenant(tenantId, async (tx) => {

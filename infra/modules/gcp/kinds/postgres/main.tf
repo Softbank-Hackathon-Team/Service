@@ -19,6 +19,13 @@ variable "cfg" {
     ha                     = optional(bool)
     read_replicas          = optional(number)
     parameters_json        = optional(string, "{}")
+    db_name                = optional(string)        # DBN-1: 앱 DB 이름 그대로 (null = <앱 이름 - → _>)
+    app_user               = optional(string, "app") # DBN-1·E10-2: 앱 계정 이름 그대로. 링크 user·root db_username 이 이 값
+    backup_retention_days  = optional(number)        # BK-1: 출발 백업 보관 그대로 (0 = 끔, null = 상품 기본)
+    pitr                   = optional(bool)          # BK-1
+    maintenance_window     = optional(string)        # BK-1: "ddd:hh:mm-ddd:hh:mm" UTC. null = 상품이 고름
+    port                   = optional(number)        # DM-7: Cloud SQL 은 5432 고정이라 안 씀 (다르면 Builder 사전 점검 경고)
+    require_tls            = optional(bool, true)    # SSL-1: 출발이 평문 허용이면 false (DRAFT(ai))
     logical_replication    = optional(bool, true)
     allow_from_json        = optional(string, "[]")
     public                 = optional(bool, false)
@@ -31,12 +38,17 @@ variable "cfg" {
     error_message = "지원하지 않는 Postgres 버전."
   }
   validation {
+    condition     = var.cfg.backup_retention_days == null || (var.cfg.backup_retention_days >= 0 && var.cfg.backup_retention_days <= 365)
+    error_message = "Cloud SQL 백업 보관은 0~365개 (줄이지 않음 — Builder 가 계획 전에 막음)."
+  }
+  validation {
     condition     = var.cfg.logical_replication
     error_message = "logical_replication 은 항상 true (CDC 이전 요구)."
   }
   validation {
-    condition     = alltrue([for c in jsondecode(var.cfg.peer_cidrs_json) : can(cidrhost(c, 0)) && tonumber(split("/", c)[1]) >= 24])
-    error_message = "peer_cidrs_json: IPv4 CIDR 이고 /24 보다 좁아야 한다 (0.0.0.0/0 금지)."
+    # DECISION(team): 출발 DB 허용 주소는 넓어도 그대로 옮긴다 — /24 거부 같은 우리 쪽 임의 제한 없음 (TF4-2, 2026-11-03 결정). 모양(CIDR)만 본다
+    condition     = alltrue([for c in jsondecode(var.cfg.peer_cidrs_json) : can(cidrhost(c, 0))])
+    error_message = "peer_cidrs_json: 항목은 CIDR 이어야 한다."
   }
 }
 variable "app_name" { type = string }
@@ -49,7 +61,7 @@ locals {
   tier       = coalesce(var.cfg.instance_class, "db-f1-micro")
   replicas   = coalesce(var.cfg.read_replicas, 0)
   peer_cidrs = jsondecode(var.cfg.peer_cidrs_json)
-  db_name    = replace(var.app_name, "-", "_")
+  db_name    = coalesce(var.cfg.db_name, replace(var.app_name, "-", "_"))
   # IR 파라미터 그대로 + 플랫폼 요구(논리 디코딩)가 이긴다
   flags = merge(
     { for k, v in jsondecode(var.cfg.parameters_json) : k => tostring(v) },
@@ -81,7 +93,7 @@ resource "google_sql_database_instance" "db" {
     ip_configuration {
       ipv4_enabled    = var.cfg.public
       private_network = var.network_id
-      ssl_mode        = "ENCRYPTED_ONLY"
+      ssl_mode        = var.cfg.require_tls ? "ENCRYPTED_ONLY" : "ALLOW_UNENCRYPTED_AND_ENCRYPTED" # SSL-1
       dynamic "authorized_networks" {
         for_each = var.cfg.public ? local.peer_cidrs : []
         content {
@@ -90,9 +102,25 @@ resource "google_sql_database_instance" "db" {
         }
       }
     }
+    # BK-1: 출발 백업 그대로. 0 = 끔, null = 켬(상품 기본 보관). PITR 은 출발 값, 모르면 켬 (DRAFT(ai): 예전 값)
     backup_configuration {
-      enabled                        = true
-      point_in_time_recovery_enabled = true
+      enabled                        = var.cfg.backup_retention_days != 0
+      point_in_time_recovery_enabled = var.cfg.backup_retention_days != 0 && coalesce(var.cfg.pitr, true)
+      dynamic "backup_retention_settings" {
+        for_each = coalesce(var.cfg.backup_retention_days, 0) > 0 ? [var.cfg.backup_retention_days] : []
+        content {
+          retained_backups = backup_retention_settings.value
+          retention_unit   = "COUNT"
+        }
+      }
+    }
+    # BK-1: 유지보수 창 = 출발 시작 요일·시 (Cloud SQL 은 1시간 단위). null = 상품이 고름
+    dynamic "maintenance_window" {
+      for_each = var.cfg.maintenance_window == null ? [] : [var.cfg.maintenance_window]
+      content {
+        day  = index(["mon", "tue", "wed", "thu", "fri", "sat", "sun"], substr(maintenance_window.value, 0, 3)) + 1
+        hour = tonumber(substr(maintenance_window.value, 4, 2))
+      }
     }
     dynamic "database_flags" {
       for_each = local.flags
@@ -118,7 +146,7 @@ resource "google_sql_database_instance" "replica" {
     ip_configuration {
       ipv4_enabled    = var.cfg.public
       private_network = var.network_id
-      ssl_mode        = "ENCRYPTED_ONLY"
+      ssl_mode        = var.cfg.require_tls ? "ENCRYPTED_ONLY" : "ALLOW_UNENCRYPTED_AND_ENCRYPTED" # SSL-1
     }
   }
 }
@@ -135,7 +163,7 @@ resource "random_password" "db" {
 }
 
 resource "google_sql_user" "app" {
-  name     = "app"
+  name     = var.cfg.app_user
   instance = google_sql_database_instance.db.name
   password = random_password.db.result
 }
@@ -169,7 +197,7 @@ output "server_ca_cert" { value = nonsensitive(google_sql_database_instance.db.s
 output "connection_name" { value = google_sql_database_instance.db.connection_name }
 output "port" { value = 5432 }
 output "db_name" { value = local.db_name }
-output "user" { value = "app" }
+output "user" { value = var.cfg.app_user }
 # 비밀 "이름"만. KIND_INTERNAL_OUTPUTS.postgres = ["password_secret"]
 output "password_secret" { value = google_secret_manager_secret.db_password.secret_id }
 output "password_secret_resource" { value = google_secret_manager_secret.db_password.id }
@@ -179,7 +207,9 @@ output "link" {
   value = {
     host = local.host
     port = "5432"
-    url  = "postgresql://app@${local.host}:5432/${local.db_name}"
-    user = "app"
+    url  = "postgresql://${var.cfg.app_user}@${local.host}:5432/${local.db_name}"
+    user = var.cfg.app_user
+    # CNPG-RO: 읽기 전용 주소 = 첫 읽기 복제본 사설 IP (없으면 주 서버)
+    reader = length(google_sql_database_instance.replica) > 0 ? google_sql_database_instance.replica[0].private_ip_address : local.host
   }
 }

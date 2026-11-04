@@ -445,6 +445,9 @@ output "link_outputs" {
 output "db_address" { value = local.repl_key != "" ? module.postgres[local.repl_key].address : "" }
 output "db_public" { value = local.repl_key != "" ? module.postgres[local.repl_key].public : false }
 output "db_ca_cert_identifier" { value = local.repl_key != "" ? module.postgres[local.repl_key].ca_cert_identifier : "" }
+# E10-2: 도착 DB 앱 계정 이름 (= 모듈 user = 링크 user). 비밀 파일·복제가 "postgres"·"app_user" 같은 기본값 대신 이 값을 쓴다
+output "db_username" { value = local.repl_key != "" ? module.postgres[local.repl_key].user : "" }
+output "db_name" { value = local.repl_key != "" ? module.postgres[local.repl_key].db_name : "" }
 output "db_master_secret_arn" { value = local.repl_key != "" ? module.postgres[local.repl_key].password_secret : "" }
 output "app_role_arn" { value = local.first_identity != "" ? module.identity[local.first_identity].role_arn : "" }
 output "namespace" { value = length(module.namespace) > 0 ? try(module.namespace[var.k8s_namespace].name, values(module.namespace)[0].name) : "" }

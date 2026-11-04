@@ -1,12 +1,10 @@
-// I3a: 원본 → 공통 명세 v2 (normalizeV2) · v2 → v1 투영 (projectV1·rebuildFromV2). 순수 함수 + 가짜 kubectl 로 golden
+// I3a: 원본 → 공통 명세 (normalizeV2). 순수 함수 + 가짜 kubectl 로 golden
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AppSpec, AppSpecV2, ImportResultV2, checkV2, type RawInventory } from "@svc/contracts";
+import { AppSpecV2, ImportResultV2, checkV2, type RawInventory } from "@svc/contracts";
 import { normalizeV2 } from "../src/import/pipeline.js";
-import { projectV1, rebuildFromV2 } from "../src/import/project-v1.js";
-import { normalizeInventory } from "../src/common/normalize.js";
 import { discoverGcp, discoverOnprem } from "../src/discover/index.js";
-import { DEMO_INVENTORY_V2, DEMO_SPEC } from "../src/common/fixtures.js";
+import { DEMO_INVENTORY } from "../src/common/fixtures.js";
 import type { Exec } from "../src/terraform/real-runner.js";
 
 const D = "sha256:" + "ab".repeat(32);
@@ -26,7 +24,7 @@ const errorsOf = (spec: AppSpecV2) => checkV2(spec).errors;
 // ── 3티어 (데모 v2 원본) ─────────────────────────────
 for (const p of ["gcp", "onprem"] as const) {
   test(`3티어 ${p}: 서비스 3 + 작업 1 + postgres 1, 의존성·신뢰도·env 다시 쓰기, Zod·checkV2 통과`, () => {
-    const { result, projectionEnv } = normalizeV2(DEMO_INVENTORY_V2[p]!);
+    const { result } = normalizeV2(DEMO_INVENTORY[p]!);
     const { spec, fieldMeta, unmapped } = result;
     assert.equal(ImportResultV2.safeParse(result).success, true, JSON.stringify(ImportResultV2.safeParse(result).error?.issues?.slice(0, 3)));
     assert.deepEqual(checkV2(spec), { errors: [], reviews: [], approvals: [] });
@@ -43,7 +41,8 @@ for (const p of ["gcp", "onprem"] as const) {
     assert.deepEqual(comp(spec, "shop-web")!.props.env, [{ name: "API_URL", template: "http://${shop-api.host}" }]);
     // HPA 가 서비스 필드로 접힘, Service 객체 → endpoints, Ingress → 라우팅
     assert.deepEqual(api.props.replicas, { min: 2, max: 6 });
-    assert.deepEqual(api.props.scale, { targetCpuPct: 70 });
+    // N7: HPA metrics 원문도 같이 (CPU 사용률 하나)
+    assert.deepEqual(api.props.scale, { targetCpuPct: 70, metrics: [{ type: "Resource", resource: { name: "cpu", target: { type: "Utilization", averageUtilization: 70 } } }] });
     assert.equal(api.props.endpoints[0].ports[0].port, 80);
     assert.deepEqual(spec.entry?.hosts[0]?.routes.map((r) => `${r.matches[0]!.path.value}->${r.backends[0]!.to}:${r.backends[0]!.port}`), ["/api->shop-api:80", "/->shop-web:80"]);
     // CronJob 실행 규칙
@@ -56,21 +55,15 @@ for (const p of ["gcp", "onprem"] as const) {
     // 설명 없는 이름 추측 연결 없음, unmapped 없음
     assert.ok(!Object.values(fieldMeta).some((m) => m.source === "heuristic:name"));
     assert.deepEqual(unmapped, []);
-    // 투영 재료: 원래 env 값은 projectionEnv 에만 (명세·저장 대상엔 없음)
-    assert.equal(projectionEnv.workloads["shop-api"]?.env.find((e) => e.name === "DB_HOST")?.value, p === "gcp" ? "10.20.0.5" : "shop-db-rw.shop.svc");
+    // 원래 env 값(출발 주소)은 명세·저장 대상에 없음
     assert.ok(!JSON.stringify(result).includes(p === "gcp" ? "10.20.0.5\"" : "shop-db-rw.shop.svc\""));
-    // projectV1: 지금 v1 모양
-    const v1 = projectV1(result, projectionEnv);
-    const parsed = AppSpec.parse(v1.spec);
-    assert.equal(parsed.app.name, "shop-api");
-    assert.equal(parsed.service.replicas, 2);   // R12: HPA 가 있어도 Deployment.spec.replicas
-    assert.equal(parsed.ingress.hostname, "shop.example.com");
-    assert.deepEqual(parsed.database, { engine: "postgres", majorVersion: "16", storageGb: 20 });
+    assert.equal(spec.app.name, "shop-api");
+    assert.equal(comp(spec, "shop-db")!.props.storageGb, 20);
   });
 }
 
 test("결정성: 입력 순서를 뒤섞어도 결과가 글자 하나까지 같다", () => {
-  const raw = DEMO_INVENTORY_V2.gcp!;
+  const raw = DEMO_INVENTORY.gcp!;
   const a = JSON.stringify(normalizeV2(raw).result);
   assert.equal(JSON.stringify(normalizeV2({ ...raw, items: [...raw.items].reverse() }).result), a);
   assert.equal(JSON.stringify(normalizeV2({ ...raw, items: [...raw.items.slice(4), ...raw.items.slice(0, 4)] }).result), a);
@@ -185,50 +178,17 @@ test("env 다시 쓰기: 값 일부가 주소면 template, 스킴·포트·경�
   assert.deepEqual(errorsOf(result.spec), []);
 });
 
-test("거부: 평문 비밀 env 는 v2·v1 둘 다 없고, unmapped B + 검토 표시", () => {
+test("거부: 평문 비밀 env 는 명세에 없고, unmapped B + 검토 표시", () => {
   const raw = inv([dep("shop-api", [{ name: "LOG_LEVEL", value: "info" }, { name: "API_TOKEN", value: "plain-secret-123" }, { name: "DSN", value: "postgres://u:pw@db:5432/x" }])]);
-  const { result, projectionEnv } = normalizeV2(raw);
+  const { result } = normalizeV2(raw);
   const s = JSON.stringify(result);
   assert.ok(!s.includes("plain-secret-123") && !s.includes("u:pw@"), "v2 에 평문 비밀 없음");
   assert.ok(result.unmapped.some((u) => u.resource === "env:shop-api.API_TOKEN" && u.grade === "B"));
   assert.equal(result.fieldMeta["components.shop-api.env.API_TOKEN"]?.needs_review, true);
-  const v1 = projectV1(result, projectionEnv);
-  assert.ok(!JSON.stringify(v1).includes("plain-secret-123") && !JSON.stringify(v1).includes("u:pw@"), "v1 에도 없음");
-  assert.deepEqual(v1.spec.service?.env, [{ name: "LOG_LEVEL", value: "info" }]);
-  assert.equal(v1.fieldMeta["service.env.API_TOKEN"]?.confidence, 0.6);
+  assert.deepEqual(comp(result.spec, "shop-api")!.props.env, [{ name: "LOG_LEVEL", value: "info" }]);
 });
 
-test("projectV1: 서비스가 없으면 SOURCE_INCOMPLETE, IMPORT_APP 으로 주 서비스를 고른다", () => {
-  const empty = normalizeV2(inv([{ kind: "cnpg.cluster", metadata: { name: "pg", namespace: NS }, spec: { postgresVersion: "16", storage: { size: "1Gi" } } }]));
-  assert.throws(() => projectV1(empty.result, empty.projectionEnv), (e: { code?: string }) => e.code === "SOURCE_INCOMPLETE");
-  const two = normalizeV2(inv([dep("a-svc"), dep("b-svc")]));
-  assert.equal(projectV1(two.result, two.projectionEnv).spec.app?.name, "a-svc");
-  assert.equal(projectV1(two.result, two.projectionEnv, { mainApp: "b-svc" }).spec.app?.name, "b-svc");
-  assert.throws(() => projectV1(two.result, two.projectionEnv, { mainApp: "nope" }), (e: { code?: string }) => e.code === "SOURCE_INCOMPLETE");
-});
-
-test("rebuildFromV2: env·secretRefs 는 앞 판 v1 에서, 나머지는 고친 v2 에서 (R15)", () => {
-  const { result, projectionEnv } = normalizeV2(DEMO_INVENTORY_V2.onprem!);
-  const prev = AppSpec.parse(projectV1(result, projectionEnv).spec);
-  const edited = structuredClone(result);
-  const api = comp(edited.spec, "shop-api")!;
-  api.props.resources = { request: { cpuMilli: 1000, memMiB: 2048 } };
-  (comp(edited.spec, "shop-db")!.props).storageGb = 40;
-  const r = rebuildFromV2(edited, prev);
-  const v1 = AppSpec.parse(r.spec);
-  assert.equal(v1.service.cpu, "1");
-  assert.equal(v1.service.memory, "2Gi");
-  assert.equal(v1.database?.storageGb, 40);
-  assert.deepEqual(v1.service.env, prev.service.env);
-  assert.deepEqual(v1.service.secretRefs, prev.service.secretRefs);
-  assert.equal(v1.app.name, prev.app.name);
-  assert.equal(r.fieldMeta["service.cpu"]?.confidence, 1);
-  // 빌드 대상 이미지는 v1 로 못 뽑음
-  api.props.image = { source: "build", repository: "x", digest: null };
-  assert.throws(() => rebuildFromV2(edited, prev), (e: { code?: string }) => e.code === "SPEC_V2_INVALID");
-});
-
-// ── golden (R14): 같은 가짜 kubectl JSON → v1 경로 vs v2 경로 + projectV1 ──────────
+// ── golden (R14): 가짜 kubectl JSON → discover → normalizeV2 가 늘 맞는 명세를 낸다 ──────────
 type Reply = { code?: number; out?: unknown; err?: string };
 function fakeExec(table: Array<[RegExp, Reply]>): Exec {
   return async (cmd, args) => {
@@ -309,31 +269,21 @@ const GOLDEN: Array<{ name: string; provider: "onprem" | "gcp"; table: Array<[Re
 ];
 
 for (const g of GOLDEN) {
-  test(`golden R14: ${g.name} → v1 경로와 v2+projectV1 이 같은 명세·같은 확신`, async () => {
+  test(`golden R14: ${g.name} → 읽기 + normalizeV2 가 Zod·checkV2 를 통과`, async () => {
     const exec = fakeExec(g.table);
     const env = { ONPREM_KUBE_CONTEXT: "k3d-test", GCP_PROJECT: "finals-demo", ...(g.env ?? {}) };
     const discover = g.provider === "onprem" ? discoverOnprem : discoverGcp;
-    const v1raw = await discover({ exec, env }, { ir: "v1" });
-    const v2raw = await discover({ exec, env }, { ir: "v2" });
-    const want = normalizeInventory(v1raw, DEMO_SPEC);
-    const { result, projectionEnv } = normalizeV2(v2raw);
+    const { result } = normalizeV2(await discover({ exec, env }, {}));
     assert.deepEqual(checkV2(result.spec).errors, []);
-    const got = projectV1(result, projectionEnv, { mainApp: g.env?.IMPORT_APP });
-    const wantSpec = structuredClone(want.spec) as Raw, gotSpec = structuredClone(got.spec) as Raw;
-    for (const k of g.except ?? []) {
-      const [a, b] = k.split(".") as [string, string];
-      assert.notDeepEqual(wantSpec[a][b], gotSpec[a][b], `예외 ${k} 는 실제로 달라야 함`);
-      delete wantSpec[a][b]; delete gotSpec[a][b];
-    }
-    assert.deepEqual(gotSpec, wantSpec);
-    assert.deepEqual(shape(got.fieldMeta), shape(want.fieldMeta));
-    assert.equal(AppSpec.safeParse(got.spec).success, AppSpec.safeParse(want.spec).success);
+    assert.equal(AppSpecV2.safeParse(result.spec).success, true);
+    assert.ok(result.spec.components.some((c) => c.kind === "service"));
+    assert.ok(result.spec.components.some((c) => c.kind === "postgres"));
     if (g.name.startsWith("레지스트리")) assert.equal((comp(result.spec, "shop-api")!.props.image as Raw).repository, "registry.local:5000/shop-api");
   });
 }
 
 test("JSON 으로 왕복해도 같은 결과 (저장 → 다시 읽기), AppSpecV2 Zod 통과", () => {
-  const { result } = normalizeV2(DEMO_INVENTORY_V2.gcp!);
+  const { result } = normalizeV2(DEMO_INVENTORY.gcp!);
   const back = JSON.parse(JSON.stringify(result));
   assert.deepEqual(back, result);
   assert.equal(AppSpecV2.safeParse(back.spec).success, true);

@@ -1,10 +1,8 @@
-import type { AppSpec, EnvironmentAdapter, TfOutputs } from "@svc/contracts";
+import type { EnvironmentAdapter } from "@svc/contracts";
 import { actionsFor, type PermTable, type Purpose } from "../common/actions.js";
-import { appNamespace, dbInstanceName, sourceImport, moduleRefOf, platformImageRef } from "../common/base.js";
+import { sourceImport, platformImageRef, type PermNeeds } from "../common/base.js";
 import { AdapterError } from "../common/errors.js";
-import { buildValues } from "../common/k8s-values.js";
-import { boundedName } from "../common/names.js";
-import { envRef, fromOut, nameSeed, regionOf, tenantOf, type Target } from "../common/target.js";
+import { envRef, regionOf, type Target } from "../common/target.js";
 
 // Z44: 예전 이름 그대로 보이게 (aws.repoName). 본체는 common/target.ts
 export { repoName } from "../common/target.js";
@@ -54,6 +52,9 @@ export const PERMS: PermTable = {
     read: ["s3:GetBucketVersioning"], write: ["s3:PutBucketVersioning"], remove: ["s3:PutBucketVersioning"] },
   aws_s3_bucket_lifecycle_configuration: {
     read: ["s3:GetLifecycleConfiguration"], write: ["s3:PutLifecycleConfiguration"], remove: ["s3:PutLifecycleConfiguration"] },
+  // B-2 DRAFT(ai): 공개 버킷일 때만 만드는 정책. TODO(human): 실행 역할 천장(infra/permissions)엔 아직 안 넣음 (보안 승인 몫)
+  aws_s3_bucket_policy: {
+    read: ["s3:GetBucketPolicy"], write: ["s3:PutBucketPolicy"], remove: ["s3:DeleteBucketPolicy"] },
   aws_s3_bucket_cors_configuration: {
     read: ["s3:GetBucketCORS"], write: ["s3:PutBucketCORS"], remove: ["s3:PutBucketCORS"] },
   aws_sqs_queue: {
@@ -125,19 +126,19 @@ export const PERMS: PermTable = {
 };
 
 // DECISION(team): 도착 컴퓨트는 출발과 같은 종류 — 출발이 쿠버네티스면 쿠버네티스(AWS=EKS, GKE·k3s와 같은 Helm 차트), 출발이 ECS(관리형 컨테이너)면 ECS(GCP 도착이면 Cloud Run) (2026-10-31 EKS 결정, 2026-11-02 ECS 추가)
-export function resourceTypes(spec: AppSpec): string[] {
+export function resourceTypes(need: PermNeeds): string[] {
   const t = ["data.aws_eks_cluster", "data.aws_eks_cluster_auth", "kubernetes_namespace_v1", "aws_iam_role", "aws_iam_role_policy", "aws_eks_pod_identity_association"];
-  if (spec.service.secretRefs.length) t.push("aws_secretsmanager_secret");
-  if (spec.database) t.push("aws_db_instance", "aws_db_parameter_group", "aws_db_subnet_group", "aws_security_group");
+  if (need.secrets) t.push("aws_secretsmanager_secret");
+  if (need.database) t.push("aws_db_instance", "aws_db_parameter_group", "aws_db_subnet_group", "aws_security_group");
   return t.sort();
 }
 
-export const operateActions = (spec: AppSpec, purpose: Purpose) => actionsFor(PERMS, resourceTypes(spec), purpose);
+export const operateActions = (need: PermNeeds, purpose: Purpose) => actionsFor(PERMS, resourceTypes(need), purpose);
 
 // 실행 역할을 AssumeRole 할 때 붙이는 세션 정책 (호출마다 더 좁힘). AWS 제한 2,048자
-export function sessionPolicy(spec: AppSpec, purpose: Purpose): string {
+export function sessionPolicy(need: PermNeeds, purpose: Purpose): string {
   const doc = JSON.stringify({ Version: "2012-10-17",
-    Statement: [{ Effect: "Allow", Action: operateActions(spec, purpose), Resource: "*" }] });
+    Statement: [{ Effect: "Allow", Action: operateActions(need, purpose), Resource: "*" }] });
   if (doc.length > 2048) throw new AdapterError("SESSION_POLICY_TOO_LONG", `세션 정책 ${doc.length}자 > 2048`);
   return doc;
 }
@@ -165,14 +166,6 @@ export function appRoleBoundary(region: string) {
   }] };
 }
 
-export function names(spec: AppSpec, t: Target) {
-  const seed = [nameSeed(t), spec.app.name];
-  return {
-    db_instance: dbInstanceName(spec, t, 63),
-    app_role: boundedName({ prefix: "app-", app: spec.app.name, seed, max: 64 }),
-  };
-}
-
 export const awsAdapter: EnvironmentAdapter = {
   provider: "aws",
   version: "aws@0.5.0",
@@ -180,48 +173,6 @@ export const awsAdapter: EnvironmentAdapter = {
     "secrets.external", "db.postgres.15", "db.postgres.16", "db.postgres.17"],
   // Z88: 진짜 읽기 = aws CLI(현재 자격·AWS_PROFILE)로 EKS 앱·RDS·VPC·ALB·ECR·Secrets Manager. MOCK_SEED=1 이면 데모 원본
   ...sourceImport("aws"),
-  requiredOperateActions: (spec) => operateActions(spec, "apply"),
   imageRef: (src: string, t: Target) =>
     platformImageRef(`${t.accountId ?? envRef("accountId")}.dkr.ecr.${regionOf(t)}.amazonaws.com`, t, src),
-  toTerraform(spec, t: Target) {
-    const n = names(spec, t);
-    return {
-      moduleRef: moduleRefOf("aws/app", t),
-      vars: {
-        expected_account_id: t.accountId ?? envRef("accountId"),
-        region: regionOf(t),
-        app_name: spec.app.name,
-        tenant_id: tenantOf(t),
-        cluster_name: t.clusterName ?? envRef("clusterName"),
-        vpc_id: t.vpcId ?? envRef("vpcId"),
-        db_subnet_ids_json: t.subnetIds ? JSON.stringify([...t.subnetIds].sort()) : envRef("dbSubnetIdsJson"),
-        k8s_namespace: appNamespace(spec),
-        name_db_instance: n.db_instance,
-        name_app_role: n.app_role,
-        app_role_boundary_arn: `arn:aws:iam::${t.accountId ?? envRef("accountId")}:policy/${BOUNDARY_NAME}`,
-        secret_names_json: JSON.stringify(spec.service.secretRefs.map((r) => r.name).sort()),
-        db_enabled: Boolean(spec.database),
-        db_engine_version: spec.database?.majorVersion ?? "16",
-        // DRAFT(ai): 데모 비용 최소 인스턴스. 실제 크기는 출발 RDS 클래스에서 가져올지 TODO(human)
-        db_instance_class: "db.t4g.micro",
-        db_allocated_storage: Math.max(20, spec.database?.storageGb ?? 20),
-      },
-    };
-  },
-  toHelmValues(spec, out: TfOutputs, t: Target) {
-    return buildValues(spec, {
-      tenant: tenantOf(t),
-      imageRef: awsAdapter.imageRef(spec.service.image, t),
-      saAnnotations: {},   // Pod Identity는 Terraform 연결(association)로 끝. 표시 불필요
-      secretStore: { kind: "ClusterSecretStore", name: "aws-secrets-manager" },
-      // 시크릿 이름 = infra/modules/aws/app 의 aws_secretsmanager_secret.s 이름 규칙
-      remoteKey: (r) => `platform/${tenantOf(t)}/${spec.app.name}/${r.name}`,
-      database: spec.database ? {
-        mode: "external", host: fromOut(out, "db_address"), port: 5432,
-        name: spec.app.name, passwordSecret: fromOut(out, "db_master_secret_arn"),
-        passwordProperty: "password",   // RDS 관리 비밀번호 시크릿은 {username,password} JSON
-      } : null,
-      ingressClass: "alb",
-    });
-  },
 };

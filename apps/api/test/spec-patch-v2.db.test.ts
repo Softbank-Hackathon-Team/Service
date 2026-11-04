@@ -14,7 +14,7 @@ const T = randomUUID(), OTHER = randomUUID();
 let core: typeof import("@svc/core");
 let owner: pg.Client;
 let app: FastifyInstance;
-// 가져오기 v2 판 한 줄 (import.ts importV2 와 같은 순서: normalizeV2 → checkV2 reviews → projectV1)
+// 가져오기 판 한 줄 (import.ts 와 같은 순서: normalizeV2 → checkV2 reviews)
 let V2: { spec: unknown; fieldMeta: Record<string, unknown>; specV2: Record<string, any> };
 
 before(async () => {
@@ -27,15 +27,13 @@ before(async () => {
   const { idempotencyPlugin } = await import("../src/plugins/idempotency.js");
   const { specRoutes } = await import("../src/routes/spec.js");
   const { planRoutes } = await import("../src/routes/plans.js");
-  const { result, projectionEnv } = adapters.normalizeV2(adapters.DEMO_INVENTORY_V2.gcp!);
-  contracts.checkV2(result.spec).reviews.forEach((r, i) => {
-    result.fieldMeta[`check.reviews[${i}]`] = { source: "checkV2", confidence: 0.6, needs_review: true, rationale: r }; });
-  // 평문 비밀로 뺀 env 하나 (가져오기 maskPlainSecrets 와 같은 모양): v2 · v1 둘 다 검토 표시
+  const { result } = adapters.normalizeV2(adapters.DEMO_INVENTORY.gcp!, { appName: "shop" });   // G3b-5: 실제 가져오기처럼 출발 범위 appName 을 준다 (안 주면 app.name 검토 줄이 생김)
+  // G3c-5: 가져오기와 같은 함수로 검토 줄(내용 키 check.*)을 붙인다
+  result.fieldMeta = contracts.syncCheckReviews(result.fieldMeta, contracts.checkV2Reviews(result.spec));
+  // 평문 비밀로 뺀 env 하나 (가져오기 maskPlainSecrets 와 같은 모양): 검토 표시
   result.fieldMeta["components.shop-api.env.API_TOKEN"] = { source: "source.env", confidence: 0.6, needs_review: true, rationale: "평문 비밀" };
   const stored = contracts.ImportResultV2.parse(result);
-  const v1 = adapters.projectV1(stored, projectionEnv);
-  V2 = { spec: v1.spec, fieldMeta: { ...v1.fieldMeta, "service.env.API_TOKEN": { source: "source.env", confidence: 0.6, needs_review: true } },
-         specV2: stored as unknown as Record<string, any> };
+  V2 = { spec: {}, fieldMeta: {}, specV2: stored as unknown as Record<string, any> };
   owner = new pg.Client({ connectionString: OWNER }); await owner.connect();
   await owner.query("INSERT INTO tenants (id, name) VALUES ($1,'test-pa2v2'), ($2,'test-pa2v2-other')", [T, OTHER]);
   app = Fastify();
@@ -70,36 +68,32 @@ const versions = async (id: string) => (await owner.query(
   "SELECT version, spec, field_meta, spec_v2 FROM spec_versions WHERE migration_id=$1 ORDER BY version", [id])).rows;
 const svc = (v2: any, cid: string) => v2.spec.components.find((c: { id: string }) => c.id === cid);
 
-test("정상: v2 칸 바꿈·확인 → 새 판에 spec·spec_v2·field_meta 같이, v1 검토 0 → POST /plan 202", { skip }, async () => {
+test("정상: 칸 바꿈·확인 → 새 판(spec_v2 에만 명세, 예전 칸은 비움), 검토 0 → POST /plan 202", { skip }, async () => {
   const id = await seed();
   const g = await app.inject({ method: "GET", url: `${P}/migrations/${id}/spec`, headers: { "x-dev-tenant": T } });
   assert.equal(g.statusCode, 200, g.body);
-  assert.deepEqual(g.json().needsReview, ["service.cpu", "service.env.API_TOKEN", "service.memory"]);
-  assert.deepEqual(g.json().needsReviewV2, ["components.shop-api.env.API_TOKEN", "components.shop-cleanup.probes", "components.shop-cleanup.resources"]);
+  assert.deepEqual(g.json().needsReview, ["components.shop-api.env.API_TOKEN", "components.shop-cleanup.probes", "components.shop-cleanup.resources", "secrets.shop-db.keys.password.pairedWith"]);
+  assert.deepEqual(g.json().needsReviewV2, g.json().needsReview, "옛 이름 칸도 같은 값");
 
   const r = await patch(id, { baseVersion: 1,
     changes: [{ path: "components.shop-api.replicas", value: { min: 3, max: 6 } }],
-    confirm: ["components.shop-api.resources", "components.shop-api.env.API_TOKEN", "components.shop-cleanup.probes", "components.shop-cleanup.resources"] });
+    confirm: ["components.shop-api.env.API_TOKEN", "components.shop-cleanup.probes", "components.shop-cleanup.resources", "secrets.shop-db.keys.password.pairedWith"] });
   assert.equal(r.statusCode, 200, r.body);
   const b = r.json();
   assert.equal(b.version, 2);
-  assert.deepEqual(b.needsReview, [], "v2 확인이 v1 field_meta 에도 남음 (단계 올림 cpu·memory, 평문 비밀 env)");
-  assert.deepEqual(b.needsReviewV2, []);
+  assert.deepEqual(b.needsReview, []);
 
   const [, v] = await versions(id);
   assert.deepEqual(svc(v.spec_v2, "shop-api").props.replicas, { min: 3, max: 6 });
   assert.deepEqual(v.spec_v2.fieldMeta["components.shop-api.replicas"], { source: "human", confidence: 1, needs_review: false });
-  assert.ok(v.spec.service.replicas >= 3 && v.spec.service.replicas <= 6, "v1 replicas 는 rebuildFromV2 가 v2 범위로 다시 뽑음");
-  assert.equal(v.field_meta["service.replicas"].source, "spec_v2.replicas");
-  assert.equal(v.field_meta["service.cpu"].needs_review, false);
+  assert.deepEqual(v.spec, {}, "예전 칸 spec 은 '{}'");
+  assert.deepEqual(v.field_meta, {}, "예전 칸 field_meta 는 초안 표시 자리만 (사람 판이라 비움)");
   assert.equal(v.spec_v2.unmapped.length, V2.specV2.unmapped.length, "unmapped·ids 는 그대로");
   assert.deepEqual(v.spec_v2.ids, V2.specV2.ids);
   const a = (await owner.query("SELECT detail FROM audit_events WHERE target=$1 AND action='spec.edited'", [id])).rows[0].detail;
-  assert.equal(a.ir, "v2");
   assert.deepEqual(a.changed, ["components.shop-api.replicas"]);
   assert.ok(!JSON.stringify(a).includes("\"min\""), "감사엔 칸 이름만");
 
-  // 다음 판: 다른 칸만 바꿔도 앞 판에서 끈 v1 단계 올림 표시는 그대로 꺼져 있음 (prevMeta)
   const r2 = await patch(id, { baseVersion: 2, changes: [{ path: "components.shop-web.replicas", value: { min: 2, max: 4 } }] });
   assert.equal(r2.statusCode, 200, r2.body);
   assert.deepEqual(r2.json().needsReview, []);
@@ -107,20 +101,16 @@ test("정상: v2 칸 바꿈·확인 → 새 판에 spec·spec_v2·field_meta 같
   assert.equal(plan.statusCode, 202, plan.body);
 });
 
-test("거부: v2 판에 v1 키 → 400 SPEC_PATH_IR_MISMATCH, v1 판에 v2 키 → 같은 400, 판 그대로", { skip }, async () => {
+test("거부: 예전 v1 키(service.port)는 경로 모양부터 400, spec_v2 없는 예전 판은 409 SPEC_INVALID (다시 가져와야 함), 판 그대로", { skip }, async () => {
   const id = await seed();
   const r = await patch(id, { baseVersion: 1, changes: [{ path: "service.port", value: 9090 }] });
   assert.equal(r.statusCode, 400, r.body);
-  assert.equal(r.json().code, "SPEC_PATH_IR_MISMATCH");
-  const c = await patch(id, { baseVersion: 1, confirm: ["service.cpu"] });
-  assert.equal(c.json().code, "SPEC_PATH_IR_MISMATCH");
   assert.equal((await versions(id)).length, 1);
-  const v1only = await seed(false);
-  const w = await patch(v1only, { baseVersion: 1, confirm: ["components.shop-api.resources"] });
-  assert.equal(w.statusCode, 400, w.body);
-  assert.equal(w.json().code, "SPEC_PATH_IR_MISMATCH");
-  const g = await app.inject({ method: "GET", url: `${P}/migrations/${v1only}/spec`, headers: { "x-dev-tenant": T } });
-  assert.equal("needsReviewV2" in g.json(), false, "v1 판 응답은 지금 모양 그대로");
+  const old = await seed(false);
+  const w = await patch(old, { baseVersion: 1, confirm: ["components.shop-api.resources"] });
+  assert.equal(w.statusCode, 409, w.body);
+  assert.equal(w.json().code, "SPEC_INVALID");
+  assert.equal((await versions(old)).length, 1);
 });
 
 test("거부: v2 모양·checkV2 오류 → 400 SPEC_PATCH_INVALID, 값은 응답에 없음, 판 그대로", { skip }, async () => {

@@ -14,7 +14,8 @@ const T = randomUUID(), OTHER = randomUUID();
 let core: typeof import("@svc/core");
 let owner: pg.Client;
 let app: FastifyInstance;
-// 가져오기 v2 판 한 줄 (import.ts importV2 와 같은 순서: normalizeV2 → checkV2 reviews → projectV1)
+// 가져오기 판 한 줄 (import.ts 와 같은 순서: normalizeV2 → checkV2 reviews)
+let networkCap = 0;   // L-1: 계약 개수 상한 (before 에서 채움)
 let V2: { spec: unknown; fieldMeta: Record<string, unknown>; specV2: Record<string, any> };
 
 before(async () => {
@@ -22,6 +23,7 @@ before(async () => {
   core = await import("@svc/core");
   const adapters = await import("@svc/adapters");
   const contracts = await import("@svc/contracts");
+  networkCap = contracts.SPEC_LIMITS.network;
   const { errorsPlugin } = await import("../src/plugins/errors.js");
   const { authPlugin } = await import("../src/plugins/auth.js");
   const { idempotencyPlugin } = await import("../src/plugins/idempotency.js");
@@ -35,10 +37,9 @@ before(async () => {
     { kind: "memorystore.instance", name: "projects/p/locations/asia-northeast3/instances/shop-redis", redisVersion: "REDIS_7_0", memorySizeGb: 1, tier: "BASIC",
       transitEncryptionMode: "DISABLED", authEnabled: false, host: "10.0.0.3", port: 6379 },
   ] } as never;
-  const { result, projectionEnv } = adapters.normalizeV2(inv);
+  const { result } = adapters.normalizeV2(inv);
   const stored = contracts.ImportResultV2.parse(result);
-  const v1 = adapters.projectV1(stored, projectionEnv);
-  V2 = { spec: v1.spec, fieldMeta: v1.fieldMeta, specV2: stored as unknown as Record<string, any> };
+  V2 = { spec: {}, fieldMeta: {}, specV2: stored as unknown as Record<string, any> };
   owner = new pg.Client({ connectionString: OWNER }); await owner.connect();
   await owner.query("INSERT INTO tenants (id, name) VALUES ($1,'test-ve2edata2'), ($2,'test-ve2edata2-other')", [T, OTHER]);
   app = Fastify();
@@ -100,7 +101,6 @@ test("정상: posture 통째 PATCH → 새 판(spec_v2.posture 바뀜), 사람 �
   assert.deepEqual(v2.fieldMeta.posture, { source: "human", confidence: 1, needs_review: false });
   const a = (await audits(id)).at(-1)!;
   assert.deepEqual(a.detail.changed, ["posture"]);
-  assert.equal(a.detail.ir, "v2");
   assert.ok(!JSON.stringify(a.detail).includes("6379"), "감사에 posture 값이 들어감");
 });
 
@@ -123,7 +123,7 @@ test("거부: 모양이 틀린 posture(빠진 칸·모르는 칸·없는 컴포�
     ["ingress 값이 unknown 아닌 글자", { ...good, network: good.network.map((n: any) => (n.scope === "component" ? { ...n, ingress: "any" } : n)) }],
     ["permissions 가 없는 컴포넌트 지목", { ...good, permissions: [{ subject: "ghost", source: "iam:x", effect: "Allow", actions: ["s3:Get*"], resources: ["*"], mode: "mirror" }] }],
     ["없는 컴포넌트 지목", { ...good, network: [...good.network, { scope: "component", subject: "ghost", mode: "mirror", ingress: "unknown", public: null }] }],
-    ["50개 초과", { ...good, network: Array.from({ length: 51 }, () => good.network[0]) }],
+    ["개수 상한 초과 (L-1: SPEC_LIMITS.network)", { ...good, network: Array.from({ length: networkCap + 1 }, () => good.network[0]) }],
   ];
   for (const [name, value] of bad) {
     const r = await patch(id, { baseVersion: 1, changes: [{ path: "posture", value }] });
@@ -149,13 +149,6 @@ test("거부: 깊은 경로(posture.network)·모르는 경로는 400 (경로 �
   const stale = await patch(id, { baseVersion: 1, changes: [{ path: "posture", value: posture() }] });
   assert.equal(stale.statusCode, 409, stale.body);
   assert.equal((await versions(id)).length, 2);
-});
-
-test("거부: v1 판(spec_v2 없음)에 posture 경로를 보내면 400 SPEC_PATH_IR_MISMATCH", { skip }, async () => {
-  const id = await seed(false);
-  const r = await patch(id, { baseVersion: 1, changes: [{ path: "posture", value: posture() }] });
-  assert.equal(r.statusCode, 400);
-  assert.equal(r.json().code ?? r.json().error?.code, "SPEC_PATH_IR_MISMATCH");
 });
 
 test("posture 와 컴포넌트 칸을 한 번에 고쳐도 한 판, 다른 검토 칸(confirm 안 한 것)은 남음, posture 를 두 번 고치면 마지막 값", { skip }, async () => {

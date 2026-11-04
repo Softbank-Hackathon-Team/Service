@@ -2,17 +2,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { AppSpecV2 } from "@svc/contracts";
-import { DEMO_INVENTORY_V2, DEMO_SPEC, normalizeV2, serviceMapV2 } from "@svc/adapters";
+import { DEMO_INVENTORY, DEMO_SPEC, normalizeV2, serviceMapV2 } from "@svc/adapters";
 import { buildPlanResources, PlanResources, type MigrationRow } from "../src/routes/env-inventory.js";
 
 type Raw = Record<string, any>;
 const SRC = "55555555-5555-4555-8555-555555555555", DST = "22222222-2222-4222-8222-222222222222";
-const v2Of = (p: "aws" | "gcp" | "onprem") => normalizeV2(DEMO_INVENTORY_V2[p]!).result.spec;
+const v2Of = (p: "aws" | "gcp" | "onprem") => normalizeV2(DEMO_INVENTORY[p]!).result.spec;
 const row = (o: Partial<MigrationRow>): MigrationRow => ({
   id: "11111111-1111-4111-8111-111111111111", status: "approved", pausedFrom: null, failedAtStatus: null,
   updatedAt: "2026-11-02T23:00:00.000Z", sourceEnvId: SRC, targetEnvId: DST,
   sourceName: "src", sourceProvider: "aws", targetName: "dst", targetProvider: "aws",
-  spec: { ...DEMO_SPEC }, applyEvidence: null, cleanupRemoved: null, reachedPct: null, ...o });
+  specV2: DEMO_SPEC, applyEvidence: null, cleanupRemoved: null, reachedPct: null, ...o });
 const plan = (from: "aws" | "gcp" | "onprem", to: "aws" | "gcp" | "onprem", spec: unknown, extra: Partial<MigrationRow> = {}) =>
   buildPlanResources(row({ sourceProvider: from, targetProvider: to, specV2: spec, ...extra }));
 const w = (r: ReturnType<typeof plan>, id: string) => r.rows.find((x) => x.category === "workload" && x.label.endsWith(`· ${id}`))!;
@@ -90,11 +90,11 @@ test("데이터 자원 줄과 경계 밖 개수 줄", () => {
   }
 });
 
-test("v1 판 불변: spec_v2 가 없으면 예전 응답 그대로 (irVersion·runtimeChange 키 없음, ECS 서비스 이름)", () => {
-  const r = buildPlanResources(row({ sourceProvider: "aws", targetProvider: "gcp" }));
-  assert.equal("irVersion" in r, false);
-  assert.ok(r.rows.every((x) => !("runtimeChange" in x)));
-  assert.equal(r.rows.find((x) => x.category === "workload")?.source?.service, "Amazon ECS 서비스");
-  // spec_v2 모양이 틀려도(손상) v1 로
-  assert.equal("irVersion" in buildPlanResources(row({ specV2: { nope: true } })), false);
+test("명세 없는 판(spec_v2 없음·손상): specKnown false, irVersion·runtimeChange 키 없음 (지어내지 않음)", () => {
+  for (const specV2 of [null, { nope: true }]) {
+    const r = buildPlanResources(row({ sourceProvider: "aws", targetProvider: "gcp", specV2 }));
+    assert.equal(r.specKnown, false);
+    assert.equal("irVersion" in r, false);
+    assert.ok(r.rows.every((x) => !("runtimeChange" in x)));
+  }
 });

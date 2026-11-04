@@ -32,8 +32,9 @@ async function setup(meta: object) {
     ($1,$3,'aws','s','connected'), ($2,$3,'gcp','g','connected')`, [src, dst, T]);
   await owner.query(`INSERT INTO migrations (id, tenant_id, source_env_id, target_env_id, status)
     VALUES ($1,$2,$3,$4,'spec_review')`, [id, T, src, dst]);
-  await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta)
-    VALUES ($1,$2,1,'{}',$3)`, [T, id, JSON.stringify(meta)]);
+  // 칸별 표시는 명세 칸(spec_v2.fieldMeta)에 있다 (옛 칸 field_meta 는 초안 표시 자리)
+  await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta, spec_v2)
+    VALUES ($1,$2,1,'{}','{}',$3)`, [T, id, JSON.stringify({ spec: {}, fieldMeta: meta, unmapped: [], ids: {} })]);
   return id;
 }
 const go = (id: string) => core.withTenant(T, (tx) => core.advance(tx, { id, tenantId: T },

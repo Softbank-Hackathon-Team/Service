@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { Provider } from "./common.js";
-import { AppSpec } from "./spec.js";
+import { AppSpecV2 } from "./spec-v2.js";
 
 // 비용 추정 계약: POST /api/v1/cost/estimate 입출력, price_catalog 한 줄. 계산은 packages/cost
 
@@ -80,7 +80,7 @@ export type SecurityLevel = z.infer<typeof SecurityLevel>;
 
 // 비용 추론 요청 (POST /v1/cost/estimate 본문 후보)
 export const CostEstimateRequest = z.object({
-  spec: AppSpec,
+  spec: AppSpecV2,
   from: Provider.optional(),                  // 지금 환경. 있으면 절약액 계산
   targets: z.array(Provider).min(1).default(["aws", "gcp", "onprem"]),
   region: z.string().default("ap-northeast-2"),

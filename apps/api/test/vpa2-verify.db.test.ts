@@ -10,13 +10,8 @@ const DB = process.env.DATABASE_URL, OWNER = process.env.OWNER_DATABASE_URL;
 const skip = !DB || !OWNER ? "DATABASE_URL / OWNER_DATABASE_URL 없음 (DB 시험 건너뜀)" : false;
 const P = "/api/v1";
 const T = randomUUID(), OTHER = randomUUID();
-const SPEC = {
-  schemaVersion: "1", app: { name: "shop" },
-  service: { image: `ghcr.io/demo/shop@sha256:${"a".repeat(64)}`, port: 8080, healthPath: "/healthz", replicas: 2, cpu: "250m", memory: "512Mi",
-             env: [{ name: "DB_PASSWORD", value: "s3cret-value" }], secretRefs: [] },
-  database: { engine: "postgres", majorVersion: "16", storageGb: 20 },
-  ingress: { hostname: "shop.example.com", entry: "cloudflare-lb" },
-};
+// 명세 한 벌 (spec_v2 칸): 서비스 shop + postgres db
+const SPEC = {"schemaVersion":"2","app":{"name":"shop"},"components":[{"id":"shop","kind":"service","props":{"runtime":"k8s","origin":{"runtime":"k8s","product":"unknown"},"image":{"source":"registry","repository":"r/shop","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"ports":[{"port":8080,"protocol":"TCP"}],"probes":{"readiness":{"type":"http","path":"/healthz","port":8080}},"replicas":{"min":1,"max":1},"serviceAccount":"default","resources":{"request":{"cpuMilli":500,"memMiB":1024}},"env":[]}},{"id":"db","kind":"postgres","props":{"majorVersion":"16","storageGb":20}}],"links":[{"from":"shop","to":"db","intent":"connect"}],"entry":{"via":"cloudflare-lb","hosts":[{"hostnames":["s.example.com"],"routes":[{"matches":[{"path":{"type":"PathPrefix","value":"/"}}],"backends":[{"to":"shop","port":8080,"weight":1}]}]}]},"posture":{"permissions":[],"network":[]}};
 
 let core: typeof import("@svc/core");
 let owner: pg.Client;
@@ -54,9 +49,12 @@ async function seed(status: string, versions: { v: number; spec: unknown; meta: 
     ($1,$3,'onprem','k3s','connected'), ($2,$3,'aws','eks','connected')`, [src, dst, tenant]);
   await owner.query(`INSERT INTO migrations (id, tenant_id, source_env_id, target_env_id, status) VALUES ($1,$2,$3,$4,$5)`,
     [id, tenant, src, dst, status]);
-  for (const x of versions)
-    await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta) VALUES ($1,$2,$3,$4,$5)`,
-      [tenant, id, x.v, x.spec, x.meta]);
+  // 칸 표시는 spec_v2.fieldMeta, AI 초안 표시(_draft)만 옛 칸 field_meta
+  for (const x of versions) {
+    const { _draft, ...meta } = x.meta;
+    await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta, spec_v2) VALUES ($1,$2,$3,'{}',$4,$5)`,
+      [tenant, id, x.v, _draft ? { _draft } : {}, { spec: x.spec, fieldMeta: meta, unmapped: [], ids: {} }]);
+  }
   return id;
 }
 const review = (ks: string[]) => Object.fromEntries(ks.map((k) => [k, { source: "ai", confidence: 0.6, needs_review: true }]));
@@ -81,10 +79,10 @@ const events = async <R>(fn: () => Promise<R>) => {
 };
 
 test("동시성: 같은 기준 판으로 동시에 둘 → 하나만 200, 하나는 409, 판은 한 개만 늘어남", { skip }, async () => {
-  const id = await seed("spec_review", [{ v: 1, spec: SPEC, meta: review(["service.port"]) }]);
+  const id = await seed("spec_review", [{ v: 1, spec: SPEC, meta: review(["components.shop.ports"]) }]);
   const rs = await Promise.all([
-    patch(id, { baseVersion: 1, changes: [{ path: "service.port", value: 9001 }] }),
-    patch(id, { baseVersion: 1, changes: [{ path: "service.port", value: 9002 }] }),
+    patch(id, { baseVersion: 1, changes: [{ path: "components.shop.ports", value: [{ port: 9001, protocol: "TCP" }] }] }),
+    patch(id, { baseVersion: 1, changes: [{ path: "components.shop.ports", value: [{ port: 9002, protocol: "TCP" }] }] }),
   ]);
   assert.deepEqual(rs.map((r) => r.statusCode).sort(), [200, 409]);
   assert.equal(rs.find((r) => r.statusCode === 409)!.json().error?.code ?? rs.find((r) => r.statusCode === 409)!.json().code, "SPEC_VERSION_CONFLICT");
@@ -93,8 +91,8 @@ test("동시성: 같은 기준 판으로 동시에 둘 → 하나만 200, 하나
 });
 
 test("동시성: PATCH 와 POST /plan 이 겹쳐도 한쪽만 이기고 판·상태가 어긋나지 않는다", { skip }, async () => {
-  const id = await seed("spec_review", [{ v: 1, spec: SPEC, meta: review(["service.port"]) }]);
-  const [p, pl] = await Promise.all([patch(id, { baseVersion: 1, confirm: ["service.port"] }), planPost(id)]);
+  const id = await seed("spec_review", [{ v: 1, spec: SPEC, meta: review(["components.shop.ports"]) }]);
+  const [p, pl] = await Promise.all([patch(id, { baseVersion: 1, confirm: ["components.shop.ports"] }), planPost(id)]);
   const st = (await owner.query("SELECT status FROM migrations WHERE id=$1", [id])).rows[0].status;
   const n = (await versions(id)).length;
   if (p.statusCode === 200) {            // PATCH 가 먼저 → 검토 칸 0 이 된 뒤 계획이 돌 수 있다
@@ -109,13 +107,13 @@ test("동시성: PATCH 와 POST /plan 이 겹쳐도 한쪽만 이기고 판·상
 });
 
 test("본문 경계: 빈 변경·알 수 없는 키·baseVersion 0/소수·25칸 이상 → 400, 판·감사 그대로", { skip }, async () => {
-  const id = await seed("spec_review", [{ v: 1, spec: SPEC, meta: review(["service.port"]) }]);
+  const id = await seed("spec_review", [{ v: 1, spec: SPEC, meta: review(["components.shop.ports"]) }]);
   const bad: unknown[] = [
-    { baseVersion: 1 }, { baseVersion: 1, changes: [], confirm: [] }, { baseVersion: 0, confirm: ["service.port"] },
-    { baseVersion: 1.5, confirm: ["service.port"] }, { confirm: ["service.port"] }, { baseVersion: 1, confirm: ["service.port"], extra: 1 },
-    { baseVersion: 1, changes: [{ path: "service.port", value: 1, extra: 1 }] },
+    { baseVersion: 1 }, { baseVersion: 1, changes: [], confirm: [] }, { baseVersion: 0, confirm: ["components.shop.ports"] },
+    { baseVersion: 1.5, confirm: ["components.shop.ports"] }, { confirm: ["components.shop.ports"] }, { baseVersion: 1, confirm: ["components.shop.ports"], extra: 1 },
+    { baseVersion: 1, changes: [{ path: "components.shop.ports", value: 1, extra: 1 }] },
     { baseVersion: 1, changes: [{ path: "__proto__.x", value: 1 }] },
-    { baseVersion: 1, confirm: Array(21).fill("service.port") },
+    { baseVersion: 1, confirm: Array(21).fill("components.shop.ports") },
     { baseVersion: 1, acceptDraft: 0 },
   ];
   for (const b of bad) assert.equal((await patch(id, b)).statusCode, 400, JSON.stringify(b).slice(0, 80));
@@ -135,8 +133,8 @@ test("acceptDraft 경계: 없는 번호 400, 받아들인 판보다 옛 초안 4
 });
 
 test("거부 뒤 흔적 0: 모양 검사 실패(400)는 판·감사·화면 신호가 하나도 안 남는다", { skip }, async () => {
-  const id = await seed("spec_review", [{ v: 1, spec: SPEC, meta: review(["service.port"]) }]);
-  const { r, got } = await events(() => patch(id, { baseVersion: 1, changes: [{ path: "service.port", value: "not-a-number" }] }));
+  const id = await seed("spec_review", [{ v: 1, spec: SPEC, meta: review(["components.shop.ports"]) }]);
+  const { r, got } = await events(() => patch(id, { baseVersion: 1, changes: [{ path: "components.shop.ports", value: "not-a-number" }] }));
   assert.equal(r.statusCode, 400, r.body);
   assert.match(r.body, /SPEC_PATCH_INVALID/);
   assert.ok(!r.body.includes("not-a-number"), "값을 되돌려 주면 안 됨");
@@ -146,28 +144,28 @@ test("거부 뒤 흔적 0: 모양 검사 실패(400)는 판·감사·화면 신�
 });
 
 test("화면 신호: 성공하면 {t,id,s:spec_review} 한 번, 비밀 값은 안 실린다", { skip }, async () => {
-  const id = await seed("spec_review", [{ v: 1, spec: SPEC, meta: review(["service.port"]) }]);
-  const { r, got } = await events(() => patch(id, { baseVersion: 1, confirm: ["service.port"] }));
+  const id = await seed("spec_review", [{ v: 1, spec: SPEC, meta: review(["components.shop.ports"]) }]);
+  const { r, got } = await events(() => patch(id, { baseVersion: 1, confirm: ["components.shop.ports"] }));
   assert.equal(r.statusCode, 200, r.body);
   assert.deepEqual(got.filter((g) => g.id === id), [{ t: T, id, s: "spec_review" }]);
 });
 
 test("멱등·경계: 표시 없는 칸 confirm 은 200(새 판), 감사 confirmed 는 비어 있음 / 같은 칸 changes 두 번은 마지막 값", { skip }, async () => {
   const id = await seed("spec_review", [{ v: 1, spec: SPEC, meta: {} }]);
-  const a = await patch(id, { baseVersion: 1, confirm: ["service.port"] });
+  const a = await patch(id, { baseVersion: 1, confirm: ["components.shop.ports"] });
   assert.equal(a.statusCode, 200, a.body);
   assert.deepEqual((await audits(id))[0].detail.confirmed, []);
-  const b = await patch(id, { baseVersion: 2, changes: [{ path: "service.replicas", value: 3 }, { path: "service.replicas", value: 4 }] });
+  const b = await patch(id, { baseVersion: 2, changes: [{ path: "components.shop.replicas", value: { min: 3, max: 3 } }, { path: "components.shop.replicas", value: { min: 4, max: 4 } }] });
   assert.equal(b.statusCode, 200, b.body);
-  assert.equal(b.json().spec.service.replicas, 4);
-  assert.deepEqual((await audits(id))[1].detail.changed, ["service.replicas"]);
+  assert.deepEqual(b.json().spec.components.find((c: { id: string }) => c.id === "shop").props.replicas, { min: 4, max: 4 });
+  assert.deepEqual((await audits(id))[1].detail.changed, ["components.shop.replicas"]);
 });
 
 test("없는 이전 → 404, 다른 단계(planning·failed·paused) → 409 INVALID_TRANSITION, 판 그대로", { skip }, async () => {
-  assert.equal((await patch(randomUUID(), { baseVersion: 1, confirm: ["service.port"] })).statusCode, 404);
+  assert.equal((await patch(randomUUID(), { baseVersion: 1, confirm: ["components.shop.ports"] })).statusCode, 404);
   for (const s of ["planning", "failed", "paused", "approved"]) {
-    const id = await seed(s, [{ v: 1, spec: SPEC, meta: review(["service.port"]) }]);
-    const r = await patch(id, { baseVersion: 1, confirm: ["service.port"] });
+    const id = await seed(s, [{ v: 1, spec: SPEC, meta: review(["components.shop.ports"]) }]);
+    const r = await patch(id, { baseVersion: 1, confirm: ["components.shop.ports"] });
     assert.equal(r.statusCode, 409, `${s} ${r.body}`);
     assert.match(r.body, /INVALID_TRANSITION/);
     assert.equal((await versions(id)).length, 1);
@@ -176,19 +174,19 @@ test("없는 이전 → 404, 다른 단계(planning·failed·paused) → 409 INV
 
 test("명세 줄이 하나도 없는 이전 → 404 (판 만들지 않음)", { skip }, async () => {
   const id = await seed("spec_review", []);
-  const r = await patch(id, { baseVersion: 1, confirm: ["service.port"] });
+  const r = await patch(id, { baseVersion: 1, confirm: ["components.shop.ports"] });
   assert.equal(r.statusCode, 404, r.body);
   assert.equal((await versions(id)).length, 0);
 });
 
 test("거부: changes 항목에 value 가 없으면 400, 판·감사 그대로 / 명시적 null 은 모양 검사에서 400(nullable 칸 없음)", { skip }, async () => {
-  const id = await seed("spec_review", [{ v: 1, spec: SPEC, meta: review(["service.port"]) }]);
-  const r = await patch(id, { baseVersion: 1, changes: [{ path: "service.port" }] });
+  const id = await seed("spec_review", [{ v: 1, spec: SPEC, meta: review(["components.shop.ports"]) }]);
+  const r = await patch(id, { baseVersion: 1, changes: [{ path: "components.shop.ports" }] });
   assert.equal(r.statusCode, 400, r.body);
   assert.match(r.body, /value/);
   assert.equal((await versions(id)).length, 1);
   assert.equal(await audCount(id), 0);
-  const n = await patch(id, { baseVersion: 1, changes: [{ path: "service.port", value: null }] });
+  const n = await patch(id, { baseVersion: 1, changes: [{ path: "components.shop.ports", value: null }] });
   assert.equal(n.statusCode, 400, n.body);
   assert.match(n.body, /SPEC_PATCH_INVALID/);
   assert.equal((await versions(id)).length, 1);
@@ -196,6 +194,6 @@ test("거부: changes 항목에 value 가 없으면 400, 판·감사 그대로 /
 
 test("정상: value 가 0·빈 글자·false 같은 값이어도 '있음'으로 보고 모양 검사로 넘어간다", { skip }, async () => {
   const id = await seed("spec_review", [{ v: 1, spec: SPEC, meta: {} }]);
-  const r = await patch(id, { baseVersion: 1, changes: [{ path: "service.secretRefs", value: [] }] });
+  const r = await patch(id, { baseVersion: 1, changes: [{ path: "components.shop.env", value: [] }] });
   assert.equal(r.statusCode, 200, r.body);
 });

@@ -3,16 +3,19 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import Fastify from "fastify";
 import { serializerCompiler, validatorCompiler } from "fastify-type-provider-zod";
-import { DEMO_SPEC, readInventory, serviceMap, stubStatus, type CloudInventory } from "@svc/adapters";
+import { DEMO_INVENTORY, DEMO_SPEC, normalizeV2, readInventory, serviceMapV2, stubStatus, type CloudInventory } from "@svc/adapters";
 import { buildEnvResources, buildPlanResources, EnvResources, footprintOf, PlanResources, stageOf, targetPct, type MigrationRow } from "../src/routes/env-inventory.js";
 
 const SRC = "55555555-5555-4555-8555-555555555555", DST = "22222222-2222-4222-8222-222222222222";
-const SPEC = { ...DEMO_SPEC, database: { engine: "postgres" as const, majorVersion: "16" as const, storageGb: 20 } };
+const SPEC = DEMO_SPEC;
+// DB 없는 명세 (postgres 와 그 의존성 뺌)
+const NO_DB = { ...DEMO_SPEC, components: DEMO_SPEC.components.filter((c) => c.kind !== "postgres"),
+  links: DEMO_SPEC.links.filter((l) => DEMO_SPEC.components.find((c) => c.id === l.to)?.kind !== "postgres") };
 const row = (o: Partial<MigrationRow>): MigrationRow => ({
   id: "11111111-1111-4111-8111-111111111111", status: "approved", pausedFrom: null, failedAtStatus: null,
   updatedAt: "2026-10-31T23:00:00.000Z", sourceEnvId: SRC, targetEnvId: DST,
   sourceName: "dev-onprem", sourceProvider: "onprem", targetName: "dev-aws", targetProvider: "aws",
-  spec: SPEC, applyEvidence: null, cleanupRemoved: null, reachedPct: null, ...o });
+  specV2: SPEC, applyEvidence: null, cleanupRemoved: null, reachedPct: null, ...o });
 const NO_CLOUD: CloudInventory = { provider: "aws", status: "unavailable", reason: "확인 불가: aws 명령이 없음", source: "aws-cli",
   scope: null, region: "ap-northeast-2", checkedAt: "2026-10-31T23:00:00.000Z", elapsedMs: 1, groups: [] };
 const state = (rs: { type: string; state: string }[], type: string) => rs.find((r) => r.type === type)?.state;
@@ -65,7 +68,7 @@ test("되돌림·취소·실패: 도착 자원은 남음/안 만듦/모름으로
 });
 
 test("명세가 없으면(가져오기 전) 자원 목록은 비고 spec 은 null", () => {
-  const f = footprintOf(DST, row({ status: "importing", spec: null }));
+  const f = footprintOf(DST, row({ status: "importing", specV2: null }));
   assert.equal(f.spec, null); assert.deepEqual(f.resources, []);
 });
 
@@ -92,14 +95,13 @@ test("응답이 strict 스키마를 통과한다 (직렬화 500 없음)", async 
 
 // ---- 대응표 (GET /migrations/:id/plan/resources) ----
 
-test("대응표: AWS RDS → GCP Cloud SQL, EKS → GKE, 방식은 논리 복제·재배포·트래픽 전환", () => {
-  const rows = serviceMap("aws", "gcp", SPEC);
+test("대응표: AWS RDS → GCP Cloud SQL, 방식은 논리 복제·재배포·트래픽 전환", () => {
+  const rows = serviceMapV2("aws", "gcp", normalizeV2(DEMO_INVENTORY.aws).result.spec);
   const db = rows.find((r) => r.category === "database")!;
   assert.equal(db.source?.service, "Amazon RDS for PostgreSQL");
   assert.equal(db.target?.service, "Cloud SQL for PostgreSQL");
   assert.equal(db.method, "logical_replication"); assert.equal(db.step, "sync");
   assert.ok(db.target?.tfTypes.includes("google_sql_database_instance"));
-  assert.equal(rows.find((r) => r.category === "cluster")?.target?.service, "Google Kubernetes Engine");
   assert.equal(rows.find((r) => r.category === "workload")?.source?.service, "Amazon ECS 서비스");
   assert.equal(rows.find((r) => r.category === "workload")?.method, "redeploy");
   assert.equal(rows.find((r) => r.category === "ingress")?.method, "traffic_shift");
@@ -108,8 +110,8 @@ test("대응표: AWS RDS → GCP Cloud SQL, EKS → GKE, 방식은 논리 복제
 });
 
 test("대응표: 온프레 CNPG → AWS RDS, DB 없는 명세면 DB 줄은 대상 아님", () => {
-  assert.equal(serviceMap("onprem", "aws", SPEC).find((r) => r.category === "database")?.source?.service, "CloudNativePG (CNPG)");
-  assert.equal(serviceMap("onprem", "aws", DEMO_SPEC).find((r) => r.category === "database")?.method, "out_of_scope");
+  assert.equal(serviceMapV2("onprem", "aws", SPEC).find((r) => r.category === "database")?.source?.service, "CloudNativePG (CNPG)");
+  assert.equal(serviceMapV2("onprem", "aws", NO_DB).find((r) => r.category === "database")?.method, "out_of_scope");
 });
 
 test("대응표 단계 진행: shifting 이면 DB 복제 끝, 트래픽 중, 정리 전", async () => {

@@ -14,7 +14,7 @@
 
 - `src/schema.ts` 입출력 Zod 스키마. DRAFT(ai): `packages/contracts/src/cost.ts`로 옮길 대상
 - `src/estimate.ts` `estimateCost()` 진입점, `estimateEnv()` 환경 하나 전수 탐색, `recommend()`, `findBreakpoints()`
-- `src/estimate-v2.ts` `estimateCostV2()` 공통 명세 v2(AppSpecV2) 환경별 월 비용 (PLAN_IR=v2 계획서 고지용). 아래 "v2 명세 비용" 참고
+- `src/estimate-v2.ts` `estimateCostV2()` 공통 명세 v2(AppSpecV2) 환경별 월 비용 (계획서 고지용). 아래 "v2 명세 비용" 참고
 - `src/load.ts` MAU→피크 rps, 필요 vCPU·메모리, 노드 수
 - `src/profile.ts` 보안 단계(기본/강화)와 프로필 가중치(스타트업/금융)
 - `src/catalog.ts` 샘플 가격표 읽기, 리전 매핑, 계단식 가격, 7일 경과 판정

@@ -86,8 +86,8 @@ for (const t of BENIGN) {
   });
 }
 
-test("원본 v1 호스트는 허용 목록으로 남고, 없으면 지운다", () => {
-  const allow = baselineHosts({ ingress: { hostname: "shop.softbank-team-iron.com", entry: "cloudflare-lb" } } as never);
+test("원본 명세 호스트는 허용 목록으로 남고, 없으면 지운다", () => {
+  const allow = baselineHosts({ entry: { via: "cloudflare-lb", hosts: [{ hostnames: ["shop.softbank-team-iron.com"], routes: [] }] }, components: [] } as never);
   assert.equal(sanitizeText("shop.softbank-team-iron.com 로 전환", allow).removed, 0);
   assert.equal(sanitizeText("shop.softbank-team-iron.com 로 전환").removed, 1);
   assert.equal(sanitizeText("evil.softbank-team-iron.com", allow).removed, 1, "같은 도메인의 다른 이름은 허용 아님");

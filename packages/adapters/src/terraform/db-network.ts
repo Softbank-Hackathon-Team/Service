@@ -1,4 +1,4 @@
-import type { ModuleRef, Provider, TfVars } from "@svc/contracts";
+import type { Provider, TfVars } from "@svc/contracts";
 
 // Z77 DRAFT(ai): 도착 클라우드 DB 의 "네트워크 길" 변수 (데모 환경만). 결정 문서: parallel/Z77/DB-NETWORK-DECISION.md
 // 기본은 아무것도 안 더한다 → 사설 DB 그대로, 계획 지문(tfPlanHash)도 예전과 똑같다.
@@ -10,7 +10,7 @@ import type { ModuleRef, Provider, TfVars } from "@svc/contracts";
 //   → 중계기 사설 IP/32 를 DB_PEER_CIDRS 에 넣으면 RDS 가 그쪽 5432 로 나갈 수 있다
 // 계획 단계(plan.ts)와 apply 단계(apply-real.ts)가 같은 함수를 불러 지문에 넣는다.
 //   → 승인 뒤에 .env 를 바꾸면 TF_PLAN_DRIFT 로 멈춘다 (승인한 사람이 본 것 = 만들어지는 것)
-// 대안 "어댑터 toTerraform 에 항상 넣기" 는 버림: 기본값에서도 모든 계획 지문이 바뀌어 기존 승인·시험이 깨진다
+// 대안 "도착 Builder 에 항상 넣기" 는 버림: 기본값에서도 모든 계획 지문이 바뀌어 기존 승인·시험이 깨진다
 
 export class DbNetworkError extends Error {
   readonly code = "DB_NETWORK_INVALID";
@@ -54,15 +54,8 @@ export function dbNetworkFromEnv(provider: Provider, env: NodeJS.ProcessEnv = pr
   return { vars, summary: { public: pub, peerCidrs, disposable } };
 }
 
-/** toTerraform 결과에 데모 네트워크 변수를 더한다. 아무것도 안 켰으면 같은 객체 그대로 (지문 안 바뀜) */
-export function withDbNetwork<T extends { moduleRef: ModuleRef; vars: TfVars }>(tf: T, provider: Provider, env: NodeJS.ProcessEnv = process.env): T {
-  const n = dbNetworkFromEnv(provider, env);
-  if (!n) return tf;
-  return { ...tf, vars: { ...tf.vars, ...n.vars } };
-}
-
-/** TA11 DRAFT(ai): v2 판 (설계 27번 3.5 withDbNetworkV2). 같은 환경변수를 postgres_json 각 항목에 넣는다.
- *  아무것도 안 켰으면 같은 객체 그대로 (지문 안 바뀜). 잘못된 값은 v1 과 같은 DbNetworkError */
+/** TA11 DRAFT(ai): 설계 27번 3.5. 환경변수를 postgres_json 각 항목에 넣는다.
+ *  아무것도 안 켰으면 같은 객체 그대로 (지문 안 바뀜). 잘못된 값은 DbNetworkError */
 export function withDbNetworkV2<T extends { vars: TfVars }>(tf: T, provider: Provider, env: NodeJS.ProcessEnv = process.env): T {
   const n = dbNetworkFromEnv(provider, env);
   if (!n || typeof tf.vars.postgres_json !== "string") return tf;

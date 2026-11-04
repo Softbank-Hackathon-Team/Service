@@ -24,7 +24,6 @@ before(async () => {
 });
 after(async () => {
   if (skip) return;
-  delete process.env.IMPORT_IR;
   await core.boss.stop({ graceful: false }); await core.pool.end(); await owner.end();
 });
 
@@ -39,54 +38,23 @@ async function seed(provider: "aws" | "gcp" | "onprem") {
 const job = (id: string) => ({ tenantId: T, requestId: `r-i3b-${id.slice(0, 8)}`, migrationId: id });
 const row = async (id: string) => (await owner.query("SELECT status, failure_code FROM migrations WHERE id=$1", [id])).rows[0] as { status: string; failure_code: string | null };
 const ver = async (id: string) => (await owner.query("SELECT spec, field_meta, spec_v2 FROM spec_versions WHERE migration_id=$1", [id])).rows as Array<{ spec: any; field_meta: Record<string, { needs_review: boolean }>; spec_v2: any }>;
-const reviewKeys = (m: Record<string, { needs_review: boolean }>) => Object.keys(m).filter((k) => m[k]!.needs_review).sort();
 
-test("정상: 출발 gcp + IMPORT_IR=v2 → spec(v1)·spec_v2 둘 다 저장, spec_review", { skip }, async () => {
-  process.env.IMPORT_IR = "v2";
+test("정상: 출발 gcp → 명세는 spec_v2 칸 하나(옛 칸 spec·field_meta 는 비움), spec_review", { skip }, async () => {
   const id = await seed("gcp");
   await imp.handleImport(job(id));
   assert.equal((await row(id)).status, "spec_review");
   const [v] = await ver(id);
   assert.ok(v, "spec_versions 한 줄");
-  assert.equal(v!.spec.schemaVersion, "1");
-  assert.equal(v!.spec.app.name, "shop-api");
+  assert.deepEqual(v!.spec, {});
+  assert.deepEqual(v!.field_meta, {});
+  assert.equal(v!.spec_v2.spec.app.name, "shop-api");
   assert.equal(v!.spec_v2.spec.schemaVersion, "2");
   assert.deepEqual(v!.spec_v2.spec.components.map((c: { id: string }) => c.id), ["shop-api", "shop-cleanup", "shop-db", "shop-web", "shop-worker"]);
   assert.ok(!JSON.stringify(v!.spec_v2).includes("10.20.0.5\""), "출발 주소 값은 spec_v2 에 없음 (fromLink)");
-  // v1 field_meta 검토 수 = 같은 원본을 v1 경로로 읽었을 때와 같다 (golden R14 와 같은 규칙). 데모 v2 원본은 300m·768Mi → 단계 올림 2개
-  assert.deepEqual(reviewKeys(v!.field_meta), ["service.cpu", "service.memory"]);
-});
-
-test("되돌아감: 출발 aws(ECS 데모 원본) + IMPORT_IR=v2 → v1 경로, spec_v2 NULL", { skip }, async () => {
-  process.env.IMPORT_IR = "v2";
-  // I9: aws v2 데모가 ECS 3티어가 됐다 → 워크로드 없는 원본(DB 만)일 때 되돌아가는지로 본다
-  const src = adapters.DEMO_INVENTORY_V2.aws!;
-  const orig = src.items;
-  src.items = orig.filter((i) => (i as { kind: string }).kind !== "ecs.service");
-  const id = await seed("aws");
-  try { await imp.handleImport(job(id)); } finally { src.items = orig; }
-  assert.equal((await row(id)).status, "spec_review");
-  const [v] = await ver(id);
-  assert.equal(v!.spec_v2, null);
-  assert.equal(v!.spec.schemaVersion, "1");
-  const a = await owner.query("SELECT detail FROM audit_events WHERE target=$1 AND action='migration.spec_review'", [id]);
-  assert.equal(a.rows[0]?.detail?.ir, "v1-fallback");
-});
-
-test("깃발 off: 지금 동작 그대로 (spec_v2 NULL, 감사 detail 에 ir 없음)", { skip }, async () => {
-  delete process.env.IMPORT_IR;
-  const id = await seed("onprem");
-  await imp.handleImport(job(id));
-  assert.equal((await row(id)).status, "spec_review");
-  const [v] = await ver(id);
-  assert.equal(v!.spec_v2, null);
-  const a = await owner.query("SELECT detail FROM audit_events WHERE target=$1 AND action='migration.spec_review'", [id]);
-  assert.equal(a.rows[0]?.detail?.ir, undefined);
 });
 
 test("거부: checkV2 구조 오류 원본 → 재시도 없이 바로 failed(IMPORT_SPEC_INVALID)", { skip }, async () => {
-  process.env.IMPORT_IR = "v2";
-  const src = adapters.DEMO_INVENTORY_V2.onprem!;
+  const src = adapters.DEMO_INVENTORY.onprem!;
   const orig = src.items;
   // digest 없는 CronJob → checkV2 "digest 아님" (구조 오류)
   src.items = [...orig, { kind: "k8s.cronjob", imageDigest: null, metadata: { name: "broken", namespace: "shop" },
@@ -104,7 +72,6 @@ test("거부: checkV2 구조 오류 원본 → 재시도 없이 바로 failed(IM
 });
 
 test("남의 회사: 다른 회사로 부른 작업은 아무것도 안 바꾼다 (회사 벽)", { skip }, async () => {
-  process.env.IMPORT_IR = "v2";
   const id = await seed("gcp");
   const other = randomUUID();
   await owner.query("INSERT INTO tenants (id, name) VALUES ($1, 'test-i3b-other')", [other]);
@@ -120,7 +87,7 @@ const ids = async (id: string) => {
 };
 /** 데모 onprem 원본에 "batch 네임스페이스의 shop-api" 크론잡을 더한다: 처음 받는 가져오기라면 이름이 겹쳐 기존 shop-api 의 id 도 바뀔 모양 */
 function withCollider<T>(fn: () => Promise<T>): Promise<T> {
-  const src = adapters.DEMO_INVENTORY_V2.onprem!;
+  const src = adapters.DEMO_INVENTORY.onprem!;
   const orig = src.items;
   const cj = JSON.parse(JSON.stringify((orig as Array<{ kind: string }>).find((i) => i.kind === "k8s.cronjob"))) as { metadata: { name: string; namespace: string } };
   cj.metadata.name = "shop-api"; cj.metadata.namespace = "batch";
@@ -129,7 +96,6 @@ function withCollider<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 test("PREVIDS 정상: 자원이 하나 더 생긴 재가져오기에서 기존 자원 id 가 그대로, 새 자원만 새 id (판 2 저장)", { skip }, async () => {
-  process.env.IMPORT_IR = "v2";
   const id = await seed("onprem");
   await imp.handleImport(job(id));
   const first = (await ids(id))[0]!;
@@ -147,7 +113,6 @@ test("PREVIDS 정상: 자원이 하나 더 생긴 재가져오기에서 기존 �
 });
 
 test("PREVIDS 경계: 앞 판이 없으면(다른 이전에 판이 있어도) 새로 정한다 — 앞 판은 같은 이전 것만", { skip }, async () => {
-  process.env.IMPORT_IR = "v2";
   const other = await seed("onprem");
   await imp.handleImport(job(other));            // 같은 회사의 다른 이전: 판 있음 (shop-api …)
   const fresh = await seed("onprem");
@@ -159,7 +124,6 @@ test("PREVIDS 경계: 앞 판이 없으면(다른 이전에 판이 있어도) �
 });
 
 test("PREVIDS 경계: 앞 판 ids 모양이 틀려도(손상) 가져오기는 새 id 로 계속된다", { skip }, async () => {
-  process.env.IMPORT_IR = "v2";
   const id = await seed("onprem");
   await imp.handleImport(job(id));
   await owner.query(`UPDATE spec_versions SET spec_v2 = jsonb_set(spec_v2, '{ids}', '{"k8s.deployment//shop/shop-api": 5}') WHERE migration_id=$1`, [id]);
@@ -190,7 +154,6 @@ const resOf = (v2: any) => v2.spec.components.find((c: { id: string }) => c.id =
 const NOTE = "출발 값이 바뀜, 앞서 사람이 정한 값 있음";
 
 test("PREVIDS2 첫 가져오기: 아무 영향 없음 (표시는 가져온 그대로, 사람 표시 없음)", { skip }, async () => {
-  process.env.IMPORT_IR = "v2";
   const id = await seed("onprem");
   await imp.handleImport(job(id));
   const { spec_v2 } = await lastV2(id);
@@ -203,7 +166,6 @@ test("PREVIDS2 첫 가져오기: 아무 영향 없음 (표시는 가져온 그�
 });
 
 test("PREVIDS2 유지: 출발 값이 그대로면 사람이 고친 값·표시와 확인한 칸이 새 판에도 그대로", { skip }, async () => {
-  process.env.IMPORT_IR = "v2";
   const id = await seed("onprem");
   await imp.handleImport(job(id));
   await humanPatch(id);
@@ -217,16 +179,17 @@ test("PREVIDS2 유지: 출발 값이 그대로면 사람이 고친 값·표시�
   assert.match(spec_v2.fieldMeta[PK].source, /probes/, "확인만 한 칸은 출처 그대로");
   // 고치지도 확인하지도 않은 칸은 가져온 그대로(다시 검토 표시 유지)
   const first = (await owner.query("SELECT spec_v2 FROM spec_versions WHERE migration_id=$1 AND version=1", [id])).rows[0].spec_v2;
-  for (const k of Object.keys(first.fieldMeta).filter((x) => x !== CK && x !== PK)) assert.deepEqual(spec_v2.fieldMeta[k], first.fieldMeta[k], `손대지 않은 칸은 가져온 그대로: ${k}`);
+  // G3b-5: app.name 은 앞 판 이름을 이어받는다 (검토 표시는 그대로, 설명 앞에 "앞 판 이름을 이어받음." 이 붙음)
+  for (const k of Object.keys(first.fieldMeta).filter((x) => x !== CK && x !== PK && x !== "app.name")) assert.deepEqual(spec_v2.fieldMeta[k], first.fieldMeta[k], `손대지 않은 칸은 가져온 그대로: ${k}`);
+  assert.deepEqual({ ...spec_v2.fieldMeta["app.name"], rationale: undefined }, { ...first.fieldMeta["app.name"], rationale: undefined }, "앱 이름 표시는 그대로");
   assert.deepEqual(Object.keys(spec_v2.fieldMeta).sort(), Object.keys(first.fieldMeta).sort());
 });
 
 test("PREVIDS2 달라짐: 출발 값이 바뀌었으면 새 값 + needs_review=true + 메모 (사람 값은 버림), 값이 안 바뀐 확인 칸은 유지", { skip }, async () => {
-  process.env.IMPORT_IR = "v2";
   const id = await seed("onprem");
   await imp.handleImport(job(id));
   await humanPatch(id);
-  const src = adapters.DEMO_INVENTORY_V2.onprem!;
+  const src = adapters.DEMO_INVENTORY.onprem!;
   const orig = src.items;
   src.items = (orig as Array<any>).map((i) => i.kind !== "k8s.cronjob" ? i : (() => {
     const c = JSON.parse(JSON.stringify(i));

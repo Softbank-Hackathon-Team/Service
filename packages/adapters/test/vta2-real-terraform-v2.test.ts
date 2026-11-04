@@ -43,7 +43,7 @@ output "db_address" { value = "shop.example" }
 test("진짜 terraform: v2 apply 가 작업 폴더 바로 아래 state 를 만들고, list·destroy 가 그걸 보고 지운다", { skip: !hasTf && "terraform 실행 파일 없음" }, async () => {
   const work = mkdtempSync(join(tmpdir(), "vta2-work-"));
   const r = createRealTerraformRunner({ workRoot: work, moduleRoot: fakeModules(), terraformBin: TF, env: { PATH: process.env.PATH, HOME: process.env.HOME, TF_FETCH_DB_SECRET: "0" } });
-  const res = await r.apply("aws", MID, { postgres_json: JSON.stringify([{ id: "shop-db" }]) }, undefined, TEN, "v2");
+  const res = await r.apply("aws", MID, { postgres_json: JSON.stringify([{ id: "shop-db" }]) }, undefined, TEN);
   assert.equal(res.ok, true, res.log.join("\n"));
   const dir = join(work, TEN, MID);
   assert.ok(existsSync(join(dir, "terraform.tfstate")), "state 가 작업 폴더 바로 아래에 있어야 함");
@@ -59,7 +59,7 @@ test("진짜 terraform: v2 apply 가 작업 폴더 바로 아래 state 를 만�
 test("진짜 terraform: 변수 검증 실패(postgres_json 빠짐)는 plan 에서 실패 → failedStep=plan, state 없음", { skip: !hasTf && "terraform 실행 파일 없음" }, async () => {
   const work = mkdtempSync(join(tmpdir(), "vta2-work-"));
   const r = createRealTerraformRunner({ workRoot: work, moduleRoot: fakeModules(), terraformBin: TF, env: { PATH: process.env.PATH, HOME: process.env.HOME, TF_DESTROY_ON_FAIL: "0" } });
-  const res = await r.apply("aws", MID, {}, undefined, TEN, "v2");
+  const res = await r.apply("aws", MID, {}, undefined, TEN);
   assert.equal(res.ok, false);
   assert.equal(res.failedStep, "plan");
   assert.equal(existsSync(join(work, TEN, MID, "terraform.tfstate")), false);

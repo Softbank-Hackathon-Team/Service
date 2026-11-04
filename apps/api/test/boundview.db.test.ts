@@ -14,7 +14,7 @@ const T = randomUUID(), OTHER = randomUUID();
 let core: typeof import("@svc/core");
 let owner: pg.Client;
 let app: FastifyInstance;
-// 가져오기 v2 판 한 줄 (import.ts importV2 와 같은 순서: normalizeV2 → checkV2 reviews → projectV1)
+// 가져오기 판 한 줄 (import.ts 와 같은 순서: normalizeV2 → checkV2 reviews)
 const OOB = [{ resource: "s3.bucket:acme-terraform-state", kind: "objectStore", reason: "이 앱의 서비스·잡이 env·비밀·IAM 근거로 닿지 않음" }];
 let V2: { spec: unknown; fieldMeta: Record<string, unknown>; specV2: Record<string, any> };
 
@@ -28,15 +28,13 @@ before(async () => {
   const { idempotencyPlugin } = await import("../src/plugins/idempotency.js");
   const { specRoutes } = await import("../src/routes/spec.js");
   const { planRoutes } = await import("../src/routes/plans.js");
-  const { result, projectionEnv } = adapters.normalizeV2(adapters.DEMO_INVENTORY_V2.gcp!);
-  contracts.checkV2(result.spec).reviews.forEach((r, i) => {
-    result.fieldMeta[`check.reviews[${i}]`] = { source: "checkV2", confidence: 0.6, needs_review: true, rationale: r }; });
-  // 평문 비밀로 뺀 env 하나 (가져오기 maskPlainSecrets 와 같은 모양): v2 · v1 둘 다 검토 표시
+  const { result } = adapters.normalizeV2(adapters.DEMO_INVENTORY.gcp!);
+  // G3c-5: 가져오기와 같은 함수로 검토 줄(내용 키 check.*)을 붙인다
+  result.fieldMeta = contracts.syncCheckReviews(result.fieldMeta, contracts.checkV2Reviews(result.spec));
+  // 평문 비밀로 뺀 env 하나 (가져오기 maskPlainSecrets 와 같은 모양): 검토 표시
   result.fieldMeta["components.shop-api.env.API_TOKEN"] = { source: "source.env", confidence: 0.6, needs_review: true, rationale: "평문 비밀" };
   const stored = contracts.ImportResultV2.parse(result);
-  const v1 = adapters.projectV1(stored, projectionEnv);
-  V2 = { spec: v1.spec, fieldMeta: { ...v1.fieldMeta, "service.env.API_TOKEN": { source: "source.env", confidence: 0.6, needs_review: true } },
-         specV2: stored as unknown as Record<string, any> };
+  V2 = { spec: {}, fieldMeta: {}, specV2: stored as unknown as Record<string, any> };
   owner = new pg.Client({ connectionString: OWNER }); await owner.connect();
   await owner.query("INSERT INTO tenants (id, name) VALUES ($1,'test-boundview'), ($2,'test-boundview-other')", [T, OTHER]);
   app = Fastify();

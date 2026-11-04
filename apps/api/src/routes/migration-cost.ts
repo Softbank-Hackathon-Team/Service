@@ -1,8 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { AppSpec, CostEstimate, PriceSourceSummary, Provider, type CostEstimateRequestInput } from "@svc/contracts";
-import { latestAcceptedSpec, withTenant, type Tx } from "@svc/core";
+import { AppSpecV2, CostEstimate, PriceSourceSummary, Provider, type CostEstimateRequestInput } from "@svc/contracts";
+import { latestAcceptedSpecV2, withTenant, type Tx } from "@svc/core";
 import { summarizePriceSources } from "@svc/cost";
 import { estimateCostCached } from "./cost-cache.js";
 import { errors } from "./responses.js";
@@ -20,17 +20,24 @@ import { IdParam, found, isoUtc } from "./kit.js";
 
 export const PREVIEW_PEAK_RPS = 10; // DRAFT(ai): 설계 초안·V 비교표의 기준과 같은 10 rps. TODO(human): MAU 입력으로 바꿀지
 
-// 명세가 아직 없을 때 쓰는 데모 앱 (packages/cost/test/helpers.ts spec()과 같은 값)
-export const DEMO_SPEC: AppSpec = {
-  schemaVersion: "1",
+// 명세가 아직 없을 때 쓰는 데모 앱 (packages/cost/test/helpers.ts spec()과 같은 값: 서비스 1대 x 250m/512Mi + Postgres 20GB)
+export const DEMO_SPEC: AppSpecV2 = AppSpecV2.parse({
+  schemaVersion: "2",
   app: { name: "demo-shop" },
-  service: {
-    image: `ghcr.io/demo/shop@sha256:${"a".repeat(64)}`, port: 8080, healthPath: "/healthz",
-    replicas: 1, cpu: "250m", memory: "512Mi", env: [], secretRefs: [],
-  },
-  database: { engine: "postgres", majorVersion: "16", storageGb: 20 },
-  ingress: { hostname: "shop.example.com", entry: "cloudflare-lb" },
-};
+  components: [
+    { id: "demo-shop", kind: "service", props: {
+      runtime: "k8s", origin: { runtime: "k8s", product: "unknown" },
+      image: { source: "registry", repository: "ghcr.io/demo/shop", digest: `sha256:${"a".repeat(64)}` },
+      ports: [{ port: 8080, protocol: "TCP" }], probes: { readiness: { type: "http", path: "/healthz", port: 8080 } },
+      replicas: { min: 1, max: 1 }, serviceAccount: "default", resources: { request: { cpuMilli: 250, memMiB: 512 } }, env: [],
+    } },
+    { id: "db", kind: "postgres", props: { majorVersion: "16", storageGb: 20 } },
+  ],
+  links: [{ from: "demo-shop", to: "db", intent: "connect" }],
+  entry: { via: "cloudflare-lb", hosts: [{ hostnames: ["shop.example.com"], routes: [{
+    matches: [{ path: { type: "PathPrefix", value: "/" } }], backends: [{ to: "demo-shop", port: 8080, weight: 1 }] }] }] },
+  posture: { permissions: [], network: [] },
+});
 
 const EnvRef = z.object({ id: z.uuid(), provider: Provider, name: z.string() }).strict();
 
@@ -76,7 +83,7 @@ export function pairDelta(est: CostEstimate, from: Provider, to: Provider): Pair
 }
 
 // 순수 함수: 미리보기 요청. 네 환경 전부 계산(화면에 다 그림), 출발은 from
-export function previewRequest(spec: AppSpec, from: Provider): CostEstimateRequestInput {
+export function previewRequest(spec: AppSpecV2, from: Provider): CostEstimateRequestInput {
   return {
     spec, from,
     targets: [...Provider.options],
@@ -127,7 +134,7 @@ export const loadFromDb: CostLoader = (tenantId, migrationId) => withTenant(tena
   }
 
   const sv = stored ? null
-    : await latestAcceptedSpec(tx, migrationId);
+    : (await latestAcceptedSpecV2(tx, migrationId))?.specV2 ?? null;
 
   return {
     migrationId: row.id,
@@ -154,7 +161,7 @@ export function buildCostView(row: Row, now: () => Date = () => new Date()): Mig
     }
     // 저장된 줄 모양이 깨졌으면 미리보기로 내려간다 (화면은 origin으로 구분)
   }
-  const parsed = AppSpec.safeParse(row.spec);
+  const parsed = AppSpecV2.safeParse(row.spec);
   const spec = parsed.success ? parsed.data : DEMO_SPEC;
   const estimate = estimateCostCached(previewRequest(spec, from));   // Z49: 같은 입력 60초 기억
   return {

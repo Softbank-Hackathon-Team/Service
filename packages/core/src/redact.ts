@@ -28,6 +28,10 @@ const RULES: Array<[RegExp, string | ((...m: string[]) => string)]> = [
   [/\bya29\.[A-Za-z0-9._-]{10,}/g, AUDIT_REDACTED],
   // 키=값 꼴 문구 안 비밀 ("password=abc", "PGPASSWORD: abc"). "secret:db" 처럼 콜론 뒤 빈칸 없음은 ARN 자원 이름이라 안 가림
   [/\b((?:pg)?password|passwd|secret|token|api[_-]?key)(\s*=\s*|\s*:\s+)("[^"]*"|'[^']*'|[^\s,;&"'}]+)/gi, (_m, k, sep) => `${k}${sep}${AUDIT_REDACTED}`],
+  // IA-1: 명령 꼴 비밀 (프로브·시작 명령). adapters import/env-rewrite.ts 의 CMD_SECRET_RULES 와 같은 꼴
+  [/(\bredis-cli\b[^;&|\n]*?\s)(-a|--pass)(\s+)("[^"]*"|'[^']*'|[^\s;&|"]+)/g, (_m, pre, f, sp) => `${pre}${f}${sp}${AUDIT_REDACTED}`],
+  [/(\bmysql(?:admin|dump|sh)?\b[^;&|\n]*?\s)-p(?=[^\s])("[^"]*"|'[^']*'|[^\s;&|"]+)/g, (_m, pre) => `${pre}-p${AUDIT_REDACTED}`],
+  [/(--(?:password|pass)(?:=|\s+))("[^"]*"|'[^']*'|[^\s;&|"]+)/gi, (_m, pre) => `${pre}${AUDIT_REDACTED}`],
   // IPv4 단독 주소 (뒤에 /nn 이 붙은 CIDR 은 남김)
   [/\b(?<![\d.])(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}\b(?![\d.]|\/\d)/g, "<ip>"],
 ];

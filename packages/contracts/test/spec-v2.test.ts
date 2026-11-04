@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { z } from "zod";
-import { AppSpec, AppSpecV2, ImportResultV2, ApprovalRowV2, checkV2, upconvertV1, LINK_OUTPUTS } from "../src/index.js";
+import { AppSpecV2, ImportResultV2, ApprovalRowV2, checkV2, LINK_OUTPUTS } from "../src/index.js";
 
 const D = (c: string) => "sha256:" + c.repeat(64);
 
@@ -147,14 +147,13 @@ test("checkV2 거부: 기타 구조 (replicas min>max, deadLetter, 기준선 대
     assert.ok(errs.some((e) => e.includes(want)), `${want} 없음:\n${errs.join("\n")}`);
 });
 
-test("checkV2 reviews: env 에 벤더 주소 → errors 0, reviews 1 / legacy:true → reviews 0", () => {
+test("checkV2 reviews: env 에 벤더 주소 → errors 0, reviews 1", () => {
   const s = good();
   comp(s, "shop-api").props.env.push({ name: "LEGACY_DB", value: "x.rds.amazonaws.com" });
   const r = checkV2(s);
   assert.deepEqual(r.errors, []);
   assert.equal(r.reviews.length, 1);
   assert.match(r.reviews[0]!, /shop-api\.env\.LEGACY_DB 에 벤더 주소/);
-  assert.deepEqual(checkV2(s, { legacy: true }).reviews, []);
 });
 
 test("checkV2 reviews: 사설 IP 는 네 칸일 때만, external 의존성 호스트는 예외", () => {
@@ -186,50 +185,6 @@ test("checkV2 approvals: image.source=build → build 한 줄 (detail = method),
   assert.deepEqual(r.approvals, [{ kind: "build", subject: "shop-web", detail: "buildpacks" }]);
   delete comp(s, "shop-web").props.image.build;
   assert.ok(checkV2(s).errors.some((e) => e.includes("shop-web.image build 계획 없음")));
-});
-
-test("v1 → v2: 지금 데모 v1 명세가 그대로 올라가고, v1 이 지어낸 값은 0.6", () => {
-  const v1 = AppSpec.parse({ schemaVersion: "1", app: { name: "demo-app" },
-    service: { image: "registry/demo@sha256:" + "0".repeat(64), port: 8080, healthPath: "/healthz", replicas: 2, cpu: "500m", memory: "1Gi", env: [], secretRefs: [] },
-    database: { engine: "postgres", majorVersion: "16", storageGb: 20 },
-    ingress: { hostname: "demo.example.com", entry: "cloudflare-lb" } });
-  const out = upconvertV1(v1);
-  assert.equal(ImportResultV2.safeParse(out).success, true);
-  assert.deepEqual(checkV2(out.spec), { errors: [], reviews: [], approvals: [] });
-  assert.equal(out.spec.components.length, 2);
-  assert.deepEqual(out.spec.links, [{ from: "demo-app", to: "db", intent: "connect" }]);
-  assert.equal(out.fieldMeta["components.demo-app.resources"]?.confidence, 0.6);
-  assert.equal(out.fieldMeta["components.demo-app.probes"]?.needs_review, true);
-  const svc = out.spec.components[0]!;
-  assert.equal(svc.kind, "service");
-  if (svc.kind === "service") {
-    assert.deepEqual(svc.props.resources, { request: { cpuMilli: 500, memMiB: 1024 } });
-    assert.deepEqual(svc.props.image, { source: "registry", repository: "registry/demo", digest: "sha256:" + "0".repeat(64) });
-  }
-});
-
-test("v1 올리기: 비밀 이름·DB 용량·벤더 주소 값은 0.6, 벤더 주소가 남은 판은 legacy 검사로만 깨끗", () => {
-  const v1 = AppSpec.parse({ schemaVersion: "1", app: { name: "demo" },
-    service: { image: "r/d@sha256:" + "0".repeat(64), port: 8080, healthPath: "/healthz", replicas: 1, cpu: "500m", memory: "1Gi",
-      env: [{ name: "DB_HOST", value: "d.x.rds.amazonaws.com" }], secretRefs: [{ name: "DB_PASSWORD", key: "password" }] },
-    database: { engine: "postgres", majorVersion: "16", storageGb: 100 }, ingress: { hostname: "d.example.com", entry: "cloudflare-lb" } });
-  const { spec, fieldMeta } = upconvertV1(v1);
-  assert.equal(fieldMeta["components.demo.env.DB_PASSWORD"]?.confidence, 0.6);
-  assert.equal(fieldMeta["components.demo.env.DB_HOST"]?.confidence, 0.6);
-  assert.equal(fieldMeta["components.db.storageGb"]?.confidence, 0.6);
-  const db = spec.components[1]!;
-  assert.equal(db.kind === "postgres" ? db.props.ha : "x", undefined);
-  const r = checkV2(spec);
-  assert.deepEqual(r.errors, []);
-  assert.ok(r.reviews.some((e) => e.includes("벤더 주소")));
-  assert.deepEqual(checkV2(spec, { legacy: true }), { errors: [], reviews: [], approvals: [] });
-});
-
-test("v1 올리기: 앱 이름이 db 여도 id 가 안 겹침", () => {
-  const v1 = AppSpec.parse({ schemaVersion: "1", app: { name: "db" },
-    service: { image: "r/d@sha256:" + "0".repeat(64), port: 80, healthPath: "/", replicas: 1, cpu: "250m", memory: "512Mi", env: [], secretRefs: [] },
-    database: { engine: "postgres", majorVersion: "16", storageGb: 5 }, ingress: { hostname: "d.example.com", entry: "cloudflare-lb" } });
-  assert.deepEqual(checkV2(upconvertV1(v1).spec).errors, []);
 });
 
 test("JSON Schema 로 뽑힌다 (npm run schemas 가 안 깨짐)", () => {

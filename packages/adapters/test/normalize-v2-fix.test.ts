@@ -3,7 +3,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { checkV2, type RawInventory } from "@svc/contracts";
 import { normalizeV2 } from "../src/import/pipeline.js";
-import { projectV1 } from "../src/import/project-v1.js";
 
 const D = "sha256:" + "ab".repeat(32);
 type Raw = Record<string, any>;
@@ -42,22 +41,18 @@ test("거부: 호스트가 다른 네임스페이스의 같은 이름 DB 면 근
   assert.deepEqual(out.result.spec.links.filter((l) => l.from === "app-a"), []);
 });
 
-test("비밀 비노출: 비밀번호·토큰은 결과·투영·v1·검증 메시지(check)·unmapped 어디에도 없다", () => {
+test("비밀 비노출: 비밀번호·토큰은 결과·검증 메시지(check)·unmapped 어디에도 없다", () => {
   const out = run([dep("app-a", "shop", [URL("shop-db-rw.shop.svc", "PWzzz9987"), { name: "API_TOKEN", value: "TOKzzz1122" }], { replicas: 0 }), pg("shop-db")]);
-  const v1 = projectV1(out.result, out.projectionEnv);
-  const all = JSON.stringify([out.result, out.projectionEnv, v1, checkV2(out.result.spec)]);
+  const all = JSON.stringify([out.result, checkV2(out.result.spec)]);
   for (const s of ["PWzzz9987", "TOKzzz1122"]) assert.ok(!all.includes(s), `${s} 가 남음`);
 });
 
-test("경계: replicas 0 은 v2 에 그대로(0·0) + 검토, 10 은 그대로, 11 은 v1 에서 10 으로 올리고 검토 표시", () => {
+test("경계: replicas 0 은 v2 에 그대로(0·0) + 검토, 10·11 도 그대로 (상한 없음)", () => {
   const rep = (n: number) => run([dep("app-a", "shop", [], { replicas: n })]);
   const props = (r: ReturnType<typeof rep>) => (r.result.spec.components[0] as any).props.replicas;
   assert.deepEqual(props(rep(0)), { min: 0, max: 0 });
   assert.deepEqual(props(rep(10)), { min: 10, max: 10 });
   assert.deepEqual(props(rep(11)), { min: 11, max: 11 });
-  const v10 = projectV1(rep(10).result, rep(10).projectionEnv), v11 = projectV1(rep(11).result, rep(11).projectionEnv);
-  assert.equal(v10.spec.service?.replicas, 10); assert.equal(v10.fieldMeta["service.replicas"]?.needs_review, false);
-  assert.equal(v11.spec.service?.replicas, 10); assert.equal(v11.fieldMeta["service.replicas"]?.needs_review, true);
   assert.deepEqual(checkV2(rep(0).result.spec).reviews.filter((x) => x.includes("replicas 0")).length, 1);
   assert.equal(checkV2(rep(2).result.spec).reviews.filter((x) => x.includes("replicas 0")).length, 0);
 });

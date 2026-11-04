@@ -1,6 +1,6 @@
-import type { AppSpec, Provider } from "@svc/contracts";
+import type { AppSpecV2, Provider } from "@svc/contracts";
 import { HOURS_PER_MONTH, isStale, rowsFor, tieredCost } from "./catalog.js";
-import { nodesFor, requiredMemGiB, requiredVcpu, mauToRps } from "./load.js";
+import { costShapeOf, nodesFor, requiredMemGiB, requiredVcpu, mauToRps } from "./load.js";
 import { PROFILES, SECURITY_OPTIONS } from "./profile.js";
 import {
   CostEstimateRequest, type CostEstimateRequestInput, type Breakpoint, type CostEstimate,
@@ -20,7 +20,7 @@ export type EnvCalc = Omit<EnvEstimate, "monthlyUsd" | "monthlyUsdNoCredit"> & {
 };
 
 type EnvCtx = {
-  catalog: PriceCatalog; region: string; spec: AppSpec; load: LoadParams;
+  catalog: PriceCatalog; region: string; spec: AppSpecV2; load: LoadParams;
   applyCredits: boolean; nodeSkus?: string[] | undefined;
 };
 
@@ -62,11 +62,12 @@ export function estimateEnv(provider: Provider, rps: number, c: EnvCtx): EnvCalc
     if (cl) base.cluster = monthly(cl); else unknown.push("cluster");
     const cr = used(pick("cluster_credit")[0]);
     if (cr) credit = Math.min(cr.usd, base.cluster);
-    if (c.spec.database) {
+    const database = costShapeOf(c.spec).database;
+    if (database) {
       const db = used(pick("db")[0]);
       if (db) base.db = monthly(db); else unknown.push("db");
       const st = pick("storage");
-      if (st.length) { st.forEach(used); base.storage = tieredCost(st, c.spec.database.storageGb); }
+      if (st.length) { st.forEach(used); base.storage = tieredCost(st, database.storageGb); }
       else unknown.push("storage");
     }
   }
@@ -150,7 +151,7 @@ export function findBreakpoints(
   return out;
 }
 
-// 공개 진입점: AppSpec + 가정 -> 환경별 월 비용과 추천.
+// 공개 진입점: 명세 + 가정 -> 환경별 월 비용과 추천.
 export function estimateCost(
   input: CostEstimateRequestInput, catalog: PriceCatalog,
   opts: { now?: Date; breakpoints?: { maxRps: number; step: number } | false } = {},

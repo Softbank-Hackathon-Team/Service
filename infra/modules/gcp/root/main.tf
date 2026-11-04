@@ -403,6 +403,9 @@ output "db_public_ip" { value = local.repl_key != "" ? module.postgres[local.rep
 output "db_outgoing_ip" { value = local.repl_key != "" ? module.postgres[local.repl_key].outgoing_ip : "" }
 output "db_server_ca_cert" { value = local.repl_key != "" ? module.postgres[local.repl_key].server_ca_cert : "" }
 output "db_connection_name" { value = local.repl_key != "" ? module.postgres[local.repl_key].connection_name : "" }
+# E10-2: 도착 DB 앱 계정 이름 (= 모듈 user = 링크 user). GCP 비밀은 비밀번호 글자뿐이라 계정 이름은 이 출력에서 읽어야 함
+output "db_username" { value = local.repl_key != "" ? module.postgres[local.repl_key].user : "" }
+output "db_name" { value = local.repl_key != "" ? module.postgres[local.repl_key].db_name : "" }
 output "db_password_secret_id" { value = local.repl_key != "" ? module.postgres[local.repl_key].password_secret : "" }
 output "app_gsa_email" { value = local.first_identity != "" ? module.identity[local.first_identity].gsa_email : "" }
 output "namespace" { value = length(module.namespace) > 0 ? try(module.namespace[var.k8s_namespace].name, values(module.namespace)[0].name) : "" }
