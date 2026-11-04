@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { AGENT_DEFAULT_MODEL, LLM_KEY_MISSING, LLM_BUDGET_EXCEEDED } from "@svc/contracts";
 import type { ContentBlock, LlmMessage, LlmProvider, LlmResponse } from "../ai/llm.js";
+import { redactOutboundMessages } from "../draft/redact.js";
 
 // 진짜 LLM 제공자: Anthropic Messages API (상용 API. 모델 서버를 직접 띄우지 않는다)
 // 키는 환경변수 ANTHROPIC_API_KEY 에서 SDK가 직접 읽는다. 이 코드는 키 값을 받지도, 로그에 남기지도 않는다.
@@ -82,7 +83,7 @@ export function anthropicProvider(o: AnthropicOptions = {}): LlmProvider {
         output_config: { effort: o.effort ?? "medium" },
         system: req.system,
         tools: req.tools as Anthropic.Beta.BetaToolUnion[],
-        messages: req.messages as Anthropic.Beta.BetaMessageParam[],
+        messages: redactOutboundMessages(req.messages) as Anthropic.Beta.BetaMessageParam[],   // LLM-1: 나가기 직전 마지막 가리기
         // 정책 거부 시 서버가 같은 요청을 대체 모델로 다시 돌린다. "default" = 거부 종류별 서버 기본값 (Claude API 전용)
         ...(useFallbacks ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const } : {}),
       }) as unknown as typeof res;
