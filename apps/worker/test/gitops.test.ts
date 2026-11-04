@@ -5,7 +5,7 @@ import { chmodSync, cpSync, mkdtempSync, readFileSync, rmSync, existsSync, write
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ONE, apiImage } from "./demo-one.js";
-import { adapterFor } from "@svc/adapters";
+import { adapterFor, stubTfOutputsV2 } from "@svc/adapters";
 import { buildPlanDoc } from "../src/jobs/plan.js";
 import { stubPrecheck } from "../src/jobs/precheck.js";
 import { mockArgoWatcher } from "../src/gitops/argo-watch.js";
@@ -24,8 +24,11 @@ const plan = buildPlanDoc({
 const input: DeployInput = {
   tenantId: TENANT, spec, plan,
   target: { envId: ENV_ID, provider: "gcp", region: "default", accountId: "demo-project" },
+  // v2 값의 자리표시(link.<id>.* · identity.<id>.gsa_email)까지 채운다. 예전 v1 출력만 있으면 GITOPS_PLACEHOLDER_MISSING
+  //   (CI 는 GITOPS_FIXTURE_DIR 이 없어 실제 git 시험을 건너뛰어서 v2 전환 뒤 이 입력이 낡은 것이 안 보였다)
   tfOutputs: { app_gsa_email: "app@demo-project.iam.gserviceaccount.com", db_private_ip: "10.0.3.12",
-               db_password_secret_id: "db-password" },
+               db_password_secret_id: "db-password", ...stubTfOutputsV2(spec),
+               identity_gsa_emails: JSON.stringify({ "shop-api": "app@demo-project.iam.gserviceaccount.com" }) },
 };
 
 test("회사 폴더 이름과 자리표시 채우기", () => {
@@ -137,9 +140,93 @@ test("URL 모드: 로컬 bare 레포를 clone 해서 배포", { skip }, async ()
     const g = (cwd: string, ...a: string[]) => execFileSync("git", ["-C", cwd, "-c", "user.name=t", "-c", "user.email=t@x", ...a], { encoding: "utf8" }).trim();
     g(tmp, "init", "-q", "-b", "main", seed); g(seed, "add", "-A"); g(seed, "commit", "-q", "-m", "seed");
     execFileSync("git", ["clone", "-q", "--bare", seed, bare]);
-    const cfg = configFromEnv({ GITOPS_REPO_URL: `file://${bare}`, GITOPS_WRITE_TOKEN: "tok", GITOPS_REPO_DIR: join(tmp, "work") })!;
+    // DECISION(통합, 10/31) 뒤 push 는 GITOPS_PUSH=1 일 때만 (repo.ts configFromEnv). 이 시험은 원격에 올라가는 것까지 본다
+    const cfg = configFromEnv({ GITOPS_REPO_URL: `file://${bare}`, GITOPS_WRITE_TOKEN: "tok", GITOPS_REPO_DIR: join(tmp, "work"), GITOPS_PUSH: "1" })!;
     const out = await deployToGitops(new GitopsRepo(cfg), input, mockArgoWatcher);
     assert.equal(g(bare, "rev-parse", "main"), out.commit);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// 온프레(agent-pull)만 쓰는 회사: 목적지 클러스터가 없어도 회사 울타리 파일을 만든다 (gitops validate 가 회사마다 요구한다).
+//   그리고 렌더·검사가 실패하면 쓴 파일을 되돌린다 — 안 되돌리면 validate 가 디스크의 모든 회사를 보므로 다른 회사 배포까지 막힌다 (2026-11-04 VM 재현)
+test("온프레 첫 배포는 목적지 없는 울타리를 만들고, 검사 실패는 되돌려 다른 회사 배포를 막지 않는다", { skip }, async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "gitops-onprem-"));
+  const sh = (cwd: string, ...a: string[]) => execFileSync("git", ["-C", cwd, "-c", "user.name=t", "-c", "user.email=t@x", ...a], { encoding: "utf8" }).trim();
+  try {
+    const seed = join(tmp, "seed"), bare = join(tmp, "remote.git"), work = join(tmp, "work");
+    cpSync(FIXTURE!, seed, { recursive: true });
+    sh(tmp, "init", "-q", "-b", "main", seed); sh(seed, "add", "-A"); sh(seed, "commit", "-q", "-m", "seed");
+    execFileSync("git", ["clone", "-q", "--bare", seed, bare]);
+    execFileSync("git", ["clone", "-q", bare, work]);
+    cpSync(join(FIXTURE!, "tools", "node_modules"), join(work, "tools", "node_modules"), { recursive: true });
+    const repo = new GitopsRepo({ dir: work, branch: "main", push: true, author: { name: "platform-worker", email: "w@x" }, maxPushTries: 3 });
+
+    const onprem = (tenantId: string): DeployInput => {
+      const p = buildPlanDoc({ planId: "7f000000-0000-4000-8000-0000000000a1", migrationId: "4a8c0000-0000-4000-8000-0000000000a1",
+        spec, target: { envId: ENV_ID, provider: "onprem", region: "default" }, precheck: stubPrecheck(), now: new Date() });
+      return { tenantId, spec, plan: p, target: { envId: ENV_ID, provider: "onprem", region: "default", accountId: null },
+        tfOutputs: { link_outputs: "{}", namespace: "app-" + spec.app.name } };
+    };
+    const ok = { wait: async () => ({ ok: true }) };
+
+    const a = await deployToGitops(repo, onprem("0a0a0a0a-0000-4000-8000-000000000001"), ok);
+    assert.equal(a.result.status, "applied");
+    const fence = JSON.parse(readFileSync(join(work, "tenants/t-0a0a0a0a/argocd/appproject.yaml"), "utf8"));
+    assert.deepEqual(fence.spec.destinations, [], "온프레는 Argo CD 목적지가 아니다 (WORKER-CONTRACT): 울타리만, 목적지 없음");
+    assert.match(sh(bare, "show", "--name-only", "--format=", "main"), /tenants\/t-0a0a0a0a\/argocd\/appproject\.yaml/, "울타리를 같은 커밋에 올린다");
+
+    // 거부: 검사에 걸리는 묶음(구역 이름이 규칙과 다름) → 실패하고, 작업 복사본은 깨끗하게 돌아온다
+    const bad = onprem("0b0b0b0b-0000-4000-8000-000000000001");
+    const b = bundleRefOf(bad);
+    const { planFile } = await import("../src/gitops/bundle.js");
+    const p = planFile(b, bad.plan, await repo.chartVersion());
+    await assert.rejects(repo.commitBundle("deploy", b, approvedValues(bad), { ...p, target: { ...p.target, namespace: "wrong" } }, "bad"),
+      (e: GitopsError) => e.code === "GITOPS_VALIDATE_FAILED");
+    assert.equal(sh(work, "status", "--porcelain", "--untracked-files=all", "--", "tenants"), "", "실패한 묶음이 작업 복사본에 남지 않는다");
+
+    // 다른 회사의 다음 온프레 배포는 그대로 된다
+    const c = await deployToGitops(repo, onprem("0c0c0c0c-0000-4000-8000-000000000001"), ok);
+    assert.equal(c.result.status, "applied");
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+// push 가 끝내 실패하면 로컬 커밋을 남기지 않는다. 남기면 (1) 다음 회사 배포의 push 에 실려 실패로 멈춘 묶음이 몰래 올라가고
+//   (2) 그 사이 원격이 앞서면 pull --ff-only 가 깨져 이 워커의 모든 배포가 GITOPS_GIT_FAILED 로 막힌다 (2026-11-04 재현)
+test("push 가 실패한 묶음은 로컬에서 걷어서, 다음 회사 배포에 실려 올라가지 않는다", { skip }, async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "gitops-pushfail-"));
+  const sh = (cwd: string, ...a: string[]) => execFileSync("git", ["-C", cwd, "-c", "user.name=t", "-c", "user.email=t@x", ...a], { encoding: "utf8" }).trim();
+  try {
+    const seed = join(tmp, "seed"), bare = join(tmp, "remote.git"), work = join(tmp, "work");
+    cpSync(FIXTURE!, seed, { recursive: true });
+    sh(tmp, "init", "-q", "-b", "main", seed); sh(seed, "add", "-A"); sh(seed, "commit", "-q", "-m", "seed");
+    execFileSync("git", ["clone", "-q", "--bare", seed, bare]);
+    execFileSync("git", ["clone", "-q", bare, work]);
+    cpSync(join(FIXTURE!, "tools", "node_modules"), join(work, "tools", "node_modules"), { recursive: true });
+    // 원격이 push 를 거절하는 동안 (깃허브 장애·권한 만료 흉내): 이 파일이 있으면 pre-receive 가 거절
+    const block = join(tmp, "block");
+    writeFileSync(join(bare, "hooks", "pre-receive"), `#!/bin/sh\n[ -f "${block}" ] && { echo "rejected for test" >&2; exit 1; }\nexit 0\n`);
+    chmodSync(join(bare, "hooks", "pre-receive"), 0o755);
+    const repo = new GitopsRepo({ dir: work, branch: "main", push: true, author: { name: "platform-worker", email: "w@x" }, maxPushTries: 2 });
+    const onprem = (tenantId: string): DeployInput => {
+      const p = buildPlanDoc({ planId: "7f000000-0000-4000-8000-0000000000b1", migrationId: "4a8c0000-0000-4000-8000-0000000000b1",
+        spec, target: { envId: ENV_ID, provider: "onprem", region: "default" }, precheck: stubPrecheck(), now: new Date() });
+      return { tenantId, spec, plan: p, target: { envId: ENV_ID, provider: "onprem", region: "default", accountId: null },
+        tfOutputs: { link_outputs: "{}", namespace: "app-" + spec.app.name, ...stubTfOutputsV2(spec) } };
+    };
+    const ok = { wait: async () => ({ ok: true }) };
+
+    writeFileSync(block, "");
+    await assert.rejects(deployToGitops(repo, onprem("0d0d0d0d-0000-4000-8000-000000000001"), ok), (e: GitopsError) => e.code === "GITOPS_PUSH_FAILED");
+    assert.equal(sh(work, "rev-parse", "HEAD"), sh(bare, "rev-parse", "main"), "실패한 커밋이 로컬에 남지 않는다");
+    rmSync(block);
+
+    const b = await deployToGitops(repo, onprem("0e0e0e0e-0000-4000-8000-000000000001"), ok);
+    assert.equal(sh(bare, "rev-parse", "main"), b.commit);
+    assert.equal(sh(bare, "ls-tree", "-d", "--name-only", "main", "tenants/t-0d0d0d0d"), "", "멈춘 회사의 묶음이 다른 회사 커밋에 실려 올라가지 않는다");
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
