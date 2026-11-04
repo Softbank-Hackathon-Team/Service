@@ -144,6 +144,8 @@ spec:
     {{- /* 리전·FIPS(dkr.ecr-fips)·듀얼스택(dkr-ecr)·:443·대문자 표기도 같은 계정 ECR 로 본다. 허용은 대소문자까지 정확한 앞부분만 */}}
     - name: ecrOutsidePrefix
       expression: 'variables.images.filter(i, i.matches({{ printf "(?i)^%s[.]dkr[.-]" $account | quote }}) && (variables.ownPrefix == "" || !i.startsWith(variables.ownPrefix)))'
+    - name: labels
+      expression: 'object.metadata.?labels.orValue({})'
   validations:
     - expression: 'object.spec.?nodeSelector[?"pool"].orValue("") == {{ $pool | quote }}'
       message: 샌드박스 파드는 nodeSelector pool={{ $pool }} 이 있어야 한다
@@ -160,6 +162,15 @@ spec:
     - expression: 'size(variables.ecrOutsidePrefix) == 0'
       messageExpression: '"플랫폼 계정 ECR 이미지는 " + (variables.ownPrefix == "" ? "네임스페이스 라벨 platform.svc/tenant 가 없어 쓸 수 없다" : variables.ownPrefix + " 아래만 된다") + ": " + variables.ecrOutsidePrefix[0]'
       message: 플랫폼 계정 ECR 이미지는 {{ $registry }}/<네임스페이스 platform.svc/tenant>/ 아래만 된다
+    {{- /* 차트 NetworkPolicy vc-cp-<릴리스>(release=<릴리스>)와 vc-snapshot-<릴리스>(app=vcluster-snapshot)는 아무 IP 로 443·8443·6443 을 연다.
+           동기화된 파드가 이 라벨을 달면 제어판 몫 바깥 길을 얻는다. 측정(kind 1.35, vCluster 0.37.6): 동기화는 app 같은 라벨은 그대로 옮기고,
+           release·vcluster.loft.sh/managed-by·vcluster.loft.sh/namespace 키는 vcluster.loft.sh/label-<릴리스>-x-<해시> 로 바꾼다. 그래서 app=vcluster-snapshot 은 실제 길이고
+           release 규칙은 vCluster 가 번역을 바꿀 때를 위한 두 번째 겹이다. 보통 release 라벨(release=foo)은 된다.
+           DRAFT(ai): app=vcluster-snapshot 규칙은 위 측정으로 더했다 (스냅숏 기능은 쓰지 않는다) */}}
+    - expression: '!("vcluster.loft.sh/managed-by" in variables.labels && "release" in variables.labels && variables.labels["release"] == variables.labels["vcluster.loft.sh/managed-by"])'
+      message: 동기화된 파드는 release 라벨을 vcluster.loft.sh/managed-by 와 같은 값(vCluster 릴리스)으로 달 수 없다
+    - expression: '!("vcluster.loft.sh/managed-by" in variables.labels) || variables.labels[?"app"].orValue("") != "vcluster-snapshot"'
+      message: 동기화된 파드는 app=vcluster-snapshot 라벨을 달 수 없다
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding
