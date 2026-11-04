@@ -1,5 +1,5 @@
 import { ApplyJob, QUEUES, redactText, type AppSpecV2, type PlanDoc, type Provider, type TfOutputs } from "@svc/contracts";
-import { azureMockOutputsV2, chooseRunner, iacMockEnabled, specV2ForPlan, STUB_TF_OUTPUTS, stubTfOutputsV2 } from "@svc/adapters";
+import { azureMockOutputsV2, chooseRunner, iacMockEnabled, onpremGitFloorOutputs, specV2ForPlan, STUB_TF_OUTPUTS, stubTfOutputsV2 } from "@svc/adapters";
 import { asFailureCode, latestAcceptedSpecV2, planExpired, type Tx } from "@svc/core";
 import { errorMessage, nextJob, runStep, stubWait } from "./_step.js";
 import { loadLatestApproval, loadLatestPlan, saveInfraReady } from "./plan-store.js";
@@ -77,6 +77,12 @@ export async function handleApply(raw: unknown) {
         if (!r.ok) return { to: "failed", failureCode: "AZURE_MOCK_APPLY_FAILED", detail: { planId: j.planId, ...mockDetail } };
         // TA3: 값이 찾는 link.<id>.* 키 (TA10 azureMockOutputsV2 = 같은 규칙의 결정적 값). 실행기가 준 출력이 이긴다
         tfOutputs = { ...azureMockOutputsV2(spec, { envId: m.targetEnvId, provider, region: "default", migrationId: j.migrationId } as never), ...r.tfOutputs };
+      } else if (provider === "onprem" && process.env.ONPREM_FLOOR_VIA_GIT !== "0") {
+        // W3: 온프레 바닥(네임스페이스·할당량)은 git 으로 간다 (고객 Argo CD 가 CreateNamespace + 차트 floor.yaml 로 만든다).
+        //   워커는 온프레 클러스터에 들어가지 않는다 (kube_context 로 도는 Terraform 을 건너뜀). 출력은 onprem/root 모듈과 같은 모양
+        //   DRAFT(ai): 기본 켬 (2026-11-04 온프레 영역 결정). ONPREM_FLOOR_VIA_GIT=0 이면 예전처럼 Terraform (고객 Argo CD 가 없는 로컬 k3d 시연 등)
+        tfOutputs = { ...onpremGitFloorOutputs(spec) };
+        realDetail = { iac: "git", note: "ONPREM_FLOOR_VIA_GIT 켬(기본): 온프레 바닥은 gitops 묶음(floor.yaml)과 고객 Argo CD 가 만든다" };
       } else if (!iacMockEnabled()) {
         // Z89: 기본 = 진짜 terraform (Z70 의 스위치 둘 대신 MOCK_IAC=1 이 아니면 항상). 잠금을 잃으면 ctx.signal → terraform 에 SIGINT
         // L5b: 진짜 발급기(REAL_STS=1 + external_id)로 빌린 AWS 실행 자격이 있으면 terraform 에 그것만 넘긴다 (맥 프로필 지움).

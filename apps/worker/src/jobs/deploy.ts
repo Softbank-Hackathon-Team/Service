@@ -6,7 +6,7 @@ import { withStepRoles, type StepRoles } from "./_roles.js";
 import { loadInfraReady, loadPlanById } from "./plan-store.js";
 import { approvedValues, configFromEnv, deployToGitops, envFacts, fillPlaceholders, GitopsError, GitopsRepo, type DeployInput } from "../gitops/index.js";
 import { checkSecretValues } from "../gitops/secret-values.js";
-import { argoWatcherFromEnv } from "../gitops/argo-watch.js";
+import { syncWatcherFor } from "../gitops/agent-watch.js";
 import { TARGET_ACCOUNT_SQL } from "./target-account.js";
 import { recordSkip, rehearsalGate, type Gate } from "../rehearsal/gate.js";
 
@@ -100,7 +100,8 @@ export async function handleDeploy(raw: unknown) {
         if (g.kind === "stop") return g.outcome;
         gate = g;
         try {
-          const out = await deployToGitops(repo, input, argoWatcherFromEnv(), { expectBundleSha: g.expectBundleSha });
+          // W4: 온프레(agent-pull)는 AGENT_DEPLOY_CONFIRM=1 이면 Agent 배포 보고를 기다린다 (agent-watch.ts). 그 밖은 Argo 폴링 그대로
+          const out = await deployToGitops(repo, input, syncWatcherFor({ tenantId: j.tenantId, targetEnvId: m.targetEnvId }), { expectBundleSha: g.expectBundleSha });
           result = DeployResult.parse(out.result);
           gitops = { commit: out.commit, argoApp: out.app, ...(out.argo ? { argo: out.argo } : {}) };
         } catch (e) { return gitopsPaused(e); }
@@ -108,8 +109,8 @@ export async function handleDeploy(raw: unknown) {
       if (result.status === "failed") {
         // DRAFT(ai) Z59 (TODO(human) "Degraded·SyncFailed → paused 냐 rolling_back 이냐" 기본값): paused.
         // 트래픽 0%·컷오버 전이라 출발이 그대로 주인 → 급할 것 없음. 사람이 고쳐 paused → deploying 으로 재개하거나 롤백을 고른다.
-        // 실패 이유 앞머리(ARGO_DEGRADED / ARGO_SYNC_FAILED / ARGO_TIMEOUT)를 failureCode 로
-        const code = /^(ARGO_[A-Z_]+)/.exec(result.reason ?? "")?.[1] ?? "ARGO_SYNC_FAILED";
+        // 실패 이유 앞머리(ARGO_DEGRADED / ARGO_SYNC_FAILED / ARGO_TIMEOUT, W4: AGENT_DEPLOY_FAILED / AGENT_DEPLOY_TIMEOUT)를 failureCode 로
+        const code = /^((?:ARGO|AGENT)_[A-Z_]+)/.exec(result.reason ?? "")?.[1] ?? "ARGO_SYNC_FAILED";
         return { to: "paused", failureCode: code, detail: { deploy: result, ...(gitops ? { gitops } : {}), rehearsal: gate.detail } };
       }
       return {

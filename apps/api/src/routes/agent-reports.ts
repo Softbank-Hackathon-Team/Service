@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import {
-  AgentReportAccepted, AgentReportList, ApiError, canTransition, envNumber,
+  AgentReportAccepted, AgentReportKinds, AgentReportList, ApiError, canTransition, envNumber,
   type AgentReport, type ConnectionStatus, type Provider,
 } from "@svc/contracts";
 import { advanceConnection, DomainError, pool, withTenant, type Tx } from "@svc/core";
@@ -79,7 +79,7 @@ export function pgAgentReportStore(env: NodeJS.ProcessEnv = process.env): AgentR
          ON CONFLICT (key_id, signature) DO NOTHING
          RETURNING id, ${isoUtc("received_at")} AS "receivedAt"`,
         [a.tenantId, a.envId, a.keyId, a.report.kind, a.signature, a.report.sentAt,
-         a.report.kind === "deploy" ? a.report.migrationId : null, JSON.stringify(a.report)]);
+         a.report.kind === "deploy" ? a.report.migrationId ?? null : null, JSON.stringify(a.report)]);
       if (ins.rowCount === 0) return "replay" as const;
       if (a.report.kind === "heartbeat") await heartbeatConnection(tx, a);
       return ins.rows[0] as { id: string; receivedAt: string };
@@ -148,7 +148,7 @@ export function agentReportRoutesWith(store: AgentReportStore) {
       schema: {
         params: IdParam,
         querystring: z.object({
-          kind: z.enum(["security", "deploy", "heartbeat"]).optional(),
+          kind: AgentReportKinds.optional(),
           limit: z.coerce.number().int().min(1).max(100).default(20),
         }),
         response: { 200: AgentReportList, ...errors(400, 401, 404, 500) },

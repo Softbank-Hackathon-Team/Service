@@ -1,0 +1,39 @@
+# 고객 온프레 설치 묶음 (ADR-005 D2·D3, 설계 문서 W2). 설치는 tools/onprem-install.sh 가 한다
+#   전제: Argo CD core(tools/argocd-core-install-v2.13.3.yaml)가 argocd 네임스페이스에 이미 있다 (설치 스크립트가 sha 확인 뒤 깐다)
+#   비밀값은 이 파일에 넣지 않는다. Agent 키·git 읽기 자격은 설치 스크립트가 Secret 으로 먼저 만든다 (helm 기록에 비밀이 남지 않게)
+
+# 회사 폴더 이름 (gitops 저장소 tenants/<tenant>/..., 워커 tenantSlug = "t-" + 회사 uuid 앞 8글자). 필수
+tenant: ""
+
+gitops:
+  # gitops 저장소 주소. 필수. 회사 경로만 읽는 읽기 전용 자격은 Argo 저장소 Secret(설치 스크립트)이 가진다
+  repoURL: ""
+  revision: main
+  # 묶음 폴더 안에서 Argo 가 적용할 하위 폴더 (워커가 manifests/*.yaml 로 렌더한다, apps/worker/src/gitops/repo.ts)
+  manifestsDir: manifests
+
+argocd:
+  namespace: argocd
+  # DRAFT(ai): 새 앱 폴더 찾는 주기(초). Argo 기본 180. git 확인 주기(설치 스크립트 ARGO_POLL)와 같은 30 으로 둔다
+  discoverSeconds: 30
+
+agent:
+  # 이미지. digest 고정 필수 (repo@sha256:...). 태그만 주면 렌더가 실패한다
+  image: ""
+  # 서명 보고를 받을 플랫폼 API 주소 (밖으로 443). 필수
+  reportURL: ""
+  # AGENT_KEY_ID · AGENT_KEY_SECRET 이 든 Secret 이름 (onprem-agent --enroll 결과로 설치 스크립트가 만든다)
+  keySecret: agent-key
+  # heartbeat 주기(초). security 는 10번에 1번
+  every: 30
+  # DRAFT(ai): Agent 한 개가 보는 앱 네임스페이스. 지금 실행기는 하나만 읽는다(AGENT_NAMESPACE)
+  appNamespace: ""
+  cnpgCluster: app-db
+  resources:
+    requests: { cpu: 10m, memory: 64Mi }
+    limits: { memory: 192Mi }
+
+# 권한 단계 (ADR-005 D3). L0 은 늘 켜짐. L1 은 고객이 고르는 선택지
+grants:
+  # L1: 클러스터 범위 읽기 허용 목록 (노드, 바인딩, Kyverno 정책 등). 기본 끔
+  cluster: false

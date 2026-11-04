@@ -274,6 +274,8 @@ jobs:
         run: bash deploy/ci/check-gitops.sh
       - name: platform chart lint + template + kubeconform
         run: bash deploy/ci/check-platform.sh
+      - name: onprem install chart lint + template + kubeconform + 권한 단언 (W2)
+        run: bash deploy/ci/check-onprem-agent.sh
       - name: onprem db tunnel chart lint + template + security shape
         run: bash deploy/ci/check-onprem-db-tunnel.sh
 
@@ -284,12 +286,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        app: [api, worker, agent-worker, web]
-        # Z75-17: 서버 앱 3개는 Dockerfile 하나의 단계(target), web 만 따로
+        app: [api, worker, agent-worker, onprem-agent, web]
+        # Z75-17: 서버 앱 3개는 Dockerfile 하나의 단계(target), web 만 따로. W1: 온프레 Agent 도 같은 Dockerfile
         include:
           - { app: api, file: deploy/docker/Dockerfile, target: api }
           - { app: worker, file: deploy/docker/Dockerfile, target: worker }
           - { app: agent-worker, file: deploy/docker/Dockerfile, target: agent-worker }
+          - { app: onprem-agent, file: deploy/docker/Dockerfile, target: onprem-agent }
           - { app: web, file: apps/web/Dockerfile, target: "" }
     steps:
       - uses: actions/checkout@v7
@@ -313,3 +316,8 @@ jobs:
         run: |
           u=$(docker run --rm --entrypoint id svc-${{ matrix.app }}:ci -u)
           echo "uid=$u"; test "$u" != "0"
+      - name: 온프레 Agent 스모크 (묶음이 뜨고 kubectl 이 들어 있는지)
+        if: matrix.app == 'onprem-agent'
+        run: |
+          docker run --rm --read-only svc-onprem-agent:ci --help | grep -q '^onprem-agent/'
+          docker run --rm --read-only --entrypoint kubectl svc-onprem-agent:ci version --client

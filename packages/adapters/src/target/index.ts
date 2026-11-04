@@ -2,7 +2,7 @@ import type { Provider, TargetBuilder } from "@svc/contracts";
 import { renderViewV2 } from "./shared.js";
 import { awsTarget } from "./aws.js";
 import { gcpTarget } from "./gcp.js";
-import { onpremTarget } from "./onprem.js";
+import { onpremTarget, onpremGitFloorOutputs } from "./onprem.js";
 import { azureMockTarget } from "./azure-mock.js";
 
 // 도착 Builder v2 표 (설계 27번 A1). 계획·적용이 쓰는 유일한 도착 길
@@ -15,7 +15,7 @@ const view = (b: TargetBuilder): TargetBuilder => ({
 });
 const TARGETS: Record<Provider, TargetBuilder> = { aws: view(awsTarget), gcp: view(gcpTarget), onprem: view(onpremTarget), azure_mock: view(azureMockTarget) };
 export const targetBuilderFor = (p: Provider) => TARGETS[p];
-export { awsTarget, gcpTarget, onpremTarget, azureMockTarget };
+export { awsTarget, gcpTarget, onpremTarget, azureMockTarget, onpremGitFloorOutputs };
 export { mockPlanV2 as azureMockPlanV2, mockOutputsV2 as azureMockOutputsV2, resourceTypesV2 as azureResourceTypesV2, type AzureMockPlanV2 } from "./azure-mock.js";
 export { rdsClassFor } from "./aws.js";
 export { cloudSqlTierFor } from "./gcp.js";
