@@ -15,6 +15,9 @@ export * from "./ai/guard.js";
 export * from "./ai/kube.js";
 export * from "./ai/k3d-sandbox.js";
 export * from "./ai/select.js";
+// vCluster 백엔드: 만들기·지우기·청소, 리허설 매니페스트 모델·자원 상한
+export * from "./ai/vcluster.js";
+export * from "./rehearsal/manifests.js";
 // LLM 공급자 (Anthropic 진짜 / 키 없이 도는 가짜)
 export * from "./llm/anthropic.js";
 export * from "./llm/mock-draft.js";
