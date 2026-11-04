@@ -1,0 +1,152 @@
+{
+ "version": 1,
+ "target": "onprem-k3s",
+ "app": "shop",
+ "namespace": "app-shop",
+ "bundleSha256": "278b277100ada37fb665390e9ea8f1d69c368ace6ec5295631bb9e6964901013",
+ "k8sMinor": "1.35",
+ "original": [
+  {
+   "path": "manifests/shop.yaml",
+   "yaml": "---\n# Source: app/templates/workloads.yaml\napiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: shop-web\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\n---\n# Source: app/templates/workloads.yaml\napiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: shop-api\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\n---\n# Source: app/templates/workloads.yaml\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app-config\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\ndata:\n  app.json: '{\"feature\":true}'\n---\n# Source: app/templates/workloads.yaml\napiVersion: v1\nkind: PersistentVolumeClaim\nmetadata:\n  name: api-cache\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\n    app.kubernetes.io/component: \"api\"\nspec:\n  accessModes:\n    - ReadWriteOnce\n  storageClassName: local-path\n  resources:\n    requests:\n      storage: \"1Gi\"\n---\n# Source: app/templates/workloads.yaml\napiVersion: v1\nkind: Service\nmetadata:\n  name: shop-web\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\n    app.kubernetes.io/component: \"web\"\nspec:\n  type: ClusterIP\n  selector:\n    app.kubernetes.io/name: shop\n    app.kubernetes.io/component: \"web\"\n  ports:\n    - port: 80\n      targetPort: http\n      name: http\n---\n# Source: app/templates/workloads.yaml\napiVersion: v1\nkind: Service\nmetadata:\n  name: shop-api\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\n    app.kubernetes.io/component: \"api\"\nspec:\n  type: ClusterIP\n  selector:\n    app.kubernetes.io/name: shop\n    app.kubernetes.io/component: \"api\"\n  ports:\n    - port: 80\n      targetPort: http\n      name: http\n---\n# Source: app/templates/workloads.yaml\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\n    app.kubernetes.io/component: \"web\"\nspec:\n  replicas: 2\n  selector:\n    matchLabels:\n      app.kubernetes.io/name: shop\n      app.kubernetes.io/component: \"web\"\n  template:\n    metadata:\n      \n      labels:\n        app.kubernetes.io/component: web\n        app.kubernetes.io/name: shop\n        managed-by: platform\n        tenant: t1\n    spec:\n      \n      serviceAccountName: shop-web\n      containers:\n        - name: app\n          image: \"reg.onprem.example/platform/t1/shop-web@sha256:fcb75f691c8b0414d670ae570240cbf95502cc18a9ba57e982ecac589760a186\"\n          args:\n            - -listen=:8080\n            - -text=web ok\n          ports:\n            - containerPort: 8080\n              name: http\n          env:\n            - name: API_URL\n              value: http://shop-api:80\n          resources:\n            limits:\n              memory: 256Mi\n            requests:\n              cpu: 100m\n              memory: 128Mi\n          readinessProbe:\n            httpGet:\n              path: /healthz\n              port: http\n          livenessProbe:\n            httpGet:\n              path: /healthz\n              port: http\n            initialDelaySeconds: 10\n          securityContext:\n            readOnlyRootFilesystem: true\n            runAsNonRoot: true\n---\n# Source: app/templates/workloads.yaml\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\n    app.kubernetes.io/component: \"api\"\nspec:\n  selector:\n    matchLabels:\n      app.kubernetes.io/name: shop\n      app.kubernetes.io/component: \"api\"\n  template:\n    metadata:\n      \n      labels:\n        app.kubernetes.io/component: api\n        app.kubernetes.io/name: shop\n        managed-by: platform\n        tenant: t1\n    spec:\n      \n      serviceAccountName: shop-api\n      initContainers:\n        - command:\n          - sh\n          - -c\n          - \"true\"\n          image: busybox:1.36\n          name: wait-db\n      containers:\n        - name: app\n          image: \"reg.onprem.example/platform/t1/shop-api@sha256:fcb75f691c8b0414d670ae570240cbf95502cc18a9ba57e982ecac589760a186\"\n          command:\n            - /http-echo\n          args:\n            - -listen=:3000\n            - -text=api ok\n          ports:\n            - containerPort: 3000\n              name: http\n          env:\n            - name: DB_HOST\n              value: shop-db-rw\n            - name: DB_PORT\n              value: \"5432\"\n            - name: DB_USER\n              value: app\n            - name: DB_PASSWORD\n              valueFrom:\n                secretKeyRef:\n                  key: password\n                  name: shop-db-app\n            - name: JWT_SECRET\n              valueFrom:\n                secretKeyRef:\n                  key: JWT_SECRET\n                  name: shop-secrets\n          resources:\n            limits:\n              memory: 512Mi\n            requests:\n              cpu: 250m\n              memory: 256Mi\n          readinessProbe:\n            httpGet:\n              path: /ready\n              port: http\n          volumeMounts:\n            - mountPath: /etc/app\n              name: cfg-app-config\n              readOnly: true\n            - mountPath: /etc/tls\n              name: sec-tls\n              readOnly: true\n            - mountPath: /var/cache/app\n              name: pvc-cache\n        -\n          command:\n          - sh\n          - -c\n          - sleep infinity\n          image: busybox:1.36\n          name: log\n      volumes:\n        - configMap:\n            name: app-config\n          name: cfg-app-config\n        - name: sec-tls\n          secret:\n            secretName: shop-tls\n        - name: pvc-cache\n          persistentVolumeClaim:\n            claimName: api-cache\n---\n# Source: app/templates/workloads.yaml\napiVersion: autoscaling/v2\nkind: HorizontalPodAutoscaler\nmetadata:\n  name: api\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\n    app.kubernetes.io/component: \"api\"\nspec:\n  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: api }\n  minReplicas: 2\n  maxReplicas: 6\n  metrics:\n    - type: Resource\n      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }\n---\n# Source: app/templates/workloads.yaml\napiVersion: batch/v1\nkind: Job\nmetadata:\n  name: migrate\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\n    app.kubernetes.io/component: \"migrate\"\nspec:\n  template:\n    metadata:\n      \n      labels:\n        app.kubernetes.io/component: migrate\n        app.kubernetes.io/name: shop\n        managed-by: platform\n        tenant: t1\n    spec:\n      \n      serviceAccountName: shop-api\n      restartPolicy: OnFailure\n      containers:\n        - name: app\n          image: \"busybox:1.36\"\n          command:\n            - sh\n            - -c\n            - echo migrated\n---\n# Source: app/templates/workloads.yaml\napiVersion: batch/v1\nkind: CronJob\nmetadata:\n  name: nightly\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\n    app.kubernetes.io/component: \"nightly\"\nspec:\n  schedule: \"0 3 * * *\"\n  concurrencyPolicy: Forbid\n  suspend: true\n  jobTemplate:\n    spec:\n      backoffLimit: 2\n      template:\n        metadata:\n          \n          labels:\n            app.kubernetes.io/component: nightly\n            app.kubernetes.io/name: shop\n            managed-by: platform\n            tenant: t1\n        spec:\n          \n          serviceAccountName: shop-api\n          restartPolicy: OnFailure\n          containers:\n            - name: app\n              image: \"reg.onprem.example/platform/t1/shop-api@sha256:fcb75f691c8b0414d670ae570240cbf95502cc18a9ba57e982ecac589760a186\"\n              command:\n                - /http-echo\n              args:\n                - -version\n---\n# Source: app/templates/ingress.yaml\napiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: shop\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\nspec:\n  rules:\n    - host: \"shop.example.com\"\n      http:\n        paths:\n          - path: \"/\"\n            pathType: Prefix\n            backend: { service: { name: shop-web, port: { number: 80 } } }\n---\n# Source: app/templates/cnpg.yaml\napiVersion: postgresql.cnpg.io/v1\nkind: Cluster\nmetadata:\n  name: shop-db\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\nspec:\n  instances: 1\n  imageName: \"ghcr.io/cloudnative-pg/postgresql:16\"\n  storage: { size: \"20Gi\" }\n  resources:\n    limits:\n      memory: 1Gi\n    requests:\n      cpu: 500m\n      memory: 1Gi\n  bootstrap:\n    initdb: { database: \"shop\", owner: \"app\" }\n  postgresql:\n    parameters:\n      wal_level: logical\n---\n# Source: app/templates/externalsecret.yaml\napiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata:\n  name: shop-secrets\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\nspec:\n  refreshInterval: 1h\n  secretStoreRef:\n    kind: ClusterSecretStore\n    name: vault\n  target:\n    name: shop-secrets\n  data:\n    - secretKey: \"JWT_SECRET\"\n      remoteRef:\n        key: \"shop/app\"\n        property: \"JWT_SECRET\"\n---\n# Source: app/templates/externalsecret.yaml\napiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata:\n  name: shop-tls\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\nspec:\n  refreshInterval: 1h\n  secretStoreRef:\n    kind: ClusterSecretStore\n    name: vault\n  target:\n    name: shop-tls\n    template: { type: \"kubernetes.io/tls\" }\n  data:\n    - secretKey: \"tls.crt\"\n      remoteRef:\n        key: \"shop/tls\"\n        property: \"tls.crt\"\n    - secretKey: \"tls.key\"\n      remoteRef:\n        key: \"shop/tls\"\n        property: \"tls.key\"\n"
+  }
+ ],
+ "apply": [
+  {
+   "path": "manifests/shop.yaml",
+   "yaml": "apiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: shop-web\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: platform\n    tenant: t1\n---\napiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: shop-api\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: platform\n    tenant: t1\n---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app-config\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: platform\n    tenant: t1\ndata:\n  app.json: '{\"feature\":true}'\n---\napiVersion: v1\nkind: PersistentVolumeClaim\nmetadata:\n  name: api-cache\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: platform\n    tenant: t1\n    app.kubernetes.io/component: api\nspec:\n  accessModes:\n    - ReadWriteOnce\n  storageClassName: sbx-standard\n  resources:\n    requests:\n      storage: 1Gi\n---\napiVersion: v1\nkind: Service\nmetadata:\n  name: shop-web\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: platform\n    tenant: t1\n    app.kubernetes.io/component: web\nspec:\n  type: ClusterIP\n  selector:\n    app.kubernetes.io/name: shop\n    app.kubernetes.io/component: web\n  ports:\n    - port: 80\n      targetPort: http\n      name: http\n---\napiVersion: v1\nkind: Service\nmetadata:\n  name: shop-api\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: platform\n    tenant: t1\n    app.kubernetes.io/component: api\nspec:\n  type: ClusterIP\n  selector:\n    app.kubernetes.io/name: shop\n    app.kubernetes.io/component: api\n  ports:\n    - port: 80\n      targetPort: http\n      name: http\n---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: platform\n    tenant: t1\n    app.kubernetes.io/component: web\nspec:\n  replicas: 1\n  selector:\n    matchLabels:\n      app.kubernetes.io/name: shop\n      app.kubernetes.io/component: web\n  template:\n    metadata:\n      labels:\n        app.kubernetes.io/component: web\n        app.kubernetes.io/name: shop\n        managed-by: platform\n        tenant: t1\n    spec:\n      serviceAccountName: shop-web\n      containers:\n        - name: app\n          image: reg.onprem.example/platform/t1/shop-web@sha256:fcb75f691c8b0414d670ae570240cbf95502cc18a9ba57e982ecac589760a186\n          args:\n            - -listen=:8080\n            - -text=web ok\n          ports:\n            - containerPort: 8080\n              name: http\n          env:\n            - name: API_URL\n              value: http://shop-api:80\n          resources:\n            limits:\n              memory: 256Mi\n            requests:\n              cpu: 100m\n              memory: 128Mi\n          readinessProbe:\n            httpGet:\n              path: /healthz\n              port: http\n          livenessProbe:\n            httpGet:\n              path: /healthz\n              port: http\n            initialDelaySeconds: 10\n          securityContext:\n            readOnlyRootFilesystem: true\n            runAsNonRoot: true\n---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: platform\n    tenant: t1\n    app.kubernetes.io/component: api\nspec:\n  selector:\n    matchLabels:\n      app.kubernetes.io/name: shop\n      app.kubernetes.io/component: api\n  template:\n    metadata:\n      labels:\n        app.kubernetes.io/component: api\n        app.kubernetes.io/name: shop\n        managed-by: platform\n        tenant: t1\n    spec:\n      serviceAccountName: shop-api\n      initContainers:\n        - command:\n            - sh\n            - -c\n            - \"true\"\n          image: busybox:1.36\n          name: wait-db\n      containers:\n        - name: app\n          image: reg.onprem.example/platform/t1/shop-api@sha256:fcb75f691c8b0414d670ae570240cbf95502cc18a9ba57e982ecac589760a186\n          command:\n            - /http-echo\n          args:\n            - -listen=:3000\n            - -text=api ok\n          ports:\n            - containerPort: 3000\n              name: http\n          env:\n            - name: DB_HOST\n              value: shop-db-rw\n            - name: DB_PORT\n              value: \"5432\"\n            - name: DB_USER\n              value: app\n            - name: DB_PASSWORD\n              valueFrom:\n                secretKeyRef:\n                  key: password\n                  name: shop-db-app\n            - name: JWT_SECRET\n              valueFrom:\n                secretKeyRef:\n                  key: JWT_SECRET\n                  name: shop-secrets\n          resources:\n            limits:\n              memory: 512Mi\n            requests:\n              cpu: 250m\n              memory: 256Mi\n          readinessProbe:\n            httpGet:\n              path: /ready\n              port: http\n          volumeMounts:\n            - mountPath: /etc/app\n              name: cfg-app-config\n              readOnly: true\n            - mountPath: /etc/tls\n              name: sec-tls\n              readOnly: true\n            - mountPath: /var/cache/app\n              name: pvc-cache\n        - command:\n            - sh\n            - -c\n            - sleep infinity\n          image: busybox:1.36\n          name: log\n      volumes:\n        - configMap:\n            name: app-config\n          name: cfg-app-config\n        - name: sec-tls\n          secret:\n            secretName: shop-tls\n        - name: pvc-cache\n          persistentVolumeClaim:\n            claimName: api-cache\n---\napiVersion: autoscaling/v2\nkind: HorizontalPodAutoscaler\nmetadata:\n  name: api\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: platform\n    tenant: t1\n    app.kubernetes.io/component: api\nspec:\n  scaleTargetRef:\n    apiVersion: apps/v1\n    kind: Deployment\n    name: api\n  minReplicas: 2\n  maxReplicas: 6\n  metrics:\n    - type: Resource\n      resource:\n        name: cpu\n        target:\n          type: Utilization\n          averageUtilization: 70\n---\napiVersion: batch/v1\nkind: Job\nmetadata:\n  name: migrate\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: platform\n    tenant: t1\n    app.kubernetes.io/component: migrate\nspec:\n  template:\n    metadata:\n      labels:\n        app.kubernetes.io/component: migrate\n        app.kubernetes.io/name: shop\n        managed-by: platform\n        tenant: t1\n    spec:\n      serviceAccountName: shop-api\n      restartPolicy: OnFailure\n      containers:\n        - name: app\n          image: busybox:1.36\n          command:\n            - sh\n            - -c\n            - echo migrated\n---\napiVersion: batch/v1\nkind: CronJob\nmetadata:\n  name: nightly\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: platform\n    tenant: t1\n    app.kubernetes.io/component: nightly\nspec:\n  schedule: 0 3 * * *\n  concurrencyPolicy: Forbid\n  suspend: true\n  jobTemplate:\n    spec:\n      backoffLimit: 2\n      template:\n        metadata:\n          labels:\n            app.kubernetes.io/component: nightly\n            app.kubernetes.io/name: shop\n            managed-by: platform\n            tenant: t1\n        spec:\n          serviceAccountName: shop-api\n          restartPolicy: OnFailure\n          containers:\n            - name: app\n              image: reg.onprem.example/platform/t1/shop-api@sha256:fcb75f691c8b0414d670ae570240cbf95502cc18a9ba57e982ecac589760a186\n              command:\n                - /http-echo\n              args:\n                - -version\n---\napiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: shop\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: platform\n    tenant: t1\nspec:\n  rules:\n    - host: shop.example.com\n      http:\n        paths:\n          - path: /\n            pathType: Prefix\n            backend:\n              service:\n                name: shop-web\n                port:\n                  number: 80\n---\napiVersion: v1\nkind: Secret\nmetadata:\n  name: shop-db-app\nstringData:\n  username: app\n  password: rehearsal-fake-password\n---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: sbx-db-shop-db\nspec:\n  replicas: 1\n  selector:\n    matchLabels: &a1\n      app.kubernetes.io/name: shop\n      app.kubernetes.io/component: sbx-db\n  template:\n    metadata:\n      labels: *a1\n    spec:\n      containers:\n        - name: postgres\n          image: docker.io/library/postgres@sha256:0cefaabd882e42bcb2a2f3dc56d3ce4770560ba62fd7f197f1a2e008fd5731ab\n          env:\n            - name: POSTGRES_DB\n              value: shop\n            - name: POSTGRES_USER\n              value: app\n            - name: PGDATA\n              value: /var/lib/postgresql/data/pgdata\n            - name: POSTGRES_PASSWORD\n              valueFrom:\n                secretKeyRef:\n                  name: shop-db-app\n                  key: password\n          ports:\n            - containerPort: 5432\n          readinessProbe:\n            tcpSocket:\n              port: 5432\n            periodSeconds: 3\n          resources:\n            requests:\n              cpu: 100m\n              memory: 128Mi\n            limits:\n              memory: 512Mi\n          volumeMounts:\n            - name: data\n              mountPath: /var/lib/postgresql/data\n      volumes:\n        - name: data\n          emptyDir: {}\n---\napiVersion: v1\nkind: Service\nmetadata:\n  name: shop-db-rw\nspec:\n  selector:\n    app.kubernetes.io/name: shop\n    app.kubernetes.io/component: sbx-db\n  ports:\n    - port: 5432\n      targetPort: 5432\n---\napiVersion: v1\nkind: Secret\nmetadata:\n  name: shop-secrets\nstringData:\n  JWT_SECRET: rehearsal-fake-JWT_SECRET\n---\napiVersion: v1\nkind: Secret\nmetadata:\n  name: shop-tls\ntype: kubernetes.io/tls\nstringData:\n  tls.crt: rehearsal-fake-tls.crt\n  tls.key: rehearsal-fake-tls.key\n"
+  }
+ ],
+ "images": [
+  {
+   "ref": "reg.onprem.example/platform/t1/shop-web@sha256:fcb75f691c8b0414d670ae570240cbf95502cc18a9ba57e982ecac589760a186",
+   "sandboxRef": "docker.io/hashicorp/http-echo@sha256:fcb75f691c8b0414d670ae570240cbf95502cc18a9ba57e982ecac589760a186"
+  },
+  {
+   "ref": "reg.onprem.example/platform/t1/shop-api@sha256:fcb75f691c8b0414d670ae570240cbf95502cc18a9ba57e982ecac589760a186",
+   "sandboxRef": "docker.io/hashicorp/http-echo@sha256:fcb75f691c8b0414d670ae570240cbf95502cc18a9ba57e982ecac589760a186"
+  }
+ ],
+ "databases": [
+  {
+   "service": "shop-db-rw",
+   "majorVersion": "16",
+   "database": "shop",
+   "owner": "app",
+   "secretName": "shop-db-app",
+   "secretKeys": [
+    "password"
+   ]
+  }
+ ],
+ "targetPodSecurity": "baseline",
+ "targetQuota": {
+  "limitsCpuM": 4000,
+  "limitsMemoryMi": 8192
+ },
+ "edges": [
+  {
+   "from": "web",
+   "host": "shop-api",
+   "port": 80
+  },
+  {
+   "from": "api",
+   "host": "shop-db-rw",
+   "port": 5432
+  }
+ ],
+ "fidelity": {
+  "version": 1,
+  "target": "onprem-k3s",
+  "bundleSha256": "278b277100ada37fb665390e9ea8f1d69c368ace6ec5295631bb9e6964901013",
+  "items": [
+   {
+    "id": "manifests",
+    "status": "identical",
+    "real": "렌더 결과",
+    "sandbox": "같은 바이트로 dry-run",
+    "reason": "지문 비교",
+    "refs": []
+   },
+   {
+    "id": "k8s_version",
+    "status": "identical",
+    "real": "k3s 1.35",
+    "sandbox": "가상 1.35",
+    "reason": "같은 마이너",
+    "refs": []
+   },
+   {
+    "id": "target_pod_security",
+    "status": "identical",
+    "real": "Kyverno baseline",
+    "sandbox": "PSA baseline dry-run",
+    "reason": "같은 수준",
+    "refs": []
+   },
+   {
+    "id": "images",
+    "status": "substituted",
+    "real": "도착 레지스트리",
+    "sandbox": "샌드박스 자리 (같은 다이제스트)",
+    "reason": "translateImage",
+    "refs": [
+     "Deployment/web",
+     "Deployment/api"
+    ]
+   },
+   {
+    "id": "replicas",
+    "status": "substituted",
+    "real": "web 2, api HPA 2~6",
+    "sandbox": "1 (HPA 는 그대로)",
+    "reason": "작은 노드",
+    "refs": [
+     "Deployment/web"
+    ]
+   },
+   {
+    "id": "storage",
+    "status": "substituted",
+    "real": "local-path",
+    "sandbox": "sbx-standard",
+    "reason": "샌드박스 저장소",
+    "refs": [
+     "PersistentVolumeClaim/api-cache"
+    ]
+   },
+   {
+    "id": "secrets",
+    "status": "substituted",
+    "real": "ExternalSecret (vault)",
+    "sandbox": "같은 이름·키의 가짜 Secret",
+    "reason": "실제 값은 안 들어감",
+    "refs": [
+     "ExternalSecret/shop-secrets",
+     "ExternalSecret/shop-tls"
+    ]
+   },
+   {
+    "id": "database",
+    "status": "substituted",
+    "real": "CNPG Cluster shop-db",
+    "sandbox": "Postgres 16 emptyDir",
+    "reason": "결정(리드)",
+    "refs": [
+     "Cluster/shop-db"
+    ]
+   },
+   {
+    "id": "ingress",
+    "status": "not_checked",
+    "real": "LB Ingress",
+    "sandbox": "가상 안에만 (컨트롤러 없음)",
+    "reason": "ingress 동기화 끔",
+    "refs": [
+     "Ingress/shop"
+    ]
+   }
+  ]
+ }
+}
