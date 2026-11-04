@@ -4,6 +4,9 @@ terraform {
   required_version = ">= 1.11"
   required_providers {
     google = { source = "hashicorp/google", version = "~> 6.0" }
+    # eso.tf: ESO·ClusterSecretStore 설치용 (helm v3 문법, kubernetes 는 레포 다른 모듈과 같은 줄)
+    helm       = { source = "hashicorp/helm", version = "~> 3.0" }
+    kubernetes = { source = "hashicorp/kubernetes", version = "~> 2.38" }
   }
 }
 
@@ -41,9 +44,59 @@ variable "upgrade_freeze_hours" {
   }
 }
 
+# ESO·ClusterSecretStore 설치 여부. create_gke=false 면 클러스터가 없으니 함께 꺼진다
+#   기본 false: tools/demo-day.sh·round11/jeong-up-11.sh·up-preflight.sh 가 이 모듈을 -auto-approve 로 apply 한다.
+#   클러스터를 만드는 apply 에 helm 접속이 섞이면 그 up 흐름이 깨질 수 있다 → 클러스터가 뜬 뒤 -var create_eso=true 로 따로 apply
+#   주의: create_eso=true 로 설치한 뒤 기본값(false)으로 다시 apply 하면 ESO·store 가 지워진다
+variable "create_eso" {
+  type    = bool
+  default = false
+}
+# ESO 차트 2.14.0 (apps/agent-worker/vendor 의 ESO CRD v2.14.0 과 같은 판). 플랫폼·온프레 설치는 아직 버전 없음
+variable "eso_chart_version" {
+  type    = string
+  default = "2.14.0"
+  validation {
+    condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.eso_chart_version))
+    error_message = "eso_chart_version 은 x.y.z 로 고정 (범위·latest 금지)"
+  }
+}
+
 provider "google" {
   project = var.project_id
   region  = var.region
+}
+
+data "google_client_config" "me" {}
+
+# 프로젝트 번호: Secret Manager 자원 이름은 번호(projects/<번호>/secrets/...)로 온다
+data "google_project" "this" {
+  count      = local.eso ? 1 : 0
+  project_id = var.project_id
+}
+
+locals {
+  eso       = var.create_gke && var.create_eso
+  eso_ns    = "external-secrets" # 공식 차트 기본값. aws/platform 의 ESO Pod Identity 와 같은 이름
+  eso_ksa   = "external-secrets" # 릴리스 이름 external-secrets → 차트 기본 SA 이름
+  eso_store = "gcp-secret-manager"
+  # GKE 없으면 빈 값: provider 설정만 읽히고 쓰는 자원이 0개라 plan 이 안 깨진다
+  gke_host = try("https://${google_container_cluster.this[0].endpoint}", "")
+  gke_ca   = try(base64decode(google_container_cluster.this[0].master_auth[0].cluster_ca_certificate), "")
+}
+
+provider "helm" {
+  kubernetes = {
+    host                   = local.gke_host
+    token                  = data.google_client_config.me.access_token
+    cluster_ca_certificate = local.gke_ca
+  }
+}
+
+provider "kubernetes" {
+  host                   = local.gke_host
+  token                  = data.google_client_config.me.access_token
+  cluster_ca_certificate = local.gke_ca
 }
 
 resource "google_project_service" "apis" {
@@ -191,6 +244,72 @@ resource "google_container_node_pool" "default" {
   }
 }
 
+# --- External Secrets (고객 클러스터): ESO + ClusterSecretStore "gcp-secret-manager".
+#   gitops/charts/app 의 ExternalSecret 이 이 이름으로 Secret Manager 의 "app-" 비밀을 읽는다 (deploy/ci/values/gcp.json).
+#   비밀 그릇·값은 여기서 만들지 않는다 (앱 층 kinds/identity·kinds/postgres 몫).
+#   신원: ESO 컨트롤러 KSA external-secrets/external-secrets → Workload Identity → 아래 GSA. store 에 auth 칸 없음(ADC)
+resource "google_service_account" "eso" {
+  count        = local.eso ? 1 : 0
+  account_id   = "${substr(var.name, 0, 24)}-eso" # account_id 30자 제한
+  display_name = "External Secrets Operator (${var.name})"
+  depends_on   = [google_project_service.apis]
+}
+
+# 읽기 범위: "app-" 접두어 비밀만 (버전 이름 .../secrets/app-x/versions/N 도 같은 접두어)
+resource "google_project_iam_member" "eso_secret_access" {
+  count   = local.eso ? 1 : 0
+  project = var.project_id
+  role    = "roles/secretmanager.secretAccessor"
+  member  = "serviceAccount:${google_service_account.eso[0].email}"
+  condition {
+    title       = "eso-app-secrets-only"
+    description = "ESO 는 app- 접두어 비밀만 읽는다"
+    expression  = "resource.name.startsWith(\"projects/${data.google_project.this[0].number}/secrets/app-\")"
+  }
+}
+
+# KSA external-secrets/external-secrets 가 이 GSA 를 빌린다
+resource "google_service_account_iam_member" "eso_wi" {
+  count              = local.eso ? 1 : 0
+  service_account_id = google_service_account.eso[0].name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[${local.eso_ns}/${local.eso_ksa}]"
+  depends_on         = [google_container_cluster.this] # WI 풀은 클러스터가 생겨야 있다
+}
+
+resource "helm_release" "eso" {
+  count            = local.eso ? 1 : 0
+  name             = "external-secrets"
+  repository       = "https://charts.external-secrets.io"
+  chart            = "external-secrets"
+  version          = var.eso_chart_version
+  namespace        = local.eso_ns
+  create_namespace = true
+  # webhook.port 는 기본 10250 그대로: private GKE 제어부 → 노드 기본 허용 포트(443·10250). 바꾸면 방화벽 규칙이 필요하다
+  values = [yamlencode({
+    installCRDs = true
+    serviceAccount = {
+      name        = local.eso_ksa
+      annotations = { "iam.gke.io/gcp-service-account" = google_service_account.eso[0].email }
+    }
+  })]
+  depends_on = [google_container_node_pool.default, google_service_account_iam_member.eso_wi]
+}
+
+# ClusterSecretStore 는 ESO CRD·webhook 이 뜬 뒤에 (helm_release 기본 wait=true)
+resource "helm_release" "secret_store" {
+  count     = local.eso ? 1 : 0
+  name      = "cluster-secret-store"
+  chart     = "${path.module}/../../../charts/cluster-secret-store"
+  namespace = local.eso_ns
+  values = [yamlencode({
+    name     = local.eso_store
+    provider = "gcpsm"
+    gcpsm    = { projectID = var.project_id }
+  })]
+  depends_on = [helm_release.eso, google_project_iam_member.eso_secret_access]
+}
+
 resource "google_artifact_registry_repository" "platform" {
   repository_id = "platform"
   location      = var.region
@@ -208,3 +327,5 @@ output "cluster_name" { value = var.create_gke ? google_container_cluster.this[0
 output "cluster_location" { value = var.create_gke ? google_container_cluster.this[0].location : var.zone }
 output "cluster_endpoint" { value = var.create_gke ? google_container_cluster.this[0].endpoint : "" }
 output "registry_host" { value = "${var.region}-docker.pkg.dev/${var.project_id}/platform" }
+output "eso_service_account_email" { value = local.eso ? google_service_account.eso[0].email : "" }
+output "secret_store_name" { value = local.eso ? local.eso_store : "" }

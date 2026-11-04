@@ -5,6 +5,9 @@ terraform {
   required_version = ">= 1.11"
   required_providers {
     aws = { source = "hashicorp/aws", version = "~> 6.0" }
+    # ESO·ClusterSecretStore 설치용 (helm v3 문법, kubernetes 는 레포 다른 모듈과 같은 줄)
+    helm       = { source = "hashicorp/helm", version = "~> 3.0" }
+    kubernetes = { source = "hashicorp/kubernetes", version = "~> 2.38" }
   }
 }
 
@@ -54,6 +57,23 @@ variable "node_instance_type" {
   type    = string
   default = "t3.medium"
 }
+# ESO·ClusterSecretStore 설치 여부. create_eks=false 면 클러스터가 없으니 함께 꺼진다
+#   기본 false: tools/demo-day.sh·round11/jeong-up-11.sh·up-preflight.sh 가 이 모듈을 -auto-approve 로 apply 한다.
+#   클러스터를 만드는 apply 에 helm 접속이 섞이면 그 up 흐름이 깨질 수 있다 → 클러스터가 뜬 뒤 -var create_eso=true 로 따로 apply
+#   주의: create_eso=true 로 설치한 뒤 기본값(false)으로 다시 apply 하면 ESO·store 가 지워진다
+variable "create_eso" {
+  type    = bool
+  default = false
+}
+# ESO 차트 2.14.0 (gcp/env 와 같은 판, apps/agent-worker/vendor 의 ESO CRD v2.14.0)
+variable "eso_chart_version" {
+  type    = string
+  default = "2.14.0"
+  validation {
+    condition     = can(regex("^[0-9]+\\.[0-9]+\\.[0-9]+$", var.eso_chart_version))
+    error_message = "eso_chart_version 은 x.y.z 로 고정 (범위·latest 금지)"
+  }
+}
 
 provider "aws" {
   region              = var.region
@@ -67,6 +87,37 @@ data "aws_availability_zones" "az" { state = "available" }
 locals {
   azs = slice(data.aws_availability_zones.az.names, 0, 2)
   eks = var.create_eks ? 1 : 0 # Z77
+}
+
+# helm·kubernetes 접속 토큰: aws provider 자격 증명(allowed_account_ids 검사 포함)으로 만든다. aws CLI 없이 돈다. 15분 유효
+data "aws_eks_cluster_auth" "this" {
+  count = local.eks
+  name  = aws_eks_cluster.this[0].name
+}
+
+locals {
+  eso       = var.create_eks && var.create_eso
+  eso_ns    = "external-secrets" # 공식 차트 기본값. aws/platform 의 ESO Pod Identity 와 같은 이름
+  eso_ksa   = "external-secrets" # 릴리스 이름 external-secrets → 차트 기본 SA 이름
+  eso_store = "aws-secrets-manager"
+  # EKS 없으면 빈 값: provider 설정만 읽히고 쓰는 자원이 0개라 plan 이 안 깨진다
+  eks_host  = try(aws_eks_cluster.this[0].endpoint, "")
+  eks_ca    = try(base64decode(aws_eks_cluster.this[0].certificate_authority[0].data), "")
+  eks_token = try(data.aws_eks_cluster_auth.this[0].token, "")
+}
+
+provider "helm" {
+  kubernetes = {
+    host                   = local.eks_host
+    token                  = local.eks_token
+    cluster_ca_certificate = local.eks_ca
+  }
+}
+
+provider "kubernetes" {
+  host                   = local.eks_host
+  token                  = local.eks_token
+  cluster_ca_certificate = local.eks_ca
 }
 
 # --- 네트워크: 공개 서브넷(NAT·LB) 2 + 사설 서브넷(노드·DB) 2
@@ -224,6 +275,82 @@ resource "aws_eks_addon" "pod_identity" {
   addon_name   = "eks-pod-identity-agent"
 }
 
+# --- External Secrets (고객 클러스터): ESO + ClusterSecretStore "aws-secrets-manager".
+#   gitops/charts/app 의 ExternalSecret 이 이 이름으로 Secrets Manager 의 platform/<tenant>/<app>/... 와 RDS 관리 비밀(rds!db-...)을 읽는다
+#   (deploy/ci/values/aws.json). 비밀 그릇·값은 여기서 만들지 않는다 (앱 층 kinds/identity·kinds/postgres 몫).
+#   신원: ESO 컨트롤러 SA external-secrets/external-secrets → Pod Identity → 아래 역할. store 에 auth 칸 없음(기본 자격 증명)
+#   역할 이름은 app-* 가 아니다 → 워커 실행 역할이 못 고치고, 앱 역할 권한 경계(app_boundary) 대상도 아니다
+resource "aws_iam_role" "eso" {
+  count = local.eso ? 1 : 0
+  name  = "${var.name}-external-secrets"
+  # aws/platform 의 local.pod_trust 와 같은 꼴
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "pods.eks.amazonaws.com" }
+      Action    = ["sts:AssumeRole", "sts:TagSession"]
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "eso" {
+  count = local.eso ? 1 : 0
+  name  = "read-app-secrets"
+  role  = aws_iam_role.eso[0].id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+      Resource = [
+        "arn:aws:secretsmanager:${var.region}:${var.expected_account_id}:secret:platform/*",
+        "arn:aws:secretsmanager:${var.region}:${var.expected_account_id}:secret:rds!*",
+      ]
+    }]
+  })
+}
+
+resource "aws_eks_pod_identity_association" "eso" {
+  count           = local.eso ? 1 : 0
+  cluster_name    = aws_eks_cluster.this[0].name
+  namespace       = local.eso_ns
+  service_account = local.eso_ksa
+  role_arn        = aws_iam_role.eso[0].arn
+  depends_on      = [aws_eks_addon.pod_identity]
+}
+
+resource "helm_release" "eso" {
+  count            = local.eso ? 1 : 0
+  name             = "external-secrets"
+  repository       = "https://charts.external-secrets.io"
+  chart            = "external-secrets"
+  version          = var.eso_chart_version
+  namespace        = local.eso_ns
+  create_namespace = true
+  # Pod Identity 는 SA annotation 이 필요 없다 (association 이 네임스페이스·SA 이름으로 묶음). webhook.port 는 기본값 그대로
+  values = [yamlencode({
+    installCRDs    = true
+    serviceAccount = { name = local.eso_ksa }
+  })]
+  # association 이 먼저 있어야 컨트롤러 파드가 처음 뜰 때부터 자격 증명을 받는다
+  depends_on = [aws_eks_node_group.default, aws_eks_pod_identity_association.eso, aws_iam_role_policy.eso]
+}
+
+# ClusterSecretStore 는 ESO CRD·webhook 이 뜬 뒤에 (helm_release 기본 wait=true)
+resource "helm_release" "secret_store" {
+  count     = local.eso ? 1 : 0
+  name      = "cluster-secret-store"
+  chart     = "${path.module}/../../../charts/cluster-secret-store"
+  namespace = local.eso_ns
+  values = [yamlencode({
+    name     = local.eso_store
+    provider = "aws"
+    aws      = { region = var.region }
+  })]
+  depends_on = [helm_release.eso]
+}
+
 # --- 실행 역할의 k8s 접근: 좁게 (DRAFT(ai)). 그룹 권한은 infra/permissions/eks-operate-namespace-rbac.yaml 을
 # 부트스트랩 때 kubectl apply. 넓게(AmazonEKSAdminPolicy 연결)는 비상용 대안으로만
 resource "aws_eks_access_entry" "operate" {
@@ -286,3 +413,5 @@ output "kubectl_admin" {
   value = !var.create_eks ? "" : var.admin_principal_arn == "" ? "cluster-creator (bootstrap)" : var.admin_principal_arn
 }
 output "ecr_registry" { value = split("/", aws_ecr_repository.platform.repository_url)[0] }
+output "eso_role_arn" { value = local.eso ? aws_iam_role.eso[0].arn : "" }
+output "secret_store_name" { value = local.eso ? local.eso_store : "" }
