@@ -1,0 +1,256 @@
+{{- if .Values.sandbox.enabled }}
+{{- $sa := printf "system:serviceaccount:%s:agent-worker" .Release.Namespace }}
+{{- $pool := .Values.sandbox.pool }}
+{{- /* 호스트 가드. 테넌트 매니페스트가 vCluster 동기화로 내려와도, agent-worker 코드가 틀려도 여기서 막힌다.
+       네임스페이스 라벨 계약과 정책 표는 README "샌드박스" 절 */}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: sbx-namespace-guard
+  labels:
+    app.kubernetes.io/part-of: platform
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "DELETE"]
+        resources: ["namespaces"]
+  matchConditions:
+    - name: agent-worker
+      expression: request.userInfo.username == {{ $sa | quote }}
+  variables:
+    - name: ns
+      expression: 'request.operation == "DELETE" ? oldObject : object'
+    - name: labels
+      expression: 'variables.ns.metadata.?labels.orValue({})'
+  validations:
+    - expression: 'variables.ns.metadata.name.startsWith("sbx-")'
+      message: agent-worker 는 이름이 sbx- 로 시작하는 네임스페이스만 만들고 지운다
+    - expression: 'variables.labels[?"platform.svc/sandbox"].orValue("") == "true"'
+      message: 라벨 platform.svc/sandbox=true 가 없다
+    - expression: 'variables.labels[?"platform.svc/sandbox-purpose"].orValue("") in ["rehearsal", "remediation"]'
+      message: 라벨 platform.svc/sandbox-purpose 는 rehearsal 또는 remediation
+    - expression: 'variables.labels[?"platform.svc/expires-at"].orValue("").matches("^[0-9]{10}$")'
+      message: 라벨 platform.svc/expires-at 은 유닉스 초 10자리
+    - expression: 'variables.labels[?"pod-security.kubernetes.io/enforce"].orValue("") == "baseline"'
+      message: 라벨 pod-security.kubernetes.io/enforce=baseline 이 없다
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: sbx-namespace-guard
+  labels:
+    app.kubernetes.io/part-of: platform
+spec:
+  policyName: sbx-namespace-guard
+  validationActions: [Deny]
+---
+{{- /* agent-worker 의 RoleBinding 은 두 모양만: sbx-operator → agent-worker 자신, 또는 vCluster 차트의 Role vc-<릴리스> → 같은 이름 SA */}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: sbx-rolebinding-guard
+  labels:
+    app.kubernetes.io/part-of: platform
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["rbac.authorization.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["rolebindings"]
+  matchConditions:
+    - name: agent-worker
+      expression: request.userInfo.username == {{ $sa | quote }}
+  variables:
+    - name: subjects
+      expression: 'object.?subjects.orValue([])'
+    - name: operator
+      expression: >-
+        object.roleRef.kind == "ClusterRole" && object.roleRef.name == "sbx-operator" &&
+        size(variables.subjects) == 1 && variables.subjects[0].kind == "ServiceAccount" &&
+        variables.subjects[0].name == "agent-worker" && variables.subjects[0].?namespace.orValue("") == {{ .Release.Namespace | quote }}
+    - name: vcluster
+      expression: >-
+        object.roleRef.kind == "Role" && object.roleRef.name.startsWith("vc-") &&
+        size(variables.subjects) >= 1 && variables.subjects.all(s, s.kind == "ServiceAccount" &&
+        s.name == object.roleRef.name && s.?namespace.orValue("") == request.namespace)
+  validations:
+    - expression: 'request.namespace.startsWith("sbx-")'
+      message: agent-worker 는 sbx- 네임스페이스 안에서만 RoleBinding 을 만든다
+    - expression: 'variables.operator || variables.vcluster'
+      message: RoleBinding 은 ClusterRole/sbx-operator → agent-worker, 또는 Role/vc-<이름> → 같은 네임스페이스 SA vc-<이름> 만 된다
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: sbx-rolebinding-guard
+  labels:
+    app.kubernetes.io/part-of: platform
+spec:
+  policyName: sbx-rolebinding-guard
+  validationActions: [Deny]
+---
+{{- /* 샌드박스 네임스페이스의 모든 파드 (vCluster 제어판, 동기화된 테넌트 파드, agent-worker 가 직접 만든 파드).
+       PSA baseline 과 겹치는 두 번째 겹이다. PSA 라벨이 빠지거나 낮아져도 남는다 */}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: sbx-pod-guard
+  labels:
+    app.kubernetes.io/part-of: platform
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods", "pods/ephemeralcontainers"]
+  variables:
+    - name: noHostPort
+      expression: 'object.spec.containers.all(c, c.?ports.orValue([]).all(p, p.?hostPort.orValue(0) == 0)) && object.spec.?initContainers.orValue([]).all(c, c.?ports.orValue([]).all(p, p.?hostPort.orValue(0) == 0)) && object.spec.?ephemeralContainers.orValue([]).all(c, c.?ports.orValue([]).all(p, p.?hostPort.orValue(0) == 0))'
+    - name: noPrivileged
+      expression: 'object.spec.containers.all(c, !c.?securityContext.?privileged.orValue(false)) && object.spec.?initContainers.orValue([]).all(c, !c.?securityContext.?privileged.orValue(false)) && object.spec.?ephemeralContainers.orValue([]).all(c, !c.?securityContext.?privileged.orValue(false))'
+  validations:
+    - expression: 'object.spec.?nodeSelector[?"pool"].orValue("") == {{ $pool | quote }}'
+      message: 샌드박스 파드는 nodeSelector pool={{ $pool }} 이 있어야 한다
+    - expression: 'request.operation != "CREATE" || !has(object.spec.nodeName)'
+      message: 샌드박스 파드는 nodeName 으로 노드를 직접 고를 수 없다
+    - expression: '!object.spec.?hostNetwork.orValue(false) && !object.spec.?hostPID.orValue(false) && !object.spec.?hostIPC.orValue(false)'
+      message: hostNetwork·hostPID·hostIPC 는 안 된다
+    - expression: 'object.spec.?volumes.orValue([]).all(v, !has(v.hostPath))'
+      message: hostPath 볼륨은 안 된다
+    - expression: variables.noHostPort
+      message: hostPort 는 안 된다
+    - expression: variables.noPrivileged
+      message: privileged 컨테이너는 안 된다
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: sbx-pod-guard
+  labels:
+    app.kubernetes.io/part-of: platform
+spec:
+  policyName: sbx-pod-guard
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        platform.svc/sandbox: "true"
+---
+{{- /* 수정 고리(remediation) 샌드박스만 gVisor. vCluster 제어판(app=vcluster, 동기화 라벨 없음)은 뺀다.
+       테넌트가 가상 파드에 app=vcluster 를 달아도 동기화된 파드에는 vcluster.loft.sh/managed-by 가 붙어 빠지지 못한다.
+       sandbox.gvisor.enabled=false 면 RuntimeClass 가 없어 동기화 파드가 거부된다 (닫힌 쪽) */}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: sbx-runtimeclass-guard
+  labels:
+    app.kubernetes.io/part-of: platform
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["pods"]
+  matchConditions:
+    - name: not-vcluster-control-plane
+      expression: '!(object.metadata.?labels[?"app"].orValue("") == "vcluster" && !("vcluster.loft.sh/managed-by" in object.metadata.?labels.orValue({})))'
+  validations:
+    - expression: 'object.spec.?runtimeClassName.orValue("") == {{ .Values.sandbox.gvisor.runtimeClass | quote }}'
+      message: 수정 고리 샌드박스 파드는 runtimeClassName={{ .Values.sandbox.gvisor.runtimeClass }} 이어야 한다
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: sbx-runtimeclass-guard
+  labels:
+    app.kubernetes.io/part-of: platform
+spec:
+  policyName: sbx-runtimeclass-guard
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        platform.svc/sandbox: "true"
+        platform.svc/sandbox-purpose: remediation
+---
+{{- /* 바깥에서 들어오는 길을 호스트에 만들지 못하게. ClusterIP 만 된다 (LoadBalancer·NodePort·ExternalName·externalIPs 거부) */}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: sbx-service-guard
+  labels:
+    app.kubernetes.io/part-of: platform
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["services"]
+  validations:
+    - expression: 'object.spec.?type.orValue("ClusterIP") == "ClusterIP"'
+      message: 샌드박스 Service 는 ClusterIP 만 된다
+    - expression: 'size(object.spec.?externalIPs.orValue([])) == 0'
+      message: 샌드박스 Service 에 externalIPs 는 안 된다
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: sbx-service-guard
+  labels:
+    app.kubernetes.io/part-of: platform
+spec:
+  policyName: sbx-service-guard
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        platform.svc/sandbox: "true"
+---
+{{- /* vCluster ingress 동기화는 꺼져 있다. 겹 하나 더: 샌드박스 네임스페이스에 Ingress·Gateway 를 아예 못 만든다 */}}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: sbx-ingress-guard
+  labels:
+    app.kubernetes.io/part-of: platform
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["networking.k8s.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["ingresses"]
+      - apiGroups: ["gateway.networking.k8s.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["gateways", "httproutes", "tlsroutes", "grpcroutes"]
+  validations:
+    - expression: "false"
+      message: 샌드박스 네임스페이스에는 Ingress·Gateway 를 만들 수 없다
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: sbx-ingress-guard
+  labels:
+    app.kubernetes.io/part-of: platform
+spec:
+  policyName: sbx-ingress-guard
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        platform.svc/sandbox: "true"
+{{- end }}
