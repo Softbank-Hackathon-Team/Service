@@ -84,6 +84,13 @@ variable "sandbox_nodes" {
   type    = object({ instance_type = string, desired = number, min = number, max = number })
   default = { instance_type = "t3.medium", desired = 1, min = 1, max = 2 }
 }
+# sandbox 노드에 gVisor(runsc) 설치. 리허설은 runc 로 돌고 AI 에이전트 수정 고리만 RuntimeClass gvisor(handler runsc)를 쓴다 (ADR-006)
+# DRAFT(ai): 기본 끔. 켜고 끌 때마다 launch template 새 버전이 생겨 sandbox 노드가 교체된다.
+# 켤 때는 deploy/helm/platform 의 sandbox.gvisor.enabled 도 같이 켠다 (RuntimeClass 는 차트가 만든다)
+variable "sandbox_gvisor_enabled" {
+  type    = bool
+  default = false
+}
 
 provider "aws" {
   region              = var.region
@@ -102,6 +109,57 @@ locals {
     cred    = merge(var.cred_nodes, { taint = "cred", role_arn = aws_iam_role.node.arn })
     sandbox = merge(var.sandbox_nodes, { taint = "sandbox", role_arn = aws_iam_role.sandbox_node.arn })
   }
+
+  # DRAFT(ai): 20261026.0 판 고정 (바로 다음 판 20261102.0 은 나온 지 이틀이라 한 주 앞 판). 노드 AMI 가 x86_64 라 x86_64 묶음만.
+  # 해시는 버킷의 .sha512 파일이 아니라 여기 적은 값과 맞춘다: 버킷 쪽 파일이 바뀌어도 다른 바이너리가 깔리지 않게
+  gvisor = {
+    url    = "https://storage.googleapis.com/gvisor/releases/release/20261026.0/x86_64/gvisor.tar.bz2"
+    sha512 = "26e4a327565f5da0f73261a6387e2c20f4695a232e330095a3111b70efd604fdf09d734e8cc8f714dbb5c5607ce8c87ea80b26df549d83a146f2efd5a1af448a"
+  }
+  # 관리형 노드 그룹이 이 MIME 에 자기 NodeConfig(클러스터 정보)를 덧붙이고, nodeadm 이 NodeConfig 들을 합친다.
+  # 순서: nodeadm-config(containerd 설정 쓰기) → cloud-init 셸 스크립트(바이너리 설치) → nodeadm-run(containerd·kubelet 시작)
+  # containerd 설정은 v2 경로(io.containerd.grpc.v1.cri)로만 쓴다. containerd 판은 nodeadm 이 보고 고른다:
+  #   1.x 면 그대로 합치고, 2.x(AL2023 저장소는 2.3) 면 v2 틀로 합친 뒤 `containerd config migrate` 로 io.containerd.cri.v1.runtime 경로로 옮긴다.
+  #   v3 경로가 문자열로라도 들어가면 nodeadm 은 v3 설정으로 보고 1.x 에서 부팅을 멈춘다. 두 경로를 같이 쓰면 2.x 에서 v2 키가 남는다
+  #   (amazon-eks-ami nodeadm/internal/containerd/config.go getConfigTemplateVersion)
+  # runsc.toml systemd-cgroup: AL2023 kubelet·runc 가 systemd cgroup 드라이버라 runsc 도 맞춘다
+  # 내려받기나 해시 확인이 실패해도 노드는 runc 로 뜬다. 그때 gvisor 파드는 shim 이 없어 시작하지 못한다 (닫힌 쪽)
+  sandbox_gvisor_user_data = <<-EOT
+    MIME-Version: 1.0
+    Content-Type: multipart/mixed; boundary="==SBXGVISOR=="
+
+    --==SBXGVISOR==
+    Content-Type: application/node.eks.aws
+
+    ---
+    apiVersion: node.eks.aws/v1alpha1
+    kind: NodeConfig
+    spec:
+      containerd:
+        config: |
+          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc]
+          runtime_type = "io.containerd.runsc.v1"
+          [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc.options]
+          TypeUrl = "io.containerd.runsc.v1.options"
+          ConfigPath = "/etc/containerd/runsc.toml"
+
+    --==SBXGVISOR==
+    Content-Type: text/x-shellscript; charset="us-ascii"
+
+    #!/bin/bash
+    set -euo pipefail
+    work=$(mktemp -d)
+    curl -fsSL --retry 5 -o "$work/gvisor.tar.bz2" "${local.gvisor.url}"
+    echo "${local.gvisor.sha512}  $work/gvisor.tar.bz2" | sha512sum -c -
+    python3 -c 'import sys, tarfile; t = tarfile.open(sys.argv[1]); [t.extract(n, sys.argv[2]) for n in ("runsc", "containerd-shim-runsc-v1")]' "$work/gvisor.tar.bz2" "$work"
+    install -m 0755 "$work/runsc" "$work/containerd-shim-runsc-v1" /usr/local/bin/
+    mkdir -p /etc/containerd
+    printf '[runsc_config]\n  systemd-cgroup = "true"\n' > /etc/containerd/runsc.toml
+    rm -rf "$work"
+    /usr/local/bin/runsc --version
+
+    --==SBXGVISOR==--
+  EOT
 }
 
 # --- 네트워크: 공개(NAT·LB) 2 + 사설 앱(노드) 2 + 사설 DB 2. NAT 게이트웨이 1개 (DRAFT(ai): 데모 비용)
@@ -310,7 +368,9 @@ resource "aws_launch_template" "node" {
     http_tokens                 = "required"
     http_put_response_hop_limit = 1
   }
-  # sandbox: gVisor(runsc) 설치·RuntimeClass 는 TODO(human), EKS 설치 방법 미확인
+  # DRAFT(ai): sandbox 만, sandbox_gvisor_enabled 일 때만 runsc 설치 + containerd 등록 (local.sandbox_gvisor_user_data). RuntimeClass 는 deploy/helm/platform
+  # TODO(human): 첫 apply 뒤 실제 노드에서 runsc 등록·gvisor 파드 기동 확인. 바이너리를 인터넷(storage.googleapis.com)에서 받을지 미러에서 받을지
+  user_data = each.key == "sandbox" && var.sandbox_gvisor_enabled ? base64encode(local.sandbox_gvisor_user_data) : null
 }
 
 # vpc-cni·kube-proxy·eks-pod-identity-agent DaemonSet 은 모든 taint 를 견디므로 세 그룹 모두에 뜬다
