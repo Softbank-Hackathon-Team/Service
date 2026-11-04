@@ -38,6 +38,97 @@
   gap: var(--space-8);
   min-width: 0;
 }
+/* 두 줄 고르기: 위는 무엇(서비스·환경 이름), 아래는 어디(벤더·환경)와 상태 */
+.pickText {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.pickText > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pickName > svg {
+  align-self: flex-start;
+  margin-top: 4px;
+}
+.pickSelected .pickText :global(.c-secondary) {
+  color: inherit;
+}
+/* 새로 등록하기 줄: 고를 것이 아니라 새로 만드는 줄이라 점선으로 구분한다 */
+.pickAdd {
+  border-style: dashed;
+  border-color: var(--color-border-strong);
+}
+.pickNote {
+  padding: var(--space-4) var(--space-20);
+}
+.listButton.listAdd {
+  margin-top: var(--space-4);
+  border: 1px dashed var(--color-border-strong);
+}
+.fieldGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: var(--space-16);
+}
+/* 고객이 할 일 차례. 번호와 한 줄 설명, 그 아래 링크·값 */
+.todo {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-16);
+  max-width: 720px;
+  counter-reset: todo;
+}
+.todo > li {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: var(--space-4) var(--space-12);
+  counter-increment: todo;
+}
+.todo > li::before {
+  content: counter(todo);
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-subtle);
+  color: var(--color-fg-secondary);
+  font-size: 13px;
+  font-weight: 600;
+}
+.todo > li > * {
+  grid-column: 2;
+}
+.todo > li > :first-child {
+  grid-row: 1;
+  align-self: center;
+}
+/* 바깥 페이지로 가는 링크. 상단 바 알약과 같은 모양 */
+.linkPill {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: var(--space-8);
+  height: var(--size-control-m);
+  padding: 0 var(--space-20);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-subtle);
+  color: var(--color-fg-primary);
+  text-decoration: none;
+  white-space: nowrap;
+}
+button.linkPill {
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+}
+.linkPill:hover {
+  background: var(--color-bg-selected);
+}
 .rows {
   display: flex;
   flex-direction: column;
