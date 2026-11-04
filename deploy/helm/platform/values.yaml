@@ -33,6 +33,64 @@ otelGateway:
   collectorImage: otel/opentelemetry-collector-contrib:0.164.0
   pool: general
 
+# 플랫폼 앱 4개 (templates/app.yaml). 이미지 = <registry>/svc-<이름>:<tag> (ECR 이름은 infra/modules/aws/platform/main.tf local.images)
+# registry·tag 둘 중 하나라도 비어 있으면 앱을 하나도 안 만든다 (값 없이 치는 기존 helm upgrade 가 그대로 돈다)
+# envFrom 은 components.<이름> 이 있을 때만 <이름>-env (web 은 비밀이 없다)
+apps:
+  image:
+    registry: ""   # 예: 725072160743.dkr.ecr.ap-northeast-2.amazonaws.com
+    tag: ""        # 예: 0.0.1-test2
+  api:
+    enabled: true
+    # DRAFT(ai): 2개. web·cloudflared 뒤에서 하나가 죽어도 화면이 안 끊기게
+    replicas: 2
+    port: 3000          # 이미지 API_PORT 기본. web 이미지 API_UPSTREAM 기본 http://api:3000 과 맞물린다
+    metricsPort: 9464   # METRICS_PORT 기본. Prometheus 는 이름이 metrics 인 포트만 긁는다
+    pool: general
+    serviceAccount: api            # Pod Identity platform/api
+    automountServiceAccountToken: false
+    service: true
+    # DRAFT(ai): 크기 전부 임시. general t3.medium ×2 에 cloudflared·otel·관측 스택과 같이 올라간다
+    resources:
+      requests: { cpu: 100m, memory: 192Mi }
+      limits: { memory: 384Mi }
+  worker:
+    enabled: true
+    # DRAFT(ai): 2개. main.tf cred_nodes 주석 "워커 ×2". 작업은 pg-boss 가 나눠 준다
+    replicas: 2
+    metricsPort: 9465   # WORKER_METRICS_PORT 기본. 살아 있음 검사도 이 포트 /metrics
+    # 고객 자격을 쥔 파드만 cred 노드에 (main.tf cred_nodes 주석). taint dedicated=cred:NoSchedule 를 견딘다
+    pool: cred
+    serviceAccount: worker         # Pod Identity platform/worker + argocd Role
+    automountServiceAccountToken: true   # Argo CD Application 읽기·patch (worker-argocd-rbac.yaml)
+    service: false
+    # 쥔 작업을 pg-boss stop 30초(강제 기한 35초)까지 기다린다 (docker-compose.prod.yml stop_grace_period 40s 와 같다)
+    terminationGracePeriodSeconds: 40
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 512Mi }
+  agent-worker:
+    enabled: true
+    replicas: 1
+    pool: general                  # main.tf general_nodes 주석 "AI 워커". cred 노드에 안 간다 (고객 자격 0)
+    serviceAccount: agent-worker   # Pod Identity 없음. 샌드박스 호스트 권한만 (agent-worker-rbac.yaml)
+    automountServiceAccountToken: true   # sbx-* 네임스페이스·vCluster 를 helm·kubectl 로 다룬다
+    service: false
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 512Mi }
+  web:
+    enabled: true
+    replicas: 2
+    port: 8080          # cloudflared console.<도메인> → http://web.<네임스페이스>.svc.cluster.local:8080
+    pool: general
+    serviceAccount: ""  # 클러스터 API·클라우드 권한 없음 → 네임스페이스 default, 토큰 안 붙임
+    automountServiceAccountToken: false
+    service: true
+    resources:
+      requests: { cpu: 20m, memory: 32Mi }
+      limits: { memory: 128Mi }
+
 # 워커가 Application 을 읽고 새로고침 표시를 다는 Argo CD 네임스페이스 (Role·RoleBinding 이 여기 생긴다)
 argocd:
   namespace: argocd
@@ -55,9 +113,10 @@ sandbox:
     provisioner: ebs.csi.aws.com
     parameters:
       type: gp3
-  # gVisor 는 수정 고리(remediation) 샌드박스만 쓴다. 리허설은 전용 노드 + 한 번에 한 테넌트 + runc
+  # gVisor. 켜면 리허설과 수정 고리 샌드박스 파드가 모두 이 RuntimeClass 로만 뜬다 (sbx-runtimeclass-guard). 리허설은 전용 노드 + 한 번에 한 테넌트
+  #   켤 때 세 곳을 같이: Terraform sandbox_gvisor_enabled(노드에 runsc), 이 값, agent-worker SANDBOX_RUNTIME_CLASS=gvisor
   gvisor:
-    # DRAFT(ai): 기본 끔. 노드에 runsc 를 까는 launch template 이 TODO(human) (main.tf). 끄면 수정 고리 샌드박스 워크로드는 뜨지 못한다 (닫힌 쪽)
+    # DRAFT(ai): 기본 끔. 끄면 리허설은 노드 기본 런타임(runc)으로 돌고, 수정 고리 샌드박스 워크로드는 뜨지 못한다 (닫힌 쪽)
     enabled: false
     runtimeClass: gvisor
     handler: runsc

@@ -1,3 +1,4 @@
+import { t } from './i18n';
 // 로그인 상태 한 곳. Vite(import.meta.env)를 안 쓰는 순수 모듈이라 node:test 로 바로 시험한다 (test/auth.test.ts).
 //
 // 서버 계약 (화면 기준 /api/auth/* → 프록시 → /api/v1/auth/*)
@@ -45,24 +46,24 @@ export const EARLY_REFRESH_SEC = 30;
 export interface AuthConfig { devAuth: boolean; loginRequired: boolean; github?: { enabled: boolean } }
 
 // 쓰던 중에 계정이 꺼지면 보호 경로가 401 USER_DISABLED 를 준다 (apps/api plugins/auth.ts). refresh 해도 같으니 바로 로그인 화면으로
-export const USER_DISABLED_NOTICE = "이 계정은 꺼졌거나 회사에서 빠졌습니다. 회사 관리자에게 확인해 주세요.";
+export const USER_DISABLED_NOTICE = t('이 계정은 꺼졌거나 회사에서 빠졌습니다. 회사 관리자에게 확인해 주세요.');
 
 /** GitHub 로그인 시작 주소. fetch 가 아니라 브라우저 이동으로 연다 (GitHub 화면을 거쳐 서버 콜백이 화면으로 돌려보낸다) */
 export const githubStartUrl = (base: string) => `${base}/auth/github/start`;
 
 const GITHUB_ERROR: Record<string, string> = {
-  GITHUB_LOGIN_DISABLED: "이 서버에서는 GitHub 로그인이 꺼져 있습니다.",
-  GITHUB_STATE_INVALID: "GitHub 로그인 확인 시간이 지났거나 다른 창에서 시작했습니다. 다시 시도해 주세요.",
-  GITHUB_ACCESS_DENIED: "GitHub에서 접근을 허락하지 않았습니다.",
-  GITHUB_CODE_INVALID: "GitHub 로그인을 확인하지 못했습니다. 다시 시도해 주세요.",
-  GITHUB_UNAVAILABLE: "GitHub에 연결하지 못했습니다. 잠시 뒤 다시 시도해 주세요.",
-  GITHUB_EMAIL_UNVERIFIED: "GitHub 계정에 확인된 기본 이메일이 없습니다. GitHub에서 이메일을 확인한 뒤 다시 시도해 주세요.",
-  GITHUB_ACCOUNT_NOT_ALLOWED: "이 GitHub 계정으로 들어올 콘솔 계정이 없거나 꺼져 있습니다. 회사 관리자에게 확인해 주세요.",
-  GITHUB_ALREADY_LINKED: "이 이메일의 계정은 다른 GitHub 계정과 이미 연결되어 있습니다.",
+  GITHUB_LOGIN_DISABLED: t('이 서버에서는 GitHub 로그인이 꺼져 있습니다.'),
+  GITHUB_STATE_INVALID: t('GitHub 로그인 확인 시간이 지났거나 다른 창에서 시작했습니다. 다시 시도해 주세요.'),
+  GITHUB_ACCESS_DENIED: t('GitHub에서 접근을 허락하지 않았습니다.'),
+  GITHUB_CODE_INVALID: t('GitHub 로그인을 확인하지 못했습니다. 다시 시도해 주세요.'),
+  GITHUB_UNAVAILABLE: t('GitHub에 연결하지 못했습니다. 잠시 뒤 다시 시도해 주세요.'),
+  GITHUB_EMAIL_UNVERIFIED: t('GitHub 계정에 확인된 기본 이메일이 없습니다. GitHub에서 이메일을 확인한 뒤 다시 시도해 주세요.'),
+  GITHUB_ACCOUNT_NOT_ALLOWED: t('이 GitHub 계정으로 들어올 콘솔 계정이 없거나 꺼져 있습니다. 회사 관리자에게 확인해 주세요.'),
+  GITHUB_ALREADY_LINKED: t('이 이메일의 계정은 다른 GitHub 계정과 이미 연결되어 있습니다.'),
 };
 
 /** ?github_error= 코드 → 사람 말. 모르는 코드는 지어내지 않고 실패했다고만 한다 */
-export const githubErrorText = (code: string) => GITHUB_ERROR[code] ?? "GitHub 로그인에 실패했습니다.";
+export const githubErrorText = (code: string) => GITHUB_ERROR[code] ?? t('GitHub 로그인에 실패했습니다.');
 
 /** 주소에서 github_error 를 꺼내고, 그 칸을 뺀 주소를 돌려준다 (해시는 그대로). 없으면 code 가 null */
 export function takeGithubError(href: string): { code: string | null; clean: string } {
@@ -104,7 +105,7 @@ export function createAuth(o: AuthOptions) {
     inflight ??= (async () => {
       try {
         const res = await post("refresh");
-        if (!res.ok) { drop(state.user ? "로그인이 끝났습니다. 다시 로그인해 주세요." : null); return false; }
+        if (!res.ok) { drop(state.user ? t('로그인이 끝났습니다. 다시 로그인해 주세요.') : null); return false; }
         accept(await res.json() as TokenResponse);
         return true;
       } catch {
@@ -129,7 +130,7 @@ export function createAuth(o: AuthOptions) {
         try { b = await res.json() as typeof b; } catch { /* JSON 아님 */ }
         throw new AuthError(res.status, b.code ?? `HTTP_${res.status}`,
           b.code === "USER_DISABLED" ? USER_DISABLED_NOTICE
-            : res.status === 401 ? "이메일이나 비밀번호가 맞지 않습니다." : res.status === 429 ? "시도가 너무 많습니다. 잠시 뒤 다시 시도해 주세요." : (b.message ?? `로그인 실패 (HTTP ${res.status})`));
+            : res.status === 401 ? t('이메일이나 비밀번호가 맞지 않습니다.') : res.status === 429 ? t('시도가 너무 많습니다. 잠시 뒤 다시 시도해 주세요.') : (b.message ?? t('로그인 실패 (HTTP {0})', { 0: res.status })));
       }
       accept(await res.json() as TokenResponse);
     },

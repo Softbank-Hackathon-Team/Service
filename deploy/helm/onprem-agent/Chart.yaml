@@ -1,0 +1,6 @@
+apiVersion: v2
+name: onprem-agent
+description: 고객 온프레 k3s 설치 묶음 (W2). Agent(읽기·보고) + 회사 앱만 당기는 Argo CD 설정. 들어오는 포트 0
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,4 +1,6 @@
-import { Children, isValidElement, useState, type CSSProperties, type ReactNode } from 'react';
+import { Children, isValidElement, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { backAction } from '../../app/nav';
+import { t } from '../../lib/i18n';
 import { Icon, type IconName } from '../ui/Icon';
 import { SkeletonRows } from '../ui/Skeleton';
 import s from './tiles.module.css';
@@ -70,6 +72,26 @@ type FoldTileProps = {
   children: ReactNode;
 };
 
+// tokens.css --motion-fold 와 같은 값. 펼침이 끝난 뒤 위치를 잰다
+const FOLD_MS = 300;
+
+/**
+ * 연 카드가 스크롤 칸 아래로 잘리면 잘린 만큼만 올린다. 카드 머리줄이 칸 위로 넘어가지는 않게 한다.
+ * 스크롤 칸이 없으면(좁은 화면 쌓기) 문서 전체를 기준으로 한다.
+ */
+function revealInScroller(el: HTMLElement) {
+  let scroller: HTMLElement | null = el.parentElement;
+  while (scroller && !(scroller.scrollHeight > scroller.clientHeight && /(auto|scroll)/.test(getComputedStyle(scroller).overflowY))) {
+    scroller = scroller.parentElement;
+  }
+  const box = el.getBoundingClientRect();
+  const view = scroller ? scroller.getBoundingClientRect() : { top: 0, bottom: window.innerHeight };
+  const delta = Math.min(box.bottom - view.bottom, box.top - view.top);
+  if (delta <= 0) return;
+  const behavior: ScrollBehavior = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+  (scroller ?? window).scrollBy({ top: delta, behavior });
+}
+
 /**
  * 얇은 테두리의 접는 카드. 머리줄 오른쪽에 요약을 두어 접어도 상태가 보인다. 쌓아서 쓴다.
  * 열고 닫을 때 높이가 미끄러지듯 바뀐다. 내용은 처음 열 때 그리고, 닫아도 남겨 두어 닫히는 동안에도 보인다.
@@ -77,12 +99,15 @@ type FoldTileProps = {
 export function FoldTile({ title, summary, defaultOpen = true, children }: FoldTileProps) {
   const [open, setOpen] = useState(defaultOpen);
   const [drawn, setDrawn] = useState(defaultOpen);
+  const ref = useRef<HTMLElement>(null);
   const toggle = () => {
     setDrawn(true);
     setOpen(!open);
+    // 칸 아래쪽에서 연 카드는 열린 내용이 보이도록 칸을 조금 올린다 (펼침이 끝난 뒤)
+    if (!open) window.setTimeout(() => ref.current && revealInScroller(ref.current), FOLD_MS);
   };
   return (
-    <section className={s.fold} data-open={open}>
+    <section ref={ref} className={s.fold} data-open={open}>
       <button type="button" className={s.foldHead} aria-expanded={open} onClick={toggle}>
         <span className={s.foldTitle}>
           <span className="t-label-md">{title}</span>
@@ -108,18 +133,37 @@ type HeroProps = {
   tone: HeroTone;
   meta: string;
   step?: string;
+  /** 머리줄 오른쪽 끝에 두는 작은 버튼 (예: 계정 화면의 환경 추가하기) */
+  action?: ReactNode;
+  /**
+   * 머리줄 왼쪽 끝 (←). 비우면 앱 안 바로 앞 화면(없으면 윗 화면, 그것도 없으면 버튼 없음).
+   * 주소는 그대로 두고 화면 안에서 단계를 넘기는 곳(새 마이그레이션 · 환경 등록)은 한 단계 앞으로 가는 함수를 준다. false 면 두지 않는다
+   */
+  back?: false | (() => void);
   title: string;
   foot?: ReactNode;
   children?: ReactNode;
 };
 
 /** 화면의 주인공. 경고(stop)만 카드를 빨갛게 칠하고, 나머지는 머리줄의 글자와 원 색으로만 상태를 알린다. */
-export function Hero({ area = 'hero', tone, meta, step, title, foot, children }: HeroProps) {
+export function Hero({ area = 'hero', tone, meta, step, action, back, title, foot, children }: HeroProps) {
+  const onBack = back === false ? null : (back ?? backAction());
+  const metaText = <span className="t-label-md">{meta}</span>;
   return (
     <section className={`${s.hero} ${s[tone] ?? ''}`} style={areaStyle(area)}>
       <div className={s.heroMeta}>
-        <span className="t-label-md">{meta}</span>
+        {onBack ? (
+          <span className={s.heroMetaStart}>
+            <button type="button" className={s.heroBack} aria-label={t('뒤로')} title={t('뒤로')} onClick={onBack}>
+              <Icon name="arrow-left" size={20} />
+            </button>
+            {metaText}
+          </span>
+        ) : (
+          metaText
+        )}
         {step && <span className={`${s.heroStep} t-label-md`}>{step}</span>}
+        {action}
       </div>
       <div className={s.heroContent}>
         <h2 className={`${s.heroTitle} t-display`}>{title}</h2>

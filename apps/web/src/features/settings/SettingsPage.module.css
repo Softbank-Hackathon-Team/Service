@@ -1,0 +1,182 @@
+/* 계정 화면 큰 카드 안의 벤더 카드 묶음. 큰 카드 남은 높이를 채우고 그 안에서 스크롤한다.
+   스크롤은 바깥 칸이 맡는다. 그리드가 스스로 높이가 정해진 스크롤 칸이면 줄이 내용만큼 늘지 못하고 카드 밖으로 넘친다 */
+.gridScroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--space-12);
+  padding-bottom: var(--space-8);
+}
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+  min-width: 0;
+  min-height: 180px;
+  padding: var(--space-16) var(--space-20);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-inner);
+  background: var(--color-bg-surface);
+  color: var(--color-fg-primary);
+  text-align: left;
+}
+.cardHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+}
+.cardTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.envList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
+}
+.envLine {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-12);
+  border-top: 1px solid var(--color-border-default);
+}
+.envLine:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+.envName {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.envName:hover {
+  text-decoration: underline;
+}
+.borrowRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+  min-height: 22px;
+}
+/* 남은 분 · 곧 만료 · 갱신 버튼을 한 칸에 겹쳐 두고, 보이는 하나만 흐리게 바꿔 낸다 */
+.swap {
+  display: grid;
+  justify-items: end;
+  align-items: center;
+}
+.swap > * {
+  grid-area: 1 / 1;
+  transition:
+    opacity var(--motion-fold) var(--ease-standard),
+    transform var(--motion-fold) var(--ease-standard),
+    visibility 0s;
+}
+.swap > [data-shown='false'] {
+  opacity: 0;
+  transform: scale(0.9);
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity var(--motion-fade) var(--ease-standard),
+    transform var(--motion-fade) var(--ease-standard),
+    visibility 0s linear var(--motion-fade);
+}
+@media (prefers-reduced-motion: reduce) {
+  .swap > *,
+  .swap > [data-shown='false'] {
+    transition: none;
+  }
+}
+/* 곧 만료: 대시보드 "검토 필요" 와 같은 작은 회색 꼬리표 */
+.soon {
+  padding: 0 var(--space-8);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-subtle);
+  color: var(--color-fg-secondary);
+  line-height: 20px;
+  white-space: nowrap;
+}
+.refresh {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 2px var(--space-8);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-subtle);
+  color: var(--color-fg-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+/* 꺼진 모습은 글자색으로만 낸다. 투명도는 .swap 이 바꿔 내는 데 쓴다 */
+.refresh:disabled {
+  color: var(--color-fg-tertiary);
+  cursor: not-allowed;
+}
+/* 환경 추가하기: 큰 카드 머리줄 오른쪽 끝. 크기·바탕은 옆 화면 카드의 고르기 버튼(OptionPill)과 같고, 색 없이 중립.
+   (+) 원은 카드 바탕색(라이트에서 흰색), + 는 글자와 같은 색 */
+.addBadge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-8);
+  height: var(--size-control-m);
+  padding: 0 var(--space-20) 0 6px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-subtle);
+  color: var(--color-fg-primary);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 160ms ease;
+}
+.addBadge:hover {
+  background: var(--color-bg-selected);
+}
+.addDot {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-surface);
+  color: var(--color-fg-primary);
+  transition: transform var(--motion-fade) var(--ease-standard);
+}
+.addBadge:hover .addDot {
+  transform: rotate(90deg);
+}
+@media (prefers-reduced-motion: reduce) {
+  .addDot {
+    transition: none;
+  }
+}
+/* 연결을 마친 환경이 하나도 없을 때 */
+.empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding-top: var(--space-8);
+}
+.options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+}

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { Icon, type IconName } from './Icon';
 import s from './controls.module.css';
+import { t } from '../../lib/i18n';
 
 type ActionPillProps = {
   label: string;
@@ -64,7 +65,7 @@ export type NavItem = { id: string; label: string };
 /** 상단 진입점. 사이드바 대신 한 줄로 둔다. */
 export function NavPills({ items, current, onSelect }: { items: NavItem[]; current: string | null; onSelect: (id: string) => void }) {
   return (
-    <nav className={s.nav} aria-label="주요 화면">
+    <nav className={s.nav} aria-label={t('주요 화면')}>
       {items.map((item) => (
         <button
           key={item.id}
@@ -86,7 +87,7 @@ export function Badge({ tone = 'neutral', children }: { tone?: BadgeTone; childr
   return <span className={`${s.badge} ${s[`badge-${tone}`]} t-label-sm`}>{children}</span>;
 }
 
-export function LiveIndicator({ label = '실시간' }: { label?: string }) {
+export function LiveIndicator({ label = t('실시간') }: { label?: string }) {
   return (
     <span className={`${s.live} t-caption`}>
       <span className={s.liveDot} aria-hidden="true" />

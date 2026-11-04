@@ -12,6 +12,7 @@ import { isApiDown } from '../../lib/http';
 import { CONN_LABEL, LABEL, PROVIDER_SHORT, progressPct } from '../../lib/status';
 import type { EnvironmentView, MigrationView } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
+import { isLinked } from '../environments/connect';
 import {
   bucketOf,
   bucketSignature,
@@ -29,19 +30,20 @@ import {
 } from './model';
 import { ShellLayout } from '../shell/ShellLayout';
 import s from './DashboardPage.module.css';
+import { t } from '../../lib/i18n';
 
 const DASHBOARD: BentoLayout = { columns: ['fill', 'side'], areas: 'hero migrations' };
 
 const HEALTH: Record<Health, { label: string; tone: 'success' | 'warning' | 'neutral' }> = {
-  healthy: { label: '정상', tone: 'success' },
-  degraded: { label: '불안정', tone: 'warning' },
-  unknown: { label: '확인 불가', tone: 'neutral' },
+  healthy: { label: t('정상'), tone: 'success' },
+  degraded: { label: t('불안정'), tone: 'warning' },
+  unknown: { label: t('확인 불가'), tone: 'neutral' },
 };
 
-const BUCKETS: { id: MigrationBucket; label: string; defaultOpen: boolean }[] = [
-  { id: 'human', label: '사람 차례', defaultOpen: true },
-  { id: 'running', label: '진행 중', defaultOpen: true },
-  { id: 'done', label: '끝남', defaultOpen: false },
+// 검토를 기다리는 마이그레이션도 진행 중이다(사람 검토 때문에 멈춰 있을 뿐). 그래서 한 카드에 두고, 검토가 필요한 줄을 위에 둔다
+const CARDS: { id: 'active' | 'done'; label: string; buckets: MigrationBucket[]; defaultOpen: boolean }[] = [
+  { id: 'active', label: t('진행 중'), buckets: ['human', 'running'], defaultOpen: true },
+  { id: 'done', label: t('히스토리'), buckets: ['done'], defaultOpen: false },
 ];
 
 async function observe(env: EnvironmentView): Promise<EnvObservation> {
@@ -56,7 +58,7 @@ async function observe(env: EnvironmentView): Promise<EnvObservation> {
 function EnvRow({ env, seen }: { env: EnvironmentView; seen: EnvObservation | undefined }) {
   const connected = env.connectionStatus === 'connected';
   const problem = connected ? seen?.problem : connectionReasonText(env.failureReason);
-  const detail = !seen ? (connected ? '확인 중' : null) : seen.health === 'unknown' ? null : [`자원 ${seen.resources}개`, seen.region].filter(Boolean).join(' · ');
+  const detail = !seen ? (connected ? t('확인 중') : null) : seen.health === 'unknown' ? null : [t('자원 {0}개', { 0: seen.resources }), seen.region].filter(Boolean).join(' · ');
   return (
     <li>
       <button type="button" className={s.envRow} onClick={() => go(`environments/${env.id}`)}>
@@ -69,7 +71,7 @@ function EnvRow({ env, seen }: { env: EnvironmentView; seen: EnvObservation | un
         <span className={s.badges}>
           <Badge tone={connected ? 'neutral' : 'danger'}>{CONN_LABEL[env.connectionStatus]}</Badge>
           {connected && seen && <Badge tone={HEALTH[seen.health].tone}>{HEALTH[seen.health].label}</Badge>}
-          {seen?.mock && <Badge>모의</Badge>}
+          {seen?.mock && <Badge>{t('모의')}</Badge>}
         </span>
       </div>
       {detail && <p className="t-body-sm c-secondary">{detail}</p>}
@@ -79,20 +81,26 @@ function EnvRow({ env, seen }: { env: EnvironmentView; seen: EnvObservation | un
   );
 }
 
-export function MigrationRow({ migration, envName }: { migration: MigrationView; envName: (id: string) => string }) {
+/** reviewTag: 검토를 기다리는 줄 제목 옆에 작은 회색 "검토 필요" 표시 (진행 중과 섞어 보여 주는 대시보드용) */
+export function MigrationRow({ migration, envName, reviewTag = false }: { migration: MigrationView; envName: (id: string) => string; reviewTag?: boolean }) {
   const action = humanAction(migration.status);
-  const running = bucketOf(migration) === 'running';
+  // 검토를 기다리는 줄도 진행 중이라 진행 막대를 보인다. 어느 칸에서 멈췄는지 모르면(목록에 멈춘 칸이 없을 때) 0% 로 오해하지 않게 그리지 않는다
+  const pct = bucketOf(migration) !== 'done' ? progressPct(migration) : 0;
+  const running = pct > 0;
   return (
     <li style={{ viewTransitionName: `migration-${migration.id}` }}>
       <button type="button" className={s.migrationRow} onClick={() => go(`migrations/${migration.id}`)}>
         <span className={s.migrationText}>
-          <span className="t-label-md">{action ?? LABEL[migration.status]}</span>
+          <span className={s.titleRow}>
+            <span className="t-label-md">{action ?? LABEL[migration.status]}</span>
+            {reviewTag && bucketOf(migration) === 'human' && <span className={`${s.reviewTag} t-caption`}>{t('검토 필요')}</span>}
+          </span>
           <span className="t-caption c-tertiary">
             {envName(migration.sourceEnvId)} → {envName(migration.targetEnvId)}
           </span>
           {running && (
             <span className={s.progress} aria-hidden="true">
-              <span style={{ width: `${progressPct(migration)}%` }} />
+              <span style={{ width: `${pct}%` }} />
             </span>
           )}
         </span>
@@ -108,7 +116,8 @@ export function MigrationRow({ migration, envName }: { migration: MigrationView;
 export function DashboardPage() {
   const envs = usePoll(api.listEnvironments, 10_000, []);
   const migrations = usePoll(api.listMigrations, 3_000, [], { signal: anyMigration });
-  const list = realEnvs(envs.data ?? []);
+  // 등록을 마친 환경만 센다. 끝나지 않은 등록은 기억하지 않는다
+  const list = realEnvs(envs.data ?? []).filter(isLinked);
   const key = list.filter((env) => env.connectionStatus === 'connected').map((env) => env.id).join(',');
   const observed = usePoll(
     async () => {
@@ -145,18 +154,18 @@ export function DashboardPage() {
     <ShellLayout layout={DASHBOARD}>
       <Hero
         tone="run"
-        meta="현재 환경"
+        meta={t('현재 환경')}
         step={String(list.length)}
         title={
           loadingEnvs
-            ? '환경을\n확인하고 있습니다'
+            ? t('환경을\n확인하고 있습니다')
             : envs.error && !envs.data
-              ? '환경을\n읽지 못했습니다'
+              ? t('환경을\n읽지 못했습니다')
               : envHeadline(list, seen)
         }
       >
         {envs.error && !envs.data ? (
-          <BarPill label="다시 시도" icon="refresh" onClick={() => void envs.reload()} />
+          <BarPill label={t('다시 시도')} icon="refresh" onClick={() => void envs.reload()} />
         ) : (
           list.length > 0 && (
             <ul className={`${s.envList} scroll-fade`}>
@@ -169,31 +178,34 @@ export function DashboardPage() {
       </Hero>
       <Stack area="migrations">
         {migrations.error && !migrations.data ? (
-          <FoldTile title="이전 목록">
+          <FoldTile title={t('마이그레이션 목록')}>
             <div className={s.listError}>
-              <p className="t-body-md c-secondary">이전 목록을 읽지 못했습니다.</p>
-              <BarPill label="다시 시도" icon="refresh" onClick={() => void migrations.reload()} />
+              <p className="t-body-md c-secondary">{t('마이그레이션 목록을 읽지 못했습니다.')}</p>
+              <BarPill label={t('다시 시도')} icon="refresh" onClick={() => void migrations.reload()} />
             </div>
           </FoldTile>
         ) : (
-          BUCKETS.map(({ id, label, defaultOpen }) => (
-            <FoldTile key={id} title={label} summary={`${groups[id].length}건`} defaultOpen={defaultOpen}>
-              {groups[id].length > 0 ? (
-                <ul className={s.migrationList}>
-                  {groups[id].map((migration) => (
-                    <MigrationRow key={migration.id} migration={migration} envName={envName} />
-                  ))}
-                </ul>
-              ) : (
-                <p className={`${s.empty} t-body-sm c-tertiary`}>
-                  {(id === 'human' && migrations.data && note) || (id === 'running' ? '돌아가는 이전이 없습니다.' : '아직 없습니다.')}
-                </p>
-              )}
-            </FoldTile>
-          ))
+          CARDS.map(({ id, label, buckets, defaultOpen }) => {
+            const items = buckets.flatMap((bucket) => groups[bucket]);
+            return (
+              <FoldTile key={id} title={label} summary={t('{0}건', { 0: items.length })} defaultOpen={defaultOpen}>
+                {items.length > 0 ? (
+                  <ul className={s.migrationList}>
+                    {items.map((migration) => (
+                      <MigrationRow key={migration.id} migration={migration} envName={envName} reviewTag />
+                    ))}
+                  </ul>
+                ) : (
+                  <p className={`${s.empty} t-body-sm c-tertiary`}>
+                    {id === 'active' ? ((migrations.data && note) || t('돌아가는 마이그레이션이 없습니다.')) : t('아직 없습니다.')}
+                  </p>
+                )}
+              </FoldTile>
+            );
+          })
         )}
         <ActionRow>
-          <ActionPill label="새 이전 시작" icon="plus" onClick={() => go('migrations/new')} />
+          <ActionPill label={t('새 마이그레이션 시작')} icon="plus" onClick={() => go('migrations/new')} />
         </ActionRow>
       </Stack>
     </ShellLayout>

@@ -167,6 +167,11 @@ export const ChartValues = z.object({
   }).strict(),
   postgres: z.array(ChartPostgres).optional(),
   ingress: ChartIngress.optional(),
+  // W3: 온프레 바닥(할당량)을 git 으로. enabled 는 배포 때 채우는 자리표시(<env:onpremFloorViaGit>) → "1"/"0". 차트 floor.yaml
+  floor: z.object({
+    enabled: z.string(),
+    quota: z.object({ cpuMilli: z.number().int().positive().optional(), memoryMi: z.number().int().positive().optional() }).strict(),
+  }).strict().optional(),
   warnings: z.array(z.string()),
   // 배포 단계가 더하는 칸 (Builder 는 안 냄): 트래픽 기록·진행 기한
   traffic: z.object({ role: z.string(), weightPct: z.number(), approvedSteps: z.array(z.number()) }).strict().nullable().optional(),

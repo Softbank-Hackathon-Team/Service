@@ -13,6 +13,9 @@ ONPREM_REGISTRY_PUSH_HOST=${REGISTRY_PUSH}
 ONPREM_ARCH=$( [ "$(uname -m)" = "x86_64" ] && echo amd64 || echo arm64 )
 ONPREM_AGENT_KEY_ID=
 ONPREM_AGENT_HMAC_SECRET=
+# 이 k3d 데모에는 고객 Argo CD 와 Agent 가 없다: 바닥은 워커 Terraform 으로, 배포 확인은 예전처럼 커밋만 (W3·W4 기본 켬을 끈다)
+ONPREM_FLOOR_VIA_GIT=0
+AGENT_DEPLOY_CONFIRM=0
 # DB 이전 도착 = CNPG (packages/replication endpointFromEnv("REPL_TARGET"))
 REPL_TARGET_URL=postgres://postgres:<superuser-pw>@localhost:${DB_HOST_PORT}/${APP}?sslmode=require
 REPL_TARGET_PEER_URL=postgres://postgres:<superuser-pw>@host.docker.internal:${DB_HOST_PORT}/${APP}?sslmode=require

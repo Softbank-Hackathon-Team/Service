@@ -134,7 +134,7 @@ TLS 가짜 값은 묶음 지문과 비밀 이름에서 정해져서, 같은 입�
 | agent-worker | `SANDBOX_HELM_BIN`, `SANDBOX_KUBECTL_BIN` | 실행 파일 경로 | PATH 의 `helm`·`kubectl` | vCluster 차트 설치, 클러스터 밖 port-forward |
 | agent-worker | `SANDBOX_VCLUSTER_CHART` | `.tgz` 경로 | `/app/vendor/vcluster-0.37.6.tgz` | 차트 묶음. CRD 는 옆 폴더 `crds/` 에서 읽는다 |
 | agent-worker | `SANDBOX_TTL_SEC` | 정수, 300 이상 | 1800 | 호스트 `sbx-*` 네임스페이스 만료 (청소 기준) |
-| agent-worker | `SANDBOX_RUNTIME_CLASS` | RuntimeClass 이름 | 없음 | gVisor 스위치. 수정 고리만 쓴다. 리허설은 보지 않는다 |
+| agent-worker | `SANDBOX_RUNTIME_CLASS` | RuntimeClass 이름 | 없음 | gVisor 스위치. 리허설과 수정 고리가 같이 쓴다. 비면 노드 기본 런타임(runc) |
 | worker, agent-worker | `MOCK_SANDBOX` | `1` | 없음 | 시험 전용. 워커는 이미지를 복사하지 않고(`imagesMirrored: false`), agent-worker 는 클러스터 없이 정해진 결과를 낸다. 워커에만 켜면 진짜 agent-worker 가 `REHEARSAL_IMAGE_MIRROR_FAILED` 로 거부한다 |
 | agent-worker | `MOCK_SANDBOX_RESULT` | `pass` \| `fail` | `pass` | `MOCK_SANDBOX=1` 일 때만. `fail` 이면 `REHEARSAL_CRASHLOOP` |
 | api | 없음 | | | `GET /api/v1/migrations/:id/rehearsal` 는 늘 켜져 있다. 줄이 없으면 `run: null` |
@@ -167,7 +167,7 @@ TLS 가짜 값은 묶음 지문과 비밀 이름에서 정해져서, 같은 입�
 | agent-worker 권한이 넓어짐 | ClusterRole `sbx-provisioner`(네임스페이스 읽기·만들기·지우기, RoleBinding 만들기, `sbx-operator` 묶기만), `sbx-operator` 는 `sbx-*` 안 RoleBinding 으로만. `sbx-namespace-guard`·`sbx-rolebinding-guard` 가 이름·라벨·묶음 모양을 본다 | `agent-worker-rbac.yaml`, `sandbox-vap.yaml` |
 | 고객 자격·비밀 값이 샌드박스에 들어감 | 이미지는 워커가 미리 복사. 비밀은 같은 이름·키의 가짜 값. 관리형 DB 는 빈 Postgres 대체물 | `image-mirror.ts`, `substitute.ts`, `stand-in.ts` |
 | 샌드박스가 남음 | 끝나면 지우고, 못 지우면 만료 라벨로 5분마다 청소 | `run.ts`, `sweeper.ts` |
-| 커널 공유 | 리허설은 runc (노드와 같은 커널). 노드에는 그 순간 한 회사만. gVisor + `restricted` 는 수정 고리만 | contracts `sandboxIsolation` |
+| 커널 공유 | gVisor 를 켜면 리허설도 커널을 나눈다(`SANDBOX_RUNTIME_CLASS`). 끄면 runc (노드와 같은 커널). 노드에는 그 순간 한 회사만. `restricted` 는 수정 고리만 | contracts `sandboxIsolation` |
 
 ### 3-2. 남은 위험 (말로 밝힌다)
 
@@ -808,7 +808,10 @@ docker compose exec db psql -U platform_owner -d platform -c \
 - 범위: EKS·GKE·온프레 k3s 도착, 3티어 필수. ECS·Cloud Run·VM 은 `non_k8s` 로 건너뛴다 (contracts `RehearsalTarget`).
 - 호스트 권한은 agent-worker 결정 코드만 쥔다. 워커는 고객 자격을 쥐므로 샌드박스 권한이 없다 (플랫폼 차트 README "샌드박스").
 - vCluster 0.37.6 OSS, 가상 쿠버네티스 1.35, 차트 ClusterRole 끔 (`vcluster.ts`, `DECISION(team)` ADR-006).
-- 리허설은 runc, sandbox 노드에 한 번에 한 회사. 수정 고리는 gVisor + `restricted` (contracts `sandboxIsolation`).
+- 리허설과 수정 고리 모두 gVisor, sandbox 노드에 한 번에 한 회사. 수정 고리는 파드 보안도 `restricted` (contracts `sandboxIsolation`).
+  처음(11/04 오후)에는 리허설을 runc 로 정했다가 같은 날 gVisor 로 바꿨다. 고객 이미지를 실제로 돌리는 리허설이 커널을 같이 쓰면, 컨테이너 탈출 하나로 sandbox 노드 역할(계정 ECR 읽기)까지 닿기 때문이다.
+  대가는 도착(runc)과 런타임이 달라지는 것이다. gVisor 가 지원하지 않는 시스템 호출을 쓰는 앱은 리허설에서만 실패할 수 있어, 충실도 표 `runtime_isolation` 줄에 적는다.
+  켜는 곳은 셋이다: Terraform `sandbox_gvisor_enabled`, 플랫폼 차트 `sandbox.gvisor.enabled`, agent-worker `SANDBOX_RUNTIME_CLASS=gvisor`.
 - 리허설 파드 보안은 `baseline`. 온프레 Kyverno `platform-namespace-pod-security` 와 같은 수준이다 (`input.ts` `TARGET_POD_SECURITY`).
 - 호스트 가드는 ValidatingAdmissionPolicy. ECR 접두어는 `sandbox/<회사>/` (`sandbox-vap.yaml`, `pod-identity.tf`).
 - 충실도 표는 계약이고 콘솔에 보인다 (contracts `FidelityMatrix`).

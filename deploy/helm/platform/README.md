@@ -10,9 +10,10 @@
 | cloudflared ×2 (general 노드) | 바깥에서 들어오는 유일한 길. 터널이 밖으로 연결을 열어서 공개 포트·로드밸런서가 없다 |
 | OTel 게이트웨이 (이미지 값을 줄 때만, general 노드) | 고객 수집기의 지표를 지표 토큰으로 확인하고, 회사·환경 라벨을 덮어써서 Prometheus 로 넘긴다 |
 | 서비스 계정 `worker`·`api`·`agent-worker` + 워커 Argo CD 권한 | AWS 권한은 Pod Identity(Terraform)가 이름으로 묶는다. 워커는 `argocd` 의 `applications` get·list·patch. agent-worker 는 클라우드 권한이 없다 |
+| 앱 api·worker·agent-worker·web (`apps.image.registry`·`apps.image.tag` 를 줄 때만) | 이미지 `<registry>/svc-<이름>:<tag>`. Service 는 `api`(3000)·`web`(8080) 둘. worker 는 `cred` 노드 ×2, 나머지는 `general`. 아래 "앱 배포" 절 |
 | 샌드박스 호스트 쪽 (`sandbox.enabled`, 기본 끔) | agent-worker 가 `sbx-*` 네임스페이스에 vCluster 를 하나씩 만들고 지우는 권한, 호스트 가드 VAP 6개(테넌트별 ECR 이미지 경로 포함), StorageClass `sbx-standard`, gVisor RuntimeClass(`sandbox.gvisor.enabled` 일 때만). `sandbox.imageRegistry` 가 꼭 있어야 한다. 아래 "샌드박스" 절 |
 
-비밀값은 차트에 없다. 사람이 Secrets Manager 에 넣는다. 앱(api·worker·web) 배포는 이 차트에 아직 없다. 앱 Deployment 는 `envFrom: secretRef: <이름>-env` 로 여기서 만든 Secret 을 쓴다.
+비밀값은 차트에 없다. 사람이 Secrets Manager 에 넣는다. 앱 Deployment 는 `envFrom: secretRef: <이름>-env` 로 여기서 만든 Secret 을 쓴다 (web 은 비밀이 없어 envFrom 이 없다).
 
 ## 이름이 맞물리는 곳 (바꾸면 같이 바꾼다)
 
@@ -43,6 +44,9 @@ helm upgrade --install platform deploy/helm/platform -n platform --create-namesp
 helm upgrade --install platform deploy/helm/platform -n platform --create-namespace \
   --set sandbox.enabled=true \
   --set sandbox.imageRegistry=<계정>.dkr.ecr.<리전>.amazonaws.com/sandbox
+
+# 3-2. 앱 4개를 올릴 때 (registry·tag 둘 다 있어야 만든다). 샌드박스·게이트웨이 값을 쓰고 있으면 같은 --set 을 같이 준다
+helm upgrade --install platform deploy/helm/platform -n platform --create-namespace --set apps.image.registry=725072160743.dkr.ecr.ap-northeast-2.amazonaws.com --set apps.image.tag=<태그>
 ```
 
 `platform/app` JSON 에 넣을 키: `components.*.secretKeys` 에 적은 것 전부 (`DATABASE_URL`, `JWT_SECRET`, `PLATFORM_PRINCIPAL_ARN`, `ANTHROPIC_API_KEY`). 키를 늘리면 JSON 과 `secretKeys` 를 같이 고친다.
@@ -142,7 +146,7 @@ exporters:
 
 ## 아직 없는 것
 
-- 앱(api·worker·agent-worker·web) 배포. 서비스 계정 `worker`·`api`·`agent-worker`, 워커의 Argo CD Application 권한(`argocd` 네임스페이스 Role), agent-worker 샌드박스 권한은 있다
+- TODO(human): worker 의 비밀 아닌 설정(`GITOPS_REPO_URL`, `PROM_URL`, `TF_WORK_DIR` 등)을 차트로 넘기는 길. 지금 앱 Deployment 는 `<이름>-env` 비밀과 포트·`HOME` 만 준다. 없으면 배포 작업이 `GITOPS_NOT_CONFIGURED` 로 멈춘다
 - 고객 쪽 Collector 설치와 Ingress 지표(`svc_ingress_*`) 만들기. 게이트웨이는 받을 준비만 되어 있다
 - 지표 토큰을 콘솔 화면에서 받는 길. 지금은 API 만 있다
 - TODO(human): Collector 설정(`templates/otel-gateway.yaml`)을 실제 Collector 0.164.0 으로 돌려 보지 않았다. 첫 설치 때 파드 로그와 라벨 덮어쓰기를 확인한다
@@ -190,7 +194,7 @@ agent-worker 는 이 다섯이 다 맞는 `sbx-` 네임스페이스만 만들고
 | `sbx-namespace-guard` | namespaces CREATE·DELETE 는 요청자 agent-worker, UPDATE 는 요청자 누구든 `platform.svc/sandbox=true` 네임스페이스 | 만들기·지우기: `sbx-` 아닌 이름, 라벨 계약 위반. 고치기: `platform.svc/tenant` 값 바꾸기·지우기 |
 | `sbx-rolebinding-guard` | rolebindings CREATE·UPDATE, 요청자 agent-worker | `sbx-` 밖, `sbx-operator`→agent-worker 와 `Role/vc-<이름>`→SA `vc-<이름>` 말고 다른 묶음 |
 | `sbx-pod-guard` | pods, pods/ephemeralcontainers CREATE·UPDATE, `platform.svc/sandbox=true` | nodeSelector `pool=sandbox` 없음, 만들 때 nodeName, hostNetwork·hostPID·hostIPC, hostPath, hostPort, privileged, 테넌트 밖 플랫폼 계정 ECR 이미지 (아래), 동기화된 파드(`vcluster.loft.sh/managed-by`)의 `release=<그 값>` 과 `app=vcluster-snapshot` |
-| `sbx-runtimeclass-guard` | pods CREATE, `platform.svc/sandbox-purpose=remediation` | `runtimeClassName` 이 `sandbox.gvisor.runtimeClass` 가 아님. vCluster 제어판(`app=vcluster` 이면서 `vcluster.loft.sh/managed-by` 없음)만 뺀다 |
+| `sbx-runtimeclass-guard` | pods CREATE, `platform.svc/sandbox-purpose=remediation` (`sandbox.gvisor.enabled=true` 면 `rehearsal` 도) | `runtimeClassName` 이 `sandbox.gvisor.runtimeClass` 가 아님. vCluster 제어판(`app=vcluster` 이면서 `vcluster.loft.sh/managed-by` 없음)만 뺀다 |
 | `sbx-service-guard` | services CREATE·UPDATE, `platform.svc/sandbox=true` | ClusterIP 아닌 type, externalIPs |
 | `sbx-ingress-guard` | ingresses, gateways·httproutes·tlsroutes·grpcroutes, `platform.svc/sandbox=true` | 만들기 전부 |
 
@@ -214,13 +218,25 @@ vCluster 차트 NetworkPolicy `vc-cp-<릴리스>`(`release=<릴리스>` 파드)�
 - 동기화는 `app`·`tier` 같은 라벨을 호스트 파드에 그대로 옮긴다. 가상 파드의 `app=vcluster-snapshot` 은 호스트에 그대로 내려온다 → `sbx-pod-guard` 가 거부한다.
 - `release`, `vcluster.loft.sh/managed-by`, `vcluster.loft.sh/namespace` 키는 `vcluster.loft.sh/label-<릴리스>-x-<해시>` 로 바꿔 옮기고, `managed-by`·`namespace` 는 동기화가 제 값을 단다. 그래서 0.37.6 에서 가상 파드의 `release=<릴리스>` 는 호스트에 `release` 로 내려오지 않는다. `release` 규칙은 vCluster 가 이 번역을 바꿀 때를 위한 두 번째 겹이다. 보통 `release=foo` 는 된다.
 
+## 앱 배포 (`templates/app.yaml`)
+
+| 앱 | 노드 | 포트 | 검사 | 서비스 계정 |
+|---|---|---|---|---|
+| api ×2 | general | http 3000, metrics 9464 | 준비 `/readyz`(DB), 살아 있음 `/healthz` | `api` (Pod Identity), 토큰 안 붙임 |
+| worker ×2 | cred (toleration `dedicated=cred`) | metrics 9465 | 살아 있음 `/metrics` | `worker` (Pod Identity + Argo CD Role) |
+| agent-worker ×1 | general | 없음 | 살아 있음 `node healthcheck.mjs db` | `agent-worker` (클라우드 권한 없음, 샌드박스 권한) |
+| web ×2 | general | http 8080 | `/nginx-health` | 없음 (default, 토큰 안 붙임) |
+
+- 모두 비루트(node 1000, nginx 101), 뿌리 파일 시스템 읽기 전용, capabilities 전부 버림. 쓰기 자리는 `/tmp`(emptyDir), web 은 `/etc/nginx/conf.d` 도. node 앱은 `HOME=/tmp`.
+- web 은 `/api/*` 를 `http://api:3000` 으로 보낸다 (`API_UPSTREAM`).
+
 ## 검증 (클라우드 없이)
 
 ```
 helm lint deploy/helm/platform
 helm template platform deploy/helm/platform -n platform
 ```
-기대: lint 0 failed, SecretStore 1·ExternalSecret 5·Deployment 1(cloudflared)·ServiceAccount 3·Role 1·RoleBinding 1, 그리고 샌드박스 켬(`sandbox.enabled=true`)이면 ClusterRole 2·ClusterRoleBinding 1·ValidatingAdmissionPolicy 6·ValidatingAdmissionPolicyBinding 6·StorageClass 1. `sandbox.gvisor.enabled=true` 면 RuntimeClass 1 이 더 생긴다. 샌드박스 켬이면 두 명령 모두 `--set sandbox.enabled=true --set sandbox.imageRegistry=000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/sandbox` 같은 값이 있어야 한다. `--set otelGateway.image=x` 를 주면 Deployment 2·Service 1·ConfigMap 1 이 된다.
+기대: lint 0 failed, SecretStore 1·ExternalSecret 5·Deployment 1(cloudflared)·ServiceAccount 3·Role 1·RoleBinding 1, 그리고 샌드박스 켬(`sandbox.enabled=true`)이면 ClusterRole 2·ClusterRoleBinding 1·ValidatingAdmissionPolicy 6·ValidatingAdmissionPolicyBinding 6·StorageClass 1. `sandbox.gvisor.enabled=true` 면 RuntimeClass 1 이 더 생긴다. 샌드박스 켬이면 두 명령 모두 `--set sandbox.enabled=true --set sandbox.imageRegistry=000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/sandbox` 같은 값이 있어야 한다. `--set otelGateway.image=x` 를 주면 Deployment 2·Service 1·ConfigMap 1 이 된다. `--set apps.image.registry=x --set apps.image.tag=y` 를 주면 Deployment 4(api·worker·agent-worker·web)·Service 2(api·web) 가 더 생긴다.
 
 세 벌 렌더 + kubeconform + 개수 확인 + `sandbox.imageRegistry` 없음·틀린 모양 거부는 `bash deploy/ci/check-platform.sh` 한 번이다 (CI `gitops` 작업).
 

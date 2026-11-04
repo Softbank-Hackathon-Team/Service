@@ -1,8 +1,8 @@
-import type { AppSpecV2, ComponentV2, TargetBuilder, TfOutputs, TfRootCall } from "@svc/contracts";
+import type { AppSpecV2, ComponentV2, EnvVarV2, TargetBuilder, TfOutputs, TfRootCall } from "@svc/contracts";
 import { actionsFor, type PermTable } from "../common/actions.js";
 import { appNamespace } from "../common/base.js";
 import { hash6 } from "../common/names.js";
-import { regionOf, tenantOf, type Target } from "../common/target.js";
+import { envRef, regionOf, tenantOf, type Target } from "../common/target.js";
 import { onpremAdapter, PERMS as V1_PERMS } from "../onprem/index.js";
 import { asV1Name, assertRenderable, compact, k8sResources, instancesOf, K8S_RENDER_CAPS, kindJson, postgresOf, refV2, secretNamesOf, workloadsOf } from "./shared.js";
 import { secretStoreName } from "./capability-checks.js";
@@ -34,7 +34,7 @@ export function resourceTypesV2(spec: AppSpecV2): string[] {
 
 // CNPG Cluster 이름 = <앱>-<id> (id 가 "db" 면 v1 <앱>-db 그대로). 접속 서비스 = <cluster>-rw, 비밀 = <cluster>-app
 // VTA1: 50자 넘으면 앞 43자 + 해시6 (CNPG Pod 이름 접미어·접속 서비스 -rw 로 63자를 안 넘게). 짧으면 v1 이름 그대로
-const cnpgName = (spec: AppSpecV2, id: string) => {
+export const cnpgName = (spec: AppSpecV2, id: string) => {
   const base = `${spec.app.name}-${id}`;
   return base.length <= 50 ? base : `${base.slice(0, 43).replace(/-+$/, "")}-${hash6(spec.app.name, id)}`;
 };
@@ -47,7 +47,12 @@ const cnpgLink = (spec: AppSpecV2) => (c: ComponentV2, output: string): string |
   return ({ host, reader: `${cnpgName(spec, c.id)}-ro`, port: "5432", user, url: `postgresql://${user}@${host}:5432/${db}` } as Record<string, string>)[output];
 };
 
-// 할당량 = Σ(요청량 × 최대 레플리카 × 2) + DB 몫 (v1 과 같은 규칙). 요청량이 하나라도 없으면 null (지어내지 않음)
+// 할당량 = Σ(요청량 × 최대 레플리카 × 2) + DB 몫. 요청량이 하나라도 없으면 null (지어내지 않음)
+//   DB 몫 = DB 마다 인스턴스 수 × 2 × (CNPG 에 그리는 요청량). 요청량은 아래 workloadValues 의 CNPG resources 와 같은 값
+//   (IR compute, 없으면 차트 기본 500m·1Gi). 예전 고정값(DB 하나 1000m·2048Mi)은 기본값일 때와 같고,
+//   출발 DB 크기를 가져오면(예: 2000m) initdb 파드가 "exceeded quota" 로 못 떴다 (2026-11-04 VM 실측)
+const CNPG_DEFAULT_CPU_MILLI = 500, CNPG_DEFAULT_MEM_MIB = 1024;   // gitops/charts/app/templates/cnpg.yaml 기본값과 같게
+const cnpgInstances = (c: ReturnType<typeof postgresOf>[number]) => 1 + (c.props.ha ? 1 : 0) + (c.props.readReplicas ?? 0);
 function quota(spec: AppSpecV2): { cpu: number | null; mem: number | null } {
   let cpu: number | null = 0, mem: number | null = 0;
   for (const w of workloadsOf(spec)) {
@@ -56,8 +61,26 @@ function quota(spec: AppSpecV2): { cpu: number | null; mem: number | null } {
     cpu = cpu === null || rq?.cpuMilli == null ? null : cpu + rq.cpuMilli * n * 2;
     mem = mem === null || rq?.memMiB == null ? null : mem + rq.memMiB * n * 2;
   }
-  const db = postgresOf(spec).length;
-  return { cpu: cpu === null ? null : cpu + db * 1000, mem: mem === null ? null : mem + db * 2048 };
+  let dbCpu = 0, dbMem = 0;
+  for (const c of postgresOf(spec)) {
+    const n = cnpgInstances(c) * 2;
+    dbCpu += (c.props.compute?.cpuMilli ?? CNPG_DEFAULT_CPU_MILLI) * n;
+    dbMem += (c.props.compute?.memMiB ?? CNPG_DEFAULT_MEM_MIB) * n;
+  }
+  return { cpu: cpu === null ? null : cpu + dbCpu, mem: mem === null ? null : mem + dbMem };
+}
+
+// W3: 온프레 바닥(할당량)을 git 으로. 차트 floor.yaml 이 floor.enabled == "1" 일 때만 ResourceQuota(platform-quota, Terraform 과 같은 이름·값)를 그린다
+//   켜기는 배포 때 워커 envFacts 의 onpremFloorViaGit (ONPREM_FLOOR_VIA_GIT=1). 켜면 apply 가 온프레 Terraform 을 건너뛴다 (워커가 클러스터에 안 들어감)
+//   네임스페이스는 고객 Argo CD 가 CreateNamespace + managed-by=platform 라벨로 만든다 (deploy/helm/onprem-agent ApplicationSet)
+//   NetworkPolicy 는 더하지 않는다: 지금 규칙은 "정책 0개 = 출발처럼 열림"(toTerraformV2 netpol_json) 이고, 기본 차단은 팀 결정이다
+function floorValues(spec: AppSpecV2) {
+  const q = quota(spec);
+  return { enabled: envRef("onpremFloorViaGit"), quota: compact({ cpuMilli: q.cpu ?? undefined, memoryMi: q.mem ?? undefined }) };
+}
+// W3: 바닥을 git 으로 할 때 apply 가 Terraform 대신 내는 출력. onprem/root 모듈 출력과 같은 모양 (맵 출력은 JSON 글자, plan-v2 flattenTfOutputsV2)
+export function onpremGitFloorOutputs(spec: AppSpecV2): TfOutputs {
+  return { link_outputs: "{}", namespace: appNamespace(asV1Name(spec)) };
 }
 
 export const onpremTarget: TargetBuilder = {
@@ -88,7 +111,44 @@ export const onpremTarget: TargetBuilder = {
   },
   toWorkloadValues(spec: AppSpecV2, out: TfOutputs, t: Target) {
     assertRenderable(spec, CAPS);
-    return buildWorkloadValues(spec, out, t, {
+    return { ...workloadValues(spec, out, t), floor: floorValues(spec) };
+  },
+};
+
+// 온프레 DB 비밀번호 (온프레 영역 결정 2026-11-04): 온프레 도착에서는 앱이 CNPG 가 만든 <cluster>-app 비밀(키 password)로 DB 에 붙는다.
+//   출발 비밀(예: shop-db-app)을 저장소에서 가져오면 그 값과 CNPG 가 만든 비밀번호가 달라 앱이 인증에 실패했다 (2026-11-04 VM 실측: 두 값 다름).
+//   클라우드 도착의 같은 문제는 cloud.ts TODO(human) 그대로 둔다.
+// DRAFT(ai): 바꿔 끼우는 줄 = 이 워크로드가 connect 링크로 이어진 postgres 가 정확히 하나이고, env 이름이 DB 비밀번호 꼴이며 fromSecret 인 줄.
+//   그 밖(연결 주소 통째 비밀, envFrom 비밀, postgres 가 둘 이상)은 바꾸지 않고 계획서 경고로 사람에게 넘긴다
+const DB_PASSWORD_ENV = /^(DB|DATABASE|POSTGRES|POSTGRESQL|PG)_?(PASS|PASSWORD|PASSWD)$/i;
+const DB_URL_ENV = /^(DB|DATABASE|POSTGRES|POSTGRESQL|PG)_?(URL|URI|DSN)$/i;
+export function useCnpgPasswords(spec: AppSpecV2): { spec: AppSpecV2; notes: string[]; cnpgSecrets: string[] } {
+  const pgs = postgresOf(spec);
+  const pgIds = new Set(pgs.map((c) => c.id));
+  const cnpgSecrets = pgs.map((c) => `${cnpgName(spec, c.id)}-app`);
+  const notes: string[] = [];
+  const dbsOf = (id: string) => [...new Set(spec.links.filter((l) => l.from === id && typeof l.to === "string" && pgIds.has(l.to)).map((l) => l.to as string))];
+  const components = spec.components.map((c) => {
+    if (c.kind !== "service" && c.kind !== "job") return c;
+    const dbs = dbsOf(c.id);
+    const swap = (env: EnvVarV2[]): EnvVarV2[] => env.map((e) => {
+      if (!("fromSecret" in e)) return e;
+      if (DB_URL_ENV.test(e.name)) { notes.push(`온프레 DB 비밀번호: ${c.id} 의 ${e.name} 은 연결 주소 통째 비밀이라 바꾸지 않음 → CNPG 비밀(${cnpgSecrets.join(", ")})의 uri 로 바꿀지 사람이 확인`); return e; }
+      if (!DB_PASSWORD_ENV.test(e.name)) return e;
+      if (dbs.length !== 1) { notes.push(`온프레 DB 비밀번호: ${c.id} 의 ${e.name} 은 이어진 postgres 가 ${dbs.length}개라 어느 CNPG 비밀인지 못 정함 → 사람이 확인`); return e; }
+      return { name: e.name, fromSecret: { secret: `${cnpgName(spec, dbs[0]!)}-app`, key: "password" } };
+    });
+    const p = c.props as { env: EnvVarV2[]; sidecars?: Array<{ env: EnvVarV2[] }>; initContainers?: Array<{ env: EnvVarV2[] }> };
+    return { ...c, props: { ...c.props, env: swap(p.env),
+      ...(p.sidecars ? { sidecars: p.sidecars.map((x) => ({ ...x, env: swap(x.env) })) } : {}),
+      ...(p.initContainers ? { initContainers: p.initContainers.map((x) => ({ ...x, env: swap(x.env) })) } : {}) } } as ComponentV2;
+  });
+  return { spec: { ...spec, components }, notes: [...new Set(notes)].sort(), cnpgSecrets };
+}
+
+function workloadValues(spec0: AppSpecV2, out: TfOutputs, t: Target) {
+    const { spec: spec, notes, cnpgSecrets } = useCnpgPasswords(spec0);
+    const v = buildWorkloadValues(spec, out, t, {
       imageRef: (src) => onpremAdapter.imageRef(src, t),
       secretStore: { kind: "ClusterSecretStore", name: secretStoreName("onprem", out) },   // CL-4: env 출력 secret_store_name 이 있으면 그것
       remoteKey: (s) => `${spec.app.name}-${s.toLowerCase().replace(/_/g, "-")}`,
@@ -96,7 +156,7 @@ export const onpremTarget: TargetBuilder = {
       postgres: postgresOf(spec).map((c) => compact({
         id: c.id, mode: "cnpg" as const, name: cnpgName(spec, c.id),
         // DRAFT(ai): instances = 주 1 + (ha 면 대기 1) + 읽기 복제본. 아무것도 없으면 1 (v1 과 같음)
-        instances: 1 + (c.props.ha ? 1 : 0) + (c.props.readReplicas ?? 0),
+        instances: cnpgInstances(c),
         majorVersion: c.props.majorVersion, storageGb: c.props.storageGb,
         ...(c.props.walStorageGb ? { walStorageGb: c.props.walStorageGb } : {}),   // DM-8 → 차트 cnpg.yaml walStorage (CNPG-V2)
         // CNPG-V2 DRAFT(ai): IR compute → CNPG resources (요청=한도, 출발 DB 크기 그대로). 없으면 차트 기본(500m·1Gi, 할당량 DB 몫 안)
@@ -110,5 +170,10 @@ export const onpremTarget: TargetBuilder = {
       })),
       link: cnpgLink(spec),
     });
-  },
-};
+    // CNPG 가 만드는 비밀은 저장소에서 가져오지 않는다 (ExternalSecret 이 같은 이름을 덮어쓰면 CNPG 와 다툰다)
+    const vv = v as typeof v & { externalSecrets?: { secrets: Array<{ name: string }> }; warnings?: string[] };
+    const es = vv.externalSecrets;
+    return { ...vv, ...(es ? { externalSecrets: { ...es, secrets: es.secrets.filter((x) => !cnpgSecrets.includes(x.name)) } } : {}),
+      warnings: [...new Set([...(vv.warnings ?? []), ...notes])].sort() };
+}
+

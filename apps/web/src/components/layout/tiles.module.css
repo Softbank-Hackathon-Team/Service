@@ -157,6 +157,35 @@
   justify-content: space-between;
   color: var(--color-fg-secondary);
 }
+/* 머리줄 왼쪽: (←) 과 머리말. 버튼은 위아래를 줄 높이(20px)만큼만 차지해서, 있든 없든 제목 자리가 같다 */
+.heroMetaStart {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-12);
+  min-width: 0;
+}
+.heroBack {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: var(--size-control-m);
+  height: var(--size-control-m);
+  margin-block: calc((20px - var(--size-control-m)) / 2);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-subtle);
+  color: var(--color-fg-primary);
+  cursor: pointer;
+  transition: background-color 160ms ease;
+}
+.heroBack:hover {
+  background: var(--color-bg-selected);
+}
+.stop .heroBack {
+  background: var(--color-bg-surface);
+  color: var(--color-fg-tone-danger);
+}
 .stop {
   background: var(--color-bg-alert);
   color: var(--color-fg-on-alert);

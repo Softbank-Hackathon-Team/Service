@@ -1,5 +1,6 @@
 import { Icon } from './Icon';
 import s from './Checklist.module.css';
+import { t } from '../../lib/i18n';
 
 /** waiting 은 사람의 입력을 기다리는 칸이다. 기계가 도는 칸(active)과 달리 돌지 않는다. */
 export type ChecklistStatus = 'done' | 'active' | 'waiting' | 'pending' | 'paused' | 'failed';
@@ -11,12 +12,12 @@ export type ChecklistEntry = {
 };
 
 const STATUS_LABEL: Record<ChecklistStatus, string> = {
-  done: '끝남',
-  active: '진행 중',
-  waiting: '입력 기다림',
-  pending: '대기',
-  paused: '멈춤',
-  failed: '실패',
+  done: t('끝남'),
+  active: t('진행 중'),
+  waiting: t('입력 기다림'),
+  pending: t('대기'),
+  paused: t('멈춤'),
+  failed: t('실패'),
 };
 
 function Marker({ status }: { status: ChecklistStatus }) {

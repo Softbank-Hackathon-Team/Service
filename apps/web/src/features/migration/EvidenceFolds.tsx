@@ -11,7 +11,9 @@ import type { MigrationStatus, MigrationView } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
 import { analysisCaption } from '../agent/model';
 import { judgementRows, leftoversOf, leftoverValue, trafficReportRows } from './model';
+import { timeoutStageText } from './rehearsal';
 import s from '../common/page.module.css';
+import { t } from '../../lib/i18n';
 
 type StopFoldProps = {
   migration: MigrationView;
@@ -36,7 +38,7 @@ export function StopFold({ migration, reason, into, hint = true, defaultOpen = t
   const evidence = timeline.data ? stopEvidence(timeline.data.items, into) : null;
   const rows = evidence?.judgement ? judgementRows(evidence.judgement, plan.data?.rollbackCriteria) : [];
   return (
-    <FoldTile title="멈춘 이유" summary={reason.label} defaultOpen={defaultOpen}>
+    <FoldTile title={t('멈춘 이유')} summary={reason.label} defaultOpen={defaultOpen}>
       {hint && <p className={`${s.note} t-body-sm c-secondary`}>{reason.hint}</p>}
       <ul className={s.rows}>
         {rows.map((row) => (
@@ -47,13 +49,19 @@ export function StopFold({ migration, reason, into, hint = true, defaultOpen = t
         ))}
         {evidence?.rule && (
           <li className={s.row}>
-            <span className="t-label-md">가드레일 규칙</span>
+            <span className="t-label-md">{t('가드레일 규칙')}</span>
             <CodeValue value={evidence.rule} className={s.rowValue} />
+          </li>
+        )}
+        {migration.failureCode === 'REHEARSAL_TIMEOUT' && timeoutStageText(evidence?.rehearsalStage) && (
+          <li className={s.row}>
+            <span className="t-label-md">{t('어디서 넘었나')}</span>
+            <span className={`${s.rowValue} t-caption c-secondary`}>{timeoutStageText(evidence?.rehearsalStage)}</span>
           </li>
         )}
         {migration.failureCode && (
           <li className={s.row}>
-            <span className="t-label-md">사유 코드</span>
+            <span className="t-label-md">{t('사유 코드')}</span>
             <CodeValue value={migration.failureCode} className={s.rowValue} />
           </li>
         )}
@@ -64,7 +72,7 @@ export function StopFold({ migration, reason, into, hint = true, defaultOpen = t
           <p className="t-body-sm">{analysis.cause}</p>
           {analysis.fix.length > 0 && (
             <div>
-              <p className="t-label-sm c-tertiary">고칠 것</p>
+              <p className="t-label-sm c-tertiary">{t('고칠 것')}</p>
               <ul className="t-body-sm c-secondary">
                 {analysis.fix.map((line) => <li key={line}>{line}</li>)}
               </ul>
@@ -72,7 +80,7 @@ export function StopFold({ migration, reason, into, hint = true, defaultOpen = t
           )}
           {analysis.evidence.length > 0 && (
             <div>
-              <p className="t-label-sm c-tertiary">근거</p>
+              <p className="t-label-sm c-tertiary">{t('근거')}</p>
               <ul className="t-body-sm c-secondary">
                 {analysis.evidence.map((line) => <li key={line}>{line}</li>)}
               </ul>
@@ -90,7 +98,7 @@ export function TrafficReportFold({ migration }: { migration: MigrationView }) {
   const traffic = report.data?.traffic ?? null;
   const rows = traffic ? trafficReportRows(traffic) : [];
   return (
-    <FoldTile title="전환 판정" summary={traffic ? (traffic.bad > 0 ? `나쁨 ${traffic.bad}번` : `판정 ${traffic.judgements}번 · 나쁨 없음`) : '아직 없음'} defaultOpen={false}>
+    <FoldTile title={t('전환 판정')} summary={traffic ? (traffic.bad > 0 ? t('나쁨 {0}번', { 0: traffic.bad }) : t('판정 {0}번 · 나쁨 없음', { 0: traffic.judgements })) : t('아직 없음')} defaultOpen={false}>
       {rows.length > 0 ? (
         <ul className={s.rows}>
           {rows.map((row) => (
@@ -101,7 +109,7 @@ export function TrafficReportFold({ migration }: { migration: MigrationView }) {
           ))}
         </ul>
       ) : (
-        <p className={`${s.note} t-body-sm c-tertiary`}>{report.loading ? '리포트를 읽고 있습니다.' : '트래픽을 옮긴 기록이 없습니다.'}</p>
+        <p className={`${s.note} t-body-sm c-tertiary`}>{report.loading ? t('리포트를 읽고 있습니다.') : t('트래픽을 옮긴 기록이 없습니다.')}</p>
       )}
     </FoldTile>
   );
@@ -121,7 +129,7 @@ type LeftoverFoldProps = {
 export function LeftoverFold({ migration, title, defaultOpen = true, children }: LeftoverFoldProps) {
   const inventory = usePoll(() => or404(api.envInventory(migration.targetEnvId)), null, [migration.targetEnvId, migration.version]);
   const left = inventory.data ? leftoversOf(inventory.data.apps, migration.id) : null;
-  const summary = inventory.loading ? '확인 중' : left === null ? '모름' : left.length > 0 ? `남은 자원 ${left.length}개` : '남은 자원 없음';
+  const summary = inventory.loading ? t('확인 중') : left === null ? t('모름') : left.length > 0 ? t('남은 자원 {0}개', { 0: left.length }) : t('남은 자원 없음');
   return (
     <FoldTile title={title} summary={summary} defaultOpen={defaultOpen}>
       {left && left.length > 0 ? (
@@ -134,11 +142,11 @@ export function LeftoverFold({ migration, title, defaultOpen = true, children }:
               </li>
             ))}
           </ul>
-          <p className={`${s.note} t-caption c-tertiary`}>이전 상태와 감사 기록으로 낸 목록입니다. 클라우드에서 직접 센 값은 아닙니다.</p>
+          <p className={`${s.note} t-caption c-tertiary`}>{t('마이그레이션 상태와 감사 기록으로 낸 목록입니다. 클라우드에서 직접 센 값은 아닙니다.')}</p>
         </>
       ) : (
         <p className={`${s.note} t-body-sm c-secondary`}>
-          {inventory.loading ? '도착 환경을 읽고 있습니다.' : left === null ? '도착 환경 재고에서 이 이전을 찾지 못했습니다.' : '서버 기록으로는 도착에 남은 자원이 없습니다.'}
+          {inventory.loading ? t('도착 환경을 읽고 있습니다.') : left === null ? t('도착 환경 재고에서 이 마이그레이션을 찾지 못했습니다.') : t('서버 기록으로는 도착에 남은 자원이 없습니다.')}
         </p>
       )}
       {children}

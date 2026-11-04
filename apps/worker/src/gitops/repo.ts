@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rmdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -159,7 +159,12 @@ export class GitopsRepo {
   // 계약 3절 1~7번. values.yaml은 JSON으로 쓴다 (JSON은 그대로 YAML이라 helm·검증 도구가 읽는다)
   commitBundle(kind: "deploy" | "traffic", b: BundleRef, values: HelmValues, plan: PlanFile, title: string, opts: CommitOpts = {}): Promise<CommitResult> {
     return serial(async () => {
-      const { remote, rel, written } = await this.writeAndRender(b, values, plan, opts.gke);
+      // 렌더·검사가 실패하면 쓴 파일을 되돌린다. 안 그러면 커밋 안 된 묶음이 작업 복사본에 남고,
+      //   validate 는 디스크의 모든 회사를 보므로 같은 워커의 다음 배포(다른 회사 포함)가 전부 같은 이유로 실패한다 (2026-11-04 재현)
+      const { remote, rel, written } = await this.writeAndRender(b, values, plan, opts.gke).catch(async (e: unknown) => {
+        await this.revert(b).catch(() => undefined);
+        throw e;
+      });
       if (opts.expectBundleSha !== undefined && written.bundleSha256 !== opts.expectBundleSha) {
         await this.revert(b);
         throw new GitopsError("REHEARSAL_BUNDLE_MISMATCH",
@@ -169,7 +174,13 @@ export class GitopsRepo {
       let changed = true;
       try { await this.git("diff", "--cached", "--quiet"); changed = false; } catch { /* 바뀐 게 있다 */ }
       if (changed) await this.git("commit", "-q", "-m", commitMessage(kind, b, written, title));
-      if (remote) await this.pushWithRetry();
+      // push 가 끝내 실패하면 로컬 커밋을 걷어 원격과 같게 돌린다. 남기면 다음 회사 배포의 push 에 실려 멈춘 묶음이 몰래 올라가고,
+      //   그 사이 원격이 앞서면 pull --ff-only 가 깨져 이 워커의 모든 배포가 막힌다 (2026-11-04 재현). 재개하면 다시 렌더·커밋한다
+      if (remote) await this.pushWithRetry().catch(async (e: unknown) => {
+        await this.git("reset", "-q", "--hard", `origin/${this.cfg.branch}`).catch(() => undefined);
+        await this.revert(b).catch(() => undefined);
+        throw e;
+      });
       const commit = await this.git("rev-parse", "HEAD");
       return { commit, bundleSha256: written.bundleSha256, resources: await this.resources(b), changed };
     });
@@ -200,7 +211,9 @@ export class GitopsRepo {
     await mkdir(abs, { recursive: true });
     await writeFile(join(abs, "values.yaml"), JSON.stringify(values, null, 2) + "\n");
     await writeFile(join(abs, "plan.json"), JSON.stringify(plan, null, 2) + "\n");
-    if (plan.target.cluster) await this.ensureFence(b.tenant, plan.target.cluster);
+    // 온프레(agent-pull)는 목적지 클러스터가 없지만(null) gitops validate 는 묶음이 있는 회사마다 울타리 파일을 요구한다
+    //   → 없을 때만 목적지 없는 울타리를 만든다 (안 그러면 온프레만 쓰는 회사의 첫 배포가 GITOPS_VALIDATE_FAILED)
+    await this.ensureFence(b.tenant, plan.target.cluster);
     if (gke) await this.writeGkeSecret(b.tenant, gke, plan.target.namespace);
     await this.tool("render.mjs", rel);
     await this.tool("validate.mjs");
@@ -214,15 +227,22 @@ export class GitopsRepo {
       if (await this.git("ls-tree", "-r", "--name-only", "HEAD", "--", p).catch(() => "")) await this.git("checkout", "-q", "HEAD", "--", p);
     }
     await this.git("clean", "-fdq", "--", ...paths);
+    // git 은 빈 폴더를 안 지운다. 첫 배포가 남긴 tenants/<회사>/apps/<앱>/ 빈 폴더가 있으면 validate 가 그 회사를 세고
+    //   "울타리 없다"로 같은 워커의 다음 배포를 막는다 → 묶음 위쪽 빈 폴더를 회사 폴더까지 지운다 (비어 있지 않으면 rmdir 이 실패하고 그대로 둔다)
+    for (let d = dirname(bundlePath(b)); d.startsWith(`tenants/${b.tenant}`); d = dirname(d)) {
+      await rmdir(join(this.cfg.dir, d)).catch(() => undefined);
+    }
   }
 
   // 울타리가 없으면 만들고, 이 클러스터가 목적지에 없으면 더한다. 사람이 YAML로 쓴 울타리는 건드리지 않는다
-  private async ensureFence(tenant: string, cluster: string) {
+  //   cluster = null (온프레 agent-pull): 울타리가 있으면 그대로, 없으면 목적지 없이 만든다
+  private async ensureFence(tenant: string, cluster: string | null) {
     const p = join(this.cfg.dir, "tenants", tenant, "argocd", "appproject.yaml");
     const text = await readFile(p, "utf8").catch(() => null);
     const root = await readFile(join(this.cfg.dir, "platform", "project-platform-root.yaml"), "utf8");
     const repoUrl = root.match(/sourceRepos:\s*\n\s*- (\S+)/)?.[1] ?? this.cfg.url ?? "";
     let clusters: string[] = [];
+    if (text !== null && cluster === null) return;
     if (text !== null) {
       let doc: { spec?: { destinations?: Array<{ name: string; namespace?: string }> } };
       try { doc = JSON.parse(text); } catch {
@@ -232,10 +252,10 @@ export class GitopsRepo {
       clusters = (doc.spec?.destinations ?? []).map((d) => d.name);
       // Z66: 옛 구역 규칙(<회사>-*)으로 만든 울타리는 클러스터가 이미 있어도 app-* 로 다시 쓴다 (안 그러면 validate 가 막는다)
       const current = (doc.spec?.destinations ?? []).every((d) => d.namespace === `${APP_NS_PREFIX}*`);
-      if (clusters.includes(cluster) && current) return;
+      if (cluster !== null && clusters.includes(cluster) && current) return;
     }
     await mkdir(dirname(p), { recursive: true });
-    await writeFile(p, JSON.stringify(fenceDoc(tenant, repoUrl, [...clusters, cluster]), null, 2) + "\n");
+    await writeFile(p, JSON.stringify(fenceDoc(tenant, repoUrl, cluster === null ? clusters : [...clusters, cluster]), null, 2) + "\n");
   }
 
   // 같은 회사의 다른 앱 구역은 지우지 않고 더한다

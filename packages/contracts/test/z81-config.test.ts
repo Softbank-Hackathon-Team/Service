@@ -90,7 +90,7 @@ test("리허설 설정 (worker): 정상 값 통과 / 틀린 값은 이름: 이�
   assert.deepEqual(configProblems("worker", { ...base, SANDBOX_REHEARSAL: "off" }), []);
 });
 
-test("샌드박스 설정 (agent-worker): vcluster·gVisor 이름·만료·차트 / RuntimeClass 없이도 통과 (리허설은 baseline 이라 묶지 않음)", () => {
+test("샌드박스 설정 (agent-worker): vcluster·gVisor 이름·만료·차트 / RuntimeClass 없이도 통과 (gVisor 없는 로컬 kind 는 노드 기본 런타임)", () => {
   const base = { DATABASE_URL: "postgres://u@h/d" };
   assert.deepEqual(configProblems("agent-worker", { ...base, SANDBOX_MODE: "vcluster" }), []);
   assert.deepEqual(configProblems("agent-worker", { ...base, SANDBOX_MODE: "vcluster", SANDBOX_RUNTIME_CLASS: "gvisor", SANDBOX_TTL_SEC: "1800",

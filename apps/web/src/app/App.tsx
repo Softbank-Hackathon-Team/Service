@@ -10,10 +10,10 @@ import { LoginPage } from '../features/login/LoginPage';
 import { MigrationPage } from '../features/migration/MigrationPage';
 import { MigrationsPage } from '../features/migration/MigrationsPage';
 import { NewMigrationPage } from '../features/migration/NewMigrationPage';
-import { SecurityPage } from '../features/security/SecurityPage';
 import { SettingsPage } from '../features/settings/SettingsPage';
 import { auth } from '../lib/api';
 import { live } from '../lib/live';
+import { adoptUserPrefs } from '../lib/prefs';
 import type { AuthState } from '../lib/auth';
 import { go, parseRoute } from './routes';
 import { withTransition } from './transition';
@@ -44,6 +44,12 @@ export function App() {
     return () => window.removeEventListener('hashchange', onHashChange);
   }, []);
 
+  // 로그인한 사람의 화면 설정(테마·언어)을 가져온다. 언어가 지금과 다르면 글자를 새로 고르려고 다시 읽는다
+  const userId = state.user?.id ?? null;
+  useEffect(() => {
+    if (userId && adoptUserPrefs(userId)) window.location.reload();
+  }, [userId]);
+
   const view = viewOf(state);
   // 화면 신호(SSE)는 콘솔에 있는 동안만 붙여 둔다. 로그아웃하면 끊는다
   useEffect(() => {
@@ -61,8 +67,6 @@ export function App() {
       return <DashboardPage />;
     case 'environments':
       return 'view' in route ? <ConnectPage key={route.id ?? 'new'} id={route.id} /> : <EnvironmentsPage id={route.id} />;
-    case 'security':
-      return <SecurityPage id={route.id} />;
     case 'audit':
       return <AuditPage id={route.id} />;
     case 'agent':

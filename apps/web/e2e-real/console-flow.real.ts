@@ -18,7 +18,7 @@ const WORKER_MS = 10 * 60_000;
 const SCREEN = {
   spec: /확인하고 확정해 주세요|이 명세로 옮길까요/,
   specBlocked: /막힌 항목 \d+개를 풀어야 합니다/,
-  approve: /승인해 주세요|이대로만 실행합니다/,
+  approve: /승인해 주세요|이대로\s*바로 실행합니다/,
   approved: /승인했습니다/,
   running: /도착 환경을 만들고 있습니다|도착지에 띄우고 있습니다|DB를 따라잡고 있습니다|트래픽을 옮기고 있습니다|DB 쓰기 담당을 넘기고 있습니다/,
   shifting: /트래픽을 옮기고 있습니다/,
@@ -71,6 +71,9 @@ const NETWORK_ECHO = /^Failed to load resource: the server responded with a stat
 const flat = (text: string | null | undefined) => (text ?? "").replace(/\s+/g, " ").trim();
 const heroTitle = (page: Page) => page.getByRole("heading", { level: 2 });
 const envButton = (page: Page, name: string) => page.getByRole("button").filter({ has: page.getByText(name, { exact: true }) });
+// 새 이전의 출발 줄은 제목이 그 환경에서 서비스 중인 소프트웨어라, 환경 이름은 줄 이름(aria-label) 끝 " · <환경>" 에 있다
+const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const sourceButton = (page: Page, name: string) => page.getByRole("button", { name: new RegExp(` · ${escapeRe(name)}$`) });
 const progress = (page: Page) => page.locator("section").filter({ has: page.getByRole("heading", { name: "진행 단계", exact: true }) });
 const stepMark = (page: Page, label: string) => progress(page).getByRole("listitem").filter({ hasText: label }).getByRole("img");
 const trafficBar = (page: Page) => page.getByRole("img", { name: /^트래픽 / });
@@ -186,7 +189,7 @@ async function waitForScreen(page: Page, ev: Evidence, want: RegExp, ms: number,
 
 async function writeEvidence(info: TestInfo, ev: Evidence) {
   const lines = [
-    `이전 ${ev.migrationId ?? "(만들지 못함)"}`,
+    `마이그레이션 ${ev.migrationId ?? "(만들지 못함)"}`,
     `화면 차례: ${ev.screens.join(" → ")}`,
     `트래픽 막대 도착 비율: ${ev.trafficShown.join(" → ") || "못 봄"}`,
     `화면이 받은 traffic-shift: ${ev.trafficReceived.join(" → ") || "없음"}`,
@@ -209,7 +212,7 @@ async function writeEvidence(info: TestInfo, ev: Evidence) {
   await info.attach("evidence", { path: file, contentType: "application/json" });
 }
 
-test("새 콘솔 · 실제 서버: 로그인부터 이전 완료까지 화면으로 한 번", async ({ page }, info) => {
+test("새 콘솔 · 실제 서버: 로그인부터 마이그레이션 완료까지 화면으로 한 번", async ({ page }, info) => {
   const ev: Evidence = {
     migrationId: null, screens: [], trafficShown: [], trafficReceived: [], report: null,
     apiFailures: [], otherFailures: [], refreshOkAt: [], browser: [], sse: { connects: [], signals: [] }, notes: {},
@@ -254,23 +257,26 @@ test("새 콘솔 · 실제 서버: 로그인부터 이전 완료까지 화면으
       await expect(heroTitle(page)).toHaveText(/환경 \d+개/);
       await expect(envButton(page, SOURCE)).toBeVisible();
       await expect(envButton(page, TARGET)).toBeVisible();
-      await expect(page.getByRole("button", { name: /^사람 차례/ }), "이전 목록을 읽음").toBeVisible();
+      await expect(page.getByRole("button", { name: /^진행 중/ }), "마이그레이션 목록을 읽음").toBeVisible();
     });
 
-    await step("새 이전 · 출발 고르기", async () => {
-      await page.getByRole("button", { name: "새 이전 시작", exact: true }).click();
+    await step("새 마이그레이션 · 출발 고르기", async () => {
+      await page.getByRole("button", { name: "새 마이그레이션 시작", exact: true }).click();
       await expect(page).toHaveURL(/#\/migrations\/new$/);
       await expect(heroTitle(page)).toHaveText(/어디에서\s*옮길까요/);
-      await envButton(page, SOURCE).click();
+      await sourceButton(page, SOURCE).click();
     });
 
-    await step("새 이전 · 찾은 자원 확인", async () => {
-      await expect(heroTitle(page)).toHaveText(/어디로 옮길까요/);
-      await expect(page.getByRole("listitem").filter({ hasText: "찾은 자원 확인" }).getByRole("img")).toHaveAccessibleName("끝남", { timeout: HUMAN_MS });
+    // 출발 범위(sourceScope)는 자동으로 고른다. 찾은 자원을 다 읽으면 "옮길 서비스" 칸이 사람 입력을 기다린다
+    await step("새 마이그레이션 · 옮길 서비스", async () => {
+      await expect(heroTitle(page)).toHaveText(/무엇을\s*옮길까요/);
+      await expect(page.getByRole("listitem").filter({ hasText: "옮길 서비스" }).getByRole("img")).toHaveAccessibleName("입력 기다림", { timeout: HUMAN_MS });
       ev.notes["찾은 자원"] = flat(await page.locator('[style*="grid-area: found"]').innerText({ timeout: 5_000 }).catch(() => "칸을 못 찾음"));
+      await page.getByRole("button", { name: /^자동으로 고르기/ }).click();
     });
 
-    await step("새 이전 · 도착 고르기", async () => {
+    await step("새 마이그레이션 · 도착 고르기", async () => {
+      await expect(heroTitle(page)).toHaveText(/어디로\s*옮길까요/);
       await envButton(page, TARGET).click();
       await page.getByRole("button", { name: `${TARGET}로 옮기기`, exact: true }).click();
       await expect(page).toHaveURL(/#\/migrations\/[0-9a-f-]{36}$/, { timeout: HUMAN_MS });
@@ -295,14 +301,10 @@ test("새 콘솔 · 실제 서버: 로그인부터 이전 완료까지 화면으
       const acks = page.locator("label").filter({ has: page.getByRole("checkbox") });
       ev.notes["승인 전에 확인"] = (await acks.allTextContents()).map(flat).join(" / ") || "없음";
       for (const box of await page.getByRole("checkbox").all()) await box.check();
-      const approve = page.getByRole("button", { name: "이 계획 승인", exact: true });
+      // 승인하면 바로 실행을 시작한다(버튼 한 번). 시작이 막혀 승인 상태에 남으면 실행 화면이 오지 않아 이 단계가 실패한다
+      const approve = page.getByRole("button", { name: "승인하고 실행 시작", exact: true });
       await expect(approve).toBeEnabled();
       await approve.click();
-      await waitForScreen(page, ev, SCREEN.approved, HUMAN_MS);
-    });
-
-    await step("실행 시작", async () => {
-      await page.getByRole("button", { name: "실행 시작", exact: true }).click();
       await waitForScreen(page, ev, anyOf(SCREEN.running, SCREEN.window, SCREEN.windowOver, SCREEN.cleanup, SCREEN.done), HUMAN_MS);
     });
 
@@ -349,7 +351,7 @@ test("새 콘솔 · 실제 서버: 로그인부터 이전 완료까지 화면으
       await expect.poll(() => ev.report !== null, { message: "완료 화면이 증적 리포트(GET report)를 읽음", timeout: HUMAN_MS }).toBe(true);
       ev.notes["리포트 traffic"] = JSON.stringify(ev.report?.traffic);
       await expect
-        .soft(page.getByRole("button", { name: /^전환 판정/ }), "트래픽을 옮기고 끝난 이전이면 전환 판정 요약이 보여야 함 (#174)")
+        .soft(page.getByRole("button", { name: /^전환 판정/ }), "트래픽을 옮기고 끝난 마이그레이션이면 전환 판정 요약이 보여야 함 (#174)")
         .not.toContainText("아직 없음");
       const opened = page.context().waitForEvent("page");
       await page.getByRole("button", { name: "증적 리포트", exact: true }).click();
@@ -365,7 +367,7 @@ test("새 콘솔 · 실제 서버: 로그인부터 이전 완료까지 화면으
     expect.soft(ev.browser.filter((p) => !(p.kind === "console.error" && NETWORK_ECHO.test(p.text))), "브라우저 console.error·pageerror").toEqual([]);
     if (ev.migrationId) {
       expect.soft(ev.sse.connects.some((c) => c.status === 200 && c.contentType.startsWith("text/event-stream")), "화면 신호 GET /api/events 가 붙음").toBe(true);
-      expect.soft(ev.sse.signals.some((s) => s.migrationId === ev.migrationId), "이 이전의 화면 신호를 받음").toBe(true);
+      expect.soft(ev.sse.signals.some((s) => s.migrationId === ev.migrationId), "이 마이그레이션의 화면 신호를 받음").toBe(true);
     }
   }
 });

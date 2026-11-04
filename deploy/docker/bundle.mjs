@@ -1,4 +1,4 @@
-// 서버 앱 하나(api | worker | agent-worker)를 JS 파일 한 개로 묶는다.
+// 서버 앱 하나(api | worker | agent-worker | onprem-agent)를 JS 파일 한 개로 묶는다.
 // 왜: 우리 패키지(@svc/*)는 .ts 원본을 그대로 내보낸다(exports: ./src/index.ts).
 //     운영 이미지에서 tsx로 매번 변환하지 않으려고, 빌드 단계에서 esbuild로 한 번만 묶는다.
 // 사용: node deploy/docker/bundle.mjs api   →  dist/api/{main,healthcheck}.mjs (+ .map)
@@ -9,7 +9,10 @@ import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 
-const APPS = ["api", "worker", "agent-worker"];
+const APPS = ["api", "worker", "agent-worker", "onprem-agent"];
+// W1: 온프레 Agent 는 apps/ 가 아니라 tools/onprem-agent.ts 가 진입점이다 (고객 서버에서 도는 실행기라 앱 폴더가 없다)
+//     DB 가 없어 db healthcheck 도 안 묶는다
+const ENTRY = { "onprem-agent": "tools/onprem-agent.ts" };
 const app = process.argv[2];
 if (!APPS.includes(app)) {
   console.error(`usage: node deploy/docker/bundle.mjs <${APPS.join("|")}>`);
@@ -21,7 +24,7 @@ rmSync(outdir, { recursive: true, force: true });
 
 const t0 = Date.now();
 const result = await build({
-  entryPoints: {
+  entryPoints: ENTRY[app] ? { main: ENTRY[app] } : {
     main: `apps/${app}/src/main.ts`,
     healthcheck: "deploy/docker/healthcheck.mjs",
     // api 이미지가 OTel 게이트웨이 입구도 겸한다 (node metrics-gateway.mjs)

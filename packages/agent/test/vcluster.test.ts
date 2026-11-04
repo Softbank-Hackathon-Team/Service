@@ -186,7 +186,7 @@ test("helm 자식 프로세스는 정해진 env 만 받는다 (agent-worker 비�
   assert.deepEqual(keys, ["HELM_CACHE_HOME", "HELM_CONFIG_HOME", "HELM_DATA_HOME", "HOME", "KUBECONFIG"]);
 });
 
-test("차트 값: 도착 마이너에 맞는 제어판, 수정 고리만 RuntimeClass, 제어판 저장 emptyDir, 노드 고정", () => {
+test("차트 값: 도착 마이너에 맞는 제어판, RuntimeClass 는 격리 값을 따름, 제어판 저장 emptyDir, 노드 고정", () => {
   const v = vclusterValues(spec({ k8sMinor: "1.33" }), "sbx-x") as any;
   assert.match(v.controlPlane.distro.k8s.image.tag, /^v1\.33\.0@sha256:/);
   assert.match((vclusterValues(spec({ k8sMinor: "1.29" }), "sbx-x") as any).controlPlane.distro.k8s.image.tag, /^v1\.35\.0@/);
@@ -203,6 +203,9 @@ test("차트 값: 도착 마이너에 맞는 제어판, 수정 고리만 Runtime
   const rem = vclusterValues(spec({ kind: "remediation", isolation: { podSecurity: "restricted", runtimeClass: "gvisor" } }), "sbx-y") as any;
   assert.equal(rem.sync.toHost.pods.runtimeClassName, "gvisor");
   assert.equal(rem.policies.podSecurityStandard, "restricted");
+  const reh = vclusterValues(spec({ isolation: { podSecurity: "baseline", runtimeClass: "gvisor" } }), "sbx-z") as any;
+  assert.equal(reh.sync.toHost.pods.runtimeClassName, "gvisor", "gVisor 를 켜면 리허설 파드도");
+  assert.equal(reh.policies.podSecurityStandard, "baseline");
 });
 
 test("자원 수량 읽기", () => {

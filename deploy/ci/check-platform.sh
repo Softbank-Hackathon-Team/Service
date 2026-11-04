@@ -48,4 +48,10 @@ expect default     0 0 0 0 0 0 3
 expect sandbox-on  2 1 6 6 1 0 3
 expect gvisor-on   2 1 6 6 1 1 3
 [ $fail -eq 0 ] && echo "ok   샌드박스 자원 개수 (기본 끔·켬·gVisor)"
+
+# 런타임 가드 대상: gVisor 끔 = 수정 고리만, 켬 = 리허설도 (ADR-006 Q7)
+purpose() { awk '/^kind: ValidatingAdmissionPolicyBinding$/{b=1} b&&/name: sbx-runtimeclass-guard$/{f=1} f&&/values:/{print; exit}' "$OUT/$1.yaml" | tr -d ' '; }
+if [ "$(purpose sandbox-on)" != "values:[remediation]" ]; then echo "FAIL sandbox-on: 런타임 가드 대상 $(purpose sandbox-on)"; fail=1; fi
+if [ "$(purpose gvisor-on)" != "values:[remediation,rehearsal]" ]; then echo "FAIL gvisor-on: 런타임 가드 대상 $(purpose gvisor-on)"; fail=1; fi
+[ $fail -eq 0 ] && echo "ok   런타임 가드 대상 (gVisor 끔 = 수정 고리, 켬 = 리허설도)"
 exit $fail

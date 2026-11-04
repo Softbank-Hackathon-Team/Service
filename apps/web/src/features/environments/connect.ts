@@ -1,17 +1,25 @@
 import type { ChecklistEntry } from '../../components/ui/Checklist';
 import type { ConnectionStatus, EnvironmentView, Provider } from '../../lib/types';
+import { t } from '../../lib/i18n';
 
 // 환경 등록 흐름의 판단. 화면(ConnectPage)은 이 파일만 보고 단계를 고른다. 시험은 test/connect-model.test.ts
 // 서버 흐름: POST /environments(draft) → 연결 링크(AWS·GCP) 또는 Agent 등록 토큰(온프레) → 고객이 역할·Agent 를 만듦
 //   → AWS·GCP 는 계정 번호로 확인 요청(verifying) → 워커가 역할을 빌려 봄 → connected 또는 failed. 온프레는 Agent 가 붙으면 connected
 
+/**
+ * 역할 부여(연결 확인 또는 온프레 Agent 접속)를 마친 환경. 환경 목록·대시보드·계정 화면은 이것만 보인다.
+ * 서버는 등록을 시작한 환경도 이력으로 갖고 있다. 화면이 보여 줄 때만 거른다: 그 앞 단계(초안·고객 작업 대기·확인 중·실패·만료)는
+ * 등록을 끝내지 않은 것이라, 해제(disconnected)는 끝난 것이라 보이지 않는다
+ */
+export const isLinked = (env: Pick<EnvironmentView, 'connectionStatus'>) => env.connectionStatus === 'connected' || env.connectionStatus === 'unstable';
+
 export type ConnectableProvider = Exclude<Provider, 'azure_mock'>;
 
 /** 등록할 수 있는 곳. Azure 는 모의만 있어 등록하지 않는다. */
 export const CONNECTABLE: { provider: ConnectableProvider; label: string; detail: string }[] = [
-  { provider: 'aws', label: 'AWS', detail: '계정에 스택 하나를 만들어 관찰 역할과 실행 역할을 엽니다' },
-  { provider: 'gcp', label: 'GCP', detail: 'Cloud Shell 에서 명령 한 줄로 프로젝트 권한을 엽니다' },
-  { provider: 'onprem', label: '온프레 k3s', detail: '고객 클러스터에 Agent 를 설치해 연결합니다' },
+  { provider: 'aws', label: 'AWS', detail: t('계정에 스택 하나를 만들어 관찰 역할과 실행 역할을 엽니다') },
+  { provider: 'gcp', label: 'GCP', detail: t('Cloud Shell 에서 명령 한 줄로 프로젝트 권한을 엽니다') },
+  { provider: 'onprem', label: t('온프레 k3s'), detail: t('고객 클러스터에 Agent 를 설치해 연결합니다') },
 ];
 
 export const providerLabel = (provider: Provider) => CONNECTABLE.find((item) => item.provider === provider)?.label ?? provider;
@@ -32,11 +40,11 @@ export type FormCheck<K extends string> = { ok: boolean; errors: Partial<Record<
 export function checkEnvForm(provider: ConnectableProvider, form: EnvForm): FormCheck<keyof EnvForm> {
   const errors: Partial<Record<keyof EnvForm, string>> = {};
   const name = form.name.trim();
-  if (!name) errors.name = '이름을 적어 주세요';
-  else if (name.length > 64) errors.name = '64자까지입니다';
+  if (!name) errors.name = t('이름을 적어 주세요');
+  else if (name.length > 64) errors.name = t('64자까지입니다');
   if (provider === 'aws') {
-    if (!AWS_REGION_RE.test(form.region.trim())) errors.region = '예: ap-northeast-2';
-    if (!EKS_CLUSTER_RE.test(form.clusterName.trim())) errors.clusterName = '영문·숫자로 시작하고 영문·숫자·-·_ 로 100자까지입니다';
+    if (!AWS_REGION_RE.test(form.region.trim())) errors.region = t('예: ap-northeast-2');
+    if (!EKS_CLUSTER_RE.test(form.clusterName.trim())) errors.clusterName = t('영문·숫자로 시작하고 영문·숫자·-·_ 로 100자까지입니다');
   }
   return { ok: Object.keys(errors).length === 0, errors };
 }
@@ -48,11 +56,11 @@ export function checkAccount(provider: ConnectableProvider, form: AccountForm): 
   const errors: Partial<Record<keyof AccountForm, string>> = {};
   const accountId = provider === 'aws' ? form.accountId.replace(/[\s-]/g, '') : form.accountId.trim();
   const target = form.targetProjectId.trim();
-  if (provider === 'aws' && !AWS_ACCOUNT_RE.test(accountId)) errors.accountId = '숫자 12자리입니다';
+  if (provider === 'aws' && !AWS_ACCOUNT_RE.test(accountId)) errors.accountId = t('숫자 12자리입니다');
   if (provider === 'gcp') {
-    if (!GCP_PROJECT_RE.test(accountId)) errors.accountId = '프로젝트 ID 모양이 아닙니다 (소문자로 시작, 6~30자)';
-    if (target && !GCP_PROJECT_RE.test(target)) errors.targetProjectId = '프로젝트 ID 모양이 아닙니다 (소문자로 시작, 6~30자)';
-    else if (target && target === accountId) errors.targetProjectId = '읽을 프로젝트와 다른 프로젝트여야 합니다';
+    if (!GCP_PROJECT_RE.test(accountId)) errors.accountId = t('프로젝트 ID 모양이 아닙니다 (소문자로 시작, 6~30자)');
+    if (target && !GCP_PROJECT_RE.test(target)) errors.targetProjectId = t('프로젝트 ID 모양이 아닙니다 (소문자로 시작, 6~30자)');
+    else if (target && target === accountId) errors.targetProjectId = t('읽을 프로젝트와 다른 프로젝트여야 합니다');
   }
   return { ok: Object.keys(errors).length === 0, errors, accountId, ...(target ? { targetProjectId: target } : {}) };
 }
@@ -98,12 +106,21 @@ export function connectSteps(
     return human ? 'waiting' : 'active';
   };
   return [
-    { status: mark(0, true), label: '어디를 연결할지', detail: o.provider ? providerLabel(o.provider) : undefined },
-    { status: mark(1, true), label: '환경 이름', detail: o.name },
-    { status: mark(2, true), label: onprem ? 'Agent 설치' : '권한 열기', detail: '고객 쪽' },
+    { status: mark(0, true), label: t('어디를 연결할지'), detail: o.provider ? providerLabel(o.provider) : undefined },
+    { status: mark(1, true), label: t('환경 이름'), detail: o.name },
+    { status: mark(2, true), label: onprem ? t('Agent 설치') : t('권한 열기'), detail: t('고객 쪽') },
     // 온프레는 Agent 가 붙는 순간 연결되므로 확인 칸을 따로 기다리지 않는다
-    { status: onprem && at === 'link' ? 'pending' : mark(3, false), label: '연결 확인' },
+    { status: onprem && at === 'link' ? 'pending' : mark(3, false), label: t('연결 확인') },
   ];
+}
+
+/** 등록하다 만 환경: 연결을 마치지도, 해제하지도 않은 것. 목록에는 없고 "어디를 연결할까요?" 아래에만 보인다 */
+export const isUnfinished = (env: Pick<EnvironmentView, 'connectionStatus'>) => !isLinked(env) && env.connectionStatus !== 'disconnected';
+
+/** 등록하다 만 환경이 멈춘 단계 이름 (등록 단계 표의 첫 미완료 칸). 예: 권한 열기, Agent 설치, 연결 확인 */
+export function stoppedAt(env: Pick<EnvironmentView, 'connectionStatus' | 'provider'>): string {
+  const steps = connectSteps(phaseOf(env.connectionStatus), { provider: env.provider });
+  return (steps.find((step) => step.status !== 'done') ?? steps[steps.length - 1]!).label;
 }
 
 /** 연결을 이어 할 곳. 이미 연결됐으면 환경 화면, 아니면 등록 흐름. 어디서 들어오든 같은 길로 보낸다. */

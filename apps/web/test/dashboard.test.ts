@@ -45,8 +45,8 @@ test("이전 묶음: 사람 차례, 진행 중, 끝남은 최근 5건까지", ()
 test("목록 안내 한 줄은 상황에 맞게 바뀌고, 사람 차례가 있으면 없다", () => {
   assert.equal(listNote(groupMigrations([mig("h", "approved")])), null);
   assert.equal(listNote(groupMigrations([mig("r", "deploying")])), "지금 사람이 할 일은 없습니다.");
-  assert.equal(listNote(groupMigrations([mig("d", "completed")])), "진행 중인 이전이 없습니다.");
-  assert.match(listNote(groupMigrations([])) ?? "", /새 이전을 시작/);
+  assert.equal(listNote(groupMigrations([mig("d", "completed")])), "진행 중인 마이그레이션이 없습니다.");
+  assert.match(listNote(groupMigrations([])) ?? "", /새 마이그레이션을 시작/);
 });
 
 test("줄 이동 비교: 묶음이 바뀔 때만 값이 달라진다", () => {
@@ -55,9 +55,9 @@ test("줄 이동 비교: 묶음이 바뀔 때만 값이 달라진다", () => {
   assert.notEqual(bucketSignature([mig("a", "paused")]), before);
 });
 
-test("사람 버튼 이름은 합의한 세 단계를 쓴다", () => {
+test("사람이 할 일 이름: 명세 확정·계획 승인. 승인하면 바로 시작하고, 시작이 막혀 승인 상태에 남을 때만 실행 다시 시작", () => {
   assert.equal(humanAction("spec_review"), "명세 확정");
   assert.equal(humanAction("awaiting_approval"), "계획 승인");
-  assert.equal(humanAction("approved"), "실행 시작");
+  assert.equal(humanAction("approved"), "실행 다시 시작");
   assert.equal(humanAction("shifting"), null);
 });

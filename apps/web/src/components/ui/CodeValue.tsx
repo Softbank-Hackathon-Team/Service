@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { middleEllipsis } from '../../lib/text';
 import { Icon } from './Icon';
 import s from './CodeValue.module.css';
+import { t } from '../../lib/i18n';
 
 type CodeValueProps = {
   value: string;
@@ -30,7 +31,7 @@ export function CodeValue({ value, max = 28, chip, size = chip ? 'md' : 'sm', cl
         {middleEllipsis(value, max)}
       </code>
       {long && (
-        <button type="button" className={s.copy} aria-label={copied ? '복사했습니다' : '전체 값 복사'} onClick={() => void copy()}>
+        <button type="button" className={s.copy} aria-label={copied ? t('복사했습니다') : t('전체 값 복사')} onClick={() => void copy()}>
           <Icon name={copied ? 'check' : 'copy'} size={14} />
         </button>
       )}

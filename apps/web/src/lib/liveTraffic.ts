@@ -1,13 +1,14 @@
+import { t } from './i18n';
 // 작업 Z35 (Z15 제안 3): 이전 상세 "가동 중 앱" 칸이 읽는 모양 (서버 apps/api/src/live-traffic.ts LiveTrafficView 와 같다)
 // TODO(통합): contracts 로 옮기면 여기 타입은 지운다
 export type LiveReason = "not_configured" | "unreachable" | "bad_shape" | "other_migration" | "no_counters";
 // 숫자가 없는 이유 (서버 readLiveTraffic). 없는 숫자는 지어내지 않고 이유만 말한다
 export const LIVE_REASON: Record<LiveReason, string> = {
-  not_configured: "서버에 앱 앞 프록시 주소가 설정되지 않았습니다.",
-  unreachable: "앱 앞 프록시에 닿지 못했습니다.",
-  bad_shape: "앱 앞 프록시가 다른 모양의 숫자를 줬습니다.",
-  other_migration: "앱 앞 프록시가 다른 이전을 세고 있습니다.",
-  no_counters: "앱 앞 프록시가 아직 요청을 세지 않습니다.",
+  not_configured: t('서버에 앱 앞 프록시 주소가 설정되지 않았습니다.'),
+  unreachable: t('앱 앞 프록시에 닿지 못했습니다.'),
+  bad_shape: t('앱 앞 프록시가 다른 모양의 숫자를 줬습니다.'),
+  other_migration: t('앱 앞 프록시가 다른 마이그레이션을 세고 있습니다.'),
+  no_counters: t('앱 앞 프록시가 아직 요청을 세지 않습니다.'),
 };
 export interface LiveTrafficView {
   migrationId: string;

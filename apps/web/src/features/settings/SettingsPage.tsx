@@ -1,18 +1,27 @@
+import { useEffect, useState } from 'react';
+import { go } from '../../app/routes';
 import type { BentoLayout } from '../../components/layout/ConsoleLayout';
 import { ActionRow, FoldTile, Hero, Stack } from '../../components/layout/tiles';
-import { ActionPill, Badge } from '../../components/ui/controls';
+import { ActionPill, Badge, OptionPill } from '../../components/ui/controls';
+import { Icon } from '../../components/ui/Icon';
 import { API_BASE, api, auth } from '../../lib/api';
 import type { AuthUser } from '../../lib/auth';
-import { go } from '../../app/routes';
-import { CONN_LABEL } from '../../lib/status';
-import type { EnvironmentView } from '../../lib/types';
+import { or404 } from '../../lib/http';
+import { LOCALES, locale } from '../../lib/i18n';
+import { readActivePrefs, savePrefs, type Locale, type Theme } from '../../lib/prefs';
+import { CONN_LABEL, PROVIDER_SHORT, isTerminal } from '../../lib/status';
+import { ago } from '../../lib/text';
+import type { EnvironmentView, Provider } from '../../lib/types';
+import { useNow } from '../../lib/useNow';
 import { usePoll } from '../../lib/usePoll';
 import { realEnvs } from '../dashboard/model';
-import { envPath } from '../environments/connect';
-import { RegisterEnvEntry } from '../environments/EnvEntry';
-import { vendorLine } from '../migration/source';
+import { envPath, isLinked, REGISTER_PATH } from '../environments/connect';
+import { PLATFORM } from '../migration/source';
 import { ShellLayout } from '../shell/ShellLayout';
+import { borrowedByEnv, borrowState, envsByProvider, PROVIDER_ORDER, type Borrowed } from './model';
 import s from '../common/page.module.css';
+import own from './SettingsPage.module.css';
+import { t } from '../../lib/i18n';
 
 const LAYOUT: BentoLayout = { columns: ['fill', 'side'], areas: 'hero side' };
 
@@ -29,34 +38,152 @@ function ProbeRow({ name, state }: { name: string; state: { data: number | null;
   return (
     <li className={s.row}>
       <span className="t-label-md">{name}</span>
-      {state.loading ? <Badge>확인 중</Badge> : <Badge tone={up ? 'success' : 'danger'}>{up ? `${state.data}ms` : '응답 없음'}</Badge>}
+      {state.loading ? <Badge>{t('확인 중')}</Badge> : <Badge tone={up ? 'success' : 'danger'}>{up ? `${state.data}ms` : t('응답 없음')}</Badge>}
     </li>
   );
 }
 
-/** 이 회사가 연결한 환경. 연결이 끝나지 않은 환경은 누르면 등록 흐름에서 이어 한다. 끝에 새로 등록하기. */
-function EnvironmentsFold() {
-  const envs = usePoll(api.listEnvironments, 10_000, []);
-  const list: EnvironmentView[] = realEnvs(envs.data ?? []);
-  const connected = list.filter((env) => env.connectionStatus === 'connected').length;
+/**
+ * 진행 중인 마이그레이션의 임시 권한 장부를 읽어 환경마다 빌린 권한을 낸다.
+ * 환경 단위 API 가 없어서 마이그레이션 보안 표(GET /migrations/:id/security)의 장부를 쓴다
+ */
+function useBorrowed(envs: EnvironmentView[]) {
+  const migrations = usePoll(api.listMigrations, 15_000, []);
+  const active = (migrations.data ?? []).filter((item) => !isTerminal(item.status));
+  const key = active.map((item) => item.id).join(',');
+  const ledgers = usePoll(
+    () => Promise.all(active.map(async (migration) => ({ migration, rows: (await or404(api.security(migration.id)))?.ledger ?? [] }))),
+    15_000,
+    [key],
+  );
+  return borrowedByEnv(envs, ledgers.data ?? []);
+}
+
+/**
+ * 빌린 권한이 있을 때만 보이는 줄. 오른쪽 한 칸이 남은 분 → 곧 만료 → 갱신 버튼으로 차례로 바뀐다 (겹쳐 두고 흐리게 바꾼다).
+ * 시계는 이 줄이 있을 때만 1초마다 돈다
+ */
+function BorrowRow({ borrowed }: { borrowed: Borrowed }) {
+  const state = borrowState(borrowed, useNow(1000));
   return (
-    <FoldTile title="연결한 환경" summary={envs.loading ? '읽는 중' : `연결 ${connected}개`}>
-      <ul className={s.listTile}>
-        {list.map((env) => (
-          <li key={env.id}>
-            <button type="button" className={s.listButton} onClick={() => go(envPath(env))}>
-              <span className={s.formRow}>
-                <span className="t-label-md">{env.name}</span>
-                {env.connectionStatus !== 'connected' && <Badge tone="warning">{CONN_LABEL[env.connectionStatus]}</Badge>}
-              </span>
-              <span className="t-caption c-tertiary">{vendorLine(env.provider)}</span>
-            </button>
-          </li>
+    <span className={own.borrowRow}>
+      <span className="t-caption c-tertiary">{t('빌린 권한')}</span>
+      <span className={own.swap}>
+        <span className="t-caption c-secondary" data-shown={state.kind === 'left'}>
+          {t('{0}분 남음', { 0: state.kind === 'left' ? state.minutes : 1 })}
+        </span>
+        <span className={`${own.soon} t-caption`} data-shown={state.kind === 'soon'}>{t('곧 만료')}</span>
+        {/* TODO(human): 빌린 권한을 사람이 갱신하는 서버 API 가 아직 없다. 생기면 이 버튼을 켠다 */}
+        <button type="button" className={own.refresh} data-shown={state.kind === 'expired'} disabled title={t('권한 갱신은 서버 기능이 생기면 켜집니다')}>
+          <Icon name="refresh" size={12} />
+          {t('갱신')}
+        </button>
+      </span>
+    </span>
+  );
+}
+
+function EnvLine({ env, borrowed }: { env: EnvironmentView; borrowed: Borrowed | undefined }) {
+  const connected = env.connectionStatus === 'connected';
+  return (
+    <li className={own.envLine}>
+      <button type="button" className={own.envName} onClick={() => go(envPath(env))}>
+        <span className="t-label-md">{env.name}</span>
+        {!connected && <Badge tone="warning">{CONN_LABEL[env.connectionStatus]}</Badge>}
+      </button>
+      <span className="t-caption c-tertiary">
+        {t('{0} · 연결 확인 {1}', { 0: PLATFORM[env.provider], 1: ago(env.lastVerifiedAt) })}
+      </span>
+      {borrowed && <BorrowRow borrowed={borrowed} />}
+    </li>
+  );
+}
+
+/** 벤더 하나의 카드. 그 벤더로 연결을 마친 환경(EKS·ECS·GKE·k3s …)이 이 안에 들어온다 */
+function ProviderCard({ provider, envs, borrowed }: { provider: Provider; envs: EnvironmentView[]; borrowed: Record<string, Borrowed> }) {
+  return (
+    <section className={own.card}>
+      <header className={own.cardHead}>
+        <span className={own.cardTitle}>
+          <Icon name={provider === 'onprem' ? 'server' : 'cloud'} />
+          <span className="t-h3">{PROVIDER_SHORT[provider]}</span>
+        </span>
+        <span className="t-caption c-tertiary">{t('{0}개', { 0: envs.length })}</span>
+      </header>
+      <ul className={own.envList}>
+        {envs.map((env) => (
+          <EnvLine key={env.id} env={env} borrowed={borrowed[env.id]} />
         ))}
-        <li>
-          <RegisterEnvEntry variant="list" />
-        </li>
       </ul>
+    </section>
+  );
+}
+
+/** 환경 추가하기. 큰 카드 머리줄 오른쪽 끝의 작은 버튼 하나가 이 화면의 유일한 등록 입구다 */
+function AddBadge() {
+  return (
+    <button type="button" className={own.addBadge} onClick={() => go(REGISTER_PATH)}>
+      <span className={own.addDot} aria-hidden>
+        <Icon name="plus" size={16} />
+      </span>
+      <span className="t-label-md">{t('환경 추가하기')}</span>
+    </button>
+  );
+}
+
+/** 화면 설정. 테마는 바로 바뀌고, 언어는 바꾸면 화면을 다시 읽는다. 이 사람·이 브라우저에 남긴다 */
+function DisplayFold({ user }: { user: AuthUser }) {
+  const [theme, setTheme] = useState<Theme>(readActivePrefs().theme);
+  const current = locale();
+  const pickTheme = (next: Theme) => {
+    setTheme(next);
+    savePrefs(user.id, { theme: next });
+  };
+  const pickLocale = (next: Locale) => {
+    if (savePrefs(user.id, { locale: next })) window.location.reload();
+  };
+  const themeLabel = theme === 'dark' ? t('다크') : t('라이트');
+  return (
+    <FoldTile title={t('화면')} summary={`${themeLabel} · ${LOCALES.find((item) => item.id === current)?.label ?? current}`}>
+      <div className={s.agent}>
+        <span className="t-label-sm c-tertiary">{t('테마')}</span>
+        <div className={own.options}>
+          <OptionPill label={t('라이트 (기본)')} selected={theme === 'light'} onClick={() => pickTheme('light')} />
+          <OptionPill label={t('다크')} selected={theme === 'dark'} onClick={() => pickTheme('dark')} />
+        </div>
+        <span className="t-label-sm c-tertiary">{t('언어')}</span>
+        <div className={own.options}>
+          {LOCALES.map((item) => (
+            <OptionPill key={item.id} label={item.label} selected={current === item.id} onClick={() => pickLocale(item.id)} />
+          ))}
+        </div>
+        <p className="t-caption c-tertiary">{t('이 브라우저에 이 계정의 설정으로 남깁니다.')}</p>
+      </div>
+    </FoldTile>
+  );
+}
+
+/** GitHub 로그인. 서버가 켜 두었는지(GET /auth/config)만 안다. 이 계정과 GitHub 계정의 연동 정보는 서버가 아직 주지 않는다 */
+function GithubFold() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void auth.config().then((config) => {
+      if (alive) setEnabled(config?.github?.enabled === true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return (
+    <FoldTile title={t('GitHub 로그인')} summary={enabled === null ? t('확인 중') : enabled ? t('켜짐') : t('꺼짐')} defaultOpen={false}>
+      <p className={`${s.note} t-body-sm c-secondary`}>
+        {enabled === null
+          ? t('서버 설정을 읽고 있습니다.')
+          : enabled
+            ? t('이 서버는 GitHub 계정으로 로그인할 수 있습니다. 이 계정에 GitHub 계정이 이어져 있는지는 서버가 아직 알려 주지 않습니다.')
+            : t('이 서버는 GitHub 로그인을 꺼 두었습니다. 이메일과 비밀번호로 로그인합니다.')}
+      </p>
     </FoldTile>
   );
 }
@@ -64,29 +191,58 @@ function EnvironmentsFold() {
 export function SettingsPage({ user }: { user: AuthUser }) {
   const health = useLatency(api.health, 5_000);
   const ready = useLatency(api.ready, 10_000);
+  const envs = usePoll(api.listEnvironments, 10_000, []);
+  const list = realEnvs(envs.data ?? []).filter(isLinked);
+  const groups = envsByProvider(list);
+  const providers = PROVIDER_ORDER.filter((provider) => groups[provider].length > 0);
+  const borrowed = useBorrowed(list);
   const name = user.displayName ?? user.email;
   return (
     <ShellLayout layout={LAYOUT}>
-      <Hero tone="run" meta={user.tenantName ?? '회사'} title={`${name}\n계정입니다`} foot="회사 멤버면 승인까지 모두 할 수 있습니다">
+      <Hero
+        tone="run"
+        meta={user.tenantName ?? t('회사')}
+        action={<AddBadge />}
+        title={t('{0}\n계정입니다', { 0: name })}
+        foot={t('회사 멤버면 승인까지 모두 할 수 있습니다')}
+      >
         <p className="t-body-md c-secondary">{user.email}</p>
+        {providers.length > 0 ? (
+          <div className={`${own.gridScroll} scroll-fade`}>
+            <div className={own.grid}>
+              {providers.map((provider) => (
+                <ProviderCard key={provider} provider={provider} envs={groups[provider]} borrowed={borrowed} />
+              ))}
+            </div>
+          </div>
+        ) : (
+          // 처음 읽는 동안에는 비었다고 말하지 않는다
+          envs.data && (
+            <div className={own.empty}>
+              <p className="t-h3">{t('등록된 환경이 없습니다')}</p>
+              <p className="t-body-sm c-secondary">{t('오른쪽 위 환경 추가하기에서 AWS·GCP 계정이나 온프레 클러스터를 연결하면, 벤더별로 여기에 모입니다.')}</p>
+            </div>
+          )
+        )}
       </Hero>
       <Stack area="side">
-        <EnvironmentsFold />
-        <FoldTile title="서비스 상태" summary="자동 확인">
+        <DisplayFold user={user} />
+        <GithubFold />
+        <FoldTile title={t('서비스 상태')} summary={t('자동 확인')} defaultOpen={false}>
           <ul className={s.rows}>
-            <ProbeRow name="API 서버" state={health} />
-            <ProbeRow name="데이터베이스" state={ready} />
+            <ProbeRow name={t('API 서버')} state={health} />
+            <ProbeRow name={t('데이터베이스')} state={ready} />
           </ul>
         </FoldTile>
-        <FoldTile title="개발자 문서" summary="OpenAPI" defaultOpen={false}>
+        <FoldTile title={t('개발자 문서')} summary="OpenAPI" defaultOpen={false}>
           <ul className={s.rows}>
-            <li className={s.row}><a className={`${s.link} t-label-md`} href={`${API_BASE}/docs`} target="_blank" rel="noopener">API 문서</a></li>
+            <li className={s.row}><a className={`${s.link} t-label-md`} href={`${API_BASE}/docs`} target="_blank" rel="noopener">{t('API 문서')}</a></li>
             <li className={s.row}><a className={`${s.link} t-label-md`} href={`${API_BASE}/docs/openapi.json`} target="_blank" rel="noopener">openapi.json</a></li>
             <li className={s.row}><a className={`${s.link} t-label-md`} href={`${API_BASE}/docs/openapi.yaml`} target="_blank" rel="noopener">openapi.yaml</a></li>
           </ul>
         </FoldTile>
         <ActionRow>
-          <ActionPill label="로그아웃" icon="rollback" onClick={() => void auth.logout()} />
+          <ActionPill label={t('로그아웃')} icon="rollback" onClick={() => void auth.logout()} />
         </ActionRow>
       </Stack>
     </ShellLayout>
