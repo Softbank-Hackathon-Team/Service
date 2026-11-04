@@ -2,7 +2,7 @@
 import http from "node:http";
 import { randomBytes } from "node:crypto";
 const ZONE = "0123456789abcdef0123456789abcdef", ACC = "fedcba9876543210fedcba9876543210";
-const db = { monitors: new Map(), pools: new Map(), lbs: new Map() };
+const db = { monitors: new Map(), pools: new Map(), lbs: new Map(), lbPatches: 0 };
 const log = [];
 // z75-38: LB 가중치 변경 이력 (FAKE_EDGE_LAG_MS 용)
 const lbHist = [];
@@ -31,11 +31,22 @@ http.createServer(async (req, res) => {
   if (!coll) return send(res, 404, null, [{ code: 7003, message: "no route" }]);
   const rid = p.split("/").at(-1); const isItem = !["monitors", "pools", "load_balancers"].includes(rid);
   if (!isItem && req.method === "GET") return send(res, 200, [...coll.values()]);
+  // pf-d: FAKE_ORIGIN_LIMIT 이 있으면 계정 오리진 합이 넘는 pool POST 를 거부 (실제 응답 code·문구는 【추정】)
+  if (!isItem && req.method === "POST" && coll === db.pools && process.env.FAKE_ORIGIN_LIMIT) {
+    const used = [...db.pools.values()].reduce((a, x) => a + (x.origins?.length ?? 0), 0);
+    if (used + (b?.origins?.length ?? 0) > Number(process.env.FAKE_ORIGIN_LIMIT)) return send(res, 400, null, [{ code: 1003, message: "origin limit reached" }]);
+  }
   if (!isItem && req.method === "POST") { const o = { id: id(), ...b }; coll.set(o.id, o); if (coll === db.lbs) lbSeen(o); return send(res, 200, o); }
   const o = coll.get(rid); if (!o) return send(res, 404, null, [{ code: 1002, message: "not found" }]);
   if (req.method === "GET") return send(res, 200, o);
+  // RV-08: FAKE_LB_PATCH_429_AT=N 이면 N 번째 LB PATCH 하나만 429 (그 뒤는 정상)
+  if (req.method === "PATCH" && coll === db.lbs && process.env.FAKE_LB_PATCH_429_AT && ++db.lbPatches === Number(process.env.FAKE_LB_PATCH_429_AT))
+    return send(res, 429, null, [{ code: 971, message: "rate limited" }]);
   if (req.method === "PATCH") { Object.assign(o, b); if (coll === db.lbs) lbSeen(o); return send(res, 200, o); }
   if (req.method === "DELETE") {
+    // pf-d: FAKE_DELETE_FAIL=lb|pool|monitor 이면 그 종류 지우기를 500 으로 실패
+    const kind = coll === db.lbs ? "lb" : coll === db.pools ? "pool" : "monitor";
+    if (process.env.FAKE_DELETE_FAIL === kind) return send(res, 500, null, [{ code: 1000, message: "internal error" }]);
     // 사용 중이면 거부 (실제 Cloudflare 와 같은 순서 강제 【추정】)
     if (coll === db.pools && [...db.lbs.values()].some((l) => l.default_pools.includes(rid))) return send(res, 400, null, [{ code: 1001, message: "pool in use" }]);
     if (coll === db.monitors && [...db.pools.values()].some((x) => x.monitor === rid)) return send(res, 400, null, [{ code: 1001, message: "monitor in use" }]);

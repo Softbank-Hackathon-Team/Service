@@ -144,8 +144,9 @@ const checks: Array<[string, () => Promise<string>]> = [
   }],
   ["Cloudflare LB 풀 health", async () => {
     if (!CF_TOKEN || !env.CLOUDFLARE_ZONE_NAME) skip("CLOUDFLARE_API_TOKEN(또는 CF_API_TOKEN)·ZONE_NAME 없음");
-    const ids = [env.CLOUDFLARE_SOURCE_POOL_ID, env.CLOUDFLARE_TARGET_POOL_ID].filter((x): x is string => !!x);
-    if (ids.length === 0) skip("CLOUDFLARE_SOURCE_POOL_ID·TARGET_POOL_ID 없음");
+    // pf-d FM-TRF-11: 워커(switcherFromEnv)처럼 옛 이름 CF_*_POOL_ID 도 받는다. 예전엔 CLOUDFLARE_* 만 봐서 cf-check --keep 출력(CF_*)을 넣으면 SKIP
+    const ids = [env.CLOUDFLARE_SOURCE_POOL_ID || env.CF_SOURCE_POOL_ID, env.CLOUDFLARE_TARGET_POOL_ID || env.CF_TARGET_POOL_ID].filter((x): x is string => !!x);
+    if (ids.length === 0) skip("CLOUDFLARE_SOURCE_POOL_ID·TARGET_POOL_ID (옛 이름 CF_*) 없음");
     const z = await cfZoneByName(cf, env.CLOUDFLARE_ZONE_NAME!);
     if (!z.accountId) throw new Error("계정 번호를 못 얻음");
     addSecret(z.accountId);
