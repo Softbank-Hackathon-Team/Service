@@ -108,6 +108,11 @@
   --content-max: 1600px;
   --hero-offset: var(--space-32);
 
+  /* Motion: 빠르게 출발해서 천천히 멈춘다. 움직임 줄이기 설정이면 base.css 가 모두 끈다. */
+  --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --motion-fold: 280ms;
+  --motion-fade: 180ms;
+
   /* Type */
   --font-sans: 'Pretendard JP Variable', -apple-system, BlinkMacSystemFont, system-ui, 'Apple SD Gothic Neo', 'Hiragino Sans', 'Noto Sans KR', 'Noto Sans JP', 'Malgun Gothic', 'Yu Gothic', sans-serif;
   --font-mono: 'IBM Plex Mono', 'Pretendard JP Variable', ui-monospace, monospace;

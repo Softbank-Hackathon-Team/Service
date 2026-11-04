@@ -21,6 +21,7 @@ import { costCaveats, costNote, costSummary, planCostCaveats, planCostSummary } 
 import {
   ackState, approveLabel, canReplan, pollMs, screenOf, signalCovers, specRows, stepGate, stepName, usd, type MigrationScreen,
 } from './model';
+import { scopeLabel } from './source';
 import {
   accuracyView, boundaryRows, confirmChunks, confirmLabel, specRowsV2, specV2Of, type MigrationSpecViewV2, type SpecRowV2,
 } from './specV2';
@@ -654,7 +655,8 @@ export function MigrationPage({ id }: { id: string }) {
   const name = (envId: string) => envs.data?.find((env) => env.id === envId)?.name ?? envId.slice(0, 8);
   const props: ScreenProps = {
     migration: shown,
-    route: `${name(shown.sourceEnvId)} → ${name(shown.targetEnvId)}`,
+    // 출발 범위를 골라 만든 이전은 무엇을 옮기는지 앞에 붙인다 (비었으면 자동으로 고른 것이라 붙이지 않음)
+    route: `${shown.sourceScope && Object.keys(shown.sourceScope).length > 0 ? `${scopeLabel(shown.sourceScope)} · ` : ''}${name(shown.sourceEnvId)} → ${name(shown.targetEnvId)}`,
     onChanged: () => void poll.reload(),
   };
   const screen = screenOf(shown.status);

@@ -51,6 +51,17 @@
   border: 2px dashed var(--color-border-strong);
   border-radius: var(--radius-full);
 }
+.waiting {
+  width: 20px;
+  height: 20px;
+  fill: var(--color-bg-accent);
+  stroke: var(--color-fg-tone-info);
+  stroke-width: 1.5;
+}
+.waitingDot {
+  fill: var(--color-fg-tone-info);
+  stroke: none;
+}
 .spinner {
   width: 20px;
   height: 20px;

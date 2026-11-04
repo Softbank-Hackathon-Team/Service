@@ -50,8 +50,23 @@ export interface MigrationView {
   failedAtStatus?: MigrationStatus | null;
   failureCode?: string | null;
   rollbackWindowEndsAt?: string | null;
+  /** K-1: 이전을 만들 때 정한 출발 범위. {} 또는 없음 = 자동으로 고름 */
+  sourceScope?: SourceScope;
   updatedAt?: string;
 }
+
+// contracts migration.ts SourceScope. 값은 CLI 인자로 들어가서 서버가 이름 글자만 받는다 (아래 정규식 그대로)
+export interface SourceScope {
+  appName?: string;
+  partOf?: string;
+  namespaces?: string[];
+  cluster?: string;
+  ecsCluster?: string;
+  database?: string;
+}
+export const SCOPE_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._\/:-]{0,199}$/;
+export const SCOPE_NAMESPACE_RE = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
+export const SCOPE_APP_RE = /^[a-z][a-z0-9-]{0,39}$/;
 
 export type Provider = "aws" | "gcp" | "onprem" | "azure_mock";
 export type ConnectionStatus =
@@ -66,7 +81,26 @@ export interface EnvironmentView {
   accountId: string | null;
   lastVerifiedAt: string | null;
   failureReason: string | null;
+  /** GCP 이전 전용 프로젝트 (도착 자원·실행 역할은 여기만). 값이 있을 때만 칸이 온다 */
+  targetProjectId?: string;
+  /** 연결은 됐지만 관찰 역할에 빠진 선택 권한, 고객이 할 일. 있을 때만 온다 */
+  missingPermissions?: string[];
+  needsHuman?: string[];
+  /** 마지막 확인이 흉내 자격(클라우드 안 읽음)으로 닫혔으면 true */
+  mock?: true;
 }
+
+// contracts environment.ts CreateEnvironmentBody, ConnectionLink · api agent-enroll.ts AgentEnrollToken
+export interface CreateEnvironmentBody { provider: Provider; name: string; region?: string; clusterName?: string }
+export interface ConnectionLink {
+  kind: "aws_quick_create" | "gcp_cloud_shell" | "onprem_install";
+  url?: string;
+  command?: string;
+  externalId?: string;
+  createBoundaryPolicy?: boolean;
+  expiresAt: string;
+}
+export interface AgentEnrollToken { envId: string; token: string; expiresAt: string; command: string }
 
 export interface PrecheckItem { id: string; level: "block" | "warn" | "info"; message: string; fix?: string }
 export interface PlanStep {

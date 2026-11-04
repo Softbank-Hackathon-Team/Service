@@ -5,7 +5,10 @@ import type { LiveTrafficView, TrafficShiftProgress } from './liveTraffic';
 import type { PlanResourcesView } from './resourceMap';
 import type { LiveCheckResult, SecurityRegression, SecurityView } from './security-types';
 import type {
+  AgentEnrollToken,
   AgentReportList,
+  ConnectionLink,
+  CreateEnvironmentBody,
   EnvApp,
   EnvironmentView,
   EnvStatus,
@@ -16,6 +19,7 @@ import type {
   PlanDoc,
   Provider,
   ResumeResult,
+  SourceScope,
   TimelineView,
 } from './types';
 import type { CloudInventory } from '../features/dashboard/model';
@@ -48,7 +52,15 @@ export const api = {
   health: () => get<{ ok: boolean }>('/healthz'),
   ready: () => get<{ ok: boolean }>('/readyz'),
   getMigration: (id: string) => get<MigrationView>(`/migrations/${id}`),
-  createMigration: (sourceEnvId: string, targetEnvId: string) => post<{ id: string }>('/migrations', { sourceEnvId, targetEnvId }),
+  /** 출발 범위를 비우면(자동으로 고름) 본문에 칸을 싣지 않는다 */
+  createMigration: (sourceEnvId: string, targetEnvId: string, sourceScope?: SourceScope) =>
+    post<{ id: string }>('/migrations', { sourceEnvId, targetEnvId, ...(sourceScope && Object.keys(sourceScope).length > 0 ? { sourceScope } : {}) }),
+  // 환경 등록: 만들기(draft) → 연결 링크 또는 Agent 등록 토큰 → 계정 번호로 확인 요청 → 워커가 확인
+  createEnvironment: (body: CreateEnvironmentBody) => post<EnvironmentView>('/environments', body),
+  connectionLink: (id: string) => post<ConnectionLink>(`/environments/${id}/connection-link`),
+  agentToken: (id: string) => post<AgentEnrollToken>(`/environments/${id}/agent-token`),
+  verifyEnvironment: (id: string, accountId: string, targetProjectId?: string) =>
+    post<{ envId: string; status: 'verifying'; queued: boolean }>(`/environments/${id}/verify`, { accountId, ...(targetProjectId ? { targetProjectId } : {}) }),
   migrationSpec: (id: string) => get<MigrationSpecViewV2>(`/migrations/${id}/spec`),
   /** 명세 칸 확인·끌어오기. 결과는 늘 새 판 하나. baseVersion 이 지금 판이 아니면 409 SPEC_VERSION_CONFLICT */
   patchSpec: (id: string, body: SpecPatch) => patch<MigrationSpecViewV2>(`/migrations/${id}/spec`, body),
@@ -71,7 +83,6 @@ export const api = {
   cancel: (id: string, manualCleanupConfirmed?: boolean) =>
     post<{ status: 'cancelled' }>(`/migrations/${id}/cancel`, manualCleanupConfirmed ? { manualCleanupConfirmed } : {}),
   rollback: (id: string) => post<{ status: 'rolling_back' }>(`/migrations/${id}/rollback`, {}),
-  // 서버 main 에는 아직 이 경로가 없다 (리소스 회수, README "서버에 없어서" 참고). 목업만 응답한다
   reclaim: (id: string) => post<{ status: 'rollback_window' }>(`/migrations/${id}/reclaim`, {}),
   resume: (id: string, ruleCleared?: boolean, acceptCustomerCost?: boolean) =>
     post<ResumeResult>(`/migrations/${id}/resume`, { ...(ruleCleared ? { ruleCleared } : {}), ...(acceptCustomerCost ? { acceptCustomerCost } : {}) }),

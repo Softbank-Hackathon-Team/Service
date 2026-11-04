@@ -4,6 +4,7 @@ import { AuditPage } from '../features/audit/AuditPage';
 import { CostPage } from '../features/cost/CostPage';
 import { DashboardPage } from '../features/dashboard/DashboardPage';
 import { DesignSystemPage } from '../features/design-system/DesignSystemPage';
+import { ConnectPage } from '../features/environments/ConnectPage';
 import { EnvironmentsPage } from '../features/environments/EnvironmentsPage';
 import { LoginPage } from '../features/login/LoginPage';
 import { MigrationPage } from '../features/migration/MigrationPage';
@@ -59,7 +60,7 @@ export function App() {
     case 'dashboard':
       return <DashboardPage />;
     case 'environments':
-      return <EnvironmentsPage id={route.id} />;
+      return 'view' in route ? <ConnectPage key={route.id ?? 'new'} id={route.id} /> : <EnvironmentsPage id={route.id} />;
     case 'security':
       return <SecurityPage id={route.id} />;
     case 'audit':
