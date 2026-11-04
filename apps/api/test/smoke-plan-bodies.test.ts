@@ -50,9 +50,10 @@ function ddProgress(env: Record<string, string>): string {
   return readFileSync(join(dir, "progress.log"), "utf8");
 }
 test("demo-day: 기본은 api 깃발 PLAN_ACKS 를 안 건다 (발표 화면 승인이 409 가 되지 않게)", () => {
-  assert.match(ddProgress({}), /dev:api & \(PLAN_ACKS=기본\)/);
+  assert.match(ddProgress({}), /start:api & \(PLAN_ACKS=0\)/);   // PF FM-ORC-05·17: 기본은 start:* + PLAN_ACKS=0 명시 (코드 기본이 켬)
 });
 test("demo-day: DEMO_DAY_PLAN_ACKS=1 이면 api 를 PLAN_ACKS=1 로 띄운다", () => {
-  assert.match(ddProgress({ DEMO_DAY_PLAN_ACKS: "1" }), /dev:api & \(PLAN_ACKS=1\)/);
-  assert.match(ddProgress({ DEMO_DAY_PLAN_ACKS: "0" }), /PLAN_ACKS=기본/);
+  assert.match(ddProgress({ DEMO_DAY_PLAN_ACKS: "1" }), /start:api & \(PLAN_ACKS=1\)/);
+  assert.match(ddProgress({ DEMO_DAY_PLAN_ACKS: "0" }), /PLAN_ACKS=0\)/);
+  assert.match(ddProgress({ DEMO_DAY_WATCH: "1" }), /dev:worker \/ dev:api/);
 });
