@@ -13,33 +13,52 @@ export function envsByProvider(envs: EnvironmentView[]): Record<Provider, Enviro
   return out;
 }
 
-export type Borrowed = { purpose: LedgerRow['purpose']; step: string | null; expiresAt: string; migrationId: string };
+export type Borrowed = { purpose: LedgerRow['purpose']; step: string | null; expiresAt: string; migrationId: string; expired: boolean };
+
+const isLive = (row: LedgerRow, now: number) => row.status === 'active' && !row.expiredButActive && Date.parse(row.expiresAt) > now;
+const isReturned = (row: LedgerRow) => row.status === 'revoked' || row.status === 'revoke_requested';
 
 /**
- * 환경마다 지금 빌려 쓰는 임시 권한. 환경 단위 API 가 없어서 진행 중인 마이그레이션의 임시 권한 장부에서 고른다.
+ * 환경마다 빌린 임시 권한. 환경 단위 API 가 없어서 진행 중인 마이그레이션의 임시 권한 장부에서 고른다.
  * 장부 줄에는 환경이 없고 벤더만 있다. 한 마이그레이션의 출발·도착은 벤더가 달라서(같은 벤더 이전은 지원 범위 밖) 벤더로 환경을 가린다.
- * 같은 환경에 여러 줄이면 가장 늦게 끝나는 것 하나.
+ * 살아 있는 줄이 있으면 가장 늦게 끝나는 것. 없으면 가장 최근에 빌린 줄이 만료된 것인지 본다 (다 쓰고 돌려준 줄이면 빌린 권한 없음)
  */
 export function borrowedByEnv(
   envs: Pick<EnvironmentView, 'id' | 'provider'>[],
   ledgers: { migration: Pick<MigrationView, 'id' | 'sourceEnvId' | 'targetEnvId'>; rows: LedgerRow[] }[],
   now = Date.now(),
 ): Record<string, Borrowed> {
-  const out: Record<string, Borrowed> = {};
+  const byEnv = new Map<string, { row: LedgerRow; migrationId: string }[]>();
   for (const { migration, rows } of ledgers) {
     for (const row of rows) {
-      if (row.status !== 'active' || row.expiredButActive || Date.parse(row.expiresAt) <= now) continue;
       const env = [migration.sourceEnvId, migration.targetEnvId]
         .map((id) => envs.find((item) => item.id === id))
         .find((item) => item?.provider === row.provider);
-      if (!env) continue;
-      const prev = out[env.id];
-      if (!prev || Date.parse(row.expiresAt) > Date.parse(prev.expiresAt))
-        out[env.id] = { purpose: row.purpose, step: row.step ?? row.stage, expiresAt: row.expiresAt, migrationId: migration.id };
+      if (env) byEnv.set(env.id, [...(byEnv.get(env.id) ?? []), { row, migrationId: migration.id }]);
     }
+  }
+  const out: Record<string, Borrowed> = {};
+  for (const [envId, rows] of byEnv) {
+    const latest = (list: typeof rows, at: (row: LedgerRow) => string) =>
+      list.reduce<(typeof rows)[number] | undefined>((best, item) => (!best || Date.parse(at(item.row)) > Date.parse(at(best.row)) ? item : best), undefined);
+    const live = latest(rows.filter((item) => isLive(item.row, now)), (row) => row.expiresAt);
+    const pick = live ?? latest(rows, (row) => row.issuedAt);
+    if (!pick || (!live && isReturned(pick.row))) continue;
+    const { row, migrationId } = pick;
+    out[envId] = { purpose: row.purpose, step: row.step ?? row.stage, expiresAt: row.expiresAt, migrationId, expired: !live };
   }
   return out;
 }
 
-/** 남은 분 (올림). 1분 안이면 1 */
-export const minutesLeft = (expiresAt: string, now = Date.now()) => Math.max(1, Math.ceil((Date.parse(expiresAt) - now) / 60_000));
+const SOON_MS = 60_000;
+/** 빌린 권한 칸의 모습: 남은 분 / 곧 만료 (1분 이하) / 만료 (갱신 버튼). 분은 내림이라 실제보다 길게 말하지 않는다 */
+export type BorrowState = { kind: 'left'; minutes: number } | { kind: 'soon' } | { kind: 'expired' };
+export function borrowState(borrowed: Pick<Borrowed, 'expiresAt' | 'expired'>, now = Date.now()): BorrowState {
+  const ms = Date.parse(borrowed.expiresAt) - now;
+  if (borrowed.expired || ms <= 0) return { kind: 'expired' };
+  if (ms <= SOON_MS) return { kind: 'soon' };
+  return { kind: 'left', minutes: Math.floor(ms / 60_000) };
+}
+
+/** 네 벤더 카드에 모두 환경이 있으면 등록 카드를 더 두지 않는다 */
+export const allProvidersFilled = (groups: Record<Provider, unknown[]>) => PROVIDER_ORDER.every((provider) => groups[provider].length > 0);

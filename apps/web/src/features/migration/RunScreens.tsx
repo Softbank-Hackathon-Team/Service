@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { ActionRow, FoldTile, Hero, Stack } from '../../components/layout/tiles';
 import { ActionPill, BarPill } from '../../components/ui/controls';
 import { TrafficBar } from '../../components/ui/TrafficBar';
@@ -9,6 +9,7 @@ import { or404 } from '../../lib/http';
 import { LIVE_REASON } from '../../lib/liveTraffic';
 import { isTerminal, LABEL } from '../../lib/status';
 import { latestMeasurements, MEASURE_LABEL } from '../../lib/timelineDetail';
+import { useNow } from '../../lib/useNow';
 import { usePoll } from '../../lib/usePoll';
 import { AgentFold, useAgentReview } from '../agent/AgentResult';
 import { failureAnalysisOf } from '../agent/model';
@@ -158,11 +159,7 @@ export function RunningScreen({ migration, route, onChanged }: ScreenProps) {
 }
 
 function useCountdown(endsAt: string | null | undefined) {
-  const [now, setNow] = useState(Date.now);
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
+  const now = useNow(1000);
   return endsAt ? Math.max(0, (Date.parse(endsAt) - now) / 1000) : 0;
 }
 

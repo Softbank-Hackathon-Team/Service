@@ -70,6 +70,45 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-8);
+  min-height: 22px;
+}
+/* 남은 분 · 곧 만료 · 갱신 버튼을 한 칸에 겹쳐 두고, 보이는 하나만 흐리게 바꿔 낸다 */
+.swap {
+  display: grid;
+  justify-items: end;
+  align-items: center;
+}
+.swap > * {
+  grid-area: 1 / 1;
+  transition:
+    opacity var(--motion-fold) var(--ease-standard),
+    transform var(--motion-fold) var(--ease-standard),
+    visibility 0s;
+}
+.swap > [data-shown='false'] {
+  opacity: 0;
+  transform: scale(0.9);
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity var(--motion-fade) var(--ease-standard),
+    transform var(--motion-fade) var(--ease-standard),
+    visibility 0s linear var(--motion-fade);
+}
+@media (prefers-reduced-motion: reduce) {
+  .swap > *,
+  .swap > [data-shown='false'] {
+    transition: none;
+  }
+}
+/* 곧 만료: 대시보드 "검토 필요" 와 같은 작은 회색 꼬리표 */
+.soon {
+  padding: 0 var(--space-8);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-subtle);
+  color: var(--color-fg-secondary);
+  line-height: 20px;
+  white-space: nowrap;
 }
 .refresh {
   display: inline-flex;
@@ -85,9 +124,10 @@
   font-size: 12px;
   cursor: pointer;
 }
+/* 꺼진 모습은 글자색으로만 낸다. 투명도는 .swap 이 바꿔 내는 데 쓴다 */
 .refresh:disabled {
+  color: var(--color-fg-tertiary);
   cursor: not-allowed;
-  opacity: 0.6;
 }
 /* 환경 등록하기: 벤더 카드와 같은 크기, 새로 만드는 칸이라 점선 */
 .addCard {

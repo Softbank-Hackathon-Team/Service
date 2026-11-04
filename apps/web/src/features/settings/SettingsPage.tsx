@@ -12,12 +12,13 @@ import { readActivePrefs, savePrefs, type Locale, type Theme } from '../../lib/p
 import { CONN_LABEL, PROVIDER_SHORT, isTerminal } from '../../lib/status';
 import { ago } from '../../lib/text';
 import type { EnvironmentView, Provider } from '../../lib/types';
+import { useNow } from '../../lib/useNow';
 import { usePoll } from '../../lib/usePoll';
 import { realEnvs } from '../dashboard/model';
 import { envPath, REGISTER_PATH } from '../environments/connect';
 import { PLATFORM } from '../migration/source';
 import { ShellLayout } from '../shell/ShellLayout';
-import { borrowedByEnv, envsByProvider, minutesLeft, PROVIDER_ORDER, type Borrowed } from './model';
+import { allProvidersFilled, borrowedByEnv, borrowState, envsByProvider, PROVIDER_ORDER, type Borrowed } from './model';
 import s from '../common/page.module.css';
 import own from './SettingsPage.module.css';
 import { t } from '../../lib/i18n';
@@ -42,10 +43,8 @@ function ProbeRow({ name, state }: { name: string; state: { data: number | null;
   );
 }
 
-const PURPOSE: Record<Borrowed['purpose'], string> = { observe: t('관찰 역할'), operate: t('실행 역할') };
-
 /**
- * 진행 중인 마이그레이션의 임시 권한 장부를 읽어 환경마다 지금 빌린 권한을 낸다.
+ * 진행 중인 마이그레이션의 임시 권한 장부를 읽어 환경마다 빌린 권한을 낸다.
  * 환경 단위 API 가 없어서 마이그레이션 보안 표(GET /migrations/:id/security)의 장부를 쓴다
  */
 function useBorrowed(envs: EnvironmentView[]) {
@@ -60,6 +59,30 @@ function useBorrowed(envs: EnvironmentView[]) {
   return borrowedByEnv(envs, ledgers.data ?? []);
 }
 
+/**
+ * 빌린 권한이 있을 때만 보이는 줄. 오른쪽 한 칸이 남은 분 → 곧 만료 → 갱신 버튼으로 차례로 바뀐다 (겹쳐 두고 흐리게 바꾼다).
+ * 시계는 이 줄이 있을 때만 1초마다 돈다
+ */
+function BorrowRow({ borrowed }: { borrowed: Borrowed }) {
+  const state = borrowState(borrowed, useNow(1000));
+  return (
+    <span className={own.borrowRow}>
+      <span className="t-caption c-tertiary">{t('빌린 권한')}</span>
+      <span className={own.swap}>
+        <span className="t-caption c-secondary" data-shown={state.kind === 'left'}>
+          {t('{0}분 남음', { 0: state.kind === 'left' ? state.minutes : 1 })}
+        </span>
+        <span className={`${own.soon} t-caption`} data-shown={state.kind === 'soon'}>{t('곧 만료')}</span>
+        {/* TODO(human): 빌린 권한을 사람이 갱신하는 서버 API 가 아직 없다. 생기면 이 버튼을 켠다 */}
+        <button type="button" className={own.refresh} data-shown={state.kind === 'expired'} disabled title={t('권한 갱신은 서버 기능이 생기면 켜집니다')}>
+          <Icon name="refresh" size={12} />
+          {t('갱신')}
+        </button>
+      </span>
+    </span>
+  );
+}
+
 function EnvLine({ env, borrowed }: { env: EnvironmentView; borrowed: Borrowed | undefined }) {
   const connected = env.connectionStatus === 'connected';
   return (
@@ -71,16 +94,7 @@ function EnvLine({ env, borrowed }: { env: EnvironmentView; borrowed: Borrowed |
       <span className="t-caption c-tertiary">
         {t('{0} · 연결 확인 {1}', { 0: PLATFORM[env.provider], 1: ago(env.lastVerifiedAt) })}
       </span>
-      <span className={own.borrowRow}>
-        <span className={`t-caption ${borrowed ? 'c-secondary' : 'c-tertiary'}`}>
-          {borrowed ? t('{0}{1} · {2}분 남음', { 0: PURPOSE[borrowed.purpose], 1: borrowed.step ? ` · ${borrowed.step}` : '', 2: minutesLeft(borrowed.expiresAt) }) : t('빌린 권한 없음')}
-        </span>
-        {/* TODO(human): 빌린 권한을 사람이 갱신하는 서버 API 가 아직 없다. 생기면 이 버튼을 켠다 */}
-        <button type="button" className={own.refresh} disabled title={t('권한 갱신은 서버 기능이 생기면 켜집니다')}>
-          <Icon name="refresh" size={12} />
-          {t('갱신')}
-        </button>
-      </span>
+      {borrowed && <BorrowRow borrowed={borrowed} />}
     </li>
   );
 }
@@ -194,7 +208,7 @@ export function SettingsPage({ user }: { user: AuthUser }) {
             {PROVIDER_ORDER.map((provider) => (
               <ProviderCard key={provider} provider={provider} envs={groups[provider]} borrowed={borrowed} />
             ))}
-            <RegisterCard />
+            {!allProvidersFilled(groups) && <RegisterCard />}
           </div>
         </div>
       </Hero>
