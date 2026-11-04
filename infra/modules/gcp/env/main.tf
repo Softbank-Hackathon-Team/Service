@@ -39,6 +39,8 @@ resource "google_project_service" "apis" {
   for_each = toset([
     "container.googleapis.com", "sqladmin.googleapis.com", "servicenetworking.googleapis.com",
     "artifactregistry.googleapis.com", "secretmanager.googleapis.com",
+    # FM-CLD-14: 앱 층(gcp/root)이 쓰는 SA(iam)·플랫폼의 고객 SA 빌리기(iamcredentials) — 앱 층 apply 전 plan 단계부터 필요해서 env 층에서 켠다
+    "iam.googleapis.com", "iamcredentials.googleapis.com", "compute.googleapis.com",
   ])
   service            = each.value
   disable_on_destroy = false

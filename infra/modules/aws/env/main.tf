@@ -21,9 +21,11 @@ variable "cidr" {
   type    = string
   default = "10.40.0.0/16"
 }
+# PF02 FM-CLD-11 DRAFT(ai): 1.33 은 2026-07-29 표준 지원이 끝나 연장 지원 요금(제어부 시간당 $0.10→$0.60)이었다 (11/4 실측 supportType=EXTENDED).
+#   aws/platform 모듈과 같은 1.35 (2027-03 까지 표준 지원). 이미 있는 클러스터는 아래 lifecycle 로 안 건드린다
 variable "k8s_version" {
   type    = string
-  default = "1.33"
+  default = "1.35"
 }
 # 워커의 실행 역할 ARN. 주면 EKS access entry를 만들어 k8s 그룹 platform:operate에 묶는다 (넓은 정책 연결 없음)
 variable "operate_role_arn" {
@@ -169,6 +171,15 @@ resource "aws_eks_cluster" "this" {
     subnet_ids              = concat(aws_subnet.private[*].id, aws_subnet.public[*].id)
     endpoint_private_access = true
     endpoint_public_access  = true # DRAFT(ai): 데모용. Argo CD 허브 IP로 제한하는 건 TODO(human)
+  }
+  # PF02 FM-CLD-11: 표준 지원이 끝나면 연장 지원으로 넘어가지 않고 자동 업그레이드 (연장 요금 방지). 새로 만들 때만 적용
+  upgrade_policy {
+    support_type = "STANDARD"
+  }
+  # 이미 있는 클러스터(예: 1.33 으로 만든 실측 중 클러스터)는 버전·지원 정책을 바꾸지 않는다.
+  #   기본값을 올려도 다음 apply 가 1.33→1.35 업그레이드(한 번에 두 단계는 EKS 가 거절)나 STANDARD 전환(곧바로 강제 업그레이드)을 하지 않게
+  lifecycle {
+    ignore_changes = [version, upgrade_policy]
   }
   depends_on = [aws_iam_role_policy_attachment.cluster]
 }
