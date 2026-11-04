@@ -54,6 +54,12 @@ export async function gitopsPreflight(env: NodeJS.ProcessEnv = process.env,
 }
 
 export interface CommitResult { commit: string; bundleSha256: string; resources: string[]; changed: boolean }
+// 렌더만 한 묶음 (커밋 없음). manifests = 커밋할 manifests/*.yaml 의 글자 그대로 (path 는 묶음 폴더 기준)
+export interface RenderedBundle { bundleSha256: string; manifests: Array<{ path: string; yaml: string }> }
+export interface CommitOpts {
+  // 리허설한 지문. 렌더 결과가 다르면 커밋하지 않고 작업 복사본을 되돌린 뒤 REHEARSAL_BUNDLE_MISMATCH
+  expectBundleSha?: string;
+}
 
 // Z38-6: 자식 프로세스(git·npm·gitops 레포의 render/validate 스크립트)에는 워커 환경변수를 통째로 넘기지 않는다.
 //   예전엔 process.env 그대로 → ANTHROPIC_API_KEY·CLOUDFLARE_API_TOKEN·GITOPS_WRITE_TOKEN·REPL_*_URL(DB 비밀번호)이
@@ -149,20 +155,14 @@ export class GitopsRepo {
   }
 
   // 계약 3절 1~7번. values.yaml은 JSON으로 쓴다 (JSON은 그대로 YAML이라 helm·검증 도구가 읽는다)
-  commitBundle(kind: "deploy" | "traffic", b: BundleRef, values: HelmValues, plan: PlanFile, title: string): Promise<CommitResult> {
+  commitBundle(kind: "deploy" | "traffic", b: BundleRef, values: HelmValues, plan: PlanFile, title: string, opts: CommitOpts = {}): Promise<CommitResult> {
     return serial(async () => {
-      await this.ensureCheckout();
-      const remote = await this.hasRemote();
-      if (remote) await this.git("pull", "--ff-only", "origin", this.cfg.branch);
-      const rel = bundlePath(b);
-      const abs = join(this.cfg.dir, rel);
-      await mkdir(abs, { recursive: true });
-      await writeFile(join(abs, "values.yaml"), JSON.stringify(values, null, 2) + "\n");
-      await writeFile(join(abs, "plan.json"), JSON.stringify(plan, null, 2) + "\n");
-      if (plan.target.cluster) await this.ensureFence(b.tenant, plan.target.cluster);
-      await this.tool("render.mjs", rel);
-      await this.tool("validate.mjs");
-      const written = await this.readPlan(b);
+      const { remote, rel, written } = await this.writeAndRender(b, values, plan);
+      if (opts.expectBundleSha !== undefined && written.bundleSha256 !== opts.expectBundleSha) {
+        await this.revert(b);
+        throw new GitopsError("REHEARSAL_BUNDLE_MISMATCH",
+          `커밋 직전 렌더 지문 ${written.bundleSha256.slice(0, 12)} 이 리허설한 지문 ${opts.expectBundleSha.slice(0, 12)} 과 다르다`);
+      }
       await this.git("add", "-A", "--", rel, `tenants/${b.tenant}/argocd`);
       let changed = true;
       try { await this.git("diff", "--cached", "--quiet"); changed = false; } catch { /* 바뀐 게 있다 */ }
@@ -171,6 +171,46 @@ export class GitopsRepo {
       const commit = await this.git("rev-parse", "HEAD");
       return { commit, bundleSha256: written.bundleSha256, resources: await this.resources(b), changed };
     });
+  }
+
+  // 리허설용: commitBundle 과 같은 순서로 쓰고 렌더하고 검사한 뒤, 커밋하지 않고 같은 임계 구역 안에서 되돌린다.
+  //   다른 이전의 커밋은 되돌린 뒤에야 작업 복사본을 본다. 렌더가 실패해도 되돌린다
+  renderBundle(b: BundleRef, values: HelmValues, plan: PlanFile): Promise<RenderedBundle> {
+    return serial(async () => {
+      try {
+        const { abs, written } = await this.writeAndRender(b, values, plan);
+        const md = join(abs, "manifests");
+        const names = (await readdir(md)).filter((n) => n.endsWith(".yaml")).sort();
+        const manifests = await Promise.all(names.map(async (n) => ({ path: `manifests/${n}`, yaml: await readFile(join(md, n), "utf8") })));
+        return { bundleSha256: written.bundleSha256, manifests };
+      } finally {
+        await this.revert(b);
+      }
+    });
+  }
+
+  private async writeAndRender(b: BundleRef, values: HelmValues, plan: PlanFile) {
+    await this.ensureCheckout();
+    const remote = await this.hasRemote();
+    if (remote) await this.git("pull", "--ff-only", "origin", this.cfg.branch);
+    const rel = bundlePath(b);
+    const abs = join(this.cfg.dir, rel);
+    await mkdir(abs, { recursive: true });
+    await writeFile(join(abs, "values.yaml"), JSON.stringify(values, null, 2) + "\n");
+    await writeFile(join(abs, "plan.json"), JSON.stringify(plan, null, 2) + "\n");
+    if (plan.target.cluster) await this.ensureFence(b.tenant, plan.target.cluster);
+    await this.tool("render.mjs", rel);
+    await this.tool("validate.mjs");
+    return { remote, rel, abs, written: await this.readPlan(b) };
+  }
+
+  // 묶음 폴더와 회사 울타리를 HEAD 그대로 돌린다. HEAD 에 없던 경로(첫 배포)는 checkout 이 실패하므로 clean 으로 지운다
+  private async revert(b: BundleRef) {
+    const paths = [bundlePath(b), `tenants/${b.tenant}/argocd`];
+    for (const p of paths) {
+      if (await this.git("ls-tree", "-r", "--name-only", "HEAD", "--", p).catch(() => "")) await this.git("checkout", "-q", "HEAD", "--", p);
+    }
+    await this.git("clean", "-fdq", "--", ...paths);
   }
 
   // 울타리가 없으면 만들고, 이 클러스터가 목적지에 없으면 더한다. 사람이 YAML로 쓴 울타리는 건드리지 않는다
