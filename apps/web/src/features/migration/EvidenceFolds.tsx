@@ -134,11 +134,11 @@ export function LeftoverFold({ migration, title, defaultOpen = true, children }:
               </li>
             ))}
           </ul>
-          <p className={`${s.note} t-caption c-tertiary`}>이전 상태와 감사 기록으로 낸 목록입니다. 클라우드에서 직접 센 값은 아닙니다.</p>
+          <p className={`${s.note} t-caption c-tertiary`}>마이그레이션 상태와 감사 기록으로 낸 목록입니다. 클라우드에서 직접 센 값은 아닙니다.</p>
         </>
       ) : (
         <p className={`${s.note} t-body-sm c-secondary`}>
-          {inventory.loading ? '도착 환경을 읽고 있습니다.' : left === null ? '도착 환경 재고에서 이 이전을 찾지 못했습니다.' : '서버 기록으로는 도착에 남은 자원이 없습니다.'}
+          {inventory.loading ? '도착 환경을 읽고 있습니다.' : left === null ? '도착 환경 재고에서 이 마이그레이션을 찾지 못했습니다.' : '서버 기록으로는 도착에 남은 자원이 없습니다.'}
         </p>
       )}
       {children}

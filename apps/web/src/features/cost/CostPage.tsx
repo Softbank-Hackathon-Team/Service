@@ -141,7 +141,7 @@ export function CostPage({ id }: { id: string }) {
     : diff === null ? '한쪽 비용을\n계산할 수 없습니다'
     : diff >= 0 ? `옮기면 월 ${usd(diff)}\n아낍니다` : `옮기면 월 ${usd(-diff)}\n더 듭니다`;
   return (
-    <ShellLayout layout={LAYOUT} barLeft={<BarPill label="이전으로" icon="rollback" onClick={() => go(`migrations/${id}`)} />}>
+    <ShellLayout layout={LAYOUT} barLeft={<BarPill label="마이그레이션으로" icon="rollback" onClick={() => go(`migrations/${id}`)} />}>
       <Hero
         tone="run"
         meta={view ? (view.specFrom === 'demo' ? '예시 앱 기준' : view.origin === 'stored' ? '승인 때 저장한 추정' : '미리보기') : '비용'}

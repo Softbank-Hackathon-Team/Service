@@ -12,7 +12,7 @@ export type Route =
 export const NAV_ITEMS: { id: Page; label: string }[] = [
   { id: 'dashboard', label: '대시보드' },
   { id: 'environments', label: '환경' },
-  { id: 'migrations', label: '이전' },
+  { id: 'migrations', label: '마이그레이션' },
   { id: 'audit', label: '감사' },
   { id: 'agent', label: '에이전트' },
 ];

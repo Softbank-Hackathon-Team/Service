@@ -21,7 +21,7 @@ import s from '../common/page.module.css';
 
 const LAYOUT: BentoLayout = { columns: ['narrow', 'fill', 'side'], areas: 'list hero side' };
 
-const STAGE = { before: '이전 전', changing: '이전 중', after: '이전 끝', undone: '되돌림' } as const;
+const STAGE = { before: '마이그레이션 전', changing: '마이그레이션 중', after: '마이그레이션 끝', undone: '되돌림' } as const;
 
 function reportLine(report: AgentReportBody) {
   if (report.kind === 'heartbeat') return `k3s ${report.k3sVersion}${report.cnpg ? ` · DB ${report.cnpg.ready ? '준비됨' : '준비 안 됨'}` : ''}`;
@@ -73,7 +73,7 @@ function ConnectedEnv({ env }: { env: EnvironmentView }) {
         {inventory.error != null && !data && <p className={`${s.error} t-body-md`}>{errorText(inventory.error)}</p>}
       </Hero>
       <Stack area="side">
-        <FoldTile title="이 환경의 이전" summary={`${data?.apps.length ?? 0}건`}>
+        <FoldTile title="이 환경의 마이그레이션" summary={`${data?.apps.length ?? 0}건`}>
           {data && data.apps.length > 0 ? (
             <ul className={s.rows}>
               {data.apps.map((app) => {
@@ -97,7 +97,7 @@ function ConnectedEnv({ env }: { env: EnvironmentView }) {
               })}
             </ul>
           ) : (
-            <p className={`${s.note} t-body-sm c-tertiary`}>이 환경을 쓰는 이전이 없습니다.</p>
+            <p className={`${s.note} t-body-sm c-tertiary`}>이 환경을 쓰는 마이그레이션이 없습니다.</p>
           )}
         </FoldTile>
         {data && <FoundResources cloud={data.cloud} />}

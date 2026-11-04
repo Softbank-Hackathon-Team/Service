@@ -26,7 +26,7 @@ export function useChosenMigration(page: 'audit' | 'agent', id: string | null) {
   const picker = items.length > 0 && (
     <select
       className={`${s.select} t-label-md`}
-      aria-label="이전 고르기"
+      aria-label="마이그레이션 고르기"
       value={chosen?.id ?? ''}
       onChange={(event) => go(`${page}/${event.target.value}`)}
     >

@@ -253,7 +253,7 @@ export function PausedScreen({ migration, route, onChanged }: ScreenProps) {
         >
           <RollbackPill migration={migration} busy={busy} onConfirm={() => void run(() => api.rollback(migration.id))} />
           <ActionPill
-            label={busy ? '보내는 중' : consent.accept ? '고객 부담으로 재개' : '이전 재개'}
+            label={busy ? '보내는 중' : consent.accept ? '고객 부담으로 재개' : '마이그레이션 재개'}
             icon="play"
             disabled={busy || (byRule && !cleared) || consent.waiting}
             onClick={() => void run(() => api.resume(migration.id, byRule ? cleared : undefined, consent.accept))}

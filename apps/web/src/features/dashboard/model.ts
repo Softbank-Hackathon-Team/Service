@@ -91,14 +91,14 @@ export const bucketSignature = (items: MigrationView[]) =>
 export function listNote(groups: Record<MigrationBucket, MigrationView[]>): string | null {
   if (groups.human.length > 0) return null;
   if (groups.running.length > 0) return '지금 사람이 할 일은 없습니다.';
-  return groups.done.length > 0 ? '진행 중인 이전이 없습니다.' : '아직 이전이 없습니다. 새 이전을 시작해 보세요.';
+  return groups.done.length > 0 ? '진행 중인 마이그레이션이 없습니다.' : '아직 마이그레이션이 없습니다. 새 마이그레이션을 시작해 보세요.';
 }
 
 const HUMAN_ACTION: Partial<Record<MigrationStatus, string>> = {
   spec_review: '명세 확정',
   awaiting_approval: '계획 승인',
   approved: '실행 시작',
-  paused: '멈춘 이전 확인',
+  paused: '멈춘 마이그레이션 확인',
   failed: '실패 확인',
   rejected: '거절된 계획 처리',
   stale: '낡은 계획 처리',

@@ -163,7 +163,7 @@ export function targetOptions(envs: EnvironmentView[], source: EnvironmentView) 
 /** 도착 환경 줄의 한 줄 설명: 실행 권한을 빌릴 수 있는지. warn 이면 실행 단계에서 막힐 수 있다. */
 export function borrowNote(env: EnvironmentView, now = Date.now()): { text: string; warn: boolean } {
   if (env.provider === 'gcp' && !env.targetProjectId && !env.mock)
-    return { text: '이전 전용 프로젝트가 없어 실행 단계에서 막힐 수 있습니다', warn: true };
+    return { text: '마이그레이션 전용 프로젝트가 없어 실행 단계에서 막힐 수 있습니다', warn: true };
   if (env.missingPermissions && env.missingPermissions.length > 0)
     return { text: `관찰 역할에 권한 ${env.missingPermissions.length}개가 빠졌습니다`, warn: true };
   const checked = env.lastVerifiedAt ? ` · 확인 ${ago(env.lastVerifiedAt, now)}` : '';

@@ -80,7 +80,7 @@ function HowFold({ provider }: { provider?: Provider }) {
             </li>
           </ul>
           <p className={`${s.note} t-body-sm c-secondary`}>
-            플랫폼은 비밀 키를 받지 않습니다. 고객 계정에 만든 역할을 이전 단계마다 필요한 만큼만 짧게 빌리고(실행 단계는 15분), 끝나면 돌려줍니다.
+            플랫폼은 비밀 키를 받지 않습니다. 고객 계정에 만든 역할을 마이그레이션 단계마다 필요한 만큼만 짧게 빌리고(실행 단계는 15분), 끝나면 돌려줍니다.
           </p>
         </>
       )}
@@ -165,7 +165,7 @@ function NewEnvironment() {
     >
       <Hero tone="run" meta={`${providerLabel(provider)} 환경 등록`} title={'이 환경을\n뭐라고 부를까요?'}>
         <form className={s.fieldGrid} onSubmit={(event) => void create(event)} noValidate>
-          <Field label="환경 이름" hint="목록과 이전 화면에 보이는 이름입니다" placeholder={NAME_PLACEHOLDER[provider]} autoFocus value={form.name} error={shown.name} onChange={set('name')} />
+          <Field label="환경 이름" hint="목록과 마이그레이션 화면에 보이는 이름입니다" placeholder={NAME_PLACEHOLDER[provider]} autoFocus value={form.name} error={shown.name} onChange={set('name')} />
           {provider === 'aws' && (
             <>
               <Field label="리전" hint="EKS 클러스터가 있는 리전" value={form.region} error={shown.region} onChange={set('region')} />
@@ -271,7 +271,7 @@ function CustomerTodo({
             />
             {!aws && (
               <Field
-                label="이전 전용 프로젝트 ID"
+                label="마이그레이션 전용 프로젝트 ID"
                 hint="도착 자원이 생기는 곳. 비우면 실행 단계에서 막힐 수 있습니다"
                 placeholder="shop-migration"
                 value={account.targetProjectId}
@@ -497,7 +497,7 @@ function ContinueConnect({ id }: { id: string }) {
       </Hero>
       {side(
         <ActionRow before={<BarPill label="환경 보기" onClick={() => go(`environments/${env.id}`)} />}>
-          <ActionPill label="이 환경에서 새 이전" onClick={() => go('migrations/new')} />
+          <ActionPill label="이 환경에서 새 마이그레이션" onClick={() => go('migrations/new')} />
         </ActionRow>,
       )}
     </ShellLayout>

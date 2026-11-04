@@ -189,7 +189,7 @@ async function waitForScreen(page: Page, ev: Evidence, want: RegExp, ms: number,
 
 async function writeEvidence(info: TestInfo, ev: Evidence) {
   const lines = [
-    `이전 ${ev.migrationId ?? "(만들지 못함)"}`,
+    `마이그레이션 ${ev.migrationId ?? "(만들지 못함)"}`,
     `화면 차례: ${ev.screens.join(" → ")}`,
     `트래픽 막대 도착 비율: ${ev.trafficShown.join(" → ") || "못 봄"}`,
     `화면이 받은 traffic-shift: ${ev.trafficReceived.join(" → ") || "없음"}`,
@@ -212,7 +212,7 @@ async function writeEvidence(info: TestInfo, ev: Evidence) {
   await info.attach("evidence", { path: file, contentType: "application/json" });
 }
 
-test("새 콘솔 · 실제 서버: 로그인부터 이전 완료까지 화면으로 한 번", async ({ page }, info) => {
+test("새 콘솔 · 실제 서버: 로그인부터 마이그레이션 완료까지 화면으로 한 번", async ({ page }, info) => {
   const ev: Evidence = {
     migrationId: null, screens: [], trafficShown: [], trafficReceived: [], report: null,
     apiFailures: [], otherFailures: [], refreshOkAt: [], browser: [], sse: { connects: [], signals: [] }, notes: {},
@@ -257,25 +257,25 @@ test("새 콘솔 · 실제 서버: 로그인부터 이전 완료까지 화면으
       await expect(heroTitle(page)).toHaveText(/환경 \d+개/);
       await expect(envButton(page, SOURCE)).toBeVisible();
       await expect(envButton(page, TARGET)).toBeVisible();
-      await expect(page.getByRole("button", { name: /^검토 필요/ }), "이전 목록을 읽음").toBeVisible();
+      await expect(page.getByRole("button", { name: /^진행 중/ }), "마이그레이션 목록을 읽음").toBeVisible();
     });
 
-    await step("새 이전 · 출발 고르기", async () => {
-      await page.getByRole("button", { name: "새 이전 시작", exact: true }).click();
+    await step("새 마이그레이션 · 출발 고르기", async () => {
+      await page.getByRole("button", { name: "새 마이그레이션 시작", exact: true }).click();
       await expect(page).toHaveURL(/#\/migrations\/new$/);
       await expect(heroTitle(page)).toHaveText(/어디에서\s*옮길까요/);
       await sourceButton(page, SOURCE).click();
     });
 
     // 출발 범위(sourceScope)는 자동으로 고른다. 찾은 자원을 다 읽으면 "옮길 서비스" 칸이 사람 입력을 기다린다
-    await step("새 이전 · 옮길 서비스", async () => {
+    await step("새 마이그레이션 · 옮길 서비스", async () => {
       await expect(heroTitle(page)).toHaveText(/무엇을\s*옮길까요/);
       await expect(page.getByRole("listitem").filter({ hasText: "옮길 서비스" }).getByRole("img")).toHaveAccessibleName("입력 기다림", { timeout: HUMAN_MS });
       ev.notes["찾은 자원"] = flat(await page.locator('[style*="grid-area: found"]').innerText({ timeout: 5_000 }).catch(() => "칸을 못 찾음"));
       await page.getByRole("button", { name: /^자동으로 고르기/ }).click();
     });
 
-    await step("새 이전 · 도착 고르기", async () => {
+    await step("새 마이그레이션 · 도착 고르기", async () => {
       await expect(heroTitle(page)).toHaveText(/어디로\s*옮길까요/);
       await envButton(page, TARGET).click();
       await page.getByRole("button", { name: `${TARGET}로 옮기기`, exact: true }).click();
@@ -355,7 +355,7 @@ test("새 콘솔 · 실제 서버: 로그인부터 이전 완료까지 화면으
       await expect.poll(() => ev.report !== null, { message: "완료 화면이 증적 리포트(GET report)를 읽음", timeout: HUMAN_MS }).toBe(true);
       ev.notes["리포트 traffic"] = JSON.stringify(ev.report?.traffic);
       await expect
-        .soft(page.getByRole("button", { name: /^전환 판정/ }), "트래픽을 옮기고 끝난 이전이면 전환 판정 요약이 보여야 함 (#174)")
+        .soft(page.getByRole("button", { name: /^전환 판정/ }), "트래픽을 옮기고 끝난 마이그레이션이면 전환 판정 요약이 보여야 함 (#174)")
         .not.toContainText("아직 없음");
       const opened = page.context().waitForEvent("page");
       await page.getByRole("button", { name: "증적 리포트", exact: true }).click();
@@ -371,7 +371,7 @@ test("새 콘솔 · 실제 서버: 로그인부터 이전 완료까지 화면으
     expect.soft(ev.browser.filter((p) => !(p.kind === "console.error" && NETWORK_ECHO.test(p.text))), "브라우저 console.error·pageerror").toEqual([]);
     if (ev.migrationId) {
       expect.soft(ev.sse.connects.some((c) => c.status === 200 && c.contentType.startsWith("text/event-stream")), "화면 신호 GET /api/events 가 붙음").toBe(true);
-      expect.soft(ev.sse.signals.some((s) => s.migrationId === ev.migrationId), "이 이전의 화면 신호를 받음").toBe(true);
+      expect.soft(ev.sse.signals.some((s) => s.migrationId === ev.migrationId), "이 마이그레이션의 화면 신호를 받음").toBe(true);
     }
   }
 });

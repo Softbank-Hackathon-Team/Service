@@ -139,7 +139,7 @@ function SecurityDetail({ migration, view, reading, threats, stoppedByRule, onCh
 
       <Section title="가드레일" summary={stoppedByRule ? '멈춤' : live ? '감시 중' : '끝남'} defaultOpen={stoppedByRule || incidents.length > 0}>
         <div className={s.agent}>
-          {stoppedByRule && <p className="t-body-sm c-danger">가드레일이 이 이전을 멈췄습니다.</p>}
+          {stoppedByRule && <p className="t-body-sm c-danger">가드레일이 이 마이그레이션을 멈췄습니다.</p>}
           {plan.data ? (
             <p className="t-body-sm c-secondary">
               오류율 {plan.data.rollbackCriteria.errorRatePct}% 초과 또는 응답 시간 {plan.data.rollbackCriteria.p95Multiplier}배 초과가 {plan.data.rollbackCriteria.windowSec}초 창에서 보이면 되돌립니다.

@@ -128,7 +128,7 @@ export function AuditPage({ id }: { id: string | null }) {
   if (!chosen) {
     return (
       <ShellLayout layout={LAYOUT}>
-        <Hero tone="run" meta="감사 기록" title={loading ? '이전을\n읽고 있습니다' : '확인할 이전이\n없습니다'} />
+        <Hero tone="run" meta="감사 기록" title={loading ? '마이그레이션을\n읽고 있습니다' : '확인할 마이그레이션이\n없습니다'} />
         {loading && <SkeletonTile area="log" title="타임라인" rows={8} />}
       </ShellLayout>
     );

@@ -246,7 +246,7 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
           </FoldTile>
         )}
         <ActionRow notice={error}>
-          <ConfirmPill label="취소" confirmLabel="이전 취소" icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
+          <ConfirmPill label="취소" confirmLabel="마이그레이션 취소" icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
           <ActionPill label={v2 ? confirmLabel(busy, reviewCount) : busy ? '보내는 중' : '명세 확정'} icon="check" disabled={busy || !view} onClick={() => void run(confirm)} />
         </ActionRow>
       </Stack>
@@ -412,7 +412,7 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
         </FoldTile>
         <SecurityFold migration={migration} />
         <ActionRow notice={error ?? (plan.error != null && !doc ? errorText(plan.error) : null)}>
-          <ConfirmPill label="취소" confirmLabel="이전 취소" icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
+          <ConfirmPill label="취소" confirmLabel="마이그레이션 취소" icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
           {doc && <ConfirmPill label="거절" confirmLabel="계획 거절" icon="ban" disabled={busy} onConfirm={() => void run(() => api.decide(doc.planId, 'reject', doc.planHash))} />}
           <ActionPill
             label={approveLabel({ busy, expired, missing: acks.missing.length })}
@@ -444,9 +444,9 @@ function ApprovedScreen({ migration, route, onChanged }: ScreenProps) {
         meta={waiting === 'tenant' ? '동시 진행 상한' : waiting === 'env' ? '환경 사용 중' : '승인됨'}
         title={
           waiting === 'tenant'
-            ? '진행 중인 이전이 많아\n아직 시작하지 않았습니다'
+            ? '진행 중인 마이그레이션이 많아\n아직 시작하지 않았습니다'
             : waiting === 'env'
-              ? '다른 이전이\n환경을 쓰고 있습니다'
+              ? '다른 마이그레이션이\n환경을 쓰고 있습니다'
               : '승인했습니다.\n버튼 하나만 남았습니다'
         }
         foot={
@@ -462,7 +462,7 @@ function ApprovedScreen({ migration, route, onChanged }: ScreenProps) {
       <Stack area="side">
         <SecurityFold migration={migration} />
         <ActionRow notice={waiting ? null : error}>
-          <ConfirmPill label="취소" confirmLabel="이전 취소" icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
+          <ConfirmPill label="취소" confirmLabel="마이그레이션 취소" icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
           {!(waiting && expired) && (
             <ActionPill
               label={busy ? '보내는 중' : waiting ? '다시 시작' : '실행 시작'}
@@ -482,13 +482,13 @@ const STOPPED: Record<'rejected' | 'stale', { meta: string; title: string; foot:
     meta: '거절',
     title: '고객 환경에는\n아무것도 안 바꿨습니다',
     foot: '거절한 사람을 감사 기록에 남겼습니다',
-    next: '같은 명세로 계획을 다시 만들거나, 명세부터 고칩니다. 그만두려면 이 이전을 끝냅니다.',
+    next: '같은 명세로 계획을 다시 만들거나, 명세부터 고칩니다. 그만두려면 이 마이그레이션을 끝냅니다.',
   },
   stale: {
     meta: '낡은 계획',
     title: '승인 시간이\n지났습니다',
     foot: '본 것과 다른 내용이 실행되지 않도록 막았습니다',
-    next: '계획을 다시 만들어 새 계획서로 승인합니다. 그만두려면 이 이전을 끝냅니다.',
+    next: '계획을 다시 만들어 새 계획서로 승인합니다. 그만두려면 이 마이그레이션을 끝냅니다.',
   },
 };
 
@@ -501,13 +501,13 @@ function StoppedScreen({ migration, route, onChanged, kind }: ScreenProps & { ki
       <Hero tone="stop" meta={copy.meta} title={copy.title} foot={copy.foot} />
       <Stack area="side">
         <FoldTile title="다음에 할 일">
-          <p className={`${s.note} t-body-md c-secondary`}>{replan ? copy.next : '이 이전을 끝내고 새로 시작해 주세요.'}</p>
+          <p className={`${s.note} t-body-md c-secondary`}>{replan ? copy.next : '이 마이그레이션을 끝내고 새로 시작해 주세요.'}</p>
         </FoldTile>
         <SecurityFold migration={migration} />
         <ActionRow notice={error}>
           {replan ? (
             <>
-              <ConfirmPill label="이 이전 끝내기" confirmLabel="이전 끝내기" icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
+              <ConfirmPill label="이 마이그레이션 끝내기" confirmLabel="마이그레이션 끝내기" icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
               {/* TODO(human): 거절 뒤 주 행동을 "계획 다시 만들기"로 둘지 "명세부터 고치기"로 둘지. 지금은 다시 계획하기가 주 행동 */}
               {kind === 'rejected' && (
                 <BarPill label="명세부터 고치기" icon="list" onClick={busy ? undefined : () => void run(() => api.reopenSpec(migration.id))} />
@@ -515,7 +515,7 @@ function StoppedScreen({ migration, route, onChanged, kind }: ScreenProps & { ki
               <ActionPill label={busy ? '보내는 중' : '계획 다시 만들기'} icon="refresh" disabled={busy} onClick={() => void run(() => api.replan(migration.id))} />
             </>
           ) : (
-            <ActionPill label={busy ? '보내는 중' : '이 이전 끝내기'} icon="x" disabled={busy} onClick={() => void run(() => api.cancel(migration.id))} />
+            <ActionPill label={busy ? '보내는 중' : '이 마이그레이션 끝내기'} icon="x" disabled={busy} onClick={() => void run(() => api.cancel(migration.id))} />
           )}
         </ActionRow>
       </Stack>
@@ -557,7 +557,7 @@ function FailedScreen({ migration, route, onChanged }: ScreenProps) {
         tone="stop"
         meta={migration.failedAtStatus ? `${LABEL[migration.failedAtStatus]}에서 실패` : '실패'}
         title={reason?.title ?? '작업이\n끝나지 못했습니다'}
-        foot={replan ? '계획을 다시 만들면 승인부터 다시 합니다' : '남은 자원을 직접 정리한 뒤 이 이전을 끝냅니다'}
+        foot={replan ? '계획을 다시 만들면 승인부터 다시 합니다' : '남은 자원을 직접 정리한 뒤 이 마이그레이션을 끝냅니다'}
       >
         {reason && (
           <div className={s.heroPanel}>
@@ -573,7 +573,7 @@ function FailedScreen({ migration, route, onChanged }: ScreenProps) {
           {replan ? (
             <>
               {cleaned && (
-                <ConfirmPill label="이 이전 끝내기" confirmLabel="정리했고 끝내기" icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id, true))} />
+                <ConfirmPill label="이 마이그레이션 끝내기" confirmLabel="정리했고 끝내기" icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id, true))} />
               )}
               <ActionPill
                 label={busy ? '보내는 중' : consent.accept ? '고객 부담으로 다시 계획' : '계획 다시 만들기'}
@@ -583,7 +583,7 @@ function FailedScreen({ migration, route, onChanged }: ScreenProps) {
               />
             </>
           ) : (
-            <ActionPill label={busy ? '보내는 중' : '이 이전 끝내기'} icon="x" disabled={busy || !cleaned} onClick={() => void run(() => api.cancel(migration.id, true))} />
+            <ActionPill label={busy ? '보내는 중' : '이 마이그레이션 끝내기'} icon="x" disabled={busy || !cleaned} onClick={() => void run(() => api.cancel(migration.id, true))} />
           )}
         </ActionRow>
       </Stack>
@@ -594,7 +594,7 @@ function FailedScreen({ migration, route, onChanged }: ScreenProps) {
 function CancelledScreen({ migration, route }: ScreenProps) {
   return (
     <Frame migration={migration} route={route}>
-      <Hero tone="run" meta="취소" title={'이 이전은\n여기서 끝났습니다'} foot="환경 잠금을 풀었습니다" />
+      <Hero tone="run" meta="취소" title={'이 마이그레이션은\n여기서 끝났습니다'} foot="환경 잠금을 풀었습니다" />
       <Stack area="side">
         <LeftoverFold migration={migration} title="도착에 남은 자원" />
         <SecurityFold migration={migration} />
@@ -648,11 +648,11 @@ export function MigrationPage({ id }: { id: string }) {
   if (!shown) {
     const missing = is404(poll.error);
     return (
-      <Frame route="이전">
+      <Frame route="마이그레이션">
         <Hero
           tone={poll.error ? 'stop' : 'run'}
-          meta="이전"
-          title={poll.error ? (missing ? '이 이전을\n찾을 수 없습니다' : '이전을\n읽지 못했습니다') : '이전을\n읽고 있습니다'}
+          meta="마이그레이션"
+          title={poll.error ? (missing ? '이 마이그레이션을\n찾을 수 없습니다' : '마이그레이션을\n읽지 못했습니다') : '마이그레이션을\n읽고 있습니다'}
         />
       </Frame>
     );

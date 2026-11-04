@@ -6,7 +6,7 @@ export const LIVE_REASON: Record<LiveReason, string> = {
   not_configured: "서버에 앱 앞 프록시 주소가 설정되지 않았습니다.",
   unreachable: "앱 앞 프록시에 닿지 못했습니다.",
   bad_shape: "앱 앞 프록시가 다른 모양의 숫자를 줬습니다.",
-  other_migration: "앱 앞 프록시가 다른 이전을 세고 있습니다.",
+  other_migration: "앱 앞 프록시가 다른 마이그레이션을 세고 있습니다.",
   no_counters: "앱 앞 프록시가 아직 요청을 세지 않습니다.",
 };
 export interface LiveTrafficView {

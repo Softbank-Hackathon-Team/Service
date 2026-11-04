@@ -38,10 +38,10 @@ const HEALTH: Record<Health, { label: string; tone: 'success' | 'warning' | 'neu
   unknown: { label: '확인 불가', tone: 'neutral' },
 };
 
-const BUCKETS: { id: MigrationBucket; label: string; defaultOpen: boolean }[] = [
-  { id: 'human', label: '검토 필요', defaultOpen: true },
-  { id: 'running', label: '진행 중', defaultOpen: true },
-  { id: 'done', label: '히스토리', defaultOpen: false },
+// 검토를 기다리는 마이그레이션도 진행 중이다(사람 검토 때문에 멈춰 있을 뿐). 그래서 한 카드에 두고, 검토가 필요한 줄을 위에 둔다
+const CARDS: { id: 'active' | 'done'; label: string; buckets: MigrationBucket[]; defaultOpen: boolean }[] = [
+  { id: 'active', label: '진행 중', buckets: ['human', 'running'], defaultOpen: true },
+  { id: 'done', label: '히스토리', buckets: ['done'], defaultOpen: false },
 ];
 
 async function observe(env: EnvironmentView): Promise<EnvObservation> {
@@ -81,7 +81,9 @@ function EnvRow({ env, seen }: { env: EnvironmentView; seen: EnvObservation | un
 
 export function MigrationRow({ migration, envName }: { migration: MigrationView; envName: (id: string) => string }) {
   const action = humanAction(migration.status);
-  const running = bucketOf(migration) === 'running';
+  // 검토를 기다리는 줄도 진행 중이라 진행 막대를 보인다. 어느 칸에서 멈췄는지 모르면(목록에 멈춘 칸이 없을 때) 0% 로 오해하지 않게 그리지 않는다
+  const pct = bucketOf(migration) !== 'done' ? progressPct(migration) : 0;
+  const running = pct > 0;
   return (
     <li style={{ viewTransitionName: `migration-${migration.id}` }}>
       <button type="button" className={s.migrationRow} onClick={() => go(`migrations/${migration.id}`)}>
@@ -92,7 +94,7 @@ export function MigrationRow({ migration, envName }: { migration: MigrationView;
           </span>
           {running && (
             <span className={s.progress} aria-hidden="true">
-              <span style={{ width: `${progressPct(migration)}%` }} />
+              <span style={{ width: `${pct}%` }} />
             </span>
           )}
         </span>
@@ -169,31 +171,35 @@ export function DashboardPage() {
       </Hero>
       <Stack area="migrations">
         {migrations.error && !migrations.data ? (
-          <FoldTile title="이전 목록">
+          <FoldTile title="마이그레이션 목록">
             <div className={s.listError}>
-              <p className="t-body-md c-secondary">이전 목록을 읽지 못했습니다.</p>
+              <p className="t-body-md c-secondary">마이그레이션 목록을 읽지 못했습니다.</p>
               <BarPill label="다시 시도" icon="refresh" onClick={() => void migrations.reload()} />
             </div>
           </FoldTile>
         ) : (
-          BUCKETS.map(({ id, label, defaultOpen }) => (
-            <FoldTile key={id} title={label} summary={`${groups[id].length}건`} defaultOpen={defaultOpen}>
-              {groups[id].length > 0 ? (
-                <ul className={s.migrationList}>
-                  {groups[id].map((migration) => (
-                    <MigrationRow key={migration.id} migration={migration} envName={envName} />
-                  ))}
-                </ul>
-              ) : (
-                <p className={`${s.empty} t-body-sm c-tertiary`}>
-                  {(id === 'human' && migrations.data && note) || (id === 'running' ? '돌아가는 이전이 없습니다.' : '아직 없습니다.')}
-                </p>
-              )}
-            </FoldTile>
-          ))
+          CARDS.map(({ id, label, buckets, defaultOpen }) => {
+            const items = buckets.flatMap((bucket) => groups[bucket]);
+            const review = id === 'active' ? groups.human.length : 0;
+            return (
+              <FoldTile key={id} title={label} summary={review > 0 ? `${items.length}건 · 검토 필요 ${review}` : `${items.length}건`} defaultOpen={defaultOpen}>
+                {items.length > 0 ? (
+                  <ul className={s.migrationList}>
+                    {items.map((migration) => (
+                      <MigrationRow key={migration.id} migration={migration} envName={envName} />
+                    ))}
+                  </ul>
+                ) : (
+                  <p className={`${s.empty} t-body-sm c-tertiary`}>
+                    {id === 'active' ? ((migrations.data && note) || '돌아가는 마이그레이션이 없습니다.') : '아직 없습니다.'}
+                  </p>
+                )}
+              </FoldTile>
+            );
+          })
         )}
         <ActionRow>
-          <ActionPill label="새 이전 시작" icon="plus" onClick={() => go('migrations/new')} />
+          <ActionPill label="새 마이그레이션 시작" icon="plus" onClick={() => go('migrations/new')} />
         </ActionRow>
       </Stack>
     </ShellLayout>

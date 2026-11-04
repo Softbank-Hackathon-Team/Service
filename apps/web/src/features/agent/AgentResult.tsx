@@ -88,7 +88,7 @@ export function AgentFold({ migrationId, review }: { migrationId: string; review
             onClick={busy || running || blocked ? undefined : () => void run(() => api.agentRun(migrationId))}
           />
         </div>
-        <p className="t-caption c-tertiary">수정안을 적용하는 것은 사람입니다. 적용한 뒤 이전을 재개해 주세요.</p>
+        <p className="t-caption c-tertiary">수정안을 적용하는 것은 사람입니다. 적용한 뒤 마이그레이션을 재개해 주세요.</p>
       </div>
     </FoldTile>
   );

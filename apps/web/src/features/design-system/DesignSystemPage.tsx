@@ -123,7 +123,7 @@ function TypeRow({ className }: { className: string }) {
   return (
     <div className={s.typeRow}>
       <span ref={ref} className={`${className} ${s.typeSample}`}>
-        이전 승인 Migrate 移行 0123
+        마이그레이션 승인 Migrate 移行 0123
       </span>
       <code className="t-code-sm c-tertiary">
         .{className} · {spec}
@@ -190,7 +190,7 @@ export function DesignSystemPage({ onExit }: { onExit?: () => void }) {
 
         <Section id="type" title="글자" source="src/design/base.css">
           <p className="t-body-md">
-            Pretendard JP 하나로 표시합니다. 안전하게 이전합니다. Move with confidence. 安全に移行します。
+            Pretendard JP 하나로 표시합니다. 안전하게 마이그레이션합니다. Move with confidence. 安全に移行します。
           </p>
           <div className={s.panel}>
             {TYPE_CLASSES.map((name) => (
@@ -318,7 +318,7 @@ export function DesignSystemPage({ onExit }: { onExit?: () => void }) {
             <Hero area="ds-hero-run" tone="run" meta="진행" step="07" title={'트래픽을\n옮기는 중'} foot="tone=run">
               <TrafficBar source="AWS" target="GCP" targetPercent={50} />
             </Hero>
-            <Hero area="ds-hero-stop" tone="stop" meta="멈춤" step="!" title={'이전을\n멈췄습니다'} foot="tone=stop" />
+            <Hero area="ds-hero-stop" tone="stop" meta="멈춤" step="!" title={'마이그레이션을\n멈췄습니다'} foot="tone=stop" />
             <Hero area="ds-hero-done" tone="done" meta="완료" step="10" title={'멈추지 않고\n옮겼습니다'} foot="tone=done" />
           </div>
           <div className={s.tiles}>

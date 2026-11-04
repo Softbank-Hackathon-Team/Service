@@ -25,13 +25,13 @@ export function MigrationsPage() {
   const envName = (id: string) => envs.data?.find((env) => env.id === id)?.name ?? id.slice(0, 8);
   const total = migrations.data?.length ?? 0;
   const title = groups.human.length > 0
-    ? `검토가 필요한 이전이\n${groups.human.length}건 있습니다`
+    ? `검토가 필요한 마이그레이션이\n${groups.human.length}건 있습니다`
     : groups.running.length > 0
       ? `${groups.running.length}건이\n진행 중입니다`
-      : total > 0 ? '진행 중인 이전이\n없습니다' : '아직 이전이\n없습니다';
+      : total > 0 ? '진행 중인 마이그레이션이\n없습니다' : '아직 마이그레이션이\n없습니다';
   return (
     <ShellLayout layout={LAYOUT}>
-      <Hero tone="run" meta="이전" step={String(total)} title={title} foot="최근 50건을 보여 줍니다. 끝난 이전은 감사 기록이라 지우지 않습니다">
+      <Hero tone="run" meta="마이그레이션" step={String(total)} title={title} foot="최근 50건을 보여 줍니다. 끝난 마이그레이션은 감사 기록이라 지우지 않습니다">
         {migrations.error != null && !migrations.data && (
           <>
             <p className={`${s.error} t-body-md`}>{errorText(migrations.error)}</p>
@@ -54,7 +54,7 @@ export function MigrationsPage() {
           </FoldTile>
         ))}
         <ActionRow>
-          <ActionPill label="새 이전 시작" icon="plus" onClick={() => go('migrations/new')} />
+          <ActionPill label="새 마이그레이션 시작" icon="plus" onClick={() => go('migrations/new')} />
         </ActionRow>
       </Stack>
     </ShellLayout>

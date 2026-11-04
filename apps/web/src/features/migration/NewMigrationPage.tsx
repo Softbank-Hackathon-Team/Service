@@ -46,7 +46,7 @@ function CreateSteps({ source, reading, scope, target }: { source?: string; read
   ];
   const current = items.findIndex((item) => item.status !== 'done');
   return (
-    <FoldTile title="새 이전" summary={`${current === -1 ? items.length : current + 1}/${items.length}`}>
+    <FoldTile title="새 마이그레이션" summary={`${current === -1 ? items.length : current + 1}/${items.length}`}>
       <div className={s.agent}>
         <Checklist items={items} />
       </div>
@@ -111,7 +111,7 @@ export function FoundResources({ cloud }: { cloud: CloudInventory }) {
   if (cloud.status === 'unavailable') {
     return (
       <FoldTile title="찾은 자원" summary="읽지 못함">
-        <p className={`${s.note} t-body-sm c-secondary`}>{cloud.reason ?? '자원을 읽지 못했습니다.'} 이전을 만들면 다시 읽습니다.</p>
+        <p className={`${s.note} t-body-sm c-secondary`}>{cloud.reason ?? '자원을 읽지 못했습니다.'} 마이그레이션을 만들면 다시 읽습니다.</p>
       </FoldTile>
     );
   }
@@ -199,7 +199,7 @@ export function NewMigrationPage() {
     const unfinished = all.filter((env) => env.connectionStatus !== 'connected' && env.connectionStatus !== 'disconnected').length;
     return (
       <ShellLayout layout={LAYOUT}>
-        <Hero tone="run" meta="새 이전" title={empty ? '연결된 환경이\n없습니다' : '어디에서\n옮길까요?'}>
+        <Hero tone="run" meta="새 마이그레이션" title={empty ? '연결된 환경이\n없습니다' : '어디에서\n옮길까요?'}>
           {envs.error != null && !envs.data && <p className={`${s.error} t-body-md`}>{errorText(envs.error)}</p>}
           <div className={s.pickList}>
             {connected.map((env) => (
@@ -231,7 +231,7 @@ export function NewMigrationPage() {
     <FoundResources cloud={inventory.data.cloud} />
   ) : (
     <FoldTile title="찾은 자원" summary="읽지 못함">
-      <p className={`${s.note} t-body-sm c-secondary`}>{errorText(inventory.error)} 이전을 만들면 다시 읽습니다.</p>
+      <p className={`${s.note} t-body-sm c-secondary`}>{errorText(inventory.error)} 마이그레이션을 만들면 다시 읽습니다.</p>
     </FoldTile>
   );
 
@@ -332,7 +332,7 @@ export function NewMigrationPage() {
           })}
           {sameVendor.length > 0 && (
             <p className={`${s.pickNote} t-caption c-tertiary`}>
-              같은 {vendorLine(source.provider)} 안의 이전은 지금 지원하지 않아 {sameVendor.map((env) => env.name).join(', ')}은(는) 뺐습니다.
+              같은 {vendorLine(source.provider)} 안의 마이그레이션은 지금 지원하지 않아 {sameVendor.map((env) => env.name).join(', ')}은(는) 뺐습니다.
             </p>
           )}
           <RegisterEnvEntry />
@@ -357,7 +357,7 @@ export function NewMigrationPage() {
             </li>
           </ul>
           <p className={`${s.note} t-body-sm c-secondary`}>
-            이전을 만들면 가져오기가 바로 출발 관찰 역할을 빌려 읽습니다. 실행 역할은 승인한 뒤 단계마다 15분씩 빌리고, 보안 화면의 임시 권한 장부에 남습니다.
+            마이그레이션을 만들면 가져오기가 바로 출발 관찰 역할을 빌려 읽습니다. 실행 역할은 승인한 뒤 단계마다 15분씩 빌리고, 마이그레이션 화면 "보안" 카드의 임시 권한에 남습니다.
           </p>
         </FoldTile>
         <ActionRow notice={error}>

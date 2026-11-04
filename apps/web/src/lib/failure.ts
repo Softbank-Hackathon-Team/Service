@@ -70,7 +70,7 @@ const RULES: Rule[] = [
 
 // 실패 코드 없이 멈춘 이전 = 가드레일 규칙이 멈췄다 (apps/api control.ts: 이때만 재개에 ruleCleared 가 필요하다)
 const BY_RULE: StopReason = {
-  kind: "guardrail", label: "가드레일 규칙", title: "가드레일이\n이전을 멈췄습니다", hint: "가드레일 규칙이 이 이전을 멈췄습니다. 규칙이 다시 지켜졌는지 확인한 뒤 고릅니다.",
+  kind: "guardrail", label: "가드레일 규칙", title: "가드레일이\n마이그레이션을 멈췄습니다", hint: "가드레일 규칙이 이 마이그레이션을 멈췄습니다. 규칙이 다시 지켜졌는지 확인한 뒤 고릅니다.",
 };
 const UNKNOWN: Omit<StopReason, "kind"> = {
   label: "알 수 없는 사유", title: "작업이\n끝나지 못했습니다", hint: "화면이 모르는 사유 코드입니다. 코드는 감사 기록에도 남아 있습니다.",

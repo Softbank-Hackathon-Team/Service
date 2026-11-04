@@ -9,12 +9,12 @@ const BY_CODE: Record<string, string> = {
   PLAN_EXPIRED: '계획서 유효 시간이 지났습니다.',
   PLAN_SUPERSEDED: '더 새로운 계획서가 있습니다. 새 계획서로 다시 승인해 주세요.',
   PLAN_NOT_APPROVED: '계획서가 아직 승인되지 않았습니다.',
-  ENV_BUSY: '이 환경은 다른 이전이 쓰고 있습니다. 그 이전이 끝난 뒤 다시 시도해 주세요.',
+  ENV_BUSY: '이 환경은 다른 마이그레이션이 쓰고 있습니다. 그 마이그레이션이 끝난 뒤 다시 시도해 주세요.',
   GUARD_FAILED: '시작 조건을 맞추지 못했습니다. 환경이 연결되어 있는지 확인해 주세요.',
   IDEMPOTENCY_KEY_REUSED: '같은 요청이 이미 처리되었습니다. 버튼을 다시 눌러 주세요.',
   // 아래는 서버(apps/api, packages/core)가 내는 코드 중 사람이 다음 행동을 바꿔야 하는 것
   NOT_PAUSED: '이미 멈춘 상태가 아닙니다. 그 사이 재개되었거나 다른 상태로 바뀌었습니다.',
-  ENV_LOCK_MISSING: '환경 잠금이 풀려 이어 갈 수 없습니다. 출발로 되돌리거나 이전을 끝내 주세요.',
+  ENV_LOCK_MISSING: '환경 잠금이 풀려 이어 갈 수 없습니다. 출발로 되돌리거나 마이그레이션을 끝내 주세요.',
   AGENT_RUN_IN_PROGRESS: '이미 점검이 돌고 있습니다. 끝난 뒤 다시 눌러 주세요.',
   LLM_KEY_MISSING: 'AI 키가 서버에 없어 점검을 돌릴 수 없습니다.',
   LLM_BUDGET_EXCEEDED: 'AI 지출 상한에 닿아 점검을 돌릴 수 없습니다.',
@@ -27,10 +27,10 @@ const BY_CODE: Record<string, string> = {
   USER_DISABLED: '이 계정은 꺼졌거나 회사에서 빠졌습니다. 회사 관리자에게 확인해 주세요.',
   // 승인·시작 (apps/api plans.ts, core tenant-limit.ts)
   ACKS_MISSING: '확인하지 않은 항목이 있습니다. 계획서를 다시 읽었으니 확인 항목을 모두 체크해 주세요.',
-  TENANT_BUSY: '회사에서 동시에 진행할 수 있는 이전 수를 넘었습니다. 승인은 그대로이니 다른 이전이 끝난 뒤 다시 시작해 주세요.',
+  TENANT_BUSY: '회사에서 동시에 진행할 수 있는 마이그레이션 수를 넘었습니다. 승인은 그대로이니 다른 마이그레이션이 끝난 뒤 다시 시작해 주세요.',
   // 다시 시도 (apps/api plans.ts replan, control.ts resume, core retry-budget.ts)
   RETRY_BUDGET_EXHAUSTED: '플랫폼이 부담하는 재시도 횟수를 다 썼습니다. 다시 시도하려면 비용을 고객이 부담하는 데 동의해 주세요.',
-  REPLAN_NOT_ALLOWED: '이 단계에서 실패한 이전은 계획을 다시 만들 수 없습니다. 이 이전을 끝내고 새로 시작해 주세요.',
+  REPLAN_NOT_ALLOWED: '이 단계에서 실패한 마이그레이션은 계획을 다시 만들 수 없습니다. 이 마이그레이션을 끝내고 새로 시작해 주세요.',
   // 명세 고치기 (apps/api spec.ts PATCH)
   SPEC_VERSION_CONFLICT: '그 사이 명세가 바뀌었습니다. 새 명세를 다시 읽었으니 확인한 뒤 다시 확정해 주세요.',
   SPEC_PATH_IR_MISMATCH: '이 명세 판과 맞지 않는 칸을 보냈습니다. 화면을 새로 고친 뒤 다시 확정해 주세요.',
@@ -39,7 +39,7 @@ const BY_CODE: Record<string, string> = {
   SPEC_DRAFT_NOT_ACCEPTED: 'AI 초안만 있는 명세입니다. 초안을 받아들인 뒤 확정해 주세요.',
   SPEC_DRAFT_STALE: '사람이 확정한 판보다 오래된 AI 초안이라 받아들이지 않았습니다.',
   // 환경 (apps/api environments.ts). 연결 마법사는 아직 화면에 없지만 같은 문장을 쓴다
-  ENV_IN_USE: '이 환경을 쓰는 이전이 진행 중이라 지금은 바꿀 수 없습니다.',
+  ENV_IN_USE: '이 환경을 쓰는 마이그레이션이 진행 중이라 지금은 바꿀 수 없습니다.',
   ENV_NAME_TAKEN: '같은 이름의 환경이 이미 있습니다. 다른 이름을 써 주세요.',
   BAD_ACCOUNT_ID: '계정 번호 모양이 맞지 않습니다. AWS는 12자리 숫자, GCP는 프로젝트 ID입니다.',
   LINK_EXPIRED: '연결 링크가 만료됐습니다. 새 링크를 받아 다시 연결해 주세요.',
@@ -47,7 +47,7 @@ const BY_CODE: Record<string, string> = {
   BAD_REGION: '리전 모양이 맞지 않습니다. 예: ap-northeast-2',
   BAD_CLUSTER_NAME: 'EKS 클러스터 이름 모양이 맞지 않습니다. 영문·숫자·-·_ 로 100자까지입니다.',
   CLUSTER_NAME_REQUIRED: 'AWS 환경은 EKS 클러스터 이름이 있어야 연결 링크를 만듭니다.',
-  BAD_TARGET_PROJECT: '이전 전용 프로젝트 ID 모양이 맞지 않거나 읽을 프로젝트와 같습니다.',
+  BAD_TARGET_PROJECT: '마이그레이션 전용 프로젝트 ID 모양이 맞지 않거나 읽을 프로젝트와 같습니다.',
   CONNECT_NOT_CONFIGURED: '플랫폼에 연결 설정이 아직 없어 링크를 만들지 못했습니다. 플랫폼 운영자에게 알려 주세요.',
   USE_AGENT_TOKEN: '온프레 환경은 연결 링크 대신 Agent 등록 명령으로 연결합니다.',
   NOT_ONPREM: 'Agent 등록은 온프레 환경에서만 합니다.',
