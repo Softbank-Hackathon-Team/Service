@@ -31,7 +31,7 @@ const result = (over: Partial<RehearsalResult> = {}): RehearsalResult => ({
   ...over,
 });
 const row = (over: Partial<RehearsalRow> = {}): RehearsalRow => ({
-  id: RUN, status: "passed", phase: "done", skip_reason: null, reused_from: null, sandbox_name: "sbx-abc123",
+  id: RUN, status: "passed", failure_code: null, phase: "done", skip_reason: null, reused_from: null, sandbox_name: "sbx-abc123",
   created_at: "2026-11-07T03:00:00.000Z", started_at: "2026-11-07T03:00:05.000Z", finished_at: "2026-11-07T03:01:30.000Z",
   deadline_at: "2026-11-07T03:20:00.000Z", input_fidelity: workerMatrix, result: result(),
   ...over,
@@ -42,6 +42,7 @@ test("통과: 결과와 합친 충실도 표, 샌드박스 이름이 그대로 �
   assert.equal(v.run?.status, "passed");
   assert.equal(v.run?.sandboxName, "sbx-abc123");
   assert.equal(v.run?.result?.verdict, "passed");
+  assert.equal(v.run?.failureCode, null);
   assert.deepEqual(v.run?.fidelity, fullMatrix);
 });
 
@@ -50,8 +51,9 @@ test("실패: 실패 코드와 어느 검사가 깨졌는지가 결과에 실린
     verdict: "failed", failureCode: "REHEARSAL_CRASHLOOP",
     checks: [{ id: "restarts", subject: "Deployment/web", required: true, ok: false, ms: 60000, detail: "restarts=7" }],
   });
-  const v = RehearsalView.parse(buildRehearsalView(M, row({ status: "failed", result: failed })));
+  const v = RehearsalView.parse(buildRehearsalView(M, row({ status: "failed", failure_code: "REHEARSAL_CRASHLOOP", result: failed })));
   assert.equal(v.run?.result?.failureCode, "REHEARSAL_CRASHLOOP");
+  assert.equal(v.run?.failureCode, "REHEARSAL_CRASHLOOP");
   assert.equal(v.run?.result?.checks[0]?.ok, false);
 });
 
@@ -61,8 +63,18 @@ test("건너뜀: skip 이유만 있고 결과·충실도는 null", () => {
     input_fidelity: null, result: null,
   })));
   assert.equal(v.run?.skip, "disabled");
+  assert.equal(v.run?.failureCode, null);
   assert.equal(v.run?.result, null);
   assert.equal(v.run?.fidelity, null);
+});
+
+test("시간 초과: 결과 없이 error 로 끝나도 실패 코드가 run.failureCode 로 보인다", () => {
+  const v = RehearsalView.parse(buildRehearsalView(M, row({
+    status: "error", failure_code: "REHEARSAL_TIMEOUT", phase: "checking", result: null,
+  })));
+  assert.equal(v.run?.status, "error");
+  assert.equal(v.run?.failureCode, "REHEARSAL_TIMEOUT");
+  assert.equal(v.run?.result, null);
 });
 
 test("진행 중: 결과가 오기 전에는 워커가 넣은 충실도 표를 보여 준다", () => {
@@ -77,8 +89,9 @@ test("줄이 없으면 run 이 null", () => {
 });
 
 test("거부: 모양이 안 맞는 결과 칸은 null 로 두고 줄 상태는 그대로 보인다 (가짜 값으로 안 채움)", () => {
-  const v = RehearsalView.parse(buildRehearsalView(M, row({ status: "error", result: { verdict: "oops" }, input_fidelity: { nope: 1 } })));
+  const v = RehearsalView.parse(buildRehearsalView(M, row({ status: "error", failure_code: "REHEARSAL_TIMEOUT", result: { verdict: "oops" }, input_fidelity: { nope: 1 } })));
   assert.equal(v.run?.status, "error");
+  assert.equal(v.run?.failureCode, "REHEARSAL_TIMEOUT");
   assert.equal(v.run?.result, null);
   assert.equal(v.run?.fidelity, null);
 });

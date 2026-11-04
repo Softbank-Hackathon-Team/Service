@@ -75,6 +75,7 @@ test("통과한 줄: 200, 계약 모양, 시각은 ISO 글자, no-store", { skip
   const v = RehearsalView.parse(res.json());
   assert.equal(v.run?.id, id);
   assert.equal(v.run?.sandboxName, "sbx-db1");
+  assert.equal(v.run?.failureCode, null);
   assert.match(v.run?.createdAt ?? "", /^\d{4}-\d\d-\d\dT[\d:.]+Z$/);
   assert.equal(v.run?.result?.verdict, "passed");
 });
@@ -97,6 +98,15 @@ test("건너뛴 줄: skip 이유가 실리고 결과는 null", { skip }, async (
   assert.equal(v.run?.skip, "disabled");
   assert.equal(v.run?.result, null);
   assert.equal(v.run?.fidelity, null);
+});
+
+test("시간 초과로 끝난 줄: result 가 비어도 failure_code 칸이 run.failureCode 로 실린다", { skip }, async () => {
+  const m = await migration(T);
+  await run(T, m, 1, { status: "error", phase: "checking", code: "REHEARSAL_TIMEOUT", name: "sbx-db3" });
+  const v = RehearsalView.parse((await get(T, m)).json());
+  assert.equal(v.run?.status, "error");
+  assert.equal(v.run?.failureCode, "REHEARSAL_TIMEOUT");
+  assert.equal(v.run?.result, null);
 });
 
 test("줄이 없는 이전은 200 + run null", { skip }, async () => {

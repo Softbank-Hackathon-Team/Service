@@ -16415,6 +16415,16 @@
                   "status": {
                     "$ref": "#/components/schemas/SandboxRunStatus"
                   },
+                  "failureCode": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/components/schemas/RehearsalFailureCode"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "phase": {
                     "anyOf": [
                       {
@@ -16498,6 +16508,7 @@
                 "required": [
                   "id",
                   "status",
+                  "failureCode",
                   "phase",
                   "skip",
                   "reusedFrom",

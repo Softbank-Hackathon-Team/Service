@@ -179,7 +179,7 @@ export type RehearsalResult = z.infer<typeof RehearsalResult>;
 export const RehearsalView = z.object({
   migrationId: z.uuid(),
   run: z.object({
-    id: z.uuid(), status: SandboxRunStatus, phase: SandboxRunPhase.nullable(), skip: RehearsalSkip.nullable(),
+    id: z.uuid(), status: SandboxRunStatus, failureCode: RehearsalFailureCode.nullable(), phase: SandboxRunPhase.nullable(), skip: RehearsalSkip.nullable(),
     reusedFrom: z.uuid().nullable(), sandboxName: z.string().nullable(),
     createdAt: z.string(), startedAt: z.string().nullable(), finishedAt: z.string().nullable(), deadlineAt: z.string().nullable(),
     fidelity: FidelityMatrix.nullable(), result: RehearsalResult.nullable(),
