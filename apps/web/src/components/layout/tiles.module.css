@@ -40,9 +40,8 @@
   flex: 1 0 auto;
 }
 /* 늘어난 카드에 안내 문장 하나뿐이면 빈 상태로 보고 가운데에 둔다. */
-.stackBody > .fold[data-open='true']:not(:has(~ .fold[data-open='true'])) > .foldBody:has(> p:only-child) {
+.stackBody > .fold[data-open='true']:not(:has(~ .fold[data-open='true'])) .foldContent:has(> p:only-child) {
   display: grid;
-  flex: 1;
   place-items: center;
   text-align: center;
 }
@@ -75,6 +74,8 @@
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-card);
   background: var(--color-bg-surface);
+  /* 남은 높이를 채우는 카드가 바뀔 때도 늘고 주는 것이 이어지게 한다. */
+  transition: flex-grow var(--motion-fold) var(--ease-standard);
 }
 .foldHead {
   display: flex;
@@ -99,15 +100,38 @@
 .foldChevron {
   display: inline-flex;
   color: var(--color-fg-tertiary);
-  transition: transform 160ms ease;
+  transition: transform var(--motion-fold) var(--ease-standard);
 }
 .foldOpen {
   transform: rotate(90deg);
 }
+/*
+ * 높이는 줄 크기 0fr ↔ 1fr 로 옮겨 내용 높이를 재지 않고도 미끄러지게 한다.
+ * 잘라 내는 칸(foldClip)과 여백 칸(foldContent)을 나눠야 닫혔을 때 여백이 남지 않는다.
+ */
 .foldBody {
+  display: grid;
+  flex: 1 0 auto;
+  grid-template-rows: 0fr;
   min-height: 0;
+  opacity: 0;
+  transition:
+    grid-template-rows var(--motion-fold) var(--ease-standard),
+    opacity var(--motion-fade) ease;
+}
+.fold[data-open='true'] > .foldBody {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+.foldClip {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+.foldContent {
+  flex: 1 0 auto;
   padding: 0 var(--space-8) var(--space-8);
-  overflow: auto;
 }
 
 .hero {
