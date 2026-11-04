@@ -17,11 +17,11 @@ import type { MigrationRow } from "../jobs/_step.js";
 /** ref = 렌더 결과(파드)가 받는 주소, source = 바이트가 있는 고객 원본 (명세 image.repository@digest) */
 export interface MirrorImage { ref: string; source: string }
 export type MirrorFailReason = "registry_unset" | "not_by_digest" | "unsupported_registry" | "role_denied"
-  | "tool_missing" | "auth_failed" | "copy_failed" | "digest_mismatch";
+  | "tool_missing" | "auth_failed" | "copy_failed" | "digest_mismatch" | "budget_exceeded";
 export type MirrorOutcome =
   | { ok: true; images: RehearsalInput["images"]; skipped?: "mock" }
   | { ok: false; code: "REHEARSAL_IMAGE_MIRROR_FAILED"; reason: MirrorFailReason; image: string | null; message: string };
-export interface MirrorDeps { exec?: Exec; env?: NodeJS.ProcessEnv; withRoles?: typeof withStepRoles }
+export interface MirrorDeps { exec?: Exec; env?: NodeJS.ProcessEnv; withRoles?: typeof withStepRoles; now?: () => number }
 
 // 원본 레지스트리 종류. platform = 이미 플랫폼 레지스트리에 있음(샌드박스 노드가 바로 읽음, 복사 없음)
 // DRAFT(ai): 출발 사설 레지스트리는 ECR 만. GCP Artifact Registry·온프레 레지스트리는 unsupported_registry (설계 7장 질문 4)
@@ -31,8 +31,13 @@ interface Planned { ref: string; sandboxRef: string; kind: SourceKind; host: str
 const DIGEST = /@(sha256:[a-f0-9]{64})$/;
 const ECR_HOST = /^\d{12}\.dkr\.ecr\.([a-z0-9-]+)\.amazonaws\.com$/;
 const ecrRegion = (host: string) => host.match(ECR_HOST)?.[1] ?? null;
-// DRAFT(ai): 시간 상한. 토큰 20초(STS_CLI_TIMEOUT_MS 와 같음), 다이제스트 확인 30초, 복사 300초 (deploy 작업 만료 900초 안)
+// DRAFT(ai): 단계 시간 상한. 토큰 20초(STS_CLI_TIMEOUT_MS 와 같음), 다이제스트 확인 30초, 복사 300초
 const TOKEN_MS = 20_000, DIGEST_MS = 30_000, COPY_MS = 300_000;
+// DRAFT(ai): 복사 한 번(역할 대여 + 모든 단계) 전체 예산 600초. deploy 작업 만료는 pg-boss 기본 900초다 (core boss.ts POLICY 의 deploy 에
+//   expireInSeconds 없음). 남는 300초는 같은 작업 안의 비밀 그릇 확인·렌더·줄 넣기와, 시간 초과로 끊은 명령이 끝나는 몫이다.
+//   단계마다 시간 상한 = min(단계 상한, 남은 예산). 이미지가 여럿이면 복사 300초 × 개수가 작업 만료를 넘을 수 있어서 둔다
+export const MIRROR_BUDGET_MS = 600_000;
+class OutOfBudget extends Error { constructor(readonly image: string | null, step: string) { super(step); } }
 // crane 은 클라우드 자격이 필요 없다 (레지스트리 토큰은 DOCKER_CONFIG 파일로만)
 const PLAIN_ENV = /^(PATH|HOME|TMPDIR|LANG|SSL_CERT_FILE|SSL_CERT_DIR|HTTPS?_PROXY|NO_PROXY|https?_proxy|no_proxy)$/;
 // 빌린 자격으로 부를 때 워커 자기 신원(Pod Identity·IRSA)이 뒤에서 대신 쓰이지 않게 지운다 (envFor 는 프로필·키만 지움)
@@ -59,6 +64,8 @@ function plan(i: MirrorImage, reg: { host: string; prefix: string }, tenantId: s
 /** deploy 리허설 문이 렌더 직후 부른다. MOCK_SANDBOX=1 이면 아무것도 안 하고 빈 표 */
 export async function mirrorImages(j: { tenantId: string; migrationId: string }, m: MigrationRow,
   images: readonly MirrorImage[], deps: MirrorDeps = {}): Promise<MirrorOutcome> {
+  const now = deps.now ?? Date.now;
+  const deadline = now() + MIRROR_BUDGET_MS;
   const env = deps.env ?? process.env;
   const s = rehearsalSettings(env);
   if (s.mock) return { ok: true, images: [], skipped: "mock" };
@@ -71,7 +78,7 @@ export async function mirrorImages(j: { tenantId: string; migrationId: string },
     if ("ok" in p) return p;
     planned.push(p);
   }
-  const copy = (r: StepRoles | null) => copyAll(planned, reg, r, deps.exec ?? spawnExec, env);
+  const copy = (r: StepRoles | null) => copyAll(planned, reg, r, deps.exec ?? spawnExec, env, () => deadline - now());
   try {
     return planned.some((p) => p.kind === "ecr") ? await (deps.withRoles ?? withStepRoles)("image_mirror", j, m, copy) : await copy(null);
   } catch (e) {
@@ -81,12 +88,20 @@ export async function mirrorImages(j: { tenantId: string; migrationId: string },
 }
 
 async function copyAll(planned: Planned[], reg: { host: string; prefix: string }, r: StepRoles | null, exec: Exec,
-  env: NodeJS.ProcessEnv): Promise<MirrorOutcome> {
+  env: NodeJS.ProcessEnv, leftMs: () => number): Promise<MirrorOutcome> {
   if (r?.denied.length) return fail("role_denied", null, r.denied.map((d) => d.code).join(","));
   const dir = mkdtempSync(join(tmpdir(), "svc-mirror-"));
   chmodSync(dir, 0o700);
   try {
-    const run = (cmd: string, args: string[], e: NodeJS.ProcessEnv, timeoutMs: number) => exec(cmd, args, { cwd: dir, env: e, timeoutMs });
+    // 예산이 없으면 시작하지 않고, 예산 때문에 끊긴 실패는 그 명령의 실패가 아니라 budget_exceeded 로 본다
+    const run = async (cmd: string, args: string[], e: NodeJS.ProcessEnv, capMs: number, image: string | null = null) => {
+      const step = `${cmd} ${args[0] === "ecr" ? args[1] : args[0]}`;
+      const timeoutMs = Math.min(capMs, leftMs());
+      if (timeoutMs <= 0) throw new OutOfBudget(image, step);
+      const out = await exec(cmd, args, { cwd: dir, env: e, timeoutMs });
+      if (out.code !== 0 && leftMs() <= 0) throw new OutOfBudget(image, step);
+      return out;
+    };
     const token = async (region: string, e: NodeJS.ProcessEnv) => {
       const t = await run("aws", ["ecr", "get-login-password", "--region", region], e, TOKEN_MS);
       return t.code === 0 ? { auth: Buffer.from(`AWS:${t.stdout.trim()}`).toString("base64") }
@@ -112,27 +127,30 @@ async function copyAll(planned: Planned[], reg: { host: string; prefix: string }
     }
     writeFileSync(join(dir, "config.json"), JSON.stringify({ auths }), { mode: 0o600 });
     const craneEnv = { ...Object.fromEntries(Object.entries(env).filter(([k]) => PLAIN_ENV.test(k))), DOCKER_CONFIG: dir };
-    const crane = (args: string[], timeoutMs: number) => run("crane", args, craneEnv, timeoutMs);
+    const crane = (args: string[], capMs: number, image: string) => run("crane", args, craneEnv, capMs, image);
 
     for (const p of toCopy) {
-      const have = await crane(["digest", p.sandboxRef], DIGEST_MS);
+      const have = await crane(["digest", p.sandboxRef], DIGEST_MS, p.ref);
       if (have.code === 127) return fail("tool_missing", p.ref, have.stderr);
       if (have.code === 0 && have.stdout.trim() === p.digest) continue;   // 이미 있으면 안 올림
       if (platformRegion) {
         // 회사별 저장소. 플랫폼 앱 저장소와 같이 태그 못 바꿈 + 올릴 때 스캔
         const c = await run("aws", ["ecr", "create-repository", "--region", platformRegion, "--repository-name", p.repository,
-          "--image-tag-mutability", "IMMUTABLE", "--image-scanning-configuration", "scanOnPush=true"], env, TOKEN_MS);
+          "--image-tag-mutability", "IMMUTABLE", "--image-scanning-configuration", "scanOnPush=true"], env, TOKEN_MS, p.ref);
         if (c.code !== 0 && !c.stderr.includes("RepositoryAlreadyExistsException"))
           return fail(c.code === 127 ? "tool_missing" : "copy_failed", p.ref, `ecr create-repository: ${c.stderr}`);
       }
-      const c = await crane(["copy", `${p.from}@${p.digest}`, p.sandboxRef], COPY_MS);
+      const c = await crane(["copy", `${p.from}@${p.digest}`, p.sandboxRef], COPY_MS, p.ref);
       if (c.code !== 0) return fail("copy_failed", p.ref, `crane copy: ${c.stderr}`);
-      const got = await crane(["digest", p.sandboxRef], DIGEST_MS);
+      const got = await crane(["digest", p.sandboxRef], DIGEST_MS, p.ref);
       if (got.code !== 0 || got.stdout.trim() !== p.digest)
         return fail("digest_mismatch", p.ref, `복사 뒤 다이제스트 ${got.stdout.trim() || "없음"} ≠ ${p.digest}`);
     }
     const byRef = new Map(planned.map((p) => [p.ref, p.sandboxRef]));
     return { ok: true, images: [...byRef].map(([ref, sandboxRef]) => ({ ref, sandboxRef })) };
+  } catch (e) {
+    if (e instanceof OutOfBudget) return fail("budget_exceeded", e.image, `이미지 복사 예산 ${MIRROR_BUDGET_MS / 1000}초를 다 씀 (${e.message})`);
+    throw e;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

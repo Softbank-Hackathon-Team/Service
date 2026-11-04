@@ -4,9 +4,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { QUEUES } from "@svc/contracts";
+import { policyOf } from "@svc/core";
 import type { Exec } from "@svc/adapters";
 import { ECR_PULL_ACTIONS, STEP_ROLES, TempRoleDenied, checkLeastPrivilege } from "@svc/security";
-import { mirrorImages, type MirrorImage } from "../src/rehearsal/image-mirror.js";
+import { MIRROR_BUDGET_MS, mirrorImages, type MirrorImage } from "../src/rehearsal/image-mirror.js";
 import type { StepRoles, withStepRoles } from "../src/jobs/_roles.js";
 
 const T = "11111111-2222-4333-8444-555555555555";
@@ -150,6 +152,47 @@ test("실패 사유: 레지스트리 없음·미지원·역할 거부·도구 �
     assert.equal(out.reason, reason);
     assert.equal(out.code, "REHEARSAL_IMAGE_MIRROR_FAILED");
   }
+});
+
+test("예산: 단계마다 시간 상한 = min(단계 상한, 남은 예산), 다 쓰면 그 이미지에서 budget_exceeded", async () => {
+  const clock = { t: 0 };
+  const store = new Map<string, string>();
+  const copyTimeouts: number[] = [];
+  // 복사 하나에 250초 걸리는 레지스트리. 시간 상한이 그보다 짧으면 끊겨서 실패한다
+  const exec: Exec = async (cmd, args, x) => {
+    const step = cmd === "aws" ? args[1]! : args[0]!;
+    if (step === "copy") copyTimeouts.push(x.timeoutMs);
+    const need = step === "copy" ? 250_000 : 1_000;
+    clock.t += Math.min(need, x.timeoutMs);
+    const r = (code: number, stdout = "", stderr = "") => ({ code, stdout, stderr, ms: Math.min(need, x.timeoutMs) });
+    if (need > x.timeoutMs) return r(1, "", `[z70] timeout ${x.timeoutMs}ms`);
+    if (step === "digest") return store.has(args[1]!) ? r(0, `${store.get(args[1]!)}\n`) : r(1, "", "MANIFEST_UNKNOWN");
+    if (step === "copy") { store.set(args[2]!, args[1]!.split("@")[1]!); return r(0); }
+    return r(0, step === "get-login-password" ? "tok\n" : "{}");
+  };
+  const images = [D1, D2, D3].map((d, n) => ({ ref: `img${n}@${d}`, source: `docker.io/library/img${n}@${d}` }));
+  const out = await mirrorImages(j, m, images, { exec, env: ENV, now: () => clock.t });
+  assert.deepEqual(copyTimeouts, [300_000, 300_000, 91_000], "세 번째 복사는 남은 91초만 받는다");
+  assert.equal(out.ok, false);
+  assert.equal(!out.ok && out.code, "REHEARSAL_IMAGE_MIRROR_FAILED");
+  assert.equal(!out.ok && out.reason, "budget_exceeded");
+  assert.equal(!out.ok && out.image, images[2]!.ref);
+  assert.equal(clock.t, MIRROR_BUDGET_MS);
+});
+
+test("예산: 역할 대여가 예산을 다 쓰면 명령을 하나도 시작하지 않고 budget_exceeded", async () => {
+  const f = fakes();
+  const clock = { t: 0 };
+  const slowRoles = ((...a: Parameters<typeof withStepRoles>) => { clock.t += MIRROR_BUDGET_MS; return f.withRoles(...a); }) as typeof withStepRoles;
+  const out = await mirrorImages(j, m, [{ ref: `x/api@${D2}`, source: `${CUSTOMER}/api@${D2}` }],
+    { exec: f.exec, withRoles: slowRoles, env: ENV, now: () => clock.t });
+  assert.equal(!out.ok && out.reason, "budget_exceeded");
+  assert.equal(f.calls.length, 0);
+});
+
+test("예산은 deploy 작업 만료보다 300초 이상 짧다 (만료를 줄이면 여기가 깨진다)", () => {
+  const expireSec = policyOf(QUEUES.deploy).expireInSeconds ?? 900;   // 없으면 pg-boss 기본 900초
+  assert.ok(MIRROR_BUDGET_MS <= expireSec * 1000 - 300_000, `예산 ${MIRROR_BUDGET_MS}ms, deploy 만료 ${expireSec}s`);
 });
 
 test("image_mirror 역할 요청 = ECR 받기 세 동작, 관찰 최소 권한 검사 통과, 고객 관찰 역할 인라인에 모두 있음", () => {
