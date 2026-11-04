@@ -11,7 +11,7 @@ import type { MigrationRow } from "../jobs/_step.js";
 // 리허설 이미지 복사 (설계 결정 38: 이미지는 해시로 회사별 플랫폼 저장소에 복사, 샌드박스에 고객 자격 없음).
 // 고객 이미지를 다이제스트 그대로 플랫폼 ECR 샌드박스 자리(SANDBOX_IMAGE_REGISTRY = <호스트>/<접두어>)로 복사하고
 // 렌더 결과의 주소 → 샌드박스 주소 짝(RehearsalInput.images, vCluster translateImage 표)을 돌려준다.
-// 출발 ECR 읽기 = 출발 관찰 역할 15분 대여(STEP_ROLES.image_mirror, ECR 받기 세 동작). 플랫폼 쪽 쓰기 = 워커 자기 Pod Identity(sbx/* 만).
+// 출발 ECR 읽기 = 출발 관찰 역할 15분 대여(STEP_ROLES.image_mirror, ECR 받기 세 동작). 플랫폼 쪽 쓰기 = 워커 자기 Pod Identity(sandbox/* 만).
 // 태그로는 절대 복사하지 않는다: 렌더 주소·원본 둘 다 @sha256 이어야 하고 같은 다이제스트여야 한다
 
 /** ref = 렌더 결과(파드)가 받는 주소, source = 바이트가 있는 고객 원본 (명세 image.repository@digest) */

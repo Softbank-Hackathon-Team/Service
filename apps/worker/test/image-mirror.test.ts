@@ -15,7 +15,7 @@ const m = { id: j.migrationId, status: "deploying" as const, sourceEnvId: "src",
 const D1 = `sha256:${"a".repeat(64)}`, D2 = `sha256:${"b".repeat(64)}`, D3 = `sha256:${"c".repeat(64)}`;
 const PLATFORM = "999999999999.dkr.ecr.ap-northeast-2.amazonaws.com";
 const CUSTOMER = "111122223333.dkr.ecr.us-west-2.amazonaws.com";
-const ENV = { SANDBOX_IMAGE_REGISTRY: `${PLATFORM}/sbx`, PATH: "/bin", HOME: "/home/node",
+const ENV = { SANDBOX_IMAGE_REGISTRY: `${PLATFORM}/sandbox`, PATH: "/bin", HOME: "/home/node",
   AWS_ACCESS_KEY_ID: "AKIAWORKER", AWS_CONTAINER_CREDENTIALS_FULL_URI: "http://169.254.170.23/v1/credentials" };
 const BORROWED = { AWS_CONFIG_FILE: "/tmp/svc-aws-x/config", AWS_SHARED_CREDENTIALS_FILE: "/tmp/svc-aws-x/credentials", AWS_REGION: "us-west-2" };
 
@@ -62,21 +62,21 @@ test("정상: 공개·고객 ECR 이미지를 다이제스트 그대로 회사 �
   ];
   const out = await run(images, f);
   assert.deepEqual(out, { ok: true, images: [
-    { ref: images[0]!.ref, sandboxRef: `${PLATFORM}/sbx/${T}/nginx@${D1}` },
-    { ref: images[1]!.ref, sandboxRef: `${PLATFORM}/sbx/${T}/api@${D2}` },
+    { ref: images[0]!.ref, sandboxRef: `${PLATFORM}/sandbox/${T}/nginx@${D1}` },
+    { ref: images[1]!.ref, sandboxRef: `${PLATFORM}/sandbox/${T}/api@${D2}` },
     { ref: images[2]!.ref, sandboxRef: `${PLATFORM}/platform/${T}/web@${D3}` },
   ] });
   const copies = f.calls.filter((c) => c.args[0] === "copy").map((c) => c.args.slice(1));
-  assert.deepEqual(copies, [[`docker.io/library/nginx@${D1}`, `${PLATFORM}/sbx/${T}/nginx@${D1}`], [`${CUSTOMER}/shop/api@${D2}`, `${PLATFORM}/sbx/${T}/api@${D2}`]],
+  assert.deepEqual(copies, [[`docker.io/library/nginx@${D1}`, `${PLATFORM}/sandbox/${T}/nginx@${D1}`], [`${CUSTOMER}/shop/api@${D2}`, `${PLATFORM}/sandbox/${T}/api@${D2}`]],
     "태그 없이 다이제스트로만 받고, 플랫폼 이미지는 복사 안 함");
-  assert.equal(f.store.get(`${PLATFORM}/sbx/${T}/api@${D2}`), D2);
+  assert.equal(f.store.get(`${PLATFORM}/sandbox/${T}/api@${D2}`), D2);
   const repos = f.calls.filter((c) => c.args[1] === "create-repository").map((c) => c.args);
-  assert.deepEqual(repos.map((a) => a[a.indexOf("--repository-name") + 1]), [`sbx/${T}/nginx`, `sbx/${T}/api`]);
+  assert.deepEqual(repos.map((a) => a[a.indexOf("--repository-name") + 1]), [`sandbox/${T}/nginx`, `sandbox/${T}/api`]);
   assert.ok(repos.every((a) => a.includes("IMMUTABLE") && a.includes("scanOnPush=true")));
 });
 
 test("이미 같은 다이제스트가 있으면 저장소 만들기·복사 안 함", async () => {
-  const f = fakes({ present: { [`${PLATFORM}/sbx/${T}/nginx@${D1}`]: D1 } });
+  const f = fakes({ present: { [`${PLATFORM}/sandbox/${T}/nginx@${D1}`]: D1 } });
   const out = await run([{ ref: `nginx@${D1}`, source: `nginx@${D1}` }], f);
   assert.equal(out.ok, true);
   assert.deepEqual(f.calls.map((c) => `${c.cmd} ${c.args[0] === "ecr" ? c.args[1] : c.args[0]}`), ["aws get-login-password", "crane digest"]);
