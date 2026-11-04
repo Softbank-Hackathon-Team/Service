@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { envNumber } from "./env.js";
 
 // vCluster 리허설 계약. deploying 안, GitOps 커밋 바로 앞에서 커밋할 렌더 결과와 같은 매니페스트를 일회용 vCluster 에 먼저 올린다.
 // 통과하면 커밋을 이어 가고, 실패하면 커밋하지 않고 deploying → paused (실패 코드는 아래 RehearsalFailureCode 닫힌 목록).
@@ -29,6 +30,29 @@ const ISOLATION: Record<SandboxRunKind, (env: NodeJS.ProcessEnv) => SandboxIsola
   remediation: (env) => ({ podSecurity: "restricted", runtimeClass: env.SANDBOX_RUNTIME_CLASS?.trim() || null }),
 };
 export const sandboxIsolation = (kind: SandboxRunKind, env: NodeJS.ProcessEnv = process.env): SandboxIsolation => ISOLATION[kind](env);
+
+// 설정 키 값 읽기 (검사는 config.ts CONFIG_RULES 가 시작 때 한다). 기본값은 여기 한 곳
+// 워커: 리허설 문. DRAFT(ai): 기본 꺼짐, 기한 1200초(줄을 만든 때부터 결과까지), 깨우기가 안 왔을 때 다시 보기 60초
+export function rehearsalSettings(env: NodeJS.ProcessEnv = process.env) {
+  return {
+    enabled: env.SANDBOX_REHEARSAL?.trim() === "on",
+    timeoutSec: envNumber(env.REHEARSAL_TIMEOUT_SEC, 1200),
+    pollSec: envNumber(env.REHEARSAL_POLL_SEC, 60),
+    imageRegistry: env.SANDBOX_IMAGE_REGISTRY?.trim() || null,   // 플랫폼 ECR 샌드박스 자리 <호스트>/<접두어>
+    mock: env.MOCK_SANDBOX?.trim() === "1",                       // 시험 전용: 이미지 복사 없이 줄을 넣는다
+  };
+}
+// agent-worker: vCluster 실행. DRAFT(ai): 호스트 네임스페이스 만료 1800초(청소 기준), 차트는 이미지에 넣은 0.37.6 묶음
+// mockResult: 시험 전용 MOCK_SANDBOX=1 이면 클러스터 없이 정해진 결과 (MOCK_SANDBOX_RESULT=fail 이면 실패, 그 밖은 통과). null = 진짜 샌드박스
+export function sandboxSettings(env: NodeJS.ProcessEnv = process.env) {
+  const mockResult: "pass" | "fail" | null = env.MOCK_SANDBOX?.trim() !== "1" ? null
+    : env.MOCK_SANDBOX_RESULT?.trim() === "fail" ? "fail" : "pass";
+  return {
+    ttlSec: envNumber(env.SANDBOX_TTL_SEC, 1800),
+    vclusterChart: env.SANDBOX_VCLUSTER_CHART?.trim() || "/app/vendor/vcluster-0.37.6.tgz",
+    mockResult,
+  };
+}
 
 // 리허설 대상 도착. gitops bundle.ts ENV_DIR 에서 azure-mock 을 뺀 셋 (ECS·Cloud Run·VM 도착은 리허설 안 함)
 export const RehearsalTarget = z.enum(["aws-eks", "gcp-gke", "onprem-k3s"]);

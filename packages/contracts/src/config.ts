@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { SandboxMode } from "./sandbox.js";
 
 // Z81-09: 시작할 때 설정(환경 변수) 검사 표 한 곳. api·worker·agent-worker 가 main 첫 줄에서 부른다 (core assertConfig).
 // 왜: 예전엔 잘못된 값이 늦게, 하나씩 터졌다 (VM 실측, CHANGES z81-09)
@@ -34,6 +35,12 @@ const httpsUrl: Check = (v) => {
   try { return new URL(v.trim()).protocol === "https:" ? null : "https:// 주소가 아님"; }
   catch { return "주소 모양이 아님"; }
 };
+
+// vCluster 리허설: 이미지 복사 자리 <레지스트리 호스트>/<접두어> (예: <계정>.dkr.ecr.<리전>.amazonaws.com/sbx). 스킴·끝 / 없음
+const registryPrefix: Check = (v) => (/^[a-z0-9.-]+(:\d{1,5})?(\/[a-z0-9._-]+)+$/.test(v.trim()) ? null : "<호스트>/<접두어> 모양이 아님");
+// 쿠버네티스 RuntimeClass 이름 (DNS 하위 도메인 모양)
+const runtimeClassName: Check = (v) => (/^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$/.test(v.trim()) ? null : "RuntimeClass 이름 모양이 아님 (소문자·숫자·-·.)");
+const switchOn = (v: string | undefined) => v?.trim() === "1";
 
 // 이름 → 검사. required 가 아니면 비어 있어도 된다 (비면 코드 기본값)
 interface Rule { check?: Check; required?: true }
@@ -84,33 +91,54 @@ export const CONFIG_RULES = {
     VERIFY_CRON: { check: (v) => v.trim() === "off" || v.trim().split(/\s+/).length === 5 ? null : "cron 5칸 또는 off" },
     REAL_STS: { check: oneOf("0", "1") },   // L4: 비움·1 = 진짜 발급기(기본), 0 = 흉내. 운영 스위치 (시험 전용 아님)
     GCP_PLATFORM_PROJECT: { check: (v) => (/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(v.trim()) ? null : "GCP 프로젝트 ID 모양이 아님") },   // L7i: 진짜 발급기일 때 GCP 발급기가 쓰는 플랫폼 프로젝트 ID
+    // vCluster 리허설 (deploying, 커밋 전). 기본값은 contracts sandbox.ts rehearsalSettings
+    SANDBOX_REHEARSAL: { check: oneOf("off", "on") },
+    REHEARSAL_TIMEOUT_SEC: { check: num({ int: true, min: 120 }) },
+    REHEARSAL_POLL_SEC: { check: num({ int: true, min: 5 }) },
+    SANDBOX_IMAGE_REGISTRY: { check: registryPrefix },
+    MOCK_SANDBOX: { check: oneOf("0", "1") },
   },
   "agent-worker": {
     ...COMMON,
     AGENT_LLM_PROVIDER: { check: oneOf("anthropic", "mock") },
     AGENT_LLM: { check: oneOf("scripted", "real") },
     AGENT_LLM_EFFORT: { check: oneOf("low", "medium", "high", "xhigh", "max") },
-    SANDBOX_MODE: { check: oneOf("memory", "k3d") },
+    SANDBOX_MODE: { check: oneOf(...SandboxMode.options) },
+    // gVisor 스위치. 수정 고리 실행에만 쓴다 (리허설은 baseline·노드 기본 런타임, contracts sandboxIsolation)
+    SANDBOX_RUNTIME_CLASS: { check: runtimeClassName },
+    // 기본값은 contracts sandbox.ts sandboxSettings
+    SANDBOX_TTL_SEC: { check: num({ int: true, min: 300 }) },
+    SANDBOX_VCLUSTER_CHART: { check: (v) => (v.trim().endsWith(".tgz") ? null : "차트 묶음(.tgz) 경로가 아님") },
+    MOCK_SANDBOX: { check: oneOf("0", "1") },
+    MOCK_SANDBOX_RESULT: { check: oneOf("pass", "fail") },
   },
 } satisfies Record<string, Record<string, Rule>>;
 export type ConfigService = keyof typeof CONFIG_RULES;
 
 // 여러 값이 같이 맞아야 하는 것 (값은 안 봄, 있는지만)
 const CROSS: Partial<Record<ConfigService, (env: NodeJS.ProcessEnv) => string[]>> = {
+  // 리허설을 켰는데 이미지 복사 자리가 없으면 첫 리허설에서야 멈춘다 → 시작 때 막는다
+  // DRAFT(ai): 흉내(MOCK_SANDBOX=1)는 복사하지 않으므로 자리가 없어도 된다 (로컬 화면 작업)
+  worker: (env) => env.SANDBOX_REHEARSAL?.trim() === "on" && blank(env.SANDBOX_IMAGE_REGISTRY) && !switchOn(env.MOCK_SANDBOX)
+    ? ["SANDBOX_IMAGE_REGISTRY: SANDBOX_REHEARSAL=on 이면 있어야 함 (MOCK_SANDBOX=1 이면 없어도 됨)"] : [],
   "agent-worker": (env) => {
     const out: string[] = [];
     const key = !blank(env.ANTHROPIC_API_KEY);
     if (env.AGENT_LLM_PROVIDER?.trim() === "anthropic" && !key) out.push("ANTHROPIC_API_KEY: AGENT_LLM_PROVIDER=anthropic 이면 있어야 함");
     if (env.AGENT_LLM?.trim() === "real" && !key) out.push("ANTHROPIC_API_KEY: AGENT_LLM=real 이면 있어야 함");
+    // 흉내 결과만 고르고 흉내를 안 켜면 진짜 샌드박스가 돈다 (fail 을 골랐는데 통과가 나오는 착각을 막는다)
+    if (!blank(env.MOCK_SANDBOX_RESULT) && !switchOn(env.MOCK_SANDBOX)) out.push("MOCK_SANDBOX_RESULT: MOCK_SANDBOX=1 일 때만 씀");
     return out;
   },
 };
 
 // z75-68 (Z62): 시험 전용 스위치. 켜져 있으면 진짜 대신 흉내(데모 원본·IaC·Argo·사전 점검·가짜 LLM·개발 헤더 인증)로 돈다.
 //   MOCK_CREDS 는 Z105-01, MOCK_REPL·MOCK_TRAFFIC 은 Z100 (Z38 R8-50 로 추가)
+//   MOCK_SANDBOX: 클러스터 없이 정해진 리허설 결과 (기본 통과, MOCK_SANDBOX_RESULT=fail 이면 실패). 로컬 화면 작업용
 //   데모(DEMO_MODE=1)에서 하나라도 켜져 있으면 서비스가 뜨지 않는다 (끝 코드 2, 이름만 찍음). 빈 값·"0" 은 꺼짐
 //   NODE_ENV=production 은 조건에 넣지 않았다: 운영 이미지(Dockerfile)가 늘 production 이고 운영 e2e(verify-round prod-e2e)가 이 스위치로 돈다
-export const TEST_ONLY_SWITCHES = ["MOCK_SEED", "MOCK_IAC", "MOCK_ARGO", "MOCK_PRECHECK", "FAKE_LLM", "DEV_AUTH", "MOCK_CREDS", "MOCK_REPL", "MOCK_TRAFFIC"] as const;
+export const TEST_ONLY_SWITCHES = ["MOCK_SEED", "MOCK_IAC", "MOCK_ARGO", "MOCK_PRECHECK", "FAKE_LLM", "DEV_AUTH", "MOCK_CREDS", "MOCK_REPL", "MOCK_TRAFFIC",
+  "MOCK_SANDBOX", "MOCK_SANDBOX_RESULT"] as const;
 export function testSwitchesOn(env: NodeJS.ProcessEnv = process.env): string[] {
   return TEST_ONLY_SWITCHES.filter((k) => { const v = env[k]?.trim(); return !!v && v !== "0"; });
 }

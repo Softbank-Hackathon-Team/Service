@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import {
   FidelityMatrix, RehearsalInput, RehearsalCheck, RehearsalResult, RehearsalView, SandboxRunJob, JOB_SCHEMAS, QUEUES,
   TransitionEvidence, SandboxMode, REHEARSAL_FAILURE_CLASS, RehearsalFailureCode, fidelityOwner, sandboxIsolation,
+  rehearsalSettings, sandboxSettings,
 } from "../src/index.js";
 
 const SHA = "a".repeat(64);
@@ -108,4 +109,17 @@ test("충실도 항목 주인: 샌드박스 쪽 두 항목만 agent-worker", () 
   assert.equal(fidelityOwner("sandbox_pod_security"), "agent-worker");
   assert.equal(fidelityOwner("runtime_isolation"), "agent-worker");
   assert.equal(fidelityOwner("images"), "worker");
+});
+
+test("설정 읽기: 비면 기본값 (리허설 꺼짐·1200초·60초, 만료 1800초, 내장 차트, 진짜 샌드박스)", () => {
+  assert.deepEqual(rehearsalSettings({}), { enabled: false, timeoutSec: 1200, pollSec: 60, imageRegistry: null, mock: false });
+  assert.deepEqual(sandboxSettings({}), { ttlSec: 1800, vclusterChart: "/app/vendor/vcluster-0.37.6.tgz", mockResult: null });
+  assert.equal(rehearsalSettings({ SANDBOX_REHEARSAL: "on", REHEARSAL_TIMEOUT_SEC: "600" }).timeoutSec, 600);
+});
+
+test("MOCK_SANDBOX: 켜면 기본 통과, MOCK_SANDBOX_RESULT=fail 이면 실패, 안 켜면 결과를 골라도 진짜 샌드박스", () => {
+  assert.equal(sandboxSettings({ MOCK_SANDBOX: "1" }).mockResult, "pass");
+  assert.equal(sandboxSettings({ MOCK_SANDBOX: "1", MOCK_SANDBOX_RESULT: "fail" }).mockResult, "fail");
+  assert.equal(sandboxSettings({ MOCK_SANDBOX: "0", MOCK_SANDBOX_RESULT: "fail" }).mockResult, null);
+  assert.equal(rehearsalSettings({ MOCK_SANDBOX: "1" }).mock, true);
 });

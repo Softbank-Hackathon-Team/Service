@@ -61,7 +61,8 @@ test("z75-68: DEMO_MODE=1 에서 시험 전용 스위치가 켜져 있으면 세
     assert.equal(configProblems(s, { DEMO_MODE: "1", MOCK_SEED: "0" }).filter((x) => /시험 전용/.test(x)).length, 0, s);
   }
   assert.deepEqual(testSwitchesOn({ MOCK_ARGO: " 1 ", MOCK_PRECHECK: "0", DEV_AUTH: "1" }), ["MOCK_ARGO", "DEV_AUTH"]);
-  assert.deepEqual([...TEST_ONLY_SWITCHES], ["MOCK_SEED", "MOCK_IAC", "MOCK_ARGO", "MOCK_PRECHECK", "FAKE_LLM", "DEV_AUTH", "MOCK_CREDS", "MOCK_REPL", "MOCK_TRAFFIC"]);
+  assert.deepEqual([...TEST_ONLY_SWITCHES], ["MOCK_SEED", "MOCK_IAC", "MOCK_ARGO", "MOCK_PRECHECK", "FAKE_LLM", "DEV_AUTH", "MOCK_CREDS", "MOCK_REPL", "MOCK_TRAFFIC",
+    "MOCK_SANDBOX", "MOCK_SANDBOX_RESULT"]);
   assert.deepEqual(configProblems("worker", { DEMO_MODE: "1", MOCK_CREDS: "1", MOCK_REPL: "1", MOCK_TRAFFIC: "1" }).filter((x) => /시험 전용/.test(x)).map((x) => x.split(":")[0]), ["MOCK_CREDS", "MOCK_REPL", "MOCK_TRAFFIC"]);
 });
 
@@ -74,4 +75,36 @@ test("PRINCIPALUSER: PLATFORM_PRINCIPAL_ARN 은 IAM 역할·사용자만 (:root�
   assert.equal(p("arn:aws:iam::123456789012:root").length, 1);
   assert.equal(p("arn:aws:sts::123456789012:assumed-role/x/y").length, 1);
   assert.equal(p("arn:aws:iam::1234:user/x").length, 1);
+});
+
+test("리허설 설정 (worker): 정상 값 통과 / 틀린 값은 이름: 이유, 켰는데 복사 자리 없으면 거부 (흉내면 통과)", () => {
+  const base = { DATABASE_URL: "postgres://u@h/d" };
+  const ecr = "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/sbx";
+  assert.deepEqual(configProblems("worker", { ...base, SANDBOX_REHEARSAL: "on", SANDBOX_IMAGE_REGISTRY: ecr, REHEARSAL_TIMEOUT_SEC: "1200", REHEARSAL_POLL_SEC: "60" }), []);
+  assert.deepEqual(configProblems("worker", { ...base, SANDBOX_REHEARSAL: "yes", REHEARSAL_TIMEOUT_SEC: "60", REHEARSAL_POLL_SEC: "1.5",
+    SANDBOX_IMAGE_REGISTRY: "https://ecr/sbx", MOCK_SANDBOX: "true" }).map((x) => x.split(":")[0]).sort(),
+    ["MOCK_SANDBOX", "REHEARSAL_POLL_SEC", "REHEARSAL_TIMEOUT_SEC", "SANDBOX_IMAGE_REGISTRY", "SANDBOX_REHEARSAL"]);
+  assert.deepEqual(configProblems("worker", { ...base, SANDBOX_REHEARSAL: "on" }).map((x) => x.split(":")[0]), ["SANDBOX_IMAGE_REGISTRY"]);
+  assert.deepEqual(configProblems("worker", { ...base, SANDBOX_REHEARSAL: "on", MOCK_SANDBOX: "1" }), []);
+  assert.deepEqual(configProblems("worker", { ...base, SANDBOX_REHEARSAL: "off" }), []);
+});
+
+test("샌드박스 설정 (agent-worker): vcluster·gVisor 이름·만료·차트 / RuntimeClass 없이도 통과 (리허설은 baseline 이라 묶지 않음)", () => {
+  const base = { DATABASE_URL: "postgres://u@h/d" };
+  assert.deepEqual(configProblems("agent-worker", { ...base, SANDBOX_MODE: "vcluster" }), []);
+  assert.deepEqual(configProblems("agent-worker", { ...base, SANDBOX_MODE: "vcluster", SANDBOX_RUNTIME_CLASS: "gvisor", SANDBOX_TTL_SEC: "1800",
+    SANDBOX_VCLUSTER_CHART: "/app/vendor/vcluster-0.37.6.tgz" }), []);
+  assert.deepEqual(configProblems("agent-worker", { ...base, SANDBOX_RUNTIME_CLASS: "GVisor_X", SANDBOX_TTL_SEC: "60", SANDBOX_VCLUSTER_CHART: "/app/vendor/vcluster" })
+    .map((x) => x.split(":")[0]).sort(), ["SANDBOX_RUNTIME_CLASS", "SANDBOX_TTL_SEC", "SANDBOX_VCLUSTER_CHART"]);
+});
+
+test("MOCK_SANDBOX (agent-worker): 켜고 결과 고르기 통과 / 틀린 결과·흉내 없이 결과만 고르면 거부 / DEMO_MODE=1 이면 두 스위치 모두 거부", () => {
+  const base = { DATABASE_URL: "postgres://u@h/d" };
+  assert.deepEqual(configProblems("agent-worker", { ...base, MOCK_SANDBOX: "1" }), []);
+  assert.deepEqual(configProblems("agent-worker", { ...base, MOCK_SANDBOX: "1", MOCK_SANDBOX_RESULT: "fail" }), []);
+  assert.deepEqual(configProblems("agent-worker", { ...base, MOCK_SANDBOX: "1", MOCK_SANDBOX_RESULT: "maybe" }).map((x) => x.split(":")[0]), ["MOCK_SANDBOX_RESULT"]);
+  assert.deepEqual(configProblems("agent-worker", { ...base, MOCK_SANDBOX_RESULT: "fail" }), ["MOCK_SANDBOX_RESULT: MOCK_SANDBOX=1 일 때만 씀"]);
+  for (const s of ["worker", "agent-worker"] as const)
+    assert.deepEqual(configProblems(s, { ...base, DEMO_MODE: "1", MOCK_SANDBOX: "1", MOCK_SANDBOX_RESULT: "pass" }).filter((x) => /시험 전용/.test(x))
+      .map((x) => x.split(":")[0]), ["MOCK_SANDBOX", "MOCK_SANDBOX_RESULT"], s);
 });
