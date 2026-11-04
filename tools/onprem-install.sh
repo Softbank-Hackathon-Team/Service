@@ -11,6 +11,11 @@
 #   [GITOPS_SSH_KEY_FILE=~/.ssh/gitops_ro | GITOPS_TOKEN_FILE=~/gitops-read-token] [GRANTS_CLUSTER=1] [KUBE_CONTEXT=...] bash tools/onprem-install.sh
 #   GITOPS_TOKEN_FILE: https 주소 + 읽기 전용 토큰 (플랫폼 Argo CD 의 gitops-repo Secret 과 같은 방식, 사용자 x-access-token).
 #     조직 정책으로 deploy key 를 못 쓰는 레포용 (2026-11-05 Softbank-Hackathon-Team 실측). 토큰은 명령줄·화면에 안 남게 파일로만 받는다
+# AGENT_IMAGE 를 레지스트리에서 못 받는 서버(이미지 파일을 옮겨 k3s ctr images import 로 넣는 경우)는 digest 이름표가 따로 있어야 한다.
+#   import 는 태그 이름만 남기고, 차트는 AGENT_IMAGE(@sha256:...)로 찾는다 → 이름표가 없으면 ErrImagePull (2026-11-05 VM 실측, 두 번 겪음)
+#   sudo k3s ctr -n k8s.io images import svc-onprem-agent.tar
+#   sudo k3s ctr -n k8s.io images tag <import 가 찍은 태그 이름> "$AGENT_IMAGE"
+#   확인: sudo k3s ctr -n k8s.io images ls -q | grep -F "$AGENT_IMAGE"
 # 되돌리기: helm uninstall onprem-agent -n svc-agent; kubectl delete ns svc-agent; Argo 를 지우려면 같은 yaml 로 kubectl delete
 set -euo pipefail
 cd "$(dirname "$0")/.."
