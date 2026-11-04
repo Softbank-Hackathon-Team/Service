@@ -1,0 +1,75 @@
+{{- if .Values.sandbox.enabled }}
+{{- /* agent-worker 결정 코드가 sbx-* 네임스페이스를 만들고 지우고, 그 안에서만 vCluster 차트를 helm 으로 올린다.
+       클러스터 범위 권한은 이름·라벨을 VAP(sandbox-vap.yaml sbx-namespace-guard·sbx-rolebinding-guard)가 묶는다 */}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sbx-provisioner
+  labels:
+    app.kubernetes.io/part-of: platform
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["rolebindings"]
+    verbs: ["create"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    resourceNames: ["sbx-operator"]
+    verbs: ["bind"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: sbx-provisioner
+  labels:
+    app.kubernetes.io/part-of: platform
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: sbx-provisioner
+subjects:
+  - kind: ServiceAccount
+    name: agent-worker
+    namespace: {{ .Release.Namespace }}
+---
+{{- /* 클러스터 전체에 묶지 않는다. agent-worker 가 sbx-* 네임스페이스마다 RoleBinding 으로만 쓴다.
+       vCluster 0.37.6 차트 Role vc-<릴리스>(templates/role.yaml, 값 rbac.clusterRole.enabled=false, k8s 1.35)의 규칙을 모두 담는다.
+       RBAC 는 가진 규칙만 Role 로 만들게 하므로 하나라도 빠지면 helm install 이 403 으로 멈춘다.
+       나머지는 helm 이 차트 렌더 결과(StatefulSet·Service·SA·Secret·NetworkPolicy·ResourceQuota·LimitRange·Role·RoleBinding)와 릴리스 Secret 을 다루는 몫이다 */}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: sbx-operator
+  labels:
+    app.kubernetes.io/part-of: platform
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets", "services", "endpoints", "pods", "pods/attach", "pods/portforward", "pods/exec", "persistentvolumeclaims", "serviceaccounts", "resourcequotas", "limitranges"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods/status", "pods/ephemeralcontainers", "pods/resize"]
+    verbs: ["patch", "update"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["", "events.k8s.io"]
+    resources: ["events"]
+    verbs: ["create", "get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps"]
+    resources: ["replicasets", "deployments"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["roles", "rolebindings"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+{{- end }}
