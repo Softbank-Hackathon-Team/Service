@@ -79,7 +79,7 @@ npm run dev:web                  # http://localhost:5173
 | 409 `RETRY_BUDGET_EXHAUSTED` | 실패 화면(다시 계획)·멈춤 화면(재개) · 버튼 줄 | 동의 체크 한 줄을 보이고, 체크하면 `acceptCustomerCost: true`로 다시 보낸다 |
 | `GET /agent-review` 의 `failureAnalysis` | 멈춘 이유 접는 카드 | 끝난 분석만 원인·고칠 것·근거로. 칸이 없거나 진행 중이면 아무것도 그리지 않는다 |
 | `GET /plan/resources` v2 (`irVersion`, `cache`·`queue`·`boundary`, `runtimeChange`) | 계획 승인 · "자원 대응" | 같은 칸 여러 줄(앱마다)도 그린다. "실행 방식 바뀜"은 그 줄 아래. 경계 밖은 옮기는 자원이 아니라 표 밖 한 줄. 머리줄 건수는 그린 줄 수 (`lib/resourceMap.ts`) |
-| `GET /migrations/:id/rehearsal` (`RehearsalView`) | 이전 화면 · 진행 단계 "앱 배포" 칸, 배포 중 큰 카드 한 줄, "리허설"·"충실도" 접는 카드, 멈춤 화면 | 앱 배포 칸 오른쪽에 리허설 중·통과·재사용·건너뜀·멈춤. 리허설 카드에 샌드박스 이름·단계·걸린 시간·남은 기한·격리(커널·파드 보안)·검사(실패 먼저)·사람이 승인한 격리 문구. 충실도 표는 같게·바꿔서·못 본 것 세 묶음으로 줄마다 실제·리허설·이유 그대로. 재개 뒤 새 줄이 생기기 전의 지난 실패 줄은 "새 시도 준비"로 본다(`features/migration/rehearsal.ts`) |
+| `GET /migrations/:id/rehearsal` (`RehearsalView`) | 이전 화면 · 진행 단계 "앱 배포" 칸, 배포 중 큰 카드 한 줄, "리허설"·"충실도" 접는 카드, 멈춤 화면 | 앱 배포 칸 오른쪽에 리허설 중·통과·재사용·건너뜀·멈춤. 리허설 카드에 샌드박스 이름·단계·걸린 시간·남은 기한·격리(커널·파드 보안)·검사(실패 먼저)·사람이 승인한 격리 문구. 충실도 표는 같게·바꿔서·못 본 것 세 묶음으로 줄마다 실제·리허설·이유 그대로. 서버 `run.stale` 이 참이면 지난 배포 시도의 기록으로 보이고(그때 결과와 판정을 가른 실패만), 지금 판정으로 말하지 않는다. 완료 화면에는 두 카드를 접어 둔다(`features/migration/rehearsal.ts`) |
 | 실패 코드 `REHEARSAL_*` 14개 | 멈춘 이유 문장 | 실제도 실패·샌드박스가 보증 못 함·플랫폼 문제(contracts `REHEARSAL_FAILURE_CLASS`)로 문장이 갈린다. 보증 못 함은 "앱이 고장 났다는 뜻은 아닙니다" |
 | 실패 코드 `UNSUPPORTED_V2`·`NEEDS_HUMAN`·`RUNTIME_*`·`TF_PLAN_DRIFT`·`GITOPS_VALUES_DRIFT` | 멈춘 이유 문장 | `lib/failure.ts`. 승인 뒤 바뀜 두 줄은 "일부만 생겼을 수 있음"으로 떨어지지 않는다 |
 | 환경 `failureReason` 코드 | 대시보드 환경 줄·환경 화면 큰 카드·환경 등록 실패 | 코드를 사람 말로 (`connectionReasonText`). 권한 이름은 문장에 넣고, 모르는 코드는 코드 그대로. 플랫폼 쪽 실패(`PLATFORM_*`)는 고객이 고칠 것이 없다고 쓴다 |
