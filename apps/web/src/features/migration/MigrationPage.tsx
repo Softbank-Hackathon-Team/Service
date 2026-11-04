@@ -26,6 +26,8 @@ import {
 } from './specV2';
 import { LeftoverFold, StopFold } from './EvidenceFolds';
 import { DoneScreen, CleanupScreen, PausedScreen, RolledBackScreen, RollingBackScreen, RunningScreen, WindowScreen } from './RunScreens';
+import { RequirementsFold, SourceFactsFold, VerdictFold } from './SecurityFolds';
+import { isSecItem, precheckLine, secAckLabel, type SecuritySpecV2 } from './securityV2';
 import { ConfirmPill, Frame, useAction, useCostConsent, type ScreenProps } from './shared';
 import s from '../common/page.module.css';
 
@@ -69,6 +71,9 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
   const accuracy = view?.accuracy ? accuracyView(view.accuracy) : null;
   const bounce = timeline.data ? lastPrecheckBounce(timeline.data.items) : null;
   const blocks = bounce?.items.filter((item) => item.level === 'block') ?? [];
+  // 보안 판정 막힘으로 돌아왔으면 보안 요구사항 카드를 열어 둔다 (요구사항을 고쳐 풀리는 막힘이 있다: 허용 국가·키 소유)
+  const secBlocked = blocks.some(isSecItem);
+  const requirements = v2?.spec.security?.requirements ?? null;
 
   // v2 판: 검토 칸을 PATCH confirm 으로 확인한 뒤(20개씩), 남은 칸이 없을 때만 POST /plan (T04 가 v2 검토 칸도 센다).
   // v1 판: 지금처럼 POST /plan 만 보낸다
@@ -100,6 +105,13 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
       await api.patchSpec(migration.id, { baseVersion: view.version, include: [resource] });
       await spec.reload();
     });
+  // 보안 요구사항 저장·지우기 (PATCH changes "security" 통째, null = 지움). 결과는 새 판 하나
+  const saveSecurity = (value: SecuritySpecV2 | null) =>
+    run(async () => {
+      if (!view) return;
+      await api.patchSpec(migration.id, { baseVersion: view.version, changes: [{ path: 'security', value }] });
+      await spec.reload();
+    });
 
   const heroRows = v2 ? rowsV2.filter((row) => row.review) : [];
   return (
@@ -116,12 +128,16 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
         }
         foot={view?.source === 'ai_draft' ? 'AI가 추측한 초안입니다. 사람이 확정하기 전에는 계획에 쓰지 않습니다' : '확정하면 사전 점검을 시작합니다'}
       >
-        {blocks.map((item) => (
-          <div key={item.id} className={s.heroPanel}>
-            <span className="t-label-md">{item.message}</span>
-            {item.fix && <span className="t-body-sm c-secondary">{item.fix}</span>}
-          </div>
-        ))}
+        {blocks.map((item) => {
+          const line = precheckLine(item);
+          return (
+            <div key={item.id} className={s.heroPanel}>
+              <span className="t-label-md">{line.title}</span>
+              {line.detail && <span className="t-body-sm">{line.detail}</span>}
+              {item.fix && <span className="t-body-sm c-secondary">{item.fix}</span>}
+            </div>
+          );
+        })}
         {blocks.length === 0 &&
           !v2 &&
           rows
@@ -170,6 +186,17 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
             <p className={`${s.note} t-body-sm c-secondary`}>{spec.loading ? '명세를 읽고 있습니다.' : '아직 명세가 없습니다.'}</p>
           )}
         </FoldTile>
+        {view && v2 && (
+          <RequirementsFold
+            key={`security-${secBlocked}`}
+            requirements={requirements}
+            version={view.version}
+            busy={busy}
+            defaultOpen={!requirements || secBlocked}
+            onSave={(value) => void saveSecurity(value)}
+          />
+        )}
+        {view && v2 && <SourceFactsFold facts={view.securityFacts} />}
         {accuracy && (
           <FoldTile title="가져오기 정확도" summary={accuracy.summary} defaultOpen={false}>
             <ul className={s.rows}>
@@ -282,7 +309,9 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
   };
   const planCost = doc?.costSummary;
   const pair = cost.data?.pair;
-  const warns = doc?.precheck.filter((item) => item.level !== 'info').length ?? 0;
+  // 보안 판정(SEC:*)은 따로 단계별 카드로 본다. 사전 점검 카드에는 나머지 점검만
+  const checks = doc?.precheck.filter((item) => !isSecItem(item)) ?? [];
+  const warns = checks.filter((item) => item.level !== 'info').length;
   const expired = doc ? Date.parse(doc.expiresAt) <= Date.now() : false;
   const mapped = planResourceRows(resources.data);
 
@@ -310,7 +339,7 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
                   <label className={`${s.ack} t-body-sm`}>
                     <input type="checkbox" checked={ticks.has(ack.id)} disabled={busy || expired} onChange={(event) => tick(ack.id, event.target.checked)} />
                     <span className={s.ackText}>
-                      <span className="t-caption c-tertiary">{ACK_KIND[ack.kind] ?? ack.kind}</span>
+                      <span className="t-caption c-tertiary">{secAckLabel(ack) ?? ACK_KIND[ack.kind] ?? ack.kind}</span>
                       <span>{ack.text}</span>
                     </span>
                   </label>
@@ -343,9 +372,9 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
             ))}
           </ul>
         </FoldTile>
-        <FoldTile key={`precheck-${warns > 0}`} title="사전 점검" summary={warns > 0 ? `확인 ${warns}건` : `${doc?.precheck.length ?? 0}건`} defaultOpen={warns > 0}>
+        <FoldTile key={`precheck-${warns > 0}`} title="사전 점검" summary={warns > 0 ? `확인 ${warns}건` : `${checks.length}건`} defaultOpen={warns > 0}>
           <ul className={s.rows}>
-            {doc?.precheck.map((item) => (
+            {checks.map((item) => (
               <li key={item.id} className={s.row}>
                 <span className="t-body-sm">{item.message}</span>
                 <Badge tone={LEVEL[item.level].tone}>{LEVEL[item.level].label}</Badge>
@@ -353,6 +382,7 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
             ))}
           </ul>
         </FoldTile>
+        {doc && <VerdictFold items={doc.precheck} />}
         <FoldTile
           title="자원 대응"
           summary={resources.data ? `${mapped.listed.length}개${mapped.runtimeChanges > 0 ? ` · 실행 방식 바뀜 ${mapped.runtimeChanges}` : ''}` : ''}

@@ -317,3 +317,29 @@
 .rowStack > :last-child {
   text-align: left;
 }
+/* 접는 카드 안의 입력 한 칸: 이름 위, 고르는 알약이나 입력칸 아래 */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+}
+.options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+}
+.input {
+  width: 100%;
+  height: var(--size-control-m);
+  padding: 0 var(--space-16);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-inner);
+  background: var(--color-bg-surface);
+  color: var(--color-fg-primary);
+}
+.input:focus {
+  border-color: var(--color-border-focus);
+}
+.input[aria-invalid='true'] {
+  border-color: var(--color-signal-fail);
+}
