@@ -14,7 +14,10 @@ spec:
   destinations:
     - { server: "https://kubernetes.default.svc", namespace: "app-*" }
   # 네임스페이스는 git 의 Namespace 객체가 아니라 CreateNamespace + managedNamespaceMetadata 로만 만든다 (다른 네임스페이스 라벨을 git 이 못 바꾸게)
-  clusterResourceWhitelist: []
+  # 클러스터 범위 자원은 Namespace 하나만 연다: Argo CD 는 CreateNamespace 로 만드는 Namespace 도 이 목록으로 검사한다
+  #   (비우면 "Namespace is not permitted in project" 로 첫 동기화가 실패한다, 2026-11-04 VM 실측). 어느 이름인지는 destinations app-* 가 묶는다
+  clusterResourceWhitelist:
+    - { group: "", kind: "Namespace" }
   namespaceResourceBlacklist:
     - { group: "rbac.authorization.k8s.io", kind: "Role" }
     - { group: "rbac.authorization.k8s.io", kind: "RoleBinding" }

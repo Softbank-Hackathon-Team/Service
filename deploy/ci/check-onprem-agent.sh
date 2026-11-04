@@ -57,8 +57,11 @@ for path, want_roles in ((sys.argv[1], 1), (sys.argv[2], 2)):
             if re.search(r'"(secrets|configmaps|\*)"', res):
                 print(f"FAIL {path}: 읽으면 안 되는 자원 {res}"); bad = 1
     proj = [d for d in docs if re.search(r"^kind: AppProject$", d, re.M)][0]
-    if "clusterResourceWhitelist: []" not in proj:
-        print(f"FAIL {path}: AppProject 가 클러스터 범위 자원을 연다"); bad = 1
+    # 클러스터 범위는 Namespace 하나만 (CreateNamespace 용). 그 밖의 종류가 하나라도 있으면 실패
+    wl = re.search(r"clusterResourceWhitelist:\n((?:\s+- .*\n)*)", proj)
+    kinds = re.findall(r'kind: "([^"]+)"', wl.group(1)) if wl else []
+    if kinds != ["Namespace"] or re.search(r'group: "[^"]+"', wl.group(1) if wl else ""):
+        print(f"FAIL {path}: AppProject 클러스터 범위 허용은 Namespace(core) 하나뿐이어야 한다: {kinds}"); bad = 1
     for k in ("Role", "RoleBinding"):
         if f'kind: "{k}"' not in proj:
             print(f"FAIL {path}: AppProject 가 {k} 를 막지 않는다"); bad = 1
