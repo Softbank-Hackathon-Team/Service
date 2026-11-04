@@ -106,7 +106,7 @@ test("거부: 24시간 지난 링크로 확인 요청 → 400 LINK_EXPIRED, DB �
   assert.equal(await jobs(env.id), 0);
   const again = await post(`/environments/${env.id}/connection-link`);
   assert.equal(again.statusCode, 200);
-  assert.notEqual(again.json().externalId, first, "만료 뒤 새 링크는 새 확인 문구");
+  assert.equal(again.json().externalId, first, "PF04: 만료 뒤 새 링크도 같은 확인 문구 (하루 뒤 만든 스택이 열리게)");
 });
 
 test("거부: 진행 중 이전이 있으면 해제 409, 없으면 204 + Agent 키 끊김", { skip }, async () => {
@@ -129,11 +129,16 @@ test("거부: 진행 중 이전이 있으면 해제 409, 없으면 204 + Agent �
   assert.equal(again.statusCode, 409, "해제된 환경은 다시 해제 못 한다");
 });
 
-test("거부: 제공자별 링크 (onprem 400, gcp 501, aws 클러스터 없음 400, 설정 없음 503)", { skip }, async () => {
+test("거부: 제공자별 링크 (onprem 400, gcp 설정 없음 503, aws 클러스터 없음 400, 설정 없음 503)", { skip }, async () => {
   const on = await create("onp", {}, "onprem");
   assert.equal((await post(`/environments/${on.id}/connection-link`)).json().code, "USE_AGENT_TOKEN");
   const g = await create("gcp-1", {}, "gcp");
-  assert.equal((await post(`/environments/${g.id}/connection-link`)).statusCode, 501);
+  const was = process.env.GCP_PLATFORM_PROJECT; delete process.env.GCP_PLATFORM_PROJECT;
+  try {
+    const gr = await post(`/environments/${g.id}/connection-link`);
+    assert.equal(gr.statusCode, 503); assert.equal(gr.json().code, "CONNECT_NOT_CONFIGURED");
+    assert.equal((await dbRow(g.id)).connection_status, "draft");
+  } finally { if (was === undefined) delete process.env.GCP_PLATFORM_PROJECT; else process.env.GCP_PLATFORM_PROJECT = was; }
   const nc = await create("no-cluster", {});
   const r = await post(`/environments/${nc.id}/connection-link`);
   assert.equal(r.statusCode, 400); assert.equal(r.json().code, "CLUSTER_NAME_REQUIRED");
@@ -159,4 +164,78 @@ test("F17: boundaryPolicyExists=true → 링크에 CreateBoundaryPolicy=false, �
   assert.ok(b.json().url.includes("param_CreateBoundaryPolicy=false"));
   const bad = await post(`/environments/${env.id}/connection-link?boundaryPolicyExists=yes`);
   assert.equal(bad.statusCode, 400);
+});
+
+test("L7 정상: gcp 링크 = Cloud Shell + 명령 한 줄, 플랫폼 SA 는 이 회사 DB 값(t-…@플랫폼 프로젝트), 상태 awaiting_customer", { skip }, async () => {
+  const g = await create("gcp-ok", {}, "gcp");
+  const was = process.env.GCP_PLATFORM_PROJECT; process.env.GCP_PLATFORM_PROJECT = "svc-platform";
+  try {
+    const r = await post(`/environments/${g.id}/connection-link`);
+    assert.equal(r.statusCode, 200, r.body);
+    const b = r.json();
+    assert.equal(b.kind, "gcp_cloud_shell");
+    assert.match(b.url, /^https:\/\/shell\.cloud\.google\.com\//);
+    const sa = (await owner.query("SELECT gcp_platform_sa FROM tenants WHERE id = (SELECT tenant_id FROM environments WHERE id=$1)", [g.id])).rows[0].gcp_platform_sa;
+    assert.match(b.command, new RegExp(`PLATFORM_SA='${sa}@svc-platform\\.iam\\.gserviceaccount\\.com'`));
+    assert.equal(b.externalId, undefined);
+    assert.equal((await dbRow(g.id)).connection_status, "awaiting_customer");
+  } finally { if (was === undefined) delete process.env.GCP_PLATFORM_PROJECT; else process.env.GCP_PLATFORM_PROJECT = was; }
+});
+
+test("PF04 거부: 해제(disconnected) 뒤 다시 연결하면 새 확인 문구 (옛 스택과 섞이지 않게)", { skip }, async () => {
+  const env = await create("pf04-disc");
+  const first = (await post(`/environments/${env.id}/connection-link`)).json().externalId;
+  await owner.query("UPDATE environments SET connection_status='disconnected' WHERE id=$1", [env.id]);
+  const again = await post(`/environments/${env.id}/connection-link`);
+  if (again.statusCode === 200) assert.notEqual(again.json().externalId, first);
+  else assert.equal(again.statusCode, 409);   // 해제에서 링크를 안 받는 설계면 409 (어느 쪽이든 옛 문구 재사용 없음)
+});
+
+test("PF07 운영자 실수: 콘솔 모양 계정 번호(1234-5678-9012)는 12자리로 받고, 모자라면 400", { skip }, async () => {
+  const env = await create("src-aws-pf07");
+  assert.equal((await post(`/environments/${env.id}/connection-link`)).statusCode, 200);
+  const bad = await post(`/environments/${env.id}/verify`, { accountId: "1234-5678-901" });
+  assert.equal(bad.statusCode, 400, bad.body);
+  assert.equal(bad.json().code, "BAD_ACCOUNT_ID");
+  const v = await post(`/environments/${env.id}/verify`, { accountId: " 1234-5678-9012 " });
+  assert.equal(v.statusCode, 202, v.body);
+  assert.equal((await dbRow(env.id)).account_id, "123456789012");
+});
+
+// 결정 3번 A안: GCP 확인 요청에 이전 전용 프로젝트를 같이 받는다. 원래 프로젝트와 같거나 gcp 가 아니면 400, 다음 링크 명령에 들어간다
+test("A안 정상: gcp verify 에 targetProjectId → DB gcp_target_project, 화면 targetProjectId, 다음 링크 명령에 TARGET_PROJECT_ID", { skip }, async () => {
+  const g = await create("gcp-target", {}, "gcp");
+  const was = process.env.GCP_PLATFORM_PROJECT; process.env.GCP_PLATFORM_PROJECT = "svc-platform";
+  try {
+    assert.equal((await post(`/environments/${g.id}/connection-link`)).statusCode, 200);
+    const v = await post(`/environments/${g.id}/verify`, { accountId: "cust-prj-1", targetProjectId: "cust-mig-1" });
+    assert.equal(v.statusCode, 202, v.body);
+    const row = (await owner.query("SELECT account_id, gcp_target_project FROM environments WHERE id=$1", [g.id])).rows[0];
+    assert.deepEqual(row, { account_id: "cust-prj-1", gcp_target_project: "cust-mig-1" });
+    const list = (await app.inject({ method: "GET", url: `${P}/environments`, headers: H })).json() as { items: Array<{ id: string; targetProjectId?: string }> };
+    assert.equal(list.items.find((e) => e.id === g.id)?.targetProjectId, "cust-mig-1");
+    // 다시 확인할 때 빠뜨려도 있던 값 그대로
+    await owner.query("UPDATE environments SET connection_status='failed' WHERE id=$1", [g.id]);
+    assert.equal((await post(`/environments/${g.id}/verify`, { accountId: "cust-prj-1" })).statusCode, 202);
+    assert.equal((await owner.query("SELECT gcp_target_project FROM environments WHERE id=$1", [g.id])).rows[0].gcp_target_project, "cust-mig-1");
+    await owner.query("UPDATE environments SET connection_status='failed' WHERE id=$1", [g.id]);
+    const l = await post(`/environments/${g.id}/connection-link`);
+    assert.match(l.json().command, /TARGET_PROJECT_ID='cust-mig-1'/);
+  } finally { if (was === undefined) delete process.env.GCP_PLATFORM_PROJECT; else process.env.GCP_PLATFORM_PROJECT = was; }
+});
+
+test("A안 거부: 전용 프로젝트가 원래 프로젝트와 같음·모양 틀림·aws 환경이면 400 BAD_TARGET_PROJECT, DB 안 바뀜", { skip }, async () => {
+  const g = await create("gcp-target-bad", {}, "gcp");
+  const was = process.env.GCP_PLATFORM_PROJECT; process.env.GCP_PLATFORM_PROJECT = "svc-platform";
+  try {
+    assert.equal((await post(`/environments/${g.id}/connection-link`)).statusCode, 200);
+    for (const t of ["cust-prj-1", "Bad_Project"]) {
+      const r = await post(`/environments/${g.id}/verify`, { accountId: "cust-prj-1", targetProjectId: t });
+      assert.equal(r.statusCode, 400, r.body); assert.equal(r.json().code, "BAD_TARGET_PROJECT");
+    }
+    assert.equal((await owner.query("SELECT gcp_target_project FROM environments WHERE id=$1", [g.id])).rows[0].gcp_target_project, null);
+  } finally { if (was === undefined) delete process.env.GCP_PLATFORM_PROJECT; else process.env.GCP_PLATFORM_PROJECT = was; }
+  const a = await create("aws-target-bad");
+  const r = await post(`/environments/${a.id}/verify`, { accountId: "111122223333", targetProjectId: "cust-mig-1" });
+  assert.equal(r.statusCode, 400); assert.equal(r.json().code, "BAD_TARGET_PROJECT");
 });
