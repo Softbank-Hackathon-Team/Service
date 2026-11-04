@@ -29,6 +29,7 @@ const table = (over: Array<[RegExp, Reply]> = []): Array<[RegExp, Reply]> => [..
   [/^aws guardduty list-detectors/, { out: { DetectorIds: [] } }],
   [/^aws eks update-kubeconfig/, { out: "Added new context" }],
   [/^kubectl --kubeconfig .* auth can-i list deployments --all-namespaces/, { out: "yes\n" }],
+  [/^kubectl --kubeconfig .* get namespaces -o name/, { out: "namespace/default\n" }],
 ];
 const CLI = { AWS_ACCESS_KEY_ID: "ASIABORROWED", AWS_SECRET_ACCESS_KEY: "s", AWS_SESSION_TOKEN: "t", AWS_REGION: "ap-northeast-2" };
 const BASE = { AWS_PROFILE: "platform", AWS_DEFAULT_PROFILE: "p2", AWS_ACCESS_KEY_ID: "AKIAOWN", HOME: "/h", PATH: "/bin" };
@@ -38,7 +39,7 @@ test("정상: 6단계 모두 통과 → ok, 모든 호출이 빌린 자격만 �
   const { exec, calls } = fakeExec(table());
   const r = await verifyAwsObserve({ exec, env: BASE }, input);
   assert.deepEqual(r, { ok: true, clusters: ["other", "shop"] });
-  assert.equal(calls.length, 7);
+  assert.equal(calls.length, 8);   // FM-CON-09: 실제 목록 읽기 한 번 더
   for (const c of calls) {
     assert.equal(c.env.AWS_PROFILE, undefined);
     assert.equal(c.env.AWS_DEFAULT_PROFILE, undefined);
@@ -60,8 +61,26 @@ test("거부: 실행 역할 없음(NoSuchEntity) → ROLE_NOT_FOUND / 신뢰 정
   assert.deepEqual(await verifyAwsObserve({ exec: f.exec, env: BASE }, input), { ok: false, reason: "ROLE_NOT_FOUND" });
   f = fakeExec(table([[/^aws iam get-role/, { out: { Role: { AssumeRolePolicyDocument: NO_EXT } } }]]));
   assert.deepEqual(await verifyAwsObserve({ exec: f.exec, env: BASE }, input), { ok: false, reason: "PERMISSION_MISSING:sts:ExternalId" });
-  f = fakeExec(table([[/^aws guardduty/, { code: 254, err: "An error occurred (AccessDeniedException) when calling the ListDetectors operation: ... with an explicit deny in a service control policy" }]]));
+  f = fakeExec(table([[/^aws rds describe-db-instances/, { code: 254, err: "An error occurred (AccessDenied) when calling the DescribeDBInstances operation: ... with an explicit deny in a service control policy" }]]));
   assert.deepEqual(await verifyAwsObserve({ exec: f.exec, env: BASE }, input), { ok: false, reason: "ORG_POLICY_BLOCKED" });
+});
+
+test("PF02: GuardDuty 읽기는 선택 — SCP·권한 없음이어도 연결은 ok + missingPermissions, 그 밖의 오류는 던짐", async () => {
+  for (const err of ["An error occurred (AccessDeniedException) when calling the ListDetectors operation: ... with an explicit deny in a service control policy",
+                     "An error occurred (AccessDeniedException) when calling the ListDetectors operation: not authorized"]) {
+    const f = fakeExec(table([[/^aws guardduty/, { code: 254, err }]]));
+    assert.deepEqual(await verifyAwsObserve({ exec: f.exec, env: BASE }, input), { ok: true, clusters: ["other", "shop"], missingPermissions: ["guardduty:ListDetectors"] });
+  }
+  const f = fakeExec(table([[/^aws guardduty/, { code: 255, err: "Could not connect to the endpoint URL" }]]));
+  await assert.rejects(verifyAwsObserve({ exec: f.exec, env: BASE }, input));
+});
+
+test("PF02 거부: 클러스터 이름이 EKS 모양이 아니면(-- 로 시작 등) CLI 를 부르지 않고 K8S_ACCESS_MISSING", async () => {
+  for (const clusterName of ["--endpoint-url=http://x", "a b", "-x", ""]) {
+    const f = fakeExec(table());
+    assert.deepEqual(await verifyAwsObserve({ exec: f.exec, env: BASE }, { ...input, clusterName }), { ok: false, reason: "K8S_ACCESS_MISSING" });
+    assert.equal(f.calls.length, 0, clusterName);
+  }
 });
 
 test("거부: can-i no → K8S_ACCESS_MISSING / 클러스터 이름 없음 → K8S_ACCESS_MISSING / aws 명령 없음은 던짐", async () => {
@@ -78,4 +97,25 @@ test("trustHasExternalId: URL 인코딩·평문·Statement 하나짜리", () => 
   assert.equal(trustHasExternalId(NO_EXT), false);
   assert.equal(trustHasExternalId({ Statement: { Effect: "Allow", Condition: { StringEquals: { "sts:ExternalId": "x" } } } }), true);
   assert.equal(trustHasExternalId("%%bad"), false);
+});
+
+test("PF03 FM-NET: can-i 가 API 서버에 못 붙으면(시간 초과·연결 거부) no 가 아니라 던짐 (재시도), 진짜 no 는 K8S_ACCESS_MISSING", async () => {
+  for (const err of ["Unable to connect to the server: dial tcp 10.0.0.1:443: i/o timeout", "error: the server doesn't have a resource type: connection refused"]) {
+    const f = fakeExec(table([[/auth can-i/, { code: 1, out: "", err }]]));
+    await assert.rejects(verifyAwsObserve({ exec: f.exec, env: BASE }, input));
+  }
+  const f = fakeExec(table([[/auth can-i/, { code: 1, out: "no\n" }]]));
+  assert.deepEqual(await verifyAwsObserve({ exec: f.exec, env: BASE }, input), { ok: false, reason: "K8S_ACCESS_MISSING" });
+});
+
+test("FM-CON-09 (실측): can-i yes 여도 실제 목록 읽기가 401 → K8S_ACCESS_MISSING:UNAUTHORIZED (예전엔 connected)", async () => {
+  const unauth: Reply = { code: 1, err: "error: You must be logged in to the server (Unauthorized)" };
+  let f = fakeExec(table([[/get namespaces/, unauth]]));
+  assert.deepEqual(await verifyAwsObserve({ exec: f.exec, env: BASE }, input), { ok: false, reason: "K8S_ACCESS_MISSING:UNAUTHORIZED" });
+  f = fakeExec(table([[/auth can-i/, unauth]]));
+  assert.deepEqual(await verifyAwsObserve({ exec: f.exec, env: BASE }, input), { ok: false, reason: "K8S_ACCESS_MISSING:UNAUTHORIZED" });
+  assert.equal(f.calls.some((c) => c.args.includes("namespaces")), false, "can-i 에서 끝나면 목록 안 읽음");
+  // 403 (인증은 됐지만 권한 없음) 은 예전처럼 K8S_ACCESS_MISSING
+  f = fakeExec(table([[/get namespaces/, { code: 1, err: 'Error from server (Forbidden): namespaces is forbidden: User "x" cannot list resource "namespaces"' }]]));
+  assert.deepEqual(await verifyAwsObserve({ exec: f.exec, env: BASE }, input), { ok: false, reason: "K8S_ACCESS_MISSING" });
 });

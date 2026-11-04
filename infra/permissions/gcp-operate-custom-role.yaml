@@ -15,6 +15,7 @@ includedPermissions:
 - cloudsql.users.list
 - cloudsql.users.update
 - container.clusters.get
+- container.clusters.update
 - container.namespaces.create
 - container.namespaces.delete
 - container.namespaces.get
@@ -47,6 +48,9 @@ includedPermissions:
 - secretmanager.versions.add
 - secretmanager.versions.destroy
 - secretmanager.versions.get
+- serviceusage.services.enable
+- serviceusage.services.get
+- serviceusage.services.list
 - storage.buckets.create
 - storage.buckets.delete
 - storage.buckets.get

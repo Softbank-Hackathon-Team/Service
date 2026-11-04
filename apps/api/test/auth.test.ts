@@ -153,3 +153,17 @@ test("z75-69: 로그아웃한 로그인 묶음(fam)의 토큰은 만료 전이�
   pruneRevoked(now + 10_000_000);
   assert.equal(revokedCount(), 0);
 });
+
+// 로그인 점검: 프록시 뒤 접속 IP. 켜면 그 헤더, 끄거나 이상한 값이면 req.ip
+import { clientIp } from "../src/auth/http.js";
+test("clientIp 정상: AUTH_CLIENT_IP_HEADER 가 켜지면 그 헤더의 IP 로 사용자마다 칸이 갈린다", () => {
+  const req = { ip: "127.0.0.1", headers: { "cf-connecting-ip": "203.0.113.9" } } as never;
+  assert.equal(clientIp(req, { AUTH_CLIENT_IP_HEADER: "CF-Connecting-IP" }), "203.0.113.9");
+  assert.equal(clientIp({ ip: "127.0.0.1", headers: { "cf-connecting-ip": "2001:db8::1" } } as never, { AUTH_CLIENT_IP_HEADER: "cf-connecting-ip" }), "2001:db8::1");
+});
+test("clientIp 거부: 꺼져 있거나 헤더가 IP 가 아니거나 여러 개면 req.ip (헤더로 제한 피하기 막음)", () => {
+  const mk = (v: string) => ({ ip: "127.0.0.1", headers: { "cf-connecting-ip": v } }) as never;
+  assert.equal(clientIp(mk("203.0.113.9"), {}), "127.0.0.1");
+  assert.equal(clientIp(mk("203.0.113.9, 10.0.0.1"), { AUTH_CLIENT_IP_HEADER: "cf-connecting-ip" }), "127.0.0.1");
+  assert.equal(clientIp(mk("evil<script>"), { AUTH_CLIENT_IP_HEADER: "cf-connecting-ip" }), "127.0.0.1");
+});

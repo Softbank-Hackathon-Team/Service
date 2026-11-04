@@ -23,12 +23,16 @@ const delegates: string[] = [];
 const exec: Exec = async (cmd, args) => {
   const line = `${cmd} ${args.join(" ")}`;
   const out = (o: unknown, code = 0, err = "") => ({ code, stdout: JSON.stringify(o), stderr: err, ms: 1 });
-  if (/^gcloud projects describe/.test(line)) return out({ projectId: P, projectNumber: number });
-  if (/^gcloud container clusters list/.test(line)) return out([{ name: "shop" }]);
+  const pd = /^gcloud projects describe (\S+)/.exec(line);
+  if (pd) return out({ projectId: pd[1], projectNumber: pd[1] === P ? number : "222222222222" });   // A안: 전용 프로젝트는 다른 번호
+  if (/^gcloud container clusters list/.test(line)) return out([{ name: "shop", location: "asia-northeast3" }]);
+  // GKE can-i: 임시 KUBECONFIG 만들기 + 쿠버네티스 읽기 확인 (verify/gcp.ts 5단계)
+  if (/^gcloud container clusters get-credentials /.test(line)) return { code: 0, stdout: "", stderr: "", ms: 1 };
+  if (/^kubectl .* auth can-i list deployments/.test(line)) return { code: 0, stdout: "yes\n", stderr: "", ms: 1 };
   if (/^gcloud sql instances list/.test(line)) return denySql ? out(null, 1, "PERMISSION_DENIED") : out([]);
   return out({});
 };
-const run: import("@svc/security").GcloudRun = async (args) => { delegates.push(args.find((a) => a.startsWith("--delegates="))!); return { code: 0, stdout: "ya29." + "x".repeat(40), stderr: "" }; };
+const run: import("@svc/security").GcloudRun = async (args) => { delegates.push(args.find((a) => a.startsWith("--impersonate-service-account="))!.split("=")[1]!.split(",")[0]!); return { code: 0, stdout: "ya29." + "x".repeat(40), stderr: "" }; };
 
 function broker() {
   return security.createTempRoleBroker({
@@ -75,7 +79,7 @@ test("정상: verifying → connected, 프로젝트 번호 고정, 위임 SA 는
   assert.equal(e.gcp_project_number, "123456789012");
   assert.deepEqual(e.verify_detail.clusters, ["shop"]);
   const sa = (await owner.query("SELECT gcp_platform_sa FROM tenants WHERE id=$1", [T])).rows[0].gcp_platform_sa;
-  assert.deepEqual(delegates, [`--delegates=${sa}@svc-platform.iam.gserviceaccount.com`]);
+  assert.deepEqual(delegates, [`${sa}@svc-platform.iam.gserviceaccount.com`]);
   const c = (await owner.query("SELECT status, revoke_reason FROM temp_credentials WHERE env_id=$1", [id])).rows;
   assert.equal(c.length, 1); assert.equal(c[0].status, "revoked");
 });
@@ -86,11 +90,28 @@ test("거부: 고정된 프로젝트 번호와 다르면 failed ACCOUNT_MISMATCH
   assert.deepEqual(await job.handleVerifyConnection({ tenantId: T, envId: a, requestId: randomUUID(), reason: "user" }, deps()), { status: "failed", reason: "ACCOUNT_MISMATCH" });
   number = "123456789012"; denySql = true;
   const b = await env(T);
-  assert.equal((await job.handleVerifyConnection({ tenantId: T, envId: b, requestId: randomUUID(), reason: "user" }, deps())).reason, "PERMISSION_MISSING:sql.instances.list");
+  assert.equal((await job.handleVerifyConnection({ tenantId: T, envId: b, requestId: randomUUID(), reason: "user" }, deps())).reason, "PERMISSION_MISSING:cloudsql.instances.list");
   assert.equal((await row(b)).gcp_project_number, null);
   denySql = false;
   const other = await env(T2);
   const r = await job.handleVerifyConnection({ tenantId: T, envId: other, requestId: randomUUID(), reason: "user" }, deps());
   assert.equal(r.skipped, "env_not_found");
   assert.equal((await row(other)).connection_status, "verifying");
+});
+
+// 결정 3번 A안: 전용 프로젝트가 있는 환경은 전용 프로젝트 번호도 첫 성공 때 고정하고, 다음 확인에서 다르면 ACCOUNT_MISMATCH
+test("A안: 전용 프로젝트 번호를 고정하고 svc-operate 는 전용 프로젝트에서 찾는다, 고정 번호와 다르면 failed ACCOUNT_MISMATCH", { skip }, async () => {
+  number = "123456789012"; denySql = false;
+  const id = await env(T);
+  await owner.query("UPDATE environments SET gcp_target_project='cust-mig-123' WHERE id=$1", [id]);
+  const seen: string[] = [];
+  const spy: Exec = async (cmd, args, o) => { seen.push(`${cmd} ${args.join(" ")}`); return exec(cmd, args, o); };
+  const r = await job.handleVerifyConnection({ tenantId: T, envId: id, requestId: randomUUID(), reason: "user" }, { roles: broker(), cli: { exec: spy, env: {} } });
+  assert.equal(r.status, "connected");
+  const q = (await owner.query("SELECT gcp_project_number, gcp_target_project_number FROM environments WHERE id=$1", [id])).rows[0];
+  assert.deepEqual(q, { gcp_project_number: "123456789012", gcp_target_project_number: "222222222222" });
+  assert.ok(seen.some((l) => l.startsWith("gcloud iam service-accounts describe svc-operate@cust-mig-123.iam.gserviceaccount.com --project cust-mig-123")));
+  const b = await env(T);
+  await owner.query("UPDATE environments SET gcp_target_project='cust-mig-123', gcp_target_project_number='999999999999' WHERE id=$1", [b]);
+  assert.deepEqual(await job.handleVerifyConnection({ tenantId: T, envId: b, requestId: randomUUID(), reason: "user" }, deps()), { status: "failed", reason: "ACCOUNT_MISMATCH" });
 });

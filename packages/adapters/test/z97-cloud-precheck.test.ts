@@ -151,3 +151,19 @@ test("Z104 03: 권한 오류 글(ARN)에 섞인 계정 번호도 가린다", asy
   assert.match(r, /••••9012/);
   assert.doesNotMatch(r, /123456789012/);
 });
+
+test("FM-CLD-14: iam·iamcredentials API 가 꺼져 있으면 PC-API FAIL (3티어 IR identity 가 apply 중간에 막힘), 다 켜지면 PASS", async () => {
+  const base = { ...KUBE_OK, "gcloud auth print-access-token": { code: 0, stdout: "ya29.secret\n" },
+    "gcloud billing projects describe finals-demo": { code: 0, stdout: j({ billingEnabled: true }) },
+    "gcloud sql instances list": { code: 0, stdout: "[]" } };
+  const f = (async () => new Response(j({ email: "sa@finals-demo.iam.gserviceaccount.com", expires_in: 3500 }), { status: 200 })) as unknown as typeof fetch;
+  const on = (names: string[]) => ({ code: 0, stdout: j(names.map((name) => ({ config: { name } }))) });
+  const run = (apis: string[]) => runCloudPrecheck({ ...onpremToAws, target: { side: "target", provider: "gcp" } },
+    { exec: fakeExec({ ...base, "gcloud services list": on(apis) }), env: { ...ENV, GCP_PROJECT: "finals-demo" }, fetch: f, tcp: okTcp, diskFree: bigDisk });
+  const noIam = byId(await run(["compute.googleapis.com", "container.googleapis.com", "sqladmin.googleapis.com", "artifactregistry.googleapis.com"]));
+  assert.equal(noIam.get("PC-API")!.verdict, "FAIL"); assert.match(noIam.get("PC-API")!.reason, /iam\.googleapis\.com/);
+  const noCred = byId(await run(["compute.googleapis.com", "container.googleapis.com", "sqladmin.googleapis.com", "artifactregistry.googleapis.com", "iam.googleapis.com"]));
+  assert.equal(noCred.get("PC-API")!.verdict, "FAIL"); assert.match(noCred.get("PC-API")!.reason, /iamcredentials/);
+  const all = byId(await run(["compute.googleapis.com", "container.googleapis.com", "sqladmin.googleapis.com", "artifactregistry.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com"]));
+  assert.equal(all.get("PC-API")!.verdict, "PASS");
+});

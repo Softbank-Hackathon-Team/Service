@@ -1,5 +1,5 @@
 import {
-  actionsOfPolicy, checkSessionPolicy, parseClusterRole, parseGcpCustomRole, TempRoleDenied,
+  actionsOfPolicy, checkSessionPolicy, compactSessionPolicy, parseClusterRole, parseGcpCustomRole, TempRoleDenied,
   AWS_SESSION_POLICY_MAX, SECRET_PATTERNS, type Stage,
 } from "@svc/security";
 
@@ -39,12 +39,15 @@ export function scanAwsPermissions(ceilingJson: string, sessions: Partial<Record
     let actions = 0, error: string | null = null;
     try { actions = checkSessionPolicy(compact, ceiling).length; }
     catch (e) { if (e instanceof TempRoleDenied) error = e.code; else throw e; }
-    out.push({ stage, chars: compact.length, limit: AWS_SESSION_POLICY_MAX, actions, error });
+    // 길이 = AWS 로 실제 보내는 판 (발급기가 실효 권한이 같은 와일드카드 판으로 줄여 보낸다, security compactSessionPolicy)
+    out.push({ stage, chars: compactSessionPolicy(compact, ceiling).length, limit: AWS_SESSION_POLICY_MAX, actions, error });
   }
   return {
     ceiling: ceiling.length,
     wildcard: ceiling.filter((a) => a.includes("*")),
-    writesOnAnyResource: [...new Set(allow.filter((s) => anyResource(s.Resource)).flatMap(acts).filter((a) => !isRead(a)))].length,
+    // ID-4: managed-by=platform 태그 조건이 붙은 문장은 "아무 자원"이 아니다 (우리가 만든 것만)
+    writesOnAnyResource: [...new Set(allow.filter((s) => anyResource(s.Resource) && !JSON.stringify(s.Condition ?? {}).includes("aws:ResourceTag/managed-by"))
+      .flatMap(acts).filter((a) => !isRead(a)))].length,
     escalationWithoutBoundary: [...new Set(escalation)].sort(),
     sessions: out,
   };

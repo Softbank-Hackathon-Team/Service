@@ -64,3 +64,14 @@ test("z75-68: DEMO_MODE=1 에서 시험 전용 스위치가 켜져 있으면 세
   assert.deepEqual([...TEST_ONLY_SWITCHES], ["MOCK_SEED", "MOCK_IAC", "MOCK_ARGO", "MOCK_PRECHECK", "FAKE_LLM", "DEV_AUTH", "MOCK_CREDS", "MOCK_REPL", "MOCK_TRAFFIC"]);
   assert.deepEqual(configProblems("worker", { DEMO_MODE: "1", MOCK_CREDS: "1", MOCK_REPL: "1", MOCK_TRAFFIC: "1" }).filter((x) => /시험 전용/.test(x)).map((x) => x.split(":")[0]), ["MOCK_CREDS", "MOCK_REPL", "MOCK_TRAFFIC"]);
 });
+
+test("PRINCIPALUSER: PLATFORM_PRINCIPAL_ARN 은 IAM 역할·사용자만 (:root·assumed-role·모양 틀림 거부)", () => {
+  const p = (v: string) => configProblems("api", { DATABASE_URL: "postgres://u@localhost:5432/d", PLATFORM_PRINCIPAL_ARN: v })
+    .filter((x) => x.startsWith("PLATFORM_PRINCIPAL_ARN"));
+  assert.deepEqual(p("arn:aws:iam::123456789012:role/svc-platform"), []);
+  assert.deepEqual(p("arn:aws:iam::123456789012:role/aws-reserved/sso.amazonaws.com/ap-northeast-2/AWSReservedSSO_X"), []);
+  assert.deepEqual(p("arn:aws:iam::123456789012:user/jeong-cli"), []);
+  assert.equal(p("arn:aws:iam::123456789012:root").length, 1);
+  assert.equal(p("arn:aws:sts::123456789012:assumed-role/x/y").length, 1);
+  assert.equal(p("arn:aws:iam::1234:user/x").length, 1);
+});

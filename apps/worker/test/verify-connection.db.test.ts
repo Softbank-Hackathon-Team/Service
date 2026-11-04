@@ -136,7 +136,7 @@ test("user 작업인데 이미 verifying 이 아님 → 그냥 끝 (중복 작�
 
 test("REAL_STS=1 이어도 external_id 없는 환경(시드)은 mock 발급기로 감 (platform awsIssuer)", { skip }, async () => {
   const platform = await import("../src/platform.js");
-  assert.equal(platform.awsIssuer({}).mock, true);
+  assert.equal(platform.awsIssuer({ REAL_STS: "0" }).mock, true);
   const w = platform.awsIssuer({ REAL_STS: "1" });
   assert.equal(w.mock, false);
   assert.equal(w.mockFor?.({}), true);
@@ -161,4 +161,38 @@ test("가짜 발급기 자격(stub)이면 고객 CLI 를 안 부르고 상태 �
   const e = await row(id);
   assert.equal(e.connection_status, "connected"); assert.equal(e.verify_failures, 0);
   assert.equal((await creds(id))[0].status, "revoked");
+});
+
+test("FM-CON-07: AssumeRole 이 TagSession 에서 거부되면 감사 env.verify_failed 에 deniedAction=sts:TagSession (계정 번호 없음)", { skip }, async () => {
+  const id = await env(T, "verifying");
+  const sts = { assumeRole: async () => { throw new security.StsCliError(254, "AccessDenied", undefined, "sts:TagSession"); } };
+  const b = security.createTempRoleBroker({
+    issuers: { aws: security.awsStsIssuer({ sts }) }, ledger: ledgerMod.pgLedger(),
+    resolveEnv: async () => ({ roleRef: "arn:aws:iam::111122223333:role/svc-observe", externalId: `ext-${id.slice(0, 8)}` }),
+    audit: (tenantId, a) => core.withTenant(tenantId, (tx) => core.writeAudit(tx, tenantId, a)),
+  });
+  const r = await job.handleVerifyConnection({ tenantId: T, envId: id, requestId: req(), reason: "user" }, { roles: b, cli: { exec, env: {} } });
+  assert.deepEqual(r, { status: "failed", reason: "ROLE_ASSUME_DENIED" });
+  const a = (await owner.query("SELECT detail FROM audit_events WHERE target=$1 AND action='env.verify_failed'", [id])).rows;
+  assert.equal(a.length, 1);
+  assert.equal(a[0].detail.deniedAction, "sts:TagSession");
+  assert.ok(!JSON.stringify(a[0].detail).includes("111122223333"));
+});
+
+test("RV-24: 실측 판(realSts)에서 사람이 누른 확인이 흉내 자격이면 connected 대신 failed(PLATFORM_ERROR:MOCK_CREDENTIALS), 고객 CLI 0번", { skip }, async () => {
+  const id = await env(T, "verifying");
+  let calls = 0;
+  const b = security.createTempRoleBroker({ issuers: { aws: security.mockIssuer("aws") }, ledger: ledgerMod.pgLedger(),
+    resolveEnv: async () => ({ roleRef: "arn:aws:iam::000000000000:role/svc-observe" }),
+    audit: (tenantId, a) => core.withTenant(tenantId, (tx) => core.writeAudit(tx, tenantId, a)) });
+  const cli = { exec: async () => { calls++; return { code: 0, stdout: "{}", stderr: "", ms: 1 }; }, env: {} };
+  const r = await job.handleVerifyConnection({ tenantId: T, envId: id, requestId: req(), reason: "user" }, { roles: b, cli, realSts: true });
+  assert.equal(r.status, "failed");
+  assert.equal((r as { reason?: string }).reason, "PLATFORM_ERROR:MOCK_CREDENTIALS");
+  assert.equal(calls, 0);
+  assert.equal((await row(id)).connection_status, "failed");
+  // 시험·로컬(realSts=false)은 예전처럼 흉내 connected
+  const id2 = await env(T, "verifying");
+  const r2 = await job.handleVerifyConnection({ tenantId: T, envId: id2, requestId: req(), reason: "user" }, { roles: b, cli, realSts: false });
+  assert.equal(r2.status, "connected");
 });
