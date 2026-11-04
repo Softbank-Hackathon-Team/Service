@@ -44,7 +44,8 @@ test("k3d 만들기: 노드 확인 → 네임스페이스(PSS restricted)·상�
   assert.match(sb.namespace, /^sbx-11111111-55555555-[0-9a-f]{4}$/);
   const labels = k.namespaces.get(sb.namespace)!;
   assert.equal(labels["pod-security.kubernetes.io/enforce"], "restricted");
-  assert.equal(labels["app.kubernetes.io/managed-by"], "svc-agent-sandbox");
+  assert.equal(labels["platform.svc/sandbox"], "true");
+  assert.equal(labels["platform.svc/sandbox-purpose"], "remediation");
   const paths = k.requests.map((r) => `${r.method} ${r.path}`);
   assert.equal(paths[0], "GET /api/v1/nodes");
   assert.ok(paths.some((p) => p.endsWith("/resourcequotas")) && paths.some((p) => p.endsWith("/limitranges")) && paths.some((p) => p.endsWith("/networkpolicies")));

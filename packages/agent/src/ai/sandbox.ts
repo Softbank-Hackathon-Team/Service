@@ -1,11 +1,15 @@
+import type { SandboxMode } from "@svc/contracts";
+
 // 샌드박스와 작업 복사본. 도구 실행기가 이 인터페이스만 본다.
-// 구현 2개: memory (메모리 안 가짜 클러스터, 기본) / k3d (로컬 k3d 안 일회용 네임스페이스, ./k3d-sandbox.ts)
-// 고르는 법은 ./select.ts 의 sandboxFromEnv (SANDBOX_MODE=memory|k3d)
+// 구현: memory (메모리 안 가짜 클러스터, 기본) / k3d (로컬 k3d 안 일회용 네임스페이스, ./k3d-sandbox.ts)
+//   / vcluster (플랫폼 클러스터 vCluster 안에 k3d 와 같은 네임스페이스, ./select.ts)
+// 고르는 법은 ./select.ts 의 sandboxFromEnv (SANDBOX_MODE=memory|k3d|vcluster)
 // 반환값은 값 또는 Promise 다 (메모리는 바로, k3d 는 kube API 를 기다린다). 루프는 항상 await 한다
 type MaybePromise<T> = T | Promise<T>;
-export type SandboxMode = "memory" | "k3d";
+export type { SandboxMode };
 export interface Sandbox {
   readonly mode?: SandboxMode;
+  readonly namespace?: string;   // 지우기 실패 로그용 (k3d·vcluster)
   get(kind: string, name: string | null): MaybePromise<unknown>;
   logs(pod: string, tail: number): MaybePromise<string | null>;
   apply(manifest: string): MaybePromise<{ ok: boolean; message: string }>;

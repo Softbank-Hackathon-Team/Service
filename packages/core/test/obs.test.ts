@@ -46,6 +46,7 @@ test("로그: 한 줄 JSON, snake_case 문맥 필드가 await 너머까지 붙�
     log.info({ prev_state: "syncing", state: "shifting" }, "transition");
   });
   log.warn({ err: new Error("boom") }, "outside");
+  assert.equal(contextFromJob("sandbox-rehearsal", "job-2", { tenantId: "t-1", requestId: "r", sandboxRunId: "sr-1" }).sandbox_run_id, "sr-1");
   const a = JSON.parse(lines[0]!);
   assert.equal(a.level, "info"); assert.equal(a.service, "worker"); assert.equal(a.msg, "transition");
   assert.equal(a.tenant_id, "t-1"); assert.equal(a.migration_id, "m-1");
