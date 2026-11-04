@@ -76,7 +76,7 @@ export function iamConditionProblems(expr: string): string[] {
 }
 
 test("FM-GCP-10: infra/permissions 의 GCP 조건 파일 전부 IAM 조건 규칙 통과 (함수·연산자 한도·제목·설명 길이)", () => {
-  assert.ok(FILES.length >= 4, FILES.join(","));
+  assert.ok(FILES.length >= 2, FILES.join(","));   // 결정 3번 A안 뒤: 보조 역할 둘(_iam·_db_secret)만 조건이 남음
   for (const f of FILES) {
     const c = JSON.parse(readFileSync(new URL(f, DIR), "utf8")) as { title?: string; description?: string; expression?: string };
     assert.ok(c.title && /^[A-Za-z0-9 _.-]{1,100}$/.test(c.title), `${f} title`);

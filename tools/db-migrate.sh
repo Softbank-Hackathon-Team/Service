@@ -102,6 +102,12 @@ marker_sql() {
     0027) echo "to_regclass('public.agent_enroll_tokens') IS NOT NULL" ;;
     0033) echo "to_regclass('public.infra_ready') IS NOT NULL" ;;
     0034) echo "EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'github_id')" ;;
+    0035) echo "EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'migrations' AND column_name = 'source_scope')" ;;
+    0040) echo "to_regclass('public.traffic_leases') IS NOT NULL" ;;
+    0041) echo "to_regclass('public.migration_traffic_targets') IS NOT NULL" ;;
+    0042) echo "has_table_privilege('app_user', 'migrate.applied', 'SELECT')" ;;
+    0043) echo "to_regprocedure('public.maint_stuck_migrations(interval,integer)') IS NOT NULL" ;;
+    0044) echo "EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'environments' AND column_name = 'gcp_target_project')" ;;
     *) echo "" ;;
   esac
 }

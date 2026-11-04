@@ -34,6 +34,7 @@ test("verify 선택 찌르기 권한은 관찰 역할에 다 있다", () => {
 
 test("확인 역할은 svc-observe 에 조건 없이 붙고, roles/browser 같은 넓은 기본 역할은 붙이지 않는다", () => {
   assert.match(sh, /ensure_role platform_observe_verify .*--permissions="\$\{VERIFY_PERMS\}"/);
-  assert.match(sh, /ensure_project_binding "\$\{OBSERVE_SA\}" "projects\/\$\{PROJECT_ID\}\/roles\/platform_observe_verify"/);
+  // 결정 3번 A안: 원래·전용 프로젝트 둘 다에 (P = 지금 프로젝트)
+  assert.equal(sh.match(/ensure_project_binding "\$\{OBSERVE_SA\}" "projects\/\$\{P\}\/roles\/platform_observe_verify"/g)?.length, 2);
   assert.ok(!/add-iam-policy-binding[^\n]*roles\/(browser|viewer)/.test(sh));
 });

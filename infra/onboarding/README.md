@@ -60,16 +60,19 @@
 # GCP 연결 (`gcp-connect.sh`)
 
 키 파일은 만들지 않는다. 고객이 Cloud Shell에서 스크립트를 한 번 실행하면 아래가 생긴다.
+결정 3번 A안: 도착 자원은 **이전 전용 프로젝트**(`TARGET_PROJECT_ID`)에만 만든다. 원래 프로젝트(`PROJECT_ID`)에는 읽기만 남는다.
 
-| 만드는 것 | 내용 |
-|---|---|
-| SA 2개 | `svc-observe`(관찰), `svc-operate`(실행) |
-| 커스텀 역할 3개 | `platform_observe`(읽기만. 데이터 자원 읽기 5개 + 둘레 자원·IAM 정책·방화벽·API 목록 등 읽기 전부 포함, 총 21개: `storage.buckets.list`·`storage.buckets.getIamPolicy`·`pubsub.topics.list`·`pubsub.subscriptions.list`·`redis.instances.list`, 객체 내용·메시지 권한 없음), `platform_operate`, `platform_operate_iam`(`infra/permissions`의 자동 생성 파일) |
-| 프로젝트 연결 | 실행 SA의 IAM 정책 변경 권한은 `app-` 접두어 SA·시크릿에만 닿는 조건부 바인딩 |
-| 빌리기 허용 | 플랫폼의 **이 회사 전용 SA**(`t-<16진 28자>@...`) 하나에게, 두 고객 SA 각각에 `roles/iam.serviceAccountTokenCreator` (프로젝트 전체가 아니라 SA 단위) |
+| 만드는 것 | 어디 | 내용 |
+|---|---|---|
+| `svc-observe` SA | 원래 프로젝트 | 관찰(읽기만). 원래·전용 두 프로젝트에 `platform_observe`·`platform_observe_verify` 역할 |
+| `svc-plan`·`svc-operate` SA | 전용 프로젝트 | 계획(읽기)·실행. 권한은 전용 프로젝트 안에서만 |
+| 커스텀 역할 | 원래: `platform_observe`·`platform_observe_verify` / 전용: 그 둘 + `platform_plan`·`platform_operate`·`platform_operate_iam`·`platform_operate_db_secret` | 권한 목록은 `infra/permissions`의 자동 생성 파일. `platform_observe`는 객체 내용·메시지·비밀값 권한 없음 |
+| 조건부 바인딩 | 전용 프로젝트 | 실행 SA의 IAM 정책 변경(`_iam`)·DB 비밀(`_db_secret`)은 `app-` 접두어 SA·시크릿에만 닿는 조건 (DRAFT(ai)) |
+| 빌리기 허용 | SA 단위 | 플랫폼의 **이 회사 전용 SA**(`t-<16진 28자>@...`) 하나에게, 세 고객 SA 각각에 `roles/iam.serviceAccountTokenCreator` (프로젝트 전체가 아님) |
 
-순서: 연결 화면에서 `PLATFORM_SA` 복사 → Cloud Shell에서 `PLATFORM_SA=... PROJECT_ID=... ROLE_DIR=./permissions bash gcp-connect.sh` → 출력된 프로젝트 번호를 화면에 입력 → "확인".
-`DRY_RUN=1`이면 명령만 출력한다. `PLATFORM_SA` 이름 규칙이 맞지 않으면 아무것도 만들기 전에 멈춘다.
+순서: 연결 화면에서 `PLATFORM_SA` 복사 → Cloud Shell에서 `PLATFORM_SA=... PROJECT_ID=<원래> TARGET_PROJECT_ID=<전용> ROLE_DIR=./permissions bash gcp-connect.sh`
+(전용 프로젝트가 아직 없으면 `CREATE_TARGET_PROJECT=1`, 결제 계정을 따로 쓰려면 `BILLING_ACCOUNT=...`) → 출력된 두 프로젝트를 화면에 입력 → "확인".
+`DRY_RUN=1`이면 명령만 출력한다. `PLATFORM_SA` 이름 규칙이 맞지 않거나 `TARGET_PROJECT_ID`가 없거나 원래 프로젝트와 같으면 아무것도 만들기 전에 멈춘다.
 
 ### 이미 연결한 고객: 관찰 역할 권한 갱신
 플랫폼이 읽는 자원이 늘면 관찰 역할(`platform_observe`)에 읽기 권한이 더 필요하다. 예전 스크립트로 만든 고객의 역할에는 새 권한이 없다.
@@ -82,3 +85,23 @@
 - DRAFT(ai): 관찰 역할 권한 목록, 역할 ID 이름(`platform_observe` 등). 첫 실측 거부 로그로 보정
 - TODO(human): 고객 프로젝트에서 `ROLE_DIR` 파일을 어떻게 전달할지(S3처럼 공개 위치 vs 스크립트에 내장)
 - STUB: 이 스크립트는 레포 세션에서 실행하지 않음. 발급기(gcloud impersonate)는 별도 묶음
+
+## 연결 끊기 (고객이 할 일)
+플랫폼 화면에서 연결을 끊으면(`DELETE /environments/:id`) 플랫폼 쪽은 환경을 `disconnected`로 바꾸고 빌린 임시 자격을 회수한다.
+**고객 클라우드에 만든 역할·신뢰는 플랫폼이 지우지 않는다**(플랫폼에는 그 권한이 없다). 빌리기 길까지 완전히 닫으려면 고객이 아래를 한다.
+
+GCP (Cloud Shell, 원래·전용 프로젝트 각각). `<플랫폼 SA>`는 연결 때 쓴 `PLATFORM_SA` 값
+1. 빌리기 허용 걷기 (이것만 해도 플랫폼은 더 못 빌린다)
+   - `gcloud iam service-accounts remove-iam-policy-binding svc-observe@<원래>.iam.gserviceaccount.com --project <원래> --member=serviceAccount:<플랫폼 SA> --role=roles/iam.serviceAccountTokenCreator`
+   - 같은 명령을 `svc-plan@<전용>…`·`svc-operate@<전용>…` 에 `--project <전용>` 으로
+2. SA 지우기: `gcloud iam service-accounts delete svc-observe@<원래>.iam.gserviceaccount.com --project <원래> --quiet`, `svc-plan`·`svc-operate` 는 `--project <전용>`
+3. 커스텀 역할 지우기: 원래 `platform_observe`·`platform_observe_verify`, 전용 그 둘 + `platform_plan`·`platform_operate`·`platform_operate_iam`·`platform_operate_db_secret`
+   - `gcloud iam roles delete <역할> --project <프로젝트> --quiet` (지운 역할은 7일 안에 되살릴 수 있고 그동안 같은 이름으로 못 만든다)
+   - SA 를 지우면 프로젝트 바인딩은 `deleted:` 로 남는다. 깨끗이 하려면 `gcloud projects remove-iam-policy-binding <프로젝트> --member=deleted:serviceAccount:… --role=projects/<프로젝트>/roles/<역할> --all`
+4. 전용 프로젝트를 이전 전용으로만 썼다면 프로젝트째 끄기: `gcloud projects delete <전용>` (30일 안에 되살릴 수 있음)
+
+AWS: 연결 스택을 지운다 — `aws cloudformation delete-stack --stack-name <연결 스택 이름>` 뒤 `aws cloudformation wait stack-delete-complete --stack-name <같은 이름>`.
+`svc-observe`·`svc-operate`(·`svc-deploy`)와 신뢰 정책, EKS 접근 항목이 같이 지워진다. `platform-app-boundary` 를 스택이 만들었으면(`CreateBoundaryPolicy=true`) 그것도.
+EKS 에 손으로 적용한 RBAC(`eks-operate-namespace-rbac.yaml`·`eks-deploy-rbac.yaml`)는 `kubectl delete -f` 로 따로 지운다.
+
+- DRAFT(ai): 끊기 버튼이 위 명령을 고객 화면에 보여 주는 일은 아직 없음(입력층 화면 몫). 지금은 이 문서만

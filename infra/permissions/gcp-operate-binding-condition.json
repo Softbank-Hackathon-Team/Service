@@ -1,5 +1,0 @@
-{
-  "title": "only-platform-named-a",
-  "description": "실행 역할(platform_operate) 1/2: 프로젝트 단위 검사(만들기·목록)·GKE(자원 조건 미지원)는 통과, Cloud SQL 은 <앱>-pg-<해시> 이름, Memorystore·서비스 계정은 app- 접두어. IAM 조건 한 식에 논리 연산자 12개 한도라 둘로 나눔",
-  "expression": "resource.type == \"cloudresourcemanager.googleapis.com/Project\" || resource.service == \"container.googleapis.com\" || (resource.type == \"sqladmin.googleapis.com/Instance\" && resource.name.extract(\"/instances/{name}-pg-\") != \"\") || (resource.type == \"redis.googleapis.com/Instance\" && resource.name.extract(\"/instances/{name}\").startsWith(\"app-\")) || (resource.type == \"iam.googleapis.com/ServiceAccount\" && resource.name.extract(\"serviceAccounts/{name}@\").startsWith(\"app-\"))"
-}

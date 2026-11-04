@@ -45,6 +45,7 @@ export interface VerifyOutcome { status: ConnectionStatus; reason?: string; skip
 interface EnvRow {
   provider: string; account_id: string | null; external_id: string | null; region: string | null; cluster_name: string | null;
   connection_status: ConnectionStatus; verify_failures: number; gcp_project_number: string | null;
+  gcp_target_project: string | null; gcp_target_project_number: string | null;
 }
 
 /** FM-CON-07: 빌리기 거부 때 무엇이 막혔나 (감사 detail 에 남김. 계정 번호 없음) */
@@ -70,7 +71,8 @@ export async function handleVerifyConnection(data: unknown, deps: VerifyDeps = {
   const job = VerifyConnectionJob.parse(data);
   const { tenantId, envId, reason } = job;
   const env = await withTenant(tenantId, async (tx) => (await tx.query<EnvRow>(
-    `SELECT provider, account_id, external_id, region, cluster_name, connection_status, verify_failures, gcp_project_number
+    `SELECT provider, account_id, external_id, region, cluster_name, connection_status, verify_failures, gcp_project_number,
+            gcp_target_project, gcp_target_project_number
        FROM environments WHERE id = $1`, [envId])).rows[0]);
   // 남의 회사·지워진 환경: RLS 로 0줄 → 아무것도 안 바꾸고 끝 (다시 해도 같다)
   if (!env) return { status: "disconnected", skipped: "env_not_found" };
@@ -86,7 +88,7 @@ export async function handleVerifyConnection(data: unknown, deps: VerifyDeps = {
   const roles = deps.roles ?? tempRoles();
   // DRAFT(ai): 환경에 리전이 없으면 서울 (issuers.ts AWS_DEFAULT_REGION 과 같음)
   const region = env.region || "ap-northeast-2";
-  type VerifyResult = { ok: true; clusters: string[]; projectNumber?: string; missingPermissions?: string[] } | { ok: false; reason: string };
+  type VerifyResult = { ok: true; clusters: string[]; projectNumber?: string; targetProjectNumber?: string; missingPermissions?: string[] } | { ok: false; reason: string };
   let result!: VerifyResult;
   // FM-GCP-03 (8Nr2 pf08) + PF01 (SvN5) 통합: 같은 다시 보기 고리 하나. GCP 는 IAM 전파가 더 길어(보통 1분) GCP_VERIFY_RETRY_MS(기본 20초) 간격
   //   GCP_VERIFY_ATTEMPTS(기본 4)번까지, ROLE_NOT_FOUND 도 다시 본다. DRAFT(ai): 시험(package.json)은 GCP_VERIFY_RETRY_MS=0 → 쉬지 않고 다시 봄
@@ -146,6 +148,7 @@ export async function handleVerifyConnection(data: unknown, deps: VerifyDeps = {
           // account_id = GCP 프로젝트 ID. 없으면 볼 곳이 없다 (checkAccountId 가 연결 때 이미 거른다)
           if (!env.account_id) result = { ok: false, reason: "ROLE_NOT_FOUND" };
           else result = await verifyGcpObserve(deps.cli ?? {}, { projectId: env.account_id, expectedProjectNumber: env.gcp_project_number,
+            targetProjectId: env.gcp_target_project, expectedTargetProjectNumber: env.gcp_target_project_number,
             clusterName: env.cluster_name, token: m.token, probeOptional: reason === "user" });
         } else {
           if (m.kind !== "aws") throw new Error("AWS 발급기가 aws 자격이 아닌 것을 돌려줬다");
@@ -188,6 +191,8 @@ export async function handleVerifyConnection(data: unknown, deps: VerifyDeps = {
           [envId, JSON.stringify({ clusters: r.clusters, checkedAt: new Date().toISOString(), ...(missing ? { missingPermissions: missing, needsHuman: [needsHumanText(missing, env.provider === "aws" ? "aws" : "gcp")] } : {}) })]);
         // L7i: 첫 성공 때 GCP 프로젝트 번호 고정 (이미 있으면 그대로 — 위 확인이 같음을 보장)
         if (r.projectNumber) await tx.query("UPDATE environments SET gcp_project_number = COALESCE(gcp_project_number, $2) WHERE id = $1", [envId, r.projectNumber]);
+        // 결정 3번 A안: 전용 프로젝트 번호도 첫 성공 때 고정
+        if (r.targetProjectNumber) await tx.query("UPDATE environments SET gcp_target_project_number = COALESCE(gcp_target_project_number, $2) WHERE id = $1", [envId, r.targetProjectNumber]);
         return { status: "connected" as const };
       }
       await advanceConnection(tx, tenantId, envId, "failed", { from: ["verifying"], failureReason: r.reason, audit });

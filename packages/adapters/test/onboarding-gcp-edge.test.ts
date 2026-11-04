@@ -20,7 +20,7 @@ function fakeGcloud() {
   return { dir, calls: () => (existsSync(log) ? readFileSync(log, "utf8") : "") };
 }
 function run(env: Record<string, string>, g = fakeGcloud()) {
-  const r = spawnSync("bash", [script], { encoding: "utf8", env: { PATH: `${g.dir}:/usr/bin:/bin`, DRY_RUN: "1", ...env } });
+  const r = spawnSync("bash", [script], { encoding: "utf8", env: { PATH: `${g.dir}:/usr/bin:/bin`, DRY_RUN: "1", TARGET_PROJECT_ID: "cust-mig", ...env } });
   return { ...r, calls: g.calls() };
 }
 
@@ -35,11 +35,13 @@ test("DRY_RUN 출력: 순서(SA → 역할 → 바인딩 → tokenCreator)와 SA
   const out = run({ PLATFORM_SA: GOOD, PROJECT_ID: "cust-prj" }).stdout;
   const idx = (re: RegExp) => out.search(re);
   assert.ok(idx(/service-accounts create svc-observe/) < idx(/roles create platform_observe/));
-  assert.ok(idx(/roles create platform_operate_iam/) < idx(/projects add-iam-policy-binding/));
-  assert.ok(idx(/projects add-iam-policy-binding/) < idx(/serviceAccountTokenCreator/));
+  // 결정 3번 A안: 프로젝트마다 SA → 역할 → 바인딩 → tokenCreator (원래 다음 전용)
+  assert.ok(idx(/roles create platform_operate_iam/) < idx(/projects add-iam-policy-binding cust-mig/));
+  assert.ok(idx(/projects add-iam-policy-binding cust-prj/) < idx(/serviceAccountTokenCreator/));
+  assert.ok(idx(/projects add-iam-policy-binding cust-mig/) < idx(/svc-operate@cust-mig\.iam\.gserviceaccount\.com --project=cust-mig --member=\S+ --role=roles\/iam\.serviceAccountTokenCreator/));
   const tc = out.split("\n").filter((l) => l.includes("serviceAccountTokenCreator"));
   assert.equal(tc.length, 3);
-  assert.ok(tc.some((l) => l.includes("svc-observe@cust-prj.iam")) && tc.some((l) => l.includes("svc-plan@cust-prj.iam")) && tc.some((l) => l.includes("svc-operate@cust-prj.iam")));
+  assert.ok(tc.some((l) => l.includes("svc-observe@cust-prj.iam")) && tc.some((l) => l.includes("svc-plan@cust-mig.iam")) && tc.some((l) => l.includes("svc-operate@cust-mig.iam")));
   assert.ok(tc.every((l) => l.includes(`serviceAccount:${GOOD}`) && l.includes("service-accounts add-iam-policy-binding")));
 });
 

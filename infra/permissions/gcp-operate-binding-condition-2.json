@@ -1,5 +1,0 @@
-{
-  "title": "only-platform-named-b",
-  "description": "실행 역할(platform_operate) 2/2: app- 접두어 시크릿·시크릿 버전·버킷·토픽·구독",
-  "expression": "(resource.type == \"secretmanager.googleapis.com/Secret\" && resource.name.extract(\"/secrets/{name}\").startsWith(\"app-\")) || (resource.type == \"secretmanager.googleapis.com/SecretVersion\" && resource.name.extract(\"/secrets/{name}/\").startsWith(\"app-\")) || (resource.type == \"storage.googleapis.com/Bucket\" && resource.name.startsWith(\"projects/_/buckets/app-\")) || (resource.type == \"pubsub.googleapis.com/Topic\" && resource.name.extract(\"/topics/{name}\").startsWith(\"app-\")) || (resource.type == \"pubsub.googleapis.com/Subscription\" && resource.name.extract(\"/subscriptions/{name}\").startsWith(\"app-\"))"
-}
