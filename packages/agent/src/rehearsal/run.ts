@@ -40,7 +40,11 @@ export interface RehearsalBackend {
   sleep?: (ms: number) => Promise<void>;
 }
 // tenantId: sandbox_runs 줄의 회사. 호스트 네임스페이스 라벨 platform.svc/tenant 가 된다
-export interface RehearsalRun { id: string; tenantId: string; onPhase?: (p: SandboxRunPhase) => Promise<void> | void }
+// deadlineAt: 줄의 실행 기한 (agent-worker 가 잡을 때 쓴 값). 이 시각을 넘으면 워커가 줄을 REHEARSAL_TIMEOUT 으로 닫는다
+export interface RehearsalRun { id: string; tenantId: string; deadlineAt?: Date | null; onPhase?: (p: SandboxRunPhase) => Promise<void> | void }
+// DRAFT(ai): 실행 기한 120초 전에 스스로 멈춘다. 지우기(helm uninstall 상한 90초 + 네임스페이스) 뒤 결과를 쓸 몫.
+//   그래서 워커가 기한으로 닫기 전에 어느 검사에서 멈췄는지가 결과로 남는다 (설정 REHEARSAL_TIMEOUT_SEC 하한 300초가 이 값을 본다)
+export const DEADLINE_RESERVE_MS = 120_000;
 
 class Stop { constructor(readonly code: RehearsalFailureCode) {} }
 const FIELD_MANAGER = "svc-rehearsal";
@@ -72,7 +76,6 @@ export function withSandboxFidelity(f: FidelityMatrix, target: RehearsalInput["t
 
 export async function runRehearsal(input: RehearsalInput, run: RehearsalRun, b: RehearsalBackend): Promise<RehearsalResult> {
   const now = b.now ?? Date.now;
-  const sleep = b.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const T: RehearsalTiming = { ...REHEARSAL_TIMING, ...b.timing };
   const iso = sandboxIsolation("rehearsal");
   const name = sandboxName("rehearsal", run.id);
@@ -100,9 +103,24 @@ export async function runRehearsal(input: RehearsalInput, run: RehearsalRun, b: 
     await run.onPhase?.(p);
   };
   const note = (r: KubeResponse) => { for (const w of r.warnings) if (warnings.size < 50) warnings.add(w.slice(0, 300)); };
+  // 기다림은 모두 이 sleep 을 지난다. 기다린 뒤가 멈출 때(기한 - 몫)를 넘으면 기다리지 않고 REHEARSAL_TIMEOUT 으로 끝낸다
+  const stopAt = run.deadlineAt ? run.deadlineAt.getTime() - DEADLINE_RESERVE_MS : Infinity;
+  const sleep = async (ms: number) => {
+    if (now() + ms > stopAt) {
+      add("sandbox_ready", name, false, 0,
+        `실행 기한(${run.deadlineAt!.toISOString()}) ${DEADLINE_RESERVE_MS / 1000}초 전이라 ${open?.key ?? "?"} 단계에서 멈춤 (지우기·결과 쓰기 몫)`);
+      throw new Stop("REHEARSAL_TIMEOUT");
+    }
+    await (b.sleep ?? ((x: number) => new Promise<void>((r) => setTimeout(r, x))))(ms);
+  };
 
   try {
     // 0. 순수 검사 (샌드박스를 만들기 전)
+    // 워커가 이미지를 복사하지 않은 입력(MOCK_SANDBOX=1 워커)이면 translateImage 표가 비어 고객 원본 주소로 받으러 간다 → 돌리지 않는다
+    if (!input.imagesMirrored) {
+      add("sandbox_ready", name, false, 0, "이미지를 플랫폼 샌드박스 자리로 복사하지 않은 입력 (워커 MOCK_SANDBOX=1). 진짜 샌드박스는 고객 원본 주소에서 이미지를 받지 않는다");
+      gate("REHEARSAL_IMAGE_MIRROR_FAILED");
+    }
     let t = now();
     const orig = parseManifests(input.original, "original");
     const appl = parseManifests(input.apply, "apply");

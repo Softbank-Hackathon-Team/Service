@@ -14,17 +14,18 @@ const input: RehearsalInput = {
   original: [{ path: "m.yaml", yaml: JSON.stringify({ apiVersion: "v1", kind: "ConfigMap", metadata: { name: "cfg" } }) }],
   apply: [{ path: "m.yaml", yaml: JSON.stringify({ apiVersion: "apps/v1", kind: "Deployment", metadata: { name: "web" },
     spec: { selector: { matchLabels: { app: "web" } }, template: { metadata: { labels: { app: "web" } }, spec: { containers: [{ name: "web", image: "x" }] } } } }) }],
-  images: [], databases: [], targetPodSecurity: "privileged", targetQuota: null, edges: [],
+  images: [], imagesMirrored: true, runBudgetSec: 1200, databases: [], targetPodSecurity: "privileged", targetQuota: null, edges: [],
   fidelity: { version: 1, target: "aws-eks", bundleSha256: "d".repeat(64), items: [{ id: "manifests", status: "identical", real: "a", sandbox: "a", reason: "r", refs: [] }] },
 };
+const DEADLINE = new Date("2026-11-05T01:20:00Z");
 
-function store(row: { status: SandboxRunStatus; input: unknown; deadlineAt?: Date | null } | null) {
-  const s = { claimed: [] as string[], phases: [] as SandboxRunPhase[], finished: [] as RehearsalFinish[], claimOk: true };
+function store(row: { status: SandboxRunStatus; input: unknown; expired?: boolean } | null) {
+  const s = { claimed: [] as Array<[string, number | null]>, phases: [] as SandboxRunPhase[], finished: [] as RehearsalFinish[], claimOk: true, finishOk: true };
   const st: SandboxRunStore = {
-    load: async () => (row ? { migrationId: "m", tenantId: T, status: row.status, input: row.input, deadlineAt: row.deadlineAt ?? null } : null),
-    claim: async (_t, _id, name) => { s.claimed.push(name); return s.claimOk; },
+    load: async () => (row ? { migrationId: "m", tenantId: T, status: row.status, input: row.input, expired: row.expired ?? false } : null),
+    claim: async (_t, _id, name, budget) => { s.claimed.push([name, budget]); return s.claimOk ? DEADLINE : null; },
     phase: async (_t, _id, p) => { s.phases.push(p); },
-    finish: async (_t, _id, f) => { s.finished.push(f); return { status: "result" in f ? f.result.verdict : "error", woken: 1 }; },
+    finish: async (_t, _id, f) => { s.finished.push(f); return s.finishOk ? { status: "result" in f ? f.result.verdict : "error", woken: 1 } : null; },
   };
   return { st, s };
 }
@@ -32,15 +33,15 @@ const job = { tenantId: T, requestId: "r", sandboxRunId: ID };
 
 test("리허설 작업: 줄을 잡고(running) 단계를 남기고 결과를 쓴 뒤 deploy 작업을 깨운다", async () => {
   const { st, s } = store({ status: "queued", input });
-  const tenants: string[] = [];
+  const runs: Array<{ tenantId: string; deadlineAt?: Date | null }> = [];
   const r = await handleRehearsal(job, { store: st, rehearse: async (i, run) => {
-    tenants.push(run.tenantId);
+    runs.push({ tenantId: run.tenantId, deadlineAt: run.deadlineAt });
     await run.onPhase?.("creating"); await run.onPhase?.("checking");
     return mockRehearsalResult(i, run.id, "fail");
   } });
-  assert.deepEqual(tenants, [T], "샌드박스 회사 라벨은 줄의 회사");
+  assert.deepEqual(runs, [{ tenantId: T, deadlineAt: DEADLINE }], "샌드박스 회사 라벨은 줄의 회사, 실행기는 잡을 때 쓴 실행 기한을 받는다");
   assert.deepEqual(r, { skipped: false, status: "failed", failureCode: "REHEARSAL_CRASHLOOP", woken: 1 });
-  assert.deepEqual(s.claimed, ["sbx-rehearsal-222222222222"]);
+  assert.deepEqual(s.claimed, [["sbx-rehearsal-222222222222", 1200]], "실행 기한은 입력의 runBudgetSec 로 잡을 때부터");
   assert.deepEqual(s.phases, ["creating", "checking"]);
   assert.equal((s.finished[0] as { result: RehearsalResult }).result.sandbox.name, "sbx-rehearsal-222222222222");
 });
@@ -48,7 +49,8 @@ test("리허설 작업: 줄을 잡고(running) 단계를 남기고 결과를 쓴
 test("리허설 작업: 두 번 온 작업·기한 지난 줄·다른 워커가 잡은 줄은 아무것도 안 한다", async () => {
   const never = async () => { throw new Error("돌면 안 됨"); };
   for (const [row, reason] of [
-    [null, "missing"], [{ status: "running", input }, "not_queued"], [{ status: "queued", input, deadlineAt: new Date(Date.now() - 1000) }, "deadline"],
+    [null, "missing"], [{ status: "running", input }, "not_queued"], [{ status: "queued", input, expired: true }, "expired"],
+    [{ status: "error", input, expired: true }, "expired"],
   ] as const) {
     const { st, s } = store(row as never);
     assert.deepEqual(await handleRehearsal(job, { store: st, rehearse: never }), { skipped: true, reason });
@@ -60,12 +62,21 @@ test("리허설 작업: 두 번 온 작업·기한 지난 줄·다른 워커가 
   assert.equal(s.finished.length, 0);
 });
 
+test("리허설 작업: 결과를 쓰기 전에 워커가 기한으로 닫았으면 expired 로 알린다 (not_queued 아님)", async () => {
+  const { st, s } = store({ status: "queued", input });
+  s.finishOk = false;
+  assert.deepEqual(await handleRehearsal(job, { store: st, rehearse: async (i, run) => mockRehearsalResult(i, run.id, "pass") }),
+    { skipped: true, reason: "expired" });
+});
+
 test("리허설 작업: 입력이 계약에 안 맞거나 처리기가 던지면 결과 없이 REHEARSAL_SANDBOX_UNAVAILABLE", async () => {
   const bad = store({ status: "queued", input: { version: 2 } });
+  // 입력이 틀리면 실행 기한을 새로 쓰지 않는다 (잡아서 바로 끝낸다)
   let ran = false;
   const r1 = await handleRehearsal(job, { store: bad.st, rehearse: async (i, run) => { ran = true; return mockRehearsalResult(i, run.id, "pass"); } });
   assert.deepEqual([r1.skipped, ran], [false, false]);
   assert.deepEqual(bad.s.finished[0] && "failureCode" in bad.s.finished[0] ? bad.s.finished[0].failureCode : null, "REHEARSAL_SANDBOX_UNAVAILABLE");
+  assert.deepEqual(bad.s.claimed, [["sbx-rehearsal-222222222222", null]]);
   const boom = store({ status: "queued", input });
   const r2 = await handleRehearsal(job, { store: boom.st, rehearse: async () => { throw new Error("socket hang up"); } });
   assert.deepEqual(r2, { skipped: false, status: "error", failureCode: "REHEARSAL_SANDBOX_UNAVAILABLE", woken: 1 });

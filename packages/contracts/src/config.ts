@@ -93,7 +93,9 @@ export const CONFIG_RULES = {
     GCP_PLATFORM_PROJECT: { check: (v) => (/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(v.trim()) ? null : "GCP 프로젝트 ID 모양이 아님") },   // L7i: 진짜 발급기일 때 GCP 발급기가 쓰는 플랫폼 프로젝트 ID
     // vCluster 리허설 (deploying, 커밋 전). 기본값은 contracts sandbox.ts rehearsalSettings
     SANDBOX_REHEARSAL: { check: oneOf("off", "on") },
-    REHEARSAL_TIMEOUT_SEC: { check: num({ int: true, min: 120 }) },
+    // 실행 기한 하한 300초: agent-worker 가 기한 120초 전에 스스로 멈추고 지우기·결과 쓰기를 한다 (agent rehearsal/run.ts DEADLINE_RESERVE_MS)
+    REHEARSAL_TIMEOUT_SEC: { check: num({ int: true, min: 300 }) },
+    REHEARSAL_QUEUE_TIMEOUT_SEC: { check: num({ int: true, min: 60 }) },
     REHEARSAL_POLL_SEC: { check: num({ int: true, min: 5 }) },
     SANDBOX_IMAGE_REGISTRY: { check: registryPrefix },
     MOCK_SANDBOX: { check: oneOf("0", "1") },

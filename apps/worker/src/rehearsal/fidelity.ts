@@ -47,7 +47,7 @@ const ITEMS: Record<WorkerItem, (f: FidelityFacts, changed: boolean) => Row> = {
     ? row("substituted", "PVC (도착 StorageClass)", "emptyDir", "플랫폼 클러스터에 블록 저장소 드라이버가 없다. 마운트 경로는 같다")
     : same("PVC 없음"),
   secrets: (f, c) => c
-    ? row("substituted", "ExternalSecret → 도착 비밀 저장소 값", "같은 이름·같은 키의 Secret, 가짜 값", "고객 비밀 값은 샌드박스에 넣지 않는다")
+    ? row("substituted", "ExternalSecret → 도착 비밀 저장소 값", "같은 이름·같은 키의 Secret, 가짜 값 (TLS 는 자체 서명 인증서)", "고객 비밀 값은 샌드박스에 넣지 않는다")
     : same(f.present.has("external_secret") ? "ExternalSecret" : "ExternalSecret 없음"),
   secret_values: (f) => f.target === "onprem-k3s"
     ? row("not_checked", "Vault 비밀 그릇 값", "가짜 값", "온프레 비밀 그릇 값은 커밋 전에 보지 못한다")

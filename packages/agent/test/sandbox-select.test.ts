@@ -15,7 +15,7 @@ const input: RehearsalInput = {
   original: [{ path: "m.yaml", yaml: stringify({ apiVersion: "v1", kind: "ConfigMap", metadata: { name: "cfg" } }) }],
   apply: [{ path: "m.yaml", yaml: stringify({ apiVersion: "apps/v1", kind: "Deployment", metadata: { name: "web" },
     spec: { selector: { matchLabels: { app: "web" } }, template: { metadata: { labels: { app: "web" } }, spec: { containers: [{ name: "web", image: "x" }] } } } }) }],
-  images: [], databases: [], targetPodSecurity: "privileged", targetQuota: null, edges: [],
+  images: [], imagesMirrored: true, runBudgetSec: 1200, databases: [], targetPodSecurity: "privileged", targetQuota: null, edges: [],
   fidelity: { version: 1, target: "aws-eks", bundleSha256: "c".repeat(64), items: [{ id: "manifests", status: "identical", real: "a", sandbox: "a", reason: "r", refs: [] }] },
 };
 
@@ -38,6 +38,8 @@ test("리허설 백엔드 고르기: MOCK_SANDBOX 는 정해진 결과, 호스�
   const pass = rehearsalFromEnv({ MOCK_SANDBOX: "1" });
   assert.equal(pass.host, null);
   assert.equal((await pass.rehearse(input, { id: RUN, tenantId: TENANT })).verdict, "passed");
+  // 흉내 agent-worker 는 흉내 워커(복사 안 함)의 입력도 받는다. 거부는 진짜 샌드박스만
+  assert.equal((await pass.rehearse({ ...input, imagesMirrored: false }, { id: RUN, tenantId: TENANT })).verdict, "passed");
   const fail = await rehearsalFromEnv({ MOCK_SANDBOX: "1", MOCK_SANDBOX_RESULT: "fail" }).rehearse(input, { id: RUN, tenantId: TENANT });
   assert.deepEqual([fail.verdict, fail.failureCode, fail.sandbox.mock], ["failed", "REHEARSAL_CRASHLOOP", true]);
 

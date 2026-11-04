@@ -1,5 +1,6 @@
 // sandbox_runs 저장소 DB 시험 (db 0046). DATABASE_URL·OWNER_DATABASE_URL 이 없으면 건너뛴다.
-// 리허설 작업 한 건: queued → running → passed 결과 + 감사 + 기다리던 deploy 작업 깨우기, 남의 회사 줄은 안 보임, 워커가 먼저 닫으면 덮어쓰지 않음
+// 리허설 작업 한 건: queued → running → passed 결과 + 감사 + 기다리던 deploy 작업 깨우기, 남의 회사 줄은 안 보임, 워커가 먼저 닫으면 덮어쓰지 않음.
+// 기한은 둘: 줄 서기 기한(워커가 넣을 때) 안에만 잡고, 잡으면서 실행 기한 = 지금 + runBudgetSec
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -20,7 +21,7 @@ const input = (sha: string) => ({
   original: [{ path: "m.yaml", yaml: JSON.stringify({ apiVersion: "v1", kind: "ConfigMap", metadata: { name: "cfg" } }) }],
   apply: [{ path: "m.yaml", yaml: JSON.stringify({ apiVersion: "apps/v1", kind: "Deployment", metadata: { name: "web" },
     spec: { selector: { matchLabels: { app: "web" } }, template: { metadata: { labels: { app: "web" } }, spec: { containers: [{ name: "web", image: "x" }] } } } }) }],
-  images: [], databases: [], targetPodSecurity: "privileged", targetQuota: null, edges: [],
+  images: [], imagesMirrored: true, runBudgetSec: 300, databases: [], targetPodSecurity: "privileged", targetQuota: null, edges: [],
   fidelity: { version: 1, target: "aws-eks", bundleSha256: sha, items: [{ id: "manifests", status: "identical", real: "a", sandbox: "a", reason: "r", refs: [] }] },
 });
 
@@ -38,11 +39,13 @@ before(async () => {
 });
 after(async () => { if (skip) return; await core.boss.stop({ graceful: false }); await core.pool.end(); await owner.end(); });
 
-async function queuedRun() {
+// queuedAgoSec: 줄을 선 지 몇 초 지났나 (앞 리허설이 길어 줄에서 기다린 시간). 줄 서기 기한은 넣은 때 + 60분
+async function queuedRun(queuedAgoSec = 0) {
   const m = randomUUID(), id = randomUUID();
   await owner.query(`INSERT INTO migrations (id, tenant_id, source_env_id, target_env_id, status) VALUES ($1,$2,$3,$4,'deploying')`, [m, T, S, G]);
-  await owner.query(`INSERT INTO sandbox_runs (id, tenant_id, migration_id, epoch, status, bundle_sha256, input, deadline_at)
-    VALUES ($1,$2,$3,1,'queued',$4,$5, now() + interval '20 minutes')`, [id, T, m, "e".repeat(64), JSON.stringify(input("e".repeat(64)))]);
+  await owner.query(`INSERT INTO sandbox_runs (id, tenant_id, migration_id, epoch, status, bundle_sha256, input, created_at, deadline_at)
+    VALUES ($1,$2,$3,1,'queued',$4,$5, now() - make_interval(secs => $6), now() - make_interval(secs => $6) + interval '60 minutes')`,
+    [id, T, m, "e".repeat(64), JSON.stringify(input("e".repeat(64))), queuedAgoSec]);
   // 워커 deploy 작업이 RetryLater 로 10분 뒤에 다시 보도록 미뤄 둔 모양
   await core.boss.send("deploy", { tenantId: T, requestId: randomUUID(), migrationId: m }, { singletonKey: `deploy:${m}`, startAfter: 600 });
   return { m, id };
@@ -85,14 +88,36 @@ test("Postgres: 실패 결과는 failed + 코드, 남의 회사 번호로 온 �
   assert.deepEqual(row, { status: "failed", failure_code: "REHEARSAL_CRASHLOOP" });
 });
 
-test("Postgres: 워커가 기한으로 먼저 닫은 줄(error REHEARSAL_TIMEOUT)은 덮어쓰지 않는다", { skip }, async () => {
+test("Postgres: 앞 리허설 때문에 실행 기한(300초)보다 오래 줄을 섰어도 잡으면 실행 기한 300초를 새로 받는다", { skip }, async () => {
+  const { id } = await queuedRun(25 * 60);
+  const store = st.pgSandboxRunStore();
+  const seen: Array<Date | null | undefined> = [];
+  const r = await h.handleRehearsal({ tenantId: T, requestId: "r", sandboxRunId: id }, { store, rehearse: async (i, run) => {
+    seen.push(run.deadlineAt);
+    return agent.mockRehearsalResult(i, run.id, "pass");
+  } });
+  assert.equal(r.skipped, false, JSON.stringify(r));
+  const row = (await owner.query(`SELECT deadline_at, EXTRACT(EPOCH FROM deadline_at - started_at)::int AS budget FROM sandbox_runs WHERE id = $1`, [id])).rows[0];
+  assert.equal(row.budget, 300, "실행 기한 = 잡은 때 + runBudgetSec");
+  assert.deepEqual(seen, [row.deadline_at], "실행기는 그 기한을 받아 스스로 멈출 때를 정한다");
+});
+
+test("Postgres: 줄 서기 기한이 지난 줄은 잡지 않는다 (expired, 줄은 queued 그대로 → 워커가 REHEARSAL_TIMEOUT 으로 닫는다)", { skip }, async () => {
+  const { id } = await queuedRun(61 * 60);
+  const store = st.pgSandboxRunStore();
+  assert.deepEqual(await h.handleRehearsal({ tenantId: T, requestId: "r", sandboxRunId: id }, { store, rehearse: async () => { throw new Error("돌면 안 됨"); } }),
+    { skipped: true, reason: "expired" });
+  assert.deepEqual((await owner.query("SELECT status, started_at FROM sandbox_runs WHERE id = $1", [id])).rows[0], { status: "queued", started_at: null });
+});
+
+test("Postgres: 워커가 기한으로 먼저 닫은 줄(error REHEARSAL_TIMEOUT)은 덮어쓰지 않고 expired 로 알린다", { skip }, async () => {
   const { id } = await queuedRun();
   const store = st.pgSandboxRunStore();
   const r = await h.handleRehearsal({ tenantId: T, requestId: "r", sandboxRunId: id }, { store, rehearse: async (i, run) => {
-    await owner.query("UPDATE sandbox_runs SET status = 'error', failure_code = 'REHEARSAL_TIMEOUT' WHERE id = $1 AND status IN ('queued','running')", [id]);
+    await owner.query("UPDATE sandbox_runs SET status = 'error', phase = 'done', failure_code = 'REHEARSAL_TIMEOUT' WHERE id = $1 AND status IN ('queued','running')", [id]);
     return agent.mockRehearsalResult(i, run.id, "pass");
   } });
-  assert.deepEqual(r, { skipped: true, reason: "not_queued" });
+  assert.deepEqual(r, { skipped: true, reason: "expired" });
   const row = (await owner.query("SELECT status, failure_code, result FROM sandbox_runs WHERE id = $1", [id])).rows[0];
   assert.deepEqual(row, { status: "error", failure_code: "REHEARSAL_TIMEOUT", result: null });
 });

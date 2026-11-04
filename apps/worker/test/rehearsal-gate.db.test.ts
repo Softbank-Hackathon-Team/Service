@@ -23,7 +23,7 @@ let owner: pg.Client;
 let gitDir = "";
 const T = randomUUID();
 const KEYS = ["MOCK_IAC", "MOCK_ARGO", "GITOPS_DISABLE", "GITOPS_REPO_DIR", "GITOPS_REPO_URL", "GITOPS_PUSH", "STUB_DELAY_MS",
-  "SANDBOX_REHEARSAL", "MOCK_SANDBOX", "SANDBOX_IMAGE_REGISTRY", "REHEARSAL_POLL_SEC", "REHEARSAL_TIMEOUT_SEC"];
+  "SANDBOX_REHEARSAL", "MOCK_SANDBOX", "SANDBOX_IMAGE_REGISTRY", "REHEARSAL_POLL_SEC", "REHEARSAL_TIMEOUT_SEC", "REHEARSAL_QUEUE_TIMEOUT_SEC"];
 const prev = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
 type Raw = Record<string, any>;
 
@@ -122,6 +122,8 @@ const runs = async (id: string) => (await owner.query(`SELECT * FROM sandbox_run
 const lastAudit = async (id: string, action: string) => (await owner.query(`SELECT detail FROM audit_events WHERE target=$1 AND action=$2 ORDER BY seq DESC LIMIT 1`, [id, action])).rows[0]?.detail as Raw | undefined;
 const deployJobs = async (id: string) => (await owner.query(
   `SELECT state, start_after > now() + interval '20 seconds' AS later FROM pgboss.job WHERE name='deploy' AND singleton_key=$1 AND state IN ('created','retry')`, [`deploy:${id}`])).rows as Array<{ state: string; later: boolean }>;
+const retryAudits = async (id: string) => (await owner.query(
+  `SELECT result FROM audit_events WHERE target=$1 AND action='deploy.retry_scheduled' ORDER BY seq`, [id])).rows.map((r) => r.result as string);
 const rehearsalJobs = async (runId: string) => (await owner.query(
   `SELECT singleton_key FROM pgboss.job WHERE name='sandbox-rehearsal' AND data->>'sandboxRunId' = $1`, [runId])).rows as Array<{ singleton_key: string }>;
 const commits = () => Number(git("rev-list", "--count", "HEAD"));
@@ -164,7 +166,7 @@ test("끔(기본): 예전처럼 커밋 → syncing, 근거 rehearsal=disabled �
   const a = (await lastAudit(id, "deploy.syncing"))!;
   assert.equal(a.evidence.rehearsal, "disabled");
   assert.ok(a.gitops.commit && a.gitops.argoApp && !("rehearsal" in a.gitops), "gitops detail 은 예전 칸 그대로");
-  assert.deepEqual((await runs(id)).map((r) => [r.status, r.skip_reason, r.epoch]), [["skipped", "disabled", (await mig(id)).version - 1]]);
+  assert.deepEqual((await runs(id)).map((r) => [r.status, r.skip_reason, r.epoch, r.phase]), [["skipped", "disabled", (await mig(id)).version - 1, "done"]]);
 });
 
 test("켬: 줄 queued + sandbox-rehearsal 작업(노드 키) → 기다림(RetryLater), 두 번 배달해도 줄·작업 하나 → agent-worker 통과 + 깨우기 → 같은 지문으로 커밋 → syncing(passed)", { skip }, async () => {
@@ -175,9 +177,11 @@ test("켬: 줄 queued + sandbox-rehearsal 작업(노드 키) → 기다림(Retry
   assert.equal((await mig(id)).status, "deploying");
   const [run] = await runs(id);
   assert.equal(run!.status, "queued");
-  assert.ok(run!.deadline_at > new Date(Date.now() + 1100_000), "기한 = 만든 때 + REHEARSAL_TIMEOUT_SEC(1200)");
+  assert.ok(run!.deadline_at > new Date(Date.now() + 3500_000), "queued 줄의 기한 = 줄 서기 기한 REHEARSAL_QUEUE_TIMEOUT_SEC(3600)");
+  assert.deepEqual([run!.input.runBudgetSec, run!.input.imagesMirrored], [1200, false], "실행 기한은 agent-worker 가 잡을 때부터, 흉내 복사는 입력에 남는다");
   assert.deepEqual(await rehearsalJobs(run!.id), [{ singleton_key: "sandbox-rehearsal:sandbox-node" }]);
   assert.deepEqual(await deployJobs(id), [{ state: "created", later: true }], "deploy 작업이 REHEARSAL_POLL_SEC 뒤로 다시 들어감");
+  assert.deepEqual(await retryAudits(id), ["ok"], "리허설 기다림은 오류가 아니다");
   assert.equal(commits(), c0, "기다리는 동안 커밋 없음");
   assert.equal(git("status", "--porcelain"), "", "렌더 뒤 작업 복사본 되돌림");
   // 두 번 배달: 같은 줄을 보고 기다림만
@@ -203,7 +207,7 @@ test("켬: 줄 queued + sandbox-rehearsal 작업(노드 키) → 기다림(Retry
   assert.equal(await dp.handleDeploy(job(id)), "advanced");
   const all = await runs(id);
   assert.equal(all.length, 2);
-  assert.deepEqual([all[1]!.status, all[1]!.reused_from], ["passed", run!.id]);
+  assert.deepEqual([all[1]!.status, all[1]!.reused_from, all[1]!.phase], ["passed", run!.id, "done"]);
   assert.equal((await lastAudit(id, "deploy.syncing"))!.evidence.rehearsal, "reused");
   assert.equal((await owner.query(`SELECT count(*)::int AS n FROM pgboss.job WHERE name='sandbox-rehearsal' AND data->>'sandboxRunId' = $1`, [all[1]!.id])).rows[0].n, 0);
 });
@@ -228,18 +232,67 @@ test("켬: 리허설 실패 → paused + 줄의 코드, detail 에 실패한 검
   assert.deepEqual(all.map((r) => r.status), ["failed", "queued"]);
 });
 
-test("켬: 기한이 지나면 error(REHEARSAL_TIMEOUT) → paused, 늦게 온 agent-worker 결과는 조건부 UPDATE 가 막는다", { skip }, async () => {
+test("켬: 그 단계 기한(줄 서기·실행)이 지나면 error(REHEARSAL_TIMEOUT) → paused, 어느 단계였는지 남는다. 늦게 온 agent-worker 결과는 조건부 UPDATE 가 막는다", { skip }, async () => {
+  Object.assign(process.env, { SANDBOX_REHEARSAL: "on", MOCK_SANDBOX: "1" });
+  for (const [status, stage] of [["queued", "queue"], ["running", "run"]] as const) {
+    const id = await seed();
+    await dp.handleDeploy(job(id));
+    const [run] = await runs(id);
+    await owner.query(`UPDATE sandbox_runs SET status=$2, started_at = CASE WHEN $2 = 'running' THEN now() END, deadline_at = now() - interval '1 second' WHERE id=$1`, [run!.id, status]);
+    await dp.handleDeploy(job(id));
+    assert.deepEqual([(await mig(id)).status, (await mig(id)).failure_code], ["paused", "REHEARSAL_TIMEOUT"], status);
+    assert.equal((await lastAudit(id, "deploy.paused"))!.rehearsal.stage, stage);
+    const [after] = await runs(id);
+    assert.deepEqual([after!.status, after!.failure_code, after!.phase], ["error", "REHEARSAL_TIMEOUT", "done"], status);
+    const late = await owner.query(`UPDATE sandbox_runs SET status='passed' WHERE id=$1 AND status IN ('queued','running')`, [run!.id]);
+    assert.equal(late.rowCount, 0);
+  }
+});
+
+test("켬: 앞 리허설 때문에 실행 기한(300초)보다 오래 줄을 서도 줄 서기 기한 안이면 REHEARSAL_TIMEOUT 이 아니라 계속 기다린다", { skip }, async () => {
+  Object.assign(process.env, { SANDBOX_REHEARSAL: "on", MOCK_SANDBOX: "1", REHEARSAL_TIMEOUT_SEC: "300", REHEARSAL_QUEUE_TIMEOUT_SEC: "3600" });
+  try {
+    const id = await seed();
+    await dp.handleDeploy(job(id));
+    const [run] = await runs(id);
+    // 10분이 지났다 (앞 회사 리허설이 도는 동안 줄에서 기다림)
+    await owner.query(`UPDATE sandbox_runs SET created_at = created_at - interval '600 seconds', deadline_at = deadline_at - interval '600 seconds' WHERE id=$1`, [run!.id]);
+    await owner.query(`DELETE FROM pgboss.job WHERE name='deploy' AND singleton_key=$1`, [`deploy:${id}`]);
+    assert.equal(await dp.handleDeploy(job(id)), "skipped");
+    assert.deepEqual([(await mig(id)).status, (await runs(id))[0]!.status], ["deploying", "queued"]);
+    assert.deepEqual(await deployJobs(id), [{ state: "created", later: true }]);
+  } finally {
+    delete process.env.REHEARSAL_TIMEOUT_SEC; delete process.env.REHEARSAL_QUEUE_TIMEOUT_SEC;
+  }
+});
+
+test("켬: 리허설이 넣자마자 끝나도 기다리던 deploy 작업을 깨운다 (줄·작업·다시 넣는 deploy 작업이 한 트랜잭션)", { skip }, async () => {
   Object.assign(process.env, { SANDBOX_REHEARSAL: "on", MOCK_SANDBOX: "1" });
   const id = await seed();
-  await dp.handleDeploy(job(id));
-  const [run] = await runs(id);
-  await owner.query(`UPDATE sandbox_runs SET deadline_at = now() - interval '1 second' WHERE id=$1`, [run!.id]);
-  await dp.handleDeploy(job(id));
-  assert.deepEqual([(await mig(id)).status, (await mig(id)).failure_code], ["paused", "REHEARSAL_TIMEOUT"]);
-  const [after] = await runs(id);
-  assert.deepEqual([after!.status, after!.failure_code], ["error", "REHEARSAL_TIMEOUT"]);
-  const late = await owner.query(`UPDATE sandbox_runs SET status='passed' WHERE id=$1 AND status IN ('queued','running')`, [run!.id]);
-  assert.equal(late.rowCount, 0);
+  // 워커를 다시 넣기 트랜잭션 안(감사 쓰기의 회사 잠금)에 세워 둔다. 그동안 줄이 보이면 agent-worker 가 바로 끝내고 깨운다
+  const lock = new pg.Client({ connectionString: OWNER }); await lock.connect();
+  try {
+    await lock.query("SELECT pg_advisory_lock(hashtext('audit:' || $1))", [T]);
+    const worker = dp.handleDeploy(job(id));
+    for (let i = 0; ; i++) {
+      const waiting = await owner.query(`SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND NOT granted
+        AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) AND objid::bigint = (hashtext('audit:' || $1)::bigint & 4294967295)`, [T]);
+      if (waiting.rowCount) break;
+      assert.ok(i < 400, "워커가 감사 잠금에서 기다려야 한다");
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    const [early] = await runs(id);
+    if (early) await completeAsAgentWorker(early.id, "passed");
+    await lock.query("SELECT pg_advisory_unlock(hashtext('audit:' || $1))", [T]);
+    assert.equal(await worker, "skipped");
+    const [run] = await runs(id);
+    if (run!.status === "queued") await completeAsAgentWorker(run!.id, "passed");
+    assert.deepEqual(await deployJobs(id), [{ state: "created", later: false }], "결과를 쓴 뒤 deploy 작업이 바로 돈다 (REHEARSAL_POLL_SEC 를 기다리지 않음)");
+  } finally {
+    await lock.end();
+  }
+  assert.equal(await dp.handleDeploy(job(id)), "advanced");
+  assert.equal((await mig(id)).status, "syncing");
 });
 
 test("켬: 통과 뒤 차트가 바뀌어 커밋 직전 렌더가 다르면 커밋하지 않고 REHEARSAL_BUNDLE_MISMATCH", { skip }, async () => {
@@ -263,7 +316,7 @@ test("켬: 치환 표 밖 종류 → failed(REHEARSAL_UNSUPPORTED_KIND), 이미�
   const a = await seed();
   await dp.handleDeploy(job(a));
   assert.deepEqual([(await mig(a)).status, (await mig(a)).failure_code], ["paused", "REHEARSAL_UNSUPPORTED_KIND"]);
-  assert.deepEqual((await runs(a)).map((r) => [r.status, r.failure_code]), [["failed", "REHEARSAL_UNSUPPORTED_KIND"]]);
+  assert.deepEqual((await runs(a)).map((r) => [r.status, r.failure_code, r.phase]), [["failed", "REHEARSAL_UNSUPPORTED_KIND", "done"]]);
   assert.match((await lastAudit(a, "deploy.paused"))!.deploy.reason, /NetworkPolicy/);
   setExtra([]);
   // 진짜 복사 길인데 샌드박스 레지스트리 설정이 없음
@@ -271,7 +324,7 @@ test("켬: 치환 표 밖 종류 → failed(REHEARSAL_UNSUPPORTED_KIND), 이미�
   const b = await seed();
   await dp.handleDeploy(job(b));
   assert.deepEqual([(await mig(b)).status, (await mig(b)).failure_code], ["paused", "REHEARSAL_IMAGE_MIRROR_FAILED"]);
-  assert.deepEqual((await runs(b)).map((r) => [r.status, r.failure_code]), [["error", "REHEARSAL_IMAGE_MIRROR_FAILED"]]);
+  assert.deepEqual((await runs(b)).map((r) => [r.status, r.failure_code, r.phase]), [["error", "REHEARSAL_IMAGE_MIRROR_FAILED", "done"]]);
   assert.equal((await lastAudit(b, "deploy.paused"))!.rehearsal.mirror.reason, "registry_unset");
 });
 
@@ -290,7 +343,7 @@ test("켬: 건너뜀 표 — ECS 도착 non_k8s, 클러스터 없음 no_cluster,
     const m = await mig(id);
     assert.equal(m.status, "syncing", `${want}: ${m.failure_code} ${JSON.stringify((await lastAudit(id, "deploy.paused"))?.deploy)}`);
     assert.equal((await lastAudit(id, "deploy.syncing"))!.evidence.rehearsal, want);
-    assert.deepEqual((await runs(id)).map((r) => [r.status, r.skip_reason]), [["skipped", want]]);
+    assert.deepEqual((await runs(id)).map((r) => [r.status, r.skip_reason, r.phase]), [["skipped", want, "done"]]);
   }
   process.env.GITOPS_REPO_DIR = gitDir;
 });

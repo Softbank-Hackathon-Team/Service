@@ -95,9 +95,14 @@ export const isLastAttempt = () => {
 };
 
 /** 정해진 대기 뒤 같은 단계를 다시 하게 한다 (pg-boss 재시도는 대기가 고정·지터라 5·15·45초 같은 간격을 못 준다).
- *  runStep이 잠금을 반납하고, 같은 큐에 startAfter로 새 작업을 넣고, 상태는 그대로 둔다 → "skipped" */
+ *  runStep이 잠금을 반납하고, 같은 큐에 startAfter로 새 작업을 넣고, 상태는 그대로 둔다 → "skipped"
+ *  opts.inTx: 다시 넣는 작업과 같은 트랜잭션에서 할 쓰기. 기다림을 끝낼 쪽(예: 리허설 결과를 쓰는 agent-worker 의 wakeQueued)이
+ *    그 쓰기를 볼 때는 깨울 작업도 이미 있다
+ *  opts.expected: 실패가 아니라 예정된 기다림 (리허설 결과 기다리기). 감사 result 가 ok, 로그는 info */
+export interface RetryLaterOpts { inTx?: (tx: Tx) => Promise<void>; expected?: boolean }
 export class RetryLater extends Error {
-  constructor(readonly queue: QueueName, readonly data: object, readonly delaySec: number, readonly detail: Record<string, unknown> = {}) {
+  constructor(readonly queue: QueueName, readonly data: object, readonly delaySec: number, readonly detail: Record<string, unknown> = {},
+    readonly opts: RetryLaterOpts = {}) {
     super(`retry ${queue} in ${delaySec}s`);
   }
 }
@@ -218,13 +223,15 @@ async function handleStepError<J extends StepJob, L>(run: StepRun<J, L>, e: unkn
   if (e instanceof RetryLater) {
     // Z19 H4: 정해진 대기 뒤 다시. 잠금은 workAndFinish가 이미 reserved로 반납했다
     await withTenant(job.tenantId, async (tx) => {
+      await e.opts.inTx?.(tx);
       const key = jobKey(e.queue, { migrationId: job.migrationId });
       await boss.send(e.queue, e.data, { ...(key ? { singletonKey: key } : {}), ...tenantGroup(e.queue, job.tenantId), startAfter: e.delaySec, db: asBossDb(tx) });
       await writeAudit(tx, job.tenantId, { actor: "worker", action: `${def.name}.retry_scheduled`, target: job.migrationId,
-        result: "error", detail: { requestId: job.requestId, delaySec: e.delaySec, ...e.detail } });
+        result: e.opts.expected ? "ok" : "error", detail: { requestId: job.requestId, delaySec: e.delaySec, ...e.detail } });
     });
     // SD-1: 재시도 이유도 로그에 (예전엔 감사 detail.error 에만 있어 맥 로그로 원인을 못 봤다). 로거가 비밀값을 가린다
-    log.warn({ delay_sec: e.delaySec, ...reasonOf(e.detail) }, "job retry scheduled");
+    if (e.opts.expected) log.info({ delay_sec: e.delaySec }, "job waiting");
+    else log.warn({ delay_sec: e.delaySec, ...reasonOf(e.detail) }, "job retry scheduled");
     return "skipped";
   }
   if (isMoved(e)) {

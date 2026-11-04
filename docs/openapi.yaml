@@ -11415,7 +11415,6 @@ components:
     SandboxRunPhase:
       type: "string"
       enum:
-        - "mirroring"
         - "creating"
         - "applying"
         - "checking"
