@@ -36,7 +36,7 @@ const httpsUrl: Check = (v) => {
   catch { return "주소 모양이 아님"; }
 };
 
-// vCluster 리허설: 이미지 복사 자리 <레지스트리 호스트>/<접두어> (예: <계정>.dkr.ecr.<리전>.amazonaws.com/sbx). 스킴·끝 / 없음
+// vCluster 리허설: 이미지 복사 자리 <레지스트리 호스트>/<접두어> (예: <계정>.dkr.ecr.<리전>.amazonaws.com/sandbox). 스킴·끝 / 없음
 const registryPrefix: Check = (v) => (/^[a-z0-9.-]+(:\d{1,5})?(\/[a-z0-9._-]+)+$/.test(v.trim()) ? null : "<호스트>/<접두어> 모양이 아님");
 // 쿠버네티스 RuntimeClass 이름 (DNS 하위 도메인 모양)
 const runtimeClassName: Check = (v) => (/^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$/.test(v.trim()) ? null : "RuntimeClass 이름 모양이 아님 (소문자·숫자·-·.)");
