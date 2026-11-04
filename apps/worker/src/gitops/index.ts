@@ -2,10 +2,10 @@ import type { AppSpecV2, DeployResult, HelmValues, PlanDoc, Provider, TfOutputs 
 import { flattenTfOutputsV2 } from "@svc/adapters";
 import { helmValuesV2 } from "../jobs/plan-v2.js";
 import { stableHash } from "../jobs/_step.js";
-import { ENV_DIR, DELIVERY, appNamespace, fillPlaceholders, planFile, tenantSlug, withTraffic, argoAppName, type BundleRef } from "./bundle.js";
-import { GitopsError, GitopsRepo, type CommitResult } from "./repo.js";
+import { ENV_DIR, DELIVERY, appNamespace, fillPlaceholders, planFile, tenantSlug, withTraffic, argoAppName, type BundleRef, type PlanFile } from "./bundle.js";
+import { GitopsError, GitopsRepo, type CommitOpts, type CommitResult, type RenderedBundle } from "./repo.js";
 
-export { configFromEnv, GitopsRepo, GitopsError, gitopsPreflight } from "./repo.js";
+export { configFromEnv, GitopsRepo, GitopsError, gitopsPreflight, type CommitOpts, type RenderedBundle } from "./repo.js";
 export * from "./bundle.js";
 
 export interface DeployInput {
@@ -56,14 +56,26 @@ export interface SyncWatchResult {
 }
 export interface SyncWatcher { wait(b: BundleRef, c: CommitResult): Promise<SyncWatchResult> }
 
-// watcher 는 필수 인자: 기본값으로 흉내가 끼어드는 길을 없앤다 (Z94)
-export async function deployToGitops(repo: GitopsRepo, i: DeployInput, watcher: SyncWatcher):
-  Promise<{ result: DeployResult; commit: string; app: string; argo?: SyncWatchResult["observed"] }> {
+// 커밋할 묶음의 값 한 벌. deployToGitops 와 리허설 렌더(renderForRehearsal)가 같이 써서 두 길의 값이 갈라지지 않는다
+export async function bundleValues(i: DeployInput, repo: GitopsRepo): Promise<{ b: BundleRef; plan: PlanFile; values: HelmValues }> {
   const b = bundleRefOf(i);
-  const filled = { values: filledValues(i) };
+  const filled = filledValues(i);   // 자리표시가 남으면 레포를 만지기 전에 막는다
   const plan = planFile(b, i.plan, await repo.chartVersion());
-  const values = withServedBy(withTraffic(filled.values, plan.approvedWeights, 0), b);
-  const c = await repo.commitBundle("deploy", b, values, plan, `plan ${i.plan.planId.slice(0, 8)}`);
+  return { b, plan, values: withServedBy(withTraffic(filled, plan.approvedWeights, 0), b) };
+}
+
+// 리허설 입력: 커밋할 바이트를 렌더만 하고 되돌린다 (커밋 없음)
+export async function renderForRehearsal(repo: GitopsRepo, i: DeployInput): Promise<{ b: BundleRef; values: HelmValues; rendered: RenderedBundle }> {
+  const { b, plan, values } = await bundleValues(i, repo);
+  return { b, values, rendered: await repo.renderBundle(b, values, plan) };
+}
+
+// watcher 는 필수 인자: 기본값으로 흉내가 끼어드는 길을 없앤다 (Z94)
+// expectBundleSha: 리허설을 통과한 지문. 커밋 직전 렌더가 다르면 커밋하지 않는다 (REHEARSAL_BUNDLE_MISMATCH)
+export async function deployToGitops(repo: GitopsRepo, i: DeployInput, watcher: SyncWatcher, opts: CommitOpts = {}):
+  Promise<{ result: DeployResult; commit: string; app: string; argo?: SyncWatchResult["observed"] }> {
+  const { b, plan, values } = await bundleValues(i, repo);
+  const c = await repo.commitBundle("deploy", b, values, plan, `plan ${i.plan.planId.slice(0, 8)}`, opts);
   const w = await watcher.wait(b, c);
   const status = !w.ok ? "failed" : DELIVERY[b.env] === "argocd-push" ? "synced_healthy" : "applied";
   return {

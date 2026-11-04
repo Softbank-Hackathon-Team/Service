@@ -4,7 +4,7 @@
 #   check   : 타입 검사 + 단위 시험 + 웹 빌드 (DB 없음)
 #   test-db : Postgres 를 띄워 마이그레이션 적용 → DB 시험 → api·worker 띄우고 smoke(끝에서 끝까지)
 #   e2e     : (Z53 추가) test-db 와 같은 준비 + 화면 Playwright 시험
-#   gitops  : 앱 Helm 차트를 렌더해서 kubeconform 으로 쿠버네티스 스키마 검사
+#   gitops  : 앱 Helm 차트와 플랫폼 차트를 렌더해서 kubeconform 으로 쿠버네티스 스키마 검사
 #   docker  : hadolint + 이미지 4개 빌드(푸시 안 함)
 #
 # Z53 제안 (원본 int5 1차 .github/workflows/ci.yml 기준, push 안 함). 바뀐 곳은 "Z53" 으로 표시
@@ -270,6 +270,8 @@ jobs:
           kubeconform -v
       - name: helm lint + template + kubeconform
         run: bash deploy/ci/check-gitops.sh
+      - name: platform chart lint + template + kubeconform
+        run: bash deploy/ci/check-platform.sh
 
   docker:
     if: github.event_name != 'schedule'
