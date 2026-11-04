@@ -1,0 +1,8 @@
+# name: deploy/ci/values/{gcp,aws}.json 의 externalSecrets.store.name 과 같아야 한다
+name: ""
+# provider: gcpsm | aws
+provider: ""
+gcpsm:
+  projectID: ""
+aws:
+  region: ""
