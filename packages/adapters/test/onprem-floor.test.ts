@@ -53,3 +53,19 @@ test("차트 floor.yaml: \"1\" 일 때만 platform-quota 를 그리고, \"0\" �
   assert.match(render("1"), /kind: ResourceQuota\n[\s\S]*name: platform-quota[\s\S]*requests\.cpu: "\d+m"/);
   assert.doesNotMatch(render("0"), /kind: ResourceQuota/);
 });
+
+test("할당량 DB 몫 = CNPG 에 그리는 요청량 × 인스턴스 × 2 (출발 DB 크기를 가져와도 initdb 파드가 할당량에 안 막힌다)", () => {
+  const base = withRequests();
+  const pg = base.components.find((c) => c.kind === "postgres")!;
+  const sized = AppSpecV2.parse({ ...base, components: base.components.map((c) => (c.id === pg.id ? { ...c, props: { ...c.props, compute: { cpuMilli: 2000, memMiB: 1024 } } } : c)) });
+  const q = (s: AppSpecV2) => (ChartValues.parse(onprem.toWorkloadValues(s, {}, T)).floor!.quota);
+  const v = ChartValues.parse(onprem.toWorkloadValues(sized, {}, T));
+  const cnpg = (v as unknown as { postgres: Array<{ resources?: { requests?: { cpu?: string } } }> }).postgres[0]!;
+  assert.equal(cnpg.resources?.requests?.cpu, "2000m");
+  // 같은 명세에서 DB 만 기본값(500m·1024Mi)으로 바꾼 것과의 차이 = (2000-500)×2, 메모리는 같다
+  const plain = AppSpecV2.parse({ ...base, components: base.components.map((c) => (c.id === pg.id ? { ...c, props: { ...c.props, compute: undefined } } : c)) });
+  assert.equal(q(sized).cpuMilli! - q(plain).cpuMilli!, (2000 - 500) * 2);
+  assert.equal(q(sized).memoryMi, q(plain).memoryMi);
+  // 할당량이 CNPG 요청량을 담는다 (예전 고정 1000m 이면 2000m 요청이 거부됐다)
+  assert.ok(q(sized).cpuMilli! >= 2000 * 2);
+});

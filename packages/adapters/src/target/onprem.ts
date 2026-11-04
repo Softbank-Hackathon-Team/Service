@@ -47,7 +47,12 @@ const cnpgLink = (spec: AppSpecV2) => (c: ComponentV2, output: string): string |
   return ({ host, reader: `${cnpgName(spec, c.id)}-ro`, port: "5432", user, url: `postgresql://${user}@${host}:5432/${db}` } as Record<string, string>)[output];
 };
 
-// 할당량 = Σ(요청량 × 최대 레플리카 × 2) + DB 몫 (v1 과 같은 규칙). 요청량이 하나라도 없으면 null (지어내지 않음)
+// 할당량 = Σ(요청량 × 최대 레플리카 × 2) + DB 몫. 요청량이 하나라도 없으면 null (지어내지 않음)
+//   DB 몫 = DB 마다 인스턴스 수 × 2 × (CNPG 에 그리는 요청량). 요청량은 아래 workloadValues 의 CNPG resources 와 같은 값
+//   (IR compute, 없으면 차트 기본 500m·1Gi). 예전 고정값(DB 하나 1000m·2048Mi)은 기본값일 때와 같고,
+//   출발 DB 크기를 가져오면(예: 2000m) initdb 파드가 "exceeded quota" 로 못 떴다 (2026-11-04 VM 실측)
+const CNPG_DEFAULT_CPU_MILLI = 500, CNPG_DEFAULT_MEM_MIB = 1024;   // gitops/charts/app/templates/cnpg.yaml 기본값과 같게
+const cnpgInstances = (c: ReturnType<typeof postgresOf>[number]) => 1 + (c.props.ha ? 1 : 0) + (c.props.readReplicas ?? 0);
 function quota(spec: AppSpecV2): { cpu: number | null; mem: number | null } {
   let cpu: number | null = 0, mem: number | null = 0;
   for (const w of workloadsOf(spec)) {
@@ -56,8 +61,13 @@ function quota(spec: AppSpecV2): { cpu: number | null; mem: number | null } {
     cpu = cpu === null || rq?.cpuMilli == null ? null : cpu + rq.cpuMilli * n * 2;
     mem = mem === null || rq?.memMiB == null ? null : mem + rq.memMiB * n * 2;
   }
-  const db = postgresOf(spec).length;
-  return { cpu: cpu === null ? null : cpu + db * 1000, mem: mem === null ? null : mem + db * 2048 };
+  let dbCpu = 0, dbMem = 0;
+  for (const c of postgresOf(spec)) {
+    const n = cnpgInstances(c) * 2;
+    dbCpu += (c.props.compute?.cpuMilli ?? CNPG_DEFAULT_CPU_MILLI) * n;
+    dbMem += (c.props.compute?.memMiB ?? CNPG_DEFAULT_MEM_MIB) * n;
+  }
+  return { cpu: cpu === null ? null : cpu + dbCpu, mem: mem === null ? null : mem + dbMem };
 }
 
 // W3: 온프레 바닥(할당량)을 git 으로. 차트 floor.yaml 이 floor.enabled == "1" 일 때만 ResourceQuota(platform-quota, Terraform 과 같은 이름·값)를 그린다
@@ -114,7 +124,7 @@ function workloadValues(spec: AppSpecV2, out: TfOutputs, t: Target) {
       postgres: postgresOf(spec).map((c) => compact({
         id: c.id, mode: "cnpg" as const, name: cnpgName(spec, c.id),
         // DRAFT(ai): instances = 주 1 + (ha 면 대기 1) + 읽기 복제본. 아무것도 없으면 1 (v1 과 같음)
-        instances: 1 + (c.props.ha ? 1 : 0) + (c.props.readReplicas ?? 0),
+        instances: cnpgInstances(c),
         majorVersion: c.props.majorVersion, storageGb: c.props.storageGb,
         ...(c.props.walStorageGb ? { walStorageGb: c.props.walStorageGb } : {}),   // DM-8 → 차트 cnpg.yaml walStorage (CNPG-V2)
         // CNPG-V2 DRAFT(ai): IR compute → CNPG resources (요청=한도, 출발 DB 크기 그대로). 없으면 차트 기본(500m·1Gi, 할당량 DB 몫 안)

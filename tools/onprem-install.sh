@@ -52,6 +52,9 @@ if [ "$cur" != "$ARGO_POLL/$ARGO_POLL_JITTER" ]; then
   K -n "$ARGO_NS" rollout status statefulset/argocd-application-controller --timeout=300s >/dev/null
   K -n "$ARGO_NS" rollout status deploy/argocd-repo-server --timeout=300s >/dev/null
 fi
+# 상태 판정 더하기: CNPG Cluster (tools/onprem-argocd-health.yaml). 없으면 DB 가 안 떠도 Healthy 로 보여 Agent 가 "적용됨" 을 보낸다
+#   controller 가 argocd-cm 을 지켜보므로 다시 띄우지 않아도 먹는다 (VM 실측 약 50초). 같은 값이면 바뀌는 것 없음
+K -n "$ARGO_NS" patch cm argocd-cm --type merge --patch-file tools/onprem-argocd-health.yaml >/dev/null
 
 echo "2/5 Agent 키 Secret"
 K create ns "$NS" --dry-run=client -o yaml | K apply -f - >/dev/null
