@@ -22,7 +22,6 @@ before(async () => {
 });
 after(async () => {
   if (skip) return;
-  delete process.env.IMPORT_IR;
   await core.boss.stop({ graceful: false }); await core.pool.end(); await owner.end();
 });
 
@@ -35,19 +34,17 @@ async function seed() {
 }
 const job = (id: string) => ({ tenantId: T, requestId: `r-i9-${id.slice(0, 8)}`, migrationId: id });
 
-test("정상: aws ECS 데모 + IMPORT_IR=v2 → spec_v2(관리형 컨테이너 3개 + DB) 와 v1 투영(shop-api) 저장, 감사 ir=v2", { skip }, async () => {
-  process.env.IMPORT_IR = "v2";
+test("정상: aws ECS 데모 → spec_v2(관리형 컨테이너 3개 + DB) 저장", { skip }, async () => {
   const id = await seed();
   await imp.handleImport(job(id));
   const m = (await owner.query("SELECT status FROM migrations WHERE id=$1", [id])).rows[0];
   assert.equal(m.status, "spec_review");
   const [v] = (await owner.query("SELECT spec, spec_v2 FROM spec_versions WHERE migration_id=$1", [id])).rows;
-  assert.equal(v.spec.app.name, "shop-api");
-  assert.equal(v.spec.service.port, 8080);
+  assert.deepEqual(v.spec, {});
+  assert.equal(v.spec_v2.spec.app.name, "shop-api");
   assert.deepEqual(v.spec_v2.spec.components.map((c: { id: string }) => c.id), ["shop-api", "shop-db", "shop-web", "shop-worker"]);
   assert.ok(v.spec_v2.spec.components.filter((c: { kind: string }) => c.kind === "service").every((c: { props: { runtime: string } }) => c.props.runtime === "managedContainer"));
   const a = await owner.query("SELECT detail FROM audit_events WHERE target=$1 AND action='migration.spec_review'", [id]);
-  assert.equal(a.rows[0]?.detail?.ir, "v2");
   // 감사에 남긴 원본은 ECS env 값을 지운다 (이름만)
   const ecs = (a.rows[0]?.detail?.sourceInventory?.items ?? []).filter((i: { kind: string }) => i.kind === "ecs.service");
   assert.equal(ecs.length, 3);
@@ -55,10 +52,7 @@ test("정상: aws ECS 데모 + IMPORT_IR=v2 → spec_v2(관리형 컨테이너 3
     for (const e of c.environment ?? []) assert.deepEqual(Object.keys(e), ["name"]);
 });
 
-test("관찰 권한: v2 만 ECS·ALB 규칙·Auto Scaling 읽기를 더한다 (v1 목록은 그대로)", { skip }, async () => {
-  delete process.env.IMPORT_IR;
-  assert.deepEqual(imp.importObserveActions(), imp.IMPORT_OBSERVE_ACTIONS);
-  process.env.IMPORT_IR = "v2";
+test("관찰 권한: ECS·ALB 규칙·Auto Scaling 읽기가 들어 있다", { skip }, async () => {
   const v2 = imp.importObserveActions();
   for (const a of ["ecs:DescribeServices", "ecs:DescribeTaskDefinition", "elasticloadbalancing:DescribeRules", "application-autoscaling:DescribeScalableTargets"])
     assert.ok(v2.includes(a), a);

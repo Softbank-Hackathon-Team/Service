@@ -27,12 +27,14 @@ import type {
   MigrationStatus,
   MigrationView,
   PlanDoc,
+  PrecheckItem,
   Provider,
   TimelineItem,
   TimelineView,
 } from './lib/types';
 import type { CloudInventory } from './features/dashboard/model';
 import type { MigrationSpec } from './features/migration/model';
+import type { SecuritySpecV2, SourceDbFacts } from './features/migration/securityV2';
 import type { AppSpecV2, FieldMetaEntryV2, MigrationSpecViewV2, OutOfBoundaryV2 } from './features/migration/specV2';
 
 // ---- 여기만 고치면 되는 값 ----
@@ -106,6 +108,7 @@ type MockMigration = MigrationView & {
   specVersion?: number;    // v2 명세 판 번호. PATCH 마다 하나씩 는다
   reviewDone?: string[];   // PATCH confirm 으로 확인한 v2 키
   included?: string[];     // PATCH include 로 끌어온 경계 밖 자원
+  security?: SecuritySpecV2 | null;   // PATCH changes "security" 로 고객이 정한 보안 요구사항 (null = 없음 → 보안 판정 P-REQ-0)
   v2plan?: boolean;        // 계획서에 비용 요약·확인 항목·irVersion "2", 자원 대응 v2
   tenantBusy?: number;     // POST /start 가 이 횟수만큼 409 TENANT_BUSY
   retries?: number;        // 사람이 실패를 다시 시도한 횟수 (서버 감사 migration.retried 줄 수)
@@ -215,6 +218,16 @@ function advance(m: MockMigration) {
     setStatus(m, 'cleanup', { detail: { cleanupApproved: true } });
     return;
   }
+  // 사전 점검: 막힘이 하나라도 있으면 명세 검토로 되돌린다 (워커 precheck.ts: block → spec_review + detail.precheck).
+  // 명세 v2 이전은 계획서도 v2 로 만든다 (서버 PLAN_IR=v2 와 같은 짝)
+  if (m.status === 'prechecking' && m.specV2) {
+    const precheck = precheckOf(m);
+    if (precheck.some((item) => item.level === 'block')) {
+      setStatus(m, 'spec_review', { detail: { precheck } });
+      return;
+    }
+    m.v2plan = true;
+  }
   const to = NEXT[m.status];
   if (!to) {
     m.nextAt = null;
@@ -304,9 +317,73 @@ function acksOf(m: MockMigration): NonNullable<PlanDoc['acknowledgements']> {
   return [
     { id: 'cost', kind: 'cost', text: `예상 월 비용(USD): 도착 ${envById(m.targetEnvId).provider} ${usd(cost.monthlyTarget)} / 출발 ${envById(m.sourceEnvId).provider} ${usd(cost.monthlySource)} / 차이 ${usd(cost.deltaMonthly)}. 도착 자원은 고객 클라우드 계정에 만들어지고 요금도 고객 계정에 청구됩니다` },
     { id: 'failure_cost_policy', kind: 'failure_cost_policy', text: `이전이 실패하면 AI 원인 분석과 재시도 ${RETRY_BUDGET}번까지의 AI 비용은 플랫폼이 부담합니다. 그 뒤 재시도의 비용은 고객 부담입니다. 클라우드 자원 요금은 처음부터 고객 계정에 청구됩니다` },
-    { id: 'precheck_warn:PC-07', kind: 'precheck_warn', text: '도착 리전의 vCPU 한도가 80%입니다 (조치: 한도 증설을 요청해 주세요)', ref: 'PC-07' },
+    // 사전 점검 warn 마다 하나 (보안 판정의 고객 확인도 warn 이다). 글 = message + " (조치: fix)"
+    ...precheckOf(m).filter((item) => item.level === 'warn').map((item) => ({
+      id: `precheck_warn:${item.id}`, kind: 'precheck_warn' as const, text: item.message + (item.fix ? ` (조치: ${item.fix})` : ''), ref: item.id,
+    })),
     { id: 'runtime_change:web', kind: 'runtime_change', text: 'managedContainer → k8s · 같은 이미지로 GKE Deployment 에 올림', ref: 'web' },
   ];
+}
+
+// 보안 판정 (워커 precheck securityPrecheckFor → SEC:*). 글 모양은 packages/security portability/precheck.ts 와 같다:
+//   "<머리말><제목>. <이유>. 근거: <근거>", 모름으로 낸 판정은 "<이유>. 확인할 것: <제목>". 고객 확인(attest)은 level warn + 머리말로만 구분된다
+// 서버는 SEC_PRECHECK=1 + PLAN_IR=v2 일 때만 붙인다. 목업은 명세 v2 이전이면 늘 붙이고, 요구사항·도착 종류로 고르는 규칙 몇 개만 흉내 낸다
+const SEC_HEAD = { block: 'FAIL 보안 — ', warn: 'WARN 보안 — ', attest: 'WARN 보안 고객 확인 — ', advise: 'INFO 보안 — ' } as const;
+const SEC_ITEM_LEVEL = { block: 'block', warn: 'warn', attest: 'warn', advise: 'info' } as const;
+const sec = (id: string, level: keyof typeof SEC_HEAD, what: string, evidence: string, fix: string): PrecheckItem =>
+  ({ id: `SEC:${id}`, level: SEC_ITEM_LEVEL[level], message: `${SEC_HEAD[level]}${what}. 근거: ${evidence}`, fix });
+const DECLARE = '고객이 이 값을 선언하고 그 선언을 감사 기록에 남긴다';
+
+function secItemsOf(m: MockMigration): PrecheckItem[] {
+  if (!m.specV2) return [];
+  const r = m.security?.requirements;
+  const target = envById(m.targetEnvId).provider;
+  const cloud = target === 'aws' || target === 'gcp';
+  const items: PrecheckItem[] = [];
+  if (!r) items.push(sec('P-REQ-0:env', 'attest', '앱 보안 요구사항이 명세에 없다. 데이터 등급·허용 국가·키 소유를 모르면 위치·키 규칙을 판정할 수 없다', 'requirements=null', '명세 검토 때 데이터 등급, 허용 국가, 키 소유를 정한다'));
+  // 목업 클라우드 도착 리전은 모두 한국이다 (REGION). 온프레는 리전으로 국가를 몰라 고객 확인
+  if (r && r.residency.length > 0) {
+    if (cloud && !r.residency.includes('KR'))
+      items.push(sec('P-LOC-1:env', 'block', `도착 국가가 허용 국가 밖이다. 허용 국가 ${r.residency.join(',')} 밖(KR)으로 데이터가 옮겨진다`, `country="KR" (attested, environments.region ${REGION[target]})`, '허용 국가 안의 리전이나 온프레를 도착으로 고른다'));
+    if (target === 'onprem')
+      items.push(sec('P-LOC-1:env', 'attest', '도착의 country 을(를) 모른다. 모름은 통과가 아니다. 확인할 것: 도착 국가가 허용 국가 밖이다', 'country=모름 (unknown)', DECLARE));
+  }
+  if (r?.keyOwnership === 'customer') {
+    if (cloud)
+      items.push(sec('P-KEY-1:shop-db', 'block', '고객 키가 제공자 기본 키로 내려간다 (shop-db). 고객이 쥐던 키가 제공자 기본 키로 바뀐다. 고객이 키를 꺼서 데이터를 못 읽게 하는 통제가 사라진다',
+        `source.keyOwner=모름 (unknown) / target.keyOwner="provider" (attested, ${target === 'aws' ? 'kms_key_id 없음 (AWS 관리 키)' : 'encryption_key_name 없음 (Google 관리 키)'}) / requirements.keyOwnership=customer`,
+        '도착에 고객 관리 키(CMK·CMEK)를 먼저 만들고 그 키로 DB 를 만든다'));
+    if (target === 'onprem')
+      items.push(sec('P-KEY-2:shop-db', 'attest', '도착의 db.keyOwner 을(를) 모른다. 모름은 통과가 아니다 (shop-db). 확인할 것: 고객 키가 필요한데 도착 키 소유를 모른다', 'db.keyOwner=모름 (unknown)', DECLARE));
+  }
+  // 출발(클라우드) 사실을 못 읽은 경고는 쪽마다 하나로 묶인다 (SEC:UNKNOWN:<쪽>)
+  items.push(sec('UNKNOWN:source', 'warn', '출발 보안 사실 1개를 모른다. 모름은 통과가 아니다. 규칙: P-DB-1(shop-db)', 'db.extensions=모름 (unknown)', 'observe 역할에 이 값을 읽을 권한을 더하고 다시 점검한다'));
+  if (r && (r.dataClass === 'personal' || r.dataClass === 'sensitive'))
+    items.push(sec('P-LOC-5:env', 'advise', '이전 중 데이터가 지나는 곳도 위치다. Cloudflare 엣지, AI 워커가 부르는 LLM API, 덤프·스냅숏 보관 위치도 데이터가 놓이는 곳이다', `dataClass=${r.dataClass}`, 'AI 워커에는 스키마만 보내고 행 데이터는 보내지 않는다. 덤프·스냅숏은 도착 국가 안에만 둔다'));
+  if (target === 'onprem')
+    items.push(sec('G-07:env', 'advise', '패치·운영 책임이 고객에게 넘어간다. 관리형이 하던 OS·k3s·Postgres 부 버전 패치와 백업을 고객이 해야 한다', `${envById(m.sourceEnvId).provider} → onprem`, '승인 화면에 책임 이전을 적고, 패치 주기를 고객과 정한다'));
+  return items;
+}
+
+/** 사전 점검 결과 (워커 precheck: 실조회 + v2 점검 + 보안 판정). 계획서의 precheck 와 되돌림 detail 이 같이 쓴다 */
+function precheckOf(m: MockMigration): PrecheckItem[] {
+  return [
+    { id: 'PC-07', level: 'warn', message: '도착 리전의 vCPU 한도가 80%입니다', fix: '한도 증설을 요청해 주세요' },
+    { id: 'PC-12', level: 'info', message: '기본 키 없는 표가 없습니다' },
+    ...secItemsOf(m),
+  ];
+}
+
+/** contracts SecuritySpecV2 모양 검사 (strict: 모르는 칸이 있으면 틀림) */
+function isSecuritySpec(v: unknown): v is SecuritySpecV2 {
+  const isObj = (x: unknown): x is Record<string, unknown> => !!x && typeof x === 'object' && !Array.isArray(x);
+  if (!isObj(v) || Object.keys(v).some((key) => key !== 'requirements') || !isObj(v.requirements)) return false;
+  const r = v.requirements;
+  return Object.keys(r).every((key) => ['dataClass', 'residency', 'keyOwnership', 'operatorAllow'].includes(key))
+    && ['public', 'internal', 'personal', 'sensitive'].includes(r.dataClass as string)
+    && Array.isArray(r.residency) && r.residency.every((c) => typeof c === 'string' && /^[A-Z]{2}$/.test(c))
+    && (r.keyOwnership === 'provider' || r.keyOwnership === 'customer')
+    && (r.operatorAllow === undefined || (Array.isArray(r.operatorAllow) && r.operatorAllow.every((op) => ['customer', 'aws', 'gcp', 'azure'].includes(op as string))));
 }
 
 function planCostOf(m: MockMigration): NonNullable<PlanDoc['costSummary']> {
@@ -334,10 +411,7 @@ function planOf(m: MockMigration): PlanDoc {
       { id: 'cutover', owner: 'worker' },
       { id: 'cleanup', owner: 'worker' },
     ],
-    precheck: [
-      { id: 'PC-07', level: 'warn', message: '도착 리전의 vCPU 한도가 80%입니다', fix: '한도 증설을 요청해 주세요' },
-      { id: 'PC-12', level: 'info', message: '기본 키 없는 표가 없습니다' },
-    ],
+    precheck: precheckOf(m),
   };
 }
 
@@ -353,6 +427,15 @@ const V2_META: Record<string, FieldMetaEntryV2> = {
   'links.web->shop-db': { source: 'iam:shop-web-task', confidence: 0.6, needs_review: true, rationale: '읽기·쓰기 근거 없음 → 넓게 둠' },
   'entry.shop.example.com.routes[0]': { source: 'ecs:shop-web.hostname', confidence: 0.9, needs_review: false },
   'check.reviews[0]': { source: 'checkV2', confidence: 0.6, needs_review: true, rationale: 'web 의 실행 방식이 출발(ECS)과 다릅니다. 승인 때 한 번 더 확인합니다' },
+};
+// 가져오기가 출발 DB 에서 읽은 보안 사실 (adapters import/security-facts.ts: RDS 는 저장 암호화만 읽고 키 소유·TLS 강제는 모름).
+// 서버 GET spec 은 아직 이 칸을 싣지 않는다 (contracts MigrationSpecViewV2 에 키 없음). 화면을 보려고 목업만 싣는다
+const V2_FACTS: Record<string, SourceDbFacts> = {
+  'shop-db': {
+    encryptedAtRest: { value: true, origin: 'measured', source: 'rds:shop-db.StorageEncrypted' },
+    keyOwner: { value: null, origin: 'unknown', source: null },
+    tlsEnforced: { value: null, origin: 'unknown', source: null },
+  },
 };
 const V2_BOUNDARY: OutOfBoundaryV2[] = [
   { resource: 'rds:analytics-db', kind: 'postgres', reason: '이 앱의 서비스·잡이 근거 있게 닿지 않음' },
@@ -378,10 +461,13 @@ function specV2Of(m: MockMigration): MigrationSpecViewV2 {
     links: [{ from: 'web', to: 'shop-db', intent: 'readwrite' }, { from: 'web', to: 'shop-cache', intent: 'readwrite' }],
     entry: { via: 'cloudflare-lb', hosts: [{ hostnames: ['shop.example.com'], routes: [{ matches: [{ path: { type: 'PathPrefix', value: '/' } }], backends: [{ to: 'web', port: 8080, weight: 1 }] }] }] },
     posture: { permissions: [], network: [] },
+    ...(m.security ? { security: m.security } : {}),
   };
   const meta: Record<string, FieldMetaEntryV2> = { ...V2_META };
   if (included.includes('rds:analytics-db'))
     meta['components.analytics-db.boundary'] = { source: 'human', confidence: 1, needs_review: true, rationale: '사람이 경계 안으로 끌어옴' };
+  // 요구사항을 저장하면 서버가 그 칸 표시를 사람 것으로 남긴다 (core applySpecV2Patch)
+  if (m.security) meta.security = { source: 'human', confidence: 1, needs_review: false };
   const done = new Set(m.reviewDone ?? []);
   for (const key of done) if (meta[key]) meta[key] = { ...meta[key]!, needs_review: false };
   return {
@@ -390,6 +476,7 @@ function specV2Of(m: MockMigration): MigrationSpecViewV2 {
     needsReviewV2: Object.entries(meta).filter(([, value]) => value.needs_review).map(([key]) => key).sort(),
     specV2: spec, fieldMetaV2: meta,
     outOfBoundary: V2_BOUNDARY.filter((item) => !included.includes(item.resource)),
+    securityFacts: V2_FACTS,
     accuracy: {
       schemaVersion: '1', basis: 'render', total: 24, matched: 20, mismatched: 1, unverifiable: 3, comparable: 21, percent: 95.2,
       fields: [
@@ -941,6 +1028,14 @@ function route(method: string, path: string, search: URLSearchParams, body: Reco
         if (!item || (m.included ?? []).includes(resource)) return fail(400, 'SPEC_PATCH_INVALID', `not outside the boundary: ${resource}`);
         if (item.kind === 'service' || item.kind === 'job') return fail(400, 'SPEC_PATCH_INVALID', `workloads cannot be included: ${resource}`);
       }
+      // 값 바꾸기는 보안 요구사항만 받는다 (서버 applySpecV2Patch "security": 통째, null = 지움. 모양이 틀리면 400)
+      let security = m.security ?? null;
+      for (const change of (body.changes as { path?: unknown; value?: unknown }[] | undefined) ?? []) {
+        if (change.path !== 'security') return fail(400, 'SPEC_PATCH_INVALID', `mock: only "security" changes are handled (${String(change.path)})`);
+        if (change.value !== null && !isSecuritySpec(change.value)) return fail(400, 'SPEC_PATCH_INVALID', 'security: does not match SecuritySpecV2');
+        security = change.value as SecuritySpecV2 | null;
+      }
+      m.security = security;
       m.included = [...(m.included ?? []), ...include];
       m.reviewDone = [...new Set([...(m.reviewDone ?? []), ...confirm])];
       m.specVersion = shown.version + 1;
@@ -1322,7 +1417,9 @@ function layoutCheck(): LayoutProblem[] {
 type Scenario = { label: string; apply: (m: MockMigration) => void };
 
 // 상황마다 서버 모양 깃발을 처음으로 돌린다 (앞 상황의 깃발이 남지 않게)
-const PLAIN: Partial<MockMigration> = { specV2: false, specVersion: 2, reviewDone: [], included: [], v2plan: false, tenantBusy: 0, retries: 0, analysis: false };
+const PLAIN: Partial<MockMigration> = { specV2: false, specVersion: 2, reviewDone: [], included: [], security: null, v2plan: false, tenantBusy: 0, retries: 0, analysis: false };
+// 개인정보 · 한국 안 · 고객 키. 클라우드 도착이면 키 규칙(P-KEY-1)이 막는다
+const CUSTOMER_KEY: SecuritySpecV2 = { requirements: { dataClass: 'personal', residency: ['KR'], keyOwnership: 'customer' } };
 
 const stopAt = (m: MockMigration, status: MigrationStatus, extra: Partial<MockMigration> = {}) => {
   Object.assign(m, { pausedFrom: null, failedAtStatus: null, failureCode: null, ...PLAIN, ...extra });
@@ -1350,8 +1447,21 @@ const SCENARIOS: Scenario[] = [
       ] };
     },
   },
+  {
+    // 온프레 도착이면 막힘 대신 고객 확인이 된다 (서버 규칙과 같다)
+    label: '사전 점검 막힘 · 보안',
+    apply: (m) => {
+      m.status = 'prechecking';
+      stopAt(m, 'spec_review', { specV2: true, security: CUSTOMER_KEY });
+      m.log.at(-1)!.detail = { precheck: precheckOf(m) };
+    },
+  },
   { label: '계획 승인', apply: (m) => stopAt(m, 'awaiting_approval') },
   { label: '계획 승인 v2 (확인 항목)', apply: (m) => stopAt(m, 'awaiting_approval', { specV2: true, v2plan: true }) },
+  {
+    label: '계획 승인 v2 · 보안 요구사항',
+    apply: (m) => stopAt(m, 'awaiting_approval', { specV2: true, v2plan: true, security: { requirements: { ...CUSTOMER_KEY.requirements, keyOwnership: 'provider' } } }),
+  },
   { label: '동시 진행 상한', apply: (m) => stopAt(m, 'approved', { specV2: true, v2plan: true, tenantBusy: 1 }) },
   { label: '낡은 계획', apply: (m) => stopAt(m, 'stale') },
   { label: '거절', apply: (m) => stopAt(m, 'rejected') },

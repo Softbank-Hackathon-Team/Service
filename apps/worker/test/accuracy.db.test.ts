@@ -12,11 +12,9 @@ let core: typeof import("@svc/core");
 let imp: typeof import("../src/jobs/import.js");
 let owner: pg.Client;
 const T = randomUUID(), OTHER = randomUUID();
-const saved = { IMPORT_IR: process.env.IMPORT_IR };
 
 before(async () => {
   if (skip) return;
-  process.env.IMPORT_IR = "v2";
   core = await import("@svc/core");
   imp = await import("../src/jobs/import.js");
   owner = new pg.Client({ connectionString: OWNER }); await owner.connect();
@@ -24,7 +22,6 @@ before(async () => {
 });
 after(async () => {
   if (skip) return;
-  if (saved.IMPORT_IR === undefined) delete process.env.IMPORT_IR; else process.env.IMPORT_IR = saved.IMPORT_IR;
   await core.pool.end(); await owner.end();
 });
 
@@ -41,7 +38,6 @@ test("정상: 가져오기 끝나면 감사 detail.accuracy 에 계약 모양 �
   const id = await seed(T, "gcp", "aws");
   await imp.handleImport(job(T, id));
   const d = await detail(id);
-  assert.equal(d.ir, "v2");
   const a = ImportAccuracy.parse(d.accuracy);
   assert.equal(a.basis, "render");
   assert.equal(a.percent, 100); assert.ok(a.comparable > 0);
@@ -51,16 +47,6 @@ test("도착 종류가 달라도 숫자가 붙는다 (도착 onprem)", { skip },
   const id = await seed(T, "gcp", "onprem");
   await imp.handleImport(job(T, id));
   assert.equal(ImportAccuracy.parse((await detail(id)).accuracy).percent, 100);
-});
-
-test("거부: v1 길(깃발 끔)이면 accuracy 칸이 없다 (기존 감사 모양 그대로)", { skip }, async () => {
-  delete process.env.IMPORT_IR;
-  try {
-    const id = await seed(T, "gcp", "aws");
-    await imp.handleImport(job(T, id));
-    const d = await detail(id);
-    assert.ok(d && !("accuracy" in d));
-  } finally { process.env.IMPORT_IR = "v2"; }
 });
 
 test("VACCURACY 다시 가져오기: 감사가 두 줄 쌓이고 둘 다 정확도가 붙으며, 판 id 는 PREVIDS 로 유지돼도 100%", { skip }, async () => {

@@ -39,9 +39,12 @@ export interface RawEcsService {
   /** ALB 대상 그룹 (DescribeTargetGroups) */
   loadBalancers?: Array<{ containerName?: string; containerPort: number; healthCheckPath?: string | null }>;
   /** 이 서비스 대상 그룹으로 가는 ALB 리스너 규칙 (host-header · path-pattern). reader 가 펼쳐 넣는다 */
-  routes?: Array<{ host: string; path?: string | null; priority?: number | null }>;
+  /** EA-1: hostUnknown = 호스트 조건 없는 규칙 (host 는 ALB DNS 이름), listener* = 그 규칙이 달린 리스너 */
+  routes?: Array<{ host: string; path?: string | null; priority?: number | null; listenerPort?: number | null; listenerProtocol?: string | null; hostUnknown?: boolean }>;
   /** Application Auto Scaling (DescribeScalableTargets + 대상 추적 CPU 정책) */
   autoscaling?: { min: number; max: number; targetCpuPct?: number | null } | null;
+  /** FM-IR-C06: 작업(awsvpc)에 붙은 보안 그룹 id. RDS 방화벽에서 "옮기는 앱 자신" 을 가리는 데만 쓴다 (없으면 칸 없음) */
+  securityGroups?: string[];
   /** v1 데모 원본 칸 (진짜 reader 는 routes·loadBalancers 로 넣는다) */
   hostname?: string;
   healthCheckPath?: string;

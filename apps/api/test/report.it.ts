@@ -13,6 +13,8 @@ import { authPlugin } from "../src/plugins/auth.js";
 import { idempotencyPlugin } from "../src/plugins/idempotency.js";
 import { migrationRoutes } from "../src/routes/migrations.js";
 import { planRoutes } from "../src/routes/plans.js";
+import { specRoutes } from "../src/routes/spec.js";
+import { confirmAllReview } from "./_confirm-spec.js";
 import { reportRoutes } from "../src/routes/report.js";
 import { EvidenceReport } from "../src/report/schema.js";
 import { HANDLERS } from "../../worker/src/jobs/index.js";
@@ -31,6 +33,7 @@ before(async () => {
   await app.register(idempotencyPlugin);
   await app.register(migrationRoutes);
   await app.register(planRoutes);
+  await app.register(specRoutes);
   await app.register(reportRoutes);
   await startBoss();
   for (const [q, h] of Object.entries(HANDLERS))
@@ -71,6 +74,7 @@ async function completedMigration(): Promise<string> {
   const c = await app.inject({ method: "POST", url: "/migrations", headers: H, payload: { sourceEnvId, targetEnvId } });
   const { id } = c.json() as { id: string };
   await waitFor(id, "spec_review");
+  await confirmAllReview(app, id, H);
   await app.inject({ method: "POST", url: `/migrations/${id}/plan`, headers: H });
   await waitFor(id, "awaiting_approval");
   const plan = (await app.inject({ method: "GET", url: `/migrations/${id}/plan`, headers: H })).json() as

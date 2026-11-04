@@ -89,9 +89,10 @@ test("Z32 큐 대기 ④: 다른 이전의 작업만 있으면 대기로 안 친
   assert.deepEqual(r.action, { kind: "fail", to: "paused", code: "JOB_NOT_PICKED" });
 });
 
-test("Z32 큐 대기 ⑤: 워커 동시 처리 수 = shift·cleanup 5, 나머지 1 (Z62 #38, 7a)", { skip }, () => {
+test("Z32 큐 대기 ⑤: 워커 동시 처리 수 = shift·cleanup 5, 나머지 단계 큐 4 (G9-5), 단계 밖 큐 1 (Z62 #38, 7a)", { skip }, () => {
   assert.equal(core.concurrencyOf("shift"), 5);
   assert.equal(core.concurrencyOf("cleanup"), 5);
   for (const q of ["import", "precheck", "plan", "apply", "deploy", "sync", "cutover", "rollback"])
-    assert.equal(core.concurrencyOf(q), 1, q);
+    assert.equal(core.concurrencyOf(q), 4, q);
+  assert.equal(core.concurrencyOf("agent-run"), 1);
 });

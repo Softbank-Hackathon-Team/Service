@@ -31,6 +31,13 @@ tf() { run terraform -chdir="$MOD" "$@"; }
 TFENV() { export TF_DATA_DIR="$STATE/tfdata" TF_IN_AUTOMATION=1; }
 [ "$DRY" = 1 ] || { mkdir -p "$STATE" && chmod 700 "$STATE" || exit 1; }
 TFENV
+# FM-CLD-13: TF_DATA_DIR 은 .terraform 만 옮기고 로컬 상태 파일(terraform.tfstate)은 -chdir 폴더(레포 안)에 생겼다.
+#   → apply·destroy 에 -state 로 STATE 폴더를 준다. 예전 실행이 레포 모듈 폴더에 남긴 상태가 있으면 한 번 옮긴다 (잃으면 destroy 가 빈손)
+TFS="$STATE/terraform.tfstate"
+if [ "$DRY" != 1 ] && [ -f "$MOD/terraform.tfstate" ]; then
+  if [ -f "$TFS" ]; then say "주의: 상태 파일이 두 곳에 있음 ($MOD/terraform.tfstate, $TFS). 레포 쪽은 그대로 두고 $TFS 를 씀 — 사람이 확인"
+  else mv "$MOD/terraform.tfstate" "$TFS" && { [ -f "$MOD/terraform.tfstate.backup" ] && mv "$MOD/terraform.tfstate.backup" "$TFS.backup"; true; } && say "예전 상태 파일을 $TFS 로 옮김"; fi
+fi
 
 digest_ref() { # 태그 → repo@sha256:…
   case "$IMAGE" in *@sha256:*) echo "$IMAGE"; return 0 ;; esac
@@ -54,7 +61,7 @@ if [ "$CMD" = up ]; then
   REF=$(digest_ref | tail -1) || { say "이미지 digest 를 못 구함: ECS_IMAGE 에 repo@sha256:… 로 주면 됨"; exit 1; }
   [ "$DRY" = 1 ] || zero_check >/dev/null 2>&1 || say "알림: 이미 ECS 자원이 있음(다른 것일 수 있음). 가져오기는 IMPORT_AWS_ECS_CLUSTER=realecs-src 로 고른다"
   tf init -input=false || exit 1
-  tf apply -input=false -auto-approve -var "image=$REF" -var "app=$APP" -var "region=$AWS_REGION" || exit 1
+  tf apply -input=false -auto-approve -state="$TFS" -var "image=$REF" -var "app=$APP" -var "region=$AWS_REGION" || exit 1
   if [ "$DRY" = 1 ]; then say "DRY: 서비스 안정화 기다림 aws ecs wait services-stable (최대 10분)"; else
     aws ecs wait services-stable --cluster realecs-src --services realecs-src-api >> "$LOGF" 2>&1 || { say "서비스가 10분 안에 안정되지 않음 (가져오기는 정의만 읽음)"; }
   fi
@@ -63,7 +70,8 @@ else
   say "down 시작 dry=$DRY"
   REF=$(digest_ref | tail -1) || REF="docker.io/x@sha256:0000000000000000000000000000000000000000000000000000000000000000"
   tf init -input=false || exit 1
-  tf destroy -input=false -auto-approve -var "image=$REF" -var "app=$APP" -var "region=$AWS_REGION" || exit 1
+  [ "$DRY" = 1 ] || [ -f "$TFS" ] || say "알림: 상태 파일 없음($TFS) → destroy 가 지울 게 없다고 볼 수 있음. 남으면 cloud-zero 로 확인"
+  tf destroy -input=false -auto-approve -state="$TFS" -var "image=$REF" -var "app=$APP" -var "region=$AWS_REGION" || exit 1
   zero_check || { say "판정 FAIL down (ECS 가 남음)"; exit 1; }
   say "판정 PASS down"
 fi

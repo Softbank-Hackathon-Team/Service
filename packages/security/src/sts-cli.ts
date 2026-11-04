@@ -15,14 +15,18 @@ export const STS_CLI_TIMEOUT_MS = 20_000;
 
 /** CLI 실패. awsCode = stderr 의 괄호 코드만 (AccessDenied, NoSuchEntity …). stderr 원문은 담지 않는다 (ARN 계정 번호·요청 번호) */
 export class StsCliError extends Error {
-  constructor(readonly code: number, readonly awsCode: string | null, why?: string) {
-    super(`aws sts assume-role 실패 (exit ${code}${awsCode ? `, ${awsCode}` : ""})${why ? `: ${maskAccount(why)}` : ""}`);
+  constructor(readonly code: number, readonly awsCode: string | null, why?: string,
+    /** FM-CON-07: AccessDenied 원문에서 "not authorized to perform: <동작>" 의 동작만 (sts:AssumeRole·sts:TagSession·sts:SetSourceIdentity). 계정·ARN 은 안 담음 */
+    readonly deniedAction: string | null = null) {
+    super(`aws sts assume-role 실패 (exit ${code}${awsCode ? `, ${awsCode}` : ""}${deniedAction ? `, ${deniedAction}` : ""})${why ? `: ${maskAccount(why)}` : ""}`);
   }
   get missing() { return this.code === 127; }
 }
 
 // "An error occurred (AccessDenied) when calling the AssumeRole operation: …" → AccessDenied
 export const awsErrorCode = (stderr: string): string | null => stderr.match(/An error occurred \(([A-Za-z0-9.]+)\)/)?.[1] ?? null;
+// "… is not authorized to perform: sts:TagSession on resource: …" → sts:TagSession (서비스:동작 모양만, 나머지 원문은 버림)
+export const awsDeniedAction = (stderr: string): string | null => stderr.match(/not authorized to perform:\s*([a-z0-9-]+:[A-Za-z0-9]+)/)?.[1] ?? null;
 
 /** AssumeRoleInput → aws CLI 인자 (순수 함수) */
 export function stsCliArgs(i: AssumeRoleInput, region: string): string[] {
@@ -52,7 +56,7 @@ export function awsCliSts(o: { run?: StsCliRun; env?: NodeJS.ProcessEnv } = {}):
       // DECISION(team): 기본 리전 서울 (issuers.ts AWS_DEFAULT_REGION 과 같음). STS 지역 엔드포인트
       const region = env.AWS_REGION || env.AWS_DEFAULT_REGION || "ap-northeast-2";
       const r = await run(stsCliArgs(input, region), env);
-      if (r.code !== 0) throw new StsCliError(r.code, awsErrorCode(r.stderr), r.code === 124 ? "시간 초과" : r.code === 127 ? "aws 명령 없음" : undefined);
+      if (r.code !== 0) throw new StsCliError(r.code, awsErrorCode(r.stderr), r.code === 124 ? "시간 초과" : r.code === 127 ? "aws 명령 없음" : undefined, awsDeniedAction(r.stderr));
       let j: { Credentials?: { AccessKeyId?: string; SecretAccessKey?: string; SessionToken?: string; Expiration?: string };
         AssumedRoleUser?: { Arn?: string; AssumedRoleId?: string } };
       try { j = JSON.parse(r.stdout); }

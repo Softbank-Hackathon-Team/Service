@@ -13,15 +13,12 @@ export class IncludeError extends Error {
 
 export interface IncludeOut {
   result: ImportResultV2;
-  /** postgres 의 v1 투영 재료 (id → 원본 종류). 가져오기 쪽에서 projectionEnv.postgres 에 합친다 */
-  postgres: Record<string, { nativeType: string }>;
   added: string[];
 }
 
 /** names = outOfBoundary.resource. 하나라도 못 끌어오면 IncludeError (아무것도 바꾸지 않음). 입력은 안 바꿈 */
 export function applyInclude(base: ImportResultV2, names: string[], opts: { lenient?: boolean } = {}): IncludeOut {
   const result = structuredClone(base) as ImportResultV2;
-  const postgres: Record<string, { nativeType: string }> = {};
   const added: string[] = [];
   const out = result.outOfBoundary ?? [];
   const pool = { ...(result.boundaryPool ?? {}) } as Record<string, BoundaryPoolItem>;
@@ -47,7 +44,6 @@ export function applyInclude(base: ImportResultV2, names: string[], opts: { leni
     Object.assign(result.fieldMeta, structuredClone(item.fieldMeta));
     result.fieldMeta[`components.${item.component.id}.boundary`] = { source: "human", confidence: 1, needs_review: true,
       rationale: `사람이 경계 밖 목록에서 끌어옴 (${o.reason.slice(0, 120)}). 이 앱 자원이 맞는지·값이 맞는지 확인 필요` };
-    if (item.nativeType) postgres[item.component.id] = { nativeType: item.nativeType };
     delete pool[name];
     included.add(name);
     added.push(name);
@@ -56,5 +52,5 @@ export function applyInclude(base: ImportResultV2, names: string[], opts: { leni
   if (Object.keys(pool).length) result.boundaryPool = pool; else delete result.boundaryPool;
   if (included.size) result.included = [...included].sort();
   result.fieldMeta = Object.fromEntries(Object.entries(result.fieldMeta).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)));
-  return { result, postgres, added };
+  return { result, added };
 }

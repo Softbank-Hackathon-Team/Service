@@ -17,6 +17,14 @@ export const PostgresTfVars = z.object({
   ha: z.boolean().nullable(),
   read_replicas: z.number().int().nullable(),
   parameters_json: z.string(),                       // IR parameters 그대로 ("{}" 가능)
+  db_name: z.string(),                               // DBN-1: IR appDatabase → databases[0] → <앱>_ (Builder 가 고름)
+  app_user: z.string(),                              // DBN-1·E10-2: IR appUser → "app". 링크 출력 user·root db_username 이 이 값
+  backup_retention_days: z.number().int().nullable(), // BK-1: IR backup.retentionDays 그대로 (0 = 끔). null = 상품 기본
+  pitr: z.boolean().nullable(),                      // BK-1: IR backup.pitr. null = 상품 기본
+  maintenance_window: z.string().nullable(),         // BK-1: IR maintenanceWindow ("ddd:hh:mm-ddd:hh:mm" UTC). null = 상품이 고름
+  port: z.number().int().nullable(),                 // DM-7: IR port 그대로. null = 5432. Cloud SQL 은 5432 고정이라 모듈이 안 씀 (Builder 경고)
+  // SSL-1 DRAFT(ai): 출발이 평문을 허용(IR tlsRequired === false)한 경우만 false. 모름(null)·true 는 지금처럼 TLS 강제 (승인 줄 tls_relaxed 로 사람이 봄)
+  require_tls: z.boolean(),
   logical_replication: z.literal(true),              // CDC 이전이라 도착은 항상 켬 (출발 값과 무관한 플랫폼 요구)
   allow_from_json: z.string(),                       // 의존성 connect 의 from 신원 + posture ingress(mirror)
   public: z.boolean(),                               // posture public (mirror) 또는 데모 DB_PUBLIC
@@ -59,6 +67,7 @@ export const CacheTfVars = z.object({
   tls: z.boolean().nullable(),
   auth: z.boolean().nullable(),
   ha: z.boolean().nullable(),
+  port: z.number().int().nullable(), // DM-7: IR port 그대로. null = 6379. Memorystore 는 상품이 정함 (Builder 경고)
   allow_from_json: z.string(),       // 의존성 from 신원 (캐시는 공개 안 함)
 }).strict();
 export type CacheTfVars = z.infer<typeof CacheTfVars>;
@@ -67,10 +76,10 @@ export const ObjectStoreTfVars = z.object({
   id: TfId,
   name: z.string(),                  // 버킷 이름 (전역 유일, 이전마다 해시)
   versioning: z.boolean(),
-  public: z.boolean().nullable(),    // null = 모름 → 모듈은 비공개로 만들고 사람에게 묻는다. 공개로 열지 않음
+  public: z.boolean().nullable(),    // null = 모름 → 모듈은 비공개로 만들고 사람에게 묻는다. B-2: true = 출발이 공개 → 모듈도 공개로 엶
   size_gb: z.number().nonnegative().nullable(),
   lifecycle_json: z.string(),        // IR lifecycle 그대로 ("[]" 가능)
-  cors_json: z.string(),             // IR cors 그대로 ("[]" 가능)
+  cors_json: z.string(),             // IR cors(CorsRuleV2 배열) 그대로 ("[]" 가능). DM-1: 모듈은 이 모양만 읽고 빈 칸을 "*"·GET 으로 채우지 않음
   allow_from_json: z.string(),
   // DRAFT(ai): force_destroy 는 IR 에 없는 플랫폼 값. 데모 정리(disposable) 때 true
   force_destroy: z.boolean(),
@@ -87,6 +96,12 @@ export const QueueTfVars = z.object({
   dead_letter_to: TfId.nullable(),   // 같은 명세 안의 다른 queue id
   dead_letter_max_receive: z.number().int().nullable(),
   allow_from_json: z.string(),
+  // PS-1·DM-6·B-1: 받는 쪽 설정 (IR 그대로, 없으면 null). subscriptions_json = topic 모델의 구독 목록 [{ name(도착 이름), ack_timeout_sec, … }]
+  idle_expiry_sec: z.number().int().nullable(),
+  retain_acked: z.boolean().nullable(),
+  filter: z.string().nullable(),
+  push_endpoint: z.string().nullable(),
+  subscriptions_json: z.string(),
 }).strict();
 export type QueueTfVars = z.infer<typeof QueueTfVars>;
 
@@ -162,6 +177,14 @@ export const VmTfVars = z.object({
 }).strict();
 export type VmTfVars = z.infer<typeof VmTfVars>;
 
+// TF4-3: 온프레 netpol 모듈 cfg (infra/modules/onprem/kinds/netpol). 지금 Builder 는 늘 빈 목록(정책 0개 = 출발처럼 열림)을 보내지만
+//   모양은 계약으로 지킨다 (예전엔 글자 "[]" 를 직접 써서 Zod 가 안 봄). id 규칙은 루트 validation 과 같음
+export const NetpolTfVars = z.object({
+  id: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/),
+  allow_namespaces_json: z.string(),        // JSON 배열: 들어오게 둘 네임스페이스 이름
+}).strict();
+export type NetpolTfVars = z.infer<typeof NetpolTfVars>;
+
 // 루트 변수 이름(`<이름>_json`) ↔ 항목 스키마. 어댑터·HCL 대조 시험이 이 표를 씀
 export const TF_KIND_VARS = {
   postgres: PostgresTfVars,
@@ -173,8 +196,9 @@ export const TF_KIND_VARS = {
   job: JobTfVars,
   service: ServiceTfVars,
   vm: VmTfVars,
+  netpol: NetpolTfVars,
 } as const;
-export const TF_VAR_KINDS = ["postgres", "namespace", "identity", "cache", "objectStore", "queue", "job", "service", "vm"] as const;
+export const TF_VAR_KINDS = ["postgres", "namespace", "identity", "cache", "objectStore", "queue", "job", "service", "vm", "netpol"] as const;
 export type TfVarKind = (typeof TF_VAR_KINDS)[number];
 
 // 모듈 내부 출력: 비밀 이름만. link_outputs 에는 안 섞음

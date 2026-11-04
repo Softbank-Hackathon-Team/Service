@@ -1,9 +1,9 @@
 // PREVIDS2: carryHumanEdits 순수 함수 시험
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEMO_INVENTORY_V2, normalizeV2, carryHumanEdits, CARRY_NOTE } from "../src/index.js";
+import { DEMO_INVENTORY, normalizeV2, carryHumanEdits, CARRY_NOTE } from "../src/index.js";
 
-const fresh = () => normalizeV2(DEMO_INVENTORY_V2.onprem!).result;
+const fresh = () => normalizeV2(DEMO_INVENTORY.onprem!).result;
 const K = "components.shop-cleanup.resources";
 const comp = (r: ReturnType<typeof fresh>, id = "shop-cleanup") => r.spec.components.find((c) => c.id === id)! as { props: Record<string, unknown> };
 

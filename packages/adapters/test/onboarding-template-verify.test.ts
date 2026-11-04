@@ -1,6 +1,7 @@
 // 검증 L3: 연결 템플릿의 빈틈 — 참조가 모두 풀리는지, 크기 한도, 하드코딩 계정 없음, 조건부 경계 정책, 파라미터 패턴의 경계값, 거부 사본
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { configProblems } from "@svc/contracts";
 import { readFileSync } from "node:fs";
 import { buildAwsConnectTemplate } from "../scripts/aws-connect-template.js";
 
@@ -48,11 +49,12 @@ test("경계 정책은 조건부: CreateBoundaryPolicy=true 일 때만 만들고
   assert.deepEqual(t.Parameters.CreateBoundaryPolicy.AllowedValues, ["true", "false"]);
 });
 
-test("PlatformPrincipalArn 패턴: 역할 ARN은 통과, 사용자·:root·12자리 아님·접두 없음은 거부", () => {
+test("PlatformPrincipalArn 패턴: 역할·사용자 ARN은 통과, :root·assumed-role·12자리 아님·접두 없음은 거부", () => {
   const re = new RegExp(load().Parameters.PlatformPrincipalArn.AllowedPattern);
   assert.ok(re.test("arn:aws:iam::123456789012:role/svc-worker"));
   assert.ok(re.test("arn:aws:iam::123456789012:role/path/to/role"));
-  for (const bad of ["arn:aws:iam::123456789012:root", "arn:aws:iam::123456789012:user/x", "arn:aws:iam::12345678901:role/x",
+  assert.ok(re.test("arn:aws:iam::123456789012:user/jeong-cli"));
+  for (const bad of ["arn:aws:iam::123456789012:root", "arn:aws:sts::123456789012:assumed-role/x/y", "arn:aws:iam::12345678901:role/x",
     "arn:aws:iam::1234567890123:role/x", "arn:aws:iam::123456789012:role/", "x-arn:aws:iam::123456789012:role/x", "*"])
     assert.ok(!re.test(bad), bad);
 });
@@ -67,15 +69,17 @@ test("ExternalId 패턴: STS 가 받는 글자만, 32자 미만 파라미터는 
   assert.equal(p.NoEcho, undefined);
 });
 
-test("두 신뢰 정책은 Allow 한 줄뿐이고 Deny·NotPrincipal·와일드카드 Principal 없음", () => {
+test("두 신뢰 정책은 Allow 두 줄(AssumeRole+ExternalId / TagSession·SetSourceIdentity)뿐이고 Deny·NotPrincipal·와일드카드 Principal 없음 (FM-CON-06)", () => {
   const t = load();
   for (const key of ["ObserveRole", "OperateRole"]) {
     const st = t.Resources[key].Properties.AssumeRolePolicyDocument.Statement;
-    assert.equal(st.length, 1);
-    assert.equal(st[0].Effect, "Allow");
-    assert.equal(st[0].NotPrincipal, undefined);
-    assert.notEqual(st[0].Principal?.AWS, "*");
-    assert.equal(st[0].Principal?.Service, undefined);
+    assert.equal(st.length, 2);
+    for (const s of st) {
+      assert.equal(s.Effect, "Allow");
+      assert.equal(s.NotPrincipal, undefined);
+      assert.notEqual(s.Principal?.AWS, "*");
+      assert.equal(s.Principal?.Service, undefined);
+    }
   }
 });
 
@@ -94,4 +98,16 @@ test("다시 만들어도 같은 글자: builder 출력의 직렬화가 파일�
   const bd = t.Resources.BoundaryPolicy.Properties.PolicyDocument;
   const again = buildAwsConnectTemplate(op, bd);
   assert.equal(JSON.stringify(again, null, 2).trimEnd(), raw.trimEnd());
+});
+
+// PRINCIPALUSER: 템플릿 AllowedPattern 과 API 설정 검사(PLATFORM_PRINCIPAL_ARN)가 같은 값을 받고 같은 값을 거부해야 한다
+//   (11/3: 한쪽만 user 를 받아 실세션 connect 에서 api 가 시작을 거부함)
+test("PRINCIPALUSER: 연결 템플릿 패턴 ↔ API 설정 검사 같은 판정", () => {
+  const re = new RegExp(load().Parameters.PlatformPrincipalArn.AllowedPattern);
+  const api = (v: string) => configProblems("api", { DATABASE_URL: "postgres://u@localhost:5432/d", PLATFORM_PRINCIPAL_ARN: v })
+    .every((x) => !x.startsWith("PLATFORM_PRINCIPAL_ARN"));
+  for (const v of ["arn:aws:iam::123456789012:role/svc-worker", "arn:aws:iam::123456789012:role/aws-reserved/sso.amazonaws.com/ap-northeast-2/AWSReservedSSO_X",
+    "arn:aws:iam::123456789012:user/jeong-cli", "arn:aws:iam::123456789012:root", "arn:aws:sts::123456789012:assumed-role/x/y",
+    "arn:aws:iam::12345678901:role/x", "arn:aws:iam::123456789012:group/g", "x-arn:aws:iam::123456789012:role/x"])
+    assert.equal(re.test(v), api(v), v);
 });

@@ -5,8 +5,9 @@ import type { Provider } from "@svc/contracts";
 import {
   createAwsBulkSource, createGcpCatalogSource, createOnpremSource, estimateCost, fetchWithCache,
   loadCatalog, loadSampleCatalog, readCache, vendorRegion, writeCache,
-  type CostEstimateRequestInput, type DetailedPriceSource, type PriceCatalog,
+  type DetailedPriceSource, type PriceCatalog,
 } from "../src/index.js";
+import { spec as demoShop } from "../test/helpers.js";
 
 const REGION = "ap-northeast-2";
 const now = new Date();
@@ -50,16 +51,7 @@ for (const v of ["aws", "gcp", "onprem"] as Provider[]) {
   }
 }
 
-const spec: CostEstimateRequestInput["spec"] = {
-  schemaVersion: "1",
-  app: { name: "demo-shop" },
-  service: {
-    image: `ghcr.io/demo/shop@sha256:${"a".repeat(64)}`, port: 8080, healthPath: "/healthz",
-    replicas: 1, cpu: "250m", memory: "512Mi", env: [], secretRefs: [],
-  },
-  database: { engine: "postgres", majorVersion: "16", storageGb: 20 },
-  ingress: { hostname: "shop.example.com", entry: "cloudflare-lb" },
-};
+const spec = demoShop();   // 시험과 같은 명세: 서비스 1대 x 250m/512Mi + Postgres 20GB
 const poc = ["t3.medium", "e2-medium", "k3s-vm-2c8g"];
 const run = (cat: PriceCatalog, nodeSkus?: string[]) =>
   estimateCost({ spec, from: "aws", traffic: { peakRps: 10 }, ...(nodeSkus ? { nodeSkus } : {}) }, cat,

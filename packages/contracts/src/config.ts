@@ -62,7 +62,8 @@ export const CONFIG_RULES = {
     REPORT_CHAIN_LIMIT: { check: num({ int: true, min: 1 }) },
     // 입력층 L2: AWS 연결 링크. 비면 링크 발급이 503 CONNECT_NOT_CONFIGURED (서버는 뜬다)
     CONNECT_TEMPLATE_URL: { check: httpsUrl },
-    PLATFORM_PRINCIPAL_ARN: { check: (v) => (/^arn:aws:iam::\d{12}:role\/[\w+=,.@\/-]+$/.test(v.trim()) ? null : "IAM 역할 ARN 모양이 아님") },
+    // DRAFT(ai) PRINCIPALUSER: 플랫폼 주체는 IAM 역할 또는 IAM 사용자 (데모 계정 finals 는 사용자 키). :root·sts assumed-role 은 거부
+    PLATFORM_PRINCIPAL_ARN: { check: (v) => (/^arn:aws:iam::\d{12}:(role|user)\/[\w+=,.@\/-]+$/.test(v.trim()) ? null : "IAM 역할·사용자 ARN 모양이 아님") },
   },
   worker: {
     ...COMMON,
@@ -71,10 +72,8 @@ export const CONFIG_RULES = {
     CRED_RENEW_SEC: { check: num({ min: 0 }) },
     STUB_DELAY_MS: { check: num({ min: 0 }) },
     IMPORT_MAX_ATTEMPTS: { check: num({ int: true, min: 1 }) },
-    IMPORT_IR: { check: oneOf("v1", "v2") },                    // I3b: 가져오기 공통 명세 판. v2 = spec_v2 도 저장(v1 은 그대로). 기본 v1
-    PLAN_IR: { check: oneOf("v1", "v2") },                      // TA3: 계획 명세 판. v2 = 도착 Builder v2(고정 루트 + workloads[]). 기본 v1. IMPORT_IR 과 따로
-    SEC_PRECHECK: { check: oneOf("0", "1") },                   // 보안 판정 연결: PLAN_IR=v2 일 때 사전 점검에 보안 판정(SEC:*)을 붙임. 기본 꺼짐, 1 = 켬
-    IMPORT_AWS_IAM: { check: oneOf("0", "1") },                 // I4: 1 = 가져오기(v2)가 AWS 앱 신원의 IAM 정책도 읽음 (grants·기준선). 기본 꺼짐
+    SEC_PRECHECK: { check: oneOf("0", "1") },                   // 보안 판정 연결: 사전 점검에 보안 판정(SEC:*)을 붙임. 기본 꺼짐, 1 = 켬
+    IMPORT_AWS_IAM: { check: oneOf("0", "1") },                 // I4: 가져오기가 AWS 앱 신원의 IAM 정책도 읽음 (grants·기준선). ID-5 DRAFT(ai): 기본 켬, 0 = 끔
     MAX_CUTOVER_ATTEMPTS: { check: num({ int: true, min: 1 }) },
     ROLLBACK_MAX_ATTEMPTS: { check: num({ int: true, min: 1 }) },
     REPL_MAX_CATCHUP_MS: { check: num({ min: 0 }) },
@@ -83,8 +82,8 @@ export const CONFIG_RULES = {
     TEMP_ROLE_SWEEP_MS: { check: num({ min: 1 }) },
     // L4b: 주기 재확인 일정. cron 5칸 또는 off (모양만 본다. 값은 pg-boss 가 다시 검사)
     VERIFY_CRON: { check: (v) => v.trim() === "off" || v.trim().split(/\s+/).length === 5 ? null : "cron 5칸 또는 off" },
-    REAL_STS: { check: oneOf("0", "1") },   // L4: 1 = 진짜 AWS STS(CLI), external_id 있는 환경만. 운영 스위치 (시험 전용 아님)
-    GCP_PLATFORM_PROJECT: { check: (v) => (/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(v.trim()) ? null : "GCP 프로젝트 ID 모양이 아님") },   // L7i: REAL_STS=1 일 때 GCP 발급기가 쓰는 플랫폼 프로젝트 ID
+    REAL_STS: { check: oneOf("0", "1") },   // L4: 비움·1 = 진짜 발급기(기본), 0 = 흉내. 운영 스위치 (시험 전용 아님)
+    GCP_PLATFORM_PROJECT: { check: (v) => (/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(v.trim()) ? null : "GCP 프로젝트 ID 모양이 아님") },   // L7i: 진짜 발급기일 때 GCP 발급기가 쓰는 플랫폼 프로젝트 ID
   },
   "agent-worker": {
     ...COMMON,

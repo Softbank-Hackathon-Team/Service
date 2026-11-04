@@ -29,7 +29,8 @@ export interface ProviderIssuer {
 export const AWS_STS_MIN_TTL = 900;
 export const AWS_DEFAULT_REGION = "ap-northeast-2";
 // 아래 인터페이스는 AWS SDK v3 STSClient AssumeRoleCommand 의 입력·출력 모양과 같다
-// STUB: SDK 연결 (@aws-sdk/client-sts 추가는 통합에 요청). 지금은 주입받는다
+// 실제 호출 = sts-cli.ts awsCliSts (워커의 aws CLI 로 진짜 assume-role, REAL_STS=1 + external_id 있는 환경. 11/3 실세션 F8 통과).
+// DRAFT(ai): SDK(@aws-sdk/client-sts)는 넣지 않는다. 대안 = SDK(의존성 +1, 워커 이미지에 이미 CLI 있음). 같은 StsApi 모양이라 바꿔 끼우면 호출부는 안 바뀐다
 export interface StsApi {
   assumeRole(input: AssumeRoleInput): Promise<{
     Credentials?: { AccessKeyId?: string; SecretAccessKey?: string; SessionToken?: string; Expiration?: Date };

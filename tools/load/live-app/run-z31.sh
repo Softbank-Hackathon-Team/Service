@@ -52,9 +52,9 @@ VERIFY_PORT=55433; [ "${ROLLBACK_AFTER_CUTOVER:-}" = 1 ] && VERIFY_PORT=55432
 # 끄기: pid 로 (pkill -f 는 이 셸까지 죽일 수 있다)
 for p in $(cat "$OUT/pids"); do kill $p 2>/dev/null || true; done
 sleep 1; for p in $(pgrep -f "src/main.ts" || true); do kill $p 2>/dev/null || true; done
-pgrep -f "dbproxy/src/proxy.ts" | xargs -r kill 2>/dev/null || true
-pgrep -f "dbproxy/src/pgbouncer-control.ts" | xargs -r kill 2>/dev/null || true
-pgrep -x pgbouncer | xargs -r kill 2>/dev/null || true
-pgrep -f "shop/app/src/server.mjs" | xargs -r kill 2>/dev/null || true
+pgrep -f "dbproxy/src/proxy.ts" | xargs kill 2>/dev/null || true   # MACENV: -r 빼기 (BSD xargs 는 입력이 없으면 원래 안 돎, GNU 는 빈 kill 이 실패해도 || true)
+pgrep -f "dbproxy/src/pgbouncer-control.ts" | xargs kill 2>/dev/null || true   # MACENV: -r 빼기 (BSD xargs 는 입력이 없으면 원래 안 돎, GNU 는 빈 kill 이 실패해도 || true)
+pgrep -x pgbouncer | xargs kill 2>/dev/null || true   # MACENV: -r 빼기 (BSD xargs 는 입력이 없으면 원래 안 돎, GNU 는 빈 kill 이 실패해도 || true)
+pgrep -f "shop/app/src/server.mjs" | xargs kill 2>/dev/null || true   # MACENV: -r 빼기 (BSD xargs 는 입력이 없으면 원래 안 돎, GNU 는 빈 kill 이 실패해도 || true)
 sleep 1
 cat "$LOG.result.txt"

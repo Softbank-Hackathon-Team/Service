@@ -15,7 +15,7 @@ test("정상: apply 실행기 env 에 빌린 자격 파일만, AWS_PROFILE·워�
     const calls: Array<{ cmd: string; args: string[]; env: NodeJS.ProcessEnv }> = [];
     const exec: Exec = async (cmd, args, o) => {
       calls.push({ cmd, args, env: o.env });
-      return { code: 0, stdout: args[0] === "output" ? "{}" : "ok", stderr: "", ms: 1 };
+      return { code: 0, stdout: args.includes("output") ? "{}" : "ok", stderr: "", ms: 1 };
     };
     const base = { PATH: "/bin", HOME: "/h", AWS_PROFILE: "finals", AWS_DEFAULT_PROFILE: "x", AWS_ACCESS_KEY_ID: "AKIAOWN", AWS_SECRET_ACCESS_KEY: "own", AWS_SESSION_TOKEN: "own" };
     const root = mkdtempSync(join(tmpdir(), "l5b-"));

@@ -1,4 +1,4 @@
-import { boss, startBoss, startMetricsServerNear, workOptions, concurrencyOf, LISTEN_NOTIFY } from "@svc/core";
+import { assertMigrations, pool, boss, startBoss, startMetricsServerNear, workOptions, stepWorkOptions, LISTEN_NOTIFY } from "@svc/core";
 import { HANDLERS } from "./jobs/index.js";
 import { jobAttempt } from "./jobs/_step.js";
 import { registerLeaseJobs } from "./lease/index.js";
@@ -43,6 +43,7 @@ if (!iacMockEnabled()) {
   else log.error({ reason: v.error }, "iac: real terraform 인데 실행 불가 → aws/gcp/onprem apply 는 TF_BIN_MISSING 으로 실패한다. 시험이면 MOCK_IAC=1");
 } else log.warn("iac: MOCK_IAC=1 → 도착 자원 흉내 (시험 전용)");
 
+await assertMigrations("worker", pool);   // PF FM-ORC-26: db:migrate 를 잊었으면 큐를 열기 전에 멈춘다
 await startBoss();
 // 큐 이름 → 처리 함수. 새 작업은 jobs/ 에 파일 하나 + jobs/index.ts에 한 줄
 // DRAFT(ai): 큐 확인 간격 0.5초 (pg-boss 기본 2초면 단계 9개가 smoke에서 너무 느리다). Z49: WORKER_POLL_SEC 로 바꿀 수 있다(최소 0.5)
@@ -51,7 +52,7 @@ for (const [queue, handle] of Object.entries(HANDLERS)) {
   const run = instrument(queue, handle);
   // Z19 H4: 몇 번째 시도인지(retryCount/retryLimit)를 처리기에 알린다. 마지막 시도가 실패하면 runStep이 이전을 failed/paused로 옮긴다
   // Z32 (Z62 #38): shift 만 localConcurrency 5 (boss.ts WORK_CONCURRENCY). 처리기는 그대로 한 번에 1건을 받는다
-  await boss.work(queue, { ...workOptions(), includeMetadata: true, localConcurrency: concurrencyOf(queue) }, async ([job]) => {
+  await boss.work(queue, { ...stepWorkOptions(queue), includeMetadata: true }, async ([job]) => {
     await jobAttempt.run({ queue, retryCount: job!.retryCount, retryLimit: job!.retryLimit }, () => run(job!));
   });
 }

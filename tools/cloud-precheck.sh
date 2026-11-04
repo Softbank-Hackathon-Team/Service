@@ -5,7 +5,7 @@
 #   region       AWS_REGION = ap-northeast-2, GCP_ZONE 이 asia-northeast3-  (AWS_REGION 이 비면 demo-day 와 같은 ap-northeast-2)
 #   aws-auth     aws sts get-caller-identity → 12자리 계정 번호 (SSO 만료·프로필 틀림을 up 도중이 아니라 여기서 잡는다. 계정 번호는 안 찍음)
 #   gcp-auth     gcloud auth print-access-token 이 되는가 (토큰은 안 찍음)
-#   gcp-apis     gcloud services list --enabled 에 sqladmin·container·compute
+#   gcp-apis     gcloud services list --enabled 에 serviceusage (FAIL), 나머지(sqladmin·container·compute·iam·iamcredentials…)는 gcp/env apply 가 켬 → 꺼져 있으면 WARN
 #   gcp-billing  gcloud billing projects describe → billingEnabled true
 #   sql-tier     (z75-52) 규칙: CLOUDSQL_DB_VERSION(POSTGRES_16, adapters gcp 기본) 이 16 이상이면 infra/modules/gcp/app/main.tf 에
 #                edition 이 글자 그대로 있어야 한다. 없으면 FAIL (PG16+ 기본 ENTERPRISE_PLUS 는 db-f1-micro·db-g1-small 을 "Invalid Tier" 로 거절, 10/31 맥).
@@ -16,13 +16,20 @@
 #                한도를 못 읽으면(권한 없음 등) WARN, 모자라면 FAIL
 #   gcp-quota    (GATE) 지역 한도 CPUS 남은 것 ≥ NEED_GCP_CPUS 4 (e2-standard-2 2대), IN_USE_ADDRESSES ≥ NEED_GCP_ADDR 2 (Cloud NAT + LB)
 # 끝 코드: 0 = FAIL 없음, 1 = FAIL 있음
-# 환경 변수: AWS_REGION GCP_PROJECT(finals-demo) GCP_ZONE(asia-northeast3-a) CLOUDSQL_TIER CLOUDSQL_EDITION(직접 정하기)
-#            PRECHECK_CALL_SEC(8, 명령 하나 최대) NEED_VPC(1) NEED_EIP(1) NEED_RDS(1) NEED_VCPU(6) NEED_GCP_CPUS(4) NEED_GCP_ADDR(2)
+# 환경 변수: AWS_REGION TARGET_PROJECT_ID(도착 전용 프로젝트, 있으면 GCP 점검은 여기) GCP_PROJECT(finals-demo) GCP_ZONE(asia-northeast3-a) CLOUDSQL_TIER CLOUDSQL_EDITION(직접 정하기)
+#            PRECHECK_CALL_SEC(30, 명령 하나 최대. gcloud 첫 호출이 18초 걸린 적 있음) NEED_VPC(1) NEED_EIP(1) NEED_RDS(1) NEED_VCPU(6) NEED_GCP_CPUS(4) NEED_GCP_ADDR(2)
 set -u
 cd "$(dirname "$0")/.." || exit 1
 T0=$(date +%s)
-CALL=${PRECHECK_CALL_SEC:-8}
-P=${GCP_PROJECT:-finals-demo}
+CALL=${PRECHECK_CALL_SEC:-30}
+# RV-22: 전체 제한. 부르는 쪽(up-preflight tmo 60)보다 짧아야 이 스크립트가 스스로 끝나며 어느 점검이 시간에 걸렸는지 남긴다.
+#   (예전: 호출당 30초 × gcloud 5개 차례 × 시간 초과 때 한 번 더 = 최악 300초 > 바깥 60초 → 바깥이 먼저 끊어 이유 없는 FAIL)
+#   각 호출 제한 = min(PRECHECK_CALL_SEC, 남은 시간). 다 쓰면 남은 호출은 바로 124 + "총 제한" 표시. 다시 하기는 남은 시간이 있을 때만
+TOTAL=${PRECHECK_TOTAL_SEC:-50}
+case "$TOTAL" in ''|*[!0-9]*) TOTAL=50 ;; esac
+DEADLINE=$((T0 + TOTAL))
+# 결정 3 A안: GCP 점검(API·결제·티어·한도)은 도착 자원이 생기는 전용 프로젝트(TARGET_PROJECT_ID)를 본다. 없으면 예전처럼 GCP_PROJECT
+P=${TARGET_PROJECT_ID:-${GCP_PROJECT:-finals-demo}}
 ZONE=${GCP_ZONE:-asia-northeast3-a}
 # UPREV-A: demo-day.sh 와 같은 기본값. 예전엔 AWS_REGION 이 비면 "서울 아님" FAIL, AWS_PROFILE 이 비면 기본 프로필(다른 계정)을 조회했다
 export AWS_PROFILE=${AWS_PROFILE:-finals}
@@ -35,6 +42,9 @@ if [ -n "${CLOUDSQL_EDITION:-}" ]; then ED=$CLOUDSQL_EDITION; ED_FROM="환경 �
 else
   ED=$(sed -n 's/^[[:space:]]*edition[[:space:]]*=[[:space:]]*"\([A-Z_]*\)".*/\1/p' "$MAIN_TF" 2>/dev/null | head -n 1); ED_FROM="main.tf"
 fi
+# NOTTY: 뒤로 띄운 줄(j_bg·nohup)이 터미널 입력을 물려받으면 gcloud·aws 가 묻는 창(프롬프트·페이저)에서 터미널을 읽다 멈춘다
+#   (11/3 5차: Jeong 터미널에서 띄운 up 만 cloud-precheck gcp-billing 이 30초 넘게 멈춤, 맥 RC 에선 2~4초) → 묻지 않게·페이저 끄기
+export CLOUDSDK_CORE_DISABLE_PROMPTS=1 AWS_PAGER="" PAGER=cat
 W=$(mktemp -d "${TMPDIR:-/tmp}/precheck.XXXXXX") || exit 1
 trap 'rm -rf "$W"' EXIT
 
@@ -43,9 +53,12 @@ trap 'rm -rf "$W"' EXIT
 #   감시자가 끄기 전에 "<출력>.to" 를 남긴다: 자식이 먼저 꺼져 래퍼가 0 으로 끝나도 124 로 본다 (Z38 R8-45)
 killtree() { local c; for c in $(pgrep -P "$1" 2>/dev/null); do killtree "$c"; done; kill -TERM "$1" 2>/dev/null; }
 tmo() {
-  local s=$1 o rc; shift
+  local s=$1 o rc left; shift
+  left=$((DEADLINE - $(date +%s)))
+  if [ "$left" -le 0 ]; then echo "$(date -u +%H:%M:%SZ) 총 제한 ${TOTAL}초를 다 씀 → 안 부름: $1 $2 $3" >> "$W/retry.log"; return 124; fi
+  [ "$s" -gt "$left" ] && s=$left
   o=$(mktemp "$W/o.XXXXXX")
-  "$@" > "$o" & local p=$!
+  "$@" < /dev/null > "$o" & local p=$!   # NOTTY: 터미널 입력을 안 물려줌
   ( sleep "$s"; : > "$o.to"; killtree "$p" ) >/dev/null 2>&1 & local k=$!
   wait "$p" 2>/dev/null; rc=$?
   kill "$k" 2>/dev/null; wait "$k" 2>/dev/null
@@ -54,6 +67,9 @@ tmo() {
   return $rc
 }
 say() { echo "$1 $2 $3" >> "$W/$2.res"; }
+# GBILLRETRY (11/3 9회차 앞): gcloud 를 5개 동시에 띄우면 자격 갱신이 몰려 가끔(6~7번에 1번) 한 호출이 시간 초과(124). 단독이면 2.5초.
+#   → gcloud 는 동시에 띄우지 않고 한 줄로 차례로(gcp_all), 각 호출은 124 일 때만 한 번 더 (gtmo). aws 쪽은 그대로 동시에
+gtmo() { local rc; tmo "$@"; rc=$?; [ $rc -eq 124 ] || return $rc; [ $((DEADLINE - $(date +%s))) -gt 2 ] || return 124; echo "$(date -u +%H:%M:%SZ) 시간 초과 → 한 번 더: $2 $3" >> "$W/retry.log"; tmo "$@"; }
 
 c_region() {
   local bad=""
@@ -71,24 +87,27 @@ c_aws_auth() {
 }
 c_gcp_auth() {
   local rc
-  tmo "$CALL" gcloud auth print-access-token > /dev/null 2>"$W/gauth.err"; rc=$?
+  gtmo "$CALL" gcloud auth print-access-token > /dev/null 2>"$W/gauth.err"; rc=$?
   if [ $rc -eq 0 ]; then say OK gcp-auth "gcloud 로그인됨"; else say FAIL gcp-auth "gcloud 토큰 못 받음 rc=$rc → gcloud auth login"; fi
 }
 c_apis() {
   local out rc miss="" late="" a
-  out=$(tmo "$CALL" gcloud services list --enabled --project "$P" --format='value(config.name)' 2>"$W/apis.err"); rc=$?
+  out=$(gtmo "$CALL" gcloud services list --enabled --project "$P" --format='value(config.name)' 2>"$W/apis.err"); rc=$?
   [ $rc -eq 0 ] || { say FAIL gcp-apis "조회 실패 rc=$rc ($(head -c 120 "$W/apis.err" | tr '\n' ' '))"; return; }
   # GATE-gcp: serviceusage 가 꺼져 있으면 gcp/env 의 google_project_service(나머지 API 켜기)부터 실패한다 → FAIL.
   #   servicenetworking·artifactregistry·secretmanager 는 apply 가 켜 주지만, 켜는 직후 몇 분은 "has not been used" 로 실패할 수 있다 → WARN (미리 켜 두면 안전)
-  for a in sqladmin container compute serviceusage; do echo "$out" | grep -qx "$a.googleapis.com" || miss="$miss $a"; done
-  for a in servicenetworking artifactregistry secretmanager; do echo "$out" | grep -qx "$a.googleapis.com" || late="$late $a"; done
+  # FM-CLD-14: iam(앱 SA)·iamcredentials(고객 SA 빌리기)는 이제 gcp/env apply 가 켠다(google_project_service), 앱 층 API(redis·run·pubsub…)는
+  #   gcp/root 가 IR 종류를 보고 켠다 → 손으로 gcloud services enable 할 일 없음. 켜는 직후 몇 분 지연만 WARN
+  #   serviceusage 만 FAIL: 나머지를 켜는 API 라 terraform 이 켤 수 없다
+  for a in serviceusage; do echo "$out" | grep -qx "$a.googleapis.com" || miss="$miss $a"; done
+  for a in sqladmin container compute servicenetworking artifactregistry secretmanager iam iamcredentials; do echo "$out" | grep -qx "$a.googleapis.com" || late="$late $a"; done
   if [ -n "$miss" ]; then say FAIL gcp-apis "꺼진 API:$miss (gcloud services enable <이름>.googleapis.com --project $P)"
   elif [ -n "$late" ]; then say WARN gcp-apis "apply 가 켤 API:$late (미리 켜 두면 안전: gcloud services enable <이름>.googleapis.com --project $P)"
-  else say OK gcp-apis "sqladmin·container·compute·serviceusage·servicenetworking·artifactregistry·secretmanager 켜짐"; fi
+  else say OK gcp-apis "sqladmin·container·compute·serviceusage·servicenetworking·artifactregistry·secretmanager·iam·iamcredentials 켜짐"; fi
 }
 c_billing() {
   local out rc
-  out=$(tmo "$CALL" gcloud billing projects describe "$P" --format='value(billingEnabled)' 2>"$W/bill.err"); rc=$?
+  out=$(gtmo "$CALL" gcloud billing projects describe "$P" --format='value(billingEnabled)' 2>"$W/bill.err"); rc=$?
   [ $rc -eq 0 ] || { say FAIL gcp-billing "조회 실패 rc=$rc"; return; }
   case "$out" in True|true) say OK gcp-billing "결제 계정 연결됨" ;; *) say FAIL gcp-billing "결제 계정 연결 안 됨 ($out)" ;; esac
 }
@@ -98,7 +117,7 @@ c_tier() {
   if [ "$major" -ge 16 ] && [ -z "$ED" ]; then rule="FAIL $DBV 인데 main.tf 에 edition 이 없음 (기본 ENTERPRISE_PLUS 가 $TIER 를 거절한다)"
   elif [ "$ED" = ENTERPRISE_PLUS ]; then case "$TIER" in db-f1-micro|db-g1-small) rule="FAIL ENTERPRISE_PLUS 는 공유 코어 $TIER 를 받지 않음" ;; esac
   fi
-  tmo "$CALL" gcloud sql tiers list --project "$P" --format='value(tier)' > "$W/tiers.txt" 2>"$W/tiers.err"; rc=$?
+  gtmo "$CALL" gcloud sql tiers list --project "$P" --format='value(tier)' > "$W/tiers.txt" 2>"$W/tiers.err"; rc=$?
   if [ -n "$rule" ]; then say FAIL sql-tier "${rule#FAIL } ($ED_FROM)"; return; fi
   [ $rc -eq 0 ] || { say FAIL sql-tier "티어 목록 조회 실패 rc=$rc"; return; }
   if grep -qx "$TIER" "$W/tiers.txt"; then say OK sql-tier "$TIER 있음, $DBV, 에디션 ${ED:-기본}($ED_FROM)"
@@ -146,9 +165,9 @@ PY2
 }
 c_gcp_quota() {
   local rc reg=${ZONE%-*} res bad="" miss="" okl=""
-  tmo "$CALL" gcloud compute regions describe "$reg" --project "$P" --format=json > "$W/gq-r.json" 2>"$W/gq.err"; rc=$?
+  gtmo "$CALL" gcloud compute regions describe "$reg" --project "$P" --format=json > "$W/gq-r.json" 2>"$W/gq.err"; rc=$?
   [ $rc -eq 0 ] || { say WARN gcp-quota "지역 한도 못 읽음 rc=$rc"; return; }
-  tmo "$CALL" gcloud compute project-info describe --project "$P" --format=json > "$W/gq-g.json" 2>>"$W/gq.err"; rc=$?
+  gtmo "$CALL" gcloud compute project-info describe --project "$P" --format=json > "$W/gq-g.json" 2>>"$W/gq.err"; rc=$?
   [ $rc -eq 0 ] || { say WARN gcp-quota "전역 한도 못 읽음 rc=$rc"; return; }
   res=$( { quota_eval "$W/gq-r.json" "$GCP_NEED_REGION"; quota_eval "$W/gq-g.json" "$GCP_NEED_GLOBAL"; } )
   case "$res" in *ERR*) say WARN gcp-quota "한도 응답을 못 읽음 (JSON 아님)"; return ;; esac
@@ -163,12 +182,16 @@ EOF
 }
 
 c_region
-for c in c_aws_auth c_gcp_auth c_apis c_billing c_tier c_vpc c_eip c_rds c_vcpu c_gcp_quota; do $c & done
+gcp_all() { c_gcp_auth; c_apis; c_billing; c_tier; c_gcp_quota; }   # 자격 확인(토큰 갱신)을 먼저 한 번 → 뒤 호출은 그 토큰을 씀
+for c in c_aws_auth c_vpc c_eip c_rds c_vcpu gcp_all; do $c & done
 wait
+[ -s "$W/retry.log" ] && sed 's/^/참고 /' "$W/retry.log"
 cat "$W"/*.res
 n=$(cat "$W"/*.res | wc -l | tr -d ' ')
 nf=$(cat "$W"/*.res | grep -c '^FAIL')
 nw=$(cat "$W"/*.res | grep -c '^WARN')
 v=PASS; [ "$nf" -eq 0 ] || v=FAIL
+el=$(( $(date +%s) - T0 ))
+[ "$el" -ge "$TOTAL" ] && echo "참고 총 제한 ${TOTAL}초에 걸림: 위에서 rc=124 인 항목이 시간에 걸린 점검 (PRECHECK_TOTAL_SEC 로 바꿈)"
 echo "판정 $v 항목 ${n}개 FAIL $nf WARN $nw 초 $(( $(date +%s) - T0 ))"
 [ "$nf" -eq 0 ]

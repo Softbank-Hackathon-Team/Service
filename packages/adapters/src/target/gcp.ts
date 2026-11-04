@@ -5,11 +5,14 @@ import { envRef, fromOut, regionOf, tenantOf, type Target } from "../common/targ
 import { gcpAdapter, PERMS } from "../gcp/index.js";
 import {
   asV1Name, assertRenderable, connectIdentities, identitiesOf, identityName, instancesOf, K8S_RENDER_CAPS, kindJson,
-  managedJobsOf, managedServicesOf, postgresOf, postureOfComponent, refV2, secretNamesOf, vmServicesOf, workloadsOf,
+  managedJobsOf, managedServicesOf, postgresOf, postureOfComponent, refV2, secretNamesOf, UNSUPPORTED_V2, vmServicesOf, workloadsOf,
 } from "./shared.js";
 import { assertGrants, gcpGrantTypes, grantsJsonFor } from "./grants.js";
+import { secretStoreName } from "./capability-checks.js";
 import { buildWorkloadValues, cloudPostgresValues } from "./cloud.js";
 import { cacheVars, cachesOf, dataTypesOf, objectStoreVars, objectStoresOf, queueVars, queuesOf } from "./data.js";
+import { assertDataFit, dbIdentityFor } from "./data-fit.js";
+import { AdapterError } from "../common/errors.js";
 import { managedJobJson, managedServiceJson, managedWorkloadValues } from "./managed.js";
 import { vmServiceJson, vmWorkloadValues } from "./vm.js";
 
@@ -25,6 +28,9 @@ export function cloudSqlTierFor(c: { cpuMilli: number | null; memMiB: number | n
   const memWant = Math.ceil((c.memMiB ?? 0) / 256) * 256;
   const maxMem = (n: number) => Math.floor((n * 6.5 * 1024) / 256) * 256;
   while (cpu < 96 && maxMem(cpu) < memWant) cpu = cpu === 1 ? 2 : cpu + 2;
+  // SZ-1: 96 vCPU 로도 안 들어가면 메모리를 줄이지 않고 막는다
+  if (Math.ceil((c.cpuMilli ?? 0) / 1000) > 96 || memWant > maxMem(96))
+    throw new AdapterError(UNSUPPORTED_V2, `출발 DB 크기(${c.cpuMilli ?? "?"}m·${c.memMiB ?? "?"}MiB)가 Cloud SQL 도착 최대(96vCPU·${maxMem(96)}MiB)보다 큼 → 낮춰 고르지 않음. 사람이 정함`);
   const min = Math.max(3840, Math.ceil((cpu * 0.9 * 1024) / 256) * 256), max = maxMem(cpu);
   const mem = Math.min(max, Math.max(min, memWant));
   return `db-custom-${cpu}-${mem}`;
@@ -33,7 +39,7 @@ export function cloudSqlTierFor(c: { cpuMilli: number | null; memMiB: number | n
 // TA12 DRAFT(ai): 데이터 자원 — Memorystore(redis·valkey, 클러스터 모드는 모듈이 아직 안 함 → capability 없음)·Cloud Storage·Pub/Sub
 // A8: 출발 IAM 권한 → 도착 신원 권한 (target/grants.ts). 대응표 밖은 assertGrants·precheck 가 막음
 // TA12c: link.* = 데이터 자원 링크의 의도 요약 (실제 권한은 grants 로 그림)
-const CAPS = [...K8S_RENDER_CAPS, "kind.postgres.15", "kind.postgres.16", "kind.postgres.17", "kind.cache.redis", "kind.cache.valkey", "kind.objectStore", "kind.queue", "render.grants", "posture.permissions", "kind.queue.dlqMixedOrder", "kind.cache.auth", "link.read", "link.write", "link.readwrite", "link.admin",
+const CAPS = [...K8S_RENDER_CAPS, "volume.pvc", "kind.postgres.15", "kind.postgres.16", "kind.postgres.17", "kind.cache.redis", "kind.cache.valkey", "kind.objectStore", "kind.queue", "render.grants", "posture.permissions", "pg.param.cloudsql", "kind.queue.dlqMixedOrder", "kind.queue.push", "kind.queue.filter", "kind.queue.retainAcked", "kind.queue.subscriptions", "kind.cache.auth", "link.read", "link.write", "link.readwrite", "link.admin",
   // TA13: 관리형 컨테이너 → Cloud Run (root service_json + kinds/service-cloudrun). 못 그리는 칸은 managedBlockers
   "runtime.managedContainer",
   // RUNTIMEMAP v2: VM 출발 → GCE (root vm_json + kinds/vm). 못 그리는 칸은 vmBlockers
@@ -73,6 +79,7 @@ export const gcpTarget: TargetBuilder = {
   toTerraformV2(spec: AppSpecV2, t: Target): TfRootCall {
     assertRenderable(spec, CAPS);
     assertGrants("gcp", spec);
+    assertDataFit("gcp", spec, { postgres: (c) => cloudSqlTierFor(c.props.compute) });   // SZ-1·CV-1: 표 밖이면 줄이지 않고 막음
     // TA13: 관리형 서비스가 있으면(섞임은 managedBlockers 가 막음) k8s 신원·네임스페이스 없이 service_json 만
     const managed = managedServicesOf(spec).length > 0;
     // RUNTIMEMAP v2: VM 도 같은 규칙 (k8s 신원·네임스페이스 없이 vm_json 만. 섞임은 vmBlockers 가 막음)
@@ -83,7 +90,8 @@ export const gcpTarget: TargetBuilder = {
       const pos = postureOfComponent(spec, c.id);
       return {
         id: c.id,
-        // Cloud SQL: 삭제 뒤 1주 같은 이름 재사용 불가 → 이전마다 다른 해시 (v1 이름 그대로)
+        // Cloud SQL: 삭제 뒤 1주 같은 이름 재사용 불가 → 이전마다 다른 해시 (v1 이름 그대로). seed 의 migrationId 는 워커 plan·apply·deploy 가 넣는다 (G8-1)
+        // TODO(human): 같은 이전 안에서 apply 실패 → 자동 destroy → 다시 apply 하면 이름이 같아 1주 동안 막힘. apply 시도마다 바뀌는 접미어를 쓸지 정해야 함
         name: dbInstanceName(asV1Name(spec), t, 40),
         major_version: c.props.majorVersion!,
         storage_gb: Math.max(10, c.props.storageGb!),   // DRAFT(ai): Cloud SQL 최소 10GB (v1 과 같은 올림)
@@ -92,6 +100,15 @@ export const gcpTarget: TargetBuilder = {
         instance_class: cloudSqlTierFor(c.props.compute),
         ha: c.props.ha ?? null,
         read_replicas: c.props.readReplicas ?? null,
+        require_tls: c.props.tlsRequired !== false,
+        port: c.props.port ?? null,   // DM-7
+        // DBN-1·E10-2: 앱 DB·계정 이름 그대로 (못 읽으면 기본 + 사전 점검 경고, data-fit.ts)
+        db_name: dbIdentityFor(spec, c).db,
+        app_user: dbIdentityFor(spec, c).user,
+        // BK-1: 출발 백업 보관·PITR·유지보수 창 그대로 (null = 상품 기본, 범위 밖은 data-fit 이 막음)
+        backup_retention_days: c.props.backup?.retentionDays ?? null,
+        pitr: c.props.backup?.pitr ?? null,
+        maintenance_window: c.props.maintenanceWindow ?? null,
         parameters_json: JSON.stringify(Object.fromEntries(Object.entries(c.props.parameters ?? {}).sort(([a], [b]) => a.localeCompare(b)))),
         logical_replication: true as const,
         allow_from_json: JSON.stringify(connectIdentities(spec, c.id)),
@@ -135,7 +152,7 @@ export const gcpTarget: TargetBuilder = {
         postgres_json: kindJson("postgres", postgres),
         namespace_json: kindJson("namespace", managed || vm ? [] : [{ name: ns, quota_cpu_m: null, quota_memory_mi: null }]),
         identity_json: kindJson("identity", identity),
-        cache_json: cacheVars(spec, t),
+        cache_json: cacheVars(spec, t, "gcp"),
         object_store_json: objectStoreVars(spec, t),
         queue_json: queueVars(spec, t),
         // 관리형이 없으면 키 자체를 안 둔다 (기존 계획 지문 그대로)
@@ -154,12 +171,12 @@ export const gcpTarget: TargetBuilder = {
     if (managedServicesOf(spec).length) return managedWorkloadValues("gcp", spec, out, t, cloudPostgresValues(spec, out, "db_password_secret_id"));
     return buildWorkloadValues(spec, out, t, {
       imageRef: (src) => gcpAdapter.imageRef(src, t),
-      secretStore: { kind: "ClusterSecretStore", name: "gcp-secret-manager" },
+      secretStore: { kind: "ClusterSecretStore", name: secretStoreName("gcp", out) },   // CL-4: env 출력 secret_store_name 이 있으면 그것
       // = kinds/identity 의 google_secret_manager_secret 규칙 (app- 접두어, v1 과 같음)
-      remoteKey: (s) => `app-${spec.app.name}-${s.toLowerCase().replace(/_/g, "-")}`,
+      remoteKey: (s) => `app-${spec.app.name}-${s.toLowerCase().replace(/[^a-z0-9-]/g, "-")}`,   // TF4-3: . 도 - (모듈 kinds/identity 와 같은 규칙)
       // 신원별 GSA (루트 출력 identity_gsa_emails 를 펼친 키). 펼치기는 A3 배포 단계
       saAnnotations: (id) => ({ "iam.gke.io/gcp-service-account": fromOut(out, `identity.${id}.gsa_email`) }),
-      postgres: cloudPostgresValues(spec, out, "db_password_secret_id"),
+      postgres: cloudPostgresValues(spec, out, "db_password_secret_id", {}, 5432),   // Cloud SQL 은 5432 고정 (모듈 link port 도 "5432")
       ingressClass: "gce",
     });
   },

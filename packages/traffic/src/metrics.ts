@@ -4,6 +4,8 @@ import type { FetchLike } from "./providers/http.js";
 // 두 Ingress의 최근 30초 지표를 읽는 쪽. 진짜는 중앙 Prometheus 질의다.
 export interface MetricsSource {
   window(migrationId: string, targetPct: number): Promise<Window>;
+  // pf-d FM-TRF-10: 지표 출처. "stub" 이면 몫·오류율이 가중치에서 계산한 값이다 (실측 아님). 없으면 모름
+  source?: "prometheus" | "stub";
 }
 
 // DRAFT(ai): 계약 문서 미정 2번 추천안. 두 클러스터에서 같은 이름을 쓰고 관측 표시를 붙인다
@@ -49,6 +51,7 @@ export function prometheusMetrics(o: { baseUrl: string; tenantId: string; fetch?
     return { n: Math.round(total), err5xx: Math.round(err), latenciesMs: [], p95Ms: p95s * 1000 };
   }
   return {
+    source: "prometheus",
     async window(id) {
       const [target, source] = await Promise.all([side(id, "target"), side(id, "source")]);
       return { target, source, baselineP95Ms: o.baselineP95Ms };
@@ -62,6 +65,7 @@ export function stubMetrics(scenario: "clean" | "err" | "slow" | "down", o: { rp
   const rps = o.rps ?? 50;
   const failAt = o.failAt ?? 0;
   return {
+    source: "stub",
     async window(_id, pct) {
       const total = rps * 30;
       const tn = Math.round(total * pct / 100), sn = total - tn;

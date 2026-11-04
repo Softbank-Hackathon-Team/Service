@@ -1,11 +1,11 @@
 // TA2: 실행기 v2 (고정 루트 + 종류 모듈). terraform·aws·gcloud 는 절대 부르지 않는다 (가짜 exec 가 받은 명령만 적는다)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRealTerraformRunner, DEFAULT_MODULE_ROOT, isV2WorkDir, type Exec, type ExecResult } from "../src/index.js";
+import { createRealTerraformRunner, DEFAULT_MODULE_ROOT, layoutOf, type Exec, type ExecResult } from "../src/index.js";
 import { MODULE_DIGEST } from "../src/module-digests.js";
 import { MODULES } from "../scripts/module-digest.js";
 import { LINK_OUTPUTS } from "@svc/contracts";
@@ -35,7 +35,7 @@ const sorted = (d: string) => readdirSync(d).sort();
 test("v2 apply: root/·kinds/ 복사(tests/ 제외), -chdir=root, tfvars·outputs·secret·tfplan 은 작업 폴더 바로 아래", async () => {
   const root = tmp(); const { exec, calls } = fakeExec();
   const r = createRealTerraformRunner({ exec, workRoot: root, env: {} });
-  const res = await r.apply("aws", MID, { app_name: "shop" }, undefined, TEN, "v2");
+  const res = await r.apply("aws", MID, { app_name: "shop" }, undefined, TEN);
   assert.equal(res.ok, true);
   const dir = join(root, TEN, MID);
   assert.equal(res.workDir, dir);
@@ -52,7 +52,7 @@ test("v2 apply: root/·kinds/ 복사(tests/ 제외), -chdir=root, tfvars·output
   assert.deepEqual(sorted(join(dir, "kinds")), ["cache", "identity", "job", "namespace", "object-store", "postgres", "queue", "service-ecs", "vm"]);
   assert.ok(existsSync(join(dir, "kinds", "postgres", "main.tf")));
   assert.equal(existsSync(join(dir, "main.tf")), false);
-  assert.ok(isV2WorkDir(dir));
+  assert.ok((layoutOf(dir) === "root"));
   // tfvars·outputs·db-secret 는 바로 아래 (v1 과 같은 자리)
   assert.deepEqual(JSON.parse(readFileSync(join(dir, "terraform.tfvars.json"), "utf8")), { app_name: "shop" });
   assert.ok(existsSync(join(dir, "outputs.json")) && existsSync(join(dir, "db-secret.json")));
@@ -64,16 +64,18 @@ test("v2 apply: root/·kinds/ 복사(tests/ 제외), -chdir=root, tfvars·output
 
 test("v2 onprem: kinds 2폴더(namespace·netpol)만", async () => {
   const root = tmp(); const { exec } = fakeExec();
-  const res = await createRealTerraformRunner({ exec, workRoot: root, env: {} }).apply("onprem", MID, {}, undefined, TEN, "v2");
+  const res = await createRealTerraformRunner({ exec, workRoot: root, env: {} }).apply("onprem", MID, {}, undefined, TEN);
   assert.deepEqual(sorted(join(res.workDir, "kinds")), ["namespace", "netpol"]);
 });
 
-test("v2 destroy·list: 작업 폴더 모양을 보고 -chdir=root 로 지운다. v1 폴더는 그대로 v1", async () => {
+test("destroy·list: 작업 폴더 모양을 보고 -chdir=root 로 지운다. 예전 통짜 모듈 폴더(root/ 없음)는 -chdir 없이 지운다", async () => {
   const root = tmp(); const { exec, calls } = fakeExec();
   const r = createRealTerraformRunner({ exec, workRoot: root, env: {} });
   const V1 = "4a8c0000-0000-4000-8000-0000000000cc";
-  await r.apply("gcp", MID, {}, undefined, TEN, "v2");
-  await r.apply("gcp", V1, {}, undefined, TEN);   // v1 (layout 안 줌)
+  await r.apply("gcp", MID, {}, undefined, TEN);
+  const old = await r.apply("gcp", V1, {}, undefined, TEN);
+  rmSync(join(old.workDir, "root"), { recursive: true, force: true });   // 예전 모양 폴더로 만든다 (root/ 없이 바로 .tf)
+  writeFileSync(join(old.workDir, "main.tf"), "");
   writeFileSync(join(root, TEN, MID, "terraform.tfstate"), JSON.stringify({ resources: [{}, {}] }));
   assert.deepEqual(r.list().map((x) => [x.migrationId, x.provider, x.resources]).sort(), [[V1, "gcp", 0], [MID, "gcp", 2]].sort());
   calls.length = 0;
@@ -82,31 +84,23 @@ test("v2 destroy·list: 작업 폴더 모양을 보고 -chdir=root 로 지운다
   assert.ok(calls[1]!.args.includes("-var-file=../terraform.tfvars.json"));
   calls.length = 0;
   assert.equal((await r.destroy(V1)).ok, true);
-  assert.deepEqual(calls.map((c) => c.args[0]), ["init", "destroy"]);   // v1: -chdir 없음
+  assert.deepEqual(calls.map((c) => c.args[0]), ["init", "destroy"]);   // 예전 모양: -chdir 없음
   assert.ok(calls[1]!.args.includes("-var-file=terraform.tfvars.json"));
 });
 
 test("v2 planOnly: 전용 작업 폴더에서 -chdir=root plan", async () => {
   const { exec, calls } = fakeExec();
-  const res = await createRealTerraformRunner({ exec, workRoot: tmp(), env: {} }).planOnly("aws", { a: 1 }, undefined, "v2");
+  const res = await createRealTerraformRunner({ exec, workRoot: tmp(), env: {} }).planOnly("aws", { a: 1 });
   assert.equal(res.ok, true);
   assert.deepEqual(calls.map((c) => c.args.slice(0, 2)), [["-chdir=root", "init"], ["-chdir=root", "plan"]]);
 });
 
-test("v1 기본 동작 그대로: layout 안 주면 -chdir 없고 root/ 안 만든다", async () => {
-  const root = tmp(); const { exec, calls } = fakeExec();
-  const res = await createRealTerraformRunner({ exec, workRoot: root, env: {} }).apply("aws", MID, {});
-  assert.equal(calls[0]!.args[0], "init");
-  assert.equal(existsSync(join(res.workDir, "root")), false);
-  assert.equal(isV2WorkDir(res.workDir), false);
-});
-
 test("거부: v2 루트가 없는 환경(azure_mock)·모듈 폴더에 root 가 없으면 에러, 나쁜 이전 id", async () => {
   const r = createRealTerraformRunner({ exec: fakeExec().exec, workRoot: tmp(), env: {} });
-  await assert.rejects(r.apply("azure_mock", MID, {}, undefined, TEN, "v2"), /no real terraform module/);
+  await assert.rejects(r.apply("azure_mock", MID, {}, undefined, TEN), /no real terraform module/);
   const r2 = createRealTerraformRunner({ exec: fakeExec().exec, workRoot: tmp(), moduleRoot: tmp(), env: {} });
-  await assert.rejects(r2.apply("aws", MID, {}, undefined, TEN, "v2"), /no v2 root/);
-  await assert.rejects(r.apply("aws", "../../etc", {}, undefined, TEN, "v2"), /bad migration id/);
+  await assert.rejects(r2.apply("aws", MID, {}, undefined, TEN), /no root module/);
+  await assert.rejects(r.apply("aws", "../../etc", {}, undefined, TEN), /bad migration id/);
 });
 
 test("지문: MODULES 가 infra 의 모든 root·kinds 폴더를 덮고, 지문 표 키와 같다", () => {
@@ -128,7 +122,8 @@ test("kinds 모듈 link 출력 키 = LINK_OUTPUTS (postgres·cache·objectStore�
   const map = { postgres: "postgres", cache: "cache", objectStore: "object-store", queue: "queue" } as const;
   for (const p of ["aws", "gcp"]) for (const [kind, dir] of Object.entries(map)) {
     const src = readFileSync(join(infra, p, "kinds", dir, "main.tf"), "utf8");
-    const m = src.match(/output "link" \{\s*value = \{([\s\S]*?)\n  \}\n\}/);
+    // SUB-1: gcp queue 는 value = merge({ 고정 키 }, { sub.<출발 구독> … }) — 고정 키만 LINK_OUTPUTS 와 비교
+    const m = src.match(/output "link" \{\s*value = \{([\s\S]*?)\n  \}\n\}/) ?? src.match(/output "link" \{\s*value = merge\(\{([\s\S]*?)\n\s*\}, \{/);
     assert.ok(m, `${p}/${dir}: output "link" 없음`);
     const keys = [...m![1]!.matchAll(/^\s{4}(\w+)\s*=/gm)].map((x) => x[1]!).sort();
     assert.deepEqual(keys, [...(LINK_OUTPUTS as Record<string, readonly string[]>)[kind]!].sort(), `${p}/${dir}`);

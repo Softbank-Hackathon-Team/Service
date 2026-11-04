@@ -1,8 +1,14 @@
 import { DATA_RAW_KINDS, type RawGcsBucket } from "../raw-data.js";
+import { corsOf } from "./s3.js";
+import { gcsNotifications } from "./notify.js";
 import type { KindMapper, MappedComponent, MetaTuple, RawItem } from "../types.js";
 
 // DRAFT(ai): Cloud Storage 버킷 → objectStore (설계 20번 6.6장). S3 와 같은 세 값 public:
 //   publicAccessPrevention=enforced → false(확실한 차단) / allUsers·allAuthenticatedUsers 바인딩 있음 → true / 바인딩 없음 확인 → false / 못 읽음 → null
+// DM-1 DRAFT(ai): GCS cors(origin·method·responseHeader·maxAgeSeconds, gcloud storage 는 snake_case 도) → IR CorsRuleV2.
+//   GCS responseHeader 는 preflight 허용 헤더(Access-Control-Allow-Headers)와 응답 노출 헤더 둘 다에 쓰인다 → allowedHeaders·exposeHeaders 둘 다에 넣는다
+const GCS_CORS = { origins: ["origin"], methods: ["method"], allowed: ["responseHeader", "response_header"], expose: ["responseHeader", "response_header"],
+  maxAge: ["maxAgeSeconds", "max_age_seconds"] };
 export const gcsMapper: KindMapper = {
   nativeTypes: [DATA_RAW_KINDS.gcs],
   kind: "objectStore",
@@ -29,14 +35,23 @@ export const gcsMapper: KindMapper = {
     lifecycle.sort((x, y) => (x.prefix < y.prefix ? -1 : x.prefix > y.prefix ? 1 : 0));
     const props: Record<string, unknown> = { versioning: b.versioning === true, public: pub, sizeGb: null };
     if (lifecycle.length) props.lifecycle = lifecycle;
-    if (Array.isArray(b.cors) && b.cors.length) props.cors = b.cors;
+    const cors = corsOf(b.cors, GCS_CORS);
+    if (cors.rules.length) props.cors = cors.rules;
     const meta: Record<string, MetaTuple> = {
       versioning: [src("versioning"), 1],
       public: pub === null ? [src("iam"), 0.6, why] : [src("iam"), 1, why],
       sizeGb: [src("storage/total_bytes"), 0.6, "크기 못 읽음 (Monitoring 지표는 이 읽기에 안 넣음)"],
     };
+    const nf = gcsNotifications(b, src("notifications"));
+    if (nf?.items.length) props.notifications = nf.items;
+    if (nf?.meta) meta.notifications = nf.meta;
     if (dropped) meta.lifecycle = [src("lifecycle"), 0.6, `못 담는 규칙 ${dropped}개를 뺌`];
     else if (lifecycle.length) meta.lifecycle = [src("lifecycle"), 1];
-    return { name: id, kind: "objectStore", native: { type: DATA_RAW_KINDS.gcs, name: id, endpoint: id, uid: b.selfLink ?? null }, props, meta };
+    if (cors.dropped) meta.cors = [src("cors"), 0.6, `출처·메서드가 없는 CORS 규칙 ${cors.dropped}개를 뺌`];
+    else if (cors.rules.length) meta.cors = [src("cors"), 0.9, "GCS responseHeader 는 요청 허용·응답 노출 헤더를 같이 정함 (S3 도착이면 둘 다로 나눔)"];
+    // G3b-4: 경로·가상 호스트 주소, 자원 이름 꼴 (gs://bkt 는 URL 호스트라 이름으로 맞음)
+    const aliases = [`storage.googleapis.com/${id}`, `${id}.storage.googleapis.com`, `projects/_/buckets/${id}`];
+    return { name: id, kind: "objectStore", native: { type: DATA_RAW_KINDS.gcs, name: id, endpoint: id, aliases, uid: b.selfLink ?? null }, props, meta,
+      ...(nf?.refs.length ? { notifyRefs: nf.refs.map((r) => ({ field: "notifications" as const, ...r })) } : {}) };
   },
 };

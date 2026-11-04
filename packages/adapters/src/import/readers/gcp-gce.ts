@@ -13,6 +13,13 @@ const tail = (u: unknown) => String(u ?? "").split("/").pop() ?? "";
 // 비밀 같은 서비스 계정 이메일 방지: 기본 계산 계정(<번호>-compute@developer…)은 프로젝트 번호를 담으므로 "default" 로, 그 밖엔 @ 앞 이름
 const saName = (email: string | null) => (!email ? null : /^\d+-compute@developer\.gserviceaccount\.com$/.test(email) ? "default" : email.split("@")[0]!);
 
+/** VM-1: MIG 가 만든 인스턴스면 그 MIG 이름 (metadata created-by = …/instanceGroupManagers/<이름>). 아니면 null */
+export function migOf(i: Obj): string | null {
+  const it = arr(get(i, "metadata", "items")).find((x) => x.key === "created-by");
+  const m = /\/instanceGroupManagers\/([a-z0-9-]{1,63})$/.exec(String(it?.value ?? ""));
+  return m ? m[1]! : null;
+}
+
 export async function readGce(d: CliDeps, project: string, env: NodeJS.ProcessEnv): Promise<VmRead> {
   const p = ["--project", project, "--format", "json"];
   const notes: string[] = [];
@@ -34,8 +41,13 @@ export async function readGce(d: CliDeps, project: string, env: NodeJS.ProcessEn
   for (const i of insts) {
     const labels = (i.labels && typeof i.labels === "object" ? i.labels : {}) as Record<string, string>;
     droppedLabels += Object.keys(labels).filter((k) => k !== groupLabel).length;
+    // VM-1 DRAFT(ai): 묶는 열쇠 순서 = MIG 이름(metadata created-by, GCE 가 붙임) → 지정 라벨 → 인스턴스 이름(끝 번호 뗌).
+    //   MIG 인스턴스 이름은 <기본이름>-<무작위 4글자>라 끝 번호 떼기로는 안 묶이고, 교체 때마다 id 가 바뀌었다.
+    //   metadata 는 created-by 키 하나만 본다 (나머지 값·startup-script 는 안 읽음)
+    const mig = migOf(i);
     const raw = groupLabel ? labels[groupLabel] : String(i.name);
-    const name = raw && !secretLooking(raw) ? groupNameOf(raw, !!groupLabel) : String(i.name);
+    const name = mig && !secretLooking(mig) ? groupNameOf(mig, true)
+      : raw && !secretLooking(raw) ? groupNameOf(raw, !!groupLabel) : String(i.name);
     groups.set(name, [...(groups.get(name) ?? []), i]);
   }
   if (droppedLabels) notes.push(`VM 라벨 ${droppedLabels}개는 가져오지 않음 (묶는 이름 말고는 안 읽음)`);
@@ -45,12 +57,23 @@ export async function readGce(d: CliDeps, project: string, env: NodeJS.ProcessEn
     const typesIn = [...new Set(list.map((i) => tail(i.machineType)))].sort();
     const sizes = typesIn.map(gceSize).filter((x): x is { cpuMilli: number; memMiB: number } => !!x).sort((a, b) => b.cpuMilli - a.cpuMilli || b.memMiB - a.memMiB);
     const tags = new Set(list.flatMap((i) => (get(i, "tags", "items") as string[] | undefined) ?? []));
+    // FW-1: 규칙은 같은 VPC 네트워크 + 대상(태그 또는 서비스 계정)이 맞을 때만 이 묶음에 붙는다. 대상이 둘 다 없으면 네트워크 전체
+    const nets = new Set(list.flatMap((i) => arr(i.networkInterfaces).map((n) => tail(n.network))).filter(Boolean));
+    const emails = new Set(list.flatMap((i) => arr(i.serviceAccounts).map((a) => String(a.email ?? ""))).filter(Boolean));
+    const applies = (f: Obj) => {
+      if (f.disabled === true || f.direction !== "INGRESS") return false;
+      if (f.network && nets.size && !nets.has(tail(f.network))) return false;
+      const tt = (f.targetTags as string[] | undefined) ?? [], ts = (f.targetServiceAccounts as string[] | undefined) ?? [];
+      if (tt.length) return tt.some((t) => tags.has(t));
+      if (ts.length) return ts.some((e) => emails.has(e));
+      return true;
+    };
     const ingress: RawVmIngress[] = [];
+    const denies = rules.filter((f) => applies(f) && arr(f.denied).length).map((f) => String(f.name ?? "?")).sort();
     for (const f of rules) {
-      if (f.disabled === true || f.direction !== "INGRESS") continue;
-      const target = (f.targetTags as string[] | undefined) ?? [];
-      if (target.length && !target.some((t) => tags.has(t))) continue;
-      const srcs = [...((f.sourceRanges as string[] | undefined) ?? []), ...((f.sourceTags as string[] | undefined) ?? []).map((t) => `tag:${t}`)].sort();
+      if (!applies(f) || !arr(f.allowed).length) continue;
+      const srcs = [...((f.sourceRanges as string[] | undefined) ?? []), ...((f.sourceTags as string[] | undefined) ?? []).map((t) => `tag:${t}`),
+        ...((f.sourceServiceAccounts as string[] | undefined) ?? []).map((e) => `sa:${saName(e) ?? e}`)].sort();
       for (const a of arr(f.allowed)) {
         const proto = String(a.IPProtocol);
         if (proto === "all") { ingress.push({ protocol: "tcp", fromPort: 0, toPort: 65535, sources: srcs }); continue; }
@@ -68,6 +91,8 @@ export async function readGce(d: CliDeps, project: string, env: NodeJS.ProcessEn
       cpuMilli: sizes[0]?.cpuMilli ?? null, memMiB: sizes[0]?.memMiB ?? null, identity: ids[0] ?? null,
       hasPublicIp: list.some((i) => arr(i.networkInterfaces).some((n) => arr(n.accessConfigs).some((a) => !!str(a.natIP)))),
       ingress: rulesKnown ? ingress : null,
+      // FW-1 DRAFT(ai): deny 규칙은 우선순위 계산 없이 "있다"만 알린다 (허용 규칙에서 빼지 않음 → 매퍼가 검토 0.6)
+      ...(rulesKnown && denies.length ? { ingressReview: `거부(deny) 규칙 ${denies.length}개(${denies.slice(0, 5).join(", ")})가 이 VM 에 걸림 → 허용 규칙만 옮김. 막던 포트·출발지를 사람이 확인` } : {}),
     };
     items.push(raw as unknown as Obj);
   }

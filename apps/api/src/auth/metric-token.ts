@@ -9,7 +9,7 @@ export const isMetricTokenShape = (token: string) =>
   token.startsWith(METRIC_TOKEN_PREFIX) && /^[A-Za-z0-9_-]{43}$/.test(token.slice(METRIC_TOKEN_PREFIX.length));
 
 export interface MetricTokenOwner { tenantId: string; envId: string }
-// 해시로 찾기. 게이트웨이는 회사 번호를 모르므로 SECURITY DEFINER 함수(0035 metric_token_lookup)로만 찾는다
+// 해시로 찾기. 게이트웨이는 회사 번호를 모르므로 SECURITY DEFINER 함수(0045 metric_token_lookup)로만 찾는다
 export type MetricTokenLookup = (hash: string) => Promise<MetricTokenOwner | undefined>;
 export const dbMetricTokenLookup: MetricTokenLookup = async (hash) => {
   const r = (await pool.query("SELECT * FROM metric_token_lookup($1)", [hash])).rows[0];

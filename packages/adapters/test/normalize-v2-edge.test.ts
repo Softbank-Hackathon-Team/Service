@@ -1,9 +1,8 @@
-// VI3a: I3a(normalizeV2·projectV1) 경계·거부·결정성 보강
+// VI3a: I3a(normalizeV2) 경계·거부·결정성 보강
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AppSpec, ImportResultV2, checkV2, type RawInventory } from "@svc/contracts";
+import { ImportResultV2, checkV2, type RawInventory } from "@svc/contracts";
 import { normalizeV2 } from "../src/import/pipeline.js";
-import { projectV1, rebuildFromV2 } from "../src/import/project-v1.js";
 import { splitImage } from "../src/import/mappers/k8s-deployment.js";
 
 const D = "sha256:" + "ab".repeat(32);
@@ -108,7 +107,7 @@ test("의존성: 이름 추측(0.6)은 근거 있는 연결이 없는 대상에�
 });
 
 // ── HPA·부분 실패·빈 입력 ─────────────────────────────
-test("HPA: 대상이 없으면 unmapped C, 다른 네임스페이스 HPA 는 안 붙고, CPU 아닌 지표는 0.6", () => {
+test("HPA: 대상이 없으면 unmapped C, 다른 네임스페이스 HPA 는 안 붙고, CPU 아닌 지표도 원문 그대로(N7)", () => {
   const items = [dep("api"),
     { kind: "k8s.hpa", metadata: { name: "h1", namespace: "shop" }, spec: { scaleTargetRef: { name: "nope" }, maxReplicas: 3 } },
     { kind: "k8s.hpa", metadata: { name: "h2", namespace: "other" }, spec: { scaleTargetRef: { name: "api" }, maxReplicas: 9 } },
@@ -117,8 +116,9 @@ test("HPA: 대상이 없으면 unmapped C, 다른 네임스페이스 HPA 는 안
   assert.deepEqual(unmapped.map((u) => u.resource), ["k8s.hpa:h1", "k8s.hpa:h2"], "대상 없음 / 다른 네임스페이스");
   const api = spec.components[0] as any;
   assert.deepEqual(api.props.replicas, { min: 2, max: 5 }, "other 네임스페이스 h2(9)는 안 붙음");
-  assert.equal(api.props.scale, undefined);
-  assert.equal(fieldMeta["components.api.scale"]?.confidence, 0.6);
+  // N7 (11/3 그대로 이식): Pods 지표도 metrics 원문으로 담는다. 도착에 지표 서버가 없으면 계획 단계(scale.customMetrics)가 막음
+  assert.deepEqual(api.props.scale, { metrics: [{ type: "Pods", pods: {} }] });
+  assert.equal(fieldMeta["components.api.scale"]?.confidence, 1);
 });
 test("부분 실패: 깨진 항목(메타 없음·컨테이너 없음)은 unmapped 로, 나머지는 정상 (throw 안 함)", () => {
   const items = [dep("ok"), { kind: "k8s.deployment", imageDigest: D }, { kind: "k8s.deployment", imageDigest: D, metadata: { name: "z", namespace: "shop" }, spec: { template: { spec: { containers: [] } } } },
@@ -143,50 +143,23 @@ test("빈 원본·환경 종류만: 던지지 않고 빈 명세(unmapped 0), 환
     assert.equal(environment?.length, items.filter((i) => i.kind !== "import.note").length + items.filter((i) => i.kind === "import.note").length);
   }
 });
-test("projectV1: 서비스 0개 · 없는 IMPORT_APP 이름은 SOURCE_INCOMPLETE 로 거부", () => {
-  const onlyDb = run([pg("shop-db")]);
-  assert.throws(() => projectV1(onlyDb.result, onlyDb.projectionEnv), (e: { code?: string }) => e.code === "SOURCE_INCOMPLETE");
-  const two = run([dep("app-a"), dep("app-b")]);
-  assert.throws(() => projectV1(two.result, two.projectionEnv, { mainApp: "nope" }), (e: { code?: string }) => e.code === "SOURCE_INCOMPLETE");
-  assert.equal(projectV1(two.result, two.projectionEnv, { mainApp: "app-b" }).spec.app?.name, "app-b");
-});
-test("rebuildFromV2: 서비스가 없는 v2 는 SPEC_V2_INVALID", () => {
-  const out = run([dep("app-a")]);
-  const v1 = projectV1(out.result, out.projectionEnv).spec;
-  const noSvc = { ...out.result.spec, components: [] };
-  assert.throws(() => rebuildFromV2(noSvc as any, v1 as any), (e: { code?: string }) => e.code === "SPEC_V2_INVALID");
-});
 
 // ── 알려진 계약 어긋남 (고치지 않고 기록) ─────────────
-test("replicas 0 Deployment(0으로 줄여 둔 서비스)도 가져온다: Zod 통과, checkV2 는 막지 않고 검토 표시, v1 투영은 1로 올리고 검토 표시", () => {
+test("replicas 0 Deployment(0으로 줄여 둔 서비스)도 가져온다: Zod 통과, checkV2 는 막지 않고 검토 표시", () => {
   const out = run([dep("app-a", "shop", [], {}, { replicas: 0 })]);
   assert.equal(ImportResultV2.safeParse(out.result).success, true);
   assert.deepEqual((out.result.spec.components[0] as any).props.replicas, { min: 0, max: 0 });
   const c = checkV2(out.result.spec);
   assert.deepEqual(c.errors, []);
   assert.deepEqual(c.reviews, ["app-a.replicas 0 (출발에서 0으로 줄여 둔 서비스)"]);
-  assert.deepEqual(checkV2(out.result.spec, { legacy: true }).reviews, []);
-  const v1 = projectV1(out.result, out.projectionEnv);
-  assert.equal(v1.spec.service?.replicas, 1);
-  assert.equal(v1.fieldMeta["service.replicas"]?.needs_review, true);
-  assert.equal(AppSpec.safeParse(v1.spec).success, true);
 });
-test("replicas 가 정상 범위(1~10)이면 v1 투영은 그대로·검토 표시 없음, 10 초과는 10으로", () => {
-  const ok = run([dep("app-a", "shop", [], {}, { replicas: 3 })]);
-  const v = projectV1(ok.result, ok.projectionEnv);
-  assert.equal(v.spec.service?.replicas, 3);
-  assert.equal(v.fieldMeta["service.replicas"]?.needs_review, false);
-  const big = run([dep("app-a", "shop", [], {}, { replicas: 50 })]);
-  assert.equal(projectV1(big.result, big.projectionEnv).spec.service?.replicas, 10);
-});
-test("자격 든 연결 URL env: 값은 v2·v1 어디에도 없고, 서비스→postgres 의존성(0.9)은 유지", () => {
+test("자격 든 연결 URL env: 값은 명세 어디에도 없고, 서비스→postgres 의존성(0.9)은 유지", () => {
   const out = run([dep("app-a", "shop", [{ name: "URL", value: "postgres://u:s3cr3t@shop-db-rw.shop.svc/app" }]), pg("shop-db")]);
   assert.deepEqual(out.result.spec.links, [{ from: "app-a", to: "shop-db", intent: "connect" }]);
   assert.equal(out.result.fieldMeta["links.app-a->shop-db"]?.confidence, 0.9);
   assert.equal(out.result.fieldMeta["links.app-a->shop-db"]?.needs_review, true);
   assert.deepEqual(out.result.unmapped.map((u) => u.resource), ["env:app-a.URL"]);
-  const v1 = projectV1(out.result, out.projectionEnv);
-  for (const doc of [out.result, out.projectionEnv, v1]) assert.ok(!JSON.stringify(doc).includes("s3cr3t"), "비밀 값이 남음");
+  for (const doc of [out.result]) assert.ok(!JSON.stringify(doc).includes("s3cr3t"), "비밀 값이 남음");
   assert.deepEqual((out.result.spec.components.find((c) => c.id === "app-a") as any).props.env, []);
 });
 test("거부: 비밀번호 값이 우연히 DB 이름과 같아도 의존성 근거로 안 쓴다(주소 모양 아님)", () => {

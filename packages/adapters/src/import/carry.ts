@@ -9,7 +9,11 @@ import type { ImportResultV2 } from "@svc/contracts";
 //   경계: 같은 id 끼리만. 새 판에 그 자원·그 칸 표시가 없으면 건드리지 않는다. links·check.reviews 등 components 밖 키는 그대로.
 export const CARRY_NOTE = "출발 값이 바뀜, 앞서 사람이 정한 값 있음";
 
-export interface PrevSpecV2 { spec: ImportResultV2["spec"]; fieldMeta: ImportResultV2["fieldMeta"] }
+export interface PrevSpecV2 { spec: ImportResultV2["spec"]; fieldMeta: ImportResultV2["fieldMeta"]; fresh?: ImportResultV2["fresh"] }
+// G3b-2 DRAFT(ai): 합친 명세가 검증을 못 넘을 때 부르는 쪽이 단위 하나씩 빼 보며 다시 부른다. skip 에 든 단위("<id>.<칸>" 또는 "links"|"entry"|"posture")는
+//   사람 값을 옮기지 않고 새로 읽은 값 + 다시 검토(CARRY_SKIP_NOTE)로 둔다 (조용히 출발 값으로 돌아가지 않게)
+export const CARRY_SKIP_NOTE = "앞서 사람이 정한 값을 합치면 명세 검증을 못 넘어 새로 읽은 값으로 둠. 사람이 다시 정함";
+export interface CarryOptions { skip?: ReadonlySet<string> }
 //
 // PREVIDS3 DRAFT(ai): 사람 결정 전부 유지 (VPREVIDS2 가 찾은 구멍 3개).
 //   ① links·entry·posture: PATCH 가 통째로 바꾸므로 fieldMeta 키 "links"|"entry"|"posture" 가 source "human". 항목 단위 3-way 합치기:
@@ -51,9 +55,11 @@ const flagNote = (e: Meta[string]): Meta[string] => ({ ...e, needs_review: true,
  * @param fresh 새로 읽은 가져오기 결과 (checkV2 전). 입력은 안 바꾸고 복사본을 돌려준다
  * @param history 앞 판들 spec_v2, 가장 새 것부터 (history[0] = 사람이 본 최신 판). 비면 아무것도 안 한다 (첫 가져오기). 앞 CARRY_WINDOW 개만 본다
  */
-export function carryHumanEdits(fresh: ImportResultV2, history: PrevSpecV2[]): { result: ImportResultV2; report: CarryReport } {
+export function carryHumanEdits(fresh: ImportResultV2, history: PrevSpecV2[], opts: CarryOptions = {}): { result: ImportResultV2; report: CarryReport } {
   const report: CarryReport = { kept: [], flagged: [], dropped: [] };
   if (!history[0]) return { result: fresh, report };
+  const skip = opts.skip ?? new Set<string>();
+  const skipNote = (e: Meta[string]): Meta[string] => ({ ...e, needs_review: true, rationale: e.rationale?.includes(CARRY_SKIP_NOTE) ? e.rationale : e.rationale ? `${e.rationale} / ${CARRY_SKIP_NOTE}` : CARRY_SKIP_NOTE });
   const hist = history.slice(0, CARRY_WINDOW);
   const result = structuredClone(fresh);
   const freshUnits = keysByUnit(result.fieldMeta);
@@ -62,11 +68,18 @@ export function carryHumanEdits(fresh: ImportResultV2, history: PrevSpecV2[]): {
   for (const [vi, last] of hist.entries()) {
     for (const [unit, prevKeys] of [...keysByUnit(last.fieldMeta)].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
       if (claimed.has(unit)) continue;
+      // 가장 새 판이 그 단위를 차지한다 (사람이 출발 값으로 되돌린 판이면 더 옛 사람 값을 되살리지 않음).
+      //   G3b-2: 합치기를 못 해 뺀 단위는 그 판에 다시 검토 표시(CARRY_SKIP_NOTE)가 남으므로 더는 조용히 사라지지 않는다
       claimed.add(unit);
       const human = prevKeys.filter((k) => last.fieldMeta[k]!.source === "human");
       const freshKeys = freshUnits.get(unit);
       const confirmed = prevKeys.filter((k) => last.fieldMeta[k]!.source !== "human" && !last.fieldMeta[k]!.needs_review && result.fieldMeta[k]?.needs_review === true);
       if (!human.length && !confirmed.length) continue;
+      if (skip.has(unit)) {
+        for (const k of freshKeys ?? []) { const e = result.fieldMeta[k]; if (e) result.fieldMeta[k] = skipNote(e); }
+        report.flagged.push(unit);
+        continue;
+      }
       const freshProp = propOf(result.spec, unit) as { present: true; value: unknown } | undefined;
       if (!freshKeys || !freshProp) { report.dropped.push(unit); continue; }   // 대상 없음 (경계 밖·출발에서 사라짐)
       // 가져온 값
@@ -106,12 +119,20 @@ export function carryHumanEdits(fresh: ImportResultV2, history: PrevSpecV2[]): {
   }
   // ── links · entry · posture · security (PREVIDS3) ──
   const ids = new Set((result.spec.components as Array<{ id: string }>).map((c) => c.id));
-  for (const key of ["links", "entry", "posture", "security"] as const) {
+  for (const key of ["links", "entry", "posture", "security", "secrets"] as const) {
     const hi = hist.findIndex((h) => h.fieldMeta[key]?.source === "human");
     if (hi < 0) continue;
     const H = hist[hi]!;
-    const B = hist.slice(hi + 1).find((h) => h.fieldMeta[key]?.source !== "human");
-    const out = mergeTop(key, B ? (B.spec as Obj)[key] : undefined, !!B, (H.spec as Obj)[key], (result.spec as Obj)[key], ids);
+    if (skip.has(key)) {   // G3b-2: 사람 값을 합치면 검증을 못 넘음 → 새로 읽은 값 + 다시 검토
+      const prev = H.fieldMeta[key]!;
+      result.fieldMeta[key] = skipNote(prev);
+      report.flagged.push(key);
+      continue;
+    }
+    // G3b-1: 바탕 B = 사람 판(H)을 만든 가져오기가 그때 새로 읽은 값(H.fresh). 없으면(옛 판) 예전처럼 사람 표시 없던 가장 가까운 앞 판
+    const freshB = key !== "security" && H.fresh ? { has: true, value: (H.fresh as Obj)[key] } : null;
+    const B = freshB ? undefined : hist.slice(hi + 1).find((h) => h.fieldMeta[key]?.source !== "human");
+    const out = mergeTop(key, freshB ? freshB.value : B ? (B.spec as Obj)[key] : undefined, freshB ? true : !!B, (H.spec as Obj)[key], (result.spec as Obj)[key], ids);
     (result.spec as Obj)[key] = out.value;
     if (out.value === undefined) delete (result.spec as Obj)[key];
     report.dropped.push(...out.dropped.map((d) => `${key}:${d}`));
@@ -124,6 +145,20 @@ export function carryHumanEdits(fresh: ImportResultV2, history: PrevSpecV2[]): {
       if (m && !(out.value as Obj[]).some((l) => l.from === m[1] && (typeof l.to === "string" ? l.to : "") === m[2])) delete result.fieldMeta[k];
     }
     (out.conflict ? report.flagged : report.kept).push(key);
+  }
+  // G3b-7 DRAFT(ai): components 밖 확인 표시도 이어받는다. 앞 판에서 사람이 확인(needs_review false, 사람 값 아님)했고 새 판에 같은 키가 검토 필요로 다시 생겼을 때
+  //   - check.* : 내용 키(자리 + 값 지문)라 같은 키 = 같은 값 → 확인 유지
+  //   - links.<a>-><b> : 그 링크 항목(의도·grants)이 앞 판과 같을 때만 유지
+  //   entry.<호스트>.routes[i] 는 번호 키라 같은 경로인지 못 가려 이어받지 않는다 (안전한 쪽)
+  const prev0 = hist[0]!;
+  const linkOf = (spec: PrevSpecV2["spec"], k: string) => { const m = /^links\.(.+)->(.+)$/.exec(k); return m ? (spec.links as Obj[]).find((l) => l.from === m[1] && (typeof l.to === "string" ? l.to : "") === m[2]) : undefined; };
+  for (const [k, pm] of Object.entries(prev0.fieldMeta)) {
+    const fm = result.fieldMeta[k];
+    if (!fm || !fm.needs_review || pm.needs_review || pm.source === "human") continue;
+    if (k.startsWith("check.") || (k.startsWith("links.") && !skip.has("links") && linkOf(prev0.spec, k) !== undefined && same(linkOf(prev0.spec, k), linkOf(result.spec, k)))) {
+      result.fieldMeta[k] = { ...fm, needs_review: false };
+      report.kept.push(k);
+    }
   }
   return { result, report };
 }
@@ -171,18 +206,25 @@ function merge3(Bi: Obj[] | undefined, Hi: Obj[], Fi: Obj[], sp: Spec3): { items
 }
 
 const str = (x: unknown) => canon(x);
-function mergeTop(key: "links" | "entry" | "posture" | "security", B: unknown, hasB: boolean, H: unknown, F: unknown, ids: Set<string>): { value: unknown; conflict: boolean; dropped: string[] } {
+function mergeTop(key: "links" | "entry" | "posture" | "security" | "secrets", B: unknown, hasB: boolean, H: unknown, F: unknown, ids: Set<string>): { value: unknown; conflict: boolean; dropped: string[] } {
   // security 는 가져오기가 채우지 않는다 (F 는 늘 비어 있음). 사람이 넣은 요구사항을 그대로 둔다
   if (key === "security") return { value: H, conflict: false, dropped: [] };
   const idOk = (id: unknown) => typeof id === "string" && ids.has(id);
   if (key === "links") {
     const r = merge3(hasB ? (B as Obj[]) ?? [] : undefined, (H as Obj[]) ?? [], (F as Obj[]) ?? [], {
-      // 같은 (from,to) 가 한 배열에 둘 이상이면 intent 를 덧붙여 가른다. 하나뿐이면 intent 를 사람이 바꿔도 같은 항목
+      // 항목 열쇠 = (from,to). G3c-6: checkV2 가 같은 (from,to) 두 줄을 막으므로 intent 로 가르는 갈래는 없앴다 (intent 를 사람이 바꿔도 같은 항목)
       keyOf: (l) => `${l.from}->${typeof l.to === "string" ? l.to : str(l.to)}`,
-      keysOf: (a) => a.map((l) => { const k = `${l.from}->${typeof l.to === "string" ? l.to : str(l.to)}`; return a.filter((x) => `${x.from}->${typeof x.to === "string" ? x.to : str(x.to)}` === k).length > 1 ? `${k}/${l.intent}` : k; }),
       exists: (l) => idOk(l.from) && (typeof l.to !== "string" || idOk(l.to)),
     });
     return { value: r.items, conflict: r.conflict, dropped: r.dropped };
+  }
+  // T1·SC-1: 비밀 표. 항목 = 비밀 이름. 사람이 켠 binary·고친 짝은 출발(이름·키 목록·type 추정)이 안 바뀌면 유지. 짝 대상이 새 판에 없으면 못 옮김
+  if (key === "secrets") {
+    const r = merge3(hasB ? (B as Obj[]) ?? [] : undefined, (H as Obj[]) ?? [], (F as Obj[]) ?? [], {
+      keyOf: (s) => String(s.name),
+      exists: (s) => ((s.keys ?? []) as Obj[]).every((k) => !k.pairedWith || idOk((k.pairedWith as Obj).component)),
+    });
+    return { value: r.items.length ? [...r.items].sort((a, b) => String(a.name).localeCompare(String(b.name))) : undefined, conflict: r.conflict, dropped: r.dropped };
   }
   if (key === "entry") {
     const hostsOf = (e: unknown) => ((e as Obj | undefined)?.hosts ?? []) as Obj[];

@@ -31,7 +31,10 @@ const exec: Exec = async (cmd, args, o) => {
   if (fail && fail.re.test(line)) throw new CliError(cmd, args, 1, fail.stderr);
   const out = (o2: unknown) => ({ code: 0, stdout: JSON.stringify(o2), stderr: "", ms: 1 });
   if (/^gcloud projects describe/.test(line)) return out({ projectId: describeId, projectNumber: number });
-  if (/^gcloud container clusters list/.test(line)) return out([{ name: "shop" }]);
+  if (/^gcloud container clusters list/.test(line)) return out([{ name: "shop", location: "asia-northeast3" }]);
+  // GKE can-i: 임시 KUBECONFIG 만들기 + 쿠버네티스 읽기 확인 (verify/gcp.ts 5단계)
+  if (/^gcloud container clusters get-credentials /.test(line)) return { code: 0, stdout: "", stderr: "", ms: 1 };
+  if (/^kubectl .* auth can-i list deployments/.test(line)) return { code: 0, stdout: "yes\n", stderr: "", ms: 1 };
   return out([]);
 };
 const run: import("@svc/security").GcloudRun = async (args, env) => { issueArgs.push(args); issueEnvs.push(env); return { code: 0, stdout: TOKEN, stderr: "" }; };
@@ -66,13 +69,13 @@ before(async () => {
 });
 after(async () => { if (skip) return; await core.pool.end(); await owner.end(); });
 
-test("회사마다 다른 위임 SA: 두 회사가 같은 프로젝트 이름의 환경을 확인해도 --delegates 는 각자 DB 값", { skip }, async () => {
+test("회사마다 다른 위임 SA: 두 회사가 같은 프로젝트 이름의 환경을 확인해도 위임 SA(쉼표 체인 앞) 는 각자 DB 값", { skip }, async () => {
   reset();
   await run1(await env(T)); await run1(await env(T2), T2);
   const sas = (await owner.query("SELECT id, gcp_platform_sa FROM tenants WHERE id = ANY($1)", [[T, T2]])).rows;
   const sa = (id: string) => sas.find((r) => r.id === id).gcp_platform_sa;
-  assert.deepEqual(issueArgs.map((a) => a.find((x) => x.startsWith("--delegates="))),
-    [`--delegates=${sa(T)}@svc-platform.iam.gserviceaccount.com`, `--delegates=${sa(T2)}@svc-platform.iam.gserviceaccount.com`]);
+  assert.deepEqual(issueArgs.map((a) => a.find((x) => x.startsWith("--impersonate-service-account="))!.split("=")[1]!.split(",")[0]),
+    [`${sa(T)}@svc-platform.iam.gserviceaccount.com`, `${sa(T2)}@svc-platform.iam.gserviceaccount.com`]);
   assert.notEqual(sa(T), sa(T2));
 });
 
@@ -146,7 +149,7 @@ test("오류→사유: describe 권한 없음 / 조직 정책 / 클러스터 목
     ["describe 권한", /^gcloud projects describe/, "ERROR: (gcloud.projects.describe) PERMISSION_DENIED: The caller does not have permission", "PERMISSION_MISSING:resourcemanager.projects.get"],
     ["조직 정책", /^gcloud container clusters list/, "Request is prohibited by organization's policy. constraints/gcp.resourceLocations", "ORG_POLICY_BLOCKED"],
     ["VPC-SC", /^gcloud sql instances list/, "VPC_SERVICE_CONTROLS violation 403", "ORG_POLICY_BLOCKED"],
-    ["sql 권한", /^gcloud sql instances list/, "403 Forbidden", "PERMISSION_MISSING:sql.instances.list"],
+    ["sql 권한", /^gcloud sql instances list/, "403 Forbidden", "PERMISSION_MISSING:cloudsql.instances.list"],
     ["실행 SA 없음", /^gcloud iam service-accounts describe/, "NOT_FOUND: Unknown service account", "ROLE_NOT_FOUND"],
   ];
   for (const [name, re, stderr, want] of cases) {

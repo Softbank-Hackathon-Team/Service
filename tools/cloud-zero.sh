@@ -5,6 +5,7 @@
 #   bash tools/cloud-zero.sh                AWS + GCP
 #   bash tools/cloud-zero.sh aws            AWS 만
 #   bash tools/cloud-zero.sh gcp            GCP 만
+#   bash tools/cloud-zero.sh cf             Cloudflare 만 (cf-check 가 만든 LB·pool·모니터. 토큰 없으면 건너뜀 줄)
 # 환경 변수
 #   AWS_PROFILE        그대로 쓴다 (.env 의 finals)
 #   AWS_REGION         기본 ap-northeast-2 (서울)
@@ -13,6 +14,7 @@
 #   CLOUD_ZERO_WAIT_SEC  0 이 아니면 "남은 것"·"조회 실패"일 때 이 시간(초)까지 CLOUD_ZERO_RETRY_SEC(기본 30)마다 다시 조회한다.
 #                      지우는 중인 것(NAT·EKS·RDS·ENI·LB 는 지운 뒤 몇 분 걸림)을 남은 것으로 오해하지 않게 (UPREV-B). 기본 0 = 한 번만
 #   GCP_PROJECT        없으면 gcloud 기본 프로젝트
+#   GCP_TARGET_PROJECT 결정 3번 A안: 이전 전용 프로젝트. 있으면 GCP 줄을 이 프로젝트에서도 한 번 더 센다 (도착 자원은 여기에 생김)
 #   CLOUD_ZERO_IGNORE  모든 줄(AWS 태그 조회·AWS·GCP 개별 조회)의 결과에서 빼 둘 확장 정규식 (z75-39). 기본 없음
 #                      예: 다른 회차 GKE 를 일부러 켜 둔 채 Cloud SQL 만 0 인지 볼 때 CLOUD_ZERO_IGNORE='gke-|app-demo' bash tools/cloud-zero.sh
 #                      뺀 것이 있으면 그 줄에 "예외: <정규식> 로 N개 뺌", 끝 줄은 "OK zero (예외: <정규식>)" 로 예외 없는 0 과 구별한다
@@ -189,11 +191,20 @@ aws_checks() {
   count "IAM 정책(platform-app-boundary)" aws --output text iam list-policies --scope Local --query "Policies[?PolicyName=='platform-app-boundary'].PolicyName"
   # GATE-v1: 실세션 connect 가 만든 연결 스택(svc-connect-*; 역할 svc-observe·svc-operate). 남으면 다음 회차 connect 가 실패 → down 의 connect-stack 단계가 지움
   count "연결 스택(svc-connect-*)" aws --output text cloudformation describe-stacks --query "Stacks[?starts_with(StackName,'svc-connect-')].StackName"
-  count "IAM 역할(svc-observe·svc-operate)" aws --output text iam list-roles --query "Roles[?RoleName=='svc-observe' || RoleName=='svc-operate'].RoleName"
+  count "IAM 역할(svc-observe·svc-operate·svc-deploy)" aws --output text iam list-roles --query "Roles[?RoleName=='svc-observe' || RoleName=='svc-operate' || RoleName=='svc-deploy'].RoleName"
+  count "IAM 정책(svc-operate-policy)" aws --output text iam list-policies --scope Local --query "Policies[?PolicyName=='svc-operate-policy'].PolicyName"
+  # PF02 FM-CLD-16: 이전 apply·smoke 가 만드는 앱 IAM 역할은 이름이 전부 app-* (실행 역할 정책이 role/app-* 만 허용).
+  #   IAM 은 전역이라 서울 태그 조회(get-resources)에 안 나올 수 있다 【추정】 → 이름으로도 센다 (destroy 실패로 남으면 다음 apply EntityAlreadyExists)
+  count "IAM 역할(app-*, 앱 apply 가 만든 것)" aws --output text iam list-roles --query "Roles[?starts_with(RoleName,'app-')].RoleName"
+  # PF FM-CLD-hunt-cloud-24: ECS 출발 샘플(infra/modules/aws/ecs-source, 이름 realecs-src)의 작업·실행 역할. 전역이라 리전 조회에 안 잡힌다
+  count "IAM 역할(realecs-src-*, ECS 출발 샘플)" aws --output text iam list-roles --query "Roles[?starts_with(RoleName,'realecs-src-')].RoleName"
+  #   전역 자원 태그 조회는 us-east-1 에서만 나오는 경우가 있어 IAM 종류만 한 번 더 (참고 줄: 태그 조회는 지운 자원도 한동안 돌려줘서 합계에 안 넣음. 이름 줄이 진짜 판정)
+  info "IAM 태그 붙은 역할·정책(us-east-1 조회)" aws --region us-east-1 --output text resourcegroupstaggingapi get-resources \
+    --resource-type-filters iam:role iam:policy --tag-filters Key=managed-by,Values=platform --query 'ResourceTagMappingList[].ResourceARN'
 }
 
 gcp_checks() {
-  P=${GCP_PROJECT:-$(gcloud config get-value project 2>/dev/null)}
+  P=${1:-${GCP_PROJECT:-$(gcloud config get-value project 2>/dev/null)}}
   echo "== GCP (project ${P:-없음})"
   # UPREV-B: 프로젝트가 비면 gcloud 가 엉뚱한 오류를 내거나 기본 프로젝트만 봐서 0 이라고 거짓말한다 → 조회 실패로 막는다
   if [ -z "$P" ] || [ "$P" = "(unset)" ]; then row "GCP" "조회 실패 (프로젝트 없음: GCP_PROJECT 를 주거나 gcloud config set project)"; FAILED=1; return; fi
@@ -226,18 +237,48 @@ gcp_checks() {
   # shellcheck disable=SC2329
   api_off_zero() { local o; if o=$("$@" 2>"$ERR"); then printf '%s\n' "$o"; return 0; fi
     grep -qiE 'not enabled|has not been used|SERVICE_DISABLED' "$ERR" && return 0; return 1; }
+  # FM-CLD-10: GCP 도착 종류(gcp/kinds cache·queue·object-store·service-cloudrun·job)가 만드는 것. 안 세면 tf:real destroy 가 실패해도 "OK zero"
+  #   모듈이 다 붙이는 labels.managed-by=platform 로 거른다(남의 자원은 안 셈). Scheduler 는 라벨이 없어 지역 안 전부를 센다 — DRAFT(ai): 데모 프로젝트 전용 가정
+  #   API 가 꺼진 프로젝트는 0 (api_off_zero). Memorystore 는 시간당 요금이 붙는다
+  GR=${GCP_REGION:-asia-northeast3}
+  count "Memorystore Redis(managed-by=platform)" api_off_zero gcloud --project "$P" redis instances list --region "$GR" --filter='labels.managed-by=platform' --format='value(name)'
+  count "Pub/Sub 토픽(managed-by=platform)" api_off_zero gcloud --project "$P" pubsub topics list --filter='labels.managed-by=platform' --format='value(name)'
+  count "Pub/Sub 구독(managed-by=platform)" api_off_zero gcloud --project "$P" pubsub subscriptions list --filter='labels.managed-by=platform' --format='value(name)'
+  count "Cloud Storage 버킷(managed-by=platform)" api_off_zero gcloud --project "$P" storage buckets list --filter='labels.managed-by=platform' --format='value(name)'
+  count "Cloud Run 서비스(managed-by=platform)" api_off_zero gcloud --project "$P" run services list --region "$GR" --filter='metadata.labels.managed-by=platform' --format='value(metadata.name)'
+  count "Cloud Run 잡(managed-by=platform)" api_off_zero gcloud --project "$P" run jobs list --region "$GR" --filter='metadata.labels.managed-by=platform' --format='value(metadata.name)'
+  count "Cloud Scheduler 잡" api_off_zero gcloud --project "$P" scheduler jobs list --location "$GR" --format='value(name)'
   # ②는 참고 줄(합계 제외): 요금이 거의 없고 이번 up(onprem→aws)은 안 쓴다. 0 이 아니면 GCP 도착 이전 전에 지우라는 표시
   info "Secret Manager 비밀(managed-by=platform)" api_off_zero gcloud --project "$P" secrets list --filter='labels.managed-by=platform' --format='value(name)'
+  # HUNT-CLD-01: 플랫폼 회사 전용 SA(t-*, onboarding/gcp-platform-tenant-sa.sh)와 그 SA 를 주체로 한 바인딩(프로젝트·연결 SA 정책).
+  #   남으면 데모가 끝난 뒤에도 워커 → t-* → svc-operate 빌리기 고리가 살아 있다. down 의 connect-gcp 단계가 지운다
+  count "회사 전용 SA(t-*)" env GCP_PROJECT="$P" bash "$(dirname "$0")/gcp-tenant-sa.sh" list-sa
+  count "t-* 주체 IAM 바인딩" env GCP_PROJECT="$P" bash "$(dirname "$0")/gcp-tenant-sa.sh" list-bindings
+  info "연결 SA(svc-observe·plan·operate, 고객 쪽·안 지움)" gcloud --project "$P" iam service-accounts list --filter='email~^svc-(observe|plan|operate)@' --format='value(email)'
   info "앱 서비스 계정(app-*)" gcloud --project "$P" iam service-accounts list --filter='email~^app-' --format='value(email)'
 }
 
+# pf-d FM-TRF-09: Cloudflare LB·pool·모니터 (cf-check 이름). 토큰은 환경 변수 또는 레포 .env (값은 안 찍음)
+CF_ROOT=$(cd "$(dirname "$0")/.." && pwd)
+# shellcheck disable=SC2329
+cf_list() { ( cd "$CF_ROOT" || exit 2; if [ -f .env ]; then node --env-file=.env --import tsx scripts/cf-check.ts --list; else node --import tsx scripts/cf-check.ts --list; fi ); }
+cf_has_token() { [ -n "${CLOUDFLARE_API_TOKEN:-}${CF_API_TOKEN:-}" ] || grep -Eq '^(CLOUDFLARE|CF)_API_TOKEN=.' "$CF_ROOT/.env" 2>/dev/null; }
+
 run_checks() {
   TOTAL=0; FAILED=0; LEFT=""; IGNORED=0
+  if [ "$WHAT" = all ] || [ "$WHAT" = cf ]; then
+    if cf_has_token; then count "Cloudflare LB·pool·모니터(cf-check)" cf_list; else row "Cloudflare" "건너뜀 (토큰 없음, 참고)"; fi
+  fi
   if [ "$WHAT" = all ] || [ "$WHAT" = aws ]; then
     if ! command -v aws >/dev/null 2>&1; then row "AWS" "조회 실패 (aws 명령 없음)"; FAILED=1; else aws_checks; fi
   fi
   if [ "$WHAT" = all ] || [ "$WHAT" = gcp ]; then
-    if ! command -v gcloud >/dev/null 2>&1; then row "GCP" "조회 실패 (gcloud 명령 없음)"; FAILED=1; else gcp_checks; fi
+    if ! command -v gcloud >/dev/null 2>&1; then row "GCP" "조회 실패 (gcloud 명령 없음)"; FAILED=1
+    else
+      gcp_checks
+      # 결정 3번 A안: 전용 프로젝트도 센다 (원래 프로젝트와 같으면 한 번만)
+      if [ -n "${GCP_TARGET_PROJECT:-}" ] && [ "${GCP_TARGET_PROJECT}" != "${P:-}" ]; then gcp_checks "${GCP_TARGET_PROJECT}"; fi
+    fi
   fi
 }
 
@@ -252,7 +293,9 @@ while :; do
   echo "재조회 ${ATTEMPT}: $([ "$FAILED" = 1 ] && echo '조회 실패' || echo "남은 것 ${TOTAL}개") → ${RETRY_SEC}초 뒤 다시 (지우는 중일 수 있음, 최대 ${WAIT_SEC}초)" >&2
   sleep "$RETRY_SEC"; ATTEMPT=$((ATTEMPT + 1))
 done
-cat "$OUTF"
+# FM-SEC-hunt-cloud-22: 남은 것 ARN·조회 실패 오류(assumed-role ARN)에 계정 번호 12자리가 그대로 나왔다 → 출력에서 가린다 (up-preflight redact 와 같은 규칙)
+redact() { sed -E 's/(^|[^0-9])[0-9]{12}([^0-9]|$)/\1<계정>\2/g; s/(^|[^0-9])[0-9]{12}([^0-9]|$)/\1<계정>\2/g'; }
+redact < "$OUTF"
 [ "$ATTEMPT" -gt 1 ] && echo "(${ATTEMPT}번째 조회, 기다린 시간 $((SECONDS - T0))초)"
 
 EXC=""
@@ -260,5 +303,5 @@ EXC=""
 echo "합계: $TOTAL$EXC"
 if [ "$FAILED" = 1 ]; then echo "확인 못 함 (위 '조회 실패' 줄)"; exit 2; fi
 if [ "$TOTAL" -eq 0 ]; then echo "OK zero$EXC"; exit 0; fi
-echo "남은 것:$LEFT"
+printf '%s\n' "남은 것:$LEFT" | redact
 exit 1

@@ -1,5 +1,6 @@
-import { arr, get, runJson, str, type CliDeps } from "../../common/cli.js";
+import { arr, get, incomplete, runJson, str, type CliDeps } from "../../common/cli.js";
 import { ECS_RAW_KIND, type RawEcsService } from "../raw-ecs.js";
+import { pickItem, unreadItem, unreadOrThrow } from "../../common/unread.js";
 
 // DRAFT(ai) I9: AWS ECS 출발 읽기 (설계 23번 2장 ② 갈래, 7장 권한 표). 읽기 명령만, 인자 배열(셸 없음).
 //   ecs list-clusters → list-services → describe-services(10개씩) → describe-task-definition → list-tasks·describe-tasks(digest)
@@ -16,14 +17,17 @@ const strs = (x: unknown): string[] => (Array.isArray(x) ? x.filter((v): v is st
 const nameOfArn = (a: string) => a.split("/").pop() ?? a;
 const chunks = <T>(xs: T[], n: number) => Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
 
+type AlbRoute = { host: string; path: string | null; priority: number | null; listenerPort: number | null; listenerProtocol: string | null; hostUnknown?: true };
+const num = (x: unknown): number | null => (typeof x === "number" && Number.isFinite(x) ? x : null);
+
 async function soft<T>(label: string, notes: string[], f: () => Promise<T>, dflt: T): Promise<T> {
   try { return await f(); } catch (e) { notes.push(`${label} 못 읽음: ${(e as Error).message.slice(0, 160)}`); return dflt; }
 }
 
 /** ALB 규칙 → 대상 그룹 ARN 별 (host, path, priority) 목록 */
-async function routesByTargetGroup(d: CliDeps, r: string[], tgArns: string[], notes: string[]): Promise<{ health: Map<string, string | null>; routes: Map<string, Array<{ host: string; path: string | null; priority: number | null }>> }> {
+async function routesByTargetGroup(d: CliDeps, r: string[], tgArns: string[], notes: string[]): Promise<{ health: Map<string, string | null>; routes: Map<string, AlbRoute[]> }> {
   const health = new Map<string, string | null>();
-  const routes = new Map<string, Array<{ host: string; path: string | null; priority: number | null }>>();
+  const routes = new Map<string, AlbRoute[]>();
   if (!tgArns.length) return { health, routes };
   const tgs = await soft("ALB 대상 그룹", notes, async () => arr(get(await runJson(d, "aws", ["elbv2", "describe-target-groups", "--target-group-arns", ...tgArns, ...r]), "TargetGroups")), []);
   const lbArns = new Set<string>();
@@ -31,6 +35,11 @@ async function routesByTargetGroup(d: CliDeps, r: string[], tgArns: string[], no
     health.set(String(tg.TargetGroupArn), str(tg.HealthCheckPath));
     for (const a of strs(tg.LoadBalancerArns)) lbArns.add(a);
   }
+  // EA-1: 호스트 조건 없는 규칙의 임시 호스트 = ALB DNS 이름 (못 읽으면 "alb-<이름>").
+  //   elasticloadbalancing:DescribeLoadBalancers 는 기본 관찰 목록(입구 재료 읽기)에 이미 있어 ECS_OBSERVE_ACTIONS 에 다시 안 적는다
+  const lbDns = new Map<string, string>();
+  if (lbArns.size) for (const lb of await soft("ALB", notes, async () => arr(get(await runJson(d, "aws", ["elbv2", "describe-load-balancers", "--load-balancer-arns", ...[...lbArns].sort(), ...r]), "LoadBalancers")), []))
+    if (str(lb.LoadBalancerArn) && str(lb.DNSName)) lbDns.set(String(lb.LoadBalancerArn), String(lb.DNSName).toLowerCase());
   for (const lb of [...lbArns].sort()) {
     const listeners = await soft("ALB 리스너", notes, async () => arr(get(await runJson(d, "aws", ["elbv2", "describe-listeners", "--load-balancer-arn", lb, ...r]), "Listeners")), []);
     for (const l of listeners) {
@@ -42,12 +51,15 @@ async function routesByTargetGroup(d: CliDeps, r: string[], tgArns: string[], no
         const prio = rule.Priority === "default" ? null : Number(rule.Priority);
         const targets = arr(rule.Actions).filter((a) => a.Type === "forward").flatMap((a) =>
           [str(a.TargetGroupArn), ...arr(get(a, "ForwardConfig", "TargetGroups")).map((t) => str(t.TargetGroupArn))].filter((x): x is string => !!x));
-        // DRAFT(ai): 호스트 조건 없는 규칙(기본 규칙 포함)은 호스트를 모름 → 라우팅에 안 넣고 notes (사람이 도착 호스트를 정함)
-        if (!hosts.length) { if (targets.some((t) => tgArns.includes(t))) notes.push(`ALB 규칙 ${String(rule.RuleArn ?? prio)} 은 호스트 조건 없음 → 라우팅에서 뺌`); continue; }
+        // EA-1 DRAFT(ai): 호스트 조건 없는 규칙(기본 규칙 포함) = 어떤 호스트든 받음 → ALB DNS 이름을 임시 호스트로 담고 hostUnknown (검토 줄).
+        //   예전엔 라우팅에서 빼서 기본 규칙만 쓰는 ALB 의 공개 서비스가 입구 없이 만들어졌다
+        const listener = { listenerPort: num(l.Port), listenerProtocol: str(l.Protocol) };
+        const hostList = hosts.length ? hosts : [lbDns.get(lb) ?? `alb-${nameOfArn(lb.replace(/\/[^/]+$/, ""))}`];
+        if (!hosts.length && targets.some((t) => tgArns.includes(t))) notes.push(`ALB 규칙 ${String(rule.RuleArn ?? prio)} 은 호스트 조건 없음 → ALB 주소 ${hostList[0]} 를 임시 호스트로 (사람이 도착 호스트를 정함)`);
         for (const t of new Set(targets))
-          for (const h of hosts)
+          for (const h of hostList)
             for (const p of paths.length ? paths : [null])
-              routes.set(t, [...(routes.get(t) ?? []), { host: h, path: p, priority: Number.isFinite(prio) ? prio : null }]);
+              routes.set(t, [...(routes.get(t) ?? []), { host: h, path: p, priority: Number.isFinite(prio) ? prio : null, ...listener, ...(hosts.length ? {} : { hostUnknown: true }) }]);
       }
     }
   }
@@ -65,10 +77,15 @@ export async function readEcs(d: CliDeps, region: string, env: NodeJS.ProcessEnv
   const want = env.IMPORT_AWS_ECS_CLUSTER;
   const cluster = want ? names.find((n) => n === want) : names[0];
   if (!cluster) {
-    if (want) notes.push(`ECS 클러스터 ${want} 없음`);
+    // K-1: 지정한 클러스터가 없으면 "ECS 없음"이 아니다 → 부르는 쪽이 검토 줄로 (discover/index.ts)
+    if (want) throw incomplete(`ECS 클러스터 ${want} 없음 (출발 범위 확인)`);
     return { items: [], counts: {}, notes };
   }
-  if (!want && names.length > 1) notes.push(`ECS 클러스터 ${names.length}개 중 ${cluster} 를 골랐다`);
+  const picked: Obj[] = [];
+  if (!want && names.length > 1) {
+    notes.push(`ECS 클러스터 ${names.length}개 중 ${cluster} 를 골랐다`);
+    picked.push(pickItem("ecs-cluster", `ECS 클러스터 ${names.length}개(${names.slice(0, 5).join(", ")}${names.length > 5 ? " …" : ""}) 중 이름순 첫 번째 ${cluster}`));   // K-1
+  }
   const svcArns = strs(get(await runJson(d, "aws", ["ecs", "list-services", "--cluster", cluster, ...r]), "serviceArns"));
   const services: Obj[] = [];
   for (const part of chunks([...svcArns].sort(), 10))
@@ -77,12 +94,15 @@ export async function readEcs(d: CliDeps, region: string, env: NodeJS.ProcessEnv
   const tgArns = [...new Set(live.flatMap((s) => arr(s.loadBalancers).map((l) => str(l.targetGroupArn)).filter((x): x is string => !!x)))].sort();
   const alb = await routesByTargetGroup(d, r, tgArns, notes);
 
-  const items: Obj[] = [];
+  const items: Obj[] = [...picked];
   for (const s of live) {
     const name = String(s.serviceName);
     const tdArn = String(s.taskDefinition);
-    const td = get(await runJson(d, "aws", ["ecs", "describe-task-definition", "--task-definition", tdArn, ...r]), "taskDefinition") as Obj | undefined;
-    if (!td) { notes.push(`${name}: 작업 정의 ${nameOfArn(tdArn)} 못 읽음 → 뺌`); continue; }
+    // RF-1: 서비스 하나의 작업 정의를 못 읽어도 ECS 갈래 통째로 빠지지 않게. 일시 오류면 던져 재시도, 아니면 그 서비스만 "못 읽음" 검토 줄
+    let td: Obj | undefined;
+    try { td = get(await runJson(d, "aws", ["ecs", "describe-task-definition", "--task-definition", tdArn, ...r]), "taskDefinition") as Obj | undefined; }
+    catch (e) { items.push(unreadOrThrow(e, `ecs.${name}`, `ECS 서비스 ${name} 의 작업 정의 ${nameOfArn(tdArn)}`)); notes.push(`${name}: 작업 정의 ${nameOfArn(tdArn)} 못 읽음 → 검토 줄`); continue; }
+    if (!td) { items.push(unreadItem(`ecs.${name}`, `ECS 서비스 ${name} 의 작업 정의 ${nameOfArn(tdArn)} 가 빈 응답`)); notes.push(`${name}: 작업 정의 ${nameOfArn(tdArn)} 못 읽음 → 검토 줄`); continue; }
     const defs = arr(td.containerDefinitions);
     const main = defs.find((c) => c.essential !== false) ?? defs[0];
     // 실행 중 작업의 주 컨테이너 digest (태그만 있는 이미지를 같은 이미지로 박으려고)
@@ -137,9 +157,10 @@ export async function readEcs(d: CliDeps, region: string, env: NodeJS.ProcessEnv
       },
       serviceConnect: aliases.length ? { namespace: str(sc?.namespace), aliases } : null,
       loadBalancers: lbs, routes, autoscaling,
+      ...(() => { const g = strs(get(s, "networkConfiguration", "awsvpcConfiguration", "securityGroups")).sort(); return g.length ? { securityGroups: g } : {}; })(),
     };
     items.push(raw as unknown as Obj);
   }
   items.push({ kind: "ecs.cluster", name: cluster });
-  return { items, counts: { [ECS_RAW_KIND]: items.length - 1 }, notes };
+  return { items, counts: { [ECS_RAW_KIND]: items.filter((i) => i.kind === ECS_RAW_KIND).length }, notes };
 }

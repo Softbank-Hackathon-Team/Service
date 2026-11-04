@@ -4,27 +4,28 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AppSpec } from "@svc/contracts";
-import { adapterFor, cidrProblem, createRealTerraformRunner, DbNetworkError, dbNetworkFromEnv, DEMO_INVENTORY, withDbNetwork,
+import { cidrProblem, createRealTerraformRunner, DbNetworkError, dbNetworkFromEnv, DEMO_SPEC, targetBuilderFor, withDbNetworkV2,
   type Exec } from "../src/index.js";
 
-const spec = AppSpec.parse(adapterFor("aws").normalize(DEMO_INVENTORY.aws).spec);
-const tfOf = (p: "aws" | "gcp") => adapterFor(p).toTerraform(spec, { envId: "33333333-3333-4333-8333-333333333333", provider: p, region: "default" });
+const tfOf = (p: "aws" | "gcp") => targetBuilderFor(p).toTerraformV2(DEMO_SPEC, { envId: "33333333-3333-4333-8333-333333333333", provider: p, region: "default",
+  tenantId: "11111111-1111-4111-8111-111111111111", migrationId: "22222222-2222-4222-8222-222222222222" } as never);
 const MAC = "203.0.113.7/32";
 
-test("아무것도 안 켜면 null, toTerraform 결과도 같은 객체 그대로 (계획 지문 안 바뀜)", () => {
+test("아무것도 안 켜면 null, Terraform 호출도 같은 객체 그대로 (계획 지문 안 바뀜)", () => {
   assert.equal(dbNetworkFromEnv("aws", {}), null);
   const tf = tfOf("aws");
-  assert.equal(withDbNetwork(tf, "aws", {}), tf);
-  assert.equal(withDbNetwork(tf, "onprem", {}), tf);
+  assert.equal(withDbNetworkV2(tf, "aws", {}), tf);
+  assert.equal(withDbNetworkV2(tf, "onprem", {}), tf);
 });
 
 test("aws DB_PUBLIC=1: 공개 + 허용 목록 + 공개 서브넷 자리표시", () => {
   const n = dbNetworkFromEnv("aws", { DB_PUBLIC: "1", DB_PEER_CIDRS: `${MAC}, 198.51.100.9/32` })!;
   assert.deepEqual(n.vars, { db_public: true, db_peer_cidrs_json: JSON.stringify([MAC, "198.51.100.9/32"]), db_public_subnet_ids_json: "<env:dbPublicSubnetIdsJson>" });
   assert.equal(n.summary.public, true);
-  const tf = withDbNetwork(tfOf("aws"), "aws", { DB_PUBLIC: "1", DB_PEER_CIDRS: MAC });
-  assert.equal(tf.vars.db_public, true);
+  const tf = withDbNetworkV2(tfOf("aws"), "aws", { DB_PUBLIC: "1", DB_PEER_CIDRS: MAC });
+  const [pg] = JSON.parse(String(tf.vars.postgres_json));
+  assert.equal(pg.public, true);
+  assert.deepEqual(JSON.parse(pg.peer_cidrs_json), [MAC]);
   assert.equal(tf.vars.vpc_id, tfOf("aws").vars.vpc_id);
 });
 
@@ -50,7 +51,7 @@ test("넓은 범위·빈 허용 목록·잘못된 조합은 DB_NETWORK_INVALID",
 test("Cloud SQL 서버 CA 출력은 db-ca.pem 파일로 빼고 경로만 남긴다 (감사 기록에 PEM 안 들어감)", async () => {
   const PEM = "-----BEGIN CERTIFICATE-----\nMIIfake\n-----END CERTIFICATE-----";
   const exec: Exec = async (_c, args) => ({ code: 0, ms: 1, stderr: "",
-    stdout: args[0] === "output" ? JSON.stringify({ db_public_ip: { value: "34.1.2.3" }, db_server_ca_cert: { value: PEM } }) : "ok" });
+    stdout: args.includes("output") ? JSON.stringify({ db_public_ip: { value: "34.1.2.3" }, db_server_ca_cert: { value: PEM } }) : "ok" });
   const root = mkdtempSync(join(tmpdir(), "z77-"));
   const r = createRealTerraformRunner({ exec, workRoot: root, env: { TF_FETCH_DB_SECRET: "0" } });
   const mid = "4a8c0000-0000-4000-8000-0000000000dd";

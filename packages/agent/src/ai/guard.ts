@@ -1,20 +1,21 @@
 import { parseAllDocuments } from "yaml";
+import { SECRET_NAME, looksSecretValue, redactText as redactSharedText } from "@svc/contracts";
 import { redact, REDACTED } from "../draft/redact.js";
 
 // 점검·수정(remediate) 경로의 두 가지 방어. 메모리·k3d 샌드박스 둘 다 이 파일을 쓴다.
 //  1) Z3-F1 도구 결과 경계: 샌드박스·레포에서 온 글자는 <tool_result> 태그를 깰 수 없다
 //  2) Z3-F5 평문 비밀: 비밀처럼 보이는 값은 LLM 에 안 가고, 매니페스트·PR 에도 못 들어간다
-// DRAFT(ai): 이름·모양 규칙은 draft/redact.ts 와 같은 목록을 쓴다 (진짜 비밀 탐지기로 바꿀 자리)
+// DRAFT(ai): 이름·모양 규칙은 contracts/src/redact.ts 한 곳 (진짜 비밀 탐지기로 바꿀 자리)
 
-export const SECRET_NAME = /pass(word)?|secret|token|api[_-]?key|private[_-]?key|credential|auth/i;
+// LLM-1: 이름·통째 판단 규칙은 contracts/src/redact.ts 한 곳에서 가져온다. 여기 SECRET_VALUE 는 글 안에서 찾아 바꾸려고 g 를 붙인 사본
+export { SECRET_NAME };
 export const SECRET_VALUE = [
   /AKIA[0-9A-Z]{16}/g,                                  // AWS 액세스 키
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(-----END [A-Z ]*PRIVATE KEY-----|$)/g, // 개인 키
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(-----END [A-Z ]*PRIVATE KEY-----|$)/g, // 개인 키 (본문까지)
   /sk-ant-[A-Za-z0-9_-]{10,}/g,                         // Anthropic 키
   /gh[pousr]_[A-Za-z0-9]{20,}/g,                        // GitHub 토큰
   /(:\/\/[^/\s:@]+:)[^/\s@]+(@)/g,                      // 접속 주소 안의 비밀번호
 ];
-const looksSecretValue = (v: string) => SECRET_VALUE.some((r) => { r.lastIndex = 0; return r.test(v); });
 
 // ── 1) 경계 ──────────────────────────────────────────────
 // 데이터 안의 "<" 는 \u003c 로 바꾼다. </tool_result> 가 들어 있어도 태그로 읽히지 않는다.
@@ -29,7 +30,9 @@ export function wrapToolResult(src: string, body: unknown): string {
 // ── 2) 평문 비밀 ─────────────────────────────────────────
 // 자유 글(로그, 오류 메시지)에서 비밀 모양을 가린다. NAME=값 / NAME: 값 의 NAME 이 비밀 이름이면 값도 가린다
 export function redactText(t: string): string {
-  let out = t;
+  // LLM-1: 감사 규칙(계정 ID·관리형 DB 주소·IPv4·토큰·password= 꼴)을 먼저 건다. LLM 으로 가는 글이 감사 기록보다 덜 가려지면 안 됨.
+  //   먼저 거는 이유: 아래 규칙이 그 자리를 다시 [REDACTED] 로 덮어 이 파일의 자리 표시가 한 가지로 유지된다
+  let out = redactSharedText(t);
   for (const r of SECRET_VALUE) {
     r.lastIndex = 0;
     out = out.replace(r, (_m, a?: string, b?: string) => (typeof a === "string" && typeof b === "string" && a.startsWith("://") ? `${a}${REDACTED}${b}` : REDACTED));

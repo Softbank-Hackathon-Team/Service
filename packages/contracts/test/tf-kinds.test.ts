@@ -7,7 +7,7 @@ import {
 
 const pg = () => ({
   id: "shop-db", name: "shop-db-a1b2c3", major_version: "16", storage_gb: 20, storage_max_gb: null,
-  instance_class: null, ha: null, read_replicas: null, parameters_json: "{}", logical_replication: true as const,
+  instance_class: null, ha: null, read_replicas: null, parameters_json: "{}", db_name: "shop", app_user: "app", backup_retention_days: null, pitr: null, maintenance_window: null, port: null, require_tls: true, logical_replication: true as const,
   allow_from_json: '["shop-api"]', public: false, peer_cidrs_json: "[]", public_subnet_ids_json: null,
   deletion_protection: false,
 });
@@ -17,11 +17,11 @@ test("정상: 데모 DB 값 parse + 나머지 종류 값 parse", () => {
   NamespaceTfVars.parse({ name: "shop", quota_cpu_m: null, quota_memory_mi: null });
   IdentityTfVars.parse({ id: "shop-api", name: "app-shop-api", service_account: "shop-api", secret_names_json: "[]" });
   CacheTfVars.parse({ id: "shop-cache", name: "shop-cache-a1", engine: "redis", version: null, memory_mib: 512,
-    cluster_mode: null, shards: null, tls: true, auth: true, ha: null, allow_from_json: '["shop-api"]' });
+    cluster_mode: null, shards: null, tls: true, auth: true, ha: null, port: null, allow_from_json: '["shop-api"]' });
   ObjectStoreTfVars.parse({ id: "shop-uploads", name: "shop-uploads-a1", versioning: false, public: null, size_gb: null,
     lifecycle_json: "[]", cors_json: "[]", allow_from_json: "[]", force_destroy: true });
   QueueTfVars.parse({ id: "shop-jobs", name: "shop-jobs-a1", model: "queue", ordered: null, retention_sec: 345600,
-    ack_timeout_sec: null, dead_letter_to: "shop-dlq", dead_letter_max_receive: 5, allow_from_json: "[]" });
+    ack_timeout_sec: null, dead_letter_to: "shop-dlq", dead_letter_max_receive: 5, allow_from_json: "[]", idle_expiry_sec: null, retain_acked: null, filter: null, push_endpoint: null, subscriptions_json: "[]" });
   JobTfVars.parse({ id: "shop-clean", name: "shop-clean-a1", schedule: "0 3 * * *", time_zone: null, concurrency_policy: "Forbid",
     suspend: null, backoff_limit: null, active_deadline_sec: null, restart_policy: "OnFailure", image: "r/x@sha256:" + "a".repeat(64),
     command_json: null, args_json: null, cpu_milli: 250, mem_mib: 512, env_json: "[]", identity: "shop-clean" });

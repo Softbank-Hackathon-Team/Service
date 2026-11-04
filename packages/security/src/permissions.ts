@@ -68,8 +68,10 @@ export const AWS_SESSION_POLICY_MAX = 2048;
 // 세션 정책 검사: 크기, 와일드카드 동작 금지, 천장 밖 동작 금지.
 // 세션 정책은 역할 권한과의 교집합이라 천장 밖 동작은 어차피 안 먹지만, 넘치는 요청은 설계 실수라 미리 막는다
 export function checkSessionPolicy(policy: string, ceiling: string[]): string[] {
-  if (policy.length > AWS_SESSION_POLICY_MAX)
-    throw new TempRoleDenied("ROLE_POLICY_TOO_LARGE", `세션 정책 ${policy.length}자 > ${AWS_SESSION_POLICY_MAX}. 관리형 정책 ARN(PolicyArns)으로 나눠야 한다`);
+  // 길이는 실제로 보내는 판(compactSessionPolicy)으로 본다
+  const wire = compactSessionPolicy(policy, ceiling);
+  if (wire.length > AWS_SESSION_POLICY_MAX)
+    throw new TempRoleDenied("ROLE_POLICY_TOO_LARGE", `세션 정책 ${wire.length}자 > ${AWS_SESSION_POLICY_MAX}. 관리형 정책 ARN(PolicyArns)으로 나눠야 한다`);
   const actions = actionsOfPolicy(JSON.parse(policy) as PolicyDoc);
   const wild = actions.filter((a) => a.includes("*"));
   if (wild.length) throw new TempRoleDenied("ROLE_WILDCARD", `세션 정책에 와일드카드: ${wild.join(", ")}`);
@@ -82,4 +84,44 @@ export function checkSessionPolicy(policy: string, ceiling: string[]): string[] 
 export function checkWithinCeiling(actions: string[], ceiling: string[]): void {
   const outside = actions.filter((a) => !ceiling.includes(a));
   if (outside.length) throw new TempRoleDenied("ROLE_OUTSIDE_CEILING", `역할 천장 밖 동작: ${outside.join(", ")}`);
+}
+
+// 세션 정책 줄이기 (AWS AssumeRole Policy 2,048자 상한). 파일은 동작을 하나하나 적고(장부·감사·시험), 보낼 때만 이걸로 줄인다.
+// 규칙: "서비스:앞글자*" 로 묶되, 천장(실행 역할 정책) 동작 중 그 패턴에 걸리는 것이 전부 원래 목록 안에 있을 때만 묶는다.
+//   실제 권한 = 세션 정책 ∩ 역할 정책 이고 역할 정책은 동작을 하나하나 적으므로(와일드카드 금지, lint 시험), 묶어도 실효 권한이 그대로다.
+// 묶을 수 없으면 원문 그대로. 결과는 늘 다시 펼쳐 원래 목록과 같은지 확인한다 (다르면 원문)
+const wildRe = (p: string) => new RegExp("^" + p.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*") + "$", "i");
+export function compactActions(actions: string[], ceiling: string[]): string[] {
+  const want = new Set(actions.map((a) => a.toLowerCase()));
+  const ceil = [...new Set([...ceiling, ...actions])];
+  const covered = new Set<string>();
+  const out: string[] = [];
+  for (const a of [...actions].sort()) {
+    if (covered.has(a)) continue;
+    const i = a.indexOf(":");
+    const svc = a.slice(0, i + 1), name = a.slice(i + 1);
+    let pick = a;
+    // 짧은 앞글자부터 (서비스 전체 "svc:*" 포함). 패턴에 걸리는 천장 동작이 전부 원래 목록 안이어야 한다
+    for (let k = 0; k < name.length; k++) {
+      const pat = `${svc}${name.slice(0, k)}*`;
+      const re = wildRe(pat);
+      const hit = ceil.filter((c) => re.test(c));
+      if (hit.every((c) => want.has(c.toLowerCase()))) { pick = pat; hit.forEach((c) => covered.add(c)); break; }
+    }
+    covered.add(a);
+    out.push(pick);
+  }
+  return [...new Set(out)];
+}
+export function compactSessionPolicy(policy: string, ceiling: string[]): string {
+  const doc = JSON.parse(policy) as PolicyDoc;
+  const explicit = actionsOfPolicy(doc);
+  if (doc.Statement.length !== 1 || doc.Statement[0]!.Condition !== undefined || explicit.some((a) => a.includes("*"))) return policy;
+  const packed = compactActions(explicit, ceiling);
+  // 다시 펼치기: 천장 ∪ 원래 목록 중 패턴에 걸리는 것 = 원래 목록 이어야 한다
+  const ceil = [...new Set([...ceiling, ...explicit])];
+  const back = new Set(ceil.filter((c) => packed.some((p) => wildRe(p).test(c))));
+  if (back.size !== explicit.length || explicit.some((a) => !back.has(a))) return policy;
+  const out = JSON.stringify({ ...doc, Statement: [{ ...doc.Statement[0]!, Action: packed }] });
+  return out.length < policy.length ? out : policy;
 }

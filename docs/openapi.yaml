@@ -740,6 +740,14 @@ paths:
             type: "string"
             format: "uuid"
             pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        - name: "boundaryPolicyExists"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+            enum:
+              - "true"
+              - "false"
         - $ref: "#/components/parameters/DevTenant"
       responses:
         "200":
@@ -989,11 +997,15 @@ paths:
                                         engine:
                                           type: "string"
                                         majorVersion:
-                                          type: "string"
+                                          type:
+                                            - "string"
+                                            - "null"
                                         storageGb:
-                                          type: "integer"
-                                          minimum: -9007199254740991
-                                          maximum: 9007199254740991
+                                          anyOf:
+                                            - type: "integer"
+                                              minimum: -9007199254740991
+                                              maximum: 9007199254740991
+                                            - type: "null"
                                       required:
                                         - "engine"
                                         - "majorVersion"
@@ -1335,6 +1347,8 @@ paths:
                   type: "string"
                   format: "uuid"
                   pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                sourceScope:
+                  $ref: "#/components/schemas/SourceScope"
               required:
                 - "sourceEnvId"
                 - "targetEnvId"
@@ -2179,6 +2193,59 @@ paths:
         "500":
           $ref: "#/components/responses/E500"
           description: "INTERNAL"
+  "/api/v1/migrations/{id}/failure-decision":
+    post:
+      operationId: "postMigrationsByIdFailuredecision"
+      tags:
+        - "migrations"
+      summary: "/api/v1/migrations/{id}/failure-decision"
+      description: "코드: apps/api/src/routes/control.ts"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/FailureDecisionInput"
+      security:
+        - bearerAuth: []
+        - devTenant: []
+      parameters:
+        - name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+            pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        - $ref: "#/components/parameters/DevTenant"
+      responses:
+        "202":
+          description: "OK"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/FailureDecisionResult"
+        "400":
+          $ref: "#/components/responses/E400"
+          description: "BAD_REQUEST (Zod 검증 실패)"
+        "401":
+          $ref: "#/components/responses/E401"
+          description: "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+        "403":
+          $ref: "#/components/responses/E403"
+          description: "TUNNEL_READ_ONLY (개발 헤더 인증 + Cloudflare 터널로 온 쓰기, Z47)"
+        "404":
+          $ref: "#/components/responses/E404"
+          description: "ApiError"
+        "409":
+          $ref: "#/components/responses/E409"
+          description: "ApiError"
+        "429":
+          $ref: "#/components/responses/E429"
+          description: "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+        "500":
+          $ref: "#/components/responses/E500"
+          description: "INTERNAL"
   "/api/v1/migrations/{id}/live-traffic":
     get:
       operationId: "getMigrationsByIdLivetraffic"
@@ -2737,6 +2804,56 @@ paths:
         "409":
           $ref: "#/components/responses/E409"
           description: "ApiError"
+        "429":
+          $ref: "#/components/responses/E429"
+          description: "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+        "500":
+          $ref: "#/components/responses/E500"
+          description: "INTERNAL"
+  "/api/v1/migrations/{id}/replication-cleanup":
+    post:
+      operationId: "postMigrationsByIdReplicationcleanup"
+      tags:
+        - "migrations"
+      summary: "/api/v1/migrations/{id}/replication-cleanup"
+      description: "코드: apps/api/src/routes/control.ts"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              anyOf:
+                - type: "object"
+                  properties:
+                    reason:
+                      type: "string"
+                      maxLength: 500
+                  additionalProperties: false
+                - type: "null"
+      security:
+        - bearerAuth: []
+        - devTenant: []
+      parameters:
+        - name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+            pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        - $ref: "#/components/parameters/DevTenant"
+      responses:
+        "200":
+          description: "OK (응답 스키마 없음)"
+        "400":
+          $ref: "#/components/responses/E400"
+          description: "BAD_REQUEST (Zod 검증 실패)"
+        "401":
+          $ref: "#/components/responses/E401"
+          description: "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+        "403":
+          $ref: "#/components/responses/E403"
+          description: "TUNNEL_READ_ONLY (개발 헤더 인증 + Cloudflare 터널로 온 쓰기, Z47)"
         "429":
           $ref: "#/components/responses/E429"
           description: "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
@@ -3352,7 +3469,7 @@ paths:
           content:
             "application/json":
               schema:
-                $ref: "#/components/schemas/MigrationSpecViewV2"
+                $ref: "#/components/schemas/MigrationSpecView"
         "400":
           $ref: "#/components/responses/E400"
           description: "BAD_REQUEST (Zod 검증 실패)"
@@ -3401,7 +3518,7 @@ paths:
           content:
             "application/json":
               schema:
-                $ref: "#/components/schemas/MigrationSpecViewV2"
+                $ref: "#/components/schemas/MigrationSpecView"
         "400":
           $ref: "#/components/responses/E400"
           description: "BAD_REQUEST (Zod 검증 실패)"
@@ -4183,7 +4300,7 @@ components:
           properties:
             name:
               type: "string"
-              pattern: "^[a-z][a-z0-9-]{0,39}$"
+              pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
           required:
             - "name"
           additionalProperties: false
@@ -4194,12 +4311,12 @@ components:
             - "multiZone"
         components:
           minItems: 1
-          maxItems: 30
+          maxItems: 500
           type: "array"
           items:
             $ref: "#/components/schemas/ComponentV2"
         links:
-          maxItems: 100
+          maxItems: 5000
           type: "array"
           items:
             $ref: "#/components/schemas/LinkV2"
@@ -4207,6 +4324,28 @@ components:
           $ref: "#/components/schemas/EntriesV2"
         posture:
           $ref: "#/components/schemas/PostureV2"
+        rbac:
+          $ref: "#/components/schemas/RbacV2"
+        privateDns:
+          maxItems: 1000
+          type: "array"
+          items:
+            $ref: "#/components/schemas/PrivateDnsRecordV2"
+        secrets:
+          maxItems: 1000
+          type: "array"
+          items:
+            $ref: "#/components/schemas/SecretV2"
+        namespaces:
+          maxItems: 20
+          type: "array"
+          items:
+            $ref: "#/components/schemas/NamespaceV2"
+        serviceAliases:
+          maxItems: 50
+          type: "array"
+          items:
+            $ref: "#/components/schemas/ServiceAliasV2"
         security:
           $ref: "#/components/schemas/SecuritySpecV2"
       required:
@@ -4396,7 +4535,7 @@ components:
           properties:
             id:
               type: "string"
-              pattern: "^[a-z][a-z0-9-]{0,39}$"
+              pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
             kind:
               type: "string"
               const: "service"
@@ -4413,15 +4552,21 @@ components:
                   $ref: "#/components/schemas/OriginV2"
                 namespace:
                   type: "string"
+                podLabels:
+                  type: "object"
+                  propertyNames:
+                    type: "string"
+                  additionalProperties:
+                    type: "string"
                 image:
                   $ref: "#/components/schemas/ImageV2"
                 command:
-                  maxItems: 50
+                  maxItems: 1000
                   type: "array"
                   items:
                     type: "string"
                 args:
-                  maxItems: 100
+                  maxItems: 1000
                   type: "array"
                   items:
                     type: "string"
@@ -4435,14 +4580,21 @@ components:
                           anyOf:
                             - type: "integer"
                               minimum: 1
-                              maximum: 64000
+                              maximum: 9007199254740991
                             - type: "null"
                         memMiB:
                           anyOf:
                             - type: "integer"
                               minimum: 1
-                              maximum: 262144
+                              maximum: 9007199254740991
                             - type: "null"
+                        extended:
+                          type: "object"
+                          propertyNames:
+                            $ref: "#/components/schemas/ExtendedResourceName"
+                          additionalProperties:
+                            type: "string"
+                            maxLength: 64
                       required:
                         - "cpuMilli"
                         - "memMiB"
@@ -4454,21 +4606,28 @@ components:
                           anyOf:
                             - type: "integer"
                               minimum: 1
-                              maximum: 64000
+                              maximum: 9007199254740991
                             - type: "null"
                         memMiB:
                           anyOf:
                             - type: "integer"
                               minimum: 1
-                              maximum: 262144
+                              maximum: 9007199254740991
                             - type: "null"
+                        extended:
+                          type: "object"
+                          propertyNames:
+                            $ref: "#/components/schemas/ExtendedResourceName"
+                          additionalProperties:
+                            type: "string"
+                            maxLength: 64
                       required:
                         - "cpuMilli"
                         - "memMiB"
                       additionalProperties: false
                   additionalProperties: false
                 env:
-                  maxItems: 200
+                  maxItems: 1000
                   type: "array"
                   items:
                     anyOf:
@@ -4501,6 +4660,10 @@ components:
                             pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
                           fromResource:
                             type: "string"
+                          containerName:
+                            type: "string"
+                          divisor:
+                            type: "string"
                         required:
                           - "name"
                           - "fromResource"
@@ -4517,6 +4680,8 @@ components:
                                 type: "string"
                               key:
                                 type: "string"
+                              optional:
+                                type: "boolean"
                             required:
                               - "secret"
                               - "key"
@@ -4537,6 +4702,8 @@ components:
                                 type: "string"
                               key:
                                 type: "string"
+                              optional:
+                                type: "boolean"
                             required:
                               - "config"
                               - "key"
@@ -4566,9 +4733,16 @@ components:
                             properties:
                               to:
                                 type: "string"
-                                pattern: "^[a-z][a-z0-9-]{0,39}$"
+                                pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
                               output:
                                 $ref: "#/components/schemas/LinkOutputV2"
+                              endpoint:
+                                type: "string"
+                                pattern: "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+                              subscription:
+                                type: "string"
+                                minLength: 1
+                                maxLength: 255
                             required:
                               - "to"
                               - "output"
@@ -4578,7 +4752,7 @@ components:
                           - "fromLink"
                         additionalProperties: false
                 envFrom:
-                  maxItems: 20
+                  maxItems: 100
                   type: "array"
                   items:
                     anyOf:
@@ -4588,6 +4762,8 @@ components:
                             type: "string"
                           prefix:
                             type: "string"
+                          optional:
+                            type: "boolean"
                         required:
                           - "config"
                           - "prefix"
@@ -4598,12 +4774,14 @@ components:
                             type: "string"
                           prefix:
                             type: "string"
+                          optional:
+                            type: "boolean"
                         required:
                           - "secret"
                           - "prefix"
                         additionalProperties: false
                 configs:
-                  maxItems: 20
+                  maxItems: 200
                   type: "array"
                   items:
                     type: "object"
@@ -4620,13 +4798,23 @@ components:
                         type: "string"
                       mountPath:
                         type: "string"
+                      binaryKeys:
+                        maxItems: 500
+                        type: "array"
+                        items:
+                          type: "string"
+                      templateKeys:
+                        maxItems: 500
+                        type: "array"
+                        items:
+                          type: "string"
                     required:
                       - "name"
                       - "data"
                       - "sha256"
                     additionalProperties: false
                 secretMounts:
-                  maxItems: 20
+                  maxItems: 200
                   type: "array"
                   items:
                     type: "object"
@@ -4647,7 +4835,7 @@ components:
                     type: "string"
                   additionalProperties: {}
                 sidecars:
-                  maxItems: 5
+                  maxItems: 50
                   type: "array"
                   items:
                     type: "object"
@@ -4681,6 +4869,10 @@ components:
                                 - "TCP"
                                 - "UDP"
                                 - "SCTP"
+                            hostPort:
+                              type: "integer"
+                              minimum: 1
+                              maximum: 65535
                           required:
                             - "port"
                           additionalProperties: false
@@ -4717,6 +4909,10 @@ components:
                                   pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
                                 fromResource:
                                   type: "string"
+                                containerName:
+                                  type: "string"
+                                divisor:
+                                  type: "string"
                               required:
                                 - "name"
                                 - "fromResource"
@@ -4733,6 +4929,8 @@ components:
                                       type: "string"
                                     key:
                                       type: "string"
+                                    optional:
+                                      type: "boolean"
                                   required:
                                     - "secret"
                                     - "key"
@@ -4753,6 +4951,8 @@ components:
                                       type: "string"
                                     key:
                                       type: "string"
+                                    optional:
+                                      type: "boolean"
                                   required:
                                     - "config"
                                     - "key"
@@ -4782,9 +4982,16 @@ components:
                                   properties:
                                     to:
                                       type: "string"
-                                      pattern: "^[a-z][a-z0-9-]{0,39}$"
+                                      pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
                                     output:
                                       $ref: "#/components/schemas/LinkOutputV2"
+                                    endpoint:
+                                      type: "string"
+                                      pattern: "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+                                    subscription:
+                                      type: "string"
+                                      minLength: 1
+                                      maxLength: 255
                                   required:
                                     - "to"
                                     - "output"
@@ -4803,14 +5010,21 @@ components:
                                 anyOf:
                                   - type: "integer"
                                     minimum: 1
-                                    maximum: 64000
+                                    maximum: 9007199254740991
                                   - type: "null"
                               memMiB:
                                 anyOf:
                                   - type: "integer"
                                     minimum: 1
-                                    maximum: 262144
+                                    maximum: 9007199254740991
                                   - type: "null"
+                              extended:
+                                type: "object"
+                                propertyNames:
+                                  $ref: "#/components/schemas/ExtendedResourceName"
+                                additionalProperties:
+                                  type: "string"
+                                  maxLength: 64
                             required:
                               - "cpuMilli"
                               - "memMiB"
@@ -4822,14 +5036,21 @@ components:
                                 anyOf:
                                   - type: "integer"
                                     minimum: 1
-                                    maximum: 64000
+                                    maximum: 9007199254740991
                                   - type: "null"
                               memMiB:
                                 anyOf:
                                   - type: "integer"
                                     minimum: 1
-                                    maximum: 262144
+                                    maximum: 9007199254740991
                                   - type: "null"
+                              extended:
+                                type: "object"
+                                propertyNames:
+                                  $ref: "#/components/schemas/ExtendedResourceName"
+                                additionalProperties:
+                                  type: "string"
+                                  maxLength: 64
                             required:
                               - "cpuMilli"
                               - "memMiB"
@@ -4859,6 +5080,20 @@ components:
                                   enum:
                                     - "HTTP"
                                     - "HTTPS"
+                                headers:
+                                  maxItems: 20
+                                  type: "array"
+                                  items:
+                                    type: "object"
+                                    properties:
+                                      name:
+                                        type: "string"
+                                      value:
+                                        type: "string"
+                                    required:
+                                      - "name"
+                                      - "value"
+                                    additionalProperties: false
                                 periodSec:
                                   type: "integer"
                                   minimum: -9007199254740991
@@ -4868,6 +5103,18 @@ components:
                                   minimum: -9007199254740991
                                   maximum: 9007199254740991
                                 initialDelaySec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                timeoutSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                successThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                terminationGracePeriodSec:
                                   type: "integer"
                                   minimum: -9007199254740991
                                   maximum: 9007199254740991
@@ -4898,6 +5145,18 @@ components:
                                   type: "integer"
                                   minimum: -9007199254740991
                                   maximum: 9007199254740991
+                                timeoutSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                successThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                terminationGracePeriodSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
                               required:
                                 - "type"
                                 - "port"
@@ -4911,6 +5170,8 @@ components:
                                   type: "integer"
                                   minimum: 1
                                   maximum: 65535
+                                service:
+                                  type: "string"
                                 periodSec:
                                   type: "integer"
                                   minimum: -9007199254740991
@@ -4920,6 +5181,18 @@ components:
                                   minimum: -9007199254740991
                                   maximum: 9007199254740991
                                 initialDelaySec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                timeoutSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                successThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                terminationGracePeriodSec:
                                   type: "integer"
                                   minimum: -9007199254740991
                                   maximum: 9007199254740991
@@ -4948,12 +5221,64 @@ components:
                                   type: "integer"
                                   minimum: -9007199254740991
                                   maximum: 9007199254740991
+                                timeoutSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                successThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                terminationGracePeriodSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
                               required:
                                 - "type"
                                 - "command"
                               additionalProperties: false
                       injected:
                         type: "boolean"
+                      volumeMounts:
+                        maxItems: 50
+                        type: "array"
+                        items:
+                          type: "object"
+                          properties:
+                            name:
+                              type: "string"
+                            mountPath:
+                              type: "string"
+                            subPath:
+                              type: "string"
+                            readOnly:
+                              type: "boolean"
+                          required:
+                            - "name"
+                            - "mountPath"
+                          additionalProperties: false
+                      restartPolicy:
+                        type: "string"
+                        const: "Always"
+                      securityContext:
+                        type: "object"
+                        propertyNames:
+                          type: "string"
+                        additionalProperties: {}
+                      commandTemplates:
+                        maxItems: 50
+                        type: "array"
+                        items:
+                          type: "integer"
+                          minimum: 0
+                          maximum: 9007199254740991
+                      argTemplates:
+                        maxItems: 100
+                        type: "array"
+                        items:
+                          type: "integer"
+                          minimum: 0
+                          maximum: 9007199254740991
                     required:
                       - "name"
                       - "image"
@@ -4961,7 +5286,7 @@ components:
                       - "resources"
                     additionalProperties: false
                 initContainers:
-                  maxItems: 5
+                  maxItems: 50
                   type: "array"
                   items:
                     type: "object"
@@ -4995,6 +5320,10 @@ components:
                                 - "TCP"
                                 - "UDP"
                                 - "SCTP"
+                            hostPort:
+                              type: "integer"
+                              minimum: 1
+                              maximum: 65535
                           required:
                             - "port"
                           additionalProperties: false
@@ -5031,6 +5360,10 @@ components:
                                   pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
                                 fromResource:
                                   type: "string"
+                                containerName:
+                                  type: "string"
+                                divisor:
+                                  type: "string"
                               required:
                                 - "name"
                                 - "fromResource"
@@ -5047,6 +5380,8 @@ components:
                                       type: "string"
                                     key:
                                       type: "string"
+                                    optional:
+                                      type: "boolean"
                                   required:
                                     - "secret"
                                     - "key"
@@ -5067,6 +5402,8 @@ components:
                                       type: "string"
                                     key:
                                       type: "string"
+                                    optional:
+                                      type: "boolean"
                                   required:
                                     - "config"
                                     - "key"
@@ -5096,9 +5433,16 @@ components:
                                   properties:
                                     to:
                                       type: "string"
-                                      pattern: "^[a-z][a-z0-9-]{0,39}$"
+                                      pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
                                     output:
                                       $ref: "#/components/schemas/LinkOutputV2"
+                                    endpoint:
+                                      type: "string"
+                                      pattern: "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+                                    subscription:
+                                      type: "string"
+                                      minLength: 1
+                                      maxLength: 255
                                   required:
                                     - "to"
                                     - "output"
@@ -5117,14 +5461,21 @@ components:
                                 anyOf:
                                   - type: "integer"
                                     minimum: 1
-                                    maximum: 64000
+                                    maximum: 9007199254740991
                                   - type: "null"
                               memMiB:
                                 anyOf:
                                   - type: "integer"
                                     minimum: 1
-                                    maximum: 262144
+                                    maximum: 9007199254740991
                                   - type: "null"
+                              extended:
+                                type: "object"
+                                propertyNames:
+                                  $ref: "#/components/schemas/ExtendedResourceName"
+                                additionalProperties:
+                                  type: "string"
+                                  maxLength: 64
                             required:
                               - "cpuMilli"
                               - "memMiB"
@@ -5136,14 +5487,21 @@ components:
                                 anyOf:
                                   - type: "integer"
                                     minimum: 1
-                                    maximum: 64000
+                                    maximum: 9007199254740991
                                   - type: "null"
                               memMiB:
                                 anyOf:
                                   - type: "integer"
                                     minimum: 1
-                                    maximum: 262144
+                                    maximum: 9007199254740991
                                   - type: "null"
+                              extended:
+                                type: "object"
+                                propertyNames:
+                                  $ref: "#/components/schemas/ExtendedResourceName"
+                                additionalProperties:
+                                  type: "string"
+                                  maxLength: 64
                             required:
                               - "cpuMilli"
                               - "memMiB"
@@ -5173,6 +5531,20 @@ components:
                                   enum:
                                     - "HTTP"
                                     - "HTTPS"
+                                headers:
+                                  maxItems: 20
+                                  type: "array"
+                                  items:
+                                    type: "object"
+                                    properties:
+                                      name:
+                                        type: "string"
+                                      value:
+                                        type: "string"
+                                    required:
+                                      - "name"
+                                      - "value"
+                                    additionalProperties: false
                                 periodSec:
                                   type: "integer"
                                   minimum: -9007199254740991
@@ -5182,6 +5554,18 @@ components:
                                   minimum: -9007199254740991
                                   maximum: 9007199254740991
                                 initialDelaySec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                timeoutSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                successThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                terminationGracePeriodSec:
                                   type: "integer"
                                   minimum: -9007199254740991
                                   maximum: 9007199254740991
@@ -5212,6 +5596,18 @@ components:
                                   type: "integer"
                                   minimum: -9007199254740991
                                   maximum: 9007199254740991
+                                timeoutSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                successThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                terminationGracePeriodSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
                               required:
                                 - "type"
                                 - "port"
@@ -5225,6 +5621,8 @@ components:
                                   type: "integer"
                                   minimum: 1
                                   maximum: 65535
+                                service:
+                                  type: "string"
                                 periodSec:
                                   type: "integer"
                                   minimum: -9007199254740991
@@ -5234,6 +5632,18 @@ components:
                                   minimum: -9007199254740991
                                   maximum: 9007199254740991
                                 initialDelaySec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                timeoutSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                successThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                terminationGracePeriodSec:
                                   type: "integer"
                                   minimum: -9007199254740991
                                   maximum: 9007199254740991
@@ -5262,20 +5672,78 @@ components:
                                   type: "integer"
                                   minimum: -9007199254740991
                                   maximum: 9007199254740991
+                                timeoutSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                successThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                terminationGracePeriodSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
                               required:
                                 - "type"
                                 - "command"
                               additionalProperties: false
                       injected:
                         type: "boolean"
+                      volumeMounts:
+                        maxItems: 50
+                        type: "array"
+                        items:
+                          type: "object"
+                          properties:
+                            name:
+                              type: "string"
+                            mountPath:
+                              type: "string"
+                            subPath:
+                              type: "string"
+                            readOnly:
+                              type: "boolean"
+                          required:
+                            - "name"
+                            - "mountPath"
+                          additionalProperties: false
+                      restartPolicy:
+                        type: "string"
+                        const: "Always"
+                      securityContext:
+                        type: "object"
+                        propertyNames:
+                          type: "string"
+                        additionalProperties: {}
+                      commandTemplates:
+                        maxItems: 50
+                        type: "array"
+                        items:
+                          type: "integer"
+                          minimum: 0
+                          maximum: 9007199254740991
+                      argTemplates:
+                        maxItems: 100
+                        type: "array"
+                        items:
+                          type: "integer"
+                          minimum: 0
+                          maximum: 9007199254740991
                     required:
                       - "name"
                       - "image"
                       - "env"
                       - "resources"
                     additionalProperties: false
+                nodeArch:
+                  maxItems: 8
+                  type: "array"
+                  items:
+                    type: "string"
+                    pattern: "^[a-z0-9]+$"
                 volumes:
-                  maxItems: 10
+                  maxItems: 200
                   type: "array"
                   items:
                     type: "object"
@@ -5292,12 +5760,202 @@ components:
                           - "RWO"
                           - "RWX"
                           - "ROX"
+                          - "RWOP"
+                      storageClass:
+                        type: "string"
+                      claimTemplate:
+                        type: "boolean"
+                      claimName:
+                        type: "string"
                     required:
                       - "name"
                       - "mountPath"
                     additionalProperties: false
+                podVolumes:
+                  maxItems: 200
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      name:
+                        type: "string"
+                      type:
+                        type: "string"
+                        enum:
+                          - "configMap"
+                          - "secret"
+                          - "emptyDir"
+                          - "projected"
+                          - "downwardAPI"
+                          - "hostPath"
+                      source:
+                        type: "object"
+                        propertyNames:
+                          type: "string"
+                        additionalProperties: {}
+                    required:
+                      - "name"
+                      - "type"
+                      - "source"
+                    additionalProperties: false
+                volumeMounts:
+                  maxItems: 200
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      name:
+                        type: "string"
+                      mountPath:
+                        type: "string"
+                      subPath:
+                        type: "string"
+                      readOnly:
+                        type: "boolean"
+                    required:
+                      - "name"
+                      - "mountPath"
+                    additionalProperties: false
+                secretSources:
+                  maxItems: 20
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      via:
+                        type: "string"
+                        enum:
+                          - "eso"
+                          - "vault-agent"
+                      secret:
+                        type: "string"
+                      store:
+                        type: "string"
+                      provider:
+                        type: "string"
+                      role:
+                        type: "string"
+                      refs:
+                        maxItems: 100
+                        type: "array"
+                        items:
+                          type: "object"
+                          properties:
+                            key:
+                              type: "string"
+                            remote:
+                              type: "string"
+                            property:
+                              type: "string"
+                          required:
+                            - "key"
+                            - "remote"
+                          additionalProperties: false
+                    required:
+                      - "via"
+                      - "refs"
+                    additionalProperties: false
+                scheduling:
+                  type: "object"
+                  properties:
+                    nodeSelector:
+                      type: "object"
+                      propertyNames:
+                        type: "string"
+                      additionalProperties:
+                        type: "string"
+                    tolerations:
+                      maxItems: 50
+                      type: "array"
+                      items:
+                        type: "object"
+                        propertyNames:
+                          type: "string"
+                        additionalProperties: {}
+                    affinity:
+                      type: "object"
+                      propertyNames:
+                        type: "string"
+                      additionalProperties: {}
+                    topologySpreadConstraints:
+                      maxItems: 20
+                      type: "array"
+                      items:
+                        type: "object"
+                        propertyNames:
+                          type: "string"
+                        additionalProperties: {}
+                    priorityClassName:
+                      type: "string"
+                  additionalProperties: false
+                host:
+                  type: "object"
+                  properties:
+                    network:
+                      type: "boolean"
+                      const: true
+                    pid:
+                      type: "boolean"
+                      const: true
+                    ipc:
+                      type: "boolean"
+                      const: true
+                  additionalProperties: false
+                podAnnotations:
+                  type: "object"
+                  propertyNames:
+                    type: "string"
+                  additionalProperties:
+                    type: "string"
+                commandTemplates:
+                  maxItems: 50
+                  type: "array"
+                  items:
+                    type: "integer"
+                    minimum: 0
+                    maximum: 9007199254740991
+                argTemplates:
+                  maxItems: 100
+                  type: "array"
+                  items:
+                    type: "integer"
+                    minimum: 0
+                    maximum: 9007199254740991
+                workloadKind:
+                  type: "string"
+                  enum:
+                    - "deployment"
+                    - "statefulset"
+                    - "daemonset"
+                statefulSet:
+                  type: "object"
+                  properties:
+                    serviceName:
+                      type: "string"
+                    podManagementPolicy:
+                      type: "string"
+                      enum:
+                        - "OrderedReady"
+                        - "Parallel"
+                    pvcRetention:
+                      type: "object"
+                      properties:
+                        whenDeleted:
+                          type: "string"
+                          enum:
+                            - "Retain"
+                            - "Delete"
+                        whenScaled:
+                          type: "string"
+                          enum:
+                            - "Retain"
+                            - "Delete"
+                      additionalProperties: false
+                  required:
+                    - "serviceName"
+                  additionalProperties: false
                 ports:
-                  maxItems: 10
+                  maxItems: 1000
                   type: "array"
                   items:
                     type: "object"
@@ -5314,11 +5972,15 @@ components:
                           - "TCP"
                           - "UDP"
                           - "SCTP"
+                      hostPort:
+                        type: "integer"
+                        minimum: 1
+                        maximum: 65535
                     required:
                       - "port"
                     additionalProperties: false
                 endpoints:
-                  maxItems: 5
+                  maxItems: 200
                   type: "array"
                   items:
                     type: "object"
@@ -5355,11 +6017,53 @@ components:
                                 - "TCP"
                                 - "UDP"
                                 - "SCTP"
+                            appProtocol:
+                              type: "string"
+                              minLength: 1
+                              maxLength: 253
+                            nodePort:
+                              type: "integer"
+                              minimum: 1
+                              maximum: 65535
                           required:
                             - "port"
                             - "targetPort"
                             - "protocol"
                           additionalProperties: false
+                      annotations:
+                        type: "object"
+                        propertyNames:
+                          type: "string"
+                        additionalProperties:
+                          type: "string"
+                      publishNotReadyAddresses:
+                        type: "boolean"
+                      sessionAffinity:
+                        type: "string"
+                        enum:
+                          - "None"
+                          - "ClientIP"
+                      sessionAffinityTimeoutSec:
+                        type: "integer"
+                        minimum: 1
+                        maximum: 86400
+                      externalTrafficPolicy:
+                        type: "string"
+                        enum:
+                          - "Cluster"
+                          - "Local"
+                      internalTrafficPolicy:
+                        type: "string"
+                        enum:
+                          - "Cluster"
+                          - "Local"
+                      loadBalancerSourceRanges:
+                        maxItems: 100
+                        type: "array"
+                        items:
+                          type: "string"
+                      loadBalancerIP:
+                        type: "string"
                     required:
                       - "name"
                       - "type"
@@ -5388,6 +6092,20 @@ components:
                               enum:
                                 - "HTTP"
                                 - "HTTPS"
+                            headers:
+                              maxItems: 20
+                              type: "array"
+                              items:
+                                type: "object"
+                                properties:
+                                  name:
+                                    type: "string"
+                                  value:
+                                    type: "string"
+                                required:
+                                  - "name"
+                                  - "value"
+                                additionalProperties: false
                             periodSec:
                               type: "integer"
                               minimum: -9007199254740991
@@ -5397,6 +6115,18 @@ components:
                               minimum: -9007199254740991
                               maximum: 9007199254740991
                             initialDelaySec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            timeoutSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            successThreshold:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            terminationGracePeriodSec:
                               type: "integer"
                               minimum: -9007199254740991
                               maximum: 9007199254740991
@@ -5427,6 +6157,18 @@ components:
                               type: "integer"
                               minimum: -9007199254740991
                               maximum: 9007199254740991
+                            timeoutSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            successThreshold:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            terminationGracePeriodSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
                           required:
                             - "type"
                             - "port"
@@ -5440,6 +6182,8 @@ components:
                               type: "integer"
                               minimum: 1
                               maximum: 65535
+                            service:
+                              type: "string"
                             periodSec:
                               type: "integer"
                               minimum: -9007199254740991
@@ -5449,6 +6193,18 @@ components:
                               minimum: -9007199254740991
                               maximum: 9007199254740991
                             initialDelaySec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            timeoutSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            successThreshold:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            terminationGracePeriodSec:
                               type: "integer"
                               minimum: -9007199254740991
                               maximum: 9007199254740991
@@ -5474,6 +6230,18 @@ components:
                               minimum: -9007199254740991
                               maximum: 9007199254740991
                             initialDelaySec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            timeoutSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            successThreshold:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            terminationGracePeriodSec:
                               type: "integer"
                               minimum: -9007199254740991
                               maximum: 9007199254740991
@@ -5501,6 +6269,20 @@ components:
                               enum:
                                 - "HTTP"
                                 - "HTTPS"
+                            headers:
+                              maxItems: 20
+                              type: "array"
+                              items:
+                                type: "object"
+                                properties:
+                                  name:
+                                    type: "string"
+                                  value:
+                                    type: "string"
+                                required:
+                                  - "name"
+                                  - "value"
+                                additionalProperties: false
                             periodSec:
                               type: "integer"
                               minimum: -9007199254740991
@@ -5510,6 +6292,18 @@ components:
                               minimum: -9007199254740991
                               maximum: 9007199254740991
                             initialDelaySec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            timeoutSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            successThreshold:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            terminationGracePeriodSec:
                               type: "integer"
                               minimum: -9007199254740991
                               maximum: 9007199254740991
@@ -5540,6 +6334,18 @@ components:
                               type: "integer"
                               minimum: -9007199254740991
                               maximum: 9007199254740991
+                            timeoutSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            successThreshold:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            terminationGracePeriodSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
                           required:
                             - "type"
                             - "port"
@@ -5553,6 +6359,8 @@ components:
                               type: "integer"
                               minimum: 1
                               maximum: 65535
+                            service:
+                              type: "string"
                             periodSec:
                               type: "integer"
                               minimum: -9007199254740991
@@ -5562,6 +6370,18 @@ components:
                               minimum: -9007199254740991
                               maximum: 9007199254740991
                             initialDelaySec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            timeoutSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            successThreshold:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            terminationGracePeriodSec:
                               type: "integer"
                               minimum: -9007199254740991
                               maximum: 9007199254740991
@@ -5587,6 +6407,18 @@ components:
                               minimum: -9007199254740991
                               maximum: 9007199254740991
                             initialDelaySec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            timeoutSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            successThreshold:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            terminationGracePeriodSec:
                               type: "integer"
                               minimum: -9007199254740991
                               maximum: 9007199254740991
@@ -5614,6 +6446,20 @@ components:
                               enum:
                                 - "HTTP"
                                 - "HTTPS"
+                            headers:
+                              maxItems: 20
+                              type: "array"
+                              items:
+                                type: "object"
+                                properties:
+                                  name:
+                                    type: "string"
+                                  value:
+                                    type: "string"
+                                required:
+                                  - "name"
+                                  - "value"
+                                additionalProperties: false
                             periodSec:
                               type: "integer"
                               minimum: -9007199254740991
@@ -5623,6 +6469,18 @@ components:
                               minimum: -9007199254740991
                               maximum: 9007199254740991
                             initialDelaySec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            timeoutSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            successThreshold:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            terminationGracePeriodSec:
                               type: "integer"
                               minimum: -9007199254740991
                               maximum: 9007199254740991
@@ -5653,6 +6511,18 @@ components:
                               type: "integer"
                               minimum: -9007199254740991
                               maximum: 9007199254740991
+                            timeoutSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            successThreshold:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            terminationGracePeriodSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
                           required:
                             - "type"
                             - "port"
@@ -5666,6 +6536,8 @@ components:
                               type: "integer"
                               minimum: 1
                               maximum: 65535
+                            service:
+                              type: "string"
                             periodSec:
                               type: "integer"
                               minimum: -9007199254740991
@@ -5675,6 +6547,18 @@ components:
                               minimum: -9007199254740991
                               maximum: 9007199254740991
                             initialDelaySec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            timeoutSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            successThreshold:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            terminationGracePeriodSec:
                               type: "integer"
                               minimum: -9007199254740991
                               maximum: 9007199254740991
@@ -5703,6 +6587,18 @@ components:
                               type: "integer"
                               minimum: -9007199254740991
                               maximum: 9007199254740991
+                            timeoutSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            successThreshold:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
+                            terminationGracePeriodSec:
+                              type: "integer"
+                              minimum: -9007199254740991
+                              maximum: 9007199254740991
                           required:
                             - "type"
                             - "command"
@@ -5714,11 +6610,11 @@ components:
                     min:
                       type: "integer"
                       minimum: 0
-                      maximum: 100
+                      maximum: 10000
                     max:
                       type: "integer"
                       minimum: 0
-                      maximum: 100
+                      maximum: 10000
                   required:
                     - "min"
                     - "max"
@@ -5730,8 +6626,44 @@ components:
                       type: "integer"
                       minimum: 1
                       maximum: 100
+                    metrics:
+                      maxItems: 20
+                      type: "array"
+                      items:
+                        type: "object"
+                        propertyNames:
+                          type: "string"
+                        additionalProperties: {}
+                    behavior:
+                      type: "object"
+                      propertyNames:
+                        type: "string"
+                      additionalProperties: {}
+                  additionalProperties: false
+                disruption:
+                  type: "object"
+                  properties:
+                    name:
+                      type: "string"
+                    minAvailable:
+                      anyOf:
+                        - type: "integer"
+                          minimum: 0
+                          maximum: 9007199254740991
+                        - type: "string"
+                    maxUnavailable:
+                      anyOf:
+                        - type: "integer"
+                          minimum: 0
+                          maximum: 9007199254740991
+                        - type: "string"
+                    unhealthyPodEvictionPolicy:
+                      type: "string"
+                      enum:
+                        - "IfHealthyBudget"
+                        - "AlwaysAllow"
                   required:
-                    - "targetCpuPct"
+                    - "name"
                   additionalProperties: false
               required:
                 - "runtime"
@@ -5751,7 +6683,7 @@ components:
           properties:
             id:
               type: "string"
-              pattern: "^[a-z][a-z0-9-]{0,39}$"
+              pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
             kind:
               type: "string"
               const: "job"
@@ -5760,15 +6692,21 @@ components:
               properties:
                 namespace:
                   type: "string"
+                podLabels:
+                  type: "object"
+                  propertyNames:
+                    type: "string"
+                  additionalProperties:
+                    type: "string"
                 image:
                   $ref: "#/components/schemas/ImageV2"
                 command:
-                  maxItems: 50
+                  maxItems: 1000
                   type: "array"
                   items:
                     type: "string"
                 args:
-                  maxItems: 100
+                  maxItems: 1000
                   type: "array"
                   items:
                     type: "string"
@@ -5782,14 +6720,21 @@ components:
                           anyOf:
                             - type: "integer"
                               minimum: 1
-                              maximum: 64000
+                              maximum: 9007199254740991
                             - type: "null"
                         memMiB:
                           anyOf:
                             - type: "integer"
                               minimum: 1
-                              maximum: 262144
+                              maximum: 9007199254740991
                             - type: "null"
+                        extended:
+                          type: "object"
+                          propertyNames:
+                            $ref: "#/components/schemas/ExtendedResourceName"
+                          additionalProperties:
+                            type: "string"
+                            maxLength: 64
                       required:
                         - "cpuMilli"
                         - "memMiB"
@@ -5801,21 +6746,28 @@ components:
                           anyOf:
                             - type: "integer"
                               minimum: 1
-                              maximum: 64000
+                              maximum: 9007199254740991
                             - type: "null"
                         memMiB:
                           anyOf:
                             - type: "integer"
                               minimum: 1
-                              maximum: 262144
+                              maximum: 9007199254740991
                             - type: "null"
+                        extended:
+                          type: "object"
+                          propertyNames:
+                            $ref: "#/components/schemas/ExtendedResourceName"
+                          additionalProperties:
+                            type: "string"
+                            maxLength: 64
                       required:
                         - "cpuMilli"
                         - "memMiB"
                       additionalProperties: false
                   additionalProperties: false
                 env:
-                  maxItems: 200
+                  maxItems: 1000
                   type: "array"
                   items:
                     anyOf:
@@ -5848,6 +6800,10 @@ components:
                             pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
                           fromResource:
                             type: "string"
+                          containerName:
+                            type: "string"
+                          divisor:
+                            type: "string"
                         required:
                           - "name"
                           - "fromResource"
@@ -5864,6 +6820,8 @@ components:
                                 type: "string"
                               key:
                                 type: "string"
+                              optional:
+                                type: "boolean"
                             required:
                               - "secret"
                               - "key"
@@ -5884,6 +6842,8 @@ components:
                                 type: "string"
                               key:
                                 type: "string"
+                              optional:
+                                type: "boolean"
                             required:
                               - "config"
                               - "key"
@@ -5913,9 +6873,16 @@ components:
                             properties:
                               to:
                                 type: "string"
-                                pattern: "^[a-z][a-z0-9-]{0,39}$"
+                                pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
                               output:
                                 $ref: "#/components/schemas/LinkOutputV2"
+                              endpoint:
+                                type: "string"
+                                pattern: "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+                              subscription:
+                                type: "string"
+                                minLength: 1
+                                maxLength: 255
                             required:
                               - "to"
                               - "output"
@@ -5925,7 +6892,7 @@ components:
                           - "fromLink"
                         additionalProperties: false
                 envFrom:
-                  maxItems: 20
+                  maxItems: 100
                   type: "array"
                   items:
                     anyOf:
@@ -5935,6 +6902,8 @@ components:
                             type: "string"
                           prefix:
                             type: "string"
+                          optional:
+                            type: "boolean"
                         required:
                           - "config"
                           - "prefix"
@@ -5945,12 +6914,14 @@ components:
                             type: "string"
                           prefix:
                             type: "string"
+                          optional:
+                            type: "boolean"
                         required:
                           - "secret"
                           - "prefix"
                         additionalProperties: false
                 configs:
-                  maxItems: 20
+                  maxItems: 200
                   type: "array"
                   items:
                     type: "object"
@@ -5967,13 +6938,23 @@ components:
                         type: "string"
                       mountPath:
                         type: "string"
+                      binaryKeys:
+                        maxItems: 500
+                        type: "array"
+                        items:
+                          type: "string"
+                      templateKeys:
+                        maxItems: 500
+                        type: "array"
+                        items:
+                          type: "string"
                     required:
                       - "name"
                       - "data"
                       - "sha256"
                     additionalProperties: false
                 secretMounts:
-                  maxItems: 20
+                  maxItems: 200
                   type: "array"
                   items:
                     type: "object"
@@ -5994,7 +6975,7 @@ components:
                     type: "string"
                   additionalProperties: {}
                 sidecars:
-                  maxItems: 5
+                  maxItems: 50
                   type: "array"
                   items:
                     type: "object"
@@ -6028,6 +7009,10 @@ components:
                                 - "TCP"
                                 - "UDP"
                                 - "SCTP"
+                            hostPort:
+                              type: "integer"
+                              minimum: 1
+                              maximum: 65535
                           required:
                             - "port"
                           additionalProperties: false
@@ -6064,6 +7049,10 @@ components:
                                   pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
                                 fromResource:
                                   type: "string"
+                                containerName:
+                                  type: "string"
+                                divisor:
+                                  type: "string"
                               required:
                                 - "name"
                                 - "fromResource"
@@ -6080,6 +7069,8 @@ components:
                                       type: "string"
                                     key:
                                       type: "string"
+                                    optional:
+                                      type: "boolean"
                                   required:
                                     - "secret"
                                     - "key"
@@ -6100,6 +7091,8 @@ components:
                                       type: "string"
                                     key:
                                       type: "string"
+                                    optional:
+                                      type: "boolean"
                                   required:
                                     - "config"
                                     - "key"
@@ -6129,9 +7122,16 @@ components:
                                   properties:
                                     to:
                                       type: "string"
-                                      pattern: "^[a-z][a-z0-9-]{0,39}$"
+                                      pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
                                     output:
                                       $ref: "#/components/schemas/LinkOutputV2"
+                                    endpoint:
+                                      type: "string"
+                                      pattern: "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+                                    subscription:
+                                      type: "string"
+                                      minLength: 1
+                                      maxLength: 255
                                   required:
                                     - "to"
                                     - "output"
@@ -6150,14 +7150,21 @@ components:
                                 anyOf:
                                   - type: "integer"
                                     minimum: 1
-                                    maximum: 64000
+                                    maximum: 9007199254740991
                                   - type: "null"
                               memMiB:
                                 anyOf:
                                   - type: "integer"
                                     minimum: 1
-                                    maximum: 262144
+                                    maximum: 9007199254740991
                                   - type: "null"
+                              extended:
+                                type: "object"
+                                propertyNames:
+                                  $ref: "#/components/schemas/ExtendedResourceName"
+                                additionalProperties:
+                                  type: "string"
+                                  maxLength: 64
                             required:
                               - "cpuMilli"
                               - "memMiB"
@@ -6169,14 +7176,21 @@ components:
                                 anyOf:
                                   - type: "integer"
                                     minimum: 1
-                                    maximum: 64000
+                                    maximum: 9007199254740991
                                   - type: "null"
                               memMiB:
                                 anyOf:
                                   - type: "integer"
                                     minimum: 1
-                                    maximum: 262144
+                                    maximum: 9007199254740991
                                   - type: "null"
+                              extended:
+                                type: "object"
+                                propertyNames:
+                                  $ref: "#/components/schemas/ExtendedResourceName"
+                                additionalProperties:
+                                  type: "string"
+                                  maxLength: 64
                             required:
                               - "cpuMilli"
                               - "memMiB"
@@ -6206,6 +7220,20 @@ components:
                                   enum:
                                     - "HTTP"
                                     - "HTTPS"
+                                headers:
+                                  maxItems: 20
+                                  type: "array"
+                                  items:
+                                    type: "object"
+                                    properties:
+                                      name:
+                                        type: "string"
+                                      value:
+                                        type: "string"
+                                    required:
+                                      - "name"
+                                      - "value"
+                                    additionalProperties: false
                                 periodSec:
                                   type: "integer"
                                   minimum: -9007199254740991
@@ -6215,6 +7243,18 @@ components:
                                   minimum: -9007199254740991
                                   maximum: 9007199254740991
                                 initialDelaySec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                timeoutSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                successThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                terminationGracePeriodSec:
                                   type: "integer"
                                   minimum: -9007199254740991
                                   maximum: 9007199254740991
@@ -6245,6 +7285,18 @@ components:
                                   type: "integer"
                                   minimum: -9007199254740991
                                   maximum: 9007199254740991
+                                timeoutSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                successThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                terminationGracePeriodSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
                               required:
                                 - "type"
                                 - "port"
@@ -6258,6 +7310,8 @@ components:
                                   type: "integer"
                                   minimum: 1
                                   maximum: 65535
+                                service:
+                                  type: "string"
                                 periodSec:
                                   type: "integer"
                                   minimum: -9007199254740991
@@ -6267,6 +7321,18 @@ components:
                                   minimum: -9007199254740991
                                   maximum: 9007199254740991
                                 initialDelaySec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                timeoutSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                successThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                terminationGracePeriodSec:
                                   type: "integer"
                                   minimum: -9007199254740991
                                   maximum: 9007199254740991
@@ -6295,12 +7361,64 @@ components:
                                   type: "integer"
                                   minimum: -9007199254740991
                                   maximum: 9007199254740991
+                                timeoutSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                successThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                terminationGracePeriodSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
                               required:
                                 - "type"
                                 - "command"
                               additionalProperties: false
                       injected:
                         type: "boolean"
+                      volumeMounts:
+                        maxItems: 50
+                        type: "array"
+                        items:
+                          type: "object"
+                          properties:
+                            name:
+                              type: "string"
+                            mountPath:
+                              type: "string"
+                            subPath:
+                              type: "string"
+                            readOnly:
+                              type: "boolean"
+                          required:
+                            - "name"
+                            - "mountPath"
+                          additionalProperties: false
+                      restartPolicy:
+                        type: "string"
+                        const: "Always"
+                      securityContext:
+                        type: "object"
+                        propertyNames:
+                          type: "string"
+                        additionalProperties: {}
+                      commandTemplates:
+                        maxItems: 50
+                        type: "array"
+                        items:
+                          type: "integer"
+                          minimum: 0
+                          maximum: 9007199254740991
+                      argTemplates:
+                        maxItems: 100
+                        type: "array"
+                        items:
+                          type: "integer"
+                          minimum: 0
+                          maximum: 9007199254740991
                     required:
                       - "name"
                       - "image"
@@ -6308,7 +7426,7 @@ components:
                       - "resources"
                     additionalProperties: false
                 initContainers:
-                  maxItems: 5
+                  maxItems: 50
                   type: "array"
                   items:
                     type: "object"
@@ -6342,6 +7460,10 @@ components:
                                 - "TCP"
                                 - "UDP"
                                 - "SCTP"
+                            hostPort:
+                              type: "integer"
+                              minimum: 1
+                              maximum: 65535
                           required:
                             - "port"
                           additionalProperties: false
@@ -6378,6 +7500,10 @@ components:
                                   pattern: "^[A-Za-z_][A-Za-z0-9_.-]*$"
                                 fromResource:
                                   type: "string"
+                                containerName:
+                                  type: "string"
+                                divisor:
+                                  type: "string"
                               required:
                                 - "name"
                                 - "fromResource"
@@ -6394,6 +7520,8 @@ components:
                                       type: "string"
                                     key:
                                       type: "string"
+                                    optional:
+                                      type: "boolean"
                                   required:
                                     - "secret"
                                     - "key"
@@ -6414,6 +7542,8 @@ components:
                                       type: "string"
                                     key:
                                       type: "string"
+                                    optional:
+                                      type: "boolean"
                                   required:
                                     - "config"
                                     - "key"
@@ -6443,9 +7573,16 @@ components:
                                   properties:
                                     to:
                                       type: "string"
-                                      pattern: "^[a-z][a-z0-9-]{0,39}$"
+                                      pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
                                     output:
                                       $ref: "#/components/schemas/LinkOutputV2"
+                                    endpoint:
+                                      type: "string"
+                                      pattern: "^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$"
+                                    subscription:
+                                      type: "string"
+                                      minLength: 1
+                                      maxLength: 255
                                   required:
                                     - "to"
                                     - "output"
@@ -6464,14 +7601,21 @@ components:
                                 anyOf:
                                   - type: "integer"
                                     minimum: 1
-                                    maximum: 64000
+                                    maximum: 9007199254740991
                                   - type: "null"
                               memMiB:
                                 anyOf:
                                   - type: "integer"
                                     minimum: 1
-                                    maximum: 262144
+                                    maximum: 9007199254740991
                                   - type: "null"
+                              extended:
+                                type: "object"
+                                propertyNames:
+                                  $ref: "#/components/schemas/ExtendedResourceName"
+                                additionalProperties:
+                                  type: "string"
+                                  maxLength: 64
                             required:
                               - "cpuMilli"
                               - "memMiB"
@@ -6483,14 +7627,21 @@ components:
                                 anyOf:
                                   - type: "integer"
                                     minimum: 1
-                                    maximum: 64000
+                                    maximum: 9007199254740991
                                   - type: "null"
                               memMiB:
                                 anyOf:
                                   - type: "integer"
                                     minimum: 1
-                                    maximum: 262144
+                                    maximum: 9007199254740991
                                   - type: "null"
+                              extended:
+                                type: "object"
+                                propertyNames:
+                                  $ref: "#/components/schemas/ExtendedResourceName"
+                                additionalProperties:
+                                  type: "string"
+                                  maxLength: 64
                             required:
                               - "cpuMilli"
                               - "memMiB"
@@ -6520,6 +7671,20 @@ components:
                                   enum:
                                     - "HTTP"
                                     - "HTTPS"
+                                headers:
+                                  maxItems: 20
+                                  type: "array"
+                                  items:
+                                    type: "object"
+                                    properties:
+                                      name:
+                                        type: "string"
+                                      value:
+                                        type: "string"
+                                    required:
+                                      - "name"
+                                      - "value"
+                                    additionalProperties: false
                                 periodSec:
                                   type: "integer"
                                   minimum: -9007199254740991
@@ -6529,6 +7694,18 @@ components:
                                   minimum: -9007199254740991
                                   maximum: 9007199254740991
                                 initialDelaySec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                timeoutSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                successThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                terminationGracePeriodSec:
                                   type: "integer"
                                   minimum: -9007199254740991
                                   maximum: 9007199254740991
@@ -6559,6 +7736,18 @@ components:
                                   type: "integer"
                                   minimum: -9007199254740991
                                   maximum: 9007199254740991
+                                timeoutSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                successThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                terminationGracePeriodSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
                               required:
                                 - "type"
                                 - "port"
@@ -6572,6 +7761,8 @@ components:
                                   type: "integer"
                                   minimum: 1
                                   maximum: 65535
+                                service:
+                                  type: "string"
                                 periodSec:
                                   type: "integer"
                                   minimum: -9007199254740991
@@ -6581,6 +7772,18 @@ components:
                                   minimum: -9007199254740991
                                   maximum: 9007199254740991
                                 initialDelaySec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                timeoutSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                successThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                terminationGracePeriodSec:
                                   type: "integer"
                                   minimum: -9007199254740991
                                   maximum: 9007199254740991
@@ -6609,20 +7812,78 @@ components:
                                   type: "integer"
                                   minimum: -9007199254740991
                                   maximum: 9007199254740991
+                                timeoutSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                successThreshold:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
+                                terminationGracePeriodSec:
+                                  type: "integer"
+                                  minimum: -9007199254740991
+                                  maximum: 9007199254740991
                               required:
                                 - "type"
                                 - "command"
                               additionalProperties: false
                       injected:
                         type: "boolean"
+                      volumeMounts:
+                        maxItems: 50
+                        type: "array"
+                        items:
+                          type: "object"
+                          properties:
+                            name:
+                              type: "string"
+                            mountPath:
+                              type: "string"
+                            subPath:
+                              type: "string"
+                            readOnly:
+                              type: "boolean"
+                          required:
+                            - "name"
+                            - "mountPath"
+                          additionalProperties: false
+                      restartPolicy:
+                        type: "string"
+                        const: "Always"
+                      securityContext:
+                        type: "object"
+                        propertyNames:
+                          type: "string"
+                        additionalProperties: {}
+                      commandTemplates:
+                        maxItems: 50
+                        type: "array"
+                        items:
+                          type: "integer"
+                          minimum: 0
+                          maximum: 9007199254740991
+                      argTemplates:
+                        maxItems: 100
+                        type: "array"
+                        items:
+                          type: "integer"
+                          minimum: 0
+                          maximum: 9007199254740991
                     required:
                       - "name"
                       - "image"
                       - "env"
                       - "resources"
                     additionalProperties: false
+                nodeArch:
+                  maxItems: 8
+                  type: "array"
+                  items:
+                    type: "string"
+                    pattern: "^[a-z0-9]+$"
                 volumes:
-                  maxItems: 10
+                  maxItems: 200
                   type: "array"
                   items:
                     type: "object"
@@ -6639,10 +7900,167 @@ components:
                           - "RWO"
                           - "RWX"
                           - "ROX"
+                          - "RWOP"
+                      storageClass:
+                        type: "string"
+                      claimTemplate:
+                        type: "boolean"
+                      claimName:
+                        type: "string"
                     required:
                       - "name"
                       - "mountPath"
                     additionalProperties: false
+                podVolumes:
+                  maxItems: 200
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      name:
+                        type: "string"
+                      type:
+                        type: "string"
+                        enum:
+                          - "configMap"
+                          - "secret"
+                          - "emptyDir"
+                          - "projected"
+                          - "downwardAPI"
+                          - "hostPath"
+                      source:
+                        type: "object"
+                        propertyNames:
+                          type: "string"
+                        additionalProperties: {}
+                    required:
+                      - "name"
+                      - "type"
+                      - "source"
+                    additionalProperties: false
+                volumeMounts:
+                  maxItems: 200
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      name:
+                        type: "string"
+                      mountPath:
+                        type: "string"
+                      subPath:
+                        type: "string"
+                      readOnly:
+                        type: "boolean"
+                    required:
+                      - "name"
+                      - "mountPath"
+                    additionalProperties: false
+                secretSources:
+                  maxItems: 20
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      via:
+                        type: "string"
+                        enum:
+                          - "eso"
+                          - "vault-agent"
+                      secret:
+                        type: "string"
+                      store:
+                        type: "string"
+                      provider:
+                        type: "string"
+                      role:
+                        type: "string"
+                      refs:
+                        maxItems: 100
+                        type: "array"
+                        items:
+                          type: "object"
+                          properties:
+                            key:
+                              type: "string"
+                            remote:
+                              type: "string"
+                            property:
+                              type: "string"
+                          required:
+                            - "key"
+                            - "remote"
+                          additionalProperties: false
+                    required:
+                      - "via"
+                      - "refs"
+                    additionalProperties: false
+                scheduling:
+                  type: "object"
+                  properties:
+                    nodeSelector:
+                      type: "object"
+                      propertyNames:
+                        type: "string"
+                      additionalProperties:
+                        type: "string"
+                    tolerations:
+                      maxItems: 50
+                      type: "array"
+                      items:
+                        type: "object"
+                        propertyNames:
+                          type: "string"
+                        additionalProperties: {}
+                    affinity:
+                      type: "object"
+                      propertyNames:
+                        type: "string"
+                      additionalProperties: {}
+                    topologySpreadConstraints:
+                      maxItems: 20
+                      type: "array"
+                      items:
+                        type: "object"
+                        propertyNames:
+                          type: "string"
+                        additionalProperties: {}
+                    priorityClassName:
+                      type: "string"
+                  additionalProperties: false
+                host:
+                  type: "object"
+                  properties:
+                    network:
+                      type: "boolean"
+                      const: true
+                    pid:
+                      type: "boolean"
+                      const: true
+                    ipc:
+                      type: "boolean"
+                      const: true
+                  additionalProperties: false
+                podAnnotations:
+                  type: "object"
+                  propertyNames:
+                    type: "string"
+                  additionalProperties:
+                    type: "string"
+                commandTemplates:
+                  maxItems: 50
+                  type: "array"
+                  items:
+                    type: "integer"
+                    minimum: 0
+                    maximum: 9007199254740991
+                argTemplates:
+                  maxItems: 100
+                  type: "array"
+                  items:
+                    type: "integer"
+                    minimum: 0
+                    maximum: 9007199254740991
                 schedule:
                   type: "string"
                   minLength: 9
@@ -6685,7 +8103,7 @@ components:
           properties:
             id:
               type: "string"
-              pattern: "^[a-z][a-z0-9-]{0,39}$"
+              pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
             kind:
               type: "string"
               const: "postgres"
@@ -6714,13 +8132,13 @@ components:
                       anyOf:
                         - type: "integer"
                           minimum: 1
-                          maximum: 64000
+                          maximum: 512000
                         - type: "null"
                     memMiB:
                       anyOf:
                         - type: "integer"
                           minimum: 1
-                          maximum: 262144
+                          maximum: 33554432
                         - type: "null"
                   required:
                     - "cpuMilli"
@@ -6733,12 +8151,12 @@ components:
                   minimum: 0
                   maximum: 15
                 databases:
-                  maxItems: 50
+                  maxItems: 1000
                   type: "array"
                   items:
                     type: "string"
                 extensions:
-                  maxItems: 100
+                  maxItems: 500
                   type: "array"
                   items:
                     type: "string"
@@ -6750,6 +8168,65 @@ components:
                     type: "string"
                 logicalReplication:
                   type: "boolean"
+                appDatabase:
+                  type: "string"
+                  minLength: 1
+                  maxLength: 63
+                appUser:
+                  type: "string"
+                  minLength: 1
+                  maxLength: 63
+                backup:
+                  type: "object"
+                  properties:
+                    retentionDays:
+                      anyOf:
+                        - type: "integer"
+                          minimum: 0
+                          maximum: 3650
+                        - type: "null"
+                    pitr:
+                      type:
+                        - "boolean"
+                        - "null"
+                  required:
+                    - "retentionDays"
+                    - "pitr"
+                  additionalProperties: false
+                maintenanceWindow:
+                  type: "string"
+                  pattern: "^(mon|tue|wed|thu|fri|sat|sun):([01]\\d|2[0-3]):[0-5]\\d-(mon|tue|wed|thu|fri|sat|sun):([01]\\d|2[0-3]):[0-5]\\d$"
+                walStorageGb:
+                  type: "integer"
+                  minimum: 1
+                  maximum: 65536
+                port:
+                  type: "integer"
+                  minimum: 1
+                  maximum: 65535
+                tlsRequired:
+                  type:
+                    - "boolean"
+                    - "null"
+                inCluster:
+                  type: "object"
+                  properties:
+                    workload:
+                      type: "string"
+                      pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
+                    product:
+                      type: "string"
+                      enum:
+                        - "postgres"
+                        - "redis"
+                        - "valkey"
+                        - "minio"
+                        - "rabbitmq"
+                        - "kafka"
+                  required:
+                    - "workload"
+                    - "product"
+                  additionalProperties: false
               required:
                 - "majorVersion"
                 - "storageGb"
@@ -6763,7 +8240,7 @@ components:
           properties:
             id:
               type: "string"
-              pattern: "^[a-z][a-z0-9-]{0,39}$"
+              pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
             kind:
               type: "string"
               const: "cache"
@@ -6800,6 +8277,29 @@ components:
                     - "null"
                 ha:
                   type: "boolean"
+                port:
+                  type: "integer"
+                  minimum: 1
+                  maximum: 65535
+                inCluster:
+                  type: "object"
+                  properties:
+                    workload:
+                      type: "string"
+                      pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
+                    product:
+                      type: "string"
+                      enum:
+                        - "postgres"
+                        - "redis"
+                        - "valkey"
+                        - "minio"
+                        - "rabbitmq"
+                        - "kafka"
+                  required:
+                    - "workload"
+                    - "product"
+                  additionalProperties: false
               required:
                 - "engine"
                 - "memoryMiB"
@@ -6815,7 +8315,7 @@ components:
           properties:
             id:
               type: "string"
-              pattern: "^[a-z][a-z0-9-]{0,39}$"
+              pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
             kind:
               type: "string"
               const: "objectStore"
@@ -6823,7 +8323,9 @@ components:
               type: "object"
               properties:
                 versioning:
-                  type: "boolean"
+                  type:
+                    - "boolean"
+                    - "null"
                 public:
                   type:
                     - "boolean"
@@ -6834,7 +8336,7 @@ components:
                       minimum: 0
                     - type: "null"
                 lifecycle:
-                  maxItems: 50
+                  maxItems: 1000
                   type: "array"
                   items:
                     type: "object"
@@ -6853,12 +8355,61 @@ components:
                       - "prefix"
                     additionalProperties: false
                 cors:
+                  maxItems: 1000
+                  type: "array"
+                  items:
+                    $ref: "#/components/schemas/CorsRuleV2"
+                notifications:
+                  maxItems: 1000
                   type: "array"
                   items:
                     type: "object"
-                    propertyNames:
+                    properties:
+                      target:
+                        type: "string"
+                        enum:
+                          - "queue"
+                          - "topic"
+                          - "function"
+                          - "eventbus"
+                      to:
+                        type: "string"
+                        pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
+                      events:
+                        maxItems: 20
+                        type: "array"
+                        items:
+                          type: "string"
+                          maxLength: 100
+                      prefix:
+                        type: "string"
+                        maxLength: 1024
+                      suffix:
+                        type: "string"
+                        maxLength: 1024
+                    required:
+                      - "target"
+                      - "events"
+                    additionalProperties: false
+                inCluster:
+                  type: "object"
+                  properties:
+                    workload:
                       type: "string"
-                    additionalProperties: {}
+                      pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
+                    product:
+                      type: "string"
+                      enum:
+                        - "postgres"
+                        - "redis"
+                        - "valkey"
+                        - "minio"
+                        - "rabbitmq"
+                        - "kafka"
+                  required:
+                    - "workload"
+                    - "product"
+                  additionalProperties: false
               required:
                 - "versioning"
                 - "public"
@@ -6873,7 +8424,7 @@ components:
           properties:
             id:
               type: "string"
-              pattern: "^[a-z][a-z0-9-]{0,39}$"
+              pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
             kind:
               type: "string"
               const: "queue"
@@ -6885,26 +8436,135 @@ components:
                   enum:
                     - "queue"
                     - "topic"
-                ordered:
-                  type: "boolean"
-                retentionSec:
-                  type: "integer"
-                  minimum: 60
-                  maximum: 2678400
                 ackTimeoutSec:
                   type: "integer"
                   minimum: -9007199254740991
                   maximum: 9007199254740991
+                retentionSec:
+                  type: "integer"
+                  minimum: 60
+                  maximum: 2678400
+                ordered:
+                  type: "boolean"
+                idleExpirySec:
+                  type: "integer"
+                  minimum: 1
+                  maximum: 9007199254740991
+                retainAcked:
+                  type: "boolean"
+                filter:
+                  type: "string"
+                  minLength: 1
+                push:
+                  type: "object"
+                  properties:
+                    endpoint:
+                      type: "string"
+                      minLength: 1
+                  required:
+                    - "endpoint"
+                  additionalProperties: false
                 deadLetter:
                   type: "object"
                   properties:
                     to:
                       type: "string"
-                      pattern: "^[a-z][a-z0-9-]{0,39}$"
+                      pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
                     maxReceive:
                       type: "integer"
                       minimum: -9007199254740991
                       maximum: 9007199254740991
+                  additionalProperties: false
+                subscriptions:
+                  maxItems: 1000
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      name:
+                        type: "string"
+                        minLength: 1
+                      ackTimeoutSec:
+                        type: "integer"
+                        minimum: -9007199254740991
+                        maximum: 9007199254740991
+                      retentionSec:
+                        type: "integer"
+                        minimum: 60
+                        maximum: 2678400
+                      ordered:
+                        type: "boolean"
+                      idleExpirySec:
+                        type: "integer"
+                        minimum: 1
+                        maximum: 9007199254740991
+                      retainAcked:
+                        type: "boolean"
+                      filter:
+                        type: "string"
+                        minLength: 1
+                      push:
+                        type: "object"
+                        properties:
+                          endpoint:
+                            type: "string"
+                            minLength: 1
+                        required:
+                          - "endpoint"
+                        additionalProperties: false
+                      deadLetter:
+                        type: "object"
+                        properties:
+                          maxReceive:
+                            type: "integer"
+                            minimum: -9007199254740991
+                            maximum: 9007199254740991
+                        additionalProperties: false
+                    required:
+                      - "name"
+                    additionalProperties: false
+                topicSubscriptions:
+                  maxItems: 1000
+                  type: "array"
+                  items:
+                    type: "object"
+                    properties:
+                      protocol:
+                        type: "string"
+                        enum:
+                          - "sqs"
+                          - "http"
+                          - "https"
+                          - "lambda"
+                          - "email"
+                          - "email-json"
+                          - "sms"
+                          - "application"
+                          - "firehose"
+                      to:
+                        type: "string"
+                        pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
+                    required:
+                      - "protocol"
+                    additionalProperties: false
+                inCluster:
+                  type: "object"
+                  properties:
+                    workload:
+                      type: "string"
+                      pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
+                    product:
+                      type: "string"
+                      enum:
+                        - "postgres"
+                        - "redis"
+                        - "valkey"
+                        - "minio"
+                        - "rabbitmq"
+                        - "kafka"
+                  required:
+                    - "workload"
+                    - "product"
                   additionalProperties: false
               required:
                 - "model"
@@ -6926,6 +8586,8 @@ components:
           type: "string"
         externalId:
           type: "string"
+        createBoundaryPolicy:
+          type: "boolean"
         expiresAt:
           type: "string"
       required:
@@ -6949,6 +8611,37 @@ components:
         - "failed"
         - "expired"
         - "disconnected"
+    CorsRuleV2:
+      type: "object"
+      properties:
+        origins:
+          minItems: 1
+          type: "array"
+          items:
+            type: "string"
+            minLength: 1
+        methods:
+          minItems: 1
+          type: "array"
+          items:
+            type: "string"
+            minLength: 1
+        allowedHeaders:
+          type: "array"
+          items:
+            type: "string"
+        exposeHeaders:
+          type: "array"
+          items:
+            type: "string"
+        maxAgeSec:
+          type: "integer"
+          minimum: 0
+          maximum: 9007199254740991
+      required:
+        - "origins"
+        - "methods"
+      additionalProperties: false
     CostEstimate:
       type: "object"
       properties:
@@ -7088,14 +8781,14 @@ components:
           const: "cloudflare-lb"
         hosts:
           minItems: 1
-          maxItems: 10
+          maxItems: 1000
           type: "array"
           items:
             type: "object"
             properties:
               hostnames:
                 minItems: 1
-                maxItems: 10
+                maxItems: 1000
                 type: "array"
                 items:
                   type: "string"
@@ -7113,14 +8806,15 @@ components:
                   - "mode"
                 additionalProperties: false
               routes:
-                maxItems: 20
+                minItems: 1
+                maxItems: 5000
                 type: "array"
                 items:
                   type: "object"
                   properties:
                     matches:
                       minItems: 1
-                      maxItems: 8
+                      maxItems: 100
                       type: "array"
                       items:
                         type: "object"
@@ -7142,7 +8836,7 @@ components:
                               - "value"
                             additionalProperties: false
                           headers:
-                            maxItems: 8
+                            maxItems: 100
                             type: "array"
                             items:
                               type: "object"
@@ -7170,14 +8864,14 @@ components:
                         additionalProperties: false
                     backends:
                       minItems: 1
-                      maxItems: 4
+                      maxItems: 100
                       type: "array"
                       items:
                         type: "object"
                         properties:
                           to:
                             type: "string"
-                            pattern: "^[a-z][a-z0-9-]{0,39}$"
+                            pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
                           port:
                             type: "integer"
                             minimum: 1
@@ -7195,6 +8889,70 @@ components:
                     - "matches"
                     - "backends"
                   additionalProperties: false
+              dns:
+                type: "object"
+                properties:
+                  read:
+                    type: "boolean"
+                  records:
+                    maxItems: 10
+                    type: "array"
+                    items:
+                      type: "object"
+                      properties:
+                        provider:
+                          type: "string"
+                          enum:
+                            - "route53"
+                            - "clouddns"
+                        zone:
+                          type: "string"
+                        name:
+                          type: "string"
+                        type:
+                          type: "string"
+                          pattern: "^[A-Z]{1,10}$"
+                        ttl:
+                          type: "integer"
+                          minimum: 0
+                          maximum: 9007199254740991
+                        values:
+                          maxItems: 20
+                          type: "array"
+                          items:
+                            type: "string"
+                        alias:
+                          type: "string"
+                        weight:
+                          type: "integer"
+                          minimum: 0
+                          maximum: 9007199254740991
+                        setId:
+                          type: "string"
+                        policy:
+                          type: "string"
+                      required:
+                        - "provider"
+                        - "zone"
+                        - "name"
+                        - "type"
+                        - "values"
+                      additionalProperties: false
+                required:
+                  - "read"
+                  - "records"
+                additionalProperties: false
+              annotations:
+                type: "object"
+                propertyNames:
+                  type: "string"
+                additionalProperties:
+                  type: "string"
+              exposure:
+                type: "string"
+                enum:
+                  - "public"
+                  - "internal"
             required:
               - "hostnames"
               - "routes"
@@ -7316,6 +9074,8 @@ components:
           type:
             - "string"
             - "null"
+        targetProjectId:
+          type: "string"
         lastVerifiedAt:
           type:
             - "string"
@@ -7336,6 +9096,9 @@ components:
           items:
             type: "string"
             maxLength: 300
+        mock:
+          type: "boolean"
+          const: true
       required:
         - "id"
         - "provider"
@@ -7696,6 +9459,10 @@ components:
         - "gaps"
         - "reportHash"
       additionalProperties: false
+    ExtendedResourceName:
+      type: "string"
+      maxLength: 253
+      pattern: "^(?:[a-z0-9]([-a-z0-9.]*[a-z0-9])?\\/)?[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$"
     FailureAnalysis:
       type: "object"
       properties:
@@ -7726,6 +9493,53 @@ components:
         - "fix"
         - "retryable"
         - "confidence"
+      additionalProperties: false
+    FailureDecisionInput:
+      type: "object"
+      properties:
+        choice:
+          type: "string"
+          enum:
+            - "retry"
+            - "rollback"
+        reason:
+          type: "string"
+          maxLength: 500
+        acceptCustomerCost:
+          type: "boolean"
+      required:
+        - "choice"
+      additionalProperties: false
+    FailureDecisionResult:
+      type: "object"
+      properties:
+        id:
+          type: "string"
+          format: "uuid"
+          pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        from:
+          type: "string"
+          const: "failed"
+        choice:
+          type: "string"
+          enum:
+            - "retry"
+            - "rollback"
+        status:
+          $ref: "#/components/schemas/MigrationStatus"
+        queue:
+          type:
+            - "string"
+            - "null"
+        jobQueued:
+          type: "boolean"
+      required:
+        - "id"
+        - "from"
+        - "choice"
+        - "status"
+        - "queue"
+        - "jobQueued"
       additionalProperties: false
     FieldMetaEntryV2:
       type: "object"
@@ -7883,6 +9697,18 @@ components:
           type: "array"
           items:
             $ref: "#/components/schemas/AccuracyField"
+        compared:
+          maxItems: 100
+          type: "array"
+          items:
+            type: "string"
+            maxLength: 60
+        notCompared:
+          maxItems: 100
+          type: "array"
+          items:
+            type: "string"
+            maxLength: 60
       required:
         - "schemaVersion"
         - "basis"
@@ -7902,16 +9728,17 @@ components:
         - "url"
         - "name"
         - "user"
+        - "reader"
     LinkV2:
       type: "object"
       properties:
         from:
           type: "string"
-          pattern: "^[a-z][a-z0-9-]{0,39}$"
+          pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
         to:
           anyOf:
             - type: "string"
-              pattern: "^[a-z][a-z0-9-]{0,39}$"
+              pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
             - type: "object"
               properties:
                 unmapped:
@@ -7936,7 +9763,7 @@ components:
             - "admin"
             - "call"
         grants:
-          maxItems: 50
+          maxItems: 500
           type: "array"
           items:
             type: "object"
@@ -8243,7 +10070,7 @@ components:
         - "targetEnvId"
         - "updatedAt"
       additionalProperties: false
-    MigrationSpecViewV2:
+    MigrationSpecView:
       type: "object"
       properties:
         migrationId:
@@ -8264,139 +10091,33 @@ components:
         complete:
           type: "boolean"
         spec:
-          type: "object"
-          properties:
-            schemaVersion:
-              type: "string"
-              const: "1"
-            app:
-              type: "object"
-              properties:
-                name:
-                  type: "string"
-                  pattern: "^[a-z][a-z0-9-]{1,30}$"
-              required:
-                - "name"
-              additionalProperties: false
-            service:
-              type: "object"
-              properties:
-                image:
-                  type: "string"
-                  pattern: "@sha256:[a-f0-9]{64}$"
-                port:
-                  type: "integer"
-                  minimum: 1
-                  maximum: 65535
-                healthPath:
-                  type: "string"
-                  format: "starts_with"
-                  pattern: "^\\/.*"
-                replicas:
-                  type: "integer"
-                  minimum: 1
-                  maximum: 10
-                cpu:
-                  type: "string"
-                  enum:
-                    - "1"
-                    - "250m"
-                    - "500m"
-                memory:
-                  type: "string"
-                  enum:
-                    - "512Mi"
-                    - "1Gi"
-                    - "2Gi"
-                env:
-                  type: "array"
-                  items:
-                    type: "object"
-                    properties:
-                      name:
-                        type: "string"
-                      value:
-                        type: "string"
-                        maxLength: 256
-                    required:
-                      - "name"
-                      - "value"
-                    additionalProperties: false
-                secretRefs:
-                  type: "array"
-                  items:
-                    type: "object"
-                    properties:
-                      name:
-                        type: "string"
-                      key:
-                        type: "string"
-                    required:
-                      - "name"
-                      - "key"
-                    additionalProperties: false
-              required:
-                - "image"
-                - "port"
-                - "healthPath"
-                - "replicas"
-                - "cpu"
-                - "memory"
-                - "env"
-                - "secretRefs"
-              additionalProperties: false
-            database:
-              type: "object"
-              properties:
-                engine:
-                  type: "string"
-                  const: "postgres"
-                majorVersion:
-                  type: "string"
-                  enum:
-                    - "15"
-                    - "16"
-                    - "17"
-                storageGb:
-                  type: "integer"
-                  minimum: -9007199254740991
-                  maximum: 100
-              required:
-                - "engine"
-                - "majorVersion"
-                - "storageGb"
-              additionalProperties: false
-            ingress:
-              type: "object"
-              properties:
-                hostname:
-                  type: "string"
-                entry:
-                  type: "string"
-                  const: "cloudflare-lb"
-              required:
-                - "hostname"
-                - "entry"
-              additionalProperties: false
-          additionalProperties: false
+          $ref: "#/components/schemas/AppSpecV2"
+        fieldMeta:
+          $ref: "#/components/schemas/FieldMetaV2"
         needsReview:
           type: "array"
           items:
             type: "string"
-        needsReviewV2:
-          type: "array"
-          items:
+        reviewLabels:
+          type: "object"
+          propertyNames:
             type: "string"
-        specV2:
-          $ref: "#/components/schemas/AppSpecV2"
-        fieldMetaV2:
-          $ref: "#/components/schemas/FieldMetaV2"
+          additionalProperties:
+            type: "string"
         accuracy:
           $ref: "#/components/schemas/ImportAccuracy"
         outOfBoundary:
           type: "array"
           items:
             $ref: "#/components/schemas/OutOfBoundaryV2"
+        specV2:
+          $ref: "#/components/schemas/AppSpecV2"
+        fieldMetaV2:
+          $ref: "#/components/schemas/FieldMetaV2"
+        needsReviewV2:
+          type: "array"
+          items:
+            type: "string"
       required:
         - "migrationId"
         - "version"
@@ -8404,7 +10125,11 @@ components:
         - "source"
         - "complete"
         - "spec"
+        - "fieldMeta"
         - "needsReview"
+        - "specV2"
+        - "fieldMetaV2"
+        - "needsReviewV2"
       additionalProperties: false
     MigrationStatus:
       type: "string"
@@ -8468,6 +10193,8 @@ components:
           type:
             - "string"
             - "null"
+        sourceScope:
+          $ref: "#/components/schemas/SourceScope"
         updatedAt:
           type: "string"
       required:
@@ -8509,6 +10236,28 @@ components:
         - "job"
         - "service"
         - "vm"
+        - "netpol"
+    NamespaceV2:
+      type: "object"
+      properties:
+        name:
+          type: "string"
+          pattern: "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$"
+        labels:
+          type: "object"
+          propertyNames:
+            type: "string"
+          additionalProperties:
+            type: "string"
+        annotations:
+          type: "object"
+          propertyNames:
+            type: "string"
+          additionalProperties:
+            type: "string"
+      required:
+        - "name"
+      additionalProperties: false
     Operator:
       type: "string"
       enum:
@@ -8565,6 +10314,10 @@ components:
         - "build"
         - "precheck_warn"
         - "low_confidence"
+        - "tls_relaxed"
+        - "host_access"
+        - "public_bucket"
+        - "provision_reuse"
     PlanAcknowledgement:
       type: "object"
       properties:
@@ -8666,18 +10419,45 @@ components:
           type: "array"
           items:
             $ref: "#/components/schemas/PlanAcknowledgement"
-        irVersion:
-          type: "string"
-          const: "2"
-        specSource:
-          type: "string"
-          enum:
-            - "spec_v2"
-            - "upconvert"
+        rollbackWindowSec:
+          type: "integer"
+          minimum: 0
+          maximum: 604800
         instances:
           type: "array"
           items:
             $ref: "#/components/schemas/ModuleInstance"
+        targetFacts:
+          type: "object"
+          propertyNames:
+            type: "string"
+            maxLength: 100
+          additionalProperties:
+            type: "string"
+            maxLength: 2000
+        provision:
+          type: "object"
+          properties:
+            mode:
+              type: "string"
+              const: "reuse"
+            source:
+              type: "string"
+              maxLength: 100
+            resources:
+              maxItems: 200
+              type: "array"
+              items:
+                type: "string"
+                maxLength: 300
+            outputsHash:
+              type: "string"
+          required:
+            - "mode"
+            - "source"
+            - "resources"
+            - "outputsHash"
+          additionalProperties: false
         planHash:
           type: "string"
         expiresAt:
@@ -8739,14 +10519,14 @@ components:
       type: "object"
       properties:
         permissions:
-          maxItems: 200
+          maxItems: 10000
           type: "array"
           items:
             type: "object"
             properties:
               subject:
                 type: "string"
-                pattern: "^[a-z][a-z0-9-]{0,39}$"
+                pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
               source:
                 type: "string"
               effect:
@@ -8779,7 +10559,7 @@ components:
                 type: "array"
                 items:
                   type: "string"
-                  pattern: "^[a-z][a-z0-9-]{0,39}$"
+                  pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
               mode:
                 type: "string"
                 enum:
@@ -8796,7 +10576,7 @@ components:
               - "mode"
             additionalProperties: false
         network:
-          maxItems: 50
+          maxItems: 5000
           type: "array"
           items:
             oneOf:
@@ -8821,6 +10601,46 @@ components:
                     enum:
                       - "allow-all"
                       - "as-declared"
+                  rules:
+                    maxItems: 100
+                    type: "array"
+                    items:
+                      type: "object"
+                      properties:
+                        name:
+                          type: "string"
+                        podSelector:
+                          type: "object"
+                          propertyNames:
+                            type: "string"
+                          additionalProperties: {}
+                        policyTypes:
+                          type: "array"
+                          items:
+                            type: "string"
+                            enum:
+                              - "Ingress"
+                              - "Egress"
+                        ingress:
+                          maxItems: 100
+                          type: "array"
+                          items:
+                            type: "object"
+                            propertyNames:
+                              type: "string"
+                            additionalProperties: {}
+                        egress:
+                          maxItems: 100
+                          type: "array"
+                          items:
+                            type: "object"
+                            propertyNames:
+                              type: "string"
+                            additionalProperties: {}
+                      required:
+                        - "name"
+                        - "podSelector"
+                      additionalProperties: false
                 required:
                   - "scope"
                   - "namespace"
@@ -8835,7 +10655,7 @@ components:
                     const: "component"
                   subject:
                     type: "string"
-                    pattern: "^[a-z][a-z0-9-]{0,39}$"
+                    pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
                   mode:
                     type: "string"
                     enum:
@@ -8869,6 +10689,27 @@ components:
                   - "ingress"
                   - "public"
                 additionalProperties: false
+        egress:
+          type: "object"
+          properties:
+            source:
+              type: "string"
+              maxLength: 64
+            ips:
+              maxItems: 100
+              type: "array"
+              items:
+                type: "string"
+                maxLength: 64
+            fixed:
+              type:
+                - "boolean"
+                - "null"
+          required:
+            - "source"
+            - "ips"
+            - "fixed"
+          additionalProperties: false
       required:
         - "permissions"
         - "network"
@@ -8916,6 +10757,32 @@ components:
         - "fetchedAt"
         - "urls"
       additionalProperties: false
+    PrivateDnsRecordV2:
+      type: "object"
+      properties:
+        zone:
+          type: "string"
+          minLength: 1
+          maxLength: 253
+        name:
+          type: "string"
+          minLength: 1
+          maxLength: 253
+        type:
+          type: "string"
+          enum:
+            - "A"
+            - "AAAA"
+            - "CNAME"
+        to:
+          type: "string"
+          pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
+      required:
+        - "zone"
+        - "name"
+        - "type"
+        - "to"
+      additionalProperties: false
     Provider:
       type: "string"
       enum:
@@ -8923,6 +10790,131 @@ components:
         - "gcp"
         - "onprem"
         - "azure_mock"
+    RbacV2:
+      type: "object"
+      properties:
+        roles:
+          maxItems: 1000
+          type: "array"
+          items:
+            type: "object"
+            properties:
+              name:
+                type: "string"
+              namespace:
+                type: "string"
+              rules:
+                maxItems: 1000
+                type: "array"
+                items:
+                  type: "object"
+                  propertyNames:
+                    type: "string"
+                  additionalProperties: {}
+            required:
+              - "name"
+              - "rules"
+            additionalProperties: false
+        roleBindings:
+          maxItems: 1000
+          type: "array"
+          items:
+            type: "object"
+            properties:
+              name:
+                type: "string"
+              namespace:
+                type: "string"
+              roleRef:
+                type: "object"
+                properties:
+                  kind:
+                    type: "string"
+                    enum:
+                      - "Role"
+                      - "ClusterRole"
+                  name:
+                    type: "string"
+                required:
+                  - "kind"
+                  - "name"
+                additionalProperties: false
+              subjects:
+                maxItems: 1000
+                type: "array"
+                items:
+                  type: "object"
+                  properties:
+                    kind:
+                      type: "string"
+                      enum:
+                        - "ServiceAccount"
+                        - "User"
+                        - "Group"
+                    name:
+                      type: "string"
+                    namespace:
+                      type: "string"
+                  required:
+                    - "kind"
+                    - "name"
+                  additionalProperties: false
+            required:
+              - "name"
+              - "roleRef"
+              - "subjects"
+            additionalProperties: false
+        clusterBindings:
+          maxItems: 1000
+          type: "array"
+          items:
+            type: "object"
+            properties:
+              name:
+                type: "string"
+              roleRef:
+                type: "object"
+                properties:
+                  kind:
+                    type: "string"
+                    enum:
+                      - "Role"
+                      - "ClusterRole"
+                  name:
+                    type: "string"
+                required:
+                  - "kind"
+                  - "name"
+                additionalProperties: false
+              subjects:
+                maxItems: 1000
+                type: "array"
+                items:
+                  type: "object"
+                  properties:
+                    kind:
+                      type: "string"
+                      enum:
+                        - "ServiceAccount"
+                        - "User"
+                        - "Group"
+                    name:
+                      type: "string"
+                    namespace:
+                      type: "string"
+                  required:
+                    - "kind"
+                    - "name"
+                  additionalProperties: false
+            required:
+              - "name"
+              - "roleRef"
+              - "subjects"
+            additionalProperties: false
+      required:
+        - "roles"
+        - "roleBindings"
+      additionalProperties: false
     ReclaimResult:
       type: "object"
       properties:
@@ -9061,6 +11053,55 @@ components:
         - "id"
         - "state"
       additionalProperties: false
+    SecretKeyV2:
+      type: "object"
+      properties:
+        key:
+          type: "string"
+          minLength: 1
+          maxLength: 253
+        binary:
+          type: "boolean"
+        pairedWith:
+          type: "object"
+          properties:
+            component:
+              type: "string"
+              pattern: "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
+            output:
+              type: "string"
+              const: "password"
+          required:
+            - "component"
+            - "output"
+          additionalProperties: false
+      required:
+        - "key"
+      additionalProperties: false
+    SecretV2:
+      type: "object"
+      properties:
+        name:
+          type: "string"
+          minLength: 1
+          maxLength: 512
+        type:
+          type: "string"
+          minLength: 1
+          maxLength: 253
+        allKeys:
+          type: "boolean"
+        keys:
+          maxItems: 1000
+          type: "array"
+          items:
+            $ref: "#/components/schemas/SecretKeyV2"
+      required:
+        - "name"
+        - "type"
+        - "allKeys"
+        - "keys"
+      additionalProperties: false
     SecurityLevel:
       type: "string"
       enum:
@@ -9169,25 +11210,74 @@ components:
       required:
         - "requirements"
       additionalProperties: false
-    SpecEnvFieldPath:
+    ServiceAliasV2:
+      type: "object"
+      properties:
+        name:
+          type: "string"
+        namespace:
+          type: "string"
+        externalName:
+          type: "string"
+          minLength: 1
+          maxLength: 253
+        ports:
+          maxItems: 10
+          type: "array"
+          items:
+            type: "object"
+            properties:
+              name:
+                type: "string"
+              port:
+                type: "integer"
+                minimum: 1
+                maximum: 65535
+              protocol:
+                type: "string"
+                enum:
+                  - "TCP"
+                  - "UDP"
+                  - "SCTP"
+            required:
+              - "port"
+            additionalProperties: false
+      required:
+        - "name"
+        - "externalName"
+      additionalProperties: false
+    SourceScope:
+      type: "object"
+      properties:
+        appName:
+          type: "string"
+          pattern: "^[a-z][a-z0-9-]{0,39}$"
+        partOf:
+          type: "string"
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._\\/:-]{0,199}$"
+        namespaces:
+          minItems: 1
+          maxItems: 10
+          type: "array"
+          items:
+            type: "string"
+            pattern: "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"
+        cluster:
+          type: "string"
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._\\/:-]{0,199}$"
+        ecsCluster:
+          type: "string"
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._\\/:-]{0,199}$"
+        database:
+          type: "string"
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._\\/:-]{0,199}$"
+      additionalProperties: false
+    SpecConfirmPath:
       type: "string"
-      pattern: "^service\\.env\\.[A-Za-z_][A-Za-z0-9_]{0,127}$"
+      pattern: "^(components|app|links|entry|posture|security|check|secrets|unread)(\\.|$)\\S{0,300}$"
     SpecFieldPath:
       type: "string"
-      enum:
-        - "schemaVersion"
-        - "app.name"
-        - "service.image"
-        - "service.port"
-        - "service.healthPath"
-        - "service.replicas"
-        - "service.cpu"
-        - "service.memory"
-        - "service.env"
-        - "service.secretRefs"
-        - "database"
-        - "ingress.hostname"
-        - "ingress.entry"
+      pattern: "^(components\\.[a-z][a-z0-9-]{0,39}\\.[A-Za-z][A-Za-z0-9]{0,39}|app\\.name|links|entry|posture|security|secrets)$"
     SpecPatchInput:
       type: "object"
       properties:
@@ -9202,9 +11292,7 @@ components:
             type: "object"
             properties:
               path:
-                anyOf:
-                  - $ref: "#/components/schemas/SpecFieldPath"
-                  - $ref: "#/components/schemas/SpecV2FieldPath"
+                $ref: "#/components/schemas/SpecFieldPath"
               value: {}
             required:
               - "path"
@@ -9214,10 +11302,7 @@ components:
           maxItems: 20
           type: "array"
           items:
-            anyOf:
-              - $ref: "#/components/schemas/SpecFieldPath"
-              - $ref: "#/components/schemas/SpecEnvFieldPath"
-              - $ref: "#/components/schemas/SpecV2ConfirmPath"
+            $ref: "#/components/schemas/SpecConfirmPath"
         acceptDraft:
           type: "integer"
           minimum: 1
@@ -9232,12 +11317,6 @@ components:
       required:
         - "baseVersion"
       additionalProperties: false
-    SpecV2ConfirmPath:
-      type: "string"
-      pattern: "^(components|links|entry|check)(\\.|$)\\S{0,300}$"
-    SpecV2FieldPath:
-      type: "string"
-      pattern: "^(components\\.[a-z][a-z0-9-]{0,39}\\.[A-Za-z][A-Za-z0-9]{0,39}|links|entry|posture|security)$"
     StartInput:
       type: "object"
       properties:
@@ -9494,6 +11573,8 @@ components:
       properties:
         accountId:
           type: "string"
+        targetProjectId:
+          type: "string"
       required:
         - "accountId"
       additionalProperties: false
@@ -9501,7 +11582,7 @@ components:
       type: "object"
       properties:
         spec:
-          $ref: "#/components/schemas/AppSpec"
+          $ref: "#/components/schemas/AppSpecV2"
         from:
           $ref: "#/components/schemas/Provider"
         targets:
@@ -9615,125 +11696,4 @@ components:
           maximum: 30
       required:
         - "name"
-      additionalProperties: false
-    AppSpec:
-      type: "object"
-      properties:
-        schemaVersion:
-          type: "string"
-          const: "1"
-        app:
-          type: "object"
-          properties:
-            name:
-              type: "string"
-              pattern: "^[a-z][a-z0-9-]{1,30}$"
-          required:
-            - "name"
-          additionalProperties: false
-        service:
-          type: "object"
-          properties:
-            image:
-              type: "string"
-              pattern: "@sha256:[a-f0-9]{64}$"
-            port:
-              type: "integer"
-              minimum: 1
-              maximum: 65535
-            healthPath:
-              type: "string"
-              format: "starts_with"
-              pattern: "^\\/.*"
-            replicas:
-              type: "integer"
-              minimum: 1
-              maximum: 10
-            cpu:
-              type: "string"
-              enum:
-                - "1"
-                - "250m"
-                - "500m"
-            memory:
-              type: "string"
-              enum:
-                - "512Mi"
-                - "1Gi"
-                - "2Gi"
-            env:
-              type: "array"
-              items:
-                type: "object"
-                properties:
-                  name:
-                    type: "string"
-                  value:
-                    type: "string"
-                    maxLength: 256
-                required:
-                  - "name"
-                  - "value"
-                additionalProperties: false
-            secretRefs:
-              type: "array"
-              items:
-                type: "object"
-                properties:
-                  name:
-                    type: "string"
-                  key:
-                    type: "string"
-                required:
-                  - "name"
-                  - "key"
-                additionalProperties: false
-          required:
-            - "image"
-            - "port"
-            - "healthPath"
-            - "replicas"
-            - "cpu"
-            - "memory"
-            - "env"
-            - "secretRefs"
-          additionalProperties: false
-        database:
-          type: "object"
-          properties:
-            engine:
-              type: "string"
-              const: "postgres"
-            majorVersion:
-              type: "string"
-              enum:
-                - "15"
-                - "16"
-                - "17"
-            storageGb:
-              type: "integer"
-              minimum: -9007199254740991
-              maximum: 100
-          required:
-            - "engine"
-            - "majorVersion"
-            - "storageGb"
-          additionalProperties: false
-        ingress:
-          type: "object"
-          properties:
-            hostname:
-              type: "string"
-            entry:
-              type: "string"
-              const: "cloudflare-lb"
-          required:
-            - "hostname"
-            - "entry"
-          additionalProperties: false
-      required:
-        - "schemaVersion"
-        - "app"
-        - "service"
-        - "ingress"
       additionalProperties: false

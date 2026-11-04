@@ -11,12 +11,22 @@ export interface PortabilityInput {
   source: EnvFacts;
   target: EnvFacts;
   appEnv?: { name: string; value: string }[];    // AppSpec.service.env (비밀이 아닌 설정값)
+  // SG-1: IR 워크로드의 보안 칸 (컨테이너마다). 출발 값이 그대로 도착 차트로 간다. workload 규칙이 하나씩 본다
+  workloads?: WorkloadSecurity[];
+  workload?: WorkloadSecurity;                   // workload 규칙에 넘길 때만 (evaluatePortabilityV2 가 채움)
+}
+// SG-1 DRAFT(ai): 워크로드 보안 사실 한 줄 = IR 서비스·잡 하나. 컨테이너(주·사이드카·init)마다 securityContext 원문, 파드 단위 host·hostPath
+export interface WorkloadSecurity {
+  componentId: string;
+  containers: { name: string; securityContext: Record<string, unknown> | null }[];   // name = "main" | "sidecars.<이름>" | "initContainers.<이름>"
+  host: { network?: boolean; pid?: boolean; ipc?: boolean } | null;
+  hostPaths: string[];                           // podVolumes 중 hostPath 경로
 }
 
 export type PortabilityHit = Omit<PortabilityVerdict, "ruleId" | "title">;
 // env = 환경 하나에 한 번 / db = 도착 postgres 컴포넌트마다 (target.db 를 그 컴포넌트 사실로 바꿔 끼운다)
 // target.db 를 읽는 규칙만 db 다. 출발 DB 만 보는 규칙(P-DB-2·3)은 출발 대표 DB 하나라 env 로 한 번 낸다
-export type RuleScope = "env" | "db";
+export type RuleScope = "env" | "db" | "workload";   // SG-1: workload = IR 컨테이너마다
 export interface PortabilityRule {
   id: string;
   title: string;
@@ -50,6 +60,8 @@ const atLeastPersonal = (r: SecurityRequirements | null) => r !== null && CLASS_
 // 사설 주소·내부 도메인 (G-23). 클라우드로 옮기면 그대로는 안 닿는다
 const PRIVATE_ADDR = /\b(10\.\d{1,3}|172\.(1[6-9]|2\d|3[01])|192\.168)\.\d{1,3}\.\d{1,3}\b|\.(internal|local|lan|corp)\b/i;
 const SSL_OFF = /sslmode=disable/i;
+// SG-1 DRAFT(ai): 노드 탈출·커널 조작에 쓰이는 capability (Kyverno baseline 의 허용 목록 밖에서 흔한 것)
+const DANGEROUS_CAPS = new Set(["ALL", "SYS_ADMIN", "NET_ADMIN", "SYS_PTRACE", "SYS_MODULE", "DAC_READ_SEARCH", "NET_RAW", "SYS_RAWIO", "BPF", "PERFMON"]);
 
 export const PORTABILITY_RULES: PortabilityRule[] = [
   // ── 요구사항 ──
@@ -333,6 +345,54 @@ export const PORTABILITY_RULES: PortabilityRule[] = [
       reason: "누가 무엇을 바꿨는지 남지 않는다",
       recommend: isOnprem(t) ? "k3s API 감사 로그를 켠다" : "도착 계정의 감사 로그를 켠다",
       evidence: `${show("source.auditLog", s.platform.auditLog)} / ${show("target.auditLog", t.platform.auditLog)}`,
+    },
+  },
+  // ── 워크로드 보안 (SG-1) ──
+  // DRAFT(ai): 그대로 이식 원칙상 출발 값을 바꾸거나 막지 않고, 승인 화면에 "이 위험한 설정이 도착에도 그대로 간다"를 warn 으로 띄운다.
+  // TODO(human): privileged·호스트 공유를 막을지(block) 승인 줄(warn)로 둘지는 보안 영역이 정한다. 지금은 warn
+  {
+    id: "P-WL-1", scope: "workload", title: "특권·권한 상승 컨테이너가 도착에도 그대로 간다",
+    check: ({ workload: w }) => {
+      const bad = (w?.containers ?? []).flatMap((c) => {
+        const sc = c.securityContext ?? {};
+        const add = (sc.capabilities as { add?: unknown } | undefined)?.add;
+        const caps = (Array.isArray(add) ? add.map(String) : []).filter((x) => DANGEROUS_CAPS.has(x.toUpperCase().replace(/^CAP_/, "")));
+        const xs = [sc.privileged === true ? "privileged: true" : null, sc.allowPrivilegeEscalation === true ? "allowPrivilegeEscalation: true" : null,
+          caps.length ? `capabilities.add ${caps.join(",")}` : null].filter((x): x is string => x !== null);
+        return xs.length ? [`${c.name}(${xs.join(", ")})`] : [];
+      });
+      return !w || !bad.length ? null : {
+        level: "warn", side: "app",
+        reason: `출발 컨테이너가 ${bad.join(" · ")} 로 돌았고, 명세가 그 값을 그대로 도착에 그린다`,
+        recommend: "앱에 꼭 필요한 권한인지 고객과 확인한다. 필요 없으면 명세 검토에서 securityContext 를 고친다",
+        evidence: `${w.componentId}: ${bad.join("; ")}`,
+      };
+    },
+  },
+  {
+    id: "P-WL-2", scope: "workload", title: "root 로 도는 컨테이너가 도착에도 그대로 간다",
+    // DRAFT(ai): 명시 root(runAsUser: 0)만 낸다. runAsNonRoot 가 안 적힌 것(대부분의 출발 앱)까지 내면 승인 줄이 늘 쌓여 무시된다
+    check: ({ workload: w }) => {
+      const root = (w?.containers ?? []).filter((c) => c.securityContext?.runAsUser === 0).map((c) => c.name);
+      return !w || !root.length ? null : {
+        level: "warn", side: "app",
+        reason: `출발 컨테이너 ${root.join(",")} 가 runAsUser: 0(root)으로 돌았고, 도착도 같은 설정으로 돈다`,
+        recommend: "root 가 필요 없으면 명세 검토에서 runAsNonRoot: true·runAsUser 를 적는다",
+        evidence: `${w.componentId}: ${root.map((n) => `${n}.runAsUser=0`).join(", ")}`,
+      };
+    },
+  },
+  {
+    id: "P-WL-3", scope: "workload", title: "호스트 네트워크·프로세스·경로를 공유하는 파드가 도착에도 그대로 간다",
+    check: ({ workload: w }) => {
+      const bad = !w ? [] : [w.host?.network ? "hostNetwork" : null, w.host?.pid ? "hostPID" : null, w.host?.ipc ? "hostIPC" : null,
+        ...w.hostPaths.map((p) => `hostPath ${p}`)].filter((x): x is string => x !== null);
+      return !w || !bad.length ? null : {
+        level: "warn", side: "app",
+        reason: `출발 파드가 ${bad.join(" · ")} 를 썼고, 명세가 그대로 도착 노드에 그린다 (노드 격리가 약해짐, 온프레 Kyverno 는 막을 수 있음)`,
+        recommend: "도착 노드에서도 꼭 필요한지 고객과 확인한다",
+        evidence: `${w.componentId}: ${bad.join(", ")}`,
+      };
     },
   },
   // ── 클라우드↔온프레 방향 ──

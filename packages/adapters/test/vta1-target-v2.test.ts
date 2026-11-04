@@ -61,10 +61,10 @@ test("경계: Cloud SQL 맞춤 등급은 요청 메모리를 낮추지 않는다
   assert.equal(cloudSqlTierFor({ cpuMilli: 1000, memMiB: 16384 }), "db-custom-4-16384");
 });
 
-// 설계 어긋남 (VTA1 결과 md): 가장 큰 등급보다 큰 요청은 조용히 가장 큰 등급으로 내려간다 (결정 4 "이상인 가장 작은 등급"과 다름).
-// 어떻게 알릴지(needsHuman / 오류)는 설계 결정이라 고치지 않고 todo 로 남긴다
-test("RDS: 가장 큰 등급보다 큰 요청은 낮춰서 고르지 말고 알려야 한다", { todo: "VTA1 설계 어긋남: 알리는 방식 미정(needsHuman 또는 오류)" }, () => {
-  assert.throws(() => rdsClassFor({ cpuMilli: 64_000, memMiB: 262_144 }));
+// SZ-1 (fc2): 가장 큰 등급보다 큰 요청은 낮춰 고르지 않고 UNSUPPORTED_V2 (사전 점검은 같은 목록을 block 으로). 표에 m6g·r6g 큰 급을 더함
+test("RDS: 가장 큰 등급보다 큰 요청은 낮춰서 고르지 말고 알려야 한다", () => {
+  assert.equal(rdsClassFor({ cpuMilli: 64_000, memMiB: 262_144 }), "db.m6g.16xlarge");
+  assert.throws(() => rdsClassFor({ cpuMilli: 128_000, memMiB: 1_048_576 }), /UNSUPPORTED|최대/);
 });
 
 test("이름 길이: 앱 이름 + 40자 DB id 로 만든 온프레 CNPG 이름·접속 주소가 쿠버네티스 이름 한도(63자) 안", () => {

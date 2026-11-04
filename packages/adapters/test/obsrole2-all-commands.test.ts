@@ -16,6 +16,8 @@ function walk(dir: string): string[] {
 const SOURCES = [...walk("packages/adapters/src/"), "packages/security/src/live/aws.ts", "packages/security/src/live/gcp.ts", "packages/security/src/live/exec.ts"];
 const code = (p: string) => read(p).split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
 
+const PENDING_AWS = ["s3api get-bucket-notification-configuration", "sns list-topics", "sns list-subscriptions-by-topic"];
+const PENDING_GCP = ["storage buckets notifications"];
 /** 소스에서 부르는 명령 키 모음. aws: 서비스+동사 / gcloud: 동사 앞 단어들(옵션·이름 앞까지) */
 function found(): { aws: Set<string>; gcp: Set<string> } {
   const aws = new Set<string>(), gcp = new Set<string>();
@@ -38,6 +40,9 @@ function found(): { aws: Set<string>; gcp: Set<string> } {
   for (const m of awsAllowed.matchAll(/"([a-z0-9-]+ [a-z0-9-]+)"/g)) aws.add(m[1]!);
   const gAllowed = /GCLOUD_ALLOWED = \[([\s\S]*?)\n\];/.exec(ex)![1]!;
   for (const m of gAllowed.matchAll(/\[((?:"[a-z-]+",?\s*)+)\]/g)) gcp.add([...m[1]!.matchAll(/"([a-z-]+)"/g)].map((x) => x[1]).join(" "));
+  // TODO(human): B-1b·B-2 읽기(AWS_DATA_READ_PENDING·GCP_DATA_READ_PENDING)는 관찰 역할에 넣을지 안 정함 → 표·템플릿 대조에서 뺌. 못 읽으면 "못 읽음" 검토 줄
+  for (const k of PENDING_AWS) aws.delete(k);
+  for (const k of PENDING_GCP) gcp.delete(k);
   return { aws, gcp };
 }
 
@@ -72,7 +77,7 @@ test("AWS 관찰 인라인 정책 = 표의 모든 동작을 포함, 읽기 동�
 test("GCP 연결 스크립트의 관찰 역할 권한 = 표의 모든 권한을 포함, 읽기 접미사만·중복 0 (DRY_RUN 출력)", () => {
   const SA = "t-" + "0123456789abcdef0123456789ab" + "@platform-prj.iam.gserviceaccount.com";
   const out = spawnSync("bash", [new URL("infra/onboarding/gcp-connect.sh", root).pathname], {
-    env: { PATH: process.env.PATH, PLATFORM_SA: SA, PROJECT_ID: "cust-prj", DRY_RUN: "1" }, encoding: "utf8" }).stdout;
+    env: { PATH: process.env.PATH, PLATFORM_SA: SA, PROJECT_ID: "cust-prj", TARGET_PROJECT_ID: "cust-mig", DRY_RUN: "1" }, encoding: "utf8" }).stdout;
   const line = out.split("\n").find((l) => l.includes("roles create platform_observe"))!;
   const perms = /--permissions=(\S+)/.exec(line)![1]!.replace(/^["']|["']$/g, "").split(",");
   const need = actionsOfCommands("gcp", Object.keys(GCP_COMMAND_PERMISSIONS));

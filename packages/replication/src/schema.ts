@@ -29,6 +29,8 @@ export interface SchemaCopyResult {
   ms: number;
   /** 실제로 돌린 DDL (감사용. 비밀값 없음) */
   ddl: string[];
+  /** PF-E16: 도착에 새로 만든 함수·뷰·트리거 (function:이름 · view:이름 · trigger:표.이름) */
+  objects?: string[];
 }
 
 interface Col { name: string; type: string; notnull: boolean; identity: string; generated: string; def: string | null; coll: string | null }
@@ -41,19 +43,29 @@ export async function copySchema(source: Endpoint, target: Endpoint, tables: Tab
   const todo = tables.filter((t) => !have.some((h) => h.name === t.name)).map((t) => t.name);
   const existing = new Set(have.map((h) => h.name));
 
-  const plan = await withClient(source, (c) => readSource(c, srcSchema, todo, source.appRole));
+  // PF-E16 (FM-APP-19): 출발 앱 스키마의 함수·뷰·트리거 중 도착에 없는 것 (스키마 이름이 같을 때만 — 정의 안에 스키마 이름이 박혀 있다)
+  const dstObjs = srcSchema === dstSchema ? await withClient(target, (c) => objectKeys(c, dstSchema)) : null;
+  const plan = await withClient(source, async (c) => ({ ...(await readSource(c, srcSchema, todo, source.appRole)),
+    objects: dstObjs ? (await readAppObjects(c, srcSchema)).filter((o) => !dstObjs.has(o.key)) : [] }));
   const ddl: string[] = [`CREATE SCHEMA IF NOT EXISTS ${ident(dstSchema)}`];
   const skippedForeignKeys: string[] = [];
 
   return withClient(target, async (c) => {
     const roleMissing = (await c.query(`SELECT 1 FROM pg_roles WHERE rolname = $1`, [target.appRole])).rowCount === 0;
-    if (!todo.length && !roleMissing) return { created: [], types: [], sequences: [], indexes: 0, foreignKeys: 0, skippedForeignKeys, roleCreated: false, grants: 0, ms: now() - t0, ddl: [] };
+    if (!todo.length && !roleMissing && !plan.objects.length) return { created: [], types: [], sequences: [], indexes: 0, foreignKeys: 0, skippedForeignKeys, roleCreated: false, grants: 0, ms: now() - t0, ddl: [] };
     // 앱 계정이 없으면 로그인 없는 역할로 만든다 (펜스·권한 복원이 이 이름을 쓴다. 앱이 뜨면 비밀번호·LOGIN 은 앱 배포가 준다)
     if (roleMissing) ddl.push(`CREATE ROLE ${ident(target.appRole)} NOLOGIN`);
+    // PF-E9 (FM-APP-18): 출발이 쓰는 확장(citext·uuid-ossp·pg_trgm 등)을 도착에 먼저 만든다. 예전엔 'type "citext" does not exist' 로 멈췄다.
+    //   도착 상품이 허용 안 하는 확장이면 이 트랜잭션이 실패 → SchemaCopyError(원문에 확장 이름) 로 멈춘다 (조용히 빼지 않음)
+    for (const x of plan.extensions) ddl.push(`CREATE EXTENSION IF NOT EXISTS ${ident(x)}`);
     for (const e of plan.enums) {
       ddl.push(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_type t JOIN pg_namespace n ON n.oid = t.typnamespace WHERE n.nspname = ${lit(dstSchema)} AND t.typname = ${lit(e.name)}) THEN CREATE TYPE ${ident(e.name)} AS ENUM (${e.labels.map(lit).join(", ")}); END IF; END $$`);
     }
     for (const s of plan.sequences) ddl.push(`CREATE SEQUENCE IF NOT EXISTS ${ident(s.name)} AS ${s.type} INCREMENT ${s.inc} MINVALUE ${s.min} MAXVALUE ${s.max} START ${s.start}${s.cycle ? " CYCLE" : ""}`);
+    // PF-E16: 함수는 표보다 먼저 (기본값·CHECK 가 함수를 부를 수 있다). 본문 검사는 끈다 (SQL 함수가 아직 없는 표를 가리켜도 되게)
+    const fnDdl = plan.objects.filter((o) => o.kind === "function");
+    if (fnDdl.length) ddl.push(`SET LOCAL check_function_bodies = off`);
+    for (const o of fnDdl) ddl.push(o.ddl);
     for (const t of todo) {
       const cols = plan.cols[t]!.map((x) => {
         let s = `${ident(x.name)} ${x.type}`;
@@ -74,9 +86,13 @@ export async function copySchema(source: Endpoint, target: Endpoint, tables: Tab
       if (todo.includes(f.ref) || existing.has(f.ref)) { ddl.push(`ALTER TABLE ${ident(f.table)} ADD CONSTRAINT ${ident(f.name)} ${f.def}`); foreignKeys++; }
       else skippedForeignKeys.push(f.name);
     }
+    // PF-E16: 뷰는 표 다음(만든 순서대로 = 뷰가 뷰를 가리켜도 앞의 것이 먼저), 트리거는 맨 뒤. 도착 구독 적용 중엔 보통 트리거가 안 돈다(session_replication_role=replica)
+    for (const o of plan.objects) if (o.kind === "view") ddl.push(o.ddl);
+    for (const o of plan.objects) if (o.kind === "trigger") ddl.push(o.ddl);
     let grants = 0;
     if (plan.grants.length || roleMissing) ddl.push(`GRANT USAGE ON SCHEMA ${ident(dstSchema)} TO ${ident(target.appRole)}`);
     for (const g of plan.grants) {
+      if (g.kind === "view" && !plan.objects.some((o) => o.key === `view:${g.name}`)) continue;   // PF-E16: 이번에 만드는 뷰만
       ddl.push(`GRANT ${g.privs.join(", ")} ON ${g.kind === "sequence" ? "SEQUENCE" : "TABLE"} ${ident(g.name)} TO ${ident(target.appRole)}`);
       grants++;
     }
@@ -95,7 +111,8 @@ export async function copySchema(source: Endpoint, target: Endpoint, tables: Tab
       throw new SchemaCopyError(`도착 스키마 만들기 실패 (아무것도 안 남김): ${(e as Error).message}`);
     }
     return { created: todo, types: plan.enums.map((e) => e.name), sequences: plan.sequences.map((s) => s.name),
-      indexes: plan.indexes.length, foreignKeys, skippedForeignKeys, roleCreated: roleMissing, grants, ms: now() - t0, ddl };
+      indexes: plan.indexes.length, foreignKeys, skippedForeignKeys, roleCreated: roleMissing, grants, ms: now() - t0, ddl,
+      objects: plan.objects.map((o) => o.key) };
   });
 }
 
@@ -178,13 +195,52 @@ async function readSource(c: pg.Client, schema: string, tables: string[], appRol
   });
 
   // 앱 계정이 출발에서 가진 표·시퀀스 권한을 그대로 (펜스는 도착에서 이 권한을 걷고 되돌린다)
-  const grants = (await c.query<{ kind: "table" | "sequence"; name: string; privs: string[] }>(
-    `SELECT CASE WHEN c.relkind = 'S' THEN 'sequence' ELSE 'table' END kind, c.relname name,
+  const grants = (await c.query<{ kind: "table" | "sequence" | "view"; name: string; privs: string[] }>(
+    `SELECT CASE WHEN c.relkind = 'S' THEN 'sequence' WHEN c.relkind = 'v' THEN 'view' ELSE 'table' END kind, c.relname name,
             array_agg(DISTINCT x.privilege_type ORDER BY x.privilege_type)::text[] privs
        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace, aclexplode(c.relacl) x
       WHERE n.nspname = $1 AND x.grantee = (SELECT oid FROM pg_roles WHERE rolname = $2)
-        AND (c.relname = ANY($3) OR c.relname = ANY($4))
+        AND (c.relname = ANY($3) OR c.relname = ANY($4) OR c.relkind = 'v')
       GROUP BY 1, 2 ORDER BY 1, 2`, [schema, appRole, tables, sequences.map((s) => s.name)])).rows;
 
-  return { cols, enums, sequences, cons, fks, indexes, grants };
+  // PF-E9: 확장 (plpgsql 은 늘 있다)
+  const extensions = (await c.query<{ n: string }>(`SELECT extname n FROM pg_extension WHERE extname <> 'plpgsql' ORDER BY 1`)).rows.map((r) => r.n);
+
+  return { cols, enums, sequences, cons, fks, indexes, grants, extensions };
+}
+
+/** PF-E16 (FM-APP-19): 논리 복제는 표 데이터만 옮긴다. 출발 앱 스키마의 사용자 함수·뷰·트리거 정의를 읽는다 (확장이 만든 함수·집계·구체화 뷰는 뺀다:
+ *  집계는 정의를 못 뽑고, 구체화 뷰는 데이터가 있어야 해서 → precheck DB-T6 이 빠진 것으로 멈춰 사람이 만든다) */
+interface AppObject { kind: "function" | "view" | "trigger"; key: string; ddl: string }
+async function readAppObjects(c: pg.Client, schema: string): Promise<AppObject[]> {
+  const fns = (await c.query<{ key: string; ddl: string }>(
+    `SELECT 'function:' || p.proname key, pg_get_functiondef(p.oid) ddl FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+      WHERE n.nspname = $1 AND p.prokind IN ('f','p','w')
+        AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_proc'::regclass AND d.objid = p.oid AND d.deptype = 'e')
+      ORDER BY p.oid`, [schema])).rows;
+  const views = (await c.query<{ key: string; name: string; def: string }>(
+    `SELECT 'view:' || c.relname key, c.relname name, pg_get_viewdef(c.oid) def FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = $1 AND c.relkind = 'v'
+        AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e')
+      ORDER BY c.oid`, [schema])).rows;
+  const trg = (await c.query<{ key: string; ddl: string; enabled: string; tbl: string; name: string }>(
+    `SELECT 'trigger:' || c.relname || '.' || t.tgname key, pg_get_triggerdef(t.oid) ddl, t.tgenabled enabled, c.relname tbl, t.tgname name
+       FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = $1 AND NOT t.tgisinternal ORDER BY t.oid`, [schema])).rows;
+  return [
+    ...fns.map((r) => ({ kind: "function" as const, key: r.key, ddl: r.ddl })),
+    ...views.map((r) => ({ kind: "view" as const, key: r.key, ddl: `CREATE VIEW ${ident(r.name)} AS ${r.def}` })),
+    ...trg.flatMap((r) => [{ kind: "trigger" as const, key: r.key, ddl: r.ddl },
+      // 꺼 둔(D)·복제 때만(R)·늘(A) 켠 트리거는 그 상태까지 그대로
+      ...(r.enabled === "D" ? [{ kind: "trigger" as const, key: r.key, ddl: `ALTER TABLE ${ident(r.tbl)} DISABLE TRIGGER ${ident(r.name)}` }]
+        : r.enabled === "R" ? [{ kind: "trigger" as const, key: r.key, ddl: `ALTER TABLE ${ident(r.tbl)} ENABLE REPLICA TRIGGER ${ident(r.name)}` }]
+        : r.enabled === "A" ? [{ kind: "trigger" as const, key: r.key, ddl: `ALTER TABLE ${ident(r.tbl)} ENABLE ALWAYS TRIGGER ${ident(r.name)}` }] : [])]),
+  ];
+}
+async function objectKeys(c: pg.Client, schema: string): Promise<Set<string>> {
+  return new Set((await c.query<{ k: string }>(
+    `SELECT 'function:' || p.proname k FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace WHERE n.nspname = $1
+     UNION ALL SELECT 'view:' || c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = $1 AND c.relkind IN ('v','m')
+     UNION ALL SELECT 'trigger:' || c.relname || '.' || t.tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = $1 AND NOT t.tgisinternal`, [schema])).rows.map((r) => r.k));
 }

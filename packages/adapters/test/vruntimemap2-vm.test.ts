@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { AppSpecV2, VmTfVars, type Provider } from "@svc/contracts";
-import { AdapterError, DEMO_INVENTORY_V2, flattenTfOutputsV2, normalizeV2, targetBuilderFor, UNSUPPORTED_V2, v2Blockers, v2PrecheckItems } from "../src/index.js";
+import { AdapterError, DEMO_INVENTORY, flattenTfOutputsV2, normalizeV2, targetBuilderFor, UNSUPPORTED_V2, v2Blockers, v2PrecheckItems } from "../src/index.js";
 
 type Raw = Record<string, any>;
 const T = { envId: "33333333-3333-4333-8333-333333333333", region: "default", tenantId: "11111111-1111-4111-8111-111111111111", migrationId: "22222222-2222-4222-8222-222222222222" };
@@ -11,7 +11,7 @@ const D = (c: string) => "sha256:" + c.repeat(64);
 
 /** ECS 데모에서 web 을 빼고 서비스 전부 VM 출발·VM 도착 (api ← entry, worker), DB 1 */
 function vmApp(mut?: (o: Raw) => void): AppSpecV2 {
-  const o: Raw = structuredClone(normalizeV2(DEMO_INVENTORY_V2.aws!).result.spec);
+  const o: Raw = structuredClone(normalizeV2(DEMO_INVENTORY.aws!).result.spec);
   for (const c of o.components) if (c.kind === "service") { c.props.origin = { runtime: "vm", product: "ec2" }; c.props.runtime = "vm"; }
   o.components = o.components.filter((c: Raw) => c.id !== "shop-web");
   o.links = o.links.filter((l: Raw) => l.from !== "shop-web" && l.to !== "shop-web");
@@ -25,7 +25,7 @@ const tf = (s: AppSpecV2, p: Provider, over: Partial<typeof T> = {}) => targetBu
 const vms = (s: AppSpecV2, p: Provider, over: Partial<typeof T> = {}) =>
   (JSON.parse(String(tf(s, p, over).vars.vm_json)) as unknown[]).map((x) => VmTfVars.parse(x));
 const unsupported = (s: AppSpecV2, p: Provider) => v2Blockers(s, targetBuilderFor(p).capabilities()).unsupported;
-const precheck = (p: Provider, s: AppSpecV2) => v2PrecheckItems(p, { spec: null, specV2: s, hadV2Before: false });
+const precheck = (p: Provider, s: AppSpecV2) => v2PrecheckItems(p, { specV2: s });
 // precheck 의 "UNSUP"(capability·모양) 막힘 ⇔ Builder 가 UNSUPPORTED_V2 를 던짐. 사람 확인(PC-V2-HUMAN, 방화벽 등)은 Builder 가 안 던지는 별개 칸
 const unsupBlocks = (p: Provider, s: AppSpecV2) => precheck(p, s).filter((i) => i.level === "block" && i.id.startsWith("PC-V2-UNSUP"));
 const builderThrows = (p: Provider, s: AppSpecV2) => {
@@ -88,14 +88,14 @@ test("불변식: precheck UNSUP 막힘 ⇔ Builder UNSUPPORTED_V2 (aws·gcp·onp
     }
 });
 
-test("결정성·멱등: 두 번 그려도·components/links 순서를 뒤집어도 vm_json 같음 / 이름은 회사 기준(같은 회사 재이전 = 같은 이름, 다른 회사 = 다른 이름)", () => {
+test("결정성·멱등: 두 번 그려도·components/links 순서를 뒤집어도 vm_json 같음 / 이름은 회사·이전 기준(G8-1: 같은 회사라도 다른 이전 = 다른 이름, 다른 회사 = 다른 이름)", () => {
   const s = vmApp();
   for (const p of ["aws", "gcp"] as const) {
     assert.equal(JSON.stringify(tf(s, p)), JSON.stringify(tf(s, p)), p);
     const r: Raw = structuredClone(s); r.components.reverse(); r.links.reverse();
     assert.equal(tf(AppSpecV2.parse(r), p).vars.vm_json, tf(s, p).vars.vm_json, p);
     const again = vms(s, p, { migrationId: "44444444-4444-4444-8444-444444444444" }).map((x) => x.name);
-    assert.deepEqual(again, vms(s, p).map((x) => x.name), `${p}: 같은 회사 다른 이전`);
+    assert.ok(again.every((n, i) => n !== vms(s, p)[i]!.name), `${p}: 같은 회사 다른 이전 (G8-1 다시 옮겨도 이름 안 겹침)`);
     const other = vms(s, p, { tenantId: "55555555-5555-4555-8555-555555555555" }).map((x) => x.name);
     assert.ok(other.every((n, i) => n !== vms(s, p)[i]!.name), `${p}: 다른 회사`);
   }

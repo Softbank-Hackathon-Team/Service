@@ -1,6 +1,7 @@
 // VI4: I4(AWS IAM → grants·기준선) 검증. 경계·거부·결정성·읽기 전용 명령 확인
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { SPEC_LIMITS } from "@svc/contracts";
 import { inferLinks } from "../src/import/links.js";
 import { iamGrants, parseArn, type RawAwsIamPolicy } from "../src/import/mappers/iam-grants.js";
 import type { MappedComponent } from "../src/import/types.js";
@@ -98,14 +99,18 @@ test("VI4 쓰레기 문장(null·문자열·빈 배열)은 건너뜀, 던지지 
   assert.equal(o.adds.length, 0);
 });
 
-test("VI4 inferLinks: grants 는 50개까지만 (초과 시 조용히 잘림 여부 확인)", () => {
-  const sts = Array.from({ length: 60 }, (_, i) => ({ Action: ["s3:GetObject"], Resource: [`arn:aws:s3:::a/p${String(i).padStart(2, "0")}/*`] }));
+test("VI4 inferLinks: grants 는 링크당 SPEC_LIMITS.grantsPerLink 개까지 (L-1: 예전 50 넘어도 그대로, 상한 초과만 잘림 + 검토 표시)", () => {
+  const cap = SPEC_LIMITS.grantsPerLink;
+  const sts = Array.from({ length: cap + 10 }, (_, i) => ({ Action: ["s3:GetObject"], Resource: [`arn:aws:s3:::a/p${String(i).padStart(4, "0")}/*`] }));
   const out = run([wl("api"), bucket("a")], [pol("api", sts)]);
   const l = out.links.find((x) => x.to === "a")!;
-  assert.equal(l.grants!.length, 50);
+  assert.equal(l.grants!.length, cap);
   assert.equal(out.meta["links.api->a"]!.needs_review, true);
   assert.match(out.meta["links.api->a"]!.rationale!, /10개는 사람이 확인/);
-  const few = run([wl("api"), bucket("a")], [pol("api", sts.slice(0, 50))]);
+  const sixty = run([wl("api"), bucket("a")], [pol("api", sts.slice(0, 60))]);   // 예전 상한 50 을 넘는 흔한 크기
+  assert.equal(sixty.links.find((x) => x.to === "a")!.grants!.length, 60);
+  assert.notEqual(sixty.meta["links.api->a"]!.needs_review, true);
+  const few = run([wl("api"), bucket("a")], [pol("api", sts.slice(0, cap))]);
   assert.notEqual(few.meta["links.api->a"]!.needs_review, true);
 });
 

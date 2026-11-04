@@ -53,12 +53,12 @@ test("같은 입력이면 같은 항목 (계획서 해시가 흔들리지 않게
   assert.deepEqual(run(r, { provider: "gcp", region: "asia-northeast3" }), run(r, { provider: "gcp", region: "asia-northeast3" }));
 });
 
-test("깃발: 기본 꺼짐. SEC_PRECHECK=1 + PLAN_IR=v2 일 때만 켜지고, 아니면 DB 를 보지 않고 빈 목록", async () => {
+test("깃발: 기본 꺼짐. SEC_PRECHECK=1 일 때만 켜지고, 아니면 DB 를 보지 않고 빈 목록", async () => {
   const m = { id: "m", sourceEnvId: "s", targetEnvId: "t" } as never;
-  assert.deepEqual(await securityPrecheckFor("tenant", m, { PLAN_IR: "v2" }), []);
-  assert.deepEqual(await securityPrecheckFor("tenant", m, { PLAN_IR: "v1", SEC_PRECHECK: "1" }), []);
-  assert.deepEqual(await securityPrecheckFor("tenant", m, { PLAN_IR: "v2", SEC_PRECHECK: "0" }), []);
-  assert.equal(secPrecheckOn({ PLAN_IR: "v2", SEC_PRECHECK: "1" }), true);
+  assert.deepEqual(await securityPrecheckFor("tenant", m, {}), []);
+  assert.deepEqual(await securityPrecheckFor("tenant", m, { SEC_PRECHECK: "0" }), []);
+  assert.equal(secPrecheckOn({ SEC_PRECHECK: "1" }), true);
+  assert.equal(secPrecheckOn({ SEC_PRECHECK: "" }), false);
 });
 
 test("출발 DB 2개: 각 도착 DB 는 같은 이름의 출발 DB 와 비교한다 (버전 16·14 를 엇갈려 비교하지 않는다)", () => {

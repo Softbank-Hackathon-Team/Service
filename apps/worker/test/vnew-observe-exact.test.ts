@@ -35,11 +35,14 @@ test("gcp v2: 관찰 요청 = GKE 앱 + VM(IMPORT_VM=1) + Cloud Run 서비스·�
     if (/^run services get-iam-policy/.test(s)) return j({ bindings: [] });
     if (/^run jobs list/.test(s)) return j([{ metadata: { name: "jb", labels: { "cloud.googleapis.com/location": "r" } }, spec: { template: { spec: { template: { spec: { containers: [{ image: `i@${DG}` }] } } } } } }]);
     if (/^storage buckets list/.test(s)) return j([{ name: "b1" }]);
+    // E-1·E-2: Cloud NAT 수동 주소 → 주소 목록, 사설 영역 → 레코드 목록
+    if (/^compute routers list/.test(s)) return j([{ nats: [{ natIpAllocateOption: "MANUAL_ONLY", natIps: ["https://x/addresses/nat-1"] }] }]);
+    if (/^dns managed-zones list/.test(s)) return j([{ name: "z1", dnsName: "internal.example.", visibility: "private" }]);
     return j([]);
   };
-  await discoverGcp({ exec: exec as never, env: { GCP_PROJECT: "p", IMPORT_VM: "1" } }, { ir: "v2" });
+  await discoverGcp({ exec: exec as never, env: { GCP_PROJECT: "p", IMPORT_VM: "1" } }, {});
   const used = actionsOfCommands("gcp", [...keys]);
-  const listed = withEnv({ IMPORT_IR: "v2" }, () => importObserveActions("gcp"));
+  const listed = withEnv({ IMPORT_AWS_IAM: "0" }, () => importObserveActions("gcp"));   // WI-1: 이 discover 의 SA 엔 GSA 주석이 없어 IAM 정책을 안 부름
   assert.deepEqual(dups(listed), []);
   assert.deepEqual(used.filter((a) => !listed.includes(a)), [], "부르는데 요청 안 함 (실계정에서 권한 거부)");
   assert.deepEqual(listed.filter((a) => !used.includes(a)), [], "요청하는데 안 부름 (최소 권한 아님)");
@@ -70,13 +73,20 @@ test("aws v2: 관찰 요청 = EKS 앱 + ECS + VM(IMPORT_VM=1) + 데이터 읽기
     if (/^ec2 describe-instances/.test(s)) return j({ Reservations: [{ Instances: [{ InstanceId: "i-1", State: { Name: "running" }, InstanceType: "t3.small", Tags: [{ Key: "Name", Value: "legacy-1" }], SecurityGroups: [{ GroupId: "sg-1" }] }] }] });
     if (/^application-autoscaling describe-scalable-targets/.test(s)) return j({ ScalableTargets: [{ MinCapacity: 1, MaxCapacity: 3 }] });
     if (/^s3api list-buckets/.test(s)) return j({ Buckets: [{ Name: "b1" }] });
+    // DM-8: 버킷에 있는 저장 등급 → 등급마다 get-metric-statistics
+    if (/^cloudwatch list-metrics/.test(s)) return j({ Metrics: [{ Dimensions: [{ Name: "BucketName", Value: "b1" }, { Name: "StorageType", Value: "StandardStorage" }] }] });
     if (/^sqs list-queues/.test(s)) return j({ QueueUrls: ["https://sqs.ap-northeast-2.amazonaws.com/000000000000/q1"] });
+    // N8: 사용자 파라미터 그룹이 있는 RDS → describe-db-parameters 를 부름
+    if (/^rds describe-db-instances/.test(s)) return j({ DBInstances: [{ DBInstanceIdentifier: "db1", Engine: "postgres", EngineVersion: "16.3", DBParameterGroups: [{ DBParameterGroupName: "shop-pg" }] }] });
+    if (/^rds describe-db-parameters/.test(s)) return j({ Parameters: [] });
     if (/^elasticache describe-replication-groups/.test(s)) return j({ ReplicationGroups: [{ ReplicationGroupId: "rg1", MemberClusters: ["rg1-001"] }] });
+    // E-2: EKS VPC 에 붙은 사설 영역 → 레코드 목록
+    if (/^route53 list-hosted-zones-by-vpc/.test(s)) return j({ HostedZoneSummaries: [{ HostedZoneId: "Z1", Name: "internal.example." }] });
     return j({});
   };
-  await discoverAws({ exec: exec as never, env: { AWS_REGION: "ap-northeast-2", IMPORT_VM: "1" } }, { ir: "v2" });
+  await discoverAws({ exec: exec as never, env: { AWS_REGION: "ap-northeast-2", IMPORT_VM: "1" } }, {});
   const used = actionsOfCommands("aws", [...keys]);
-  const listed = withEnv({ IMPORT_IR: "v2", IMPORT_AWS_IAM: undefined }, () => importObserveActions("aws"));
+  const listed = withEnv({ IMPORT_AWS_IAM: "0" }, () => importObserveActions("aws"));   // ID-5: 이 시험의 discover 는 IAM 을 안 부름 → 끈 목록과 비교
   assert.deepEqual(dups(listed), []);
   assert.deepEqual(used.filter((a) => !listed.includes(a)), [], "부르는데 요청 안 함");
   // sts:GetCallerIdentity 는 권한이 필요 없는 명령(표 null)이지만 예전 장부 목록에 있던 것이라 남겨 둔다

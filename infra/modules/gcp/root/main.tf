@@ -119,6 +119,20 @@ variable "service_json" {
   }
 }
 
+# APP-22 (가) DECISION(team, 11/4 01:57Z): 컷오버 전까지 도착 앱은 출발 DB 에 붙고, 컷오버 때 도착 DB 로 바꾼다 (롤백하면 다시 출발).
+#   Terraform 이 앱까지 띄우는 도착(서비스·VM·잡)은 워커가 이 값을 바꿔 다시 apply 한다 (k8s 는 GitOps database.activeWriter).
+#   모양 = {"active":"source"|"target", "link":{"<postgres id>":{"host","port","user","url","reader"}}, "secrets":{"<그릇>#<키>":{"secret","key"}}, "external":["<그릇 이름>"]}
+#   active=source 일 때만: env 의 <postgres id>.<출력> 자리를 출발 경로 값으로, 그 postgres 와 짝인 비밀번호 줄을 출발 전용 계정 그릇(external)으로 바꾼다.
+#   external 그릇은 워커가 apply 전에 만들고 값을 넣는다 (이 루트가 만들지 않음, 비밀번호는 state 에 안 들어감). 비면(기본) 지금과 같다
+variable "db_writer_json" {
+  type    = string
+  default = "{}"
+  validation {
+    condition     = can(jsondecode(var.db_writer_json)) && contains(["source", "target"], try(jsondecode(var.db_writer_json).active, "target"))
+    error_message = "db_writer_json: JSON 이고 active 는 source | target."
+  }
+}
+
 # RUNTIMEMAP v2: VM 서비스 (GCE). 항목 모양 = tf-kinds.ts VmTfVars. 비면 아무것도 안 만듦 (기존 계획 그대로)
 variable "vm_json" {
   type    = string
@@ -207,7 +221,7 @@ locals {
   ))
   # Cloud Run 주소는 결정적: https://<서비스>-<프로젝트 번호>.<리전>.run.app (모듈 출력 uri 를 쓰면 같은 for_each 안에서 순환)
   project_number = local.svc_on == 1 ? data.google_project.this[0].number : ""
-  link_values = merge(
+  link_values_target = merge(
     merge([for id, m in module.postgres : { for k, v in m.link : "${id}.${k}" => v }]...),
     merge([for id, m in module.cache : { for k, v in m.link : "${id}.${k}" => v }]...),
     merge([for id, m in module.object_store : { for k, v in m.link : "${id}.${k}" => v }]...),
@@ -219,6 +233,13 @@ locals {
       "${id}.url"  = "https://${x.name}-${local.project_number}.${var.region}.run.app"
     }]...),
   )
+  # APP-22 (가): 출발 쪽일 때만 덮는다 (db_writer_json 설명 참고)
+  db_writer          = jsondecode(var.db_writer_json)
+  db_writer_source   = try(local.db_writer.active, "target") == "source"
+  db_writer_link     = { for k, v in merge({}, [for id, l in try(local.db_writer.link, {}) : { for o, x in l : "${id}.${o}" => tostring(x) }]...) : k => v if local.db_writer_source }
+  db_writer_secrets  = { for k, v in try(local.db_writer.secrets, {}) : k => { secret = tostring(v.secret), key = tostring(v.key) } if local.db_writer_source }
+  db_writer_external = toset([for n in try(local.db_writer.external, []) : tostring(n) if local.db_writer_source])
+  link_values        = merge(local.link_values_target, local.db_writer_link)
   # JOBMOD: 잡 env 값이 <tf-output:link.<id>.<출력>> 한 덩어리면 같은 apply 의 값으로 풀고, 나머지는 그대로. 못 푼 자리표시가 남으면 계획에서 멈춤
   job_env_rows = { for id, x in local.job : id => [for e in jsondecode(x.env_json) : {
     name  = e.name
@@ -227,13 +248,36 @@ locals {
   job_cfg = { for id, x in local.job : id => merge(x, { env_json = jsonencode(local.job_env_rows[id]) }) }
   # VM env 도 같은 규칙으로 조각을 합친다. VM 주소는 apply 뒤에야 알아서 다른 VM 을 가리키는 ref 는 Builder 가 계획 전에 막는다 (순환 방지)
   vm_cfg = { for id, x in local.vm : id => merge(x, {
-    env_json = jsonencode([for e in jsondecode(x.env_json) : { name = e.name, value = join("", [for p in e.parts : p.ref == null ? p.lit : local.link_values[p.ref]]) }])
+    env_json     = jsonencode([for e in jsondecode(x.env_json) : { name = e.name, value = join("", [for p in e.parts : p.ref == null ? p.lit : local.link_values[p.ref]]) }])
+    secrets_json = jsonencode([for sx in jsondecode(x.secrets_json) : merge(sx, try(local.db_writer_secrets["${sx.secret}#${sx.key}"], {}))])
   }) }
   service_cfg = { for id, x in local.service : id => merge(x, {
-    env_json = jsonencode([for e in jsondecode(x.env_json) : { name = e.name, value = join("", [for p in e.parts : p.ref == null ? p.lit : local.link_values[p.ref]]) }])
+    env_json     = jsonencode([for e in jsondecode(x.env_json) : { name = e.name, value = join("", [for p in e.parts : p.ref == null ? p.lit : local.link_values[p.ref]]) }])
+    secrets_json = jsonencode([for sx in jsondecode(x.secrets_json) : merge(sx, try(local.db_writer_secrets["${sx.secret}#${sx.key}"], {}))])
   }) }
+  # FM-CLD-14: 이 IR 이 쓰는 종류로 켜야 할 GCP API 를 정한다 (손으로 gcloud services enable 하지 않게). 짝: packages/adapters gcpRequiredApis
+  #   env 층(gcp/env)이 이미 켜는 것(container·sqladmin·servicenetworking·artifactregistry·secretmanager·iam·iamcredentials)도 겹쳐 적어도 된다(멱등)
+  required_apis = sort(distinct(concat(
+    length(local.postgres) > 0 ? ["sqladmin.googleapis.com", "secretmanager.googleapis.com"] : [],
+    length(local.identity) > 0 ? ["iam.googleapis.com", "secretmanager.googleapis.com"] : [],
+    length(local.cache) > 0 ? ["redis.googleapis.com", "secretmanager.googleapis.com"] : [],
+    length(local.object_store) > 0 ? ["storage.googleapis.com"] : [],
+    length(local.queue_all) > 0 ? ["pubsub.googleapis.com"] : [],
+    length(local.service) > 0 ? ["run.googleapis.com", "iam.googleapis.com", "secretmanager.googleapis.com", "compute.googleapis.com"] : [],
+    length(local.job) > 0 ? ["run.googleapis.com", "cloudscheduler.googleapis.com", "iam.googleapis.com"] : [],
+    length(local.vm) > 0 ? ["compute.googleapis.com", "iam.googleapis.com", "secretmanager.googleapis.com"] : [],
+  )))
   # DRAFT(ai): Direct VPC egress 서브넷 = env 층 이름 규칙(<네트워크>-nodes, gcp/env). env 층이 바뀌면 같이 고침
   svc_subnetwork = "projects/${var.project_id}/regions/${var.region}/subnetworks/${element(split("/", var.network_id), length(split("/", var.network_id)) - 1)}-nodes"
+}
+
+# FM-CLD-14: 필요한 API 켜기. 지울 때 끄지 않는다(같은 프로젝트의 다른 앱·env 층이 쓰는 중일 수 있음)
+resource "google_project_service" "required" {
+  for_each                   = toset(local.required_apis)
+  project                    = var.project_id
+  service                    = each.value
+  disable_on_destroy         = false
+  disable_dependent_services = false
 }
 
 data "google_project" "this" {
@@ -261,6 +305,7 @@ module "namespace" {
   cfg          = each.value
   app_name     = var.app_name
   tenant_label = local.tenant_label
+  depends_on   = [google_project_service.required]
 }
 
 module "postgres" {
@@ -271,6 +316,7 @@ module "postgres" {
   region     = var.region
   network_id = var.network_id
   labels     = local.labels
+  depends_on = [google_project_service.required]
 }
 
 module "identity" {
@@ -284,7 +330,7 @@ module "identity" {
   extra_readable_secrets = local.db_secrets[each.key]
   # DB 비밀번호 secret 이 만들어진 뒤에 바인딩하도록 postgres 모듈 전체에 의존
   namespace  = try(module.namespace[var.k8s_namespace].name, var.k8s_namespace)
-  depends_on = [module.postgres]
+  depends_on = [google_project_service.required, module.postgres]
 }
 
 module "cache" {
@@ -295,21 +341,24 @@ module "cache" {
   region     = var.region
   network_id = var.network_id
   labels     = local.labels
+  depends_on = [google_project_service.required]
 }
 
 module "object_store" {
-  source   = "../kinds/object-store"
-  for_each = local.object_store
-  cfg      = each.value
-  region   = var.region
-  labels   = local.labels
+  source     = "../kinds/object-store"
+  for_each   = local.object_store
+  cfg        = each.value
+  region     = var.region
+  labels     = local.labels
+  depends_on = [google_project_service.required]
 }
 
 module "queue_dl" {
-  source   = "../kinds/queue"
-  for_each = local.queue_dl
-  cfg      = each.value
-  labels   = local.labels
+  source     = "../kinds/queue"
+  for_each   = local.queue_dl
+  cfg        = each.value
+  labels     = local.labels
+  depends_on = [google_project_service.required]
 }
 
 module "queue" {
@@ -318,6 +367,7 @@ module "queue" {
   cfg               = each.value
   labels            = local.labels
   dead_letter_topic = try(each.value.dead_letter_to, null) == null ? "" : module.queue_dl[each.value.dead_letter_to].topic_id
+  depends_on        = [google_project_service.required]
 }
 
 # --- TA13: Cloud Run 서비스 (서비스가 있을 때만) ---
@@ -328,6 +378,7 @@ resource "google_secret_manager_secret" "svc" {
   replication {
     auto {}
   }
+  depends_on = [google_project_service.required]
 }
 
 # TODO(human): 입구(entry) → Cloud Run 연결 (Cloudflare 원점 = 서비스 uri 또는 서버리스 NEG + LB). 지금은 public=true 면 ingress ALL 만
@@ -340,7 +391,8 @@ module "service" {
   network    = var.network_id
   subnetwork = local.svc_subnetwork
   labels     = local.labels
-  secret_ids = { for n, x in google_secret_manager_secret.svc : n => x.secret_id }
+  secret_ids = merge({ for n, x in google_secret_manager_secret.svc : n => x.secret_id }, { for n in local.db_writer_external : n => n })
+  depends_on = [google_project_service.required]
 }
 
 # RUNTIMEMAP v2: GCE VM (VM 이 있을 때만). 서브넷은 서비스와 같은 곳(DB 사설 길 = 같은 VPC)
@@ -352,7 +404,8 @@ module "vm" {
   region     = var.region
   subnetwork = local.svc_subnetwork
   labels     = local.labels
-  secret_ids = { for n, x in google_secret_manager_secret.svc : n => x.secret_id }
+  secret_ids = merge({ for n, x in google_secret_manager_secret.svc : n => x.secret_id }, { for n in local.db_writer_external : n => n })
+  depends_on = [google_project_service.required]
 }
 
 # JOBMOD: Cloud Run job + Cloud Scheduler (잡이 있을 때만)
@@ -365,6 +418,7 @@ module "job" {
   network    = var.network_id
   subnetwork = local.svc_subnetwork
   labels     = local.labels
+  depends_on = [google_project_service.required]
 }
 
 resource "terraform_data" "job_env" {
@@ -403,6 +457,9 @@ output "db_public_ip" { value = local.repl_key != "" ? module.postgres[local.rep
 output "db_outgoing_ip" { value = local.repl_key != "" ? module.postgres[local.repl_key].outgoing_ip : "" }
 output "db_server_ca_cert" { value = local.repl_key != "" ? module.postgres[local.repl_key].server_ca_cert : "" }
 output "db_connection_name" { value = local.repl_key != "" ? module.postgres[local.repl_key].connection_name : "" }
+# E10-2: 도착 DB 앱 계정 이름 (= 모듈 user = 링크 user). GCP 비밀은 비밀번호 글자뿐이라 계정 이름은 이 출력에서 읽어야 함
+output "db_username" { value = local.repl_key != "" ? module.postgres[local.repl_key].user : "" }
+output "db_name" { value = local.repl_key != "" ? module.postgres[local.repl_key].db_name : "" }
 output "db_password_secret_id" { value = local.repl_key != "" ? module.postgres[local.repl_key].password_secret : "" }
 output "app_gsa_email" { value = local.first_identity != "" ? module.identity[local.first_identity].gsa_email : "" }
 output "namespace" { value = length(module.namespace) > 0 ? try(module.namespace[var.k8s_namespace].name, values(module.namespace)[0].name) : "" }

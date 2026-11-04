@@ -23,7 +23,7 @@ export function smokePlanBodies(plan: { planHash: string; acknowledgements?: { i
   };
 }
 
-// E2E-v7 DRAFT(ai): IMPORT_IR=v2 서버면 가져오기가 검토 칸(needsReviewV2)을 남겨 POST /plan 이 409 GUARD_FAILED 다.
+// E2E-v7 DRAFT(ai): 가져오기가 검토 칸(needsReviewV2)을 남겨 POST /plan 이 409 GUARD_FAILED 다.
 //   smoke 는 화면 대신 그 칸을 전부 "봤다"(confirm)로 보낸다. v1 검토 칸(service.cpu·memory)은 v2 판에선
 //   components.<app.name>.resources confirm 으로만 풀린다(E2E v3 메모). 고칠 칸이 없으면 null (PATCH 안 보냄)
 export function smokeConfirmBody(view: { version: number; needsReview?: string[]; needsReviewV2?: string[]; spec?: { app?: { name?: string } } }): { baseVersion: number; confirm: string[] } | null {
@@ -39,8 +39,8 @@ export function smokeConfirmBody(view: { version: number; needsReview?: string[]
   return { baseVersion: view.version, confirm: confirm.slice(0, 20) };
 }
 // VSMOKE: 가져오기가 사람 확인 칸(needs_review)을 남기면 POST /plan 이 409 GUARD_FAILED("N field(s) need review").
-//   aws 데모가 ECS(v2, I9)가 된 뒤 IMPORT_IR=v2 회차는 ECS 예약값 → 요청량(0.9) 같은 칸이 생긴다. 화면이 하듯 그 키를 그대로 confirm 한다
-//   (값은 안 바꾸고 "봤다"만). AI 초안 판이면 acceptDraft 로 먼저 받아들인다. 확인 칸이 없으면 아무 요청도 안 보낸다(깃발 꺼짐 회차 그대로)
+//   aws 데모(ECS)는 ECS 예약값 → 요청량(0.9) 같은 칸이 생긴다. 화면이 하듯 그 키를 그대로 confirm 한다
+//   (값은 안 바꾸고 "봤다"만). AI 초안 판이면 acceptDraft 로 먼저 받아들인다. 확인 칸이 없으면 아무 요청도 안 보낸다
 export interface SmokeSpecView { version: number; source: "accepted" | "ai_draft"; needsReview: string[]; needsReviewV2?: string[]; spec?: { app?: { name?: string } } }
 export function smokeReviewBody(v: SmokeSpecView): Record<string, unknown> | null {
   const keys = [...(v.needsReviewV2 ?? v.needsReview)];

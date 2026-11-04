@@ -2,11 +2,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ImportAccuracy, type AppSpecV2, type Provider, type RawInventory } from "@svc/contracts";
-import { DEMO_INVENTORY_V2, measureImportAccuracy, normalizeV2, targetBuilderFor } from "../src/index.js";
+import { DEMO_INVENTORY, measureImportAccuracy, normalizeV2, targetBuilderFor } from "../src/index.js";
 
 type O = Record<string, any>;
 const T = (p: Provider) => ({ envId: "33333333-3333-4333-8333-333333333333", provider: p, region: "default", tenantId: "11111111-1111-4111-8111-111111111111", migrationId: "22222222-2222-4222-8222-222222222222" }) as never;
-const inv = (): RawInventory => structuredClone(DEMO_INVENTORY_V2.gcp!);
+const inv = (): RawInventory => structuredClone(DEMO_INVENTORY.gcp!);
 const deploy = (i: RawInventory, name: string) => (i.items as O[]).find((x) => x.kind === "k8s.deployment" && x.metadata.name === name)!;
 const run = (i: RawInventory, mutate?: (spec: O) => void, target: Provider | null = "aws") => {
   const result = normalizeV2(i).result;
@@ -14,7 +14,7 @@ const run = (i: RawInventory, mutate?: (spec: O) => void, target: Provider | nul
   if (mutate) mutate(rendered ?? (result.spec as O));
   return measureImportAccuracy({ inventory: i, result, rendered });
 };
-const wl = (r: O, id: string) => (r.workloads as O[]).find((w) => w.id === id)!;
+const wl = (r: O, id: string) => (r.workloads as O[]).find((w) => w.name === id)!;
 const specProps = (s: O, id: string) => (s.components as O[]).find((c) => c.id === id)!.props;
 const pick = (a: ReturnType<typeof run>, component: string, field: string) => a.fields.find((f) => f.component === component && f.field === field);
 
@@ -37,14 +37,14 @@ test("완전 일치: 렌더 기준·명세 기준 모두 100%, 틀린 칸 0, 계
 test("한 칸 틀리면 그만큼만 떨어짐 (복제 수 · 이미지 · 포트 · 프로브 · 환경변수 이름 · 요청 자원)", () => {
   const base = run(inv());
   const cases: Array<[string, string, (r: O) => void]> = [
-    ["shop-api", "replicas", (r) => { wl(r, "shop-api").replicas = { min: 1, max: 6 }; }],
-    ["shop-api", "image.digest", (r) => { wl(r, "shop-api").image.ref = "x.example/shop-api@sha256:" + "c".repeat(64); }],
-    ["shop-api", "ports", (r) => { wl(r, "shop-api").ports = [{ port: 9090 }]; }],
-    ["shop-api", "probes.readiness", (r) => { wl(r, "shop-api").probes.readiness.path = "/other"; }],
+    ["shop-api", "replicas", (r) => { const w = wl(r, "shop-api"); w.scale = { min: 1, max: 6 }; delete w.replicas; }],
+    ["shop-api", "image.digest", (r) => { wl(r, "shop-api").image = "x.example/shop-api@sha256:" + "c".repeat(64); }],
+    ["shop-api", "ports", (r) => { wl(r, "shop-api").ports = [{ containerPort: 9090 }]; }],
+    ["shop-api", "probes.readiness", (r) => { wl(r, "shop-api").probes.readiness.httpGet.path = "/other"; }],
     ["shop-api", "env.names", (r) => { wl(r, "shop-api").env = wl(r, "shop-api").env.filter((e: O) => e.name !== "DATABASE_PASSWORD"); }],
     ["shop-api", "resources.cpu", (r) => { wl(r, "shop-api").resources.requests.cpu = "100m"; }],
     ["shop-api", "resources.memory", (r) => { wl(r, "shop-api").resources.requests.memory = "128Mi"; }],
-    ["shop-cleanup", "schedule", (r) => { wl(r, "shop-cleanup").schedule = "0 4 * * *"; }],
+    ["shop-cleanup", "schedule", (r) => { wl(r, "shop-cleanup").job.schedule = "0 4 * * *"; }],
   ];
   for (const [c, f, m] of cases) {
     const a = run(inv(), m);
@@ -67,7 +67,7 @@ test("DB 버전·용량이 명세에서 틀리면 잡힌다", () => {
 });
 
 test("도착 렌더에 워크로드가 없으면 workload 칸 하나가 틀림으로 남는다 (조용히 빠지지 않음)", () => {
-  const a = run(inv(), (r) => { r.workloads = r.workloads.filter((w: O) => w.id !== "shop-web"); });
+  const a = run(inv(), (r) => { r.workloads = r.workloads.filter((w: O) => w.name !== "shop-web"); });
   assert.equal(pick(a, "shop-web", "workload")?.result, "mismatch");
   assert.ok(!a.fields.some((f) => f.component === "shop-web" && f.field !== "workload"));
 });
@@ -81,7 +81,7 @@ test("비교 불가(원본 값을 못 읽음)는 분모에서 빠진다: percent
   assert.equal(a.comparable, a.total - 1);
   assert.equal(a.percent, 100);
   // 비교 불가 + 틀림 하나: 분모는 비교 가능한 칸
-  const b = run(i, (r) => { wl(r, "shop-api").replicas = { min: 9, max: 9 }; });
+  const b = run(i, (r) => { const w = wl(r, "shop-api"); delete w.scale; w.replicas = 9; });
   assert.equal(b.percent, Math.round(((b.comparable - 1) / b.comparable) * 1000) / 10);
 });
 

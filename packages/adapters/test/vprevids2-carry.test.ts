@@ -1,11 +1,11 @@
 // VPREVIDS2: carryHumanEdits 순수성·경계·거친 입력
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DEMO_INVENTORY_V2, normalizeV2 } from "../src/index.js";
+import { DEMO_INVENTORY, normalizeV2 } from "../src/index.js";
 import { carryHumanEdits } from "../src/import/carry.js";
 
 type O = Record<string, any>;
-const fresh = () => normalizeV2(structuredClone(DEMO_INVENTORY_V2.gcp!)).result;
+const fresh = () => normalizeV2(structuredClone(DEMO_INVENTORY.gcp!)).result;
 const humanPrev = (): any => {
   const p = structuredClone(fresh()) as O;
   p.spec.components.find((c: O) => c.id === "shop-api").props.replicas = { min: 7, max: 7 };

@@ -1,4 +1,4 @@
-// VTA3b DB 시험: PLAN_IR=v2 로 계획·승인한 뒤 spec_v2 가 사라지거나 출처가 바뀌면 적용 단계가 TF_PLAN_DRIFT (MOCK_IAC 길)
+// VTA3b DB 시험: 계획·승인한 뒤 명세(spec_v2)가 사라지거나 내용이 바뀌면 적용 단계가 TF_PLAN_DRIFT (MOCK_IAC 길)
 //   drift 실패는 provisioning 에서 난 실패라 다시 계획(replan) 길이 열려 있다 (failed_at_status = provisioning)
 import { test, before, after, afterEach } from "node:test";
 import assert from "node:assert/strict";
@@ -14,7 +14,7 @@ let plan: typeof import("../src/jobs/plan.js");
 let apply: typeof import("../src/jobs/apply.js");
 let owner: pg.Client;
 const T = randomUUID();
-const prev = { PLAN_IR: process.env.PLAN_IR, IMPORT_IR: process.env.IMPORT_IR, MOCK_IAC: process.env.MOCK_IAC };
+const prev = { MOCK_IAC: process.env.MOCK_IAC, TF_BIN: process.env.TF_BIN };
 
 before(async () => {
   if (skip) return;
@@ -35,21 +35,18 @@ after(async () => {
   await core.boss.stop({ graceful: false }); await core.pool.end(); await owner.end();
 });
 
-// 가져오기(IMPORT_IR=v2) → 계획(PLAN_IR=v2) → 승인·잠금 → provisioning 까지 (승인·상태는 시험 준비라 owner 로 바로)
+// 가져오기 → 계획 → 승인·잠금 → provisioning 까지 (승인·상태는 시험 준비라 owner 로 바로)
 async function approvedV2(source: "aws" | "gcp") {
   const id = randomUUID(), src = randomUUID(), dst = randomUUID();
   await owner.query(`INSERT INTO environments (id, tenant_id, provider, name, connection_status) VALUES
     ($1,$3,$4,'s','connected'), ($2,$3,'gcp','d','connected')`, [src, dst, T, source]);
   await owner.query(`INSERT INTO migrations (id, tenant_id, source_env_id, target_env_id, status)
     VALUES ($1,$2,$3,$4,'importing')`, [id, T, src, dst]);
-  process.env.IMPORT_IR = "v2";
   await imp.handleImport({ tenantId: T, requestId: `r-vta3b-i-${id.slice(0, 8)}`, migrationId: id });
   await owner.query(`UPDATE migrations SET status='planning' WHERE id=$1`, [id]);
-  process.env.PLAN_IR = "v2";
   const planId = randomUUID();
   await plan.handlePlan({ tenantId: T, requestId: `r-vta3b-p-${id.slice(0, 8)}`, migrationId: id, planId });
   const p = (await core.withTenant(T, (tx) => core.loadLatestPlan(tx, id)))!;
-  assert.equal(p.irVersion, "2");
   await owner.query(`INSERT INTO plan_approvals (tenant_id, plan_id, migration_id, decision, approved_by, plan_hash)
     VALUES ($1,$2,$3,'approve','user:dev',$4)`, [T, planId, id, p.planHash]);
   await owner.query(`UPDATE migrations SET status='provisioning' WHERE id=$1`, [id]);
@@ -62,9 +59,8 @@ const applyJob = (m: { id: string; planId: string; plan: { planHash: string } })
 const st = async (id: string) => (await owner.query(
   "SELECT status, failure_code, failed_at_status FROM migrations WHERE id=$1", [id])).rows[0];
 
-test("정상: 아무것도 안 바뀌면 v2 흉내 적용 → deploying, InfraReady 에 link.<postgres>.* 출력", { skip }, async () => {
+test("정상: 아무것도 안 바뀌면 흉내 적용 → deploying, InfraReady 에 link.<postgres>.* 출력", { skip }, async () => {
   const m = await approvedV2("gcp");
-  assert.equal(m.plan.specSource, "spec_v2");
   process.env.MOCK_IAC = "1";
   await apply.handleApply(applyJob(m));
   assert.equal((await st(m.id)).status, "deploying");
@@ -75,7 +71,7 @@ test("정상: 아무것도 안 바뀌면 v2 흉내 적용 → deploying, InfraRe
 test("거부: 승인 뒤 사람이 고친 판(spec_v2 없음)이 생기면 TF_PLAN_DRIFT, provisioning 실패라 다시 계획 가능, 잠금 0", { skip }, async () => {
   const m = await approvedV2("gcp");
   await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta)
-    SELECT tenant_id, migration_id, 2, spec, '{}'::jsonb FROM spec_versions WHERE migration_id=$1 AND version=1`, [m.id]);
+    SELECT tenant_id, migration_id, 2, '{}', '{}'::jsonb FROM spec_versions WHERE migration_id=$1 AND version=1`, [m.id]);
   process.env.MOCK_IAC = "1";
   await apply.handleApply(applyJob(m));
   assert.deepEqual(await st(m.id), { status: "failed", failure_code: "TF_PLAN_DRIFT", failed_at_status: "provisioning" });
@@ -83,30 +79,16 @@ test("거부: 승인 뒤 사람이 고친 판(spec_v2 없음)이 생기면 TF_PL
   assert.equal(await core.withTenant(T, (tx) => core.loadInfraReady(tx, m.id)), null);
 });
 
-test("거부: upconvert 로 승인했는데 다시 가져와 spec_v2 가 생긴 판 → 출처가 달라 TF_PLAN_DRIFT (몰래 바꿔 타지 않음)", { skip }, async () => {
-  // I9: aws 데모가 ECS v2(관리형 컨테이너 → 도착 렌더 미지원)가 됐다 → 워크로드 없는 원본(DB 만)으로 v1 되돌아감 판을 만든다
-  const { DEMO_INVENTORY_V2 } = await import("@svc/adapters");
-  const src = DEMO_INVENTORY_V2.aws!, orig = src.items;
-  src.items = orig.filter((i) => (i as { kind: string }).kind !== "ecs.service");
-  let m: Awaited<ReturnType<typeof approvedV2>>;
-  try { m = await approvedV2("aws"); } finally { src.items = orig; }
-  assert.equal(m.plan.specSource, "upconvert");
-  const { AppSpec, upconvertV1 } = await import("@svc/contracts");
-  const v1 = (await owner.query(`SELECT spec FROM spec_versions WHERE migration_id=$1 AND version=1`, [m.id])).rows[0].spec;
-  const iv2 = { spec: upconvertV1(AppSpec.parse(v1)).spec, fieldMeta: {}, unmapped: [], ids: {} };
+test("거부: 승인 뒤 사람이 명세 내용을 고친 판(postgres 저장 공간)이 생기면 TF_PLAN_DRIFT (몰래 바꿔 타지 않음)", { skip }, async () => {
+  const m = await approvedV2("gcp");
+  const cur = (await owner.query(`SELECT spec_v2 FROM spec_versions WHERE migration_id=$1 AND version=1`, [m.id])).rows[0].spec_v2;
+  const spec = structuredClone(cur.spec);
+  const pg0 = spec.components.find((c: { kind: string }) => c.kind === "postgres");
+  pg0.props.storageGb = (pg0.props.storageGb ?? 20) + 7;
   await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta, spec_v2)
-    VALUES ($1,$2,2,$3,'{}'::jsonb,$4)`, [T, m.id, JSON.stringify(v1), JSON.stringify(iv2)]);
-  process.env.MOCK_IAC = "1";
+    VALUES ($1,$2,2,'{}','{}'::jsonb,$3)`, [T, m.id, JSON.stringify({ ...cur, spec })]);
+  // 지문 대조는 진짜 terraform 길(realApply)의 첫 단계. terraform 을 부르기 전에 멈추므로 실행 파일은 없는 경로로 둔다
+  process.env.MOCK_IAC = "0"; process.env.TF_BIN = "/nonexistent/terraform";
   await apply.handleApply(applyJob(m));
   assert.deepEqual(await st(m.id), { status: "failed", failure_code: "TF_PLAN_DRIFT", failed_at_status: "provisioning" });
-});
-
-test("깃발: 승인 뒤 PLAN_IR 을 꺼도 적용 길은 계획서 irVersion 대로 (v2 흉내 출력이 그대로 생김)", { skip }, async () => {
-  const m = await approvedV2("gcp");
-  delete process.env.PLAN_IR;
-  process.env.MOCK_IAC = "1";
-  await apply.handleApply(applyJob(m));
-  assert.equal((await st(m.id)).status, "deploying");
-  const infra = (await core.withTenant(T, (tx) => core.loadInfraReady(tx, m.id)))!;
-  assert.ok(Object.keys(infra.tfOutputs).some((k) => k.startsWith("link.")));
 });

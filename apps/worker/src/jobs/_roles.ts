@@ -34,6 +34,8 @@ export interface StepRoles {
   // L5b: 진짜 발급기(REAL_STS=1 + external_id)로 빌린 AWS 실행 자격 → terraform 자식 env 에 덮을 값 (파일 경로만, 키 값 없음).
   //   없으면(가짜 발급기·AWS 아님) 지금처럼 프로세스 자격(맥 프로필)으로 돈다
   awsEnv?: Partial<Record<"source" | "target", Record<string, string>>>;
+  // RV-27: 진짜 발급기로 빌린 GCP 자격(bearer 토큰). precheck 등 gcloud 읽기가 워커 자기 로그인 대신 쓴다. 재발급되면 같이 바뀜. 메모리에만
+  gcpToken?: Partial<Record<"source" | "target", string>>;
 }
 
 async function envsOf(tenantId: string, m: MigrationRow) {
@@ -93,10 +95,17 @@ export async function withStepRoles<T>(step: RoleStep, j: { tenantId: string; mi
   let files = new Map<string, BorrowedAwsCreds>();
   try { files = await awsCredFiles(r, j, m); }
   catch (e) { await returnStepRoles(r, j.tenantId, `${step}_done`); throw e; }
+  gcpTokens(r, j);
   const h = r.creds.length ? startRenewal({ creds: r.creds, everyMs: credRenewSec() * 1000,
     renew: async (c) => {
       const n = await tempRoles().renew(c.credentialRef, j.tenantId);
       // L5b: 진짜 자격 파일을 새 키로 바꾼다 (terraform 이 Expiration 뒤 다시 읽음). 참조가 바뀌니 표도 옮긴다
+      // RV-27: GCP 토큰도 새 것으로 (같은 쪽)
+      const i = r.creds.indexOf(c), side = r.sides?.[i];
+      if (c.provider === "gcp" && !n.stub && side && r.gcpToken?.[side]) {
+        const k = tempRoles().use(n.credentialRef, j.tenantId, j.migrationId);
+        if (k.kind === "bearer") r.gcpToken[side] = k.token;
+      }
       const f = files.get(c.credentialRef);
       if (f) {
         const k = tempRoles().use(n.credentialRef, j.tenantId, j.migrationId);
@@ -113,6 +122,16 @@ export async function withStepRoles<T>(step: RoleStep, j: { tenantId: string; mi
     for (const f of files.values()) f.dispose();
     await returnStepRoles(r, j.tenantId, `${step}_done`);
   }
+}
+
+// RV-27: 진짜 발급기로 빌린 GCP 자격(stub=false)의 bearer 토큰을 쪽별로 꺼내 둔다 (파일 없음, 메모리만)
+function gcpTokens(r: StepRoles, j: { tenantId: string; migrationId: string }) {
+  r.creds.forEach((c, i) => {
+    const side = r.sides?.[i];
+    if (c.provider !== "gcp" || c.stub || !side) return;
+    const k = tempRoles().use(c.credentialRef, j.tenantId, j.migrationId);
+    if (k.kind === "bearer") (r.gcpToken ??= {})[side] = k.token;
+  });
 }
 
 // L5b: 진짜 발급기로 빌린 AWS 자격(stub=false)만 임시 credential_process 파일로 만든다. 가짜(stub)는 지금처럼 안 넘긴다

@@ -1,4 +1,6 @@
+import { dropRuntimeLinkSecret } from "../app-link.js";
 import { MigrationJob, QUEUES } from "@svc/contracts";
+import { replicationFor } from "./_repl.js";
 import { asBossDb, boss, withTenant, writeAudit } from "@svc/core";
 import { replicationFromEnv } from "@svc/replication";
 import { jobData, readMigration, RetryLater, runStep, stubWait, stubFailIfAsked } from "./_step.js";
@@ -43,6 +45,8 @@ export async function handleCleanup(raw: unknown) {
     // 출발 쪽 정리 = 출발 환경 destroy 단계 실행 역할 (Z39). 이 워커가 빌린 것은 아래 revokeForMigration 이 같이 회수하고 센다 (T27)
     // STUB: 지금 정리 일은 자격을 안 쓴다. 진짜 destroy 가 들어오면 회수를 일 뒤로 옮긴다
     work: async (j, m) => withStepRoles("cleanup", j, m, async () => {
+      // APP-22 (가): Terraform 실행 방식 도착의 출발 전용 계정 비밀 그릇을 지운다 (롤백 가능 창이 끝나 다시 출발로 갈 일 없음). 실행 역할 회수 전에
+      const linkSecret = await dropRuntimeLinkSecret(j, m);
       // 이 이전에 빌려준 실행 역할 회수 → T27 operateRoleRevoked (DB 장부 기준: 다른 워커가 쥔 것이 남아 있으면 false)
       const roles = await tempRoles().revokeForMigration(j.tenantId, j.migrationId, "cleanup");
       // Z75-04: 다른 워커가 빌린 실행 역할이 아직 살아 있으면(그 워커가 죽었거나 아직 청소 전) 지금 completed 로 가면
@@ -54,17 +58,17 @@ export async function handleCleanup(raw: unknown) {
           { reason: "OPERATE_ROLE_HELD_ELSEWHERE", stillActive: roles.stillActive, requested: roles.requested });
       }
       // TODO(human): 출발 쪽 DB·자원을 지울지, 남겨 둘지 (고객 동의 범위). 출발 DB는 쓰기 권한 회수 상태로 남는다
-      const repl = replicationFromEnv(j.migrationId);
+      const repl = await replicationFor(j.tenantId, j.migrationId);
       if (!repl) {
         await stubWait();
         await stubFailIfAsked(j, "cleanup");
-        return { to: "completed", detail: { removed: ["STUB: replication slot", "STUB: source app scaled to 0"], roles, stub: true },
+        return { to: "completed", detail: { removed: ["STUB: replication slot", "STUB: source app scaled to 0"], roles, stub: true, ...(linkSecret.skipped ? {} : { linkSecret }) },
                  evidence: { tempResources: 0, ...roles.evidence } };   // STUB: 임시 자원 장부
       }
       // 복제 슬롯·발행·구독·마커를 양쪽에서 지우고, 남은 게 없는지 다시 센다 (T27 tempResources)
       const { removed } = await repl.teardown();
       const left = await repl.leftovers();
-      return { to: "completed", detail: { removed: [...removed, "STUB: source app scaled to 0"], leftovers: left, roles },
+      return { to: "completed", detail: { removed: [...removed, "STUB: source app scaled to 0"], leftovers: left, roles, ...(linkSecret.skipped ? {} : { linkSecret }) },
                evidence: { tempResources: left.length, ...roles.evidence } };
     }),
     // 재발급 실패(Z61) → cleanup → paused(CRED_RENEW_FAILED). 그 밖의 예외는 지금처럼 pg-boss 재시도

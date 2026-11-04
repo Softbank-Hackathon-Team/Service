@@ -6,16 +6,15 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { AppSpecV2, checkV2, ImportResultV2, ServiceTfVars } from "@svc/contracts";
 import {
-  adapterFor, AdapterError, DEMO_INVENTORY, DEMO_INVENTORY_V2, discoverAws, inventoryForAudit, normalizeV2, projectV1, readEcs,
-  roleNameOf, secretRefOf, targetBuilderFor, UNSUPPORTED_V2, v2PrecheckItems,
-} from "../src/index.js";
+  adapterFor, AdapterError, DEMO_INVENTORY, discoverAws, inventoryForAudit, normalizeV2, readEcs,
+  roleNameOf, secretRefOf, targetBuilderFor, UNSUPPORTED_V2, v2PrecheckItems} from "../src/index.js";
 import type { Exec } from "../src/terraform/real-runner.js";
 
 const D = "sha256:" + "ab".repeat(32);
 const T = { envId: "33333333-3333-4333-8333-333333333333", provider: "gcp" as const, region: "default", tenantId: "11111111-1111-4111-8111-111111111111", migrationId: "22222222-2222-4222-8222-222222222222" };
 
 test("aws v2 데모(ECS 3티어) → normalizeV2: 관리형 컨테이너 서비스 3개 + DB, 연결·라우팅·비밀, 같은 입력 = 같은 결과", () => {
-  const a = normalizeV2(DEMO_INVENTORY_V2.aws!), b = normalizeV2(DEMO_INVENTORY_V2.aws!);
+  const a = normalizeV2(DEMO_INVENTORY.aws!), b = normalizeV2(DEMO_INVENTORY.aws!);
   assert.equal(JSON.stringify(a.result), JSON.stringify(b.result));
   const r = ImportResultV2.parse(a.result);
   assert.deepEqual(checkV2(r.spec).errors, []);
@@ -46,21 +45,6 @@ test("aws v2 데모(ECS 3티어) → normalizeV2: 관리형 컨테이너 서비�
   assert.deepEqual(checkV2(r.spec).approvals, []);
 });
 
-test("v1 투영: v1 ECS 데모 원본을 v2 로 읽어 투영 = 지금 v1 명세 (값 같음)", () => {
-  const n = normalizeV2(DEMO_INVENTORY.aws);
-  const p = projectV1(n.result, n.projectionEnv);
-  assert.deepEqual(p.spec, adapterFor("aws").normalize(DEMO_INVENTORY.aws).spec);
-  // v1 데모의 hostname 은 "/" 한 줄 라우팅 + 검토 표시
-  assert.equal(n.result.spec.entry?.hosts[0]?.hostnames[0], "shop.example.com");
-  assert.equal(n.result.fieldMeta["entry.shop.example.com.routes[0]"]?.needs_review, true);
-  // v2 데모 주 서비스(shop-api)도 같은 칸 (DB_HOST 만 더 있음)
-  const m = normalizeV2(DEMO_INVENTORY_V2.aws!);
-  const q = projectV1(m.result, m.projectionEnv).spec;
-  assert.equal(q.app?.name, "shop-api");
-  assert.equal(q.ingress?.hostname, "shop.example.com");
-  assert.deepEqual(q.service?.secretRefs, [{ name: "DATABASE_PASSWORD", key: "password" }]);
-});
-
 test("거부: digest 못 읽은 ECS 서비스 → unmapped B, 깨진 원본 → C (리소스 안 됨)", () => {
   const inv = { provider: "aws" as const, coverage: {}, items: [
     { kind: "ecs.service", serviceName: "tagonly", desiredCount: 1, imageDigest: null, taskDefinition: { containerDefinitions: [{ image: "r/x:1.0" }] } },
@@ -81,12 +65,12 @@ test("secrets ARN → 비밀 이름·키, 작업 역할 ARN → 이름", () => {
 
 // TA13: aws·gcp 는 ECS·Cloud Run 으로 그림 (ta13-managed-target.test.ts). 온프레·azure 는 계속 capability 로 막힘
 test("Builder: managedContainer 는 온프레에서 capability 로 막힘 (UNSUPPORTED_V2, 서비스·푸는 길 적음), runtime 을 k8s 로 바꾸면 그려진다", () => {
-  const spec = normalizeV2(DEMO_INVENTORY_V2.aws!).result.spec;
+  const spec = normalizeV2(DEMO_INVENTORY.aws!).result.spec;
   for (const p of ["onprem"] as const) {
     assert.throws(() => targetBuilderFor(p).toTerraformV2(spec, { ...T, provider: p }), (e: unknown) =>
       e instanceof AdapterError && e.code === UNSUPPORTED_V2 && /runtime\.managedContainer/.test(e.message) && /shop-api,shop-web,shop-worker/.test(e.message), p);
   }
-  const items = v2PrecheckItems("onprem", { spec: null, specV2: spec, hadV2Before: false });
+  const items = v2PrecheckItems("onprem", { specV2: spec });
   assert.ok(items.some((i) => i.level === "block" && /runtime\.managedContainer/.test(i.message)));
   // 사람이 runtime 을 k8s 로 바꾼 판 = 실행 방식 바뀜 승인 줄 + GKE 로 그려짐
   const k8s = AppSpecV2.parse({ ...spec, components: spec.components.map((c) => (c.kind === "service" ? { ...c, props: { ...c.props, runtime: "k8s" } } : c)) });
@@ -126,7 +110,8 @@ const ECS_TABLE: Array<[RegExp, Reply]> = [
   [/^aws ecs list-tasks/, { out: { taskArns: ["arn:aws:ecs:ap-northeast-2:000000000000:task/shop/abc"] } }],
   [/^aws ecs describe-tasks/, { out: { tasks: [{ taskDefinitionArn: "arn:aws:ecs:ap-northeast-2:000000000000:task-definition/shop-api:7", containers: [{ name: "api", imageDigest: D }] }] } }],   // VI9: 진짜 응답처럼 판 ARN 포함 (reader 가 서비스 판 작업만 봄)
   [/^aws elbv2 describe-target-groups/, { out: { TargetGroups: [{ TargetGroupArn: TG, HealthCheckPath: "/healthz", LoadBalancerArns: [LB] }] } }],
-  [/^aws elbv2 describe-listeners/, { out: { Listeners: [{ ListenerArn: "arn:l1" }] } }],
+  [/^aws elbv2 describe-load-balancers --load-balancer-arns/, { out: { LoadBalancers: [{ LoadBalancerArn: LB, DNSName: "shop-123.ap-northeast-2.elb.amazonaws.com" }] } }],   // EA-1
+  [/^aws elbv2 describe-listeners/, { out: { Listeners: [{ ListenerArn: "arn:l1", Port: 443, Protocol: "HTTPS" }] } }],
   [/^aws elbv2 describe-rules/, { out: { Rules: [
     { Priority: "10", Conditions: [{ Field: "host-header", HostHeaderConfig: { Values: ["shop.example.com"] } }, { Field: "path-pattern", PathPatternConfig: { Values: ["/api/*"] } }],
       Actions: [{ Type: "forward", TargetGroupArn: TG }] },
@@ -144,7 +129,9 @@ test("Reader aws-ecs: 서비스·작업 정의·digest·ALB 규칙·Auto Scaling
   assert.ok(r.notes.some((n) => /호스트 조건 없음/.test(n)));
   const it = r.items[0] as Record<string, any>;
   assert.equal(it.imageDigest, D);
-  assert.deepEqual(it.routes, [{ host: "shop.example.com", path: "/api/*", priority: 10 }]);
+  // EA-1: 기본 규칙(호스트 조건 없음)도 ALB 주소를 임시 호스트로 담음 + 리스너 포트·프로토콜
+  assert.deepEqual(it.routes, [{ host: "shop.example.com", path: "/api/*", priority: 10, listenerPort: 443, listenerProtocol: "HTTPS" },
+    { host: "shop-123.ap-northeast-2.elb.amazonaws.com", path: null, priority: null, listenerPort: 443, listenerProtocol: "HTTPS", hostUnknown: true }]);
   assert.deepEqual(it.autoscaling, { min: 2, max: 6, targetCpuPct: 70 });
   assert.equal("logConfiguration" in it.taskDefinition.containerDefinitions[0], false, "허용 목록 밖 칸은 안 넣음");
   assert.ok(calls.every((c) => / (list|describe)-/.test(c)), "읽기 명령만");
@@ -158,7 +145,7 @@ test("Reader aws-ecs: 서비스·작업 정의·digest·ALB 규칙·Auto Scaling
   assert.ok(n.unmapped.some((u) => u.resource === "env:shop-api.API_KEY"));
 });
 
-test("discoverAws: v2 는 EKS 없어도 ECS 로 읽고, v1 은 지금처럼 EKS 필수(SOURCE_INCOMPLETE). 감사 판은 ECS env 값을 지운다", async () => {
+test("discoverAws: EKS 없어도 ECS 로 읽는다. 감사 판은 ECS env 값을 지운다", async () => {
   const base: Array<[RegExp, Reply]> = [
     [/^aws sts get-caller-identity/, { out: { Account: "000000000000" } }],
     [/^aws eks list-clusters/, { out: { clusters: [] } }],
@@ -166,11 +153,10 @@ test("discoverAws: v2 는 EKS 없어도 ECS 로 읽고, v1 은 지금처럼 EKS 
     [/^aws (ec2|elbv2 describe-load-balancers|ecr|secretsmanager)/, { out: {} }],
   ];
   const { exec } = fakeExec([...base, ...ECS_TABLE]);
-  const inv = await discoverAws({ exec, env: {} }, { ir: "v2" });
+  const inv = await discoverAws({ exec, env: {} }, {});
   assert.equal(inv.coverage["ecs.service"], 1);
   assert.ok(inv.items.some((i) => (i as { kind: string }).kind === "ecs.cluster"));
   assert.equal(inv.items.some((i) => (i as { kind: string }).kind === "eks.cluster"), false);
-  await assert.rejects(discoverAws({ exec, env: {} }, {}), (e: unknown) => e instanceof AdapterError && e.code === "SOURCE_INCOMPLETE");
   const audit = inventoryForAudit(inv);
   const s = JSON.stringify(audit.items.find((i) => (i as { kind: string }).kind === "ecs.service"));
   assert.equal(s.includes("sk-ant-"), false);

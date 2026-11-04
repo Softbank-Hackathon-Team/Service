@@ -45,7 +45,7 @@ const rejects = (id: string, re: RegExp) => assert.rejects(go(id), (e: { code?: 
   e.code === "GUARD_FAILED" && re.test(e.message ?? ""));
 const ent = (confidence: number, needs_review?: boolean) => ({ source: "k8s", confidence, ...(needs_review === undefined ? {} : { needs_review }) });
 
-test("거부: v1 은 깨끗해도 spec_v2 fieldMeta 에 검토 필요 칸이 있으면 409", { skip }, async () => {
+test("거부: spec_v2 fieldMeta 에 검토 필요 칸이 있으면 409", { skip }, async () => {
   delete process.env.SPEC_MIN_CONFIDENCE;
   const id = await setup([{ specV2: v2({ "components.web.image": ent(0.6, true), "components.db.version": ent(0.6, true) }) }]);
   await rejects(id, /2 field\(s\) need review/);
@@ -60,10 +60,10 @@ test("정상: spec_v2 가 NULL·검토 칸 없음이면 지금과 같이 통과"
   await go(b); assert.equal(await status(b), "prechecking");
 });
 
-test("v1·v2 합산: 각각 한 칸씩이면 2칸으로 막힘", { skip }, async () => {
+test("옛 칸 field_meta 의 검토 표시는 안 센다 (초안 표시 자리뿐): spec_v2 한 칸만 → 1칸으로 막힘", { skip }, async () => {
   delete process.env.SPEC_MIN_CONFIDENCE;
   await rejects(await setup([{ meta: { "service.port": ent(0.6, true) }, specV2: v2({ "components.web.port": ent(0.6, true) }) }]),
-    /2 field\(s\) need review/);
+    /1 field\(s\) need review/);
 });
 
 test("신뢰도 문턱값 0.7: spec_v2 미처리 0.6 칸 → 409, 처리된(needs_review false) 칸만이면 통과", { skip }, async () => {

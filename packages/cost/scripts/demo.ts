@@ -1,18 +1,10 @@
 // 실행: npm run demo -w @svc/cost
 // 샘플 가격표로 PoC(cost_poc.py) 네 장면을 다시 보여 준다. 네트워크 없음.
-import { estimateCost, loadSampleCatalog, type CostEstimateRequestInput } from "../src/index.js";
+import { estimateCost, loadSampleCatalog } from "../src/index.js";
+import { spec as demoShop } from "../test/helpers.js";
 
 const catalog = loadSampleCatalog();
-const spec: CostEstimateRequestInput["spec"] = {
-  schemaVersion: "1",
-  app: { name: "demo-shop" },
-  service: {
-    image: `ghcr.io/demo/shop@sha256:${"a".repeat(64)}`, port: 8080, healthPath: "/healthz",
-    replicas: 1, cpu: "250m", memory: "512Mi", env: [], secretRefs: [],
-  },
-  database: { engine: "postgres", majorVersion: "16", storageGb: 20 },
-  ingress: { hostname: "shop.example.com", entry: "cloudflare-lb" },
-};
+const spec = demoShop();   // 시험과 같은 명세: 서비스 1대 x 250m/512Mi + Postgres 20GB
 // PoC와 같은 노드 종류만 (전수 탐색 끄고 비교)
 const poc = ["t3.medium", "e2-medium", "k3s-vm-2c8g"];
 

@@ -176,7 +176,7 @@ const r = hit[1]; process.stdout.write(typeof r.out === "string" ? r.out : JSON.
 }
 
 for (const dst of ["aws", "gcp"] as const) {
-  test(`VM 출발(EC2 가짜 CLI) → ${dst === "aws" ? "EC2" : "GCE"}: 가져오기 v2 까지는 가지만 이미지 빌드 자리라 가져오기에서 멈춤 — 멈춘 곳·이유 기록`, { skip }, async () => {
+  test(`VM 출발(EC2 가짜 CLI) → ${dst === "aws" ? "EC2" : "GCE"}: 명세 검토(spec_review)까지 간다, 이미지는 빌드 자리로 남음`, { skip }, async () => {
     installFakeAws();
     process.env.PATH = `${dir}:${prev.PATH}`; process.env.AWS_REGION = "ap-northeast-2";
     delete process.env.MOCK_SEED;
@@ -186,12 +186,13 @@ for (const dst of ["aws", "gcp"] as const) {
       const last = (await owner.query(`SELECT detail FROM audit_events WHERE target=$1 AND detail ? 'to' ORDER BY seq DESC LIMIT 1`, [id])).rows[0]?.detail as { error?: string } | undefined;
       const p = await path(id);
       console.log(`E2EKINDS vm→${dst}: ${p.join("→")} · ${JSON.stringify(await status(id))} · ${last?.error}`);
-      // 기록: VM 출발은 v2 가져오기(normalizeV2·checkV2)를 통과하고, 저장 직전 v1 투영(projectV1)이 "이미지가 빌드 대상" 으로 영구 실패시킨다.
-      //   v1 명세 칸(spec)이 아직 필수라 registry 이미지가 없는 출발은 명세 검토에도 못 간다. 빌드 자리 = IR-11 사람 결정이라 여기선 고치지 않음
-      assert.equal(s1, "failed");
-      assert.deepEqual(p, ["draft", "importing", "failed"]);
-      assert.equal((await status(id) as { failure_code?: string }).failure_code, "IMPORT_SOURCE_INCOMPLETE");
-      assert.match(String(last?.error), /이미지가 빌드 대상이라 v1 경로로 못 감/);
+      // 명세가 하나(spec_v2)가 된 뒤로는 v1 투영이 없어 VM 출발도 명세 검토까지 간다. 이미지 빌드 자리(IR-11)는 명세에 build 로 남고 계획 단계 몫
+      assert.equal(s1, "spec_review", String(last?.error));
+      assert.deepEqual(p, ["draft", "importing", "spec_review"]);
+      const v = (await owner.query(`SELECT spec, spec_v2 FROM spec_versions WHERE migration_id=$1`, [id])).rows[0];
+      assert.deepEqual(v.spec, {});
+      const svcs = (v.spec_v2.spec.components as Array<{ kind: string; props: { image?: { source: string } } }>).filter((c) => c.kind === "service");
+      assert.ok(svcs.length > 0 && svcs.some((c) => c.props.image?.source === "build"), JSON.stringify(svcs.map((c) => c.props.image)));
       assert.equal((await owner.query(`SELECT count(*)::int AS n FROM plans WHERE migration_id=$1`, [id])).rows[0].n, 0);
     } finally {
       process.env.MOCK_SEED = "1"; process.env.PATH = prev.PATH!;

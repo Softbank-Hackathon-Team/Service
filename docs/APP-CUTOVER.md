@@ -4,6 +4,20 @@
 
 상태: DRAFT(ai), 10/31 17:55Z. 클라우드 컨테이너 실측 (PG 16 ×3, 샘플 앱 shop, 실제 논리 복제). 맥·도커 compose 는 아직 안 돌려 봄. "앱 연결 드레인"은 TODO(human)였는데, 17:03Z 기본값 승인 방침에 따라 AI 기본값으로 정했다. 바꾸려면 아래 "버린 대안" 표를 보고 고르면 된다.
 
+## APP-22 (가) 팀 결정 (11/4): 도착 앱은 컷오버 전까지 출발 DB 에 붙는다
+
+DECISION(team): 컷오버 전까지 도착 앱은 출발 DB 에 붙고(트래픽 10·50% 동안 쓰기가 전부 출발로), 컷오버 때 도착 DB 로 바꾼다. 롤백하면 다시 출발. 도착 직접 쓰기 감지(TARGET_LOCAL_WRITES)는 안전망으로 둔다.
+
+| 칸 | 무엇 |
+|---|---|
+| 차트 값 | `database.activeWriter`(처음 `source`) + `database.endpoints.source`(host·port·user·secretRef) / `endpoints.target`(link 출력). activeWriter 로 DB_HOST·PORT·USER·PASSWORD 를 고르고 체크섬으로 다시 띄움 |
+| 출발 경로 | deploy 앞에서 출발 DB 에 도착 egress 만 여는 경로와 전용 최소 권한 계정 `svc_link_<이전 id 앞 8자>` 를 만든다 (`SOURCE_DB_LINK=real`). 손으로 마련한 경로면 `APP_LINK_SOURCE_URL` |
+| 컷오버 | C2 울타리가 앱 계정과 전용 계정 둘 다 막음 → C6 뒤 `activeWriter=target` 커밋(3번 재시도). 프록시(`APP_LINK_URLS`)가 있으면 빠른 길로 같이 |
+| 롤백(컷오버 뒤) | DB 되돌림 → `activeWriter=source` 커밋. 출발 울타리 걷기가 전용 계정 권한도 되돌림 |
+| Terraform 이 앱을 띄우는 도착 (ECS·Cloud Run·VM·관리형 잡) | apply 가 출발 경로를 얻어 비밀번호를 도착 그릇(aws `platform/<회사>/<앱>/db-link` JSON password, gcp `app-<앱>-db-link`)에 stdin 으로 넣고 루트 변수 `db_writer_json`(active=source)로 띄운다. 경로 사실(비밀번호 뺀 것)은 작업 폴더 `db-writer.json`. 컷오버(C6 뒤) = active=target 으로 다시 apply, 컷오버 뒤 롤백 = active=source 로 다시 apply (실패해도 destroy 안 함, 3번 재시도, 도착 실행 역할 apply 천장). 정리·도착 지우기 때 그릇 삭제 |
+| 막기 | 사전 점검 `PC-APPLINK-PATH`(경로 없음·루프백·{tf:} 미해결, Terraform 실행 방식이면 계정·비밀번호·DB 이름 필요). 컷오버 때 바꿀 길이 없으면 울타리 전에 `APP_LINK_UNAVAILABLE` |
+| 끄기 | `APP_LINK=0` (시험 전용) |
+
 ## 그림 먼저
 
 ```mermaid

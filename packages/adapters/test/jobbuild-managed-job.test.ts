@@ -3,7 +3,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { AppSpecV2, JobTfVars } from "@svc/contracts";
 import {
-  AdapterError, DEMO_INVENTORY_V2, identitiesOf, managedBlockers, managedJobVars, normalizeV2, requirementsV2, resourceTypesV2For, targetBuilderFor, UNSUPPORTED_V2, v2PrecheckItems,
+  AdapterError, DEMO_INVENTORY, identitiesOf, managedBlockers, managedJobVars, normalizeV2, requirementsV2, resourceTypesV2For, targetBuilderFor, UNSUPPORTED_V2, v2PrecheckItems,
 } from "../src/index.js";
 
 const T = { envId: "33333333-3333-4333-8333-333333333333", region: "default", tenantId: "11111111-1111-4111-8111-111111111111", migrationId: "22222222-2222-4222-8222-222222222222" };
@@ -21,7 +21,7 @@ const nightly = (over: Record<string, unknown> = {}): Comp => ({ id: "nightly", 
   command: ["/bin/batch"], args: ["--all"], ...over } });
 /** ECS 3티어 데모 + 잡. product 를 바꾸면 Cloud Run 출발 모양 (도착 Builder 는 origin.product 를 안 봄) */
 function app(product: "ecs" | "cloudRun", job: Comp | null = nightly(), mutate?: (s: { components: Comp[] }) => void): AppSpecV2 {
-  const s = structuredClone(normalizeV2(DEMO_INVENTORY_V2.aws!).result.spec) as unknown as { components: Comp[] };
+  const s = structuredClone(normalizeV2(DEMO_INVENTORY.aws!).result.spec) as unknown as { components: Comp[] };
   for (const c of s.components) if (c.kind === "service") c.props.origin = { runtime: "managedContainer", product };
   if (job) s.components.push(job);
   mutate?.(s);
@@ -91,7 +91,7 @@ test("거부: schedule 이 옮길 수 없는 cron(6필드·요일 간격·날짜
     const spec = app("ecs", nightly(over));
     assert.ok(managedBlockers(spec).some((m) => /nightly 관리형 예약 잡/.test(m) && re.test(m)), `${JSON.stringify(over)} → ${managedBlockers(spec).join(" | ")}`);
     for (const p of ["aws", "gcp"] as const) throwsUnsupported(() => targetBuilderFor(p).toTerraformV2(spec, at(p)), /nightly 관리형 예약 잡/);
-    assert.ok(v2PrecheckItems("aws", { spec: null, specV2: spec, hadV2Before: false }).some((i) => i.level === "block" && /nightly/.test(i.message)));
+    assert.ok(v2PrecheckItems("aws", { specV2: spec }).some((i) => i.level === "block" && /nightly/.test(i.message)));
   }
   // 온프레(관리형 capability 없음)는 관리형 앱 전체가 막힘 (잡만 따로 새지 않음)
   throwsUnsupported(() => targetBuilderFor("onprem").toTerraformV2(app("ecs"), at("onprem")), /./);

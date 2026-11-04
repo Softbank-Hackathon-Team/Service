@@ -37,7 +37,9 @@ const ids = (r: PortabilityResultV2) => r.items.map((i) => `${i.ruleId}:${i.comp
 test("규칙표: 모든 규칙에 scope 가 있고, target.db 를 읽는 규칙만 db 다", () => {
   const db = PORTABILITY_RULES.filter((r) => r.scope === "db").map((r) => r.id);
   assert.deepEqual(db, ["P-ENC-1", "P-KEY-1", "P-KEY-2", "P-ENC-2", "P-NET-1", "P-IAM-1", "P-DB-1", "P-DB-4", "P-DB-5", "P-BAK-1"]);
-  assert.ok(PORTABILITY_RULES.every((r) => r.scope === "env" || r.scope === "db"));
+  // SG-1: workload = IR 컨테이너 보안 규칙
+  assert.deepEqual(PORTABILITY_RULES.filter((r) => r.scope === "workload").map((r) => r.id), ["P-WL-1", "P-WL-2", "P-WL-3"]);
+  assert.ok(PORTABILITY_RULES.every((r) => r.scope === "env" || r.scope === "db" || r.scope === "workload"));
 });
 
 test("postgres 2개: db 규칙은 컴포넌트마다 따로, env 규칙은 한 번만 나온다", () => {

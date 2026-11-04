@@ -200,7 +200,11 @@
               "runtime_change",
               "build",
               "precheck_warn",
-              "low_confidence"
+              "low_confidence",
+              "tls_relaxed",
+              "host_access",
+              "public_bucket",
+              "provision_reuse"
             ]
           },
           "text": {
@@ -218,16 +222,10 @@
         "additionalProperties": false
       }
     },
-    "irVersion": {
-      "type": "string",
-      "const": "2"
-    },
-    "specSource": {
-      "type": "string",
-      "enum": [
-        "spec_v2",
-        "upconvert"
-      ]
+    "rollbackWindowSec": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 604800
     },
     "instances": {
       "type": "array",
@@ -245,7 +243,8 @@
               "queue",
               "job",
               "service",
-              "vm"
+              "vm",
+              "netpol"
             ]
           },
           "id": {
@@ -263,6 +262,48 @@
         ],
         "additionalProperties": false
       }
+    },
+    "targetFacts": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "maxLength": 100
+      },
+      "additionalProperties": {
+        "type": "string",
+        "maxLength": 2000
+      }
+    },
+    "provision": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "const": "reuse"
+        },
+        "source": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "resources": {
+          "maxItems": 200,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 300
+          }
+        },
+        "outputsHash": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode",
+        "source",
+        "resources",
+        "outputsHash"
+      ],
+      "additionalProperties": false
     },
     "planHash": {
       "type": "string"

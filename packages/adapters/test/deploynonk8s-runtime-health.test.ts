@@ -2,12 +2,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { AppSpecV2, type TfOutputs } from "@svc/contracts";
-import { checkTerraformRuntime, DEMO_INVENTORY_V2, normalizeV2, stubTfOutputsV2, targetBuilderFor, terraformRuntimeOf, flattenTfOutputsV2, type Exec } from "../src/index.js";
+import { checkTerraformRuntime, DEMO_INVENTORY, normalizeV2, stubTfOutputsV2, targetBuilderFor, terraformRuntimeOf, flattenTfOutputsV2, type Exec } from "../src/index.js";
 
 type Raw = Record<string, any>;
 const T = { envId: "33333333-3333-4333-8333-333333333333", region: "default", tenantId: "11111111-1111-4111-8111-111111111111", migrationId: "22222222-2222-4222-8222-222222222222" };
-const ecs = () => normalizeV2(DEMO_INVENTORY_V2.aws!).result.spec as AppSpecV2;
-const k8s = () => normalizeV2(DEMO_INVENTORY_V2.gcp!).result.spec as AppSpecV2;
+const ecs = () => normalizeV2(DEMO_INVENTORY.aws!).result.spec as AppSpecV2;
+const k8s = () => normalizeV2(DEMO_INVENTORY.gcp!).result.spec as AppSpecV2;
 function vm(): AppSpecV2 {
   const o: Raw = structuredClone(ecs());
   for (const c of o.components) if (c.kind === "service") { c.props.origin = { runtime: "vm", product: "ec2" }; c.props.runtime = "vm"; }

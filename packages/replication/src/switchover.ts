@@ -33,6 +33,12 @@ export interface SwitchoverInput {
   maxCatchupMs?: number;
   /** C3 뒤 표별 행 수가 정확히 같은지 확인 (울타리 뒤라 같아야 한다) */
   verifyCounts?: boolean;
+  /** PF-E24: verifyCounts 를 안 주면 추정 행 수가 이 값 이하일 때만 비교 (기본 100만) */
+  verifyCountsMaxRows?: number;
+  /** PF-E26: C6 뒤 역방향 구독 붙이기를 다시 해 보는 횟수 (기본 4 = 1·2·4·8초) */
+  reverseRetries?: number;
+  /** PF-E23: 멈춤 전 구독 적용 일꾼을 기다리는 상한 (기본 15초) */
+  workerWaitMs?: number;
   /** C4 시퀀스 여유분 */
   sequenceGap?: number;
   /** Z36: 워커가 환경 잠금을 잃으면 abort된다. C5(되돌릴 수 없는 지점) 직전에 보고 멈춘다 → catch가 출발 울타리를 걷는다.
@@ -93,6 +99,25 @@ export async function switchover(i: SwitchoverInput): Promise<SwitchoverResult> 
     } catch (x) {
       throw new Error(`reverse slot not allowed on ${i.to.label} (checked before pause, nothing changed): ${(x as Error).message}`);
     }
+    // PF-E23 (FM-APP-30): 방금 만든 구독(컷오버 직후 롤백의 역방향)은 런처가 몇 초 뒤에 적용 일꾼을 띄운다. 그 전에 멈추면 C3 가 마커를 ~5초 기다렸다(쓰기 멈춤).
+    //   멈춤 전에 일꾼이 뜰 때까지 기다린다 (쓰기 안 멈춤). 상한이 지나면 예전처럼 그냥 간다 (C3 의 따라잡기 상한이 그대로 지킨다)
+    const tw = now();
+    while (now() - tw < (i.workerWaitMs ?? 15_000)) {
+      const w = await D.query(`SELECT 1 FROM pg_stat_subscription WHERE subname = $1 AND relid IS NULL AND pid IS NOT NULL`, [i.current]);
+      if (w.rowCount) break;
+      await sleep(50);
+    }
+    if (now() - tw >= 1) measures.push({ name: "apply_worker_wait_ms", value: Math.round(now() - tw), unit: "ms" });
+    // PF-E24 (FM-APP-29) DRAFT(ai): C3 의 행 수 비교는 멈춤 안에서 출발·도착 전체를 훑어 표 크기에 비례해 멈춤이 늘었다(600만 행 0.5~1.1초).
+    //   추정 행 수(pg_class.reltuples 합)가 한도(기본 100만, REPL_VERIFY_COUNTS_MAX_ROWS)를 넘으면 멈춤 안 행 수 비교를 뺀다.
+    //   순서 보장은 마커(한 길로 순서대로 적용)가 하고, 행 수는 sync 증거(catchUpEvidence)에 남는다. TODO(human): 큰 DB 에서 행 수 대신 무엇으로 검증할지
+    let verifyDefault = true;
+    if (i.verifyCounts === undefined) {
+      const est = await S.query<{ n: string | null }>(`SELECT sum(GREATEST(c.reltuples, 0))::bigint n FROM pg_class c JOIN pg_namespace ns ON ns.oid = c.relnamespace
+         WHERE (ns.nspname, c.relname) IN (SELECT * FROM unnest($1::text[], $2::text[]))`, [i.tables.map((t) => t.schema), i.tables.map((t) => t.name)]);
+      const maxRows = i.verifyCountsMaxRows ?? 1_000_000;
+      if (Number(est.rows[0]?.n ?? 0) > maxRows) { verifyDefault = false; measures.push({ name: "row_count_verify_skipped_est_rows", value: Number(est.rows[0]!.n), unit: "count" }); }
+    }
     const T0 = now(); marks.push(["start", T0]);
     paused = true;
     await hooks.pause(); const t1 = mark("c1_pause");
@@ -111,7 +136,7 @@ export async function switchover(i: SwitchoverInput): Promise<SwitchoverResult> 
     }
 
     if (!f.markerInserted) throw new Error("C2: marker was not inserted although the fence check was clean");
-    const verify = i.verifyCounts !== false;
+    const verify = i.verifyCounts ?? verifyDefault;
     // z75-31: 출발 행 수는 표지를 넣은 뒤 바로 센다 (울타리 뒤라 고정). 도착을 기다리는 동안 다른 연결에서 같이 돈다
     const srcCounts = verify ? rowCounts(S, i.tables) : Promise.resolve(null);
     srcCounts.catch(() => {});
@@ -179,8 +204,24 @@ export async function switchover(i: SwitchoverInput): Promise<SwitchoverResult> 
     const pauseMs = t6 - t1;
 
     // RESUME 뒤: 옛 출발은 읽기 전용 대기(권한 회수 유지), 역방향 구독을 붙인다 (슬롯이 이미 WAL을 잡고 있어 빠지는 쓰기 없음)
-    await unfence(S, i.from, { writable: false });
-    await ensureSubscription(S, i.to, i.reverse, { copyData: false, createSlot: false });
+    // PF-E26 (RV-10): 여기는 멈춤 밖(앱은 이미 도착을 씀)이라 한 번의 일시 오류(연결 끊김·잠깐 못 닿음)로 CUTOVER_HALFWAY 가 되면
+    //   역방향 구독이 없어 롤백을 못 하고, C5 의 역방향 슬롯이 도착 WAL 을 붙잡았다 → 연결을 새로 열어 몇 번 더 해 본다(1·2·4·8초).
+    //   둘 다 있는 것은 건너뛰는 멱등 동작이라 다시 불러도 안전. 끝내 안 되면 예전처럼 던진다
+    let S2 = S;
+    for (let k = 0; ; k++) {
+      try {
+        await unfence(S2, i.from, { writable: false });
+        await ensureSubscription(S2, i.to, i.reverse, { copyData: false, createSlot: false });
+        break;
+      } catch (x) {
+        if (k >= (i.reverseRetries ?? 4) || i.signal?.aborted) throw x;
+        measures.push({ name: "reverse_subscribe_retry", value: k + 1, unit: "count" });
+        await sleep(1000 * 2 ** k);
+        if (S2 !== S) await S2.end().catch(() => {});
+        S2 = await connect(i.from).catch(() => S2);
+      }
+    }
+    if (S2 !== S) await S2.end().catch(() => {});
     mark("reverse_subscribed");
     // Z80 04: 정방향 슬롯(출발)을 여기서 지운다. walsender 가 아직 붙어 있으면 dropSlotIfIdle 이 잠깐(최대 5초) 기다린다.
     //   못 지우면 L3 과 같은 측정값을 남기고(감사 detail.measurements) 컷오버는 성공으로 둔다. cleanup 의 teardown 이 다시 지운다

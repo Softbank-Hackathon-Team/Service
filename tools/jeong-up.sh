@@ -6,6 +6,9 @@
 cd "$(dirname "$0")/.." || exit 1
 JSELF=tools/jeong-up.sh
 . tools/jeong-lib.sh
+# WATCHREQ (방법론 v1 ⑧, F14): 감시 창이 없으면 up 이 중간에 실패해도 아무도 jeong-down 을 안 쳐서 자원이 남는다(11/3 감시 창 꺼짐) → 시작하지 않는다.
+#   DRAFT(ai): 감시 없이 올릴 때만 JEONG_NO_WATCH=1. 뒤에서 도는 자식(JEONG_CHILD)은 이미 본 뒤라 안 본다
+j_watch_gate || exit 4
 j_bg up "$@"
 j_begin up
 j_trap up

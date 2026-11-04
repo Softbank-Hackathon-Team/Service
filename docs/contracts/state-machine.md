@@ -158,7 +158,7 @@ flowchart LR
 | `spec_review` | 2 | `prechecking` (코드 있음), `cancelled` |
 | `prechecking` | 4 | `planning`, `spec_review`, `failed`, `cancelled` |
 | `planning` | 3 | `awaiting_approval`, `failed`, `cancelled` |
-| `awaiting_approval` | 4 | `approved`, `rejected`, `stale`, `cancelled` |
+| `awaiting_approval` | 4 | `approved`, `rejected`, `stale` (계획 만료 깨우기 작업 `plan-expiry`·만료 뒤 승인 시도, G7-1), `cancelled` |
 | `approved` | 3 | `provisioning` (코드 있음), `stale`, `cancelled` |
 | `provisioning` | 2 | `deploying`, `failed` |
 | `deploying` | 3 | `syncing`, `paused`, `rolling_back` |
@@ -171,10 +171,10 @@ flowchart LR
 | `paused` | 5 | `deploying`, `syncing`, `shifting`, `cleanup`, `rolling_back` |
 | `rolling_back` | 2 | `rolled_back`, `failed` |
 | `rolled_back` | 0 | 끝 (더 갈 곳 없음) |
-| `failed` | 2 | `planning`, `cancelled` |
+| `failed` | 3 | `prechecking` (다시 계획, G7-2), `rolling_back` (컷오버·롤백 중 실패만, F8-1), `cancelled` |
 | `cancelled` | 0 | 끝 (더 갈 곳 없음) |
-| `rejected` | 3 | `spec_review`, `planning`, `cancelled` |
-| `stale` | 2 | `planning`, `cancelled` |
+| `rejected` | 3 | `spec_review`, `prechecking` (다시 계획, G7-2), `cancelled` |
+| `stale` | 2 | `prechecking` (다시 계획, G7-2), `cancelled` |
 <!-- /GEN:transitions -->
 
 ---

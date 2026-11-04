@@ -1,21 +1,23 @@
 // Z70: apply 작업의 진짜 terraform 길 (DB 없이 realApply 만). 실행기·fetch 는 가짜
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AppSpec } from "@svc/contracts";
-import { adapterFor, DEMO_INVENTORY, type RealApplyResult } from "@svc/adapters";
+import { ONE } from "./demo-one.js";
+import { type RealApplyResult } from "@svc/adapters";
 import { buildPlanDoc } from "../src/jobs/plan.js";
 import { stubPrecheck } from "../src/jobs/precheck.js";
 import { realApply, type RealApplyInput } from "../src/jobs/apply-real.js";
+import { provisionOf, factsDrift, targetFactsOf } from "../src/jobs/plan-facts.js";
 import { isNoCluster } from "../src/jobs/deploy.js";
 import { withServedBy, servedByName } from "../src/gitops/index.js";
 
 const ENV_ID = "33333333-3333-4333-8333-333333333333";
 const MID = "4a8c0000-0000-4000-8000-0000000000cc";
 const TENANT = "11111111-1111-4111-8111-111111111111";
-const spec = AppSpec.parse(adapterFor("aws").normalize(DEMO_INVENTORY.aws).spec);
+const spec = ONE;
 const plan = buildPlanDoc({ planId: "7f000000-0000-4000-8000-0000000000cc", migrationId: MID, spec,
   target: { envId: ENV_ID, provider: "aws", region: "default" }, precheck: stubPrecheck(), now: new Date() });
-const input: RealApplyInput = { migrationId: MID, tenantId: TENANT, envId: ENV_ID, provider: "aws", accountId: "111122223333", spec, plan };
+const inputBase: RealApplyInput = { migrationId: MID, tenantId: TENANT, envId: ENV_ID, provider: "aws", accountId: "111122223333", spec, plan };
+const input = inputBase;
 const FACTS = { TF_FACT_VPC_ID: "vpc-1", TF_FACT_DB_SUBNET_IDS_JSON: '["subnet-a","subnet-b"]', TF_FACT_CLUSTER_NAME: "finals-eks" };
 
 function fakeRunner(ok = true) {
@@ -113,10 +115,10 @@ test("Z77: 공개로 승인한 계획 → 공개 변수 + 공개 서브넷을 �
   const env = { ...FACTS, ...PUB, TF_FACT_DB_PUBLIC_SUBNET_IDS_JSON: '["subnet-p1","subnet-p2"]' };
   const r = await realApply({ ...input, plan: buildPlanDoc(planInput, env) }, { env, runner: f.runner });
   assert.equal(r.ok, true);
-  const vars = f.seen[0]!.vars;
-  assert.equal(vars.db_public, true);
-  assert.equal(vars.db_deletion_protection, false);
-  assert.equal(vars.db_public_subnet_ids_json, '["subnet-p1","subnet-p2"]');
+  const pg0 = JSON.parse(f.seen[0]!.vars.postgres_json as string)[0];
+  assert.equal(pg0.public, true);
+  assert.equal(pg0.deletion_protection, false);
+  assert.equal(pg0.public_subnet_ids_json, '["subnet-p1","subnet-p2"]');
   assert.deepEqual((r.detail.dbNetwork as { peerCidrs: string[] }).peerCidrs, ["203.0.113.7/32"]);
 });
 
@@ -158,7 +160,7 @@ test("Z77: 다른 사실의 빈 값은 여전히 모자란 것으로 본다 (TF_
 });
 
 test("Z77: gcp 는 클러스터 없이 안 된다 (TF_FACT_CLUSTER_NAME=\"\" → TF_FACTS_MISSING)", async () => {
-  const gspec = AppSpec.parse(adapterFor("gcp").normalize(DEMO_INVENTORY.gcp).spec);
+  const gspec = ONE;
   const gplan = buildPlanDoc({ ...planInput, spec: gspec, target: { envId: ENV_ID, provider: "gcp", region: "default" } }, {});
   const f = fakeRunner();
   const r = await realApply({ ...input, provider: "gcp", accountId: "finals-demo", spec: gspec, plan: gplan },
@@ -177,7 +179,10 @@ test("Z89-03: imported 길 — 실행기 안 부름, outputs.json = imported tfO
   const dir = join(root, "t-11111111", MID);   // tenantSlug(TENANT)
   mkdirSync(dir, { recursive: true });
   const outs = { db_address: "m1.rds.example", db_master_secret_arn: "arn:m1" };
-  writeFileSync(join(dir, "imported.json"), JSON.stringify({ source: "z88-import", tfOutputs: outs, resources: ["aws_db_instance.db"] }));
+  const imp = { source: "z88-import", tfOutputs: outs, resources: ["aws_db_instance.db"] };
+  writeFileSync(join(dir, "imported.json"), JSON.stringify(imp));
+  // G7-4: 재사용 계획은 계획서에도 provision 이 실려 있어야 한다 (계획 때 본 imported.json 과 같음)
+  const input = { ...inputBase, plan: { ...plan, provision: provisionOf({ ...imp, file: "" }) } };
   const f = fakeRunner();
   const r = await realApply(input, { env: { ...FACTS, TF_WORK_DIR: root }, runner: f.runner });
   assert.equal(r.ok, true);
@@ -191,4 +196,32 @@ test("Z89-03: imported 길 — 실행기 안 부름, outputs.json = imported tfO
   writeFileSync(join(dir, "db-secret.json"), "{}", { mode: 0o600 });
   const r2 = await realApply(input, { env: { ...FACTS, TF_WORK_DIR: root }, runner: f.runner });
   assert.equal((r2 as { detail: Record<string, unknown> }).detail.dbSecret, true);
+});
+
+// G7-3·G7-4: 계획서 지문과 apply 직전 값 비교
+test("G7-4: 새로 만들기로 승인한 뒤 imported.json 이 생기면 TF_PLAN_DRIFT, 실행기 안 부름", async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const root = mkdtempSync(join(tmpdir(), "g74-"));
+  const dir = join(root, "t-11111111", MID);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "imported.json"), JSON.stringify({ source: "x", tfOutputs: { db_address: "a" }, resources: ["aws_db_instance.db"] }));
+  const f = fakeRunner();
+  const r = await realApply(input, { env: { ...FACTS, TF_WORK_DIR: root }, runner: f.runner });
+  assert.equal((r as { failureCode: string }).failureCode, "TF_PLAN_DRIFT");
+  assert.equal(f.seen.length, 0);
+});
+
+test("G7-3: 계획서의 도착 사실(VPC)이 apply 때 바뀌면 이유에 키 이름만 (값 글자 없음)", () => {
+  const vars = { vpcId: "<env:vpcId>", accountId: "<env:accountId>", tenantId: "<env:tenantId>" } as never;
+  const before = targetFactsOf(vars, FACTS, "aws", "111122223333");
+  assert.deepEqual(Object.keys(before ?? {}).sort(), ["accountId", "vpcId"]);
+  const p = { ...plan, targetFacts: before };
+  assert.equal(factsDrift(p, targetFactsOf(vars, FACTS, "aws", "111122223333"), null), null);
+  const why = factsDrift(p, targetFactsOf(vars, { ...FACTS, TF_FACT_VPC_ID: "vpc-2" }, "aws", "111122223333"), null);
+  assert.match(why ?? "", /vpcId/);
+  assert.doesNotMatch(why ?? "", /vpc-1|vpc-2/);
+  // 옛 계획서(targetFacts 없음)는 비교하지 않는다
+  assert.equal(factsDrift(plan, before, null), null);
 });

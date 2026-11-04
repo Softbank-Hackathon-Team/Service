@@ -1,14 +1,11 @@
-{{- /* A4 DRAFT(ai): workloads[] — 서비스·잡 여러 개를 한 차트(= Argo 앱 1개)로. 값이 없으면 이 파일은 아무것도 안 그린다 (옛 단일 값 길).
-       값 칸: name, kind(service|job), image, command, args, env, envFrom, ports, probes{readiness,liveness,startup}, resources,
-              replicas, scale{min,max,cpuPct}, serviceAccount{name,annotations}, securityContext{pod,container},
-              initContainers, sidecars(injected:true 는 안 그림), configs[{name,data,mountPath}], secretMounts[{name,secretName,mountPath}],
-              pvcs[{name,size,storageClassName,mountPath}], volumes, volumeMounts,
-              job{schedule,concurrencyPolicy,suspend,backoffLimit,restartPolicy}, service{name}
-       없는 칸은 키 자체를 안 그린다 */}}
+{{- /* A4·PB-1 DRAFT(ai): workloads[] — 서비스·잡 여러 개를 한 차트(= Argo 앱 1개)로. 값 모양 = packages/contracts/src/chart-values.ts (ChartWorkload)
+       Builder 가 ChartValues.parse 로 검사한 값만 온다. 없는 칸은 키 자체를 안 그린다 */}}
+{{- $seenCfg := dict }}
 {{- $seenSA := dict }}
 {{- range $w := .Values.workloads }}
 {{- $sa := $w.serviceAccount | default dict }}
-{{- if and $sa.name (not (hasKey $seenSA $sa.name)) }}
+{{- /* create: false (k8s 기본 "default" SA 등 클러스터에 이미 있는 것)는 안 만든다 */}}
+{{- if and $sa.name $sa.create (not (hasKey $seenSA $sa.name)) }}
 {{- $_ := set $seenSA $sa.name true }}
 ---
 apiVersion: v1
@@ -20,16 +17,21 @@ metadata:
   annotations: {{- toYaml . | nindent 4 }}
   {{- end }}
 {{- end }}
+{{- /* PB-1: ConfigMap 이름 = 출발 이름 그대로 (env configMapKeyRef·envFrom 이 이 이름을 본다). 여러 워크로드가 같이 쓰면 한 번만 */}}
 {{- range $c := ($w.configs | default list) }}
+{{- if not (hasKey $seenCfg $c.name) }}
+{{- $_ := set $seenCfg $c.name true }}
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ printf "%s-%s" $w.name $c.name }}
-  labels: {{- include "app.wlabels" (dict "root" $ "w" $w) | nindent 4 }}
+  name: {{ $c.name }}
+  labels: {{- include "app.labels" $ | nindent 4 }}
 data: {{- toYaml ($c.data | default dict) | nindent 2 }}
 {{- end }}
+{{- end }}
 {{- range $p := ($w.pvcs | default list) }}
+{{- if not $p.claimTemplate }}
 ---
 {{- /* 빈 PVC. 출발 데이터는 안 따라온다 (어댑터가 경고 줄을 띄움) */}}
 apiVersion: v1
@@ -38,13 +40,14 @@ metadata:
   name: {{ printf "%s-%s" $w.name $p.name }}
   labels: {{- include "app.wlabels" (dict "root" $ "w" $w) | nindent 4 }}
 spec:
-  accessModes: [ReadWriteOnce]
+  accessModes: {{- toYaml ($p.accessModes | default (list "ReadWriteOnce")) | nindent 4 }}
   {{- with $p.storageClassName }}
   storageClassName: {{ . }}
   {{- end }}
   resources:
     requests:
       storage: {{ $p.size | quote }}
+{{- end }}
 {{- end }}
 {{- if eq ($w.kind | default "service") "job" }}
 {{- $j := $w.job | default dict }}
@@ -57,20 +60,25 @@ metadata:
   labels: {{- include "app.wlabels" (dict "root" $ "w" $w) | nindent 4 }}
 spec:
   schedule: {{ $j.schedule | quote }}
+  {{- with $j.timeZone }}
+  timeZone: {{ . | quote }}
+  {{- end }}
   {{- with $j.concurrencyPolicy }}
   concurrencyPolicy: {{ . }}
   {{- end }}
-  {{- if hasKey $j "suspend" }}
-  suspend: {{ $j.suspend }}
-  {{- end }}
+  {{- /* J-1: 잡 주인이 target 이 되기 전(컷오버 전)에는 도착 CronJob 을 멈춰 둔다 → 출발·도착이 같은 잡을 두 번 돌리지 않음.
+         주인이 target 이면 출발 값(suspend) 그대로 */}}
+  suspend: {{ if eq ($.Values.jobOwner | default "source") "target" }}{{ $j.suspend | default false }}{{ else }}true{{ end }}
   jobTemplate:
     spec:
       {{- if hasKey $j "backoffLimit" }}
       backoffLimit: {{ $j.backoffLimit }}
       {{- end }}
+      {{- with $j.activeDeadlineSeconds }}
+      activeDeadlineSeconds: {{ . }}
+      {{- end }}
       template:
-        metadata:
-          labels: {{- include "app.wlabels" (dict "root" $ "w" $w) | nindent 12 }}
+        metadata: {{- include "app.wpodmeta" (dict "root" $ "w" $w) | nindent 10 }}
         spec: {{- include "app.wpod" (dict "root" $ "w" $w "restart" ($j.restartPolicy | default "OnFailure")) | nindent 10 }}
 {{- else }}
 ---
@@ -83,49 +91,97 @@ spec:
   {{- if hasKey $j "backoffLimit" }}
   backoffLimit: {{ $j.backoffLimit }}
   {{- end }}
+  {{- with $j.activeDeadlineSeconds }}
+  activeDeadlineSeconds: {{ . }}
+  {{- end }}
   template:
-    metadata:
-      labels: {{- include "app.wlabels" (dict "root" $ "w" $w) | nindent 8 }}
+    metadata: {{- include "app.wpodmeta" (dict "root" $ "w" $w) | nindent 6 }}
     spec: {{- include "app.wpod" (dict "root" $ "w" $w "restart" ($j.restartPolicy | default "OnFailure")) | nindent 6 }}
 {{- end }}
 {{- else }}
+{{- /* D6: 출발 종류 그대로 (Deployment·StatefulSet·DaemonSet) */}}
+{{- $wk := $w.workloadKind | default "deployment" }}
 ---
 apiVersion: apps/v1
-kind: Deployment
+kind: {{ if eq $wk "statefulset" }}StatefulSet{{ else if eq $wk "daemonset" }}DaemonSet{{ else }}Deployment{{ end }}
 metadata:
   name: {{ $w.name }}
   labels: {{- include "app.wlabels" (dict "root" $ "w" $w) | nindent 4 }}
 spec:
-  {{- if and (hasKey $w "replicas") (not $w.scale) }}
+  {{- if and (ne $wk "daemonset") (hasKey $w "replicas") (not $w.scale) }}
   replicas: {{ $w.replicas }}
   {{- end }}
+  {{- if eq $wk "deployment" }}
   {{- with $.Values.progressDeadlineSeconds }}
   progressDeadlineSeconds: {{ . }}
+  {{- end }}
+  {{- end }}
+  {{- if eq $wk "statefulset" }}
+  {{- $st := $w.statefulSet | default dict }}
+  {{- with $st.serviceName }}
+  serviceName: {{ . }}
+  {{- end }}
+  {{- with $st.podManagementPolicy }}
+  podManagementPolicy: {{ . }}
+  {{- end }}
+  {{- with $st.pvcRetention }}
+  persistentVolumeClaimRetentionPolicy: {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- $vct := list }}
+  {{- range $p := ($w.pvcs | default list) }}{{ if $p.claimTemplate }}{{ $vct = append $vct $p }}{{ end }}{{ end }}
+  {{- if $vct }}
+  volumeClaimTemplates:
+  {{- range $p := $vct }}
+    - metadata: { name: {{ $p.name }} }
+      spec:
+        accessModes: {{- toYaml $p.accessModes | nindent 10 }}
+        {{- with $p.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources: { requests: { storage: {{ $p.size | quote }} } }
+  {{- end }}
+  {{- end }}
   {{- end }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ $.Values.app.name }}
       app.kubernetes.io/component: {{ $w.name | quote }}
   template:
-    metadata:
-      labels: {{- include "app.wlabels" (dict "root" $ "w" $w) | nindent 8 }}
+    metadata: {{- include "app.wpodmeta" (dict "root" $ "w" $w) | nindent 6 }}
     spec: {{- include "app.wpod" (dict "root" $ "w" $w) | nindent 6 }}
-{{- if $w.ports }}
+{{- /* PB-1: Service 는 services[] 한 줄에 하나 (출발 Service 이름·종류·포트 그대로). Headless = clusterIP: None */}}
+{{- range $svc := ($w.services | default list) }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ ($w.service | default dict).name | default $w.name }}
+  name: {{ $svc.name }}
   labels: {{- include "app.wlabels" (dict "root" $ "w" $w) | nindent 4 }}
+  {{- with $svc.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
+  {{- if eq $svc.type "Headless" }}
+  clusterIP: None
+  {{- else }}
+  type: {{ $svc.type }}
+  {{- end }}
   selector:
     app.kubernetes.io/name: {{ $.Values.app.name }}
     app.kubernetes.io/component: {{ $w.name | quote }}
   ports:
-    {{- range $w.ports }}
-    - name: {{ .name | default "http" }}
-      port: {{ .servicePort | default .containerPort }}
-      targetPort: {{ .containerPort }}
+    {{- range $svc.ports }}
+    - port: {{ .port }}
+      targetPort: {{ .targetPort }}
+      {{- with .name }}
+      name: {{ . }}
+      {{- end }}
+      {{- with .protocol }}
+      protocol: {{ . }}
+      {{- end }}
+      {{- with .appProtocol }}
+      appProtocol: {{ . }}
+      {{- end }}
     {{- end }}
 {{- end }}
 {{- with $w.scale }}
@@ -136,14 +192,43 @@ metadata:
   name: {{ $w.name }}
   labels: {{- include "app.wlabels" (dict "root" $ "w" $w) | nindent 4 }}
 spec:
-  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: {{ $w.name }} }
+  scaleTargetRef: { apiVersion: apps/v1, kind: {{ if eq ($w.workloadKind | default "deployment") "statefulset" }}StatefulSet{{ else }}Deployment{{ end }}, name: {{ $w.name }} }
   minReplicas: {{ .min }}
   maxReplicas: {{ .max }}
-  {{- with .cpuPct }}
+  {{- /* CV-1: 출발 HPA metrics 원문이 있으면 그대로, 없으면 cpuPct 하나 */}}
+  {{- if .metrics }}
+  metrics: {{- toYaml .metrics | nindent 4 }}
+  {{- else if .cpuPct }}
   metrics:
     - type: Resource
-      resource: { name: cpu, target: { type: Utilization, averageUtilization: {{ . }} } }
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: {{ .cpuPct }} } }
   {{- end }}
+  {{- with .behavior }}
+  behavior: {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- /* CV-1: PodDisruptionBudget (출발 이름·값 그대로). 셀렉터 = 이 Deployment 의 셀렉터 */}}
+{{- with $w.disruption }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .name }}
+  labels: {{- include "app.wlabels" (dict "root" $ "w" $w) | nindent 4 }}
+spec:
+  {{- if hasKey . "minAvailable" }}
+  minAvailable: {{ .minAvailable }}
+  {{- end }}
+  {{- if hasKey . "maxUnavailable" }}
+  maxUnavailable: {{ .maxUnavailable }}
+  {{- end }}
+  {{- with .unhealthyPodEvictionPolicy }}
+  unhealthyPodEvictionPolicy: {{ . }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $.Values.app.name }}
+      app.kubernetes.io/component: {{ $w.name | quote }}
 {{- end }}
 {{- end }}
 {{- end }}

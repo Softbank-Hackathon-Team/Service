@@ -28,11 +28,14 @@ const exec: Exec = async (cmd, args) => {
   lines.push(line);
   for (const d of denied) if (new RegExp(`^gcloud ${d}`).test(line)) return out(null, 1, "ERROR: (gcloud) PERMISSION_DENIED: Permission denied");
   if (/^gcloud projects describe/.test(line)) return out({ projectId: P, projectNumber: number });
-  if (/^gcloud container clusters list/.test(line)) return out([{ name: "shop" }]);
+  if (/^gcloud container clusters list/.test(line)) return out([{ name: "shop", location: "asia-northeast3" }]);
+  // GKE can-i: 임시 KUBECONFIG 만들기 + 쿠버네티스 읽기 확인 (verify/gcp.ts 5단계)
+  if (/^gcloud container clusters get-credentials /.test(line)) return { code: 0, stdout: "", stderr: "", ms: 1 };
+  if (/^kubectl .* auth can-i list deployments/.test(line)) return { code: 0, stdout: "yes\n", stderr: "", ms: 1 };
   if (/^gcloud sql instances list/.test(line)) return denySql ? out(null, 1, "PERMISSION_DENIED") : out([]);
   return out({});
 };
-const run: import("@svc/security").GcloudRun = async (args) => { delegates.push(args.find((a) => a.startsWith("--delegates="))!); return { code: 0, stdout: "ya29." + "x".repeat(40), stderr: "" }; };
+const run: import("@svc/security").GcloudRun = async (args) => { delegates.push(args.find((a) => a.startsWith("--impersonate-service-account="))!.split("=")[1]!.split(",")[0]!); return { code: 0, stdout: "ya29." + "x".repeat(40), stderr: "" }; };
 
 function broker() {
   return security.createTempRoleBroker({
@@ -98,7 +101,7 @@ test("거부: 필수 권한(sql)이 없으면 선택 권한 여부와 상관없�
   const id = await env(T);
   const r = await job.handleVerifyConnection({ tenantId: T, envId: id, requestId: randomUUID(), reason: "user" }, deps());
   assert.equal(r.status, "failed");
-  assert.equal((await row(id)).failure_reason, "PERMISSION_MISSING:sql.instances.list");
+  assert.equal((await row(id)).failure_reason, "PERMISSION_MISSING:cloudsql.instances.list");
   assert.equal(lines.filter((l) => PROBE.test(l)).length, 0);
 });
 

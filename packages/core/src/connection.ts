@@ -56,8 +56,9 @@ export async function advanceConnection(tx: Tx, tenantId: string, envId: string,
   if (o.verifyJob) {
     const data = VerifyConnectionJob.parse({ ...o.verifyJob, envId });
     const key = jobKey("verify-connection", { envId });
+    // PF10 (9회차 대량): 주기 재확인(periodic)이 수백 개 쌓여 있어도 사람이 누른 확인(user)이 먼저 (pg-boss 는 priority 큰 것부터)
     const jobId = await boss.send("verify-connection", data,
-      { ...(key ? { singletonKey: key } : {}), db: asBossDb(tx) });
+      { ...(key ? { singletonKey: key } : {}), ...(data.reason === "user" ? { priority: VERIFY_USER_PRIORITY } : {}), db: asBossDb(tx) });
     jobQueued = jobId !== null;
   }
 
@@ -68,6 +69,10 @@ export async function advanceConnection(tx: Tx, tenantId: string, envId: string,
   });
   return { from, to, jobQueued };
 }
+
+// DRAFT(ai): 사람이 누른 연결 확인의 큐 우선순위. 주기 재확인은 기본 0.
+//   verify-connection 큐는 워커 하나가 한 번에 1건이라, 1시간 훑기가 500개를 넣으면 새 고객 확인이 몇 시간 뒤로 밀렸다
+export const VERIFY_USER_PRIORITY = 10;
 
 // L4b: 주기 재확인 훑기 전용. 모든 회사의 연결됨·불안정 환경 (번호만).
 // withTenant 밖에서 pool 을 쓰는 예외다 (envlock.ts listExpiredEnvLocks 와 같음). 회사 벽은 DB 함수(svc_maintenance 소유, 0026)가 지키고,

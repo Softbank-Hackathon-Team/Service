@@ -38,5 +38,4 @@ measurements
 tools/measure/out
 **/test-results
 **/playwright-report
-prototypes
 examples

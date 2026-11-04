@@ -2,6 +2,7 @@ import { QUEUES, type QueueName } from "@svc/contracts";
 import { handleImport } from "./import.js";
 import { handlePrecheck } from "./precheck.js";
 import { handlePlan } from "./plan.js";
+import { handlePlanExpiry } from "./plan-expiry.js";
 import { handleApply } from "./apply.js";
 import { handleDeploy } from "./deploy.js";
 import { handleSync } from "./sync.js";
@@ -9,6 +10,8 @@ import { handleShift } from "./shift.js";
 import { handleCutover } from "./cutover.js";
 import { handleCleanup } from "./cleanup.js";
 import { handleRollback } from "./rollback.js";
+import { handleTargetDestroy } from "./target-destroy.js";
+import { replCleanupJob } from "./repl-cleanup.js";
 import { handleVerifyConnection } from "./verify-connection.js";
 import { handleImageBuild } from "./image-build.js";
 
@@ -19,6 +22,7 @@ export const HANDLERS: Partial<Record<QueueName, (data: unknown) => Promise<unkn
   [QUEUES.import]: handleImport,       // importing → spec_review
   [QUEUES.precheck]: handlePrecheck,   // prechecking → planning
   [QUEUES.plan]: handlePlan,           // planning → awaiting_approval   (사람 승인)
+  [QUEUES.planExpiry]: handlePlanExpiry, // awaiting_approval → stale (계획 만료 시각에, G7-1)
   [QUEUES.apply]: handleApply,         // provisioning → deploying
   [QUEUES.deploy]: handleDeploy,       // deploying → syncing
   [QUEUES.sync]: handleSync,           // syncing → shifting
@@ -26,5 +30,7 @@ export const HANDLERS: Partial<Record<QueueName, (data: unknown) => Promise<unkn
   [QUEUES.cutover]: handleCutover,     // cutover → rollback_window
   [QUEUES.cleanup]: handleCleanup,     // rollback_window → cleanup → completed
   [QUEUES.rollback]: handleRollback,   // rolling_back → rolled_back
+  [QUEUES.targetDestroy]: (d) => handleTargetDestroy(d), // 상태를 안 옮김: provisioning 실패로 만든 도착 자원 지우기 (G5-1, ADR-066)
+  [QUEUES.replCleanup]: (d) => replCleanupJob(d), // 상태를 안 옮김: 끝난 이전의 남은 복제 객체 다시 걷기 (F8-5). 덜 걷으면 던져 큐가 재시도 (PF-E25)
   [QUEUES.imageBuild]: handleImageBuild, // 상태를 안 옮김: provisioning 의 apply 가 앞에서 부르는 보조 작업 (STUB)
 };

@@ -1,7 +1,7 @@
 // Z20 (리뷰 Z10 M6): claim(queued → running) 뒤 예외가 나도 running 에 갇히지 않는다
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { adapterFor } from "@svc/adapters";
+import { adapterFor, normalizeV2 } from "@svc/adapters";
 import { mockDraftLlm, type SpecDraftInput } from "@svc/agent";
 import { handleSpecDraft, memorySpecDraftStore } from "../src/handle-spec-draft.js";
 
@@ -13,11 +13,11 @@ const job = { tenantId: T, requestId: "req-z20", agentRunId: R };
 async function input(): Promise<SpecDraftInput> {
   const src = adapterFor("aws"), dst = adapterFor("gcp");
   const inv = await src.discover({ accountId: "dev", expiresAt: "" }, { kind: "container", selector: "*" });
-  const { spec, fieldMeta } = src.normalize(inv);
+  const { spec, fieldMeta, unmapped } = normalizeV2(inv).result;
   return { migrationId: M, source: { provider: "aws" },
     target: { provider: "gcp", region: "default", capabilities: dst.capabilities() },
     inventory: { provider: inv.provider, items: inv.items, coverage: inv.coverage },
-    baseline: { version: 1, spec, fieldMeta }, plan: null };
+    baseline: { version: 1, spec, fieldMeta, unmapped }, plan: null };
 }
 
 test("M6: 단계 기록(DB)이 예외 → failed('예외: <이름>'), 예외는 다시 던짐, 메시지 본문은 안 남김", async () => {

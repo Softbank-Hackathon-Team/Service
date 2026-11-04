@@ -6,7 +6,7 @@ import { test, before, after, type TestContext } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -46,7 +46,7 @@ function withEnv(t: TestContext, vars: Record<string, string>) {
 
 const work = mkdtempSync(join(tmpdir(), "z70db-"));
 const FAKE_TF = join(work, "fake-terraform.sh");
-writeFileSync(FAKE_TF, `#!/bin/sh\necho "$@" >> "${join(work, "calls.log")}"\ncase "$1" in apply) echo "Error: fake quota" >&2; exit 1;; *) echo ok;; esac\n`);
+writeFileSync(FAKE_TF, `#!/bin/sh\necho "$@" >> "${join(work, "calls.log")}"\nsub="$1"; case "$1" in -chdir=*) sub="$2";; esac\ncase "$sub" in apply) echo "Error: fake quota" >&2; exit 1;; *) echo ok;; esac\n`);
 chmodSync(FAKE_TF, 0o755);
 // Z89: test:db 는 MOCK_IAC=1 로 돈다 → 이 파일만 진짜 길(MOCK_IAC=0)로 바꾸고 terraform 은 가짜 셸
 const REAL = { MOCK_IAC: "0", TF_BIN: FAKE_TF, TF_WORK_DIR: work,
@@ -58,13 +58,12 @@ async function seed(goodHash: boolean) {
     ($1,$3,'onprem','s','connected',null), ($2,$3,'aws','dst','connected','111122223333')`, [src, dst, T]);
   await owner.query(`INSERT INTO migrations (id, tenant_id, source_env_id, target_env_id, status)
     VALUES ($1,$2,$3,$4,'provisioning')`, [id, T, src, dst]);
-  const { adapterFor, DEMO_INVENTORY } = await import("@svc/adapters");
-  const spec = adapterFor("aws").normalize(DEMO_INVENTORY.aws).spec;
-  await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta)
-    VALUES ($1,$2,1,$3,'{}')`, [T, id, JSON.stringify(spec)]);
-  const { AppSpec } = await import("@svc/contracts");
+  const { ONE: spec } = await import("./demo-one.js");
+  const { tfCallV2 } = await import("../src/jobs/plan-v2.js");
+  await owner.query(`INSERT INTO spec_versions (tenant_id, migration_id, version, spec, field_meta, spec_v2)
+    VALUES ($1,$2,1,'{}','{}',$3)`, [T, id, JSON.stringify({ spec, fieldMeta: {}, unmapped: [], ids: {} })]);
   const tfPlanHash = goodHash
-    ? step.stableHash(adapterFor("aws").toTerraform(AppSpec.parse(spec), { envId: dst, provider: "aws", region: "default" })) : "tf";
+    ? step.stableHash(tfCallV2(spec, { envId: dst, provider: "aws", region: "default", migrationId: id }, {})) : "tf";   // G8-1: 계획 처리기와 같은 대상(이전 번호 seed)
   const doc = { planId, migrationId: id, adapterVersion: "test", steps: [], precheck: [],
     rollbackCriteria: { errorRatePct: 1, p95Multiplier: 2, windowSec: 30 },
     tfPlanHash, helmValuesHash: "hv", planHash: "hp", expiresAt: EXPIRES };
@@ -95,14 +94,27 @@ test("Z70 승인 지문과 다른 Terraform 입력 → failed(TF_PLAN_DRIFT), te
   assert.equal(existsSync(join(work, TSLUG, m.id)), false);
 });
 
-test("Z70 terraform apply 실패 → failed(TF_APPLY_FAILED), 잠금 해제, 감사에 파기 명령·작업 폴더", { skip }, async (t) => {
+test("Jeong 11/4 01:53Z: terraform apply 실패 → failed(TF_APPLY_FAILED), 기본은 바로 지우지 않음(사람 답 대기)", { skip }, async (t) => {
   withEnv(t, REAL);
+  rmSync(join(work, "calls.log"), { force: true });
+  const m = await seed(true);
+  assert.equal(await apply.handleApply(job(m.id, m.planId)), "advanced");
+  assert.deepEqual(await st(m.id), { status: "failed", failure_code: "TF_APPLY_FAILED", failed_at_status: "provisioning" });
+  assert.deepEqual(calls().map((l) => l.split(" ").find((a) => !a.startsWith("-"))), ["init", "plan", "apply"]);
+  const a = await owner.query(`SELECT detail FROM audit_events WHERE target=$1 ORDER BY seq`, [m.id]);
+  assert.doesNotMatch(JSON.stringify(a.rows), /"destroyedAfterFail"/);
+  assert.equal((await owner.query(`SELECT count(*)::int n FROM pgboss.job WHERE name='target-destroy' AND data->>'migrationId'=$1`, [m.id])).rows[0].n, 0);
+});
+
+test("Z70 terraform apply 실패 (TF_DESTROY_ON_FAIL=1) → failed(TF_APPLY_FAILED), 잠금 해제, 감사에 파기 명령·작업 폴더", { skip }, async (t) => {
+  withEnv(t, { ...REAL, TF_DESTROY_ON_FAIL: "1" });
+  rmSync(join(work, "calls.log"), { force: true });   // 앞 시험(기본 = 안 지움)의 호출 기록을 지움
   const m = await seed(true);
   assert.equal(await apply.handleApply(job(m.id, m.planId)), "advanced");
   assert.deepEqual(await st(m.id), { status: "failed", failure_code: "TF_APPLY_FAILED", failed_at_status: "provisioning" });
   assert.equal(await lockCount(m.id), 0);
   // Z89: apply 실패 → 같은 state 로 바로 destroy (만들다 만 자원 정리)
-  assert.deepEqual(calls().map((l) => l.split(" ")[0]), ["init", "plan", "apply", "destroy"]);
+  assert.deepEqual(calls().map((l) => l.split(" ").find((a) => !a.startsWith("-"))), ["init", "plan", "apply", "destroy"]);
   // Z89: state 폴더는 회사별
   const vars = JSON.parse(readFileSync(join(work, TSLUG, m.id, "terraform.tfvars.json"), "utf8"));
   assert.equal(vars.expected_account_id, "111122223333", "환경 표 account_id 로 자리표시를 채움");

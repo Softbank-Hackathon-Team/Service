@@ -18,7 +18,7 @@ const actionsOf = (f: string) => new Set(aws(f).flatMap((s) => arr(s.Action)));
 // 있으면 곧바로 권한 상승이나 비밀값 읽기로 이어지는 동작
 const AWS_FORBIDDEN = [
   /^iam:(AttachRolePolicy|AttachUserPolicy|PutUserPolicy|CreatePolicyVersion|SetDefaultPolicyVersion|CreateAccessKey|CreateUser|UpdateAssumeRolePolicy|CreateLoginProfile|PutRolePermissionsBoundary|DeleteRolePermissionsBoundary)$/,
-  /^sts:/, /^secretsmanager:(GetSecretValue|PutSecretValue|PutResourcePolicy)$/,
+  /^sts:/, /^secretsmanager:(PutSecretValue|PutResourcePolicy)$/,
   /^kms:Decrypt$/, /^organizations:/, /^ssm:GetParameter/, /^eks:(AssociateAccessPolicy|CreateAccessEntry|UpdateClusterConfig)$/,
 ];
 const isRead = (a: string) => /:(Describe|Get|List)/.test(a);
@@ -35,6 +35,19 @@ test("AWS: Action에 * 없음, NotAction·NotResource·Deny 없음", () => {
 test("AWS: 금지 동작(권한 상승·비밀값 읽기) 없음", () => {
   for (const f of AWS_FILES) for (const a of actionsOf(f))
     assert.ok(!AWS_FORBIDDEN.some((r) => r.test(a)), `${f}: 금지 동작 ${a}`);
+});
+
+// ID-2: 비밀값 읽기는 하나뿐 — 실행 역할의 AppDbSecretRead(RDS 관리형 rds!db-* + 주인 DB 태그 조건)와 apply 세션 정책. plan·destroy 에는 없다
+test("AWS: GetSecretValue 는 RDS 관리형 시크릿 조건 문장과 apply 단계에만", () => {
+  for (const s of aws("aws-operate-role-policy.json")) {
+    if (!arr(s.Action).includes("secretsmanager:GetSecretValue")) continue;
+    assert.equal(s.Sid, "AppDbSecretRead");
+    assert.equal(s.Resource, "arn:aws:secretsmanager:*:*:secret:rds!db-*");
+    assert.equal(s.Condition?.StringEquals?.["aws:ResourceTag/aws:secretsmanager:owningService"], "rds");
+    assert.ok((s.Condition as any)?.StringLike?.["aws:ResourceTag/aws:rds:primaryDBInstanceArn"]);
+  }
+  assert.ok(actionsOf("aws-session-policy-apply.json").has("secretsmanager:GetSecretValue"));
+  for (const f of ["aws-session-policy-plan.json", "aws-session-policy-destroy.json"]) assert.ok(!actionsOf(f).has("secretsmanager:GetSecretValue"), f);
 });
 
 test("AWS: 세션 정책(plan·apply·destroy)은 실행 역할 정책의 부분집합", () => {
@@ -71,12 +84,10 @@ test("AWS: IAM 동작은 app-* 역할에만, PassRole은 EKS Pod Identity로만,
 });
 
 // 알려진 과다 권한 (THREAT-MODEL.md 권한 점검 표 A-1~A-4). 고칠 때 이 목록에서 지운다. 늘어나면 실패
+// ID-4: 바꾸기·지우기는 managed-by=platform 태그 조건 문장으로 옮겼다. 남은 것 = 만들기 + 태그 붙이기(만들 때 태그에도 필요, 이름으로 못 좁힘)
 const AWS_KNOWN_BROAD_WRITES = [
-  "ec2:AuthorizeSecurityGroupIngress", "ec2:CreateSecurityGroup", "ec2:CreateTags", "ec2:DeleteSecurityGroup",
-  "ec2:RevokeSecurityGroupEgress", "eks:CreatePodIdentityAssociation", "eks:DeletePodIdentityAssociation",
-  "rds:AddTagsToResource", "rds:CreateDBInstance", "rds:CreateDBParameterGroup", "rds:CreateDBSubnetGroup",
-  "rds:DeleteDBInstance", "rds:DeleteDBParameterGroup", "rds:DeleteDBSubnetGroup", "rds:ModifyDBInstance",
-  "rds:ModifyDBParameterGroup", "secretsmanager:CreateSecret", "secretsmanager:DeleteSecret",
+  "ec2:CreateSecurityGroup", "ec2:CreateTags", "eks:CreatePodIdentityAssociation",
+  "rds:AddTagsToResource", "rds:CreateDBInstance", "rds:CreateDBParameterGroup", "rds:CreateDBSubnetGroup", "secretsmanager:CreateSecret",
   "secretsmanager:TagResource",
 ].sort();
 test("AWS: Resource \"*\" + 쓰기 동작 = 알려진 목록과 같다 (늘어나면 실패)", () => {
@@ -84,6 +95,26 @@ test("AWS: Resource \"*\" + 쓰기 동작 = 알려진 목록과 같다 (늘어�
     .filter((s) => arr(s.Resource).includes("*") && !s.Condition?.StringEquals?.["aws:ResourceTag/managed-by"])
     .flatMap((s) => arr(s.Action)).filter((a) => !isRead(a)).sort();
   assert.deepEqual(broad, AWS_KNOWN_BROAD_WRITES);
+});
+
+// ID-4: 기존 자원을 바꾸거나 지우는 동작(Modify·Delete·Set·Authorize·Revoke)은 우리 태그(managed-by=platform) 조건 문장에만.
+//   S3 는 버킷 태그 조건을 믿지 못해 이름(app-*)만 — 예외로 고정. 고객 기존 RDS·보안 그룹·시크릿·app-* 역할을 지울 수 없게
+const MUTATES = /:(Modify|Delete|Set|Authorize|Revoke|Update|Put(?!Bucket|Encryption|Lifecycle))/;
+test("AWS 실행 역할: 기존 자원 바꾸기·지우기는 managed-by=platform 태그 조건이 있을 때만 (S3 제외)", () => {
+  const bad: string[] = [];
+  for (const s of aws("aws-operate-role-policy.json")) {
+    const tagged = s.Condition?.StringEquals?.["aws:ResourceTag/managed-by"] === "platform";
+    const realArns = arr(s.Resource).filter((r) => r === "*" || r.startsWith("arn:aws:rds") || r.startsWith("arn:aws:iam") || r.startsWith("arn:aws:secretsmanager")
+      || r.startsWith("arn:aws:elasticache") || r.startsWith("arn:aws:sqs") || r.startsWith("arn:aws:sns"));
+    if (tagged || realArns.length === 0) continue;
+    for (const a of arr(s.Action)) {
+      if (!MUTATES.test(a) || a.startsWith("s3:") || a === "iam:PutRolePolicy") continue;   // PutRolePolicy 는 경계 조건(위 시험)
+      // 데이터 문장의 ec2 동작은 elasticache·sqs 자원 ARN 에 걸려 실제 효력이 없다
+      if (s.Sid === "DataScoped" && a.startsWith("ec2:")) continue;
+      bad.push(`${s.Sid}:${a}`);
+    }
+  }
+  assert.deepEqual(bad, []);
 });
 
 // GCP 커스텀 역할
@@ -114,6 +145,23 @@ test("GCP: 주 역할엔 setIamPolicy 없음, 별도 역할은 setIamPolicy만 +
   assert.equal((cond.expression.match(/startsWith\("app-"\)/g) ?? []).length, 4);
   assert.match(cond.expression, /storage\.googleapis\.com\/Bucket" && resource\.name\.startsWith\("projects\/_\/buckets\/app-"\)/);
   assert.equal((cond.expression.match(/resource\.type == /g) ?? []).length, 5, "조건 없는 자원 종류가 섞이면 안 됨");
+});
+
+// ID-2: 비밀값 읽기는 주 역할 금지. 도착 DB 비밀번호만 따로 역할 + 이름 조건 (app-…-db-password 시크릿 버전만)
+test("GCP: DB 비밀번호 역할은 versions.access 하나뿐 + app-…-db-password 시크릿 버전 조건", () => {
+  const role = read("gcp-operate-db-secret-role.yaml").split("\n").filter((l) => l.startsWith("- ")).map((l) => l.slice(2).trim());
+  assert.deepEqual(role, ["secretmanager.versions.access"]);
+  const x = (JSON.parse(read("gcp-operate-db-secret-condition.json")) as { expression: string }).expression;
+  assert.equal((x.match(/resource\.type == /g) ?? []).length, 1);
+  assert.match(x, /resource\.type == "secretmanager\.googleapis\.com\/SecretVersion"/);
+  assert.ok(!x.includes("||"), "다른 자원 종류로 새는 갈래 없음");
+  assert.match(x, /startsWith\("app-"\)/); assert.match(x, /endsWith\("-db-password"\)/);
+  // 이름 규칙 원본(Terraform)과 맞는지: 도착 DB 비밀번호 시크릿 이름은 app- 로 시작해 -db-password 로 끝난다
+  for (const f of ["../../../infra/modules/gcp/kinds/postgres/main.tf", "../../../infra/modules/gcp/app/main.tf"]) {
+    const tf = readFileSync(new URL(f, import.meta.url), "utf8");
+    const m = tf.match(/resource "google_secret_manager_secret" "db_password" \{[^}]*?secret_id\s*=\s*"([^"]+)"/);
+    assert.ok(m, f); assert.ok(m![1]!.startsWith("app-") && m![1]!.endsWith("-db-password"), m![1]);
+  }
 });
 
 // 온프레 k8s ClusterRole

@@ -23,6 +23,8 @@ export const sqsMapper: KindMapper = {
     if (fifo) { props.ordered = true; meta.ordered = [`sqs:${name}.FifoQueue`, 0.9, "SQS FIFO = 순서 + 중복 제거. 도착이 다르면 중복 제거가 없어질 수 있음"]; }
     else if (a.FifoQueue !== undefined) props.ordered = false;
     if (retention !== null && retention >= 60 && retention <= 2678400) { props.retentionSec = Math.trunc(retention); meta.retentionSec = [`sqs:${name}.MessageRetentionPeriod`, 1]; }
+    // DM-8: 범위 밖·못 읽은 값은 칸을 비우되 검토 표시 (도착 상품 기본값이 확신 없이 들어가지 않게)
+    else if (a.MessageRetentionPeriod !== undefined) meta.retentionSec = [`sqs:${name}.MessageRetentionPeriod`, 0.6, `보관 ${a.MessageRetentionPeriod} 을 못 담음 (IR 범위 60~2678400초 밖) → 도착 상품 기본값`];
     if (vis !== null && vis >= 0) { props.ackTimeoutSec = Math.trunc(vis); meta.ackTimeoutSec = [`sqs:${name}.VisibilityTimeout`, 1]; }
     // RedrivePolicy 는 JSON 문자열 (SQS 응답이 그렇다). 깨졌으면 DLQ 없음으로 두고 검토 표시
     let deadLetterRef: { arn: string; name: string } | undefined;
@@ -41,7 +43,9 @@ export const sqsMapper: KindMapper = {
       props.deadLetter = { ...(maxReceive !== undefined ? { maxReceive } : {}) };
       meta.deadLetter = [`sqs:${name}.RedrivePolicy`, 1];
     }
-    return { name, kind: "queue", native: { type: DATA_RAW_KINDS.sqs, name, endpoint: q.QueueUrl, uid: a.QueueArn ?? null }, props, meta,
+    // G3b-4: 큐 이름(SQS_QUEUE=orders)·ARN 으로 적은 env 도 의존성 근거로 (이름은 맨 이름이라 0.9 + 검토)
+    const aliases = [...new Set([a.QueueArn, name].filter((x): x is string => typeof x === "string" && x.length > 0 && x !== q.QueueUrl))];
+    return { name, kind: "queue", native: { type: DATA_RAW_KINDS.sqs, name, endpoint: q.QueueUrl, ...(aliases.length ? { aliases } : {}), uid: a.QueueArn ?? null }, props, meta,
       ...(deadLetterRef ? { deadLetterRef } : {}) };
   },
 };

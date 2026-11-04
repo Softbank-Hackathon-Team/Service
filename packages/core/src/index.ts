@@ -8,6 +8,8 @@ export * from "./audit.js";
 export * from "./redact.js";
 export * from "./guards.js";
 export * from "./envlock.js";
+export * from "./traffic-target.js";
+export * from "./migrations-check.js";
 export * from "./idempotency.js";
 export * from "./jobs.js";
 export * from "./plans.js";

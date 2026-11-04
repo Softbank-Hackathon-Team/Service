@@ -14,7 +14,7 @@ const T = randomUUID(), OTHER = randomUUID();
 let core: typeof import("@svc/core");
 let owner: pg.Client;
 let app: FastifyInstance;
-// 가져오기 v2 판 한 줄 (import.ts importV2 와 같은 순서: normalizeV2 → checkV2 reviews → projectV1)
+// 가져오기 판 한 줄 (import.ts 와 같은 순서: normalizeV2 → checkV2 reviews)
 const OOB_UNUSED = [{ resource: "s3.bucket:acme-terraform-state", kind: "objectStore", reason: "이 앱의 서비스·잡이 env·비밀·IAM 근거로 닿지 않음" }];
 let V2: { spec: unknown; fieldMeta: Record<string, unknown>; specV2: Record<string, any> };
 
@@ -37,10 +37,9 @@ before(async () => {
     { kind: "s3.bucket", Name: "acme-tfstate", Arn: "arn:aws:s3:::acme-tfstate" },
     { kind: "rds.dbInstance", DBInstanceIdentifier: "analytics-db", Engine: "postgres", EngineVersion: "16", AllocatedStorage: 20,
       Endpoint: { Address: "analytics-db.abc.ap-northeast-2.rds.amazonaws.com" }, DBInstanceArn: `arn:aws:rds:ap-northeast-2:${ACC}:db:analytics-db` }];
-  const { result, projectionEnv } = adapters.normalizeV2({ provider: "aws", coverage: {}, items } as never);
+  const { result } = adapters.normalizeV2({ provider: "aws", coverage: {}, items } as never);
   const stored = contracts.ImportResultV2.parse(result);
-  const v1 = adapters.projectV1(stored, projectionEnv);
-  V2 = { spec: v1.spec, fieldMeta: v1.fieldMeta, specV2: stored as unknown as Record<string, any> };
+  V2 = { spec: {}, fieldMeta: {}, specV2: stored as unknown as Record<string, any> };
   owner = new pg.Client({ connectionString: OWNER }); await owner.connect();
   await owner.query("INSERT INTO tenants (id, name) VALUES ($1,'test-boundpull'), ($2,'test-boundpull-other')", [T, OTHER]);
   app = Fastify();
@@ -147,11 +146,11 @@ test("409: 끌어올 재료가 없는 판(boundaryPool 없는 옛 판) · 워크
   assert.equal((await versions(id)).length, 1);
 });
 
-test("거부: v1 판(spec_v2 NULL)에 include → 400 SPEC_PATH_IR_MISMATCH / 빈 include 만 보내면 400(할 일 없음)", { skip }, async () => {
+test("거부: 예전 판(spec_v2 NULL)에 include → 409 SPEC_INVALID / 빈 include 만 보내면 400(할 일 없음)", { skip }, async () => {
   const v1 = await seed(false);
   const r = await patch(v1, { baseVersion: 1, include: ["s3.bucket:shop-uploads"] });
-  assert.equal(r.statusCode, 400, r.body);
-  assert.equal(r.json().code, "SPEC_PATH_IR_MISMATCH");
+  assert.equal(r.statusCode, 409, r.body);
+  assert.equal(r.json().code, "SPEC_INVALID");
   const id = await seed();
   assert.equal((await patch(id, { baseVersion: 1, include: [] })).statusCode, 400);
 });

@@ -1,4 +1,4 @@
-// VI3bfix: IMPORT_IR 모르는 값으로 영구 실패한 이전을 API 로 볼 때 모양 (이전 보기·타임라인 200, 남의 회사는 ApiError 404)
+// VI3bfix: 가져오기가 영구 실패(IMPORT_SPEC_INVALID)한 이전을 API 로 볼 때 모양 (이전 보기·타임라인 200, 남의 회사는 ApiError 404)
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
@@ -37,7 +37,6 @@ before(async () => {
 });
 after(async () => {
   if (skip) return;
-  delete process.env.IMPORT_IR;
   await core.boss.stop({ graceful: false }); await app.close(); await core.pool.end(); await owner.end();
 });
 
@@ -47,9 +46,12 @@ test("영구 실패 이전: GET 은 MigrationView(failed·IMPORT_SPEC_INVALID·f
     ($1,$3,'gcp','s','connected'), ($2,$3,'aws','d','connected')`, [src, dst, T]);
   await owner.query(`INSERT INTO migrations (id, tenant_id, source_env_id, target_env_id, status)
     VALUES ($1,$2,$3,$4,'importing')`, [id, T, src, dst]);
-  process.env.IMPORT_IR = "V2";
-  const imp = await import("../../worker/src/jobs/import.js");
-  await imp.handleImport({ tenantId: T, requestId: `r-vi3bfix-api`, migrationId: id });
+  // 가져오기 처리기가 영구 실패 때 하는 것과 같은 전이 (명세 구조 오류 → failed IMPORT_SPEC_INVALID)
+  await core.withTenant(T, (tx) => core.advance(tx, { id, tenantId: T }, "importing", "failed", {
+    mode: "ifStill", failureCode: "IMPORT_SPEC_INVALID",
+    audit: { actor: "worker", action: "migration.failed", target: id, result: "error",
+             detail: { requestId: "r-vi3bfix-api", error: "SPEC_V2_INVALID", attempts: 1, permanent: true } },
+  }));
 
   const g = await app.inject({ method: "GET", url: `${P}/migrations/${id}`, headers: { "x-dev-tenant": T } });
   assert.equal(g.statusCode, 200, g.body);
@@ -68,6 +70,6 @@ test("영구 실패 이전: GET 은 MigrationView(failed·IMPORT_SPEC_INVALID·f
     assert.equal(o.statusCode, 404);
     const e = ApiError.parse(o.json());
     assert.equal(e.status, 404);
-    assert.ok(!o.body.includes("IMPORT_IR"));
+    assert.ok(!o.body.includes("SPEC_V2_INVALID"));
   }
 });

@@ -9,8 +9,10 @@ import { AWS_DEFAULT_REGION } from "@svc/security";
 export const LINK_TTL_MS = 24 * 60 * 60 * 1000;
 
 // 확인 문구(ExternalId). 랜덤 32바이트 → base64url 43자 (설계 IA 6.1 1단계). 비밀은 아니지만 로그엔 앞 4자만
+// 실측 hotfix: base64url 은 "_" 가 나와 예전 템플릿 ExternalId 패턴(_ 없음)에 절반쯤 CreateStack ValidationError.
+//   hex(0-9a-f) 로 만들면 예전·새 템플릿 패턴 둘 다 통과한다 (S3 템플릿을 다시 올리기 전에도 안전). 32바이트 = 64자
 export function newExternalId(): string {
-  return randomBytes(32).toString("base64url");
+  return randomBytes(32).toString("hex");
 }
 export const externalIdHint = (id: string) => id.slice(0, 4);
 
@@ -26,6 +28,25 @@ export interface AwsLinkInput {
   principalArn: string;            // PLATFORM_PRINCIPAL_ARN (역할을 빌릴 수 있는 플랫폼 워커 역할 하나)
   externalId: string;
   clusterName: string;
+  // F17: false 면 param_CreateBoundaryPolicy=false (템플릿 기본 true). 빠지면 템플릿 기본값
+  createBoundaryPolicy?: boolean;
+  // ID-1: 플랫폼 Argo CD 허브 역할 ARN. 있으면 템플릿이 배포 역할(svc-deploy)·접근 항목을 만든다. 없으면 안 만든다(예전과 같음)
+  argoHubRoleArn?: string;
+}
+
+// F17: 플랫폼 주체 ARN(arn:aws:iam::<12자리>:role/...)의 계정 칸. 모양이 아니면 null
+export const principalAccount = (arn: string): string | null => /^arn:aws:iam::(\d{12}):/.exec(arn)?.[1] ?? null;
+
+// F17: 템플릿에 경계 정책을 만들라고 할지. 같은 계정에 platform-app-boundary 가 이미 있으면 CloudFormation 이
+//   NAME_CONFLICT_VALIDATION 으로 스택 전체를 되돌린다 (11/3 실세션 2회차). 아래 둘 중 하나면 만들지 않는다
+//   - 요청자가 "이미 있다"고 알림 (CLI 가 aws iam get-policy 로 확인, 화면은 고객에게 물음)
+//   - 고객 계정 = 플랫폼 계정 (데모 한 계정: 도착 환경 모듈 infra/modules/aws/env 가 같은 이름 정책을 먼저 만든다)
+// DRAFT(ai): 계정을 모르면(연결 확인 전 첫 링크) 템플릿 기본값(만듦). 고객 계정은 보통 플랫폼과 달라 충돌이 없다【추정】
+export function shouldCreateBoundary(o: { boundaryPolicyExists?: boolean; envAccountId?: string | null; principalArn: string }): boolean {
+  if (o.boundaryPolicyExists === true) return false;
+  const pa = principalAccount(o.principalArn);
+  if (o.envAccountId && pa && o.envAccountId === pa) return false;
+  return true;
 }
 
 export function awsQuickCreateUrl(i: AwsLinkInput): string {
@@ -36,14 +57,44 @@ export function awsQuickCreateUrl(i: AwsLinkInput): string {
     `param_ExternalId=${encodeURIComponent(i.externalId)}`,
     `param_PlatformPrincipalArn=${encodeURIComponent(i.principalArn)}`,
     `param_EksClusterName=${encodeURIComponent(i.clusterName)}`,
+    ...(i.createBoundaryPolicy === false ? ["param_CreateBoundaryPolicy=false"] : []),
+    ...(i.argoHubRoleArn ? [`param_ArgoHubRoleArn=${encodeURIComponent(i.argoHubRoleArn)}`] : []),
   ].join("&");
   const r = encodeURIComponent(region);
   return `https://${r}.console.aws.amazon.com/cloudformation/home?region=${r}#/stacks/create/review?${q}`;
 }
 
 // 연결 링크 설정 (요청 때마다 읽는다: 시험·운영이 값을 바꿔도 다시 띄울 필요 없음). 둘 중 하나라도 없으면 null
-export function connectSettings(env: NodeJS.ProcessEnv = process.env): { templateUrl: string; principalArn: string } | null {
+// ID-1: ARGO_HUB_ROLE_ARN 은 선택. 역할 ARN 모양이 아니면 무시한다 (템플릿 패턴이 어차피 거부)
+export function connectSettings(env: NodeJS.ProcessEnv = process.env): { templateUrl: string; principalArn: string; argoHubRoleArn?: string } | null {
   const templateUrl = env.CONNECT_TEMPLATE_URL?.trim();
   const principalArn = env.PLATFORM_PRINCIPAL_ARN?.trim();
-  return templateUrl && principalArn ? { templateUrl, principalArn } : null;
+  const hub = env.ARGO_HUB_ROLE_ARN?.trim();
+  const argo = hub && /^arn:aws:iam::\d{12}:role\/.+$/.test(hub) ? { argoHubRoleArn: hub } : {};
+  return templateUrl && principalArn ? { templateUrl, principalArn, ...argo } : null;
+}
+
+// ── GCP Cloud Shell 연결 (L7) ──
+// 【사실: Google "Open in Cloud Shell" 문서】 https://shell.cloud.google.com/cloudshell/editor?cloudshell_git_repo=…&cloudshell_workspace=…&shellonly=true
+//   는 레포를 고객 Cloud Shell 에 복제하고 그 폴더에서 터미널을 연다. 환경변수는 링크로 못 넘긴다 → 화면이 명령 한 줄을 같이 보여 주고 고객이 붙여 넣는다
+// DRAFT(ai): 레포 주소(GCP_CONNECT_REPO_URL)가 없으면 빈 Cloud Shell 만 연다(고객이 스크립트를 따로 받아야 함). 키 파일은 어디에도 없다
+// 결정 3번 A안: targetProjectId = 이전 전용 프로젝트 (도착 자원·실행 역할은 여기만). 모르면 빈 값으로 넣고 고객이 채운다 (스크립트가 비면 아무것도 안 바꾸고 멈춤)
+export interface GcpLinkInput { platformSa: string; projectId?: string | null; targetProjectId?: string | null; repoUrl?: string | null; repoBranch?: string | null }
+const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+export function gcpCloudShellLink(i: GcpLinkInput): { url: string; command: string } {
+  const url = i.repoUrl
+    ? `https://shell.cloud.google.com/cloudshell/editor?${[
+      `cloudshell_git_repo=${encodeURIComponent(i.repoUrl)}`,
+      ...(i.repoBranch ? [`cloudshell_git_branch=${encodeURIComponent(i.repoBranch)}`] : []),
+      "cloudshell_workspace=infra", "shellonly=true"].join("&")}`
+    : "https://shell.cloud.google.com/?show=terminal";
+  // 프로젝트를 아직 모르면(검증 전) 고객 gcloud 기본 프로젝트를 스크립트가 쓴다
+  const env = [`PLATFORM_SA=${shq(i.platformSa)}`, ...(i.projectId ? [`PROJECT_ID=${shq(i.projectId)}`] : []),
+    `TARGET_PROJECT_ID=${shq(i.targetProjectId ?? "")}`, "ROLE_DIR=./permissions"];
+  return { url, command: `${env.join(" ")} bash onboarding/gcp-connect.sh` };
+}
+export function gcpConnectSettings(env: NodeJS.ProcessEnv = process.env): { platformProject: string; repoUrl: string | null; repoBranch: string | null } | null {
+  const platformProject = env.GCP_PLATFORM_PROJECT?.trim();
+  if (!platformProject || !/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(platformProject)) return null;
+  return { platformProject, repoUrl: env.GCP_CONNECT_REPO_URL?.trim() || null, repoBranch: env.GCP_CONNECT_REPO_BRANCH?.trim() || null };
 }

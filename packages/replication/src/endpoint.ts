@@ -16,6 +16,8 @@ export interface Endpoint {
   peerUrl?: string;
   /** 앱이 쓰는 DB 계정. 전환 때 이 계정의 쓰기 권한을 회수(펜스)한다 */
   appRole: string;
+  /** APP-22 (가): 앱 계정 말고도 이 DB 에 쓰는 계정 (도착 앱이 컷오버 전까지 출발에 붙는 전용 계정). 울타리를 같이 친다. 없는 계정은 건너뜀 */
+  fenceRoles?: string[];
   /** 복제할 표가 있는 스키마. 기본 public */
   schema?: string;
   /** Z77: 워커 → 이 DB 접속의 TLS. 없으면 예전처럼 adminUrl 그대로 (로컬·k3d 데모) */
@@ -40,8 +42,17 @@ function stripSslParams(url: string): string {
 }
 
 /** pg.Client 설정. tls 가 없으면 예전과 똑같다 */
-export function clientConfig(e: Endpoint): pg.ClientConfig {
-  const base = { application_name: "svc-replication" };
+// RV-06 DRAFT(ai): 고객 DB 연결이 중간에 조용히 끊기면(중계기·터널·NAT 가 패킷을 버림) 응답 없는 질의가 OS 기본 TCP 시간(수 시간) 동안 안 끝난다.
+//   컷오버 C2 울타리 뒤(출발 읽기 전용·앱 붙잡힘)에서 걸리면 되돌림(catch) 이 안 돌고, 잠금 연장은 따로 돌아 리퍼도 못 잡는다.
+//   → TCP keepalive(10초 뒤부터 probe) 로 죽은 연결을 OS 가 끊게 하고, 접속 자체는 REPL_CONNECT_TIMEOUT_MS(기본 20초) 안에 끝나야 한다.
+//   질의 시간 상한(query_timeout)은 안 둔다: node-pg 는 시간만 지나면 약속만 거절하고 연결은 그 질의에 묶인 채라 뒤 질의가 줄 서서 또 멈춘다
+const connectTimeoutMs = (env: NodeJS.ProcessEnv = process.env) => {
+  const v = env.REPL_CONNECT_TIMEOUT_MS;
+  const n = v === undefined || v.trim() === "" ? 20_000 : Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : 20_000;
+};
+export function clientConfig(e: Endpoint, env: NodeJS.ProcessEnv = process.env): pg.ClientConfig {
+  const base = { application_name: "svc-replication", keepAlive: true, keepAliveInitialDelayMillis: 10_000, connectionTimeoutMillis: connectTimeoutMs(env) };
   if (!e.tls) return { ...base, connectionString: e.adminUrl };
   const { mode, caFile } = e.tls;
   if (mode !== "require" && !caFile) throw new Error(`${e.label}: sslmode=${mode} 는 CA 파일(REPL_CA_FILE)이 필요하다`);
@@ -127,11 +138,13 @@ export function endpointFromEnv(prefix: "REPL_SOURCE" | "REPL_TARGET", env: Node
   const url = env[`${prefix}_URL`];
   if (!url) throw new Error(`${prefix}_URL is not set`);
   return {
-    label: env[`${prefix}_LABEL`] ?? prefix.toLowerCase(),
-    provider: (env[`${prefix}_PROVIDER`] as Provider | undefined) ?? "postgres",
+    label: env[`${prefix}_LABEL`] || prefix.toLowerCase(),
+    provider: (env[`${prefix}_PROVIDER`] as Provider | undefined) || "postgres",
     adminUrl: url,
     peerUrl: env[`${prefix}_PEER_URL`] || undefined,
-    appRole: env[`${prefix}_APP_ROLE`] ?? "app_user",
+    // PF-E13 (FM-APP-24): 빈 값은 기본값 (demo-day 가 옛 .env 값을 막으려고 빈 값으로 적는다)
+    appRole: env[`${prefix}_APP_ROLE`] || "app_user",
+    ...(env[`${prefix}_FENCE_ROLES`] ? { fenceRoles: env[`${prefix}_FENCE_ROLES`]!.split(",").map((x) => x.trim()).filter(Boolean) } : {}),
     schema: env[`${prefix}_SCHEMA`] || undefined,
     tls: tlsFromEnv(prefix, env),
   };

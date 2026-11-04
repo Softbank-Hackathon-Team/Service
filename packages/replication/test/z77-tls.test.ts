@@ -15,7 +15,7 @@ const URL_T = "postgres://app:pw@shop.abc.ap-northeast-2.rds.amazonaws.com:5432/
 test("TLS 변수가 없으면 예전과 똑같다 (접속 문자열 그대로, ssl 객체 없음)", () => {
   const e = endpointFromEnv("REPL_TARGET", { REPL_TARGET_URL: URL_T });
   assert.equal(e.tls, undefined);
-  assert.deepEqual(clientConfig(e), { application_name: "svc-replication", connectionString: URL_T });
+  assert.deepEqual(clientConfig(e, {}), { application_name: "svc-replication", keepAlive: true, keepAliveInitialDelayMillis: 10_000, connectionTimeoutMillis: 20_000, connectionString: URL_T });
 });
 
 test("CA 파일만 주면 verify-full: CA 를 싣고 이름까지 확인, 문자열 안 sslmode 는 뺀다", () => {

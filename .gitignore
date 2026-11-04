@@ -3,7 +3,7 @@
 documents/
 
 # --- 스켈레톤 세팅에서 추가 ---
-node_modules/
+node_modules
 dist/
 coverage/
 .env

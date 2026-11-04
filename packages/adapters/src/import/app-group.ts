@@ -48,7 +48,12 @@ export function selectAppGroup(components: MappedComponent[], fieldMeta: FieldMe
     const g = appGroupOf(w);
     if (g) groups.set(g[1], [...(groups.get(g[1]) ?? []), w]);
   }
-  if (!groups.size) return { components, outOfBoundary: [], chosen: null };
+  if (!groups.size) {
+    // PF-A5 DRAFT(ai): 앱 묶음(partOf·IMPORT_APP)을 줬는데 라벨 묶음이 하나도 없으면 한정을 못 한 것 → 조용히 다 가져오지 않고 검토 줄
+    if (partOf?.trim() && workloads.length) fieldMeta["check.pick.app"] = { source: "input:partOf", confidence: 0.6, needs_review: true,
+      rationale: `입력한 앱 "${partOf.trim().slice(0, 63)}" 로 한정하려 했지만 앱 묶음 라벨(app.kubernetes.io/part-of 등)이 붙은 워크로드가 없음 → 한정 안 하고 네임스페이스의 워크로드 ${workloads.length}개를 전부 담음. 이 앱 것인지 사람 확인` };
+    return { components, outOfBoundary: [], chosen: null };
+  }
   const ranked = [...groups.entries()].sort((a, b) => b[1].length - a[1].length || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
   const want = partOf?.trim();
   let chosen: string, source: string, confidence: 1 | 0.6, rationale: string | undefined;

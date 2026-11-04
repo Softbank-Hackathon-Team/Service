@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { hostname } from "node:os";
 import type { Provider } from "@svc/contracts";
 import { checkLeastPrivilege, TempCredential, TempRoleDenied, TempRoleRequest } from "./temp-role.js";
-import { checkSessionPolicy, checkWithinCeiling, type PermissionSet } from "./permissions.js";
+import { checkSessionPolicy, checkWithinCeiling, compactSessionPolicy, type PermissionSet } from "./permissions.js";
 import type { ProviderIssuer } from "./issuers.js";
 import { CredentialVault, type SecretMaterial } from "./vault.js";
 import { memoryLedger, type CredentialLedger } from "./ledger.js";
@@ -111,8 +111,10 @@ export function createTempRoleBroker(d: BrokerDeps) {
           if (!d.permissions) throw new TempRoleDenied("ROLE_NO_CEILING", "최소 권한 파일(infra/permissions)이 없어 실행 역할을 줄 수 없다");
           if (parsed.provider === "aws") {
             if (!parsed.stage) throw new TempRoleDenied("ROLE_OPERATE_NO_STAGE", "AWS 실행 역할은 단계(plan|apply|destroy)가 필요하다");
-            sessionPolicy = d.permissions.aws.sessionPolicies[parsed.stage];
-            const allowed = checkSessionPolicy(sessionPolicy, d.permissions.aws.ceiling);
+            const explicitPolicy = d.permissions.aws.sessionPolicies[parsed.stage];
+            const allowed = checkSessionPolicy(explicitPolicy, d.permissions.aws.ceiling);
+            // 2,048자 상한: 보낼 때는 실효 권한이 같은 짧은 판 (permissions.ts compactSessionPolicy)
+            sessionPolicy = compactSessionPolicy(explicitPolicy, d.permissions.aws.ceiling);
             checkWithinCeiling(parsed.actions, allowed);   // 요청이 세션 정책보다 넓으면 설계 실수
           } else if (parsed.provider === "gcp") checkWithinCeiling(parsed.actions, d.permissions.gcp.ceiling);
           else if (parsed.provider === "onprem") checkWithinCeiling(parsed.actions, d.permissions.onprem.ceiling);

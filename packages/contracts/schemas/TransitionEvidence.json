@@ -75,6 +75,13 @@
     "manualCleanupConfirmed": {
       "type": "boolean"
     },
+    "failureDecision": {
+      "type": "string",
+      "enum": [
+        "retry",
+        "rollback"
+      ]
+    },
     "reason": {
       "type": "string"
     }

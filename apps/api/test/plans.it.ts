@@ -11,6 +11,8 @@ import { authPlugin } from "../src/plugins/auth.js";
 import { idempotencyPlugin } from "../src/plugins/idempotency.js";
 import { migrationRoutes } from "../src/routes/migrations.js";
 import { planRoutes } from "../src/routes/plans.js";
+import { specRoutes } from "../src/routes/spec.js";
+import { confirmAllReview } from "./_confirm-spec.js";
 import { HANDLERS } from "../../worker/src/jobs/index.js";
 import { handleApply } from "../../worker/src/jobs/apply.js";
 import { handlePrecheck } from "../../worker/src/jobs/precheck.js";
@@ -29,6 +31,7 @@ before(async () => {
   await app.register(idempotencyPlugin);
   await app.register(migrationRoutes);
   await app.register(planRoutes);
+  await app.register(specRoutes);
   await startBoss();
   for (const [q, h] of Object.entries(HANDLERS))
     await boss.work(q, workOptions(), async ([j]) => { await h(j!.data); });
@@ -53,7 +56,8 @@ async function toAwaitingApproval() {
     sourceEnvId: "22222222-2222-4222-8222-222222222222", targetEnvId: "33333333-3333-4333-8333-333333333333" } });
   const { id } = c.json() as { id: string };
   await waitFor(id, "spec_review");
-  assert.equal((await app.inject({ method: "POST", url: `/migrations/${id}/plan`, headers: H })).statusCode, 202);
+  await confirmAllReview(app, id, H);
+  { const r = await app.inject({ method: "POST", url: `/migrations/${id}/plan`, headers: H }); assert.equal(r.statusCode, 202, r.body); }
   await waitFor(id, "awaiting_approval");
   const plan = (await app.inject({ method: "GET", url: `/migrations/${id}/plan`, headers: H })).json() as
     { planId: string; planHash: string };

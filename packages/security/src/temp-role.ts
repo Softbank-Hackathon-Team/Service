@@ -11,7 +11,7 @@ export const TempRoleRequest = z.object({
   migrationId: z.uuid().optional(),      // 실행 역할은 반드시 이전 한 건에 묶는다
   // 실행 역할의 단계. AWS 는 이 단계의 세션 정책(infra/permissions/aws-session-policy-<stage>.json)으로 다시 좁힌다
   stage: z.enum(["plan", "apply", "destroy"]).optional(),
-  actions: z.array(z.string().min(3)).max(50),
+  actions: z.array(z.string().min(3)).max(200),   // ID-8: 50 → 200 (AWS apply 세션 정책 66개가 잘리지 않게, STEP_ROLE_MAX_ACTIONS 와 같음)
   // DRAFT(ai): 최대 1시간. AWS AssumeRole 기본값(1h)과 같게 잡았다. 긴 작업은 다시 빌린다
   ttlSec: z.number().int().min(60).max(3600),
 }).strict();

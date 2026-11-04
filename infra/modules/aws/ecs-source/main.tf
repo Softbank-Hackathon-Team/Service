@@ -40,6 +40,10 @@ variable "desired_count" {
 
 provider "aws" {
   region = var.region
+  # FM-CLD-13: IAM 역할·보안 그룹·로그 그룹까지 전부 태그 → 상태를 잃어도 cloud-zero 태그 조회가 센다
+  default_tags {
+    tags = local.tags
+  }
 }
 
 locals {

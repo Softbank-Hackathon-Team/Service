@@ -118,6 +118,20 @@ variable "service_json" {
   }
 }
 
+# APP-22 (가) DECISION(team, 11/4 01:57Z): 컷오버 전까지 도착 앱은 출발 DB 에 붙고, 컷오버 때 도착 DB 로 바꾼다 (롤백하면 다시 출발).
+#   Terraform 이 앱까지 띄우는 도착(서비스·VM·잡)은 워커가 이 값을 바꿔 다시 apply 한다 (k8s 는 GitOps database.activeWriter).
+#   모양 = {"active":"source"|"target", "link":{"<postgres id>":{"host","port","user","url","reader"}}, "secrets":{"<그릇>#<키>":{"secret","key"}}, "external":["<그릇 이름>"]}
+#   active=source 일 때만: env 의 <postgres id>.<출력> 자리를 출발 경로 값으로, 그 postgres 와 짝인 비밀번호 줄을 출발 전용 계정 그릇(external)으로 바꾼다.
+#   external 그릇은 워커가 apply 전에 만들고 값을 넣는다 (이 루트가 만들지 않음, 비밀번호는 state 에 안 들어감). 비면(기본) 지금과 같다
+variable "db_writer_json" {
+  type    = string
+  default = "{}"
+  validation {
+    condition     = can(jsondecode(var.db_writer_json)) && contains(["source", "target"], try(jsondecode(var.db_writer_json).active, "target"))
+    error_message = "db_writer_json: JSON 이고 active 는 source | target."
+  }
+}
+
 # RUNTIMEMAP v2: VM 서비스 (EC2). 항목 모양 = tf-kinds.ts VmTfVars. 비면 아무것도 안 만듦 (기존 계획 그대로)
 variable "vm_json" {
   type    = string
@@ -226,7 +240,7 @@ locals {
     flatten([for x in local.vm : [for s in jsondecode(x.secrets_json) : s.secret]]),
   ))
   # env 조각의 ref("<IR id>.<출력>") 값표 = 데이터 자원 link 출력 + 서비스 주소(Service Connect: host = IR id)
-  link_values = merge(
+  link_values_target = merge(
     merge([for id, m in module.postgres : { for k, v in m.link : "${id}.${k}" => v }]...),
     merge([for id, m in module.cache : { for k, v in m.link : "${id}.${k}" => v }]...),
     merge([for id, m in module.object_store : { for k, v in m.link : "${id}.${k}" => v }]...),
@@ -238,6 +252,13 @@ locals {
       "${id}.url"  = x.port == null || x.port == 80 ? "http://${id}" : "http://${id}:${x.port}"
     }]...),
   )
+  # APP-22 (가): 출발 쪽일 때만 덮는다 (db_writer_json 설명 참고)
+  db_writer          = jsondecode(var.db_writer_json)
+  db_writer_source   = try(local.db_writer.active, "target") == "source"
+  db_writer_link     = { for k, v in merge({}, [for id, l in try(local.db_writer.link, {}) : { for o, x in l : "${id}.${o}" => tostring(x) }]...) : k => v if local.db_writer_source }
+  db_writer_secrets  = { for k, v in try(local.db_writer.secrets, {}) : k => { secret = tostring(v.secret), key = tostring(v.key) } if local.db_writer_source }
+  db_writer_external = toset([for n in try(local.db_writer.external, []) : tostring(n) if local.db_writer_source])
+  link_values        = merge(local.link_values_target, local.db_writer_link)
   # JOBMOD: 잡 env 값이 <tf-output:link.<id>.<출력>> 한 덩어리면 같은 apply 의 값으로 풀고, 나머지는 그대로. 못 푼 자리표시가 남으면 계획에서 멈춤 (job_env 검사)
   job_env_rows = { for id, x in local.job : id => [for e in jsondecode(x.env_json) : {
     name  = e.name
@@ -246,10 +267,12 @@ locals {
   job_cfg = { for id, x in local.job : id => merge(x, { env_json = jsonencode(local.job_env_rows[id]) }) }
   # VM env 도 같은 규칙으로 조각을 합친다. VM 주소는 apply 뒤에야 알아서 다른 VM 을 가리키는 ref 는 Builder 가 계획 전에 막는다 (순환 방지)
   vm_cfg = { for id, x in local.vm : id => merge(x, {
-    env_json = jsonencode([for e in jsondecode(x.env_json) : { name = e.name, value = join("", [for p in e.parts : p.ref == null ? p.lit : local.link_values[p.ref]]) }])
+    env_json     = jsonencode([for e in jsondecode(x.env_json) : { name = e.name, value = join("", [for p in e.parts : p.ref == null ? p.lit : local.link_values[p.ref]]) }])
+    secrets_json = jsonencode([for sx in jsondecode(x.secrets_json) : merge(sx, try(local.db_writer_secrets["${sx.secret}#${sx.key}"], {}))])
   }) }
   service_cfg = { for id, x in local.service : id => merge(x, {
-    env_json = jsonencode([for e in jsondecode(x.env_json) : { name = e.name, value = join("", [for p in e.parts : p.ref == null ? p.lit : local.link_values[p.ref]]) }])
+    env_json     = jsonencode([for e in jsondecode(x.env_json) : { name = e.name, value = join("", [for p in e.parts : p.ref == null ? p.lit : local.link_values[p.ref]]) }])
+    secrets_json = jsonencode([for sx in jsondecode(x.secrets_json) : merge(sx, try(local.db_writer_secrets["${sx.secret}#${sx.key}"], {}))])
   }) }
   # DB·캐시가 받아 줄 앱 쪽 보안 그룹: 서비스가 있으면 ECS 쪽, 아니면 EKS 클러스터 SG (v1 과 같음)
   app_sg_id = local.sg_on == 1 ? aws_security_group.svc[0].id : try(data.aws_eks_cluster.this[0].vpc_config[0].cluster_security_group_id, "")
@@ -363,6 +386,12 @@ resource "aws_security_group" "svc" {
   }
 }
 
+# APP-22 (가): 출발 전용 계정 비밀 그릇 (워커가 apply 전에 만들고 값을 넣음). 출발 쪽일 때만 읽는다 (정리 때 그릇이 지워져도 destroy 가 안 막힘)
+data "aws_secretsmanager_secret" "db_writer" {
+  for_each = local.db_writer_external
+  name     = each.key
+}
+
 resource "aws_secretsmanager_secret" "svc" {
   for_each                = local.svc_secret_names
   name                    = each.key
@@ -379,7 +408,7 @@ module "service" {
   security_group_ids            = [aws_security_group.svc[0].id]
   region                        = var.region
   boundary_arn                  = var.app_role_boundary_arn
-  secret_arns                   = { for n, x in aws_secretsmanager_secret.svc : n => x.arn }
+  secret_arns                   = merge({ for n, x in aws_secretsmanager_secret.svc : n => x.arn }, { for n, x in data.aws_secretsmanager_secret.db_writer : n => x.arn })
   service_connect_namespace_arn = aws_service_discovery_http_namespace.svc[0].arn
   tags                          = { managed-by = "platform", tenant = var.tenant_id, app = var.app_name }
 }
@@ -393,7 +422,7 @@ module "vm" {
   security_group_ids = [aws_security_group.svc[0].id]
   region             = var.region
   boundary_arn       = var.app_role_boundary_arn
-  secret_arns        = { for n, x in aws_secretsmanager_secret.svc : n => x.arn }
+  secret_arns        = merge({ for n, x in aws_secretsmanager_secret.svc : n => x.arn }, { for n, x in data.aws_secretsmanager_secret.db_writer : n => x.arn })
   tags               = { managed-by = "platform", tenant = var.tenant_id, app = var.app_name }
 }
 
@@ -445,6 +474,9 @@ output "link_outputs" {
 output "db_address" { value = local.repl_key != "" ? module.postgres[local.repl_key].address : "" }
 output "db_public" { value = local.repl_key != "" ? module.postgres[local.repl_key].public : false }
 output "db_ca_cert_identifier" { value = local.repl_key != "" ? module.postgres[local.repl_key].ca_cert_identifier : "" }
+# E10-2: 도착 DB 앱 계정 이름 (= 모듈 user = 링크 user). 비밀 파일·복제가 "postgres"·"app_user" 같은 기본값 대신 이 값을 쓴다
+output "db_username" { value = local.repl_key != "" ? module.postgres[local.repl_key].user : "" }
+output "db_name" { value = local.repl_key != "" ? module.postgres[local.repl_key].db_name : "" }
 output "db_master_secret_arn" { value = local.repl_key != "" ? module.postgres[local.repl_key].password_secret : "" }
 output "app_role_arn" { value = local.first_identity != "" ? module.identity[local.first_identity].role_arn : "" }
 output "namespace" { value = length(module.namespace) > 0 ? try(module.namespace[var.k8s_namespace].name, values(module.namespace)[0].name) : "" }

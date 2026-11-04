@@ -64,7 +64,8 @@ export type CliErrorKind = "transient" | "denied" | "other";
 export function classifyCliError(e: unknown): CliErrorKind {
   if (!(e instanceof CliError) || e.missing) return "other";
   // VL5fix: "timeout-svc" 같은 따옴표 속 리소스 이름의 낱말(timeout·502·certificate)로 분류가 바뀌지 않게 따옴표 안은 뺀다
-  const t = `${e.stderr}\n${e.message}`.replace(/"[^"\n]*"|'[^'\n]*'/g, '""');
+  // PF-A2: 명령 인자 --request-timeout=15s 가 오류 글에 같이 찍혀도(가짜 CLI·일부 플러그인) "timeout" 으로 일시 오류가 되지 않게 뺀다
+  const t = `${e.stderr}\n${e.message}`.replace(/"[^"\n]*"|'[^'\n]*'/g, '""').replace(/--request-timeout=\S*/g, "");
   if (DENIED_RE.test(t)) return "denied";
   return TRANSIENT_RE.test(t) ? "transient" : "other";
 }

@@ -8,7 +8,7 @@
 
 - `src/`: 새 콘솔. `npm run dev`, 포트 5173
 - `legacy/`: 이전 콘솔. `npm run dev:legacy`, 포트 5174. e2e는 아직 이쪽을 본다
-- `src/design`, `src/components`: 토큰과 컴포넌트. 원본은 `prototypes/console`이고 화면에서 쓰는 것을 가져왔다
+- `src/design`, `src/components`: 토큰과 컴포넌트. 디자인의 원본은 이 두 폴더다
 - `src/features/<화면>`: 화면과 순수 판단(`model.ts`). 판단은 `test/`에서 시험한다
 - `src/lib`: API 클라이언트, 인증, 폴링, 화면 신호, 상태 이름표
 

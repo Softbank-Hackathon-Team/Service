@@ -1,9 +1,9 @@
 import { prometheusMetrics, stubMetrics, switcherFromEnv, type MetricsSource, type TrafficSwitcher } from "@svc/traffic";
-import { awsCliSts, awsStsIssuer, createTempRoleBroker, gcpCliIssuer, perEnvGcpIssuer, loadPermissionSet, mockIssuer, perEnvAwsIssuer, type PermissionSet, type ProviderIssuer, type TempRoleBroker } from "@svc/security";
+import { awsCliSts, awsStsIssuer, createTempRoleBroker, gcpCliIssuer, GcpIssueError, perEnvGcpIssuer, loadPermissionSet, mockIssuer, perEnvAwsIssuer, type PermissionSet, type ProviderIssuer, type TempRoleBroker } from "@svc/security";
 import { fileURLToPath } from "node:url";
 import { pgLedger } from "./temp-cred-ledger.js";
-import { withTenant, writeAudit, scrubString } from "@svc/core";
-import { envNumber } from "@svc/contracts";
+import { withTenant, writeAudit, scrubString, trafficTargetFor } from "@svc/core";
+import { envNumber, type TrafficTarget } from "@svc/contracts";
 
 // 워커 프로세스 하나에 하나씩 두는 외부 연결 (트래픽 전환기, 지표, 임시 역할 중개자)
 // DRAFT(ai): 기본은 전부 가짜(mock/stub). 환경변수가 있으면 진짜로 바뀐다. 비밀값은 환경변수 이름만 읽는다
@@ -11,12 +11,36 @@ import { envNumber } from "@svc/contracts";
 let sw: TrafficSwitcher | null = null;
 export function trafficSwitcher(): TrafficSwitcher {
   // STUB: 진짜 Cloudflare 토큰 공급자(비밀 저장소)는 계정 세팅 뒤. 지금은 CLOUDFLARE_API_TOKEN 환경변수에서 읽는다 (예전 이름 CF_API_TOKEN 도 받음)
-  sw ??= switcherFromEnv(process.env, { tokens: () => async () => {
-    const t = process.env.CLOUDFLARE_API_TOKEN || process.env.CF_API_TOKEN;
-    if (!t) throw new Error("CLOUDFLARE_API_TOKEN 이 없다");
-    return t;
-  } });
+  sw ??= switcherFromEnv(process.env, { tokens: () => async () => workerCfToken(process.env) });
   return sw;
+}
+
+// pf-d FM-TRF-18: 워커는 LB 가중치 PATCH·GET 만 한다 → 그 권한만 가진 토큰(Zone · Load Balancers: Edit)을 따로 받는다.
+//   CLOUDFLARE_WORKER_API_TOKEN 이 있으면 그것, 없으면 예전처럼 CLOUDFLARE_API_TOKEN(cf-check 와 같은 토큰, 풀·모니터 권한까지 있음)
+export function workerCfToken(env: Record<string, string | undefined>): string {
+  const t = env.CLOUDFLARE_WORKER_API_TOKEN || env.CLOUDFLARE_API_TOKEN || env.CF_API_TOKEN;
+  if (!t) throw new Error("CLOUDFLARE_WORKER_API_TOKEN (또는 CLOUDFLARE_API_TOKEN) 이 없다");
+  return t;
+}
+
+// PF TRF-21: 이 이전의 LB 자리와 전환기. DB(0041 migration_traffic_targets)에 줄이 있으면 그 값, 없으면 예전처럼 .env (TRAFFIC_LB_ID…)
+//   → 이전마다 .env 4줄을 고치고 워커를 다시 띄우지 않아도 된다. 토큰은 여전히 워커 환경(비밀값은 DB 에 안 둔다)
+const byTarget = new Map<string, TrafficSwitcher>();
+export interface TrafficFor { lbId: string; switcher: TrafficSwitcher; from: "db" | "env" }
+export async function trafficFor(tenantId: string, migrationId: string): Promise<TrafficFor> {
+  const t = await withTenant(tenantId, (tx) => trafficTargetFor(tx, migrationId));
+  if (!t) return { lbId: TRAFFIC_LB_ID ?? migrationId, switcher: trafficSwitcher(), from: "env" };
+  const key = JSON.stringify(t);
+  let s = byTarget.get(key);
+  if (!s) { s = switcherFromEnv(trafficEnvFor(t, process.env), { tokens: () => async () => workerCfToken(process.env) }); byTarget.set(key, s); }
+  return { lbId: t.lbId, switcher: s, from: "db" };
+}
+/** DB 의 LB 자리를 switcherFromEnv 가 읽는 이름으로 덮는다 (없는 칸은 워커 env 그대로) */
+export function trafficEnvFor(t: TrafficTarget, env: Record<string, string | undefined>): Record<string, string | undefined> {
+  return { ...env, TRAFFIC_PROVIDER: t.provider, TRAFFIC_LB_ID: t.lbId,
+    ...(t.sourcePoolId ? { CLOUDFLARE_SOURCE_POOL_ID: t.sourcePoolId } : {}),
+    ...(t.targetPoolId ? { CLOUDFLARE_TARGET_POOL_ID: t.targetPoolId } : {}),
+    ...(t.zoneId ? { CLOUDFLARE_ZONE_ID: t.zoneId } : {}) };
 }
 
 export function trafficMetrics(tenantId: string): MetricsSource {
@@ -29,6 +53,8 @@ export function trafficMetrics(tenantId: string): MetricsSource {
 // DRAFT(ai): 판정 간격. 진짜 지표(PROM_URL)면 1000ms(창 하나 = 1초), 가짜 지표면 20ms (smoke·통합 시험이 36초씩 걸리지 않게)
 // 부를 때마다 읽는다 (시험이 before()에서 환경변수를 바꿔도 먹게)
 export const trafficTickMs = () => envNumber(process.env.TRAFFIC_TICK_MS, process.env.PROM_URL ? 1000 : 20);
+// TODO(human) FM-TRF-14: LB·풀 ID 가 워커 하나에 하나(환경 변수) → 다른 회사·환경 이전 둘이 동시에 shift 하면 같은 LB 가중치를 바꾼다.
+//   이전마다 LB 를 따로 만들지(계획 승인 때 G6-7 입구 선택과 같이), 한 LB 를 잠금으로 나눌지는 사람이 정한다. 데모는 이전 1개
 export const TRAFFIC_LB_ID = process.env.TRAFFIC_LB_ID;   // 없으면 이전 번호를 LB 이름으로 (mock 전용)
 
 let broker: TempRoleBroker | null = null;
@@ -43,40 +69,53 @@ export function permissionSet(): PermissionSet | null {
 
 // 환경 → 고객 역할 참조 (Z39). environments 의 provider·account_id·external_id 로 만든다. 값이 아니라 이름이다
 // DRAFT(ai): 역할 이름 규칙 svc-<observe|operate> (stubRoleIssuer 와 같음). 계정 번호가 비면 0 으로 채운 가짜
-async function resolveEnv(tenantId: string, envId: string, purpose: "observe" | "operate") {
-  const e = await withTenant(tenantId, async (tx) => (await tx.query(
-    `SELECT provider, account_id, external_id FROM environments WHERE id = $1`, [envId])).rows[0]) as
-    { provider: string; account_id: string | null; external_id: string | null } | undefined;
+export interface EnvRoleRow { provider: string; account_id: string | null; external_id: string | null; gcp_target_project?: string | null }
+export function roleRefFor(e: EnvRoleRow | undefined, envId: string, purpose: "observe" | "operate"): { roleRef: string; externalId?: string } {
   const role = `svc-${purpose}`;
-  const acct = e?.account_id || (e?.provider === "aws" ? "000000000000" : "stub");
+  // 결정 3번 A안: GCP 실행 역할(svc-operate, plan 단계는 발급기가 svc-plan 으로 바꿈)은 이전 전용 프로젝트에만 있다. 관찰은 원래 프로젝트(account_id)
+  //   DRAFT(ai): 전용 프로젝트가 비면 예전처럼 account_id (옛 환경). 새 연결 스크립트로 붙은 고객이면 거기엔 svc-operate 가 없어 ROLE_NOT_FOUND
+  const gcpOperate = e?.provider === "gcp" && purpose === "operate" && e.gcp_target_project;
+  const acct = (gcpOperate ? e.gcp_target_project : e?.account_id) || (e?.provider === "aws" ? "000000000000" : "stub");
   const roleRef = e?.provider === "gcp" ? `${role}@${acct}.iam.gserviceaccount.com`
     : e?.provider === "onprem" ? `agent://${envId}/${role}`
     : e?.provider === "azure_mock" ? `azure-mock://${acct}/${role}`
     : `arn:aws:iam::${acct}:role/${role}`;
   return { roleRef, ...(e?.external_id ? { externalId: e.external_id } : {}) };
 }
+async function resolveEnv(tenantId: string, envId: string, purpose: "observe" | "operate") {
+  const e = await withTenant(tenantId, async (tx) => (await tx.query(
+    `SELECT provider, account_id, external_id, gcp_target_project FROM environments WHERE id = $1`, [envId])).rows[0]) as EnvRoleRow | undefined;
+  return roleRefFor(e, envId, purpose);
+}
 
-// L4: 진짜 AWS 발급기 스위치. REAL_STS=1 일 때만 aws sts assume-role (CLI). 빈 값·0 = 지금처럼 전부 mock
+// L4: 진짜 발급기 스위치. "mock 없이"가 기본: REAL_STS 가 비었거나 없으면 켜짐(aws sts assume-role CLI, gcloud impersonate).
+//   끄기는 REAL_STS=0 으로만 (로컬 개발·시험이 명시적으로 끈다: package.json test·test:db, .env.example). 흉내 발급기는 꺼졌을 때만 쓴다
 // MOCK_CREDS 는 읽는 코드가 없어 기준으로 쓰지 않는다. 시험 전용이 아니라 운영 스위치라 TEST_ONLY_SWITCHES 에 넣지 않는다
-export const realStsEnabled = (env: NodeJS.ProcessEnv = process.env) => env.REAL_STS?.trim() === "1";
-// REAL_STS=1 이어도 external_id 없는 환경(시드)은 mock (issuers.ts perEnvAwsIssuer DRAFT(ai))
+export const realStsEnabled = (env: NodeJS.ProcessEnv = process.env) => env.REAL_STS?.trim() !== "0";
 export function awsIssuer(env: NodeJS.ProcessEnv = process.env): ProviderIssuer {
   return realStsEnabled(env) ? perEnvAwsIssuer(awsStsIssuer({ sts: awsCliSts() }), mockIssuer("aws")) : mockIssuer("aws");
 }
 
-// L7i: GCP 진짜 발급기. REAL_STS=1 + GCP_PLATFORM_PROJECT 있을 때만 gcloud impersonate. 플랫폼 SA 는 회사 번호로 DB 에서만 읽는다
+// L7i: GCP 진짜 발급기. 켜짐(기본) + GCP_PLATFORM_PROJECT 로 gcloud impersonate. 플랫폼 SA 는 회사 번호로 DB 에서만 읽는다
 export async function gcpPlatformSa(tenantId: string): Promise<string | undefined> {
   return withTenant(tenantId, async (tx) => (await tx.query(`SELECT gcp_platform_sa FROM tenants WHERE id = $1`, [tenantId])).rows[0]?.gcp_platform_sa);
 }
+// DRAFT(ai): 켜졌는데 GCP_PLATFORM_PROJECT 가 없으면 흉내로 조용히 넘어가지 않고 진짜 고객 SA 발급은 PLATFORM_SA_MISSING 으로 실패시킨다.
+//   시드 환경(프로젝트 "stub" 등 고객 SA 모양 아님)은 AWS external_id 없는 시드와 같게 흉내로 (perEnvGcpIssuer)
 export function gcpIssuer(env: NodeJS.ProcessEnv = process.env): ProviderIssuer {
+  if (!realStsEnabled(env)) return mockIssuer("gcp");
   const project = env.GCP_PLATFORM_PROJECT?.trim();
-  return realStsEnabled(env) && project
-    ? perEnvGcpIssuer(gcpCliIssuer({ platformSa: gcpPlatformSa, platformProject: project }), mockIssuer("gcp"))
-    : mockIssuer("gcp");
+  const real: ProviderIssuer = project
+    ? gcpCliIssuer({ platformSa: gcpPlatformSa, platformProject: project })
+    : { mock: false,
+        issue: async () => { throw new GcpIssueError("PLATFORM_SA_MISSING", "GCP_PLATFORM_PROJECT 설정 없음"); },
+        revoke: async () => ({ hardRevoked: false, detail: { method: "drop_and_expire" } }) };
+  return perEnvGcpIssuer(real, mockIssuer("gcp"));
 }
 
 export function tempRoles(): TempRoleBroker {
-  // STUB: GCP·온프레 발급기는 mock. AWS 는 REAL_STS=1 + external_id 있는 환경만 진짜 (L4). GCP 는 WIF 연결 뒤
+  // AWS·GCP 는 기본 진짜(REAL_STS=0 일 때만 흉내). 시드 환경(external_id 없음·고객 SA 모양 아님)은 흉내.
+  // STUB: 온프레 발급기는 mock (온프레 연결은 Agent 키·하트비트로 확인, 빌린 자격 없음). azure_mock 은 설계상 흉내만
   // TODO(human): environments 표에 고객 역할 ARN·ExternalId 칸이 생기면 resolveEnv 를 DB 읽기로 바꾼다 (T-ROLE-2)
   const permissions = permissionSet();
   broker ??= createTempRoleBroker({

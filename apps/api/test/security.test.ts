@@ -62,7 +62,8 @@ test("레포 권한 파일을 읽는다: AWS 천장·세션 정책 3개, GCP, �
   assert.equal(f.permissions.aws.sessions.length, 3);
   for (const s of f.permissions.aws.sessions) { assert.equal(s.error, null); assert.ok(s.chars <= s.limit); }
   assert.ok(f.chart, "gitops/charts/app 차트가 읽혀야 한다");
-  assert.equal(f.chart.dbPasswordFromSecret, true);
+  // PB-1: 차트는 DB_PASSWORD env 를 지어내지 않는다 (env 는 명세 그대로) → 판정 없음(null)
+  assert.equal(f.chart.dbPasswordFromSecret, null);
 });
 
 test("AWS 스캔: 경계 조건 없는 PutRolePolicy 는 잡고, 조건 있으면 통과", () => {

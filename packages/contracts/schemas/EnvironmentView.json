@@ -38,6 +38,9 @@
         "null"
       ]
     },
+    "targetProjectId": {
+      "type": "string"
+    },
     "lastVerifiedAt": {
       "type": [
         "string",
@@ -65,6 +68,10 @@
         "type": "string",
         "maxLength": 300
       }
+    },
+    "mock": {
+      "type": "boolean",
+      "const": true
     }
   },
   "required": [

@@ -77,7 +77,7 @@ test("경고 조건: 안·밖 섞이면 밖 문장만 경고, Deny 만 있으면
   // 권한이 아예 없으면 경계 경고도 없음
   assert.deepEqual(grantWarnings("aws", build([])), []);
   // 같은 경고가 precheck 항목으로도 한 번만 나온다
-  const items = v2PrecheckItems("aws", { spec: {}, specV2: mixed, hadV2Before: false }).filter((i) => /권한 경계/.test(i.message));
+  const items = v2PrecheckItems("aws", { specV2: mixed }).filter((i) => /권한 경계/.test(i.message));
   assert.equal(items.length, 1);
 });
 

@@ -1,11 +1,13 @@
-import { AppSpec, DeployResult, MigrationJob, QUEUES, type AppSpecV2, type InfraReady, type PlanDoc, type Provider } from "@svc/contracts";
-import { asFailureCode, latestAcceptedSpec, latestAcceptedSpecV2, scrubString } from "@svc/core";
+import { DeployResult, MigrationJob, QUEUES, type AppSpecV2, type InfraReady, type PlanDoc, type Provider } from "@svc/contracts";
+import { asFailureCode, latestAcceptedSpecV2, scrubString } from "@svc/core";
 import { checkTerraformRuntime, envFor, factsFromEnv, iacMockEnabled, specV2ForPlan, terraformRuntimeOf, type RuntimeHealthDeps, type TerraformRuntime } from "@svc/adapters";
 import { nextJob, runStep, stubWait, stubFailIfAsked, type StepOutcome } from "./_step.js";
 import { withStepRoles, type StepRoles } from "./_roles.js";
 import { loadInfraReady, loadPlanById } from "./plan-store.js";
-import { configFromEnv, deployToGitops, GitopsError, GitopsRepo } from "../gitops/index.js";
+import { approvedValues, configFromEnv, deployToGitops, envFacts, fillPlaceholders, GitopsError, GitopsRepo, type DeployInput } from "../gitops/index.js";
+import { checkSecretValues } from "../gitops/secret-values.js";
 import { argoWatcherFromEnv } from "../gitops/argo-watch.js";
+import { TARGET_ACCOUNT_SQL } from "./target-account.js";
 
 // GitOps 배포. deploying → syncing
 // GITOPS_REPO_DIR가 있으면 gitops 레포에 묶음을 커밋한다 (계약: parallel/N/gitops/WORKER-CONTRACT.md).
@@ -13,9 +15,8 @@ import { argoWatcherFromEnv } from "../gitops/argo-watch.js";
 interface Loaded {
   infra: InfraReady;
   plan: PlanDoc | null;
-  spec: AppSpec | null;
+  spec: AppSpecV2 | null;      // TA3: 받아들인 최신 판 (없거나 모양이 틀리면 null → approvedValues 가 drift)
   env: { provider: Provider; accountId: string | null } | null;
-  specV2?: AppSpecV2 | null;   // TA3: 계획서 irVersion "2" 일 때만 (출처가 바뀌었으면 null → approvedValues 가 drift)
   runtime?: TerraformRuntime | null;   // DEPLOYNONK8S: 도착이 ECS·Cloud Run·VM 이면 그 실행 방식 (k8s 면 null·없음)
 }
 
@@ -33,24 +34,20 @@ export async function handleDeploy(raw: unknown) {
     load: async (tx, j, m): Promise<Loaded | null> => {
       const infra = await loadInfraReady(tx, j.migrationId);
       if (!infra) return null;
-      // DEPLOYNONK8S: v2 계획서면 도착 실행 방식을 먼저 본다. ECS·Cloud Run·VM 은 gitops 설정과 상관없이 Terraform 출력 + 건강 확인 길
+      // DEPLOYNONK8S: 도착 실행 방식을 먼저 본다. ECS·Cloud Run·VM 은 gitops 설정과 상관없이 Terraform 출력 + 건강 확인 길
       const nonK8s = await terraformRuntimeLoad(tx, infra, m);
       if (nonK8s) return nonK8s;
       if (!cfg) return { infra, plan: null, spec: null, env: null };
       const plan = await loadPlanById(tx, infra.planId);
-      const spec = await latestAcceptedSpec(tx, m.id);
+      const row = await latestAcceptedSpecV2(tx, m.id);
       const e = await tx.query(
-        `SELECT provider, account_id AS "accountId" FROM environments WHERE id=$1`, [m.targetEnvId]);
-      if (!plan || !spec || !e.rows[0]) return null;
-      if (plan.irVersion === "2") {
-        const row = await latestAcceptedSpecV2(tx, m.id);
-        return { infra, plan, spec: AppSpec.parse(spec), env: e.rows[0], specV2: row ? specV2ForPlan(row, plan.specSource) : null };
-      }
-      return { infra, plan, spec: AppSpec.parse(spec), env: e.rows[0] };
+        `SELECT provider, ${TARGET_ACCOUNT_SQL} AS "accountId" FROM environments WHERE id=$1`, [m.targetEnvId]);   // A안: GCP = 전용 프로젝트
+      if (!plan || !row || !e.rows[0]) return null;
+      return { infra, plan, spec: specV2ForPlan(row), env: e.rows[0] };
     },
     work: async (j, m, l): Promise<StepOutcome> => {
-      if (l.runtime && l.specV2 && l.env) {
-        const nl = l as Loaded & { runtime: TerraformRuntime; specV2: AppSpecV2; env: NonNullable<Loaded["env"]> };
+      if (l.runtime && l.spec && l.env) {
+        const nl = l as Loaded & { runtime: TerraformRuntime; spec: AppSpecV2; env: NonNullable<Loaded["env"]> };
         // VDEPLOYNONK8S 고침: 건강 조회는 도착 관찰 역할을 빌려서 한다(진짜 발급기면 그 자격 env, 워커 자기 자격은 지움). 단계가 끝나면 돌려준다
         return withStepRoles("deploy", j, m, (roles) => deployTerraformRuntime(j, nl, roles));
       }
@@ -75,12 +72,15 @@ export async function handleDeploy(raw: unknown) {
         gitops = noCluster ? { skipped: "no_cluster" } : { mock: true };   // Z89: 흉내였다는 사실을 감사 detail 에 남긴다
       } else {
         try {
-          const out = await deployToGitops(new GitopsRepo(cfg), {
-            tenantId: j.tenantId, spec: l.spec!, plan: l.plan!, tfOutputs: l.infra.tfOutputs,
-            ...(l.plan!.irVersion === "2" ? { specV2: l.specV2 ?? null } : {}),
+          const input: DeployInput = {
+            tenantId: j.tenantId, spec: l.spec, plan: l.plan!, tfOutputs: l.infra.tfOutputs,
             // 계획 처리기와 같은 target이어야 Helm 값 지문이 같다 (region "default")
             target: { envId: m.targetEnvId, provider: l.env!.provider, region: "default", accountId: l.env!.accountId },
-          }, argoWatcherFromEnv());
+          };
+          // APP-20: 커밋 전에 도착 비밀 그릇에 값이 들었나 (흉내 IaC 면 그릇이 없으니 안 본다)
+          const sv = await secretValuesGate(input);
+          if (sv) return sv;
+          const out = await deployToGitops(new GitopsRepo(cfg), input, argoWatcherFromEnv());
           result = DeployResult.parse(out.result);
           gitops = { commit: out.commit, argoApp: out.app, ...(out.argo ? { argo: out.argo } : {}) };
         } catch (e) {
@@ -108,6 +108,27 @@ export async function handleDeploy(raw: unknown) {
   });
 }
 
+// APP-20 (지휘 결정 11/4 00:51Z, ADR-072 유지): 값이 빈 비밀 그릇이 있으면 커밋하지 않고 paused. paused → deploying 재개 가능(값 넣고 재개)
+//   시험이 CLI 를 가짜로 바꾼다
+let secretExec: Parameters<typeof checkSecretValues>[1] | undefined;
+export const setSecretValueExec = (e: typeof secretExec) => { secretExec = e; };
+export async function secretValuesGate(i: DeployInput): Promise<StepOutcome | null> {
+  const p = i.target.provider;
+  if ((p !== "aws" && p !== "gcp") || (iacMockEnabled() && !secretExec)) return null;
+  // 원격 키는 회사 번호(<env:tenantId>)만 채우면 정해진다. tf 출력 자리표시가 빠진 건 deployToGitops 가 따로 막는다
+  const named = fillPlaceholders(approvedValues(i), { tf: {}, env: envFacts(i) }).values;
+  const secrets = ((named.externalSecrets as { secrets?: Array<{ name: string; remoteKey: string }> } | undefined)?.secrets ?? []);
+  if (!secrets.length) return null;
+  const r = await checkSecretValues({ provider: p, keys: secrets.map((s) => s.remoteKey), projectId: i.target.accountId,
+    // 도착 리전: "default" 면 adapters regionOf 와 같은 서울 리전 (DECISION(team) 10/31)
+    region: i.target.region && i.target.region !== "default" ? i.target.region : "ap-northeast-2" }, secretExec);
+  if (r.ok) return null;
+  const code = r.missing.length ? "SECRET_VALUES_MISSING" : "SECRET_VALUES_UNKNOWN";
+  return { to: "paused", failureCode: code, detail: { deploy: { error: code,
+    reason: r.missing.length ? `도착 비밀 그릇에 값이 없음: ${r.missing.join(", ")} → 고객 도구로 값을 넣고 재개 (플랫폼은 값을 복사하지 않음)`
+      : `도착 비밀 그릇 버전을 못 읽음 → 자격·권한 확인 뒤 재개`, missing: r.missing, unknown: r.unknown.map((u) => ({ key: u.key, error: scrubString(u.error) })), checked: r.checked.length } } };
+}
+
 /** Z77: apply 출력의 cluster_name 이 빈 문자열이면 "클러스터 없이 만든 이전". 키가 없으면(STUB·Mock) 아니다 */
 export function isNoCluster(tfOutputs: Record<string, string> | undefined | null): boolean {
   return !!tfOutputs && Object.prototype.hasOwnProperty.call(tfOutputs, "cluster_name") && tfOutputs.cluster_name === "";
@@ -115,28 +136,36 @@ export function isNoCluster(tfOutputs: Record<string, string> | undefined | null
 
 type Tx = Parameters<Parameters<typeof runStep>[1]["load"] & {}>[0];
 
-/** DEPLOYNONK8S: v2 계획서 + 승인 명세가 ECS·Cloud Run·VM 이면 그 Loaded, 아니면 null (k8s·v1 은 지금 길 그대로) */
+/** APP-22 (가): 도착 앱이 GitOps(차트 values.database.activeWriter)로 DB 주소를 고르는 배포인가.
+ *  아님 = 앱을 안 올림(클러스터 없음·MOCK_ARGO 흉내) 또는 Terraform 실행 방식(ECS·Cloud Run·VM: 주소가 tf 출력에 박힘) */
+export async function appDbSwitchKind(tx: Tx, m: { id: string; targetEnvId: string }): Promise<"gitops" | "no_app" | "terraform_runtime"> {
+  const infra = await loadInfraReady(tx, m.id);
+  if (!infra || isNoCluster(infra.tfOutputs) || process.env.MOCK_ARGO === "1") return "no_app";
+  return (await terraformRuntimeLoad(tx, infra, m)) ? "terraform_runtime" : "gitops";
+}
+
+/** DEPLOYNONK8S: 승인 명세가 ECS·Cloud Run·VM 이면 그 Loaded, 아니면 null (k8s 는 gitops 길) */
 async function terraformRuntimeLoad(tx: Tx, infra: InfraReady, m: { id: string; targetEnvId: string }): Promise<Loaded | null> {
   const plan = await loadPlanById(tx, infra.planId);
-  if (plan?.irVersion !== "2") return null;
+  if (!plan) return null;
   const row = await latestAcceptedSpecV2(tx, m.id);
-  const specV2 = row ? specV2ForPlan(row, plan.specSource) : null;
-  const runtime = terraformRuntimeOf(specV2);
+  const spec = row ? specV2ForPlan(row) : null;
+  const runtime = terraformRuntimeOf(spec);
   if (!runtime) return null;
-  const e = await tx.query(`SELECT provider, account_id AS "accountId" FROM environments WHERE id=$1`, [m.targetEnvId]);
+  const e = await tx.query(`SELECT provider, ${TARGET_ACCOUNT_SQL} AS "accountId" FROM environments WHERE id=$1`, [m.targetEnvId]);   // A안: GCP = 전용 프로젝트
   if (!e.rows[0]) return null;
-  return { infra, plan, spec: null, env: e.rows[0], specV2, runtime };
+  return { infra, plan, spec, env: e.rows[0], runtime };
 }
 
 /** DEPLOYNONK8S: Terraform 이 앱까지 띄운 도착 → gitops·Argo 건너뜀, apply 출력 + 건강 확인으로 DeployResult.
  *  흉내 길(MOCK_IAC=1)은 출력만 본다. 진짜 길은 읽기 CLI (프로세스·실행 역할 env 의 자격, 코드엔 없음).
  *  못 뜨면 paused (paused → deploying 재개 가능, 트래픽 0%·컷오버 전이라 출발이 그대로 주인) */
-async function deployTerraformRuntime(j: MigrationJob, l: Loaded & { runtime: TerraformRuntime; specV2: AppSpecV2; env: NonNullable<Loaded["env"]> }, roles?: Pick<StepRoles, "awsEnv">): Promise<StepOutcome> {
+async function deployTerraformRuntime(j: MigrationJob, l: Loaded & { runtime: TerraformRuntime; spec: AppSpecV2; env: NonNullable<Loaded["env"]> }, roles?: Pick<StepRoles, "awsEnv">): Promise<StepOutcome> {
   await stubFailIfAsked(j, "deploy");
   const gitops = { skipped: "terraform_runtime", runtime: l.runtime };
   const facts = factsFromEnv(process.env);
   const h = await checkTerraformRuntime({
-    provider: l.env.provider, runtime: l.runtime, spec: l.specV2, tfOutputs: l.infra.tfOutputs ?? {},
+    provider: l.env.provider, runtime: l.runtime, spec: l.spec, tfOutputs: l.infra.tfOutputs ?? {},
     live: !iacMockEnabled(), projectId: facts.projectId ?? null,   // region = 계획과 같은 "default" 규칙 (checkTerraformRuntime)
   }, { ...runtimeHealthDeps, ...(roles?.awsEnv?.target && !runtimeHealthDeps.env ? { env: envFor(roles.awsEnv.target) } : {}) });
   if (!h.ok)

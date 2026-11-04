@@ -3,20 +3,15 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { AppSpec, AppSpecV2, ComponentV2, type TargetEnv } from "@svc/contracts";
+import { AppSpecV2, ComponentV2, type TargetEnv } from "@svc/contracts";
 import { aws, gcp, targetBuilderFor, v2PrecheckItems, type Target } from "../src/index.js";
 import { awsGrantPlan, grantWarnings, insideBoundary, gcpGrantTypes } from "../src/target/grants.js";
 
 const T = (p: TargetEnv["provider"], extra: Partial<Target> = {}): Target =>
   ({ envId: "33333333-3333-4333-8333-333333333333", provider: p, region: "default", tenantId: "11111111-1111-4111-8111-111111111111", migrationId: "22222222-2222-4222-8222-222222222222", ...extra }) as Target;
 const D = (c: string) => `sha256:${c.repeat(64)}`;
-const V1: AppSpec = AppSpec.parse({
-  schemaVersion: "1", app: { name: "shop" },
-  service: { image: `registry/shop-api@${D("a")}`, port: 8080, healthPath: "/healthz", replicas: 2, cpu: "500m", memory: "1Gi",
-    env: [{ name: "LOG_LEVEL", value: "info" }], secretRefs: [{ name: "DATABASE_PASSWORD", key: "password" }] },
-  database: { engine: "postgres", majorVersion: "16", storageGb: 20 },
-  ingress: { hostname: "shop.example.com", entry: "cloudflare-lb" },
-});
+// 데모 명세 (shop 서비스 1개 + postgres 1개)
+const BASE: AppSpecV2 = AppSpecV2.parse({"schemaVersion":"2","app":{"name":"shop"},"components":[{"id":"shop","kind":"service","props":{"runtime":"k8s","origin":{"runtime":"k8s","product":"unknown"},"image":{"source":"registry","repository":"registry/shop-api","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"ports":[{"port":8080,"protocol":"TCP"}],"probes":{"readiness":{"type":"http","path":"/healthz","port":8080}},"replicas":{"min":2,"max":2},"serviceAccount":"default","resources":{"request":{"cpuMilli":500,"memMiB":1024}},"env":[{"name":"LOG_LEVEL","value":"info"},{"name":"DATABASE_PASSWORD","fromSecret":{"secret":"DATABASE_PASSWORD","key":"password"}}]}},{"id":"db","kind":"postgres","props":{"majorVersion":"16","storageGb":20}}],"links":[{"from":"shop","to":"db","intent":"connect"}],"entry":{"via":"cloudflare-lb","hosts":[{"hostnames":["shop.example.com"],"routes":[{"matches":[{"path":{"type":"PathPrefix","value":"/"}}],"backends":[{"to":"shop","port":8080,"weight":1}]}]}]},"posture":{"permissions":[],"network":[]}});
 const svc = (id: string, extra: Record<string, unknown> = {}) => ({
   id, kind: "service",
   props: {
@@ -106,7 +101,7 @@ test("정상: 버킷·큐 데이터 권한만이면 경계 경고 없음 (preche
   const s = DATA();
   assert.ok(Object.values(awsGrantPlan(s).byIdentity).flat().every(insideBoundary));
   assert.deepEqual(boundaryWarn(s), []);
-  const items = v2PrecheckItems("aws", { spec: {}, specV2: s, hadV2Before: false });
+  const items = v2PrecheckItems("aws", { specV2: s });
   assert.ok(!items.some((i) => i.id.startsWith("PC-V2-GRANTS") && /권한 경계/.test(i.message)));
 });
 

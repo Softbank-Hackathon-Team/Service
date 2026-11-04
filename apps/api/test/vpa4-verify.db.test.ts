@@ -117,7 +117,8 @@ test("검사 순서: 지문 불일치(PLAN_HASH_MISMATCH) → 만료(PLAN_EXPIRE
   await owner.query("UPDATE plans SET expires_at = now() - interval '1 second' WHERE id = $1", [b.planId]);
   const r2 = await approve(b.planId, { decision: "approve", planHash: b.planHash, acks: [] });
   assert.equal(r2.json().code, "PLAN_EXPIRED");
-  assert.equal(await status(a.id), "awaiting_approval"); assert.equal(await status(b.id), "awaiting_approval");
+  // G7-1: 만료된 계획의 승인은 막다른 길 대신 stale 로 옮긴다 (지문이 틀린 a 는 그대로)
+  assert.equal(await status(a.id), "awaiting_approval"); assert.equal(await status(b.id), "stale");
 });
 
 test("멱등: 같은 키·같은 본문 재전송은 첫 응답 그대로(승인 한 번), 첫 시도가 ACKS_MISSING 이면 같은 키로 acks 를 채워 다시 보내도 새 요청으로 처리", { skip }, async () => {
@@ -156,16 +157,18 @@ test("시작 지문 경계: 빈 글자·공백·대소문자 다른 지문·앞�
   assert.equal(await applyJobs(m.id), 1, "apply 작업은 하나뿐");
 });
 
-test("깃발 값 경계: '1' 만 켜짐 — '0'·'true'·''·' ' 는 꺼짐이라 acks 없이 승인된다", { skip }, async () => {
-  for (const v of ["0", "true", "", " "]) {
+test("깃발 값 경계 (G7-8 기본 켬): '0'·' 0 ' 만 꺼짐이라 acks 없이 승인 — '1'·'true'·''·' ' 는 켜짐이라 acks 없으면 409", { skip }, async () => {
+  for (const v of ["0", " 0 "]) {
     process.env.PLAN_ACKS = v;
     const m = await seed();
     const r = await approve(m.planId, { decision: "approve", planHash: m.planHash });
     assert.equal(r.statusCode, 200, `PLAN_ACKS=${JSON.stringify(v)} ${r.body}`);
   }
-  process.env.PLAN_ACKS = " 1 ";
-  const m = await seed();
-  assert.equal((await approve(m.planId, { decision: "approve", planHash: m.planHash })).statusCode, 409, "앞뒤 공백은 trim 돼 켜짐");
+  for (const v of ["1", " 1 ", "true", "", " "]) {
+    process.env.PLAN_ACKS = v;
+    const m = await seed();
+    assert.equal((await approve(m.planId, { decision: "approve", planHash: m.planHash })).statusCode, 409, `PLAN_ACKS=${JSON.stringify(v)}`);
+  }
 });
 
 test("남의 회사: 계획 승인 404, 시작 404, 어느 쪽도 감사·잠금·작업을 안 남김", { skip }, async () => {

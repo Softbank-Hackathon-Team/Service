@@ -1,7 +1,7 @@
 // A8: 출발 IAM 권한(I4 grants·posture.permissions) → 도착 Builder. 순수·결정적. 도착별 정상 1 + 못 옮기는 동작 거부 1 + 깃발 on 끝까지
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AppSpec, AppSpecV2, checkV2, ComponentV2, ImportResultV2, type RawInventory, type TargetEnv } from "@svc/contracts";
+import { AppSpecV2, checkV2, ComponentV2, ImportResultV2, type RawInventory, type TargetEnv } from "@svc/contracts";
 import {
   targetBuilderFor, v2PrecheckItems, AdapterError, UNSUPPORTED_V2, normalizeV2, type Target,
 } from "../src/index.js";
@@ -12,13 +12,8 @@ const T = (p: TargetEnv["provider"], extra: Partial<Target> = {}): Target =>
 const D = (c: string) => `sha256:${c.repeat(64)}`;
 
 // v1 데모 (DB·시크릿 있는 API 층)
-const V1: AppSpec = AppSpec.parse({
-  schemaVersion: "1", app: { name: "shop" },
-  service: { image: `registry/shop-api@${D("a")}`, port: 8080, healthPath: "/healthz", replicas: 2, cpu: "500m", memory: "1Gi",
-    env: [{ name: "LOG_LEVEL", value: "info" }], secretRefs: [{ name: "DATABASE_PASSWORD", key: "password" }] },
-  database: { engine: "postgres", majorVersion: "16", storageGb: 20 },
-  ingress: { hostname: "shop.example.com", entry: "cloudflare-lb" },
-});
+// 데모 명세 (shop 서비스 1개 + postgres 1개)
+const BASE: AppSpecV2 = AppSpecV2.parse({"schemaVersion":"2","app":{"name":"shop"},"components":[{"id":"shop","kind":"service","props":{"runtime":"k8s","origin":{"runtime":"k8s","product":"unknown"},"image":{"source":"registry","repository":"registry/shop-api","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"ports":[{"port":8080,"protocol":"TCP"}],"probes":{"readiness":{"type":"http","path":"/healthz","port":8080}},"replicas":{"min":2,"max":2},"serviceAccount":"default","resources":{"request":{"cpuMilli":500,"memMiB":1024}},"env":[{"name":"LOG_LEVEL","value":"info"},{"name":"DATABASE_PASSWORD","fromSecret":{"secret":"DATABASE_PASSWORD","key":"password"}}]}},{"id":"db","kind":"postgres","props":{"majorVersion":"16","storageGb":20}}],"links":[{"from":"shop","to":"db","intent":"connect"}],"entry":{"via":"cloudflare-lb","hosts":[{"hostnames":["shop.example.com"],"routes":[{"matches":[{"path":{"type":"PathPrefix","value":"/"}}],"backends":[{"to":"shop","port":8080,"weight":1}]}]}]},"posture":{"permissions":[],"network":[]}});
 
 // 3티어 v2: web → api → db, + 예약 잡 (api 와 같은 SA)
 const svc = (id: string, extra: Record<string, unknown> = {}) => ({
@@ -65,9 +60,9 @@ const TIER3 = (): AppSpecV2 => AppSpecV2.parse({
 const tf = (p: "aws" | "gcp" | "onprem" | "azure_mock", s: AppSpecV2) => targetBuilderFor(p).toTerraformV2(s, T(p));
 const identityRows = (p: "aws" | "gcp", s: AppSpecV2) => JSON.parse(String(tf(p, s).vars.identity_json)) as Array<Record<string, string>>;
 const blocks = (p: "aws" | "gcp" | "onprem" | "azure_mock", s: AppSpecV2) =>
-  v2PrecheckItems(p, { spec: {}, specV2: s, hadV2Before: false }).filter((i) => i.level === "block");
+  v2PrecheckItems(p, { specV2: s }).filter((i) => i.level === "block");
 const warns = (p: "aws" | "gcp" | "onprem" | "azure_mock", s: AppSpecV2) =>
-  v2PrecheckItems(p, { spec: {}, specV2: s, hadV2Before: false }).filter((i) => i.id.startsWith("PC-V2-GRANTS"));
+  v2PrecheckItems(p, { specV2: s }).filter((i) => i.id.startsWith("PC-V2-GRANTS"));
 const throwsUnsup = (f: () => unknown, msg?: RegExp) => assert.throws(f, (e: unknown) => e instanceof AdapterError && e.code === UNSUPPORTED_V2 && (!msg || msg.test(e.message)));
 
 // DB 관리 권한 + 계정 단위 보기 + Deny * (I4 가 RDS 출발에서 만드는 모양)
