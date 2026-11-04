@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { MigrationJob, PrecheckItem, QUEUES, SourceDbFacts, type AppSpecV2, type Provider } from "@svc/contracts";
-import { latestAcceptedSpecV2, withTenant } from "@svc/core";
+import { AgentReport, envNumber, MigrationJob, PrecheckItem, QUEUES, SourceDbFacts, type AppSpecV2, type Provider } from "@svc/contracts";
+import { latestAcceptedSpecV2, withTenant, type Tx } from "@svc/core";
 import { iacMockEnabled, terraformRuntimeOf, specV2ForPlan, envFor, gcpEnvFor, v2PrecheckItems, runCloudPrecheck, toPrecheckItems, spawnExec, resolveSpecV2, targetFactsV2, sourceFactsV2, sourceDbsV2, appEnvV2, workloadSecurityV2,
-  type EnvSide, type PrecheckEnvInfo, type PrecheckInput, type PrecheckDeps, type CloudProvider } from "@svc/adapters";
+  type AgentFacts, type EnvSide, type PrecheckEnvInfo, type PrecheckInput, type PrecheckDeps, type CloudProvider } from "@svc/adapters";
 import { evaluatePortabilityV2, PORTABILITY_RULES, toSecurityPrecheckItems } from "@svc/security";
 import { endpointFromEnv, precheckSource, resolveTfRefs, withClient } from "@svc/replication";
 import { runStep } from "./_step.js";
@@ -158,9 +158,10 @@ export async function v2PrecheckFor(tenantId: string, m: MigrationRow, _env: Nod
 // 보안 판정 연결: 명세의 보안 요구사항 + 출발 사실(가져오기가 읽은 securityFacts) + 도착 사실(모듈 고정값)을 맞대어
 //   막기(block → 명세 검토로 되돌림)·경고(warn → 계획서 승인 항목 precheck_warn:SEC:…)·참고(info)를 낸다. 순수 함수
 // SG-1: rules = 돌릴 규칙 묶음 (기본 전부). workload = IR 컨테이너 보안 규칙(P-WL-*)만, nonWorkload = 그 밖
-export function securityPrecheckItems(i: { spec: AppSpecV2; securityFacts?: Record<string, SourceDbFacts>; source: EnvSide; target: EnvSide; rules?: "all" | "workload" | "nonWorkload" }): PrecheckItem[] {
+// W5: targetAgentFacts = 온프레 도착 Agent 의 최근 facts 보고 (있으면 잰 값이 고정값·모름을 덮는다)
+export function securityPrecheckItems(i: { spec: AppSpecV2; securityFacts?: Record<string, SourceDbFacts>; source: EnvSide; target: EnvSide; targetAgentFacts?: AgentFacts; rules?: "all" | "workload" | "nonWorkload" }): PrecheckItem[] {
   const pick = i.rules ?? "all";
-  const t = targetFactsV2(i.target, i.spec);
+  const t = targetFactsV2(i.target, i.spec, i.targetAgentFacts);
   const r = evaluatePortabilityV2({
     requirements: i.spec.security?.requirements ?? null,
     source: sourceFactsV2(i.source, i.spec, i.securityFacts), sourceDbs: sourceDbsV2(i.spec, i.securityFacts),
@@ -172,6 +173,19 @@ export function securityPrecheckItems(i: { spec: AppSpecV2; securityFacts?: Reco
 // SEC_PRECHECK=1 일 때만. 꺼져 있으면 지금 점검 그대로. 명세를 못 쓰면 [] (v2PrecheckFor·계획 단계가 막는다)
 // DRAFT(ai): 기본 꺼짐. 켜면 요구사항 없음(P-REQ-0)·도착 로그인 방식 모름·출발 확장 모름 경고가 모든 계획서의 승인 항목이 되므로 보안 시연 환경에서만 켠다
 export const secPrecheckOn = (env: NodeJS.ProcessEnv = process.env) => env.SEC_PRECHECK === "1";
+
+// W5: 그 환경 Agent 의 가장 최근 facts 보고. AGENT_FACTS_MAX_AGE_SEC(기본 900초 = loop 기본 주기 300초의 3배)보다 오래되면 안 쓴다
+//   (오래된 측정을 지금 사실처럼 쓰지 않는다 → 모름·고정값 그대로). 모양이 틀린 본문도 안 쓴다
+// DRAFT(ai): 900초
+export async function latestAgentFacts(tx: Tx, envId: string, env: NodeJS.ProcessEnv = process.env): Promise<AgentFacts | undefined> {
+  const maxAge = envNumber(env.AGENT_FACTS_MAX_AGE_SEC, 900);
+  if (!Number.isFinite(maxAge) || maxAge <= 0) return undefined;
+  const r = await tx.query(
+    `SELECT body FROM agent_reports WHERE env_id = $1 AND kind = 'facts' AND received_at > now() - make_interval(secs => $2)
+       ORDER BY received_at DESC LIMIT 1`, [envId, maxAge]);
+  const p = AgentReport.safeParse(r.rows[0]?.body);
+  return p.success && p.data.kind === "facts" ? p.data : undefined;
+}
 export async function securityPrecheckFor(tenantId: string, m: MigrationRow, env: NodeJS.ProcessEnv = process.env): Promise<PrecheckItem[]> {
   if (!secPrecheckOn(env)) return [];
   return withTenant(tenantId, async (tx) => {
@@ -190,8 +204,9 @@ export async function securityPrecheckFor(tenantId: string, m: MigrationRow, env
     };
     const source = side(m.sourceEnvId), target = side(m.targetEnvId);
     if (!source || !target) return [];
+    const targetAgentFacts = target.provider === "onprem" ? await latestAgentFacts(tx, target.envId, env) : undefined;
     // SG-1: 워크로드 규칙(P-WL-*)은 v2PrecheckFor 가 늘 낸다 → 여기서는 빼서 두 번 안 나오게
-    return securityPrecheckItems({ spec: spec.spec, securityFacts: facts, source, target, rules: "nonWorkload" });
+    return securityPrecheckItems({ spec: spec.spec, securityFacts: facts, source, target, targetAgentFacts, rules: "nonWorkload" });
   });
 }
 

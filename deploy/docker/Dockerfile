@@ -1,8 +1,9 @@
 # syntax=docker/dockerfile:1.7
-# 서버 앱 3개(api · worker · agent-worker) 운영 이미지를 한 파일로 만든다 (Z75-17). 빌드 문맥 = Service 루트
+# 서버 앱 3개(api · worker · agent-worker) 운영 이미지와 온프레 Agent 이미지를 한 파일로 만든다 (Z75-17, W1). 빌드 문맥 = Service 루트
 #   docker build -f deploy/docker/Dockerfile --target api          -t svc-api:dev .
 #   docker build -f deploy/docker/Dockerfile --target worker       -t svc-worker:dev .
 #   docker build -f deploy/docker/Dockerfile --target agent-worker -t svc-agent-worker:dev .
+#   docker build -f deploy/docker/Dockerfile --target onprem-agent -t svc-onprem-agent:dev .   (고객 온프레 클러스터에서 도는 Agent)
 # 단계: manifests(package.json만) → deps(npm ci, 셋이 같이 씀) → src → build-<앱>(esbuild 묶음) → <앱>(묶음 파일만)
 # 이미지는 여전히 3개다. 앱마다 필요한 것만 담는다(api: 권한 파일·차트, worker: git·권한 파일, agent-worker: 묶음만)
 # 예전엔 apps/<앱>/Dockerfile 3개에 같은 앞 단계 35줄이 세 번 있었다. 앞 단계를 고치면 세 곳을 같이 고쳐야 했다
@@ -13,6 +14,12 @@ ARG GIT_IMAGE=alpine/git:v2.54.0
 # worker 의 crane (리허설 이미지 복사, apps/worker/src/rehearsal/image-mirror.ts). 공식 이미지의 정적 바이너리 하나만 꺼내 온다
 #   판 v0.22.1, 다이제스트 = 여러 아키텍처 index (amd64·arm64 둘 다 같은 고정값으로 받는다)
 ARG CRANE_IMAGE=gcr.io/go-containerregistry/crane:v0.22.1@sha256:1f968817b95790bed063f71175aa6b8ff879fa17064020415f3e18bb6e6a36e1
+# W1: 온프레 Agent 의 kubectl. 공식 이미지(registry.k8s.io/kubectl)의 정적 바이너리 /bin/kubectl 하나만 꺼내 온다
+#   판 v1.36.5 = 시연 온프레 k3s(v1.36.5+k3s1)와 같은 판. kubectl 은 서버와 위아래 1 minor 까지 지원한다
+#   다이제스트 = 여러 아키텍처 index (amd64·arm64 둘 다 같은 고정값으로 받는다)
+# DRAFT(ai): 고객 k3s 판이 1.35 미만·1.37 초과면 이 판을 같이 올려야 한다
+#   agent-worker 의 KUBECTL_IMAGE(플랫폼 EKS 판)와 따로 둔다. 고객 클러스터 판에 맞추기 때문이다
+ARG ONPREM_KUBECTL_IMAGE=registry.k8s.io/kubectl:v1.36.5@sha256:0667e3f3e6ef435d7cd4c16684244703ebd67314c17511c2a9f87ea44f6cdf6b
 # agent-worker 의 helm (vCluster 차트를 sbx-* 네임스페이스에 올린다). git 과 같은 방식으로 이미지에서 꺼낸다. 다이제스트 고정
 ARG HELM_IMAGE=alpine/helm:3.22.1@sha256:8191701ad1f82ee3695c87211fcbfe6d7b1bb7df92ac1c8de9ccdb0995a6a2c1
 # agent-worker 의 kubectl (플랫폼 클러스터 밖에서 돌 때 가상 API 로 port-forward). helm 과 같은 방식, 다이제스트 고정. 플랫폼 EKS 1.35 와 같은 마이너
@@ -58,6 +65,11 @@ FROM src AS build-agent-worker
 COPY apps/agent-worker ./apps/agent-worker
 RUN node deploy/docker/bundle.mjs agent-worker
 
+# W1: 온프레 Agent 는 tools/onprem-agent.ts 하나가 진입점 (@svc/agent 의 kubectl 모으기 + 서명 보내기)
+FROM src AS build-onprem-agent
+COPY tools/onprem-agent.ts ./tools/onprem-agent.ts
+RUN node deploy/docker/bundle.mjs onprem-agent
+
 # git 과 git 이 쓰는 공유 라이브러리만 /out 에 모은다 (ldd 로 찾은 것 + 심볼릭 링크의 실제 파일)
 FROM ${GIT_IMAGE} AS git
 # SC2046: $(cat /tmp/libs) 는 파일 목록이라 일부러 쪼갠다 (따옴표로 묶으면 한 파일 이름이 된다)
@@ -71,6 +83,7 @@ RUN set -e; mkdir -p /out; \
 FROM ${CRANE_IMAGE} AS crane
 FROM ${HELM_IMAGE} AS helm
 FROM ${KUBECTL_IMAGE} AS kubectl
+FROM ${ONPREM_KUBECTL_IMAGE} AS onprem-kubectl
 
 # 세 이미지 공통 바탕
 FROM ${NODE_IMAGE} AS runtime
@@ -132,3 +145,16 @@ COPY --from=build-agent-worker /src/dist/agent-worker/ ./
 USER node
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
   CMD ["node", "healthcheck.mjs", "db"]
+
+# W1: 고객 온프레 클러스터에서 도는 Agent. 클러스터를 읽고(kubectl) 서명한 보고를 플랫폼 API 로 보낸다 (밖으로 443 만)
+#   클러스터 안에서는 kubectl 이 파드의 ServiceAccount 토큰으로 자동 인증한다 (kubeconfig 를 넣지 않는다)
+#   필요한 환경변수: AGENT_REPORT_URL, AGENT_KEY_ID, AGENT_KEY_SECRET (키 두 개는 Secret 에서. 설치 차트 W2)
+#   읽기 전용 루트 파일시스템으로 돌려도 된다: 쓰는 곳이 없다 (--enroll 은 --out 을 쓰기 가능한 마운트로 준다)
+#   docker run --rm svc-onprem-agent:dev --help
+FROM runtime AS onprem-agent
+COPY --from=onprem-kubectl /bin/kubectl /usr/local/bin/kubectl
+COPY --from=build-onprem-agent /src/dist/onprem-agent/ ./
+USER node
+ENTRYPOINT ["node", "--enable-source-maps", "main.mjs"]
+# 30초마다 heartbeat, 10번에 1번 security (tools/onprem-agent.ts loop)
+CMD ["loop", "--every", "30"]

@@ -624,6 +624,7 @@ paths:
               - "security"
               - "deploy"
               - "heartbeat"
+              - "facts"
         - name: "limit"
           in: "query"
           required: false
@@ -4161,6 +4162,9 @@ components:
             bundleHash:
               type: "string"
               maxLength: 200
+            app:
+              type: "string"
+              maxLength: 253
             status:
               type: "string"
               enum:
@@ -4179,7 +4183,6 @@ components:
             - "kind"
             - "agentVersion"
             - "sentAt"
-            - "migrationId"
             - "bundleHash"
             - "status"
             - "resources"
@@ -4227,6 +4230,78 @@ components:
             - "k3sVersion"
             - "cnpg"
           additionalProperties: false
+        - type: "object"
+          properties:
+            kind:
+              type: "string"
+              const: "facts"
+            agentVersion:
+              type: "string"
+              maxLength: 40
+            sentAt:
+              type: "string"
+              format: "date-time"
+              pattern: "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+            grants:
+              type: "object"
+              properties:
+                level:
+                  type: "string"
+                  enum:
+                    - "L0"
+                    - "L1"
+              required:
+                - "level"
+              additionalProperties: false
+            dbs:
+              maxItems: 50
+              type: "array"
+              items:
+                type: "object"
+                properties:
+                  namespace:
+                    type: "string"
+                    maxLength: 63
+                  cluster:
+                    type: "string"
+                    maxLength: 63
+                  majorVersion:
+                    anyOf:
+                      - type: "integer"
+                        exclusiveMinimum: 0
+                        maximum: 9007199254740991
+                      - type: "null"
+                  tlsEnforced:
+                    type:
+                      - "boolean"
+                      - "null"
+                  authMethods:
+                    anyOf:
+                      - maxItems: 20
+                        type: "array"
+                        items:
+                          type: "string"
+                          maxLength: 40
+                      - type: "null"
+                  exposed:
+                    type:
+                      - "boolean"
+                      - "null"
+                required:
+                  - "namespace"
+                  - "cluster"
+                  - "majorVersion"
+                  - "tlsEnforced"
+                  - "authMethods"
+                  - "exposed"
+                additionalProperties: false
+          required:
+            - "kind"
+            - "agentVersion"
+            - "sentAt"
+            - "grants"
+            - "dbs"
+          additionalProperties: false
     AgentReportAccepted:
       type: "object"
       properties:
@@ -4235,11 +4310,7 @@ components:
           format: "uuid"
           pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
         kind:
-          type: "string"
-          enum:
-            - "security"
-            - "deploy"
-            - "heartbeat"
+          $ref: "#/components/schemas/AgentReportKinds"
         envId:
           type: "string"
           format: "uuid"
@@ -4252,6 +4323,13 @@ components:
         - "envId"
         - "receivedAt"
       additionalProperties: false
+    AgentReportKinds:
+      type: "string"
+      enum:
+        - "security"
+        - "deploy"
+        - "heartbeat"
+        - "facts"
     AgentReportList:
       type: "object"
       properties:
@@ -4283,11 +4361,7 @@ components:
           format: "uuid"
           pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
         kind:
-          type: "string"
-          enum:
-            - "security"
-            - "deploy"
-            - "heartbeat"
+          $ref: "#/components/schemas/AgentReportKinds"
         keyId:
           type: "string"
         sentAt:

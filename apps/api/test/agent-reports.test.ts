@@ -132,3 +132,19 @@ test("마스터 키 없음 → 503 AGENT_REPORTS_DISABLED (DB 를 보기 전에 
   assert.equal(r.json().code, "AGENT_REPORTS_DISABLED");
   await off.close();
 });
+
+test("W4·W5: Agent 자동 deploy 보고(이전 번호 없이 app + 커밋)와 facts 보고도 받는다, 목록에서 kind=facts 로 거른다", async () => {
+  const sentAt = new Date().toISOString();
+  const reps: AgentReport[] = [
+    { kind: "deploy", agentVersion: "t", sentAt, app: "t-0a1b2c3d-shop-onprem-k3s", bundleHash: "a".repeat(40), status: "applied", resources: [] },
+    { kind: "facts", agentVersion: "t", sentAt, grants: { level: "L0" }, dbs: [] },
+  ];
+  for (const r of reps) {
+    const res = await sendAgentReport(r, { baseUrl: base, keyId: KEY, secret: SECRET });
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+  }
+  const l = await fetch(base + `/api/v1/environments/${E}/agent-reports?kind=facts`, { headers: { "x-dev-tenant": T } });
+  assert.equal(l.status, 200);
+  const j = await l.json() as { items: Array<{ kind: string }> };
+  assert.ok(j.items.length >= 1 && j.items.every((i) => i.kind === "facts"));
+});

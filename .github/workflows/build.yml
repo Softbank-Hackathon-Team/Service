@@ -1,4 +1,4 @@
-# 태그(v*)를 밀면 이미지 4개를 GHCR 에 올린다.
+# 태그(v*)를 밀면 이미지 5개를 GHCR 에 올린다 (W1: 온프레 Agent 포함).
 #   이름: ghcr.io/<소유자 소문자>/svc-<app>:<태그>  (+ sha-<짧은 커밋>)
 #   예)   git tag v0.1.0 && git push origin v0.1.0
 # 권한: 이 워크플로의 GITHUB_TOKEN 에 packages:write 만 준다(따로 비밀값 없음).
@@ -20,12 +20,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        app: [api, worker, agent-worker, web]
+        app: [api, worker, agent-worker, onprem-agent, web]
         # Z75-17: 서버 앱 3개는 Dockerfile 하나의 단계(target), web 만 따로
         include:
           - { app: api, file: deploy/docker/Dockerfile, target: api }
           - { app: worker, file: deploy/docker/Dockerfile, target: worker }
           - { app: agent-worker, file: deploy/docker/Dockerfile, target: agent-worker }
+          - { app: onprem-agent, file: deploy/docker/Dockerfile, target: onprem-agent }
           - { app: web, file: apps/web/Dockerfile, target: "" }
     steps:
       - uses: actions/checkout@v7

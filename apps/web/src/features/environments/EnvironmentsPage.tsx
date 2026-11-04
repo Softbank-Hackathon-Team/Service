@@ -26,6 +26,11 @@ const STAGE = { before: '이전 전', changing: '이전 중', after: '이전 끝
 function reportLine(report: AgentReportBody) {
   if (report.kind === 'heartbeat') return `k3s ${report.k3sVersion}${report.cnpg ? ` · DB ${report.cnpg.ready ? '준비됨' : '준비 안 됨'}` : ''}`;
   if (report.kind === 'deploy') return report.status === 'applied' ? `배포 적용 · 자원 ${report.resources.length}개` : `배포 실패${report.reason ? ` · ${report.reason}` : ''}`;
+  if (report.kind === 'facts') {
+    const tls = report.dbs.filter((db) => db.tlsEnforced === false).length;
+    const open = report.dbs.filter((db) => db.exposed === true).length;
+    return `보안 사실 · 권한 ${report.grants.level} · DB ${report.dbs.length}개 (TLS 강제 아님 ${tls}, 밖에 열림 ${open})`;
+  }
   const failed = report.findings.filter((finding) => finding.status === 'fail');
   const threats = failed.filter((finding) => finding.kind === 'threat').length;
   return `보안 보고 · 위반 ${failed.length - threats}개 · 위협 ${threats}개`;
