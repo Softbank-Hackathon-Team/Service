@@ -134,6 +134,10 @@ run "node_groups" {
     condition     = alltrue([for sg in aws_security_group.node : length(sg.ingress) == 0 && length(sg.egress) == 0])
     error_message = "노드 SG 3개에는 규칙이 없어야 함 (표식 전용)"
   }
+  assert {
+    condition     = aws_eks_node_group.this["sandbox"].scaling_config[0].min_size >= 1 && aws_eks_node_group.this["sandbox"].scaling_config[0].desired_size >= 1
+    error_message = "sandbox 노드는 데모 전에 떠 있어야 함 (min·desired 1 이상)"
+  }
 }
 
 run "cni_and_pod_identity" {

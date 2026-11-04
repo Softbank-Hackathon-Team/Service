@@ -232,6 +232,8 @@ resource "aws_eks_cluster" "this" {
 # 노드 그룹별 보안 그룹. 규칙 0개: 플랫폼 RDS 인그레스가 출처로 가리키는 표식으로만 쓴다
 # 노드끼리·컨트롤 플레인과의 통신은 같이 붙는 클러스터 SG(자기 참조 전부 허용)가 맡는다. 보안 그룹은 합집합이라 여기 규칙을 더하지 않는다.
 # Terraform 이 새 SG 의 기본 나가는 규칙을 지우지만 나가는 길도 클러스터 SG 가 허용한다
+# 그래서 sandbox 노드도 NAT 로 인터넷에 나간다. sandbox → RDS 는 db_from_nodes 가 막는다
+# TODO(human): sandbox 인터넷 차단은 클러스터 SG 를 떼야 한다. 그 전에 ECR·S3·EC2·STS·EKS Auth VPC 엔드포인트와 ghcr.io 이미지 미러가 필요
 resource "aws_security_group" "node" {
   for_each    = toset(["general", "cred", "sandbox"])
   name        = "${var.name}-node-${each.key}"
