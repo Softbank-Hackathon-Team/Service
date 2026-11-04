@@ -122,6 +122,8 @@ const runs = async (id: string) => (await owner.query(`SELECT * FROM sandbox_run
 const lastAudit = async (id: string, action: string) => (await owner.query(`SELECT detail FROM audit_events WHERE target=$1 AND action=$2 ORDER BY seq DESC LIMIT 1`, [id, action])).rows[0]?.detail as Raw | undefined;
 const deployJobs = async (id: string) => (await owner.query(
   `SELECT state, start_after > now() + interval '20 seconds' AS later FROM pgboss.job WHERE name='deploy' AND singleton_key=$1 AND state IN ('created','retry')`, [`deploy:${id}`])).rows as Array<{ state: string; later: boolean }>;
+const retryAudits = async (id: string) => (await owner.query(
+  `SELECT result FROM audit_events WHERE target=$1 AND action='deploy.retry_scheduled' ORDER BY seq`, [id])).rows.map((r) => r.result as string);
 const rehearsalJobs = async (runId: string) => (await owner.query(
   `SELECT singleton_key FROM pgboss.job WHERE name='sandbox-rehearsal' AND data->>'sandboxRunId' = $1`, [runId])).rows as Array<{ singleton_key: string }>;
 const commits = () => Number(git("rev-list", "--count", "HEAD"));
@@ -178,6 +180,7 @@ test("켬: 줄 queued + sandbox-rehearsal 작업(노드 키) → 기다림(Retry
   assert.ok(run!.deadline_at > new Date(Date.now() + 1100_000), "기한 = 만든 때 + REHEARSAL_TIMEOUT_SEC(1200)");
   assert.deepEqual(await rehearsalJobs(run!.id), [{ singleton_key: "sandbox-rehearsal:sandbox-node" }]);
   assert.deepEqual(await deployJobs(id), [{ state: "created", later: true }], "deploy 작업이 REHEARSAL_POLL_SEC 뒤로 다시 들어감");
+  assert.deepEqual(await retryAudits(id), ["ok"], "리허설 기다림은 오류가 아니다");
   assert.equal(commits(), c0, "기다리는 동안 커밋 없음");
   assert.equal(git("status", "--porcelain"), "", "렌더 뒤 작업 복사본 되돌림");
   // 두 번 배달: 같은 줄을 보고 기다림만
@@ -240,6 +243,35 @@ test("켬: 기한이 지나면 error(REHEARSAL_TIMEOUT) → paused, 늦게 온 a
   assert.deepEqual([after!.status, after!.failure_code], ["error", "REHEARSAL_TIMEOUT"]);
   const late = await owner.query(`UPDATE sandbox_runs SET status='passed' WHERE id=$1 AND status IN ('queued','running')`, [run!.id]);
   assert.equal(late.rowCount, 0);
+});
+
+test("켬: 리허설이 넣자마자 끝나도 기다리던 deploy 작업을 깨운다 (줄·작업·다시 넣는 deploy 작업이 한 트랜잭션)", { skip }, async () => {
+  Object.assign(process.env, { SANDBOX_REHEARSAL: "on", MOCK_SANDBOX: "1" });
+  const id = await seed();
+  // 워커를 다시 넣기 트랜잭션 안(감사 쓰기의 회사 잠금)에 세워 둔다. 그동안 줄이 보이면 agent-worker 가 바로 끝내고 깨운다
+  const lock = new pg.Client({ connectionString: OWNER }); await lock.connect();
+  try {
+    await lock.query("SELECT pg_advisory_lock(hashtext('audit:' || $1))", [T]);
+    const worker = dp.handleDeploy(job(id));
+    for (let i = 0; ; i++) {
+      const waiting = await owner.query(`SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND NOT granted
+        AND database = (SELECT oid FROM pg_database WHERE datname = current_database()) AND objid::bigint = (hashtext('audit:' || $1)::bigint & 4294967295)`, [T]);
+      if (waiting.rowCount) break;
+      assert.ok(i < 400, "워커가 감사 잠금에서 기다려야 한다");
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    const [early] = await runs(id);
+    if (early) await completeAsAgentWorker(early.id, "passed");
+    await lock.query("SELECT pg_advisory_unlock(hashtext('audit:' || $1))", [T]);
+    assert.equal(await worker, "skipped");
+    const [run] = await runs(id);
+    if (run!.status === "queued") await completeAsAgentWorker(run!.id, "passed");
+    assert.deepEqual(await deployJobs(id), [{ state: "created", later: false }], "결과를 쓴 뒤 deploy 작업이 바로 돈다 (REHEARSAL_POLL_SEC 를 기다리지 않음)");
+  } finally {
+    await lock.end();
+  }
+  assert.equal(await dp.handleDeploy(job(id)), "advanced");
+  assert.equal((await mig(id)).status, "syncing");
 });
 
 test("켬: 통과 뒤 차트가 바뀌어 커밋 직전 렌더가 다르면 커밋하지 않고 REHEARSAL_BUNDLE_MISMATCH", { skip }, async () => {

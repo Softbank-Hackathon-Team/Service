@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { QUEUES, RehearsalTarget, rehearsalSettings, type RehearsalEvidence, type RehearsalFailureCode } from "@svc/contracts";
 import { withTenant } from "@svc/core";
 import { RetryLater, jobData, type MigrationRow, type StepJob, type StepOutcome } from "../jobs/_step.js";
@@ -10,7 +11,7 @@ import { expireRun, insertFinished, insertQueued, insertReused, insertSkipped, r
 // deploy 리허설 문 (설계 2.2). secretValuesGate 뒤, GitOps 커밋 바로 앞.
 // 이번 차례(epoch = migrations.version) 줄 하나의 상태로 갈리는 상태 기계다:
 //   줄 없음   → 꺼짐·미지원 도착이면 skipped 줄 → 커밋 / 같은 지문 통과가 있으면 재사용 줄 → 커밋 /
-//              그 밖은 렌더 → 치환 → 이미지 복사 → queued 줄 + sandbox-rehearsal 작업 → RetryLater
+//              그 밖은 렌더 → 치환 → 이미지 복사 → RetryLater (queued 줄 + sandbox-rehearsal 작업 + 다시 넣는 deploy 작업이 한 트랜잭션)
 //   queued·running → 기한 전이면 RetryLater, 지나면 error(REHEARSAL_TIMEOUT) → paused
 //   passed    → 그 지문으로 커밋 (렌더가 다르면 commitBundle 이 REHEARSAL_BUNDLE_MISMATCH)
 //   failed·error → paused (줄의 실패 코드)
@@ -55,10 +56,10 @@ export async function rehearsalGate(j: StepJob, m: MigrationRow, epoch: number, 
       `이미지 복사 실패 (${mirrored.reason}): ${mirrored.message}`, { mirror: { reason: mirrored.reason, image: mirrored.image } });
 
   const input = buildRehearsalInput({ target: target.data, i, values, rendered, docs, images: mirrored.images, mirrored: !mirrored.skipped });
-  const id = await withTenant(j.tenantId, (tx) => insertQueued(tx, { ...key, requestId: j.requestId }, input, s.timeoutSec));
-  // 두 번 배달이면 앞 배달이 넣은 줄을 다시 읽어 그 상태대로 간다
-  if (!id) return rehearsalGate(j, m, epoch, i, repo, deps);
-  throw new RetryLater(QUEUES.deploy, jobData(j), s.pollSec, { rehearsal: { sandboxRunId: id, status: "queued", bundleSha256: input.bundleSha256 } });
+  const id = randomUUID();
+  // 줄과 작업은 다시 넣는 deploy 작업과 같은 트랜잭션에 (runStep). 리허설이 아무리 빨리 끝나도 깨울 deploy 작업이 이미 있다
+  throw new RetryLater(QUEUES.deploy, jobData(j), s.pollSec, { rehearsal: { sandboxRunId: id, status: "queued", bundleSha256: input.bundleSha256 } },
+    { expected: true, inTx: (tx) => insertQueued(tx, { ...key, id, requestId: j.requestId }, input, s.timeoutSec) });
 }
 
 async function fromRow(j: StepJob, key: RunKey, row: RunRow, deps: GateDeps): Promise<Gate> {
@@ -82,7 +83,7 @@ async function fromRow(j: StepJob, key: RunKey, row: RunRow, deps: GateDeps): Pr
       }
       // 기한 직후에 한 번 더 보게 (기한이 짧게 남았으면 그만큼만)
       const delay = row.leftSec === null ? s.pollSec : Math.max(1, Math.min(s.pollSec, Math.ceil(row.leftSec)));
-      throw new RetryLater(QUEUES.deploy, jobData(j), delay, { rehearsal: { sandboxRunId: row.id, status: row.status } });
+      throw new RetryLater(QUEUES.deploy, jobData(j), delay, { rehearsal: { sandboxRunId: row.id, status: row.status } }, { expected: true });
     }
   }
 }
