@@ -108,6 +108,7 @@ marker_sql() {
     0042) echo "has_table_privilege('app_user', 'migrate.applied', 'SELECT')" ;;
     0043) echo "to_regprocedure('public.maint_stuck_migrations(interval,integer)') IS NOT NULL" ;;
     0044) echo "EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'environments' AND column_name = 'gcp_target_project')" ;;
+    0046) echo "to_regclass('public.sandbox_runs') IS NOT NULL" ;;
     *) echo "" ;;
   esac
 }
