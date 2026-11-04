@@ -1,6 +1,7 @@
 import type { SecurityStatus } from '../../components/ui/Security';
 import type { CellState, LedgerRow, MatrixRow, SecurityRegression, SecurityView } from '../../lib/security-types';
 import type { AgentReportList } from '../../lib/types';
+import { t } from '../../lib/i18n';
 
 const CELL: Record<CellState, SecurityStatus> = { pass: 'pass', fail: 'fail', unknown: 'unknown', not_applicable: 'na', attested: 'attested' };
 
@@ -24,12 +25,12 @@ export function controlRows(cells: MatrixRow[]): ControlRow[] {
 }
 
 export function securityHeadline(view: Pick<SecurityView, 'summary'> | null, regression: Pick<SecurityRegression, 'summary' | 'verdict'> | null) {
-  if (!view) return { stop: false, title: '보안 표를\n읽고 있습니다' };
+  if (!view) return { stop: false, title: t('보안 표를\n읽고 있습니다') };
   const worse = regression?.verdict === 'regressed' ? regression.summary.worse : 0;
-  if (view.summary.fail > 0) return { stop: true, title: `위반 ${view.summary.fail}건을\n확인해 주세요` };
-  if (worse > 0) return { stop: true, title: `옮긴 뒤 ${worse}건이\n약해집니다` };
-  if (view.summary.notImplemented > 0 || view.summary.warn > 0) return { stop: false, title: '위반은 없고\n확인할 칸이 남았습니다' };
-  return { stop: false, title: '통제가\n모두 지켜졌습니다' };
+  if (view.summary.fail > 0) return { stop: true, title: t('위반 {0}건을\n확인해 주세요', { 0: view.summary.fail }) };
+  if (worse > 0) return { stop: true, title: t('옮긴 뒤 {0}건이\n약해집니다', { 0: worse }) };
+  if (view.summary.notImplemented > 0 || view.summary.warn > 0) return { stop: false, title: t('위반은 없고\n확인할 칸이 남았습니다') };
+  return { stop: false, title: t('통제가\n모두 지켜졌습니다') };
 }
 
 export type Threat = { key: string; title: string; severity: string; evidence: string; at: string };
@@ -46,7 +47,7 @@ export function threatsFrom(reports: (AgentReportList | null)[]): Threat[] {
             .filter((finding) => finding.kind === 'threat' && finding.status === 'fail')
             .map((finding, index) => ({
               key: `${item.id}-${index}`,
-              title: finding.resource || finding.toolCheckId || '보안 항목',
+              title: finding.resource || finding.toolCheckId || t('보안 항목'),
               severity: finding.severity,
               evidence: finding.evidence,
               at: item.receivedAt,
@@ -69,4 +70,28 @@ export function ledgerSummary(rows: Pick<LedgerRow, 'status' | 'expiredButActive
 export function ledgerOrder<T extends Pick<LedgerRow, 'status' | 'expiredButActive' | 'issuedAt'>>(rows: T[]): T[] {
   const rank = (row: T) => (row.expiredButActive ? 0 : row.status === 'active' || row.status === 'revoke_requested' ? 1 : 2);
   return [...rows].sort((a, b) => rank(a) - rank(b) || b.issuedAt.localeCompare(a.issuedAt));
+}
+
+/**
+ * 이전 화면 "보안" 카드의 접힌 머리줄 요약과 스스로 펼칠지.
+ * 가드레일 멈춤·지금 일어나는 위협·만료됐는데 남은 권한은 사람이 바로 봐야 해서 펼친다. 위반·약점은 요약에만 쓴다.
+ */
+export function securityCardSummary(o: {
+  view: Pick<SecurityView, 'summary' | 'ledger'> | null;
+  threats: number;
+  stoppedByRule: boolean;
+  reading: boolean;
+}): { summary: string; open: boolean } {
+  const stale = o.view?.ledger ? ledgerSummary(o.view.ledger).stale : 0;
+  const parts = [
+    o.stoppedByRule ? t('가드레일 멈춤') : null,
+    o.threats > 0 ? t('위협 {0}', { 0: o.threats }) : null,
+    stale > 0 ? t('만료된 권한 {0}', { 0: stale }) : null,
+    o.view && o.view.summary.fail > 0 ? t('위반 {0}', { 0: o.view.summary.fail }) : null,
+    o.view && o.view.summary.warn > 0 ? t('약점 {0}', { 0: o.view.summary.warn }) : null,
+  ].filter((part): part is string => !!part);
+  const open = o.stoppedByRule || o.threats > 0 || stale > 0;
+  if (parts.length > 0) return { summary: parts.slice(0, 2).join(' · '), open };
+  if (!o.view) return { summary: o.reading ? t('읽는 중') : t('아직 없음'), open };
+  return { summary: o.view.summary.notImplemented > 0 ? t('미구현 {0}', { 0: o.view.summary.notImplemented }) : t('모두 지켜짐'), open };
 }

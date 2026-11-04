@@ -117,3 +117,36 @@
   --font-sans: 'Pretendard JP Variable', -apple-system, BlinkMacSystemFont, system-ui, 'Apple SD Gothic Neo', 'Hiragino Sans', 'Noto Sans KR', 'Noto Sans JP', 'Malgun Gothic', 'Yu Gothic', sans-serif;
   --font-mono: 'IBM Plex Mono', 'Pretendard JP Variable', ui-monospace, monospace;
 }
+
+/*
+ * 다크 테마 (설정 > 화면 > 테마). 같은 이름의 토큰을 어두운 바탕용 값으로 바꾼다. 컴포넌트는 그대로다.
+ * DRAFT(ai): 라이트 17색의 어두운 짝. 글자 대비 4.5:1 은 화면 점검(__layoutCheck)으로 본다.
+ * 주 버튼과 경고 카드는 라이트와 같은 진한 파랑·빨강 위 흰 글자를 쓴다 (밝은 파랑 위 흰 글자는 대비가 모자란다)
+ */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --primitive-canvas: #0e1116;
+  --primitive-surface: #161a21;
+  --primitive-subtle: #1f242d;
+  --primitive-line: #2a303b;
+  --primitive-strong: #3b4351;
+  --primitive-muted: #98a1af;
+  --primitive-secondary: #aab3c0;
+  --primitive-ink: #e7eaef;
+  --primitive-accent: #7c9cf2;
+  --primitive-accent-hover: #98b2f6;
+  --primitive-accent-soft: #1d2846;
+  --primitive-success: #5cc095;
+  --primitive-success-soft: #14271e;
+  --primitive-warning: #e0b057;
+  --primitive-warning-soft: #2c2312;
+  --primitive-danger: #ee8a8a;
+  --primitive-danger-soft: #3a1d1d;
+
+  --color-bg-action-primary: #365fce;
+  --color-bg-action-primary-hover: #4670db;
+  --color-fg-on-action: #ffffff;
+  --color-bg-alert: #a83f3f;
+  --color-fg-on-alert: #ffffff;
+  --color-fg-on-alert-muted: #f3d6d6;
+}

@@ -5,6 +5,7 @@ import { isTerminal, LABEL } from '../../lib/status';
 import type { MigrationView } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
 import s from '../common/page.module.css';
+import { t } from '../../lib/i18n';
 
 const byRecent = (a: MigrationView, b: MigrationView) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '');
 
@@ -16,7 +17,7 @@ export function chooseMigration(items: MigrationView[], id: string | null): Migr
 }
 
 /** 이전 한 건 기준으로 보는 화면들이 함께 쓴다. 상단 바의 선택 칸까지 돌려준다. */
-export function useChosenMigration(page: 'security' | 'audit' | 'agent', id: string | null) {
+export function useChosenMigration(page: 'audit' | 'agent', id: string | null) {
   const migrations = usePoll(api.listMigrations, 5_000, [], { signal: anyMigration });
   const envs = usePoll(api.listEnvironments, null, []);
   const items = migrations.data ?? [];
@@ -26,7 +27,7 @@ export function useChosenMigration(page: 'security' | 'audit' | 'agent', id: str
   const picker = items.length > 0 && (
     <select
       className={`${s.select} t-label-md`}
-      aria-label="이전 고르기"
+      aria-label={t('마이그레이션 고르기')}
       value={chosen?.id ?? ''}
       onChange={(event) => go(`${page}/${event.target.value}`)}
     >

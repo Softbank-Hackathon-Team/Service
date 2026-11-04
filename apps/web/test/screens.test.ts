@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseRoute } from "../src/app/routes";
-import { controlRows, ledgerOrder, ledgerSummary, securityHeadline, threatsFrom } from "../src/features/security/model";
+import { controlRows, ledgerOrder, ledgerSummary, securityCardSummary, securityHeadline, threatsFrom } from "../src/features/security/model";
 import type { LedgerRow, MatrixRow } from "../src/lib/security-types";
 import type { Finding } from "../src/lib/types";
 
@@ -11,7 +11,9 @@ test("주소 해석: 모든 화면으로 간다", () => {
   assert.deepEqual(parseRoute("#/없는화면"), { page: "dashboard" });
   assert.deepEqual(parseRoute("#/environments"), { page: "environments", id: null });
   assert.deepEqual(parseRoute("#/environments/e1"), { page: "environments", id: "e1" });
-  assert.deepEqual(parseRoute("#/security/m1"), { page: "security", id: "m1" });
+  // 보안 탭은 없어졌다. 예전 주소는 그 이전 화면(보안 카드가 있는 곳)으로 간다
+  assert.deepEqual(parseRoute("#/security/m1"), { page: "migrations", view: "detail", id: "m1" });
+  assert.deepEqual(parseRoute("#/security"), { page: "migrations", view: "list" });
   assert.deepEqual(parseRoute("#/audit"), { page: "audit", id: null });
   assert.deepEqual(parseRoute("#/agent/m1"), { page: "agent", id: "m1" });
   assert.deepEqual(parseRoute("#/settings"), { page: "settings" });
@@ -60,4 +62,16 @@ test("임시 권한 장부: 만료됐는데 남은 것을 따로 세고 맨 위�
   assert.deepEqual(ledgerSummary(rows), { total: 5, live: 2, closed: 2, stale: 1 });
   assert.deepEqual(ledgerOrder(rows).map((r) => r.issuedAt), ["0", "3", "2", "4", "1"]);
   assert.deepEqual(ledgerSummary([]), { total: 0, live: 0, closed: 0, stale: 0 });
+});
+
+test("이전 화면 보안 카드: 접힌 요약과 스스로 펼칠 때", () => {
+  const view = (fail: number, warn: number, notImplemented = 0, ledger: { status: "active" | "revoked"; expiredButActive: boolean }[] | null = []) =>
+    ({ summary: { ok: 10, warn, fail, notImplemented, na: 0 }, ledger: ledger as never });
+  assert.deepEqual(securityCardSummary({ view: null, threats: 0, stoppedByRule: false, reading: true }), { summary: "읽는 중", open: false });
+  assert.deepEqual(securityCardSummary({ view: view(2, 3), threats: 0, stoppedByRule: false, reading: false }), { summary: "위반 2 · 약점 3", open: false }, "위반·약점은 요약만");
+  assert.deepEqual(securityCardSummary({ view: view(0, 0), threats: 0, stoppedByRule: false, reading: false }), { summary: "모두 지켜짐", open: false });
+  assert.deepEqual(securityCardSummary({ view: view(0, 0, 4), threats: 0, stoppedByRule: false, reading: false }), { summary: "미구현 4", open: false });
+  assert.deepEqual(securityCardSummary({ view: view(2, 3), threats: 1, stoppedByRule: true, reading: false }), { summary: "가드레일 멈춤 · 위협 1", open: true });
+  const stale = view(0, 0, 0, [{ status: "active", expiredButActive: true }]);
+  assert.deepEqual(securityCardSummary({ view: stale, threats: 0, stoppedByRule: false, reading: false }), { summary: "만료된 권한 1", open: true });
 });

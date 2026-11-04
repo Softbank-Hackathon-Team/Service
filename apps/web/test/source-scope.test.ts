@@ -95,7 +95,7 @@ test("도착 후보: 연결된 다른 벤더만, 같은 벤더는 따로 돌려�
 
 test("빌릴 권한 한 줄: GCP 전용 프로젝트가 없거나 권한이 빠지면 경고", () => {
   const now = Date.parse("2026-11-04T12:00:00Z");
-  assert.deepEqual(borrowNote(env("c", "gcp"), now), { text: "이전 전용 프로젝트가 없어 실행 단계에서 막힐 수 있습니다", warn: true });
+  assert.deepEqual(borrowNote(env("c", "gcp"), now), { text: "마이그레이션 전용 프로젝트가 없어 실행 단계에서 막힐 수 있습니다", warn: true });
   assert.equal(borrowNote(env("c", "gcp", { targetProjectId: "shop-mig" }), now).warn, false);
   assert.equal(borrowNote(env("a", "aws", { missingPermissions: ["eks:ListClusters"] }), now).warn, true);
   assert.deepEqual(borrowNote(env("a", "aws", { lastVerifiedAt: "2026-11-04T11:57:00Z" }), now), { text: "실행 역할 빌릴 수 있음 · 확인 3분 전", warn: false });

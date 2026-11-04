@@ -2,6 +2,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import { AccountPill } from '../ui/controls';
 import { Logo } from '../ui/Logo';
 import s from './ConsoleLayout.module.css';
+import { t } from '../../lib/i18n';
 
 /** 칸 너비. 큰 카드(fill)만 늘고 줄며, 나머지는 토큰으로 고정한다. */
 const COLUMN = {
@@ -55,7 +56,7 @@ export function ConsoleLayout({ layout, nav, onAccount, barLeft, barRight, child
         </div>
         <div className={s.barGroup}>
           {barRight}
-          {onAccount && <AccountPill label="계정" onClick={onAccount} />}
+          {onAccount && <AccountPill label={t('계정')} onClick={onAccount} />}
         </div>
       </header>
       <main className={s.bento} style={bentoStyle}>

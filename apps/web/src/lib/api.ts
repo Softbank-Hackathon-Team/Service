@@ -2,6 +2,7 @@ import type { AgentReview } from './agent-review-types';
 import { createAuth } from './auth';
 import { createClient, unwrap } from './http';
 import type { LiveTrafficView, TrafficShiftProgress } from './liveTraffic';
+import type { RehearsalView } from './rehearsal-types';
 import type { PlanResourcesView } from './resourceMap';
 import type { LiveCheckResult, SecurityRegression, SecurityView } from './security-types';
 import type {
@@ -72,6 +73,8 @@ export const api = {
   /** 거절 뒤 명세부터 다시 고치기: rejected → spec_review */
   reopenSpec: (id: string) => post<{ id: string }>(`/migrations/${id}/spec/reopen`),
   latestPlan: (id: string) => get<PlanDoc>(`/migrations/${id}/plan`),
+  /** deploying 안 vCluster 리허설의 지금 줄. 줄이 아직 없으면 run: null */
+  rehearsal: (id: string) => get<RehearsalView>(`/migrations/${id}/rehearsal`),
   planResources: (id: string) => get<PlanResourcesView>(`/migrations/${id}/plan/resources`),
   migrationCost: (id: string) => get<MigrationCostView>(`/migrations/${id}/cost`),
   timeline: (id: string) => get<TimelineView>(`/migrations/${id}/timeline`),

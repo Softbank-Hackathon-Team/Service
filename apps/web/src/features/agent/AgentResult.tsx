@@ -7,17 +7,18 @@ import { usePoll } from '../../lib/usePoll';
 import { useAction } from '../migration/shared';
 import { agentBlock } from './model';
 import s from '../common/page.module.css';
+import { t } from '../../lib/i18n';
 
 export const OUTCOME: Record<NonNullable<RemediateReview['outcome']>, { label: string; tone: 'success' | 'neutral' | 'warning' }> = {
-  proposed: { label: '수정안 있음', tone: 'success' },
-  no_change: { label: '고칠 것 없음', tone: 'neutral' },
-  gave_up: { label: '원인 못 찾음', tone: 'warning' },
+  proposed: { label: t('수정안 있음'), tone: 'success' },
+  no_change: { label: t('고칠 것 없음'), tone: 'neutral' },
+  gave_up: { label: t('원인 못 찾음'), tone: 'warning' },
 };
 
 export function llmNote(llm: AgentLlm | undefined) {
   const block = agentBlock(llm);
   if (block) return block.note;
-  if (llm?.state === 'fake') return '시험용 가짜 AI 결과입니다.';
+  if (llm?.state === 'fake') return t('시험용 가짜 AI 결과입니다.');
   return null;
 }
 
@@ -33,14 +34,14 @@ export function RemediateBody({ view }: { view: AgentReview | null }) {
   return (
     <>
       {note && <p className="t-body-sm c-secondary">{note}</p>}
-      {result?.source === 'stub' && <Badge tone="warning">시험용 결과</Badge>}
+      {result?.source === 'stub' && <Badge tone="warning">{t('시험용 결과')}</Badge>}
       {result?.title && <p className="t-label-md">{result.title}</p>}
       {result?.rationale && <p className="t-body-sm c-secondary">{result.rationale}</p>}
       {result?.status === 'failed' && result.reason && <p className="t-body-sm c-danger">{result.reason}</p>}
-      {result?.gate && !result.gate.ok && <p className="t-body-sm c-danger">안전 검사를 통과하지 못했습니다: {result.gate.violations.join(', ')}</p>}
+      {result?.gate && !result.gate.ok && <p className="t-body-sm c-danger">{t('안전 검사를 통과하지 못했습니다: {0}', { 0: result.gate.violations.join(', ') })}</p>}
       {result && result.checked.length > 0 && (
         <div>
-          <p className="t-label-sm c-tertiary">확인한 것</p>
+          <p className="t-label-sm c-tertiary">{t('확인한 것')}</p>
           <ul className="t-body-sm c-secondary">
             {result.checked.map((item) => (
               <li key={item}>{item}</li>
@@ -50,7 +51,7 @@ export function RemediateBody({ view }: { view: AgentReview | null }) {
       )}
       {result && result.notDone.length > 0 && (
         <div>
-          <p className="t-label-sm c-warning">사람이 확인할 것</p>
+          <p className="t-label-sm c-warning">{t('사람이 확인할 것')}</p>
           <ul className="t-body-sm c-secondary">
             {result.notDone.map((item) => (
               <li key={item}>{item}</li>
@@ -63,9 +64,9 @@ export function RemediateBody({ view }: { view: AgentReview | null }) {
 }
 
 export function agentSummary(result: RemediateReview | null | undefined) {
-  if (isRunning(result)) return '점검 중';
+  if (isRunning(result)) return t('점검 중');
   if (result?.outcome) return OUTCOME[result.outcome].label;
-  return result?.status === 'failed' ? '점검 실패' : '아직 없음';
+  return result?.status === 'failed' ? t('점검 실패') : t('아직 없음');
 }
 
 /** 멈춘 이전 화면에 끼우는 수정안 카드. 같은 화면의 멈춘 이유 카드도 실패 분석을 쓰므로 읽기는 화면이 한 번만 한다. */
@@ -77,18 +78,18 @@ export function AgentFold({ migrationId, review }: { migrationId: string; review
   const block = agentBlock(view?.llm);
   const blocked = block !== null;
   return (
-    <FoldTile title="에이전트 수정안" summary={agentSummary(result)}>
+    <FoldTile title={t('에이전트 수정안')} summary={agentSummary(result)}>
       <div className={s.agent}>
         <RemediateBody view={view} />
         {error && <p className="t-body-sm c-danger">{error}</p>}
         <div>
           <BarPill
-            label={block ? block.button : busy || running ? '점검 중' : result ? '다시 점검' : '수정안 받기'}
+            label={block ? block.button : busy || running ? t('점검 중') : result ? t('다시 점검') : t('수정안 받기')}
             icon="bot"
             onClick={busy || running || blocked ? undefined : () => void run(() => api.agentRun(migrationId))}
           />
         </div>
-        <p className="t-caption c-tertiary">수정안을 적용하는 것은 사람입니다. 적용한 뒤 이전을 재개해 주세요.</p>
+        <p className="t-caption c-tertiary">{t('수정안을 적용하는 것은 사람입니다. 적용한 뒤 마이그레이션을 재개해 주세요.')}</p>
       </div>
     </FoldTile>
   );

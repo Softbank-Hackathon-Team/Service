@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  CONNECTABLE, checkAccount, checkEnvForm, connectPollMs, connectSteps, envPath, phaseOf,
+  CONNECTABLE, checkAccount, checkEnvForm, connectPollMs, connectSteps, envPath, isLinked, isUnfinished, phaseOf, stoppedAt,
 } from "../src/features/environments/connect";
 import { parseRoute } from "../src/app/routes";
 import type { ConnectionStatus } from "../src/lib/types";
@@ -62,4 +62,19 @@ test("어디서 들어오든 같은 길: 연결됐으면 환경 화면, 아니�
   assert.deepEqual(parseRoute("#/environments/connect"), { page: "environments", view: "connect", id: null });
   assert.deepEqual(parseRoute("#/environments/connect/e1"), { page: "environments", view: "connect", id: "e1" });
   assert.deepEqual(parseRoute("#/environments/e1"), { page: "environments", id: "e1" });
+});
+
+test("끝나지 않은 등록: 서버는 이력으로 갖고, 화면은 연결됨·불안정만 보인다", () => {
+  const all = ["draft", "awaiting_customer", "verifying", "connected", "unstable", "failed", "expired", "disconnected"] as const;
+  assert.deepEqual(all.filter((connectionStatus) => isLinked({ connectionStatus })), ["connected", "unstable"]);
+});
+
+test("등록하다 만 환경: 연결도 해제도 아닌 것, 멈춘 단계는 등록 표의 첫 미완료 칸", () => {
+  const all = ["draft", "awaiting_customer", "verifying", "connected", "unstable", "failed", "expired", "disconnected"] as const;
+  assert.deepEqual(all.filter((connectionStatus) => isUnfinished({ connectionStatus })), ["draft", "awaiting_customer", "verifying", "failed", "expired"]);
+  assert.equal(stoppedAt({ connectionStatus: "awaiting_customer", provider: "aws" }), "권한 열기");
+  assert.equal(stoppedAt({ connectionStatus: "draft", provider: "onprem" }), "Agent 설치");
+  assert.equal(stoppedAt({ connectionStatus: "verifying", provider: "gcp" }), "연결 확인");
+  assert.equal(stoppedAt({ connectionStatus: "failed", provider: "aws" }), "연결 확인");
+  assert.equal(stoppedAt({ connectionStatus: "expired", provider: "gcp" }), "연결 확인");
 });

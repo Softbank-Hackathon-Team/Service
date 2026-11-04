@@ -1,4 +1,5 @@
 import type { Provider } from "./types";
+import { t } from './i18n';
 // Z83-08: "출발 → 도착 자원 대응표" 화면 타입. 값은 서버 GET /migrations/:id/plan/resources (Z86,
 // apps/api env-inventory.ts PlanResources, packages/adapters service-map.ts · service-map-v2.ts) 가 준다.
 // Z101: 서버가 없을 때 쓰던 정적 표(staticRows·이름표 복사본)는 지웠다 — 이름표는 서버 한 곳에만 있다.
@@ -33,19 +34,19 @@ export interface PlanResourcesView {
 
 // ---- 아래 이름표는 service-map.ts · service-map-v2.ts 와 글자가 같아야 한다 (데모에서 화면·API 가 어긋나지 않게) ----
 export const CATEGORY_LABEL: Record<ResourceCategory, string> = {
-  cluster: "컨테이너 클러스터", workload: "앱(컨테이너)", database: "DB", ingress: "진입(로드 밸런서)", registry: "이미지 저장소",
-  secret: "비밀 저장소", identity: "앱 권한(ID)", network: "네트워크", storage: "객체 저장소",
-  cache: "캐시", queue: "큐·토픽", boundary: "경계 밖 자원",
+  cluster: t('컨테이너 클러스터'), workload: t('앱(컨테이너)'), database: "DB", ingress: t('진입(로드 밸런서)'), registry: t('이미지 저장소'),
+  secret: t('비밀 저장소'), identity: t('앱 권한(ID)'), network: t('네트워크'), storage: t('객체 저장소'),
+  cache: t('캐시'), queue: t('큐·토픽'), boundary: t('경계 밖 자원'),
 };
 
 // 출발 원래 실행 모양(contracts OriginV2.runtime)과 도착 실행 방식 이름
 const RUNTIME_LABEL: Record<string, string> = {
-  k8s: "쿠버네티스", managedContainer: "관리형 컨테이너", vm: "VM", paas: "PaaS", source: "소스 빌드",
+  k8s: t('쿠버네티스'), managedContainer: t('관리형 컨테이너'), vm: "VM", paas: "PaaS", source: t('소스 빌드'),
 };
 
 /** "실행 방식 바뀜" 한 줄. 바뀐 줄이 아니면 null. */
 export const runtimeChangeNote = (row: Pick<ResourceRow, "runtimeChange">): string | null =>
-  row.runtimeChange ? `실행 방식 바뀜: ${RUNTIME_LABEL[row.runtimeChange.from] ?? row.runtimeChange.from} → ${RUNTIME_LABEL[row.runtimeChange.to] ?? row.runtimeChange.to}` : null;
+  row.runtimeChange ? t('실행 방식 바뀜: {0} → {1}', { 0: RUNTIME_LABEL[row.runtimeChange.from] ?? row.runtimeChange.from, 1: RUNTIME_LABEL[row.runtimeChange.to] ?? row.runtimeChange.to }) : null;
 
 /**
  * 계획 화면의 "자원 대응" 카드에 쓸 줄. 옮기지 않는 줄(out_of_scope)은 빼고, 머리줄 건수는 실제로 그린 줄 수다.

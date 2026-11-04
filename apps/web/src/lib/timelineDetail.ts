@@ -1,4 +1,5 @@
 import type { PrecheckItem, TimelineItem } from "./types";
+import { t } from './i18n';
 
 // Z83-06: 타임라인 한 줄의 detail(JSON)을 사람이 읽는 조각으로. 워커가 넣는 키만 안다(apps/worker/src/jobs/*.ts):
 //   precheck: PrecheckItem[]                 (precheck.ts — 되돌아간 이유)
@@ -24,25 +25,25 @@ export function summarizeDetail(detail: Record<string, unknown>): DetailChip[] {
   const pc = precheckOf(detail);
   if (pc) {
     const block = pc.filter((c) => c.level === "block").length, warn = pc.filter((c) => c.level === "warn").length;
-    out.push({ label: `점검 ${pc.length}항목 · 막힘 ${block} · 주의 ${warn}`, tone: block ? "bad" : warn ? "wait" : "ok" });
+    out.push({ label: t('점검 {0}항목 · 막힘 {1} · 주의 {2}', { 0: pc.length, 1: block, 2: warn }), tone: block ? "bad" : warn ? "wait" : "ok" });
   }
   const g = detail.gitops;
   if (isObj(g)) {
-    if (str(g.skipped)) out.push({ label: `GitOps 건너뜀 (${str(g.skipped)})`, tone: "wait" });
-    const c = str(g.commit); if (c) out.push({ label: `커밋 ${c.slice(0, 8)}`, tone: "ok" });
-    const a = str(g.argoApp); if (a) out.push({ label: `Argo 앱 ${a}` });
+    if (str(g.skipped)) out.push({ label: t('GitOps 건너뜀 ({0})', { 0: str(g.skipped) }), tone: "wait" });
+    const c = str(g.commit); if (c) out.push({ label: t('커밋 {0}', { 0: c.slice(0, 8) }), tone: "ok" });
+    const a = str(g.argoApp); if (a) out.push({ label: t('Argo 앱 {0}', { 0: a }) });
   }
   const d = detail.deploy;
   if (isObj(d)) {
-    const e = str(d.error); if (e) out.push({ label: `배포 오류 ${e}`, tone: "bad" });
-    const s = str(d.status) ?? str(d.result); if (s && !e) out.push({ label: `배포 ${s}` });
+    const e = str(d.error); if (e) out.push({ label: t('배포 오류 {0}', { 0: e }), tone: "bad" });
+    const s = str(d.status) ?? str(d.result); if (s && !e) out.push({ label: t('배포 {0}', { 0: s }) });
   }
-  const w = detail.windowSec; if (typeof w === "number") out.push({ label: `롤백 창 ${w}초` });
-  const r = detail.revert; if (isObj(r)) { const why = str(r.reason); out.push({ label: `되돌림${why ? ": " + why : ""}`, tone: "wait" }); }
-  const at = detail.attempts; if (typeof at === "number" && at > 1) out.push({ label: `${at}번째 시도`, tone: "wait" });
-  if (detail.recheck) out.push({ label: "실행 직전 재검사 실패 (계획 지문 다름)", tone: "bad" });
+  const w = detail.windowSec; if (typeof w === "number") out.push({ label: t('롤백 창 {0}초', { 0: w }) });
+  const r = detail.revert; if (isObj(r)) { const why = str(r.reason); out.push({ label: t('되돌림{0}', { 0: why ? ": " + why : "" }), tone: "wait" }); }
+  const at = detail.attempts; if (typeof at === "number" && at > 1) out.push({ label: t('{0}번째 시도', { 0: at }), tone: "wait" });
+  if (detail.recheck) out.push({ label: t('실행 직전 재검사 실패 (계획 지문 다름)'), tone: "bad" });
   const err = str(detail.error); if (err) out.push({ label: err, tone: "bad" });
-  if (detail.stub === true) out.push({ label: "흉내(stub)", tone: "wait" });
+  if (detail.stub === true) out.push({ label: t('흉내(stub)'), tone: "wait" });
   return out;
 }
 
@@ -79,12 +80,15 @@ function judgementOf(x: unknown): Judgement | null {
 }
 
 /** 이 상태로 들어온 마지막 전이에 남은 근거: 트래픽 판정, 가드레일 규칙 번호 (packages/core advance: detail.evidence). 전이가 없으면 null */
-export function stopEvidence(items: TimelineItem[], into: string): { at: string; judgement: Judgement | null; rule: string | null } | null {
+//   리허설로 멈춘 전이는 detail.rehearsal 에 stage(queue = 줄 서기 / run = 실행)를 남긴다 (REHEARSAL_TIMEOUT 을 둘로 가른다)
+export function stopEvidence(items: TimelineItem[], into: string): { at: string; judgement: Judgement | null; rule: string | null; rehearsalStage: "queue" | "run" | null } | null {
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i]!;
     if (it.kind !== "transition" || it.to !== into) continue;
     const evidence = isObj(it.detail.evidence) ? it.detail.evidence : {};
-    return { at: it.at, judgement: judgementOf(it.detail.lastJudgement), rule: str(evidence.guardrailRule) };
+    const stage = isObj(it.detail.rehearsal) ? str(it.detail.rehearsal.stage) : null;
+    return { at: it.at, judgement: judgementOf(it.detail.lastJudgement), rule: str(evidence.guardrailRule),
+      rehearsalStage: stage === "queue" || stage === "run" ? stage : null };
   }
   return null;
 }
@@ -100,7 +104,7 @@ export function latestMeasurements(items: TimelineItem[]): { name: string; value
 }
 
 export const MEASURE_LABEL: Record<string, string> = {
-  replication_lag_ms: "복제 지연", cutover_pause_ms: "컷오버 멈춤", reverse_replication_ms: "역방향 복제", initial_copy_ms: "초기 복사",
-  sequences_synced: "시퀀스 맞춤", replication_slot_lag_bytes: "슬롯 지연 바이트", replication_slot_safe_wal_bytes: "슬롯 안전 WAL", fence_terminated_sessions: "끊은 세션",
-  forward_slot_left: "남은 정방향 슬롯", already_cut_over: "이미 컷오버", p95_ms: "p95", error_rate_pct: "오류율",
+  replication_lag_ms: t('복제 지연'), cutover_pause_ms: t('컷오버 멈춤'), reverse_replication_ms: t('역방향 복제'), initial_copy_ms: t('초기 복사'),
+  sequences_synced: t('시퀀스 맞춤'), replication_slot_lag_bytes: t('슬롯 지연 바이트'), replication_slot_safe_wal_bytes: t('슬롯 안전 WAL'), fence_terminated_sessions: t('끊은 세션'),
+  forward_slot_left: t('남은 정방향 슬롯'), already_cut_over: t('이미 컷오버'), p95_ms: "p95", error_rate_pct: t('오류율'),
 };

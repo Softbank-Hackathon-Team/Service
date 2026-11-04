@@ -1,5 +1,6 @@
 import type { MigrationSpecView } from './model';
 import type { SecuritySpecV2, SourceDbFacts } from './securityV2';
+import { t } from '../../lib/i18n';
 
 // 명세 v2 검토 (GET /migrations/:id/spec 의 v2 칸, apps/api spec.ts · contracts spec.ts MigrationSpecViewV2).
 // 서버는 v2 판일 때만 needsReviewV2·specV2·fieldMetaV2 를 싣고, 가져오기 v2 판이면 accuracy·outOfBoundary 도 싣는다.
@@ -49,26 +50,26 @@ export interface SpecPatch { baseVersion: number; confirm?: string[]; include?: 
 export const CONFIRM_MAX = 20;
 
 export const KIND_LABEL: Record<ComponentKindV2, string> = {
-  service: '서비스', job: '예약 잡', postgres: 'DB', cache: '캐시', objectStore: '객체 저장소', queue: '큐·토픽',
+  service: t('서비스'), job: t('예약 잡'), postgres: 'DB', cache: t('캐시'), objectStore: t('객체 저장소'), queue: t('큐·토픽'),
 };
 const DATA_KINDS: readonly ComponentKindV2[] = ['postgres', 'cache', 'objectStore', 'queue'];
 
 // 리소스 props 맨 위 칸 이름. 표에 없는 칸은 키 그대로 쓴다 (지어내지 않음)
 const FIELD_LABEL: Record<string, string> = {
-  runtime: '실행 방식', origin: '원래 실행 모양', image: '이미지', command: '명령', args: '인자', resources: '자원 요청', env: '환경변수',
-  envFrom: '환경변수 묶음', configs: '설정 묶음', secretMounts: '비밀 마운트', serviceAccount: '신원', securityContext: '보안 설정',
-  sidecars: '사이드카', initContainers: '초기화 컨테이너', volumes: '볼륨', ports: '포트', endpoints: '서비스 주소', probes: '상태 확인',
-  replicas: '복제 수', scale: '자동 확장', schedule: '일정', timeZone: '시간대', majorVersion: '버전', storageGb: '저장 용량',
-  storageMaxGb: '최대 저장 용량', compute: '계산 자원', ha: '고가용성', readReplicas: '읽기 복제본', databases: 'DB 이름', extensions: '확장',
-  parameters: '설정값', logicalReplication: '논리 복제', engine: '엔진', version: '버전', memoryMiB: '메모리', clusterMode: '클러스터 모드',
-  shards: '샤드', tls: 'TLS', auth: '인증', versioning: '버전 관리', public: '공개 여부', sizeGb: '크기', lifecycle: '수명 규칙', cors: 'CORS',
-  model: '모델', ordered: '순서 보장', retentionSec: '보관 시간', ackTimeoutSec: '확인 제한 시간', deadLetter: '실패 메시지 큐',
-  boundary: '앱 경계', appGroup: '앱 묶음', 'digest': 'digest', 'db.version': 'DB 버전', 'db.storageGb': 'DB 저장 용량',
-  'env.names': '환경변수 이름', 'resources.cpu': 'CPU', 'resources.memory': '메모리',
+  runtime: t('실행 방식'), origin: t('원래 실행 모양'), image: t('이미지'), command: t('명령'), args: t('인자'), resources: t('자원 요청'), env: t('환경변수'),
+  envFrom: t('환경변수 묶음'), configs: t('설정 묶음'), secretMounts: t('비밀 마운트'), serviceAccount: t('신원'), securityContext: t('보안 설정'),
+  sidecars: t('사이드카'), initContainers: t('초기화 컨테이너'), volumes: t('볼륨'), ports: t('포트'), endpoints: t('서비스 주소'), probes: t('상태 확인'),
+  replicas: t('복제 수'), scale: t('자동 확장'), schedule: t('일정'), timeZone: t('시간대'), majorVersion: t('버전'), storageGb: t('저장 용량'),
+  storageMaxGb: t('최대 저장 용량'), compute: t('계산 자원'), ha: t('고가용성'), readReplicas: t('읽기 복제본'), databases: t('DB 이름'), extensions: t('확장'),
+  parameters: t('설정값'), logicalReplication: t('논리 복제'), engine: t('엔진'), version: t('버전'), memoryMiB: t('메모리'), clusterMode: t('클러스터 모드'),
+  shards: t('샤드'), tls: 'TLS', auth: t('인증'), versioning: t('버전 관리'), public: t('공개 여부'), sizeGb: t('크기'), lifecycle: t('수명 규칙'), cors: 'CORS',
+  model: t('모델'), ordered: t('순서 보장'), retentionSec: t('보관 시간'), ackTimeoutSec: t('확인 제한 시간'), deadLetter: t('실패 메시지 큐'),
+  boundary: t('앱 경계'), appGroup: t('앱 묶음'), 'digest': 'digest', 'db.version': t('DB 버전'), 'db.storageGb': t('DB 저장 용량'),
+  'env.names': t('환경변수 이름'), 'resources.cpu': 'CPU', 'resources.memory': t('메모리'),
 };
 const fieldLabel = (field: string) => FIELD_LABEL[field] ?? field;
 
-const INTENT_LABEL: Record<string, string> = { connect: '연결', read: '읽기', write: '쓰기', readwrite: '읽기·쓰기', admin: '관리자', call: '호출' };
+const INTENT_LABEL: Record<string, string> = { connect: t('연결'), read: t('읽기'), write: t('쓰기'), readwrite: t('읽기·쓰기'), admin: t('관리자'), call: t('호출') };
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const isPrim = (v: unknown) => v === null || ['string', 'number', 'boolean'].includes(typeof v);
@@ -76,45 +77,45 @@ const isPrim = (v: unknown) => v === null || ['string', 'number', 'boolean'].inc
 /** 환경변수 한 줄의 출처. 값 자체는 비밀일 수 있어 보이지 않는다. */
 function envText(entry: unknown): string | undefined {
   if (!isObj(entry)) return undefined;
-  if ('value' in entry) return '값이 직접 적혀 있음 (화면에 안 보임)';
-  if ('template' in entry) return '다른 값을 이어 붙인 값 (화면에 안 보임)';
+  if ('value' in entry) return t('값이 직접 적혀 있음 (화면에 안 보임)');
+  if ('template' in entry) return t('다른 값을 이어 붙인 값 (화면에 안 보임)');
   const ref = (o: unknown, a: string, b: string) => (isObj(o) ? `${String(o[a])}/${String(o[b])}` : '');
-  if ('fromSecret' in entry) return `비밀 ${ref(entry.fromSecret, 'secret', 'key')}`;
-  if ('fromConfig' in entry) return `설정 ${ref(entry.fromConfig, 'config', 'key')}`;
-  if ('fromLink' in entry) return `연결 ${ref(entry.fromLink, 'to', 'output').replace('/', '.')}`;
-  if ('fromResource' in entry) return `자원 값 ${String(entry.fromResource)}`;
-  if ('fromField' in entry) return `파드 정보 ${String(entry.fromField)}`;
+  if ('fromSecret' in entry) return t('비밀 {0}', { 0: ref(entry.fromSecret, 'secret', 'key') });
+  if ('fromConfig' in entry) return t('설정 {0}', { 0: ref(entry.fromConfig, 'config', 'key') });
+  if ('fromLink' in entry) return t('연결 {0}', { 0: ref(entry.fromLink, 'to', 'output').replace('/', '.') });
+  if ('fromResource' in entry) return t('자원 값 {0}', { 0: String(entry.fromResource) });
+  if ('fromField' in entry) return t('파드 정보 {0}', { 0: String(entry.fromField) });
   return undefined;
 }
 
 // 숫자 칸의 단위 (contracts spec-v2.ts 칸 이름이 단위를 말한다)
-const UNIT: Record<string, string> = { storageGb: 'GB', storageMaxGb: 'GB', sizeGb: 'GB', memoryMiB: 'MiB', retentionSec: '초', ackTimeoutSec: '초' };
+const UNIT: Record<string, string> = { storageGb: 'GB', storageMaxGb: 'GB', sizeGb: 'GB', memoryMiB: 'MiB', retentionSec: t('초'), ackTimeoutSec: t('초') };
 
 const amount = (a: unknown) => (isObj(a) ? `${a.cpuMilli ?? '?'}m · ${a.memMiB ?? '?'}MiB` : null);
 
 /** 값 한 칸을 한 줄 글자로. null(읽지 못함)은 호출하는 쪽이 따로 다룬다. */
 export function valueText(field: string, value: unknown): string {
   if (value === undefined || value === null) return '';
-  if (typeof value === 'boolean') return value ? '예' : '아니오';
+  if (typeof value === 'boolean') return value ? t('예') : t('아니오');
   if (typeof value === 'number' && UNIT[field]) return `${value}${UNIT[field]}`;
   if (typeof value === 'string' || typeof value === 'number') return String(value);
   if (Array.isArray(value)) {
     if (value.every((item) => isPrim(item))) return value.map((item) => (item === null ? '?' : String(item))).join(', ');
     if (value.every((item) => isObj(item) && typeof item.port === 'number')) return value.map((item) => String((item as { port: number }).port)).join(', ');
-    return `${value.length}개`;
+    return t('{0}개', { 0: value.length });
   }
   if (!isObj(value)) return '';
   if (field === 'replicas' && typeof value.min === 'number' && typeof value.max === 'number')
-    return value.min === value.max ? `${value.min}개` : `${value.min}~${value.max}개`;
-  if (field === 'resources') return [amount(value.request) && `요청 ${amount(value.request)}`, amount(value.limit) && `상한 ${amount(value.limit)}`].filter(Boolean).join(' / ');
+    return value.min === value.max ? t('{0}개', { 0: value.min }) : t('{0}~{1}개', { 0: value.min, 1: value.max });
+  if (field === 'resources') return [amount(value.request) && t('요청 {0}', { 0: amount(value.request) }), amount(value.limit) && t('상한 {0}', { 0: amount(value.limit) })].filter(Boolean).join(' / ');
   if (field === 'image' && typeof value.repository === 'string')
-    return value.source === 'build' ? `${value.repository} (도착에서 빌드)` : value.digest ? `${value.repository}@${String(value.digest)}` : `${value.repository} (digest 없음)`;
+    return value.source === 'build' ? t('{0} (도착에서 빌드)', { 0: value.repository }) : value.digest ? `${value.repository}@${String(value.digest)}` : t('{0} (digest 없음)', { 0: value.repository });
   if (field === 'scale' && typeof value.targetCpuPct === 'number') return `CPU ${value.targetCpuPct}%`;
   if (field === 'origin' && typeof value.runtime === 'string') return `${value.runtime} · ${String(value.product ?? '')}`;
   if (field === 'probes')
     return Object.entries(value).filter(([, probe]) => isObj(probe)).map(([kind, probe]) => [kind, (probe as Record<string, unknown>).type, (probe as Record<string, unknown>).path].filter(Boolean).join(' ')).join(', ');
   const flat = Object.entries(value).filter(([, v]) => isPrim(v) && v !== null);
-  return flat.length > 0 ? flat.slice(0, 4).map(([k, v]) => `${k} ${String(v)}`).join(', ') : `칸 ${Object.keys(value).length}개`;
+  return flat.length > 0 ? flat.slice(0, 4).map(([k, v]) => `${k} ${String(v)}`).join(', ') : t('칸 {0}개', { 0: Object.keys(value).length });
 }
 
 type Resolved = { name: string; value: unknown };
@@ -130,7 +131,7 @@ export function resolveKey(spec: AppSpecV2, key: string, meta?: FieldMetaEntryV2
       const [, sidecar, name = ''] = env;
       const holder = sidecar ? (c?.props.sidecars as unknown[] | undefined)?.find((item) => isObj(item) && item.name === sidecar) : c?.props;
       const list = isObj(holder) && Array.isArray(holder.env) ? holder.env : [];
-      return { name: `${id}${sidecar ? ` · ${sidecar}` : ''} · 환경변수 ${name}`, value: envText(list.find((item) => isObj(item) && item.name === name)) };
+      return { name: t('{0}{1} · 환경변수 {2}', { 0: id, 1: sidecar ? ` · ${sidecar}` : '', 2: name }), value: envText(list.find((item) => isObj(item) && item.name === name)) };
     }
     const field = rest.split('.')[0] ?? rest;
     const value = c && Object.prototype.hasOwnProperty.call(c.props, field) ? c.props[field] : undefined;
@@ -140,31 +141,31 @@ export function resolveKey(spec: AppSpecV2, key: string, meta?: FieldMetaEntryV2
   if (link) {
     const [, from = '', to = ''] = link;
     const found = spec.links.find((item) => item.from === from && (item.to === to || (isObj(item.to) && Object.values(item.to)[0] === to)));
-    return { name: `연결 ${from} → ${to}`, value: found ? (INTENT_LABEL[found.intent] ?? found.intent) : undefined };
+    return { name: t('연결 {0} → {1}', { 0: from, 1: to }), value: found ? (INTENT_LABEL[found.intent] ?? found.intent) : undefined };
   }
   const entry = /^entry\.(.+?)\.(hostnames|routes\[(\d+)\](?:\.(\w+))?)$/.exec(key);
   if (entry) {
     const [, host = '', part = '', index] = entry;
     const h = spec.entry?.hosts.find((item) => item.hostnames.includes(host));
-    if (part === 'hostnames') return { name: `진입 ${host} · 호스트 이름`, value: h ? h.hostnames.join(', ') : undefined };
+    if (part === 'hostnames') return { name: t('진입 {0} · 호스트 이름', { 0: host }), value: h ? h.hostnames.join(', ') : undefined };
     const route = h?.routes[Number(index)];
     const text = route
       ? `${route.matches.map((m) => m.path.value).join(', ')} → ${route.backends.map((b) => `${b.to}:${b.port}`).join(', ')}`
       : undefined;
-    return { name: `진입 ${host} · 경로 ${Number(index) + 1}`, value: text };
+    return { name: t('진입 {0} · 경로 {1}', { 0: host, 1: Number(index) + 1 }), value: text };
   }
   const check = /^check\.reviews\[(\d+)\]$/.exec(key);
   // 명세 점검 줄은 내용이 rationale 에 있다 (워커 import.ts: check.reviews[i] = { rationale: 점검 문장 })
-  if (check) return { name: `명세 점검 ${Number(check[1]) + 1}`, value: meta?.rationale };
+  if (check) return { name: t('명세 점검 {0}', { 0: Number(check[1]) + 1 }), value: meta?.rationale };
   return { name: key, value: undefined };
 }
 
 // 값의 출처 이름. 서버 source 글자 앞부분만 사람 말로 바꾸고 나머지(자원 이름 등)는 그대로 둔다
 const SOURCE_EXACT: Record<string, string> = {
-  human: '사람이 정함', checkV2: '명세 점검', default: '읽지 못해 추정', fixture: '예시 값', 'source.env': '출발 환경변수',
+  human: t('사람이 정함'), checkV2: t('명세 점검'), default: t('읽지 못해 추정'), fixture: t('예시 값'), 'source.env': t('출발 환경변수'),
 };
 const SOURCE_PREFIX: [string, string][] = [
-  ['k8s:', '쿠버네티스 '], ['ecs:', 'ECS '], ['label:', '라벨 '], ['boundary:', '앱 경계 판단 '], ['env:', '환경변수 '], ['spec_v2.', '명세 '],
+  ['k8s:', t('쿠버네티스 ')], ['ecs:', 'ECS '], ['label:', t('라벨 ')], ['boundary:', t('앱 경계 판단 ')], ['env:', t('환경변수 ')], ['spec_v2.', t('명세 ')],
 ];
 export function sourceText(source: string): string {
   if (SOURCE_EXACT[source]) return SOURCE_EXACT[source];
@@ -213,7 +214,7 @@ export function specRowsV2(view: MigrationSpecViewV2): SpecRowV2[] {
     const unread = value === null;
     const showMeta = isReview || (meta !== undefined && meta.confidence < 1);
     const provenance = showMeta
-      ? [unread ? '값을 읽지 못했습니다' : null, meta ? sourceText(meta.source) : null, meta && meta.confidence < 1 ? `신뢰도 ${Math.round(meta.confidence * 100)}%` : null,
+      ? [unread ? t('값을 읽지 못했습니다') : null, meta ? sourceText(meta.source) : null, meta && meta.confidence < 1 ? t('신뢰도 {0}%', { 0: Math.round(meta.confidence * 100) }) : null,
          meta?.rationale && !key.startsWith('check.') ? meta.rationale : null].filter(Boolean).join(' · ') || null
       : null;
     const prose = key.startsWith('check.') || /\.env\./.test(key);
@@ -231,11 +232,11 @@ export function confirmChunks(keys: readonly string[], size = CONFIRM_MAX): stri
 /** 가져오기 정확도 카드. 가져올 때 잰 값이라 사람이 고친 뒤에도 다시 재지 않는다. */
 export function accuracyView(a: ImportAccuracy) {
   return {
-    summary: a.percent === null ? '비교할 칸 없음' : `${a.percent}%`,
+    summary: a.percent === null ? t('비교할 칸 없음') : `${a.percent}%`,
     rows: [
-      { name: '비교 기준', value: a.basis === 'render' ? '도착에 내보낼 값과 비교' : '공통 명세 값과 비교' },
-      { name: '비교한 칸', value: `${a.comparable}칸 · 일치 ${a.matched} · 불일치 ${a.mismatched}` },
-      { name: '비교 못 한 칸', value: `${a.unverifiable}칸` },
+      { name: t('비교 기준'), value: a.basis === 'render' ? t('도착에 내보낼 값과 비교') : t('공통 명세 값과 비교') },
+      { name: t('비교한 칸'), value: t('{0}칸 · 일치 {1} · 불일치 {2}', { 0: a.comparable, 1: a.matched, 2: a.mismatched }) },
+      { name: t('비교 못 한 칸'), value: t('{0}칸', { 0: a.unverifiable }) },
     ],
     mismatches: a.fields
       .filter((field) => field.result === 'mismatch')
@@ -260,4 +261,4 @@ export function boundaryRows(list: OutOfBoundaryV2[] | undefined) {
 
 /** 명세 확정 버튼 글자. 확인할 칸이 있으면 그 칸을 확인하고 확정한다는 것까지 말한다. */
 export const confirmLabel = (busy: boolean, reviews: number) =>
-  busy ? '보내는 중' : reviews > 0 ? `${reviews}칸 확인하고 명세 확정` : '명세 확정';
+  busy ? t('보내는 중') : reviews > 0 ? t('{0}칸 확인하고 명세 확정', { 0: reviews }) : t('명세 확정');
