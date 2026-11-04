@@ -71,6 +71,9 @@ const NETWORK_ECHO = /^Failed to load resource: the server responded with a stat
 const flat = (text: string | null | undefined) => (text ?? "").replace(/\s+/g, " ").trim();
 const heroTitle = (page: Page) => page.getByRole("heading", { level: 2 });
 const envButton = (page: Page, name: string) => page.getByRole("button").filter({ has: page.getByText(name, { exact: true }) });
+// 새 이전의 출발 줄은 제목이 그 환경에서 서비스 중인 소프트웨어라, 환경 이름은 줄 이름(aria-label) 끝 " · <환경>" 에 있다
+const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const sourceButton = (page: Page, name: string) => page.getByRole("button", { name: new RegExp(` · ${escapeRe(name)}$`) });
 const progress = (page: Page) => page.locator("section").filter({ has: page.getByRole("heading", { name: "진행 단계", exact: true }) });
 const stepMark = (page: Page, label: string) => progress(page).getByRole("listitem").filter({ hasText: label }).getByRole("img");
 const trafficBar = (page: Page) => page.getByRole("img", { name: /^트래픽 / });
@@ -261,16 +264,19 @@ test("새 콘솔 · 실제 서버: 로그인부터 이전 완료까지 화면으
       await page.getByRole("button", { name: "새 이전 시작", exact: true }).click();
       await expect(page).toHaveURL(/#\/migrations\/new$/);
       await expect(heroTitle(page)).toHaveText(/어디에서\s*옮길까요/);
-      await envButton(page, SOURCE).click();
+      await sourceButton(page, SOURCE).click();
     });
 
-    await step("새 이전 · 찾은 자원 확인", async () => {
-      await expect(heroTitle(page)).toHaveText(/어디로 옮길까요/);
-      await expect(page.getByRole("listitem").filter({ hasText: "찾은 자원 확인" }).getByRole("img")).toHaveAccessibleName("끝남", { timeout: HUMAN_MS });
+    // 출발 범위(sourceScope)는 자동으로 고른다. 찾은 자원을 다 읽으면 "옮길 서비스" 칸이 사람 입력을 기다린다
+    await step("새 이전 · 옮길 서비스", async () => {
+      await expect(heroTitle(page)).toHaveText(/무엇을\s*옮길까요/);
+      await expect(page.getByRole("listitem").filter({ hasText: "옮길 서비스" }).getByRole("img")).toHaveAccessibleName("입력 기다림", { timeout: HUMAN_MS });
       ev.notes["찾은 자원"] = flat(await page.locator('[style*="grid-area: found"]').innerText({ timeout: 5_000 }).catch(() => "칸을 못 찾음"));
+      await page.getByRole("button", { name: /^자동으로 고르기/ }).click();
     });
 
     await step("새 이전 · 도착 고르기", async () => {
+      await expect(heroTitle(page)).toHaveText(/어디로\s*옮길까요/);
       await envButton(page, TARGET).click();
       await page.getByRole("button", { name: `${TARGET}로 옮기기`, exact: true }).click();
       await expect(page).toHaveURL(/#\/migrations\/[0-9a-f-]{36}$/, { timeout: HUMAN_MS });
