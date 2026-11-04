@@ -162,3 +162,19 @@ test("가짜 발급기 자격(stub)이면 고객 CLI 를 안 부르고 상태 �
   assert.equal(e.connection_status, "connected"); assert.equal(e.verify_failures, 0);
   assert.equal((await creds(id))[0].status, "revoked");
 });
+
+test("FM-CON-07: AssumeRole 이 TagSession 에서 거부되면 감사 env.verify_failed 에 deniedAction=sts:TagSession (계정 번호 없음)", { skip }, async () => {
+  const id = await env(T, "verifying");
+  const sts = { assumeRole: async () => { throw new security.StsCliError(254, "AccessDenied", undefined, "sts:TagSession"); } };
+  const b = security.createTempRoleBroker({
+    issuers: { aws: security.awsStsIssuer({ sts }) }, ledger: ledgerMod.pgLedger(),
+    resolveEnv: async () => ({ roleRef: "arn:aws:iam::111122223333:role/svc-observe", externalId: `ext-${id.slice(0, 8)}` }),
+    audit: (tenantId, a) => core.withTenant(tenantId, (tx) => core.writeAudit(tx, tenantId, a)),
+  });
+  const r = await job.handleVerifyConnection({ tenantId: T, envId: id, requestId: req(), reason: "user" }, { roles: b, cli: { exec, env: {} } });
+  assert.deepEqual(r, { status: "failed", reason: "ROLE_ASSUME_DENIED" });
+  const a = (await owner.query("SELECT detail FROM audit_events WHERE target=$1 AND action='env.verify_failed'", [id])).rows;
+  assert.equal(a.length, 1);
+  assert.equal(a[0].detail.deniedAction, "sts:TagSession");
+  assert.ok(!JSON.stringify(a[0].detail).includes("111122223333"));
+});

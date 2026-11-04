@@ -47,6 +47,9 @@ interface EnvRow {
   connection_status: ConnectionStatus; verify_failures: number; gcp_project_number: string | null;
 }
 
+/** FM-CON-07: 빌리기 거부 때 무엇이 막혔나 (감사 detail 에 남김. 계정 번호 없음) */
+const deniedDetail = (e: unknown): Record<string, unknown> =>
+  e instanceof StsCliError && e.awsCode === "AccessDenied" ? { deniedAction: e.deniedAction ?? "unknown" } : {};
 /** 발급 실패 → 사유. 정해지지 않은 것은 null (다시 던짐) */
 function issueFailure(e: unknown): string | null {
   if (e instanceof TempRoleDenied) return e.code;
@@ -93,9 +96,11 @@ export async function handleVerifyConnection(data: unknown, deps: VerifyDeps = {
   const delays = gcpRetry ? Array.from({ length: gcpAttempts - 1 }, () => gcpWait)
     : reason === "user" ? (deps.delaysMs ?? verifyPropagationDelaysMs()) : [];
   const retryReasons = gcpRetry ? new Set([...PROPAGATION_REASONS, "ROLE_NOT_FOUND"]) : PROPAGATION_REASONS;
+  let issueDenied: Record<string, unknown> = {};   // FM-CON-07: 마지막 시도의 거부 동작
   try {
   for (let attempt = 0; ; attempt++) {
     let ref: string | null = null;
+    issueDenied = {};
     try {
       const gcp = env.provider === "gcp";
       try {
@@ -123,6 +128,7 @@ export async function handleVerifyConnection(data: unknown, deps: VerifyDeps = {
         const why = issueFailure(e);
         if (!why) throw e;
         result = { ok: false, reason: why };
+        issueDenied = deniedDetail(e);
       }
       if (ref) {
         const m = roles.use(ref, tenantId);
@@ -163,7 +169,7 @@ export async function handleVerifyConnection(data: unknown, deps: VerifyDeps = {
   return withTenant(tenantId, async (tx) => {
     // OBSROLE3: 연결은 성공했지만 관찰 역할에 선택 권한이 빠져 있으면(예전 스크립트로 만든 고객) 실패로 바꾸지 않고 사람이 할 일로 남긴다
     const missing = r.ok && r.missingPermissions?.length ? r.missingPermissions : null;
-    const detail = r.ok ? (missing ? { missingPermissions: missing } : {}) : { reason: r.reason };
+    const detail = r.ok ? (missing ? { missingPermissions: missing } : {}) : { reason: r.reason, ...issueDenied };
     const action = r.ok ? "env.verified" : "env.verify_failed";
     const audit = { actor: "worker", action, detail: { ...detail, trigger: reason } };
     if (reason === "user") {

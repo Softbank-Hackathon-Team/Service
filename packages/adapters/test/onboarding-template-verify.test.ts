@@ -69,15 +69,17 @@ test("ExternalId 패턴: STS 가 받는 글자만, 32자 미만 파라미터는 
   assert.equal(p.NoEcho, undefined);
 });
 
-test("두 신뢰 정책은 Allow 한 줄뿐이고 Deny·NotPrincipal·와일드카드 Principal 없음", () => {
+test("두 신뢰 정책은 Allow 두 줄(AssumeRole+ExternalId / TagSession·SetSourceIdentity)뿐이고 Deny·NotPrincipal·와일드카드 Principal 없음 (FM-CON-06)", () => {
   const t = load();
   for (const key of ["ObserveRole", "OperateRole"]) {
     const st = t.Resources[key].Properties.AssumeRolePolicyDocument.Statement;
-    assert.equal(st.length, 1);
-    assert.equal(st[0].Effect, "Allow");
-    assert.equal(st[0].NotPrincipal, undefined);
-    assert.notEqual(st[0].Principal?.AWS, "*");
-    assert.equal(st[0].Principal?.Service, undefined);
+    assert.equal(st.length, 2);
+    for (const s of st) {
+      assert.equal(s.Effect, "Allow");
+      assert.equal(s.NotPrincipal, undefined);
+      assert.notEqual(s.Principal?.AWS, "*");
+      assert.equal(s.Principal?.Service, undefined);
+    }
   }
 });
 
