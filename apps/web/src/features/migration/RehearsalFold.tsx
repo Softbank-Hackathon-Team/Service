@@ -3,6 +3,7 @@ import { FoldTile } from '../../components/layout/tiles';
 import { Checklist } from '../../components/ui/Checklist';
 import { CodeValue } from '../../components/ui/CodeValue';
 import { api } from '../../lib/api';
+import { stopReasonOf } from '../../lib/failure';
 import { or404 } from '../../lib/http';
 import type { RehearsalRun } from '../../lib/rehearsal-types';
 import type { MigrationView } from '../../lib/types';
@@ -12,6 +13,7 @@ import {
   FIDELITY_LABEL,
   ISOLATION_TEXT,
   SKIP_TEXT,
+  STALE_TEXT,
   checkEntries,
   elapsedSec,
   fidelityGroups,
@@ -36,7 +38,7 @@ export function useRehearsal(migration: MigrationView) {
     [migration.id, migration.status, relevant],
   );
   const run = poll.data?.run ?? null;
-  return { run, stale: run ? isStaleRun(run, migration) : false, loading: relevant && poll.loading };
+  return { run, stale: isStaleRun(run), loading: relevant && poll.loading };
 }
 
 function Row({ name, children }: { name: string; children: ReactNode }) {
@@ -85,22 +87,29 @@ function FidelityFold({ run, defaultOpen }: { run: RehearsalRun; defaultOpen: bo
 export function RehearsalFolds({ migration, run, stale, defaultOpen }: { migration: MigrationView; run: RehearsalRun | null; stale: boolean; defaultOpen: boolean }) {
   if (!run || !rehearsalRelevant(migration)) return null;
   const state = rehearsalState(run, stale);
-  const result = stale ? null : run.result;
+  // 지난 시도의 줄도 내용은 그대로 보인다. 머리 문장으로 지금 판정이 아니라고 먼저 말한다
+  const result = run.result;
+  const past = stale ? rehearsalState(run) : null;
   const sandbox = run.sandboxName ?? result?.sandbox.name ?? null;
   const left = remainingSec(run);
   const checks = result ? checkEntries(result) : null;
-  const moving = state === 'running' || state === 'waiting';
+  const moving = !stale && (state === 'running' || state === 'waiting');
   return (
     <>
       <FoldTile title="리허설" summary={rehearsalSummary(run, stale)} defaultOpen={defaultOpen}>
         {state === 'skipped' && run.skip && <p className={`${s.note} t-body-sm c-secondary`}>{SKIP_TEXT[run.skip]}</p>}
-        {state === 'stale' && <p className={`${s.note} t-body-sm c-secondary`}>지난 시도는 멈췄습니다. 새 샌드박스에서 처음부터 다시 돕니다.</p>}
+        {stale && (
+          <p className={`${s.note} t-body-sm c-secondary`}>
+            {STALE_TEXT} 그때 결과: {rehearsalSummary(run)}
+            {run.failureCode ? ` (${stopReasonOf(run.failureCode, 'paused')?.label ?? run.failureCode})` : ''}
+          </p>
+        )}
         {moving && (
           <div className={s.agent}>
             <Checklist items={phaseEntries(run)} />
           </div>
         )}
-        {state !== 'skipped' && (
+        {(past ?? state) !== 'skipped' && (
           <ul className={s.rows}>
             {sandbox && (
               <li className={s.row}>
@@ -108,18 +117,29 @@ export function RehearsalFolds({ migration, run, stale, defaultOpen }: { migrati
                 <CodeValue value={sandbox} className={s.rowValue} />
               </li>
             )}
-            {!stale && <Row name={moving ? '지금까지' : '걸린 시간'}>{formatSec(elapsedSec(run))}</Row>}
-            {left !== null && <Row name="남은 기한">{formatSec(left)}</Row>}
+            <Row name={moving ? '지금까지' : '걸린 시간'}>{formatSec(elapsedSec(run))}</Row>
+            {left !== null && !stale && <Row name="남은 기한">{formatSec(left)}</Row>}
             {state === 'reused' && <Row name="재사용">같은 계획·같은 묶음의 앞선 통과</Row>}
             {result && <Row name="격리">{isolationLine(result.sandbox)}</Row>}
             {result && <Row name="샌드박스 쿠버네티스">{result.sandbox.k8sVersion}</Row>}
             {result && !result.deleted && <Row name="지우기">아직 남음 · 청소가 지웁니다</Row>}
           </ul>
         )}
-        {checks && (
+        {checks && checks.failed.length > 0 && (
+          <ul className={s.rows}>
+            {checks.failed.map((check) => (
+              <li key={check.label} className={s.stackRow}>
+                <span className="t-label-md c-danger">✕ {check.label}</span>
+                {check.detail && <span className="t-caption c-secondary">{check.detail}</span>}
+              </li>
+            ))}
+          </ul>
+        )}
+        {/* 지난 시도의 기록은 판정을 가른 실패만 남기고, 통과한 검사 목록은 그리지 않는다 */}
+        {checks && !stale && checks.items.length > 0 && (
           <div className={s.agent}>
             <Checklist items={checks.items} />
-            {checks.more > 0 && <span className="t-caption c-tertiary">검사 {checks.more}개 더 · 모두 통과 또는 참고</span>}
+            {checks.more > 0 && <span className="t-caption c-tertiary">검사 {checks.more}개 더</span>}
           </div>
         )}
         {result && result.warnings.length > 0 && (
@@ -138,7 +158,7 @@ export function RehearsalFolds({ migration, run, stale, defaultOpen }: { migrati
           </>
         )}
       </FoldTile>
-      {!stale && <FidelityFold run={run} defaultOpen={defaultOpen && (state === 'failed' || state === 'error')} />}
+      {(past ?? state) !== 'skipped' && <FidelityFold run={run} defaultOpen={defaultOpen && !stale && (state === 'failed' || state === 'error')} />}
     </>
   );
 }

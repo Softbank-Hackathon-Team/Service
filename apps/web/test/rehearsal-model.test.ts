@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  checkEntries, elapsedSec, failureClassOf, fidelityGroups, isolationLine, isRehearsalCode, isStaleRun, phaseEntries,
+  checkEntries, elapsedSec, formatSec, failureClassOf, fidelityGroups, isolationLine, isRehearsalCode, isStaleRun, phaseEntries,
   rehearsalHeroLine, rehearsalPollMs, rehearsalRelevant, rehearsalState, rehearsalStepDetail, rehearsalSummary, remainingSec, SKIP_TEXT,
 } from "../src/features/migration/rehearsal";
 import { migrationSteps } from "../src/features/migration/model";
@@ -38,12 +38,17 @@ test("진행 단계 '앱 배포' 칸 한 마디", () => {
   assert.equal(migrationSteps({ status: "deploying" }).find((step) => step.label === "앱 배포")?.detail, undefined);
 });
 
-test("지난 시도: deploying 인데 실패 줄이 마지막 전이보다 먼저 생겼으면", () => {
-  const failed = run({ status: "failed", createdAt: "2026-11-04T10:00:00Z" });
-  assert.equal(isStaleRun(failed, { status: "deploying", updatedAt: "2026-11-04T10:30:00Z" }), true);
-  assert.equal(isStaleRun(failed, { status: "paused", updatedAt: "2026-11-04T10:30:00Z" }), false, "멈춘 동안은 그 줄이 지금 이유다");
-  assert.equal(isStaleRun(run({ status: "passed" }), { status: "deploying", updatedAt: "2026-11-04T10:30:00Z" }), false);
-  assert.equal(isStaleRun(failed, { status: "deploying", updatedAt: "2026-11-04T09:59:00Z" }), false);
+test("지난 시도: 서버 run.stale 만 본다. 배포 중이면 '리허설 준비', 아니면 칸에 붙이지 않는다", () => {
+  assert.equal(isStaleRun(run({ stale: true })), true);
+  assert.equal(isStaleRun(run({ stale: false })), false);
+  assert.equal(isStaleRun(run()), false, "옛 서버 응답(칸 없음)은 지금 시도로 본다");
+  assert.equal(isStaleRun(null), false);
+  const past = run({ status: "failed", failureCode: "REHEARSAL_CRASHLOOP", stale: true });
+  assert.equal(rehearsalState(past, true), "stale");
+  assert.equal(rehearsalStepDetail(past, true, "deploying"), "리허설 준비");
+  assert.equal(rehearsalStepDetail(past, true, "paused"), undefined);
+  assert.equal(rehearsalSummary(past, true), "지난 시도 기록");
+  assert.equal(rehearsalSummary(past), "실패", "지난 줄의 그때 결과");
 });
 
 test("읽을지와 간격: 배포 단계부터, deploying 만 빠르게", () => {
@@ -66,13 +71,15 @@ test("단계 목록·요약·큰 카드 한 줄", () => {
   assert.equal(rehearsalHeroLine(run({ status: "failed" })), null, "멈춘 결론은 멈춤 화면이 말한다");
 });
 
-test("검사 줄: 판정에 드는 실패가 먼저, 참고 줄은 뒤", () => {
-  const check = (id: "rollout" | "restarts" | "edge_http", ok: boolean, required: boolean) => ({ id, subject: "Deployment/web", required, ok, ms: 10, detail: ok ? "" : "CrashLoopBackOff 5회" });
-  const { items, more } = checkEntries({ checks: [check("edge_http", false, false), check("rollout", true, true), check("restarts", false, true)] }, 2);
-  assert.deepEqual(items.map((i) => i.status), ["failed", "done"]);
-  assert.match(items[0]!.label, /재시작 없음 · Deployment\/web/);
-  assert.equal(items[0]!.detail, "CrashLoopBackOff 5회");
-  assert.equal(more, 1);
+test("검사 줄: 판정을 가른 실패는 이유와 함께 따로, 나머지는 판정에 드는 것 먼저", () => {
+  const check = (id: "rollout" | "restarts" | "edge_http" | "quota", ok: boolean, required: boolean, subject = "Deployment/web") =>
+    ({ id, subject, required, ok, ms: 10, detail: ok ? "" : "CrashLoopBackOff 5회" });
+  const { failed, items, more } = checkEntries({ checks: [check("edge_http", false, false), check("rollout", true, true), check("restarts", false, true), check("quota", true, true, "도착 네임스페이스 한도")] }, 2);
+  assert.deepEqual(failed, [{ label: "재시작 없음 · Deployment/web", detail: "CrashLoopBackOff 5회" }]);
+  assert.deepEqual(items.map((i) => [i.label, i.status]), [["롤아웃 · Deployment/web", "done"], ["도착 네임스페이스 한도", "done"]], "대상이 이름과 같으면 한 번만");
+  assert.equal(more, 1, "참고 실패 줄은 뒤로 밀린다");
+  assert.equal(formatSec(0), "1초 미만");
+  assert.equal(formatSec(95), "1분 35초");
 });
 
 test("충실도: 세 묶음, 빈 묶음 뺌, 표는 고치지 않음", () => {

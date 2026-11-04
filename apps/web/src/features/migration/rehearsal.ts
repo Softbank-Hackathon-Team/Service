@@ -14,7 +14,7 @@ import {
   type RehearsalSkip,
   type SandboxRunPhase,
 } from '../../lib/rehearsal-types';
-import type { MigrationView } from '../../lib/types';
+import type { MigrationStatus, MigrationView } from '../../lib/types';
 
 // vCluster 리허설: deploying 안, GitOps 커밋 직전에 같은 매니페스트를 일회용 가상 클러스터에 먼저 올린다.
 // 화면은 이 파일의 판단만 쓴다. 시험은 test/rehearsal-model.test.ts
@@ -22,6 +22,9 @@ import type { MigrationView } from '../../lib/types';
 /** 격리 문구. 사람이 승인한 문장이라 화면과 발표에 그대로 쓴다. 바꾸지 않는다. */
 export const ISOLATION_TEXT =
   '리허설은 플랫폼 안의 일회용 가상 클러스터에서 돕니다. 전용 노드에 한 번에 한 회사만 올라가고, 인터넷·클라우드 메타데이터·플랫폼 DB에 닿지 못하며, 고객 자격 증명은 들어가지 않습니다.';
+
+/** 지난 시도 줄 머리 문장. 줄 내용은 그대로 보이되 지금 판정이 아니라고 먼저 말한다. */
+export const STALE_TEXT = '지난 배포 시도의 기록입니다. 이번 시도의 판정이 아닙니다.';
 
 /** 빌린 권한 한 줄. 리허설 자체는 고객 권한을 쓰지 않고, 이미지 복사만 출발 관찰 역할을 빌린다. */
 export const BORROW_TEXT = '리허설은 고객 권한을 쓰지 않습니다. 이미지 복사만 출발 관찰 역할을 15분 빌립니다.';
@@ -102,16 +105,6 @@ export const isRehearsalCode = (code: string | null | undefined): code is Rehear
 export const failureClassOf = (code: string | null | undefined): RehearsalFailureClass | null =>
   isRehearsalCode(code) ? REHEARSAL_FAILURE_CLASS[code] : null;
 
-/**
- * 지금 배포 시도의 줄이 아니라 지난 시도의 실패 줄인가. 재개하면 deploying 으로 돌아오지만 새 줄이 생기기 전에는 지난 줄이 가장 새것이다.
- * DRAFT(ai): 서버가 "지난 시도" 칸을 내기 전까지의 짐작. deploying 인데 실패·오류로 끝난 줄이 이전이 마지막으로 바뀐 때보다 먼저 만들어졌으면 지난 시도로 본다.
- */
-export function isStaleRun(run: Pick<RehearsalRun, 'status' | 'createdAt'>, migration: Pick<MigrationView, 'status' | 'updatedAt'>): boolean {
-  if (migration.status !== 'deploying' || !migration.updatedAt) return false;
-  if (run.status !== 'failed' && run.status !== 'error') return false;
-  return Date.parse(run.createdAt) < Date.parse(migration.updatedAt);
-}
-
 export type RehearsalState = 'none' | 'waiting' | 'running' | 'passed' | 'reused' | 'skipped' | 'failed' | 'error' | 'stale';
 
 export function rehearsalState(run: RehearsalRun | null | undefined, stale = false): RehearsalState {
@@ -133,14 +126,18 @@ export function rehearsalState(run: RehearsalRun | null | undefined, stale = fal
   }
 }
 
-/** 진행 단계 카드 "앱 배포" 칸 오른쪽 한 마디. 줄이 없으면 붙이지 않는다. */
-export function rehearsalStepDetail(run: RehearsalRun | null | undefined, stale = false): string | undefined {
+/** 지난 시도의 줄인가 (서버 run.stale). 지난 줄은 지금 판정으로 말하지 않는다. */
+export const isStaleRun = (run: Pick<RehearsalRun, 'stale'> | null | undefined) => run?.stale === true;
+
+/** 진행 단계 카드 "앱 배포" 칸 오른쪽 한 마디. 줄이 없거나 지난 시도의 줄이면(배포 중일 때 말고) 붙이지 않는다. */
+export function rehearsalStepDetail(run: RehearsalRun | null | undefined, stale = false, status?: MigrationStatus): string | undefined {
   const state = rehearsalState(run, stale);
   switch (state) {
     case 'none':
       return undefined;
-    case 'waiting':
     case 'stale':
+      return status === 'deploying' ? '리허설 준비' : undefined;
+    case 'waiting':
       return '리허설 준비';
     case 'running':
       return '리허설 중';
@@ -169,7 +166,7 @@ export function rehearsalSummary(run: RehearsalRun | null | undefined, stale = f
     skipped: '건너뜀',
     failed: '실패',
     error: '오류',
-    stale: '새 시도 준비',
+    stale: '지난 시도 기록',
   };
   return SUMMARY[state];
 }
@@ -184,16 +181,27 @@ export function phaseEntries(run: Pick<RehearsalRun, 'status' | 'phase'>): Check
   }));
 }
 
-/** 검사 줄. 판정에 드는 실패를 먼저, 참고 줄은 뒤에. limit 을 넘으면 남은 수를 돌려준다. */
-export function checkEntries(result: Pick<RehearsalResult, 'checks'>, limit = 8): { items: ChecklistEntry[]; more: number } {
-  const rank = (check: RehearsalResult['checks'][number]) => (check.required ? (check.ok ? 1 : 0) : 2);
-  const sorted = [...result.checks].sort((a, b) => rank(a) - rank(b));
-  const items = sorted.slice(0, limit).map((check) => ({
-    label: `${CHECK_LABEL[check.id] ?? check.id}${check.subject ? ` · ${check.subject}` : ''}${check.required ? '' : ' (참고)'}`,
-    status: (check.ok ? 'done' : check.required ? 'failed' : 'paused') as ChecklistEntry['status'],
-    detail: check.ok ? undefined : check.detail.slice(0, 80) || undefined,
+/** 검사 줄 이름. 대상이 이름과 같으면 한 번만 쓴다. 참고 줄은 표시한다. */
+const checkLabel = (check: RehearsalResult['checks'][number]) => {
+  const name = CHECK_LABEL[check.id] ?? check.id;
+  const subject = check.subject && check.subject !== name ? ` · ${check.subject}` : '';
+  return `${name}${subject}${check.required ? '' : ' (참고)'}`;
+};
+
+/**
+ * 검사 줄. 판정을 가른 실패(필수)는 이유와 함께 따로, 나머지는 판정에 드는 것 먼저 limit 개까지 목록으로.
+ * 실패 이유는 길어서 목록 오른쪽에 두지 않고 줄 아래에 둔다.
+ */
+export function checkEntries(result: Pick<RehearsalResult, 'checks'>, limit = 5) {
+  const failed = result.checks.filter((check) => check.required && !check.ok).map((check) => ({ label: checkLabel(check), detail: check.detail }));
+  const rest = result.checks.filter((check) => !(check.required && !check.ok));
+  const rank = (check: RehearsalResult['checks'][number]) => (check.required ? 0 : check.ok ? 1 : 2);
+  const sorted = [...rest].sort((a, b) => rank(a) - rank(b));
+  const items: ChecklistEntry[] = sorted.slice(0, limit).map((check) => ({
+    label: checkLabel(check),
+    status: check.ok ? 'done' : 'paused',
   }));
-  return { items, more: Math.max(0, sorted.length - limit) };
+  return { failed, items, more: Math.max(0, sorted.length - limit) };
 }
 
 /** 충실도 표를 세 묶음으로. 빈 묶음은 뺀다. 표는 고치지 않고 그대로 보인다. */
@@ -224,7 +232,7 @@ export function remainingSec(run: Pick<RehearsalRun, 'deadlineAt' | 'finishedAt'
   return Math.max(0, Math.round((Date.parse(run.deadlineAt) - now) / 1000));
 }
 
-export const formatSec = (sec: number) => (sec < 60 ? `${sec}초` : `${Math.floor(sec / 60)}분 ${sec % 60}초`);
+export const formatSec = (sec: number) => (sec < 1 ? '1초 미만' : sec < 60 ? `${sec}초` : `${Math.floor(sec / 60)}분 ${sec % 60}초`);
 
 // 리허설 줄이 있을 수 있는 상태: deploying 과 그 뒤. 멈춘·실패한 이전은 멈춘 칸으로 본다
 const AFTER_DEPLOY = ['deploying', 'syncing', 'shifting', 'cutover', 'rollback_window', 'cleanup', 'completed'];
@@ -246,6 +254,6 @@ export function rehearsalHeroLine(run: RehearsalRun | null | undefined, stale = 
     return `고객 클러스터에 올리기 전에 일회용 가상 클러스터에서 먼저 리허설하고 있습니다${run?.phase ? ` · ${PHASE_LABEL[run.phase]}` : ''}`;
   if (state === 'passed' || state === 'reused') return '리허설을 통과해 같은 매니페스트를 도착 클러스터에 올리고 있습니다';
   if (state === 'skipped' && run?.skip) return SKIP_TEXT[run.skip];
-  if (state === 'stale') return '지난 리허설은 멈췄습니다. 새 샌드박스에서 처음부터 다시 돕니다';
+  if (state === 'stale') return '이번 배포 시도의 리허설을 준비하고 있습니다. 옆의 리허설 카드는 지난 시도의 기록입니다';
   return null;
 }

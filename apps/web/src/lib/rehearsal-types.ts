@@ -71,6 +71,9 @@ export interface RehearsalRun {
   deadlineAt: string | null;
   fidelity: FidelityMatrix | null;
   result: RehearsalResult | null;
+  /** true = 이 줄 뒤에 더 나중의 배포 시도가 deploying 에 들어왔다. 지금 판정이 아니라 지난 시도의 기록이다 (서버가 감사 기록으로 계산).
+   *  옛 서버 응답에는 칸이 없어서 optional 로 받고, 없으면 지금 시도로 본다 */
+  stale?: boolean;
 }
 
 /** GET /migrations/:id/rehearsal. 아직 줄이 없으면 run: null */
