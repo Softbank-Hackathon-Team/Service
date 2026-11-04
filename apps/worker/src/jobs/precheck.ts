@@ -11,6 +11,7 @@ import { specHasPostgres } from "./_repl.js";
 import { withStepRoles, type StepRoles } from "./_roles.js";
 import type { MigrationRow } from "./_step.js";
 import { TARGET_ACCOUNT_SQL } from "./target-account.js";
+import { agentStaleSec } from "./verify-connection.js";
 
 // 사전 점검: 이전해도 되는지 본다. block(FAIL)이 하나라도 있으면 명세 검토로 되돌린다
 // Z97: STUB(고정 "확인됨")을 실조회로 바꿨다 — 자격(STS·tokeninfo·kubectl)·도착 API·결제·할당량·DB 버전·TCP·디스크.
@@ -24,7 +25,20 @@ export function stubPrecheck(): PrecheckItem[] {
   ].map((i) => PrecheckItem.parse(i));
 }
 
-async function envInfo(tenantId: string, m: MigrationRow): Promise<{ source: PrecheckEnvInfo; target: PrecheckEnvInfo }> {
+// 온프레 pull 모드 도착: 살아 있는 키 수 + 마지막 하트비트 나이(초) + 그 하트비트의 k3s 버전. 판정 기준은 연결 확인(verify-connection)과 같다
+//   폐기된 키로 온 하트비트는 세지 않는다
+export async function onpremAgentInfo(tx: Tx, envId: string, env: NodeJS.ProcessEnv = process.env): Promise<NonNullable<PrecheckEnvInfo["agent"]>> {
+  const q = await tx.query<{ keys: number; age: number | null; k3s: string | null }>(
+    `SELECT (SELECT count(*)::int FROM agent_keys WHERE env_id = $1 AND revoked_at IS NULL) AS keys, h.age, h.k3s
+       FROM (SELECT 1) one LEFT JOIN LATERAL (
+         SELECT GREATEST(0, floor(extract(epoch FROM now() - r.received_at)))::int AS age, r.body->>'k3sVersion' AS k3s
+           FROM agent_reports r JOIN agent_keys k ON k.id = r.key_id AND k.revoked_at IS NULL
+          WHERE r.env_id = $1 AND r.kind = 'heartbeat' ORDER BY r.received_at DESC LIMIT 1) h ON true`, [envId]);
+  const r = q.rows[0];
+  return { keys: r?.keys ?? 0, lastHeartbeatAgeSec: r?.age ?? null, staleSec: agentStaleSec(env), k3sVersion: r?.k3s ?? null };
+}
+
+async function envInfo(tenantId: string, m: MigrationRow, env: NodeJS.ProcessEnv = process.env): Promise<{ source: PrecheckEnvInfo; target: PrecheckEnvInfo }> {
   return withTenant(tenantId, async (tx) => {
     const q = await tx.query(`SELECT id, provider, name, account_id, ${TARGET_ACCOUNT_SQL} AS target_account_id, external_id FROM environments WHERE id = ANY($1::uuid[])`, [[m.sourceEnvId, m.targetEnvId]]);
     const by = new Map(q.rows.map((r) => [r.id as string, r]));
@@ -32,7 +46,11 @@ async function envInfo(tenantId: string, m: MigrationRow): Promise<{ source: Pre
       const r = by.get(id);
       return { side, provider: (r?.provider ?? "onprem") as CloudProvider, name: r?.name, accountId: (side === "target" ? r?.target_account_id : r?.account_id) ?? null, externalId: r?.external_id ?? null };
     };
-    return { source: one(m.sourceEnvId, "source"), target: one(m.targetEnvId, "target") };
+    const target = one(m.targetEnvId, "target");
+    // pull 모드(ONPREM_FLOOR_VIA_GIT≠0, apply.ts 와 같은 기준)면 워커가 고객 클러스터에 kubectl 로 못 붙는다 → Agent 하트비트로 점검
+    //   출발 온프레는 그대로 (가져오기가 kubectl 로 읽는 경로라 점검도 같은 길을 본다)
+    if (target.provider === "onprem" && env.ONPREM_FLOOR_VIA_GIT !== "0") target.agent = await onpremAgentInfo(tx, m.targetEnvId, env);
+    return { source: one(m.sourceEnvId, "source"), target };
   });
 }
 
@@ -71,7 +89,7 @@ export async function realPrecheck(tenantId: string, m: MigrationRow, deps: Part
   const env = resolveTfRefs(deps.env ?? process.env, m.id);
   // PF RV-28: 진짜 판(MOCK_IAC≠1)이고 명세에 postgres 가 있으면 출발 복제 점검을 못 본 채(주소 없음·접속 실패) 통과시키지 않는다 (RV-23 sync 와 같은 기준)
   const required = !iacMockEnabled(env) && (await specHasPostgres(tenantId, m.id).catch(() => null)) === true;
-  const [envs, db, repl, runtime] = await Promise.all([envInfo(tenantId, m), sourceDbFacts(env), replSourcePrecheck(env, { required }), specRuntime(tenantId, m.id)]);
+  const [envs, db, repl, runtime] = await Promise.all([envInfo(tenantId, m, env), sourceDbFacts(env), replSourcePrecheck(env, { required }), specRuntime(tenantId, m.id)]);
   const gp = (e: PrecheckEnvInfo) => (e.provider === "gcp" ? e.accountId : null);   // 8nr2 RV-27: GCP 점검은 빌린 관찰 토큰·도착 프로젝트로
   const sideEnv = deps.sideEnv ?? precheckSideEnv(roles, env, { source: gp(envs.source), target: gp(envs.target) });
   const checks = await runCloudPrecheck({ ...envs, ...db }, { exec: spawnExec, ...deps, env, ...(sideEnv ? { sideEnv } : {}) });
