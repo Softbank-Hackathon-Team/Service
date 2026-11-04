@@ -13,7 +13,7 @@ import s from '../common/page.module.css';
 
 const LAYOUT: BentoLayout = { columns: ['fill', 'side'], areas: 'hero list' };
 const BUCKETS: { id: MigrationBucket; label: string }[] = [
-  { id: 'human', label: '사람 차례' },
+  { id: 'human', label: '검토 필요' },
   { id: 'running', label: '진행 중' },
   { id: 'done', label: '끝남' },
 ];
@@ -25,7 +25,7 @@ export function MigrationsPage() {
   const envName = (id: string) => envs.data?.find((env) => env.id === id)?.name ?? id.slice(0, 8);
   const total = migrations.data?.length ?? 0;
   const title = groups.human.length > 0
-    ? `사람 차례가\n${groups.human.length}건 있습니다`
+    ? `검토가 필요한 이전이\n${groups.human.length}건 있습니다`
     : groups.running.length > 0
       ? `${groups.running.length}건이\n진행 중입니다`
       : total > 0 ? '진행 중인 이전이\n없습니다' : '아직 이전이\n없습니다';

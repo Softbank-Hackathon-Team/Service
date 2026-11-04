@@ -39,7 +39,7 @@ const HEALTH: Record<Health, { label: string; tone: 'success' | 'warning' | 'neu
 };
 
 const BUCKETS: { id: MigrationBucket; label: string; defaultOpen: boolean }[] = [
-  { id: 'human', label: '사람 차례', defaultOpen: true },
+  { id: 'human', label: '검토 필요', defaultOpen: true },
   { id: 'running', label: '진행 중', defaultOpen: true },
   { id: 'done', label: '끝남', defaultOpen: false },
 ];

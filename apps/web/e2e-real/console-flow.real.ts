@@ -254,7 +254,7 @@ test("새 콘솔 · 실제 서버: 로그인부터 이전 완료까지 화면으
       await expect(heroTitle(page)).toHaveText(/환경 \d+개/);
       await expect(envButton(page, SOURCE)).toBeVisible();
       await expect(envButton(page, TARGET)).toBeVisible();
-      await expect(page.getByRole("button", { name: /^사람 차례/ }), "이전 목록을 읽음").toBeVisible();
+      await expect(page.getByRole("button", { name: /^검토 필요/ }), "이전 목록을 읽음").toBeVisible();
     });
 
     await step("새 이전 · 출발 고르기", async () => {
