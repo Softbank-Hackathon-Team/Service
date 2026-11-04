@@ -79,12 +79,15 @@ function judgementOf(x: unknown): Judgement | null {
 }
 
 /** 이 상태로 들어온 마지막 전이에 남은 근거: 트래픽 판정, 가드레일 규칙 번호 (packages/core advance: detail.evidence). 전이가 없으면 null */
-export function stopEvidence(items: TimelineItem[], into: string): { at: string; judgement: Judgement | null; rule: string | null } | null {
+//   리허설로 멈춘 전이는 detail.rehearsal 에 stage(queue = 줄 서기 / run = 실행)를 남긴다 (REHEARSAL_TIMEOUT 을 둘로 가른다)
+export function stopEvidence(items: TimelineItem[], into: string): { at: string; judgement: Judgement | null; rule: string | null; rehearsalStage: "queue" | "run" | null } | null {
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i]!;
     if (it.kind !== "transition" || it.to !== into) continue;
     const evidence = isObj(it.detail.evidence) ? it.detail.evidence : {};
-    return { at: it.at, judgement: judgementOf(it.detail.lastJudgement), rule: str(evidence.guardrailRule) };
+    const stage = isObj(it.detail.rehearsal) ? str(it.detail.rehearsal.stage) : null;
+    return { at: it.at, judgement: judgementOf(it.detail.lastJudgement), rule: str(evidence.guardrailRule),
+      rehearsalStage: stage === "queue" || stage === "run" ? stage : null };
   }
   return null;
 }

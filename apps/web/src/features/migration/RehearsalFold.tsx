@@ -15,6 +15,7 @@ import {
   SKIP_TEXT,
   STALE_TEXT,
   checkEntries,
+  deadlineLabel,
   elapsedSec,
   fidelityGroups,
   formatSec,
@@ -118,7 +119,7 @@ export function RehearsalFolds({ migration, run, stale, defaultOpen }: { migrati
               </li>
             )}
             <Row name={moving ? '지금까지' : '걸린 시간'}>{formatSec(elapsedSec(run))}</Row>
-            {left !== null && !stale && <Row name="남은 기한">{formatSec(left)}</Row>}
+            {left !== null && !stale && deadlineLabel(run) && <Row name={deadlineLabel(run)!}>{`${formatSec(left)} 남음`}</Row>}
             {state === 'reused' && <Row name="재사용">같은 계획·같은 묶음의 앞선 통과</Row>}
             {result && <Row name="격리">{isolationLine(result.sandbox)}</Row>}
             {result && <Row name="샌드박스 쿠버네티스">{result.sandbox.k8sVersion}</Row>}

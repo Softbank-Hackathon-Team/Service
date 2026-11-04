@@ -42,7 +42,7 @@ function StepsTile({ migration }: { migration: MigrationView }) {
   const anchor = timeline.data ? stepAnchorFrom(timeline.data.items, migration.status) : null;
   // 앱 배포 칸에 리허설 한 마디 (리허설 중·통과·건너뜀·멈춤). 배포 단계 전에는 읽지 않는다
   const rehearsal = useRehearsal(migration);
-  const deploying = rehearsalStepDetail(rehearsal.run, rehearsal.stale, migration.status);
+  const deploying = rehearsal.loading ? undefined : rehearsalStepDetail(rehearsal.run, rehearsal.stale, migration.status);
   return (
     <Tile area="steps" compact scroll>
       <TileHeader title="진행 단계" />

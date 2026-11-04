@@ -3,7 +3,8 @@
 
 export type RehearsalTarget = "aws-eks" | "gcp-gke" | "onprem-k3s";
 export type SandboxRunStatus = "queued" | "running" | "passed" | "failed" | "error" | "skipped";
-export type SandboxRunPhase = "mirroring" | "creating" | "applying" | "checking" | "deleting" | "done";
+// 이미지 복사는 줄이 생기기 전에 워커가 한다(단계 아님). 끝난 줄은 늘 done (건너뜀·재사용·시간 초과 포함)
+export type SandboxRunPhase = "creating" | "applying" | "checking" | "deleting" | "done";
 export type RehearsalSkip = "non_k8s" | "no_cluster" | "unsupported_target" | "disabled" | "mock";
 
 export const REHEARSAL_FAILURE_CODES = [

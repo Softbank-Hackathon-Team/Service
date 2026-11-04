@@ -11,6 +11,7 @@ import type { MigrationStatus, MigrationView } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
 import { analysisCaption } from '../agent/model';
 import { judgementRows, leftoversOf, leftoverValue, trafficReportRows } from './model';
+import { timeoutStageText } from './rehearsal';
 import s from '../common/page.module.css';
 
 type StopFoldProps = {
@@ -49,6 +50,12 @@ export function StopFold({ migration, reason, into, hint = true, defaultOpen = t
           <li className={s.row}>
             <span className="t-label-md">가드레일 규칙</span>
             <CodeValue value={evidence.rule} className={s.rowValue} />
+          </li>
+        )}
+        {migration.failureCode === 'REHEARSAL_TIMEOUT' && timeoutStageText(evidence?.rehearsalStage) && (
+          <li className={s.row}>
+            <span className="t-label-md">어디서 넘었나</span>
+            <span className={`${s.rowValue} t-caption c-secondary`}>{timeoutStageText(evidence?.rehearsalStage)}</span>
           </li>
         )}
         {migration.failureCode && (

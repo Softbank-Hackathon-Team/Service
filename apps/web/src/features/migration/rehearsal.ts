@@ -30,14 +30,15 @@ export const STALE_TEXT = '지난 배포 시도의 기록입니다. 이번 시�
 export const BORROW_TEXT = '리허설은 고객 권한을 쓰지 않습니다. 이미지 복사만 출발 관찰 역할을 15분 빌립니다.';
 
 export const PHASE_LABEL: Record<SandboxRunPhase, string> = {
-  mirroring: '이미지 복사',
   creating: '샌드박스 만들기',
   applying: '같은 매니페스트 올리기',
   checking: '검사',
   deleting: '샌드박스 지우기',
   done: '끝',
 };
-const PHASES: SandboxRunPhase[] = ['mirroring', 'creating', 'applying', 'checking', 'deleting'];
+const PHASES: SandboxRunPhase[] = ['creating', 'applying', 'checking', 'deleting'];
+/** 단계 이름. 화면이 모르는 단계(옛 서버의 mirroring 등)는 비운다 */
+export const phaseLabel = (phase: string | null | undefined) => (phase && phase in PHASE_LABEL ? PHASE_LABEL[phase as SandboxRunPhase] : '');
 
 export const CHECK_LABEL: Record<RehearsalCheckId, string> = {
   sandbox_ready: '샌드박스 준비',
@@ -129,12 +130,15 @@ export function rehearsalState(run: RehearsalRun | null | undefined, stale = fal
 /** 지난 시도의 줄인가 (서버 run.stale). 지난 줄은 지금 판정으로 말하지 않는다. */
 export const isStaleRun = (run: Pick<RehearsalRun, 'stale'> | null | undefined) => run?.stale === true;
 
-/** 진행 단계 카드 "앱 배포" 칸 오른쪽 한 마디. 줄이 없거나 지난 시도의 줄이면(배포 중일 때 말고) 붙이지 않는다. */
+/**
+ * 진행 단계 카드 "앱 배포" 칸 오른쪽 한 마디. 지난 시도의 줄이면(배포 중일 때 말고) 붙이지 않는다.
+ * 배포 중인데 줄이 없으면 워커가 이미지를 복사하는 중이라(줄은 그 뒤에 생긴다) "리허설 준비".
+ */
 export function rehearsalStepDetail(run: RehearsalRun | null | undefined, stale = false, status?: MigrationStatus): string | undefined {
   const state = rehearsalState(run, stale);
   switch (state) {
     case 'none':
-      return undefined;
+      return status === 'deploying' ? '리허설 준비' : undefined;
     case 'stale':
       return status === 'deploying' ? '리허설 준비' : undefined;
     case 'waiting':
@@ -156,7 +160,7 @@ export function rehearsalStepDetail(run: RehearsalRun | null | undefined, stale 
 /** 리허설 카드 머리줄 오른쪽 요약. */
 export function rehearsalSummary(run: RehearsalRun | null | undefined, stale = false): string {
   const state = rehearsalState(run, stale);
-  if (state === 'running' && run?.phase) return `도는 중 · ${PHASE_LABEL[run.phase]}`;
+  if (state === 'running' && phaseLabel(run?.phase)) return `도는 중 · ${phaseLabel(run?.phase)}`;
   const SUMMARY: Record<RehearsalState, string> = {
     none: '아직 없음',
     waiting: '차례 기다림',
@@ -173,7 +177,7 @@ export function rehearsalSummary(run: RehearsalRun | null | undefined, stale = f
 
 /** 도는 동안의 단계. 이미지 복사는 워커, 나머지는 샌드박스 쪽이 한다. */
 export function phaseEntries(run: Pick<RehearsalRun, 'status' | 'phase'>): ChecklistEntry[] {
-  const at = run.status === 'queued' ? -1 : run.phase ? PHASES.indexOf(run.phase) : 0;
+  const at = run.status === 'queued' ? -1 : run.phase ? PHASES.indexOf(run.phase as SandboxRunPhase) : 0;
   const finished = run.phase === 'done' || run.status === 'passed';
   return PHASES.map((phase, index) => ({
     label: PHASE_LABEL[phase],
@@ -226,6 +230,23 @@ export function elapsedSec(run: Pick<RehearsalRun, 'createdAt' | 'startedAt' | '
   return Math.max(0, Math.round((end - start) / 1000));
 }
 
+/**
+ * 기한 줄 이름. deadlineAt 은 지금 단계의 기한이다: 줄을 서는 동안은 줄 서기 기한(최대 60분),
+ * agent-worker 가 집으면 실행 기한(REHEARSAL_TIMEOUT_SEC)으로 바뀐다. 그래서 남은 시간이 집히는 순간 다른 값으로 뛸 수 있다.
+ */
+export function deadlineLabel(run: Pick<RehearsalRun, 'status'>): string | null {
+  if (run.status === 'queued') return '줄 서기 기한';
+  if (run.status === 'running') return '실행 기한';
+  return null;
+}
+
+/** REHEARSAL_TIMEOUT 이 어디서 났는지 (감사 detail.rehearsal.stage): 줄 서기(queue) / 실행(run) */
+export function timeoutStageText(stage: string | null | undefined): string | null {
+  if (stage === 'queue') return '샌드박스가 아직 돌지 못함 (줄 서기 기한 넘김)';
+  if (stage === 'run') return '실행 중 시간 초과';
+  return null;
+}
+
 /** 남은 기한(초). 기한이 없거나 끝난 줄이면 null. */
 export function remainingSec(run: Pick<RehearsalRun, 'deadlineAt' | 'finishedAt'>, now = Date.now()): number | null {
   if (!run.deadlineAt || run.finishedAt) return null;
@@ -250,8 +271,9 @@ export const rehearsalPollMs = (status: MigrationView['status']) => (status === 
 /** 큰 카드 한 줄 (deploying 일 때). 줄이 없으면 null. */
 export function rehearsalHeroLine(run: RehearsalRun | null | undefined, stale = false): string | null {
   const state = rehearsalState(run, stale);
+  if (state === 'none') return '고객 클러스터에 올리기 전에 리허설을 준비하고 있습니다 · 이미지 복사';
   if (state === 'running' || state === 'waiting')
-    return `고객 클러스터에 올리기 전에 일회용 가상 클러스터에서 먼저 리허설하고 있습니다${run?.phase ? ` · ${PHASE_LABEL[run.phase]}` : ''}`;
+    return `고객 클러스터에 올리기 전에 일회용 가상 클러스터에서 먼저 리허설하고 있습니다${phaseLabel(run?.phase) ? ` · ${phaseLabel(run?.phase)}` : ''}`;
   if (state === 'passed' || state === 'reused') return '리허설을 통과해 같은 매니페스트를 도착 클러스터에 올리고 있습니다';
   if (state === 'skipped' && run?.skip) return SKIP_TEXT[run.skip];
   if (state === 'stale') return '이번 배포 시도의 리허설을 준비하고 있습니다. 옆의 리허설 카드는 지난 시도의 기록입니다';

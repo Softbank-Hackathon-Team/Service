@@ -133,7 +133,8 @@ export function RunningScreen({ migration, route, onChanged }: ScreenProps) {
   const { busy, error, run } = useAction(onChanged);
   const rehearsal = useRehearsal(migration);
   const deploying = migration.status === 'deploying';
-  const rehearsalLine = deploying ? rehearsalHeroLine(rehearsal.run, rehearsal.stale) : null;
+  // 처음 읽는 동안은 줄이 없는 것과 구별이 안 돼서 아무것도 쓰지 않는다
+  const rehearsalLine = deploying && !rehearsal.loading ? rehearsalHeroLine(rehearsal.run, rehearsal.stale) : null;
   return (
     <Frame migration={migration} route={route}>
       <Hero tone="run" meta={LABEL[migration.status]} title={runTitle(migration.status)}>

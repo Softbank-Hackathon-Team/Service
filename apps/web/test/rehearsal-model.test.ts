@@ -2,10 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   checkEntries, elapsedSec, formatSec, failureClassOf, fidelityGroups, isolationLine, isRehearsalCode, isStaleRun, phaseEntries,
-  rehearsalHeroLine, rehearsalPollMs, rehearsalRelevant, rehearsalState, rehearsalStepDetail, rehearsalSummary, remainingSec, SKIP_TEXT,
+  rehearsalHeroLine, rehearsalPollMs, deadlineLabel, timeoutStageText, phaseLabel, rehearsalRelevant, rehearsalState, rehearsalStepDetail, rehearsalSummary, remainingSec, SKIP_TEXT,
 } from "../src/features/migration/rehearsal";
 import { migrationSteps } from "../src/features/migration/model";
 import { stopReasonOf } from "../src/lib/failure";
+import { stopEvidence } from "../src/lib/timelineDetail";
 import { REHEARSAL_FAILURE_CLASS, REHEARSAL_FAILURE_CODES, type RehearsalRun } from "../src/lib/rehearsal-types";
 
 const run = (over: Partial<RehearsalRun> = {}): RehearsalRun => ({
@@ -63,7 +64,10 @@ test("읽을지와 간격: 배포 단계부터, deploying 만 빠르게", () => 
 });
 
 test("단계 목록·요약·큰 카드 한 줄", () => {
-  assert.deepEqual(phaseEntries(run()).map((e) => e.status), ["done", "done", "active", "pending", "pending"]);
+  // 이미지 복사는 줄이 생기기 전 일이라 단계에 없다: 만들기 → 올리기 → 검사 → 지우기
+  assert.deepEqual(phaseEntries(run()).map((e) => e.status), ["done", "active", "pending", "pending"]);
+  assert.deepEqual(phaseEntries(run()).map((e) => e.label), ["샌드박스 만들기", "같은 매니페스트 올리기", "검사", "샌드박스 지우기"]);
+  assert.equal(phaseLabel("mirroring"), "", "옛 서버의 모르는 단계는 비운다");
   assert.ok(phaseEntries(run({ status: "queued", phase: null })).every((e) => e.status === "pending"));
   assert.equal(rehearsalSummary(run({ phase: "checking" })), "도는 중 · 검사");
   assert.match(rehearsalHeroLine(run()) ?? "", /가상 클러스터에서 먼저 리허설/);
@@ -109,4 +113,26 @@ test("리허설 실패 코드 14개 모두 사람 말이 있고, 플랫폼 문�
   assert.equal(failureClassOf("REHEARSAL_POLICY_DENIED"), "cannot_vouch");
   assert.match(stopReasonOf("REHEARSAL_POLICY_DENIED", "paused")!.hint, /고장 났다는 뜻은 아닙니다/);
   assert.equal(isRehearsalCode("TF_APPLY_FAILED"), false);
+});
+
+test("배포 중인데 줄이 아직 없으면(이미지 복사 중) 리허설 준비", () => {
+  assert.equal(rehearsalStepDetail(null, false, "deploying"), "리허설 준비");
+  assert.equal(rehearsalStepDetail(null, false, "syncing"), undefined);
+  assert.match(rehearsalHeroLine(null) ?? "", /리허설을 준비하고 있습니다 · 이미지 복사/);
+});
+
+test("기한은 지금 단계의 기한: 줄 서기 / 실행", () => {
+  assert.equal(deadlineLabel(run({ status: "queued", phase: null })), "줄 서기 기한");
+  assert.equal(deadlineLabel(run({ status: "running" })), "실행 기한");
+  assert.equal(deadlineLabel(run({ status: "passed" })), null);
+});
+
+test("리허설 시간 초과는 어디서 났는지로 나눈다", () => {
+  assert.equal(timeoutStageText("queue"), "샌드박스가 아직 돌지 못함 (줄 서기 기한 넘김)");
+  assert.equal(timeoutStageText("run"), "실행 중 시간 초과");
+  assert.equal(timeoutStageText(null), null);
+  const move = (detail: Record<string, unknown>) => ({ kind: "transition" as const, at: "t", from: "deploying", to: "paused", detail, measurements: [] });
+  assert.equal(stopEvidence([move({ rehearsal: { stage: "queue" } }) as never], "paused")?.rehearsalStage, "queue");
+  assert.equal(stopEvidence([move({ rehearsal: { stage: "bogus" } }) as never], "paused")?.rehearsalStage, null);
+  assert.equal(stopEvidence([move({}) as never], "paused")?.rehearsalStage, null);
 });
