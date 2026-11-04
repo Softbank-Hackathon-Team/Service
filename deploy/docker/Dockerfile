@@ -18,7 +18,12 @@ ARG CRANE_IMAGE=gcr.io/go-containerregistry/crane:v0.22.1@sha256:1f968817b95790b
 #   판 v1.36.5 = 시연 온프레 k3s(v1.36.5+k3s1)와 같은 판. kubectl 은 서버와 위아래 1 minor 까지 지원한다
 #   다이제스트 = 여러 아키텍처 index (amd64·arm64 둘 다 같은 고정값으로 받는다)
 # DRAFT(ai): 고객 k3s 판이 1.35 미만·1.37 초과면 이 판을 같이 올려야 한다
-ARG KUBECTL_IMAGE=registry.k8s.io/kubectl:v1.36.5@sha256:0667e3f3e6ef435d7cd4c16684244703ebd67314c17511c2a9f87ea44f6cdf6b
+#   agent-worker 의 KUBECTL_IMAGE(플랫폼 EKS 판)와 따로 둔다. 고객 클러스터 판에 맞추기 때문이다
+ARG ONPREM_KUBECTL_IMAGE=registry.k8s.io/kubectl:v1.36.5@sha256:0667e3f3e6ef435d7cd4c16684244703ebd67314c17511c2a9f87ea44f6cdf6b
+# agent-worker 의 helm (vCluster 차트를 sbx-* 네임스페이스에 올린다). git 과 같은 방식으로 이미지에서 꺼낸다. 다이제스트 고정
+ARG HELM_IMAGE=alpine/helm:3.22.1@sha256:8191701ad1f82ee3695c87211fcbfe6d7b1bb7df92ac1c8de9ccdb0995a6a2c1
+# agent-worker 의 kubectl (플랫폼 클러스터 밖에서 돌 때 가상 API 로 port-forward). helm 과 같은 방식, 다이제스트 고정. 플랫폼 EKS 1.35 와 같은 마이너
+ARG KUBECTL_IMAGE=registry.k8s.io/kubectl:v1.35.10@sha256:4e1d541a3d62f74637974e4c71f3cea91b9a36ffd059ab45e355648898783837
 
 FROM ${NODE_IMAGE} AS manifests
 WORKDIR /src
@@ -76,8 +81,9 @@ RUN set -e; mkdir -p /out; \
     tar -cf - /usr/bin/git /usr/libexec/git-core /usr/share/git-core $(cat /tmp/libs) 2>/dev/null | tar -xf - -C /out
 
 FROM ${CRANE_IMAGE} AS crane
-
+FROM ${HELM_IMAGE} AS helm
 FROM ${KUBECTL_IMAGE} AS kubectl
+FROM ${ONPREM_KUBECTL_IMAGE} AS onprem-kubectl
 
 # 세 이미지 공통 바탕
 FROM ${NODE_IMAGE} AS runtime
@@ -128,6 +134,13 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
   CMD ["node", "healthcheck.mjs", "db"]
 
 FROM runtime AS agent-worker
+# vCluster 리허설: helm·kubectl(정적 바이너리) + 차트 묶음·CRD (apps/agent-worker/vendor). 체크섬이 다르면 빌드가 멈춘다
+COPY --from=helm /usr/bin/helm /usr/local/bin/helm
+COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl
+COPY apps/agent-worker/vendor /app/vendor
+WORKDIR /app/vendor
+RUN sha256sum -c SHA256SUMS && helm version --short && kubectl version --client
+WORKDIR /app
 COPY --from=build-agent-worker /src/dist/agent-worker/ ./
 USER node
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
@@ -139,7 +152,7 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
 #   읽기 전용 루트 파일시스템으로 돌려도 된다: 쓰는 곳이 없다 (--enroll 은 --out 을 쓰기 가능한 마운트로 준다)
 #   docker run --rm svc-onprem-agent:dev --help
 FROM runtime AS onprem-agent
-COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl
+COPY --from=onprem-kubectl /bin/kubectl /usr/local/bin/kubectl
 COPY --from=build-onprem-agent /src/dist/onprem-agent/ ./
 USER node
 ENTRYPOINT ["node", "--enable-source-maps", "main.mjs"]

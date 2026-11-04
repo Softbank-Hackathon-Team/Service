@@ -1,0 +1,18 @@
+{{- /* auth 칸 없음: 컨트롤러 파드의 클라우드 신원(GKE Workload Identity / EKS Pod Identity)을 그대로 쓴다 */}}
+{{- if not .Values.name }}{{ fail "name 필요" }}{{ end }}
+apiVersion: external-secrets.io/v1
+kind: ClusterSecretStore
+metadata:
+  name: {{ .Values.name }}
+spec:
+  provider:
+    {{- if eq .Values.provider "gcpsm" }}
+    gcpsm:
+      projectID: {{ required "gcpsm.projectID 필요" .Values.gcpsm.projectID | quote }}
+    {{- else if eq .Values.provider "aws" }}
+    aws:
+      service: SecretsManager
+      region: {{ required "aws.region 필요" .Values.aws.region | quote }}
+    {{- else }}
+    {{- fail "provider 는 gcpsm 또는 aws" }}
+    {{- end }}

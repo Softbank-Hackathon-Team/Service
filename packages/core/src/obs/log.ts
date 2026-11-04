@@ -8,7 +8,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 // DRAFT(ai): pino 를 직접 의존하지 않고 같은 모양을 손으로 찍는다. worker 에 새 의존성을 늘리지 않으려고
 
 export const LOG_FIELDS = ["tenant_id", "migration_id", "state", "job_id", "queue", "request_id"] as const;
-export type LogContext = Partial<Record<(typeof LOG_FIELDS)[number] | "prev_state" | "agent_run_id", string>>;
+export type LogContext = Partial<Record<(typeof LOG_FIELDS)[number] | "prev_state" | "agent_run_id" | "sandbox_run_id", string>>;
 
 const LEVELS = { debug: 20, info: 30, warn: 40, error: 50 } as const;
 export type LogLevel = keyof typeof LEVELS;
@@ -27,7 +27,7 @@ export function contextFromJob(queue: string, jobId: string | undefined, data: u
   const d = (data && typeof data === "object" ? data : {}) as Record<string, unknown>;
   const s = (k: string) => (typeof d[k] === "string" ? (d[k] as string) : undefined);
   return dropEmpty({ queue, job_id: jobId, tenant_id: s("tenantId"), migration_id: s("migrationId"),
-    request_id: s("requestId"), agent_run_id: s("agentRunId") });
+    request_id: s("requestId"), agent_run_id: s("agentRunId"), sandbox_run_id: s("sandboxRunId") });
 }
 
 // LOGLEAK DRAFT(ai): 로그에 비밀값이 안 남게 한다. 대안: pino redact 경로만(깊이 1단·문자열 속은 못 가림) → worker 로그는 pino 가 아니라 못 씀

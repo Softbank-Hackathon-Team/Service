@@ -176,11 +176,6 @@
             "-c",
             "sleep infinity"
           ]
-        },
-        {
-          "name": "mesh",
-          "image": "istio/proxyv2",
-          "injected": true
         }
       ]
     },

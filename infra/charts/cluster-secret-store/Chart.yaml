@@ -1,0 +1,7 @@
+# 도착 클러스터의 ClusterSecretStore 하나 (gitops/charts/app 의 ExternalSecret 이 이름으로 참조).
+# infra/modules/{gcp,aws}/env/eso.tf 가 ESO 릴리스 뒤에 helm_release 로 설치한다. 값은 이름·리전·프로젝트뿐, 비밀 없음.
+apiVersion: v2
+name: cluster-secret-store
+description: ClusterSecretStore for the target cluster (gcpsm | aws SecretsManager)
+type: application
+version: 0.1.0

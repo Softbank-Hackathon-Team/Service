@@ -80,10 +80,11 @@ test("PRINCIPALUSER: PLATFORM_PRINCIPAL_ARN 은 IAM 역할·사용자만 (:root�
 test("리허설 설정 (worker): 정상 값 통과 / 틀린 값은 이름: 이유, 켰는데 복사 자리 없으면 거부 (흉내면 통과)", () => {
   const base = { DATABASE_URL: "postgres://u@h/d" };
   const ecr = "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/sandbox";
-  assert.deepEqual(configProblems("worker", { ...base, SANDBOX_REHEARSAL: "on", SANDBOX_IMAGE_REGISTRY: ecr, REHEARSAL_TIMEOUT_SEC: "1200", REHEARSAL_POLL_SEC: "60" }), []);
-  assert.deepEqual(configProblems("worker", { ...base, SANDBOX_REHEARSAL: "yes", REHEARSAL_TIMEOUT_SEC: "60", REHEARSAL_POLL_SEC: "1.5",
+  assert.deepEqual(configProblems("worker", { ...base, SANDBOX_REHEARSAL: "on", SANDBOX_IMAGE_REGISTRY: ecr, REHEARSAL_TIMEOUT_SEC: "1200", REHEARSAL_QUEUE_TIMEOUT_SEC: "3600", REHEARSAL_POLL_SEC: "60" }), []);
+  // 실행 기한 200초: agent-worker 가 기한 120초 전에 멈추면 샌드박스를 만들 시간도 안 남는다
+  assert.deepEqual(configProblems("worker", { ...base, SANDBOX_REHEARSAL: "yes", REHEARSAL_TIMEOUT_SEC: "200", REHEARSAL_QUEUE_TIMEOUT_SEC: "10", REHEARSAL_POLL_SEC: "1.5",
     SANDBOX_IMAGE_REGISTRY: "https://ecr/sandbox", MOCK_SANDBOX: "true" }).map((x) => x.split(":")[0]).sort(),
-    ["MOCK_SANDBOX", "REHEARSAL_POLL_SEC", "REHEARSAL_TIMEOUT_SEC", "SANDBOX_IMAGE_REGISTRY", "SANDBOX_REHEARSAL"]);
+    ["MOCK_SANDBOX", "REHEARSAL_POLL_SEC", "REHEARSAL_QUEUE_TIMEOUT_SEC", "REHEARSAL_TIMEOUT_SEC", "SANDBOX_IMAGE_REGISTRY", "SANDBOX_REHEARSAL"]);
   assert.deepEqual(configProblems("worker", { ...base, SANDBOX_REHEARSAL: "on" }).map((x) => x.split(":")[0]), ["SANDBOX_IMAGE_REGISTRY"]);
   assert.deepEqual(configProblems("worker", { ...base, SANDBOX_REHEARSAL: "on", MOCK_SANDBOX: "1" }), []);
   assert.deepEqual(configProblems("worker", { ...base, SANDBOX_REHEARSAL: "off" }), []);

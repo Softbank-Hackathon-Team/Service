@@ -74,7 +74,7 @@ export const TARGET_POD_SECURITY: Record<RehearsalTarget, RehearsalInput["target
 
 export interface BuildArgs {
   target: RehearsalTarget; i: DeployInput; values: HelmValues; rendered: RenderedBundle; docs: Manifest[];
-  images: RehearsalInput["images"]; mirrored: boolean;
+  images: RehearsalInput["images"]; mirrored: boolean; runBudgetSec: number;
 }
 export function buildRehearsalInput(a: BuildArgs): RehearsalInput {
   const ns = appNamespace({ tenant: "", app: a.i.spec!.app.name, env: a.target });
@@ -87,6 +87,6 @@ export function buildRehearsalInput(a: BuildArgs): RehearsalInput {
   return RehearsalInput.parse({
     version: 1, target: a.target, app: a.i.spec!.app.name, namespace: ns, bundleSha256: a.rendered.bundleSha256, k8sMinor: k8sMinor.value,
     original: a.rendered.manifests, apply: sub.apply.map((m) => ({ path: m.path, yaml: stringify(m.doc) })),
-    images: a.images, databases: sub.databases, targetPodSecurity: TARGET_POD_SECURITY[a.target], targetQuota, edges: sub.edges, fidelity,
+    images: a.images, imagesMirrored: a.mirrored, runBudgetSec: a.runBudgetSec, databases: sub.databases, targetPodSecurity: TARGET_POD_SECURITY[a.target], targetQuota, edges: sub.edges, fidelity,
   });
 }

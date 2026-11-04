@@ -1,0 +1,400 @@
+{
+ "version": 1,
+ "target": "onprem-k3s",
+ "app": "shop",
+ "namespace": "app-shop",
+ "bundleSha256": "278b277100ada37fb665390e9ea8f1d69c368ace6ec5295631bb9e6964901013",
+ "k8sMinor": "1.35",
+ "original": [
+  {
+   "path": "manifests/serviceaccount-shop-web.yaml",
+   "yaml": "---\n# Source: app/templates/workloads.yaml\napiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: shop-web\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\n"
+  },
+  {
+   "path": "manifests/serviceaccount-shop-api.yaml",
+   "yaml": "---\n# Source: app/templates/workloads.yaml\napiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: shop-api\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\n"
+  },
+  {
+   "path": "manifests/configmap-app-config.yaml",
+   "yaml": "---\n# Source: app/templates/workloads.yaml\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app-config\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\ndata:\n  app.json: '{\"feature\":true}'\n"
+  },
+  {
+   "path": "manifests/persistentvolumeclaim-api-cache.yaml",
+   "yaml": "---\n# Source: app/templates/workloads.yaml\napiVersion: v1\nkind: PersistentVolumeClaim\nmetadata:\n  name: api-cache\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\n    app.kubernetes.io/component: \"api\"\nspec:\n  accessModes:\n    - ReadWriteOnce\n  storageClassName: local-path\n  resources:\n    requests:\n      storage: \"1Gi\"\n"
+  },
+  {
+   "path": "manifests/service-shop-web.yaml",
+   "yaml": "---\n# Source: app/templates/workloads.yaml\napiVersion: v1\nkind: Service\nmetadata:\n  name: shop-web\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\n    app.kubernetes.io/component: \"web\"\nspec:\n  type: ClusterIP\n  selector:\n    app.kubernetes.io/name: shop\n    app.kubernetes.io/component: \"web\"\n  ports:\n    - port: 80\n      targetPort: http\n      name: http\n"
+  },
+  {
+   "path": "manifests/service-shop-api.yaml",
+   "yaml": "---\n# Source: app/templates/workloads.yaml\napiVersion: v1\nkind: Service\nmetadata:\n  name: shop-api\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\n    app.kubernetes.io/component: \"api\"\nspec:\n  type: ClusterIP\n  selector:\n    app.kubernetes.io/name: shop\n    app.kubernetes.io/component: \"api\"\n  ports:\n    - port: 80\n      targetPort: http\n      name: http\n"
+  },
+  {
+   "path": "manifests/deployment-web.yaml",
+   "yaml": "---\n# Source: app/templates/workloads.yaml\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\n    app.kubernetes.io/component: \"web\"\nspec:\n  replicas: 2\n  selector:\n    matchLabels:\n      app.kubernetes.io/name: shop\n      app.kubernetes.io/component: \"web\"\n  template:\n    metadata:\n\n      labels:\n        app.kubernetes.io/component: web\n        app.kubernetes.io/name: shop\n        managed-by: platform\n        tenant: t1\n    spec:\n\n      serviceAccountName: shop-web\n      containers:\n        - name: app\n          image: \"reg.onprem.example/platform/t1/shop-web@sha256:fcb75f691c8b0414d670ae57\\\n            0240cbf95502cc18a9ba57e982ecac589760a186\"\n          args:\n            - -listen=:8080\n            - -text=web ok\n          ports:\n            - containerPort: 8080\n              name: http\n          env:\n            - name: API_URL\n              value: http://shop-api:80\n          resources:\n            limits:\n              memory: 256Mi\n            requests:\n              cpu: 100m\n              memory: 128Mi\n          readinessProbe:\n            httpGet:\n              path: /healthz\n              port: http\n          livenessProbe:\n            httpGet:\n              path: /healthz\n              port: http\n            initialDelaySeconds: 10\n          securityContext:\n            readOnlyRootFilesystem: true\n            runAsNonRoot: true\n"
+  },
+  {
+   "path": "manifests/deployment-api.yaml",
+   "yaml": "---\n# Source: app/templates/workloads.yaml\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\n    app.kubernetes.io/component: \"api\"\nspec:\n  selector:\n    matchLabels:\n      app.kubernetes.io/name: shop\n      app.kubernetes.io/component: \"api\"\n  template:\n    metadata:\n\n      labels:\n        app.kubernetes.io/component: api\n        app.kubernetes.io/name: shop\n        managed-by: platform\n        tenant: t1\n    spec:\n\n      serviceAccountName: shop-api\n      initContainers:\n        - command:\n            - sh\n            - -c\n            - \"true\"\n          image: busybox:1.36\n          name: wait-db\n      containers:\n        - name: app\n          image: \"reg.onprem.example/platform/t1/shop-api@sha256:fcb75f691c8b0414d670ae57\\\n            0240cbf95502cc18a9ba57e982ecac589760a186\"\n          command:\n            - /http-echo\n          args:\n            - -listen=:3000\n            - -text=api ok\n          ports:\n            - containerPort: 3000\n              name: http\n          env:\n            - name: DB_HOST\n              value: shop-db-rw\n            - name: DB_PORT\n              value: \"5432\"\n            - name: DB_USER\n              value: app\n            - name: DB_PASSWORD\n              valueFrom:\n                secretKeyRef:\n                  key: password\n                  name: shop-db-app\n            - name: JWT_SECRET\n              valueFrom:\n                secretKeyRef:\n                  key: JWT_SECRET\n                  name: shop-secrets\n          resources:\n            limits:\n              memory: 512Mi\n            requests:\n              cpu: 250m\n              memory: 256Mi\n          readinessProbe:\n            httpGet:\n              path: /ready\n              port: http\n          volumeMounts:\n            - mountPath: /etc/app\n              name: cfg-app-config\n              readOnly: true\n            - mountPath: /etc/tls\n              name: sec-tls\n              readOnly: true\n            - mountPath: /var/cache/app\n              name: pvc-cache\n        - command:\n            - sh\n            - -c\n            - sleep infinity\n          image: busybox:1.36\n          name: log\n      volumes:\n        - configMap:\n            name: app-config\n          name: cfg-app-config\n        - name: sec-tls\n          secret:\n            secretName: shop-tls\n        - name: pvc-cache\n          persistentVolumeClaim:\n            claimName: api-cache\n"
+  },
+  {
+   "path": "manifests/horizontalpodautoscaler-api.yaml",
+   "yaml": "---\n# Source: app/templates/workloads.yaml\napiVersion: autoscaling/v2\nkind: HorizontalPodAutoscaler\nmetadata:\n  name: api\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\n    app.kubernetes.io/component: \"api\"\nspec:\n  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: api }\n  minReplicas: 2\n  maxReplicas: 6\n  metrics:\n    - type: Resource\n      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }\n"
+  },
+  {
+   "path": "manifests/job-migrate.yaml",
+   "yaml": "---\n# Source: app/templates/workloads.yaml\napiVersion: batch/v1\nkind: Job\nmetadata:\n  name: migrate\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\n    app.kubernetes.io/component: \"migrate\"\nspec:\n  template:\n    metadata:\n\n      labels:\n        app.kubernetes.io/component: migrate\n        app.kubernetes.io/name: shop\n        managed-by: platform\n        tenant: t1\n    spec:\n\n      serviceAccountName: shop-api\n      restartPolicy: OnFailure\n      containers:\n        - name: app\n          image: \"busybox:1.36\"\n          command:\n            - sh\n            - -c\n            - echo migrated\n"
+  },
+  {
+   "path": "manifests/cronjob-nightly.yaml",
+   "yaml": "---\n# Source: app/templates/workloads.yaml\napiVersion: batch/v1\nkind: CronJob\nmetadata:\n  name: nightly\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\n    app.kubernetes.io/component: \"nightly\"\nspec:\n  schedule: \"0 3 * * *\"\n  concurrencyPolicy: Forbid\n  suspend: true\n  jobTemplate:\n    spec:\n      backoffLimit: 2\n      template:\n        metadata:\n\n          labels:\n            app.kubernetes.io/component: nightly\n            app.kubernetes.io/name: shop\n            managed-by: platform\n            tenant: t1\n        spec:\n\n          serviceAccountName: shop-api\n          restartPolicy: OnFailure\n          containers:\n            - name: app\n              image: \"reg.onprem.example/platform/t1/shop-api@sha256:fcb75f691c8b0414d670ae57\\\n                0240cbf95502cc18a9ba57e982ecac589760a186\"\n              command:\n                - /http-echo\n              args:\n                - -version\n"
+  },
+  {
+   "path": "manifests/ingress-shop.yaml",
+   "yaml": "---\n# Source: app/templates/ingress.yaml\napiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: shop\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\nspec:\n  rules:\n    - host: \"shop.example.com\"\n      http:\n        paths:\n          - path: \"/\"\n            pathType: Prefix\n            backend: { service: { name: shop-web, port: { number: 80 } } }\n"
+  },
+  {
+   "path": "manifests/cluster-shop-db.yaml",
+   "yaml": "---\n# Source: app/templates/cnpg.yaml\napiVersion: postgresql.cnpg.io/v1\nkind: Cluster\nmetadata:\n  name: shop-db\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\nspec:\n  instances: 1\n  imageName: \"ghcr.io/cloudnative-pg/postgresql:16\"\n  storage: { size: \"20Gi\" }\n  resources:\n    limits:\n      memory: 1Gi\n    requests:\n      cpu: 500m\n      memory: 1Gi\n  bootstrap:\n    initdb: { database: \"shop\", owner: \"app\" }\n  postgresql:\n    parameters:\n      wal_level: logical\n"
+  },
+  {
+   "path": "manifests/externalsecret-shop-secrets.yaml",
+   "yaml": "---\n# Source: app/templates/externalsecret.yaml\napiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata:\n  name: shop-secrets\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\nspec:\n  refreshInterval: 1h\n  secretStoreRef:\n    kind: ClusterSecretStore\n    name: vault\n  target:\n    name: shop-secrets\n  data:\n    - secretKey: \"JWT_SECRET\"\n      remoteRef:\n        key: \"shop/app\"\n        property: \"JWT_SECRET\"\n"
+  },
+  {
+   "path": "manifests/externalsecret-shop-tls.yaml",
+   "yaml": "---\n# Source: app/templates/externalsecret.yaml\napiVersion: external-secrets.io/v1\nkind: ExternalSecret\nmetadata:\n  name: shop-tls\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: \"platform\"\n    tenant: \"t1\"\nspec:\n  refreshInterval: 1h\n  secretStoreRef:\n    kind: ClusterSecretStore\n    name: vault\n  target:\n    name: shop-tls\n    template: { type: \"kubernetes.io/tls\" }\n  data:\n    - secretKey: \"tls.crt\"\n      remoteRef:\n        key: \"shop/tls\"\n        property: \"tls.crt\"\n    - secretKey: \"tls.key\"\n      remoteRef:\n        key: \"shop/tls\"\n        property: \"tls.key\"\n"
+  }
+ ],
+ "apply": [
+  {
+   "path": "manifests/serviceaccount-shop-web.yaml",
+   "yaml": "apiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: shop-web\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: platform\n    tenant: t1\n"
+  },
+  {
+   "path": "manifests/serviceaccount-shop-api.yaml",
+   "yaml": "apiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: shop-api\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: platform\n    tenant: t1\n"
+  },
+  {
+   "path": "manifests/configmap-app-config.yaml",
+   "yaml": "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: app-config\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: platform\n    tenant: t1\ndata:\n  app.json: '{\"feature\":true}'\n"
+  },
+  {
+   "path": "manifests/service-shop-web.yaml",
+   "yaml": "apiVersion: v1\nkind: Service\nmetadata:\n  name: shop-web\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: platform\n    tenant: t1\n    app.kubernetes.io/component: web\nspec:\n  type: ClusterIP\n  selector:\n    app.kubernetes.io/name: shop\n    app.kubernetes.io/component: web\n  ports:\n    - port: 80\n      targetPort: http\n      name: http\n"
+  },
+  {
+   "path": "manifests/service-shop-api.yaml",
+   "yaml": "apiVersion: v1\nkind: Service\nmetadata:\n  name: shop-api\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: platform\n    tenant: t1\n    app.kubernetes.io/component: api\nspec:\n  type: ClusterIP\n  selector:\n    app.kubernetes.io/name: shop\n    app.kubernetes.io/component: api\n  ports:\n    - port: 80\n      targetPort: http\n      name: http\n"
+  },
+  {
+   "path": "manifests/deployment-web.yaml",
+   "yaml": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: platform\n    tenant: t1\n    app.kubernetes.io/component: web\nspec:\n  replicas: 1\n  selector:\n    matchLabels:\n      app.kubernetes.io/name: shop\n      app.kubernetes.io/component: web\n  template:\n    metadata:\n      labels:\n        app.kubernetes.io/component: web\n        app.kubernetes.io/name: shop\n        managed-by: platform\n        tenant: t1\n    spec:\n      serviceAccountName: shop-web\n      containers:\n        - name: app\n          image: docker.io/hashicorp/http-echo@sha256:fcb75f691c8b0414d670ae570240cbf95502cc18a9ba57e982ecac589760a186\n          args:\n            - -listen=:8080\n            - -text=web ok\n          ports:\n            - containerPort: 8080\n              name: http\n          env:\n            - name: API_URL\n              value: http://shop-api:80\n          resources:\n            limits:\n              memory: 256Mi\n            requests:\n              cpu: 100m\n              memory: 128Mi\n          readinessProbe:\n            httpGet:\n              path: /healthz\n              port: http\n          livenessProbe:\n            httpGet:\n              path: /healthz\n              port: http\n            initialDelaySeconds: 10\n          securityContext:\n            readOnlyRootFilesystem: true\n            runAsNonRoot: true\n"
+  },
+  {
+   "path": "manifests/deployment-api.yaml",
+   "yaml": "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: api\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: platform\n    tenant: t1\n    app.kubernetes.io/component: api\nspec:\n  selector:\n    matchLabels:\n      app.kubernetes.io/name: shop\n      app.kubernetes.io/component: api\n  template:\n    metadata:\n      labels:\n        app.kubernetes.io/component: api\n        app.kubernetes.io/name: shop\n        managed-by: platform\n        tenant: t1\n    spec:\n      serviceAccountName: shop-api\n      initContainers:\n        - command:\n            - sh\n            - -c\n            - \"true\"\n          image: busybox:1.36\n          name: wait-db\n      containers:\n        - name: app\n          image: docker.io/hashicorp/http-echo@sha256:fcb75f691c8b0414d670ae570240cbf95502cc18a9ba57e982ecac589760a186\n          command:\n            - /http-echo\n          args:\n            - -listen=:3000\n            - -text=api ok\n          ports:\n            - containerPort: 3000\n              name: http\n          env:\n            - name: DB_HOST\n              value: shop-db-rw\n            - name: DB_PORT\n              value: \"5432\"\n            - name: DB_USER\n              value: app\n            - name: DB_PASSWORD\n              valueFrom:\n                secretKeyRef:\n                  key: password\n                  name: shop-db-app\n            - name: JWT_SECRET\n              valueFrom:\n                secretKeyRef:\n                  key: JWT_SECRET\n                  name: shop-secrets\n          resources:\n            limits:\n              memory: 512Mi\n            requests:\n              cpu: 100m\n              memory: 128Mi\n          readinessProbe:\n            httpGet:\n              path: /ready\n              port: http\n          volumeMounts:\n            - mountPath: /etc/app\n              name: cfg-app-config\n              readOnly: true\n            - mountPath: /etc/tls\n              name: sec-tls\n              readOnly: true\n            - mountPath: /var/cache/app\n              name: pvc-cache\n        - command:\n            - sh\n            - -c\n            - sleep infinity\n          image: busybox:1.36\n          name: log\n      volumes:\n        - configMap:\n            name: app-config\n          name: cfg-app-config\n        - name: sec-tls\n          secret:\n            secretName: shop-tls\n        - name: pvc-cache\n          emptyDir: {}\n"
+  },
+  {
+   "path": "manifests/horizontalpodautoscaler-api.yaml",
+   "yaml": "apiVersion: autoscaling/v2\nkind: HorizontalPodAutoscaler\nmetadata:\n  name: api\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: platform\n    tenant: t1\n    app.kubernetes.io/component: api\nspec:\n  scaleTargetRef:\n    apiVersion: apps/v1\n    kind: Deployment\n    name: api\n  minReplicas: 1\n  maxReplicas: 6\n  metrics:\n    - type: Resource\n      resource:\n        name: cpu\n        target:\n          type: Utilization\n          averageUtilization: 70\n"
+  },
+  {
+   "path": "manifests/job-migrate.yaml",
+   "yaml": "apiVersion: batch/v1\nkind: Job\nmetadata:\n  name: migrate\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: platform\n    tenant: t1\n    app.kubernetes.io/component: migrate\nspec:\n  template:\n    metadata:\n      labels:\n        app.kubernetes.io/component: migrate\n        app.kubernetes.io/name: shop\n        managed-by: platform\n        tenant: t1\n    spec:\n      serviceAccountName: shop-api\n      restartPolicy: OnFailure\n      containers:\n        - name: app\n          image: busybox:1.36\n          command:\n            - sh\n            - -c\n            - echo migrated\n"
+  },
+  {
+   "path": "manifests/cronjob-nightly.yaml",
+   "yaml": "apiVersion: batch/v1\nkind: CronJob\nmetadata:\n  name: nightly\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: platform\n    tenant: t1\n    app.kubernetes.io/component: nightly\nspec:\n  schedule: 0 3 * * *\n  concurrencyPolicy: Forbid\n  suspend: true\n  jobTemplate:\n    spec:\n      backoffLimit: 2\n      template:\n        metadata:\n          labels:\n            app.kubernetes.io/component: nightly\n            app.kubernetes.io/name: shop\n            managed-by: platform\n            tenant: t1\n        spec:\n          serviceAccountName: shop-api\n          restartPolicy: OnFailure\n          containers:\n            - name: app\n              image: docker.io/hashicorp/http-echo@sha256:fcb75f691c8b0414d670ae570240cbf95502cc18a9ba57e982ecac589760a186\n              command:\n                - /http-echo\n              args:\n                - -version\n"
+  },
+  {
+   "path": "rehearsal/secret-shop-db-app.yaml",
+   "yaml": "apiVersion: v1\nkind: Secret\nmetadata:\n  name: shop-db-app\n  namespace: app-shop\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: platform\n    tenant: t1\nstringData:\n  dbname: shop\n  host: shop-db-rw\n  jdbc-uri: jdbc:postgresql://shop-db-rw:5432/shop?password=825cae75cc041221f27afde26ec3c65d2770a021fda6157e&user=app\n  password: 825cae75cc041221f27afde26ec3c65d2770a021fda6157e\n  pgpass: |\n    shop-db-rw:5432:shop:app:825cae75cc041221f27afde26ec3c65d2770a021fda6157e\n  port: \"5432\"\n  uri: postgresql://app:825cae75cc041221f27afde26ec3c65d2770a021fda6157e@shop-db-rw:5432/shop\n  username: app\n"
+  },
+  {
+   "path": "rehearsal/secret-shop-secrets.yaml",
+   "yaml": "apiVersion: v1\nkind: Secret\nmetadata:\n  name: shop-secrets\n  namespace: app-shop\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: platform\n    tenant: t1\nstringData:\n  JWT_SECRET: 0d2f22c42d095b227e39173f53a7f7e1d7d2d0bb62c2e833\n"
+  },
+  {
+   "path": "rehearsal/secret-shop-tls.yaml",
+   "yaml": "apiVersion: v1\nkind: Secret\nmetadata:\n  name: shop-tls\n  namespace: app-shop\n  labels:\n    app.kubernetes.io/name: shop\n    managed-by: platform\n    tenant: t1\ntype: kubernetes.io/tls\nstringData:\n  tls.crt: f440a8ab64e3723c939ad758b1409cfa864196242603c7fd\n  tls.key: 9791f7dffdaee09e90782ead12db4477be62a4fb7e17beb0\n"
+  }
+ ],
+ "images": [
+  {
+   "ref": "reg.onprem.example/platform/t1/shop-web@sha256:fcb75f691c8b0414d670ae570240cbf95502cc18a9ba57e982ecac589760a186",
+   "sandboxRef": "docker.io/hashicorp/http-echo@sha256:fcb75f691c8b0414d670ae570240cbf95502cc18a9ba57e982ecac589760a186"
+  },
+  {
+   "ref": "reg.onprem.example/platform/t1/shop-api@sha256:fcb75f691c8b0414d670ae570240cbf95502cc18a9ba57e982ecac589760a186",
+   "sandboxRef": "docker.io/hashicorp/http-echo@sha256:fcb75f691c8b0414d670ae570240cbf95502cc18a9ba57e982ecac589760a186"
+  }
+ ],
+ "imagesMirrored": true,
+ "runBudgetSec": 1200,
+ "databases": [
+  {
+   "service": "shop-db-rw",
+   "majorVersion": "16",
+   "database": "shop",
+   "owner": "app",
+   "secretName": "shop-db-app",
+   "secretKeys": [
+    "dbname",
+    "host",
+    "jdbc-uri",
+    "password",
+    "pgpass",
+    "port",
+    "uri",
+    "username"
+   ]
+  }
+ ],
+ "targetPodSecurity": "baseline",
+ "targetQuota": null,
+ "edges": [
+  {
+   "from": "web",
+   "host": "shop-api",
+   "port": 80
+  },
+  {
+   "from": "shop",
+   "host": "shop-web",
+   "port": 80
+  }
+ ],
+ "fidelity": {
+  "version": 1,
+  "target": "onprem-k3s",
+  "bundleSha256": "278b277100ada37fb665390e9ea8f1d69c368ace6ec5295631bb9e6964901013",
+  "items": [
+   {
+    "id": "manifests",
+    "status": "identical",
+    "real": "렌더한 묶음을 그대로 커밋",
+    "sandbox": "같은 묶음 원본을 서버 dry-run",
+    "reason": "지문 bundleSha256 을 커밋 직전에 다시 비교한다",
+    "refs": []
+   },
+   {
+    "id": "namespace",
+    "status": "identical",
+    "real": "app-<앱> 네임스페이스",
+    "sandbox": "가상 클러스터에 같은 이름",
+    "reason": "서비스 DNS 이름이 같다",
+    "refs": []
+   },
+   {
+    "id": "k8s_version",
+    "status": "identical",
+    "real": "쿠버네티스 1.35",
+    "sandbox": "가상 클러스터 1.35",
+    "reason": "도착 마이너와 같은 판",
+    "refs": []
+   },
+   {
+    "id": "objects",
+    "status": "identical",
+    "real": "묶음의 모든 객체",
+    "sandbox": "아래 바꾼 항목 말고 그대로 적용",
+    "reason": "치환 표에 없는 바꿈은 없다",
+    "refs": []
+   },
+   {
+    "id": "target_pod_security",
+    "status": "identical",
+    "real": "Kyverno 파드 보안 baseline",
+    "sandbox": "파드 틀을 baseline 네임스페이스에 dry-run",
+    "reason": "같은 PSS 규칙으로 판정한다",
+    "refs": []
+   },
+   {
+    "id": "images",
+    "status": "substituted",
+    "real": "도착 레지스트리 주소 @digest",
+    "sandbox": "플랫폼 샌드박스 레지스트리 주소, 같은 다이제스트",
+    "reason": "샌드박스에 고객 자격을 넣지 않으려고 다이제스트 그대로 복사했다",
+    "refs": [
+     "CronJob/nightly:spec.jobTemplate.spec.template.spec.containers[0].image",
+     "Deployment/api:spec.template.spec.containers[0].image",
+     "Deployment/web:spec.template.spec.containers[0].image"
+    ]
+   },
+   {
+    "id": "replicas",
+    "status": "substituted",
+    "real": "원래 복제 수 (HPA 최소 포함)",
+    "sandbox": "1",
+    "reason": "샌드박스 노드 하나에 올린다. 롤아웃·준비 판정은 같다",
+    "refs": [
+     "Deployment/web:spec.replicas",
+     "HorizontalPodAutoscaler/api:spec.minReplicas"
+    ]
+   },
+   {
+    "id": "requests",
+    "status": "substituted",
+    "real": "원래 요청량",
+    "sandbox": "요청량 상한 cpu 100m, memory 128Mi (한도 그대로)",
+    "reason": "작은 노드에서 스케줄 실패를 없앤다. 한도가 그대로라 OOM 판정은 같다",
+    "refs": [
+     "Deployment/api:spec.template.spec.containers[0].resources.requests.cpu",
+     "Deployment/api:spec.template.spec.containers[0].resources.requests.memory"
+    ]
+   },
+   {
+    "id": "scheduling",
+    "status": "identical",
+    "real": "배치 규칙 없음",
+    "sandbox": "같음",
+    "reason": "도착과 같다",
+    "refs": []
+   },
+   {
+    "id": "service_type",
+    "status": "identical",
+    "real": "ClusterIP·Headless Service",
+    "sandbox": "같음",
+    "reason": "도착과 같다",
+    "refs": []
+   },
+   {
+    "id": "storage",
+    "status": "substituted",
+    "real": "PVC (도착 StorageClass)",
+    "sandbox": "emptyDir",
+    "reason": "플랫폼 클러스터에 블록 저장소 드라이버가 없다. 마운트 경로는 같다",
+    "refs": [
+     "Deployment/api:spec.template.spec.volumes[2].emptyDir",
+     "Deployment/api:spec.template.spec.volumes[2].persistentVolumeClaim",
+     "PersistentVolumeClaim/api-cache"
+    ]
+   },
+   {
+    "id": "secrets",
+    "status": "substituted",
+    "real": "ExternalSecret → 도착 비밀 저장소 값",
+    "sandbox": "같은 이름·같은 키의 Secret, 가짜 값",
+    "reason": "고객 비밀 값은 샌드박스에 넣지 않는다",
+    "refs": [
+     "ExternalSecret/shop-secrets",
+     "ExternalSecret/shop-tls",
+     "Secret/app-shop/shop-secrets",
+     "Secret/app-shop/shop-tls"
+    ]
+   },
+   {
+    "id": "secret_values",
+    "status": "not_checked",
+    "real": "Vault 비밀 그릇 값",
+    "sandbox": "가짜 값",
+    "reason": "온프레 비밀 그릇 값은 커밋 전에 보지 못한다",
+    "refs": []
+   },
+   {
+    "id": "database",
+    "status": "substituted",
+    "real": "CNPG Cluster",
+    "sandbox": "같은 메이저 Postgres, 빈 DB, emptyDir",
+    "reason": "샌드박스 안에서 접속 주소·비밀만 바꿔 연결을 본다",
+    "refs": [
+     "Cluster/shop-db",
+     "Secret/app-shop/shop-db-app"
+    ]
+   },
+   {
+    "id": "ingress",
+    "status": "substituted",
+    "real": "Ingress → LB·DNS·TLS",
+    "sandbox": "적용 안 함, 백엔드 Service 를 ClusterIP 로 직접 확인",
+    "reason": "샌드박스 정책이 Ingress 를 막는다. LB·DNS·TLS 는 확인 못 함",
+    "refs": [
+     "Ingress/shop"
+    ]
+   },
+   {
+    "id": "tunnel",
+    "status": "identical",
+    "real": "터널 없음",
+    "sandbox": "같음",
+    "reason": "도착과 같다",
+    "refs": []
+   },
+   {
+    "id": "cloud_identity",
+    "status": "identical",
+    "real": "클라우드 신원 없음",
+    "sandbox": "같음",
+    "reason": "도착과 같다",
+    "refs": []
+   },
+   {
+    "id": "network",
+    "status": "substituted",
+    "real": "도착 네트워크 그대로",
+    "sandbox": "바깥 연결 막음, 앱 안 Service 끼리는 열림",
+    "reason": "더 엄격하다. 바깥 API 를 부르는 앱은 실패할 수 있다",
+    "refs": []
+   },
+   {
+    "id": "quota",
+    "status": "identical",
+    "real": "네임스페이스 한도 없음",
+    "sandbox": "같은 한도로 원본 요청량 합을 셈",
+    "reason": "도착 네임스페이스 한도 값과 같다",
+    "refs": []
+   },
+   {
+    "id": "hpa_scaling",
+    "status": "not_checked",
+    "real": "HPA 가 지표로 늘림",
+    "sandbox": "늘지 않음",
+    "reason": "가상 클러스터에 지표 서버가 없다",
+    "refs": []
+   },
+   {
+    "id": "cronjob_runs",
+    "status": "not_checked",
+    "real": "일정대로 실행",
+    "sandbox": "적용만, 실행은 안 봄",
+    "reason": "컷오버 전에는 도착 CronJob 이 멈춰 있다",
+    "refs": []
+   },
+   {
+    "id": "daemonsets",
+    "status": "identical",
+    "real": "DaemonSet 없음",
+    "sandbox": "같음",
+    "reason": "도착과 같다",
+    "refs": []
+   },
+   {
+    "id": "data",
+    "status": "not_checked",
+    "real": "출발에서 복제한 데이터",
+    "sandbox": "빈 DB",
+    "reason": "리허설은 데이터를 옮기지 않는다",
+    "refs": []
+   },
+   {
+    "id": "traffic",
+    "status": "not_checked",
+    "real": "실제 사용자 트래픽",
+    "sandbox": "검사 요청만",
+    "reason": "실제 트래픽은 카나리 10% 와 자동 롤백이 마지막 안전장치다",
+    "refs": []
+   },
+   {
+    "id": "node_arch",
+    "status": "not_checked",
+    "real": "도착 노드풀 CPU 종류",
+    "sandbox": "플랫폼 노드 amd64",
+    "reason": "도착 노드 CPU 종류와 다를 수 있다",
+    "refs": []
+   }
+  ]
+ }
+}

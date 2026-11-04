@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { SECRET_TYPE_REQUIRED_KEYS, type FidelityItemId, type RehearsalInput } from "@svc/contracts";
+import { dummyTls } from "./dummy-tls.js";
 
 // 리허설 치환 (설계 2.6 + 리드 결정 11/4). 원본 매니페스트는 그대로 dry-run 하고, 적용은 아래 표대로 바꾼 사본으로 한다.
 // 표에 없는 바꿈은 없다. 바꾼 자리마다 충실도 항목(FidelityItemId)의 refs 에 "<종류>/<ns>/<이름>[:<경로>]" 를 남긴다
@@ -274,7 +275,9 @@ const SUBSTITUTIONS: Record<string, Rule> = {
     const spec = (doc.spec as { target?: { name?: string; template?: { type?: string } }; data?: Array<{ secretKey?: string }> } | undefined) ?? {};
     const name = spec.target?.name ?? doc.metadata.name;
     const keys = [...(spec.data ?? []).map((d) => d.secretKey).filter((k): k is string => !!k), ...(s.keyRefs.get(name) ?? [])];
-    const sec = plainSecret(s.ctx.namespace, name, spec.target?.template?.type, doc.metadata.labels, keys, (k) => dummy(s.ctx.seed, name, k));
+    const type = spec.target?.template?.type;
+    const tls: Record<string, string> = type === "kubernetes.io/tls" ? dummyTls(s.ctx.seed, name) : {};
+    const sec = plainSecret(s.ctx.namespace, name, type, doc.metadata.labels, keys, (k) => tls[k] ?? dummy(s.ctx.seed, name, k));
     e.whole("secrets");
     return [sec];
   },

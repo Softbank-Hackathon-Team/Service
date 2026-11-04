@@ -1,0 +1,37 @@
+# 플랫폼 EKS Argo CD 허브: 공식 차트 argo-cd 값. 설치 순서는 deploy/helm/platform/README.md
+# DRAFT(ai): 차트 10.11.7 (Argo CD v3.5.7). v3.6.0 은 막 나온 새 판이라 그 앞 안정판을 쓴다
+
+global:
+  # 고객 클러스터 자격을 쥐는 파드라 cred 노드에 둔다 (infra/modules/aws/platform 노드 그룹 주석)
+  nodeSelector:
+    pool: cred
+  tolerations:
+    - { key: dedicated, operator: Equal, value: cred, effect: NoSchedule }
+
+# 로그인 연동과 알림을 쓰지 않는다. 쓰지 않는 파드는 cred 노드 메모리만 먹는다
+dex:
+  enabled: false
+notifications:
+  enabled: false
+
+# DRAFT(ai): 노드 t3.medium 1대에 워커와 같이 뜬다. requests 를 작게 잡고 상한만 둔다
+controller:
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 768Mi }
+repoServer:
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 512Mi }
+server:
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { memory: 256Mi }
+applicationSet:
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { memory: 256Mi }
+redis:
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+    limits: { memory: 128Mi }

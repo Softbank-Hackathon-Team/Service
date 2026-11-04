@@ -19,7 +19,7 @@ const matrix = () => ({
 const doc = { path: "manifests/web.yaml", yaml: "kind: Deployment" };
 const input = () => ({
   version: 1, target: "onprem-k3s", app: "shop", namespace: "app-shop", bundleSha256: SHA, k8sMinor: "1.35",
-  original: [doc], apply: [doc], images: [{ ref: "r/web@sha256:1", sandboxRef: "sandbox/web@sha256:1" }],
+  original: [doc], apply: [doc], images: [{ ref: "r/web@sha256:1", sandboxRef: "sandbox/web@sha256:1" }], imagesMirrored: true, runBudgetSec: 1200,
   databases: [{ service: "db", majorVersion: "16", database: "shop", owner: "app", secretName: "db-app", secretKeys: ["password"] }],
   targetPodSecurity: "baseline", targetQuota: { limitsCpuM: 4000, limitsMemoryMi: null },
   edges: [{ from: "web", host: "api", port: 8080 }], fidelity: matrix(),
@@ -43,6 +43,9 @@ test("RehearsalInput: 정상 / 쿠버네티스 마이너 모양이 틀리면 거
   assert.ok(RehearsalInput.safeParse(input()).success);
   assert.equal(RehearsalInput.safeParse({ ...input(), k8sMinor: "1.5" }).success, false);
   assert.equal(RehearsalInput.safeParse({ ...input(), apply: [] }).success, false, "적용할 사본 0개");
+  const { imagesMirrored: _m, ...noFlag } = input();
+  assert.equal(RehearsalInput.safeParse(noFlag).success, false, "복사했는지 모르는 입력은 받지 않는다");
+  assert.equal(RehearsalInput.safeParse({ ...input(), runBudgetSec: 0 }).success, false, "실행 기한 0초");
 });
 
 test("RehearsalCheck: 정상 / 음수 시간·모르는 검사 id 는 거부", () => {
@@ -117,8 +120,8 @@ test("충실도 항목 주인: 샌드박스 쪽 두 항목만 agent-worker", () 
   assert.equal(fidelityOwner("images"), "worker");
 });
 
-test("설정 읽기: 비면 기본값 (리허설 꺼짐·1200초·60초, 만료 1800초, 내장 차트, 진짜 샌드박스)", () => {
-  assert.deepEqual(rehearsalSettings({}), { enabled: false, timeoutSec: 1200, pollSec: 60, imageRegistry: null, mock: false });
+test("설정 읽기: 비면 기본값 (리허설 꺼짐·실행 1200초·줄 서기 3600초·60초, 만료 1800초, 내장 차트, 진짜 샌드박스)", () => {
+  assert.deepEqual(rehearsalSettings({}), { enabled: false, timeoutSec: 1200, queueTimeoutSec: 3600, pollSec: 60, imageRegistry: null, mock: false });
   assert.deepEqual(sandboxSettings({}), { ttlSec: 1800, vclusterChart: "/app/vendor/vcluster-0.37.6.tgz", mockResult: null });
   assert.equal(rehearsalSettings({ SANDBOX_REHEARSAL: "on", REHEARSAL_TIMEOUT_SEC: "600" }).timeoutSec, 600);
 });

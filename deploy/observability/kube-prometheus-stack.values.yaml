@@ -1,0 +1,76 @@
+# 플랫폼 EKS 관측 기본판: 공식 차트 kube-prometheus-stack 값. 맥 묶음(docker-compose.observability.yml)의 클러스터판
+# 설치 순서는 deploy/helm/platform/README.md
+# DRAFT(ai): 차트 버전 92.17.1 기준. 고객 지표는 OTel 게이트웨이 파드의 metrics 포트를 아래 platform-apps 가 긁어서 받는다
+
+# 알림 받을 곳이 아직 없다
+alertmanager:
+  enabled: false
+
+# EKS 제어판은 AWS 관리라 못 긁는다. kube-proxy 는 지표를 127.0.0.1 에만 연다. 켜 두면 빨간 타깃만 는다
+kubeEtcd:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+prometheus:
+  prometheusSpec:
+    nodeSelector:
+      pool: general
+    scrapeInterval: 15s
+    evaluationInterval: 15s
+    # DRAFT(ai): 디스크 없음(EBS CSI 애드온 없음). 파드가 다시 뜨면 지표가 사라진다. 데모 기간에는 맥 묶음과 같은 2일로 충분
+    retention: 2d
+    retentionSize: 4GiB
+    resources:
+      requests: { cpu: 100m, memory: 512Mi }
+      limits: { memory: 1536Mi }
+    # 지표 포트는 업무 포트와 따로다(api 9464, worker 9465, otel-gateway 8889). 포트 이름이 metrics 인 파드만 긁는다
+    additionalScrapeConfigs:
+      - job_name: platform-apps
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names: [platform]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_container_port_name]
+            regex: metrics
+            action: keep
+          - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name]
+            target_label: job
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+
+prometheusOperator:
+  nodeSelector:
+    pool: general
+  admissionWebhooks:
+    patch:
+      nodeSelector:
+        pool: general
+
+kube-state-metrics:
+  nodeSelector:
+    pool: general
+
+# cred·sandbox 노드에는 호스트를 들여다보는 파드를 두지 않는다. 그 노드의 컨테이너 지표는 kubelet 으로 받는다
+prometheus-node-exporter:
+  nodeSelector:
+    pool: general
+  tolerations: []
+
+grafana:
+  nodeSelector:
+    pool: general
+  # 차트 기본값 prom-operator 는 누구나 아는 비밀번호다. 비우면 무작위로 만들어 Secret 에 둔다
+  adminPassword: null
+  sidecar:
+    datasources:
+      alertmanager:
+        enabled: false
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 384Mi }

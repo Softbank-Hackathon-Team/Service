@@ -2,7 +2,10 @@ import { QUEUES } from "@svc/contracts";
 import { boss, startBoss, withTenant, createLogger, withLogContext, contextFromJob, currentLogContext, assertConfig, logEffectiveConfig } from "@svc/core";
 import { llmBudgetFromEnv } from "@svc/contracts";
 import { llmFromEnv, remediateLlmFromEnv, sandboxFromEnv, cachedLlm, llmCacheConfigFromEnv, llmCallOptionsFromEnv, withLlmCacheTally, budgetedLlm,
-  type LlmCallLogger, type LlmProvider } from "@svc/agent";
+  rehearsalFromEnv, hostAccessFromEnv, type LlmCallLogger, type LlmProvider } from "@svc/agent";
+import { handleRehearsal } from "./handle-rehearsal.js";
+import { pgSandboxRunStore } from "./pg-sandbox-run-store.js";
+import { startSandboxSweeper } from "./sweeper.js";
 import { pgLlmCacheStore } from "./pg-llm-cache-store.js";
 import { pgLlmSpendStore } from "./pg-llm-spend-store.js";
 import { DEMO_SCRIPT, memoryStore } from "./handle-agent-run.js";
@@ -11,7 +14,7 @@ import { gitopsWorkcopyFromEnv } from "./gitops-workcopy.js";
 import { pgSpecDraftStore } from "./pg-spec-draft-store.js";
 import { routeAgentRun, type AgentRunKind } from "./route.js";
 
-// agent-worker: agent-run 큐만 받는다. 클라우드 실행 권한(IRSA 등)을 주지 않는 별도 배포다
+// agent-worker: agent-run 큐와 sandbox-rehearsal 큐를 받는다. 클라우드 실행 권한(IRSA 등)을 주지 않는 별도 배포다
 // LLM 공급자는 환경변수로 고른다 (키 값은 SDK가 직접 읽고, 여기서는 쓰지 않는다)
 // 작업 Z90: 기본 = 실제 Claude API. 가짜는 FAKE_LLM=1(시험)만. 키가 없으면 워커는 뜨되 실행마다 LLM_KEY_MISSING 으로 실패한다
 // Z81-09: 설정을 먼저 본다 (LLM·샌드박스 선택 전). 틀린 값을 하나씩이 아니라 한 번에 목록으로
@@ -27,6 +30,9 @@ log.info({ provider: choice.provider, model: choice.model, why: choice.why }, "a
 const rLlm = remediateLlmFromEnv(DEMO_SCRIPT, process.env, { onCall });
 const rSbx = sandboxFromEnv();
 log.info({ llm: rLlm.mode, model: rLlm.model, why: rLlm.why, sandbox: rSbx.describe }, "agent-worker remediate");
+// 리허설 (deploying 안, 커밋 전): MOCK_SANDBOX=1 이면 정해진 결과, 그 밖은 플랫폼 클러스터 vCluster. LLM 을 쓰지 않는다
+const rehearsal = rehearsalFromEnv();
+log.info({ backend: rehearsal.describe }, "agent-worker rehearsal");
 for (const w of new Set([...choice.warnings, ...rLlm.warnings])) log.warn({ setting: w }, "agent-worker 예전 LLM 설정 무시");
 // z75-59: 실제 API 응답 캐시 (회사별, 기본 24시간). 실제 제공자일 때만 씌운다 (가짜·키 없음은 그대로). AGENT_LLM_CACHE=0 이면 끔
 const cacheCfg = llmCacheConfigFromEnv();
@@ -93,6 +99,22 @@ await boss.work(QUEUES.agentRun, async ([job]) =>
       throw e;
     }
   }));
+// 리허설 큐는 동시 1건 (core boss.ts: singleton + 키 하나). sandbox 노드에 한 번에 한 회사
+const rehearsalDeps = { store: pgSandboxRunStore(), rehearse: rehearsal.rehearse };
+await boss.work(QUEUES.sandboxRehearsal, async ([job]) =>
+  withLogContext(contextFromJob(QUEUES.sandboxRehearsal, job!.id, job!.data), async () => {
+    const t0 = performance.now();
+    try {
+      const r = await handleRehearsal(job!.data, rehearsalDeps);
+      log.info({ ...r, duration_ms: Math.round(performance.now() - t0) }, "sandbox-rehearsal finished");
+    } catch (e) {
+      log.error({ err: e, duration_ms: Math.round(performance.now() - t0) }, "sandbox-rehearsal failed");
+      throw e;
+    }
+  }));
+// 만료 샌드박스 청소 (#177): 샌드박스 클러스터 접속 설정이 있을 때만 (vcluster·k3d). 시작 때 한 번 + 5분마다
+const sweepHost = hostAccessFromEnv();
+if (sweepHost) startSandboxSweeper(sweepHost.kube, log);
 log.info("agent-worker ready");
 
 process.on("SIGTERM", async () => { await boss.stop({ graceful: true }); process.exit(0); });

@@ -87,6 +87,8 @@ jobs:
       PGPASSWORD: owner_pw
       # Z53: 워커가 읽는 값이라 작업(job) 단위로. 100% 관찰 30초 → 0.5초 (int5 2차 Z20 M7 결정과 같게)
       TRAFFIC_OBSERVE_SEC: "0.5"
+      # smoke 는 completed 까지 60초만 기다린다. 기본 롤백 창 120초면 끝나기 전에 멈춘다 (e2e 작업과 같은 값)
+      ROLLBACK_WINDOW_SEC: "20"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7

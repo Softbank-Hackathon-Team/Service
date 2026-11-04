@@ -24,9 +24,12 @@ rmSync(outdir, { recursive: true, force: true });
 
 const t0 = Date.now();
 const result = await build({
-  entryPoints: ENTRY[app]
-    ? { main: ENTRY[app] }
-    : { main: `apps/${app}/src/main.ts`, healthcheck: "deploy/docker/healthcheck.mjs" },
+  entryPoints: ENTRY[app] ? { main: ENTRY[app] } : {
+    main: `apps/${app}/src/main.ts`,
+    healthcheck: "deploy/docker/healthcheck.mjs",
+    // api 이미지가 OTel 게이트웨이 입구도 겸한다 (node metrics-gateway.mjs)
+    ...(app === "api" ? { "metrics-gateway": "apps/api/src/metrics-gateway-main.ts" } : {}),
+  },
   outdir,
   outExtension: { ".js": ".mjs" },
   bundle: true,

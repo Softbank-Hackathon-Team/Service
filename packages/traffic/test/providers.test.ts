@@ -106,14 +106,16 @@ test("switcherFromEnv: 기본 mock, cloudflare 는 ID 와 토큰 공급자가 �
 });
 
 test("Prometheus: 질의 3줄 × 2쪽, p95 는 초→ms, 이전 번호가 UUID 가 아니면 거부(주입 방지)", async () => {
-  const M = "44444444-4444-4444-8444-444444444444";
-  assert.throws(() => promQueries('x"} or vector(1) #', "target"), /PromQL/);
+  const M = "44444444-4444-4444-8444-444444444444", TEN = "11111111-1111-4111-8111-111111111111";
+  assert.throws(() => promQueries(TEN, 'x"} or vector(1) #', "target"), /PromQL/);
+  assert.throws(() => promQueries('x"} or vector(1) #', M, "target"), /PromQL/);
+  assert.match(promQueries(TEN, M, "target").total, new RegExp(`tenant="${TEN}"`), "다른 회사 지표가 판정에 안 섞이게");
   const f: FetchLike = async (url) => {
     const q = decodeURIComponent(url.split("query=")[1]!);
     const v = q.startsWith("histogram_quantile") ? "0.12" : q.includes('code=~"5.."') ? "3" : q.includes('env="target"') ? "150" : "1350";
     return { status: 200, json: async () => ({ status: "success", data: { result: [{ value: [0, v] }] } }) };
   };
-  const w = await prometheusMetrics({ baseUrl: "http://prom:9090", fetch: f, baselineP95Ms: 130 }).window(M, 10);
+  const w = await prometheusMetrics({ baseUrl: "http://prom:9090", tenantId: TEN, fetch: f, baselineP95Ms: 130 }).window(M, 10);
   assert.deepEqual(w.target, { n: 150, err5xx: 3, latenciesMs: [], p95Ms: 120 });
   assert.equal(w.source.n, 1350);
 });
