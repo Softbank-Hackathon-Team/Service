@@ -8,6 +8,8 @@ locals {
   # 고객 역할 이름: packages/adapters/scripts/aws-connect-template.ts 의 OBSERVE_ROLE_NAME·OPERATE_ROLE_NAME 과 같아야 한다
   # DRAFT(ai): 고객 계정 번호를 미리 알 수 없어 계정 자리만 * 로 둔다. 역할 이름은 두 개로 고정 (role/* 아님)
   customer_role_arns = ["arn:aws:iam::*:role/svc-observe", "arn:aws:iam::*:role/svc-operate"]
+  # 리허설 이미지 복사 자리 (worker SANDBOX_IMAGE_REGISTRY = 출력 sandbox_image_registry). 회사별 저장소 sbx/<회사>/<이름> 을 워커가 만든다
+  sandbox_image_prefix = "sbx"
 
   worker_statements = [
     {
@@ -24,8 +26,27 @@ locals {
       Action   = ["s3:PutObject"]
       Resource = ["${aws_s3_bucket.evidence.arn}/*"]
     },
+    {
+      Sid    = "SandboxImageLogin"
+      Effect = "Allow"
+      # 레지스트리 로그인 토큰. 이 동작은 자원 단위 제한을 받지 않아 * 다. 실제 받기·올리기는 아래 저장소 범위가 정한다
+      Action   = ["ecr:GetAuthorizationToken"]
+      Resource = ["*"]
+    },
+    {
+      Sid    = "SandboxImagePush"
+      Effect = "Allow"
+      # 고객 이미지를 다이제스트로 복사해 넣기 (worker rehearsal/image-mirror.ts). 샌드박스 접두어 아래만, 지우기 없음
+      Action = [
+        "ecr:CreateRepository", "ecr:BatchCheckLayerAvailability", "ecr:InitiateLayerUpload", "ecr:UploadLayerPart",
+        "ecr:CompleteLayerUpload", "ecr:PutImage", "ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer",
+      ]
+      Resource = ["arn:aws:ecr:${var.region}:${var.expected_account_id}:repository/${local.sandbox_image_prefix}/*"]
+    },
   ]
 }
+
+output "sandbox_image_registry" { value = "${var.expected_account_id}.dkr.ecr.${var.region}.amazonaws.com/${local.sandbox_image_prefix}" }
 
 # 이름 platform-worker: 고객 연결 템플릿 시험(packages/adapters/test/onboarding-template.test.ts)이 이 이름을 예시로 쓴다
 # DRAFT(ai): var.name 을 따르지 않고 고정. name 을 바꿔도 고객 템플릿 예시·bootstrap 주체 목록과 어긋나지 않게

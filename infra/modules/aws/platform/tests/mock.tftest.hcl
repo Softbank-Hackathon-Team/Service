@@ -251,9 +251,17 @@ run "pod_identity" {
   assert {
     condition = (
       toset(flatten([for st in jsondecode(aws_iam_role_policy.worker.policy).Statement : st.Resource if contains(st.Action, "sts:AssumeRole")])) == toset(["arn:aws:iam::*:role/svc-observe", "arn:aws:iam::*:role/svc-operate"]) &&
-      !anytrue([for st in jsondecode(aws_iam_role_policy.worker.policy).Statement : anytrue([for r in st.Resource : r == "*" || endswith(r, ":role/*")])])
+      !anytrue([for st in jsondecode(aws_iam_role_policy.worker.policy).Statement : anytrue([for r in st.Resource : (r == "*" && st.Action != ["ecr:GetAuthorizationToken"]) || endswith(r, ":role/*")])])
     )
-    error_message = "worker AssumeRole 대상은 svc-observe·svc-operate 만, role/* 나 * 는 없어야 함"
+    error_message = "worker AssumeRole 대상은 svc-observe·svc-operate 만, role/* 는 없고 * 는 ECR 로그인 토큰에만"
+  }
+  assert {
+    condition = (
+      [for st in jsondecode(aws_iam_role_policy.worker.policy).Statement : st.Resource if anytrue([for a in st.Action : startswith(a, "ecr:") && a != "ecr:GetAuthorizationToken"])] == [["arn:aws:ecr:ap-northeast-2:123456789012:repository/sbx/*"]] &&
+      !anytrue([for st in jsondecode(aws_iam_role_policy.worker.policy).Statement : anytrue([for a in st.Action : startswith(a, "ecr:Delete") || startswith(a, "ecr:Set") || a == "ecr:*"])]) &&
+      output.sandbox_image_registry == "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/sbx"
+    )
+    error_message = "worker ECR 쓰기는 sbx/* 저장소에만, 지우기·정책 바꾸기 없음. SANDBOX_IMAGE_REGISTRY 출력은 같은 접두어"
   }
   assert {
     condition     = !anytrue([for st in jsondecode(aws_iam_role_policy.worker.policy).Statement : anytrue([for r in st.Resource : strcontains(r, "tf-state")])])
