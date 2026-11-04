@@ -50,6 +50,11 @@ export const FAILURE_CODES = [
   "TRAFFIC_RESTORE_FAILED",      // Jeong 01:53Z: 실패 진입 때 트래픽 출발 100% 되돌리기가 재시도 뒤에도 실패
   "TRAFFIC_PLATFORM_ERROR",      // pf-d RV-11: 전환 도중 플랫폼 DB 오류가 이어짐 → 출발 100% 로 되돌린 뒤 paused
   "TRAFFIC_PREFLIGHT_FAILED", "TRAFFIC_LB_MISCONFIGURED",   // Z14-06: LB 점검 실패 / 전환 조건 안 맞음 → paused
+  // vCluster 리허설 (deploying, 커밋 전) → paused. contracts RehearsalFailureCode 와 같은 글자 (시험이 두 목록을 맞춘다)
+  "REHEARSAL_DRY_RUN_REJECTED", "REHEARSAL_TARGET_POLICY_DENIED", "REHEARSAL_QUOTA_EXCEEDED",
+  "REHEARSAL_ROLLOUT_FAILED", "REHEARSAL_CRASHLOOP", "REHEARSAL_NOT_READY", "REHEARSAL_JOB_FAILED", "REHEARSAL_CONNECTIVITY_FAILED",
+  "REHEARSAL_POLICY_DENIED", "REHEARSAL_UNSUPPORTED_KIND",
+  "REHEARSAL_IMAGE_MIRROR_FAILED", "REHEARSAL_SANDBOX_UNAVAILABLE", "REHEARSAL_TIMEOUT", "REHEARSAL_BUNDLE_MISMATCH",
 ] as const;
 
 // 마지막 재시도까지 실패한 작업 (Z19 H4 죽은 작업 처리): JOB_FAILED_<단계 이름 대문자>
