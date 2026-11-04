@@ -1,4 +1,4 @@
-import { go, parentOf, parseRoute } from './routes';
+import { go, parentOf, parseRoute, type Route } from './routes';
 
 // 히어로 (←) 이 쓰는 앱 안 이동 기록.
 // 주소(#/…)가 바뀔 때마다 브라우저 기록 칸(history.state)에 "앱 안에서 몇 번째 화면인지"를 적는다.
@@ -25,9 +25,19 @@ export function startNav() {
   });
 }
 
-/** 지금 화면의 (←): 앱 안 기록이 있으면 바로 앞 화면, 없으면 윗 화면, 그것도 없으면 null (버튼을 두지 않음) */
+/**
+ * (←) 이 갈 곳: 'history' = 앱 안 바로 앞 화면, 문자열 = 윗 화면 주소, null = 버튼 없음.
+ * 대시보드는 집이라 돌아갈 곳이 없다 (앞 화면 기록이 있어도 두지 않음)
+ */
+export function backTarget(route: Route, depth: number): 'history' | string | null {
+  if (route.page === 'dashboard') return null;
+  if (depth > 0) return 'history';
+  return parentOf(route);
+}
+
+/** 지금 화면의 (←). null 이면 버튼을 두지 않는다 */
 export function backAction(): (() => void) | null {
-  if (depth > 0) return () => history.back();
-  const up = parentOf(parseRoute(window.location.hash));
-  return up === null ? null : () => go(up);
+  const target = backTarget(parseRoute(window.location.hash), depth);
+  if (target === null) return null;
+  return target === 'history' ? () => history.back() : () => go(target);
 }
