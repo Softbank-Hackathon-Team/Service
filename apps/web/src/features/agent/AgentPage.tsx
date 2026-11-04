@@ -12,6 +12,8 @@ import { agentBlock, spendRows, spendText } from './model';
 import s from '../common/page.module.css';
 import { t } from '../../lib/i18n';
 
+// 고를 마이그레이션이 없으면 큰 카드 하나만 (옆 칸을 비워 두지 않는다)
+const EMPTY: BentoLayout = { columns: ['fill'], areas: 'hero' };
 const LAYOUT: BentoLayout = { columns: ['fill', 'side', 'side'], areas: 'hero steps side' };
 
 const TOOL_LABEL: Record<string, string> = {
@@ -122,7 +124,7 @@ export function AgentPage({ id }: { id: string | null }) {
   const { chosen, picker, loading } = useChosenMigration('agent', id);
   if (!chosen) {
     return (
-      <ShellLayout layout={LAYOUT}>
+      <ShellLayout layout={loading ? LAYOUT : EMPTY}>
         <Hero tone="run" meta={t('AI 에이전트')} title={loading ? t('마이그레이션을\n읽고 있습니다') : t('점검할 마이그레이션이\n없습니다')} />
         {loading && <SkeletonTile area="steps" title={t('에이전트가 한 일')} rows={6} />}
       </ShellLayout>
