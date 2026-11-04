@@ -21,8 +21,8 @@ components:
 
 # 바깥 입구: Cloudflare Tunnel (원격 관리 터널). 공개 호스트 이름과 http://web.<네임스페이스>.svc.cluster.local:8080 연결은 Cloudflare 쪽에서 한다
 cloudflared:
-  # DRAFT(ai): 버전 고정. 배포 전에 최신 안정판으로 올린다
-  image: cloudflare/cloudflared:2025.4.0
+  # DRAFT(ai): 버전 고정. 2026-11 기준 최신 안정판
+  image: cloudflare/cloudflared:2026.10.7
   replicas: 2
   pool: general
 
