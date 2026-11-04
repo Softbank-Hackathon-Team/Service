@@ -85,15 +85,36 @@ test("G5-1 거부: 다시 계획으로 움직인 이전(prechecking)은 지우�
   assert.equal((await audits(id)).at(-1).action, "target_teardown.skipped");
 });
 
-test("G5-1 거부: destroy 실패 → 감사 failed(error, 사람 명령 힌트) + 예외(pg-boss 재시도)", { skip }, async () => {
+test("G5-1 거부: destroy 실패 → 감사 failed(error, 사람 명령 힌트) + 늦춰 다시 넣기 (PF FM-ORC-12)", { skip }, async () => {
   const id = await seed("failed");
   workDir(id);
   const tf = fakeTf((a) => (a.includes("destroy") ? 1 : 0));
-  await assert.rejects(job.handleTargetDestroy(data(id), { env, runner: tf.runner }), /terraform destroy failed/);
-  const a = (await audits(id)).at(-1);
-  assert.equal(a.action, "target_teardown.failed");
-  assert.equal(a.result, "error");
-  assert.match(a.detail.hint, /tf:real -- destroy/);
+  const sent: number[] = [];
+  const requeue = async (_j: unknown, sec: number) => { sent.push(sec); };
+  assert.equal(await job.handleTargetDestroy(data(id), { env, runner: tf.runner, requeue }), "retrying");
+  const all = await audits(id);
+  const f = all.find((x: { action: string }) => x.action === "target_teardown.failed");
+  assert.equal(f.result, "error");
+  assert.match(f.detail.hint, /tf:real -- destroy/);
+  assert.equal(all.at(-1).action, "target_teardown.retry_scheduled");
+  assert.deepEqual(sent, [60]);
+});
+
+test("PF FM-ORC-12·25 거부: 실패가 이어지면 1·2·5…분으로 늘려 다시 넣고, 다 쓰면 gave_up(error) 하고 더 안 넣음", { skip }, async () => {
+  const id = await seed("failed");
+  workDir(id);
+  const tf = fakeTf((a) => (a.includes("destroy") ? 1 : 0));
+  const sent: number[] = [];
+  const requeue = async (_j: unknown, sec: number) => { sent.push(sec); };
+  const e2 = { ...env, TEARDOWN_RETRY_SEC: "60,120,300" };
+  const outs = [];
+  for (let i = 0; i < 4; i++) outs.push(await job.handleTargetDestroy(data(id), { env: e2, runner: tf.runner, requeue }));
+  assert.deepEqual(outs, ["retrying", "retrying", "retrying", "gave_up"]);
+  assert.deepEqual(sent, [60, 120, 300]);
+  const last = (await audits(id)).at(-1);
+  assert.equal(last.action, "target_teardown.gave_up");
+  assert.equal(last.result, "error");
+  assert.deepEqual(job.teardownRetrySec({}), [60, 120, 300, 600, 1200, 1200, 1200]);
 });
 
 test("G5-1: 작업 폴더 없음(terraform 시작 전 실패) → 지울 것 없음 / 가져온 기존 자원(imported.json)은 안 지움", { skip }, async () => {
@@ -112,4 +133,43 @@ test("G5-1: 흉내(MOCK_IAC=1)는 stub 감사만, 실행기 안 만듦", { skip 
   const id = await seed("cancelled");
   assert.equal(await job.handleTargetDestroy(data(id), { env: { MOCK_IAC: "1", TF_WORK_DIR: root } }), "stub");
   assert.equal((await audits(id)).at(-1).detail.stub, true);
+});
+
+test("PF FM-ORC-07 거부: terraform 실행 자체가 예외(명령 없음 등)여도 감사 target_teardown.failed 가 남고 늦춰 다시", { skip }, async () => {
+  const id = await seed("failed");
+  workDir(id);
+  const runner = { destroy: async () => { throw new Error("spawn terraform ENOENT"); } };
+  assert.equal(await job.handleTargetDestroy(data(id), { env, runner: runner as never, requeue: async () => {} }), "retrying");
+  const a = (await audits(id)).find((x: { action: string }) => x.action === "target_teardown.failed");
+  assert.match(a.detail.error, /ENOENT/);
+});
+
+test("PF FM-OPS-05 거부: apply 가 작업 폴더를 적었는데 지금 못 찾으면(TF_WORK_DIR 다름) '지울 것 없음'이 아니라 failed + 경로 힌트", { skip }, async () => {
+  const id = await seed("failed");
+  await core.withTenant(T, (tx) => core.writeAudit(tx, T, { actor: "worker", action: "apply.failed", target: id, result: "ok",
+    detail: { workDir: `/elsewhere/${slug(T)}/${id}`, failureCode: "TF_APPLY_FAILED" } }));
+  const tf = fakeTf(() => 0);
+  assert.equal(await job.handleTargetDestroy(data(id), { env, runner: tf.runner }), "missing");
+  assert.equal(tf.calls.length, 0);
+  const a = (await audits(id)).at(-1);
+  assert.equal(a.action, "target_teardown.failed");
+  assert.match(a.detail.recordedWorkDir, /elsewhere/);
+});
+
+test("PF FM-ORC-10: destroy 실패 원인 갈래 — 삭제 보호는 재시도 없이 blocked + 힌트, 잠금은 재시도(예외)", { skip }, async () => {
+  assert.equal(job.destroyFailureCause(["Error: cannot destroy instance without setting deletion_protection=false"]), "DELETION_PROTECTED");
+  assert.equal(job.destroyFailureCause(["Error: InvalidParameterCombination: Cannot delete protected DB Instance"]), "DELETION_PROTECTED");
+  assert.equal(job.destroyFailureCause(["Error: Error acquiring the state lock"]), "STATE_LOCKED");
+  assert.equal(job.destroyFailureCause(["AccessDenied: not authorized to perform rds:DeleteDBInstance"]), "ACCESS_DENIED");
+  assert.equal(job.destroyFailureCause(["boom"]), "TF_DESTROY_FAILED");
+  const id = await seed("failed");
+  workDir(id);
+  const exec = async (_c: string, args: string[]) => args.includes("destroy")
+    ? { code: 1, stdout: "", stderr: "Error: cannot destroy instance without setting deletion_protection=false", ms: 1 }
+    : { code: 0, stdout: "", stderr: "", ms: 1 };
+  const runner = adapters.createRealTerraformRunner({ exec, workRoot: root, env: { TF_WORK_DIR: root } });
+  assert.equal(await job.handleTargetDestroy(data(id), { env, runner }), "blocked");
+  const a = (await audits(id)).at(-1);
+  assert.equal(a.detail.cause, "DELETION_PROTECTED");
+  assert.match(a.detail.hint, /DB_DISPOSABLE/);
 });
