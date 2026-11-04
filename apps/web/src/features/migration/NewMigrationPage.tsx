@@ -23,9 +23,9 @@ const LAYOUT: BentoLayout = { columns: ['fill', 'side'], areas: 'hero found' };
 /** 이전을 만드는 순서. 근거 칸 맨 위에 두어 고르는 내내 지금 몇 번째인지 보인다. */
 function CreateSteps({ source, reading, target }: { source?: string; reading?: boolean; target?: string }) {
   const items: ChecklistEntry[] = [
-    { status: source ? 'done' : 'active', label: '출발 고르기', detail: source },
+    { status: source ? 'done' : 'waiting', label: '출발 고르기', detail: source },
     { status: !source ? 'pending' : reading ? 'active' : 'done', label: '찾은 자원 확인' },
-    { status: !source ? 'pending' : target ? 'done' : 'active', label: '도착 고르기', detail: target },
+    { status: !source ? 'pending' : target ? 'done' : 'waiting', label: '도착 고르기', detail: target },
   ];
   const current = items.findIndex((item) => item.status !== 'done');
   return (
