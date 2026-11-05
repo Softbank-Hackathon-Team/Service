@@ -22,7 +22,7 @@ export const RELAY_AMI_PARAM = "/aws/service/ami-amazon-linux-latest/al2023-ami-
 export const RELAY_INSTANCE_TYPE = "t4g.nano";
 export const PG_PORT = 5432;
 
-export type RelayErrorCode = "RELAY_PROVISION_FAILED" | "RELAY_TEARDOWN_FAILED" | "RELAY_SOURCE_DB_UNKNOWN" | "RELAY_CONFIG_MISSING";
+export type RelayErrorCode = "RELAY_PROVISION_FAILED" | "RELAY_TEARDOWN_FAILED" | "RELAY_SOURCE_DB_UNKNOWN" | "RELAY_CONFIG_MISSING" | "RELAY_DB_EGRESS_DENIED";
 export class RelayError extends Error {
   constructor(readonly code: RelayErrorCode, message: string, readonly awsCode?: string) { super(message); this.name = "RelayError"; }
 }
@@ -69,8 +69,9 @@ export interface RelayPlan {
   rules: SgRule[];
   instance: { imageId: string; instanceType: string; subnetId: string; rootDeviceName: string; tags: Tag[] };
   userData: string;
-  /** RDS 보안 그룹에 달 나가기 규칙 (대상 = 중계 사설 IP/32, 사설 IP 를 안 뒤에 정해진다) */
-  dbEgress: { groupId: string; port: number; tags: Tag[] };
+  /** RDS 보안 그룹에 달 나가기 규칙 (대상 = 중계 사설 IP/32, 사설 IP 를 안 뒤에 정해진다).
+   *  groupIds = RDS 의 활성 보안 그룹 전부: 이미 나가기가 열려 있는지는 합집합으로 본다. 규칙을 달 때는 groupId(첫 번째) 하나에만 */
+  dbEgress: { groupId: string; groupIds: string[]; port: number; tags: Tag[] };
   hostPublicKey: string;
 }
 
@@ -191,7 +192,7 @@ export function buildRelayPlan(i: RelayPlanInput): RelayPlan {
     instance: { imageId: i.ami.imageId, instanceType: RELAY_INSTANCE_TYPE, subnetId: i.network.subnetId,
                 rootDeviceName: i.ami.rootDeviceName, tags: relayTags(i.migrationId, RELAY_ROLE) },
     userData: relayUserData({ migrationId: i.migrationId, rdsEndpoint: i.rds.endpoint, tunnelPublicKey: i.tunnelPublicKey, hostKey: i.hostKey }),
-    dbEgress: { groupId, port: PG_PORT, tags: relayTags(i.migrationId, RELAY_DB_EGRESS_ROLE) },
+    dbEgress: { groupId, groupIds: [...new Set(i.rds.securityGroupIds)], port: PG_PORT, tags: relayTags(i.migrationId, RELAY_DB_EGRESS_ROLE) },
     hostPublicKey: i.hostKey.publicKeyLine.trim(),
   };
 }
@@ -301,7 +302,7 @@ export async function resolveRelayAmi(d: RelayAwsDeps): Promise<RelayAmi> {
   return { imageId, rootDeviceName: img.RootDeviceName };
 }
 
-interface SgRuleRow { SecurityGroupRuleId?: string; GroupId?: string; IsEgress?: boolean; IpProtocol?: string; FromPort?: number; ToPort?: number;
+export interface SgRuleRow { SecurityGroupRuleId?: string; GroupId?: string; IsEgress?: boolean; IpProtocol?: string; FromPort?: number; ToPort?: number;
   CidrIpv4?: string; CidrIpv6?: string; ReferencedGroupInfo?: { GroupId?: string }; PrefixListId?: string; Tags?: Tag[] }
 interface InstanceRow { InstanceId?: string; State?: { Name?: string }; PublicIpAddress?: string; PrivateIpAddress?: string; Tags?: Tag[] }
 const ruleKey = (dir: "ingress" | "egress", proto: string, port: number | undefined, cidrS: string) => `${dir}|${proto}|${port ?? ""}|${cidrS}`;
@@ -309,8 +310,31 @@ const rowKey = (r: SgRuleRow) => ruleKey(r.IsEgress ? "egress" : "ingress", r.Ip
   r.CidrIpv4 ?? r.CidrIpv6 ?? r.ReferencedGroupInfo?.GroupId ?? r.PrefixListId ?? "");
 const LIVE_STATES = ["pending", "running", "stopping", "stopped"];
 
+const ip4n = (s: string) => s.split(".").reduce((a, x) => a * 256 + Number(x), 0);
+function cidrHas(c: string, ip: string): boolean {
+  const [base, pre] = c.split("/"); const n = Number(pre);
+  if (!base || !IPV4.test(base) || !IPV4.test(ip) || !Number.isInteger(n) || n < 0 || n > 32) return false;
+  const size = 2 ** (32 - n);
+  return Math.floor(ip4n(base) / size) === Math.floor(ip4n(ip) / size);
+}
+/** RDS 보안 그룹들(합집합)의 나가기 규칙이 이미 중계 사설 IP:port(TCP)를 허용하면 그 규칙 번호. 없으면 undefined.
+ *  콘솔·API 로 만든 보안 그룹은 기본 "나가기 전부 허용"이 있어 대개 이미 열려 있다. Terraform 처럼 나가기 규칙이 없을 때만 우리가 단다.
+ *  플랫폼이 단 나가기 규칙(svc:role=relay-db-egress, 다른 이전 것 포함)은 그 이전이 끝나면 빠지므로 허용으로 치지 않는다.
+ *  접두 목록(prefix list)·IPv6 는 내용을 안 읽으므로 허용으로 치지 않는다 (그때는 규칙을 단다) */
+export function existingDbEgressCover(rows: SgRuleRow[], privateIp: string, port: number, relaySgId: string): string | undefined {
+  return rows.find((r) => {
+    if (!r.IsEgress || !r.SecurityGroupRuleId) return false;
+    if ((r.Tags ?? []).some((t) => t.Key === RELAY_TAG.role && t.Value === RELAY_DB_EGRESS_ROLE)) return false;
+    const proto = r.IpProtocol === "-1" || ((r.IpProtocol === "tcp" || r.IpProtocol === "6") && (r.FromPort ?? -1) <= port && port <= (r.ToPort ?? -1));
+    const dest = (r.CidrIpv4 !== undefined && cidrHas(r.CidrIpv4, privateIp)) || (!!relaySgId && r.ReferencedGroupInfo?.GroupId === relaySgId);
+    return proto && dest;
+  })?.SecurityGroupRuleId;
+}
+
 export interface RelayResources {
-  securityGroupId: string; instanceId: string; publicIp: string; privateIp: string; dbEgressRuleId: string;
+  securityGroupId: string; instanceId: string; publicIp: string; privateIp: string;
+  /** 우리가 단 RDS 나가기 규칙 번호. 이미 열려 있어 안 달았으면 "" (그때 dbEgressCoveredBy = 이미 허용하던 규칙 번호) */
+  dbEgressRuleId: string; dbEgressCoveredBy?: string;
   /** 이번에 새로 만든 것 / 이미 있어 그대로 쓴 것 (감사 detail 용, 번호만) */
   created: string[]; reused: string[];
 }
@@ -396,17 +420,33 @@ export async function provisionRelay(d: RelayAwsDeps, plan: RelayPlan): Promise<
   if (stale.length) await aws.call(["ec2", "revoke-security-group-egress", "--group-id", plan.dbEgress.groupId, "--security-group-rule-ids", ...stale.sort()],
     "RDS 옛 나가기 규칙 빼기", P);
   let dbEgressRuleId = keep?.SecurityGroupRuleId;
+  let dbEgressCoveredBy: string | undefined;
   if (dbEgressRuleId) reused.push(dbEgressRuleId);
   else {
-    const a = await aws.call<{ SecurityGroupRules?: SgRuleRow[] }>(["ec2", "authorize-security-group-egress", "--group-id", plan.dbEgress.groupId,
-      "--ip-permissions", j([{ IpProtocol: "tcp", FromPort: plan.dbEgress.port, ToPort: plan.dbEgress.port,
-        IpRanges: [{ CidrIp: target, Description: "Postgres from source DB to svc relay (rollback window reverse subscription)" }] }]),
-      "--tag-specifications", j([tagSpec("security-group-rule", plan.dbEgress.tags)])], "RDS 나가기 규칙 열기", P);
-    dbEgressRuleId = a.SecurityGroupRules?.[0]?.SecurityGroupRuleId;
-    if (!dbEgressRuleId) throw new RelayError(P, "authorize-security-group-egress 가 규칙 번호를 안 돌려줬다");
-    created.push(dbEgressRuleId);
+    // 이미 열려 있으면 고객 보안 그룹을 고치지 않는다 (연결 스택의 SourceDbSecurityGroupId 를 비운 고객은 이 권한이 없다)
+    const all = (await aws.call<{ SecurityGroupRules?: SgRuleRow[] }>(["ec2", "describe-security-group-rules", "--filters",
+      j([{ Name: "group-id", Values: plan.dbEgress.groupIds.length ? plan.dbEgress.groupIds : [plan.dbEgress.groupId] }])], "RDS 나가기 규칙 읽기", P)).SecurityGroupRules ?? [];
+    dbEgressCoveredBy = existingDbEgressCover(all, privateIp, plan.dbEgress.port, sgId);
+    if (!dbEgressCoveredBy) {
+      let a: { SecurityGroupRules?: SgRuleRow[] };
+      try {
+        a = await aws.call<{ SecurityGroupRules?: SgRuleRow[] }>(["ec2", "authorize-security-group-egress", "--group-id", plan.dbEgress.groupId,
+          "--ip-permissions", j([{ IpProtocol: "tcp", FromPort: plan.dbEgress.port, ToPort: plan.dbEgress.port,
+            IpRanges: [{ CidrIp: target, Description: "Postgres from source DB to svc relay (rollback window reverse subscription)" }] }]),
+          "--tag-specifications", j([tagSpec("security-group-rule", plan.dbEgress.tags)])], "RDS 나가기 규칙 열기", P);
+      } catch (e) {
+        if (e instanceof RelayError && /^(UnauthorizedOperation|AccessDenied)/.test(e.awsCode ?? ""))
+          throw new RelayError("RELAY_DB_EGRESS_DENIED", `출발 RDS 보안 그룹 ${plan.dbEgress.groupId} 에 나가기 규칙(→ 중계 ${target}:${plan.dbEgress.port})이 없고, 열 권한도 없다. `
+            + `롤백 창 역복제(출발 RDS → 중계기)에 필요하다. 연결 스택 입력값 SourceDbSecurityGroupId 에 ${plan.dbEgress.groupId} 를 넣어 스택을 업데이트하거나, `
+            + `고객이 그 보안 그룹에 나가기 TCP ${plan.dbEgress.port} → ${target} 를 직접 연 뒤 다시 승인한다`, e.awsCode);
+        throw e;
+      }
+      dbEgressRuleId = a.SecurityGroupRules?.[0]?.SecurityGroupRuleId;
+      if (!dbEgressRuleId) throw new RelayError(P, "authorize-security-group-egress 가 규칙 번호를 안 돌려줬다");
+      created.push(dbEgressRuleId);
+    }
   }
-  return { securityGroupId: sgId, instanceId, publicIp, privateIp, dbEgressRuleId, created, reused };
+  return { securityGroupId: sgId, instanceId, publicIp, privateIp, dbEgressRuleId: dbEgressRuleId ?? "", ...(dbEgressCoveredBy ? { dbEgressCoveredBy } : {}), created, reused };
 }
 
 // user-data 에 호스트 개인 키가 들어 있다 → argv(ps 에 보임) 대신 0600 임시 파일(0700 폴더)로 넘기고 바로 지운다

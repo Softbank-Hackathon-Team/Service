@@ -9,7 +9,7 @@ import { FakeAws, fakeDeps } from "./fake-aws-relay.js";
 import { actionsOfPolicy, createTempRoleBroker, loadPermissionSet, memoryLedger, mockIssuer, STEP_ROLES, stepActions, TempRoleDenied, type AuditRecord } from "@svc/security";
 import { deriveSshHostKey, deriveSshKeypair, knownHostsLine } from "../src/gitops/migration-secrets.js";
 import {
-  buildRelayPlan, ownedBy, pickPublicSubnet, platformEgressCidrs, provisionRelay, RelayError, relayTags, teardownRelay, type RelayPlanInput,
+  buildRelayPlan, existingDbEgressCover, ownedBy, pickPublicSubnet, platformEgressCidrs, provisionRelay, RelayError, relayTags, teardownRelay, type RelayPlanInput,
 } from "../src/relay/aws-relay.js";
 import { provisionRelayStep, rdsIdentifierFromIds, relayEndpointRows, relayGate, teardownRelayStep, type RelayFacts } from "../src/relay/relay-step.js";
 
@@ -129,6 +129,47 @@ test("정리: 이 이전 두 태그가 있는 것만 지운다 (RDS 규칙 → E
   assert.equal(f.insts.get(r1.instanceId)!.state, "terminated");
   assert.deepEqual((await teardownRelay(deps(f), M)).removed, [], "두 번째는 지울 것 없음");
   for (const a of f.calls.filter((c) => c[1] === "terminate-instances")) assert.ok(!a.includes("i-foreign"));
+});
+
+// 출발 RDS 보안 그룹 나가기: 이미 열려 있으면 고객 보안 그룹을 안 고친다 (연결 스택 SourceDbSecurityGroupId 를 비운 고객은 그 권한이 없다)
+test("RDS 나가기 판정: 전부 허용·VPC 대역 5432·중계 SG 참조는 이미 열림, 다른 포트·접두 목록·플랫폼이 단 규칙은 아님", () => {
+  const row = (o: Record<string, unknown>) => ({ SecurityGroupRuleId: "sgr-x", IsEgress: true, ...o });
+  const ip = "10.0.1.20";
+  assert.equal(existingDbEgressCover([row({ IpProtocol: "-1", FromPort: -1, ToPort: -1, CidrIpv4: "0.0.0.0/0" })], ip, 5432, "sg-relay"), "sgr-x");
+  assert.equal(existingDbEgressCover([row({ IpProtocol: "tcp", FromPort: 5432, ToPort: 5432, CidrIpv4: "10.0.0.0/16" })], ip, 5432, "sg-relay"), "sgr-x");
+  assert.equal(existingDbEgressCover([row({ IpProtocol: "tcp", FromPort: 0, ToPort: 65535, ReferencedGroupInfo: { GroupId: "sg-relay" } })], ip, 5432, "sg-relay"), "sgr-x");
+  assert.equal(existingDbEgressCover([row({ IpProtocol: "tcp", FromPort: 443, ToPort: 443, CidrIpv4: "0.0.0.0/0" })], ip, 5432, "sg-relay"), undefined);
+  assert.equal(existingDbEgressCover([row({ IpProtocol: "tcp", FromPort: 5432, ToPort: 5432, CidrIpv4: "10.9.0.0/16" })], ip, 5432, "sg-relay"), undefined);
+  assert.equal(existingDbEgressCover([row({ IpProtocol: "-1", PrefixListId: "pl-123" })], ip, 5432, "sg-relay"), undefined);
+  assert.equal(existingDbEgressCover([row({ IsEgress: false, IpProtocol: "-1", CidrIpv4: "0.0.0.0/0" })], ip, 5432, "sg-relay"), undefined);
+  assert.equal(existingDbEgressCover([row({ IpProtocol: "tcp", FromPort: 5432, ToPort: 5432, CidrIpv4: "10.0.1.99/32",
+    Tags: relayTags("33333333-3333-4333-8333-333333333333", "relay-db-egress") })], "10.0.1.99", 5432, "sg-relay"), undefined, "다른 이전이 단 규칙은 그 이전이 끝나면 빠진다");
+});
+
+test("실행기: RDS 보안 그룹에 기본 나가기(전부 허용)가 있으면 규칙을 안 달고(권한 없어도 됨), 정리도 RDS 쪽은 안 건드린다", async () => {
+  const f = newFake();
+  f.rules.push({ id: "sgr-rds-egress-all", group: "sg-0rds", egress: true, proto: "-1", from: -1, to: -1, cidr: "0.0.0.0/0", tags: [] });
+  f.denyEgressGroup = "sg-0rds";   // 열려고 하면 실패한다: 안 열어야 통과
+  const r1 = await provisionRelay(deps(f), buildRelayPlan(planInput()));
+  assert.equal(r1.dbEgressRuleId, "");
+  assert.equal(r1.dbEgressCoveredBy, "sgr-rds-egress-all");
+  assert.ok(!f.calls.some((a) => a[1] === "authorize-security-group-egress" && a.includes("sg-0rds")), "RDS 보안 그룹을 안 고쳤다");
+  const t = await teardownRelay(deps(f), M);
+  assert.deepEqual(t.removed.sort(), [r1.instanceId, r1.securityGroupId].sort());
+  assert.ok(f.rules.some((r) => r.id === "sgr-rds-egress-all"), "고객 규칙 그대로");
+});
+
+test("실행기: RDS 나가기가 막혀 있고 열 권한도 없으면 RELAY_DB_EGRESS_DENIED (보안 그룹 번호·스택 입력값 안내)", async () => {
+  const f = newFake();
+  f.denyEgressGroup = "sg-0rds";
+  await assert.rejects(provisionRelay(deps(f), buildRelayPlan(planInput())), (e: unknown) => {
+    assert.ok(e instanceof RelayError);
+    assert.equal(e.code, "RELAY_DB_EGRESS_DENIED");
+    assert.equal(e.awsCode, "UnauthorizedOperation");
+    assert.match(e.message, /sg-0rds/);
+    assert.match(e.message, /SourceDbSecurityGroupId/);
+    return true;
+  });
 });
 
 test("실행기 거부: 권한 없음 → RELAY_PROVISION_FAILED + awsCode, 만든 것은 태그를 단 채 남는다", async () => {

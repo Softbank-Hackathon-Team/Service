@@ -20,6 +20,8 @@ export class FakeAws {
   n = 0;
   userData = "";
   failOn?: string;
+  /** 이 보안 그룹에 나가기 규칙을 열려 하면 권한 없음 (연결 스택 SourceDbSecurityGroupId 를 비운 고객) */
+  denyEgressGroup?: string;
   exec = async (cmd: string, args: string[]): Promise<ExecResult> => {
     assert.equal(cmd, "aws");
     this.calls.push(args);
@@ -29,6 +31,7 @@ export class FakeAws {
     const ok = (o: unknown) => ({ code: 0, stdout: JSON.stringify(o), stderr: "", ms: 1 });
     const err = (c: string) => ({ code: 254, stdout: "", stderr: `\nAn error occurred (${c}) when calling the X operation: no`, ms: 1 });
     if (this.failOn === op) return err("UnauthorizedOperation");
+    if (op === "ec2 authorize-security-group-egress" && this.denyEgressGroup && val("--group-id") === this.denyEgressGroup) return err("UnauthorizedOperation");
     const filters = JSON.parse(val("--filters") ?? "[]") as { Name: string; Values: string[] }[];
     const tagOk = (tags: Tag[]) => filters.filter((f) => f.Name.startsWith("tag:")).every((f) => f.Values.includes(tags.find((t) => t.Key === f.Name.slice(4))?.Value ?? "\u0000"));
     const fv = (n: string) => filters.find((f) => f.Name === n)?.Values;

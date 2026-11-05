@@ -47,6 +47,7 @@ export const FAILURE_CODES = [
   "RELAY_SOURCE_DB_UNKNOWN",     //   명세에서 출발 RDS 를 못 찾음·postgres 둘 이상·RDS 포트 5432 아님 → apply failed
   "RELAY_ROLE_DENIED",           //   출발 실행 역할(중계기 세션 정책) 발급 거부 → apply failed
   "RELAY_PROVISION_FAILED",      //   중계기 만들기 실패 (aws CLI). 만든 것은 태그를 단 채 남는다 → apply failed
+  "RELAY_DB_EGRESS_DENIED",      //   출발 RDS 보안 그룹에 중계기로 나가는 5432 가 없고 열 권한도 없음 (연결 스택 SourceDbSecurityGroupId 비움) → apply failed
   "RELAY_TEARDOWN_FAILED",       //   중계기 지우기 실패 → cleanup paused (롤백은 rolled_back + 경고)
   "REPL_DELIVERY_FAILED",        // 온프레 CNPG 이전: 서버 인증서·봉인 비밀·터널 값을 못 만듦 (중계기 칸 없음, 출발 포트 5432 아님, openssl 실패 등) → paused
   "SECRET_VALUES_MISSING", "SECRET_VALUES_UNKNOWN",   // APP-20: deploy 커밋 전 도착 비밀 그릇에 값(버전)이 없음 / 못 읽음 → paused

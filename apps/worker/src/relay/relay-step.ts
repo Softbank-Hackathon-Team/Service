@@ -200,7 +200,7 @@ export async function provisionRelayStep(j: Job, m: MigrationRow, deps: RelaySte
       publicIp: res.publicIp, privateIp: res.privateIp, knownHosts, existing: facts.existing });
     await (deps.save ?? ((r) => withTenant(j.tenantId, async (tx) => { for (const x of r) await upsertReplicationEndpoint(tx, x); })))(rows);
     // 감사 detail: 번호·주소만 (키·비밀번호 없음). 자원의 진실은 태그다 (이 detail 은 사람이 찾기 쉽게)
-    return { kind: "ok", detail: { instanceId: res.instanceId, securityGroupId: res.securityGroupId, dbEgressRuleId: res.dbEgressRuleId,
+    return { kind: "ok", detail: { instanceId: res.instanceId, securityGroupId: res.securityGroupId, dbEgressRuleId: res.dbEgressRuleId, ...(res.dbEgressCoveredBy ? { dbEgressCoveredBy: res.dbEgressCoveredBy } : {}),
       publicIp: res.publicIp, privateIp: res.privateIp, subnetId, rdsIdentifier: rds.identifier, rdsSecurityGroupId: rds.securityGroupIds[0],
       created: res.created, reused: res.reused, region: g.region, endpointRows: ["source", "target"] } };
   });
