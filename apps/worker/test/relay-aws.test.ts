@@ -237,7 +237,7 @@ test("실행기: RDS 들어오기가 막혀 있고 열 권한도 없으면 RELAY
 });
 
 test("터널 목적지: 출발 줄이 중계기 출발 입구(host=공개 IP:15432)면 진짜 RDS 이름(tls_servername):5432, 아니면 예전처럼", () => {
-  const base = { tenantId: T, migrationId: M, rds: planInput().rds, db: "shop", appUser: "shop_app", publicIp: "203.0.113.50", privateIp: "10.0.1.20", knownHosts: "203.0.113.50 ssh-ed25519 AAAA" };
+  const base = { tenantId: T, migrationId: M, sourceEnvId: "783df2ef-8dbf-4a20-904d-bb02aeb96332", rds: planInput().rds, db: "shop", appUser: "shop_app", publicIp: "203.0.113.50", privateIp: "10.0.1.20", knownHosts: "203.0.113.50 ssh-ed25519 AAAA" };
   const [s] = relayEndpointRows({ ...base, existing: [] });
   assert.equal(forwardTarget(s), `${RDS}:5432`);
   assert.equal(forwardTarget({ ...s, host: RDS, port: 5432, tlsServername: null }), `${RDS}:5432`);
@@ -327,7 +327,7 @@ test("단계 정상: 빌린 출발 자격으로 만들고 끝점 두 줄 (도착
   const [s, t] = saved as ReturnType<typeof relayEndpointRows>;
   // 출발 = 중계기 출발 입구 (공개 IP:15432), 진짜 RDS 이름은 tls_servername
   assert.deepEqual([s.side, s.provider, s.host, s.port, s.tlsServername, s.dbname, s.username, s.passwordRef, s.appRole],
-    ["source", "rds", "203.0.113.50", 15432, RDS, "shop", "postgres", "env:REPL_SECRET_SRC_22222222", "shop_app"]);
+    ["source", "rds", "203.0.113.50", 15432, RDS, "shop", "postgres", "env:REPL_SECRET_SRC_S", "shop_app"]);
   assert.deepEqual([t.side, t.provider, t.host, t.peerHost, t.peerPort, t.username, t.passwordRef, t.relayHost, t.relayPort],
     ["target", "cnpg", "203.0.113.50", "10.0.1.20", 5432, "svc_migrate", "derive:migrate", "203.0.113.50", 22]);
   assert.equal(t.relayKnownHosts, knownHostsLine("203.0.113.50", deriveSshHostKey(MK, T, M).publicKeyLine));
@@ -341,8 +341,18 @@ test("단계 정상: 빌린 출발 자격으로 만들고 끝점 두 줄 (도착
   assert.equal(f2.calls.length, 0);
 });
 
+test("출발 비밀번호 참조: 이전이 아니라 출발 환경 기준 이름 (같은 출발 RDS 로 이전을 다시 만들어도 같은 키), 운영자가 바꾼 참조는 그대로", () => {
+  const base = { tenantId: T, rds: planInput().rds, db: "shop", appUser: "shop_app", publicIp: "203.0.113.50", privateIp: "10.0.1.20", knownHosts: "203.0.113.50 ssh-ed25519 AAAA", existing: [] };
+  const [a] = relayEndpointRows({ ...base, migrationId: M, sourceEnvId: "783df2ef-8dbf-4a20-904d-bb02aeb96332" });
+  const [b] = relayEndpointRows({ ...base, migrationId: randomUUID(), sourceEnvId: "783df2ef-8dbf-4a20-904d-bb02aeb96332" });
+  assert.equal(a.passwordRef, "env:REPL_SECRET_SRC_783DF2EF");
+  assert.equal(b.passwordRef, a.passwordRef);
+  const [c] = relayEndpointRows({ ...base, migrationId: M, sourceEnvId: "783df2ef-8dbf-4a20-904d-bb02aeb96332", existing: [{ ...a, passwordRef: "env:REPL_SECRET_OPS" }] });
+  assert.equal(c.passwordRef, "env:REPL_SECRET_OPS");
+});
+
 test("끝점 줄 다시 쓰기: 같은 중계기면 배달이 채운 칸(CA·verify-full·출발 peer)을 그대로 둔다, 중계기가 바뀌면 CA 를 비운다", () => {
-  const base = { tenantId: T, migrationId: M, rds: planInput().rds, db: "shop", appUser: "shop_app", publicIp: "203.0.113.50", privateIp: "10.0.1.20", knownHosts: "203.0.113.50 ssh-ed25519 AAAA" };
+  const base = { tenantId: T, migrationId: M, sourceEnvId: "783df2ef-8dbf-4a20-904d-bb02aeb96332", rds: planInput().rds, db: "shop", appUser: "shop_app", publicIp: "203.0.113.50", privateIp: "10.0.1.20", knownHosts: "203.0.113.50 ssh-ed25519 AAAA" };
   const [s0, t0] = relayEndpointRows({ ...base, existing: [] });
   const delivered = [{ ...s0, peerHost: "db-tunnel.app.svc", peerPort: 5432, passwordRef: "env:REPL_SECRET_OPS" },
     { ...t0, caPem: "-----BEGIN CERTIFICATE-----\nx", tlsServername: "x-rw.app.svc", sslmode: "verify-full" as const }];
