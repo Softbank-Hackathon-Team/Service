@@ -5,7 +5,8 @@ import {
   releaseEnvLocks, failureEdge, INACTIVE_STATES, STEP_QUEUES, LEASE, type ExpiredLock, type Tx,
 } from "@svc/core";
 import { randomUUID } from "node:crypto";
-import { replicationFromEnv, type FenceRecovery } from "@svc/replication";
+import type { FenceRecovery } from "@svc/replication";
+import { replicationFor } from "../jobs/_repl.js";
 import { ROLLBACK_MAX_ATTEMPTS } from "../jobs/rollback.js";
 
 // 청소 작업(60초마다): 기한이 지난 환경 잠금을 찾아 상태를 정리한다.
@@ -64,11 +65,13 @@ export async function reapOnce(): Promise<ReapReport> {
 }
 
 // 진짜 복제(REPL_*)가 있을 때만. STUB이면 걷을 울타리가 없다 → null. 실패해도 청소는 계속(결과는 감사 detail.fence)
-export async function recoverFence(l: Pick<ExpiredLock, "migrationId" | "status">): Promise<FenceRecovery | { error: string } | null> {
+// DECISION(team): 끝점은 이전마다 DB 행으로 (2026-11-05, 보안·온프레 영역) → 워커 처리기와 같은 replicationFor (회사·이전 번호로)
+//   tx = reapLock 이 쥔 트랜잭션 (이전 행 잠금을 쥔 채 연결을 하나 더 빌리지 않는다). 없으면 replicationFor 가 withTenant 를 연다
+export async function recoverFence(l: Pick<ExpiredLock, "migrationId" | "status" | "tenantId">, tx?: Tx): Promise<FenceRecovery | { error: string } | null> {
   if (l.status !== "cutover" && l.status !== "rolling_back") return null;
-  let repl: ReturnType<typeof replicationFromEnv>;
-  try { repl = replicationFromEnv(l.migrationId); }
-  catch (e) { return { error: (e as Error).message.slice(0, 300) }; }   // PF-E22: 주소를 못 만들면(빈 {tf:}) 청소는 계속
+  let repl: Awaited<ReturnType<typeof replicationFor>>;
+  try { repl = await replicationFor(l.tenantId, l.migrationId, tx); }
+  catch (e) { return { error: (e as Error).message.slice(0, 300) }; }   // PF-E22: 주소를 못 만들면(빈 {tf:}·끝점 줄 한쪽만) 청소는 계속
   if (!repl) return null;
   const r = await repl.recoverInterruptedSwitch(l.status).catch((e) => ({ error: (e as Error).message.slice(0, 300) }));
   console.log("[lease-reaper] fence recovery", l.migrationId, JSON.stringify(r));
@@ -138,7 +141,7 @@ export async function reapLock(l: ExpiredLock): Promise<{ action: ReapAction; ap
     // Z36 (Z42 Q17): 쓰기 담당 바꾸기 도중(cutover·rolling_back)에 잠금 기한이 지났으면, 상태를 옮기기 전에 울타리부터 확인·해제.
     // Z38 R3-1: 위 잠금을 쥔 채 부른다 → 새 워커의 acquireEnvLock 이 울타리 해제가 끝날 때까지 기다린다
     //   대가: 복제 DB 두 곳에 붙는 몇백 ms 동안 이 트랜잭션이 열려 있다 【추정】
-    fence = await recoverFence(l);
+    fence = await recoverFence(l, tx);
     const stepFailed = l.holder === "reserved" && !DONE.includes(l.status) ? await stepFailedSinceEntry(tx, l.migrationId) : false;
     const rollbackFailures = l.status === "rolling_back" ? await rollbackFailuresSinceEntry(tx, l.migrationId) : 0;
     act = decideReap({ holder: l.holder, status: l.status, stepFailed, rollbackFailures });

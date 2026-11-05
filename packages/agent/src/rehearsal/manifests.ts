@@ -21,11 +21,15 @@ export const REHEARSAL_KINDS: Readonly<Record<string, KindInfo>> = {
   "autoscaling/v2/HorizontalPodAutoscaler": { plural: "horizontalpodautoscalers", applies: true, wait: null },
   "policy/v1/PodDisruptionBudget": { plural: "poddisruptionbudgets", applies: true, wait: null },
   "networking.k8s.io/v1/Ingress": { plural: "ingresses", applies: true, wait: null },
+  // 온프레 DB 이전 터널(db-tunnel.yaml)의 NetworkPolicy. 그대로 적용한다 (가상 API 서버가 모양을 판정, 샌드박스 기본 거부는 따로 있다)
+  "networking.k8s.io/v1/NetworkPolicy": { plural: "networkpolicies", applies: true, wait: null },
   // 온프레 바닥 floor.yaml 의 platform-quota (ONPREM_FLOOR_VIA_GIT). 그대로 적용해 가상 API 서버가 도착과 같은 할당량 검사를 한다.
   //   다른 객체보다 먼저 적용하고 상태가 잡힌 뒤에 파드를 만든다 (run.ts applyQuotas)
   "v1/ResourceQuota": { plural: "resourcequotas", applies: true, wait: null },
   "external-secrets.io/v1/ExternalSecret": { plural: "externalsecrets", applies: false, wait: null },
   "postgresql.cnpg.io/v1/Cluster": { plural: "clusters", applies: false, wait: null },
+  // 온프레 DB 이전 봉인 비밀 (sealedsecret.yaml). 샌드박스에는 컨트롤러·개인 키가 없다 → 원본은 CRD 로 dry-run 만, 적용은 워커가 같은 이름의 가짜 Secret 으로
+  "bitnami.com/v1alpha1/SealedSecret": { plural: "sealedsecrets", applies: false, wait: null },
 };
 
 export interface K8sObject {

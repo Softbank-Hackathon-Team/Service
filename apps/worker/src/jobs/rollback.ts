@@ -1,6 +1,6 @@
 import { MigrationJob, QUEUES } from "@svc/contracts";
 import { replicationFor } from "./_repl.js";
-import { ReplConfigError, replicationFromEnv, toMeasurements, withClient, appCanWrite } from "@svc/replication";
+import { ReplConfigError, toMeasurements, withClient, appCanWrite } from "@svc/replication";
 import { restoreSource } from "@svc/traffic";
 import { trafficLeaseState, withTenant, writeAudit } from "@svc/core";
 import { log } from "../instrument.js";
@@ -12,8 +12,9 @@ import { tempRoles, trafficFor, trafficMetrics } from "../platform.js";
 import { appLinkHooks, appLinkMeasurements, appLinkOn, recordActiveWriter, switchRuntimeWriter, targetBundle } from "../app-link.js";
 import { appDbSwitchKind } from "./deploy.js";
 import { loadReapplyInput, type RealApplyInput } from "./apply-real.js";
-import { commitTrafficWeight, configFromEnv, GitopsRepo, type BundleRef } from "../gitops/index.js";
+import { commitReplicationCleanup, commitTrafficWeight, configFromEnv, GitopsRepo, type BundleRef } from "../gitops/index.js";
 import { envNumber } from "@svc/contracts";
+import { teardownRelayStep } from "../relay/relay-step.js";
 
 // DRAFT(ai): 롤백 자체가 이 횟수만큼 실패하면 rolling_back → failed(ROLLBACK_FAILED).
 // 잠금은 남는다(반쯤 되돌린 상태일 수 있음). 사람이 확인하고 POST .../cancel {manualCleanupConfirmed:true}로 끝낸다.
@@ -130,12 +131,19 @@ export async function handleRollback(raw: unknown) {
       // Z69: 컷오버 전·뒤·noop 모두 걷고, 실패하면 경고만 (rollback-cleanup.ts 결정 참고)
       const cleanup = await cleanupAfterRollback(repl);
       const { removed, leftovers } = cleanup;
+      // 온프레 CNPG 이전: 걷기가 다 끝났을 때만 gitops 에서 이전 역할(ensure absent)·터널을 걷는다. 실패해도 롤백은 이어 간다 (detail 에만)
+      //   덜 걷었으면 터널을 남긴다: repl-cleanup 이 같은 터널로 다시 걷고 그때 이 커밋을 한다
+      const gitopsReplication = cleanup.ok ? await commitReplicationCleanup(bundle) : { skipped: "replication_leftovers" };
+      // 출발 계정 중계기: 걷기와 터널 정리 커밋이 끝났을 때만 지운다. 실패해도 롤백은 rolled_back (걷기 실패와 같은 규칙, Z69) → 경고 감사 + repl-cleanup 으로 다시
+      const relay = cleanup.ok ? await teardownRelayStep(j, m) : { kind: "skipped" as const, reason: "replication_leftovers" };
+      if (relay.kind === "failed") log.warn({ migration_id: j.migrationId, code: relay.failureCode, reason: relay.reason }, "rollback: relay teardown incomplete");
       if (!cleanup.ok) log.warn({ migration_id: j.migrationId, kind: r.kind, warning: cleanup.warning, leftovers }, "rollback: replication cleanup incomplete");
       // 출발 헬스 = 출발 DB에서 앱 계정이 다시 쓸 수 있나
       const sourceHealthy = await withClient(repl.cfg.source, (c) => appCanWrite(c, repl.cfg.source, (repl.cfg.tables?.[0]) ?? "orders"));
       return {
         to: "rolled_back",
-        detail: { weights, traffic: traffic.detail, gitopsWeight,
+        detail: { weights, traffic: traffic.detail, gitopsWeight, gitopsReplication,
+                  relay: relay.kind === "ok" ? relay.detail : relay.kind === "skipped" ? { skipped: relay.reason } : { failed: relay.failureCode, error: relay.reason },
                   replication: { kind: r.kind, order: dbFirst ? "db_then_traffic" : "traffic_then_db", removed, leftovers, cleanup: cleanup.ok ? "ok" : "incomplete",
                                  ...(cleanup.warning ? { warning: cleanup.warning } : {}) },
                   measurements: [...(r.result ? toMeasurements(r.result.measures, j.migrationId, "source") : []), ...appLinkMeasurements(appLink, j.migrationId, "source")],
@@ -143,10 +151,13 @@ export async function handleRollback(raw: unknown) {
         // 출발 건강 = 트래픽 지표(5xx) 와 DB(앱 계정 쓰기 가능) 둘 다
         evidence: { sourceWeight100: traffic.evidence.sourceWeight100, sourceHealthy: sourceHealthy && traffic.evidence.sourceHealthy === true },
         // 경고는 rolled_back 감사와 별도 줄로도 남긴다(화면·조회에서 result=error로 바로 보이게). 같은 트랜잭션
-        ...(cleanup.ok ? {} : { inTx: async (tx) => {
-          await writeAudit(tx, j.tenantId, { actor: "worker", action: "rollback.cleanup_incomplete", target: j.migrationId, result: "error",
+        ...(cleanup.ok && relay.kind !== "failed" ? {} : { inTx: async (tx) => {
+          if (!cleanup.ok) await writeAudit(tx, j.tenantId, { actor: "worker", action: "rollback.cleanup_incomplete", target: j.migrationId, result: "error",
             detail: { requestId: j.requestId, kind: r.kind, removed, leftovers, warning: cleanup.warning,
                       hint: "teardown은 여러 번 불러도 안전. 원인(권한·연결·active 슬롯) 해결 뒤 다시 걷기" } });
+          if (relay.kind === "failed") await writeAudit(tx, j.tenantId, { actor: "worker", action: "rollback.relay_cleanup_incomplete", target: j.migrationId, result: "error",
+            detail: { requestId: j.requestId, code: relay.failureCode, warning: relay.reason.slice(0, 500), ...(relay.detail ?? {}),
+                      hint: "출발 계정 중계기(태그 managed-by=platform, svc:migration=<이전>)가 남았다. 원인을 고친 뒤 repl-cleanup 으로 다시 지운다" } });
         } }),
       };
     })),

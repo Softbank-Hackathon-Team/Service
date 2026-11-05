@@ -19,10 +19,12 @@ const isDelete = (a: string) => DELETE_VERB.test(verbOf(a));
 // Azure 는 Mock 전용이라 천장 파일이 없다. 관찰 요청 모양만 맞춘다
 const AZURE_OBSERVE = ["resources.list", "resourcegroups.get"];
 
-export function stepActions(p: PermissionSet | null, provider: Provider, purpose: "observe" | "operate", stage?: Stage): string[] {
+export function stepActions(p: PermissionSet | null, provider: Provider, purpose: "observe" | "operate", stage?: Stage, policy?: "relay"): string[] {
   const cap = (xs: string[]) => [...new Set(xs)].sort();
   if (provider === "azure_mock") return purpose === "observe" ? AZURE_OBSERVE : [];
   if (!p) return [];
+  // 중계기: 고객 실행 역할에 따로 붙인 중계기 문 묶음의 동작 전부 (AWS 만, 파일이 없으면 빈 목록 → 발급이 거부된다)
+  if (policy === "relay") return provider === "aws" && purpose === "operate" ? cap(p.aws.relay?.ceiling ?? []) : [];
   const ceiling = provider === "aws" ? p.aws.ceiling : provider === "gcp" ? p.gcp.ceiling : p.onprem.ceiling;
   if (purpose === "observe") return cap(ceiling.filter(isRead));
   const st = stage ?? "plan";
@@ -54,5 +56,9 @@ export const STEP_ROLES = {
   db_writer: [{ side: "target", purpose: "operate", stage: "apply" }],
   // 리허설 이미지 복사 (worker rehearsal/image-mirror.ts). 출발 ECR 에서 다이제스트로 받기만 한다. 관찰 천장 전체가 아니라 이 세 동작만 요청
   image_mirror: [{ side: "source", purpose: "observe", actions: ECR_PULL_ACTIONS }],
-} as const satisfies Record<string, ReadonlyArray<{ side: "source" | "target"; purpose: "observe" | "operate"; stage?: Stage; actions?: readonly string[] }>>;
+  // 온프레 이전 중계기 (worker relay/relay-step.ts): 출발 AWS 계정에 중계 EC2·보안 그룹을 만들고(apply) 정리 때 지운다.
+  //   출발 실행 역할을 빌리되 세션 정책은 중계기 동작만 (policy relay). stage apply 는 장부 칸(0009 CHECK)용
+  // DRAFT(ai): 만들기·지우기를 한 세션 정책으로 (지우기 전용으로 더 좁히지 않음). 지우는 대상은 코드가 두 태그로 한 번 더 거른다
+  relay: [{ side: "source", purpose: "operate", stage: "apply", policy: "relay" }],
+} as const satisfies Record<string, ReadonlyArray<{ side: "source" | "target"; purpose: "observe" | "operate"; stage?: Stage; actions?: readonly string[]; policy?: "relay" }>>;
 export type RoleStep = keyof typeof STEP_ROLES;

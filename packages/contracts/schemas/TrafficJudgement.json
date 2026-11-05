@@ -34,6 +34,9 @@
     "sourceP95Ms": {
       "type": "number"
     },
+    "latencyMeasured": {
+      "type": "boolean"
+    },
     "verdict": {
       "type": "string",
       "enum": [

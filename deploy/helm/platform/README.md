@@ -36,7 +36,7 @@ helm install external-secrets external-secrets/external-secrets -n external-secr
 
 # 2. 비밀값 넣기 (값은 채팅·레포에 남기지 않는다)
 aws secretsmanager put-secret-value --secret-id platform/app --secret-string file://<레포 밖 app.json>
-#    app.json 키: DATABASE_URL, JWT_SECRET, PLATFORM_PRINCIPAL_ARN, AGENT_REPORT_MASTER_KEY, PUBLIC_API_URL, GITOPS_REPO_URL, GITOPS_WRITE_TOKEN, GITOPS_PUSH, ANTHROPIC_API_KEY
+#    app.json 키: DATABASE_URL, JWT_SECRET, PLATFORM_PRINCIPAL_ARN, AGENT_REPORT_MASTER_KEY, PUBLIC_API_URL, GITOPS_REPO_URL, GITOPS_WRITE_TOKEN, GITOPS_PUSH, REPL_SECRET_MASTER_KEY, PLATFORM_EGRESS_CIDRS, ANTHROPIC_API_KEY
 #    values.yaml secretKeys 에 적힌 키가 JSON 에 하나라도 없으면 그 컴포넌트의 비밀 동기화가 멈춘다 → 키를 더할 때는 값부터 넣고 helm upgrade
 aws secretsmanager put-secret-value --secret-id platform/cloudflared --secret-string file://<레포 밖 cf.json>
 
@@ -50,8 +50,9 @@ helm upgrade --install platform deploy/helm/platform -n platform --create-namesp
   --set sandbox.imageRegistry=<계정>.dkr.ecr.<리전>.amazonaws.com/sandbox \
   --set sandbox.rehearsal.enabled=true
 
-# 3-2. 앱 4개를 올릴 때 (registry·tag 둘 다 있어야 만든다). 샌드박스·게이트웨이 값을 쓰고 있으면 같은 --set 을 같이 준다
-helm upgrade --install platform deploy/helm/platform -n platform --create-namespace --set apps.image.registry=725072160743.dkr.ecr.ap-northeast-2.amazonaws.com --set apps.image.tag=<태그>
+# 3-2. 앱 4개를 올릴 때 (registry·tag 둘 다 있어야 만든다). 이미 설치한 뒤에는 --reset-then-reuse-values 를 꼭 붙인다 (--reuse-values 는 새 차트 기본값을 버린다)
+#      빠지면 그동안 준 값이 사라져 워커가 GCP 로그인을 잃는다
+helm upgrade --install platform deploy/helm/platform -n platform --create-namespace --reset-then-reuse-values --set apps.image.registry=725072160743.dkr.ecr.ap-northeast-2.amazonaws.com --set apps.image.tag=<태그>
 ```
 
 `platform/app` JSON 에 넣을 키: `components.*.secretKeys` 에 적은 것 전부 (`DATABASE_URL`, `JWT_SECRET`, `PLATFORM_PRINCIPAL_ARN`, `ANTHROPIC_API_KEY`). 키를 늘리면 JSON 과 `secretKeys` 를 같이 고친다.
@@ -112,9 +113,9 @@ kubectl create configmap argocd-gcp-creds -n argocd --from-file=gcp-creds/ --dry
 
 # 2. infra/modules/gcp/platform-wif 적용 (svc-worker 도 여기서 만든다). 출력 audience, worker_principal 을 아래에 쓴다
 
-# 3. 차트에 값 주기. 값은 helm 이 기억하지 않으니 이후 helm upgrade 마다 같은 --set 을 준다 (빠지면 워커가 GCP 로그인을 잃는다)
+# 3. 차트에 값 주기. 이후 helm upgrade 는 --reset-then-reuse-values 를 꼭 붙인다 (빠지면 값이 사라져 워커가 GCP 로그인을 잃는다)
 #    Git Bash 는 //iam... 을 경로로 바꾸므로 앞에 MSYS_NO_PATHCONV=1 을 붙인다 (바뀌면 렌더가 멈춘다)
-helm upgrade platform deploy/helm/platform -n platform --set apps.image.registry=725072160743.dkr.ecr.ap-northeast-2.amazonaws.com --set apps.image.tag=$TAG --set otelGateway.image=725072160743.dkr.ecr.ap-northeast-2.amazonaws.com/svc-api:$TAG --set gcpPlatform.project=$PROJECT --set gcpPlatform.wifAudience=$AUDIENCE
+helm upgrade platform deploy/helm/platform -n platform --reset-then-reuse-values --set apps.image.registry=725072160743.dkr.ecr.ap-northeast-2.amazonaws.com --set apps.image.tag=$TAG --set otelGateway.image=725072160743.dkr.ecr.ap-northeast-2.amazonaws.com/svc-api:$TAG --set gcpPlatform.project=$PROJECT --set gcpPlatform.wifAudience=$AUDIENCE
 
 # 4. 회사마다: 워커에 그 회사 SA 가장 권한을 준다 (위 허브 3번과 같은 스크립트, 같이 실행하면 된다). 진짜 플랫폼 회사 UUID 를 쓴다
 WORKER_PRINCIPAL="$WORKER_PRINCIPAL" PLATFORM_PROJECT="$PROJECT" TENANT_ID="$TENANT" bash infra/onboarding/gcp-platform-tenant-sa.sh
@@ -159,6 +160,8 @@ kubectl port-forward svc/monitoring-grafana -n monitoring 3001:80
 - 받는 지표: `svc_ingress_requests_total`(카운터), `svc_ingress_request_duration_seconds`(히스토그램). 다른 이름은 버린다.
 - 보낸 쪽이 붙일 라벨: `env`(source 또는 target), `migration`(이전 번호), 요청 수에는 `code`, Ingress 가 여러 개면 파드마다 다른 `replica`. 형식이 틀리면 버리고, 정한 라벨 밖은 지운다.
 
+온프레 도착은 수집기를 설치 묶음이 깐다: `tools/onprem-install.sh` 에 `METRICS_URL`(이 주소의 `/v1/metrics`)·`METRIC_TOKEN_FILE`(그 환경의 토큰 파일)을 주면 `deploy/helm/onprem-agent` 의 `svc-metrics` 가 이전마다 앱 차트 cloudflared(표시 `svc.platform/metrics`)의 상태 코드별 응답 수를 `svc_ingress_requests_total{env="target",migration,code,replica}` 로 보낸다. cloudflared 에는 요청 응답 시간 지표가 없어 지연 히스토그램은 안 보낸다 (판정은 오류율만).
+
 고객 Collector 설정 (토큰은 파일이나 환경 변수로만 넣는다):
 
 ```yaml
@@ -171,6 +174,40 @@ exporters:
     auth:
       authenticator: bearertokenauth
 ```
+
+## 온프레 DB 이전 켜기 (ADR-019, 한 번)
+
+온프레 도착 DB 로 복제하려면 worker 에 키 2개, 플랫폼 DB 에 표 하나(0050), 새 이미지가 있어야 한다. 순서가 중요하다.
+facts 계약이 strict 라 **플랫폼(api)을 먼저 올리고 고객 Agent 를 나중에** 올린다 (새 Agent 가 보내는 `sealing`·`egressIp` 를 옛 api 는 거부한다).
+
+```
+# 1. 값 넣기. 기존 platform/app JSON 에 두 키만 더한다. 값은 화면·셸 기록에 안 남는다
+#    REPL_SECRET_MASTER_KEY 가 이미 있으면 그대로 둔다 (바꾸면 진행 중인 이전의 비밀이 전부 달라진다)
+#    PLATFORM_EGRESS_CIDRS = worker 가 나가는 NAT 공인 IP. 쉼표로 여러 개
+aws ec2 describe-nat-gateways --filter Name=state,Values=available --query 'NatGateways[].NatGatewayAddresses[].PublicIp' --output text
+umask 077; f=$(mktemp)
+aws secretsmanager get-secret-value --secret-id platform/app --query SecretString --output text \
+  | python3 -c 'import json,sys,secrets; d=json.load(sys.stdin); d.setdefault("REPL_SECRET_MASTER_KEY", secrets.token_hex(32)); d["PLATFORM_EGRESS_CIDRS"]=sys.argv[1]; json.dump(d, open(sys.argv[2],"w")); print(sorted(d))' "<NAT IP>/32" "$f"
+aws secretsmanager put-secret-value --secret-id platform/app --secret-string "file://$f" >/dev/null; rm -f "$f"
+
+# 2. 표 0050 (플랫폼 DB). 새 worker 이미지보다 먼저: 새 worker 는 클라우드 이전까지 모든 이전에서 이 표를 읽는다
+#    임시 파드에서 db-migrate.sh 를 돌린다 (표 주인 비밀번호는 RDS 관리 비밀 → k8s Secret, 화면에 안 나옴). main 에서
+bash tools/platform-db-migrate.sh status    # pending 이 0050_replication_endpoints.sql 하나인지 본다
+bash tools/platform-db-migrate.sh apply     # 남은 것이 그 하나가 아니면 아무것도 안 넣고 멈춘다
+
+# 3. 이미지: main 에 들어간 뒤 build-ecr 을 돌린다 (태그 sha-<커밋 7자>)
+gh workflow run build-ecr.yml --ref main
+
+# 4. 차트. --reuse-values 가 아니라 --reset-then-reuse-values (helm 3.14+).
+#    --reuse-values 는 옛 릴리스의 값(옛 secretKeys 4개)이 새 기본값을 덮어 키 2개가 worker 로 안 간다. 이미 준 --set 값은 그대로 남는다 (위 3-2·GCP 값 주기도 같은 플래그)
+helm upgrade platform deploy/helm/platform -n platform --reset-then-reuse-values --set apps.image.tag=<새 태그>
+kubectl -n platform get externalsecret worker-env        # SecretSynced 가 아니면 1번 JSON 에 키가 빠진 것
+kubectl -n platform get secret worker-env -o json | python3 -c 'import json,sys; print(sorted(json.load(sys.stdin)["data"]))'   # 키 이름만
+
+# 5. 고객 온프레: 새 Agent 이미지 + 봉인 컨트롤러 (tools/onprem-install.sh 머리말 그대로 다시 돌린다)
+```
+
+확인: 고객 Agent 보고 뒤 `agent_reports` 의 facts 에 `sealing.certPem`·`egressIp` 가 있으면 이전 계획이 봉인 인증서와 중계 SSH 허용 IP 를 쓸 수 있다.
 
 ## 아직 없는 것
 

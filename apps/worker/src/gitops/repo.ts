@@ -157,7 +157,7 @@ export class GitopsRepo {
   }
 
   // 계약 3절 1~7번. values.yaml은 JSON으로 쓴다 (JSON은 그대로 YAML이라 helm·검증 도구가 읽는다)
-  commitBundle(kind: "deploy" | "traffic", b: BundleRef, values: HelmValues, plan: PlanFile, title: string, opts: CommitOpts = {}): Promise<CommitResult> {
+  commitBundle(kind: "deploy" | "traffic" | "cleanup", b: BundleRef, values: HelmValues, plan: PlanFile, title: string, opts: CommitOpts = {}): Promise<CommitResult> {
     return serial(async () => {
       // 렌더·검사가 실패하면 쓴 파일을 되돌린다. 안 그러면 커밋 안 된 묶음이 작업 복사본에 남고,
       //   validate 는 디스크의 모든 회사를 보므로 같은 워커의 다음 배포(다른 회사 포함)가 전부 같은 이유로 실패한다 (2026-11-04 재현)

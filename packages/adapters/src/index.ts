@@ -41,6 +41,8 @@ export * from "./import/raw-k8s.js";
 export { mockSeed, CliError, classifyCliError, sourceFail, type CliErrorKind, type CliDeps } from "./common/cli.js";
 export { runCloudPrecheck, toPrecheckItems, mockPrecheckEnabled, mockChecks, cliProblem, tcpProbe, apiEndpoint, AWS_QUOTAS, GCP_APIS, CLOUDSQL_PG_MAJORS_DEFAULT, MIN_REPL_PG_MAJOR,
   type CloudCheck, type Verdict, type PrecheckEnvInfo, type PrecheckInput, type PrecheckDeps, type CloudProvider } from "./precheck/cloud-precheck.js";
+export { relayPathApplies } from "./precheck/cloud-precheck.js";
+export { RELAY_ACTIONS, relayPermVerdict, relaySimArgs, relaySimContext, RELAY_PERM_FIX } from "./precheck/relay-permissions.js";   // 온프레 이전 중계기 권한
 // L4: 연결 확인 (빌린 관찰 역할로 고객 AWS 읽어 보기)
 export { verifyAwsObserve, envFor, EKS_CLUSTER_NAME_RE, trustHasExternalId, type VerifyAwsInput, type VerifyAwsResult } from "./verify/aws.js";
 // I3a: 가져오기 (원본 → 공통 명세)
@@ -78,3 +80,6 @@ export { measureImportAccuracy, ACCURACY_COMPARED, ACCURACY_NOT_COMPARED, type M
 export { carryHumanEdits, CARRY_NOTE, type PrevSpecV2, type CarryReport } from "./import/carry.js";
 export { applyInclude, IncludeError, type IncludeFailure, type IncludeOut } from "./import/include.js";
 export { serviceMapV2, categoryOfTypeV2, type ServiceMapRowV2, type ServiceCategoryV2 } from "./common/service-map-v2.js";
+// APP-22 (가): 컷오버 전 도착 앱 → 출발 RDS 잇기 (계획·SQL·사전 점검은 순수, 열기·걷기만 AWS CLI)
+export { planSourceDbLink, sourceDbLinkGrantSql, sourceDbLinkDropSql, sourceDbLinkMode, sourceDbLinkInputFromEnv, sourceDbLinkPrecheck,
+  openSourceDbLinkAws, closeSourceDbLinkAws, SOURCE_DB_LINK_AWS_ACTIONS, SOURCE_DB_LINK_SG_TAG, sourceDbLinkOperatePolicy, type SqlRunner, type SourceDbLinkMode, type OpenAwsResult } from "./aws/source-db-link.js";

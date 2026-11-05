@@ -1,0 +1,29 @@
+{
+  "app": { "name": "shop" },
+  "namespace": "app-shop",
+  "labels": { "managed-by": "platform" },
+  "workloads": [],
+  "externalSecrets": { "store": { "kind": "ClusterSecretStore", "name": "onprem-store" }, "secrets": [] },
+  "warnings": [],
+  "postgres": [
+    {
+      "id": "db", "mode": "cnpg", "name": "shop-db", "instances": 1, "majorVersion": "16", "storageGb": 10,
+      "host": "shop-db-rw", "port": 5432, "passwordSecret": "shop-db-app", "database": "shop", "owner": "app",
+      "replication": { "enabled": true, "role": "svc_migrate", "passwordSecret": "shop-db-migrate", "validUntil": "2026-11-30T00:00:00Z" },
+      "certificates": { "serverCASecret": "shop-db-server-ca", "serverTLSSecret": "shop-db-server-tls" }
+    }
+  ],
+  "dbTunnel": {
+    "relay": { "host": "203.0.113.7", "port": 22, "knownHosts": "203.0.113.7 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeHostKeyForRenderOnly" },
+    "keySecret": "db-tunnel-key",
+    "forward": { "target": "shop.abc123.ap-northeast-2.rds.amazonaws.com:5432" },
+    "reverse": { "enabled": true, "cnpgName": "shop-db" },
+    "image": "alpine/git:v2.54.0@sha256:ac6c828f15d82775d204d3d75112e1d34af8945da80ccf922713c9891ba68e7a"
+  },
+  "sealedSecrets": [
+    { "name": "shop-db-migrate", "type": "kubernetes.io/basic-auth", "encryptedData": { "username": "AgBFakeSealedForRenderOnly1", "password": "AgBFakeSealedForRenderOnly2" } },
+    { "name": "db-tunnel-key", "encryptedData": { "id": "AgBFakeSealedForRenderOnly3" } },
+    { "name": "shop-db-server-tls", "type": "kubernetes.io/tls", "encryptedData": { "tls.crt": "AgBFakeSealedForRenderOnly4", "tls.key": "AgBFakeSealedForRenderOnly5" } },
+    { "name": "shop-db-server-ca", "encryptedData": { "ca.crt": "AgBFakeSealedForRenderOnly6" } }
+  ]
+}

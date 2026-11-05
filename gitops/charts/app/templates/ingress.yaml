@@ -18,16 +18,53 @@ spec:
     matchLabels: { app.kubernetes.io/name: {{ $.Values.app.name }}-cloudflared }
   template:
     metadata:
+      {{- with $ing.metrics }}
+      {{- if not (regexMatch "^[0-9a-fA-F-]{36}$" (toString .migration)) }}{{ fail "ingress.metrics.migration 은 이전 uuid" }}{{ end }}
+      {{- if not (has .env (list "source" "target")) }}{{ fail "ingress.metrics.env 는 source 또는 target" }}{{ end }}
+      {{- /* 트래픽 판정 지표 (#245): 고객 클러스터 수집기(onprem-agent metrics)가 이 표시로 파드를 찾고, 표시 값을 env·migration 라벨로 붙인다 */}}
+      labels: { app.kubernetes.io/name: {{ $.Values.app.name }}-cloudflared, svc.platform/metrics: cloudflared }
+      annotations:
+        svc.platform/metrics-port: "2000"
+        svc.platform/migration: {{ .migration | quote }}
+        svc.platform/env: {{ .env | quote }}
+      {{- else }}
       labels: { app.kubernetes.io/name: {{ $.Values.app.name }}-cloudflared }
+      {{- end }}
     spec:
       containers:
         - name: cloudflared
           image: cloudflare/cloudflared:2025.9.1
+          {{- if $ing.metrics }}
+          {{- /* --metrics 는 tunnel 단계 옵션이라 run 앞. 파드 주소로 열어야 다른 파드(수집기)가 읽는다. 들어오는 길은 아래 NetworkPolicy 로 수집기만 */}}
+          args: ["tunnel", "--no-autoupdate", "--metrics", "0.0.0.0:2000", "run", "--url", {{ printf "http://%s:%v" $first.service $first.port | quote }}]
+          ports: [{ name: metrics, containerPort: 2000, protocol: TCP }]
+          {{- else }}
           args: ["tunnel", "--no-autoupdate", "run", "--url", {{ printf "http://%s:%v" $first.service $first.port | quote }}]
+          {{- end }}
           env:
             - name: TUNNEL_TOKEN
               valueFrom: { secretKeyRef: { name: {{ $ing.tunnelTokenSecret }}, key: token } }
           resources: { requests: { cpu: 50m, memory: 64Mi }, limits: { memory: 128Mi } }
+{{- with $ing.metrics }}
+---
+# cloudflared 는 밖으로 나가는 연결만 쓴다 (터널). 들어오는 것은 지표 :2000 하나이고, 고객 클러스터 수집기 네임스페이스에서만 받는다.
+#   지표 주소에는 /metrics 말고 /debug/pprof 같은 진단 경로도 있어 클러스터 전체에 열지 않는다
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $.Values.app.name }}-cloudflared-metrics
+  labels: {{- include "app.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: {{ $.Values.app.name }}-cloudflared }
+  policyTypes: ["Ingress"]
+  ingress:
+    - from:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: {{ .collectorNamespace | default "svc-agent" }} } }
+          podSelector: { matchLabels: { app.kubernetes.io/name: svc-metrics } }
+      ports:
+        - { protocol: TCP, port: 2000 }
+{{- end }}
 {{- else if eq $ing.mode "lb" }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress

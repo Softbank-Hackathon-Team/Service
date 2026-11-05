@@ -10,6 +10,7 @@ export * from "./redact.js";
 export * from "./guards.js";
 export * from "./envlock.js";
 export * from "./traffic-target.js";
+export * from "./replication-endpoints.js";   // 이전마다 복제 끝점 (db 0050)
 export * from "./migrations-check.js";
 export * from "./idempotency.js";
 export * from "./jobs.js";

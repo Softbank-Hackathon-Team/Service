@@ -15,7 +15,7 @@ import { RehearsalInput, type Provider } from "@svc/contracts";
 import { DEMO_SPEC, STUB_TF_OUTPUTS, stubTfOutputsV2 } from "@svc/adapters";
 import { buildPlanDoc } from "../src/jobs/plan.js";
 import { stubPrecheck } from "../src/jobs/precheck.js";
-import { approvedWeights, bundleRefOf, filledValues, withServedBy, withTraffic, type DeployInput } from "../src/gitops/index.js";
+import { approvedWeights, bundleRefOf, DB_TUNNEL_IMAGE, filledValues, replicationCnpgs, withDelivery, withServedBy, withTraffic, type DeployInput } from "../src/gitops/index.js";
 import { buildRehearsalInput, imagePairs, parseManifests } from "../src/rehearsal/input.js";
 import { docIdOf, podImages, quantity, refOf, substitute, unsupportedOf, type K8sDoc } from "../src/rehearsal/substitute.js";
 
@@ -37,7 +37,8 @@ function inputFor(provider: Provider, spec = DEMO_SPEC): DeployInput {
 // gitops 레포 tools/lib.mjs renderDocs·writeBundle 과 같은 모양 (네임스페이스 채움, 종류/이름 정렬, 파일 하나에 문서 하나)
 function render(i: DeployInput, extra: K8sDoc[] = []) {
   const b = bundleRefOf(i);
-  const values = withServedBy(withTraffic(filledValues(i), approvedWeights(i.plan), 0), b);
+  const filled = i.replication ? withDelivery(filledValues(i), i.replication) : filledValues(i);   // 온프레 DB 이전 배달물 (bundleValues 와 같은 순서)
+  const values = withServedBy(withTraffic(filled, approvedWeights(i.plan), 0), b);
   const dir = mkdtempSync(join(tmpdir(), "rehearsal-golden-"));
   try {
     writeFileSync(join(dir, "values.yaml"), JSON.stringify(values));
@@ -198,6 +199,48 @@ test("onprem: CNPG Cluster → 같은 메이저 Postgres 자리 + <이름>-app S
   assert.equal(applyDoc(x, `ResourceQuota/${ns}/platform-quota`), undefined, "할당량이 없으면 floor.yaml 도 안 그린다");
 });
 
+// 온프레 DB 이전 배달물 (replication-delivery.ts): 봉인 비밀 4개·서버 인증서 칸·SSH 터널을 실제 차트로 렌더 → 치환
+//   봉인 비밀 = 같은 이름·키·type 의 가짜 Secret (TLS 는 자체 서명), 터널 Deployment 는 돌리지 않음, NetworkPolicy 는 그대로 적용
+test("onprem DB 이전: SealedSecret → 가짜 Secret, db-tunnel 은 안 돌림, NetworkPolicy 는 적용, 차이 = refs", { skip }, () => {
+  const i0 = inputFor("onprem");
+  const cnpg = replicationCnpgs(filledValues(i0))[0]!;
+  const fake = (name: string, type: string | undefined, keys: string[]) =>
+    ({ name, ...(type ? { type } : {}), encryptedData: Object.fromEntries(keys.map((k, n) => [k, `AgBFakeSealedForTest${n}`])) });
+  const i: DeployInput = { ...i0, replication: { cnpg, reused: true, write: null,
+    certificates: { serverCASecret: `${cnpg.name}-server-ca`, serverTLSSecret: `${cnpg.name}-server-tls` },
+    sealedSecrets: [fake(cnpg.passwordSecret, "kubernetes.io/basic-auth", ["password", "username"]), fake(`${cnpg.name}-server-ca`, undefined, ["ca.crt"]),
+      fake(`${cnpg.name}-server-tls`, "kubernetes.io/tls", ["tls.crt", "tls.key"]), fake("db-tunnel-key", undefined, ["id"])],
+    dbTunnel: { relay: { host: "203.0.113.7", port: 22, knownHosts: "203.0.113.7 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeHostKeyForRenderOnly" },
+      keySecret: "db-tunnel-key", forward: { target: `${RDS}:5432` }, reverse: { enabled: true, cnpgName: cnpg.name }, image: DB_TUNNEL_IMAGE } } };
+  const { values, rendered } = render(i);
+  const docs = parseManifests(rendered);
+  const ns = `app-${bundleRefOf(i).app}`;
+  assert.deepEqual(unsupportedOf(docs), []);
+  assert.ok(docs.some((d) => d.doc.kind === "SealedSecret") && docs.some((d) => d.doc.kind === "NetworkPolicy"), "차트가 봉인 비밀·NetworkPolicy 를 그렸다");
+  assert.ok(!podImages(docs).includes(DB_TUNNEL_IMAGE), "터널 이미지는 샌드박스로 복사하지 않는다");
+  const x = buildRehearsalInput({ target: "onprem-k3s", i, values, rendered, docs, images: [], mirrored: true, runBudgetSec: 1200 });
+  assert.ok(RehearsalInput.safeParse(x).success);
+  assert.equal(applyDoc(x, `Deployment/${ns}/db-tunnel`), undefined, "터널은 돌리지 않는다");
+  assert.ok(applyDoc(x, `Service/${ns}/db-tunnel`), "터널 Service 는 그대로");
+  const np = rendered.manifests.find((m) => m.path.includes("networkpolicy-db-tunnel"))!;
+  assert.deepEqual(applyDoc(x, `NetworkPolicy/${ns}/db-tunnel`), parse(np.yaml), "NetworkPolicy 는 바꾸지 않고 적용");
+  for (const d of x.apply.map((m) => parse(m.yaml) as K8sDoc)) assert.notEqual(d.kind, "SealedSecret");
+  const sec = (name: string) => applyDoc(x, `Secret/${ns}/${name}`) as K8sDoc & { type?: string; stringData: Record<string, string> };
+  assert.equal(sec(cnpg.passwordSecret).type, "kubernetes.io/basic-auth");
+  assert.deepEqual(Object.keys(sec(cnpg.passwordSecret).stringData).sort(), ["password", "username"]);
+  assert.deepEqual(Object.keys(sec("db-tunnel-key").stringData), ["id"]);
+  const tls = sec(`${cnpg.name}-server-tls`);
+  assert.equal(tls.type, "kubernetes.io/tls");
+  assert.ok(new X509Certificate(tls.stringData["tls.crt"]!).checkPrivateKey(createPrivateKey(tls.stringData["tls.key"]!)), "TLS 가짜 값은 맞는 인증서·키");
+  for (const v of Object.values(sec("db-tunnel-key").stringData)) assert.ok(!v.includes("AgBFake"), "암호문을 값으로 쓰지 않는다");
+  assert.equal(items(x).tunnel!.status, "not_checked");
+  assert.match(items(x).tunnel!.real, /db-tunnel/);
+  assert.equal(items(x).secrets!.status, "substituted");
+  assert.match(items(x).secrets!.real, /SealedSecret/);
+  const refs = x.fidelity.items.flatMap((it) => it.refs).sort();
+  assert.deepEqual(refs, diffPaths(x.original, x.apply));
+});
+
 // 온프레 바닥을 git 으로 (ONPREM_FLOOR_VIA_GIT 기본 켬). 모든 워크로드에 요청량이 있으면 floor.yaml 이 platform-quota 를 그린다 (11/04 VM 실측 모양)
 //   예전에는 치환 표에 없어 온프레 도착 리허설이 전부 REHEARSAL_UNSUPPORTED_KIND 로 멈췄다
 test("onprem: floor.yaml 할당량 → 바꾸지 않고 적용 묶음에, 도착 할당량은 requests 기준 같은 값, 충실도는 같은 ResourceQuota", { skip }, () => {
@@ -226,10 +269,13 @@ test("onprem: floor.yaml 할당량 → 바꾸지 않고 적용 묶음에, 도착
 });
 
 test("치환 표 밖 종류는 닫힌 쪽 실패 목록으로", () => {
-  const docs = [{ path: "manifests/x.yaml", doc: { apiVersion: "networking.k8s.io/v1", kind: "NetworkPolicy", metadata: { name: "x", namespace: "app-a" } } as K8sDoc },
+  // NetworkPolicy 는 온프레 DB 이전 터널(db-tunnel.yaml) 때문에 표에 들어왔다. 같은 이름의 다른 API 그룹 SealedSecret 은 표 밖
+  const docs = [{ path: "manifests/x.yaml", doc: { apiVersion: "rbac.authorization.k8s.io/v1", kind: "Role", metadata: { name: "x", namespace: "app-a" } } as K8sDoc },
     { path: "manifests/c.yaml", doc: { apiVersion: "example.io/v1", kind: "Cluster", metadata: { name: "c", namespace: "app-a" } } as K8sDoc },
+    { path: "manifests/s.yaml", doc: { apiVersion: "example.io/v1", kind: "SealedSecret", metadata: { name: "s", namespace: "app-a" } } as K8sDoc },
+    { path: "manifests/n.yaml", doc: { apiVersion: "networking.k8s.io/v1", kind: "NetworkPolicy", metadata: { name: "n", namespace: "app-a" } } as K8sDoc },
     { path: "manifests/d.yaml", doc: { apiVersion: "v1", kind: "ConfigMap", metadata: { name: "d", namespace: "app-a" } } as K8sDoc }];
-  assert.deepEqual(unsupportedOf(docs), ["NetworkPolicy/app-a/x", "Cluster/app-a/c"]);
+  assert.deepEqual(unsupportedOf(docs), ["Role/app-a/x", "Cluster/app-a/c", "SealedSecret/app-a/s"]);
 });
 
 test("수량 읽기와 이미지 짝: 명세 다이제스트 원본, 명세 밖 주소는 그대로", () => {

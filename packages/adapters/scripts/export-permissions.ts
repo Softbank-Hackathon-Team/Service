@@ -5,6 +5,7 @@ import { actionsFor } from "../src/common/actions.js";
 import { DATA_TYPES } from "../src/target/data.js";
 import { GRANT_TYPES_GCP } from "../src/target/grants.js";
 import { buildAwsConnectTemplate } from "./aws-connect-template.js";
+import { sourceDbLinkOperatePolicy } from "../src/aws/source-db-link.js";
 
 // 앱 모듈(infra/modules/*/app)을 plan/apply/destroy 하는 데 필요한 최소 권한을 파일로 뽑는다.
 // 계정 세팅 때 "실행 역할" 정책·GCP 커스텀 역할의 출발점. 값은 권한표 추정 → 실계정 거부 로그로 보정
@@ -64,6 +65,12 @@ const IAM_DELETE = ["iam:DeleteRole", "iam:DeleteRolePolicy"];
 const isDataOwned = (a: string) => /^(elasticache:(Delete|Modify)|sqs:(DeleteQueue|SetQueueAttributes)|sns:(DeleteTopic|SetTopicAttributes))/.test(a);
 const awsDataOwned = awsDataScoped.filter(isDataOwned);
 const awsDataNamed = awsDataScoped.filter((a) => !isDataOwned(a));
+// APP-01·D: 이미지별 ECR 저장소 (이름 platform/<회사>/<이름>). 만들기·태그·설정·push(레이어 올리기)·digest 확인용 읽기
+const ECR_REPOS = "arn:aws:ecr:*:*:repository/platform/*";
+const ECR_REPO_ACTS = ["ecr:BatchCheckLayerAvailability", "ecr:BatchGetImage", "ecr:CompleteLayerUpload", "ecr:CreateRepository",
+  "ecr:DescribeRepositories", "ecr:InitiateLayerUpload", "ecr:ListTagsForResource", "ecr:PutImage",
+  "ecr:PutImageScanningConfiguration", "ecr:PutImageTagMutability", "ecr:TagResource", "ecr:UploadLayerPart"];
+const ECR_REPO_REMOVE = ["ecr:BatchDeleteImage", "ecr:DeleteRepository"];
 const awsOperatePolicy = {
   Version: "2012-10-17",
   Statement: [
@@ -82,6 +89,11 @@ const awsOperatePolicy = {
     { Sid: "AppDbSecretRead", Effect: "Allow", Action: ["secretsmanager:GetSecretValue"], Resource: "arn:aws:secretsmanager:*:*:secret:rds!db-*",
       Condition: { StringEquals: { ...REGION, "aws:ResourceTag/aws:secretsmanager:owningService": "rds" },
         StringLike: { "aws:ResourceTag/aws:rds:primaryDBInstanceArn": "arn:aws:rds:*:*:db:*-pg-??????" } } },
+    // APP-01·D (그대로 이식): 사설 이미지를 도착 ECR 이미지별 저장소(platform/<회사>/<이름>, aws root image_repos_json)로 복사.
+    //   저장소 만들기·올리기는 그 이름 아래만, 지우기는 우리 태그가 있는 것만. 토큰(GetAuthorizationToken)은 자원 단위가 없어 "*"
+    { Sid: "AppImageRepos", Effect: "Allow", Action: ECR_REPO_ACTS, Resource: ECR_REPOS, Condition: { StringEquals: REGION } },
+    { Sid: "AppImageReposOwned", Effect: "Allow", Action: ECR_REPO_REMOVE, Resource: ECR_REPOS, Condition: { StringEquals: { ...REGION, ...OWNED_TAG } } },
+    { Sid: "AppImageAuth", Effect: "Allow", Action: ["ecr:GetAuthorizationToken"], Resource: "*", Condition: { StringEquals: REGION } },
     { Sid: "AppRolesWithBoundary", Effect: "Allow", Action: awsIamBound, Resource: "arn:aws:iam::*:role/app-*",
       Condition: { StringEquals: { "iam:PermissionsBoundary": BOUNDARY_ARN } } },
     { Sid: "AppRolesOnly", Effect: "Allow", Action: awsIamOther.filter((a) => !IAM_DELETE.includes(a)), Resource: "arn:aws:iam::*:role/app-*" },
@@ -96,6 +108,8 @@ writeFileSync(join(out, "aws-operate-role-policy.json"), JSON.stringify(awsOpera
 // 경계 정책 본문 (infra/modules/aws/env 가 같은 내용으로 만든다. 테스트가 둘을 대조)
 const awsBoundary = aws.appRoleBoundary("ap-northeast-2");
 writeFileSync(join(out, "aws-app-role-boundary.json"), JSON.stringify(awsBoundary, null, 2) + "\n");
+// APP-22 (가): 실행 역할 인라인 정책 source-db-link (기록용 파일. 템플릿이 같은 함수로 넣는다)
+writeFileSync(join(out, "aws-operate-source-db-link-policy.json"), JSON.stringify(sourceDbLinkOperatePolicy(), null, 2) + "\n");
 // 고객 연결 템플릿(CloudFormation): 위 두 정책을 그대로 넣는다 → 실행 정책과 어긋나지 않음
 writeFileSync(join(onboardingOut, "aws-connect.json"), JSON.stringify(buildAwsConnectTemplate(awsOperatePolicy, awsBoundary), null, 2) + "\n");
 for (const p of purposes) {

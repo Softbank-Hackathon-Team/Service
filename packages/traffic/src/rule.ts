@@ -28,6 +28,7 @@ export type Reason = "error_rate" | "error_rate_hard" | "latency" | "insufficien
 export interface Evaluation {
   hit: boolean; reason: Reason;
   targetRatio: number; sourceRatio: number; targetP95Ms: number; refP95Ms: number;
+  latencyMeasured: boolean;   // false 면 지연 조건을 판정하지 못했다 (NaN 비교는 항상 통과). 오류율로만 본 판정이다
 }
 
 export function evaluate(w: Window, opts: Partial<RuleOpts> = {}): Evaluation {
@@ -37,7 +38,7 @@ export function evaluate(w: Window, opts: Partial<RuleOpts> = {}): Evaluation {
   const sourceRatio = s.n > 0 ? s.err5xx / s.n : 0;
   const targetP95Ms = sideP95(t);
   const refP95Ms = s.n >= o.minSourceSamples ? sideP95(s) : w.baselineP95Ms;
-  const base = { targetRatio, sourceRatio, targetP95Ms, refP95Ms };
+  const base = { targetRatio, sourceRatio, targetP95Ms, refP95Ms, latencyMeasured: Number.isFinite(targetP95Ms) && Number.isFinite(refP95Ms) };
   // 지름길: 도착이 통째로 죽었으면 표본 하한과 상관없이 바로
   if (t.err5xx >= o.hardErrors && targetRatio > 0.5) return { ...base, hit: true, reason: "error_rate_hard" };
   if (t.n < o.minSamples) return { ...base, hit: false, reason: "insufficient_samples" };

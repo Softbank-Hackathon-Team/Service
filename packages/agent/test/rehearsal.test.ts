@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { stringify } from "yaml";
 import { RehearsalResult, SandboxRunPhase, type RehearsalInput } from "@svc/contracts";
 import {
-  asHostKube, createVcluster, DEADLINE_RESERVE_MS, diagnose, leftoverRehearsal, loadVendorCrds, mockRehearsalResult, REHEARSAL_KINDS, runRehearsal, STAND_IN_LABEL, sweepSandboxes,
+  asHostKube, createVcluster, DEADLINE_RESERVE_MS, diagnose, leftoverRehearsal, loadVendorCrds, mockRehearsalResult, parseManifests, REHEARSAL_KINDS, runRehearsal, STAND_IN_LABEL, sweepSandboxes,
   type RehearsalBackend,
 } from "../src/index.js";
 import { fakeHelm, fakeHost, fakeVirtual } from "./fake-kube.js";
@@ -274,6 +274,20 @@ test("dry-run 전용 종류마다 이미지에 넣은 CRD 가 있다", () => {
     const [group, , kind] = key.split("/");
     assert.ok(vendored.has(`${group}/${kind}`), key);
   }
+});
+
+test("온프레 DB 이전: NetworkPolicy 는 적용, SealedSecret 은 원본 dry-run 만 (적용 묶음에 오면 문제), CRD 는 v0.40.0", () => {
+  const np = "apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata: { name: db-tunnel }\nspec: { podSelector: {} }\n";
+  const ss = "apiVersion: bitnami.com/v1alpha1\nkind: SealedSecret\nmetadata: { name: shop-db-migrate }\nspec: { encryptedData: { password: AgBx } }\n";
+  const orig = parseManifests([{ path: "m/np.yaml", yaml: np }, { path: "m/ss.yaml", yaml: ss }], "original");
+  assert.deepEqual(orig.problems, []);
+  assert.deepEqual(orig.manifests.map((m) => [m.obj.kind, m.info.applies]), [["NetworkPolicy", true], ["SealedSecret", false]]);
+  const apply = parseManifests([{ path: "m/np.yaml", yaml: np }, { path: "m/ss.yaml", yaml: ss }], "apply");
+  assert.deepEqual(apply.manifests.map((m) => m.obj.kind), ["NetworkPolicy"]);
+  assert.match(apply.problems.join(" "), /SealedSecret shop-db-migrate \(dry-run 전용 종류가 적용 묶음에 있음\)/);
+  const crd = CRDS.find((c) => c.spec.group === "bitnami.com" && c.spec.names.kind === "SealedSecret");
+  assert.ok(crd, "sealedsecrets.bitnami.com CRD 를 이미지에 넣었다");
+  assert.deepEqual(crd.spec.versions.map((v: { name: string }) => v.name), ["v1alpha1"]);
 });
 
 test("MOCK_SANDBOX 결과: 같은 입력이면 같은 결과, fail 이면 REHEARSAL_CRASHLOOP", () => {
