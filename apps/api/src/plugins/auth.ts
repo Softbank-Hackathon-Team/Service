@@ -25,6 +25,8 @@ export const isAgentPath = (url: string) => url.startsWith("/agent/") || url.sta
 // 로그인·갱신·로그아웃·설정 경로(/auth/login 등)는 자기가 인증을 처리하므로 여기서 건너뛴다 (routes/auth.ts)
 // 이메일+비밀번호가 기본이고(외부 앱 등록이 필요 없어 데모 기기 어디서나 돈다), GHLOGIN 으로 GitHub OAuth 를 더했다:
 //   /auth/github/start·callback 이 같은 세션 표(auth_sessions)에 줄을 넣고 같은 svc_refresh 쿠키를 준다
+// 온프레 설치 한 줄이 받는 스크립트·묶음 파일 (routes/onprem-install.ts). 회사 데이터·비밀이 없다 (비밀은 등록 응답으로만)
+export const isPublicInstallPath = (url: string) => /^\/api\/v1\/install\/onprem(\.sh|\/[A-Za-z0-9._\/-]+)(\?|$)/.test(url);
 export const isPublicAuthPath = (url: string) => /^\/api\/v1\/auth\/(login|refresh|logout|config|github\/(start|callback))(\?|$)/.test(url);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -60,6 +62,7 @@ async function authPluginImpl(app: FastifyInstance, opts: AuthPluginOptions) {
     // DRAFT(ai) Z30: 운영 기본 = 공개. 닫으려면 DOCS_PUBLIC=false (그러면 다른 경로처럼 로그인 필요)
     if (/^\/api\/v1\/docs(\/|\?|$)/.test(req.url) && process.env.DOCS_PUBLIC !== "false") return;
     if (isPublicAuthPath(req.url)) return;
+    if (isPublicInstallPath(req.url)) return;
     const authz = req.headers.authorization;
     if (typeof authz === "string" && /^Bearer /i.test(authz)) {
       const raw = authz.slice(7).trim();

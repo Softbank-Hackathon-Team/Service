@@ -72,6 +72,10 @@
                   "enrollToken": {
                     "type": "string",
                     "maxLength": 100
+                  },
+                  "gitopsPublicKey": {
+                    "type": "string",
+                    "maxLength": 200
                   }
                 },
                 "required": [
@@ -113,12 +117,44 @@
                     },
                     "secret": {
                       "type": "string"
+                    },
+                    "tenant": {
+                      "type": "string"
+                    },
+                    "gitops": {
+                      "type": "object",
+                      "properties": {
+                        "repoURL": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "repoURL"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "metrics": {
+                      "type": "object",
+                      "properties": {
+                        "url": {
+                          "type": "string"
+                        },
+                        "token": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "url",
+                        "token"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
                     "envId",
                     "keyId",
-                    "secret"
+                    "secret",
+                    "tenant"
                   ],
                   "additionalProperties": false
                 }
@@ -144,6 +180,10 @@
           "500": {
             "$ref": "#/components/responses/E500",
             "description": "INTERNAL"
+          },
+          "502": {
+            "$ref": "#/components/responses/E502",
+            "description": "ApiError"
           },
           "503": {
             "$ref": "#/components/responses/E503",
@@ -1979,6 +2019,86 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/E401",
+            "description": "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429",
+            "description": "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500",
+            "description": "INTERNAL"
+          }
+        }
+      }
+    },
+    "/api/v1/install/onprem.sh": {
+      "get": {
+        "operationId": "getInstallOnprem.sh",
+        "tags": [
+          "install"
+        ],
+        "summary": "/api/v1/install/onprem.sh",
+        "description": "코드: apps/api/src/routes/onprem-install.ts",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devTenant": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DevTenant"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (응답 스키마 없음)"
+          },
+          "401": {
+            "$ref": "#/components/responses/E401",
+            "description": "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+          },
+          "429": {
+            "$ref": "#/components/responses/E429",
+            "description": "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+          },
+          "500": {
+            "$ref": "#/components/responses/E500",
+            "description": "INTERNAL"
+          }
+        }
+      }
+    },
+    "/api/v1/install/onprem/*": {
+      "get": {
+        "operationId": "getInstallOnprem*",
+        "tags": [
+          "install"
+        ],
+        "summary": "/api/v1/install/onprem/*",
+        "description": "코드: apps/api/src/routes/onprem-install.ts",
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "devTenant": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DevTenant"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK (응답 스키마 없음)"
           },
           "401": {
             "$ref": "#/components/responses/E401",

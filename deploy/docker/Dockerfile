@@ -119,6 +119,9 @@ ENV API_HOST=0.0.0.0
 #   없으면 apps/api/src/security/load.ts 가 못 읽어 "정적" 근거·LP-AWS-BOUNDARY 가 비고 prod e2e 2건 실패
 COPY infra/permissions /app/infra/permissions
 COPY gitops/charts /app/gitops/charts
+# 온프레 설치 한 줄이 받는 파일 (routes/onprem-install.ts, GET /api/v1/install/onprem*). 레포와 같은 상대 경로로 둔다
+COPY tools/onprem-bootstrap.sh tools/onprem-install.sh tools/argocd-core-install-v2.13.3.yaml tools/sealed-secrets-controller-v0.40.0.yaml tools/onprem-argocd-health.yaml tools/cnpg-1.30.1.yaml /app/onprem-bundle/tools/
+COPY deploy/helm/onprem-agent /app/onprem-bundle/deploy/helm/onprem-agent
 ENV PERMISSIONS_DIR=/app/infra/permissions
 ENV CHART_DIR=/app/gitops/charts/app
 # 파일 주인은 root(읽기만 가능) → 앱이 자기 코드를 못 바꾼다
