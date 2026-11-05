@@ -53,8 +53,8 @@ case "$args" in
   "projects create "*) rm -f "$S/no-project" ;;
   "billing projects link "*) : ;;
   "billing projects describe "*) echo "billingAccounts/000000-AAAAAA-BBBBBB" ;;
-  "services list "*) [ -f "$S/api-iamcredentials-$pj" ] && echo "iamcredentials.googleapis.com" ;;
-  "services enable "*) touch "$S/api-iamcredentials-$pj" ;;
+  "services list "*) a=$(grep -o 'config.name=[^ ]*' <<<"$args" | head -1 | cut -d= -f2); [ -f "$S/api-$a-$pj" ] && echo "$a" ;;   # FM-INT-26: API 마다 따로 기억
+  "services enable "*) touch "$S/api-$3-$pj" ;;
   *) echo "unexpected: $args" >&2; exit 2 ;;
 esac
 `;
@@ -74,11 +74,11 @@ function env() {
 const MUTATING = /^(services enable|iam service-accounts create|iam roles create|iam roles update|iam roles undelete|projects add-iam-policy-binding|projects remove-iam-policy-binding|iam service-accounts add-iam-policy-binding)/;
 const mutations = (calls: string[]) => calls.filter((c) => MUTATING.test(c));
 
-test("처음 실행 (A안 두 프로젝트): API 2 + SA 3 + 역할 9(원래 2·전용 7) + 프로젝트 바인딩 9(원래 2·전용 7) + tokenCreator 3 = 변경 26번", () => {
+test("처음 실행 (A안 두 프로젝트): API 5(iamcredentials·cloudresourcemanager 두 곳 + 전용 serviceusage, FM-INT-26) + SA 3 + 역할 9(원래 2·전용 7) + 프로젝트 바인딩 9(원래 2·전용 7) + tokenCreator 3 = 변경 27번", () => {
   const e = env();
   const r = e.run();
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(mutations(e.calls()).length, 26);
+  assert.equal(mutations(e.calls()).length, 29);
   assert.match(r.stdout, /123456/);
   assert.deepEqual(r.stdout.split("\n").filter((l) => l.includes("건너뜀")), ["= 이미 있음, 건너뜀: 전용 프로젝트 cust-mig"]);   // A안: 전용 프로젝트는 고객이 먼저 고름
 });
@@ -91,7 +91,7 @@ test("재실행: 변경 명령 0번, 전부 '건너뜀', 종료 0 (확인 명령
   assert.equal(r.status, 0, r.stderr);
   const second = e.calls().slice(before);
   assert.equal(mutations(second).length, 0, "재실행에서 변경 명령: " + mutations(second).join(" | "));
-  assert.equal((r.stdout.match(/이미 있음, 건너뜀/g) ?? []).length, 27);   // + 전용 프로젝트 있음
+  assert.equal((r.stdout.match(/이미 있음, 건너뜀/g) ?? []).length, 30);   // + 전용 프로젝트 있음 (API 5)
   assert.ok(second.length >= 10, "각 항목을 먼저 확인");
 });
 
@@ -102,7 +102,7 @@ test("부분 상태: 관찰 SA·관찰 역할만 있으면 나머지만 만든�
   assert.equal(r.status, 0, r.stderr);
   const m = mutations(e.calls());
   // OBSROLE3: 있는 관찰 역할에 권한이 비어 있으면 create 가 아니라 update(add-permissions) 1번이 더해진다 (8 → 9)
-  assert.equal(m.length, 25);
+  assert.equal(m.length, 28);
   assert.equal(m.filter((c) => c.startsWith("iam roles update platform_observe ")).length, 1);
   assert.ok(!m.some((c) => c.includes("service-accounts create svc-observe")) && !m.some((c) => c.includes("roles create platform_observe ") && c.includes("--project=cust-prj")));
   assert.ok(m.some((c) => c.includes("service-accounts create svc-operate")));
@@ -238,7 +238,7 @@ test("DRY_RUN 은 확인 명령도 안 부르고, 이미 있어도 전부 출력
   const r = e.run({ DRY_RUN: "1" });
   assert.equal(r.status, 0);
   assert.equal(e.calls().length, before, "DRY_RUN 중 gcloud 호출 없음");
-  assert.equal((r.stdout.match(/^\+ gcloud/gm) ?? []).length, 26);
+  assert.equal((r.stdout.match(/^\+ gcloud/gm) ?? []).length, 29);   // API 5
 });
 
 // ── OBSROLE3: 이미 만든 관찰 역할 권한 갱신 ──
@@ -393,4 +393,21 @@ test("FM-GCP-14: svc-observe 에 확인 역할(platform_observe_verify)을 붙�
   assert.ok(!readFileSync(join(e.state, "pbind"), "utf8").includes("roles/browser"));
   const b = e.calls().length; e.run();
   assert.equal(mutations(e.calls().slice(b)).length, 0);
+});
+
+// FM-INT-26 (맥 실측 2 손 우회 ⑧): 새 프로젝트엔 Cloud Resource Manager API 가 꺼져 있어 verify(projects describe)·terraform 이 막혔다
+test("FM-INT-26 정상: 원래·전용 프로젝트 둘 다 cloudresourcemanager 를, 전용 프로젝트에 serviceusage 를 켠다", () => {
+  const e = env();
+  assert.equal(e.run().status, 0);
+  const en = mutations(e.calls()).filter((c) => c.startsWith("services enable "));
+  for (const want of [`cloudresourcemanager.googleapis.com --project=${PRJ}`, `cloudresourcemanager.googleapis.com --project=${TPRJ}`, `serviceusage.googleapis.com --project=${TPRJ}`])
+    assert.ok(en.some((c) => c === `services enable ${want}`), `없음: ${want} / ${en.join(" | ")}`);
+});
+test("FM-INT-26 거부: 이미 켜진 API 는 다시 켜지 않고, 원래 프로젝트엔 serviceusage 를 켜지 않는다(읽기만)", () => {
+  const e = env();
+  for (const pj of [PRJ, TPRJ]) writeFileSync(join(e.state, `api-cloudresourcemanager.googleapis.com-${pj}`), "");
+  assert.equal(e.run().status, 0);
+  const en = mutations(e.calls()).filter((c) => c.startsWith("services enable "));
+  assert.ok(!en.some((c) => c.includes("cloudresourcemanager")), en.join(" | "));
+  assert.ok(!en.some((c) => c === `services enable serviceusage.googleapis.com --project=${PRJ}`));
 });
