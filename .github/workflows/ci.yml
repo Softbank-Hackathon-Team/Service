@@ -399,6 +399,12 @@ jobs:
           for c in "aws --version" "gcloud --version" "kubectl version --client" "gke-gcloud-auth-plugin --version" "openssl version"; do
             docker run --rm --read-only --tmpfs /tmp -e HOME=/tmp --entrypoint sh svc-worker:ci -c "$c" >/dev/null || { echo "실패: $c"; exit 1; }
           done
+      - name: worker 묶음 렌더 스모크 (gitops 레포 render 도구가 부르는 helm template, 읽기 전용 뿌리 + HOME=/tmp)
+        if: matrix.app == 'worker'
+        run: |
+          docker run --rm --read-only --tmpfs /tmp -e HOME=/tmp \
+            -v "$PWD/gitops/charts/app:/chart:ro" -v "$PWD/deploy/ci/values:/values:ro" \
+            --entrypoint helm svc-worker:ci template smoke /chart -f /values/v2-3tier-onprem.json >/dev/null
       - name: 온프레 Agent 스모크 (묶음이 뜨고 kubectl 이 들어 있는지)
         if: matrix.app == 'onprem-agent'
         run: |
