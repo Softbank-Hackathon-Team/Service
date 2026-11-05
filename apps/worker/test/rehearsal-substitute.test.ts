@@ -25,13 +25,13 @@ const CHART = join(import.meta.dirname, "..", "..", "..", "gitops", "charts", "a
 const TENANT = "9f8e7d6c-0000-4000-8000-000000000001";
 const RDS = "shop-db.c1x2y3z4.ap-northeast-2.rds.amazonaws.com", CLOUDSQL = "10.20.0.5";
 
-function inputFor(provider: Provider): DeployInput {
+function inputFor(provider: Provider, spec = DEMO_SPEC): DeployInput {
   const envId = "33333333-3333-4333-8333-333333333333";
   const plan = buildPlanDoc({ planId: "7f000000-0000-4000-8000-000000000001", migrationId: "4a8c0000-0000-4000-8000-000000000001",
-    spec: DEMO_SPEC, target: { envId, provider, region: "default" }, precheck: stubPrecheck(), now: new Date() });
+    spec, target: { envId, provider, region: "default" }, precheck: stubPrecheck(), now: new Date() });
   const host = provider === "aws" ? RDS : provider === "gcp" ? CLOUDSQL : "unused";
-  return { tenantId: TENANT, spec: DEMO_SPEC, plan, target: { envId, provider, region: "default", accountId: "123456789012" },
-    tfOutputs: { ...STUB_TF_OUTPUTS, ...stubTfOutputsV2(DEMO_SPEC), "link.shop-db.host": host } };
+  return { tenantId: TENANT, spec, plan, target: { envId, provider, region: "default", accountId: "123456789012" },
+    tfOutputs: { ...STUB_TF_OUTPUTS, ...stubTfOutputsV2(spec), "link.shop-db.host": host } };
 }
 
 // gitops 레포 tools/lib.mjs renderDocs·writeBundle 과 같은 모양 (네임스페이스 채움, 종류/이름 정렬, 파일 하나에 문서 하나)
@@ -192,9 +192,37 @@ test("onprem: CNPG Cluster → 같은 메이저 Postgres 자리 + <이름>-app S
   assert.equal(x.targetPodSecurity, "baseline");
   assert.equal(items(x).secret_values!.status, "not_checked");
   assert.equal(items(x).database!.status, "substituted");
-  // 도착 한도는 계획 때 Terraform 값(namespace_json) 그대로. 데모 명세는 요청량이 빠진 워크로드가 있어 도착에도 한도가 없다
+  // 도착 할당량은 계획 때 Terraform 값(namespace_json) 그대로. 데모 명세는 요청량이 빠진 잡(shop-cleanup)이 있어 도착에도 할당량이 없다
   assert.equal(x.targetQuota, null);
-  assert.equal(items(x).quota!.real, "네임스페이스 한도 없음");
+  assert.equal(items(x).quota!.real, "네임스페이스 할당량 없음");
+  assert.equal(applyDoc(x, `ResourceQuota/${ns}/platform-quota`), undefined, "할당량이 없으면 floor.yaml 도 안 그린다");
+});
+
+// 온프레 바닥을 git 으로 (ONPREM_FLOOR_VIA_GIT 기본 켬). 모든 워크로드에 요청량이 있으면 floor.yaml 이 platform-quota 를 그린다 (11/04 VM 실측 모양)
+//   예전에는 치환 표에 없어 온프레 도착 리허설이 전부 REHEARSAL_UNSUPPORTED_KIND 로 멈췄다
+test("onprem: floor.yaml 할당량 → 바꾸지 않고 적용 묶음에, 도착 할당량은 requests 기준 같은 값, 충실도는 같은 ResourceQuota", { skip }, () => {
+  const spec = structuredClone(DEMO_SPEC);
+  for (const c of spec.components) if (c.kind === "job") {
+    const p = c.props as { resources?: Record<string, unknown> };
+    p.resources = { ...(p.resources ?? {}), request: { cpuMilli: 100, memMiB: 128 } };
+  }
+  const i = inputFor("onprem", spec);
+  const { values, rendered } = render(i);
+  const docs = parseManifests(rendered);
+  assert.deepEqual(unsupportedOf(docs), [], "치환 표 밖 종류 없음");
+  const x = buildRehearsalInput({ target: "onprem-k3s", i, values, rendered, docs, images: [], mirrored: true, runBudgetSec: 1200 });
+  const id = `ResourceQuota/${x.namespace}/platform-quota`;
+  const quota = applyDoc(x, id)!;
+  assert.ok(quota, "적용 묶음에 있다");
+  assert.deepEqual(quota, x.original.map((m) => parse(m.yaml) as K8sDoc).find((d) => docIdOf(d) === id), "원본과 같다 (바꾸지 않음)");
+  const hard = (quota.spec as { hard: Record<string, string> }).hard;
+  assert.deepEqual(x.targetQuota, { basis: "requests", cpuM: parseInt(hard["requests.cpu"]!, 10), memoryMi: parseInt(hard["requests.memory"]!, 10) },
+    "리허설이 세는 할당량 = 차트가 그린 할당량");
+  assert.deepEqual(Object.keys(hard).sort(), ["requests.cpu", "requests.memory"]);
+  const q = items(x).quota!;
+  assert.equal(q.status, "identical");
+  assert.match(q.real, /^ResourceQuota requests\.cpu \d+m · requests\.memory \d+Mi$/);
+  assert.match(q.sandbox, /같은 ResourceQuota 를 가상 앱 네임스페이스에 적용/);
 });
 
 test("치환 표 밖 종류는 닫힌 쪽 실패 목록으로", () => {

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   asHostKube, createVcluster, cpuMilli, expiredSandbox, helmRunner, KubeError, kubectlPortForward, leftoverRehearsal, memoryMi,
-  originalLimits, parseManifests, sandboxQuotaPlan, sweepSandboxes, vclusterValues, type VclusterSpec,
+  originalUsage, parseManifests, sandboxQuotaPlan, sweepSandboxes, vclusterValues, type VclusterSpec,
 } from "../src/index.js";
 import { fakeHelm, fakeHost, fakeVirtual } from "./fake-kube.js";
 
@@ -250,9 +250,20 @@ test("리허설 자원 상한 = 적용 묶음 요청량 합 + 제어판·검사 
   assert.equal(small.quota.requests.cpuM, 1000, "노드 할당량을 넘지 않는다");
 });
 
-test("원본 한도 합은 LimitRange 기본 없이 적힌 값만 (도착 한도 비교용)", () => {
+test("원본 할당량 셈: 할당량이 세는 칸만, LimitRange 기본 없이. 빈 칸 컨테이너는 따로 (도착 API 서버가 거부)", () => {
   const orig = parseManifests([doc(deploy("api", 3, "{ limits: { cpu: 500m, memory: 512Mi } }", "\n        - { name: log, image: busybox }"))], "original").manifests;
-  assert.deepEqual(originalLimits(orig), { cpuM: 1500, memoryMi: 1536 });
+  // limits: 적힌 한도만. log 사이드카는 한도가 없다
+  assert.deepEqual(originalUsage(orig, "limits"), { cpuM: 1500, memoryMi: 1536, missing: { cpu: ["Deployment/api/log"], memory: ["Deployment/api/log"] } });
+  // requests: 요청량이 비면 한도 (API 서버 기본값 규칙)
+  assert.deepEqual(originalUsage(orig, "requests"), { cpuM: 1500, memoryMi: 1536, missing: { cpu: ["Deployment/api/log"], memory: ["Deployment/api/log"] } });
+
+  // 초기화 컨테이너는 하나씩 돌아 큰 쪽, CNPG Cluster 는 instances 개 파드, cloudflared 같은 차트 객체도 센다
+  const web = deploy("web", 2, "{ requests: { cpu: 100m, memory: 128Mi }, limits: { memory: 256Mi } }",
+    "\n      initContainers:\n        - { name: migrate, image: img, resources: { requests: { cpu: 300m, memory: 64Mi } } }");
+  const cnpg = "apiVersion: postgresql.cnpg.io/v1\nkind: Cluster\nmetadata: { name: db }\nspec: { instances: 2, resources: { requests: { cpu: 500m, memory: 1Gi }, limits: { memory: 1Gi } } }\n";
+  const all = parseManifests([doc([web, cnpg].join("---\n"))], "original").manifests;
+  assert.deepEqual(originalUsage(all, "requests"), { cpuM: 300 * 2 + 500 * 2, memoryMi: 128 * 2 + 1024 * 2, missing: { cpu: [], memory: [] } });
+  assert.deepEqual(originalUsage(all, "limits").missing, { cpu: ["Deployment/web/main", "Deployment/web/migrate", "Cluster/db/postgres"], memory: ["Deployment/web/migrate"] });
 });
 
 test("종류 표 밖·dry-run 전용 종류가 적용 묶음에 있으면 problems", () => {

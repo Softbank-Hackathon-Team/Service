@@ -239,6 +239,7 @@ export function fakeVirtual(o: {
   crash?: string[];                                      // 재시작을 반복할 워크로드 이름
   httpCode?: number;
   warning?: string;
+  quotaStatus?: boolean;                                 // false = 할당량 컨트롤러가 셈을 안 함 (status.hard 가 안 생김)
 } = {}): FakeVirtual {
   const objects = new Map<string, any>();
   const namespaces = new Map<string, Record<string, string>>();
@@ -284,6 +285,7 @@ export function fakeVirtual(o: {
       return { ...d, spec: { ...d.spec, selector: { matchLabels: { "batch.kubernetes.io/job-name": d.metadata.name } } },
         status: { conditions: [{ type: failed ? "Failed" : "Complete", status: "True" }] } };
     }
+    if (plural === "resourcequotas") return o.quotaStatus === false ? d : { ...d, status: { hard: d.spec?.hard ?? {}, used: {} } };
     if (plural === "deployments" || plural === "statefulsets") {
       const want = d.spec?.replicas ?? 1;
       const pods = podsIn(ns, false).filter((p) => Object.entries(d.spec.selector.matchLabels).every(([k, v]) => p.metadata.labels[k] === v));

@@ -21,7 +21,7 @@ const input = () => ({
   version: 1, target: "onprem-k3s", app: "shop", namespace: "app-shop", bundleSha256: SHA, k8sMinor: "1.35",
   original: [doc], apply: [doc], images: [{ ref: "r/web@sha256:1", sandboxRef: "sandbox/web@sha256:1" }], imagesMirrored: true, runBudgetSec: 1200,
   databases: [{ service: "db", majorVersion: "16", database: "shop", owner: "app", secretName: "db-app", secretKeys: ["password"] }],
-  targetPodSecurity: "baseline", targetQuota: { limitsCpuM: 4000, limitsMemoryMi: null },
+  targetPodSecurity: "baseline", targetQuota: { basis: "requests", cpuM: 4000, memoryMi: null },
   edges: [{ from: "web", host: "api", port: 8080 }], fidelity: matrix(),
 });
 const check = { id: "rollout", subject: "Deployment/web", required: true, ok: true, ms: 1200, detail: "2/2 ready" };
@@ -46,6 +46,8 @@ test("RehearsalInput: 정상 / 쿠버네티스 마이너 모양이 틀리면 거
   const { imagesMirrored: _m, ...noFlag } = input();
   assert.equal(RehearsalInput.safeParse(noFlag).success, false, "복사했는지 모르는 입력은 받지 않는다");
   assert.equal(RehearsalInput.safeParse({ ...input(), runBudgetSec: 0 }).success, false, "실행 기한 0초");
+  assert.equal(RehearsalInput.safeParse({ ...input(), targetQuota: { cpuM: 4000, memoryMi: null } }).success, false, "무엇을 세는 할당량인지 모르면 거부");
+  assert.equal(RehearsalInput.safeParse({ ...input(), targetQuota: { limitsCpuM: 4000, limitsMemoryMi: null } }).success, false, "예전 모양(한도만)은 거부");
 });
 
 test("RehearsalCheck: 정상 / 음수 시간·모르는 검사 id 는 거부", () => {

@@ -79,7 +79,7 @@ export type RehearsalEvidence = z.infer<typeof RehearsalEvidence>;
 export const RehearsalFailureCode = z.enum([
   "REHEARSAL_DRY_RUN_REJECTED",      // API 서버가 원본 객체를 거부. 실제 도착도 거부한다
   "REHEARSAL_TARGET_POLICY_DENIED",  // 파드 틀이 도착의 파드 보안 수준을 어김 (k3s baseline)
-  "REHEARSAL_QUOTA_EXCEEDED",        // 원본 요청량 합이 도착 네임스페이스 한도를 넘음
+  "REHEARSAL_QUOTA_EXCEEDED",        // 도착 네임스페이스 할당량에 걸림: 원본 합이 넘거나, 할당량이 세는 칸이 빈 컨테이너가 있음 (도착 API 서버가 파드를 거부)
   "REHEARSAL_ROLLOUT_FAILED", "REHEARSAL_CRASHLOOP", "REHEARSAL_NOT_READY",
   "REHEARSAL_JOB_FAILED", "REHEARSAL_CONNECTIVITY_FAILED",
   "REHEARSAL_POLICY_DENIED",         // 샌드박스만의 규칙(호스트 VAP 등)이 막음. 앱 고장이라는 뜻이 아님
@@ -134,6 +134,11 @@ export const FidelityMatrix = z.object({
 }).strict().refine((m) => new Set(m.items.map((i) => i.id)).size === m.items.length, "항목 id 는 한 번씩");
 export type FidelityMatrix = z.infer<typeof FidelityMatrix>;
 
+// 도착 ResourceQuota 가 세는 칸. requests = requests.cpu·requests.memory, limits = limits.cpu·limits.memory
+//   도착 네임스페이스에는 LimitRange 가 없어서, 그 칸이 빈 컨테이너가 있으면 API 서버가 파드를 거부한다 ("must specify ...")
+export const QuotaBasis = z.enum(["requests", "limits"]);
+export type QuotaBasis = z.infer<typeof QuotaBasis>;
+
 // 워커 → agent-worker. sandbox_runs.input 에 저장 (큐 내용은 줄 번호 하나뿐, SandboxRunJob)
 const Doc = z.object({ path: z.string().max(300), yaml: z.string().max(200_000) }).strict();
 export const RehearsalInput = z.object({
@@ -151,7 +156,8 @@ export const RehearsalInput = z.object({
   databases: z.array(z.object({ service: z.string(), majorVersion: z.string(), database: z.string(),
     owner: z.string(), secretName: z.string(), secretKeys: z.array(z.string()) }).strict()),
   targetPodSecurity: z.enum(["privileged", "baseline", "restricted"]),
-  targetQuota: z.object({ limitsCpuM: z.number().int().nullable(), limitsMemoryMi: z.number().int().nullable() }).strict().nullable(),
+  // 도착 네임스페이스 할당량. basis = 그 ResourceQuota 가 세는 칸 (온프레 requests.*, EKS·GKE limits.*). null = 할당량 없음
+  targetQuota: z.object({ basis: QuotaBasis, cpuM: z.number().int().nullable(), memoryMi: z.number().int().nullable() }).strict().nullable(),
   edges: z.array(z.object({ from: z.string(), host: z.string(), port: z.number().int() }).strict()),   // 서비스 사이 연결
   fidelity: FidelityMatrix,                          // 워커 몫 항목만
 }).strict();

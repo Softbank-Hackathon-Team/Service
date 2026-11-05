@@ -1,4 +1,5 @@
 import { parseAllDocuments } from "yaml";
+import type { QuotaBasis } from "@svc/contracts";
 
 // 리허설이 받는 매니페스트 모델. 종류 표 하나가 "무엇을 적용하고 무엇을 기다리나"를 정한다
 // 표 = 앱 차트가 그리는 닫힌 목록(gitops/charts/app/templates) + 워커 치환이 만드는 Secret.
@@ -20,6 +21,9 @@ export const REHEARSAL_KINDS: Readonly<Record<string, KindInfo>> = {
   "autoscaling/v2/HorizontalPodAutoscaler": { plural: "horizontalpodautoscalers", applies: true, wait: null },
   "policy/v1/PodDisruptionBudget": { plural: "poddisruptionbudgets", applies: true, wait: null },
   "networking.k8s.io/v1/Ingress": { plural: "ingresses", applies: true, wait: null },
+  // 온프레 바닥 floor.yaml 의 platform-quota (ONPREM_FLOOR_VIA_GIT). 그대로 적용해 가상 API 서버가 도착과 같은 할당량 검사를 한다.
+  //   다른 객체보다 먼저 적용하고 상태가 잡힌 뒤에 파드를 만든다 (run.ts applyQuotas)
+  "v1/ResourceQuota": { plural: "resourcequotas", applies: true, wait: null },
   "external-secrets.io/v1/ExternalSecret": { plural: "externalsecrets", applies: false, wait: null },
   "postgresql.cnpg.io/v1/Cluster": { plural: "clusters", applies: false, wait: null },
 };
@@ -132,10 +136,38 @@ function totalNeed(ms: readonly Manifest[], withDefaults: boolean): Need & { pod
   return t;
 }
 
-// 원본이 도착 네임스페이스 한도를 넘나 (도착은 LimitRange 를 모르니 기본값 없이 적힌 한도만 더한다)
-export function originalLimits(original: readonly Manifest[]): { cpuM: number; memoryMi: number } {
-  const t = totalNeed(original, false);
-  return { cpuM: t.limitsCpuM, memoryMi: t.limitsMemoryMi };
+// 원본이 도착 네임스페이스 할당량에 걸리나. 할당량이 세는 칸(basis)만 더한다
+//   도착 네임스페이스에는 LimitRange 가 없다 (infra kinds/namespace, gitops floor.yaml) → 기본값을 넣지 않는다
+//   requests: 요청량, 빈 칸이면 한도 (API 서버 기본값 규칙) / limits: 한도
+//   그 칸이 빈 컨테이너는 missing 에 담는다. 그 자원 할당량이 있으면 도착 API 서버가 파드를 거부한다 ("must specify ...")
+//   CNPG Cluster 는 operator 가 instances 개 파드를 spec.resources 로 띄운다 (원본에만 있는 종류라 여기서 같이 센다)
+export interface QuotaUsage { cpuM: number; memoryMi: number; missing: { cpu: string[]; memory: string[] } }
+export function originalUsage(original: readonly Manifest[], basis: QuotaBasis): QuotaUsage {
+  const out: QuotaUsage = { cpuM: 0, memoryMi: 0, missing: { cpu: [], memory: [] } };
+  const field = (c: any, r: "cpu" | "memory"): number | null => {
+    const read = r === "cpu" ? cpuMilli : memoryMi;
+    const res = c?.resources ?? {};
+    return basis === "requests" ? read(res.requests?.[r]) ?? read(res.limits?.[r]) : read(res.limits?.[r]);
+  };
+  const pod = (owner: string, spec: any, count: number) => {
+    for (const r of ["cpu", "memory"] as const) {
+      let sum = 0, init = 0;
+      for (const [list, isInit] of [[spec?.containers ?? [], false], [spec?.initContainers ?? [], true]] as const) {
+        for (const c of list) {
+          const v = field(c, r);
+          if (v === null) out.missing[r].push(`${owner}/${String(c?.name ?? "?")}`);
+          else if (isInit) init = Math.max(init, v);
+          else sum += v;
+        }
+      }
+      const n = Math.max(sum, init) * count;
+      if (r === "cpu") out.cpuM += n; else out.memoryMi += n;
+    }
+  };
+  for (const p of podTemplates(original)) pod(subjectOf(p.owner), p.template.spec, p.count);
+  for (const m of original) if (m.key === "postgresql.cnpg.io/v1/Cluster")
+    pod(subjectOf(m), { containers: [{ name: "postgres", resources: m.obj.spec?.resources }] }, Number(m.obj.spec?.instances ?? 1));
+  return out;
 }
 
 // ── 실행마다 ResourceQuota ──
