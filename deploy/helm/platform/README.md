@@ -48,8 +48,9 @@ helm upgrade --install platform deploy/helm/platform -n platform --create-namesp
   --set sandbox.enabled=true \
   --set sandbox.imageRegistry=<계정>.dkr.ecr.<리전>.amazonaws.com/sandbox
 
-# 3-2. 앱 4개를 올릴 때 (registry·tag 둘 다 있어야 만든다). 샌드박스·게이트웨이 값을 쓰고 있으면 같은 --set 을 같이 준다
-helm upgrade --install platform deploy/helm/platform -n platform --create-namespace --set apps.image.registry=725072160743.dkr.ecr.ap-northeast-2.amazonaws.com --set apps.image.tag=<태그>
+# 3-2. 앱 4개를 올릴 때 (registry·tag 둘 다 있어야 만든다). 이미 설치한 뒤에는 --reuse-values 를 꼭 붙인다
+#      빠지면 그동안 준 값이 사라져 워커가 GCP 로그인을 잃는다
+helm upgrade --install platform deploy/helm/platform -n platform --create-namespace --reuse-values --set apps.image.registry=725072160743.dkr.ecr.ap-northeast-2.amazonaws.com --set apps.image.tag=<태그>
 ```
 
 `platform/app` JSON 에 넣을 키: `components.*.secretKeys` 에 적은 것 전부 (`DATABASE_URL`, `JWT_SECRET`, `PLATFORM_PRINCIPAL_ARN`, `ANTHROPIC_API_KEY`). 키를 늘리면 JSON 과 `secretKeys` 를 같이 고친다.
@@ -110,9 +111,9 @@ kubectl create configmap argocd-gcp-creds -n argocd --from-file=gcp-creds/ --dry
 
 # 2. infra/modules/gcp/platform-wif 적용 (svc-worker 도 여기서 만든다). 출력 audience, worker_principal 을 아래에 쓴다
 
-# 3. 차트에 값 주기. 값은 helm 이 기억하지 않으니 이후 helm upgrade 마다 같은 --set 을 준다 (빠지면 워커가 GCP 로그인을 잃는다)
+# 3. 차트에 값 주기. 이후 helm upgrade 는 --reuse-values 를 꼭 붙인다 (빠지면 값이 사라져 워커가 GCP 로그인을 잃는다)
 #    Git Bash 는 //iam... 을 경로로 바꾸므로 앞에 MSYS_NO_PATHCONV=1 을 붙인다 (바뀌면 렌더가 멈춘다)
-helm upgrade platform deploy/helm/platform -n platform --set apps.image.registry=725072160743.dkr.ecr.ap-northeast-2.amazonaws.com --set apps.image.tag=$TAG --set otelGateway.image=725072160743.dkr.ecr.ap-northeast-2.amazonaws.com/svc-api:$TAG --set gcpPlatform.project=$PROJECT --set gcpPlatform.wifAudience=$AUDIENCE
+helm upgrade platform deploy/helm/platform -n platform --reuse-values --set apps.image.registry=725072160743.dkr.ecr.ap-northeast-2.amazonaws.com --set apps.image.tag=$TAG --set otelGateway.image=725072160743.dkr.ecr.ap-northeast-2.amazonaws.com/svc-api:$TAG --set gcpPlatform.project=$PROJECT --set gcpPlatform.wifAudience=$AUDIENCE
 
 # 4. 회사마다: 워커에 그 회사 SA 가장 권한을 준다 (위 허브 3번과 같은 스크립트, 같이 실행하면 된다). 진짜 플랫폼 회사 UUID 를 쓴다
 WORKER_PRINCIPAL="$WORKER_PRINCIPAL" PLATFORM_PROJECT="$PROJECT" TENANT_ID="$TENANT" bash infra/onboarding/gcp-platform-tenant-sa.sh
