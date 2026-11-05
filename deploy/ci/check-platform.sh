@@ -61,6 +61,10 @@ IMG=(--set apps.image.registry=x --set apps.image.tag=y)
 if helm template platform "$CHART" -n platform "${IMG[@]}" | grep -qE 'GCP_PLATFORM_PROJECT|CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE|worker-gcp-cred'; then
   echo "FAIL gcpPlatform 값 없이 GCP 설정이 그려졌다"; fail=1
 fi
+# --reuse-values: 이 칸이 생기기 전 릴리스 값으로 올려도 렌더가 돈다
+if ! helm template platform "$CHART" -n platform "${IMG[@]}" --set gcpPlatform=null >/dev/null 2>&1; then
+  echo "FAIL gcpPlatform 칸이 없는 릴리스 값으로 렌더가 안 된다"; fail=1
+fi
 GCP=$(helm template platform "$CHART" -n platform "${IMG[@]}" --set gcpPlatform.project=platform-proj --set "gcpPlatform.wifAudience=$AUD")
 printf '%s\n' "$GCP" > "$OUT/gcp-on.yaml"
 kubeconform -strict -summary -kubernetes-version "$K8S_VERSION" \
