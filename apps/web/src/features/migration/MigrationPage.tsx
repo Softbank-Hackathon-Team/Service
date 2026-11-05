@@ -24,7 +24,8 @@ import {
 import { scopeLabel } from './source';
 import { SecurityFold } from './SecurityCard';
 import {
-  accuracyView, boundaryRows, confirmChunks, confirmLabel, firewallDecision, firewallRows, isFirewallBlock, specRowsV2, specV2Of, type FirewallRow, type MigrationSpecViewV2, type SpecRowV2,
+  accuracyView, boundaryRows, canConfirmSpec, confirmChunks, confirmLabel, firewallDecision, firewallRows, isFirewallBlock, specPatchBody, specRowsV2, specV2Of,
+  type FirewallRow, type MigrationSpecViewV2, type SpecRowV2,
 } from './specV2';
 import { LeftoverFold, StopFold } from './EvidenceFolds';
 import { DoneScreen, CleanupScreen, PausedScreen, RolledBackScreen, RollingBackScreen, RunningScreen, WindowScreen } from './RunScreens';
@@ -96,12 +97,10 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
     }
     let current: MigrationSpecViewV2 = view;
     for (const keys of confirmChunks(v2.review)) {
-      current = await api.patchSpec(migration.id, {
-        baseVersion: current.version,
-        confirm: keys,
-        ...(current.source === 'ai_draft' ? { acceptDraft: current.version } : {}),
-      });
+      current = await api.patchSpec(migration.id, specPatchBody(current, { confirm: keys }));
     }
+    // 확인할 칸이 없는 AI 초안도 먼저 받아들인다. 서버 T04 는 받아들인 판만 세서, 초안 그대로 확정하면 "명세 없음"으로 막힌다
+    if (current.source === 'ai_draft') current = await api.patchSpec(migration.id, specPatchBody(current, {}));
     // 확인한 뒤에도 검토 칸이 남았으면(그 사이 생긴 칸) 확정하지 않고 새 판을 보여 준다
     if ((current.needsReviewV2 ?? []).length > 0) {
       await spec.reload();
@@ -110,24 +109,25 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
     await api.confirmSpec(migration.id);
   };
   // 경계 밖 데이터 자원을 이 앱으로 끌어온다. 끌어온 자원은 새 검토 칸이 되어 확정 전에 한 번 더 본다
+  // 아래 PATCH 셋도 확인처럼 specPatchBody 로 본문을 만든다 (AI 초안 판이면 acceptDraft 를 같이 실어야 서버가 받는다)
   const pull = (resource: string) =>
     run(async () => {
       if (!view) return;
-      await api.patchSpec(migration.id, { baseVersion: view.version, include: [resource] });
+      await api.patchSpec(migration.id, specPatchBody(view, { include: [resource] }));
       await spec.reload();
     });
   // 보안 요구사항 저장·지우기 (PATCH changes "security" 통째, null = 지움). 결과는 새 판 하나
   const saveSecurity = (value: SecuritySpecV2 | null) =>
     run(async () => {
       if (!view) return;
-      await api.patchSpec(migration.id, { baseVersion: view.version, changes: [{ path: 'security', value }] });
+      await api.patchSpec(migration.id, specPatchBody(view, { changes: [{ path: 'security', value }] }));
       await spec.reload();
     });
 
   const decideFirewall = (subject: string) =>
     run(async () => {
       if (!view || !v2) return;
-      await api.patchSpec(migration.id, { baseVersion: view.version, changes: [{ path: 'posture', value: firewallDecision(v2.spec.posture, subject) }] });
+      await api.patchSpec(migration.id, specPatchBody(view, { changes: [{ path: 'posture', value: firewallDecision(v2.spec.posture, subject) }] }));
       await spec.reload();
     });
 
@@ -281,7 +281,12 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
         )}
         <ActionRow notice={error}>
           <ConfirmPill label={t('취소')} confirmLabel={t('마이그레이션 취소')} icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
-          <ActionPill label={v2 ? confirmLabel(busy, reviewCount) : busy ? t('보내는 중') : t('명세 확정')} icon="check" disabled={busy || !view} onClick={() => void run(confirm)} />
+          <ActionPill
+            label={v2 ? confirmLabel(busy, reviewCount, firewall.length) : busy ? t('보내는 중') : t('명세 확정')}
+            icon="check"
+            disabled={busy || !view || !canConfirmSpec(firewall.length)}
+            onClick={() => void run(confirm)}
+          />
         </ActionRow>
       </Stack>
     </Frame>

@@ -48,6 +48,15 @@ export type MigrationSpecViewV2 = MigrationSpecView & {
 /** PATCH /migrations/:id/spec 본문 중 화면이 쓰는 칸 (contracts SpecPatchInput). changes 는 지금 "security"·"posture" 만 보낸다 (값 통째, security 의 null = 지움) */
 export interface SpecPatch { baseVersion: number; confirm?: string[]; include?: string[]; acceptDraft?: number; changes?: { path: string; value: unknown }[] }
 
+/**
+ * PATCH 본문. 화면이 보고 있는 판(GET spec)을 기준으로 한다. 그 판이 AI 초안이면 그 판을 받아들인다는 acceptDraft 를 같이 싣는다:
+ * 서버는 받아들인 판이 없고 초안만 있을 때 acceptDraft 없이 고치거나 확인하면 409 SPEC_DRAFT_NOT_ACCEPTED 로 막는다 (apps/api spec.ts).
+ * 확인·끌어오기·보안 요구사항·방화벽 결정이 모두 이 함수로 본문을 만든다 (한 곳이라도 빠뜨리면 초안을 보는 동안 그 버튼만 막힌다)
+ */
+export function specPatchBody(view: Pick<MigrationSpecViewV2, 'version' | 'source'>, edit: Omit<SpecPatch, 'baseVersion' | 'acceptDraft'>): SpecPatch {
+  return { baseVersion: view.version, ...edit, ...(view.source === 'ai_draft' ? { acceptDraft: view.version } : {}) };
+}
+
 /** 한 번에 confirm 으로 보낼 수 있는 키 수 (contracts SpecPatchInput confirm max 20) */
 export const CONFIRM_MAX = 20;
 
@@ -295,6 +304,22 @@ export function boundaryRows(list: OutOfBoundaryV2[] | undefined) {
   }));
 }
 
-/** 명세 확정 버튼 글자. 확인할 칸이 있으면 그 칸을 확인하고 확정한다는 것까지 말한다. */
-export const confirmLabel = (busy: boolean, reviews: number) =>
-  busy ? t('보내는 중') : reviews > 0 ? t('{0}칸 확인하고 명세 확정', { 0: reviews }) : t('명세 확정');
+/**
+ * 명세 확정 버튼 글자. 확인할 칸이 있으면 그 칸을 확인하고 확정한다는 것까지 말한다.
+ * 정하지 않은 출발 방화벽 줄이 있으면 확정을 막으므로(canConfirmSpec) 막힌 이유를 버튼에 쓴다
+ */
+export const confirmLabel = (busy: boolean, reviews: number, undecidedFirewall = 0) =>
+  busy
+    ? t('보내는 중')
+    : undecidedFirewall > 0
+      ? t('출발 방화벽 {0}개를 먼저 정해 주세요', { 0: undecidedFirewall })
+      : reviews > 0
+        ? t('{0}칸 확인하고 명세 확정', { 0: reviews })
+        : t('명세 확정');
+
+/**
+ * 명세를 확정해도 되는가. 서버 POST /plan(T04)은 검토 칸만 세고 출발 방화벽 줄은 보지 않아서 그대로 받아 준다.
+ * 하지만 바로 뒤 사전 점검이 같은 줄을 사람 확인 막힘(PC-V2-HUMAN-n, adapters target/shared.ts)으로 잡아 명세 검토로 되돌려 보낸다.
+ * 정하지 않은 줄(firewallRows)이 남아 있으면 확정해 봐야 돌아오므로 화면이 먼저 막는다
+ */
+export const canConfirmSpec = (undecidedFirewall: number) => undecidedFirewall === 0;

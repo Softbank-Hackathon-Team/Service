@@ -1104,6 +1104,7 @@ export const EN: Table = {
   "출발 · {0}": "Source · {0}",
   "출발 레지스트리에서 샌드박스 자리로 이미지를 복사하지 못했습니다. 고객 클러스터에는 아무것도 반영하지 않았습니다.": "Couldn't copy images from the source registry to the sandbox. Nothing was applied to the customer cluster.",
   "출발 방화벽": "Source firewall",
+  "출발 방화벽 {0}개를 먼저 정해 주세요": { one: "Decide {0} source firewall rule first", other: "Decide {0} source firewall rules first" },
   "출발 방화벽을 읽지 못했습니다": "Could not read the source firewall",
   "출발 쓰기 막힘 남음": "Source still write-fenced",
   "출발 자원 정리 중.": "Cleaning up source resources.",
