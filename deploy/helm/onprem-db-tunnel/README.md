@@ -54,6 +54,23 @@ kubectl -n app-<앱> rollout status deploy/db-tunnel   # 준비 = 정방향 입�
 
 `forward.target` 의 글자는 중계 `forward_pg_targets_json` 과 같아야 한다. sshd `PermitOpen` 은 이름을 그대로 비교한다.
 
+## 앱 차트 안 터널 (끌어오기 모델, 사람 손 없음)
+
+위 순서는 사람이 `kubectl`·`helm` 으로 하는 시연용이다. 같은 터널을 앱 차트(`gitops/charts/app`)가 `dbTunnel` 값으로 그린다. 워커가 이전을 시작할 때 배포 값에 넣고, Argo CD 가 끌어와 적용하고, 정리 때 값을 빼면 지운다.
+
+| 값 | 뜻 |
+|---|---|
+| `dbTunnel.relay.host` / `port`(기본 22) / `knownHosts`(필수) | 중계 주소와 호스트 키 고정. `host` 가 IPv4 면 나가는 22 를 그 주소/32 로만 연다. 이름이면 포트만 묶는다 |
+| `dbTunnel.keySecret`(필수) | 키 `id` = 개인키가 든 Secret. `sealedSecrets[]` 로 들어온다 |
+| `dbTunnel.forward.target`(필수) | `"<출발 DB>:5432"`. 중계 `forward_pg_targets_json` 과 같은 글자 |
+| `dbTunnel.reverse.enabled` / `cnpgName` | 역방향(-R)을 `<cnpgName>-rw:5432` 로. `cnpgName` 이 없으면 `postgres[]` 의 CNPG 가 하나일 때 그 이름 |
+| `dbTunnel.image`(필수) | `@sha256:` 다이제스트 고정 |
+
+- 구독 주소: Service `db-tunnel` (`db-tunnel.<namespace>.svc:5432`, `sslmode=require`).
+- 이 차트와 다른 점: 정방향은 항상 켜고, 중계 계정은 `tunnel` 고정, 이름은 `db-tunnel` 고정, NetworkPolicy 는 같은 Cluster(`cnpg.io/cluster`)의 CNPG 인스턴스로만 묶는다.
+- 같은 앱 차트에서 함께 쓰는 값: `postgres[].replication`(이전 전용 역할 `svc_migrate`, superuser 없음), `postgres[].certificates`(플랫폼이 준 서버 CA·TLS), `sealedSecrets[]`(역할 비밀번호·터널 키·서버 인증서를 봉인한 값, 범위 strict).
+- 시험: `packages/adapters/test/onprem-migrate-chart.test.ts`, CI 값 `deploy/ci/values/v2-onprem-migrate.json`(`deploy/ci/check-gitops.sh` 가 스키마 검사).
+
 ## 아직 안 된 것
 
 - 워커가 관리 SQL 을 역방향 터널로 온프레 CNPG 에 넣는 것은 시연용이다 (ADR-005 원칙 위반: 플랫폼이 온프레 DB 관리자 접속을 쥔다). 원칙대로라면 클러스터 안 실행기(W7)다.
