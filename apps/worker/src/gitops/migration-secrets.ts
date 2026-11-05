@@ -60,8 +60,30 @@ export interface SshKeypair { privateKeyOpenssh: string; publicKeyLine: string }
  */
 export function deriveSshKeypair(masterKey: string, tenantId: string, migrationId: string, comment = `svc-migration-${migrationId}`): SshKeypair {
   needMasterKey(masterKey);
+  return opensshEd25519(createHmac("sha256", masterKey).update(`ssh:${tenantId}:${migrationId}`).digest(), comment);
+}
+
+/**
+ * 중계기(출발 계정 EC2) sshd 의 ed25519 호스트 키. seed = HMAC-SHA256(masterKey, `ssh-host:${tenantId}:${migrationId}`).
+ * 플랫폼이 EC2 를 만들기 전에 이미 공개 키를 안다 → 터널의 known_hosts 를 처음부터 고정한다 (ssh-keyscan 첫 접속 믿기 없음).
+ * 터널 키(ssh:…)와 글이 달라 서로 다른 키가 된다. 개인 키는 중계기 user-data 로만 나간다 (저장·로그 없음)
+ */
+export function deriveSshHostKey(masterKey: string, tenantId: string, migrationId: string, comment = `svc-relay-host-${migrationId}`): SshKeypair {
+  needMasterKey(masterKey);
+  return opensshEd25519(createHmac("sha256", masterKey).update(`ssh-host:${tenantId}:${migrationId}`).digest(), comment);
+}
+
+/** known_hosts 한 줄 `<호스트> ssh-ed25519 AAAA…` (포트 22 가 아니면 `[호스트]:포트`). 공개 키 줄의 comment 는 뺀다 */
+export function knownHostsLine(host: string, publicKeyLine: string, port = 22): string {
+  if (!/^[A-Za-z0-9.-]+$/.test(host)) throw new MigrationSecretError("SSH_HOST_INVALID", "known_hosts 호스트는 이름 또는 IPv4 만");
+  const [type, key] = publicKeyLine.trim().split(/\s+/);
+  if (type !== "ssh-ed25519" || !key) throw new MigrationSecretError("SSH_KEY_INVALID", "ssh-ed25519 공개 키 줄이 아니다");
+  return `${port === 22 ? host : `[${host}]:${port}`} ${type} ${key}`;
+}
+
+// seed 32바이트 → OpenSSH 형식 ed25519 키 쌍 (터널 키·중계기 호스트 키가 같이 쓴다)
+function opensshEd25519(seed: Buffer, comment: string): SshKeypair {
   if (/[\r\n]/.test(comment)) throw new MigrationSecretError("SSH_COMMENT_INVALID", "comment 에 줄바꿈을 넣을 수 없다");
-  const seed = createHmac("sha256", masterKey).update(`ssh:${tenantId}:${migrationId}`).digest();
   const { pub } = ed25519FromSeed(seed);
   const pubBlob = Buffer.concat([sshString("ssh-ed25519"), sshString(pub)]);
   // checkint 두 번(같은 값): 원래는 무작위. 같은 입력 → 같은 파일이 되도록 seed 에서 뽑는다 (암호 없는 파일이라 보안 의미 없음)

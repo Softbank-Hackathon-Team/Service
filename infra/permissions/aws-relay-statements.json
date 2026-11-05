@@ -5,21 +5,14 @@
       "Sid": "RelayDescribe",
       "Effect": "Allow",
       "Action": [
-        "ec2:DescribeAccountAttributes",
         "ec2:DescribeImages",
-        "ec2:DescribeInstanceAttribute",
-        "ec2:DescribeInstanceCreditSpecifications",
-        "ec2:DescribeInstanceTypes",
         "ec2:DescribeInstances",
-        "ec2:DescribeKeyPairs",
-        "ec2:DescribeNetworkInterfaces",
+        "ec2:DescribeRouteTables",
         "ec2:DescribeSecurityGroupRules",
         "ec2:DescribeSecurityGroups",
         "ec2:DescribeSubnets",
-        "ec2:DescribeTags",
-        "ec2:DescribeVolumes",
-        "ec2:DescribeVpcAttribute",
-        "ec2:DescribeVpcs"
+        "ec2:DescribeVpcs",
+        "rds:DescribeDBInstances"
       ],
       "Resource": "*",
       "Condition": {
@@ -32,10 +25,9 @@
       "Sid": "RelayAmiParameter",
       "Effect": "Allow",
       "Action": [
-        "ssm:GetParameter",
-        "ssm:GetParameters"
+        "ssm:GetParameter"
       ],
-      "Resource": "arn:aws:ssm:ap-northeast-2::parameter/aws/service/ami-amazon-linux-latest/*"
+      "Resource": "arn:aws:ssm:ap-northeast-2::parameter/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64"
     },
     {
       "Sid": "RelayCreateSecurityGroupTagged",
@@ -47,21 +39,19 @@
       "Condition": {
         "StringEquals": {
           "aws:RequestTag/managed-by": "platform"
+        },
+        "Null": {
+          "aws:RequestTag/svc:migration": "false"
         }
       }
     },
     {
-      "Sid": "RelayImportKeyPairTagged",
+      "Sid": "RelayCreateSecurityGroupInVpc",
       "Effect": "Allow",
       "Action": [
-        "ec2:ImportKeyPair"
+        "ec2:CreateSecurityGroup"
       ],
-      "Resource": "arn:aws:ec2:ap-northeast-2:*:key-pair/*",
-      "Condition": {
-        "StringEquals": {
-          "aws:RequestTag/managed-by": "platform"
-        }
-      }
+      "Resource": "arn:aws:ec2:ap-northeast-2:*:vpc/*"
     },
     {
       "Sid": "RelayRunInstanceTagged",
@@ -69,40 +59,41 @@
       "Action": [
         "ec2:RunInstances"
       ],
-      "Resource": "arn:aws:ec2:ap-northeast-2:*:instance/*",
+      "Resource": [
+        "arn:aws:ec2:ap-northeast-2:*:instance/*",
+        "arn:aws:ec2:ap-northeast-2:*:network-interface/*",
+        "arn:aws:ec2:ap-northeast-2:*:volume/*"
+      ],
       "Condition": {
         "StringEquals": {
           "aws:RequestTag/managed-by": "platform"
+        },
+        "Null": {
+          "aws:RequestTag/svc:migration": "false"
         }
       }
     },
     {
-      "Sid": "RelayCreateInVpc",
+      "Sid": "RelayRunInSubnet",
       "Effect": "Allow",
       "Action": [
-        "ec2:CreateSecurityGroup",
         "ec2:RunInstances"
       ],
-      "Resource": [
-        "arn:aws:ec2:ap-northeast-2:*:vpc/*",
-        "arn:aws:ec2:ap-northeast-2:*:subnet/*",
-        "arn:aws:ec2:ap-northeast-2:*:network-interface/*",
-        "arn:aws:ec2:ap-northeast-2:*:volume/*"
-      ]
+      "Resource": "arn:aws:ec2:ap-northeast-2:*:subnet/*"
     },
     {
-      "Sid": "RelayRunUsesOwnSgAndKey",
+      "Sid": "RelayRunUsesOwnSg",
       "Effect": "Allow",
       "Action": [
         "ec2:RunInstances"
       ],
-      "Resource": [
-        "arn:aws:ec2:ap-northeast-2:*:key-pair/*",
-        "arn:aws:ec2:ap-northeast-2:*:security-group/*"
-      ],
+      "Resource": "arn:aws:ec2:ap-northeast-2:*:security-group/*",
       "Condition": {
         "StringEquals": {
           "aws:ResourceTag/managed-by": "platform"
+        },
+        "Null": {
+          "aws:ResourceTag/svc:migration": "false"
         }
       }
     },
@@ -127,7 +118,6 @@
       ],
       "Resource": [
         "arn:aws:ec2:ap-northeast-2:*:instance/*",
-        "arn:aws:ec2:ap-northeast-2:*:key-pair/*",
         "arn:aws:ec2:ap-northeast-2:*:network-interface/*",
         "arn:aws:ec2:ap-northeast-2:*:security-group/*",
         "arn:aws:ec2:ap-northeast-2:*:security-group-rule/*",
@@ -137,36 +127,63 @@
         "StringEquals": {
           "ec2:CreateAction": [
             "AuthorizeSecurityGroupEgress",
+            "AuthorizeSecurityGroupIngress",
             "CreateSecurityGroup",
-            "ImportKeyPair",
             "RunInstances"
           ],
           "aws:RequestTag/managed-by": "platform"
+        },
+        "Null": {
+          "aws:RequestTag/svc:migration": "false"
         }
       }
     },
     {
-      "Sid": "RelayModifyOwned",
+      "Sid": "RelayModifyOwnSecurityGroup",
       "Effect": "Allow",
       "Action": [
         "ec2:AuthorizeSecurityGroupEgress",
         "ec2:AuthorizeSecurityGroupIngress",
-        "ec2:DeleteKeyPair",
         "ec2:DeleteSecurityGroup",
         "ec2:RevokeSecurityGroupEgress",
-        "ec2:RevokeSecurityGroupIngress",
-        "ec2:TerminateInstances"
+        "ec2:RevokeSecurityGroupIngress"
       ],
-      "Resource": [
-        "arn:aws:ec2:ap-northeast-2:*:instance/*",
-        "arn:aws:ec2:ap-northeast-2:*:key-pair/*",
-        "arn:aws:ec2:ap-northeast-2:*:security-group/*"
-      ],
+      "Resource": "arn:aws:ec2:ap-northeast-2:*:security-group/*",
       "Condition": {
         "StringEquals": {
           "aws:ResourceTag/managed-by": "platform"
+        },
+        "Null": {
+          "aws:ResourceTag/svc:migration": "false"
         }
       }
+    },
+    {
+      "Sid": "RelayTerminateOwnInstance",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:TerminateInstances"
+      ],
+      "Resource": "arn:aws:ec2:ap-northeast-2:*:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/managed-by": "platform"
+        },
+        "Null": {
+          "aws:ResourceTag/svc:migration": "false"
+        }
+      }
+    },
+    {
+      "Sid": "RelaySecurityGroupRuleIds",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupIngress"
+      ],
+      "Resource": "arn:aws:ec2:ap-northeast-2:*:security-group-rule/*"
     },
     {
       "Sid": "SourceDbEgressToRelay",

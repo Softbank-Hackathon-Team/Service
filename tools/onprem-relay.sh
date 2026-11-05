@@ -92,7 +92,9 @@ EOF
   echo "  $TUNNEL_PUB"
   echo "tfvars: $TFVARS"
   echo
-  echo "사람이 실행 (이 도구는 실행하지 않는다). 고객 계정 실행 역할 권한 = infra/permissions/aws-relay-statements.json"
+  echo "사람이 실행 (이 도구는 실행하지 않는다). 고객 계정 권한 = infra/permissions/aws-relay-statements.json (워커 자동 길 기준)"
+  echo "  + 이 Terraform 길에만 더 필요: ec2:ImportKeyPair·DeleteKeyPair·DescribeKeyPairs (ec2-user 키), Terraform 공급자 읽기(DescribeInstanceAttribute·DescribeInstanceTypes·DescribeVolumes·DescribeNetworkInterfaces·DescribeTags·DescribeAccountAttributes·DescribeVpcAttribute·DescribeInstanceCreditSpecifications)"
+  echo "  (워커가 apply 단계에서 중계기를 자동으로 만드는 길이 기본이다. 이 도구는 RELAY_AUTO=0 일 때·시드 환경 시연용)"
   echo "  terraform -chdir=\"$WORK\" init -from-module=\"$MODULE\""
   echo "  terraform -chdir=\"$WORK\" plan -var-file=relay.tfvars -out=relay.plan"
   echo "  terraform -chdir=\"$WORK\" apply relay.plan"

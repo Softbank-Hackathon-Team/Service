@@ -6,7 +6,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { collectFacts, DEFAULT_SEALING_CERT_URL, fetchSealingCert, pgHbaFacts, pgMajorFromImage, type Kubectl } from "../src/index.js";
+import { collectFacts, DEFAULT_EGRESS_IP_URL, DEFAULT_SEALING_CERT_URL, EGRESS_IP_TIMEOUT_MS, fetchEgressIp, fetchSealingCert, pgHbaFacts, pgMajorFromImage, type Kubectl } from "../src/index.js";
 
 const now = () => new Date("2026-11-04T00:00:00Z");
 const kube = (map: Record<string, unknown>): Kubectl => async (args) => {
@@ -108,4 +108,29 @@ test("facts 거부: 인증서를 못 받거나(404·연결 실패) RSA 가 아�
   // 계약: 인증서 PEM 이 아니면 받지 않는다 (예전 Agent 처럼 칸이 없는 보고는 받는다)
   const ok = { kind: "facts", agentVersion: "t", sentAt: "2026-11-04T00:00:00Z", grants: { level: "L0" }, dbs: [] };
   assert.ok(!AgentReport.safeParse({ ...ok, sealing: { certPem: "-----BEGIN PRIVATE KEY-----\n", fetchedAt: "2026-11-04T00:00:00Z" } }).success);
+});
+
+// 출발 계정 중계기 SSH(22)를 이 IP/32 에만 연다 (worker relay/). 못 받으면 칸이 없고 워커가 ONPREM_EGRESS_UNKNOWN 으로 멈춘다
+test("facts: 나가는 공인 IP 를 받으면 egressIp 칸에 싣는다 (기본 주소·5초 시간 제한·계약 통과)", async () => {
+  const seen: { url: string; signal: unknown }[] = [];
+  const fake = (async (url: string, init?: RequestInit) => { seen.push({ url, signal: init?.signal }); return new Response("203.0.113.9\n", { status: 200 }); }) as unknown as typeof fetch;
+  const r = await collectFacts({ agentVersion: "t", now, kubectl: noKube, egressIp: () => fetchEgressIp(DEFAULT_EGRESS_IP_URL, { fetch: fake }) });
+  AgentReport.parse(r);
+  assert.equal(r.egressIp, "203.0.113.9");
+  assert.equal(seen[0]!.url, "https://checkip.amazonaws.com");
+  assert.ok(seen[0]!.signal instanceof AbortSignal, "시간 제한 신호");
+  assert.equal(EGRESS_IP_TIMEOUT_MS, 5000);
+});
+
+test("facts 거부: 나가는 IP 를 못 받거나(500·시간 초과) IPv4 한 줄이 아니면 egressIp 칸이 없고 보고는 그대로 간다", async () => {
+  const bad = (status: number, body: string) => (async () => new Response(body, { status })) as unknown as typeof fetch;
+  for (const f of [bad(500, "203.0.113.9"), bad(200, "<html>proxy</html>"), bad(200, "0.0.0.0/0"), bad(200, "2001:db8::1")]) {
+    const r = await collectFacts({ agentVersion: "t", now, kubectl: noKube, egressIp: () => fetchEgressIp("https://x", { fetch: f }) });
+    assert.equal("egressIp" in r, false);
+    AgentReport.parse(r);
+  }
+  const t = await collectFacts({ agentVersion: "t", now, kubectl: noKube, egressIp: async () => { throw new DOMException("timeout", "TimeoutError"); } });
+  assert.equal("egressIp" in t, false);
+  const ok = { kind: "facts", agentVersion: "t", sentAt: "2026-11-04T00:00:00Z", grants: { level: "L0" }, dbs: [] };
+  assert.ok(!AgentReport.safeParse({ ...ok, egressIp: "203.0.113.0/24" }).success, "계약: IPv4 주소 하나만");
 });

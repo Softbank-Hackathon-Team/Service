@@ -41,6 +41,13 @@ export const FAILURE_CODES = [
   // gitops 배포 (apps/worker/src/gitops GitopsError.code) → deploy가 paused로
   "RUNTIME_OUTPUT_MISSING", "RUNTIME_UNHEALTHY", "RUNTIME_CHECK_FAILED",   // DEPLOYNONK8S: ECS·Cloud Run·VM 도착 배포 확인 (출력 빠짐 / 시간 안에 안 뜸 / 읽기 CLI 실패)
   "SEALING_CERT_MISSING",        // 온프레 CNPG 이전: 도착 Agent 보고에 sealed-secrets 봉인 인증서가 없음 → deploy 커밋 전 paused
+  // 온프레 CNPG 이전 중계기 (worker relay/relay-step.ts): apply 가 출발 AWS 계정에 만들고 정리가 지운다
+  "ONPREM_EGRESS_UNKNOWN",       //   Agent facts 에 온프레 나가는 IP 가 없음 → SSH(22)를 세상에 열지 않으려고 apply 가 failed
+  "RELAY_CONFIG_MISSING",        //   워커 env PLATFORM_EGRESS_CIDRS 없음·틀림 → apply failed
+  "RELAY_SOURCE_DB_UNKNOWN",     //   명세에서 출발 RDS 를 못 찾음·postgres 둘 이상·RDS 포트 5432 아님 → apply failed
+  "RELAY_ROLE_DENIED",           //   출발 실행 역할(중계기 세션 정책) 발급 거부 → apply failed
+  "RELAY_PROVISION_FAILED",      //   중계기 만들기 실패 (aws CLI). 만든 것은 태그를 단 채 남는다 → apply failed
+  "RELAY_TEARDOWN_FAILED",       //   중계기 지우기 실패 → cleanup paused (롤백은 rolled_back + 경고)
   "REPL_DELIVERY_FAILED",        // 온프레 CNPG 이전: 서버 인증서·봉인 비밀·터널 값을 못 만듦 (중계기 칸 없음, 출발 포트 5432 아님, openssl 실패 등) → paused
   "SECRET_VALUES_MISSING", "SECRET_VALUES_UNKNOWN",   // APP-20: deploy 커밋 전 도착 비밀 그릇에 값(버전)이 없음 / 못 읽음 → paused
   "GITOPS_NOT_CONFIGURED",       // Z89: GitOps 레포 설정 없음인데 MOCK_ARGO=1 도 아님 (예전엔 조용히 STUB 성공)

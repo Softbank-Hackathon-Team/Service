@@ -57,12 +57,15 @@ export async function borrowStepRoles(step: RoleStep, j: { tenantId: string; mig
     // Azure 는 Mock 전용이라 실행 역할을 주지 않는다 (ROLE_AZURE_MOCK). 묻지도 않는다 → 거부 감사가 매번 쌓이지 않게
     if (provider === "azure_mock" && r.purpose === "operate") { out.skipped.push({ side: r.side, reason: "azure_mock_no_operate" }); continue; }
     const stage = "stage" in r ? r.stage : undefined;
+    const policy = "policy" in r ? r.policy : undefined;
+    // 중계기 세션 정책은 AWS 실행 역할에만 있다. 다른 클라우드면 묻지 않는다 (부르는 쪽이 먼저 거르지만 한 번 더)
+    if (policy && provider !== "aws") { out.skipped.push({ side: r.side, reason: "relay_policy_aws_only" }); continue; }
     try {
       out.creds.push(await broker.issue({
         // 관찰 역할도 이전 번호를 붙인다 (필수는 아님) → 이 이전의 장부·감사·보안 표에 같이 보인다
         tenantId: j.tenantId, envId, provider, purpose: r.purpose, migrationId: j.migrationId,
-        ...(stage ? { stage } : {}),
-        actions: "actions" in r ? [...r.actions] : stepActions(perms, provider, r.purpose, stage), ttlSec: STEP_ROLE_TTL_SEC,
+        ...(stage ? { stage } : {}), ...(policy ? { policy } : {}),
+        actions: "actions" in r ? [...r.actions] : stepActions(perms, provider, r.purpose, stage, policy), ttlSec: STEP_ROLE_TTL_SEC,
       }, { step }));
       out.sides!.push(r.side);
     } catch (e) {

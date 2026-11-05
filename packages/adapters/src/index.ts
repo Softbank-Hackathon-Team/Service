@@ -41,6 +41,8 @@ export * from "./import/raw-k8s.js";
 export { mockSeed, CliError, classifyCliError, sourceFail, type CliErrorKind, type CliDeps } from "./common/cli.js";
 export { runCloudPrecheck, toPrecheckItems, mockPrecheckEnabled, mockChecks, cliProblem, tcpProbe, apiEndpoint, AWS_QUOTAS, GCP_APIS, CLOUDSQL_PG_MAJORS_DEFAULT, MIN_REPL_PG_MAJOR,
   type CloudCheck, type Verdict, type PrecheckEnvInfo, type PrecheckInput, type PrecheckDeps, type CloudProvider } from "./precheck/cloud-precheck.js";
+export { relayPathApplies } from "./precheck/cloud-precheck.js";
+export { RELAY_ACTIONS, relayPermVerdict, relaySimArgs, relaySimContext, RELAY_PERM_FIX } from "./precheck/relay-permissions.js";   // 온프레 이전 중계기 권한
 // L4: 연결 확인 (빌린 관찰 역할로 고객 AWS 읽어 보기)
 export { verifyAwsObserve, envFor, EKS_CLUSTER_NAME_RE, trustHasExternalId, type VerifyAwsInput, type VerifyAwsResult } from "./verify/aws.js";
 // I3a: 가져오기 (원본 → 공통 명세)

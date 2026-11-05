@@ -67,8 +67,25 @@ export function sealingFact(pem: string, fetchedAt: string): FactsReport["sealin
   return { certPem, fetchedAt };
 }
 
+// 클러스터가 밖으로 나가는 공인 IP 를 알려 주는 주소. 응답 본문 = IPv4 한 줄
+// DRAFT(ai): 기본 https://checkip.amazonaws.com (AWS 가 운영, 인증 없음, 본문이 IP 한 줄). 고객 망이 막으면 EGRESS_IP_URL 로 바꾸고,
+//   "off" 면 묻지 않는다 (그러면 워커가 중계기를 못 만들고 ONPREM_EGRESS_UNKNOWN 으로 멈춘다)
+export const DEFAULT_EGRESS_IP_URL = "https://checkip.amazonaws.com";
+export const EGRESS_IP_TIMEOUT_MS = 5000;
+const IPV4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
+
+/** 나가는 공인 IPv4 를 HTTP GET 으로 받는다. 200 이 아니거나 5초가 넘거나 IPv4 한 줄이 아니면 throw (부르는 쪽이 칸을 비운다) */
+export async function fetchEgressIp(url: string, o: { fetch?: typeof fetch; timeoutMs?: number } = {}): Promise<string> {
+  const res = await (o.fetch ?? fetch)(url, { signal: AbortSignal.timeout(o.timeoutMs ?? EGRESS_IP_TIMEOUT_MS) });
+  if (!res.ok) throw new Error(`egress ip ${res.status}`);
+  const ip = (await res.text()).trim();
+  if (!IPV4.test(ip)) throw new Error("egress ip: 응답이 IPv4 한 줄이 아니다");
+  return ip;
+}
+
 // sealingCert: 봉인 인증서 PEM 을 가져오는 함수. 없으면 sealing 칸을 안 만든다. 실패해도 보고는 보낸다 (칸만 빠짐)
-export async function collectFacts(o: CollectBase & { sealingCert?: () => Promise<string> }): Promise<FactsReport> {
+// egressIp: 나가는 공인 IP 를 가져오는 함수. 없거나 실패하면 egressIp 칸을 안 만든다 (보고는 보낸다)
+export async function collectFacts(o: CollectBase & { sealingCert?: () => Promise<string>; egressIp?: () => Promise<string> }): Promise<FactsReport> {
   const sentAt = (o.now?.() ?? new Date()).toISOString();
   // kubectl auth can-i 는 "no" 면 0 이 아닌 코드로 끝난다 → 실패 = L0
   const level = await o.kubectl(["auth", "can-i", "list", "nodes"]).then((s) => (s.trim() === "yes" ? "L1" : "L0"), () => "L0" as const);
@@ -92,5 +109,9 @@ export async function collectFacts(o: CollectBase & { sealingCert?: () => Promis
   if (o.sealingCert) {
     try { sealing = sealingFact(await o.sealingCert(), (o.now?.() ?? new Date()).toISOString()); } catch { sealing = null; }
   }
-  return { kind: "facts", agentVersion: o.agentVersion, sentAt, grants: { level }, dbs, ...(sealing ? { sealing } : {}) };
+  let egressIp: string | null = null;
+  if (o.egressIp) {
+    try { const ip = (await o.egressIp()).trim(); egressIp = IPV4.test(ip) ? ip : null; } catch { egressIp = null; }
+  }
+  return { kind: "facts", agentVersion: o.agentVersion, sentAt, grants: { level }, dbs, ...(sealing ? { sealing } : {}), ...(egressIp ? { egressIp } : {}) };
 }
