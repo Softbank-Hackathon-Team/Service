@@ -191,6 +191,13 @@ export const ChartIngress = z.object({
     migration: z.string().regex(/^[0-9a-f-]{36}$/i),
     env: z.enum(["source", "target"]),
     collectorNamespace: Name.optional(),
+    // 클라우드 도착: 고객 클러스터에 수집기가 없고 배포 권한에 RBAC·NetworkPolicy 가 없다 → cloudflared 파드 안에 수집기를 같이 띄운다.
+    //   이때 :2000 은 127.0.0.1 에만 열고 수집기 바깥으로 안 나간다. 토큰 = tokenSecret 의 키 token. 배포 전 비밀 점검이 값 없음을 먼저 막는다
+    sidecar: z.object({
+      image: z.string().regex(/^[^@\s]+@sha256:[0-9a-f]{64}$/),
+      endpoint: z.string().regex(/^https:\/\/[^/\s]+\/\S+$/),
+      tokenSecret: Name,
+    }).strict().optional(),
   }).strict().optional(),
 }).strict();
 
