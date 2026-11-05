@@ -1,9 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { AppSpecV2, MigrationStatus, Provider, type MigrationStatus as Status } from "@svc/contracts";
-import { SPEC_DRAFT_KEY, withTenant } from "@svc/core";
-import { cachedInventory, chooseRunner, gcp, onprem, resourceTypesV2For, serviceMapV2, stubStatus, type RunnerStatus } from "@svc/adapters";
+import { AppSpecV2, envNumber, InventoryRefreshJob, MigrationStatus, Provider, QUEUES, type MigrationStatus as Status } from "@svc/contracts";
+import { asBossDb, boss, jobKey, SPEC_DRAFT_KEY, withTenant } from "@svc/core";
+import { chooseRunner, gcp, inventoryUnavailable, onprem, readInventory, resourceTypesV2For, serviceMapV2, stubStatus, type CloudInventory as ReadInventory, type RunnerStatus } from "@svc/adapters";
 import { EnvironmentStatus, errors } from "./responses.js";
 import { IdParam, found, isoUtc } from "./kit.js";
 import { onpremInventoryDeps } from "./agent-reports.js";
@@ -11,8 +11,9 @@ import { onpremInventoryDeps } from "./agent-reports.js";
 // Z86: 읽기 전용 GET 2개
 //   GET /api/v1/environments/:id/inventory   — "이 환경에 지금 무엇이 돌고 있고, 이전 때문에 무엇이 생기고 걷혔나"
 //   GET /api/v1/migrations/:id/plan/resources — "이 이전에서 출발의 어떤 서비스가 도착의 어떤 서비스로, 어떤 방식으로 옮겨지나" (대응표)
-// inventory 의 cloud 칸 = 클라우드에서 직접 읽은 실자원 (adapters inventory.ts: aws·gcloud·kubectl CLI 읽기 명령만, 30초 캐시).
-//   자격·CLI 가 없으면 status "unavailable" + 이유 (가짜 값 없음). Azure 는 Mock 실행기 값이고 그렇게 표시한다
+// inventory 의 cloud 칸 = 클라우드에서 직접 읽은 실자원. #242: 읽기는 worker 가 고객 관찰 역할을 빌려 하고(inventory-refresh 작업), 여기는 저장된 결과만 돌려준다.
+//   api 는 aws·gcloud·kubectl 을 부르지 않는다. 결과가 없거나 오래됐으면 작업을 넣고 있는 값을 바로 돌려준다 (cloudRefresh 칸)
+//   자격·CLI 가 없으면 status "unavailable" + 이유 (가짜 값 없음). Azure 는 Mock 실행기 값이고 그렇게 표시한다. 온프레 pull 은 Agent 보고
 // 나머지 칸은 클라우드 호출 없이 세 곳에서 모은다
 //   1) 환경 자체 자원 = 기존 GET /environments/:id/status 와 같은 실행기 상태 (진짜 값은 Azure Mock 만, 나머지는 health unknown)
 //   2) 이전마다 이 환경 쪽 앱 자원 = 받아들인 최신 명세 + 어댑터 resourceTypes(명세) (Terraform 이 "만드는" 종류 표, 계약 테스트로 모듈과 맞춤)
@@ -71,7 +72,11 @@ export const CloudInventory = z.object({
 
 export const EnvResources = z.object({
   envId: z.uuid(), name: z.string(), provider: Provider, generatedAt: z.string(),
-  cloud: CloudInventory,                    // 실자원 (클라우드에서 직접 읽음)
+  cloud: CloudInventory,                    // 실자원 (worker 가 클라우드에서 읽어 저장한 값)
+  cloudRefresh: z.object({
+    refreshing: z.boolean(),                // 지금 worker 가 다시 읽는 중인가 (true 면 잠시 뒤 다시 부르면 새 값)
+    checkedAt: z.string().nullable(),       // cloud 를 실제로 읽은 시각. 아직 한 번도 안 읽었으면 null
+  }).strict(),
   base: EnvironmentStatus,                  // 환경 자체 (리소스 그룹·네트워크 등). /status 와 같은 값
   apps: z.array(AppFootprint),
   totals: z.object({ running: z.number().int(), changing: z.number().int(), planned: z.number().int(), gone: z.number().int() }).strict(),
@@ -267,12 +272,13 @@ const MOVING: FState[] = ["creating", "stopping"];
 const GONE: FState[] = ["removed", "stopped"];
 
 export function buildEnvResources(env: { id: string; name: string; provider: Provider }, base: RunnerStatus,
-  rows: MigrationRow[], cloud: z.infer<typeof CloudInventory>, now: () => Date = () => new Date()): EnvResources {
+  rows: MigrationRow[], cloud: z.infer<typeof CloudInventory>, now: () => Date = () => new Date(),
+  cloudRefresh: EnvResources["cloudRefresh"] = { refreshing: false, checkedAt: cloud.checkedAt }): EnvResources {
   // 같은 이전이 출발=도착(같은 환경)이면 도착으로 한 번만 센다
   const apps = rows.map((m) => footprintOf(env.id, m));
   const all = apps.flatMap((a) => a.resources);
   return {
-    envId: env.id, name: env.name, provider: env.provider, generatedAt: now().toISOString(), cloud, base, apps,
+    envId: env.id, name: env.name, provider: env.provider, generatedAt: now().toISOString(), cloud, cloudRefresh, base, apps,
     totals: {
       running: all.filter((r) => LIVE.includes(r.state)).length + base.resources.filter((r) => r.state === "Succeeded").length,
       changing: all.filter((r) => MOVING.includes(r.state)).length,
@@ -362,6 +368,61 @@ const normPct = (rows: MigrationRow[]) => {
   return rows;
 };
 
+// #242 DECISION(team): 조회 시점 = 화면을 열 때 + 60초 지나면 다시 (2026-11-05). 주기 조회는 고객 계정 API 를 계속 불러서 뒤로
+const staleSec = (env: NodeJS.ProcessEnv) => envNumber(env.INVENTORY_STALE_SEC, 60);
+// DRAFT(ai): 요청하고 2분이 지나도 결과가 안 오면 워커가 죽은 것으로 보고 다시 넣는다
+const inFlightSec = (env: NodeJS.ProcessEnv) => envNumber(env.INVENTORY_INFLIGHT_SEC, 120);
+
+/** 줄을 찍고 작업을 넣는다 (한 트랜잭션). 동시에 온 요청 중 조건을 통과한 하나만 작업을 넣는다 */
+async function requestInventoryRefresh(tenantId: string, envId: string, requestId: string, env: NodeJS.ProcessEnv): Promise<void> {
+  await withTenant(tenantId, async (tx) => {
+    const q = await tx.query(
+      `INSERT INTO environment_inventory AS i (environment_id, tenant_id, requested_at) VALUES ($1, $2, now())
+       ON CONFLICT (environment_id) DO UPDATE SET requested_at = now()
+        WHERE (i.checked_at IS NULL OR i.checked_at < now() - make_interval(secs => $3))
+          AND (i.requested_at IS NULL OR i.requested_at < now() - make_interval(secs => $4) OR i.requested_at <= i.checked_at)
+       RETURNING environment_id`, [envId, tenantId, staleSec(env), inFlightSec(env)]);
+    if (!q.rowCount) return;
+    const key = jobKey(QUEUES.inventoryRefresh, { envId });
+    await boss.send(QUEUES.inventoryRefresh, InventoryRefreshJob.parse({ tenantId, requestId, envId }),
+      { ...(key ? { singletonKey: key } : {}), db: asBossDb(tx) });
+  });
+}
+
+export interface StoredInventory { inventory: ReadInventory | null; refreshing: boolean; checkedAt: string | null }
+export interface StoredInventoryRequest { tenantId: string; envId: string; provider: Provider; requestId: string; warn: (o: object, msg: string) => void; azureStatus?: () => Promise<RunnerStatus>; env?: NodeJS.ProcessEnv }
+
+/** 환경 실자원: 저장된 마지막 결과 + 없거나 오래됐으면 조회 요청. 클라우드 CLI 는 부르지 않는다 */
+export async function storedInventory(o: StoredInventoryRequest): Promise<StoredInventory> {
+  const env = o.env ?? process.env;
+  // CLI 를 안 쓰는 둘은 바로 읽는다: Azure Mock 실행기, 온프레 Agent 보고(DB)
+  const agent = onpremInventoryDeps(o.tenantId, o.envId, o.provider, env).agent;
+  if (o.provider === "azure_mock" || agent) {
+    const inventory = await readInventory(o.provider, { ...(o.azureStatus ? { azureStatus: o.azureStatus } : {}), ...(agent ? { agent } : {}) });
+    return { inventory, refreshing: false, checkedAt: inventory.checkedAt };
+  }
+  if (env.INVENTORY_CLI === "0") {
+    const inventory = inventoryUnavailable(o.provider, "INVENTORY_CLI=0 (실자원 읽기 끔)");
+    return { inventory, refreshing: false, checkedAt: inventory.checkedAt };
+  }
+  const row = await withTenant(o.tenantId, async (tx) => (await tx.query(
+    `SELECT result, ${isoUtc("checked_at")} AS "checkedAt",
+            (checked_at IS NULL OR checked_at < now() - make_interval(secs => $2)) AS stale,
+            (requested_at IS NOT NULL AND (checked_at IS NULL OR requested_at > checked_at)
+             AND requested_at >= now() - make_interval(secs => $3)) AS "inFlight"
+       FROM environment_inventory WHERE environment_id = $1`, [o.envId, staleSec(env), inFlightSec(env)])).rows[0] as
+    { result: unknown; checkedAt: string | null; stale: boolean; inFlight: boolean } | undefined);
+  // 결과가 계약과 안 맞으면(옛 모양) 없는 것으로 본다. 지어내지 않고 다시 읽기를 기다린다
+  const parsed = CloudInventory.safeParse(row?.result);
+  const out: StoredInventory = { inventory: parsed.success ? parsed.data : null, refreshing: row?.inFlight ?? false, checkedAt: row?.checkedAt ?? null };
+  if (!row || (row.stale && !row.inFlight)) {
+    // 큐가 안 되어도 화면은 있는 값을 보여 준다 (읽기 트랜잭션과 나눈 이유)
+    try { await requestInventoryRefresh(o.tenantId, o.envId, o.requestId, env); out.refreshing = true; }
+    catch (e) { o.warn({ envId: o.envId, err: (e as Error).message }, "inventory refresh not queued"); }
+  }
+  return out;
+}
+
 export async function envInventoryRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
 
@@ -388,10 +449,12 @@ export async function envInventoryRoutes(app: FastifyInstance) {
     const c = chooseRunner(env.provider);
     if (c.kind === "unavailable") throw c.error;
     const runner = c.kind === "runner" ? c.runner : null;
-    const [base, cloud] = await Promise.all([
+    const [base, stored] = await Promise.all([
       runner ? runner.status(target) : Promise.resolve(stubStatus(target)),
-      cachedInventory(env.id, env.provider, { ...(runner ? { azureStatus: () => runner.status(target) } : {}), ...onpremInventoryDeps(req.tenantId, env.id, env.provider) }),
+      storedInventory({ tenantId: req.tenantId, envId: env.id, provider: env.provider, requestId: req.id, warn: (o, m) => req.log.warn(o, m),
+        ...(runner ? { azureStatus: () => runner.status(target) } : {}) }),
     ]);
-    return buildEnvResources(env, base, normPct(rows), cloud);
+    const cloud = stored.inventory ?? inventoryUnavailable(env.provider, stored.refreshing ? "아직 읽지 못함: 첫 조회가 진행 중" : "아직 읽지 못함: 조회 요청을 넣지 못함");
+    return buildEnvResources(env, base, normPct(rows), cloud, undefined, { refreshing: stored.refreshing, checkedAt: stored.checkedAt });
   });
 }

@@ -11,11 +11,9 @@ import { arr, str as s, get, lastLine, maskAccount, awsRegion, gcpRegion, onprem
 //          push 시연(ONPREM_FLOOR_VIA_GIT=0, 로컬 k3d)만 kubectl --context <ONPREM_KUBE_CONTEXT, 기본 k3d-onprem> get nodes · clusters.postgresql.cnpg.io · deployments · services
 //   Azure: Mock 실행기 상태 (진짜 Azure 는 만들지 않기로 함)
 // 규칙: 쓰기 명령 0개(인자 배열 고정, 셸 없음, 사용자 입력이 인자에 안 들어감). 자격·CLI 가 없으면 가짜 값 없이 status "unavailable" + 이유.
-// 명령 하나가 실패하면 그 묶음만 error 로 두고 나머지는 보여 준다. 결과는 환경별 30초 캐시 (INVENTORY_CACHE_SEC)
+// 명령 하나가 실패하면 그 묶음만 error 로 두고 나머지는 보여 준다
 // INVENTORY_CLI=0 이면 아예 부르지 않는다 (시험·CI)
-// STUB(L5c): 이 읽기는 API 프로세스에서 돌고, 임시 역할 중개자(보관함·장부)는 워커에만 있다 → 아직 프로세스 자격(맥 프로필)으로 읽는다.
-//   precheck 는 워커라 빌린 관찰 자격으로 바꿨다 (L5c). 상태·인벤토리 화면은 발표에서 "프로세스 자격"이라고 숨기지 않는다
-// TODO(human): 인벤토리·상태를 빌린 자격으로 바꾸는 길 — (a) API 가 워커에 읽기 작업(큐)을 맡기고 결과 캐시를 읽음 (b) API 에도 중개자를 둠(보관함이 프로세스마다 생김)
+// #242: 클라우드 CLI 읽기는 worker 만 부른다 (jobs/inventory-refresh.ts 가 빌린 관찰 자격을 d.env 로 넘김). api 는 저장된 결과만 읽고 Azure Mock·Agent 보고만 직접 읽는다
 
 export interface InventoryItem { name: string; status: string | null; detail: string | null }
 export interface InventoryGroup { category: ServiceCategory; service: string; items: InventoryItem[]; error: string | null }
@@ -138,7 +136,13 @@ const done = (provider: Provider, source: CloudInventory["source"], scope: strin
     reason: bad.length ? `${bad.map((g) => g.service).join(", ")} 읽기 실패: ${bad[0]!.error}` : null };
 };
 
-/** 환경 하나의 실자원. 캐시 없음 (캐시는 cachedInventory) */
+/** 어떤 이유로 읽지 않았을 때의 결과. 묶음 없음, 이유만 (가짜 값 없음) */
+export function inventoryUnavailable(provider: Provider, reason: string, now: Date = new Date()): CloudInventory {
+  const source = ({ aws: "aws-cli", gcp: "gcloud", onprem: "kubectl", azure_mock: "azure-mock" } as const)[provider];
+  return unavailable(provider, source, reason, performance.now(), now);
+}
+
+/** 환경 하나의 실자원. 저장은 부르는 쪽 몫 */
 export async function readInventory(provider: Provider, d: InventoryDeps = {}): Promise<CloudInventory> {
   const env = d.env ?? process.env, exec = d.exec ?? spawnExec, now = d.now ?? (() => new Date());
   const t0 = performance.now();
@@ -189,21 +193,8 @@ export async function readInventory(provider: Provider, d: InventoryDeps = {}): 
   return { ...inv, ...(inv.groups.every((g) => !g.error) ? { status: "ok" as const, reason: null } : {}) };
 }
 
-const CACHE = new Map<string, { at: number; v: Promise<CloudInventory> }>();
-/** 환경별 30초 캐시 (같은 화면을 여러 탭이 15초마다 불러도 CLI 는 30초에 한 번) */
-export function cachedInventory(key: string, provider: Provider, d: InventoryDeps = {}): Promise<CloudInventory> {
-  const ttl = envNumber((d.env ?? process.env).INVENTORY_CACHE_SEC, 30) * 1000;
-  const hit = CACHE.get(key);
-  if (hit && Date.now() - hit.at < ttl) return hit.v;
-  const v = readInventory(provider, d);
-  CACHE.set(key, { at: Date.now(), v });
-  v.catch(() => CACHE.delete(key));
-  return v;
-}
-export const clearInventoryCache = () => CACHE.clear();
-
 // Z100 (기능 #4): GET /environments/:id/status 의 aws·gcp·onprem 칸을 실자원 읽기로 채운다.
-//   예전: 진짜 실행기가 없어 health "unknown" + 빈 목록(stubStatus). 이제 같은 CLI 읽기(cachedInventory) 결과를 실행기 상태 모양으로 바꾼다.
+//   예전: 진짜 실행기가 없어 health "unknown" + 빈 목록(stubStatus). 이제 같은 CLI 읽기 결과(#242 부터는 worker 가 저장한 값)를 실행기 상태 모양으로 바꾼다.
 //   못 읽으면(unavailable) 가짜 값 없이 예전과 같은 unknown + 빈 목록.
 const STATE_RULES: [RegExp, ResourceState][] = [
   [/^(creating|provisioning|pending|starting|pending_create|reconciling|setting up)/i, "Creating"],
