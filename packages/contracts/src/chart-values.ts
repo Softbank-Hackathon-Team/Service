@@ -184,6 +184,14 @@ export const ChartIngress = z.object({
   className: z.string(),
   tunnelTokenSecret: z.string(),
   hosts: z.array(z.object({ hostnames: z.array(z.string()).min(1), tls: z.boolean().optional(), paths: z.array(ChartIngressPath) }).strict()),
+  // 트래픽 판정 지표 (#245). cloudflared 가 응답 수를 127.0.0.1 이 아닌 파드 주소 :2000 에 내고, 고객 클러스터의 수집기
+  //   (deploy/helm/onprem-agent metrics)가 파드 표시(svc.platform/*)를 보고 긁어 svc_ingress_requests_total{env,migration,code} 로 보낸다.
+  //   collectorNamespace = 그 수집기 네임스페이스. :2000 은 거기서만 들어올 수 있다 (차트 ingress.yaml NetworkPolicy)
+  metrics: z.object({
+    migration: z.string().regex(/^[0-9a-f-]{36}$/i),
+    env: z.enum(["source", "target"]),
+    collectorNamespace: Name.optional(),
+  }).strict().optional(),
 }).strict();
 
 export const ChartValues = z.object({

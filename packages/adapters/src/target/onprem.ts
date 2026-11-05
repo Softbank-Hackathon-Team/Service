@@ -176,9 +176,15 @@ function workloadValues(spec0: AppSpecV2, out: TfOutputs, t: Target) {
       link: cnpgLink(spec),
     });
     // CNPG 가 만드는 비밀은 저장소에서 가져오지 않는다 (ExternalSecret 이 같은 이름을 덮어쓰면 CNPG 와 다툰다)
-    const vv = v as typeof v & { externalSecrets?: { secrets: Array<{ name: string }> }; warnings?: string[] };
+    const vv = v as typeof v & { externalSecrets?: { secrets: Array<{ name: string }> }; warnings?: string[]; ingress?: { mode: string } };
     const es = vv.externalSecrets;
+    // DRAFT(ai): 트래픽 판정 지표 (#245). 입구가 cloudflared 이고 이전 번호가 있으면 cloudflared 지표를 켜고 이 이전 표시를 붙인다.
+    //   고객 클러스터 수집기(deploy/helm/onprem-agent metrics, 환경 토큰 하나)가 그 표시로 긁어 env=target·migration 라벨로 보낸다.
+    //   이전 번호가 없으면(시험·상태 조회) 안 켠다: migration 라벨이 없는 지표는 게이트웨이가 버린다
+    const ingress = vv.ingress?.mode === "cloudflared" && t.migrationId
+      ? { ...vv.ingress, metrics: { migration: t.migrationId, env: "target" as const } } : vv.ingress;
     return { ...vv, ...(es ? { externalSecrets: { ...es, secrets: es.secrets.filter((x) => !cnpgSecrets.includes(x.name)) } } : {}),
+      ...(ingress ? { ingress } : {}),
       warnings: [...new Set([...(vv.warnings ?? []), ...notes])].sort() };
 }
 

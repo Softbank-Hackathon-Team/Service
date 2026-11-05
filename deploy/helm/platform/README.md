@@ -157,6 +157,8 @@ kubectl port-forward svc/monitoring-grafana -n monitoring 3001:80
 - 받는 지표: `svc_ingress_requests_total`(카운터), `svc_ingress_request_duration_seconds`(히스토그램). 다른 이름은 버린다.
 - 보낸 쪽이 붙일 라벨: `env`(source 또는 target), `migration`(이전 번호), 요청 수에는 `code`, Ingress 가 여러 개면 파드마다 다른 `replica`. 형식이 틀리면 버리고, 정한 라벨 밖은 지운다.
 
+온프레 도착은 수집기를 설치 묶음이 깐다: `tools/onprem-install.sh` 에 `METRICS_URL`(이 주소의 `/v1/metrics`)·`METRIC_TOKEN_FILE`(그 환경의 토큰 파일)을 주면 `deploy/helm/onprem-agent` 의 `svc-metrics` 가 이전마다 앱 차트 cloudflared(표시 `svc.platform/metrics`)의 상태 코드별 응답 수를 `svc_ingress_requests_total{env="target",migration,code,replica}` 로 보낸다. cloudflared 에는 요청 응답 시간 지표가 없어 지연 히스토그램은 안 보낸다 (판정은 오류율만).
+
 고객 Collector 설정 (토큰은 파일이나 환경 변수로만 넣는다):
 
 ```yaml
