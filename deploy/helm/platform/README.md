@@ -36,7 +36,7 @@ helm install external-secrets external-secrets/external-secrets -n external-secr
 
 # 2. 비밀값 넣기 (값은 채팅·레포에 남기지 않는다)
 aws secretsmanager put-secret-value --secret-id platform/app --secret-string file://<레포 밖 app.json>
-#    app.json 키: DATABASE_URL, JWT_SECRET, PLATFORM_PRINCIPAL_ARN, AGENT_REPORT_MASTER_KEY, PUBLIC_API_URL, GITOPS_REPO_URL, GITOPS_WRITE_TOKEN, GITOPS_PUSH, REPL_SECRET_MASTER_KEY, PLATFORM_EGRESS_CIDRS, ANTHROPIC_API_KEY
+#    app.json 키: DATABASE_URL, JWT_SECRET, PLATFORM_PRINCIPAL_ARN, AGENT_REPORT_MASTER_KEY, PUBLIC_API_URL, CONNECT_TEMPLATE_URL, GITOPS_REPO_URL, GITOPS_WRITE_TOKEN, GITOPS_PUSH, REPL_SECRET_MASTER_KEY, PLATFORM_EGRESS_CIDRS, ANTHROPIC_API_KEY
 #    values.yaml secretKeys 에 적힌 키가 JSON 에 하나라도 없으면 그 컴포넌트의 비밀 동기화가 멈춘다 → 키를 더할 때는 값부터 넣고 helm upgrade
 aws secretsmanager put-secret-value --secret-id platform/cloudflared --secret-string file://<레포 밖 cf.json>
 
@@ -53,7 +53,7 @@ helm upgrade --install platform deploy/helm/platform -n platform --create-namesp
 helm upgrade --install platform deploy/helm/platform -n platform --create-namespace --reset-then-reuse-values --set apps.image.registry=725072160743.dkr.ecr.ap-northeast-2.amazonaws.com --set apps.image.tag=<태그>
 ```
 
-`platform/app` JSON 에 넣을 키: `components.*.secretKeys` 에 적은 것 전부 (`DATABASE_URL`, `JWT_SECRET`, `PLATFORM_PRINCIPAL_ARN`, `ANTHROPIC_API_KEY`). 키를 늘리면 JSON 과 `secretKeys` 를 같이 고친다.
+`platform/app` JSON 에 넣을 키: `components.*.secretKeys` 에 적은 것 전부 (`DATABASE_URL`, `JWT_SECRET`, `PLATFORM_PRINCIPAL_ARN`, `CONNECT_TEMPLATE_URL`, `ANTHROPIC_API_KEY` 등). 키를 늘리면 JSON 과 `secretKeys` 를 같이 고친다.
 
 Cloudflare 쪽: Zero Trust 에서 원격 관리 터널을 만들고 토큰을 `platform/cloudflared` 에 넣는다. 공개 호스트 이름의 서비스는 `http://web.platform.svc.cluster.local:8080` (web 배포가 올라온 뒤), 지표 주소(예: metrics.<도메인>)는 `http://otel-gateway.platform.svc.cluster.local:4318`.
 
