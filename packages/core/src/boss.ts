@@ -99,6 +99,8 @@ export const POLICY: Record<string, QueuePolicy> = {
   // DRAFT(ai): 동시 1건 (샌드박스 노드 1대). 재시도 없음(워커가 기한 뒤 REHEARSAL_TIMEOUT), 만료 30분, 생존 신호 10초(STEP_HEARTBEAT_SEC 와 같은 값)
   //   생존 신호가 없으면 죽은 agent-worker 의 작업이 만료(30분)까지 자리를 쥐어 뒤 리허설이 모두 기한을 넘긴다
   [QUEUES.sandboxRehearsal]: { policy: "singleton", retryLimit: 0, expireInSeconds: 1800, heartbeatSeconds: 10 },
+  // #242 DRAFT(ai): 재시도 없음 (못 읽으면 그 이유를 결과로 저장하고, 다음 화면 요청이 다시 넣는다). 명령 시간 초과 합이 1분 안쪽이라 5분이면 충분
+  [QUEUES.inventoryRefresh]: { policy: "stately", retryLimit: 0, expireInSeconds: 300 },
 };
 
 // Z32 (Z6-2): 워커가 kill -9 로 죽으면 쥐고 있던 작업이 expireInSeconds(기본 900초, apply 3600초) 동안 active로 남았다.
@@ -130,6 +132,8 @@ export const WORK_CONCURRENCY: Readonly<Record<string, number>> = {
   [QUEUES.import]: STEP_CONCURRENCY, [QUEUES.precheck]: STEP_CONCURRENCY, [QUEUES.plan]: STEP_CONCURRENCY,
   [QUEUES.apply]: STEP_CONCURRENCY, [QUEUES.deploy]: STEP_CONCURRENCY, [QUEUES.sync]: STEP_CONCURRENCY,
   [QUEUES.cutover]: STEP_CONCURRENCY, [QUEUES.rollback]: STEP_CONCURRENCY,
+  // #242 DRAFT(ai): 조회 한 건이 최대 18초쯤 걸려(명령 시간 초과 8초 + 10초) 1건씩이면 환경이 많을 때 화면이 밀린다. 같은 환경은 작업 키로 1건씩
+  [QUEUES.inventoryRefresh]: STEP_CONCURRENCY,
 };
 export const concurrencyOf = (name: string): number => WORK_CONCURRENCY[name] ?? 1;
 // G9-5 DRAFT(ai): 회사 공평 배분. 이전 단계 작업은 group = 회사 번호로 넣고(advance enqueueNext), 큐마다 한 회사가 동시에
@@ -183,6 +187,7 @@ const KEY_BY: Partial<Record<QueueName, (i: JobKeyIds) => string | undefined>> =
   "plan-expiry": (i) => i.migrationId,
   "apply": (i) => i.targetEnvId,
   "verify-connection": (i) => i.envId,
+  "inventory-refresh": (i) => i.envId,
   "security-scan": (i) => i.envId,
   "agent-run": (i) => i.agentRunId,
   // DRAFT(ai): 샌드박스 노드 하나 = 키 하나 (위 POLICY 의 동시 1건). 노드를 늘리면 노드마다 키를 나누고 vCluster 를 그 노드에 묶는다

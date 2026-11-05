@@ -181,7 +181,8 @@ export function NewMigrationPage() {
   // 출발은 연결된 환경만. 끝나지 않은 등록은 기억하지 않는다
   const connected = all.filter((env) => env.connectionStatus === 'connected');
   const source = connected.find((env) => env.id === sourceId);
-  const inventory = usePoll(sourceId ? () => api.envInventory(sourceId) : null, null, [sourceId]);
+  // 실자원은 worker 가 읽어 저장한다 (첫 응답엔 아직 없을 수 있음). 그래서 한 번만 읽지 않고 다시 읽는다
+  const inventory = usePoll(sourceId ? () => api.envInventory(sourceId) : null, 5_000, [sourceId]);
 
   const reset = () =>
     withTransition(() => {

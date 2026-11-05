@@ -1396,6 +1396,25 @@
                       ],
                       "additionalProperties": false
                     },
+                    "cloudRefresh": {
+                      "type": "object",
+                      "properties": {
+                        "refreshing": {
+                          "type": "boolean"
+                        },
+                        "checkedAt": {
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "refreshing",
+                        "checkedAt"
+                      ],
+                      "additionalProperties": false
+                    },
                     "base": {
                       "$ref": "#/components/schemas/EnvironmentStatus"
                     },
@@ -1665,6 +1684,7 @@
                     "provider",
                     "generatedAt",
                     "cloud",
+                    "cloudRefresh",
                     "base",
                     "apps",
                     "totals"

@@ -25,6 +25,7 @@ export const QUEUES = {
   idempotencyCleanup: "idempotency-cleanup",
   verifySweep: "verify-sweep",          // L4b: 연결 주기 재확인 훑기 (일정이 냄 → 환경마다 verify-connection periodic)
   sandboxRehearsal: "sandbox-rehearsal", // deploying 리허설 한 건 (워커가 냄 → agent-worker 가 vCluster 에서 돌림)
+  inventoryRefresh: "inventory-refresh", // #242: 환경 실자원 조회 (api 가 냄 → 워커가 관찰 역할을 빌려 읽고 environment_inventory 에 저장)
 } as const;
 export type QueueName = typeof QUEUES[keyof typeof QUEUES];
 
@@ -58,6 +59,10 @@ export const VerifyConnectionJob = EnvJob.extend({
   reason: z.enum(["user", "periodic"]),
 }).strict();
 export type VerifyConnectionJob = z.infer<typeof VerifyConnectionJob>;
+
+// #242: 환경 실자원 조회 작업. 환경 값은 믿지 않고 DB 에서 다시 읽는다
+export const InventoryRefreshJob = EnvJob.extend({}).strict();
+export type InventoryRefreshJob = z.infer<typeof InventoryRefreshJob>;
 
 // 이미지 빌드 작업 (설계 23번 3.3). 계획 승인 뒤 provisioning 에서 apply 앞에 서비스마다 하나.
 // 빌드 계획(BuildPlan)은 승인된 명세에서 온 값이지만, 워커는 이 내용을 믿지 않고 명세를 DB에서 다시 읽는다 (STUB 단계에선 아직 읽지 않음)
@@ -105,4 +110,5 @@ export const JOB_SCHEMAS = {
   "security-scan": EnvJob,
   "agent-run": AgentRunJob,
   "sandbox-rehearsal": SandboxRunJob,
+  "inventory-refresh": InventoryRefreshJob,
 } as const;
