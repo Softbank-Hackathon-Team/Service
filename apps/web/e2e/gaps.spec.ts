@@ -1,4 +1,4 @@
-import { expect, test, OTHER_TENANT, SEED, createMigration, expectStatus, openConsole, shot } from "./helpers";
+import { expect, test, OTHER_TENANT, SEED, confirmSpec, createMigration, expectStatus, openConsole, shot } from "./helpers";
 import type { Page, Route } from "@playwright/test";
 
 // Z104: 기능 명세 40행 대비 e2e 공백 메우기 (parallel/Z104/E2E-GAP.md 우선순위 1·2·7 + 로그인 모드 화면 전체)
@@ -10,7 +10,7 @@ const key = () => crypto.randomUUID();
 async function toAwaitingApproval(page: Page): Promise<string> {
   await openConsole(page);
   const id = await createMigration(page);
-  await page.getByRole("button", { name: /명세 확정/ }).click();
+  await confirmSpec(page);
   await expectStatus(page, "awaiting_approval");
   return id;
 }

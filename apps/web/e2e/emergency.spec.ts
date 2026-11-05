@@ -1,5 +1,5 @@
 import { type Page, type Request } from "@playwright/test";
-import { expect, test, SEED, createMigration, currentStatus, expectStatus, openConsole, shot } from "./helpers";
+import { expect, test, SEED, confirmSpec, createMigration, currentStatus, expectStatus, openConsole, shot } from "./helpers";
 
 // Z11: 비상 버튼(롤백·취소). 서버 경로는 apps/api/src/routes/control.ts
 // 롤백 시험은 rollback_window 칸에서 누른다. 워커 기본 창은 3초라 사람이(시험도) 누르기 빠듯하다
@@ -58,7 +58,7 @@ test("롤백: 실행 중엔 취소가 꺼지고, 롤백 가능 창에서 확인 
   await openConsole(page);
   const id = await createMigration(page);
   await expectStatus(page, "spec_review");
-  await page.getByRole("button", { name: /명세 확정/ }).click();
+  await confirmSpec(page);
   await expectStatus(page, "awaiting_approval");
   await page.getByRole("button", { name: "승인", exact: true }).click();
   await expectStatus(page, "approved");

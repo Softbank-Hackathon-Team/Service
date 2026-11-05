@@ -1,4 +1,4 @@
-import { expect, test, SEED, createMigration, currentStatus, expectStatus, openConsole, shot } from "./helpers";
+import { expect, test, SEED, confirmSpec, createMigration, currentStatus, expectStatus, openConsole, shot } from "./helpers";
 
 // 콘티 장면: S1(만들기) → S3(계획서) → S4(승인·실행·완료). 장면 번호는 Z24 8분판·Z28 5분판과 같다
 
@@ -16,7 +16,7 @@ test("만들기 → 명세 확정 → 계획 보기 → 승인 → 시작 → �
   await expect(page.locator(".mlist li", { hasText: id.slice(0, 8) })).toBeVisible();
   await shot(page, info, "01-spec-review");
 
-  await page.getByRole("button", { name: /명세 확정/ }).click();
+  await confirmSpec(page);
   await expectStatus(page, "awaiting_approval");
   mark.awaiting_approval = Date.now() - t0;
 
@@ -74,7 +74,7 @@ test("만들기 → 명세 확정 → 계획 보기 → 승인 → 시작 → �
 test("승인 대기 화면에 계획서와 예상 비용이 같이 보인다 (S2·S3)", async ({ page }) => {
   await openConsole(page);
   const id = await createMigration(page);
-  await page.getByRole("button", { name: /명세 확정/ }).click();
+  await confirmSpec(page);
   await expectStatus(page, "awaiting_approval");
   await expect(page.locator(".plan")).toBeVisible();
   const cost = page.locator(".cost");

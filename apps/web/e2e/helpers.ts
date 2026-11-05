@@ -1,6 +1,7 @@
 import { test as base, expect, type Page, type Route, type TestInfo } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { smokeConfirmReview } from "../../../tools/smoke-env";
 
 // 개발 seed(db/migrations/0002_seed_dev.sql)와 같은 값 = 0번 일꾼(worker)의 회사
 const BASE_SEED = {
@@ -115,6 +116,20 @@ export async function createMigration(page: Page): Promise<string> {
   await page.getByRole("button", { name: "새 이전 만들기" }).click();
   await expect(page.locator(".dhead h2 code")).toBeVisible();
   return currentMigrationId(page);
+}
+
+// 명세 검토의 사람 일을 끝내고 '명세 확정'을 누른다. 서버는 확인 칸이 남으면 409 GUARD_FAILED,
+//   출발 방화벽을 모르면 사전 점검(PC-V2-HUMAN)에서 spec_review 로 되돌린다.
+//   레거시 화면에는 이 칸을 고르는 UI 가 없어 smoke 와 같은 결정을 API 로 보낸다 (tools/smoke-env.ts)
+export async function confirmSpec(page: Page) {
+  await expectStatus(page, "spec_review");
+  await smokeConfirmReview(async (method, path, body) => {
+    const res = await page.request.fetch(`/api${path}`, { method, ...(body === undefined ? {} : { data: body }),
+      headers: { "x-dev-tenant": SEED.tenant, ...(method === "GET" ? {} : { "idempotency-key": crypto.randomUUID() }) } });
+    expect(res.ok(), `${method} ${path}: ${res.status()} ${await res.text()}`).toBe(true);
+    return res.json();
+  }, await currentMigrationId(page));
+  await page.getByRole("button", { name: /명세 확정/ }).click();
 }
 
 // 스크린샷: 시험 결과 폴더 + (E2E_SCREENSHOT_DIR 이 있으면) 그 폴더에도
