@@ -8,14 +8,15 @@ import { ensureReplUser, dropReplUser, replUserOf } from "../src/index.js";
 import { SOURCE, q, reachable } from "./harness.js";
 
 const up = await reachable(SOURCE);
-let skip: string | false = up ? false : "Postgres(55432) 없음: npm run db:up";
+// skip 은 test() 를 부를 때(파일을 읽을 때) 정해진다 → 판 확인도 before() 가 아니라 여기서 (before 에서 바꾸면 반영 안 됨)
+const pgVersion = up ? Number((await q(SOURCE, `SELECT current_setting('server_version_num')::int v`))[0].v) : 0;
+const skip: string | false = !up ? "Postgres(55432) 없음: npm run db:up"
+  : pgVersion < 160000 ? `PG16 멤버십 inherit 옵션 시험 (지금 ${pgVersion})` : false;
 const NAME = "repl_rdsinh_fwd", USER = replUserOf(NAME);
 const RDS = { ...SOURCE, provider: "rds" as const };
 
 before(async () => {
-  if (!up) return;
-  const [v] = await q(SOURCE, `SELECT current_setting('server_version_num')::int v`);
-  if (v.v < 160000) { skip = "PG16 멤버십 inherit 옵션 시험"; return; }
+  if (skip) return;
   await q(SOURCE, `DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='rds_replication') THEN CREATE ROLE rds_replication NOLOGIN; END IF; END $$`);
   await q(SOURCE, `DROP ROLE IF EXISTS ${USER}`);
 });
