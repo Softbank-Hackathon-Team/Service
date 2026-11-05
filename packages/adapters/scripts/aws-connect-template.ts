@@ -5,6 +5,7 @@
 import { AWS_DATA_READ_ACTIONS } from "../src/discover/data.js";
 import { AWS_COMMAND_ACTIONS, actionsOfCommands } from "../src/common/observe-permissions.js";
 import { AWS_OBSERVE_PENDING } from "../src/common/observe-pending.js";
+import { sourceDbLinkOperatePolicy } from "../src/aws/source-db-link.js";
 
 type Json = Record<string, unknown>;
 
@@ -121,6 +122,9 @@ export function buildAwsConnectTemplate(operatePolicy: Json, boundaryPolicy: Jso
           RoleName: OPERATE_ROLE_NAME, MaxSessionDuration: 3600,
           AssumeRolePolicyDocument: trust(),
           ManagedPolicyArns: [{ Ref: "OperatePolicy" }],
+          // APP-22 (가): 출발 RDS 보안 그룹에 도착 나가는 IP 규칙 열기·닫기. 표시 태그(svc:source-db-link=open)가 붙은 그룹에서만.
+          //   관리형 정책(svc-operate-policy)은 6,144자 한도에 거의 차서 인라인으로 (역할과 같이 지워짐 → cloud-zero 세기 바뀜 없음)
+          Policies: [{ PolicyName: "source-db-link", PolicyDocument: sourceDbLinkOperatePolicy() }],
         },
       },
       // 관찰 = EKS 기본 보기 정책(클러스터 범위)

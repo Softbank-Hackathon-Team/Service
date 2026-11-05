@@ -5,6 +5,7 @@ import { actionsFor } from "../src/common/actions.js";
 import { DATA_TYPES } from "../src/target/data.js";
 import { GRANT_TYPES_GCP } from "../src/target/grants.js";
 import { buildAwsConnectTemplate } from "./aws-connect-template.js";
+import { sourceDbLinkOperatePolicy } from "../src/aws/source-db-link.js";
 
 // 앱 모듈(infra/modules/*/app)을 plan/apply/destroy 하는 데 필요한 최소 권한을 파일로 뽑는다.
 // 계정 세팅 때 "실행 역할" 정책·GCP 커스텀 역할의 출발점. 값은 권한표 추정 → 실계정 거부 로그로 보정
@@ -107,6 +108,8 @@ writeFileSync(join(out, "aws-operate-role-policy.json"), JSON.stringify(awsOpera
 // 경계 정책 본문 (infra/modules/aws/env 가 같은 내용으로 만든다. 테스트가 둘을 대조)
 const awsBoundary = aws.appRoleBoundary("ap-northeast-2");
 writeFileSync(join(out, "aws-app-role-boundary.json"), JSON.stringify(awsBoundary, null, 2) + "\n");
+// APP-22 (가): 실행 역할 인라인 정책 source-db-link (기록용 파일. 템플릿이 같은 함수로 넣는다)
+writeFileSync(join(out, "aws-operate-source-db-link-policy.json"), JSON.stringify(sourceDbLinkOperatePolicy(), null, 2) + "\n");
 // 고객 연결 템플릿(CloudFormation): 위 두 정책을 그대로 넣는다 → 실행 정책과 어긋나지 않음
 writeFileSync(join(onboardingOut, "aws-connect.json"), JSON.stringify(buildAwsConnectTemplate(awsOperatePolicy, awsBoundary), null, 2) + "\n");
 for (const p of purposes) {

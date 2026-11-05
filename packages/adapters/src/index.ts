@@ -78,3 +78,6 @@ export { measureImportAccuracy, ACCURACY_COMPARED, ACCURACY_NOT_COMPARED, type M
 export { carryHumanEdits, CARRY_NOTE, type PrevSpecV2, type CarryReport } from "./import/carry.js";
 export { applyInclude, IncludeError, type IncludeFailure, type IncludeOut } from "./import/include.js";
 export { serviceMapV2, categoryOfTypeV2, type ServiceMapRowV2, type ServiceCategoryV2 } from "./common/service-map-v2.js";
+// APP-22 (가): 컷오버 전 도착 앱 → 출발 RDS 잇기 (계획·SQL·사전 점검은 순수, 열기·걷기만 AWS CLI)
+export { planSourceDbLink, sourceDbLinkGrantSql, sourceDbLinkDropSql, sourceDbLinkMode, sourceDbLinkInputFromEnv, sourceDbLinkPrecheck,
+  openSourceDbLinkAws, closeSourceDbLinkAws, SOURCE_DB_LINK_AWS_ACTIONS, SOURCE_DB_LINK_SG_TAG, sourceDbLinkOperatePolicy, type SqlRunner, type SourceDbLinkMode, type OpenAwsResult } from "./aws/source-db-link.js";
