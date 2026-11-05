@@ -1,3 +1,4 @@
+import { X509Certificate } from "node:crypto";
 import type { AgentReport } from "@svc/contracts";
 import type { CollectBase } from "./collect.js";
 
@@ -45,7 +46,29 @@ export function pgHbaFacts(lines: string[] | undefined): { tlsEnforced: boolean;
 
 const items = <T>(json: string): T[] => (JSON.parse(json) as { items?: T[] }).items ?? [];
 
-export async function collectFacts(o: CollectBase): Promise<FactsReport> {
+// 클러스터 안 sealed-secrets 컨트롤러가 공개 봉인 인증서를 내주는 주소 (kubeseal --fetch-cert 가 Service 프록시로 읽는 것과 같은 경로 /v1/cert.pem)
+// DRAFT(ai): 기본 설치(kube-system 의 sealed-secrets-controller, 포트 8080). 다르게 깔렸으면 SEALING_CERT_URL 로 바꾼다
+export const DEFAULT_SEALING_CERT_URL = "http://sealed-secrets-controller.kube-system.svc:8080/v1/cert.pem";
+
+/** 봉인 인증서 PEM 을 HTTP GET 으로 받는다. 200 이 아니거나 시간이 넘으면 throw (부르는 쪽이 칸을 비운다) */
+export async function fetchSealingCert(url: string, o: { fetch?: typeof fetch; timeoutMs?: number } = {}): Promise<string> {
+  const res = await (o.fetch ?? fetch)(url, { signal: AbortSignal.timeout(o.timeoutMs ?? 5000) });
+  if (!res.ok) throw new Error(`sealing cert ${res.status}`);
+  return res.text();
+}
+
+// 받은 PEM 이 인증서 하나로 읽히고 RSA 공개 키인지 (sealed-secrets 는 RSA 만 쓴다). 아니면 null
+export function sealingFact(pem: string, fetchedAt: string): FactsReport["sealing"] | null {
+  const certPem = `${pem.trim()}\n`;
+  if (!certPem.startsWith("-----BEGIN CERTIFICATE-----") || certPem.length > 16384) return null;
+  try {
+    if (new X509Certificate(certPem).publicKey.asymmetricKeyType !== "rsa") return null;
+  } catch { return null; }
+  return { certPem, fetchedAt };
+}
+
+// sealingCert: 봉인 인증서 PEM 을 가져오는 함수. 없으면 sealing 칸을 안 만든다. 실패해도 보고는 보낸다 (칸만 빠짐)
+export async function collectFacts(o: CollectBase & { sealingCert?: () => Promise<string> }): Promise<FactsReport> {
   const sentAt = (o.now?.() ?? new Date()).toISOString();
   // kubectl auth can-i 는 "no" 면 0 이 아닌 코드로 끝난다 → 실패 = L0
   const level = await o.kubectl(["auth", "can-i", "list", "nodes"]).then((s) => (s.trim() === "yes" ? "L1" : "L0"), () => "L0" as const);
@@ -65,5 +88,9 @@ export async function collectFacts(o: CollectBase): Promise<FactsReport> {
       tlsEnforced: hba.tlsEnforced, authMethods: hba.authMethods.slice(0, 20), exposed,
     };
   });
-  return { kind: "facts", agentVersion: o.agentVersion, sentAt, grants: { level }, dbs };
+  let sealing: FactsReport["sealing"] | null = null;
+  if (o.sealingCert) {
+    try { sealing = sealingFact(await o.sealingCert(), (o.now?.() ?? new Date()).toISOString()); } catch { sealing = null; }
+  }
+  return { kind: "facts", agentVersion: o.agentVersion, sentAt, grants: { level }, dbs, ...(sealing ? { sealing } : {}) };
 }

@@ -11,10 +11,12 @@
 //     토큰은 argv 대신 환경변수로 받는다 (ps·셸 기록에 덜 남는다)
 // 필요한 .env: AGENT_REPORT_URL, AGENT_KEY_ID, AGENT_KEY_SECRET (agent:key 가 만든 .agent-key.env 를 --env-file 로 더 읽어도 된다)
 //   선택: AGENT_NAMESPACE(app), AGENT_CNPG_CLUSTER(app-db), AGENT_KUBE_CONTEXT, AGENT_ARGOCD_NAMESPACE(argocd), AGENT_TENANT(svc.tenant 라벨로 거름)
+//         SEALING_CERT_URL(facts 에 실을 sealed-secrets 공개 인증서 주소, 기본 클러스터 안 sealed-secrets-controller.kube-system:8080)
 // 출력: 보낼 때마다 JSON 한 줄 {kind, status, ok, body}
 import { chmodSync, writeFileSync } from "node:fs";
 import {
-  collectArgoDeploys, collectDeploy, collectFacts, collectHeartbeat, collectSecurity, kubectlExec, sendAgentReport, type AgentReport,
+  collectArgoDeploys, collectDeploy, collectFacts, collectHeartbeat, collectSecurity, DEFAULT_SEALING_CERT_URL, fetchSealingCert, kubectlExec,
+  sendAgentReport, type AgentReport,
 } from "@svc/agent";
 
 const VERSION = "onprem-agent/0.1.0";
@@ -32,7 +34,8 @@ const send = async (r: AgentReport) => {
 };
 const heartbeat = async () => send(await collectHeartbeat({ ...base, namespace: ns, cnpgCluster: process.env.AGENT_CNPG_CLUSTER || "app-db" }));
 const security = async () => send(await collectSecurity(base));
-const facts = async () => send(await collectFacts(base));
+const sealingCert = () => fetchSealingCert(process.env.SEALING_CERT_URL || DEFAULT_SEALING_CERT_URL);
+const facts = async () => send(await collectFacts({ ...base, sealingCert }));
 // W4: 앱마다 마지막으로 보낸 (커밋, 결과). 같은 상태를 30초마다 다시 보내지 않는다 (재시작하면 한 번 다시 보낸다 = 해롭지 않음)
 const lastDeploy = new Map<string, string>();
 const deploys = async () => {

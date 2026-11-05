@@ -43,6 +43,13 @@ export const AgentReport = z.discriminatedUnion("kind", [
       // 이 Cluster 파드를 가리키는 NodePort·LoadBalancer Service 가 있으면 true (클러스터 밖에서 닿음)
       exposed: z.boolean().nullable(),
     }).strict()).max(50),
+    // 클러스터 안 sealed-secrets 컨트롤러의 공개 봉인 인증서 (GET /v1/cert.pem). 워커가 이전별 비밀을 SealedSecret 으로 봉인할 때 쓴다
+    //   못 받으면 칸이 없다 (보고 실패 아님). 선택 칸이라 이 칸을 모르는 예전 Agent 보고도 그대로 받는다
+    // DRAFT(ai): 최대 16384자 (RSA 4096 인증서 PEM 은 약 1.8KB)
+    sealing: z.object({
+      certPem: z.string().max(16384).startsWith("-----BEGIN CERTIFICATE-----"),
+      fetchedAt: z.iso.datetime({ offset: true }),
+    }).strict().optional(),
   }).strict(),
 ]);
 export type AgentReport = z.infer<typeof AgentReport>;
