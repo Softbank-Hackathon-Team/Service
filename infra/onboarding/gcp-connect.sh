@@ -299,6 +299,10 @@ ensure_cond_bindings "${OPERATE_SA}" "projects/${P}/roles/platform_operate_db_se
 # 플랫폼의 회사 전용 SA가 SA를 빌려 쓰게 함. 대상은 SA 단위(프로젝트 전체 아님), 주체는 이 회사 SA 하나
 ensure_token_creator "${PLAN_SA}"
 ensure_token_creator "${OPERATE_SA}"
+# Argo CD 허브가 이 회사 SA 로 도착 GKE 에 들어온다. GKE 는 API 접속 때 clusters.get 을 본다.
+# 프로젝트 권한은 이것뿐이고, 배포 권한은 앱 구역 RoleBinding 으로만 받는다 (kinds/namespace)
+ensure_role platform_hub_access --title="platform-hub-access" --description="platform argocd hub cluster access" --permissions="container.clusters.get" --stage=GA
+ensure_project_binding "${PLATFORM_SA}" "projects/${P}/roles/platform_hub_access"
 
 if [ "${DRY_RUN:-0}" = "1" ]; then
   PROJECT_NUMBER="<DRY_RUN>"

@@ -7,6 +7,7 @@ import { specV2ForPlan, terraformRuntimeOf } from "@svc/adapters";
 import { latestAcceptedSpecV2, loadLatestApproval, loadPlanById } from "@svc/core";
 import { DbWriterError, dbWriterApplies, loadWriterState, prepareSourceWriter, saveWriterState, writerVar, type ManagedProvider, type SecretPut } from "../db-writer.js";
 import { factsDrift, importedFor, targetFactsOf } from "./plan-facts.js";
+import { gcpPlatformSa } from "../platform.js";
 import { appLinkFromEnv } from "@svc/dbproxy";
 import { tenantSlug } from "../gitops/bundle.js";
 import { stableHash } from "./_step.js";
@@ -39,6 +40,17 @@ export interface RealApplyDeps {
   credEnv?: Record<string, string>;
   /** APP-22: 출발 전용 계정 비밀번호를 도착 그릇에 넣기 (시험이 가짜로 바꿈) */
   putSecret?: SecretPut;
+  /** 회사 전용 플랫폼 SA 이름 (시험이 가짜로 바꿈) */
+  gcpPlatformSa?: (tenantId: string) => Promise<string | undefined>;
+}
+
+// Argo CD 허브가 고객 GKE 에 들어오는 신원. 회사 사실이라 계획 지문 밖에 두고 apply 때 더한다 (db_writer_json 과 같은 자리).
+// 비면 앱 구역에 허브 권한을 안 만든다. 그러면 허브 배포가 거절되어 Argo 상태로 드러난다
+async function hubPrincipalVar(i: RealApplyInput, env: NodeJS.ProcessEnv, d: RealApplyDeps): Promise<Record<string, string>> {
+  const project = env.GCP_PLATFORM_PROJECT?.trim();
+  if (i.provider !== "gcp" || !project) return {};
+  const sa = await (d.gcpPlatformSa ?? gcpPlatformSa)(i.tenantId);
+  return sa ? { hub_principal: `${sa}@${project}.iam.gserviceaccount.com` } : {};
 }
 
 interface Prepared {
@@ -84,7 +96,7 @@ async function prepare(i: RealApplyInput, d: RealApplyDeps): Promise<Prepared | 
   if (filled.missing.length)
     return { ok: false, failureCode: "TF_FACTS_MISSING", detail: { ...base, missing: filled.missing.map(factEnvName) } };
 
-  return { env, base, target, imp, facts, noCluster, vars: filled.vars as Record<string, unknown> };
+  return { env, base, target, imp, facts, noCluster, vars: { ...(filled.vars as Record<string, unknown>), ...(await hubPrincipalVar(i, env, d)) } };
 }
 
 export async function realApply(i: RealApplyInput, d: RealApplyDeps = {}): Promise<RealApplyOutcome> {

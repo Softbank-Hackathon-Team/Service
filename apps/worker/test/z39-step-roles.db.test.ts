@@ -45,7 +45,7 @@ test("apply 단계: 도착 gcp 실행 역할 1건 발급 → 단계 끝에 회�
   const row = rows[0]!;
   assert.deepEqual([row.stage, row.step, row.status, row.revoke_reason, row.requested_ttl_sec, row.stub],
     ["apply", "apply", "revoked", "apply_done", 900, true]);
-  assert.ok(row.actions_count > 0 && row.actions_count <= 50);
+  assert.ok(row.actions_count > 0 && row.actions_count <= 200);   // 상한은 STEP_ROLE_MAX_ACTIONS (packages/security/src/step-roles.ts)
   assert.equal(row.role_ref, "svc-operate@z39-project.iam.gserviceaccount.com");   // environments.account_id 로 만든 참조
   assert.doesNotMatch(JSON.stringify(await ledger(M1)), /mock-token|mock-secret|ASIAMOCK/);
   const issued = await audits("temp_role.issued");

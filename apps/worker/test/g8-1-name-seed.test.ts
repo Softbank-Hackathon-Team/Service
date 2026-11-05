@@ -52,6 +52,22 @@ test("같은 앱·같은 환경이라도 이전이 다르면 DB 이름·계획 �
   assert.notEqual(names[0]!.role, names[1]!.role, "IAM 역할 이름");
 });
 
+test("허브 신원: gcp 만 회사 SA 를 hub_principal 로 넘기고, 계획 지문은 그대로", async () => {
+  const GCP = { TF_FACT_NETWORK_ID: "net-1", TF_FACT_CLUSTER_NAME: "finals-gke", TF_FACT_CLUSTER_LOCATION: "asia-northeast3-a" };
+  const SA = "t-0123456789abcdef0123456789ab";
+  const go = async (provider: "aws" | "gcp", env: Record<string, string>, sa: string | undefined) => {
+    const f = fakeRunner();
+    const r = await realApply({ migrationId: MID_A, tenantId: TENANT, envId: ENV_ID, provider, accountId: provider === "gcp" ? "demo-project" : "111122223333",
+      spec, plan: plan(provider, MID_A) }, { env, runner: f.runner, gcpPlatformSa: async () => sa });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    return f.seen[0]!.hub_principal;
+  };
+  assert.equal(await go("gcp", { ...GCP, GCP_PLATFORM_PROJECT: "platform-proj" }, SA), `${SA}@platform-proj.iam.gserviceaccount.com`);
+  assert.equal(await go("gcp", GCP, SA), undefined, "플랫폼 프로젝트 설정이 없으면 안 넘긴다");
+  assert.equal(await go("gcp", { ...GCP, GCP_PLATFORM_PROJECT: "platform-proj" }, undefined), undefined, "회사 SA 가 없으면 안 넘긴다");
+  assert.equal(await go("aws", { ...FACTS, GCP_PLATFORM_PROJECT: "platform-proj" }, SA), undefined, "aws 는 해당 없음");
+});
+
 test("거부: 다른 이전의 계획서로 apply 하면 TF_PLAN_DRIFT, 배포 값도 이전 번호가 다르면 승인 지문과 다름", async () => {
   const f = fakeRunner();
   const r = await realApply({ migrationId: MID_B, tenantId: TENANT, envId: ENV_ID, provider: "aws", accountId: "111122223333",

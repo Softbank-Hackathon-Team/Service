@@ -96,6 +96,15 @@ variable "namespace_json" {
     error_message = "namespace_json: JSON 배열이어야 함."
   }
 }
+# Argo CD 허브가 들어오는 회사 전용 플랫폼 SA (워커가 apply 때 넣는다). 빈 값이면 앱 구역에 허브 권한을 안 만든다
+variable "hub_principal" {
+  type    = string
+  default = ""
+  validation {
+    condition     = var.hub_principal == "" || can(regex("^t-[0-9a-f]{28}@[a-z][a-z0-9-]{4,28}[a-z0-9]\\.iam\\.gserviceaccount\\.com$", var.hub_principal))
+    error_message = "hub_principal: 회사 전용 플랫폼 SA(t-<16진 28자>@<프로젝트>.iam.gserviceaccount.com)만 된다."
+  }
+}
 variable "identity_json" {
   type    = string
   default = "[]"
@@ -300,12 +309,13 @@ provider "kubernetes" {
 }
 
 module "namespace" {
-  source       = "../kinds/namespace"
-  for_each     = local.namespace
-  cfg          = each.value
-  app_name     = var.app_name
-  tenant_label = local.tenant_label
-  depends_on   = [google_project_service.required]
+  source        = "../kinds/namespace"
+  for_each      = local.namespace
+  cfg           = each.value
+  app_name      = var.app_name
+  tenant_label  = local.tenant_label
+  hub_principal = var.hub_principal
+  depends_on    = [google_project_service.required]
 }
 
 module "postgres" {

@@ -20,6 +20,16 @@ includedPermissions:
 - container.namespaces.delete
 - container.namespaces.get
 - container.namespaces.update
+- container.roleBindings.create
+- container.roleBindings.delete
+- container.roleBindings.get
+- container.roleBindings.update
+- container.roles.bind
+- container.roles.create
+- container.roles.delete
+- container.roles.escalate
+- container.roles.get
+- container.roles.update
 - iam.serviceAccounts.create
 - iam.serviceAccounts.delete
 - iam.serviceAccounts.get
