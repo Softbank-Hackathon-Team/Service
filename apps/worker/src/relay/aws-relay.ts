@@ -561,7 +561,8 @@ export async function provisionRelay(d: RelayAwsDeps, plan: RelayPlan): Promise<
         if (e instanceof RelayError && /^(UnauthorizedOperation|AccessDenied)/.test(e.awsCode ?? ""))
           throw new RelayError("RELAY_DB_INGRESS_DENIED", `출발 RDS 보안 그룹 ${plan.dbIngress.groupId} 이 중계기(보안 그룹 ${sgId})에서 들어오는 TCP ${plan.dbIngress.port} 를 받지 않고, 열 권한도 없다. `
             + `워커의 출발 DB 접속과 온프레 정방향 터널에 필요하다. 연결 스택을 새 템플릿으로 업데이트하고(SourceDbSecurityGroupId=${plan.dbIngress.groupId}) 다시 승인하거나, `
-            + `고객이 그 보안 그룹에 들어오기 TCP ${plan.dbIngress.port} ← ${sgId} 를 직접 연 뒤 다시 승인한다`, e.awsCode);
+            // 고객이 직접 열 때는 VPC 대역으로 안내한다: 중계 보안 그룹을 참조하는 고객 규칙(우리 태그 없음)이 남으면 정리 때 중계 보안 그룹을 못 지운다
+            + `고객이 그 보안 그룹에 들어오기 TCP ${plan.dbIngress.port} ← 중계기가 있는 VPC 대역(중계 보안 그룹 참조는 쓰지 않는다)을 직접 연 뒤 다시 승인한다`, e.awsCode);
         throw e;
       }
       dbIngressRuleId = a.SecurityGroupRules?.[0]?.SecurityGroupRuleId;
