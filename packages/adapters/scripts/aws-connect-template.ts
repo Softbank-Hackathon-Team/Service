@@ -1,10 +1,26 @@
 // 고객 AWS 계정 연결 템플릿(CloudFormation JSON) 생성. 입력은 export-permissions.ts가 만든 정책 문서 두 개.
-// 순수 함수(파일·네트워크 없음): 같은 입력이면 같은 템플릿. 실행 정책과 템플릿 속 정책이 어긋나지 않게 한 곳에서 만든다
+// 순수 함수(네트워크 없음, 파일은 레포 안 중계기 권한 원본만 읽음): 같은 입력이면 같은 템플릿. 실행 정책과 템플릿 속 정책이 어긋나지 않게 한 곳에서 만든다
 // DRAFT(ai): 생성기 안에 두되 파일을 분리했다. 단독으로 실행·시험할 수 있게(의존성 0)
 
+import { readFileSync } from "node:fs";
 import { AWS_DATA_READ_ACTIONS } from "../src/discover/data.js";
 import { AWS_COMMAND_ACTIONS, actionsOfCommands } from "../src/common/observe-permissions.js";
 import { AWS_OBSERVE_PENDING } from "../src/common/observe-pending.js";
+import { sourceDbLinkOperatePolicy } from "../src/aws/source-db-link.js";
+
+// 온프레 복제 중계기 권한. 원본 = infra/permissions/aws-relay-statements.json (worker relay/aws-relay.ts 가 부르는 동작)
+// SourceDbEgressToRelay 는 출발 RDS 보안 그룹 하나로 좁혀서 스택 매개변수 SourceDbSecurityGroupId 로 받는다.
+// DRAFT(ai): 매개변수 기본값은 빈 값. 비우면 이 문장을 빼서 온프레 복제를 안 쓰는 고객의 스택이 그대로 만들어진다 (그때 중계기 RDS 나가기 규칙은 AccessDenied)
+const RELAY_SG_PARAM_SID = "SourceDbEgressToRelay";
+export function relayOperatePolicy() {
+  const doc = JSON.parse(readFileSync(new URL("../../../infra/permissions/aws-relay-statements.json", import.meta.url), "utf8")) as { Version: string; Statement: ({ Sid: string; Resource: unknown } & Json)[] };
+  return {
+    Version: doc.Version,
+    Statement: doc.Statement.map((x) => x.Sid !== RELAY_SG_PARAM_SID ? x : {
+      "Fn::If": ["HasSourceDbSecurityGroup", { ...x, Resource: { "Fn::Join": ["", String(x.Resource).split(/\$\{(AccountId|SourceDbSecurityGroupId)\}/).map((part) => part === "AccountId" ? { Ref: "AWS::AccountId" } : part === "SourceDbSecurityGroupId" ? { Ref: part } : part)] } }, { Ref: "AWS::NoValue" }],
+    }),
+  };
+}
 
 type Json = Record<string, unknown>;
 
@@ -87,8 +103,13 @@ export function buildAwsConnectTemplate(operatePolicy: Json, boundaryPolicy: Jso
         Type: "String", Default: "true", AllowedValues: ["true", "false"],
         Description: "같은 계정에 platform-app-boundary 정책이 이미 있으면 false (이름 충돌 방지)",
       },
+      SourceDbSecurityGroupId: {
+        Type: "String", Default: "", AllowedPattern: "^$|^sg-[0-9a-f]{8,17}$",
+        Description: "온프레 복제를 쓸 때 출발 RDS 보안 그룹 ID. 비우면 중계기의 RDS 나가기 규칙 권한을 넣지 않는다",
+      },
     },
     Conditions: {
+      HasSourceDbSecurityGroup: { "Fn::Not": [{ "Fn::Equals": [{ Ref: "SourceDbSecurityGroupId" }, ""] }] },
       CreateBoundary: { "Fn::Equals": [{ Ref: "CreateBoundaryPolicy" }, "true"] },
       HasArgoHub: { "Fn::Not": [{ "Fn::Equals": [{ Ref: "ArgoHubRoleArn" }, ""] }] },
     },
@@ -121,6 +142,12 @@ export function buildAwsConnectTemplate(operatePolicy: Json, boundaryPolicy: Jso
           RoleName: OPERATE_ROLE_NAME, MaxSessionDuration: 3600,
           AssumeRolePolicyDocument: trust(),
           ManagedPolicyArns: [{ Ref: "OperatePolicy" }],
+          // APP-22 (가): 출발 RDS 보안 그룹에 도착 나가는 IP 규칙 열기·닫기. 표시 태그(svc:source-db-link=open)가 붙은 그룹에서만.
+          //   관리형 정책(svc-operate-policy)은 6,144자 한도에 거의 차서 인라인으로 (역할과 같이 지워짐 → cloud-zero 세기 바뀜 없음)
+          Policies: [
+            { PolicyName: "source-db-link", PolicyDocument: sourceDbLinkOperatePolicy() },
+            { PolicyName: "relay", PolicyDocument: relayOperatePolicy() },
+          ],
         },
       },
       // 관찰 = EKS 기본 보기 정책(클러스터 범위)

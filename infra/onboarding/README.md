@@ -78,6 +78,7 @@ gcloud iam roles update platform_operate --project=<전용> --add-permissions=co
 
 순서: 연결 화면에서 `PLATFORM_SA` 복사 → Cloud Shell에서 `PLATFORM_SA=... PROJECT_ID=<원래> TARGET_PROJECT_ID=<전용> ROLE_DIR=./permissions bash gcp-connect.sh`
 (전용 프로젝트가 아직 없으면 `CREATE_TARGET_PROJECT=1`, 결제 계정을 따로 쓰려면 `BILLING_ACCOUNT=...`) → 출력된 두 프로젝트를 화면에 입력 → "확인".
+전용 프로젝트에는 연결 확인·빌리기·첫 up 이 부르는 API 9개(cloudresourcemanager·serviceusage·iam·iamcredentials·sts·container·sqladmin·compute·secretmanager)를, 원래 프로젝트에는 iamcredentials·cloudresourcemanager 를 켠다(켜져 있으면 건너뜀).
 `DRY_RUN=1`이면 명령만 출력한다. `PLATFORM_SA` 이름 규칙이 맞지 않거나 `TARGET_PROJECT_ID`가 없거나 원래 프로젝트와 같으면 아무것도 만들기 전에 멈춘다.
 
 ### 이미 연결한 고객: 관찰 역할 권한 갱신
