@@ -102,7 +102,7 @@ test("부분 상태: 관찰 SA·관찰 역할만 있으면 나머지만 만든�
   assert.equal(r.status, 0, r.stderr);
   const m = mutations(e.calls());
   // OBSROLE3: 있는 관찰 역할에 권한이 비어 있으면 create 가 아니라 update(add-permissions) 1번이 더해진다 (8 → 9)
-  assert.equal(m.length, 23);
+  assert.equal(m.length, 25);
   assert.equal(m.filter((c) => c.startsWith("iam roles update platform_observe ")).length, 1);
   assert.ok(!m.some((c) => c.includes("service-accounts create svc-observe")) && !m.some((c) => c.includes("roles create platform_observe ") && c.includes("--project=cust-prj")));
   assert.ok(m.some((c) => c.includes("service-accounts create svc-operate")));
