@@ -35,19 +35,20 @@ export function promQueries(tenantId: string, migrationId: string, side: "source
 export function prometheusMetrics(o: { baseUrl: string; tenantId: string; fetch?: FetchLike; baselineP95Ms: number; windowSec?: number;
   authHeader?: () => Promise<string | undefined> }): MetricsSource {
   const f = o.fetch ?? (globalThis.fetch as unknown as FetchLike);
-  async function scalar(q: string): Promise<number> {
+  async function scalar(q: string, missing = 0): Promise<number> {
     const url = `${o.baseUrl.replace(/\/$/, "")}/api/v1/query?query=${encodeURIComponent(q)}`;
     const auth = await o.authHeader?.();
     const res = await f(url, { method: "GET", headers: auth ? { authorization: auth } : {} });
     const body = await res.json() as { status?: string; data?: { result?: Array<{ value?: [number, string] }> } };
     if (res.status >= 400 || body.status !== "success") throw new Error(`Prometheus 질의 실패 HTTP ${res.status}`);
     const v = body.data?.result?.[0]?.value?.[1];
-    const n = v === undefined ? 0 : Number(v);
+    const n = v === undefined ? missing : Number(v);
     return Number.isFinite(n) ? n : NaN;   // 표본 0 이면 histogram_quantile 이 NaN
   }
   async function side(id: string, s: "source" | "target") {
     const q = promQueries(o.tenantId, id, s, o.windowSec);
-    const [total, err, p95s] = await Promise.all([scalar(q.total), scalar(q.err5xx), scalar(q.p95)]);
+    // 지연 지표가 없으면(cloudflared 도착) p95 결과가 빈 줄이다. 0ms 가 아니라 NaN = 못 잼 (rule.ts latencyMeasured)
+    const [total, err, p95s] = await Promise.all([scalar(q.total), scalar(q.err5xx), scalar(q.p95, NaN)]);
     return { n: Math.round(total), err5xx: Math.round(err), latenciesMs: [], p95Ms: p95s * 1000 };
   }
   return {

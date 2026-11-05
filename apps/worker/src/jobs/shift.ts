@@ -132,6 +132,7 @@ export async function handleShift(raw: unknown) {
                   observeRequiredSec: r.observeRequiredSec, ...(r.stepShares ? { stepShares: r.stepShares } : {}),
                   // pf-d FM-TRF-10: 가짜 지표(PROM_URL 없음)면 몫은 실측이 아니다 → 화면·감사에서 "실측"으로 읽지 않게 표시
                   metricsSource: r.metricsSource,
+                  ...(r.latencyUnmeasured ? { latencyUnmeasured: "지연 미측정: 도착 응답 시간 지표가 없어 오류율로만 판정" } : {}),
                   // pf-d FM-TRF-21: 전환기가 mock 이면 진짜 LB 는 안 바뀌었다 (TRAFFIC_PROVIDER 비었음). 실회차에서 조용히 성공처럼 안 보이게
                   trafficProvider: sw.provider, trafficLbFrom: lbFrom,
                   ...(sw.provider === "mock" ? { trafficStub: "STUB: mock 전환기 (TRAFFIC_PROVIDER 없음) — Cloudflare LB 가중치는 안 바뀜" } : {}),
