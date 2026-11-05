@@ -9,7 +9,7 @@ const lbHist = [];
 const lbSeen = (o) => lbHist.push({ t: Date.now(), w: { ...(o.random_steering?.pool_weights ?? {}) }, pools: [...(o.default_pools ?? [])] });
 const id = () => randomBytes(16).toString("hex");
 const send = (res, code, result, errors = []) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify({ success: code < 400, errors, result })); };
-http.createServer(async (req, res) => {
+const api = http.createServer(async (req, res) => {
   let body = ""; for await (const c of req) body += c;
   const b = body ? JSON.parse(body) : undefined;
   const u = new URL(req.url, "http://x"); const p = u.pathname.replace("/client/v4", "");
@@ -53,7 +53,9 @@ http.createServer(async (req, res) => {
     coll.delete(rid); return send(res, 200, { id: rid });
   }
   send(res, 405, null, []);
-}).listen(Number(process.env.PORT ?? 8787), () => console.log("fake cf up"));
+});
+// PORT=0 이면 운영체제가 빈 포트를 준다. 시험은 이 줄에서 포트를 읽는다
+api.listen(Number(process.env.PORT ?? 8787), () => console.log(`fake cf up ${api.address().port}`));
 
 // Z70-3: 가짜 엣지 (EDGE_PORT 가 있을 때만). cf-check --probe 를 VM 에서 흉내 낸다 (CF_CHECK_PROBE_ADDR=127.0.0.1, CF_CHECK_PROBE_PORT, CF_CHECK_PROBE_SCHEME=http)
 //   FAKE_EDGE=522 : 오리진 443 이 닫힌 경우. FAKE_EDGE_DELAY_MS(기본 1000) 뒤 522, x-served-by 없음 (Cloudflare 실제는 약 20초)
