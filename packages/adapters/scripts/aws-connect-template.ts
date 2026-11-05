@@ -9,12 +9,17 @@ import { AWS_OBSERVE_PENDING } from "../src/common/observe-pending.js";
 import { sourceDbLinkOperatePolicy } from "../src/aws/source-db-link.js";
 
 // 온프레 복제 중계기 권한. 원본 = infra/permissions/aws-relay-statements.json (worker relay/aws-relay.ts 가 부르는 동작)
-// TODO(human): SourceDbEgressToRelay 는 출발 RDS 보안 그룹 ID 를 ${SourceDbSecurityGroupId} 로 받는다.
-//   스택 매개변수를 늘릴지 태그 조건으로 바꿀지 정해지기 전까지 템플릿에 넣지 않는다 (빠지면 중계기 RDS 나가기 규칙 단계가 AccessDenied)
-const RELAY_PENDING_SIDS = new Set(["SourceDbEgressToRelay"]);
+// SourceDbEgressToRelay 는 출발 RDS 보안 그룹 하나로 좁혀서 스택 매개변수 SourceDbSecurityGroupId 로 받는다.
+// DRAFT(ai): 매개변수 기본값은 빈 값. 비우면 이 문장을 빼서 온프레 복제를 안 쓰는 고객의 스택이 그대로 만들어진다 (그때 중계기 RDS 나가기 규칙은 AccessDenied)
+const RELAY_SG_PARAM_SID = "SourceDbEgressToRelay";
 export function relayOperatePolicy() {
-  const doc = JSON.parse(readFileSync(new URL("../../../infra/permissions/aws-relay-statements.json", import.meta.url), "utf8")) as { Version: string; Statement: { Sid: string }[] };
-  return { Version: doc.Version, Statement: doc.Statement.filter((x) => !RELAY_PENDING_SIDS.has(x.Sid)) };
+  const doc = JSON.parse(readFileSync(new URL("../../../infra/permissions/aws-relay-statements.json", import.meta.url), "utf8")) as { Version: string; Statement: ({ Sid: string; Resource: unknown } & Json)[] };
+  return {
+    Version: doc.Version,
+    Statement: doc.Statement.map((x) => x.Sid !== RELAY_SG_PARAM_SID ? x : {
+      "Fn::If": ["HasSourceDbSecurityGroup", { ...x, Resource: { "Fn::Join": ["", String(x.Resource).split(/\$\{(AccountId|SourceDbSecurityGroupId)\}/).map((part) => part === "AccountId" ? { Ref: "AWS::AccountId" } : part === "SourceDbSecurityGroupId" ? { Ref: part } : part)] } }, { Ref: "AWS::NoValue" }],
+    }),
+  };
 }
 
 type Json = Record<string, unknown>;
@@ -98,8 +103,13 @@ export function buildAwsConnectTemplate(operatePolicy: Json, boundaryPolicy: Jso
         Type: "String", Default: "true", AllowedValues: ["true", "false"],
         Description: "같은 계정에 platform-app-boundary 정책이 이미 있으면 false (이름 충돌 방지)",
       },
+      SourceDbSecurityGroupId: {
+        Type: "String", Default: "", AllowedPattern: "^$|^sg-[0-9a-f]{8,17}$",
+        Description: "온프레 복제를 쓸 때 출발 RDS 보안 그룹 ID. 비우면 중계기의 RDS 나가기 규칙 권한을 넣지 않는다",
+      },
     },
     Conditions: {
+      HasSourceDbSecurityGroup: { "Fn::Not": [{ "Fn::Equals": [{ Ref: "SourceDbSecurityGroupId" }, ""] }] },
       CreateBoundary: { "Fn::Equals": [{ Ref: "CreateBoundaryPolicy" }, "true"] },
       HasArgoHub: { "Fn::Not": [{ "Fn::Equals": [{ Ref: "ArgoHubRoleArn" }, ""] }] },
     },

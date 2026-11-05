@@ -34,9 +34,27 @@
         "false"
       ],
       "Description": "같은 계정에 platform-app-boundary 정책이 이미 있으면 false (이름 충돌 방지)"
+    },
+    "SourceDbSecurityGroupId": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "^$|^sg-[0-9a-f]{8,17}$",
+      "Description": "온프레 복제를 쓸 때 출발 RDS 보안 그룹 ID. 비우면 중계기의 RDS 나가기 규칙 권한을 넣지 않는다"
     }
   },
   "Conditions": {
+    "HasSourceDbSecurityGroup": {
+      "Fn::Not": [
+        {
+          "Fn::Equals": [
+            {
+              "Ref": "SourceDbSecurityGroupId"
+            },
+            ""
+          ]
+        }
+      ]
+    },
     "CreateBoundary": {
       "Fn::Equals": [
         {
@@ -857,6 +875,38 @@
                     "ec2:RevokeSecurityGroupIngress"
                   ],
                   "Resource": "arn:aws:ec2:ap-northeast-2:*:security-group-rule/*"
+                },
+                {
+                  "Fn::If": [
+                    "HasSourceDbSecurityGroup",
+                    {
+                      "Sid": "SourceDbEgressToRelay",
+                      "Effect": "Allow",
+                      "Action": [
+                        "ec2:AuthorizeSecurityGroupEgress",
+                        "ec2:RevokeSecurityGroupEgress"
+                      ],
+                      "Resource": {
+                        "Fn::Join": [
+                          "",
+                          [
+                            "arn:aws:ec2:ap-northeast-2:",
+                            {
+                              "Ref": "AWS::AccountId"
+                            },
+                            ":security-group/",
+                            {
+                              "Ref": "SourceDbSecurityGroupId"
+                            },
+                            ""
+                          ]
+                        ]
+                      }
+                    },
+                    {
+                      "Ref": "AWS::NoValue"
+                    }
+                  ]
                 }
               ]
             }
