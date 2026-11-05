@@ -253,7 +253,10 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
       args = ["secretsmanager", "get-secret-value", "--secret-id", out.db_master_secret_arn, "--query", "SecretString", "--output", "text"];
     } else if (provider === "gcp" && out.db_password_secret_id) {
       cmd = env.GCLOUD_BIN ?? "gcloud";
-      args = ["secrets", "versions", "access", "latest", `--secret=${out.db_password_secret_id}`, ...(env.TF_FACT_PROJECT_ID ? [`--project=${env.TF_FACT_PROJECT_ID}`] : [])];
+      // 도착 프로젝트 = 빌린 토큰 env 의 CLOUDSDK_CORE_PROJECT (gcpTerraformEnv 가 gcp_target_project 로 채움). 없을 때만 예전 TF_FACT_PROJECT_ID
+      //   (예전엔 TF_FACT_PROJECT_ID 가 먼저라 워커 env 에 남은 데모 프로젝트로 다른 회사의 비밀을 찾을 수 있었다)
+      const project = env.CLOUDSDK_CORE_PROJECT || env.TF_FACT_PROJECT_ID;
+      args = ["secrets", "versions", "access", "latest", `--secret=${out.db_password_secret_id}`, ...(project ? [`--project=${project}`] : [])];
     }
     if (!cmd) return false;
     const r = await exec(cmd, args, { cwd: dir, env: o.secretEnv ? childEnv(o.secretEnv()) : cenv, signal, timeoutMs: 60_000 });

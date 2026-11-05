@@ -37,7 +37,7 @@ export type PlanCostSummary = z.infer<typeof PlanCostSummary>;
 // PA4: 승인할 때 사람이 하나씩 확인해야 하는 항목 종류 (계획 26 3.1)
 //   cost·failure_cost_policy = 항상 / runtime_change·build = IR v2 승인 행 / precheck_warn = 사전 점검 warn / low_confidence = 문턱값(A3)
 // G7-4: provision_reuse = 새로 만들지 않고 이미 있는 도착 자원을 다시 씀 (imported.json). 사람이 그 사실을 보고 확인
-export const PlanAckKind = z.enum(["cost", "failure_cost_policy", "runtime_change", "build", "precheck_warn", "low_confidence", "tls_relaxed", "host_access", "public_bucket", "provision_reuse"]);   // SSL-1: tls_relaxed, HN-1: host_access, B-2: public_bucket
+export const PlanAckKind = z.enum(["cost", "failure_cost_policy", "runtime_change", "build", "precheck_warn", "low_confidence", "tls_relaxed", "host_access", "public_bucket", "provision_reuse", "env_layer_create"]);   // env_layer_create: 도착 GKE 를 새로 만든다 (비용)   // SSL-1: tls_relaxed, HN-1: host_access, B-2: public_bucket
 export type PlanAckKind = z.infer<typeof PlanAckKind>;
 export const PlanAcknowledgement = z.object({
   id: z.string().min(1),                // 승인 본문 acks 가 이 id 를 덮어야 한다 (예: cost, runtime_change:<자원 id>)
@@ -78,6 +78,15 @@ export const PlanDoc = z.object({
     source: z.string().max(100),
     resources: z.array(z.string().max(300)).max(200),
     outputsHash: z.string(),
+  }).strict().optional(),
+  // 환경 층 (도착 GCP 프로젝트의 VPC·GKE·AR·ESO, worker env-layer.ts). 환경 층 DB 사실을 쓰거나(existing) 이 apply 가 만들 때(create)만 칸.
+  //   TF_FACT_* 로 사실을 받는 예전 길·흉내 길은 칸 없음 = 예전 지문 그대로.
+  //   create: 계획 때는 클러스터 이름·네트워크를 모른다 → apply 는 그 키를 targetFacts 비교에서 빼고 varsHash(모듈 입력 지문)·moduleDigest 로 대조
+  envLayer: z.object({
+    mode: z.enum(["existing", "create"]),
+    moduleDigest: z.string().max(100),
+    varsHash: z.string().max(100).optional(),   // create 일 때만
+    notice: z.string().max(500).optional(),     // create 일 때만: 사람이 보는 고지
   }).strict().optional(),
   planHash: z.string(),
   expiresAt: z.string(),

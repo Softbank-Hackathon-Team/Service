@@ -10526,6 +10526,7 @@ components:
         - "host_access"
         - "public_bucket"
         - "provision_reuse"
+        - "env_layer_create"
     PlanAcknowledgement:
       type: "object"
       properties:
@@ -10665,6 +10666,27 @@ components:
             - "source"
             - "resources"
             - "outputsHash"
+          additionalProperties: false
+        envLayer:
+          type: "object"
+          properties:
+            mode:
+              type: "string"
+              enum:
+                - "existing"
+                - "create"
+            moduleDigest:
+              type: "string"
+              maxLength: 100
+            varsHash:
+              type: "string"
+              maxLength: 100
+            notice:
+              type: "string"
+              maxLength: 500
+          required:
+            - "mode"
+            - "moduleDigest"
           additionalProperties: false
         planHash:
           type: "string"

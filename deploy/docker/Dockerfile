@@ -171,6 +171,8 @@ ENV PERMISSIONS_DIR=/app/infra/permissions
 # terraform 모듈 (infra/modules/<환경>/{root,kinds,app}). 실행기가 이전마다 TF_WORK_DIR 로 복사해서 돈다.
 #   묶음(dist/worker)은 레포 뿌리를 import.meta.url 로 못 찾으므로 경로를 env 로 준다. state·tfvars·.terraform 은 .dockerignore 가 뺀다
 COPY infra/modules /app/infra/modules
+# 환경 층(gcp/env)이 ${path.module}/../../../charts/cluster-secret-store 를 쓴다 → 모듈과 같은 깊이에 차트도 (worker env-layer.ts 가 작업 폴더로 복사)
+COPY infra/charts /app/infra/charts
 ENV TF_MODULE_ROOT=/app/infra/modules
 COPY --from=build-worker /src/dist/worker/ ./
 USER node

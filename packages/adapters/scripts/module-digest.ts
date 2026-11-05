@@ -17,4 +17,5 @@ export const MODULES = [
   "aws/root", "aws/kinds/cache", "aws/kinds/identity", "aws/kinds/job", "aws/kinds/namespace", "aws/kinds/object-store", "aws/kinds/postgres", "aws/kinds/queue", "aws/kinds/service-ecs", "aws/kinds/vm",
   "gcp/root", "gcp/kinds/cache", "gcp/kinds/identity", "gcp/kinds/job", "gcp/kinds/namespace", "gcp/kinds/object-store", "gcp/kinds/postgres", "gcp/kinds/queue", "gcp/kinds/service-cloudrun", "gcp/kinds/vm",
   "onprem/root", "onprem/kinds/namespace", "onprem/kinds/netpol",
+  "gcp/env",   // 환경 층 (worker env-layer.ts 가 도착 GKE 가 없을 때 만든다). 계획서 envLayer.moduleDigest
 ] as const;
