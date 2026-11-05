@@ -158,6 +158,14 @@ export function cloudflareLb(c: CloudflareLbConfig): TrafficSwitcher & { describ
       const f = (await describe(lbId)).fallback_pool;
       return f === c.targetPoolId ? "target" : f === c.sourcePoolId ? "source" : f ? "other" : null;
     },
+    // #245: 풀은 계정 아래 자원이라 zone → 계정을 먼저 읽는다. 토큰에 Zone Read, Account Load Balancing: Monitors and Pools Read 가 더 필요하다
+    async sourceOrigins() {
+      const z = await cfRequest<{ account?: { id?: string } }>(req, "GET", `/zones/${encodeURIComponent(await zone())}`);
+      if (!z.account?.id) throw new ProviderError("cloudflare", 404, "zone 의 계정 번호가 안 보인다", { retryable: false });
+      const pool = await cfRequest<{ origins?: Array<{ address?: string; enabled?: boolean }> }>(req, "GET",
+        `/accounts/${encodeURIComponent(z.account.id)}/load_balancers/pools/${encodeURIComponent(c.sourcePoolId)}`);
+      return (pool.origins ?? []).filter((x) => x.enabled !== false && x.address).map((x) => x.address!);
+    },
     // 막아야 하는 문제만 돌려준다 (CF_EXTRA_POOLS 같은 경고는 뺀다)
     async preflight(lbId) { return cloudflarePreflight(c, await describe(lbId)).filter((x) => !CF_PREFLIGHT_WARN_ONLY.has(x)); },
   };

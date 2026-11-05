@@ -43,9 +43,9 @@ export function trafficEnvFor(t: TrafficTarget, env: Record<string, string | und
     ...(t.zoneId ? { CLOUDFLARE_ZONE_ID: t.zoneId } : {}) };
 }
 
-export function trafficMetrics(tenantId: string): MetricsSource {
+export function trafficMetrics(tenantId: string, sourceBaselineRps?: number): MetricsSource {
   // DRAFT(ai): PROM_URL 이 없으면 가짜 정상 지표. TRAFFIC_STUB_SCENARIO=err|slow|down 으로 롤백 데모
-  if (process.env.PROM_URL) return prometheusMetrics({ baseUrl: process.env.PROM_URL, tenantId, baselineP95Ms: envNumber(process.env.TRAFFIC_BASELINE_P95_MS, 200) });
+  if (process.env.PROM_URL) return prometheusMetrics({ baseUrl: process.env.PROM_URL, tenantId, baselineP95Ms: envNumber(process.env.TRAFFIC_BASELINE_P95_MS, 200), ...(sourceBaselineRps ? { sourceBaselineRps } : {}) });
   const sc = (process.env.TRAFFIC_STUB_SCENARIO ?? "clean") as "clean" | "err" | "slow" | "down";
   return stubMetrics(sc, { failAt: envNumber(process.env.TRAFFIC_STUB_FAIL_AT, 50) });
 }
