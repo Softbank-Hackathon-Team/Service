@@ -200,8 +200,10 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
 #   docker run --rm svc-onprem-agent:dev --help
 FROM runtime AS onprem-agent
 COPY --from=onprem-kubectl /bin/kubectl /usr/local/bin/kubectl
-COPY --from=build-onprem-agent /src/dist/onprem-agent/ ./
+# 고객이 받는 공개 이미지(GHCR)다 → 소스맵(main.mjs.map, 원본 소스·주석 전체)은 넣지 않는다. 오류 줄 번호는 main.mjs 기준
+COPY --from=build-onprem-agent /src/dist/onprem-agent/main.mjs ./
+COPY --from=build-onprem-agent /src/dist/onprem-agent/data ./data
 USER node
-ENTRYPOINT ["node", "--enable-source-maps", "main.mjs"]
+ENTRYPOINT ["node", "main.mjs"]
 # 30초마다 heartbeat, 10번에 1번 security (tools/onprem-agent.ts loop)
 CMD ["loop", "--every", "30"]
