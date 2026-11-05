@@ -7,7 +7,7 @@ import { KubeError, ok2xx, statusMessage, type KubeClient, type KubeResponse, ty
 import { redactText } from "../ai/guard.js";
 import { sandboxName, VCLUSTER_CHART, type SweepReport, type Vcluster, type VclusterSpec } from "../ai/vcluster.js";
 import {
-  apiPath, originalLimits, parseManifests, podTemplates, PROBE_RESOURCES, sandboxQuotaPlan, subjectOf,
+  apiPath, originalUsage, parseManifests, podTemplates, PROBE_RESOURCES, sandboxQuotaPlan, subjectOf,
   type Manifest, type Resources,
 } from "./manifests.js";
 import { databaseStandIns } from "./stand-in.js";
@@ -18,12 +18,12 @@ import { databaseStandIns } from "./stand-in.js";
 
 export interface RehearsalTiming {
   readyMs: number; rolloutMs: number; jobMs: number; dbMs: number;
-  restartWindowMs: number; probeMs: number; crdMs: number; pollMs: number;
+  restartWindowMs: number; probeMs: number; crdMs: number; quotaMs: number; pollMs: number;
 }
 // 설계 2.7 시간 상한. 롤아웃·잡은 매니페스트의 progressDeadlineSeconds·activeDeadlineSeconds 가 있으면 그 값 (최대 600초)
 export const REHEARSAL_TIMING: RehearsalTiming = {
   readyMs: 180_000, rolloutMs: 300_000, jobMs: 300_000, dbMs: 180_000,
-  restartWindowMs: 60_000, probeMs: 120_000, crdMs: 30_000, pollMs: 2_000,
+  restartWindowMs: 60_000, probeMs: 120_000, crdMs: 30_000, quotaMs: 30_000, pollMs: 2_000,
 };
 // TODO(human): 검사 파드 이미지를 플랫폼 ECR 샌드박스 자리로 옮길지 (지금은 Docker Hub 다이제스트 고정)
 export const PROBE_IMAGE = "docker.io/curlimages/curl:8.17.0@sha256:935d9100e9ba842cdb060de42472c7ca90cfe9a7c96e4dacb55e79e560b3ff40";
@@ -89,6 +89,7 @@ export async function runRehearsal(input: RehearsalInput, run: RehearsalRun, b: 
   let vc: Vcluster | null = null;
   let k8sVersion = "";
   let deleted = false;
+  let bundleQuotas: string[] = [];   // 묶음이 가져온 ResourceQuota 이름. 이 할당량의 거부는 도착도 같은 거부다 (diagnose)
 
   const add = (id: RehearsalCheckId, subject: string, ok: boolean, ms: number, detail: string, required = true) => {
     checks.push({ id, subject: subject.slice(0, 200), required, ok, ms: Math.max(0, Math.round(ms)), detail: redactText(detail).slice(0, 500) });
@@ -126,6 +127,8 @@ export async function runRehearsal(input: RehearsalInput, run: RehearsalRun, b: 
     let t = now();
     const orig = parseManifests(input.original, "original");
     const appl = parseManifests(input.apply, "apply");
+    const quotas = appl.manifests.filter((m) => m.key === "v1/ResourceQuota");
+    bundleQuotas = quotas.map((m) => m.obj.metadata.name);
     const standIns = databaseStandIns(input.databases, appl.manifests);
     const db = standIns.manifests;
     const problems = [...orig.problems, ...appl.problems, ...standIns.problems];
@@ -134,14 +137,21 @@ export async function runRehearsal(input: RehearsalInput, run: RehearsalRun, b: 
         : `원본 ${orig.manifests.length}개, 적용 ${appl.manifests.length}개 모두 지원 목록 안, DB 대체물 ${db.length}개`);
     gate(problems.length ? "REHEARSAL_UNSUPPORTED_KIND" : null);
 
-    const lim = originalLimits(orig.manifests);
+    // 원본(요청량 상한·복제 1 치환 전) 합으로 본다. 가상 클러스터 안 할당량은 치환본이라 합 초과를 다 잡지 못한다
     const tq = input.targetQuota;
-    const over = tq ? [
-      ...(tq.limitsCpuM !== null && lim.cpuM > tq.limitsCpuM ? [`CPU 한도 합 ${lim.cpuM}m > 도착 ${tq.limitsCpuM}m`] : []),
-      ...(tq.limitsMemoryMi !== null && lim.memoryMi > tq.limitsMemoryMi ? [`메모리 한도 합 ${lim.memoryMi}Mi > 도착 ${tq.limitsMemoryMi}Mi`] : []),
-    ] : [];
-    add("quota", "도착 네임스페이스 한도", over.length === 0, 0,
-      tq ? (over.length ? over.join(", ") : `한도 합 CPU ${lim.cpuM}m, 메모리 ${lim.memoryMi}Mi (도착 안)`) : "도착 네임스페이스 한도 없음");
+    const over: string[] = [];
+    let quotaDetail = "도착 네임스페이스 한도 없음";
+    if (tq) {
+      const use = originalUsage(orig.manifests, tq.basis);
+      const word = tq.basis === "requests" ? "요청량" : "한도";
+      const list = (xs: string[]) => `${xs.slice(0, 5).join(", ")}${xs.length > 5 ? ` 외 ${xs.length - 5}개` : ""}`;
+      if (tq.cpuM !== null && use.missing.cpu.length) over.push(`${word} cpu 가 빈 컨테이너 ${list(use.missing.cpu)} (도착 할당량 ${tq.basis}.cpu 가 파드를 거부)`);
+      if (tq.memoryMi !== null && use.missing.memory.length) over.push(`${word} memory 가 빈 컨테이너 ${list(use.missing.memory)} (도착 할당량 ${tq.basis}.memory 가 파드를 거부)`);
+      if (tq.cpuM !== null && use.cpuM > tq.cpuM) over.push(`CPU ${word} 합 ${use.cpuM}m > 도착 ${tq.basis}.cpu ${tq.cpuM}m`);
+      if (tq.memoryMi !== null && use.memoryMi > tq.memoryMi) over.push(`메모리 ${word} 합 ${use.memoryMi}Mi > 도착 ${tq.basis}.memory ${tq.memoryMi}Mi`);
+      quotaDetail = over.length ? over.join(", ") : `${tq.basis} 기준 합 CPU ${use.cpuM}m, 메모리 ${use.memoryMi}Mi (도착 안)`;
+    }
+    add("quota", "도착 네임스페이스 한도", over.length === 0, 0, quotaDetail);
     gate(over.length ? "REHEARSAL_QUOTA_EXCEEDED" : null);
 
     const plan = sandboxQuotaPlan([...db, ...appl.manifests], b.allocatable);
@@ -171,10 +181,14 @@ export async function runRehearsal(input: RehearsalInput, run: RehearsalRun, b: 
     await prepare(kube, orig.manifests);
     gate(await dryRun(kube, orig.manifests));
     gate(await targetPolicy(kube, orig.manifests));
+    // 묶음 할당량(온프레 floor.yaml)이 가장 먼저. 할당량보다 먼저 만든 파드는 검사를 받지 않고,
+    //   할당량 상태(status.hard)가 잡히기 전에 만든 파드는 API 서버가 받을지 정하지 못한다
+    gate(await apply(kube, quotas, false));
+    gate(await quotaSynced(kube, quotas));
     // DB 대체물이 먼저 준비돼야 앱이 붙는다
     gate(await apply(kube, db, true));
     if (db.length) gate(await converge(kube, db, true));
-    gate(await apply(kube, appl.manifests, false));
+    gate(await apply(kube, appl.manifests.filter((m) => m.key !== "v1/ResourceQuota"), false));
 
     // 3. 롤아웃 · 잡 · 재시작 · 준비 · 연결
     await phase("checking", "check");
@@ -297,6 +311,25 @@ export async function runRehearsal(input: RehearsalInput, run: RehearsalRun, b: 
     return code;
   }
 
+  // 할당량 컨트롤러가 처음 셈을 해서 status.hard 에 spec.hard 의 칸이 다 들어올 때까지
+  async function quotaSynced(kube: VirtualAdminKube, ms: Manifest[]): Promise<RehearsalFailureCode | null> {
+    for (const m of ms) {
+      const t0 = now();
+      const want = Object.keys(m.obj.spec?.hard ?? {});
+      for (;;) {
+        const g = await kube.call("GET", apiPath(m, ns, m.obj.metadata.name));
+        const hard = (g.body as any)?.status?.hard ?? {};
+        if (ok2xx(g.status) && want.every((k) => k in hard)) break;
+        if (now() - t0 >= T.quotaMs) {
+          add("apply", subjectOf(m), false, now() - t0, `할당량 상태(status.hard)가 ${Math.round(T.quotaMs / 1000)}초 안에 안 잡힘 (${g.status})`);
+          return "REHEARSAL_SANDBOX_UNAVAILABLE";
+        }
+        await sleep(500);
+      }
+    }
+    return null;
+  }
+
   // 롤아웃·잡을 한 고리에서 같이 기다린다 (마이그레이션 잡이 앱 준비보다 먼저 끝나야 할 수 있다)
   async function converge(kube: VirtualAdminKube, ms: Manifest[], isDb: boolean): Promise<RehearsalFailureCode | null> {
     const t0 = now();
@@ -310,7 +343,7 @@ export async function runRehearsal(input: RehearsalInput, run: RehearsalRun, b: 
       for (const w of items.filter((x) => !x.done)) {
         const live = (await kube.call("GET", apiPath(w.m, ns, w.m.obj.metadata.name))).body as any;
         const mine = pods.filter((p) => matches(live?.spec?.selector?.matchLabels, p.metadata?.labels));
-        const evidence = { pods: mine, events: events.filter((e) => relatedEvent(e, w.m.obj.metadata.name)) };
+        const evidence = { pods: mine, events: events.filter((e) => relatedEvent(e, w.m.obj.metadata.name)), quotas: bundleQuotas };
         const state = w.m.info.wait === "job" ? jobState(live) : rolloutState(live);
         if (state === "done") { w.done = { code: null, detail: w.m.info.wait === "job" ? "Complete" : `준비 ${live?.status?.readyReplicas ?? 0}/${live?.spec?.replicas ?? 1}`, ms: now() - t0 }; continue; }
         const diag = diagnose(evidence);
@@ -479,13 +512,19 @@ function jobState(o: any): "done" | "failed" | "pending" {
 
 // 멈춘 워크로드의 이유. 위에서부터 처음 맞는 줄. terminal 이면 기한을 기다리지 않고 바로 끝낸다
 //   샌드박스만의 규칙(가상 PSA, 호스트 VAP)은 앱 고장이 아니라 "보증 못 함", 자원·스케줄은 우리 쪽, 이미지 받기는 복사 문제
-export interface Evidence { pods: any[]; events: any[] }
+// quotas: 묶음이 가져온 ResourceQuota 이름 (온프레 floor.yaml platform-quota). 샌드박스 상한(호스트)과 가른다
+export interface Evidence { pods: any[]; events: any[]; quotas?: readonly string[] }
 const waitingReasons = (p: any): string[] => [...(p.status?.initContainerStatuses ?? []), ...(p.status?.containerStatuses ?? [])]
   .map((c: any) => c.state?.waiting?.reason).filter(Boolean);
 export const DIAGNOSES: ReadonlyArray<{ code: RehearsalFailureCode; find(e: Evidence): { detail: string; terminal: boolean } | null }> = [
   { code: "REHEARSAL_POLICY_DENIED", find: (e) => {
     const ev = e.events.find((x) => (x.reason === "FailedCreate" && /PodSecurity/.test(x.message ?? "")) || (/sync/i.test(x.reason ?? "") && /denied|forbidden/i.test(x.message ?? "")));
     return ev ? { detail: `${ev.reason}: ${ev.message}`, terminal: true } : null;
+  } },
+  // 묶음 할당량이 파드를 거부 (합 초과 "exceeded quota: <이름>", 칸 없음 "failed quota: <이름>: must specify"). 도착 API 서버도 같은 할당량으로 거부한다
+  { code: "REHEARSAL_QUOTA_EXCEEDED", find: (e) => {
+    const ev = e.events.find((x) => x.reason === "FailedCreate" && (e.quotas ?? []).includes(/(?:exceeded|failed) quota: ([a-z0-9.-]+)/i.exec(x.message ?? "")?.[1] ?? ""));
+    return ev ? { detail: `도착 할당량: ${ev.message}`, terminal: true } : null;
   } },
   { code: "REHEARSAL_SANDBOX_UNAVAILABLE", find: (e) => {
     const ev = e.events.find((x) => x.reason === "FailedCreate" && /exceeded quota/i.test(x.message ?? ""));

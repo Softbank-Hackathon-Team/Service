@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { stringify } from "yaml";
 import { RehearsalResult, SandboxRunPhase, type RehearsalInput } from "@svc/contracts";
 import {
-  asHostKube, createVcluster, DEADLINE_RESERVE_MS, leftoverRehearsal, loadVendorCrds, mockRehearsalResult, REHEARSAL_KINDS, runRehearsal, STAND_IN_LABEL, sweepSandboxes,
+  asHostKube, createVcluster, DEADLINE_RESERVE_MS, diagnose, leftoverRehearsal, loadVendorCrds, mockRehearsalResult, REHEARSAL_KINDS, runRehearsal, STAND_IN_LABEL, sweepSandboxes,
   type RehearsalBackend,
 } from "../src/index.js";
 import { fakeHelm, fakeHost, fakeVirtual } from "./fake-kube.js";
@@ -175,7 +175,10 @@ test("실패는 정해진 코드로 끝나고, 샌드박스는 언제나 지운�
     { name: "노드 할당량 부족", input: sample(), k: { allocatable: { cpuM: 300, memoryMi: 3400 } }, code: "REHEARSAL_SANDBOX_UNAVAILABLE", verdict: "error", created: false },
     // 앱 300m + 검사 10m + 제어판 220m = 530m 은 들어가고, DB 대체물 50m 까지 580m 이면 안 들어간다
     { name: "DB 대체물 요청량도 센다", input: sample(), k: { allocatable: { cpuM: 560, memoryMi: 3400 } }, code: "REHEARSAL_SANDBOX_UNAVAILABLE", verdict: "error", created: false, detail: /CPU 580m/ },
-    { name: "도착 한도 초과", input: { ...sample(), targetQuota: { limitsCpuM: null, limitsMemoryMi: 100 } }, code: "REHEARSAL_QUOTA_EXCEEDED", verdict: "failed", created: false },
+    { name: "도착 한도 초과", input: { ...sample(), targetQuota: { basis: "limits", cpuM: null, memoryMi: 100 } }, code: "REHEARSAL_QUOTA_EXCEEDED", verdict: "failed", created: false },
+    // 온프레 할당량은 requests 기준. 예시의 migrate 잡과 CNPG Cluster 는 요청량이 없어 도착 API 서버가 파드를 거부한다
+    { name: "도착 할당량(requests)이 세는 칸이 빈 컨테이너", input: { ...sample(), targetQuota: { basis: "requests", cpuM: 100_000, memoryMi: null } }, code: "REHEARSAL_QUOTA_EXCEEDED", verdict: "failed", created: false,
+      detail: /요청량 cpu 가 빈 컨테이너 Job\/migrate\/migrate, Cluster\/shop-db\/postgres \(도착 할당량 requests\.cpu 가 파드를 거부\)/ },
     { name: "지원 목록 밖 종류", input: sample({ extraOriginal: [{ apiVersion: "v1", kind: "Pod", metadata: { name: "debug" } }] }), code: "REHEARSAL_UNSUPPORTED_KIND", verdict: "failed", created: false },
     // 흉내 워커(MOCK_SANDBOX=1)는 이미지를 복사하지 않는다. 진짜 샌드박스가 고객 원본 주소로 받으러 가지 않게 만들기 전에 멈춘다
     { name: "이미지를 복사하지 않은 입력", input: { ...sample(), imagesMirrored: false }, code: "REHEARSAL_IMAGE_MIRROR_FAILED", verdict: "error", created: false },
@@ -192,6 +195,48 @@ test("실패는 정해진 코드로 끝나고, 샌드박스는 언제나 지운�
     assert.equal(r.checks.filter((x) => x.required && !x.ok).length > 0, true, `${c.name}: 실패 줄이 보인다`);
     if (c.detail) assert.match(r.checks.find((x) => !x.ok)!.detail, c.detail, c.name);
   }
+});
+
+// 온프레 바닥 (ONPREM_FLOOR_VIA_GIT, gitops floor.yaml). 워커 치환이 바꾸지 않고 넘긴다
+const FLOOR = { apiVersion: "v1", kind: "ResourceQuota", metadata: { name: "platform-quota" }, spec: { hard: { "requests.cpu": "4000m", "requests.memory": "8192Mi" } } };
+const floored = (s: Shape = {}) => sample({ ...s, extraOriginal: [FLOOR], extraApply: [FLOOR] });
+const applied = (k: ReturnType<typeof backend>) => k.virtual.requests.filter((x) => x.startsWith("PATCH") && !x.includes("dryRun=All"));
+
+test("온프레 바닥 할당량: 묶음 ResourceQuota 를 가장 먼저 그대로 적용하고, 상태(status.hard)가 잡힌 뒤 DB 대체물·앱을 만든다", async () => {
+  const k = backend();
+  const r = await k.run(floored());
+  assert.equal(r.verdict, "passed", JSON.stringify(r.checks.filter((c) => !c.ok)));
+  const writes = applied(k).filter((x) => /\/namespaces\/app-shop\//.test(x));
+  assert.match(writes[0]!, /\/resourcequotas\/platform-quota\?/, `첫 적용이 할당량: ${writes[0]}`);
+  const synced = k.virtual.requests.findIndex((x) => x === "GET /api/v1/namespaces/app-shop/resourcequotas/platform-quota");
+  const firstPodOwner = k.virtual.requests.findIndex((x) => x.startsWith("PATCH") && !x.includes("dryRun=All") && /\/(deployments|jobs)\//.test(x));
+  assert.ok(synced >= 0 && synced < firstPodOwner, "할당량 상태를 확인한 뒤 파드를 만드는 객체를 적용");
+  assert.deepEqual(k.virtual.objects.get("app-shop/resourcequotas/platform-quota")?.spec, FLOOR.spec, "바꾸지 않고 그대로");
+  assert.ok(r.checks.some((c) => c.id === "apply" && c.subject === "ResourceQuota/platform-quota" && c.ok));
+});
+
+test("온프레 바닥 할당량: 상태가 안 잡히면 파드를 만들기 전에 우리 쪽 문제(REHEARSAL_SANDBOX_UNAVAILABLE)로 멈춘다", async () => {
+  const k = backend({ virtual: { quotaStatus: false } });
+  const r = await k.run(floored());
+  assert.deepEqual([r.verdict, r.failureCode], ["error", "REHEARSAL_SANDBOX_UNAVAILABLE"], JSON.stringify(r.checks.filter((c) => !c.ok)));
+  assert.match(r.checks.find((c) => !c.ok)!.detail, /status\.hard.*30초/);
+  assert.equal(applied(k).some((x) => /\/(deployments|jobs)\//.test(x)), false, "파드를 만드는 객체는 적용하지 않음");
+  assert.equal(r.deleted, true);
+});
+
+test("묶음 할당량이 파드를 거부하면(failed/exceeded quota: platform-quota) 도착도 거부한다: REHEARSAL_QUOTA_EXCEEDED, 롤아웃 기한을 안 기다림", async () => {
+  const quotaEvent = { involvedObject: { kind: "ReplicaSet", name: "web-7d9c" }, reason: "FailedCreate",
+    message: 'pods "web-7d9c-x" is forbidden: failed quota: platform-quota: must specify requests.cpu for: web' };
+  const k = backend({ virtual: { events: [quotaEvent] } });
+  const r = await k.run(floored({ web: `${REG}/shop-web-slow@sha256:cd` }));
+  assert.deepEqual([r.verdict, r.failureCode], ["failed", "REHEARSAL_QUOTA_EXCEEDED"], JSON.stringify(r.checks.filter((c) => !c.ok)));
+  assert.ok(k.elapsed() < 60_000, `걸린 시간 ${k.elapsed()}ms`);
+  assert.match(r.checks.find((c) => !c.ok)!.detail, /도착 할당량: .*must specify requests\.cpu/);
+
+  // 같은 모양이어도 묶음에 없는 할당량(샌드박스 상한)이면 예전처럼 우리 쪽 문제로 본다
+  const host = { ...quotaEvent, message: 'pods "web-7d9c-x" is forbidden: exceeded quota: vc-sbx-rehearsal-7a6b, requested: requests.cpu=100m' };
+  assert.equal(diagnose({ pods: [], events: [host], quotas: ["platform-quota"] })?.code, "REHEARSAL_SANDBOX_UNAVAILABLE");
+  assert.equal(diagnose({ pods: [], events: [quotaEvent], quotas: [] })?.code, undefined, "묶음 할당량이 없는 실행은 이 줄로 판정하지 않음");
 });
 
 test("재시작이 쌓이거나 컨테이너를 못 만들면 롤아웃 기한(300초)을 다 기다리지 않고 끝낸다", async () => {

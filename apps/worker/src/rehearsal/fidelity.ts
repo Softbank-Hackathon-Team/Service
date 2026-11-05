@@ -66,8 +66,14 @@ const ITEMS: Record<WorkerItem, (f: FidelityFacts, changed: boolean) => Row> = {
     : row("not_checked", f.target === "aws-eks" ? "EKS Pod Identity·IRSA" : f.target === "gcp-gke" ? "GKE Workload Identity" : "클라우드 신원 주석",
       "신원 주석을 빼고 돌림, 클라우드 권한 없음", "가상 클러스터 안에서는 클라우드 신원이 효과가 없다"),
   network: () => row("substituted", "도착 네트워크 그대로", "바깥 연결 막음, 앱 안 Service 끼리는 열림", "더 엄격하다. 바깥 API 를 부르는 앱은 실패할 수 있다"),
-  quota: (f) => row("identical", f.quota ? `limits.cpu ${f.quota.limitsCpuM ?? "-"}m · limits.memory ${f.quota.limitsMemoryMi ?? "-"}Mi` : "네임스페이스 한도 없음",
-    "같은 한도로 원본 요청량 합을 셈", "도착 네임스페이스 한도 값과 같다"),
+  quota: (f) => {
+    if (!f.quota) return same("네임스페이스 할당량 없음", "도착 네임스페이스에 할당량이 없다");
+    const q = f.quota, real = `${q.basis}.cpu ${q.cpuM ?? "-"}m · ${q.basis}.memory ${q.memoryMi ?? "-"}Mi`;
+    return f.present.has("resource_quota")
+      ? row("identical", `ResourceQuota ${real}`, `같은 ResourceQuota 를 가상 앱 네임스페이스에 적용 + 원본 ${q.basis} 합을 셈`,
+        "가상 API 서버가 도착과 같은 할당량 검사로 파드를 받거나 거부한다. 리허설은 요청량 상한·복제 1 로 돌아서 합 초과는 원본 합으로 본다")
+      : row("identical", real, `같은 값으로 원본 ${q.basis} 합을 셈`, "도착 네임스페이스 할당량 값과 같다. 할당량 객체는 Terraform 이 만들어 묶음에 없다");
+  },
   hpa_scaling: (f) => f.present.has("hpa") ? row("not_checked", "HPA 가 지표로 늘림", "늘지 않음", "가상 클러스터에 지표 서버가 없다") : same("HPA 없음"),
   cronjob_runs: (f) => f.present.has("cronjob") ? row("not_checked", "일정대로 실행", "적용만, 실행은 안 봄", "컷오버 전에는 도착 CronJob 이 멈춰 있다") : same("CronJob 없음"),
   daemonsets: (f) => f.present.has("daemonset") ? row("not_checked", "노드마다 하나씩", "적용만, 롤아웃은 안 봄", "가상 노드라 노드별 롤아웃을 볼 수 없다") : same("DaemonSet 없음"),

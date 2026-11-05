@@ -96,18 +96,22 @@ flowchart LR
 
 TLS 가짜 값은 묶음 지문과 비밀 이름에서 정해져서, 같은 입력이면 같은 글자다 (`apps/worker/src/rehearsal/dummy-tls.ts`). 인증서를 읽어 TLS 를 여는 앱이 16진 가짜 값 때문에 리허설에서만 죽는 일을 막는다. RSA 키만 읽는 앱은 여전히 리허설에서만 실패할 수 있다 (`DRAFT(ai)`).
 
-치환 표가 아는 종류는 ServiceAccount, ConfigMap, Secret, PersistentVolumeClaim, Deployment, StatefulSet, DaemonSet, Job, CronJob, Service, HorizontalPodAutoscaler, PodDisruptionBudget, ExternalSecret(`external-secrets.io`), Ingress, Cluster(`postgresql.cnpg.io`) 다. 그 밖의 종류가 하나라도 있으면 `REHEARSAL_UNSUPPORTED_KIND` 로 닫는다.
+치환 표가 아는 종류는 ServiceAccount, ConfigMap, Secret, PersistentVolumeClaim, Deployment, StatefulSet, DaemonSet, Job, CronJob, Service, HorizontalPodAutoscaler, PodDisruptionBudget, ResourceQuota, ExternalSecret(`external-secrets.io`), Ingress, Cluster(`postgresql.cnpg.io`) 다. 그 밖의 종류가 하나라도 있으면 `REHEARSAL_UNSUPPORTED_KIND` 로 닫는다.
+
+ResourceQuota 는 온프레 바닥을 git 으로 그릴 때(`ONPREM_FLOOR_VIA_GIT`, 기본 켬) `gitops/charts/app/templates/floor.yaml` 이 만드는 `platform-quota` 다. 명세의 모든 워크로드에 요청량이 있을 때만 그려진다. 바꾸지 않고 가상 앱 네임스페이스에 그대로 적용한다. 그래서 가상 API 서버가 도착과 같은 할당량 검사로 파드를 받거나 거부한다.
+
+도착 할당량이 세는 칸(입력 `targetQuota.basis`)은 도착마다 다르다. 온프레는 `requests.*`, EKS·GKE 는 `limits.*` 다 (`infra/modules/<aws|gcp|onprem>/kinds/namespace/main.tf`, `floor.yaml`). 지금 EKS·GKE 명세는 할당량을 만들지 않는다. 도착 네임스페이스에는 LimitRange 가 없어서, 그 칸이 빈 컨테이너가 있으면 도착 API 서버가 파드를 거부한다 (`must specify requests.cpu`). 이 둘은 `apps/worker/test/rehearsal-quota-basis.test.ts` 가 지킨다.
 
 ### 1-4. agent-worker: 검사 순서
 
 `sandbox-rehearsal` 큐 한 건을 받으면 줄을 잡고(`running`, 실행 기한을 다시 씀) `packages/agent/src/rehearsal/run.ts` 순서대로 돈다. 필수 검사가 하나라도 실패하면 그 단계의 코드로 멈춘다. 지우기는 언제나 한다.
 
-1. 순수 검사. 입력 `imagesMirrored` 가 `false` 면 샌드박스를 만들기 전에 `REHEARSAL_IMAGE_MIRROR_FAILED` 로 멈춘다. 진짜 샌드박스는 고객 원본 주소에서 이미지를 받지 않는다. 그다음 지원 종류, DB 대체물 판(Postgres 15·16·17), 도착 네임스페이스 한도(원본 한도 합)를 본다. sandbox 노드 자리(CPU 1930m, 메모리 3400Mi)에 들어가는지도 미리 센다.
+1. 순수 검사. 입력 `imagesMirrored` 가 `false` 면 샌드박스를 만들기 전에 `REHEARSAL_IMAGE_MIRROR_FAILED` 로 멈춘다. 진짜 샌드박스는 고객 원본 주소에서 이미지를 받지 않는다. 그다음 지원 종류, DB 대체물 판(Postgres 15·16·17), 도착 네임스페이스 할당량을 본다. 할당량은 원본(치환 전)으로 센다: 할당량이 세는 칸(`requests` 또는 `limits`)의 합, 그 칸이 빈 컨테이너, CNPG Cluster 는 instances 개 파드. sandbox 노드 자리(CPU 1930m, 메모리 3400Mi)에 들어가는지도 미리 센다.
 2. 샌드박스 만들기. 지금 실행이 아닌 리허설 네임스페이스를 먼저 지운다. 그다음 `sbx-rehearsal-<실행 번호 앞 12자>` 네임스페이스, RoleBinding `sbx-operator`, NetworkPolicy `sbx-default-deny`, vCluster 차트를 차례로 만든다. `/readyz` 가 200 이 될 때까지 최대 180초 기다린다.
 3. 가상 앱 네임스페이스를 만든다. enforce 는 `baseline`, warn·audit 는 `restricted` 다. 원본에 필요한 CRD(ExternalSecret, CNPG Cluster)를 넣는다.
 4. 원본 서버 dry-run (`REHEARSAL_DRY_RUN_REJECTED`).
 5. 도착 파드 보안. 파드 틀마다 도착 수준 네임스페이스에 dry-run 한다. 온프레 k3s 는 `baseline`, EKS·GKE 는 라벨이 없어(`privileged`) 건너뛴다 (`REHEARSAL_TARGET_POLICY_DENIED`).
-6. DB 대체물을 적용하고 준비를 기다린다. 그다음 치환본을 적용한다.
+6. 묶음 할당량(ResourceQuota)을 먼저 적용하고, 상태(`status.hard`)가 잡힐 때까지 최대 30초 기다린다 (안 잡히면 `REHEARSAL_SANDBOX_UNAVAILABLE`). 할당량보다 먼저 만든 파드는 검사를 받지 않기 때문이다. 그다음 DB 대체물을 적용하고 준비를 기다린다. 마지막으로 나머지 치환본을 적용한다.
 7. 롤아웃·잡이 끝나길 기다린다. 기본 300초, 매니페스트에 `progressDeadlineSeconds`·`activeDeadlineSeconds` 가 있으면 그 값(최대 600초).
 8. 60초 동안 재시작이 늘었는지 본다 (`REHEARSAL_CRASHLOOP`). 그다음 Ready 를 본다 (`REHEARSAL_NOT_READY`).
 9. 검사 파드(curl) 하나에서 Service 와 서비스 사이 연결(edges)마다 요청을 한 번 보낸다. 4xx 도 "닿았다"로 본다 (`REHEARSAL_CONNECTIVITY_FAILED`).
@@ -191,7 +195,7 @@ TLS 가짜 값은 묶음 지문과 비밀 이름에서 정해져서, 같은 입�
 |---|---|---|---|
 | `would_fail` | `failed` | `REHEARSAL_DRY_RUN_REJECTED` | API 서버가 원본 객체를 거부. 실제 도착도 거부한다 |
 | | | `REHEARSAL_TARGET_POLICY_DENIED` | 파드 틀이 도착 파드 보안 수준을 어김 (k3s `baseline`) |
-| | | `REHEARSAL_QUOTA_EXCEEDED` | 원본 한도 합이 도착 네임스페이스 한도를 넘음 |
+| | | `REHEARSAL_QUOTA_EXCEEDED` | 도착 네임스페이스 할당량에 걸림. 원본 합이 넘거나, 할당량이 세는 칸이 빈 컨테이너가 있거나, 가상 클러스터에 적용한 묶음 할당량이 파드를 거부함 (`failed quota: platform-quota`) |
 | | | `REHEARSAL_ROLLOUT_FAILED` | 롤아웃이 안 끝남, 또는 컨테이너를 못 만듦 (없는 Secret 키 등) |
 | | | `REHEARSAL_CRASHLOOP` | 60초 관찰 중 재시작이 늘었음 |
 | | | `REHEARSAL_NOT_READY` | 롤아웃 뒤 Ready 가 아님 |

@@ -1,5 +1,5 @@
 import { parse, stringify } from "yaml";
-import { RehearsalInput, type AppSpecV2, type FidelityMatrix, type HelmValues, type RehearsalTarget, type TfOutputs } from "@svc/contracts";
+import { RehearsalInput, type AppSpecV2, type FidelityMatrix, type HelmValues, type QuotaBasis, type RehearsalTarget, type TfOutputs } from "@svc/contracts";
 import { adapterFor, dbIdentityFor, flattenTfOutputsV2, targetBuilderFor } from "@svc/adapters";
 import { appNamespace, envFacts, fillPlaceholders, type DeployInput, type RenderedBundle } from "../gitops/index.js";
 import type { MirrorImage } from "./image-mirror.js";
@@ -54,8 +54,12 @@ export function k8sMinorOf(tf: TfOutputs | undefined): { value: string; known: b
   return m ? { value: m[1]!, known: true } : { value: DEFAULT_K8S_MINOR, known: false };
 }
 
-/** 도착 네임스페이스 한도 = 계획 때 Terraform 값(namespace_json)의 quota. 없거나 못 읽으면 null (한도 없음) */
-export function targetQuotaOf(i: DeployInput): RehearsalInput["targetQuota"] {
+// 도착 ResourceQuota 가 세는 칸. infra/modules/<aws|gcp|onprem>/kinds/namespace/main.tf 의 hard 와,
+//   온프레를 git 으로 그릴 때(ONPREM_FLOOR_VIA_GIT)의 gitops/charts/app/templates/floor.yaml. 어긋나면 rehearsal-quota-basis 시험이 깨진다
+export const QUOTA_BASIS: Record<RehearsalTarget, QuotaBasis> = { "aws-eks": "limits", "gcp-gke": "limits", "onprem-k3s": "requests" };
+
+/** 도착 네임스페이스 할당량 = 계획 때 Terraform 값(namespace_json)의 quota (온프레 floor.yaml 도 같은 함수 값). 없거나 못 읽으면 null (할당량 없음) */
+export function targetQuotaOf(i: DeployInput, target: RehearsalTarget): RehearsalInput["targetQuota"] {
   if (!i.spec) return null;
   try {
     const t = { envId: i.target.envId, provider: i.target.provider, region: i.target.region, migrationId: i.plan.migrationId };
@@ -63,7 +67,7 @@ export function targetQuotaOf(i: DeployInput): RehearsalInput["targetQuota"] {
     const ns = (typeof raw === "string" ? JSON.parse(raw) : raw) as Array<{ quota_cpu_m?: number | null; quota_memory_mi?: number | null }> | undefined;
     const q = ns?.[0];
     if (!q || (q.quota_cpu_m == null && q.quota_memory_mi == null)) return null;
-    return { limitsCpuM: q.quota_cpu_m ?? null, limitsMemoryMi: q.quota_memory_mi ?? null };
+    return { basis: QUOTA_BASIS[target], cpuM: q.quota_cpu_m ?? null, memoryMi: q.quota_memory_mi ?? null };
   } catch { return null; }
 }
 
@@ -81,7 +85,7 @@ export function buildRehearsalInput(a: BuildArgs): RehearsalInput {
   const managedDbs = managedDbsOf(a.values, a.i.spec);
   const sub = substitute(a.docs, { namespace: ns, images: new Map(a.images.map((x) => [x.ref, x.sandboxRef])), managedDbs, seed: a.rendered.bundleSha256 });
   const k8sMinor = k8sMinorOf(a.i.tfOutputs);
-  const targetQuota = targetQuotaOf(a.i);
+  const targetQuota = targetQuotaOf(a.i, a.target);
   const fidelity: FidelityMatrix = workerFidelity({ target: a.target, bundleSha256: a.rendered.bundleSha256, refs: sub.refs, present: sub.present,
     databases: sub.databases.length, k8sMinor, imagesMirrored: a.mirrored, quota: targetQuota });
   return RehearsalInput.parse({

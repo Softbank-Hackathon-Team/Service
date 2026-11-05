@@ -25,7 +25,7 @@ export interface Substituted {
   edges: RehearsalInput["edges"];
   unsupported: string[];
 }
-export type Presence = "hpa" | "cronjob" | "daemonset" | "ingress" | "tunnel" | "external_secret" | "cnpg";
+export type Presence = "hpa" | "cronjob" | "daemonset" | "ingress" | "tunnel" | "external_secret" | "cnpg" | "resource_quota";
 
 // DRAFT(ai): 요청량 상한. 샌드박스 노드(t3.medium 1대)에 3티어가 다 올라가게. 낮추기만 하고 한도(limits)는 그대로라 OOM 판정은 같다
 export const REQUEST_CAP = { cpu: "100m", memory: "128Mi" } as const;
@@ -269,6 +269,9 @@ const SUBSTITUTIONS: Record<string, Rule> = {
     if (typeof (doc.spec as Obj | undefined)?.minReplicas === "number" && ((doc.spec as Obj).minReplicas as number) > 1) e.set("replicas", ["spec", "minReplicas"], 1);
   },
   PodDisruptionBudget: keep,
+  // 온프레 바닥 floor.yaml 의 platform-quota (ONPREM_FLOOR_VIA_GIT 기본 켬). 바꾸지 않고 가상 앱 네임스페이스에 그대로 적용한다
+  //   → 가상 API 서버가 도착과 같은 할당량 검사를 한다 (요청량이 빈 컨테이너 거부 등). 합 초과는 원본으로 따로 센다 (agent run.ts)
+  ResourceQuota: (_e, _doc, s) => { s.present.add("resource_quota"); },
   ExternalSecret: (e, doc, s) => {
     if (!isEso(doc)) return;
     s.present.add("external_secret");
