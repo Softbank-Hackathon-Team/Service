@@ -92,6 +92,11 @@ async function resolveEnv(tenantId: string, envId: string, purpose: "observe" | 
 //   끄기는 REAL_STS=0 으로만 (로컬 개발·시험이 명시적으로 끈다: package.json test·test:db, .env.example). 흉내 발급기는 꺼졌을 때만 쓴다
 // MOCK_CREDS 는 읽는 코드가 없어 기준으로 쓰지 않는다. 시험 전용이 아니라 운영 스위치라 TEST_ONLY_SWITCHES 에 넣지 않는다
 export const realStsEnabled = (env: NodeJS.ProcessEnv = process.env) => env.REAL_STS?.trim() !== "0";
+// #241: 실환경 모드(진짜 발급기)에서 AWS·GCP 환경이 흉내 자격을 받았다 = 연결 링크를 안 거친 환경(시드 등). 그대로 CLI 를 부르면 워커 자기 권한으로 플랫폼 계정을 읽는다.
+//   고객 자원을 읽는 작업은 이 값이 참이면 읽지 말고 멈춘다. 로컬·시험(REAL_STS=0)과 온프레·azure_mock(늘 흉내 발급기)은 해당 없음
+export const MOCK_CREDENTIALS = "MOCK_CREDENTIALS";
+export const refuseMockCredentials = (cred: { stub: boolean }, provider: string, env: NodeJS.ProcessEnv = process.env) =>
+  cred.stub && realStsEnabled(env) && (provider === "aws" || provider === "gcp");
 export function awsIssuer(env: NodeJS.ProcessEnv = process.env): ProviderIssuer {
   return realStsEnabled(env) ? perEnvAwsIssuer(awsStsIssuer({ sts: awsCliSts() }), mockIssuer("aws")) : mockIssuer("aws");
 }

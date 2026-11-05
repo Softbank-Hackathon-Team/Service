@@ -176,13 +176,13 @@ test("읽는 도중 일시 오류: 자격은 반납되고(import_done) 재시도
   setMode("ok");
 });
 
-test("external_id 없는 aws 환경(REAL_STS=1): 빌리지 않고 가짜 발급기(stub) → 워커 자기 자격 그대로", { skip }, async () => {
+test("external_id 없는 aws 환경(REAL_STS=1): 가짜 발급기(stub)면 워커 자기 자격으로 읽지 않고 멈춘다 (#241)", { skip }, async () => {
   setMode("ok"); resetLog();
   const id = await seed("connected", null);
   await imp.handleImport(job(id));
-  const cs = await creds(id);
-  assert.equal(cs.length, 1); assert.equal(cs[0]!.stub, true);
-  assert.ok(calls().every((l) => !l.includes("key=ASIAVL5KEY")), "빌린 키가 쓰이면 안 됨");
+  assert.deepEqual(await row(id), { status: "failed", failure_code: "IMPORT_SOURCE_UNAVAILABLE" });
+  assert.deepEqual(await creds(id), [{ status: "revoked", stub: true, revoke_reason: "import_done" }]);
+  assert.deepEqual(calls().filter((l) => !l.startsWith("aws sts assume-role")), [], "CLI 를 한 번도 부르면 안 됨");
 });
 
 test("남의 회사 작업: 아무것도 안 빌리고 안 바꾼다", { skip }, async () => {

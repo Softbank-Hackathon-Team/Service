@@ -1,8 +1,8 @@
 import { ImportResultV2, MigrationJob, SourceScope, checkV2, checkV2Reviews, syncCheckReviews, specIssueLines, type ObserveSession, type Provider, type RawInventory } from "@svc/contracts";
 import { withTenant, advance, scrubString } from "@svc/core";
-import { applyInclude, AWS_DATA_READ_ACTIONS, AWS_NET_READ_ACTIONS, GCP_NET_READ_PERMISSIONS, measureImportAccuracy, targetBuilderFor, GCP_DATA_READ_PERMISSIONS, actionsOfCommands, AdapterError, CLOUDRUN_OBSERVE_PERMISSIONS, discoverForImport, ECS_OBSERVE_ACTIONS, EC2_OBSERVE_ACTIONS, GCE_OBSERVE_PERMISSIONS, envFor, inventoryForAudit, isAdapterError, normalizeV2, carryHumanEdits, type PrevSpecV2 } from "@svc/adapters";
+import { applyInclude, gcpEnvFor, AWS_DATA_READ_ACTIONS, AWS_NET_READ_ACTIONS, GCP_NET_READ_PERMISSIONS, measureImportAccuracy, targetBuilderFor, GCP_DATA_READ_PERMISSIONS, actionsOfCommands, AdapterError, CLOUDRUN_OBSERVE_PERMISSIONS, discoverForImport, ECS_OBSERVE_ACTIONS, EC2_OBSERVE_ACTIONS, GCE_OBSERVE_PERMISSIONS, envFor, inventoryForAudit, isAdapterError, normalizeV2, carryHumanEdits, type PrevSpecV2 } from "@svc/adapters";
 import { StsCliError, TempRoleDenied } from "@svc/security";
-import { tempRoles } from "../platform.js";
+import { MOCK_CREDENTIALS, refuseMockCredentials, tempRoles } from "../platform.js";
 import { failedAttempts, recordAttemptFailure, isLastAttempt } from "./_step.js";
 import { envNumber } from "@svc/contracts";
 import { log } from "../instrument.js";
@@ -94,6 +94,7 @@ async function importOnce(job: MigrationJob): Promise<boolean> {
 
 // L5: 가져오기 관찰 역할 (설계 AF 7 2단계). 진짜 발급기(REAL_STS=1 + external_id)면 빌린 키를 discover 자식 CLI env 로만 넘긴다.
 //   가짜 발급기(stub)면 지금처럼 프로세스 자격 (cliEnv 없음). 장부에 issued → revoked(import_done) 가 남는다
+//   #241: 프로세스 자격으로 읽는 건 로컬·시험(REAL_STS=0)뿐이다. 실환경 모드의 AWS·GCP 가 stub 이면 읽지 않고 영구 실패 (워커 권한으로 플랫폼 계정을 읽게 되므로)
 // DRAFT(ai): 자격 수명 1시간 (요청 상한 3600). import 는 재발급 고리(_roles.ts)에 없고, 복사한 cliEnv 는 재발급돼도 안 바뀐다
 export const IMPORT_OBSERVE_TTL_SEC = 3600;
 // DRAFT(ai): discover 가 실제로 부르는 읽기 동작 (discover/index.ts aws 쪽 명령과 같은 목록)
@@ -119,18 +120,31 @@ export const importObserveActions = (provider = "aws"): string[] => {
 };
 async function borrowObserve(job: MigrationJob, row: { source_env_id: string; provider: string; account_id: string | null; region: string | null }) {
   const roles = tempRoles();
+  const release = (credentialRef: string) => roles.revoke(credentialRef, job.tenantId, "import_done").then(() => undefined, (e) => console.error("import revoke", scrubString((e as Error).message)));
   let ref: string;
   let session: ObserveSession;
   try {
     const cred = await roles.issue({ tenantId: job.tenantId, envId: row.source_env_id, provider: row.provider as Provider,
       purpose: "observe", migrationId: job.migrationId, actions: importObserveActions(row.provider), ttlSec: IMPORT_OBSERVE_TTL_SEC }, { step: "import" });
     ref = cred.credentialRef;
+    if (refuseMockCredentials(cred, row.provider)) {
+      await release(ref);
+      throw new AdapterError("SOURCE_UNAVAILABLE", `출발 관찰 역할이 가짜 자격 (${MOCK_CREDENTIALS}) — 콘솔 연결 링크로 만든 환경인지 확인`);
+    }
     session = { accountId: row.account_id ?? "dev", expiresAt: cred.expiresAt, ...(row.region ? { region: row.region } : {}) };
     if (!cred.stub) {
       const k = roles.use(ref, job.tenantId, job.migrationId);
       // DRAFT(ai): 환경에 리전이 없으면 서울 (issuers.ts AWS_DEFAULT_REGION 과 같음)
       if (k.kind === "aws") session.cliEnv = { AWS_ACCESS_KEY_ID: k.accessKeyId, AWS_SECRET_ACCESS_KEY: k.secretAccessKey,
         AWS_SESSION_TOKEN: k.sessionToken, AWS_REGION: row.region || "ap-northeast-2" };
+      // #241: GCP 빌린 토큰도 자식 CLI 로 넘긴다. 안 넘기면 고객 환경을 워커 자기 계정으로 읽는다. GCP_PROJECT 까지 덮는 건 discover(gcpProject)가 이 값을 먼저 보기 때문
+      else if (k.kind === "bearer" && row.provider === "gcp" && row.account_id) session.cliEnv = { CLOUDSDK_AUTH_ACCESS_TOKEN: k.token,
+        CLOUDSDK_CORE_PROJECT: row.account_id, GCP_PROJECT: row.account_id };
+      // 빌렸는데 넘길 수 없으면 프로세스 자격으로 흘러가지 않게 멈춘다
+      else {
+        await release(ref);
+        throw new AdapterError("SOURCE_UNAVAILABLE", `출발 관찰 역할 자격을 CLI 에 넘길 수 없음 (${row.provider}/${k.kind})`);
+      }
     }
   } catch (e) {
     // 역할을 못 빌림(거부·없음) = 사람이 연결을 고쳐야 함 → 영구 실패. 그 밖(네트워크·명령 없음)은 재시도
@@ -140,7 +154,7 @@ async function borrowObserve(job: MigrationJob, row: { source_env_id: string; pr
   }
   return {
     session,
-    release: () => roles.revoke(ref, job.tenantId, "import_done").then(() => undefined, (e) => console.error("import revoke", scrubString((e as Error).message))),
+    release: () => release(ref),
   };
 }
 
@@ -210,11 +224,14 @@ async function accuracyOf(tx: { query: (sql: string, p?: unknown[]) => Promise<{
 // 시험이 바깥 읽기(discover)를 느리게·중간 취소로 흉내 낼 수 있게 한 곳에서 부른다 (기본 = discoverForImport)
 export const importDeps = { discover: discoverForImport };
 type SpecImport = { inv: RawInventory; result: ImportResultV2; note?: string; carry?: { kept: string[]; flagged: string[]; dropped: string[] } };
+// #241: 자식 CLI 환경. 워커 자기 AWS 자격을 지우고(envFor), GCP 토큰이면 워커 자기 gcloud 자격(서비스 계정 파일·대리 설정 등)까지 지운다(gcpEnvFor)
+const observeEnv = (c: Record<string, string>): NodeJS.ProcessEnv => c.CLOUDSDK_AUTH_ACCESS_TOKEN && c.CLOUDSDK_CORE_PROJECT
+  ? gcpEnvFor(c.CLOUDSDK_AUTH_ACCESS_TOKEN, c.CLOUDSDK_CORE_PROJECT, envFor(c)) : envFor(c);
 async function importSpec(p: Provider, sess: ObserveSession, previous: PreviousImports = { ids: {}, history: [] }, scope: SourceScope = {}): Promise<SpecImport> {
   // I4: 앱 신원의 IAM 정책도 읽어 grants·기준선을 채운다.
   // ID-5 DRAFT(ai): 기본 켬 (그대로 이식: 권한 없이 옮기면 도착 앱이 403). IMPORT_AWS_IAM=0 이면 끔. 못 읽으면 unread.IAM 검토 줄
   // K-1: 출발 범위(이전마다)를 discover 에 넘긴다. 빈 칸은 워커 환경변수(개발용) → 자동 고르기 + 검토 줄
-  const inv = await importDeps.discover(p, { iam: process.env.IMPORT_AWS_IAM !== "0", scope }, sess.cliEnv ? { env: envFor(sess.cliEnv) } : {});
+  const inv = await importDeps.discover(p, { iam: process.env.IMPORT_AWS_IAM !== "0", scope }, sess.cliEnv ? { env: observeEnv(sess.cliEnv) } : {});
   if (!(inv.items as Array<{ kind?: string }>).some((i) => WORKLOAD_KINDS.has(String(i.kind))))
     throw new AdapterError("SOURCE_INCOMPLETE", "출발 환경에 옮길 워크로드(k8s·ECS·Cloud Run·VM)가 없음");
   // PARTOF: 앱 묶음 값 = 출발 범위 partOf (K-1) → IMPORT_APP(개발용). 없으면 라벨이 가장 많은 묶음 + 검토 표시
