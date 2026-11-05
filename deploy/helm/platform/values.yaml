@@ -18,7 +18,10 @@ components:
   worker:
     # GITOPS_*: 배포 단계가 gitops 레포에 커밋·push (없으면 모든 배포가 GITOPS_NOT_CONFIGURED 로 멈춘다, 클라우드·온프레 공통)
     #   GITOPS_REPO_URL·GITOPS_PUSH 는 비밀이 아니지만 차트에 비밀 아닌 값을 넘기는 길이 아직 없어 같은 JSON 으로 받는다 (아래 README TODO)
-    secretKeys: [DATABASE_URL, GITOPS_REPO_URL, GITOPS_WRITE_TOKEN, GITOPS_PUSH]
+    # REPL_SECRET_MASTER_KEY: 이전별 비밀(온프레 이전 전용 계정 비밀번호·터널/중계 SSH 키·CA 씨앗)을 파생하는 마스터 키 (ADR-019, 32자 이상).
+    #   바꾸면 진행 중인 이전의 파생 값이 모두 달라진다 → 이전이 없을 때만 교체
+    # PLATFORM_EGRESS_CIDRS: worker 가 밖으로 나가는 IP(NAT) 대역. 자동 중계의 5432 를 이 대역에만 연다 (비밀은 아니지만 비밀 아닌 값을 넘기는 길이 없어 같은 JSON)
+    secretKeys: [DATABASE_URL, GITOPS_REPO_URL, GITOPS_WRITE_TOKEN, GITOPS_PUSH, REPL_SECRET_MASTER_KEY, PLATFORM_EGRESS_CIDRS]
   agent-worker:
     secretKeys: [DATABASE_URL, ANTHROPIC_API_KEY]
   otel-gateway:

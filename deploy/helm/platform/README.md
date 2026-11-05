@@ -36,7 +36,7 @@ helm install external-secrets external-secrets/external-secrets -n external-secr
 
 # 2. 비밀값 넣기 (값은 채팅·레포에 남기지 않는다)
 aws secretsmanager put-secret-value --secret-id platform/app --secret-string file://<레포 밖 app.json>
-#    app.json 키: DATABASE_URL, JWT_SECRET, PLATFORM_PRINCIPAL_ARN, AGENT_REPORT_MASTER_KEY, PUBLIC_API_URL, GITOPS_REPO_URL, GITOPS_WRITE_TOKEN, GITOPS_PUSH, ANTHROPIC_API_KEY
+#    app.json 키: DATABASE_URL, JWT_SECRET, PLATFORM_PRINCIPAL_ARN, AGENT_REPORT_MASTER_KEY, PUBLIC_API_URL, GITOPS_REPO_URL, GITOPS_WRITE_TOKEN, GITOPS_PUSH, REPL_SECRET_MASTER_KEY, PLATFORM_EGRESS_CIDRS, ANTHROPIC_API_KEY
 #    values.yaml secretKeys 에 적힌 키가 JSON 에 하나라도 없으면 그 컴포넌트의 비밀 동기화가 멈춘다 → 키를 더할 때는 값부터 넣고 helm upgrade
 aws secretsmanager put-secret-value --secret-id platform/cloudflared --secret-string file://<레포 밖 cf.json>
 
@@ -169,6 +169,38 @@ exporters:
     auth:
       authenticator: bearertokenauth
 ```
+
+## 온프레 DB 이전 켜기 (ADR-019, 한 번)
+
+온프레 도착 DB 로 복제하려면 worker 에 키 2개, 플랫폼 DB 에 표 하나(0050), 새 이미지가 있어야 한다. 순서가 중요하다.
+facts 계약이 strict 라 **플랫폼(api)을 먼저 올리고 고객 Agent 를 나중에** 올린다 (새 Agent 가 보내는 `sealing`·`egressIp` 를 옛 api 는 거부한다).
+
+```
+# 1. 값 넣기. 기존 platform/app JSON 에 두 키만 더한다. 값은 화면·셸 기록에 안 남는다
+#    REPL_SECRET_MASTER_KEY 가 이미 있으면 그대로 둔다 (바꾸면 진행 중인 이전의 비밀이 전부 달라진다)
+#    PLATFORM_EGRESS_CIDRS = worker 가 나가는 NAT 공인 IP. 쉼표로 여러 개
+aws ec2 describe-nat-gateways --filter Name=state,Values=available --query 'NatGateways[].NatGatewayAddresses[].PublicIp' --output text
+umask 077; f=$(mktemp)
+aws secretsmanager get-secret-value --secret-id platform/app --query SecretString --output text \
+  | python3 -c 'import json,sys,secrets; d=json.load(sys.stdin); d.setdefault("REPL_SECRET_MASTER_KEY", secrets.token_hex(32)); d["PLATFORM_EGRESS_CIDRS"]=sys.argv[1]; json.dump(d, open(sys.argv[2],"w")); print(sorted(d))' "<NAT IP>/32" "$f"
+aws secretsmanager put-secret-value --secret-id platform/app --secret-string "file://$f" >/dev/null; rm -f "$f"
+
+# 2. 표 0050 (플랫폼 DB, 표 주인 계정). 이미 넣은 파일은 건너뛴다
+DB_ADMIN_URL=<표 주인 연결> sh tools/db-migrate.sh --dry-run   # 0050_replication_endpoints.sql 하나만 보이면 된다
+DB_ADMIN_URL=<표 주인 연결> sh tools/db-migrate.sh
+
+# 3. 이미지: main 에 들어간 뒤 build-ecr 을 돌린다 (태그 sha-<커밋 7자>)
+gh workflow run build-ecr.yml --ref main
+
+# 4. 차트. --reuse-values 는 새 기본값(secretKeys)을 버리므로 --reset-then-reuse-values
+helm upgrade platform deploy/helm/platform -n platform --reset-then-reuse-values --set apps.image.tag=<새 태그>
+kubectl -n platform get externalsecret worker-env        # SecretSynced 가 아니면 1번 JSON 에 키가 빠진 것
+kubectl -n platform get secret worker-env -o json | python3 -c 'import json,sys; print(sorted(json.load(sys.stdin)["data"]))'   # 키 이름만
+
+# 5. 고객 온프레: 새 Agent 이미지 + 봉인 컨트롤러 (tools/onprem-install.sh 머리말 그대로 다시 돌린다)
+```
+
+확인: 고객 Agent 보고 뒤 `agent_reports` 의 facts 에 `sealing.certPem`·`egressIp` 가 있으면 이전 계획이 봉인 인증서와 중계 SSH 허용 IP 를 쓸 수 있다.
 
 ## 아직 없는 것
 
