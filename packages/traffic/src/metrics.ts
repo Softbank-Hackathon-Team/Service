@@ -32,8 +32,9 @@ export function promQueries(tenantId: string, migrationId: string, side: "source
 // Prometheus HTTP API (/api/v1/query) 로 창 하나를 읽는다.
 // p95 는 Prometheus 가 계산한 값을 p95Ms 로 넘긴다 (원래 지연 목록은 안 가져온다)
 // DRAFT(ai): 출발 쪽 표본이 모자랄 때 쓰는 기준 p95 는 전환 직전 10초 값을 부르는 쪽이 넣는다 (baselineP95Ms)
+// #245: sourceBaselineRps = 전환 직전 출발의 초당 요청 수. 출발 응답 수 지표가 없을 때만 "전체(기준값) - 도착" 을 추정 출발 수로 내서 몫 계산에 쓴다. 지표가 있으면 지표가 먼저다
 export function prometheusMetrics(o: { baseUrl: string; tenantId: string; fetch?: FetchLike; baselineP95Ms: number; windowSec?: number;
-  authHeader?: () => Promise<string | undefined> }): MetricsSource {
+  authHeader?: () => Promise<string | undefined>; sourceBaselineRps?: number }): MetricsSource {
   const f = o.fetch ?? (globalThis.fetch as unknown as FetchLike);
   async function scalar(q: string, missing = 0): Promise<number> {
     const url = `${o.baseUrl.replace(/\/$/, "")}/api/v1/query?query=${encodeURIComponent(q)}`;
@@ -48,14 +49,16 @@ export function prometheusMetrics(o: { baseUrl: string; tenantId: string; fetch?
   async function side(id: string, s: "source" | "target") {
     const q = promQueries(o.tenantId, id, s, o.windowSec);
     // 지연 지표가 없으면(cloudflared 도착) p95 결과가 빈 줄이다. 0ms 가 아니라 NaN = 못 잼 (rule.ts latencyMeasured)
-    const [total, err, p95s] = await Promise.all([scalar(q.total), scalar(q.err5xx), scalar(q.p95, NaN)]);
-    return { n: Math.round(total), err5xx: Math.round(err), latenciesMs: [], p95Ms: p95s * 1000 };
+    // 응답 수 줄이 없으면(NaN) 지표가 없는 것. 값 0 은 지표가 있고 요청이 없는 것이라 구분한다
+    const [total, err, p95s] = await Promise.all([scalar(q.total, NaN), scalar(q.err5xx), scalar(q.p95, NaN)]);
+    return { n: Number.isNaN(total) ? 0 : Math.round(total), err5xx: Math.round(err), latenciesMs: [] as number[], p95Ms: p95s * 1000, absent: Number.isNaN(total) };
   }
   return {
     source: "prometheus",
     async window(id) {
-      const [target, source] = await Promise.all([side(id, "target"), side(id, "source")]);
-      return { target, source, baselineP95Ms: o.baselineP95Ms };
+      const [{ absent: _t, ...target }, { absent, ...source }] = await Promise.all([side(id, "target"), side(id, "source")]);
+      return { target, source, baselineP95Ms: o.baselineP95Ms,
+        ...(absent && o.sourceBaselineRps ? { estimatedSourceN: Math.max(0, Math.round(o.sourceBaselineRps * (o.windowSec ?? 30)) - target.n) } : {}) };
     },
   };
 }

@@ -80,3 +80,17 @@ test("거부: 다른 이전의 계획서로 apply 하면 TF_PLAN_DRIFT, 배포 �
   const i: DeployInput = { tenantId: TENANT, spec, plan: p, target: { envId: ENV_ID, provider: "gcp", region: "default", accountId: "demo-project" }, tfOutputs: {} };
   assert.doesNotThrow(() => approvedValues(i));
 });
+
+test("#245: 트래픽 지표 주소를 켜도 승인 지문은 안 깨지고, 지문을 본 뒤 수집기가 붙는다. 지문이 다르면 그대로 막는다", () => {
+  const p = plan("gcp", MID_A);
+  const i: DeployInput = { tenantId: TENANT, spec, plan: p, target: { envId: ENV_ID, provider: "gcp", region: "default", accountId: "demo-project" }, tfOutputs: {} };
+  const was = process.env.TRAFFIC_METRICS_ENDPOINT;
+  process.env.TRAFFIC_METRICS_ENDPOINT = "https://metrics.example.com/v1/metrics";
+  try {
+    const v = approvedValues(i) as { ingress?: { metrics?: { sidecar?: { endpoint: string } } } };
+    assert.equal(v.ingress?.metrics?.sidecar?.endpoint, "https://metrics.example.com/v1/metrics");
+    assert.throws(() => approvedValues({ ...i, plan: { ...p, helmValuesHash: "다른 지문" } }), /지문/);
+  } finally {
+    if (was === undefined) delete process.env.TRAFFIC_METRICS_ENDPOINT; else process.env.TRAFFIC_METRICS_ENDPOINT = was;
+  }
+});

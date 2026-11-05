@@ -36,7 +36,7 @@ helm install external-secrets external-secrets/external-secrets -n external-secr
 
 # 2. 비밀값 넣기 (값은 채팅·레포에 남기지 않는다)
 aws secretsmanager put-secret-value --secret-id platform/app --secret-string file://<레포 밖 app.json>
-#    app.json 키: DATABASE_URL, JWT_SECRET, PLATFORM_PRINCIPAL_ARN, AGENT_REPORT_MASTER_KEY, PUBLIC_API_URL, GITOPS_REPO_URL, GITOPS_WRITE_TOKEN, GITOPS_PUSH, REPL_SECRET_MASTER_KEY, PLATFORM_EGRESS_CIDRS, ANTHROPIC_API_KEY
+#    app.json 키: DATABASE_URL, JWT_SECRET, PLATFORM_PRINCIPAL_ARN, AGENT_REPORT_MASTER_KEY, PUBLIC_API_URL, CONNECT_TEMPLATE_URL, GITOPS_REPO_URL, GITOPS_WRITE_TOKEN, GITOPS_PUSH, REPL_SECRET_MASTER_KEY, PLATFORM_EGRESS_CIDRS, ANTHROPIC_API_KEY
 #    values.yaml secretKeys 에 적힌 키가 JSON 에 하나라도 없으면 그 컴포넌트의 비밀 동기화가 멈춘다 → 키를 더할 때는 값부터 넣고 helm upgrade
 aws secretsmanager put-secret-value --secret-id platform/cloudflared --secret-string file://<레포 밖 cf.json>
 
@@ -53,7 +53,7 @@ helm upgrade --install platform deploy/helm/platform -n platform --create-namesp
 helm upgrade --install platform deploy/helm/platform -n platform --create-namespace --reset-then-reuse-values --set apps.image.registry=725072160743.dkr.ecr.ap-northeast-2.amazonaws.com --set apps.image.tag=<태그>
 ```
 
-`platform/app` JSON 에 넣을 키: `components.*.secretKeys` 에 적은 것 전부 (`DATABASE_URL`, `JWT_SECRET`, `PLATFORM_PRINCIPAL_ARN`, `ANTHROPIC_API_KEY`). 키를 늘리면 JSON 과 `secretKeys` 를 같이 고친다.
+`platform/app` JSON 에 넣을 키: `components.*.secretKeys` 에 적은 것 전부 (`DATABASE_URL`, `JWT_SECRET`, `PLATFORM_PRINCIPAL_ARN`, `CONNECT_TEMPLATE_URL`, `ANTHROPIC_API_KEY` 등). 키를 늘리면 JSON 과 `secretKeys` 를 같이 고친다.
 
 Cloudflare 쪽: Zero Trust 에서 원격 관리 터널을 만들고 토큰을 `platform/cloudflared` 에 넣는다. 공개 호스트 이름의 서비스는 `http://web.platform.svc.cluster.local:8080` (web 배포가 올라온 뒤), 지표 주소(예: metrics.<도메인>)는 `http://otel-gateway.platform.svc.cluster.local:4318`.
 
@@ -221,6 +221,25 @@ helm upgrade platform deploy/helm/platform -n platform --reset-then-reuse-values
 - worker 는 1개만 뜬다. EBS 는 파드 하나만 붙기 때문이다. 재배포 때는 이전 파드를 먼저 내려 잠깐 작업이 멈춘다 (`Recreate`).
 - 디스크는 첫 파드가 뜬 가용 영역에 묶인다. cred 노드가 다른 영역으로 바뀌면 파드가 `Pending` 이 된다. 그 영역에 노드를 늘리면 다시 뜬다.
 - `helm uninstall` 이나 PVC 삭제로도 디스크는 남는다 (`resource-policy: keep`, `reclaimPolicy: Retain`). 지우는 것은 사람이 한다.
+
+## 클라우드 도착 트래픽 지표 (AWS·GCP)
+
+`trafficMetrics.endpoint` 를 주면 도착 cloudflared 파드 안에 수집기가 같이 뜬다. 배포 권한에 RBAC·NetworkPolicy 가 없어 온프레처럼 따로 띄우지 않는다. 비우면 아무것도 안 그린다.
+
+```
+# 1. 도착 환경의 지표 토큰 받기 (POST /api/v1/environments/:id/metric-token). 원문은 응답에 한 번만 나온다
+# 2. 도착 비밀 저장소의 svc-metric-token 에 {"token": "<값>"} 넣기. 정확한 이름은 이전 계획의 경고 줄에 나온다
+# 3. 차트 값 주기
+helm upgrade platform deploy/helm/platform -n platform --reset-then-reuse-values --set trafficMetrics.endpoint=https://metrics.<도메인>/v1/metrics
+# 4. 도착 지표가 Prometheus 에 들어오는 것을 본 뒤에 판정을 켠다. 먼저 켜면 표본 부족으로 롤백된다
+helm upgrade platform deploy/helm/platform -n platform --reset-then-reuse-values --set trafficMetrics.promUrl=http://monitoring-kube-prometheus-prometheus.monitoring:9090
+```
+
+- 값을 켜면 토큰은 필수다. 저장소에 없으면 배포가 커밋 전에 `SECRET_VALUES_MISSING` 으로 멈추고 어느 이름이 없는지 알려 준다. 넣고 재개하면 된다. 이때 트래픽은 아직 출발에 있다.
+- 값을 켠 시점 이후 배포부터 수집기가 붙는다. 지문에는 안 들어가서 이미 승인한 계획도 그대로 간다.
+- 응답 시간은 잴 수 없어 판정은 오류율로만 하고 "지연 미측정"으로 남는다.
+- gitops 레포의 `charts/app` 을 이 레포와 같게 맞춰야 수집기가 그려진다.
+- TODO(human): 토큰을 사람이 넣는다. worker 가 이전마다 발급해 넣는 길은 아직 없다.
 
 ## 아직 없는 것
 

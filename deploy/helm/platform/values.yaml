@@ -14,7 +14,8 @@ components:
   api:
     # AGENT_REPORT_MASTER_KEY: 온프레 Agent 등록·보고 서명 (32자 이상 무작위, 없으면 /agent/* 가 503 AGENT_REPORTS_DISABLED)
     # PUBLIC_API_URL: Agent 등록 응답에 담는 보고 주소 = 플랫폼 공개 주소 (비우면 요청 주소)
-    secretKeys: [DATABASE_URL, JWT_SECRET, PLATFORM_PRINCIPAL_ARN, AGENT_REPORT_MASTER_KEY, PUBLIC_API_URL]
+    # CONNECT_TEMPLATE_URL: 콘솔 "AWS 연결" 링크의 CloudFormation 템플릿 주소 (Terraform 출력 connect_template_url, 없으면 연결 링크가 503 CONNECT_NOT_CONFIGURED)
+    secretKeys: [DATABASE_URL, JWT_SECRET, PLATFORM_PRINCIPAL_ARN, AGENT_REPORT_MASTER_KEY, PUBLIC_API_URL, CONNECT_TEMPLATE_URL]
   worker:
     # GITOPS_*: 배포 단계가 gitops 레포에 커밋·push (없으면 모든 배포가 GITOPS_NOT_CONFIGURED 로 멈춘다, 클라우드·온프레 공통)
     #   GITOPS_REPO_URL·GITOPS_PUSH 는 비밀이 아니지만 차트에 비밀 아닌 값을 넘기는 길이 아직 없어 같은 JSON 으로 받는다 (아래 README TODO)
@@ -109,6 +110,11 @@ apps:
 gcpPlatform:
   project: ""       # 플랫폼 프로젝트 ID
   wifAudience: ""   # infra/modules/gcp/platform-wif 출력 audience. project 를 채우면 꼭 넣는다
+
+# 트래픽 판정 지표 (#245). 비우면 아무것도 안 만든다
+trafficMetrics:
+  endpoint: ""      # 도착 수집기가 보낼 주소 (https://metrics.<도메인>/v1/metrics). 채우면 AWS·GCP 도착 cloudflared 에 수집기가 붙는다
+  promUrl: ""       # 판정이 읽는 Prometheus. 도착 지표가 들어온 뒤에 켠다. 먼저 켜면 표본 부족으로 롤백된다
 
 # 워커가 Application 을 읽고 새로고침 표시를 다는 Argo CD 네임스페이스 (Role·RoleBinding 이 여기 생긴다)
 argocd:

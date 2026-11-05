@@ -48,6 +48,11 @@ override_resource {
   override_during = plan
   values          = { arn = "arn:aws:s3:::platform-evidence-123456789012" }
 }
+# 연결 템플릿 버킷은 이미 있는 버킷을 data 로 읽는다. mock 값 대신 고정 arn·region
+override_data {
+  target = data.aws_s3_bucket.connect_template
+  values = { id = "svc-connect-template-5f2cb764", arn = "arn:aws:s3:::svc-connect-template-5f2cb764", region = "ap-northeast-2" }
+}
 variables {
   expected_account_id = "123456789012"
 }
@@ -338,4 +343,36 @@ run "pod_identity" {
     condition     = toset(flatten([for st in jsondecode(aws_iam_role_policy.api.policy).Statement : st.Action])) == toset(["s3:GetObject", "s3:ListBucket"])
     error_message = "api 권한은 s3:GetObject·s3:ListBucket 둘뿐이어야 함"
   }
+}
+
+# 연결 템플릿: 객체 하나만 익명 GetObject, ACL 공개는 막음, 주소 모양
+run "connect_template_public_one_object" {
+  command = plan
+  assert {
+    condition = jsondecode(aws_s3_bucket_policy.connect_template.policy).Statement[0] == {
+      Sid      = "PublicReadConnectTemplateOnly", Effect = "Allow", Principal = "*", Action = "s3:GetObject"
+      Resource = "arn:aws:s3:::svc-connect-template-5f2cb764/aws-connect.json"
+    }
+    error_message = "공개 허용은 aws-connect.json 객체 하나에 s3:GetObject 만이어야 함"
+  }
+  assert {
+    condition     = length([for st in jsondecode(aws_s3_bucket_policy.connect_template.policy).Statement : st if st.Effect == "Allow"]) == 1
+    error_message = "Allow 문장은 하나뿐이어야 함 (ListBucket·쓰기 금지)"
+  }
+  assert {
+    condition     = aws_s3_bucket_public_access_block.connect_template.block_public_acls && aws_s3_bucket_public_access_block.connect_template.ignore_public_acls && !aws_s3_bucket_public_access_block.connect_template.block_public_policy && !aws_s3_bucket_public_access_block.connect_template.restrict_public_buckets
+    error_message = "ACL 공개는 막고(true), 정책 공개는 허용(false)이어야 함"
+  }
+  assert {
+    condition     = output.connect_template_url == "https://svc-connect-template-5f2cb764.s3.ap-northeast-2.amazonaws.com/aws-connect.json"
+    error_message = "connect_template_url 모양이 틀림"
+  }
+}
+
+run "connect_template_reject_wildcard_key" {
+  command = plan
+  variables {
+    connect_template_key = "*"
+  }
+  expect_failures = [var.connect_template_key]
 }

@@ -10,6 +10,8 @@ export interface TrafficSwitcher {
   // pf-d FM-TRF-13: 무게 있는 쪽이 다 죽었을 때 갈 곳(fallback). 컷오버 뒤 = 도착(출발은 울타리), 롤백 = 출발. 없으면 그 제공자는 모름(mock 은 기억만)
   setFallback?(lbId: string, side: "source" | "target"): Promise<void>;
   getFallback?(lbId: string): Promise<"source" | "target" | "other" | null>;
+  // #245: 출발 쪽 원본 주소 (Cloudflare 풀 origin). 출발 ALB 를 찾을 때 쓴다. 없으면 그 제공자는 모름
+  sourceOrigins?(): Promise<string[]>;
 }
 
 export type TrafficProvider = "cloudflare" | "aws_alb" | "gcp_gclb" | "mock";
