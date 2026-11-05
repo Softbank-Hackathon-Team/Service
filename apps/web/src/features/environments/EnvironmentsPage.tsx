@@ -1,7 +1,7 @@
 import { go } from '../../app/routes';
 import type { BentoLayout } from '../../components/layout/ConsoleLayout';
 import { ActionRow, FoldTile, Hero, Stack, Tile, TileHeader } from '../../components/layout/tiles';
-import { ActionPill, Badge } from '../../components/ui/controls';
+import { ActionPill, Badge, BarPill } from '../../components/ui/controls';
 import { api } from '../../lib/api';
 import { errorText } from '../../lib/errors';
 import { connectionReasonText } from '../../lib/failure';
@@ -15,7 +15,8 @@ import { leftoversOf } from '../migration/model';
 import { FoundResources } from '../migration/NewMigrationPage';
 import { vendorLine } from '../migration/source';
 import { ShellLayout } from '../shell/ShellLayout';
-import { envPath, isLinked } from './connect';
+import { AgentCommand, until, useAgentToken } from './AgentToken';
+import { REGISTER_PATH, isLinked } from './connect';
 import { RegisterEnvEntry } from './EnvEntry';
 import s from '../common/page.module.css';
 import { t } from '../../lib/i18n';
@@ -109,24 +110,91 @@ function ConnectedEnv({ env }: { env: EnvironmentView }) {
         </FoldTile>
         {data && <FoundResources cloud={data.cloud} />}
         {env.provider === 'onprem' && <AgentReports envId={env.id} />}
+        {env.provider === 'onprem' && <AgentEnrollFold env={env} />}
       </Stack>
     </>
   );
 }
 
+const AGENT_BACK = t('Agent 신호가 오면 이 화면의 연결 상태와 마지막 신호가 저절로 바뀝니다.');
+
+/**
+ * 이미 연결된 온프레 환경의 Agent 다시 등록. Agent 를 새로 깔았거나 키를 잃었을 때 등록 명령을 새로 받는다.
+ * 환경 등록과 같은 토큰 요청·같은 명령 칸을 쓴다 (AgentToken.tsx). 받으면 앞서 받고 쓰지 않은 토큰은 바로 끝난다
+ */
+function AgentEnrollFold({ env }: { env: EnvironmentView }) {
+  const enroll = useAgentToken(env.id);
+  return (
+    <FoldTile title={t('Agent 다시 등록')} summary={enroll.token ? t('{0}까지', { 0: until(enroll.token.expiresAt) }) : t('등록 토큰')} defaultOpen={false}>
+      <p className={`${s.note} t-body-sm c-secondary`}>{t('Agent 를 새로 깔았거나 키를 잃었으면 등록 명령을 새로 받아 실행합니다. 새로 받으면 앞서 받고 쓰지 않은 토큰은 바로 끝납니다.')}</p>
+      {enroll.token && <AgentCommand token={enroll.token} pending={null} after={AGENT_BACK} />}
+      {enroll.error && <p className={`${s.error} t-body-sm`}>{enroll.error}</p>}
+      <div className={s.note}>
+        <BarPill label={enroll.issuing ? t('받는 중') : enroll.token ? t('새 명령 받기') : t('등록 토큰 다시 받기')} icon="refresh" onClick={enroll.issuing ? undefined : () => void enroll.issue()} />
+      </div>
+    </FoldTile>
+  );
+}
+
+/**
+ * 연결되어 있지 않은 환경. 목록은 연결됨·불안정만 보이므로(isLinked) 여기 오는 것은 거의 불안정이다.
+ * 불안정은 등록 흐름(ConnectPage)으로 고칠 수 없다: 서버는 연결 링크·확인 요청을 등록 중·실패·만료 환경에서만 받는다.
+ * - 온프레(pull 모드): Agent 신호가 끊긴 것. 고객 클러스터에서 Agent 를 다시 띄우거나, 등록 명령을 새로 받아 다시 등록한다.
+ *   신호가 다시 오면 서버가 연결됨으로 되돌린다 (apps/api agent-reports.ts heartbeatConnection)
+ * - AWS·GCP: 플랫폼의 주기 재확인이 연달아 실패한 것. 다음 재확인이 통과하면 저절로 연결됨으로 돌아간다 (worker verify-connection).
+ *   DRAFT(ai): 사람이 누를 재확인 길이 서버에 없어 버튼을 두지 않고, 저절로 돌아간다는 것만 알린다
+ */
 function DisconnectedEnv({ env }: { env: EnvironmentView }) {
-  // 해제된 환경은 다시 연결할 수 없다(새로 등록). 나머지는 등록 흐름에서 이어 한다
   const gone = env.connectionStatus === 'disconnected';
+  const unstable = env.connectionStatus === 'unstable';
+  const onprem = env.provider === 'onprem';
+  const enroll = useAgentToken(env.id);
   return (
     <>
-      <Hero tone="stop" meta={`${vendorLine(env.provider)} · ${CONN_LABEL[env.connectionStatus]}`} title={t('{0}\n연결되어 있지 않습니다', { 0: env.name })} foot={env.lastVerifiedAt ? t('마지막 확인 {0}', { 0: ago(env.lastVerifiedAt) }) : undefined}>
-        {env.failureReason && <div className={s.heroPanel}><span className="t-body-md">{connectionReasonText(env.failureReason)}</span></div>}
+      <Hero
+        tone="stop"
+        meta={`${vendorLine(env.provider)} · ${CONN_LABEL[env.connectionStatus]}`}
+        title={unstable ? t('{0}\n연결이 불안정합니다', { 0: env.name }) : t('{0}\n연결되어 있지 않습니다', { 0: env.name })}
+        foot={env.lastVerifiedAt ? t('마지막 확인 {0}', { 0: ago(env.lastVerifiedAt) }) : undefined}
+      >
+        {(env.failureReason || unstable) && (
+          <div className={s.heroPanel}>
+            {env.failureReason && <span className="t-body-md">{connectionReasonText(env.failureReason)}</span>}
+            {unstable && (
+              <span className="t-body-sm c-secondary">
+                {onprem
+                  ? t('Agent 가 멈췄으면 고객 클러스터에서 다시 띄웁니다. 새로 깔아야 하면 등록 명령을 새로 받아 실행합니다.')
+                  : t('플랫폼이 주기적으로 연결을 다시 확인합니다. 확인이 통과하면 저절로 연결됨으로 돌아갑니다.')}
+              </span>
+            )}
+          </div>
+        )}
+        {unstable && onprem && (enroll.token || enroll.error) && (
+          <div className={s.heroPanel}>
+            {enroll.token && <AgentCommand token={enroll.token} pending={null} after={AGENT_BACK} />}
+            {enroll.error && <span className={`${s.error} t-body-md`}>{enroll.error}</span>}
+          </div>
+        )}
       </Hero>
       <Stack area="side">
-        {env.provider === 'onprem' && <AgentReports envId={env.id} />}
-        <ActionRow>
-          <ActionPill label={gone ? t('새로 등록하기') : t('연결 이어 하기')} icon={gone ? 'plus' : 'arrow-right'} onClick={() => go(gone ? 'environments/connect' : envPath(env))} />
-        </ActionRow>
+        {onprem && <AgentReports envId={env.id} />}
+        {gone ? (
+          // 해제된 환경은 다시 연결할 수 없다(새로 등록)
+          <ActionRow>
+            <ActionPill label={t('새로 등록하기')} icon="plus" onClick={() => go(REGISTER_PATH)} />
+          </ActionRow>
+        ) : (
+          onprem && (
+            <ActionRow>
+              <ActionPill
+                label={enroll.issuing ? t('받는 중') : enroll.token ? t('새 명령 받기') : t('등록 토큰 다시 받기')}
+                icon="refresh"
+                disabled={enroll.issuing}
+                onClick={() => void enroll.issue()}
+              />
+            </ActionRow>
+          )
+        )}
       </Stack>
     </>
   );

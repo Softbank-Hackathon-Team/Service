@@ -35,14 +35,15 @@ import {
   type ConnectPhase,
   type EnvForm,
 } from './connect';
+import { AgentCommand, until } from './AgentToken';
 import s from '../common/page.module.css';
-import { localeTag, t } from '../../lib/i18n';
+import { t } from '../../lib/i18n';
 
 // 큰 카드는 지금 할 한 가지, 오른쪽은 등록 단계와 권한을 빌리는 방식.
 const LAYOUT: BentoLayout = { columns: ['fill', 'side'], areas: 'hero side' };
 
-const until = (iso: string) =>
-  new Date(iso).toLocaleString(localeTag(), { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+// 이 요청을 받을 설정이 플랫폼에 없다(503). 링크·명령을 다시 받아도 같은 답이라 다시 받기를 내놓지 않는다
+const NOT_CONFIGURED = ['CONNECT_NOT_CONFIGURED', 'AGENT_REPORTS_DISABLED'];
 
 function StepsFold({ at, provider, name }: { at: Parameters<typeof connectSteps>[0]; provider?: Provider; name?: string }) {
   const items = connectSteps(at, { provider, name });
@@ -226,6 +227,7 @@ function CustomerTodo({
   token,
   issuing,
   issueError,
+  canReissue,
   account,
   accountErrors,
   onAccount,
@@ -236,6 +238,8 @@ function CustomerTodo({
   token: AgentEnrollToken | null;
   issuing: boolean;
   issueError: string | null;
+  /** false = 플랫폼 설정이 없어 다시 받아도 같은 답 (NOT_CONFIGURED) */
+  canReissue: boolean;
   account: AccountForm;
   accountErrors: Partial<Record<keyof AccountForm, string>>;
   onAccount: (key: keyof AccountForm) => (value: string) => void;
@@ -245,21 +249,14 @@ function CustomerTodo({
   if (env.provider === 'onprem') {
     return (
       <>
-        <ol className={s.todo}>
-          <li>
-            <span className="t-body-md">{t('고객 클러스터에 닿는 터미널에서 이 명령을 실행합니다.')}</span>
-            {token ? <CodeValue value={token.command} chip max={56} /> : pending}
-          </li>
-          <li>
-            <span className="t-body-md">{t('Agent 가 붙으면 이 화면이 저절로 넘어갑니다.')}</span>
-            {token && <span className="t-caption c-tertiary">{t('명령의 토큰은 {0}까지 한 번만 씁니다', { 0: until(token.expiresAt) })}</span>}
-          </li>
-        </ol>
+        <AgentCommand token={token} pending={pending} after={t('Agent 가 붙으면 이 화면이 저절로 넘어갑니다.')} />
         {issueError && <p className={`${s.error} t-body-md`}>{issueError}</p>}
-        <button type="button" className={s.linkPill} disabled={issuing} onClick={onReissue}>
-          <Icon name="refresh" />
-          <span className="t-label-md">{issuing ? t('받는 중') : t('새 명령 받기')}</span>
-        </button>
+        {canReissue && (
+          <button type="button" className={s.linkPill} disabled={issuing} onClick={onReissue}>
+            <Icon name="refresh" />
+            <span className="t-label-md">{issuing ? t('받는 중') : t('새 명령 받기')}</span>
+          </button>
+        )}
       </>
     );
   }
@@ -332,18 +329,27 @@ function ContinueConnect({ id }: { id: string }) {
   const [token, setToken] = useState<AgentEnrollToken | null>(null);
   const [issuing, setIssuing] = useState(false);
   const [issueError, setIssueError] = useState<string | null>(null);
+  const [notConfigured, setNotConfigured] = useState(false);
   const issued = useRef(false);
   const issue = async () => {
     if (!env) return;
     issued.current = true;
     setIssuing(true);
     setIssueError(null);
+    setNotConfigured(false);
     try {
       if (env.provider === 'onprem') setToken(await api.agentToken(env.id));
       else setLink(await api.connectionLink(env.id));
       await envs.reload();
     } catch (reason) {
-      setIssueError(errorText(reason));
+      // 503 CONNECT_NOT_CONFIGURED 등: 이 연결 종류를 받을 설정이 플랫폼에 없다. 고객이 할 일은 없고 다시 받아도 같다
+      const unset = NOT_CONFIGURED.includes(errorCode(reason) ?? '');
+      setNotConfigured(unset);
+      setIssueError(
+        unset
+          ? t('이 플랫폼에는 {0} 연결 설정이 아직 없습니다. 다시 받아도 같으니 플랫폼 운영자에게 알려 주세요.', { 0: providerLabel(env.provider) })
+          : errorText(reason),
+      );
     } finally {
       setIssuing(false);
     }
@@ -421,6 +427,7 @@ function ContinueConnect({ id }: { id: string }) {
             token={token}
             issuing={issuing}
             issueError={issueError}
+            canReissue={!notConfigured}
             account={account}
             accountErrors={touched ? accountCheck.errors : {}}
             onAccount={(key) => (value) => setAccount((prev) => ({ ...prev, [key]: value }))}
@@ -430,11 +437,11 @@ function ContinueConnect({ id }: { id: string }) {
         {side(
           !onprem && (
             <ActionRow notice={verifyError}>
-              {/* 링크를 받기 전(draft)에는 서버가 확인 요청을 받지 않는다. 링크부터 받게 한다 */}
+              {/* 링크를 받기 전(draft)에는 서버가 확인 요청을 받지 않는다. 링크부터 받게 한다. 플랫폼 설정이 없으면 다시 받아도 같아 버튼을 두지 않는다 */}
               {env.connectionStatus === 'awaiting_customer' ? (
                 <ActionPill label={busy ? t('보내는 중') : t('연결 확인')} disabled={busy} onClick={() => void verify()} />
               ) : (
-                <ActionPill label={issuing ? t('링크 받는 중') : t('링크 다시 받기')} icon="refresh" disabled={issuing} onClick={() => void issue()} />
+                !notConfigured && <ActionPill label={issuing ? t('링크 받는 중') : t('링크 다시 받기')} icon="refresh" disabled={issuing} onClick={() => void issue()} />
               )}
             </ActionRow>
           ),
@@ -459,6 +466,7 @@ function ContinueConnect({ id }: { id: string }) {
     const reason = connectionReasonText(env.failureReason);
     // 실패는 같은 계정으로 다시 확인할 수 있다(서버 failed → verifying). 만료는 링크부터 다시
     const canVerify = !expired && env.provider !== 'onprem' && !!env.accountId;
+    const reissueLabel = issuing ? t('받는 중') : env.provider === 'onprem' ? t('새 명령 받기') : t('링크 다시 받기');
     return (
       <ShellLayout layout={LAYOUT}>
         <Hero
@@ -480,11 +488,11 @@ function ContinueConnect({ id }: { id: string }) {
           {issueError && <p className={`${s.onAlert} t-body-md`}>{issueError}</p>}
         </Hero>
         {side(
-          <ActionRow notice={verifyError} before={canVerify ? <BarPill label={issuing ? t('받는 중') : env.provider === 'onprem' ? t('새 명령 받기') : t('링크 다시 받기')} onClick={issuing ? undefined : () => void issue()} /> : undefined}>
+          <ActionRow notice={verifyError} before={canVerify && !notConfigured ? <BarPill label={reissueLabel} onClick={issuing ? undefined : () => void issue()} /> : undefined}>
             {canVerify ? (
               <ActionPill label={busy ? t('보내는 중') : t('같은 계정으로 다시 확인')} icon="refresh" disabled={busy} onClick={() => void verify()} />
             ) : (
-              <ActionPill label={issuing ? t('받는 중') : env.provider === 'onprem' ? t('새 명령 받기') : t('링크 다시 받기')} icon="refresh" disabled={issuing} onClick={() => void issue()} />
+              !notConfigured && <ActionPill label={reissueLabel} icon="refresh" disabled={issuing} onClick={() => void issue()} />
             )}
           </ActionRow>,
         )}

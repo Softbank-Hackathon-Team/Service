@@ -110,9 +110,13 @@ function SourceRow({ env, onPick }: { env: EnvironmentView; onPick: () => void }
 
 export function FoundResources({ cloud }: { cloud: CloudInventory }) {
   if (cloud.status === 'unavailable') {
+    const reason = cloud.reason ?? t('자원을 읽지 못했습니다.');
     return (
       <FoldTile title={t('찾은 자원')} summary={t('읽지 못함')}>
-        <p className={`${s.note} t-body-sm c-secondary`}>{t('{0} 마이그레이션을 만들면 다시 읽습니다.', { 0: cloud.reason ?? t('자원을 읽지 못했습니다.') })}</p>
+        <p className={`${s.note} t-body-sm c-secondary`}>
+          {/* 온프레 pull 모드(source agent)는 플랫폼이 클러스터에 붙지 않고 Agent 보고로 채운다 (apps/api agent-reports.ts agentInventoryFor). 다음 보고가 오면 다시 읽는다 */}
+          {cloud.source === 'agent' ? t('{0} 다음 Agent 보고가 오면 다시 읽습니다.', { 0: reason }) : t('{0} 마이그레이션을 만들면 다시 읽습니다.', { 0: reason })}
+        </p>
       </FoldTile>
     );
   }
