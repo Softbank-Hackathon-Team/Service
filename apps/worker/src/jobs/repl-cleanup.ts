@@ -1,6 +1,5 @@
 import { MigrationJob, TERMINAL, type MigrationStatus } from "@svc/contracts";
 import { withTenant, writeAudit } from "@svc/core";
-import { replicationFromEnv } from "@svc/replication";
 import { replicationFor } from "./_repl.js";
 import { cleanupAfterRollback, type ReplCleaner, type RollbackCleanup } from "./rollback-cleanup.js";
 

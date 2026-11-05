@@ -2,7 +2,6 @@ import { dropRuntimeLinkSecret } from "../app-link.js";
 import { MigrationJob, QUEUES } from "@svc/contracts";
 import { replicationFor } from "./_repl.js";
 import { asBossDb, boss, withTenant, writeAudit } from "@svc/core";
-import { replicationFromEnv } from "@svc/replication";
 import { jobData, readMigration, RetryLater, runStep, stubWait, stubFailIfAsked } from "./_step.js";
 import { tempRoles } from "../platform.js";
 import { pausedOnRenewFailure, withStepRoles } from "./_roles.js";
