@@ -69,6 +69,12 @@ for path, want_roles in ((sys.argv[1], 1), (sys.argv[2], 2)):
     for must in ("readOnlyRootFilesystem: true", "runAsNonRoot: true", "allowPrivilegeEscalation: false"):
         if must not in dep:
             print(f"FAIL {path}: Agent 에 {must} 없음"); bad = 1
+    # ADR-019: 봉인 컨트롤러 공개 인증서(8080)로만 더 나간다. 8080 이 아무 곳으로나 열리면 안 된다
+    np = [d for d in docs if re.search(r"^kind: NetworkPolicy$", d, re.M)][0]
+    if "port: 8080" not in np or "name: sealed-secrets-controller" not in np or "kubernetes.io/metadata.name: kube-system" not in np:
+        print(f"FAIL {path}: Agent 네트워크 정책에 봉인 컨트롤러(kube-system/sealed-secrets-controller:8080) 길이 없다"); bad = 1
+    if re.search(r"- ports:\n\s+- \{ protocol: TCP, port: 8080 \}", np):
+        print(f"FAIL {path}: 8080 이 목적지 없이 열렸다"); bad = 1
 if not bad:
     print("ok   Agent 권한은 읽기만(Secret·ConfigMap 없음), AppProject 는 클러스터 자원·RBAC 막음, Agent 는 비루트·읽기 전용")
 sys.exit(bad)

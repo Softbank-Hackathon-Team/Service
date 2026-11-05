@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # 고객 온프레 k3s 에 설치 묶음(W2)을 까는 스크립트. 고객 서버에서 사람이 돌린다 (플랫폼이 원격으로 돌리지 않는다)
 #   1) Argo CD core v2.13.3 (레포에 고정한 파일, sha256 확인 뒤 server-side apply. 인터넷에서 직접 apply 하지 않는다)
+#   1b) 봉인 컨트롤러 sealed-secrets v0.40.0 (레포에 고정한 파일, sha256 확인). DB 이전 비밀(전용 계정·터널 키·인증서)을
+#       플랫폼이 이 컨트롤러의 공개 인증서로 봉인해 git 으로 보낸다 (ADR-019). 없으면 배포가 SEALING_CERT_MISSING 으로 멈춘다
 #   2) Agent 키 Secret (onprem-agent --enroll 이 만든 키 파일에서. 값을 화면·helm 기록에 남기지 않는다)
 #   3) gitops 저장소 Secret (읽기 전용 자격: deploy key 또는 HTTPS 읽기 토큰. 둘 다 없으면 공개 저장소로 본다)
 #   4) helm 차트 deploy/helm/onprem-agent (Agent + 권한 + 이 회사만 당기는 Argo 설정)
@@ -16,13 +18,16 @@
 #   sudo k3s ctr -n k8s.io images import svc-onprem-agent.tar
 #   sudo k3s ctr -n k8s.io images tag <import 가 찍은 태그 이름> "$AGENT_IMAGE"
 #   확인: sudo k3s ctr -n k8s.io images ls -q | grep -F "$AGENT_IMAGE"
-# 되돌리기: helm uninstall onprem-agent -n svc-agent; kubectl delete ns svc-agent; Argo 를 지우려면 같은 yaml 로 kubectl delete
+# 되돌리기: helm uninstall onprem-agent -n svc-agent; kubectl delete ns svc-agent; Argo·봉인 컨트롤러를 지우려면 같은 yaml 로 kubectl delete
+#   (봉인 키 Secret(kube-system 의 sealed-secrets-key…)은 컨트롤러가 만든 것이라 yaml 로 지워지지 않고 남는다. 그 Secret 을 지우면 이미 봉인된 값은 다시 못 푼다)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 ARGO_YAML=tools/argocd-core-install-v2.13.3.yaml
 ARGO_SHA=cfe23fcb976c00c96e5add2f8fd9f70db4390b06c66ec4f391634e49e3ef45e3   # tools/argo-k3d.sh 와 같은 값
 ARGO_NS=argocd
+SEALED_YAML=tools/sealed-secrets-controller-v0.40.0.yaml
+SEALED_SHA=ac8aabccdd9110430d117501705818115b2ab0993700a9c118d4d42cf4015a17   # github.com/bitnami-labs/sealed-secrets 릴리스 v0.40.0 controller.yaml
 NS=svc-agent
 die() { echo "onprem-install: $*" >&2; exit 1; }
 need() { [ -n "${!1:-}" ] || die "$1 필요"; }
@@ -39,6 +44,8 @@ grep -q '^AGENT_KEY_ID=' "$AGENT_KEY_FILE" && grep -q '^AGENT_KEY_SECRET=' "$AGE
 [ -z "${GITOPS_TOKEN_FILE:-}" ] || case "$GITOPS_REPO_URL" in https://*) ;; *) die "GITOPS_TOKEN_FILE 은 https 주소와 같이 쓴다";; esac
 got=$(sha256sum "$ARGO_YAML" 2>/dev/null | cut -d' ' -f1 || shasum -a 256 "$ARGO_YAML" | cut -d' ' -f1)
 [ "$got" = "$ARGO_SHA" ] || die "Argo 설치 파일 sha 불일치: $got"
+got=$(sha256sum "$SEALED_YAML" 2>/dev/null | cut -d' ' -f1 || shasum -a 256 "$SEALED_YAML" | cut -d' ' -f1)
+[ "$got" = "$SEALED_SHA" ] || die "봉인 컨트롤러 설치 파일 sha 불일치: $got"
 
 echo "1/5 Argo CD core"
 K create ns "$ARGO_NS" --dry-run=client -o yaml | K apply -f - >/dev/null
@@ -65,6 +72,11 @@ fi
 # 상태 판정 더하기: CNPG Cluster (tools/onprem-argocd-health.yaml). 없으면 DB 가 안 떠도 Healthy 로 보여 Agent 가 "적용됨" 을 보낸다
 #   controller 가 argocd-cm 을 지켜보므로 다시 띄우지 않아도 먹는다 (VM 실측 약 50초). 같은 값이면 바뀌는 것 없음
 K -n "$ARGO_NS" patch cm argocd-cm --type merge --patch-file tools/onprem-argocd-health.yaml >/dev/null
+
+echo "1b/5 봉인 컨트롤러 (sealed-secrets v0.40.0, kube-system)"
+# 이미 있으면 같은 파일이라 바뀌는 것 없음. 봉인 키는 컨트롤러가 처음 뜰 때 클러스터 안에서 만든다 (밖으로 안 나간다)
+K apply -f "$SEALED_YAML" >/dev/null
+K -n kube-system rollout status deploy/sealed-secrets-controller --timeout=300s >/dev/null
 
 echo "2/5 Agent 키 Secret"
 K create ns "$NS" --dry-run=client -o yaml | K apply -f - >/dev/null
