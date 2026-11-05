@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # 고객 온프레 k3s 에 설치 묶음(W2)을 까는 스크립트. 고객 서버에서 사람이 돌린다 (플랫폼이 원격으로 돌리지 않는다)
 #   1) Argo CD core v2.13.3 (레포에 고정한 파일, sha256 확인 뒤 server-side apply. 인터넷에서 직접 apply 하지 않는다)
+#   1c) CNPG 운영자 1.30.1 (레포에 고정한 파일, sha256 확인). 이미 있으면(CRD clusters.postgresql.cnpg.io) 건너뛴다. INSTALL_CNPG=0 이면 안 깐다
 #   1b) 봉인 컨트롤러 sealed-secrets v0.40.0 (레포에 고정한 파일, sha256 확인). DB 이전 비밀(전용 계정·터널 키·인증서)을
 #       플랫폼이 이 컨트롤러의 공개 인증서로 봉인해 git 으로 보낸다 (ADR-019). 없으면 배포가 SEALING_CERT_MISSING 으로 멈춘다
 #   2) Agent 키 Secret (onprem-agent --enroll 이 만든 키 파일에서. 값을 화면·helm 기록에 남기지 않는다)
@@ -31,6 +32,8 @@ ARGO_SHA=cfe23fcb976c00c96e5add2f8fd9f70db4390b06c66ec4f391634e49e3ef45e3   # to
 ARGO_NS=argocd
 SEALED_YAML=tools/sealed-secrets-controller-v0.40.0.yaml
 SEALED_SHA=ac8aabccdd9110430d117501705818115b2ab0993700a9c118d4d42cf4015a17   # github.com/bitnami-labs/sealed-secrets 릴리스 v0.40.0 controller.yaml
+CNPG_YAML=tools/cnpg-1.30.1.yaml
+CNPG_SHA=37237f145d8138256ea25ae830f87759255665ff08f8d552fdd8224a5ec032fb   # github.com/cloudnative-pg/cloudnative-pg 릴리스 v1.30.1 cnpg-1.30.1.yaml (2026-11-06 받음)
 NS=svc-agent
 die() { echo "onprem-install: $*" >&2; exit 1; }
 need() { [ -n "${!1:-}" ] || die "$1 필요"; }
@@ -52,6 +55,10 @@ got=$(sha256sum "$ARGO_YAML" 2>/dev/null | cut -d' ' -f1 || shasum -a 256 "$ARGO
 [ "$got" = "$ARGO_SHA" ] || die "Argo 설치 파일 sha 불일치: $got"
 got=$(sha256sum "$SEALED_YAML" 2>/dev/null | cut -d' ' -f1 || shasum -a 256 "$SEALED_YAML" | cut -d' ' -f1)
 [ "$got" = "$SEALED_SHA" ] || die "봉인 컨트롤러 설치 파일 sha 불일치: $got"
+if [ "${INSTALL_CNPG:-1}" != "0" ]; then
+  got=$(sha256sum "$CNPG_YAML" 2>/dev/null | cut -d' ' -f1 || shasum -a 256 "$CNPG_YAML" | cut -d' ' -f1)
+  [ "$got" = "$CNPG_SHA" ] || die "CNPG 설치 파일 sha 불일치: $got"
+fi
 
 echo "1/5 Argo CD core"
 K create ns "$ARGO_NS" --dry-run=client -o yaml | K apply -f - >/dev/null
@@ -83,6 +90,18 @@ echo "1b/5 봉인 컨트롤러 (sealed-secrets v0.40.0, kube-system)"
 # 이미 있으면 같은 파일이라 바뀌는 것 없음. 봉인 키는 컨트롤러가 처음 뜰 때 클러스터 안에서 만든다 (밖으로 안 나간다)
 K apply -f "$SEALED_YAML" >/dev/null
 K -n kube-system rollout status deploy/sealed-secrets-controller --timeout=300s >/dev/null
+
+echo "1c/5 CNPG 운영자 (온프레 도착 DB)"
+# 이미 있으면 그대로 둔다: 고객이 helm 등으로 다른 판을 깔았을 수 있다 (덮어쓰면 그 설치와 싸운다). 다시 실행해도 결과가 같다
+if K get crd clusters.postgresql.cnpg.io >/dev/null 2>&1; then
+  echo "  이미 있음 (건너뜀)"
+elif [ "${INSTALL_CNPG:-1}" = "0" ]; then
+  echo "  INSTALL_CNPG=0: 깔지 않음. 도착 DB(CNPG Cluster)는 CNPG 운영자가 있어야 뜬다" >&2
+else
+  # CRD 가 커서 client-side apply 의 annotation 한도를 넘는다 → server-side (Argo 와 같은 이유)
+  K apply --server-side --force-conflicts -f "$CNPG_YAML" >/dev/null
+  K -n cnpg-system rollout status deploy/cnpg-controller-manager --timeout=300s >/dev/null
+fi
 
 echo "2/5 Agent 키 Secret"
 K create ns "$NS" --dry-run=client -o yaml | K apply -f - >/dev/null

@@ -207,6 +207,32 @@ kubectl -n platform get secret worker-env -o json | python3 -c 'import json,sys;
 
 확인: 고객 Agent 보고 뒤 `agent_reports` 의 facts 에 `sealing.certPem`·`egressIp` 가 있으면 이전 계획이 봉인 인증서와 중계 SSH 허용 IP 를 쓸 수 있다.
 
+## 온프레 설치 한 줄 켜기 (한 번)
+
+고객은 콘솔 연결 화면의 명령 한 줄(`curl -fsSL <플랫폼>/api/v1/install/onprem.sh | SVC_ENROLL_TOKEN=et_... bash`)만 자기 서버에서 실행한다. GitHub 작업은 고객이 하지 않는다.
+등록 순간에 플랫폼이 회사 전용 gitops 레포(`gitops-t-<회사>`)를 만들고, 고객 서버가 만든 SSH 공개 키를 그 레포에만 읽기 전용 배포 키로 건다. 워커는 온프레 묶음을 그 레포로 복사한다.
+그래서 고객 Argo CD 자격이 새도 그 회사 폴더만 보인다 (공용 gitops 레포 읽기 토큰을 고객에게 주지 않는다).
+
+```bash
+# 1. GitHub 조직 설정: Settings → Member privileges(또는 Repository) → Deploy keys 허용 (꺼져 있으면 등록이 TENANT_REPO_DEPLOY_KEY_DENIED 로 멈춘다)
+# 2. 플랫폼용 GitHub 토큰 1개 (fine-grained, 조직 소유, 모든 레포: Administration 쓰기 + Contents 쓰기). 레포 만들기·배포 키 걸기(api)·회사 레포 push(worker)에 쓴다
+# 3. Agent 이미지 공개: Actions → publish-onprem-agent 실행 → 조직 Packages 에서 svc-onprem-agent 를 Public 으로 (처음 한 번). 요약 끝의 이름@sha256 을 적어 둔다
+# 4. platform/app JSON 에 키 넣기 (값은 채팅·레포에 남기지 않는다). secretKeys 보다 먼저 넣는다
+#    GITOPS_TENANT_REPO_URL = https://github.com/<조직>/gitops-{tenant}.git   ({tenant} 그대로. 회사마다 바뀐다)
+#    GITOPS_TENANT_TOKEN    = 2번 토큰
+#    ONPREM_AGENT_IMAGE     = 3번 이름@sha256
+#    ONPREM_METRICS_URL     = https://metrics.<도메인>/v1/metrics   (트래픽 판정 지표 수집기가 보낼 곳. 등록 응답에 지표 토큰이 같이 나간다)
+# 5. helm upgrade 로 api·worker 가 새 키를 받게 한다 (기본 values 에는 안 넣었다: 다른 사람이 키 없이 upgrade 해도 동기화가 멈추지 않게)
+helm upgrade platform deploy/helm/platform -n platform --reset-then-reuse-values \
+  --set 'components.api.secretKeys={DATABASE_URL,JWT_SECRET,PLATFORM_PRINCIPAL_ARN,AGENT_REPORT_MASTER_KEY,PUBLIC_API_URL,CONNECT_TEMPLATE_URL,GITOPS_TENANT_REPO_URL,GITOPS_TENANT_TOKEN,ONPREM_AGENT_IMAGE,ONPREM_METRICS_URL}' \
+  --set 'components.worker.secretKeys={DATABASE_URL,GITOPS_REPO_URL,GITOPS_WRITE_TOKEN,GITOPS_PUSH,REPL_SECRET_MASTER_KEY,PLATFORM_EGRESS_CIDRS,GITOPS_TENANT_REPO_URL,GITOPS_TENANT_TOKEN}'
+# 6. 확인: 로그인 없이 스크립트가 나오면 된다 (503 이면 ONPREM_AGENT_IMAGE 가 없거나 모양이 틀림)
+curl -fsS https://console.<도메인>/api/v1/install/onprem.sh | head -3
+```
+
+- 이미 설치된 고객(손으로 설치, 공용 레포 토큰)은 콘솔에서 새 등록 명령을 받아 `SVC_REENROLL=1` 을 앞에 붙여 다시 돌리면 회사 레포·배포 키로 바뀐다. 그 다음 그 서버의 공용 레포 토큰 파일은 지운다.
+- 키를 안 넣으면 예전과 같다: 콘솔 명령은 레포 스크립트(`npm run agent:onprem -- --enroll`), 워커는 공용 레포에만 쓴다.
+
 ## worker Terraform 작업 폴더 디스크
 
 자원 생성 작업은 worker 안 작업 폴더에 state·입력값·출력값·DB 비밀 파일을 둔다. 기본값(`/tmp`)이면 파드가 지워질 때 함께 사라져, 만든 자원을 Terraform 으로 지우지 못한다. 실제 자원을 만들기 전에 디스크를 켠다.

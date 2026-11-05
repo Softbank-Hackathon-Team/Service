@@ -119,6 +119,9 @@ ENV API_HOST=0.0.0.0
 #   없으면 apps/api/src/security/load.ts 가 못 읽어 "정적" 근거·LP-AWS-BOUNDARY 가 비고 prod e2e 2건 실패
 COPY infra/permissions /app/infra/permissions
 COPY gitops/charts /app/gitops/charts
+# 온프레 설치 한 줄이 받는 파일 (routes/onprem-install.ts, GET /api/v1/install/onprem*). 레포와 같은 상대 경로로 둔다
+COPY tools/onprem-bootstrap.sh tools/onprem-install.sh tools/argocd-core-install-v2.13.3.yaml tools/sealed-secrets-controller-v0.40.0.yaml tools/onprem-argocd-health.yaml tools/cnpg-1.30.1.yaml /app/onprem-bundle/tools/
+COPY deploy/helm/onprem-agent /app/onprem-bundle/deploy/helm/onprem-agent
 ENV PERMISSIONS_DIR=/app/infra/permissions
 ENV CHART_DIR=/app/gitops/charts/app
 # 파일 주인은 root(읽기만 가능) → 앱이 자기 코드를 못 바꾼다
@@ -197,8 +200,10 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
 #   docker run --rm svc-onprem-agent:dev --help
 FROM runtime AS onprem-agent
 COPY --from=onprem-kubectl /bin/kubectl /usr/local/bin/kubectl
-COPY --from=build-onprem-agent /src/dist/onprem-agent/ ./
+# 고객이 받는 공개 이미지(GHCR)다 → 소스맵(main.mjs.map, 원본 소스·주석 전체)은 넣지 않는다. 오류 줄 번호는 main.mjs 기준
+COPY --from=build-onprem-agent /src/dist/onprem-agent/main.mjs ./
+COPY --from=build-onprem-agent /src/dist/onprem-agent/data ./data
 USER node
-ENTRYPOINT ["node", "--enable-source-maps", "main.mjs"]
+ENTRYPOINT ["node", "main.mjs"]
 # 30초마다 heartbeat, 10번에 1번 security (tools/onprem-agent.ts loop)
 CMD ["loop", "--every", "30"]

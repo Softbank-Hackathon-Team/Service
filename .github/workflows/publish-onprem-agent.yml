@@ -1,0 +1,62 @@
+# 온프레 Agent 이미지를 고객이 받을 수 있는 공개 레지스트리(GHCR)에 올린다.
+#   고객 서버는 우리 AWS 에 권한이 없어 ECR 비공개 이미지를 못 받는다 → 설치 한 줄(tools/onprem-bootstrap.sh)이 이 이미지를 쓴다
+#   이름: ghcr.io/<조직 소문자>/svc-onprem-agent:sha-<짧은 커밋>  (+ main 이면 :main)
+#   플랫폼 api 의 ONPREM_AGENT_IMAGE 에는 태그 대신 요약 끝의 이름@sha256 을 넣는다 (deploy/helm/platform/README.md)
+# 처음 한 번: GitHub 조직 패키지 화면에서 svc-onprem-agent 를 Public 으로 바꾼다 (새 패키지는 비공개로 생긴다)
+name: publish-onprem-agent
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "tools/onprem-agent.ts"
+      - "packages/agent/**"
+      - "packages/contracts/**"
+      - "deploy/docker/Dockerfile"
+      - ".github/workflows/publish-onprem-agent.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: image name (GHCR 은 소문자만)
+        id: name
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/svc-onprem-agent" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v4
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.name.outputs.image }}
+          tags: |
+            type=sha,prefix=sha-
+            type=raw,value=main,enable={{is_default_branch}}
+      - name: build + push
+        id: push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          target: onprem-agent
+          # DRAFT(ai): amd64 만 (시연 VM·대부분의 온프레 서버). arm 서버 고객이 생기면 linux/arm64 추가 (kubectl 단계 이미지도 같이 확인)
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: true
+          sbom: true
+          cache-from: type=gha,scope=onprem-agent
+          cache-to: type=gha,mode=max,scope=onprem-agent
+      - name: digest (ONPREM_AGENT_IMAGE 에 넣을 값)
+        run: echo "${{ steps.name.outputs.image }}@${{ steps.push.outputs.digest }}" | tee -a "$GITHUB_STEP_SUMMARY"
