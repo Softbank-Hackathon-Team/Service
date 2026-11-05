@@ -150,6 +150,23 @@ exit 1
   assert.match(err.message, /not running/);
 });
 
+test("kubectl port-forward: 프로세스가 먼저 끝나고 오류 글이 늦게 와도 사유에 남는다", async () => {
+  process.env.DATABASE_URL = "postgres://app:pw@db/app";
+  process.env.ANTHROPIC_API_KEY = "sk-ant-test";
+  const home = mkdtempSync(join(tmpdir(), "pf-"));
+  const late = join(home, "kubectl-late");
+  // exit 는 바로 오고, stderr 를 쥔 자식이 끝나야 close 가 온다
+  writeFileSync(late, `#!/bin/sh
+(sleep 0.3; echo 'error: pod is not running' >&2) &
+exit 1
+`);
+  chmodSync(late, 0o755);
+  const err = await kubectlPortForward({ bin: late, kubeconfig: join(home, "k"), home })("sbx-x").then(() => null, (e) => e);
+  assert.ok(err instanceof KubeError);
+  assert.equal(err.code, "SANDBOX_PORT_FORWARD");
+  assert.match(err.message, /끝남 \(1\).*not running/);
+});
+
 test("만료 청소: 지난 것만 지우고, 지우기 실패는 실행 번호·네임스페이스와 함께 돌려준다 (#177)", async () => {
   const nowSec = 1_800_000_000;
   const ns = (name: string, purpose: string, exp: number, run: string) =>
