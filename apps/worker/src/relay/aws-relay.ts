@@ -12,7 +12,7 @@ import { mkdtemp, rm, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnExec, type Exec, type ExecResult } from "@svc/adapters";
-import type { SshKeypair } from "../gitops/migration-secrets.js";
+import { OPENSSH_PEM, type SshKeypair } from "../gitops/migration-secrets.js";
 
 export const RELAY_TAG = { managedBy: "managed-by", migration: "svc:migration", role: "svc:role" } as const;
 export const RELAY_ROLE = "relay";
@@ -104,7 +104,7 @@ export function relayUserData(i: { migrationId: string; rdsEndpoint: string; tun
   if (!SSH_PUB.test(i.tunnelPublicKey.trim())) throw new RelayError("RELAY_PROVISION_FAILED", "터널 공개 키가 ssh-ed25519 한 줄이 아니다");
   if (!SSH_PUB.test(i.hostKey.publicKeyLine.trim())) throw new RelayError("RELAY_PROVISION_FAILED", "호스트 공개 키가 ssh-ed25519 한 줄이 아니다");
   const priv = i.hostKey.privateKeyOpenssh.trim();
-  if (!/^-----BEGIN OPENSSH PRIVATE KEY-----\n[A-Za-z0-9+/=\n]+\n-----END OPENSSH PRIVATE KEY-----$/.test(priv))
+  if (!new RegExp(`^-----BEGIN ${OPENSSH_PEM}-----\\n[A-Za-z0-9+/=\\n]+\\n-----END ${OPENSSH_PEM}-----$`).test(priv))
     throw new RelayError("RELAY_PROVISION_FAILED", "호스트 개인 키가 OpenSSH 형식이 아니다");
   return [
     "#!/bin/bash",

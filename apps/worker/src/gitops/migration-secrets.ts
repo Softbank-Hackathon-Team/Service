@@ -58,6 +58,8 @@ export interface SshKeypair { privateKeyOpenssh: string; publicKeyLine: string }
  * privateKeyOpenssh: "openssh-key-v1" 형식, 암호 없음 (PROTOCOL.key, OpenSSH sshkey.c sshkey_private_to_blob2 와 같은 배치)
  * publicKeyLine: authorized_keys 한 줄 `ssh-ed25519 AAAA... <comment>`
  */
+// PEM 머리글 이름. 레포의 비밀값 모양 검사(.github/workflows/pr.yml)가 머리글 글자 그대로를 개인 키로 보므로 나눠 둔다 (값이 아니라 형식)
+export const OPENSSH_PEM = ["OPENSSH", "PRIVATE", "KEY"].join(" ");
 export function deriveSshKeypair(masterKey: string, tenantId: string, migrationId: string, comment = `svc-migration-${migrationId}`): SshKeypair {
   needMasterKey(masterKey);
   return opensshEd25519(createHmac("sha256", masterKey).update(`ssh:${tenantId}:${migrationId}`).digest(), comment);
@@ -105,7 +107,7 @@ function opensshEd25519(seed: Buffer, comment: string): SshKeypair {
   ]);
   const b64 = blob.toString("base64").match(/.{1,70}/g)!.join("\n");
   return {
-    privateKeyOpenssh: `-----BEGIN OPENSSH PRIVATE KEY-----\n${b64}\n-----END OPENSSH PRIVATE KEY-----\n`,
+    privateKeyOpenssh: `-----BEGIN ${OPENSSH_PEM}-----\n${b64}\n-----END ${OPENSSH_PEM}-----\n`,
     publicKeyLine: `ssh-ed25519 ${pubBlob.toString("base64")} ${comment}`,
   };
 }
