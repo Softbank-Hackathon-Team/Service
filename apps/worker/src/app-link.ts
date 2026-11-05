@@ -8,7 +8,8 @@
 import type { Endpoint } from "@svc/replication";
 import { appLinkFromEnv, holdHooks, type AppLinkReport, type HoldHooks } from "@svc/dbproxy";
 import type { Provider } from "@svc/contracts";
-import { envFor, iacMockEnabled } from "@svc/adapters";
+import { envFor, gcpEnvFor, iacMockEnabled } from "@svc/adapters";
+import { withGcpCred } from "./gcp-token-server.js";
 import { deleteLinkSecret, loadWriterState } from "./db-writer.js";
 import { reapplyDbWriter, type RealApplyInput } from "./jobs/apply-real.js";
 import { withStepRoles } from "./jobs/_roles.js";
@@ -106,7 +107,7 @@ export async function switchRuntimeWriter(j: { tenantId: string; migrationId: st
   return withStepRoles("db_writer", j, m, async (roles) => {
     let last: Awaited<ReturnType<typeof reapplyDbWriter>> | undefined;
     for (let i = 1; i <= Math.max(1, tries); i++) {
-      last = await reapplyDbWriter(input, writer, { mock, ...(roles.awsEnv?.target ? { credEnv: roles.awsEnv.target } : {}) });
+      last = await withGcpCred<NonNullable<typeof last>>(roles, input.accountId, (gcpCred) => reapplyDbWriter(input, writer, { mock, ...(roles.awsEnv?.target ? { credEnv: roles.awsEnv.target } : {}), ...(gcpCred ? { gcpCred } : {}) }));
       if (last.ok || last.failureCode === "APP_LINK_STATE_MISSING") return { ...last, attempts: i };
     }
     return { ...last!, attempts: tries };
@@ -120,7 +121,8 @@ export async function dropRuntimeLinkSecret(j: { tenantId: string; migrationId: 
   if (!st) return { skipped: "no_db_writer_state" };
   if (iacMockEnabled(env)) return { skipped: "mock" };
   try {
-    await withStepRoles("db_writer", j, m, (roles) => deleteLinkSecret(st, roles.awsEnv?.target ? envFor(roles.awsEnv.target, env) : env));
+    await withStepRoles("db_writer", j, m, (roles) => deleteLinkSecret(st, roles.gcpToken?.target ? gcpEnvFor(roles.gcpToken.target, st.projectId ?? "", env)
+      : roles.awsEnv?.target ? envFor(roles.awsEnv.target, env) : env));
     return { deleted: st.secret };
   } catch (e) { return { error: (e as Error).message.slice(0, 200) }; }
 }
