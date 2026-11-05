@@ -207,6 +207,21 @@ kubectl -n platform get secret worker-env -o json | python3 -c 'import json,sys;
 
 확인: 고객 Agent 보고 뒤 `agent_reports` 의 facts 에 `sealing.certPem`·`egressIp` 가 있으면 이전 계획이 봉인 인증서와 중계 SSH 허용 IP 를 쓸 수 있다.
 
+## worker Terraform 작업 폴더 디스크
+
+자원 생성 작업은 worker 안 작업 폴더에 state·입력값·출력값·DB 비밀 파일을 둔다. 기본값(`/tmp`)이면 파드가 지워질 때 함께 사라져, 만든 자원을 Terraform 으로 지우지 못한다. 실제 자원을 만들기 전에 디스크를 켠다.
+
+```bash
+# 1. 플랫폼 Terraform apply 로 aws-ebs-csi-driver 애드온을 만든다
+# 2. worker 를 1개로 줄이고 디스크를 켠다
+helm upgrade platform deploy/helm/platform -n platform --reset-then-reuse-values \
+  --set apps.worker.replicas=1 --set apps.worker.tfWorkDir.size=20Gi
+```
+
+- worker 는 1개만 뜬다. EBS 는 파드 하나만 붙기 때문이다. 재배포 때는 이전 파드를 먼저 내려 잠깐 작업이 멈춘다 (`Recreate`).
+- 디스크는 첫 파드가 뜬 가용 영역에 묶인다. cred 노드가 다른 영역으로 바뀌면 파드가 `Pending` 이 된다. 그 영역에 노드를 늘리면 다시 뜬다.
+- `helm uninstall` 이나 PVC 삭제로도 디스크는 남는다 (`resource-policy: keep`, `reclaimPolicy: Retain`). 지우는 것은 사람이 한다.
+
 ## 아직 없는 것
 
 - TODO(human): worker 의 비밀 아닌 설정(`PROM_URL`, `TF_WORK_DIR` 등)을 차트로 넘기는 길. 지금 앱 Deployment 는 `<이름>-env` 비밀과 포트·`HOME` 만 준다
@@ -215,7 +230,7 @@ kubectl -n platform get secret worker-env -o json | python3 -c 'import json,sys;
 - 지표 토큰을 콘솔 화면에서 받는 길. 지금은 API 만 있다
 - TODO(human): Collector 설정(`templates/otel-gateway.yaml`)을 실제 Collector 0.164.0 으로 돌려 보지 않았다. 첫 설치 때 파드 로그와 라벨 덮어쓰기를 확인한다
 - `monitoring` 접근 제한(NetworkPolicy). Prometheus 는 로그인이 없어 클러스터 안 파드면 읽을 수 있다
-- TODO(human): 플랫폼 Terraform 에 `aws-ebs-csi-driver` addon 이 없다. 없으면 `sbx-standard`(provisioner `ebs.csi.aws.com`) PVC 와 vCluster 제어판 PVC 가 묶이지 않는다
+- 플랫폼 Terraform `aws-ebs-csi-driver` 애드온은 코드에 있다. apply 전에는 worker 작업 폴더 PVC, `sbx-standard` PVC, vCluster 제어판 PVC 가 묶이지 않는다
 - TODO(human): sandbox 노드에 runsc 설치 (`main.tf` sandbox launch template). 그 전에는 `sandbox.gvisor.enabled=false` 로 두고, 수정 고리(remediation) 샌드박스 워크로드는 뜨지 않는다
 - TODO(human): DATABASE_URL 의 TLS. RDS 는 TLS 만 받는다. `sslmode=require` 는 pg 가 인증서 검증까지 하므로 RDS CA 묶음(`NODE_EXTRA_CA_CERTS`)을 같이 줘야 한다.
 - TODO(human): `0001_init.sql` 의 고정 `app_user` 비밀번호를 바꾼 뒤 `DATABASE_URL` 을 넣는다.

@@ -89,4 +89,17 @@ for bad in "--set gcpPlatform.project=platform-proj" "--set gcpPlatform.project=
   if helm template platform "$CHART" -n platform $bad >/dev/null 2>&1; then echo "FAIL '$bad' 인데 렌더가 됐다"; fail=1; fi
 done
 [ $fail -eq 0 ] && echo "ok   worker GCP 로그인 (값 없음·worker 만·틀린 모양 거부)"
+
+# worker Terraform 디스크: 값이 없으면 아무것도 안 그린다, 켜면 worker 에만 붙는다, worker 가 2개면 렌더 실패
+if helm template platform "$CHART" -n platform "${IMG[@]}" | grep -qE 'worker-tf-work|TF_WORK_DIR|type: Recreate'; then
+  echo "FAIL tfWorkDir 값 없이 디스크가 그려졌다"; fail=1
+fi
+TFD=$(helm template platform "$CHART" -n platform "${IMG[@]}" --set apps.worker.replicas=1 --set apps.worker.tfWorkDir.size=20Gi)
+[ "$(printf '%s\n' "$TFD" | grep -c 'claimName: worker-tf-work')" = 1 ] || { echo "FAIL 디스크는 worker 하나에만 붙어야 한다"; fail=1; }
+printf '%s\n' "$TFD" | grep -q 'name: TF_WORK_DIR, value: /var/lib/svc-tf' || { echo "FAIL TF_WORK_DIR 이 디스크를 가리키지 않는다"; fail=1; }
+printf '%s\n' "$TFD" | grep -q 'type: Recreate' || { echo "FAIL 디스크를 켰는데 Recreate 가 아니다"; fail=1; }
+if helm template platform "$CHART" -n platform "${IMG[@]}" --set apps.worker.tfWorkDir.size=20Gi >/dev/null 2>&1; then
+  echo "FAIL worker 2개에 디스크를 켰는데 렌더가 됐다"; fail=1
+fi
+[ $fail -eq 0 ] && echo "ok   worker Terraform 디스크 (값 없음·worker 만·2개 거부)"
 exit $fail

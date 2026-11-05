@@ -191,6 +191,10 @@ run "sandbox_gvisor_on" {
 run "cni_and_pod_identity" {
   command = plan
   assert {
+    condition     = [for a in aws_eks_addon.ebs_csi.pod_identity_association : a.service_account] == ["ebs-csi-controller-sa"]
+    error_message = "EBS CSI 권한은 컨트롤러 서비스 계정의 Pod Identity 로 줘야 함"
+  }
+  assert {
     condition     = jsondecode(aws_eks_addon.vpc_cni.configuration_values).enableNetworkPolicy == "true" && jsondecode(aws_eks_addon.vpc_cni.configuration_values).env.ENABLE_PREFIX_DELEGATION == "true"
     error_message = "vpc-cni 는 네트워크 정책과 prefix delegation 을 켜야 함"
   }
