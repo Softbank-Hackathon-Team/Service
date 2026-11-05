@@ -8,6 +8,7 @@ import { api } from '../../lib/api';
 import { errorText } from '../../lib/errors';
 import { or404 } from '../../lib/http';
 import { isTerminal, LABEL } from '../../lib/status';
+import { failureDetailOf } from '../../lib/timelineDetail';
 import type { MigrationStatus, MigrationView, TimelineItem } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
 import { ShellLayout } from '../shell/ShellLayout';
@@ -31,6 +32,8 @@ export function auditEntry(item: TimelineItem): TimelineEntry {
     title: item.kind === 'transition' ? `${statusName(item.from)} → ${statusName(item.to)}` : item.action,
     detail: [human ? item.actor : item.actor === 'worker' ? t('워커') : t('시스템'), item.failureCode].filter(Boolean).join(' · '),
     time: time(item.at),
+    // 실패·오류 줄은 서버가 남긴 이유(detail.error)를 같이 보인다. 사유 코드만으로는 무엇을 고칠지 모를 때가 많다
+    note: denied ? failureDetailOf(item) : null,
   };
 }
 

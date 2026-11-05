@@ -219,6 +219,8 @@ export interface TimelineView {
 }
 // POST /migrations/:id/resume 응답 (apps/api/src/routes/control.ts, 응답 스키마 없음)
 export interface ResumeResult { id: string; from: "paused"; status: MigrationStatus; queue: string; jobQueued: boolean }
+// POST /migrations/:id/failure-decision 응답 (contracts migration.ts FailureDecisionResult). queue 는 cancelled 면 null
+export interface FailureDecisionResult { id: string; from: "failed"; choice: "retry" | "rollback"; status: MigrationStatus; queue: string | null; jobQueued: boolean }
 
 // ---- GET /migrations/:id/report 중 화면이 쓰는 칸 ----
 export interface EvidenceReport {

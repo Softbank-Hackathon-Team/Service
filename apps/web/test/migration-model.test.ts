@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  ackState, approveLabel, canPick, canReplan, canRollback, formatClock, judgementRows, leftoversOf, leftoverValue, migrationSteps, needsStepAnchor, stepsPhase,
+  ackState, approveLabel, canPick, canReplan, canRollback, failureChoices, formatClock, judgementRows, leftoversOf, leftoverValue, migrationSteps, needsStepAnchor, stepsPhase,
   pollMs, screenOf, shiftNote, signalCovers, specRows, stepAnchorFrom, stepGate, trafficPercent, trafficReportRows,
 } from "../src/features/migration/model";
 import { planResourceRows, runtimeChangeNote, type ResourceRow } from "../src/lib/resourceMap";
@@ -191,16 +191,28 @@ test("신호가 화면을 다 맞춰 주는 상태: 사람 차례·멈춤은 맞
     assert.equal(signalCovers(status), true, status);
 });
 
-test("계획 다시 만들기: stale·rejected 는 늘, failed 는 planning·provisioning 에서 멈춘 것만", () => {
+test("계획 다시 만들기: stale·rejected 만. failed 는 서버가 다시 계획을 막는다(409) → 실패 질문으로", () => {
   assert.equal(canReplan({ status: "stale", failedAtStatus: null }), true);
   assert.equal(canReplan({ status: "rejected", failedAtStatus: null }), true);
-  assert.equal(canReplan({ status: "failed", failedAtStatus: "planning" }), true);
-  assert.equal(canReplan({ status: "failed", failedAtStatus: "provisioning" }), true);
-  assert.equal(canReplan({ status: "failed", failedAtStatus: "importing" }), false);     // 서버 409 REPLAN_NOT_ALLOWED
-  assert.equal(canReplan({ status: "failed", failedAtStatus: "prechecking" }), false);
-  assert.equal(canReplan({ status: "failed", failedAtStatus: "cutover" }), false);       // 서버 가드 T37
-  assert.equal(canReplan({ status: "failed", failedAtStatus: null }), false);
+  assert.equal(canReplan({ status: "failed", failedAtStatus: "planning" }), false);
+  assert.equal(canReplan({ status: "failed", failedAtStatus: "provisioning" }), false);
+  assert.equal(canReplan({ status: "failed", failedAtStatus: "importing" }), false);
   assert.equal(canReplan({ status: "paused", failedAtStatus: null }), false);
+});
+
+test("실패 질문: 가져오기·점검·계획·자원 만들기는 그 단계부터 다시, 만든 것이 없는 실패는 정리 확인 없이 끝낸다", () => {
+  const at = (failedAtStatus: Parameters<typeof failureChoices>[0]["failedAtStatus"]) => failureChoices({ status: "failed", failedAtStatus });
+  // 가져오기 실패: 서버 failure-decision 이 재시도(→ importing)를 받는다. 거절은 cancelled (만든 자원 없음)
+  assert.deepEqual(at("importing"), { retry: "importing", nothingMade: true });
+  assert.deepEqual(at("prechecking"), { retry: "prechecking", nothingMade: true });
+  assert.deepEqual(at("planning"), { retry: "planning", nothingMade: true });
+  // 자원 만들기 실패: 재시도는 승인한 계획 그대로 다시 만들기. 만든 자원이 있을 수 있어 끝내기는 정리 확인 뒤
+  assert.deepEqual(at("provisioning"), { retry: "provisioning", nothingMade: false });
+  // 데이터·트래픽이 움직인 뒤 실패는 화면이 다시 시도를 두지 않는다
+  assert.deepEqual(at("cutover"), { retry: null, nothingMade: false });
+  assert.deepEqual(at("rolling_back"), { retry: null, nothingMade: false });
+  assert.deepEqual(at(null), { retry: null, nothingMade: false });
+  assert.deepEqual(failureChoices({ status: "paused", failedAtStatus: "importing" }), { retry: null, nothingMade: false });
 });
 
 test("승인 확인 항목: 다 체크해야 승인, 버튼은 남은 수를 말한다, 옛 계획서는 항목 없이 바로 승인", () => {

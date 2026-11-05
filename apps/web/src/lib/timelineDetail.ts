@@ -93,6 +93,24 @@ export function stopEvidence(items: TimelineItem[], into: string): { at: string;
   return null;
 }
 
+/**
+ * 감사 줄 하나에 서버가 남긴 실패 이유 한 줄. 워커는 실패·재시도 이유를 detail.error 에 남긴다(500자, 워커 _step.ts SD-1·import.ts).
+ * 계획 재확인 실패는 detail.recheck 에 글로 남긴다 (plan.ts). 없으면 null. 글자 그대로 보여 준다 (HTML 로 해석하지 않는다)
+ */
+export function failureDetailOf(item: Pick<TimelineItem, "detail">): string | null {
+  const why = str(item.detail.error) ?? (typeof item.detail.recheck === "string" ? item.detail.recheck : null);
+  return why && why.trim() ? why.trim() : null;
+}
+
+/** 이 상태(기본 failed)로 들어온 마지막 전이의 실패 이유. 실패 화면의 큰 카드가 쓴다 */
+export function failureDetail(items: TimelineItem[], into = "failed"): string | null {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i]!;
+    if (it.kind === "transition" && it.to === into) return failureDetailOf(it);
+  }
+  return null;
+}
+
 // 가장 최근 측정값(이름별 1개). 복제 지연·컷오버 멈춤 같은 숫자를 상세·모니터링에서 바로 보이게
 export function latestMeasurements(items: TimelineItem[]): { name: string; value: number; unit: string; at: string }[] {
   const seen = new Map<string, { name: string; value: number; unit: string; at: string }>();

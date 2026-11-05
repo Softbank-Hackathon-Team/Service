@@ -4,7 +4,7 @@ import { errorText } from "../src/lib/errors";
 import { connectionReasonText, stopReasonOf } from "../src/lib/failure";
 import { errorCode } from "../src/lib/errors";
 import { HttpError } from "../src/lib/http";
-import { stopEvidence } from "../src/lib/timelineDetail";
+import { failureDetail, failureDetailOf, stopEvidence } from "../src/lib/timelineDetail";
 import type { TimelineItem } from "../src/lib/types";
 
 test("멈춘 이유: 트래픽 지표로 멈추면 가드레일, 단계 실패는 단계, 워커 문제는 시스템", () => {
@@ -52,6 +52,20 @@ test("멈춘 근거: 그 상태로 들어온 마지막 전이의 판정과 규�
   assert.equal(got?.rule, "MG-2-07");
   assert.equal(stopEvidence([item({ detail: { lastJudgement: { stepPct: "50" } } })], "paused")?.judgement, null);
   assert.equal(stopEvidence(items, "rolling_back"), null);
+});
+
+test("실패 이유: failed 로 들어온 마지막 전이에 서버가 남긴 글(detail.error, 계획 재확인은 recheck)을 그대로 읽는다", () => {
+  const failed = (detail: Record<string, unknown>, seq = 2) =>
+    item({ seq, action: "migration.failed", result: "error", from: "importing", to: "failed", failureCode: "IMPORT_SOURCE_UNAVAILABLE", detail });
+  const items = [
+    item({ seq: 1, kind: "event", from: null, to: null, action: "import.attempt_failed", result: "error", detail: { error: "앞 시도" } }),
+    failed({ error: "  aws: AccessDenied <script>  ", attempts: 3 }),
+  ];
+  assert.equal(failureDetail(items), "aws: AccessDenied <script>");   // 글자 그대로 (화면이 HTML 로 해석하지 않는다)
+  assert.equal(failureDetail([failed({ recheck: "target unstable" })]), "target unstable");
+  assert.equal(failureDetail([failed({ attempts: 3 })]), null);
+  assert.equal(failureDetail([failed({ error: "x" })], "paused"), null);
+  assert.equal(failureDetailOf(items[0]!), "앞 시도");
 });
 
 test("오류 문장: 서버가 새로 내는 코드도 사람 말로 바꾼다", () => {

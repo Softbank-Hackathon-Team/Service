@@ -14,6 +14,7 @@ import type {
   EnvironmentView,
   EnvStatus,
   EvidenceReport,
+  FailureDecisionResult,
   FullEstimate,
   MigrationCostView,
   MigrationView,
@@ -67,9 +68,15 @@ export const api = {
   patchSpec: (id: string, body: SpecPatch) => patch<MigrationSpecViewV2>(`/migrations/${id}/spec`, body),
   /** 명세 확정 → 사전 점검 시작 (T04: 검토 칸이 남아 있으면 409) */
   confirmSpec: (id: string) => post<{ id: string }>(`/migrations/${id}/plan`),
-  /** 계획 다시 만들기: failed(planning·provisioning)·stale·rejected → planning. 재시도 한도를 넘었으면 acceptCustomerCost 필요 */
+  /** 계획 다시 만들기: stale·rejected → prechecking. failed 는 서버가 409 로 막는다 (failureDecision 을 쓴다) */
   replan: (id: string, acceptCustomerCost?: boolean) =>
     post<{ id: string }>(`/migrations/${id}/replan`, acceptCustomerCost ? { acceptCustomerCost } : {}),
+  /**
+   * 실패 질문의 답 (apps/api control.ts). retry = 실패 지점 단계부터 다시 (재시도 한도를 넘었으면 acceptCustomerCost 필요),
+   * rollback = 자원을 만든 뒤 실패면 롤백, 만들기 전 실패(가져오기·점검·계획)면 정리 확인 없이 끝냄(cancelled)
+   */
+  failureDecision: (id: string, choice: 'retry' | 'rollback', acceptCustomerCost?: boolean) =>
+    post<FailureDecisionResult>(`/migrations/${id}/failure-decision`, { choice, ...(choice === 'retry' && acceptCustomerCost ? { acceptCustomerCost } : {}) }),
   /** 거절 뒤 명세부터 다시 고치기: rejected → spec_review */
   reopenSpec: (id: string) => post<{ id: string }>(`/migrations/${id}/spec/reopen`),
   latestPlan: (id: string) => get<PlanDoc>(`/migrations/${id}/plan`),

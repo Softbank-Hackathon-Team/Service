@@ -12,14 +12,14 @@ import { stopReasonOf } from '../../lib/failure';
 import { is404, or404 } from '../../lib/http';
 import { planResourceRows, runtimeChangeNote } from '../../lib/resourceMap';
 import { LABEL } from '../../lib/status';
-import { lastPrecheckBounce } from '../../lib/timelineDetail';
+import { failureDetail, lastPrecheckBounce } from '../../lib/timelineDetail';
 import type { MigrationView, PlanAckKind, PrecheckItem } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
 import { useAgentReview } from '../agent/AgentResult';
 import { failureAnalysisOf } from '../agent/model';
 import { costCaveats, costNote, costSummary, planCostCaveats, planCostSummary } from '../cost/model';
 import {
-  ackState, approveLabel, autoStart, canReplan, pollMs, screenOf, signalCovers, specRows, stepGate, stepName, usd, type MigrationScreen,
+  ackState, approveLabel, autoStart, canReplan, failureChoices, pollMs, screenOf, signalCovers, specRows, stepGate, stepName, usd, type MigrationScreen, type RetryStage,
 } from './model';
 import { scopeLabel } from './source';
 import { SecurityFold } from './SecurityCard';
@@ -583,15 +583,32 @@ function StoppedScreen({ migration, route, onChanged, kind }: ScreenProps & { ki
   );
 }
 
+// 실패 지점별 "다시 시도" 글자와 큰 카드 아래 한 줄. failure-decision retry 가 그 단계 작업을 다시 넣는다 (apps/api control.ts RETRY_QUEUE)
+const RETRY: Record<RetryStage, { label: string; foot: string }> = {
+  importing: { label: t('다시 가져오기'), foot: t('출발 환경을 고친 뒤 다시 가져오거나, 끝내고 범위를 바꿔 새로 만듭니다') },
+  prechecking: { label: t('다시 점검'), foot: t('고친 뒤 사전 점검부터 다시 합니다') },
+  planning: { label: t('계획 다시 만들기'), foot: t('계획을 다시 만들면 승인부터 다시 합니다') },
+  provisioning: { label: t('자원 만들기 다시 시도'), foot: t('승인한 계획 그대로 도착 자원 만들기를 다시 합니다') },
+};
+
 function FailedScreen({ migration, route, onChanged }: ScreenProps) {
   const { busy, error, code, run } = useAction(onChanged);
   const consent = useCostConsent(code);
   const review = useAgentReview(migration.id);
   const analysis = failureAnalysisOf(review.data);
+  // 서버가 실패 전이에 남긴 이유 (감사 detail.error). 사유 코드 문장만으로는 무엇을 고칠지 모를 때가 많다
+  const timeline = usePoll(() => or404(api.timeline(migration.id)), null, [migration.id, migration.version]);
+  const why = timeline.data ? failureDetail(timeline.data.items) : null;
   const [cleaned, setCleaned] = useState(false);
   const reason = stopReasonOf(migration.failureCode, migration.status);
-  // 실패 지점이 planning·provisioning 이면 계획을 다시 만들 수 있다. 아니면 지금처럼 정리 확인 뒤 끝내는 길만
-  const replan = canReplan(migration);
+  // 가져오기·점검·계획·자원 만들기에서 실패했으면 그 단계부터 다시 할 수 있다. 아니면 지금처럼 정리 확인 뒤 끝내는 길만
+  const { retry, nothingMade } = failureChoices(migration);
+  // DRAFT(ai): 만든 자원이 없는 실패(가져오기·점검·계획)는 끝내고 새 마이그레이션 화면으로 보낸다. 출발 범위를 바꿔 다시 만드는 것이 다음 할 일이다
+  const endAndStartOver = () =>
+    run(async () => {
+      await api.failureDecision(migration.id, 'rollback');
+      go('migrations/new');
+    });
   const stop = reason && (
     <StopFold
       key={analysis ? 'analysis' : 'plain'}
@@ -603,7 +620,8 @@ function FailedScreen({ migration, route, onChanged }: ScreenProps) {
       analysis={analysis}
     />
   );
-  const leftover = (
+  // 만든 자원이 없는 실패는 정리할 것이 없어 "정리했습니다" 확인을 두지 않는다
+  const leftover = nothingMade ? null : (
     <LeftoverFold migration={migration} title={t('끝내기 전에')}>
       <label className={`${s.check} t-body-md`}>
         <input type="checkbox" checked={cleaned} onChange={(event) => setCleaned(event.target.checked)} />
@@ -617,29 +635,35 @@ function FailedScreen({ migration, route, onChanged }: ScreenProps) {
         tone="stop"
         meta={migration.failedAtStatus ? t('{0}에서 실패', { 0: LABEL[migration.failedAtStatus] }) : t('실패')}
         title={reason?.title ?? t('작업이\n끝나지 못했습니다')}
-        foot={replan ? t('계획을 다시 만들면 승인부터 다시 합니다') : t('남은 자원을 직접 정리한 뒤 이 마이그레이션을 끝냅니다')}
+        foot={retry ? RETRY[retry].foot : t('남은 자원을 직접 정리한 뒤 이 마이그레이션을 끝냅니다')}
       >
-        {reason && (
+        {(reason || why) && (
           <div className={s.heroPanel}>
-            <span className="t-body-md">{reason.hint}</span>
+            {reason && <span className="t-body-md">{reason.hint}</span>}
+            {/* 서버 글은 데이터로만 그린다 (React 가 글자로 넣는다) */}
+            {why && <span className="t-body-sm c-secondary">{t('서버가 남긴 이유: {0}', { 0: why })}</span>}
           </div>
         )}
       </Hero>
       <Stack area="side">
-        {replan ? stop : leftover}
-        {replan ? leftover : stop}
+        {retry ? stop : leftover}
+        {retry ? leftover : stop}
         <SecurityFold migration={migration} />
-        <ActionRow notice={replan ? consent.notice(error) : error} before={replan ? consent.check : null}>
-          {replan ? (
+        <ActionRow notice={retry ? consent.notice(error) : error} before={retry ? consent.check : null}>
+          {retry ? (
             <>
-              {cleaned && (
-                <ConfirmPill label={t('이 마이그레이션 끝내기')} confirmLabel={t('정리했고 끝내기')} icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id, true))} />
+              {nothingMade ? (
+                <ConfirmPill label={t('끝내고 새로 만들기')} confirmLabel={t('이 마이그레이션 끝내기')} icon="x" disabled={busy} onConfirm={() => void endAndStartOver()} />
+              ) : (
+                cleaned && (
+                  <ConfirmPill label={t('이 마이그레이션 끝내기')} confirmLabel={t('정리했고 끝내기')} icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id, true))} />
+                )
               )}
               <ActionPill
-                label={busy ? t('보내는 중') : consent.accept ? t('고객 부담으로 다시 계획') : t('계획 다시 만들기')}
+                label={busy ? t('보내는 중') : consent.accept ? t('고객 부담으로 다시 시도') : RETRY[retry].label}
                 icon="refresh"
                 disabled={busy || consent.waiting}
-                onClick={() => void run(() => api.replan(migration.id, consent.accept))}
+                onClick={() => void run(() => api.failureDecision(migration.id, 'retry', consent.accept))}
               />
             </>
           ) : (

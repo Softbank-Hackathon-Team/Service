@@ -8,6 +8,8 @@ export type TimelineEntry = {
   title: string;
   detail: string;
   time: string;
+  /** 서버가 남긴 이유 한 줄 (실패 줄의 detail.error 등). 글자 그대로 그린다 */
+  note?: string | null;
 };
 
 const KIND_ICON: Record<TimelineKind, IconName> = {
@@ -33,6 +35,7 @@ export function Timeline({ items }: { items: TimelineEntry[] }) {
               <span className="t-caption c-tertiary">{item.time}</span>
             </div>
             <p className="t-code-sm c-secondary">{item.detail}</p>
+            {item.note && <p className={`${s.note} t-body-sm c-secondary`}>{item.note}</p>}
           </div>
         </li>
       ))}

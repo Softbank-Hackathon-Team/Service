@@ -101,7 +101,7 @@ export function useAction(onChanged: () => void, onFailed?: (reason: unknown) =>
 /**
  * TODO(human): 고객 비용 동의 문구와 방식(체크 한 번이면 되는지, 누가 동의할 수 있는지)은 사람이 정한다. 지금은 체크 한 줄
  * 재시도 비용 동의 (서버 core retry-budget.ts). 플랫폼이 부담하는 재시도 횟수를 넘으면 서버가 409 RETRY_BUDGET_EXHAUSTED 를 준다.
- * 그때만 동의 체크를 보이고, 체크하면 같은 요청을 acceptCustomerCost:true 로 다시 보낸다. 다시 계획하기·재개가 같이 쓴다.
+ * 그때만 동의 체크를 보이고, 체크하면 같은 요청을 acceptCustomerCost:true 로 다시 보낸다. 다시 계획하기·실패 재시도·재개가 같이 쓴다.
  */
 export function useCostConsent(code: string | null) {
   const [asked, setAsked] = useState(false);
