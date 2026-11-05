@@ -108,11 +108,13 @@ function reusable(i: DeliveryInput, digest: string): boolean {
   return expectedNames(i.cnpg).every((n) => have.has(n));
 }
 
-/** 정방향 목적지 "<출발 host>:5432". 차트(db-tunnel.yaml)와 중계 sshd PermitOpen 이 이 모양만 받는다 */
-function forwardTarget(source: ReplicationEndpoint): string {
-  if (source.port !== 5432 || !/^[A-Za-z0-9.-]+$/.test(source.host))
+/** 정방향 목적지 "<출발 DB 이름>:5432". 차트(db-tunnel.yaml)와 중계 sshd PermitOpen 이 이 모양만 받는다.
+ *  출발 줄에 tls_servername 이 있으면 그게 진짜 DB 이름이다 (중계기 출발 입구: host = 중계 공개 IP·port = 15432, relay-step relayEndpointRows) */
+export function forwardTarget(source: ReplicationEndpoint): string {
+  const real = source.tlsServername ?? source.host;
+  if ((!source.tlsServername && source.port !== 5432) || !/^[A-Za-z0-9.-]+$/.test(real))
     throw new DeliveryError("REPL_DELIVERY_FAILED", `출발 줄 ${source.host}:${source.port} 로는 터널 목적지를 못 만든다 (이름 또는 IPv4, 포트 5432 만)`);
-  return `${source.host}:5432`;
+  return `${real}:5432`;
 }
 
 function tunnelValues(i: DeliveryInput): ChartDbTunnel {

@@ -9,7 +9,7 @@ import { AWS_OBSERVE_PENDING } from "../src/common/observe-pending.js";
 import { sourceDbLinkOperatePolicy } from "../src/aws/source-db-link.js";
 
 // 온프레 복제 중계기 권한. 원본 = infra/permissions/aws-relay-statements.json (worker relay/aws-relay.ts 가 부르는 동작)
-// SourceDbEgressToRelay 는 출발 RDS 보안 그룹 하나로 좁혀서 스택 매개변수 SourceDbSecurityGroupId 로 받는다.
+// SourceDbEgressToRelay 는 출발 RDS 보안 그룹 하나로 좁혀서 스택 매개변수 SourceDbSecurityGroupId 로 받는다 (나가기: 롤백 역복제, 들어오기: 워커 출발 입구·온프레 정방향 터널).
 // DRAFT(ai): 매개변수 기본값은 빈 값. 비우면 이 문장을 빼서 온프레 복제를 안 쓰는 고객의 스택이 그대로 만들어진다 (그때 중계기 RDS 나가기 규칙은 AccessDenied)
 const RELAY_SG_PARAM_SID = "SourceDbEgressToRelay";
 export function relayOperatePolicy() {
@@ -105,7 +105,7 @@ export function buildAwsConnectTemplate(operatePolicy: Json, boundaryPolicy: Jso
       },
       SourceDbSecurityGroupId: {
         Type: "String", Default: "", AllowedPattern: "^$|^sg-[0-9a-f]{8,17}$",
-        Description: "온프레 복제를 쓸 때 출발 RDS 보안 그룹 ID. 비우면 중계기의 RDS 나가기 규칙 권한을 넣지 않는다",
+        Description: "온프레 복제를 쓸 때 출발 RDS 보안 그룹 ID. 비우면 중계기의 RDS 나가기·들어오기 규칙 권한을 넣지 않는다",
       },
     },
     Conditions: {

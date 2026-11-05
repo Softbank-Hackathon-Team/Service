@@ -22,6 +22,8 @@ export class FakeAws {
   failOn?: string;
   /** 이 보안 그룹에 나가기 규칙을 열려 하면 권한 없음 (연결 스택 SourceDbSecurityGroupId 를 비운 고객) */
   denyEgressGroup?: string;
+  /** 이 보안 그룹에 들어오기 규칙을 열려 하면 권한 없음 (옛 연결 템플릿: 출발 RDS 보안 그룹에 나가기만 허용) */
+  denyIngressGroup?: string;
   exec = async (cmd: string, args: string[]): Promise<ExecResult> => {
     assert.equal(cmd, "aws");
     this.calls.push(args);
@@ -32,10 +34,13 @@ export class FakeAws {
     const err = (c: string) => ({ code: 254, stdout: "", stderr: `\nAn error occurred (${c}) when calling the X operation: no`, ms: 1 });
     if (this.failOn === op) return err("UnauthorizedOperation");
     if (op === "ec2 authorize-security-group-egress" && this.denyEgressGroup && val("--group-id") === this.denyEgressGroup) return err("UnauthorizedOperation");
+    if (op === "ec2 authorize-security-group-ingress" && this.denyIngressGroup && val("--group-id") === this.denyIngressGroup) return err("UnauthorizedOperation");
     const filters = JSON.parse(val("--filters") ?? "[]") as { Name: string; Values: string[] }[];
     const tagOk = (tags: Tag[]) => filters.filter((f) => f.Name.startsWith("tag:")).every((f) => f.Values.includes(tags.find((t) => t.Key === f.Name.slice(4))?.Value ?? "\u0000"));
     const fv = (n: string) => filters.find((f) => f.Name === n)?.Values;
-    const ruleRow = (r: Rule) => ({ SecurityGroupRuleId: r.id, GroupId: r.group, IsEgress: r.egress, IpProtocol: r.proto, FromPort: r.from, ToPort: r.to, CidrIpv4: r.cidr, Tags: r.tags });
+    // cidr 이 "sg:<id>" 면 보안 그룹 참조 규칙 (ReferencedGroupInfo)
+    const ruleRow = (r: Rule) => ({ SecurityGroupRuleId: r.id, GroupId: r.group, IsEgress: r.egress, IpProtocol: r.proto, FromPort: r.from, ToPort: r.to,
+      ...(r.cidr.startsWith("sg:") ? { ReferencedGroupInfo: { GroupId: r.cidr.slice(3) } } : { CidrIpv4: r.cidr }), Tags: r.tags });
     const instRow = (id: string) => { const x = this.insts.get(id)!; return { InstanceId: id, State: { Name: x.state }, Tags: x.tags,
       ...(x.state === "running" ? { PublicIpAddress: "203.0.113.50", PrivateIpAddress: "10.0.1.20" } : {}) }; };
     const tagsOf = (type: string) => (JSON.parse(val("--tag-specifications") ?? "[]") as { ResourceType: string; Tags: Tag[] }[]).find((s) => s.ResourceType === type)?.Tags ?? [];
@@ -63,7 +68,7 @@ export class FakeAws {
       case "ec2 authorize-security-group-ingress": case "ec2 authorize-security-group-egress": {
         const p = JSON.parse(val("--ip-permissions")!)[0];
         const r: Rule = { id: `sgr-${++this.n}`, group: val("--group-id")!, egress: args[1]!.endsWith("egress"), proto: p.IpProtocol, from: p.FromPort, to: p.ToPort,
-          cidr: p.IpRanges[0].CidrIp, tags: tagsOf("security-group-rule") };
+          cidr: p.IpRanges?.[0]?.CidrIp ?? `sg:${p.UserIdGroupPairs[0].GroupId}`, tags: tagsOf("security-group-rule") };
         if (this.rules.some((x) => x.group === r.group && x.egress === r.egress && x.from === r.from && x.cidr === r.cidr)) return err("InvalidPermission.Duplicate");
         this.rules.push(r);
         return ok({ Return: true, SecurityGroupRules: [ruleRow(r)] });

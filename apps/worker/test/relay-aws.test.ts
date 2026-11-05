@@ -2,15 +2,20 @@
 //   진짜 AWS 는 부르지 않는다. 가짜 aws 는 이 파일의 작은 EC2 흉내 (태그 필터·규칙·상태만)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { createServer, connect, type AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { RELAY_ACTIONS } from "@svc/adapters";
 import { FakeAws, fakeDeps } from "./fake-aws-relay.js";
 import { actionsOfPolicy, createTempRoleBroker, loadPermissionSet, memoryLedger, mockIssuer, STEP_ROLES, stepActions, TempRoleDenied, type AuditRecord } from "@svc/security";
 import { deriveSshHostKey, deriveSshKeypair, knownHostsLine } from "../src/gitops/migration-secrets.js";
 import {
-  buildRelayPlan, existingDbEgressCover, ownedBy, pickPublicSubnet, platformEgressCidrs, provisionRelay, RelayError, relayTags, teardownRelay, type RelayPlanInput,
+  buildRelayPlan, existingDbEgressCover, existingDbIngressCover, ownedBy, RELAY_FORWARDER_PY, pickPublicSubnet, platformEgressCidrs, provisionRelay, RelayError, relayTags, teardownRelay, type RelayPlanInput,
 } from "../src/relay/aws-relay.js";
+import { forwardTarget } from "../src/gitops/replication-delivery.js";
 import { provisionRelayStep, rdsIdentifierFromIds, relayEndpointRows, relayGate, teardownRelayStep, type RelayFacts } from "../src/relay/relay-step.js";
 
 const MK = "test-master-key-0123456789abcdef-xyz";   // 시험용 가짜 키
@@ -46,7 +51,14 @@ test("계획: user-data 에 PermitOpen <rds>:5432·파생 호스트 키 하나�
   assert.ok(!/ec2-user|authorized_keys.*ec2/.test(p.userData), "관리 SSH 키 없음");
   assert.ok(p.userData.includes("  ForceCommand /bin/false") && p.userData.includes("Match all"));
   assert.deepEqual(p.rules.map((r) => [r.direction, r.port, r.cidr]), [
-    ["ingress", 22, "203.0.113.9/32"], ["ingress", 5432, "10.0.0.0/16"], ["ingress", 5432, "198.51.100.7/32"], ["egress", 5432, "10.0.0.0/16"]]);
+    ["ingress", 22, "203.0.113.9/32"], ["ingress", 5432, "10.0.0.0/16"], ["ingress", 5432, "198.51.100.7/32"],
+    ["ingress", 15432, "198.51.100.7/32"], ["egress", 5432, "10.0.0.0/16"]]);
+  // 출발 입구 forwarder: 목적지는 RDS:5432 고정, 15432 에서 받는다, root 아닌 일회용 계정
+  assert.ok(p.userData.includes(`ExecStart=/usr/bin/python3 /usr/local/bin/svc-relay-fwd.py ${RDS} 5432 15432\n`));
+  assert.ok(p.userData.includes("DynamicUser=yes") && p.userData.includes("systemctl enable --now svc-relay-fwd.service"));
+  assert.ok(p.userData.indexOf("systemctl restart sshd") < p.userData.indexOf("svc-relay-fwd.py <<"), "터널(sshd)이 먼저 선다");
+  assert.equal(p.dbIngress.tags.find((t) => t.Key === "svc:role")!.Value, "relay-db-ingress");
+  assert.deepEqual([p.dbIngress.groupId, p.dbIngress.port], ["sg-0rds", 5432]);
   for (const tags of [p.sgTags, p.instance.tags, p.dbEgress.tags]) assert.ok(ownedBy(tags, M));
   assert.equal(p.sgTags.find((t) => t.Key === "svc:role")!.Value, "relay");
   assert.equal(p.dbEgress.tags.find((t) => t.Key === "svc:role")!.Value, "relay-db-egress");
@@ -97,7 +109,10 @@ test("실행기: 처음엔 만들고(기본 나가기 규칙 뺌·RDS 나가기 
   assert.equal(f.userData, plan.userData, "user-data 는 파일로 넘겼다 (argv 에 개인 키 없음)");
   assert.ok(!f.calls.flat().some((a) => a.includes("PRIVATE KEY")), "aws 인자에 개인 키 없음");
   const relayRules = f.rules.filter((r) => r.group === r1.securityGroupId).map((r) => [r.egress ? "egress" : "ingress", r.from, r.cidr]).sort();
-  assert.deepEqual(relayRules, [["egress", 5432, "10.0.0.0/16"], ["ingress", 22, "203.0.113.9/32"], ["ingress", 5432, "10.0.0.0/16"], ["ingress", 5432, "198.51.100.7/32"]]);
+  assert.deepEqual(relayRules, [["egress", 5432, "10.0.0.0/16"], ["ingress", 15432, "198.51.100.7/32"], ["ingress", 22, "203.0.113.9/32"],
+    ["ingress", 5432, "10.0.0.0/16"], ["ingress", 5432, "198.51.100.7/32"]]);
+  // RDS 들어오기: 가짜 RDS 보안 그룹이 VPC 대역 5432 를 이미 받는다 → 규칙을 안 단다
+  assert.deepEqual([r1.dbIngressRuleId, r1.dbIngressCoveredBy], ["", "sgr-rds-default"]);
   const dbRule = f.rules.find((r) => r.id === r1.dbEgressRuleId)!;
   assert.deepEqual([dbRule.group, dbRule.egress, dbRule.from, dbRule.cidr], ["sg-0rds", true, 5432, "10.0.1.20/32"]);
   assert.ok(ownedBy(dbRule.tags, M) && ownedBy(f.sgs.get(r1.securityGroupId)!.tags, M));
@@ -172,6 +187,88 @@ test("실행기: RDS 나가기가 막혀 있고 열 권한도 없으면 RELAY_DB
   });
 });
 
+// 2026-11-06 실측: 실제 RDS 보안 그룹은 클러스터 보안 그룹만 받았다 → 중계기 → RDS:5432 TIMEOUT. 그때 이 규칙을 단다
+test("RDS 들어오기 판정: 전부 허용·VPC 대역·중계 SG 참조는 이미 열림, 클러스터 SG 참조·다른 포트·나가기·플랫폼이 단 규칙은 아님", () => {
+  const row = (o: Record<string, unknown>) => ({ SecurityGroupRuleId: "sgr-in", IsEgress: false, ...o });
+  const ip = "10.0.1.20";
+  assert.equal(existingDbIngressCover([row({ IpProtocol: "-1", CidrIpv4: "0.0.0.0/0" })], ip, 5432, "sg-relay"), "sgr-in");
+  assert.equal(existingDbIngressCover([row({ IpProtocol: "tcp", FromPort: 5432, ToPort: 5432, CidrIpv4: "10.0.0.0/16" })], ip, 5432, "sg-relay"), "sgr-in");
+  assert.equal(existingDbIngressCover([row({ IpProtocol: "tcp", FromPort: 5432, ToPort: 5432, ReferencedGroupInfo: { GroupId: "sg-relay" } })], ip, 5432, "sg-relay"), "sgr-in");
+  assert.equal(existingDbIngressCover([row({ IpProtocol: "tcp", FromPort: 5432, ToPort: 5432, ReferencedGroupInfo: { GroupId: "sg-eks-cluster" } })], ip, 5432, "sg-relay"), undefined);
+  assert.equal(existingDbIngressCover([row({ IpProtocol: "tcp", FromPort: 3306, ToPort: 3306, CidrIpv4: "10.0.0.0/16" })], ip, 5432, "sg-relay"), undefined);
+  assert.equal(existingDbIngressCover([row({ IsEgress: true, IpProtocol: "-1", CidrIpv4: "0.0.0.0/0" })], ip, 5432, "sg-relay"), undefined);
+  assert.equal(existingDbIngressCover([row({ IpProtocol: "tcp", FromPort: 5432, ToPort: 5432, ReferencedGroupInfo: { GroupId: "sg-relay" },
+    Tags: relayTags("33333333-3333-4333-8333-333333333333", "relay-db-ingress") })], ip, 5432, "sg-relay"), undefined, "다른 이전이 단 규칙");
+});
+
+test("실행기: RDS 가 클러스터 SG 만 받으면 들어오기 규칙(중계 SG 참조)을 달고, 다시 돌면 그대로, 정리는 그 규칙부터 뺀다", async () => {
+  const f = newFake();
+  f.rules = f.rules.filter((r) => r.id !== "sgr-rds-default");
+  f.rules.push({ id: "sgr-rds-from-eks", group: "sg-0rds", egress: false, proto: "tcp", from: 5432, to: 5432, cidr: "sg:sg-eks-cluster", tags: [] });
+  const r1 = await provisionRelay(deps(f), buildRelayPlan(planInput()));
+  const inRule = f.rules.find((r) => r.id === r1.dbIngressRuleId)!;
+  assert.ok(inRule, "들어오기 규칙을 달았다");
+  assert.deepEqual([inRule.group, inRule.egress, inRule.from, inRule.to, inRule.cidr], ["sg-0rds", false, 5432, 5432, `sg:${r1.securityGroupId}`]);
+  assert.equal(inRule.tags.find((t) => t.Key === "svc:role")!.Value, "relay-db-ingress");
+  assert.ok(ownedBy(inRule.tags, M));
+  const before = f.calls.length;
+  const r2 = await provisionRelay(deps(f), buildRelayPlan(planInput()));
+  assert.equal(r2.dbIngressRuleId, r1.dbIngressRuleId);
+  assert.ok(!f.calls.slice(before).some((a) => /authorize-|revoke-/.test(a[1]!)), "다시 돌면 아무것도 안 고친다");
+  const t = await teardownRelay(deps(f), M);
+  assert.ok(t.removed.includes(r1.dbIngressRuleId));
+  const order = f.ops().slice(before).filter((o) => /revoke-security-group-(ingress|egress)|terminate-instances|delete-security-group/.test(o));
+  assert.deepEqual(order, ["ec2 revoke-security-group-ingress", "ec2 revoke-security-group-egress", "ec2 terminate-instances", "ec2 delete-security-group"],
+    "참조 규칙을 먼저 빼야 중계 SG 를 지울 수 있다");
+  assert.ok(f.rules.some((r) => r.id === "sgr-rds-from-eks"), "고객 규칙 그대로");
+});
+
+test("실행기: RDS 들어오기가 막혀 있고 열 권한도 없으면 RELAY_DB_INGRESS_DENIED (옛 연결 템플릿, 스택 업데이트 안내)", async () => {
+  const f = newFake();
+  f.rules = f.rules.filter((r) => r.id !== "sgr-rds-default");
+  f.denyIngressGroup = "sg-0rds";
+  await assert.rejects(provisionRelay(deps(f), buildRelayPlan(planInput())), (e: unknown) => {
+    assert.ok(e instanceof RelayError);
+    assert.equal(e.code, "RELAY_DB_INGRESS_DENIED");
+    assert.match(e.message, /sg-0rds/);
+    assert.match(e.message, /SourceDbSecurityGroupId/);
+    return true;
+  });
+});
+
+test("터널 목적지: 출발 줄이 중계기 출발 입구(host=공개 IP:15432)면 진짜 RDS 이름(tls_servername):5432, 아니면 예전처럼", () => {
+  const base = { tenantId: T, migrationId: M, rds: planInput().rds, db: "shop", appUser: "shop_app", publicIp: "203.0.113.50", privateIp: "10.0.1.20", knownHosts: "203.0.113.50 ssh-ed25519 AAAA" };
+  const [s] = relayEndpointRows({ ...base, existing: [] });
+  assert.equal(forwardTarget(s), `${RDS}:5432`);
+  assert.equal(forwardTarget({ ...s, host: RDS, port: 5432, tlsServername: null }), `${RDS}:5432`);
+  assert.throws(() => forwardTarget({ ...s, host: "203.0.113.50", port: 15432, tlsServername: null }), /5432/);
+});
+
+// forwarder 를 진짜로 돌린다 (python3 표준 라이브러리만 = 중계기 AL2023 과 같은 조건). 가짜 상류 서버로 바이트가 그대로 오가는지
+test("출발 입구 forwarder: 받은 바이트를 상류로 그대로, 응답도 그대로 (여러 연결 동시에)", { skip: spawnSync("python3", ["-c", "import asyncio"]).status !== 0 ? "python3 없음" : false }, async () => {
+  const up = createServer((s) => s.on("data", (b) => s.write(Buffer.concat([Buffer.from("ack:"), b]))));
+  await new Promise<void>((r) => up.listen(0, "127.0.0.1", r));
+  const upPort = (up.address() as AddressInfo).port;
+  const dir = mkdtempSync(join(tmpdir(), "relay-fwd-"));
+  const free = createServer(); await new Promise<void>((r) => free.listen(0, "127.0.0.1", r));
+  const listenPort = (free.address() as AddressInfo).port; await new Promise<void>((r) => free.close(() => r()));
+  writeFileSync(join(dir, "fwd.py"), RELAY_FORWARDER_PY);
+  const py = spawn("python3", [join(dir, "fwd.py"), "127.0.0.1", String(upPort), String(listenPort)], { stdio: "ignore" });
+  try {
+    const once = (msg: string) => new Promise<string>((resolve, reject) => {
+      const c = connect(listenPort, "127.0.0.1", () => c.write(msg));
+      c.on("data", (b) => { resolve(b.toString()); c.end(); });
+      c.on("error", reject);
+    });
+    let ok = false;
+    for (let i = 0; i < 50 && !ok; i++) { try { await once("ping"); ok = true; } catch { await new Promise((r) => setTimeout(r, 100)); } }
+    assert.ok(ok, "forwarder 가 떴다");
+    assert.deepEqual(await Promise.all(["a", "bb", "ccc"].map(once)), ["ack:a", "ack:bb", "ack:ccc"]);
+  } finally {
+    py.kill(); up.close(); rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("실행기 거부: 권한 없음 → RELAY_PROVISION_FAILED + awsCode, 만든 것은 태그를 단 채 남는다", async () => {
   const f = newFake();
   f.failOn = "ec2 run-instances";
@@ -228,8 +325,9 @@ test("단계 정상: 빌린 출발 자격으로 만들고 끝점 두 줄 (도착
     save: async (rows) => { saved = rows; } });
   assert.equal(out.kind, "ok", JSON.stringify(out));
   const [s, t] = saved as ReturnType<typeof relayEndpointRows>;
-  assert.deepEqual([s.side, s.provider, s.host, s.port, s.dbname, s.username, s.passwordRef, s.appRole],
-    ["source", "rds", RDS, 5432, "shop", "postgres", "env:REPL_SECRET_SRC_22222222", "shop_app"]);
+  // 출발 = 중계기 출발 입구 (공개 IP:15432), 진짜 RDS 이름은 tls_servername
+  assert.deepEqual([s.side, s.provider, s.host, s.port, s.tlsServername, s.dbname, s.username, s.passwordRef, s.appRole],
+    ["source", "rds", "203.0.113.50", 15432, RDS, "shop", "postgres", "env:REPL_SECRET_SRC_22222222", "shop_app"]);
   assert.deepEqual([t.side, t.provider, t.host, t.peerHost, t.peerPort, t.username, t.passwordRef, t.relayHost, t.relayPort],
     ["target", "cnpg", "203.0.113.50", "10.0.1.20", 5432, "svc_migrate", "derive:migrate", "203.0.113.50", 22]);
   assert.equal(t.relayKnownHosts, knownHostsLine("203.0.113.50", deriveSshHostKey(MK, T, M).publicKeyLine));
