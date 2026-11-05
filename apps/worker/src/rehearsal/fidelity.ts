@@ -58,15 +58,23 @@ const ITEMS: Record<WorkerItem, (f: FidelityFacts, changed: boolean) => Row> = {
   ingress: (f) => f.present.has("ingress")
     ? row("substituted", "Ingress → LB·DNS·TLS", "적용 안 함, 백엔드 Service 를 ClusterIP 로 직접 확인", "샌드박스 정책이 Ingress 를 막는다. LB·DNS·TLS 는 확인 못 함")
     : same("Ingress 없음"),
+  // db-tunnel 은 ssh -L/-R 인자라 연결 검사(edgesFrom 은 http:// 주소만 읽음)가 생기지 않는다 → "연결도 보지 않음"
   tunnel: (f) => f.present.has("tunnel") || f.present.has("db_tunnel")
     ? row("not_checked", [f.present.has("tunnel") ? "cloudflared 터널" : "", f.present.has("db_tunnel") ? "DB 이전 SSH 터널(db-tunnel)" : ""].filter(Boolean).join(" · "),
-      "돌리지 않음, 터널 대상 Service 연결만 본다", "터널 토큰·SSH 키·중계기와 바깥 연결은 샌드박스에 없다")
+      [f.present.has("tunnel") ? "cloudflared 는 돌리지 않음, 터널 대상 Service 연결만 본다" : "",
+        f.present.has("db_tunnel") ? "db-tunnel 은 돌리지 않음, 연결도 보지 않음 (복제는 리허설 밖)" : ""].filter(Boolean).join(" · "),
+      "터널 토큰·SSH 키·중계기와 바깥 연결은 샌드박스에 없다")
     : same("터널 없음"),
   cloud_identity: (f, c) => f.target === "onprem-k3s" && !c
     ? same("클라우드 신원 없음")
     : row("not_checked", f.target === "aws-eks" ? "EKS Pod Identity·IRSA" : f.target === "gcp-gke" ? "GKE Workload Identity" : "클라우드 신원 주석",
       "신원 주석을 빼고 돌림, 클라우드 권한 없음", "가상 클러스터 안에서는 클라우드 신원이 효과가 없다"),
-  network: () => row("substituted", "도착 네트워크 그대로", "바깥 연결 막음, 앱 안 Service 끼리는 열림", "더 엄격하다. 바깥 API 를 부르는 앱은 실패할 수 있다"),
+  // vCluster 는 NetworkPolicy 를 호스트로 내리지 않는다 (packages/agent/src/ai/vcluster.ts networkPolicies.enabled=false, 샌드박스 기본 거부를 지키려고)
+  network: (f) => f.present.has("network_policy")
+    ? row("substituted", "도착 네트워크 그대로 + 묶음 NetworkPolicy (도착 CNI 가 적용)",
+      "바깥 연결 막음, 앱 안 Service 끼리는 열림. 묶음 NetworkPolicy 는 가상 API 에만 적용하고 호스트로 내리지 않아 막지 않는다",
+      "NetworkPolicy 는 모양만 검사한다. 정책으로 막혀야 할 연결이 샌드박스에서는 통한다")
+    : row("substituted", "도착 네트워크 그대로", "바깥 연결 막음, 앱 안 Service 끼리는 열림", "더 엄격하다. 바깥 API 를 부르는 앱은 실패할 수 있다"),
   quota: (f) => {
     if (!f.quota) return same("네임스페이스 할당량 없음", "도착 네임스페이스에 할당량이 없다");
     const q = f.quota, real = `${q.basis}.cpu ${q.cpuM ?? "-"}m · ${q.basis}.memory ${q.memoryMi ?? "-"}Mi`;

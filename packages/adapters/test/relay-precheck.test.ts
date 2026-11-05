@@ -33,7 +33,8 @@ test("빠진 동작을 이름으로 알린다 (WARN + 고치는 법). 흉내 평
   const c = cs.find((x) => x.id === "PC-RELAY-PERM")!;
   assert.equal(c.verdict, "WARN");
   assert.match(c.reason, /빠진 동작 2개: ec2:RunInstances, ec2:TerminateInstances/);
-  assert.match(c.fix!, /aws-relay-statements\.json/);
+  assert.match(c.fix!, /aws-connect\.json/);
+  assert.match(c.fix!, /SourceDbSecurityGroupId/);
   const sim = calls.find((a) => a[1] === "iam")!;
   assert.equal(sim[sim.indexOf("--policy-source-arn") + 1], "arn:aws:iam::111111111111:role/svc-operate");
   for (const a of RELAY_ACTIONS) assert.ok(sim.includes(a), a);

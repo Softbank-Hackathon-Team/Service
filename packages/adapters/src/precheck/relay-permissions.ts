@@ -34,7 +34,8 @@ export function relaySimContext(region: string): object[] {
     s("aws:RequestTag/svc:migration", "precheck"), s("aws:ResourceTag/svc:migration", "precheck"), s("ec2:Owner", "amazon"), s("ec2:CreateAction", "RunInstances")];
 }
 
-export const RELAY_PERM_FIX = "출발 계정 실행 역할 svc-operate 에 infra/permissions/aws-relay-statements.json 문 묶음을 붙인다 (${AccountId}·${SourceDbSecurityGroupId} 를 채움). "
+export const RELAY_PERM_FIX = "연결 스택을 지금 템플릿(infra/onboarding/aws-connect.json, 중계기 문 묶음 포함)으로 업데이트한다. "
+  + "출발 RDS 보안 그룹에 중계기로 나가는 5432 가 없으면 스택 입력값 SourceDbSecurityGroupId 에 그 보안 그룹을 넣는다 (이미 열려 있으면 비워도 된다). "
   + "자동 점검을 하려면 관찰 역할에 iam:SimulatePrincipalPolicy 가 있어야 한다";
 
 /** simulate-principal-policy 결과 → 점검 한 줄.
