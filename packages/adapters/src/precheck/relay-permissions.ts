@@ -8,7 +8,7 @@ import type { CloudCheck } from "./cloud-precheck.js";
 /** 중계기 만들기·지우기에 쓰는 동작 전부 (정렬). 지울 때 쓰는 것도 같은 세션 정책이다 (security STEP_ROLES.relay) */
 export const RELAY_ACTIONS = [
   "ec2:AuthorizeSecurityGroupEgress",   // 중계 SG 나가기 5432 → VPC, 출발 RDS SG 나가기 → 중계 사설 IP/32
-  "ec2:AuthorizeSecurityGroupIngress",  // 중계 SG 들어오기 22(온프레 /32)·5432(VPC·플랫폼)
+  "ec2:AuthorizeSecurityGroupIngress",  // 중계 SG 들어오기 22(온프레 /32)·5432(VPC·플랫폼)·15432(플랫폼 출발 입구), 출발 RDS SG 들어오기 ← 중계 SG
   "ec2:CreateSecurityGroup",
   "ec2:CreateTags",                     // 만들 때 태그 (ec2:CreateAction 조건)
   "ec2:DeleteSecurityGroup",
@@ -20,7 +20,7 @@ export const RELAY_ACTIONS = [
   "ec2:DescribeSubnets",
   "ec2:DescribeVpcs",                   // VPC 대역
   "ec2:RevokeSecurityGroupEgress",      // 새 SG 기본 나가기 전부 허용 빼기, 정리 때 RDS 나가기 규칙 빼기
-  "ec2:RevokeSecurityGroupIngress",     // 온프레 나가는 IP 가 바뀌면 옛 22 규칙 빼기
+  "ec2:RevokeSecurityGroupIngress",     // 온프레 나가는 IP 가 바뀌면 옛 22 규칙 빼기, 정리 때 RDS 들어오기 규칙 빼기
   "ec2:RunInstances",
   "ec2:TerminateInstances",
   "rds:DescribeDBInstances",            // 출발 RDS 주소·VPC·SG
@@ -35,7 +35,7 @@ export function relaySimContext(region: string): object[] {
 }
 
 export const RELAY_PERM_FIX = "연결 스택을 지금 템플릿(infra/onboarding/aws-connect.json, 중계기 문 묶음 포함)으로 업데이트한다. "
-  + "출발 RDS 보안 그룹에 중계기로 나가는 5432 가 없으면 스택 입력값 SourceDbSecurityGroupId 에 그 보안 그룹을 넣는다 (이미 열려 있으면 비워도 된다). "
+  + "출발 RDS 보안 그룹이 중계기와 5432 를 주고받지 못하면(나가기·들어오기) 스택 입력값 SourceDbSecurityGroupId 에 그 보안 그룹을 넣는다 (이미 열려 있으면 비워도 된다). "
   + "자동 점검을 하려면 관찰 역할에 iam:SimulatePrincipalPolicy 가 있어야 한다";
 
 /** simulate-principal-policy 결과 → 점검 한 줄.

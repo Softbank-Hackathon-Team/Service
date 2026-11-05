@@ -31,6 +31,8 @@ class CopyInProgress extends Error {}
 //   다 쓰면 failureCode 도 REPL_TARGET_UNREACHABLE (SYNC_FAILED 대신)
 export const REPL_REACH_TIMEOUT_MS = envNumber(process.env.REPL_REACH_TIMEOUT_MS, 5000);
 class TargetUnreachable extends Error { readonly code = "REPL_TARGET_UNREACHABLE"; }
+// 출발 끝점도 DB 줄이면 같은 방식으로 먼저 본다 (2026-11-06 실측: 워커가 비공개 RDS 에 못 닿아 pg 접속 시간 초과만 4번 → 원인이 안 보였다)
+class SourceUnreachable extends Error { readonly code = "REPL_SOURCE_UNREACHABLE"; }
 // PF-E4 (FM-APP-11): 다시 해도 안 바뀌는 접속·설정 오류(Postgres SQLSTATE). 예전엔 보통 실패로 세어 1분 넘게 헛돌고 paused SYNC_FAILED.
 //   3D000 없는 DB · 28P01 비밀번호 틀림 · 28000 접속 허용 안 됨(pg_hba) · 42501 권한 없음 → 바로 멈춘다 (코드는 그대로 SYNC_FAILED, 원문은 detail.error)
 export const PERMANENT_PG_CODES = new Set(["3D000", "28P01", "28000", "42501"]);
@@ -80,6 +82,11 @@ export async function handleSync(raw: unknown) {
         const { host, port } = endpointAddress(repl.cfg.target);
         const why = await tcpReachProblem(host, port, REPL_REACH_TIMEOUT_MS);
         if (why) return failed(new TargetUnreachable(`REPL_TARGET_UNREACHABLE ${host}:${port} (${repl.cfg.target.label}): ${why}`));
+      }
+      if (repl.cfg.source.origin === "db") {
+        const { host, port } = endpointAddress(repl.cfg.source);
+        const why = await tcpReachProblem(host, port, REPL_REACH_TIMEOUT_MS);
+        if (why) return failed(new SourceUnreachable(`REPL_SOURCE_UNREACHABLE ${host}:${port} (${repl.cfg.source.label}): ${why}`));
       }
       let r: Awaited<ReturnType<typeof repl.sync>>, ev: Awaited<ReturnType<typeof repl.catchUpEvidence>>;
       let schemaCopy: Awaited<ReturnType<typeof repl.prepareTarget>> = null;
@@ -155,9 +162,10 @@ export async function handleSync(raw: unknown) {
         const checks = e instanceof SyncPermanentError && e.checks?.length ? { checks: e.checks } : {};
         // PF-E7: 상대 DB 에 못 붙음(구독이 출발로 못 감) = 중계기·터널·허용 주소 문제. 원인 찾는 곳을 같이 남긴다
         const peerHint = /could not connect to the publisher/.test(msg) ? { hint: "도착 DB 가 출발(REPL_SOURCE_PEER_URL)에 못 붙음 → 중계기·터널·DB_PEER_CIDRS·보안 그룹 확인" }
-          : e instanceof TargetUnreachable ? { hint: "워커가 도착 DB 주소(replication_endpoints target host:port)에 못 붙음 → 주소·중계기·방화벽 확인 (npm run repl:endpoint -- show)" } : {};
+          : e instanceof TargetUnreachable ? { hint: "워커가 도착 DB 주소(replication_endpoints target host:port)에 못 붙음 → 주소·중계기·방화벽 확인 (npm run repl:endpoint -- show)" }
+          : e instanceof SourceUnreachable ? { hint: "워커가 출발 DB 주소(replication_endpoints source host:port, 중계기 출발 입구면 중계 공개 IP:15432)에 못 붙음 → 중계기 forwarder·보안 그룹(플랫폼 나가는 대역)·RDS 들어오기 규칙 확인" } : {};
         const permanent = e instanceof SyncPermanentError || (!!code && PERMANENT_PG_CODES.has(code));
-        const failureCode = e instanceof SyncPermanentError || e instanceof TargetUnreachable ? e.code : "SYNC_FAILED";
+        const failureCode = e instanceof SyncPermanentError || e instanceof TargetUnreachable || e instanceof SourceUnreachable ? e.code : "SYNC_FAILED";
         const exhausted = permanent || attempts >= SYNC_MAX_ATTEMPTS;
         if (exhausted && SYNC_EXHAUSTED_ACTION === "pause") {
           return { to: "paused", failureCode, detail: { error: msg, attempts, permanent, ...(code ? { pgCode: code } : {}), ...checks, ...peerHint } };

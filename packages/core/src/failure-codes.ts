@@ -33,6 +33,7 @@ export const FAILURE_CODES = [
   "REPL_ENDPOINT_INCOMPLETE",    // db 0050: 이전의 복제 끝점 줄이 한쪽만 있음 (줄과 env 를 섞지 않는다) → sync paused
   "REPL_SECRET_UNRESOLVED",      // db 0050: password_ref 를 못 풂 (REPL_SECRET_MASTER_KEY 없음·짧음, env:REPL_SECRET_* 없음) → sync paused
   "REPL_TARGET_UNREACHABLE",     // db 0050: 도착 끝점 host:port 에 TCP 로 못 붙음 (재시도 소진 뒤) → sync paused
+  "REPL_SOURCE_UNREACHABLE",     // 출발 끝점 host:port(중계기 출발 입구 포함)에 TCP 로 못 붙음 (재시도 소진 뒤) → sync paused
   "CUTOVER_CATCHUP_EXHAUSTED",   // 컷오버 C6' 되돌림 횟수 소진
   "CUTOVER_ERROR",               // 컷오버 도중 예외 (Z19 H2)
   "CUTOVER_HALFWAY",             //   C5 뒤 예외
@@ -51,6 +52,7 @@ export const FAILURE_CODES = [
   "RELAY_ROLE_DENIED",           //   출발 실행 역할(중계기 세션 정책) 발급 거부 → apply failed
   "RELAY_PROVISION_FAILED",      //   중계기 만들기 실패 (aws CLI). 만든 것은 태그를 단 채 남는다 → apply failed
   "RELAY_DB_EGRESS_DENIED",      //   출발 RDS 보안 그룹에 중계기로 나가는 5432 가 없고 열 권한도 없음 (연결 스택 SourceDbSecurityGroupId 비움) → apply failed
+  "RELAY_DB_INGRESS_DENIED",     //   출발 RDS 보안 그룹이 중계기에서 들어오는 5432 를 안 받고 열 권한도 없음 (연결 스택이 옛 템플릿) → apply failed
   "RELAY_TEARDOWN_FAILED",       //   중계기 지우기 실패 → cleanup paused (롤백은 rolled_back + 경고)
   "REPL_DELIVERY_FAILED",        // 온프레 CNPG 이전: 서버 인증서·봉인 비밀·터널 값을 못 만듦 (중계기 칸 없음, 출발 포트 5432 아님, openssl 실패 등) → paused
   "SECRET_VALUES_MISSING", "SECRET_VALUES_UNKNOWN",   // APP-20: deploy 커밋 전 도착 비밀 그릇에 값(버전)이 없음 / 못 읽음 → paused
