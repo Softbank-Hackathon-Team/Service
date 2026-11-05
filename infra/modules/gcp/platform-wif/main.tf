@@ -1,6 +1,6 @@
-# 플랫폼 GCP 프로젝트의 구글 교환 창구: 플랫폼 EKS 의 Argo CD 허브가 키 없이 구글 토큰을 받는다.
-# EKS 가 파드에 준 토큰(OIDC)을 믿고, 그 토큰으로 회사 전용 플랫폼 SA(t-<28자>@) 를 가장하게 한다.
-# 허브 쪽 설정은 deploy/argocd/argo-cd.gke-login.values.yaml, 설치 순서는 deploy/helm/platform/README.md
+# 플랫폼 GCP 프로젝트의 구글 교환 창구: 플랫폼 EKS 의 Argo CD 허브와 worker 가 키 없이 구글 토큰을 받는다.
+# EKS 가 파드에 준 토큰(OIDC)을 믿고, 허브는 회사 전용 플랫폼 SA(t-<28자>@) 를, worker 는 svc-worker 를 가장하게 한다.
+# 허브 쪽 설정은 deploy/argocd/argo-cd.gke-login.values.yaml, worker 쪽은 deploy/helm/platform 의 gcpPlatform, 설치 순서는 deploy/helm/platform/README.md
 # DRAFT(ai): AWS 타입 대신 OIDC 타입. AWS 타입은 구글 Go 라이브러리가 파드 단위 역할을 못 읽어 노드 역할을 공유하게 된다
 terraform {
   required_version = ">= 1.11"
@@ -26,6 +26,8 @@ locals {
     "system:serviceaccount:argocd:argocd-application-controller",
     "system:serviceaccount:argocd:argocd-server",
   ]
+  # 플랫폼 차트 worker 서비스 계정 (deploy/helm/platform/templates/serviceaccounts.yaml, 네임스페이스 platform)
+  worker_subject = "system:serviceaccount:platform:worker"
 }
 
 resource "google_project_service" "api" {
@@ -47,14 +49,29 @@ resource "google_iam_workload_identity_pool_provider" "eks" {
   workload_identity_pool_id          = google_iam_workload_identity_pool.hub.workload_identity_pool_id
   workload_identity_pool_provider_id = "platform-eks"
   attribute_mapping                  = { "google.subject" = "assertion.sub" }
-  # 이 EKS 안에서도 허브 계정 둘만 교환한다
-  attribute_condition = "assertion.sub in ${jsonencode(local.hub_subjects)}"
+  # 이 EKS 안에서도 허브 계정 둘과 worker 만 교환한다
+  attribute_condition = "assertion.sub in ${jsonencode(concat(local.hub_subjects, [local.worker_subject]))}"
   oidc {
     issuer_uri = var.eks_oidc_issuer
   }
 }
 
-# 허브 토큰 audience 와 create-cred-config 에 그대로 쓴다
+# worker 의 시작 주체. 프로젝트 역할은 주지 않는다: 회사 전용 SA(t-) 를 빌리는 것만 할 수 있고 (gcp-platform-tenant-sa.sh 가 SA 마다 준다),
+# 빌린 토큰이 안 넘어간 gcloud 호출이 이 자격으로 돌아도 고객 자원을 읽지 못한다
+resource "google_service_account" "worker" {
+  project      = var.project_id
+  account_id   = "svc-worker"
+  display_name = "platform worker"
+  depends_on   = [google_project_service.api]
+}
+
+resource "google_service_account_iam_member" "worker_federation" {
+  service_account_id = google_service_account.worker.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "principal://iam.googleapis.com/${google_iam_workload_identity_pool.hub.name}/subject/${local.worker_subject}"
+}
+
+# 허브·worker 토큰 audience 와 create-cred-config 에 그대로 쓴다
 output "provider_name" { value = google_iam_workload_identity_pool_provider.eks.name }
 output "audience" { value = "//iam.googleapis.com/${google_iam_workload_identity_pool_provider.eks.name}" }
 
@@ -63,3 +80,6 @@ output "audience" { value = "//iam.googleapis.com/${google_iam_workload_identity
 output "hub_principals" {
   value = [for s in local.hub_subjects : "principal://iam.googleapis.com/${google_iam_workload_identity_pool.hub.name}/subject/${s}"]
 }
+
+# gcp-platform-tenant-sa.sh 의 WORKER_PRINCIPAL 에 그대로 쓴다
+output "worker_principal" { value = "serviceAccount:${google_service_account.worker.email}" }

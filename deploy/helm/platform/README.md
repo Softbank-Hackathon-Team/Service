@@ -23,6 +23,7 @@
 | `secrets.app` = `platform/app`, `secrets.cloudflared` = `platform/cloudflared` | `aws_secretsmanager_secret.platform` |
 | cloudflared `nodeSelector pool: general` | `aws_eks_node_group.this` 라벨 `pool` |
 | 서비스 계정 `platform/worker`, `platform/api` | `aws_eks_pod_identity_association.worker`·`.api` (`pod-identity.tf`) |
+| 서비스 계정 `platform/worker` (GCP 교환 주체) | `infra/modules/gcp/platform-wif` 의 `worker_subject` |
 | `sandbox.pool` = `sandbox` (파드 nodeSelector `pool`, taint `dedicated=sandbox:NoSchedule`) | `aws_eks_node_group.this["sandbox"]` 라벨 `pool`, taint `dedicated` |
 | `sandbox.imageRegistry` = `<계정>.dkr.ecr.<리전>.amazonaws.com/sandbox` | 플랫폼 ECR 샌드박스 자리. worker 환경변수 `SANDBOX_IMAGE_REGISTRY` 와 같은 값 |
 
@@ -99,6 +100,29 @@ kubectl create configmap argocd-gcp-creds -n argocd --from-file=gcp-creds/ --dry
 - ponytail: 3번은 회사마다 손으로 한다. 회사가 늘면 환경 연결 때 워커가 이 ConfigMap 을 고치게 한다.
 - TODO(human): 고객 GKE 쪽 허용(앱 구역 RoleBinding, `container.clusters.get`). 이게 없으면 로그인은 돼도 배포가 거절된다.
 - TODO(human): 허브가 고객 EKS 에 들어가는 권한과 cluster Secret. 이게 없으면 EKS 고객 Application 은 동기화되지 않는다.
+
+## 워커의 GCP 로그인 (GCP 연결·가져오기·이전에 필요)
+
+허브와 같은 교환 창구를 쓴다. 워커는 EKS 토큰을 구글 토큰으로 바꿔 `svc-worker@<플랫폼 프로젝트>` 로 시작하고, 거기서 회사 전용 SA(`t-<28자>@`), 고객 SA 순서로 빌린다. `svc-worker` 에는 프로젝트 역할이 없어서 회사 SA 를 빌리는 것 말고는 할 수 없다.
+
+```
+# 1. 플랫폼 전용 GCP 프로젝트를 만들고 결제 계정을 연결한다. 권한이 없으면 기존 프로젝트를 쓴다
+
+# 2. infra/modules/gcp/platform-wif 적용 (svc-worker 도 여기서 만든다). 출력 audience, worker_principal 을 아래에 쓴다
+
+# 3. 차트에 값 주기. 값은 helm 이 기억하지 않으니 이후 helm upgrade 마다 같은 --set 을 준다 (빠지면 워커가 GCP 로그인을 잃는다)
+#    Git Bash 는 //iam... 을 경로로 바꾸므로 앞에 MSYS_NO_PATHCONV=1 을 붙인다 (바뀌면 렌더가 멈춘다)
+helm upgrade platform deploy/helm/platform -n platform --set apps.image.registry=725072160743.dkr.ecr.ap-northeast-2.amazonaws.com --set apps.image.tag=$TAG --set otelGateway.image=725072160743.dkr.ecr.ap-northeast-2.amazonaws.com/svc-api:$TAG --set gcpPlatform.project=$PROJECT --set gcpPlatform.wifAudience=$AUDIENCE
+
+# 4. 회사마다: 워커에 그 회사 SA 가장 권한을 준다 (위 허브 3번과 같은 스크립트, 같이 실행하면 된다). 진짜 플랫폼 회사 UUID 를 쓴다
+WORKER_PRINCIPAL="$WORKER_PRINCIPAL" PLATFORM_PROJECT="$PROJECT" TENANT_ID="$TENANT" bash infra/onboarding/gcp-platform-tenant-sa.sh
+
+# 5. 확인: 토큰이 나오면(출력은 버린다) svc-worker 로그인이 된 것이다
+kubectl exec -n platform deploy/worker -- sh -c 'gcloud auth print-access-token >/dev/null && echo ok'
+```
+
+- TODO(human): 5번을 실제 환경에서 돌려 보지 않았다. gcloud 가 `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE` 로 이 설정 파일을 못 읽으면 워커 시작 때 `gcloud auth login --cred-file` 을 부르는 길로 바꾼다.
+- 고객 쪽은 회사 SA 이름이 바뀌므로 `gcp-connect.sh` 를 다시 실행한다.
 
 ## 관측 기본판 (이 차트와 따로 설치)
 
@@ -239,7 +263,7 @@ vCluster 차트 NetworkPolicy `vc-cp-<릴리스>`(`release=<릴리스>` 파드)�
 helm lint deploy/helm/platform
 helm template platform deploy/helm/platform -n platform
 ```
-기대: lint 0 failed, SecretStore 1·ExternalSecret 5·Deployment 1(cloudflared)·ServiceAccount 3·Role 1·RoleBinding 1, 그리고 샌드박스 켬(`sandbox.enabled=true`)이면 ClusterRole 2·ClusterRoleBinding 1·ValidatingAdmissionPolicy 6·ValidatingAdmissionPolicyBinding 6·StorageClass 1. `sandbox.gvisor.enabled=true` 면 RuntimeClass 1 이 더 생긴다. 샌드박스 켬이면 두 명령 모두 `--set sandbox.enabled=true --set sandbox.imageRegistry=000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/sandbox` 같은 값이 있어야 한다. `--set otelGateway.image=x` 를 주면 Deployment 2·Service 1·ConfigMap 1 이 된다. `--set apps.image.registry=x --set apps.image.tag=y` 를 주면 Deployment 4(api·worker·agent-worker·web)·Service 2(api·web) 가 더 생긴다.
+기대: lint 0 failed, SecretStore 1·ExternalSecret 5·Deployment 1(cloudflared)·ServiceAccount 3·Role 1·RoleBinding 1, 그리고 샌드박스 켬(`sandbox.enabled=true`)이면 ClusterRole 2·ClusterRoleBinding 1·ValidatingAdmissionPolicy 6·ValidatingAdmissionPolicyBinding 6·StorageClass 1. `sandbox.gvisor.enabled=true` 면 RuntimeClass 1 이 더 생긴다. 샌드박스 켬이면 두 명령 모두 `--set sandbox.enabled=true --set sandbox.imageRegistry=000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/sandbox` 같은 값이 있어야 한다. `--set otelGateway.image=x` 를 주면 Deployment 2·Service 1·ConfigMap 1 이 된다. `--set apps.image.registry=x --set apps.image.tag=y` 를 주면 Deployment 4(api·worker·agent-worker·web)·Service 2(api·web) 가 더 생긴다. `gcpPlatform.project`·`gcpPlatform.wifAudience` 를 주면 ConfigMap `worker-gcp-cred` 가 더 생기고 worker 에 토큰·설정 파일이 붙는다.
 
 세 벌 렌더 + kubeconform + 개수 확인 + `sandbox.imageRegistry` 없음·틀린 모양 거부는 `bash deploy/ci/check-platform.sh` 한 번이다 (CI `gitops` 작업).
 

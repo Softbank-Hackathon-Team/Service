@@ -96,6 +96,12 @@ apps:
       requests: { cpu: 20m, memory: 32Mi }
       limits: { memory: 128Mi }
 
+# 플랫폼 GCP 프로젝트. 비우면 아무것도 안 만든다 (값 없이 치는 기존 helm upgrade 가 그대로 돈다)
+# 채우면 api·worker 에 GCP_PLATFORM_PROJECT 를 주고, worker 는 키 없이 svc-worker@<project> 로 gcloud 를 시작한다 (templates/worker-gcp.yaml)
+gcpPlatform:
+  project: ""       # 플랫폼 프로젝트 ID
+  wifAudience: ""   # infra/modules/gcp/platform-wif 출력 audience. project 를 채우면 꼭 넣는다
+
 # 워커가 Application 을 읽고 새로고침 표시를 다는 Argo CD 네임스페이스 (Role·RoleBinding 이 여기 생긴다)
 argocd:
   namespace: argocd
