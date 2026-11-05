@@ -125,7 +125,7 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
   CMD ["node", "healthcheck.mjs", "http://127.0.0.1:3000/healthz"]
 
 FROM runtime AS worker
-# gitops 배포(N2)는 git 명령을 부른다. helm 은 gitops 레포 render 도구가 필요할 때만 (TODO(human): helm 바이너리 넣을지)
+# gitops 배포(N2)는 git 명령을 부른다. 묶음 렌더(gitops 레포 tools/render.mjs)는 helm template 을 부른다 → helm 은 아래 crane 다음에 넣는다
 # Z75: apk add 대신 git 단계에서 복사(패키지 서버가 막힌 곳에서도 빌드됨). 바탕에 이미 있는 라이브러리(libz·libssl 등)는 덮어쓰지 않는다.
 #      층에 임시 파일이 안 남게 bind 로 붙인다. WITH_GIT=0 은 git 없이 만드는 검증용(4차 apps/worker/Dockerfile 과 같은 뜻, 기본 1)
 ARG WITH_GIT=1
@@ -139,6 +139,10 @@ RUN --mount=type=bind,from=git,source=/out,target=/g set -e; [ "$WITH_GIT" = "1"
     ! ldd /usr/libexec/git-core/git-remote-https 2>&1 | grep -q "not found"
 # 리허설 이미지 복사 도구. 정적 Go 바이너리라 라이브러리가 필요 없다 (TLS 루트는 바탕의 /etc/ssl/certs)
 COPY --from=crane /ko-app/crane /usr/local/bin/crane
+# 묶음 렌더 도구. gitops 레포 tools/lib.mjs 가 helm template 을 부른다 (apps/worker/src/gitops/repo.ts tool("render.mjs")).
+#   배포 커밋과 리허설이 같은 렌더를 쓴다. agent-worker 와 같은 helm 단계(다이제스트 고정), 정적 Go 바이너리
+COPY --from=helm /usr/bin/helm /usr/local/bin/helm
+RUN helm version --short
 # 가져오기(discover)·사전 점검·역할 빌리기가 부르는 클라우드 CLI (packages/adapters/src/discover/index.ts, precheck/cloud-precheck.ts)
 #   kubectl = EKS·GKE 안의 Deployment·Service 읽기 (플랫폼 EKS 와 같은 판 단계를 같이 쓴다)
 #   설정·캐시는 HOME(/tmp, 차트가 emptyDir 로 준다) 아래에 쓴다. 사용 통계·업데이트 확인은 끈다 (바깥으로 나가는 호출을 줄인다)
