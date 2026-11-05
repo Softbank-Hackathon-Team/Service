@@ -37,7 +37,7 @@ MOCK_SEED=1 MOCK_IAC=1 MOCK_ARGO=1 MOCK_PRECHECK=1 FAKE_LLM=1 ROLLBACK_WINDOW_SE
 npm run dev:web                  # http://localhost:5173
 ```
 
-- 끝까지 한 번: `E2E_LOGIN_PASSWORD=... npm run e2e:real` 이 로그인부터 이전 완료까지 화면만 눌러 진행한다 (`e2e-real/console-flow.real.ts`). 서버·화면은 먼저 떠 있어야 한다. 배포된 플랫폼은 `E2E_BASE_URL` 만 바꿔 같은 시험을 돌린다
+- 끝까지 한 번: `E2E_LOGIN_PASSWORD=... npm run e2e:real` 이 로그인부터 이전 완료까지, 그리고 실행 뒤 롤백까지 화면을 눌러 진행한다 (`e2e-real/console-flow.real.ts`). 서버·화면은 먼저 떠 있어야 한다. 배포된 플랫폼은 `E2E_BASE_URL` 만 바꿔 같은 시험을 돌린다
 - 화면 점검: 개발 서버에서만 브라우저 콘솔의 `__layoutCheck()` 가 지금 화면의 카드·버튼 겹침, 가로 넘침, 화면 밖 행동 버튼, 좁은 화면의 쌓는 순서, 글자 대비(4.5:1)를 잰다. 창을 1024×768, 1280×720, 1440×900, 1920×1080 으로 바꿔 가며 돌린다 (`src/dev-layout-check.ts`, 운영 빌드에는 안 들어감)
 - 멈춤·실패 화면: 예전 목업의 "상황 만들기"는 목업과 함께 없어졌다. 서버에서 이전을 실패로 닫는 길은 `npm run ops:force-fail -- <이전 id> --reason "<왜>" --yes`
 

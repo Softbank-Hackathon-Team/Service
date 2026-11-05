@@ -3,7 +3,8 @@
 #   PR 에서 이 검사를 보고 싶으면 Actions 화면에서 ci 를 브랜치 지정해 수동 실행(workflow_dispatch)한다.
 #   check   : 타입 검사 + 단위 시험 + 웹 빌드 (DB 없음)
 #   test-db : Postgres 를 띄워 마이그레이션 적용 → DB 시험 → api·worker 띄우고 smoke(끝에서 끝까지)
-#   e2e     : (Z53 추가) test-db 와 같은 준비 + 화면 Playwright 시험
+#   e2e     : (Z53 추가) test-db 와 같은 준비 + 레거시 화면 Playwright 시험
+#   e2e-console : 운영 이미지가 빌드하는 새 콘솔(apps/web/src)을 빌드 결과로 띄워 만들기 → 승인 → 실행 → 완료·롤백까지 도는 시험
 #   gitops  : 앱 Helm 차트와 플랫폼 차트를 렌더해서 kubeconform 으로 쿠버네티스 스키마 검사
 #   docker  : hadolint + 이미지 4개 빌드(푸시 안 함)
 #
@@ -208,6 +209,82 @@ jobs:
           path: |
             apps/web/e2e-report/
             apps/web/e2e-results/
+            .ci-logs/
+          retention-days: 7
+
+  # 레거시 e2e 와 실패가 섞이지 않게 작업을 나눈다. 시험 스위치는 e2e 와 같고, 진짜 로그인을 쓰므로 DEV_AUTH 는 안 켠다
+  e2e-console:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      TRAFFIC_OBSERVE_SEC: "0.5"
+      MOCK_SEED: "1"
+      MOCK_IAC: "1"
+      MOCK_ARGO: "1"
+      MOCK_PRECHECK: "1"
+      FAKE_LLM: "1"
+      # DRAFT(ai): 시험이 롤백 대기 화면을 보고 누를 시간. 20초는 느린 실행기에서 화면을 보기 전에 끝날 수 있다
+      ROLLBACK_WINDOW_SEC: "60"
+    services:
+      db:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: platform_owner
+          POSTGRES_PASSWORD: owner_pw
+          POSTGRES_DB: platform
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U platform_owner -d platform"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: apply db/migrations
+        run: sh tools/db-migrate.sh
+        env:
+          DB_ADMIN_URL: postgres://platform_owner:owner_pw@127.0.0.1:5432/platform
+      - run: cp .env.example .env
+      - uses: actions/cache@v4
+        id: pw-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - if: steps.pw-cache.outputs.cache-hit != 'true'
+        run: npx -w @svc/web playwright install --with-deps chromium
+      - if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx -w @svc/web playwright install-deps chromium
+      - name: 일회용 로그인 계정
+        run: |
+          pw=$(openssl rand -base64 24)
+          echo "::add-mask::$pw"
+          echo "E2E_LOGIN_PASSWORD=$pw" >> "$GITHUB_ENV"
+          DEMO_USER_PASSWORD="$pw" npm run auth:seed
+      - run: npm run build -w @svc/web
+      - name: start api + worker + 빌드 결과 (background)
+        run: |
+          mkdir -p .ci-logs
+          nohup npm run start -w @svc/worker > .ci-logs/worker.log 2>&1 &
+          nohup npm run start -w @svc/api > .ci-logs/api.log 2>&1 &
+          nohup npm run preview -w @svc/web > .ci-logs/web.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -fsS http://localhost:4173/api/readyz && exit 0
+            sleep 1
+          done
+          echo "not ready"; exit 1
+      - run: npm run e2e:real -w @svc/web
+        env:
+          E2E_BASE_URL: http://localhost:4173
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: e2e-console-report
+          path: |
+            apps/web/e2e-results/real/
             .ci-logs/
           retention-days: 7
 

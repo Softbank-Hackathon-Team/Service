@@ -83,6 +83,10 @@ export async function handleRollback(raw: unknown) {
         ? { evidence: { sourceWeight100: true, sourceHealthy: true }, detail: { skipped: "lb_owned_by_other_migration", after: null } }
         : await restoreSource({ switcher, lbId, metrics: trafficMetrics(j.tenantId), migrationId: j.migrationId });
       const weights = traffic.detail.after;
+      // 화면 막대·GET traffic-shift 가 읽는 진행 줄도 출발로 맞춘다 (옮긴 적 없으면 줄이 없어 그대로). 표시용이라 쓰기 실패로 롤백을 멈추지 않는다
+      if (lease !== "other") await withTenant(j.tenantId, (tx) => tx.query(
+        `UPDATE traffic_progress SET target_pct = 0, observed_pct = 0, reached = true, reobserve = 0, observed_at = now() WHERE migration_id = $1`, [j.migrationId]))
+        .catch(() => { /* 표시용 */ });
       // Z59: 계약 5절 "Cloudflare 를 먼저 0 → 그다음 weightPct 0 커밋". shift 긴급 되돌림은 이미 0을 남기지만
       // 컷오버 뒤·창 안 롤백, rollback_failed 재시도는 이 길만 탄다. 커밋 실패는 롤백을 막지 않는다 (detail 에만)
       const gitopsWeight = await recordZero(bundle);

@@ -26,6 +26,7 @@ const SCREEN = {
   windowOver: /자원을 정리하고 있습니다/,
   cleanup: /임시 자원을 지우고 있습니다/,
   done: /멈추지 않고 .+로 옮겼습니다/,
+  rolledBack: /트래픽을 모두\s+.+로 되돌렸습니다/,
 };
 const anyOf = (...patterns: RegExp[]) => new RegExp(patterns.map((pattern) => pattern.source).join("|"));
 
@@ -212,7 +213,8 @@ async function writeEvidence(info: TestInfo, ev: Evidence) {
   await info.attach("evidence", { path: file, contentType: "application/json" });
 }
 
-test("새 콘솔 · 실제 서버: 로그인부터 마이그레이션 완료까지 화면으로 한 번", async ({ page }, info) => {
+// 실행까지는 같은 길이고, 롤백 대기 화면에서 갈라진다: 회수해서 완료까지, 또는 롤백해서 출발로
+const flow = (ending: "회수" | "롤백") => async ({ page }: { page: Page }, info: TestInfo) => {
   const ev: Evidence = {
     migrationId: null, screens: [], trafficShown: [], trafficReceived: [], report: null,
     apiFailures: [], otherFailures: [], refreshOkAt: [], browser: [], sse: { connects: [], signals: [] }, notes: {},
@@ -224,6 +226,10 @@ test("새 콘솔 · 실제 서버: 로그인부터 마이그레이션 완료까�
       return body();
     });
 
+  let authorization = "";
+  page.on("request", (req) => {
+    authorization = req.headers().authorization ?? authorization;
+  });
   page.on("response", async (res) => {
     const url = new URL(res.url());
     const path = url.pathname;
@@ -287,11 +293,19 @@ test("새 콘솔 · 실제 서버: 로그인부터 마이그레이션 완료까�
 
     await step("명세 확정", async () => {
       await expect(page.getByRole("button", { name: /^읽은 값/ })).toContainText(/\d+칸/);
+      // 출발 방화벽을 못 읽은 자원은 사람이 정하기 전에는 사전 점검을 못 넘는다. 개발 seed 의 DB 가 그렇다
+      const decide = page.getByRole("button", { name: "의존성 연결만 열기", exact: true });
+      const undecided = await decide.count();
+      ev.notes["출발 방화벽 결정"] = `${undecided}개`;
+      for (let left = undecided; left > 0; left--) {
+        await decide.first().click();
+        await expect(decide).toHaveCount(left - 1);
+      }
       await page.getByRole("button", { name: /명세 확정$/ }).click();
     });
 
     await step("사전 점검 · 계획 만들기", async () => {
-      await waitForScreen(page, ev, SCREEN.approve, WORKER_MS);
+      await waitForScreen(page, ev, SCREEN.approve, WORKER_MS, SCREEN.specBlocked);
       await expect(page.getByRole("button", { name: /^실행 단계/ }), "계획서를 읽음").toContainText(/\d+단계/);
       await expect(page.getByRole("button", { name: /^사전 점검/ })).toContainText(/\d+건/);
       ev.notes["사전 점검"] = flat(await page.getByRole("button", { name: /^사전 점검/ }).textContent());
@@ -300,7 +314,10 @@ test("새 콘솔 · 실제 서버: 로그인부터 마이그레이션 완료까�
     await step("계획 승인", async () => {
       const acks = page.locator("label").filter({ has: page.getByRole("checkbox") });
       ev.notes["승인 전에 확인"] = (await acks.allTextContents()).map(flat).join(" / ") || "없음";
-      for (const box of await page.getByRole("checkbox").all()) await box.check();
+      const boxes = await page.getByRole("checkbox").all();
+      expect(boxes.length, "계획서에 확인 항목이 있음 (비용·실패 비용은 늘 있다)").toBeGreaterThan(0);
+      await expect(page.getByRole("button", { name: `확인 ${boxes.length}개 남음`, exact: true }), "다 체크하기 전에는 승인할 수 없음").toBeDisabled();
+      for (const box of boxes) await box.check();
       // 승인하면 바로 실행을 시작한다(버튼 한 번). 시작이 막혀 승인 상태에 남으면 실행 화면이 오지 않아 이 단계가 실패한다
       const approve = page.getByRole("button", { name: "승인하고 실행 시작", exact: true });
       await expect(approve).toBeEnabled();
@@ -315,6 +332,30 @@ test("새 콘솔 · 실제 서버: 로그인부터 마이그레이션 완료까�
       await expect.soft(stepMark(page, "트래픽 이동")).toHaveAccessibleName("끝남");
       await expect.soft(stepMark(page, "DB 컷오버")).toHaveAccessibleName("끝남");
     });
+
+    if (ending === "롤백") {
+      await step("롤백", async () => {
+        await expect(heroTitle(page), "창이 끝나기 전에 롤백 대기 화면에 있음").toHaveText(SCREEN.window);
+        await expect(trafficBar(page)).toHaveAccessibleName(new RegExp(`${TARGET} 100%$`));
+        const rollback = page.getByRole("button", { name: "롤백", exact: true });
+        await rollback.click();
+        await page.getByRole("button", { name: "출발로 되돌리기", exact: true }).click();
+        // 되돌리는 동안은 진행 단계에 "멈춤"이 떠서 waitForScreen 은 못 쓴다
+        await expect(heroTitle(page)).toHaveText(SCREEN.rolledBack, { timeout: WORKER_MS });
+        await expect(rollback, "되돌린 뒤에는 롤백 버튼이 없음").toHaveCount(0);
+        await expect(page.getByRole("button", { name: "리소스 회수", exact: true })).toHaveCount(0);
+        await expect(page.getByText("이 마이그레이션이 도착에 만든 자원은 자동으로 지웁니다", { exact: true })).toBeVisible();
+        // 화면 문구만 믿지 않고 워커가 남긴 전이 기록과 트래픽 진행 줄을 읽는다
+        const read = async <T>(what: string) => (await (await page.request.get(`/api/migrations/${ev.migrationId}/${what}`, { headers: { authorization } })).json()) as T;
+        const { items } = await read<{ items: { to: string | null; detail: { weights?: unknown } }[] }>("timeline");
+        const weights = items.find((item) => item.to === "rolled_back")?.detail.weights;
+        ev.notes["롤백 뒤 트래픽"] = JSON.stringify(weights);
+        expect(weights, "트래픽이 출발 100%로 돌아옴").toEqual({ source: 1, target: 0 });
+        const shift = await read<{ targetWeightPct: number | null }>("traffic-shift");
+        expect(shift.targetWeightPct, "화면 막대가 읽는 값도 도착 0%").toBe(0);
+      });
+      return;
+    }
 
     await step("롤백 대기", async () => {
       expect.soft(ev.screens.some((title) => SCREEN.window.test(title)), "롤백 대기 화면(되돌릴 수 있는 시간)을 봄").toBe(true);
@@ -370,4 +411,7 @@ test("새 콘솔 · 실제 서버: 로그인부터 마이그레이션 완료까�
       expect.soft(ev.sse.signals.some((s) => s.migrationId === ev.migrationId), "이 마이그레이션의 화면 신호를 받음").toBe(true);
     }
   }
-});
+};
+
+test("새 콘솔 · 실제 서버: 로그인부터 마이그레이션 완료까지 화면으로 한 번", flow("회수"));
+test("새 콘솔 · 실제 서버: 만들기부터 실행 뒤 롤백까지 화면으로 한 번", flow("롤백"));

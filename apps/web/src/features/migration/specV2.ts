@@ -12,13 +12,15 @@ export type ComponentKindV2 = 'service' | 'job' | 'postgres' | 'cache' | 'object
 export interface ComponentV2 { id: string; kind: ComponentKindV2; props: Record<string, unknown> }
 export interface LinkV2 { from: string; to: string | { unmapped: string } | { external: string }; intent: string }
 export interface EntryRouteV2 { matches: { path: { type: string; value: string } }[]; backends: { to: string; port: number; weight: number }[] }
+/** 화면이 읽는 칸은 network 의 구성요소 줄뿐이다. 나머지 칸은 PATCH 때 그대로 돌려보낸다 */
+export interface PostureV2 { network?: ({ scope: string; subject?: string; ingress?: { from: string; port?: number }[] | 'unknown'; public?: boolean | null } & Record<string, unknown>)[] }
 export interface AppSpecV2 {
   schemaVersion: '2';
   app: { name: string };
   components: ComponentV2[];
   links: LinkV2[];
   entry?: { via: string; hosts: { hostnames: string[]; routes: EntryRouteV2[] }[] };
-  posture?: unknown;
+  posture?: PostureV2;
   /** 앱 보안 요구사항. 가져오기는 비워 두고 고객이 명세 검토에서 넣는다 (PATCH changes path "security") */
   security?: SecuritySpecV2;
 }
@@ -43,7 +45,7 @@ export type MigrationSpecViewV2 = MigrationSpecView & {
    */
   securityFacts?: Record<string, SourceDbFacts>;
 };
-/** PATCH /migrations/:id/spec 본문 중 화면이 쓰는 칸 (contracts SpecPatchInput). changes 는 지금 "security" 하나만 보낸다 (값 통째, null = 지움) */
+/** PATCH /migrations/:id/spec 본문 중 화면이 쓰는 칸 (contracts SpecPatchInput). changes 는 지금 "security"·"posture" 만 보낸다 (값 통째, security 의 null = 지움) */
 export interface SpecPatch { baseVersion: number; confirm?: string[]; include?: string[]; acceptDraft?: number; changes?: { path: string; value: unknown }[] }
 
 /** 한 번에 confirm 으로 보낼 수 있는 키 수 (contracts SpecPatchInput confirm max 20) */
@@ -191,6 +193,40 @@ export type SpecRowV2 = {
 export function specV2Of(view: MigrationSpecViewV2) {
   return view.specV2 ? { spec: view.specV2, meta: view.fieldMetaV2 ?? {}, review: view.needsReviewV2 ?? [] } : null;
 }
+
+// 서버 판정과 같은 규칙 (adapters target/shared.ts): 도착이 옮길 수 있는 허용 원본은 CIDR 뿐이다
+const isCidr = (from: string) => /^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/.test(from);
+/** sources = 옮길 수 없는 허용 원본, kept = 결정해도 도착에 그대로 남는 허용 주소. 사람이 무엇을 승인하는지 보이도록 화면에 적는다 */
+export type FirewallRow = { subject: string; reason: 'unknown' | 'uncopyable' | 'publicNoCidr'; sources: string[]; kept: string[] };
+
+/** 사전 점검이 사람 확인(PC-V2-HUMAN)으로 막을 출발 방화벽 줄. 사람이 정하기 전에 보여 주어 점검에서 되돌아오지 않게 한다 */
+export function firewallRows(spec: AppSpecV2): FirewallRow[] {
+  return (spec.posture?.network ?? []).flatMap((row): FirewallRow[] => {
+    if (row.scope !== 'component' || !row.subject) return [];
+    if (row.ingress === 'unknown') return [{ subject: row.subject, reason: 'unknown', sources: [], kept: [] }];
+    const sources = (row.ingress ?? []).map((item) => item.from);
+    const uncopyable = sources.filter((from) => !isCidr(from)).sort();
+    const kept = [...new Set(sources.filter(isCidr))].sort();
+    if (uncopyable.length > 0) return [{ subject: row.subject, reason: 'uncopyable', sources: uncopyable, kept }];
+    return row.public === true && sources.length === 0 ? [{ subject: row.subject, reason: 'publicNoCidr', sources: [], kept: [] }] : [];
+  });
+}
+
+// DRAFT(ai): 가장 좁은 값 하나만 고르게 한다. CIDR 은 남기고, 옮길 수 없는 원본은 빼고, CIDR 없는 공개 자원은 비공개로 둔다. 의존성 연결은 서버가 따로 연다
+// TODO(human): 허용 주소를 사람이 직접 적는 칸이 필요한지 영역에서 정한다
+export function firewallDecision(posture: PostureV2 | undefined, subject: string): PostureV2 {
+  return {
+    ...posture,
+    network: (posture?.network ?? []).map((row) => {
+      if (row.scope !== 'component' || row.subject !== subject) return row;
+      const ingress = row.ingress === 'unknown' ? [] : (row.ingress ?? []).filter((item) => isCidr(item.from));
+      return { ...row, ingress, public: row.public === true && ingress.length === 0 ? false : row.public };
+    }),
+  };
+}
+
+/** 지난 사전 점검의 막힘 중 방화벽 줄 (서버 문구 adapters target/shared.ts). 사람이 다 정했으면 큰 카드에서 뺀다 */
+export const isFirewallBlock = (message: string) => /출발 방화벽|허용 주소\(CIDR\)/.test(message);
 
 // 검토 칸 순서: 값이 있는 칸(리소스·연결·진입)을 먼저, 명세 전체에 대한 점검 문장은 뒤에. 같은 무리 안에서는 서버 순서
 const GROUP = ['components.', 'links.', 'entry.', 'check.'];
