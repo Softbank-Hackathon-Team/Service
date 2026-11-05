@@ -122,7 +122,7 @@ export const spawnExec: Exec = (cmd, args, o) => new Promise((res) => {
 export interface RealRunnerOpts {
   exec?: Exec;
   env?: NodeJS.ProcessEnv;
-  moduleRoot?: string;   // 기본 infra/modules
+  moduleRoot?: string;   // 기본 TF_MODULE_ROOT 또는 레포의 infra/modules (묶음 이미지는 레포 뿌리를 못 찾아 env 로 준다)
   workRoot?: string;     // 기본 TF_WORK_DIR 또는 ~/.svc-tf
   terraformBin?: string; // 기본 TF_BIN 또는 terraform
 }
@@ -193,7 +193,7 @@ export function parseOutputs(json: string): TfOutputs {
 export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
   const env = o.env ?? process.env;
   const exec = o.exec ?? spawnExec;
-  const moduleRoot = o.moduleRoot ?? DEFAULT_MODULE_ROOT;
+  const moduleRoot = o.moduleRoot ?? (env.TF_MODULE_ROOT || DEFAULT_MODULE_ROOT);
   const workRoot = o.workRoot ?? workRootOf(env);
   const tf = o.terraformBin ?? env.TF_BIN ?? "terraform";
   // M8: apply 큐 expireInSeconds 3600 보다 짧게. 실측 전 기본 45분 (RDS 생성 10분대 + 여유)
