@@ -153,9 +153,11 @@ ENV PATH=/opt/google-cloud-sdk/bin:$PATH \
     CLOUDSDK_COMPONENT_MANAGER_DISABLE_UPDATE_CHECK=true \
     AWS_CLI_AUTO_PROMPT=off
 ARG AWS_CLI_APK
+# openssl = 이전별 CNPG 서버 인증서 발급 (apps/worker/src/gitops/migration-secrets.ts issueServerCert). Node 에 X.509 만드는 API 가 없다
 # hadolint ignore=DL3018
-RUN apk add --no-cache "$AWS_CLI_APK" \
- && aws --version && gcloud --version >/dev/null && kubectl version --client >/dev/null && gke-gcloud-auth-plugin --version >/dev/null
+RUN apk add --no-cache "$AWS_CLI_APK" openssl \
+ && aws --version && gcloud --version >/dev/null && kubectl version --client >/dev/null && gke-gcloud-auth-plugin --version >/dev/null \
+ && openssl version
 # 최소 권한 파일(J2): 묶음 파일 하나에는 안 들어가서 따로 복사. 없으면 실행 역할 발급이 전부 거부된다
 COPY infra/permissions /app/infra/permissions
 ENV PERMISSIONS_DIR=/app/infra/permissions

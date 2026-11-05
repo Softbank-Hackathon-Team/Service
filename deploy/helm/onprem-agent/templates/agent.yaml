@@ -55,7 +55,7 @@ spec:
             capabilities: { drop: ["ALL"] }
           resources: {{- toYaml .Values.agent.resources | nindent 12 }}
 ---
-# Agent 는 들어오는 연결이 없고, 나가는 곳은 DNS · 쿠버네티스 API · 플랫폼 API(443) 뿐이다
+# Agent 는 들어오는 연결이 없고, 나가는 곳은 DNS · 쿠버네티스 API · 플랫폼 API(443) · 봉인 컨트롤러 공개 인증서(8080) 뿐이다
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -75,3 +75,11 @@ spec:
     - ports:
         - { protocol: TCP, port: 443 }
         - { protocol: TCP, port: 6443 }
+    # 봉인 컨트롤러(sealed-secrets, kube-system)의 공개 인증서 /v1/cert.pem. facts 의 sealing 칸 (ADR-019)
+    #   이 줄이 없으면 정상 상태에서 막혀 sealing 칸이 비고 배포가 SEALING_CERT_MISSING 으로 멈춘다 (2026-11-05 VM 실측:
+    #   새 파드는 정책이 걸리기 전 몇 초 동안은 통과해서, 바로 재면 열려 보인다. 25초 뒤 재면 막힘)
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+          podSelector: { matchLabels: { name: sealed-secrets-controller } }
+      ports:
+        - { protocol: TCP, port: 8080 }

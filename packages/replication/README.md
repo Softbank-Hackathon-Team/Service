@@ -57,6 +57,20 @@ if (!r.gate.ready) throw new Error(r.gate.reasons.join());   // pg-boss 재시�
 | `appRole` | 앱 DB 계정. 컷오버 때 이 계정 쓰기 권한을 회수한다 |
 | `schema` | 기본 `public` |
 
+### 이전마다 끝점 (db 0050 `replication_endpoints`)
+
+DECISION(team): 끝점은 이전마다 DB 행으로 (2026-11-05, 보안·온프레 영역). 워커 전역 `REPL_SOURCE_URL`·`REPL_TARGET_URL` 하나면 회사가 다른 두 이전이 같은 출발 DB 를 쓸 수 있었다.
+
+| 받는 것 | 넘기는 것 | 부작용 | 실패 코드 |
+|---|---|---|---|
+| `EndpointRecord` 두 줄 (contracts `ReplicationEndpoint` 모양) + env | `Migration` (끝점 `origin: "db"`) 또는 줄이 없으면 `null` | 없음 (비밀번호 참조 풀기만 env 를 읽음) | `ReplConfigError` `REPL_ENDPOINT_INCOMPLETE`(한쪽만), `REPL_SECRET_UNRESOLVED`(참조를 못 풂) |
+
+- 워커는 `replicationFor(tenantId, migrationId)` 하나로 복제 객체를 얻는다 (`apps/worker/src/jobs/_repl.ts`). 두 줄 → 줄, 둘 다 없음 → 예전 `replicationFromEnv`, 한 줄 → 오류.
+- 비밀번호는 칸에 없다. `password_ref` = `derive:<용도>` (`REPL_SECRET_MASTER_KEY` HMAC, `deriveReplPassword`) 또는 `env:REPL_SECRET_<이름>`. 그 밖의 이름(`env:DATABASE_URL` 등)은 거부.
+- TLS: `sslmode` + `ca_pem`(없으면 `REPL_CA_FILE`) + `tls_servername`(host 가 IP 일 때 인증서에서 확인할 이름). 상대가 붙는 `peerUrl` 에는 `sslmode=require`.
+- 등록·보기: `npm run repl:endpoint -- set|show --tenant <회사> --migration <이전> …` (`tools/repl-endpoint.ts`). 도착 줄에는 온프레 터널 중계기 칸(`--relay-host`·`--relay-known-hosts-file`·`--relay-port`)도 넣는다. 이 패키지는 그 칸을 읽지 않는다 (워커 gitops 렌더만 쓴다).
+- 온프레 CNPG 도착이면 워커 deploy 가 도착 줄 `ca_pem`·`tls_servername`·`sslmode=verify-full` 과 출발 줄 peer(`db-tunnel.<ns>.svc:5432`, 비어 있을 때만)를 채운다 (`apps/worker/src/gitops/replication-delivery.ts`, `deploy/helm/onprem-db-tunnel/README.md`).
+
 ## 단계 (컷오버 C1~C6)
 
 1. C1 붙잡기: `hooks.pause()` — 진행 중인 요청은 끝까지, 새 요청은 기다림
@@ -105,6 +119,8 @@ if (!r.gate.ready) throw new Error(r.gate.reasons.join());   // pg-boss 재시�
 | 파일 | 내용 |
 |---|---|
 | `src/endpoint.ts` | 끝점, 관리자 연결, 환경 변수 읽기 |
+| `src/record.ts` | DB 줄 → 끝점, 도달 확인(TCP) |
+| `src/secret-ref.ts` | `password_ref` 문법·유도·풀기 |
 | `src/precheck.ts` | 점검 DB-01~05 (서버 설정·권한), DB-T1~T5 (표·기본키·대형 객체·도착 스키마·빈 표) |
 | `src/replicate.ts` | publication/subscription/slot 만들기·지우기 |
 | `src/lag.ts` | 초기 복사 진행, 마커 왕복 지연, 슬롯 바이트 지연 |

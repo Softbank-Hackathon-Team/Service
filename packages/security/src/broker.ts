@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { hostname } from "node:os";
 import type { Provider } from "@svc/contracts";
 import { checkLeastPrivilege, TempCredential, TempRoleDenied, TempRoleRequest } from "./temp-role.js";
-import { checkSessionPolicy, checkWithinCeiling, compactSessionPolicy, type PermissionSet } from "./permissions.js";
+import { AWS_SESSION_POLICY_MAX, checkSessionPolicy, checkWithinCeiling, compactSessionPolicy, type PermissionSet } from "./permissions.js";
 import type { ProviderIssuer } from "./issuers.js";
 import { CredentialVault, type SecretMaterial } from "./vault.js";
 import { memoryLedger, type CredentialLedger } from "./ledger.js";
@@ -61,7 +61,8 @@ export function createTempRoleBroker(d: BrokerDeps) {
   async function deny(req: Partial<TempRoleRequest>, e: TempRoleDenied): Promise<never> {
     if (req.tenantId) await d.audit(req.tenantId, {
       actor: "worker", action: "temp_role.denied", target: req.migrationId ?? req.envId ?? "-", result: "denied",
-      detail: { code: e.code, message: e.message, provider: req.provider, purpose: req.purpose, stage: req.stage, actions: req.actions },
+      detail: { code: e.code, message: e.message, provider: req.provider, purpose: req.purpose, stage: req.stage, actions: req.actions,
+        ...(req.policy ? { policy: req.policy } : {}) },
     });
     throw e;
   }
@@ -109,12 +110,23 @@ export function createTempRoleBroker(d: BrokerDeps) {
         if (parsed.purpose === "operate") {
           // 권한 파일 없이 실행 역할을 주면 AWS plan 단계도 역할 전체 권한을 받는다 → 거부 (T-ROLE-6)
           if (!d.permissions) throw new TempRoleDenied("ROLE_NO_CEILING", "최소 권한 파일(infra/permissions)이 없어 실행 역할을 줄 수 없다");
+          if (parsed.policy && parsed.provider !== "aws")
+            throw new TempRoleDenied("ROLE_POLICY_PROVIDER", `세션 정책 ${parsed.policy} 는 AWS 실행 역할에만 쓴다`);
           if (parsed.provider === "aws") {
             if (!parsed.stage) throw new TempRoleDenied("ROLE_OPERATE_NO_STAGE", "AWS 실행 역할은 단계(plan|apply|destroy)가 필요하다");
-            const explicitPolicy = d.permissions.aws.sessionPolicies[parsed.stage];
-            const allowed = checkSessionPolicy(explicitPolicy, d.permissions.aws.ceiling);
+            // 중계기(policy relay): 천장 = 고객이 따로 붙인 중계기 문 묶음, 세션 정책 = 그 동작만. 단계 세션 정책은 안 쓴다
+            const relay = parsed.policy === "relay" ? d.permissions.aws.relay : undefined;
+            if (parsed.policy === "relay" && !relay)
+              throw new TempRoleDenied("ROLE_NO_CEILING", "중계기 권한 파일(infra/permissions/aws-relay-statements.json)이 없어 중계기 역할을 줄 수 없다");
+            const ceiling = relay ? relay.ceiling : d.permissions.aws.ceiling;
+            const explicitPolicy = relay ? relay.sessionPolicy : d.permissions.aws.sessionPolicies[parsed.stage];
+            const allowed = checkSessionPolicy(explicitPolicy, ceiling);
             // 2,048자 상한: 보낼 때는 실효 권한이 같은 짧은 판 (permissions.ts compactSessionPolicy)
-            sessionPolicy = compactSessionPolicy(explicitPolicy, d.permissions.aws.ceiling);
+            // 중계기는 줄이지 않는다: 줄이기는 "역할 정책 = 천장" 을 전제하는데, 실행 역할에는 중계기 문 말고 운영 정책도 붙어 있어
+            //   중계기 천장 기준으로 줄이면 ec2:* 가 되어 운영 정책의 다른 ec2 동작까지 열린다 (시험이 잡음). 18개라 원문도 2,048자 안이다
+            sessionPolicy = relay ? explicitPolicy : compactSessionPolicy(explicitPolicy, ceiling);
+            if (sessionPolicy.length > AWS_SESSION_POLICY_MAX)
+              throw new TempRoleDenied("ROLE_POLICY_TOO_LARGE", `세션 정책 ${sessionPolicy.length}자 > ${AWS_SESSION_POLICY_MAX}`);
             checkWithinCeiling(parsed.actions, allowed);   // 요청이 세션 정책보다 넓으면 설계 실수
           } else if (parsed.provider === "gcp") checkWithinCeiling(parsed.actions, d.permissions.gcp.ceiling);
           else if (parsed.provider === "onprem") checkWithinCeiling(parsed.actions, d.permissions.onprem.ceiling);
@@ -165,6 +177,7 @@ export function createTempRoleBroker(d: BrokerDeps) {
       await d.audit(req.tenantId, {
         actor: "worker", action: "temp_role.issued", target: req.migrationId ?? req.envId, result: "ok",
         detail: { credentialRef: ref, provider: req.provider, purpose: req.purpose, stage: req.stage ?? null,
+          ...(req.policy ? { policy: req.policy } : {}),
           roleRef: env.roleRef, expiresAt: cred.expiresAt, actions: req.actions.length, stub: mock,
           ...(o.step ? { step: o.step } : {}),
           ...(o.renewedFrom ? { renewedFrom: o.renewedFrom, renewSeq: o.seq } : {}),

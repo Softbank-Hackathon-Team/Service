@@ -396,7 +396,7 @@ jobs:
       - name: worker 클라우드 CLI 스모크 (읽기 전용 뿌리 + HOME=/tmp 에서 도는지, 차트와 같은 조건)
         if: matrix.app == 'worker'
         run: |
-          for c in "aws --version" "gcloud --version" "kubectl version --client" "gke-gcloud-auth-plugin --version"; do
+          for c in "aws --version" "gcloud --version" "kubectl version --client" "gke-gcloud-auth-plugin --version" "openssl version"; do
             docker run --rm --read-only --tmpfs /tmp -e HOME=/tmp --entrypoint sh svc-worker:ci -c "$c" >/dev/null || { echo "실패: $c"; exit 1; }
           done
       - name: worker 묶음 렌더 스모크 (gitops 레포 render 도구가 부르는 helm template, 읽기 전용 뿌리 + HOME=/tmp)

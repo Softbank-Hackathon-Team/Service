@@ -5,6 +5,14 @@ labels: { managed-by: platform }
 workloads: []
 externalSecrets: { store: { kind: ClusterSecretStore, name: none }, secrets: [] }
 postgres: []
+# postgres[] mode cnpg 한 줄의 이전 칸 (templates/cnpg.yaml):
+#   replication: { enabled: true, role: svc_migrate, passwordSecret: <name>-migrate, validUntil: <RFC3339, 선택>, ensure: present|absent }
+#   certificates: { serverCASecret: <비밀>, serverTLSSecret: <비밀> }   # 선택
+# 온프레 DB 이전 터널 (templates/db-tunnel.yaml). 없으면 안 그린다. 워커가 이전 동안만 넣는다
+#   dbTunnel: { relay: { host, port: 22, knownHosts }, keySecret, forward: { target: "<출발 DB>:5432" }, reverse: { enabled, cnpgName }, image: <@sha256 고정> }
+dbTunnel: null
+# 봉인 비밀 (templates/sealedsecret.yaml). [{ name, type?, encryptedData: { 키: 암호문 } }]
+sealedSecrets: []
 # Builder 기본과 같음: cloudflared 터널 (인바운드 0). hosts 는 명세 entry 에서 온다
 ingress: { mode: cloudflared, className: "", tunnelTokenSecret: cloudflared-token, hosts: [] }
 warnings: []

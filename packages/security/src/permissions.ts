@@ -9,7 +9,12 @@ import { TempRoleDenied } from "./temp-role.js";
 //   온프레: onprem-operate-clusterrole.yaml rules → "group/resource:verb"
 export type Stage = "plan" | "apply" | "destroy";
 export interface PermissionSet {
-  aws: { ceiling: string[]; sessionPolicies: Record<Stage, string> };
+  aws: {
+    ceiling: string[]; sessionPolicies: Record<Stage, string>;
+    // 온프레 이전 중계기 (aws-relay-statements.json). 고객이 실행 역할에 따로 붙이는 문 묶음이라 천장도 따로다.
+    //   파일이 없으면 없음 → 중계기 역할 발급은 ROLE_NO_CEILING 으로 거부된다
+    relay?: { ceiling: string[]; sessionPolicy: string };
+  };
   gcp: { ceiling: string[] };
   onprem: { ceiling: string[] };
 }
@@ -49,13 +54,30 @@ export function parseClusterRole(yaml: string): string[] {
   return out.sort();
 }
 
+export const RELAY_STATEMENTS_FILE = "aws-relay-statements.json";
+
+/** 중계기 세션 정책 = 문 묶음의 동작만, Resource "*" (태그·자원 조건은 고객 역할 쪽 문이 건다. 실효 권한 = 둘의 교집합).
+ *  단계 세션 정책(aws-session-policy-*.json)과 같은 "동작 목록으로 좁히기" 모양 */
+export function relaySessionPolicy(actions: readonly string[]): string {
+  return JSON.stringify({ Version: "2012-10-17", Statement: [{ Effect: "Allow", Action: [...new Set(actions)].sort(), Resource: "*" }] });
+}
+
+function loadRelay(dir: string): PermissionSet["aws"]["relay"] {
+  let raw: string;
+  try { raw = readFileSync(join(dir, RELAY_STATEMENTS_FILE), "utf8"); } catch { return undefined; }
+  const ceiling = actionsOfPolicy(JSON.parse(raw) as PolicyDoc);
+  return { ceiling, sessionPolicy: relaySessionPolicy(ceiling) };
+}
+
 export function loadPermissionSet(dir: string): PermissionSet {
   const read = (f: string) => readFileSync(join(dir, f), "utf8");
   const compact = (f: string) => JSON.stringify(JSON.parse(read(f)));
+  const relay = loadRelay(dir);
   return {
     aws: {
       ceiling: actionsOfPolicy(JSON.parse(read("aws-operate-role-policy.json")) as PolicyDoc),
       sessionPolicies: { plan: compact("aws-session-policy-plan.json"), apply: compact("aws-session-policy-apply.json"), destroy: compact("aws-session-policy-destroy.json") },
+      ...(relay ? { relay } : {}),
     },
     gcp: { ceiling: parseGcpCustomRole(read("gcp-operate-custom-role.yaml")) },
     onprem: { ceiling: parseClusterRole(read("onprem-operate-clusterrole.yaml")) },

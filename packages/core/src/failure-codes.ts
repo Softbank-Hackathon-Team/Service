@@ -27,6 +27,9 @@ export const FAILURE_CODES = [
   "ARGO_DEGRADED", "ARGO_TIMEOUT", "ARGO_APP_MISSING",      // deploy 반영 확인 (Z94 argo-watch): Degraded / 시간 초과 / Application 끝까지 없음
   "ARGO_AUTH_FAILED", "ARGO_UNREACHABLE", "ARGO_NOT_CONFIGURED", //   토큰·RBAC 거부 / 연속 일시 오류 / .env 에 Argo 설정 없음
   "SYNC_FAILED",                 // sync 재시도 소진 또는 영구 실패
+  "REPL_ENDPOINT_INCOMPLETE",    // db 0050: 이전의 복제 끝점 줄이 한쪽만 있음 (줄과 env 를 섞지 않는다) → sync paused
+  "REPL_SECRET_UNRESOLVED",      // db 0050: password_ref 를 못 풂 (REPL_SECRET_MASTER_KEY 없음·짧음, env:REPL_SECRET_* 없음) → sync paused
+  "REPL_TARGET_UNREACHABLE",     // db 0050: 도착 끝점 host:port 에 TCP 로 못 붙음 (재시도 소진 뒤) → sync paused
   "CUTOVER_CATCHUP_EXHAUSTED",   // 컷오버 C6' 되돌림 횟수 소진
   "CUTOVER_ERROR",               // 컷오버 도중 예외 (Z19 H2)
   "CUTOVER_HALFWAY",             //   C5 뒤 예외
@@ -37,6 +40,16 @@ export const FAILURE_CODES = [
   "ROLLBACK_FAILED",             // 롤백 재시도 소진
   // gitops 배포 (apps/worker/src/gitops GitopsError.code) → deploy가 paused로
   "RUNTIME_OUTPUT_MISSING", "RUNTIME_UNHEALTHY", "RUNTIME_CHECK_FAILED",   // DEPLOYNONK8S: ECS·Cloud Run·VM 도착 배포 확인 (출력 빠짐 / 시간 안에 안 뜸 / 읽기 CLI 실패)
+  "SEALING_CERT_MISSING",        // 온프레 CNPG 이전: 도착 Agent 보고에 sealed-secrets 봉인 인증서가 없음 → deploy 커밋 전 paused
+  // 온프레 CNPG 이전 중계기 (worker relay/relay-step.ts): apply 가 출발 AWS 계정에 만들고 정리가 지운다
+  "ONPREM_EGRESS_UNKNOWN",       //   Agent facts 에 온프레 나가는 IP 가 없음 → SSH(22)를 세상에 열지 않으려고 apply 가 failed
+  "RELAY_CONFIG_MISSING",        //   워커 env PLATFORM_EGRESS_CIDRS 없음·틀림 → apply failed
+  "RELAY_SOURCE_DB_UNKNOWN",     //   명세에서 출발 RDS 를 못 찾음·postgres 둘 이상·RDS 포트 5432 아님 → apply failed
+  "RELAY_ROLE_DENIED",           //   출발 실행 역할(중계기 세션 정책) 발급 거부 → apply failed
+  "RELAY_PROVISION_FAILED",      //   중계기 만들기 실패 (aws CLI). 만든 것은 태그를 단 채 남는다 → apply failed
+  "RELAY_DB_EGRESS_DENIED",      //   출발 RDS 보안 그룹에 중계기로 나가는 5432 가 없고 열 권한도 없음 (연결 스택 SourceDbSecurityGroupId 비움) → apply failed
+  "RELAY_TEARDOWN_FAILED",       //   중계기 지우기 실패 → cleanup paused (롤백은 rolled_back + 경고)
+  "REPL_DELIVERY_FAILED",        // 온프레 CNPG 이전: 서버 인증서·봉인 비밀·터널 값을 못 만듦 (중계기 칸 없음, 출발 포트 5432 아님, openssl 실패 등) → paused
   "SECRET_VALUES_MISSING", "SECRET_VALUES_UNKNOWN",   // APP-20: deploy 커밋 전 도착 비밀 그릇에 값(버전)이 없음 / 못 읽음 → paused
   "GITOPS_NOT_CONFIGURED",       // Z89: GitOps 레포 설정 없음인데 MOCK_ARGO=1 도 아님 (예전엔 조용히 STUB 성공)
   "GITOPS_ERROR", "GITOPS_GIT_FAILED", "GITOPS_NO_CHECKOUT", "GITOPS_PLACEHOLDER_MISSING", "GITOPS_PUSH_FAILED", "GITOPS_PUSH_CONFLICT",
