@@ -322,6 +322,58 @@
               }
             },
             {
+              "Sid": "AppImageRepos",
+              "Effect": "Allow",
+              "Action": [
+                "ecr:BatchCheckLayerAvailability",
+                "ecr:BatchGetImage",
+                "ecr:CompleteLayerUpload",
+                "ecr:CreateRepository",
+                "ecr:DescribeRepositories",
+                "ecr:InitiateLayerUpload",
+                "ecr:ListTagsForResource",
+                "ecr:PutImage",
+                "ecr:PutImageScanningConfiguration",
+                "ecr:PutImageTagMutability",
+                "ecr:TagResource",
+                "ecr:UploadLayerPart"
+              ],
+              "Resource": "arn:aws:ecr:*:*:repository/platform/*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestedRegion": "ap-northeast-2"
+                }
+              }
+            },
+            {
+              "Sid": "AppImageReposOwned",
+              "Effect": "Allow",
+              "Action": [
+                "ecr:BatchDeleteImage",
+                "ecr:DeleteRepository"
+              ],
+              "Resource": "arn:aws:ecr:*:*:repository/platform/*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestedRegion": "ap-northeast-2",
+                  "aws:ResourceTag/managed-by": "platform"
+                }
+              }
+            },
+            {
+              "Sid": "AppImageAuth",
+              "Effect": "Allow",
+              "Action": [
+                "ecr:GetAuthorizationToken"
+              ],
+              "Resource": "*",
+              "Condition": {
+                "StringEquals": {
+                  "aws:RequestedRegion": "ap-northeast-2"
+                }
+              }
+            },
+            {
               "Sid": "AppRolesWithBoundary",
               "Effect": "Allow",
               "Action": [

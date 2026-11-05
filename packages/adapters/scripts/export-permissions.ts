@@ -64,6 +64,12 @@ const IAM_DELETE = ["iam:DeleteRole", "iam:DeleteRolePolicy"];
 const isDataOwned = (a: string) => /^(elasticache:(Delete|Modify)|sqs:(DeleteQueue|SetQueueAttributes)|sns:(DeleteTopic|SetTopicAttributes))/.test(a);
 const awsDataOwned = awsDataScoped.filter(isDataOwned);
 const awsDataNamed = awsDataScoped.filter((a) => !isDataOwned(a));
+// APP-01·D: 이미지별 ECR 저장소 (이름 platform/<회사>/<이름>). 만들기·태그·설정·push(레이어 올리기)·digest 확인용 읽기
+const ECR_REPOS = "arn:aws:ecr:*:*:repository/platform/*";
+const ECR_REPO_ACTS = ["ecr:BatchCheckLayerAvailability", "ecr:BatchGetImage", "ecr:CompleteLayerUpload", "ecr:CreateRepository",
+  "ecr:DescribeRepositories", "ecr:InitiateLayerUpload", "ecr:ListTagsForResource", "ecr:PutImage",
+  "ecr:PutImageScanningConfiguration", "ecr:PutImageTagMutability", "ecr:TagResource", "ecr:UploadLayerPart"];
+const ECR_REPO_REMOVE = ["ecr:BatchDeleteImage", "ecr:DeleteRepository"];
 const awsOperatePolicy = {
   Version: "2012-10-17",
   Statement: [
@@ -82,6 +88,11 @@ const awsOperatePolicy = {
     { Sid: "AppDbSecretRead", Effect: "Allow", Action: ["secretsmanager:GetSecretValue"], Resource: "arn:aws:secretsmanager:*:*:secret:rds!db-*",
       Condition: { StringEquals: { ...REGION, "aws:ResourceTag/aws:secretsmanager:owningService": "rds" },
         StringLike: { "aws:ResourceTag/aws:rds:primaryDBInstanceArn": "arn:aws:rds:*:*:db:*-pg-??????" } } },
+    // APP-01·D (그대로 이식): 사설 이미지를 도착 ECR 이미지별 저장소(platform/<회사>/<이름>, aws root image_repos_json)로 복사.
+    //   저장소 만들기·올리기는 그 이름 아래만, 지우기는 우리 태그가 있는 것만. 토큰(GetAuthorizationToken)은 자원 단위가 없어 "*"
+    { Sid: "AppImageRepos", Effect: "Allow", Action: ECR_REPO_ACTS, Resource: ECR_REPOS, Condition: { StringEquals: REGION } },
+    { Sid: "AppImageReposOwned", Effect: "Allow", Action: ECR_REPO_REMOVE, Resource: ECR_REPOS, Condition: { StringEquals: { ...REGION, ...OWNED_TAG } } },
+    { Sid: "AppImageAuth", Effect: "Allow", Action: ["ecr:GetAuthorizationToken"], Resource: "*", Condition: { StringEquals: REGION } },
     { Sid: "AppRolesWithBoundary", Effect: "Allow", Action: awsIamBound, Resource: "arn:aws:iam::*:role/app-*",
       Condition: { StringEquals: { "iam:PermissionsBoundary": BOUNDARY_ARN } } },
     { Sid: "AppRolesOnly", Effect: "Allow", Action: awsIamOther.filter((a) => !IAM_DELETE.includes(a)), Resource: "arn:aws:iam::*:role/app-*" },
