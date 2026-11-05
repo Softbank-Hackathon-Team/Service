@@ -146,3 +146,8 @@ agentRemediation:
   #   GITOPS_WRITE_TOKEN 은 주지 않는다: agent-worker 는 고객 로그를 LLM 에 넣는 곳이고, gitops 레포 main 에는 보호 규칙이 없다
   #   (쓰기 토큰이 새면 main push = 고객 클러스터 배포). 수정안은 원격에 push 하지 않고 패치로 남는다 (GITOPS_PUSH 없음)
   gitopsRead: false
+  # DRAFT(ai): AI 점검이 쓸 샌드박스 (agent-worker env SANDBOX_MODE). 비우면 agent-worker 기본 = memory(가짜 클러스터)
+  #   memory | vcluster 만 받는다 (k3d 는 맥 로컬용). vcluster 는 sandbox.enabled·sandbox.gvisor.enabled 와 같이 켜야 렌더된다:
+  #   수정 실행 파드는 sbx-runtimeclass-guard 가 gVisor 만 받아서, gVisor 가 꺼져 있으면 파드가 전부 거부된다
+  #   TODO(human): vcluster 로 켜기 전에, LLM 도구가 vCluster 안에서 관리자 클라이언트로 도는 것(조회 전용 kubeconfig 로 바꾸는 일)을 정한다
+  sandboxMode: ""

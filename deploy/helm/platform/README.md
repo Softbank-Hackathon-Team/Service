@@ -240,6 +240,7 @@ agent-worker 결정 코드만 호스트 샌드박스 권한을 쥔다. worker �
 | `sandbox.rehearsal.enabled` (`sandbox.enabled` 필요, 없으면 렌더가 멈춘다) | worker | env `SANDBOX_REHEARSAL=on`, `SANDBOX_IMAGE_REGISTRY=<sandbox.imageRegistry>` |
 | `sandbox.gvisor.enabled` | agent-worker | env `SANDBOX_RUNTIME_CLASS=<sandbox.gvisor.runtimeClass>` |
 | `agentRemediation.gitopsRead` | agent-worker | `platform/app` 의 `GITOPS_REPO_URL`·`GITOPS_READ_TOKEN` (JSON 에 `GITOPS_READ_TOKEN` 을 먼저 넣는다) |
+| `agentRemediation.sandboxMode` (`memory`·`vcluster`, 비우면 넣지 않음) | agent-worker | env `SANDBOX_MODE`. `vcluster` 는 `sandbox.enabled`·`sandbox.gvisor.enabled` 가 같이 켜져 있어야 렌더된다 (수정 실행 파드는 gVisor 만 받는다) |
 
 - 복사 자리와 런타임 이름을 호스트 가드와 같은 값 하나에서 꺼낸다. 비밀 JSON 에 따로 넣어 두면 가드와 어긋날 수 있다. 같은 키가 JSON 에도 있으면 차트 env 가 이긴다.
 - AI 점검에는 읽기 토큰만 준다. agent-worker 는 고객 로그를 LLM 에 넣는 곳이고, gitops 레포 `main` 에는 보호 규칙이 없어 쓰기 토큰이 새면 고객 클러스터 배포로 이어진다. 수정안은 원격에 push 하지 않고 패치로 남는다(`GITOPS_PUSH` 없음).

@@ -123,8 +123,18 @@ hasnt secrets.yaml ExternalSecret worker-env GITOPS_READ_TOKEN "켬 (worker 비�
 if helm template platform "$CHART" -n platform "${IMG[@]}" --set sandbox.rehearsal.enabled=true >/dev/null 2>&1; then
   echo "FAIL sandbox 끔인데 sandbox.rehearsal.enabled=true 로 렌더가 됐다"; fail=1
 fi
+# AI 점검 샌드박스 (values agentRemediation.sandboxMode): 비우면 env 없음 / vcluster 는 agent-worker 에만 / sandbox·gVisor 없이 vcluster, 모르는 값은 렌더 실패
+DOC=$(helm template platform "$CHART" -n platform "${IMG[@]}" "${ON[@]}")
+hasnt app.yaml Deployment agent-worker SANDBOX_MODE "기본"
+DOC=$(helm template platform "$CHART" -n platform "${IMG[@]}" "${ON[@]}" --set sandbox.gvisor.enabled=true --set agentRemediation.sandboxMode=vcluster)
+has app.yaml Deployment agent-worker '{ name: SANDBOX_MODE, value: "vcluster" }' "vcluster"
+for a in api worker web; do hasnt app.yaml Deployment "$a" SANDBOX_MODE "vcluster"; done
+for bad in "--set agentRemediation.sandboxMode=vcluster" "${ON[*]} --set agentRemediation.sandboxMode=vcluster" "--set agentRemediation.sandboxMode=k3d"; do
+  # shellcheck disable=SC2086
+  if helm template platform "$CHART" -n platform "${IMG[@]}" $bad >/dev/null 2>&1; then echo "FAIL '$bad' 인데 렌더가 됐다"; fail=1; fi
+done
 if ! helm template platform "$CHART" -n platform "${IMG[@]}" "${ON[@]}" --set sandbox.rehearsal=null --set agentRemediation=null >/dev/null 2>&1; then
   echo "FAIL sandbox.rehearsal·agentRemediation 칸이 없는 릴리스 값으로 렌더가 안 된다"; fail=1
 fi
-[ $fail -eq 0 ] && echo "ok   리허설·런타임·AI 점검 GitOps 읽기 (값 없음·켬·sandbox 끔 거부·예전 릴리스 값)"
+[ $fail -eq 0 ] && echo "ok   리허설·런타임·AI 점검 GitOps 읽기·AI 점검 샌드박스 (값 없음·켬·sandbox·gVisor 없이 거부·예전 릴리스 값)"
 exit $fail

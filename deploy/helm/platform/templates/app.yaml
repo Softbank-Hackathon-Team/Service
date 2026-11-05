@@ -4,6 +4,15 @@
 {{- $sbx := default dict .Values.sandbox }}
 {{- $rehearsal := default dict $sbx.rehearsal }}
 {{- $gvisor := default dict $sbx.gvisor }}
+{{- $remediation := default dict .Values.agentRemediation }}
+{{- with $remediation.sandboxMode }}
+{{- if not (has . (list "memory" "vcluster")) }}
+{{- fail (printf "agentRemediation.sandboxMode 는 memory 또는 vcluster (받은 값 %q)" .) }}
+{{- end }}
+{{- if and (eq . "vcluster") (not (and $sbx.enabled $gvisor.enabled)) }}
+{{- fail "agentRemediation.sandboxMode=vcluster 는 sandbox.enabled·sandbox.gvisor.enabled 와 같이 켠다 (수정 실행 파드는 gVisor 만 받는다)" }}
+{{- end }}
+{{- end }}
 {{- if and $rehearsal.enabled (not $sbx.enabled) }}
 {{- fail "sandbox.rehearsal.enabled 는 sandbox.enabled 와 같이 켠다 (리허설은 sandbox 노드·호스트 가드·agent-worker 권한이 있어야 돈다)" }}
 {{- end }}
@@ -98,6 +107,10 @@ spec:
             {{- if and $sbx.enabled $gvisor.enabled (eq $name "agent-worker") }}
             # 샌드박스 파드 런타임 (values sandbox.gvisor). 호스트 가드 sbx-runtimeclass-guard 가 이 이름만 받는다
             - { name: SANDBOX_RUNTIME_CLASS, value: {{ $gvisor.runtimeClass | quote }} }
+            {{- end }}
+            {{- if and $remediation.sandboxMode (eq $name "agent-worker") }}
+            # AI 점검 샌드박스 (values agentRemediation.sandboxMode). 비우면 agent-worker 기본(memory)
+            - { name: SANDBOX_MODE, value: {{ $remediation.sandboxMode | quote }} }
             {{- end }}
           {{- if or $a.port $a.metricsPort }}
           ports:
