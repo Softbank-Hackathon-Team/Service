@@ -154,7 +154,8 @@ export function kubectlPortForward(o: { bin: string; kubeconfig: string; home: s
     };
     p.stdout.on("data", take); p.stderr.on("data", take);
     p.on("error", (e) => fail(`kubectl 실행 실패 (${o.bin}): ${e.message}`));
-    p.on("exit", (c, sig) => { if (!open) fail(`port-forward 끝남 (${c ?? sig}): ${out.trim().slice(-200)}`); });
+    // exit 가 아니라 close: exit 는 stderr 를 다 읽기 전에 와서 kubectl 오류 글이 사유에서 빠질 수 있다
+    p.on("close", (c, sig) => { if (!open) fail(`port-forward 끝남 (${c ?? sig}): ${out.trim().slice(-200)}`); });
   });
 }
 // helm·kubectl 이 읽을 호스트 kubeconfig (JSON 은 YAML 이다). 비밀은 없고 파일 경로만
