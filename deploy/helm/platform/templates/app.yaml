@@ -15,6 +15,7 @@
 {{- $a := index $apps $name }}
 {{- $f := index $fixed $name }}
 {{- if $a.enabled }}
+{{- $tfDisk := and (eq $name "worker") (default dict $a.tfWorkDir).size }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -25,6 +26,10 @@ metadata:
     app.kubernetes.io/part-of: platform
 spec:
   replicas: {{ $a.replicas }}
+  {{- if $tfDisk }}
+  # EBS 는 파드 하나만 붙는다. 새 파드를 먼저 띄우면 디스크를 못 붙여 멈춘다
+  strategy: { type: Recreate }
+  {{- end }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ $name }}
@@ -52,6 +57,9 @@ spec:
         runAsNonRoot: true
         runAsUser: {{ $f.uid }}
         runAsGroup: {{ $f.uid }}
+        {{- if $tfDisk }}
+        fsGroup: {{ $f.uid }}
+        {{- end }}
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: {{ $name }}
@@ -71,6 +79,9 @@ spec:
             - { name: METRICS_PORT, value: {{ $a.metricsPort | quote }} }
             {{- else if eq $name "worker" }}
             - { name: WORKER_METRICS_PORT, value: {{ $a.metricsPort | quote }} }
+            {{- if $tfDisk }}
+            - { name: TF_WORK_DIR, value: /var/lib/svc-tf }
+            {{- end }}
             {{- else if eq $name "web" }}
             # nginx 템플릿(deploy/docker/web-nginx.conf.template)이 /api/* 를 여기로 보낸다
             - { name: API_UPSTREAM, value: {{ printf "http://api:%v" $apps.api.port | quote }} }
@@ -149,9 +160,16 @@ spec:
             - { name: gcp-token, mountPath: /var/run/secrets/tokens/gcp, readOnly: true }
             - { name: gcp-cred, mountPath: /var/run/gcp-cred, readOnly: true }
             {{- end }}
+            {{- if $tfDisk }}
+            - { name: tf-work, mountPath: /var/lib/svc-tf }
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- if $tfDisk }}
+        - name: tf-work
+          persistentVolumeClaim: { claimName: worker-tf-work }
+        {{- end }}
         {{- if eq $name "web" }}
         - name: nginx-conf
           emptyDir: {}
