@@ -1,6 +1,12 @@
 {{- $apps := .Values.apps }}
 {{- /* helm upgrade --reuse-values 는 이전 릴리스 값만 쓴다. 이 칸이 생기기 전 릴리스면 값이 없어도 렌더가 돌아야 한다 */}}
 {{- $gcp := default dict .Values.gcpPlatform }}
+{{- $sbx := default dict .Values.sandbox }}
+{{- $rehearsal := default dict $sbx.rehearsal }}
+{{- $gvisor := default dict $sbx.gvisor }}
+{{- if and $rehearsal.enabled (not $sbx.enabled) }}
+{{- fail "sandbox.rehearsal.enabled 는 sandbox.enabled 와 같이 켠다 (리허설은 sandbox 노드·호스트 가드·agent-worker 권한이 있어야 돈다)" }}
+{{- end }}
 {{- /* 플랫폼 앱 4개. 이미지 registry·tag 는 배포 때 준다. 둘 중 하나라도 비어 있으면 앱을 하나도 안 만든다 (값 없이도 비밀·입구 차트는 검사된다) */}}
 {{- if and $apps.image.registry $apps.image.tag }}
 {{- /* 앱마다 고정인 것: 실행 사용자(이미지 USER), 검사 경로, 쓰기 자리. 값으로 빼지 않는다 (이미지와 같이 바뀐다)
@@ -83,6 +89,15 @@ spec:
             # gcloud 시작 자격 = svc-worker (templates/worker-gcp.yaml). 빌린 고객 토큰으로 부를 때는 gcpEnvFor 가 지운다
             - { name: CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE, value: /var/run/gcp-cred/worker.json }
             {{- end }}
+            {{- end }}
+            {{- if and $sbx.enabled $rehearsal.enabled (eq $name "worker") }}
+            # 리허설 켜기 (values sandbox.rehearsal). 복사 자리는 호스트 가드 sbx-pod-guard 와 같은 값 하나 (sandbox.imageRegistry)
+            - { name: SANDBOX_REHEARSAL, value: "on" }
+            - { name: SANDBOX_IMAGE_REGISTRY, value: {{ $sbx.imageRegistry | quote }} }
+            {{- end }}
+            {{- if and $sbx.enabled $gvisor.enabled (eq $name "agent-worker") }}
+            # 샌드박스 파드 런타임 (values sandbox.gvisor). 호스트 가드 sbx-runtimeclass-guard 가 이 이름만 받는다
+            - { name: SANDBOX_RUNTIME_CLASS, value: {{ $gvisor.runtimeClass | quote }} }
             {{- end }}
           {{- if or $a.port $a.metricsPort }}
           ports:

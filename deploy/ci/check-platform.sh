@@ -89,4 +89,39 @@ for bad in "--set gcpPlatform.project=platform-proj" "--set gcpPlatform.project=
   if helm template platform "$CHART" -n platform $bad >/dev/null 2>&1; then echo "FAIL '$bad' 인데 렌더가 됐다"; fail=1; fi
 done
 [ $fail -eq 0 ] && echo "ok   worker GCP 로그인 (값 없음·worker 만·틀린 모양 거부)"
+
+# 리허설·샌드박스 런타임·AI 점검 GitOps 읽기 (values sandbox.rehearsal · sandbox.gvisor · agentRemediation.gitopsRead)
+#   값 없으면 아무것도 안 그린다 / 켜면 worker·agent-worker 에만 / sandbox 끔 + 리허설 켬은 렌더 실패 / 칸이 없는 릴리스 값(--reuse-values)으로도 렌더
+REG=000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/sandbox
+part() { printf '%s\n' "$DOC" | awk -v n="# Source: platform/templates/$1" -v k="kind: $2" -v d="  name: $3" 'BEGIN{RS="\n---\n"} index($0,n) && index($0,k "\n") && index($0,d "\n")'; }
+has() { if ! part "$1" "$2" "$3" | grep -qF -- "$4"; then echo "FAIL $5: $3 에 $4 없음"; fail=1; fi; }
+hasnt() { if part "$1" "$2" "$3" | grep -qF -- "$4"; then echo "FAIL $5: $3 에 $4 있음"; fail=1; fi; }
+DOC=$(helm template platform "$CHART" -n platform "${IMG[@]}" "${ON[@]}")
+for a in api worker agent-worker web; do
+  for e in SANDBOX_REHEARSAL SANDBOX_IMAGE_REGISTRY SANDBOX_RUNTIME_CLASS; do hasnt app.yaml Deployment "$a" "$e" "기본"; done
+done
+hasnt secrets.yaml ExternalSecret agent-worker-env GITOPS_ "기본"
+DOC=$(helm template platform "$CHART" -n platform "${IMG[@]}" "${ON[@]}" --set sandbox.rehearsal.enabled=true --set sandbox.gvisor.enabled=true --set agentRemediation.gitopsRead=true)
+printf '%s\n' "$DOC" > "$OUT/sandbox-env-on.yaml"
+kubeconform -strict -summary -kubernetes-version "$K8S_VERSION" \
+  -schema-location default \
+  -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+  "$OUT/sandbox-env-on.yaml"
+has app.yaml Deployment worker '{ name: SANDBOX_REHEARSAL, value: "on" }' "켬"
+has app.yaml Deployment worker "{ name: SANDBOX_IMAGE_REGISTRY, value: \"$REG\" }" "켬"
+has app.yaml Deployment agent-worker '{ name: SANDBOX_RUNTIME_CLASS, value: "gvisor" }' "켬"
+hasnt app.yaml Deployment worker SANDBOX_RUNTIME_CLASS "켬"
+for a in api agent-worker web; do hasnt app.yaml Deployment "$a" SANDBOX_REHEARSAL "켬"; done
+for a in api web; do hasnt app.yaml Deployment "$a" SANDBOX_RUNTIME_CLASS "켬"; done
+has secrets.yaml ExternalSecret agent-worker-env "property: GITOPS_REPO_URL" "켬"
+has secrets.yaml ExternalSecret agent-worker-env "property: GITOPS_READ_TOKEN" "켬"
+hasnt secrets.yaml ExternalSecret agent-worker-env GITOPS_WRITE_TOKEN "켬 (쓰기 토큰은 안 준다)"
+hasnt secrets.yaml ExternalSecret worker-env GITOPS_READ_TOKEN "켬 (worker 비밀은 그대로)"
+if helm template platform "$CHART" -n platform "${IMG[@]}" --set sandbox.rehearsal.enabled=true >/dev/null 2>&1; then
+  echo "FAIL sandbox 끔인데 sandbox.rehearsal.enabled=true 로 렌더가 됐다"; fail=1
+fi
+if ! helm template platform "$CHART" -n platform "${IMG[@]}" "${ON[@]}" --set sandbox.rehearsal=null --set agentRemediation=null >/dev/null 2>&1; then
+  echo "FAIL sandbox.rehearsal·agentRemediation 칸이 없는 릴리스 값으로 렌더가 안 된다"; fail=1
+fi
+[ $fail -eq 0 ] && echo "ok   리허설·런타임·AI 점검 GitOps 읽기 (값 없음·켬·sandbox 끔 거부·예전 릴리스 값)"
 exit $fail
