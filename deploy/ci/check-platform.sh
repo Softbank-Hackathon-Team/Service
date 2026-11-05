@@ -58,7 +58,10 @@ if [ "$(purpose gvisor-on)" != "values:[remediation,rehearsal]" ]; then echo "FA
 # worker GCP 로그인: 값이 없으면 아무것도 안 그린다, 값이 있으면 worker 만 설정 파일·토큰을 받는다, 틀린 모양은 렌더 실패
 AUD=//iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/platform-hub/providers/platform-eks
 IMG=(--set apps.image.registry=x --set apps.image.tag=y)
-if helm template platform "$CHART" -n platform "${IMG[@]}" | grep -qE 'GCP_PLATFORM_PROJECT|CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE|worker-gcp-cred'; then
+# 출력을 먼저 담고 고른다. `… | grep -q` 는 일치하자마자 끝나 앞 명령이 SIGPIPE(141)로 끝나고, pipefail 아래서는 "있음"이 "없음"으로 뒤집힌다
+contains() { grep -qF -- "$2" <<<"$1"; }
+NOGCP=$(helm template platform "$CHART" -n platform "${IMG[@]}")
+if grep -qE 'GCP_PLATFORM_PROJECT|CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE|worker-gcp-cred' <<<"$NOGCP"; then
   echo "FAIL gcpPlatform 값 없이 GCP 설정이 그려졌다"; fail=1
 fi
 # --reuse-values: 이 칸이 생기기 전 릴리스 값으로 올려도 렌더가 돈다
@@ -73,8 +76,8 @@ kubeconform -strict -summary -kubernetes-version "$K8S_VERSION" \
   "$OUT/gcp-on.yaml"
 # 앱 Deployment 하나만 잘라 낸다
 app() { printf '%s\n' "$GCP" | awk -v n="# Source: platform/templates/app.yaml" -v d="$1" 'BEGIN{RS="\n---\n"} index($0,n) && /kind: Deployment/ && index($0,"  name: " d "\n")'; }
-want() { if ! app "$1" | grep -qF -- "$2"; then echo "FAIL $1 에 $2 없음"; fail=1; fi; }
-deny() { if app "$1" | grep -qF -- "$2"; then echo "FAIL $1 에 $2 있음"; fail=1; fi; }
+want() { if ! contains "$(app "$1")" "$2"; then echo "FAIL $1 에 $2 없음"; fail=1; fi; }
+deny() { if contains "$(app "$1")" "$2"; then echo "FAIL $1 에 $2 있음"; fail=1; fi; }
 want api GCP_PLATFORM_PROJECT
 want worker GCP_PLATFORM_PROJECT
 want worker CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE
@@ -83,7 +86,7 @@ want worker worker-gcp-cred
 for a in api agent-worker web; do deny "$a" CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE; deny "$a" gcp-token; done
 deny agent-worker GCP_PLATFORM_PROJECT
 deny web GCP_PLATFORM_PROJECT
-if ! printf '%s\n' "$GCP" | grep -qF 'svc-worker@platform-proj.iam.gserviceaccount.com:generateAccessToken'; then echo "FAIL 설정 파일에 svc-worker 없음"; fail=1; fi
+if ! contains "$GCP" 'svc-worker@platform-proj.iam.gserviceaccount.com:generateAccessToken'; then echo "FAIL 설정 파일에 svc-worker 없음"; fail=1; fi
 for bad in "--set gcpPlatform.project=platform-proj" "--set gcpPlatform.project=platform-proj --set gcpPlatform.wifAudience=https://example.com/aud" "--set gcpPlatform.project=Bad_Project --set gcpPlatform.wifAudience=$AUD"; do
   # shellcheck disable=SC2086
   if helm template platform "$CHART" -n platform $bad >/dev/null 2>&1; then echo "FAIL '$bad' 인데 렌더가 됐다"; fail=1; fi
@@ -94,8 +97,8 @@ done
 #   값 없으면 아무것도 안 그린다 / 켜면 worker·agent-worker 에만 / sandbox 끔 + 리허설 켬은 렌더 실패 / 칸이 없는 릴리스 값(--reuse-values)으로도 렌더
 REG=000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/sandbox
 part() { printf '%s\n' "$DOC" | awk -v n="# Source: platform/templates/$1" -v k="kind: $2" -v d="  name: $3" 'BEGIN{RS="\n---\n"} index($0,n) && index($0,k "\n") && index($0,d "\n")'; }
-has() { if ! part "$1" "$2" "$3" | grep -qF -- "$4"; then echo "FAIL $5: $3 에 $4 없음"; fail=1; fi; }
-hasnt() { if part "$1" "$2" "$3" | grep -qF -- "$4"; then echo "FAIL $5: $3 에 $4 있음"; fail=1; fi; }
+has() { if ! contains "$(part "$1" "$2" "$3")" "$4"; then echo "FAIL $5: $3 에 $4 없음"; fail=1; fi; }
+hasnt() { if contains "$(part "$1" "$2" "$3")" "$4"; then echo "FAIL $5: $3 에 $4 있음"; fail=1; fi; }
 DOC=$(helm template platform "$CHART" -n platform "${IMG[@]}" "${ON[@]}")
 for a in api worker agent-worker web; do
   for e in SANDBOX_REHEARSAL SANDBOX_IMAGE_REGISTRY SANDBOX_RUNTIME_CLASS; do hasnt app.yaml Deployment "$a" "$e" "기본"; done
