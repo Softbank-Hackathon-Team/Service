@@ -1,7 +1,7 @@
 import type { AppSpecV2, PlanDoc, Provider, TfOutputs } from "@svc/contracts";
 import { existsSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { createRealTerraformRunner, envFor, dbNetworkFromEnv, DbNetworkError, factEnvName, factsFromEnv, fillTfVars, flattenTfOutputsV2, type RealTerraformRunner } from "@svc/adapters";
+import { createRealTerraformRunner, envFor, dbNetworkFromEnv, DbNetworkError, factEnvName, factsFromEnv, fillTfVars, flattenTfOutputsV2, gcpTerraformEnv, type GcpTerraformCred, type RealTerraformRunner } from "@svc/adapters";
 import { tfCallV2 } from "./plan-v2.js";
 import { specV2ForPlan, terraformRuntimeOf } from "@svc/adapters";
 import { latestAcceptedSpecV2, loadLatestApproval, loadPlanById } from "@svc/core";
@@ -38,6 +38,8 @@ export interface RealApplyDeps {
   signal?: AbortSignal;
   // L5b: 빌린 자격 env (borrowedAwsCreds().env). 있으면 실행기 env 에서 워커 자기 자격(AWS_PROFILE·키)을 지우고 이것만 덮는다
   credEnv?: Record<string, string>;
+  // 빌린 GCP 토큰. 있으면 Terraform·gcloud 가 워커 자기 자격 대신 이것만 쓴다 (gcp-token-server.ts)
+  gcpCred?: GcpTerraformCred;
   /** APP-22: 출발 전용 계정 비밀번호를 도착 그릇에 넣기 (시험이 가짜로 바꿈) */
   putSecret?: SecretPut;
   /** 회사 전용 플랫폼 SA 이름 (시험이 가짜로 바꿈) */
@@ -51,6 +53,13 @@ async function hubPrincipalVar(i: RealApplyInput, env: NodeJS.ProcessEnv, d: Rea
   if (i.provider !== "gcp" || !project) return {};
   const sa = await (d.gcpPlatformSa ?? gcpPlatformSa)(i.tenantId);
   return sa ? { hub_principal: `${sa}@${project}.iam.gserviceaccount.com` } : {};
+}
+
+/** 실행기 환경: 빌린 GCP 토큰 > 빌린 AWS 자격 > 워커 환경 */
+export function runnerOpts(d: Pick<RealApplyDeps, "credEnv" | "gcpCred">, env: NodeJS.ProcessEnv) {
+  const cred = d.gcpCred;
+  if (cred) return { env: gcpTerraformEnv(cred, env), secretEnv: () => gcpTerraformEnv(cred, env) };
+  return { env: d.credEnv ? envFor(d.credEnv, env) : env };
 }
 
 interface Prepared {
@@ -107,7 +116,7 @@ export async function realApply(i: RealApplyInput, d: RealApplyDeps = {}): Promi
   let vars = p.vars;
   if (!imp && dbWriterApplies(env, i.provider, i.spec, !!terraformRuntimeOf(i.spec))) {
     try {
-      const w = await prepareSourceWriter({ env, provider: i.provider as ManagedProvider, spec: i.spec, tenantId: i.tenantId, tenant: tenantSlug(i.tenantId),
+      const w = await prepareSourceWriter({ env: d.gcpCred ? gcpTerraformEnv(d.gcpCred, env) : env, provider: i.provider as ManagedProvider, spec: i.spec, tenantId: i.tenantId, tenant: tenantSlug(i.tenantId),
         migrationId: i.migrationId, target: p.target, projectId: i.provider === "gcp" ? i.accountId ?? facts.projectId : undefined,
         region: typeof vars.region === "string" ? vars.region : undefined, put: d.putSecret });
       vars = { ...vars, db_writer_json: w.var };
@@ -119,7 +128,7 @@ export async function realApply(i: RealApplyInput, d: RealApplyDeps = {}): Promi
   }
   const filled = { vars };
   // ③ 실행
-  const runner = d.runner ?? createRealTerraformRunner({ env: d.credEnv ? envFor(d.credEnv, env) : env });
+  const runner = d.runner ?? createRealTerraformRunner(runnerOpts(d, env));
   // Z89 (Z62 주제 57): 가져오기가 이미 찾은 도착 자원이면 만들지 않고 그 출력으로 넘어간다 ("이미 있음")
   const imported = imp;
   if (imported) {
@@ -181,7 +190,7 @@ export async function reapplyDbWriter(i: RealApplyInput, writer: "source" | "tar
   const p = await prepare(i, d);
   if ("ok" in p) return { ok: false, failureCode: p.failureCode, error: String((p.detail as { error?: unknown }).error ?? p.failureCode) };
   const vars = { ...p.vars, db_writer_json: writerVar(st, i.spec, { ...p.target, tenantId: tenant }, writer) };
-  const runner = d.runner ?? createRealTerraformRunner({ env: d.credEnv ? envFor(d.credEnv, env) : env });
+  const runner = d.runner ?? createRealTerraformRunner(runnerOpts(d, env));
   const r = await runner.apply(i.provider, i.migrationId, vars as never, d.signal, tenant, { keepOnFail: true });
   if (!r.ok) return { ok: false, failureCode: "APP_LINK_REAPPLY_FAILED", error: `terraform ${r.failedStep ?? "apply"} failed`, workDir: r.workDir };
   saveWriterState(env, tenant, i.migrationId, { ...st, active: writer });

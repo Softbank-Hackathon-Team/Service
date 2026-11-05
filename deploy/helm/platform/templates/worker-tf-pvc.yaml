@@ -1,0 +1,36 @@
+{{- /* Terraform 작업 폴더 디스크 (state·입력값·출력값·DB 비밀 파일). 값이 없으면 아무것도 안 그린다 */}}
+{{- $w := .Values.apps.worker }}
+{{- $disk := default dict $w.tfWorkDir }}
+{{- if and $disk.size .Values.apps.image.registry .Values.apps.image.tag $w.enabled }}
+{{- if ne (int $w.replicas) 1 }}{{ fail "apps.worker.tfWorkDir 를 켜면 apps.worker.replicas 는 1 이어야 한다 (EBS 는 파드 하나만 붙는다)" }}{{ end }}
+---
+# 지워도 디스크를 남긴다. state 를 잃으면 만든 자원을 Terraform 으로 못 지운다
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: worker-tf-work
+  labels:
+    app.kubernetes.io/part-of: platform
+provisioner: ebs.csi.aws.com
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
+parameters:
+  type: gp3
+  encrypted: "true"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: worker-tf-work
+  labels:
+    app.kubernetes.io/name: worker
+    app.kubernetes.io/part-of: platform
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: worker-tf-work
+  resources:
+    requests:
+      storage: {{ $disk.size }}
+{{- end }}

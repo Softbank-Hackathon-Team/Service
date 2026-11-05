@@ -39,6 +39,17 @@ export function gcpEnvFor(token: string, projectId: string, base: NodeJS.Process
   return { ...env, CLOUDSDK_AUTH_ACCESS_TOKEN: token, CLOUDSDK_CORE_PROJECT: projectId };
 }
 
+/** 빌린 GCP 토큰으로 Terraform·gcloud 를 돌리는 값. metadataHost 는 worker gcp-token-server 주소 */
+export interface GcpTerraformCred { metadataHost: string; token: () => string; projectId?: string }
+/** Google 프로바이더는 GCE_METADATA_HOST 창구에서 지금 토큰을 받고, gcloud 는 CLOUDSDK_AUTH_ACCESS_TOKEN 을 쓴다. 다른 구글 자격은 지워 프로바이더가 고르지 못하게 한다 */
+export function gcpTerraformEnv(c: GcpTerraformCred, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env = gcpEnvFor(c.token(), c.projectId ?? "", base);
+  if (!c.projectId) delete env.CLOUDSDK_CORE_PROJECT;
+  for (const k of ["GOOGLE_CREDENTIALS", "GOOGLE_CLOUD_KEYFILE_JSON", "GCLOUD_KEYFILE_JSON", "GOOGLE_OAUTH_ACCESS_TOKEN", "GOOGLE_IMPERSONATE_SERVICE_ACCOUNT"]) delete env[k];
+  env.GCE_METADATA_HOST = c.metadataHost;
+  return env;
+}
+
 // OBSROLE3: 연결 확인을 막지는 않지만 가져오기·점검이 쓰는 읽기 권한. 관찰 역할을 예전 스크립트로 만든 고객은 여기가 비어 있다.
 //   명령 하나 = 권한 하나 이상 (표 원본 = common/observe-permissions.ts GCP_COMMAND_PERMISSIONS). 목록 1건만 가져오고(--limit=1) 값은 안 읽는다.
 //   권한 이름을 직접 확인할 방법이 없는 것(storage.buckets.getIamPolicy·compute.regions.get·iam.serviceAccounts.list)은 찌르지 않는다 — 같은 역할의 다른 권한이 없을 때 같이 드러남

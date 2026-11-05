@@ -142,6 +142,9 @@ test("두 번 돌려도 같다: block 뒤 같은 작업이 다시 오면(상태�
   await pre.handlePrecheck(job(id));
   const acts = async () => (await owner.query(`SELECT action FROM audit_events WHERE target=$1 ORDER BY seq`, [id])).rows.map((r) => r.action);
   const n1 = (await acts()).length;
+  // 첫 점검의 신호는 다른 연결로 늦게 온다. 받기 전에 목록을 비우면 두 번째 점검의 신호로 세어진다
+  for (let i = 0; i < 250 && !events.some((e) => e.id === id); i++) await new Promise((r) => setTimeout(r, 20));
+  assert.equal(events.filter((e) => e.id === id).length, 1, "첫 점검의 신호를 못 받음");
   events.length = 0;
   await pre.handlePrecheck(job(id));
   await settle();

@@ -461,6 +461,36 @@ resource "aws_eks_addon" "coredns" {
   depends_on                  = [aws_eks_node_group.this]
 }
 
+# EBS 볼륨. worker Terraform 작업 폴더(차트 apps.worker.tfWorkDir)와 리허설 StorageClass sbx-standard 가 쓴다
+resource "aws_iam_role" "ebs_csi" {
+  name = "${var.name}-ebs-csi"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "pods.eks.amazonaws.com" }
+      Action    = ["sts:AssumeRole", "sts:TagSession"]
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "ebs_csi" {
+  role       = aws_iam_role.ebs_csi.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+}
+
+# Deployment 라 노드가 없으면 DEGRADED 로 apply 가 멈춘다 → 노드 그룹 뒤
+resource "aws_eks_addon" "ebs_csi" {
+  cluster_name                = aws_eks_cluster.this.name
+  addon_name                  = "aws-ebs-csi-driver"
+  resolve_conflicts_on_create = "OVERWRITE"
+  pod_identity_association {
+    role_arn        = aws_iam_role.ebs_csi.arn
+    service_account = "ebs-csi-controller-sa"
+  }
+  depends_on = [aws_iam_role_policy_attachment.ebs_csi, aws_eks_addon.pod_identity, aws_eks_node_group.this]
+}
+
 # --- 사람 운영자 kubectl 접근 (DRAFT(ai)): 값이 있을 때만. 클러스터 전체 admin
 resource "aws_eks_access_entry" "admin" {
   count         = var.admin_principal_arn != "" ? 1 : 0
