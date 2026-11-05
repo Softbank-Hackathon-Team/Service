@@ -119,6 +119,23 @@ test("비밀값 찾기: 패턴·키 이름은 잡고, 가린 값·참조 이름�
   assert.equal(clean.scannedStrings, 4);
 });
 
+test("명세의 비밀 참조(그릇 이름)는 평문이 아니다. 같은 자리라도 값 모양이면 잡고, 다른 자리의 secret 칸은 그대로 잡는다", () => {
+  const spec = (props: unknown) => ({ spec: { components: [{ props }] } });
+  const refs = scanSecrets([{ where: "spec_v2 v1", value: spec({
+    env: [{ name: "DB_PASSWORD", fromSecret: { secret: "shop-db", key: "password" } }],
+    envFrom: [{ secret: "shop-env" }], secretMounts: [{ secret: "shop-tls", path: "/tls" }],
+    sidecars: [{ env: [{ name: "A", fromSecret: { secret: "shop-side", key: "k" } }] }] }) }]);
+  assert.deepEqual(refs.hits, []);
+  const shaped = scanSecrets([{ where: "spec_v2 v1", value: spec({ env: [{ fromSecret: { secret: "AKIA" + "ABCDEFGHIJKLMNOP" } }] }) }]);
+  assert.deepEqual(shaped.hits.map((h) => h.kind), ["aws_access_key"]);
+  // 같은 모양이라도 명세 부품 밖(감사·계획서·명세의 다른 칸)이면 평문으로 잡는다
+  const ref = { fromSecret: { secret: "s3cret" }, envFrom: [{ secret: "s3cret" }], secretMounts: [{ secret: "s3cret" }] };
+  for (const where of ["audit#1", "plan abcd1234", "spec v1", "spec_v2 v1"])
+    assert.equal(scanSecrets([{ where, value: ref }]).hits.length, 3, where);
+  const other = scanSecrets([{ where: "spec_v2 v1", value: spec({ secret: "s3cret", env: [{ fromSecret: { secret: { raw: "x" } } }] }) }]);
+  assert.deepEqual(other.hits.map((h) => h.where), ["spec_v2 v1.spec.components[0].props.secret", "spec_v2 v1.spec.components[0].props.env[0].fromSecret.secret"]);
+});
+
 test("접속 문자열 비밀번호 여부만 본다 (값은 안 돌려줌)", () => {
   assert.equal(urlHasPassword("postgres://a:b@h/d"), true);
   assert.equal(urlHasPassword("postgres://a@h/d"), false);

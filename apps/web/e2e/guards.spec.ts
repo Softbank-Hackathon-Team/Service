@@ -1,11 +1,11 @@
-import { expect, test, OTHER_TENANT, SEED, createMigration, expectStatus, openConsole, shot } from "./helpers";
+import { expect, test, OTHER_TENANT, SEED, confirmSpec, createMigration, expectStatus, openConsole, shot } from "./helpers";
 
 // 콘티: S3 "승인 전 실행은 409" (계획서와 지문 장면의 배경 주장)
 test.describe("승인 없이 시작", () => {
   test("승인 대기에서는 실행 시작 버튼이 없고, 서버도 409로 막는다", async ({ page }, info) => {
     await openConsole(page);
     const id = await createMigration(page);
-    await page.getByRole("button", { name: /명세 확정/ }).click();
+    await confirmSpec(page);
     await expectStatus(page, "awaiting_approval");
 
     await expect(page.getByRole("button", { name: /실행 시작/ })).toHaveCount(0);
@@ -22,7 +22,7 @@ test.describe("승인 없이 시작", () => {
   test("화면이 낡아 승인됨으로 보일 때 시작을 누르면 서버 오류가 화면에 뜬다", async ({ page, routes }, info) => {
     await openConsole(page);
     const id = await createMigration(page);
-    await page.getByRole("button", { name: /명세 확정/ }).click();
+    await confirmSpec(page);
     await expectStatus(page, "awaiting_approval");
 
     // 다른 사람이 아직 승인 안 했는데 이 화면만 "승인됨"으로 보이는 경우(폴링 사이 낡은 화면)를 흉내 낸다:

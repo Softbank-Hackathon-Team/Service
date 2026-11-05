@@ -188,7 +188,7 @@ export function MigrationDetail(p: { id: string; envs: EnvironmentView[]; inList
             <>
               <ReasonInput value={reason} onChange={setReason} label="승인·거절 사유 (선택)" />
               <button className="primary" disabled={!!busy}
-                onClick={run("승인", () => api.decide(pd.planId, "approve", pd.planHash, reason || undefined))}>승인</button>
+                onClick={run("승인", () => api.decide(pd.planId, "approve", pd.planHash, reason || undefined, pd.acknowledgements?.map((a) => a.id)))}>승인</button>
               <button className="danger" disabled={!!busy}
                 onClick={run("거절", () => api.decide(pd.planId, "reject", pd.planHash, reason || undefined))}>거절</button>
               <span className="muted small why">아래 계획서를 보고 승인해야 '실행 시작' 버튼이 생겨. 승인 전 실행은 서버도 409로 막아.</span>
@@ -196,7 +196,7 @@ export function MigrationDetail(p: { id: string; envs: EnvironmentView[]; inList
           )}
           {m.status === "awaiting_approval" && !pd && <Loading text="계획서를 불러오는 중…" />}
           {m.status === "approved" && (
-            <button className="primary" disabled={!!busy} onClick={run("실행 시작", () => api.start(m.id))}>
+            <button className="primary" disabled={!!busy || !pd} onClick={run("실행 시작", () => api.start(m.id, pd?.planHash))}>
               실행 시작 (Terraform)
             </button>
           )}

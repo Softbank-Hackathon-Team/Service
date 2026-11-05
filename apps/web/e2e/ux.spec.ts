@@ -1,4 +1,4 @@
-import { expect, test, SEED, createMigration, expectStatus, openConsole } from "./helpers";
+import { expect, test, SEED, confirmSpec, createMigration, expectStatus, openConsole } from "./helpers";
 
 // Y(웹 UX 다듬기)에서 바꾼 화면 동작. 번호는 parallel/S/CHANGES.md 의 UX 문제 번호
 
@@ -47,7 +47,7 @@ test("10 출발과 도착이 같으면 만들기 버튼이 꺼진다", async ({ 
 test("8·9 버튼 뒤 JSON 대신 한국어 한 줄, 승인 전엔 이유 안내", async ({ page }) => {
   await openConsole(page);
   await createMigration(page);
-  await page.getByRole("button", { name: /명세 확정/ }).click();
+  await confirmSpec(page);
   await expectStatus(page, "awaiting_approval");
   await expect(page.locator(".main")).not.toContainText('{"id"');
   await expect(page.locator(".actions .why")).toContainText("승인해야");
@@ -57,7 +57,7 @@ test("8·9 버튼 뒤 JSON 대신 한국어 한 줄, 승인 전엔 이유 안내
 test("12 끝난 이전은 상세를 다시 읽지 않는다", async ({ page }) => {
   await openConsole(page);
   const id = await createMigration(page);
-  await page.getByRole("button", { name: /명세 확정/ }).click();
+  await confirmSpec(page);
   await expectStatus(page, "awaiting_approval");
   await page.getByRole("button", { name: "승인", exact: true }).click();
   await expectStatus(page, "approved");

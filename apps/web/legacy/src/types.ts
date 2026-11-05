@@ -85,6 +85,7 @@ export interface PlanDoc {
   helmValuesHash: string;
   planHash: string;
   expiresAt: string;
+  acknowledgements?: { id: string }[];
 }
 
 export interface ApiError { status: number; code: string; message: string; requestId: string }

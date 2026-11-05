@@ -1,4 +1,4 @@
-import { expect, test, SEED, createMigration, expectStatus, openConsole, shot } from "./helpers";
+import { expect, test, SEED, confirmSpec, createMigration, expectStatus, openConsole, shot } from "./helpers";
 
 // 작업 Z18: 이전 상세의 보안 표. 만들기 → 끝까지 → 표가 진짜 값(감사 체인·장부·T27)을 보여 주는가
 // 콘티: S6 컷 1 보안 표 (판 B, Z18 합쳐진 뒤)
@@ -20,7 +20,7 @@ test("보안 표: 진행 중에도 보이고, 끝나면 실행 역할 회수·�
   await expect(matrix.locator('[data-control="SEC-IAM-02"] [data-side="source"][data-cell="pass"]')).toContainText("정적");
   await shot(page, info, "z18-01-spec-review");
 
-  await page.getByRole("button", { name: /명세 확정/ }).click();
+  await confirmSpec(page);
   await expectStatus(page, "awaiting_approval");
   await page.getByPlaceholder(/사유/).fill("e2e 보안 표");
   await page.getByRole("button", { name: "승인", exact: true }).click();
@@ -32,7 +32,7 @@ test("보안 표: 진행 중에도 보이고, 끝나면 실행 역할 회수·�
   await expect(panel.locator('[data-row="TC-REVOKED"]')).toContainText("operateRoleRevoked = true");
   await expect(panel.locator('[data-row="TC-LEDGER"]')).not.toContainText("미구현");
   // Z39: 작업 단계가 임시 역할을 빌렸다 → 장부에 단계 이름, 감사에 발급 수. TC-AUDIT 는 더 이상 미구현이 아니다
-  await expect(panel.locator('[data-row="TC-LEDGER"]')).toContainText("단계 precheck");
+  await expect(panel.locator('[data-row="TC-LEDGER"]')).toContainText("단계 import·precheck·plan·apply·deploy");
   await expect(panel.locator('[data-row="TC-AUDIT"] [data-state="ok"]')).toBeVisible();
   await expect(panel.locator('[data-row="TC-AUDIT"]')).toContainText(/발급 [1-9]/);
   await expect(panel.locator('[data-row="AU-CHAIN"] [data-state="ok"]')).toBeVisible();

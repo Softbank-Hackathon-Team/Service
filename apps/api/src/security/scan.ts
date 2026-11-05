@@ -115,6 +115,9 @@ export { SECRET_PATTERNS };
 const SECRET_KEYS = new Set(["password", "passwd", "secret", "secretaccesskey", "token", "accesstoken",
   "sessiontoken", "apikey", "privatekey", "clientsecret", "material"]);
 const MASKED = /^(\[redacted\]|\*+|)$/i;
+// 명세 v2 부품의 비밀 참조: 값이 아니라 secrets 표의 그릇 이름 (contracts spec-v2-check). 값 모양 패턴 검사는 그대로 받는다.
+//   앞머리 "spec_v2 v<판>" 은 load.ts 가 붙인다. 감사·계획서 같은 다른 문서의 같은 모양은 예외가 아니다
+const SECRET_REF = /^spec_v2 v\d+\.spec\.components\[\d+\]\.props\.((sidecars|initContainers)\[\d+\]\.)?(env\[\d+\]\.fromSecret|envFrom\[\d+\]|secretMounts\[\d+\])\.secret$/;
 
 export interface SecretHit { where: string; kind: string }
 export interface SecretScan { scannedDocs: number; scannedStrings: number; hits: SecretHit[] }
@@ -125,7 +128,7 @@ export function scanSecrets(docs: { where: string; value: unknown }[]): SecretSc
   const walk = (v: unknown, path: string, key: string | null) => {
     if (typeof v === "string") {
       strings++;
-      if (key && SECRET_KEYS.has(key.toLowerCase()) && !MASKED.test(v)) hits.push({ where: path, kind: "secret_field" });
+      if (key && SECRET_KEYS.has(key.toLowerCase()) && !MASKED.test(v) && !SECRET_REF.test(path)) hits.push({ where: path, kind: "secret_field" });
       for (const p of SECRET_PATTERNS) if (p.re.test(v)) hits.push({ where: path, kind: p.kind });
     } else if (Array.isArray(v)) v.forEach((x, i) => walk(x, `${path}[${i}]`, key));
     else if (v && typeof v === "object") {

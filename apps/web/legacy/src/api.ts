@@ -62,10 +62,11 @@ export const api = {
   confirmSpec: (id: string) => post<{ id: string }>(`/migrations/${id}/plan`),
   latestPlan: (id: string) => get<PlanDoc>(`/migrations/${id}/plan`),
   getPlan: (planId: string) => get<PlanDoc>(`/plans/${planId}`),
-  decide: (planId: string, decision: "approve" | "reject", planHash: string, reason?: string) =>
+  // 서버 기본(PLAN_ACKS 켬): 승인은 확인 항목을 다 덮어야 하고, 시작은 승인한 지문을 다시 보내야 한다 (apps/web/src/lib/api.ts 와 같은 본문)
+  decide: (planId: string, decision: "approve" | "reject", planHash: string, reason?: string, acks?: string[]) =>
     post<{ migrationId: string; planId: string; status: string }>(`/plans/${planId}/approvals`,
-      reason ? { decision, planHash, reason } : { decision, planHash }),
-  start: (id: string) => post<{ id: string }>(`/migrations/${id}/start`),
+      { decision, planHash, ...(reason ? { reason } : {}), ...(decision === "approve" && acks?.length ? { acks } : {}) }),
+  start: (id: string, planHash?: string) => post<{ id: string }>(`/migrations/${id}/start`, planHash ? { planHash } : undefined),
   // 작업 Z18: 보안 표 (임시 자격·최소 권한·감사 체인·비밀값·런타임)
   security: (id: string) => get<SecurityView>(`/migrations/${id}/security`),
   securityRegression: (id: string) => get<SecurityRegression>(`/migrations/${id}/security/regression`),

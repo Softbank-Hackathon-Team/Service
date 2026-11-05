@@ -1,5 +1,5 @@
 import { type Page } from "@playwright/test";
-import { expect, test, OTHER_TENANT, SEED, createMigration, currentMigrationId, currentStatus, expectStatus, openConsole, shot, type Routes } from "./helpers";
+import { expect, test, OTHER_TENANT, SEED, confirmSpec, createMigration, currentMigrationId, currentStatus, expectStatus, openConsole, shot, type Routes } from "./helpers";
 
 // 작업 Z41: 데모 콘티 장면(S0~S8)을 화면 경로로 덮는다.
 //   장면 번호 = 8분판 parallel/Z24/docs/DEMO-STORYBOARD.md = 5분판 parallel/Z28/docs/DEMO-STORYBOARD-5MIN.md
@@ -66,7 +66,7 @@ test("무대 한 건: S0 시작 전 → S1 만들기 → S3 계획서 → S2 비
 
   await test.step("S3 앞부분: 명세 확정 → 승인 대기, 계획서(지문 64자, 단계 6줄, 롤백 기준, 사전 점검)", async () => {
     const t = Date.now();
-    await page.getByRole("button", { name: /명세 확정/ }).click(); clicks.push("명세 확정");
+    await confirmSpec(page); clicks.push("명세 확정");
     await expectStatus(page, "awaiting_approval");
     mark.S3_confirm_to_awaiting = Date.now() - t;
     const plan = page.locator(".plan");
@@ -185,7 +185,7 @@ test("S3 뒤: 옛 화면 지문으로 승인 → 409 PLAN_HASH_MISMATCH, 한국�
       if (!resp.ok()) return r.fulfill({ response: resp });
       await r.fulfill({ response: resp, json: { ...(await resp.json()), planHash: "0".repeat(64) } });
     });
-    await page.getByRole("button", { name: /명세 확정/ }).click();
+    await confirmSpec(page);
     await expectStatus(page, "awaiting_approval");
     await expect(page.locator(".plan .kv code").nth(1)).toHaveText("0".repeat(64));
     await page.getByRole("button", { name: "승인", exact: true }).click();
