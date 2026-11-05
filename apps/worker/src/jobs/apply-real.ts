@@ -1,12 +1,15 @@
 import type { AppSpecV2, PlanDoc, Provider, TfOutputs } from "@svc/contracts";
 import { existsSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { createRealTerraformRunner, envFor, dbNetworkFromEnv, DbNetworkError, factEnvName, factsFromEnv, fillTfVars, flattenTfOutputsV2, gcpTerraformEnv, type GcpTerraformCred, type RealTerraformRunner } from "@svc/adapters";
+import { createRealTerraformRunner, envFor, dbNetworkFromEnv, DbNetworkError, factEnvName, fillTfVars, flattenTfOutputsV2, gcpTerraformEnv, type GcpTerraformCred, type RealTerraformRunner } from "@svc/adapters";
 import { tfCallV2 } from "./plan-v2.js";
 import { specV2ForPlan, terraformRuntimeOf } from "@svc/adapters";
 import { latestAcceptedSpecV2, loadLatestApproval, loadPlanById } from "@svc/core";
 import { DbWriterError, dbWriterApplies, loadWriterState, prepareSourceWriter, saveWriterState, writerVar, type ManagedProvider, type SecretPut } from "../db-writer.js";
-import { factsDrift, importedFor, targetFactsOf } from "./plan-facts.js";
+import { factsDrift, importedFor, mergedFactsOf, targetFactsOf } from "./plan-facts.js";
+import { ensureEnvLayer, readEnvLayer, type EnsureEnvLayerDeps } from "../env-layer.js";
+import { factsOfLayer, regionOf } from "@svc/adapters";
+import { TARGET_ACCOUNT_SQL } from "./target-account.js";
 import { gcpPlatformSa } from "../platform.js";
 import { appLinkFromEnv } from "@svc/dbproxy";
 import { tenantSlug } from "../gitops/bundle.js";
@@ -23,6 +26,8 @@ import { envNumber, redactText } from "@svc/contracts";
 export interface RealApplyInput {
   migrationId: string; tenantId: string; envId: string;
   provider: Provider; accountId: string | null; spec: AppSpecV2; plan: PlanDoc;
+  /** 환경 층 DB 사실 (ready 줄, ensureEnvLayer·loadReapplyInput 이 채움). 있으면 TF_FACT_* 보다 먼저. 없으면 예전 그대로 */
+  envLayer?: { facts: Record<string, string>; varsHash: string } | null;
 }
 export type RealApplyOutcome =
   | { ok: true; tfOutputs: TfOutputs; detail: Record<string, unknown> }
@@ -88,15 +93,12 @@ async function prepare(i: RealApplyInput, d: RealApplyDeps): Promise<Prepared | 
 
   // G7-3·G7-4: 사람이 본 도착 사실(계정·VPC·클러스터)·재사용 여부가 지금과 같은가. 다르면 만들지 않는다
   const imp = importedFor(env, i.migrationId, i.tenantId);
-  const drift = factsDrift(i.plan, targetFactsOf(tf.vars, env, i.provider, i.accountId), imp);
+  const drift = factsDrift(i.plan, targetFactsOf(tf.vars, env, i.provider, i.accountId, i.envLayer?.facts), imp, i.envLayer);
   if (drift) return { ok: false, failureCode: "TF_PLAN_DRIFT", detail: { ...base, error: drift } };
 
   // ② 자리표시. deploy 의 envFacts 와 같은 규칙 (tenantId = tenantSlug, gcp projectId = account_id)
-  const facts = factsFromEnv(env, {
-    tenantId: tenantSlug(i.tenantId), migrationId: i.migrationId,
-    accountId: i.provider === "aws" ? i.accountId ?? undefined : undefined,
-    projectId: i.provider === "gcp" ? i.accountId ?? undefined : undefined,
-  });
+  //   환경 층 DB 사실(ready)이 있으면 TF_FACT_* 보다 먼저 (mergedFactsOf = plan·apply·reapply 같은 규칙)
+  const facts = mergedFactsOf(env, i.provider, i.accountId, i.envLayer?.facts, { tenantId: tenantSlug(i.tenantId), migrationId: i.migrationId });
   // Z77: 클러스터 없이(TF_FACT_CLUSTER_NAME="")는 aws 만. gcp 앱 모듈은 GKE 조회가 필수라 빈 값이면 모자란 사실로 본다
   if (facts.clusterName === "" && i.provider !== "aws")
     return { ok: false, failureCode: "TF_FACTS_MISSING", detail: { ...base, missing: ["TF_FACT_CLUSTER_NAME"], error: "클러스터 없이 만들기는 aws 도착만" } };
@@ -178,6 +180,17 @@ export async function realApply(i: RealApplyInput, d: RealApplyDeps = {}): Promi
     ...(noCluster ? { noCluster: true } : {}) } };
 }
 
+/** apply 작업의 진짜 길: ① 환경 층 확보(ensureEnvLayer, apply 맨 앞 = 승인 뒤 provisioning 에서만) → ② 앱 층 realApply (환경 층 사실을 씀).
+ *  reapplyDbWriter(컷오버·롤백)는 이 함수를 거치지 않는다 → 그때 GKE 를 만들 일이 없다 */
+export async function realApplyWithEnvLayer(i: RealApplyInput, d: RealApplyDeps & { envLayer?: Omit<EnsureEnvLayerDeps, "gcpCred" | "signal" | "env"> } = {}): Promise<RealApplyOutcome> {
+  const el = await ensureEnvLayer({ tenantId: i.tenantId, migrationId: i.migrationId, envId: i.envId, provider: i.provider, projectId: i.accountId,
+    region: regionOf({ envId: i.envId, provider: i.provider, region: "default" }), plan: i.plan },
+    { ...d.envLayer, ...(d.env ? { env: d.env } : {}), ...(d.gcpCred ? { gcpCred: d.gcpCred } : {}), ...(d.signal ? { signal: d.signal } : {}) });
+  if (!el.ok) return { ok: false, failureCode: el.failureCode, detail: { planId: i.plan.planId, provider: i.provider, real: true, ...el.detail } };
+  const out = await realApply({ ...i, ...(el.layer ? { envLayer: el.layer } : {}) }, d);
+  return el.source === "db" ? { ...out, detail: { ...out.detail, envLayer: el.detail } } : out;
+}
+
 /** APP-22 (가) DECISION(team): Terraform 이 앱을 띄우는 도착의 앱 DB 주소 바꾸기 = db_writer_json active 만 바꿔 같은 입력으로 다시 apply.
  *  컷오버(C6 뒤) = target, 컷오버 뒤 롤백 = source. 경로 사실은 apply 때 남긴 db-writer.json (비밀번호는 그릇에 이미 있음).
  *  흉내 판(MOCK_IAC=1)은 apply 를 안 돌리고 상태 파일만 바꾼다 */
@@ -204,10 +217,14 @@ export async function loadReapplyInput(tx: { query: (sql: string, args: unknown[
   const plan = ap ? await loadPlanById(tx as never, ap.planId) : null;
   const row = await latestAcceptedSpecV2(tx as never, m.id);
   const spec = row ? specV2ForPlan(row) : null;
-  const e = await tx.query(`SELECT provider, account_id FROM environments WHERE id=$1`, [m.targetEnvId]);
+  // apply 와 같은 도착 계정 규칙 (A안: GCP = gcp_target_project). 예전엔 account_id 라 전용 프로젝트 환경에서 다시 apply 가 TF_PLAN_DRIFT 였다
+  const e = await tx.query(`SELECT provider, ${TARGET_ACCOUNT_SQL} AS account_id FROM environments WHERE id=$1`, [m.targetEnvId]);
   if (!plan || !spec || !e.rows[0]) return null;
+  // 환경 층으로 만든 도착이면 다시 apply 도 같은 사실로 (없으면 TF_FACTS_MISSING). 여기서는 읽기만, 만들지 않는다
+  const layer = e.rows[0].provider === "gcp" ? await readEnvLayer(tx as never, m.targetEnvId) : null;
   return { migrationId: m.id, tenantId: m.tenantId, envId: m.targetEnvId, provider: e.rows[0].provider as Provider,
-           accountId: (e.rows[0].account_id as string | null) ?? null, spec, plan };
+           accountId: (e.rows[0].account_id as string | null) ?? null, spec, plan,
+           ...(layer?.status === "ready" && layer.facts ? { envLayer: { facts: factsOfLayer(layer.facts), varsHash: layer.varsHash } } : {}) };
 }
 
 async function setTargetUpstream(urls: string[], host: string, port: number, token: string | undefined, f: typeof fetch, timeoutMs: number) {

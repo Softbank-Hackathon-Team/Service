@@ -16,6 +16,9 @@ export const FAILURE_CODES = [
   "APPLY_FAILED",                // apply 예외
   "TF_APPLY_FAILED", "TF_PLAN_DRIFT", "TF_FACTS_MISSING",  // 진짜 Terraform 실행기 (int5-3 infra)
   "UNSUPPORTED_V2", "NEEDS_HUMAN", // TA3: 도착이 명세를 못 그림(capability 밖) / 사람이 정해야 함(v2 리소스 빠짐 등). 재시도 안 함
+  "ENV_LAYER_APPLY_FAILED",      // 환경 층(gcp/env: VPC·GKE·ESO) apply 실패. 만들다 만 자원은 지우지 않는다 (environment_layers.status=failed)
+  "ENV_LAYER_BUSY",              //   같은 환경의 환경 층을 다른 이전이 만드는 중 (status=creating)
+  "ENV_LAYER_CRED_MISSING",      //   환경 층을 만들 빌린 GCP 실행 토큰이 없음 (워커 자기 자격으로는 만들지 않는다)
   "TF_BIN_MISSING",              // Z89: 진짜 Terraform 이 기본인데 실행 파일이 없음 (MOCK_IAC=1 이 아닌데 terraform 미설치)
   "CRED_RENEW_FAILED",           // 임시 자격 재발급 실패 (Z61)
   "APP_LINK_UPSTREAM_FAILED",    // 앱 연결 상류 실패 (int5-3)

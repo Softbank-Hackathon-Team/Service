@@ -2,7 +2,8 @@ import { ApprovalRowV2, PlanDoc, PlanJob, PrecheckItem, QUEUES, checkV2, AppSpec
   type PlanAcknowledgement, type PlanCostSummary, type PlanStep, type PriceCatalog, type Provider } from "@svc/contracts";
 import { PLAN_ROLLBACK_WINDOW_SEC, latestAcceptedSpecV2, retryBudget, SPEC_DRAFT_KEY, type AcceptedSpecV2Row, type Tx } from "@svc/core";
 import { estimateCostV2, loadCatalog } from "@svc/cost";
-import { DbNetworkError, isAdapterError, NEEDS_HUMAN, specV2OrThrow, UNSUPPORTED_V2 } from "@svc/adapters";
+import { DbNetworkError, isAdapterError, NEEDS_HUMAN, regionOf, specV2OrThrow, UNSUPPORTED_V2 } from "@svc/adapters";
+import { planEnvLayer, readEnvLayer, type EnvLayerRow } from "../env-layer.js";
 import type { z } from "zod";
 import { failedAttempts, jobData, recordAttemptFailure, RetryLater, runStep, stableHash, stubWait, type StepOutcome } from "./_step.js";
 import { savePlan } from "./plan-store.js";
@@ -26,6 +27,9 @@ export interface PlanInput {
   // G7-3·G7-4: 계획 작업(handlePlan)이 채운다. 없으면 칸 없음 = 예전 지문
   accountId?: string | null;          // 환경 표 account_id (aws 계정 / gcp 프로젝트) → targetFacts
   imported?: ImportedInfra | null;    // 작업 폴더 imported.json → provision: reuse
+  // 환경 층 (env-layer.ts planEnvLayer). 없으면 칸 없음 = 예전 지문 (TF_FACT_* 길)
+  envLayer?: NonNullable<PlanDoc["envLayer"]>;
+  envLayerFacts?: Record<string, string>;   // existing 일 때 DB 사실 → targetFacts
 }
 
 // ---- PA4 (계획 26 · A4): 비용 고지 + 확인 항목 ----
@@ -160,12 +164,18 @@ export function buildPlanDoc(i: PlanInput, env: NodeJS.ProcessEnv = process.env)
     } : {}),
   };
   // G7-3·G7-4: 도착 사실·재사용 — 있을 때만 칸 (없으면 예전 지문)
-  const targetFacts = i.accountId !== undefined ? targetFactsOf(tf.vars, env, i.target.provider, i.accountId) : undefined;
+  const targetFacts = i.accountId !== undefined ? targetFactsOf(tf.vars, env, i.target.provider, i.accountId, i.envLayerFacts) : undefined;
   const provision = provisionOf(i.imported ?? null);
   Object.assign(body, {
     ...(targetFacts ? { targetFacts } : {}),
     ...(provision ? { provision } : {}),
+    ...(i.envLayer ? { envLayer: i.envLayer } : {}),
   });
+  // 환경 층 새로 만들기: GKE 비용·시간·자동 삭제 없음을 사람이 확인하는 항목. create 계획에만 생기는 칸이라 다른 계획 지문은 그대로
+  if (i.envLayer?.mode === "create") {
+    const acks = ((body as { acknowledgements?: PlanAcknowledgement[] }).acknowledgements ??= []);
+    acks.push({ id: "env_layer_create", kind: "env_layer_create", ref: "gcp/env", text: i.envLayer.notice ?? "도착 GKE 를 새로 만듭니다 (비용 발생)" });
+  }
   if (provision && "acknowledgements" in body && Array.isArray(body.acknowledgements))
     body.acknowledgements.push({ id: "provision_reuse", kind: "provision_reuse", ref: provision.source,
       text: `도착 자원을 새로 만들지 않고 이미 있는 자원 ${provision.resources.length}개(${provision.resources.join(", ") || "목록 없음"})를 다시 씁니다. 비용 고지는 새로 만드는 기준이라 실제와 다를 수 있습니다` });
@@ -199,15 +209,16 @@ export async function handlePlan(raw: unknown) {
         `SELECT detail->'precheck' AS items FROM audit_events WHERE target=$1 AND action='precheck.planning' ORDER BY seq DESC LIMIT 1`, [m.id]);
       const precheck = PrecheckItem.array().safeParse(pc.rows[0]?.items ?? []);
       const extras = await loadPlanSpecExtras(tx, m.id);
-      return { specRow, provider: env.provider as Provider, precheck: precheck.success ? precheck.data : [],
+      const envLayerRow = env.provider === "gcp" ? await readEnvLayer(tx, m.targetEnvId) : null;
+      return { envLayerRow, specRow, provider: env.provider as Provider, precheck: precheck.success ? precheck.data : [],
                accountId: (env.account_id as string | null) ?? null,
                sourceProvider: (se.rows[0]?.provider ?? env.provider) as Provider, ...extras };
     },
     work: async (j, m, loaded) => "recheckFailed" in (loaded as object)
       ? planRecheckOutcome(j, loaded as PlanRecheckFailed)
       : withStepRoles("plan", j, m, async () => {
-      const { specRow, provider, precheck, sourceProvider, specVersion, v2Approvals, accountId } = loaded as {
-        specRow: AcceptedSpecV2Row; provider: Provider; precheck: PrecheckItem[]; accountId: string | null;
+      const { specRow, provider, precheck, sourceProvider, specVersion, v2Approvals, accountId, envLayerRow } = loaded as {
+        specRow: AcceptedSpecV2Row; provider: Provider; precheck: PrecheckItem[]; accountId: string | null; envLayerRow: EnvLayerRow | null;
         sourceProvider: Provider; specVersion?: number; v2Approvals: ApprovalRowV2[] };
       await stubWait();
       const { spec } = specV2OrThrow(specRow);
@@ -221,6 +232,9 @@ export async function handlePlan(raw: unknown) {
         // TA3 비용: Terraform 루트와 같은 명세로 센다
         costSummary: estimatePlanCost(spec, sourceProvider, provider),
         accountId, imported: importedFor(process.env, m.id, job.tenantId),
+        // 환경 층: DB ready 줄이면 existing(그 사실), 없고 ENV_LAYER_AUTO=1 이면 create(GKE 생성 고지). 그 밖은 칸 없음
+        ...(() => { const el = planEnvLayer(provider, envLayerRow, process.env, accountId, regionOf({ envId: m.targetEnvId, provider, region: "default" }));
+          return { ...(el.envLayer ? { envLayer: el.envLayer } : {}), ...(el.dbFacts ? { envLayerFacts: el.dbFacts } : {}) }; })(),
       });
       return { to: "awaiting_approval", detail: { planId: plan.planId, planHash: plan.planHash },
                inTx: (tx) => savePlan(tx, job.tenantId, plan),

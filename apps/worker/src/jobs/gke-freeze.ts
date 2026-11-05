@@ -4,6 +4,7 @@ import { freezeGkeUpgrades, releaseGkeUpgrades, type CliDeps, type GkeFreezeResu
 import { tempRoles } from "../platform.js";
 import { withStepRoles, type StepRoles } from "./_roles.js";
 import type { MigrationRow } from "./_step.js";
+import { readEnvLayer } from "../env-layer.js";
 import { TARGET_ACCOUNT_SQL } from "./target-account.js";
 
 // 이전 중 도착 GKE 업그레이드 멈춤 (결정: 이전 중 maintenance exclusion, 끝 상태에서 풂).
@@ -34,7 +35,11 @@ async function loadTarget(tenantId: string, m: MigrationRow): Promise<TargetRow 
   return withTenant(tenantId, async (tx) => {
     const q = await tx.query(
       `SELECT provider, ${TARGET_ACCOUNT_SQL} AS project, cluster_name AS cluster, region AS location FROM environments WHERE id = $1`, [m.targetEnvId]);
-    return (q.rows[0] as TargetRow | undefined) ?? null;
+    const row = (q.rows[0] as TargetRow | undefined) ?? null;
+    // 환경 층이 만든 GKE 는 영역(zone) 클러스터라 위치가 environments.region 이 아니다 → 환경 층 사실(ready)이 있으면 그것
+    const layer = row?.provider === "gcp" ? await readEnvLayer(tx, m.targetEnvId) : null;
+    return row && layer?.status === "ready" && layer.facts
+      ? { ...row, cluster: layer.facts.cluster_name, location: layer.facts.cluster_location } : row;
   });
 }
 

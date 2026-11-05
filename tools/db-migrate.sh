@@ -113,6 +113,7 @@ marker_sql() {
     0047) echo "EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agent_reports_kind_check' AND pg_get_constraintdef(oid) LIKE '%facts%')" ;;
     0050) echo "to_regclass('public.replication_endpoints') IS NOT NULL" ;;
     0051) echo "to_regclass('public.environment_inventory') IS NOT NULL" ;;
+    0052) echo "to_regclass('public.environment_layers') IS NOT NULL" ;;
     *) echo "" ;;
   esac
 }
