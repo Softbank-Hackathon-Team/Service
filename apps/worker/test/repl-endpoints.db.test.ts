@@ -54,7 +54,7 @@ async function seed(t: string, status = "syncing") {
 const ep = (t: string, m: string, side: "source" | "target", o: Partial<ReplicationEndpoint> = {}): ReplicationEndpoint => ({
   tenantId: t, migrationId: m, side, label: `${side}-db`, provider: "postgres", host: `${side}.invalid`, port: 5432, dbname: "shop",
   username: "admin", passwordRef: "derive:admin", peerHost: null, peerPort: null, appRole: "app_user", fenceRoles: [], schemaName: null,
-  sslmode: null, tlsServername: null, caPem: null, ...o,
+  sslmode: null, tlsServername: null, caPem: null, relayHost: null, relayKnownHosts: null, relayPort: 22, ...o,
 });
 const put = (t: string, e: ReplicationEndpoint) => core.withTenant(t, (tx) => core.upsertReplicationEndpoint(tx, e));
 

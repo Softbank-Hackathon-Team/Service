@@ -68,7 +68,8 @@ DECISION(team): 끝점은 이전마다 DB 행으로 (2026-11-05, 보안·온프�
 - 워커는 `replicationFor(tenantId, migrationId)` 하나로 복제 객체를 얻는다 (`apps/worker/src/jobs/_repl.ts`). 두 줄 → 줄, 둘 다 없음 → 예전 `replicationFromEnv`, 한 줄 → 오류.
 - 비밀번호는 칸에 없다. `password_ref` = `derive:<용도>` (`REPL_SECRET_MASTER_KEY` HMAC, `deriveReplPassword`) 또는 `env:REPL_SECRET_<이름>`. 그 밖의 이름(`env:DATABASE_URL` 등)은 거부.
 - TLS: `sslmode` + `ca_pem`(없으면 `REPL_CA_FILE`) + `tls_servername`(host 가 IP 일 때 인증서에서 확인할 이름). 상대가 붙는 `peerUrl` 에는 `sslmode=require`.
-- 등록·보기: `npm run repl:endpoint -- set|show --tenant <회사> --migration <이전> …` (`tools/repl-endpoint.ts`).
+- 등록·보기: `npm run repl:endpoint -- set|show --tenant <회사> --migration <이전> …` (`tools/repl-endpoint.ts`). 도착 줄에는 온프레 터널 중계기 칸(`--relay-host`·`--relay-known-hosts-file`·`--relay-port`)도 넣는다. 이 패키지는 그 칸을 읽지 않는다 (워커 gitops 렌더만 쓴다).
+- 온프레 CNPG 도착이면 워커 deploy 가 도착 줄 `ca_pem`·`tls_servername`·`sslmode=verify-full` 과 출발 줄 peer(`db-tunnel.<ns>.svc:5432`, 비어 있을 때만)를 채운다 (`apps/worker/src/gitops/replication-delivery.ts`, `deploy/helm/onprem-db-tunnel/README.md`).
 
 ## 단계 (컷오버 C1~C6)
 

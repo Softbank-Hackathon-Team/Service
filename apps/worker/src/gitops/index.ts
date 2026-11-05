@@ -4,9 +4,11 @@ import { helmValuesV2 } from "../jobs/plan-v2.js";
 import { stableHash } from "../jobs/_step.js";
 import { ENV_DIR, DELIVERY, appNamespace, fillPlaceholders, gkeAccess, planFile, tenantSlug, withTraffic, argoAppName, type BundleRef, type PlanFile } from "./bundle.js";
 import { GitopsError, GitopsRepo, type CommitOpts, type CommitResult, type RenderedBundle } from "./repo.js";
+import { withDelivery, type ReplicationDelivery } from "./replication-delivery.js";
 
 export { configFromEnv, GitopsRepo, GitopsError, gitopsPreflight, type CommitOpts, type RenderedBundle } from "./repo.js";
 export * from "./bundle.js";
+export * from "./replication-delivery.js";
 
 export interface DeployInput {
   tenantId: string;
@@ -15,6 +17,9 @@ export interface DeployInput {
   plan: PlanDoc;
   target: { envId: string; provider: Provider; region: string; accountId: string | null };
   tfOutputs: TfOutputs;
+  // 온프레 CNPG 이전 배달물 (서버 인증서·봉인 비밀·터널). 배포 단계가 끝점 줄이 있을 때만 넣는다 (replication-delivery.ts).
+  //   승인 지문(helmValuesHash)은 채우기 전 값으로 비교하므로 이 칸은 승인 검사에 안 걸린다 (withServedBy 와 같은 자리)
+  replication?: ReplicationDelivery;
 }
 
 // 승인 때 값과 같은지: 계획 처리기와 똑같이 helmValuesV2(spec, target)를 다시 만들어 지문을 비교한다.
@@ -62,7 +67,8 @@ export interface SyncWatcher { wait(b: BundleRef, c: CommitResult): Promise<Sync
 // 커밋할 묶음의 값 한 벌. deployToGitops 와 리허설 렌더(renderForRehearsal)가 같이 써서 두 길의 값이 갈라지지 않는다
 export async function bundleValues(i: DeployInput, repo: GitopsRepo): Promise<{ b: BundleRef; plan: PlanFile; values: HelmValues }> {
   const b = bundleRefOf(i);
-  const filled = filledValues(i);   // 자리표시가 남으면 레포를 만지기 전에 막는다
+  const filled0 = filledValues(i);   // 자리표시가 남으면 레포를 만지기 전에 막는다
+  const filled = i.replication ? withDelivery(filled0, i.replication) : filled0;
   const plan = planFile(b, i.plan, await repo.chartVersion());
   return { b, plan, values: withServedBy(withTraffic(filled, plan.approvedWeights, 0), b) };
 }

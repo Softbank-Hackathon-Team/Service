@@ -1,4 +1,5 @@
-import { dropRuntimeLinkSecret } from "../app-link.js";
+import { dropRuntimeLinkSecret, targetBundle } from "../app-link.js";
+import { commitReplicationCleanup } from "../gitops/index.js";
 import { MigrationJob, QUEUES } from "@svc/contracts";
 import { replicationFor } from "./_repl.js";
 import { asBossDb, boss, withTenant, writeAudit } from "@svc/core";
@@ -67,7 +68,12 @@ export async function handleCleanup(raw: unknown) {
       // 복제 슬롯·발행·구독·마커를 양쪽에서 지우고, 남은 게 없는지 다시 센다 (T27 tempResources)
       const { removed } = await repl.teardown();
       const left = await repl.leftovers();
-      return { to: "completed", detail: { removed: [...removed, "STUB: source app scaled to 0"], leftovers: left, roles, ...(linkSecret.skipped ? {} : { linkSecret }) },
+      // 온프레 CNPG 이전: 복제 걷기가 끝난 뒤에만 gitops 값에서 이전 역할(ensure absent)·터널·터널 키·역할 비밀번호를 걷는다.
+      //   찌꺼기가 남았으면 그대로 둔다 (터널이 사라지면 워커가 도착 DB 에 못 붙어 repl-cleanup 으로 다시 걷을 길이 없다)
+      const gitopsRepl = left.length === 0
+        ? await commitReplicationCleanup(await withTenant(j.tenantId, (tx) => targetBundle(tx, j.tenantId, m)))
+        : { skipped: "replication_leftovers" };
+      return { to: "completed", detail: { removed: [...removed, "STUB: source app scaled to 0"], leftovers: left, roles, gitopsReplication: gitopsRepl, ...(linkSecret.skipped ? {} : { linkSecret }) },
                evidence: { tempResources: left.length, ...roles.evidence } };
     }),
     // 재발급 실패(Z61) → cleanup → paused(CRED_RENEW_FAILED). 그 밖의 예외는 지금처럼 pg-boss 재시도

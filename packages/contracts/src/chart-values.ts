@@ -129,6 +129,7 @@ export const ChartPgReplication = z.object({
   ensure: z.enum(["present", "absent"]).optional(),          // 정리: absent 로 한 번 배포해 역할을 지운 뒤 칸을 뺀다
 }).strict();
 export const ChartPgCertificates = z.object({ serverCASecret: Name, serverTLSSecret: Name }).strict();
+export type ChartPgCertificates = z.infer<typeof ChartPgCertificates>;
 // 이전 동안만 사는 SSH DB 터널 (deploy/helm/onprem-db-tunnel 과 같은 모양). Service 이름 db-tunnel
 export const ChartDbTunnel = z.object({
   relay: z.object({
@@ -141,11 +142,13 @@ export const ChartDbTunnel = z.object({
   reverse: z.object({ enabled: z.boolean(), cnpgName: Name.optional() }).strict().optional(),
   image: z.string().regex(/@sha256:[0-9a-f]{64}$/),         // 다이제스트 고정
 }).strict();
+export type ChartDbTunnel = z.infer<typeof ChartDbTunnel>;
 // 봉인 비밀 (bitnami SealedSecret, strict 범위 = 이름·네임스페이스에 묶임). 값은 암호문만
 export const ChartSealedSecret = z.object({
   name: Name, type: z.string().optional(),
   encryptedData: z.record(z.string(), z.string().min(1)).refine((m) => Object.keys(m).length > 0, "encryptedData 가 비었다"),
 }).strict();
+export type ChartSealedSecret = z.infer<typeof ChartSealedSecret>;
 
 export const ChartPostgres = z.discriminatedUnion("mode", [
   // 클라우드 관리형 DB: 접속 주소·비밀 위치만. 비밀은 ESO 로 secretName 에 받는다

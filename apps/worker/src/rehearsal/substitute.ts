@@ -25,7 +25,7 @@ export interface Substituted {
   edges: RehearsalInput["edges"];
   unsupported: string[];
 }
-export type Presence = "hpa" | "cronjob" | "daemonset" | "ingress" | "tunnel" | "external_secret" | "cnpg" | "resource_quota";
+export type Presence = "hpa" | "cronjob" | "daemonset" | "ingress" | "tunnel" | "db_tunnel" | "external_secret" | "sealed_secret" | "cnpg" | "resource_quota" | "network_policy";
 
 // DRAFT(ai): 요청량 상한. 샌드박스 노드(t3.medium 1대)에 3티어가 다 올라가게. 낮추기만 하고 한도(limits)는 그대로라 OOM 판정은 같다
 export const REQUEST_CAP = { cpu: "100m", memory: "128Mi" } as const;
@@ -107,10 +107,15 @@ const containerLists = (pod: Obj) => (["containers", "initContainers"] as const)
   .flatMap((k) => (Array.isArray(pod[k]) ? (pod[k] as Container[]).map((c, i) => ({ c, segs: [k, i] as Seg[] })) : []));
 
 // ingress.yaml 의 cloudflared 터널. 리허설에서 돌리지 않는다 (토큰·바깥 연결 없음)
-const isTunnel = (d: K8sDoc) => d.kind === "Deployment" && d.metadata.name.endsWith("-cloudflared") &&
+const isCloudflared = (d: K8sDoc) => d.kind === "Deployment" && d.metadata.name.endsWith("-cloudflared") &&
   containerLists(at(d, POD_SPEC.Deployment!) as Obj ?? {}).some(({ c }) => String(c.image ?? "").startsWith("cloudflare/cloudflared"));
+// db-tunnel.yaml 의 온프레 DB 이전 SSH 터널 (이름 db-tunnel, 라벨 component db-tunnel). 같은 이유로 돌리지 않는다 (중계기·SSH 키·바깥 연결 없음)
+const isDbTunnel = (d: K8sDoc) => d.kind === "Deployment" && d.metadata.name === "db-tunnel" &&
+  d.metadata.labels?.["app.kubernetes.io/component"] === "db-tunnel";
+const isTunnel = (d: K8sDoc) => isCloudflared(d) || isDbTunnel(d);
 const isCnpg = (d: K8sDoc) => d.kind === "Cluster" && String(d.apiVersion ?? "").startsWith("postgresql.cnpg.io/");
 const isEso = (d: K8sDoc) => d.kind === "ExternalSecret" && String(d.apiVersion ?? "").startsWith("external-secrets.io/");
+const isSealed = (d: K8sDoc) => d.kind === "SealedSecret" && String(d.apiVersion ?? "").startsWith("bitnami.com/");
 
 /** 적용할 파드가 받는 이미지 (터널 빼고). mirrorImages 입력 */
 export function podImages(docs: readonly Manifest[]): string[] {
@@ -238,7 +243,7 @@ const SUBSTITUTIONS: Record<string, Rule> = {
   PersistentVolumeClaim: (e) => { e.whole("storage"); return []; },
   Deployment: (e, doc, s) => {
     if (!isTunnel(doc)) return workload(true)(e, doc, s);
-    s.present.add("tunnel");
+    s.present.add(isDbTunnel(doc) ? "db_tunnel" : "tunnel");
     const pod = (at(doc, POD_SPEC.Deployment!) as Obj) ?? {};
     const args = containerLists(pod).flatMap(({ c }) => (c.args ?? []).filter((a): a is string => typeof a === "string"));
     edgesFrom(doc.metadata.name, args, s.ctx.namespace, s.services, s.edges);
@@ -284,6 +289,21 @@ const SUBSTITUTIONS: Record<string, Rule> = {
     e.whole("secrets");
     return [sec];
   },
+  // db-tunnel 의 NetworkPolicy: 그대로 적용 (가상 클러스터 안 판정). 막는 대상(터널 파드)은 돌지 않는다
+  NetworkPolicy: (_e, _doc, s) => { s.present.add("network_policy"); },
+  // 봉인 비밀: 샌드박스엔 컨트롤러·개인 키가 없다 → ESO 와 같이 같은 이름·같은 키·같은 type 의 가짜 Secret (값은 고객 값과 상관없음)
+  SealedSecret: (e, doc, s) => {
+    if (!isSealed(doc)) return;
+    s.present.add("sealed_secret");
+    const spec = (doc.spec as { encryptedData?: Record<string, unknown>; template?: { metadata?: { name?: string }; type?: string } } | undefined) ?? {};
+    const name = spec.template?.metadata?.name ?? doc.metadata.name;
+    const keys = [...Object.keys(spec.encryptedData ?? {}), ...(s.keyRefs.get(name) ?? [])];
+    const type = spec.template?.type;
+    const tls: Record<string, string> = type === "kubernetes.io/tls" ? dummyTls(s.ctx.seed, name) : {};
+    const sec = plainSecret(s.ctx.namespace, name, type, doc.metadata.labels, keys, (k) => tls[k] ?? dummy(s.ctx.seed, name, k));
+    e.whole("secrets");
+    return [sec];
+  },
   Ingress: (e, doc, s) => {
     s.present.add("ingress");
     const rules = ((doc.spec as Obj | undefined)?.rules as Array<{ http?: { paths?: Array<{ backend?: { service?: { name?: string; port?: { number?: number } } } }> } }> | undefined) ?? [];
@@ -314,7 +334,8 @@ const SUBSTITUTIONS: Record<string, Rule> = {
   },
 };
 
-const supported = (d: K8sDoc) => !!SUBSTITUTIONS[d.kind] && (d.kind !== "Cluster" || isCnpg(d)) && (d.kind !== "ExternalSecret" || isEso(d));
+const supported = (d: K8sDoc) => !!SUBSTITUTIONS[d.kind] && (d.kind !== "Cluster" || isCnpg(d)) && (d.kind !== "ExternalSecret" || isEso(d)) &&
+  (d.kind !== "SealedSecret" || isSealed(d));
 /** 치환 표에 없는 종류 (닫힌 쪽 실패). 이미지 복사 전에 본다 */
 export const unsupportedOf = (docs: readonly Manifest[]) => docs.filter((m) => !supported(m.doc)).map((m) => docIdOf(m.doc));
 

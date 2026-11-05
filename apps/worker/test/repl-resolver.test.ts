@@ -12,7 +12,7 @@ const ENV = { REPL_SOURCE_URL: "postgres://u:p@env-src.invalid:5432/shop", REPL_
 const row = (side: "source" | "target"): ReplicationEndpoint => ({
   tenantId: T, migrationId: M, side, label: `row-${side}`, provider: "postgres", host: `${side}.row.invalid`, port: 5432, dbname: "shop",
   username: "admin", passwordRef: "derive:admin", peerHost: null, peerPort: null, appRole: "app_user", fenceRoles: [], schemaName: null,
-  sslmode: null, tlsServername: null, caPem: null,
+  sslmode: null, tlsServername: null, caPem: null, relayHost: null, relayKnownHosts: null, relayPort: 22,
 });
 
 test("정상: 줄 없음 → 예전 env 끝점 그대로, 두 줄 → 줄 끝점 (env 주소는 안 씀)", () => {

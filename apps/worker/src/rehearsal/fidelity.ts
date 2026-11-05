@@ -47,7 +47,7 @@ const ITEMS: Record<WorkerItem, (f: FidelityFacts, changed: boolean) => Row> = {
     ? row("substituted", "PVC (도착 StorageClass)", "emptyDir", "플랫폼 클러스터에 블록 저장소 드라이버가 없다. 마운트 경로는 같다")
     : same("PVC 없음"),
   secrets: (f, c) => c
-    ? row("substituted", "ExternalSecret → 도착 비밀 저장소 값", "같은 이름·같은 키의 Secret, 가짜 값 (TLS 는 자체 서명 인증서)", "고객 비밀 값은 샌드박스에 넣지 않는다")
+    ? row("substituted", secretSources(f) || "ExternalSecret → 도착 비밀 저장소 값", "같은 이름·같은 키의 Secret, 가짜 값 (TLS 는 자체 서명 인증서)", "고객 비밀 값은 샌드박스에 넣지 않는다")
     : same(f.present.has("external_secret") ? "ExternalSecret" : "ExternalSecret 없음"),
   secret_values: (f) => f.target === "onprem-k3s"
     ? row("not_checked", "Vault 비밀 그릇 값", "가짜 값", "온프레 비밀 그릇 값은 커밋 전에 보지 못한다")
@@ -58,8 +58,9 @@ const ITEMS: Record<WorkerItem, (f: FidelityFacts, changed: boolean) => Row> = {
   ingress: (f) => f.present.has("ingress")
     ? row("substituted", "Ingress → LB·DNS·TLS", "적용 안 함, 백엔드 Service 를 ClusterIP 로 직접 확인", "샌드박스 정책이 Ingress 를 막는다. LB·DNS·TLS 는 확인 못 함")
     : same("Ingress 없음"),
-  tunnel: (f) => f.present.has("tunnel")
-    ? row("not_checked", "cloudflared 터널", "돌리지 않음, 터널 대상 Service 연결만 본다", "터널 토큰과 바깥 연결은 샌드박스에 없다")
+  tunnel: (f) => f.present.has("tunnel") || f.present.has("db_tunnel")
+    ? row("not_checked", [f.present.has("tunnel") ? "cloudflared 터널" : "", f.present.has("db_tunnel") ? "DB 이전 SSH 터널(db-tunnel)" : ""].filter(Boolean).join(" · "),
+      "돌리지 않음, 터널 대상 Service 연결만 본다", "터널 토큰·SSH 키·중계기와 바깥 연결은 샌드박스에 없다")
     : same("터널 없음"),
   cloud_identity: (f, c) => f.target === "onprem-k3s" && !c
     ? same("클라우드 신원 없음")
@@ -81,6 +82,10 @@ const ITEMS: Record<WorkerItem, (f: FidelityFacts, changed: boolean) => Row> = {
   traffic: () => row("not_checked", "실제 사용자 트래픽", "검사 요청만", "실제 트래픽은 카나리 10% 와 자동 롤백이 마지막 안전장치다"),
   node_arch: () => row("not_checked", "도착 노드풀 CPU 종류", "플랫폼 노드 amd64", "도착 노드 CPU 종류와 다를 수 있다"),
 };
+
+// 바꾼 비밀의 출처 (ExternalSecret · SealedSecret)
+const secretSources = (f: FidelityFacts) => [f.present.has("external_secret") ? "ExternalSecret → 도착 비밀 저장소 값" : "",
+  f.present.has("sealed_secret") ? "SealedSecret → 도착 sealed-secrets 컨트롤러가 푼 값" : ""].filter(Boolean).join(" · ");
 
 const MAX_REFS = 50;
 const capRefs = (r: string[]) => (r.length <= MAX_REFS ? r : [...r.slice(0, MAX_REFS - 1), `+${r.length - MAX_REFS + 1} more`]);

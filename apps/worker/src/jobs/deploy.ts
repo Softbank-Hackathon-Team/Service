@@ -1,10 +1,11 @@
-import { DeployResult, MigrationJob, QUEUES, type AppSpecV2, type InfraReady, type PlanDoc, type Provider, type RehearsalEvidence } from "@svc/contracts";
-import { asFailureCode, latestAcceptedSpecV2, scrubString } from "@svc/core";
+import { DeployResult, MigrationJob, QUEUES, type AppSpecV2, type InfraReady, type PlanDoc, type Provider, type RehearsalEvidence, type ReplicationEndpoint, type ReplicationSealedMaterial } from "@svc/contracts";
+import { asFailureCode, latestAcceptedSpecV2, recordReplicationDelivery, replicationEndpointsFor, replicationSealedMaterialFor, scrubString, withTenant } from "@svc/core";
 import { checkTerraformRuntime, envFor, factsFromEnv, iacMockEnabled, specV2ForPlan, terraformRuntimeOf, type RuntimeHealthDeps, type TerraformRuntime } from "@svc/adapters";
 import { nextJob, runStep, stubWait, stubFailIfAsked, type StepOutcome } from "./_step.js";
 import { withStepRoles, type StepRoles } from "./_roles.js";
 import { loadInfraReady, loadPlanById } from "./plan-store.js";
-import { approvedValues, configFromEnv, deployToGitops, envFacts, fillPlaceholders, GitopsError, GitopsRepo, type DeployInput } from "../gitops/index.js";
+import { approvedValues, configFromEnv, decideDelivery, deployToGitops, envFacts, filledValues, fillPlaceholders, GitopsError, GitopsRepo, type DeployInput } from "../gitops/index.js";
+import { latestSealingCert } from "../gitops/sealing-cert.js";
 import { checkSecretValues } from "../gitops/secret-values.js";
 import { syncWatcherFor } from "../gitops/agent-watch.js";
 import { TARGET_ACCOUNT_SQL } from "./target-account.js";
@@ -20,7 +21,9 @@ interface Loaded {
   env: { provider: Provider; accountId: string | null } | null;
   runtime?: TerraformRuntime | null;   // DEPLOYNONK8S: 도착이 ECS·Cloud Run·VM 이면 그 실행 방식 (k8s 면 null·없음)
   epoch: number;               // 리허설 차례 = deploying 에 들어올 때의 migrations.version (재개하면 새 차례)
+  repl?: ReplFacts;            // 온프레 도착만: CNPG 이전 배달물을 만들 사실 (끝점 줄·저장된 봉인 값·봉인 인증서)
 }
+interface ReplFacts { records: ReplicationEndpoint[]; stored: ReplicationSealedMaterial | null; sealingCertPem: string | null }
 
 // DEPLOYNONK8S: 시험이 건강 조회(읽기 CLI·대기)를 가짜로 바꾼다
 let runtimeHealthDeps: RuntimeHealthDeps = {};
@@ -46,7 +49,8 @@ export async function handleDeploy(raw: unknown) {
       const e = await tx.query(
         `SELECT provider, ${TARGET_ACCOUNT_SQL} AS "accountId" FROM environments WHERE id=$1`, [m.targetEnvId]);   // A안: GCP = 전용 프로젝트
       if (!plan || !row || !e.rows[0]) return null;
-      return { infra, plan, spec: specV2ForPlan(row), env: e.rows[0], epoch };
+      const repl = e.rows[0].provider === "onprem" ? await loadReplFacts(tx, j.tenantId, m) : undefined;
+      return { infra, plan, spec: specV2ForPlan(row), env: e.rows[0], epoch, ...(repl ? { repl } : {}) };
     },
     work: async (j, m, l): Promise<StepOutcome> => {
       if (l.runtime && l.spec && l.env) {
@@ -59,6 +63,9 @@ export async function handleDeploy(raw: unknown) {
       let result: DeployResult;
       let gitops: Record<string, unknown> | undefined;
       let gate: Extract<Gate, { kind: "commit" }>;
+      // 온프레 CNPG 이전 배달물 판정의 경고 (끝점 줄 없음 등). 감사 detail.warnings 로 남긴다
+      let warnings: string[] = [];
+      let delivery: Record<string, unknown> | undefined;
       // Z77: 클러스터 없이 RDS 만 만든 이전(env 모듈 create_eks=false, 맥 B 회차)은 올릴 곳이 없다 → GitOps 가 켜져 있어도 STUB
       const noCluster = isNoCluster(l.infra.tfOutputs);
       // Z89: GitOps 설정이 없으면 예전엔 조용히 STUB 성공 → 이제 MOCK_ARGO=1(시험 전용)일 때만 흉내. 아니면 paused(GITOPS_NOT_CONFIGURED)
@@ -86,6 +93,13 @@ export async function handleDeploy(raw: unknown) {
           target: { envId: m.targetEnvId, provider: l.env!.provider, region: "default", accountId: l.env!.accountId },
         };
         const repo = new GitopsRepo(cfg);
+        // 온프레 CNPG 이전: 서버 인증서·봉인 비밀·터널을 값에 넣고 끝점 줄에 되쓴다. 리허설 렌더와 커밋 렌더가 같은 값을 보게 리허설 문 앞에서
+        if (l.repl) {
+          const d = await replicationDeliveryStep(j, input, l.repl);
+          if ("outcome" in d) return d.outcome;
+          warnings = d.warnings;
+          delivery = d.detail;
+        }
         try {
           // APP-20: 커밋 전에 도착 비밀 그릇에 값이 들었나 (흉내 IaC 면 그릇이 없으니 안 본다)
           const sv = await secretValuesGate(input);
@@ -111,10 +125,10 @@ export async function handleDeploy(raw: unknown) {
         // 트래픽 0%·컷오버 전이라 출발이 그대로 주인 → 급할 것 없음. 사람이 고쳐 paused → deploying 으로 재개하거나 롤백을 고른다.
         // 실패 이유 앞머리(ARGO_DEGRADED / ARGO_SYNC_FAILED / ARGO_TIMEOUT, W4: AGENT_DEPLOY_FAILED / AGENT_DEPLOY_TIMEOUT)를 failureCode 로
         const code = /^((?:ARGO|AGENT)_[A-Z_]+)/.exec(result.reason ?? "")?.[1] ?? "ARGO_SYNC_FAILED";
-        return { to: "paused", failureCode: code, detail: { deploy: result, ...(gitops ? { gitops } : {}), rehearsal: gate.detail } };
+        return { to: "paused", failureCode: code, detail: { deploy: result, ...(gitops ? { gitops } : {}), rehearsal: gate.detail, ...extra(warnings, delivery) } };
       }
       return {
-        to: "syncing", detail: { deploy: result, ...(gitops ? { gitops } : {}), rehearsal: gate.detail },
+        to: "syncing", detail: { deploy: result, ...(gitops ? { gitops } : {}), rehearsal: gate.detail, ...extra(warnings, delivery) },
         // Z94: argoHealthy = 반영 확인 결과 (argocd-push 는 Synced+Healthy, 온프레는 Agent applied). 여기 오면 failed 는 위에서 걸렀다
         // STUB: 보안 동등성(MG-2-07)은 보안 영역 가드레일이 붙으면 그 결과를 넣는다
         evidence: { argoHealthy: result.status === "synced_healthy" || result.status === "applied", securityParity: true, rehearsal: gate.evidence },
@@ -122,6 +136,37 @@ export async function handleDeploy(raw: unknown) {
       };
     },
   });
+}
+
+const extra = (warnings: string[], delivery?: Record<string, unknown>) =>
+  ({ ...(warnings.length ? { warnings } : {}), ...(delivery ? { replicationDelivery: delivery } : {}) });
+
+/** 온프레 도착이면 배달물을 만들 사실을 읽는다 (회사 벽 안 tx). 봉인 인증서는 도착 환경 Agent 보고에서만 (sealing-cert.ts) */
+async function loadReplFacts(tx: Tx, tenantId: string, m: { id: string; targetEnvId: string }): Promise<ReplFacts> {
+  const records = (await replicationEndpointsFor(tx, m.id)).filter((r) => r.tenantId === tenantId);
+  const stored = records.length ? await replicationSealedMaterialFor(tx, m.id) : null;
+  const sealing = records.length ? await latestSealingCert(tx, tenantId, m.targetEnvId) : undefined;
+  return { records, stored, sealingCertPem: sealing?.certPem ?? null };
+}
+
+/** 배달물 판정 → 값에 넣고(input.replication) 끝점 줄에 되쓴다. 설정 문제면 paused (paused → deploying 재개 가능, 고객 클러스터엔 아무것도 안 들어감) */
+export async function replicationDeliveryStep(j: MigrationJob, input: DeployInput, f: ReplFacts, env: NodeJS.ProcessEnv = process.env):
+    Promise<{ outcome: StepOutcome } | { warnings: string[]; detail?: Record<string, unknown> }> {
+  let values;
+  try { values = filledValues(input); } catch (e) { return { outcome: gitopsPaused(e) }; }
+  const dec = await decideDelivery({
+    provider: input.target.provider, pullMode: envFacts(input).onpremFloorViaGit === "1", values,
+    tenantId: j.tenantId, migrationId: j.migrationId, records: f.records, stored: f.stored, sealingCertPem: f.sealingCertPem,
+    masterKey: env.REPL_SECRET_MASTER_KEY,
+  });
+  if (dec.kind === "stop")
+    return { outcome: { to: "paused", failureCode: dec.code, detail: { deploy: { error: dec.code, reason: dec.reason }, ...extra(dec.warnings) } } };
+  if (dec.kind === "none") return { warnings: dec.warnings };
+  const d = dec.delivery;
+  const wrote = d.write ? await withTenant(j.tenantId, (tx) => recordReplicationDelivery(tx, d.write!)) : null;
+  input.replication = d;
+  return { warnings: dec.warnings, detail: { cnpg: d.cnpg.name, reused: d.reused, rowsUpdated: !!wrote, sourcePeerSet: wrote?.sourcePeerSet ?? false,
+    sealedSecrets: d.sealedSecrets.map((s) => s.name) } };
 }
 
 // APP-20 (지휘 결정 11/4 00:51Z, ADR-072 유지): 값이 빈 비밀 그릇이 있으면 커밋하지 않고 paused. paused → deploying 재개 가능(값 넣고 재개)

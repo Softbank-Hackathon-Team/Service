@@ -12,7 +12,7 @@ import { tempRoles, trafficFor, trafficMetrics } from "../platform.js";
 import { appLinkHooks, appLinkMeasurements, appLinkOn, recordActiveWriter, switchRuntimeWriter, targetBundle } from "../app-link.js";
 import { appDbSwitchKind } from "./deploy.js";
 import { loadReapplyInput, type RealApplyInput } from "./apply-real.js";
-import { commitTrafficWeight, configFromEnv, GitopsRepo, type BundleRef } from "../gitops/index.js";
+import { commitReplicationCleanup, commitTrafficWeight, configFromEnv, GitopsRepo, type BundleRef } from "../gitops/index.js";
 import { envNumber } from "@svc/contracts";
 
 // DRAFT(ai): 롤백 자체가 이 횟수만큼 실패하면 rolling_back → failed(ROLLBACK_FAILED).
@@ -130,12 +130,15 @@ export async function handleRollback(raw: unknown) {
       // Z69: 컷오버 전·뒤·noop 모두 걷고, 실패하면 경고만 (rollback-cleanup.ts 결정 참고)
       const cleanup = await cleanupAfterRollback(repl);
       const { removed, leftovers } = cleanup;
+      // 온프레 CNPG 이전: 걷기가 다 끝났을 때만 gitops 에서 이전 역할(ensure absent)·터널을 걷는다. 실패해도 롤백은 이어 간다 (detail 에만)
+      //   덜 걷었으면 터널을 남긴다: repl-cleanup 이 같은 터널로 다시 걷고 그때 이 커밋을 한다
+      const gitopsReplication = cleanup.ok ? await commitReplicationCleanup(bundle) : { skipped: "replication_leftovers" };
       if (!cleanup.ok) log.warn({ migration_id: j.migrationId, kind: r.kind, warning: cleanup.warning, leftovers }, "rollback: replication cleanup incomplete");
       // 출발 헬스 = 출발 DB에서 앱 계정이 다시 쓸 수 있나
       const sourceHealthy = await withClient(repl.cfg.source, (c) => appCanWrite(c, repl.cfg.source, (repl.cfg.tables?.[0]) ?? "orders"));
       return {
         to: "rolled_back",
-        detail: { weights, traffic: traffic.detail, gitopsWeight,
+        detail: { weights, traffic: traffic.detail, gitopsWeight, gitopsReplication,
                   replication: { kind: r.kind, order: dbFirst ? "db_then_traffic" : "traffic_then_db", removed, leftovers, cleanup: cleanup.ok ? "ok" : "incomplete",
                                  ...(cleanup.warning ? { warning: cleanup.warning } : {}) },
                   measurements: [...(r.result ? toMeasurements(r.result.measures, j.migrationId, "source") : []), ...appLinkMeasurements(appLink, j.migrationId, "source")],

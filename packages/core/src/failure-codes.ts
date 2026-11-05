@@ -40,6 +40,8 @@ export const FAILURE_CODES = [
   "ROLLBACK_FAILED",             // 롤백 재시도 소진
   // gitops 배포 (apps/worker/src/gitops GitopsError.code) → deploy가 paused로
   "RUNTIME_OUTPUT_MISSING", "RUNTIME_UNHEALTHY", "RUNTIME_CHECK_FAILED",   // DEPLOYNONK8S: ECS·Cloud Run·VM 도착 배포 확인 (출력 빠짐 / 시간 안에 안 뜸 / 읽기 CLI 실패)
+  "SEALING_CERT_MISSING",        // 온프레 CNPG 이전: 도착 Agent 보고에 sealed-secrets 봉인 인증서가 없음 → deploy 커밋 전 paused
+  "REPL_DELIVERY_FAILED",        // 온프레 CNPG 이전: 서버 인증서·봉인 비밀·터널 값을 못 만듦 (중계기 칸 없음, 출발 포트 5432 아님, openssl 실패 등) → paused
   "SECRET_VALUES_MISSING", "SECRET_VALUES_UNKNOWN",   // APP-20: deploy 커밋 전 도착 비밀 그릇에 값(버전)이 없음 / 못 읽음 → paused
   "GITOPS_NOT_CONFIGURED",       // Z89: GitOps 레포 설정 없음인데 MOCK_ARGO=1 도 아님 (예전엔 조용히 STUB 성공)
   "GITOPS_ERROR", "GITOPS_GIT_FAILED", "GITOPS_NO_CHECKOUT", "GITOPS_PLACEHOLDER_MISSING", "GITOPS_PUSH_FAILED", "GITOPS_PUSH_CONFLICT",

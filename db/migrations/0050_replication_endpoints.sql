@@ -29,10 +29,23 @@ CREATE TABLE replication_endpoints (
   tls_servername text CHECK (length(tls_servername) BETWEEN 1 AND 253),
   -- 공개 CA 인증서 PEM. 개인 키는 받지 않는다
   ca_pem         text CHECK (ca_pem LIKE '%-----BEGIN CERTIFICATE-----%' AND ca_pem NOT LIKE '%PRIVATE KEY%'),
+  -- 중계기(infra/modules/aws/demo-relay) 사실. 도착(target) 줄에만. 워커가 온프레 터널 값(dbTunnel.relay)으로 그린다
+  --   relay_host = 중계 공개 주소, relay_known_hosts = 중계 호스트 키 줄(ssh-keyscan, 공개 값), relay_port = sshd 포트
+  -- 개인 키는 받지 않는다 (ca_pem 과 같은 규칙)
+  relay_host        text CHECK (length(relay_host) BETWEEN 1 AND 253 AND relay_host ~ '^[A-Za-z0-9.-]+$'),
+  relay_known_hosts text CHECK (length(relay_known_hosts) BETWEEN 1 AND 8192 AND relay_known_hosts NOT LIKE '%PRIVATE KEY%'),
+  relay_port        int  NOT NULL DEFAULT 22 CHECK (relay_port BETWEEN 1 AND 65535),
+  -- DRAFT(ai): 워커가 봉인한 SealedSecret 값(암호문만) + 입력 지문. 다시 렌더할 때 지문이 같으면 이 값을 그대로 다시 써서
+  --   커밋 묶음이 매번 바뀌지 않게 한다 (봉인은 무작위 세션 키라 매번 다른 글자가 된다 → 리허설 지문·재개가 어긋난다).
+  --   암호문은 어차피 gitops 레포에 커밋되는 값이다 (풀 수 있는 쪽은 클러스터 sealed-secrets 컨트롤러뿐). 평문은 없다
+  sealed_material   jsonb,
   created_at     timestamptz NOT NULL DEFAULT now(),
   updated_at     timestamptz NOT NULL DEFAULT now(),
   -- peer_port 만 있고 peer_host 가 없으면 뜻이 없다 (peer_host 만 있으면 port 를 쓴다)
   CONSTRAINT replication_endpoints_peer_pair CHECK (peer_port IS NULL OR peer_host IS NOT NULL),
+  -- 중계기 칸·봉인 값은 도착 줄에만, 주소와 호스트 키는 같이 (호스트 키 없이 붙으면 처음 보는 키를 믿게 된다)
+  CONSTRAINT replication_endpoints_relay_side CHECK (side = 'target' OR (relay_host IS NULL AND relay_known_hosts IS NULL AND sealed_material IS NULL)),
+  CONSTRAINT replication_endpoints_relay_pair CHECK ((relay_host IS NULL) = (relay_known_hosts IS NULL)),
   UNIQUE (migration_id, side),
   FOREIGN KEY (migration_id, tenant_id) REFERENCES migrations (id, tenant_id) ON DELETE CASCADE
 );
@@ -47,6 +60,6 @@ CREATE POLICY tenant_wall ON replication_endpoints
 -- DRAFT(ai): 지우기는 이전을 지울 때(CASCADE)만. 운영자는 set 으로 덮어쓴다
 GRANT SELECT, INSERT, UPDATE ON replication_endpoints TO app_user;
 
--- forward-only: 되돌리기는 아래를 사람이 직접 돌린다
+-- forward-only: 되돌리기는 아래를 사람이 직접 돌린다 (표째 지우므로 relay_*·sealed_material 칸도 같이 사라진다)
 -- Down Migration
 -- DROP TABLE replication_endpoints;

@@ -101,6 +101,13 @@ export function cnpgServerDnsNames(cluster: string, namespace: string): string[]
   });
 }
 
+/** CNPG 서버 CA 개인 키 seed = HMAC-SHA256(masterKey, `ca:${tenantId}:${migrationId}`) 32바이트.
+ *  같은 이전이면 같은 CA 키 → 다시 발급해도 CA 공개 키가 같다 (워커는 도착 줄 ca_pem 으로 확인한다). 키 자체는 남기지 않는다 */
+export function deriveCaSeed(masterKey: string, tenantId: string, migrationId: string): Buffer {
+  needMasterKey(masterKey);
+  return createHmac("sha256", masterKey).update(`ca:${tenantId}:${migrationId}`).digest();
+}
+
 export interface ServerCertInput {
   // 있으면 CA 개인 키를 이 32바이트 seed 에서 파생한다 (나중에 같은 CA 로 다시 발급할 수 있게). 없으면 무작위 = 진짜 일회용
   caSeed?: Buffer | null;

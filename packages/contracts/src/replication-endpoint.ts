@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ChartSealedSecret } from "./chart-values.js";
 
 // DECISION(team): 끝점은 이전마다 DB 행으로 (2026-11-05, 보안·온프레 영역)
 // 이전 하나의 복제 끝점 한쪽 (db 0050 replication_endpoints 한 줄). core 가 읽고·쓰고, 워커(@svc/replication)가 Endpoint 로 바꾼다.
@@ -46,5 +47,28 @@ export const ReplicationEndpoint = z.object({
     .refine((s) => s.includes("-----BEGIN CERTIFICATE-----"), "caPem: CERTIFICATE PEM 이어야 한다")
     .refine((s) => !/PRIVATE KEY/.test(s), "caPem: 개인 키는 넣지 않는다")
     .nullable(),
-}).strict().refine((e) => e.peerPort === null || e.peerHost !== null, { message: "peerPort 는 peerHost 와 같이", path: ["peerPort"] });
+  /** 중계기 공개 주소 (온프레 터널 dbTunnel.relay.host). 도착 줄에만 */
+  relayHost: z.string().min(1).max(253).regex(/^[A-Za-z0-9.-]+$/, "relayHost: IP 또는 이름만").nullable(),
+  /** 중계기 호스트 키 줄 (ssh-keyscan 출력, 공개 값). 터널이 처음 보는 키를 거부하도록 고정한다. 개인 키는 받지 않는다 */
+  relayKnownHosts: z.string().min(1).max(8192)
+    .refine((s) => !/PRIVATE KEY/.test(s), "relayKnownHosts: 개인 키는 넣지 않는다")
+    .refine((s) => s.split("\n").some((l) => /^\S+ (ssh-ed25519|ecdsa-sha2-nistp256|ssh-rsa) [A-Za-z0-9+/=]+/.test(l.trim())), "relayKnownHosts: `<호스트> <키 종류> <키>` 줄이 하나 이상")
+    .nullable(),
+  /** 중계기 sshd 포트 (기본 22) */
+  relayPort: PORT,
+}).strict()
+  .refine((e) => e.peerPort === null || e.peerHost !== null, { message: "peerPort 는 peerHost 와 같이", path: ["peerPort"] })
+  .refine((e) => e.side === "target" || (e.relayHost === null && e.relayKnownHosts === null), { message: "relay* 는 도착(target) 줄에만", path: ["relayHost"] })
+  .refine((e) => (e.relayHost === null) === (e.relayKnownHosts === null), { message: "relayHost 와 relayKnownHosts 는 같이", path: ["relayKnownHosts"] });
 export type ReplicationEndpoint = z.infer<typeof ReplicationEndpoint>;
+
+// DRAFT(ai): 워커가 이전마다 봉인한 SealedSecret 값(암호문만)과 그 입력 지문 (db 0050 sealed_material, 도착 줄).
+//   다시 렌더할 때 digest 가 같고 도착 줄 ca_pem 이 caSha256 과 같으면 이 값을 그대로 다시 쓴다 → 같은 입력이면 같은 커밋 묶음.
+//   digest = HMAC-SHA256(REPL_SECRET_MASTER_KEY, 입력) 이라 마스터 키를 바꾸면 다시 봉인한다. 평문은 없다 (apps/worker gitops/replication-delivery.ts)
+export const ReplicationSealedMaterial = z.object({
+  version: z.literal(1),
+  digest: z.string().regex(/^[0-9a-f]{64}$/),
+  caSha256: z.string().regex(/^[0-9a-f]{64}$/),
+  sealedSecrets: z.array(ChartSealedSecret).min(1).max(10),
+}).strict();
+export type ReplicationSealedMaterial = z.infer<typeof ReplicationSealedMaterial>;

@@ -1,6 +1,8 @@
 import { MigrationJob, TERMINAL, type MigrationStatus } from "@svc/contracts";
 import { withTenant, writeAudit } from "@svc/core";
 import { replicationFor } from "./_repl.js";
+import { targetBundle } from "../app-link.js";
+import { commitReplicationCleanup } from "../gitops/index.js";
 import { cleanupAfterRollback, type ReplCleaner, type RollbackCleanup } from "./rollback-cleanup.js";
 
 // F8-5: 끝난 이전에 남은 복제 객체(구독·슬롯·발행·마커)를 사람이 다시 걷는 작업. 상태는 안 바꾼다(advance 없음).
@@ -28,7 +30,12 @@ export async function handleReplCleanup(raw: unknown, cleaner?: ReplCleaner | nu
     return "stub";
   }
   const c: RollbackCleanup = await cleanupAfterRollback(repl);
-  await audit(j, c.ok ? "ok" : "error", { status, removed: c.removed, leftovers: c.leftovers,
+  // 온프레 CNPG 이전: 다 걷었으면 gitops 에서 이전 역할(ensure absent)·터널도 걷는다 (롤백·정리 때 찌꺼기로 남겨 둔 터널)
+  const gitopsReplication = c.ok ? await commitReplicationCleanup(await withTenant(j.tenantId, async (tx) => {
+    const m = (await tx.query<{ id: string; targetEnvId: string }>(`SELECT id, target_env_id AS "targetEnvId" FROM migrations WHERE id=$1`, [j.migrationId])).rows[0];
+    return m ? targetBundle(tx, j.tenantId, m) : null;
+  })) : { skipped: "replication_leftovers" };
+  await audit(j, c.ok ? "ok" : "error", { status, removed: c.removed, leftovers: c.leftovers, gitopsReplication,
     ...(c.warning ? { warning: c.warning } : {}) });
   return c.ok ? "done" : "incomplete";
 }

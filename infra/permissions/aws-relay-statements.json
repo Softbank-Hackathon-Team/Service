@@ -1,0 +1,181 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "RelayDescribe",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeAccountAttributes",
+        "ec2:DescribeImages",
+        "ec2:DescribeInstanceAttribute",
+        "ec2:DescribeInstanceCreditSpecifications",
+        "ec2:DescribeInstanceTypes",
+        "ec2:DescribeInstances",
+        "ec2:DescribeKeyPairs",
+        "ec2:DescribeNetworkInterfaces",
+        "ec2:DescribeSecurityGroupRules",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeSubnets",
+        "ec2:DescribeTags",
+        "ec2:DescribeVolumes",
+        "ec2:DescribeVpcAttribute",
+        "ec2:DescribeVpcs"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestedRegion": "ap-northeast-2"
+        }
+      }
+    },
+    {
+      "Sid": "RelayAmiParameter",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters"
+      ],
+      "Resource": "arn:aws:ssm:ap-northeast-2::parameter/aws/service/ami-amazon-linux-latest/*"
+    },
+    {
+      "Sid": "RelayCreateSecurityGroupTagged",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateSecurityGroup"
+      ],
+      "Resource": "arn:aws:ec2:ap-northeast-2:*:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/managed-by": "platform"
+        }
+      }
+    },
+    {
+      "Sid": "RelayImportKeyPairTagged",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:ImportKeyPair"
+      ],
+      "Resource": "arn:aws:ec2:ap-northeast-2:*:key-pair/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/managed-by": "platform"
+        }
+      }
+    },
+    {
+      "Sid": "RelayRunInstanceTagged",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:RunInstances"
+      ],
+      "Resource": "arn:aws:ec2:ap-northeast-2:*:instance/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:RequestTag/managed-by": "platform"
+        }
+      }
+    },
+    {
+      "Sid": "RelayCreateInVpc",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateSecurityGroup",
+        "ec2:RunInstances"
+      ],
+      "Resource": [
+        "arn:aws:ec2:ap-northeast-2:*:vpc/*",
+        "arn:aws:ec2:ap-northeast-2:*:subnet/*",
+        "arn:aws:ec2:ap-northeast-2:*:network-interface/*",
+        "arn:aws:ec2:ap-northeast-2:*:volume/*"
+      ]
+    },
+    {
+      "Sid": "RelayRunUsesOwnSgAndKey",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:RunInstances"
+      ],
+      "Resource": [
+        "arn:aws:ec2:ap-northeast-2:*:key-pair/*",
+        "arn:aws:ec2:ap-northeast-2:*:security-group/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/managed-by": "platform"
+        }
+      }
+    },
+    {
+      "Sid": "RelayRunAmazonImage",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:RunInstances"
+      ],
+      "Resource": "arn:aws:ec2:ap-northeast-2::image/*",
+      "Condition": {
+        "StringEquals": {
+          "ec2:Owner": "amazon"
+        }
+      }
+    },
+    {
+      "Sid": "RelayTagOnCreate",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:CreateTags"
+      ],
+      "Resource": [
+        "arn:aws:ec2:ap-northeast-2:*:instance/*",
+        "arn:aws:ec2:ap-northeast-2:*:key-pair/*",
+        "arn:aws:ec2:ap-northeast-2:*:network-interface/*",
+        "arn:aws:ec2:ap-northeast-2:*:security-group/*",
+        "arn:aws:ec2:ap-northeast-2:*:security-group-rule/*",
+        "arn:aws:ec2:ap-northeast-2:*:volume/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "ec2:CreateAction": [
+            "AuthorizeSecurityGroupEgress",
+            "CreateSecurityGroup",
+            "ImportKeyPair",
+            "RunInstances"
+          ],
+          "aws:RequestTag/managed-by": "platform"
+        }
+      }
+    },
+    {
+      "Sid": "RelayModifyOwned",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:DeleteKeyPair",
+        "ec2:DeleteSecurityGroup",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupIngress",
+        "ec2:TerminateInstances"
+      ],
+      "Resource": [
+        "arn:aws:ec2:ap-northeast-2:*:instance/*",
+        "arn:aws:ec2:ap-northeast-2:*:key-pair/*",
+        "arn:aws:ec2:ap-northeast-2:*:security-group/*"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/managed-by": "platform"
+        }
+      }
+    },
+    {
+      "Sid": "SourceDbEgressToRelay",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupEgress"
+      ],
+      "Resource": "arn:aws:ec2:ap-northeast-2:${AccountId}:security-group/${SourceDbSecurityGroupId}"
+    }
+  ]
+}
