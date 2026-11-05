@@ -24,8 +24,8 @@ export interface ShiftProgress {
   stepStartedAt: string; at: string;
 }
 /** 지표 창 하나의 실측 도착 몫(0~100, 정수). 표본이 없으면 null */
-export function observedTargetPct(w: { target: { n: number }; source: { n: number } }): number | null {
-  const total = w.target.n + w.source.n;
+export function observedTargetPct(w: { target: { n: number }; source: { n: number }; estimatedSourceN?: number }): number | null {
+  const total = w.target.n + (w.estimatedSourceN ?? w.source.n);
   return total > 0 ? Math.round((w.target.n / total) * 100) : null;
 }
 

@@ -16,7 +16,8 @@ export type RuleOpts = typeof RULE_DEFAULTS;
 // p95Ms 가 있으면 그 값을 쓴다 (Prometheus 처럼 이미 분위수를 계산해 주는 지표). 없으면 latenciesMs 로 계산
 export interface Side { n: number; err5xx: number; latenciesMs: number[]; p95Ms?: number }
 const sideP95 = (s: Side) => s.p95Ms ?? p95(s.latenciesMs);
-export interface Window { target: Side; source: Side; baselineP95Ms: number }
+// #245: estimatedSourceN = 출발 지표가 없을 때 기준값으로 추정한 출발 수. 단계별 몫 계산에만 쓰고 판정(evaluate)에는 안 쓴다
+export interface Window { target: Side; source: Side; baselineP95Ms: number; estimatedSourceN?: number }
 
 export function p95(xs: number[]): number {
   if (!xs.length) return NaN;
