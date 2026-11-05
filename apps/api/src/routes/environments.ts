@@ -8,10 +8,10 @@ import {
 import {
   withTenant, advanceConnection, writeAudit, DomainError, BadRequest, INACTIVE_STATES, staleMigrationsForEnvChange, type Tx,
 } from "@svc/core";
-import { cachedInventory, chooseRunner, inventoryToStatus, EKS_CLUSTER_NAME_RE } from "@svc/adapters";
+import { chooseRunner, inventoryToStatus, stubStatus, EKS_CLUSTER_NAME_RE } from "@svc/adapters";
 import { EnvironmentList, EnvironmentStatus, errors } from "./responses.js";
 import { IdParam, auditOk, found, isoUtc } from "./kit.js";
-import { onpremInventoryDeps } from "./agent-reports.js";
+import { storedInventory } from "./env-inventory.js";
 import { awsQuickCreateUrl, connectSettings, externalIdHint, gcpCloudShellLink, gcpConnectSettings, newExternalId, shouldCreateBoundary } from "../connect/link.js";
 import { hashMetricToken, newMetricToken } from "../auth/metric-token.js";
 
@@ -266,7 +266,7 @@ export async function environmentRoutes(app: FastifyInstance) {
   });
 
   // 환경 자체의 자원 상태 (리소스 그룹·클러스터 등). Azure 는 Mock 실행기가 답한다
-  // Z100: aws/gcp/onprem 은 실자원 읽기(adapters inventory.ts, CLI 읽기 명령만·30초 캐시)로 채운다. 못 읽으면 unknown + 빈 목록 (가짜 값 없음)
+  // Z100: aws/gcp/onprem 은 실자원 읽기 결과로 채운다. #242: worker 가 저장한 값(없거나 오래되면 조회 요청). 없으면 unknown + 빈 목록 (가짜 값 없음)
   r.get("/environments/:id/status", { schema: { params: IdParam,
     response: { 200: EnvironmentStatus, ...errors(400, 401, 404, 409, 500) } } }, async (req) => {
     const env = found(await withTenant(req.tenantId, async (tx) => {
@@ -277,7 +277,10 @@ export async function environmentRoutes(app: FastifyInstance) {
     const target = { envId: env.id, provider: env.provider, region: "default" };
     const c = chooseRunner(env.provider);
     if (c.kind === "unavailable") throw c.error;
-    if (c.kind === "stub") return inventoryToStatus(await cachedInventory(env.id, env.provider, onpremInventoryDeps(req.tenantId, env.id, env.provider)), target);
+    if (c.kind === "stub") {
+      const { inventory } = await storedInventory({ tenantId: req.tenantId, envId: env.id, provider: env.provider, requestId: req.id, warn: (o, m) => req.log.warn(o, m) });
+      return inventory ? inventoryToStatus(inventory, target) : stubStatus(target);
+    }
     return c.runner.status(target);
   });
 }
