@@ -250,6 +250,9 @@ VERIFY_PERMS="resourcemanager.projects.get,container.clusters.list,container.clu
 P="${PROJECT_ID}"
 # FM-CLD-14: 플랫폼이 고객 SA 를 빌릴 때(verify·plan·apply·destroy) IAM Service Account Credentials API 를 부른다 → SA 가 있는 두 프로젝트 모두에 켠다
 ensure_api iamcredentials.googleapis.com
+# FM-INT-26 (맥 실측 2 우회 ⑧): verify 의 projects describe·terraform 의 프로젝트 IAM 읽기가 Cloud Resource Manager API 를 부른다.
+#   새 프로젝트엔 꺼져 있어 손으로 services enable 했음 → 두 프로젝트 모두에 켠다 (요금 0)
+ensure_api cloudresourcemanager.googleapis.com
 ensure_sa svc-observe
 ensure_role platform_observe --title="platform-observe" --description="platform read-only inventory" --permissions="${OBSERVE_PERMS}" --stage=GA
 sync_role_permissions platform_observe "${OBSERVE_PERMS}"
@@ -270,6 +273,9 @@ ensure_token_creator "${OBSERVE_SA}"
 # ── 전용 프로젝트: 도착 자원·실행 역할 ──
 P="${TARGET_PROJECT_ID}"
 ensure_api iamcredentials.googleapis.com
+# FM-INT-26: 전용 프로젝트도 같음 + serviceusage(gcp/env 가 나머지 API 를 켜는 API, cloud-precheck gcp-apis FAIL 항목)
+ensure_api cloudresourcemanager.googleapis.com
+ensure_api serviceusage.googleapis.com
 ensure_sa svc-plan
 ensure_sa svc-operate
 # 관찰 SA 도 전용 프로젝트를 읽는다 (연결 확인이 전용 프로젝트 번호·svc-operate 를 보고, 배포 확인·도착 GKE 읽기). 읽기 전용
