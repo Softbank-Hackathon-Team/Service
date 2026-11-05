@@ -55,7 +55,7 @@ export { renderViewV2, isInClusterData, targetBuilderFor, awsTarget, gcpTarget, 
   managedBlockers, managedServicesOf, managedServiceVars, managedSecretName, managedJobsOf, managedJobVars,
   dbWriterVar, dbLinkSecretName, type DbWriter, type SourceDbLinkRef } from "./target/index.js";   // TA13 · JOBBUILD · APP-22 (가)
 export { targetFactsV2, sourceFactsV2, sourceDbsV2, appEnvV2, workloadSecurityV2, MODULE_DB_FACTS, type EnvSide, type AgentFacts } from "./target/security-facts.js";   // 보안 판정용 환경 사실
-export { verifyGcpObserve, OPTIONAL_PROBES, gcpEnvFor, gcpReasonOf, type VerifyGcpInput, type VerifyGcpResult } from "./verify/gcp.js";   // L7i
+export { verifyGcpObserve, OPTIONAL_PROBES, gcpEnvFor, gcpTerraformEnv, gcpReasonOf, type GcpTerraformCred, type VerifyGcpInput, type VerifyGcpResult } from "./verify/gcp.js";   // L7i
 export { freezeGkeUpgrades, releaseGkeUpgrades, freezeArgs, releaseArgs, freezeExclusionName, FREEZE_DEFAULT_HOURS, FREEZE_MAX_HOURS, type GkeFreezeTarget, type GkeFreezeResult } from "./gcp/upgrade-freeze.js";
 // L5b: 빌린 AWS 실행 자격 → terraform 자식 프로세스 (credential_process 임시 파일)
 export { borrowedAwsCreds, type BorrowedAwsCreds, type AwsSessionKeys } from "./terraform/borrowed-aws.js";

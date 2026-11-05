@@ -14,7 +14,8 @@ import { envNumber } from "@svc/contracts";
 // 그래서 "빌림 → 일 → 회수"를 한 단계 안에서 끝낸다. 장부(temp_credentials)·감사(temp_role.*)에 발급·회수·만료가 남는다.
 //
 // L5b·L5c: 진짜 발급기(REAL_STS=1 + external_id)로 빌린 AWS 자격은 apply terraform·precheck CLI 가 쓴다 (awsEnv).
-// STUB: 가짜 발급기·GCP·온프레 자격은 아직 안 쓴다 (프로세스 자격). 그래도 발급 검사(최소 권한·세션 정책·TTL)는 진짜로 돈다.
+// 진짜 발급기로 빌린 GCP 자격은 gcpToken 으로 precheck gcloud·apply·destroy terraform 이 쓴다 (gcp-token-server.ts).
+// STUB: 가짜 발급기·온프레 자격은 아직 안 쓴다 (프로세스 자격). 그래도 발급 검사(최소 권한·세션 정책·TTL)는 진짜로 돈다.
 // 거부되면(권한 파일 없음 등) 감사에 temp_role.denied 가 남고 단계는 계속 간다.
 // DRAFT(ai): TEMP_ROLE_REQUIRED=1 이면 거부 = 단계 실패(예외). 기본 0 (자격을 아직 안 쓰는 STUB 단계를 거부로 멈추지 않게)
 // DRAFT(ai): 요청 수명 = 900초 (실행 역할 상한, AWS STS 최소값과 같음)
@@ -36,6 +37,7 @@ export interface StepRoles {
   awsEnv?: Partial<Record<"source" | "target", Record<string, string>>>;
   // RV-27: 진짜 발급기로 빌린 GCP 자격(bearer 토큰). precheck 등 gcloud 읽기가 워커 자기 로그인 대신 쓴다. 재발급되면 같이 바뀜. 메모리에만
   gcpToken?: Partial<Record<"source" | "target", string>>;
+  gcpExpiresAt?: Partial<Record<"source" | "target", string>>;   // gcpToken 의 만료 시각. 토큰 창구가 남은 초를 알려 준다
 }
 
 async function envsOf(tenantId: string, m: MigrationRow) {
@@ -107,7 +109,7 @@ export async function withStepRoles<T>(step: RoleStep, j: { tenantId: string; mi
       const i = r.creds.indexOf(c), side = r.sides?.[i];
       if (c.provider === "gcp" && !n.stub && side && r.gcpToken?.[side]) {
         const k = tempRoles().use(n.credentialRef, j.tenantId, j.migrationId);
-        if (k.kind === "bearer") r.gcpToken[side] = k.token;
+        if (k.kind === "bearer") { r.gcpToken[side] = k.token; (r.gcpExpiresAt ??= {})[side] = n.expiresAt; }
       }
       const f = files.get(c.credentialRef);
       if (f) {
@@ -133,7 +135,7 @@ function gcpTokens(r: StepRoles, j: { tenantId: string; migrationId: string }) {
     const side = r.sides?.[i];
     if (c.provider !== "gcp" || c.stub || !side) return;
     const k = tempRoles().use(c.credentialRef, j.tenantId, j.migrationId);
-    if (k.kind === "bearer") (r.gcpToken ??= {})[side] = k.token;
+    if (k.kind === "bearer") { (r.gcpToken ??= {})[side] = k.token; (r.gcpExpiresAt ??= {})[side] = c.expiresAt; }
   });
 }
 

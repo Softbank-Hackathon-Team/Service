@@ -92,7 +92,7 @@ export function fillTfVars(vars: TfVars, facts: Record<string, string>): { vars:
 // ---- 자식 프로세스 환경 ----
 // DRAFT(ai): gitops repo.ts PASS_ENV 와 같은 생각. terraform 에는 클라우드 자격·프록시·경로만 넘긴다.
 // REPL_*_URL(DB 비밀번호)·ANTHROPIC_API_KEY·CLOUDFLARE_API_TOKEN·GITOPS_WRITE_TOKEN 은 넘기지 않는다
-const PASS_ENV = /^(PATH|HOME|USER|LANG|LC_[A-Z]+|TMPDIR|TZ|SSL_CERT_FILE|NODE_EXTRA_CA_CERTS|HTTPS?_PROXY|NO_PROXY|https?_proxy|no_proxy|AWS_[A-Z0-9_]+|GOOGLE_[A-Z0-9_]+|CLOUDSDK_[A-Z0-9_]+|USE_GKE_GCLOUD_AUTH_PLUGIN|KUBECONFIG|TF_LOG|TF_LOG_PATH|TF_PLUGIN_CACHE_DIR|TF_CLI_CONFIG_FILE)$/;
+const PASS_ENV = /^(PATH|HOME|USER|LANG|LC_[A-Z]+|TMPDIR|TZ|SSL_CERT_FILE|NODE_EXTRA_CA_CERTS|HTTPS?_PROXY|NO_PROXY|https?_proxy|no_proxy|AWS_[A-Z0-9_]+|GOOGLE_[A-Z0-9_]+|CLOUDSDK_[A-Z0-9_]+|GCE_METADATA_HOST|USE_GKE_GCLOUD_AUTH_PLUGIN|KUBECONFIG|TF_LOG|TF_LOG_PATH|TF_PLUGIN_CACHE_DIR|TF_CLI_CONFIG_FILE)$/;
 export function childEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = { TF_IN_AUTOMATION: "1", TF_INPUT: "0" };
   for (const [k, v] of Object.entries(env)) if (v !== undefined && PASS_ENV.test(k)) out[k] = v;
@@ -125,6 +125,7 @@ export interface RealRunnerOpts {
   moduleRoot?: string;   // 기본 TF_MODULE_ROOT 또는 레포의 infra/modules (묶음 이미지는 레포 뿌리를 못 찾아 env 로 준다)
   workRoot?: string;     // 기본 TF_WORK_DIR 또는 ~/.svc-tf
   terraformBin?: string; // 기본 TF_BIN 또는 terraform
+  secretEnv?: () => NodeJS.ProcessEnv;   // apply 뒤 gcloud 로 DB 비밀을 꺼낼 때의 환경. 긴 apply 동안 토큰이 바뀌니 그때 다시 만든다
 }
 export interface RealStep { step: "init" | "plan" | "apply" | "output" | "destroy" | "secret" | "version"; code: number; ms: number }
 export interface RealApplyResult {
@@ -255,7 +256,7 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
       args = ["secrets", "versions", "access", "latest", `--secret=${out.db_password_secret_id}`, ...(env.TF_FACT_PROJECT_ID ? [`--project=${env.TF_FACT_PROJECT_ID}`] : [])];
     }
     if (!cmd) return false;
-    const r = await exec(cmd, args, { cwd: dir, env: cenv, signal, timeoutMs: 60_000 });
+    const r = await exec(cmd, args, { cwd: dir, env: o.secretEnv ? childEnv(o.secretEnv()) : cenv, signal, timeoutMs: 60_000 });
     steps.push({ step: "secret", code: r.code, ms: round(r.ms) });
     // 비밀값이 로그에 들어가지 않게: stdout 은 절대 log 에 안 넣는다
     log.push(`$ ${cmd} ${args[0]} … → exit ${r.code}`);

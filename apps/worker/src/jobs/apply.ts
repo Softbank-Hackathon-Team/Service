@@ -5,6 +5,7 @@ import { errorMessage, nextJob, runStep, stubWait } from "./_step.js";
 import { loadLatestApproval, loadLatestPlan, saveInfraReady } from "./plan-store.js";
 import { failedOnRenewFailure, withStepRoles } from "./_roles.js";
 import { realApply } from "./apply-real.js";
+import { withGcpCred } from "../gcp-token-server.js";
 import { runImageBuilds } from "./image-build.js";
 import { TARGET_ACCOUNT_SQL } from "./target-account.js";
 import { provisionRelayStep } from "../relay/relay-step.js";
@@ -95,10 +96,10 @@ export async function handleApply(raw: unknown) {
       } else if (!iacMockEnabled()) {
         // Z89: 기본 = 진짜 terraform (Z70 의 스위치 둘 대신 MOCK_IAC=1 이 아니면 항상). 잠금을 잃으면 ctx.signal → terraform 에 SIGINT
         // L5b: 진짜 발급기(REAL_STS=1 + external_id)로 빌린 AWS 실행 자격이 있으면 terraform 에 그것만 넘긴다 (맥 프로필 지움).
-        //   STUB: 가짜 발급기·GCP·온프레는 지금처럼 프로세스 자격(AWS_PROFILE·gcloud 로그인)으로 돈다
-        const r = await realApply({ migrationId: j.migrationId, tenantId: j.tenantId, envId: m.targetEnvId,
+        //   빌린 GCP 토큰도 같다 (withGcpCred). STUB: 가짜 발급기·온프레는 지금처럼 프로세스 자격(AWS_PROFILE·gcloud 로그인)으로 돈다
+        const r = await withGcpCred(roles, accountId, (gcpCred) => realApply({ migrationId: j.migrationId, tenantId: j.tenantId, envId: m.targetEnvId,
                                     provider, accountId, spec, plan },
-                                  { signal: ctx.signal, ...(roles.awsEnv?.target ? { credEnv: roles.awsEnv.target } : {}) });
+                                  { signal: ctx.signal, ...(roles.awsEnv?.target ? { credEnv: roles.awsEnv.target } : {}), ...(gcpCred ? { gcpCred } : {}) }));
         if (!r.ok) return { to: "failed", failureCode: r.failureCode, detail: r.detail };
         tfOutputs = r.tfOutputs;
         realDetail = r.detail;

@@ -1,7 +1,8 @@
 import { dropRuntimeLinkSecret } from "../app-link.js";
 import { MigrationJob, QUEUES, redactText, type MigrationStatus } from "@svc/contracts";
 import { boss, withTenant, writeAudit } from "@svc/core";
-import { createRealTerraformRunner, envFor, iacMockEnabled, readImported, workRootOf, type RealTerraformRunner } from "@svc/adapters";
+import { createRealTerraformRunner, envFor, gcpTerraformEnv, iacMockEnabled, readImported, workRootOf, type GcpTerraformCred, type RealTerraformRunner } from "@svc/adapters";
+import { withGcpCred } from "../gcp-token-server.js";
 import { readMigration, type MigrationRow } from "./_step.js";
 import { withStepRoles } from "./_roles.js";
 import { tenantSlug } from "../gitops/bundle.js";
@@ -76,15 +77,15 @@ export async function handleTargetDestroy(raw: unknown, d: TargetDestroyDeps = {
     await audit(j, "target_teardown.done", "ok", { provider, imported: true, note: "가져온 기존 자원은 지우지 않음" });
     return "nothing";
   }
-  const run = async (credEnv?: Record<string, string>) => {
-    const runner = d.runner ?? createRealTerraformRunner({ env: credEnv ? envFor(credEnv, env) : env });
+  const run = async (credEnv?: Record<string, string>, gcpCred?: GcpTerraformCred) => {
+    const runner = d.runner ?? createRealTerraformRunner({ env: gcpCred ? gcpTerraformEnv(gcpCred, env) : credEnv ? envFor(credEnv, env) : env });
     return runner.destroy(j.migrationId);
   };
   let r: Awaited<ReturnType<typeof run>>;
   try {
     r = d.noRoles || d.runner
       ? await run()
-      : await withStepRoles("rollback", j, m as MigrationRow, (roles) => run(roles.awsEnv?.target));
+      : await withStepRoles("rollback", j, m as MigrationRow, (roles) => withGcpCred(roles, undefined, (gcpCred) => run(roles.awsEnv?.target, gcpCred)));
   } catch (e) {
     // PF FM-ORC-07: 역할 빌리기 거부·terraform 없음(spawn ENOENT) 같은 예외도 감사에 남긴다 (예전엔 pg-boss 실패로만 사라짐)
     await audit(j, "target_teardown.failed", "error", { provider, error: redactText((e as Error)?.message ?? String(e)).slice(0, 300),   // RV-16: 자르기 전에 가림 (자른 끝이 ARN·URL 가운데면 규칙이 안 맞음)
