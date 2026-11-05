@@ -38,3 +38,13 @@ test("PF RV-28: 진짜 판 + postgres 명세면 출발 주소 없음·접속 실
   assert.deepEqual(ids(await replSourcePrecheck({ REPL_SOURCE_URL: "postgres://u:p@127.0.0.1:1/x" }, { required: true })), ["PC-REPL-CONN:block"]);
   assert.deepEqual(await replSourcePrecheck({}), []);
 });
+
+test("AWS→온프레 중계기 이전: 출발 주소가 아직 없으면 막지 않고 warn (끝점은 apply 의 중계기가 채움), 주소가 있으면 예전처럼 본다", async () => {
+  assert.deepEqual(ids(await replSourcePrecheck({}, { required: true, relayDeferred: true })), ["PC-REPL-RELAY:warn"]);
+  // 중계기 이전이 아니면 그대로 block
+  assert.deepEqual(ids(await replSourcePrecheck({}, { required: true, relayDeferred: false })), ["PC-REPL-CONN:block"]);
+  // 주소가 있으면 미루지 않는다 (못 붙으면 block)
+  assert.deepEqual(ids(await replSourcePrecheck({ REPL_SOURCE_URL: "postgres://u:p@127.0.0.1:1/x" }, { required: true, relayDeferred: true })), ["PC-REPL-CONN:block"]);
+  // 복제가 필요 없는 명세면 아무것도 안 낸다
+  assert.deepEqual(await replSourcePrecheck({}, { relayDeferred: true }), []);
+});
