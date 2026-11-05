@@ -167,6 +167,11 @@ function workloadValues(spec0: AppSpecV2, out: TfOutputs, t: Target) {
         host: `${cnpgName(spec, c.id)}-rw`, port: 5432, passwordSecret: `${cnpgName(spec, c.id)}-app`,
         // DBN-1·E10-2: CNPG bootstrap.initdb 의 database·owner (차트 cnpg.yaml v2 갈래가 읽음, CNPG-V2)
         database: dbIdentityFor(spec, c).db, owner: dbIdentityFor(spec, c).user,
+        // DRAFT(ai): 온프레 도착은 DB 를 언제나 논리 복제로 받는다 (리플랫폼 전제) → CNPG 마다 이전 전용 역할을 켠다.
+        //   superuser 없음: 역할 = LOGIN REPLICATION CREATEROLE + pg_create_subscription + initdb 소유 역할 (차트 cnpg.yaml 머리 주석).
+        //   비밀번호 비밀·서버 인증서(certificates)·터널(dbTunnel)·봉인 비밀(sealedSecrets)·validUntil·ensure 는 여기서 안 낸다.
+        //   이전마다 다른 값이라 워커가 배포 값에 더한다 (계약 ChartPgReplication·ChartDbTunnel·ChartSealedSecret)
+        replication: { enabled: true, role: "svc_migrate", passwordSecret: `${cnpgName(spec, c.id)}-migrate` },
       })),
       link: cnpgLink(spec),
     });
