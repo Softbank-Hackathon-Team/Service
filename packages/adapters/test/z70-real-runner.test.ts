@@ -1,7 +1,7 @@
 // Z70: 진짜 terraform 실행기 시험. terraform·aws·gcloud 는 절대 부르지 않는다 (가짜 exec 가 받은 명령만 적는다)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRealTerraformRunner, workDirOf, findWorkDir, PLAN_ONLY_ID, planOnlyId, realTerraformEnabled, factEnvName, factsFromEnv, fillTfVars, parseOutputs, childEnv,
@@ -92,6 +92,21 @@ test("apply: init → plan -out → apply tfplan → output → 비밀번호 꺼
   // RV-15: 작업 폴더(tfstate 에 GCP DB 비밀번호 원문)·outputs.json 도 나만 읽게
   assert.equal(statSync(join(root, MID)).mode & 0o777, 0o700);
   assert.equal(statSync(join(root, MID, "outputs.json")).mode & 0o777, 0o600);
+});
+
+// 묶음 이미지(dist/worker)는 import.meta.url 로 레포 뿌리를 못 찾는다 → Dockerfile 이 TF_MODULE_ROOT=/app/infra/modules 를 준다
+test("TF_MODULE_ROOT: 모듈을 그 폴더에서 복사한다. 없으면 레포 infra/modules, 거기 루트 모듈이 없으면 apply 전에 멈춘다", async () => {
+  const mods = tmp();
+  mkdirSync(join(mods, "onprem", "root"), { recursive: true });
+  writeFileSync(join(mods, "onprem", "root", "main.tf"), "# from TF_MODULE_ROOT\n");
+  const root = tmp(); const { exec } = fakeExec();
+  const res = await createRealTerraformRunner({ exec, workRoot: root, env: { TF_MODULE_ROOT: mods } }).apply("onprem", MID, { app_name: "shop" });
+  assert.equal(res.ok, true);
+  assert.equal(readFileSync(join(root, MID, "root", "main.tf"), "utf8"), "# from TF_MODULE_ROOT\n");
+  // 거부: 그 폴더에 aws 루트가 없으면 terraform 을 부르기 전에 멈춘다 (레포 모듈로 몰래 넘어가지 않는다)
+  const { exec: e2, calls } = fakeExec();
+  await assert.rejects(createRealTerraformRunner({ exec: e2, workRoot: tmp(), env: { TF_MODULE_ROOT: mods } }).apply("aws", MID, { app_name: "shop" }), /no root module for aws/);
+  assert.equal(calls.length, 0);
 });
 
 test("plan 이 실패하면 apply 를 부르지 않고 failedStep=plan, 로그에 오류 줄", async () => {
