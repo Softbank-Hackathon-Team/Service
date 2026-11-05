@@ -41,6 +41,14 @@ for (const [name, table] of [["영어", EN], ["일본어", JA]] as const) {
   });
 }
 
+for (const [name, table] of [["영어", EN], ["일본어", JA]] as const) {
+  test(`${name} 표의 열쇠는 글자 코드 순서다 (찾기 쉽고, 여러 사람이 더해도 합치기에서 덜 부딪힌다)`, () => {
+    const keys = Object.keys(table);
+    const out = keys.filter((key, i) => i > 0 && keys[i - 1]! > key);
+    assert.deepEqual(out.slice(0, 10), [], `순서가 어긋난 열쇠 ${out.length}개`);
+  });
+}
+
 test("t(): 원문이 열쇠, 자리 채우기, 영어 단수·복수, 없는 문장은 원문", () => {
   setLocaleForTest("ko");
   assert.equal(t("{0}에서 출발", { 0: "dev-aws" }), "dev-aws에서 출발");
