@@ -14,12 +14,11 @@ const T = randomUUID(), U = randomUUID(), M = randomUUID(), N = randomUUID(), DO
 
 const ROOT = resolve(import.meta.dirname, "../../..");
 const ACC = "fedcba9876543210fedcba9876543210";
-let nextPort = 20000 + Math.floor(Math.random() * 20000);
 
 async function fake(env: Record<string, string> = {}): Promise<{ port: number; stop: () => void; get: (p: string) => Promise<any[]>; post: (p: string, b: unknown) => Promise<void> }> {
-  const port = nextPort++;
-  const ch: ChildProcess = spawn(process.execPath, ["scripts/cf-fake-server.mjs"], { cwd: ROOT, env: { ...process.env, PORT: String(port), ...env }, stdio: ["ignore", "pipe", "inherit"] });
-  await new Promise<void>((res, rej) => { ch.stdout!.on("data", (d) => String(d).includes("fake cf up") && res()); ch.on("exit", () => rej(new Error("fake 종료"))); });
+  // PORT=0: 임의 번호를 고르면 다른 프로세스가 쓰는 포트와 부딪힌다 (EADDRINUSE)
+  const ch: ChildProcess = spawn(process.execPath, ["scripts/cf-fake-server.mjs"], { cwd: ROOT, env: { ...process.env, PORT: "0", ...env }, stdio: ["ignore", "pipe", "inherit"] });
+  const port = await new Promise<number>((res, rej) => { ch.stdout!.on("data", (d) => { const m = /fake cf up (\d+)/.exec(String(d)); if (m) res(Number(m[1])); }); ch.on("exit", () => rej(new Error("fake 종료"))); });
   const base = `http://127.0.0.1:${port}/client/v4`;
   const h = { authorization: "Bearer fake-token", "content-type": "application/json" };
   return {
