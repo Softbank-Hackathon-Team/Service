@@ -73,6 +73,15 @@ spec:
             - { name: API_UPSTREAM, value: {{ printf "http://api:%v" $apps.api.port | quote }} }
             - { name: API_PREFIX, value: /api/v1 }
             {{- end }}
+            {{- with $.Values.gcpPlatform.project }}
+            {{- if has $name (list "api" "worker") }}
+            - { name: GCP_PLATFORM_PROJECT, value: {{ . | quote }} }
+            {{- end }}
+            {{- if eq $name "worker" }}
+            # gcloud 시작 자격 = svc-worker (templates/worker-gcp.yaml). 빌린 고객 토큰으로 부를 때는 gcpEnvFor 가 지운다
+            - { name: CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE, value: /var/run/gcp-cred/worker.json }
+            {{- end }}
+            {{- end }}
           {{- if or $a.port $a.metricsPort }}
           ports:
             {{- with $a.port }}
@@ -125,12 +134,29 @@ spec:
             # nginx 이미지가 시작 때 템플릿을 채워 여기에 default.conf 를 쓴다 (docker-compose.prod.yml 의 tmpfs 와 같다)
             - { name: nginx-conf, mountPath: /etc/nginx/conf.d }
             {{- end }}
+            {{- if and (eq $name "worker") $.Values.gcpPlatform.project }}
+            - { name: gcp-token, mountPath: /var/run/secrets/tokens/gcp, readOnly: true }
+            - { name: gcp-cred, mountPath: /var/run/gcp-cred, readOnly: true }
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
         {{- if eq $name "web" }}
         - name: nginx-conf
           emptyDir: {}
+        {{- end }}
+        {{- if and (eq $name "worker") $.Values.gcpPlatform.project }}
+        # 구글용 토큰 (1시간, 자동 갱신). 저장되는 키는 없다
+        - name: gcp-token
+          projected:
+            sources:
+              - serviceAccountToken:
+                  audience: {{ $.Values.gcpPlatform.wifAudience }}
+                  expirationSeconds: 3600
+                  path: token
+        - name: gcp-cred
+          configMap:
+            name: worker-gcp-cred
         {{- end }}
 {{- if $a.service }}
 ---

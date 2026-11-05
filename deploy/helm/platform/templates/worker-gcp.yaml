@@ -1,0 +1,28 @@
+{{- /* worker 의 GCP 로그인 설정 파일. 어느 SA 로 들어갈지 적은 파일이고 키가 아니다. 토큰은 app.yaml 의 projected 볼륨이 파일로 준다 */}}
+{{- with .Values.gcpPlatform }}
+{{- if .project }}
+{{- if not (regexMatch "^[a-z][a-z0-9-]{4,28}[a-z0-9]$" .project) }}
+{{- fail (printf "gcpPlatform.project=%q 는 GCP 프로젝트 ID 모양이어야 한다" .project) }}
+{{- end }}
+{{- if not (regexMatch "^//iam\\.googleapis\\.com/projects/[0-9]+/locations/global/workloadIdentityPools/[a-z0-9-]+/providers/[a-z0-9-]+$" .wifAudience) }}
+{{- fail (printf "gcpPlatform.wifAudience=%q 는 infra/modules/gcp/platform-wif 출력 audience 그대로여야 한다" .wifAudience) }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: worker-gcp-cred
+  labels:
+    app.kubernetes.io/part-of: platform
+data:
+  worker.json: |
+    {{- dict
+          "type" "external_account"
+          "audience" .wifAudience
+          "subject_token_type" "urn:ietf:params:oauth:token-type:jwt"
+          "token_url" "https://sts.googleapis.com/v1/token"
+          "service_account_impersonation_url" (printf "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/svc-worker@%s.iam.gserviceaccount.com:generateAccessToken" .project)
+          "credential_source" (dict "file" "/var/run/secrets/tokens/gcp/token" "format" (dict "type" "text"))
+        | toPrettyJson | nindent 4 }}
+{{- end }}
+{{- end }}
