@@ -162,6 +162,10 @@ function ingressValues(spec: AppSpecV2, ns: string, warnings: string[]) {
 
 // 차트 cloudflared 파드가 읽는 Secret 이름 (gitops/charts/app/templates/ingress.yaml, 키 token)
 const TUNNEL_SECRET = "cloudflared-token";
+// 트래픽 판정 지표 수집기 (#245). 차트가 cloudflared 파드 안에 같이 띄운다. 키 token = 도착 환경의 지표 토큰
+const METRIC_SECRET = "svc-metric-token";
+// DRAFT(ai): 플랫폼 otel-gateway·온프레 수집기와 같은 판 (deploy/helm/onprem-agent/values.yaml metrics.image)
+const METRIC_COLLECTOR_IMAGE = "otel/opentelemetry-collector-contrib:0.164.0@sha256:340c9ca6a36617084c6661bdc4f0fe92b7cda5a805d61673ec8db375fddc522b";
 
 export function buildWorkloadValues(spec: AppSpecV2, out: TfOutputs, t: Target, w: WorkloadCtx): HelmValues {
   const ns = appNamespace({ app: spec.app } as never);
@@ -186,6 +190,14 @@ export function buildWorkloadValues(spec: AppSpecV2, out: TfOutputs, t: Target, 
     keys.set(TUNNEL_SECRET, new Set(["token"]));
     warnings.push(`입구: cloudflared 터널 토큰을 비밀 저장소 ${w.remoteKey(TUNNEL_SECRET)} (키 token) 에 넣어야 도착 입구 파드가 뜸`);
   }
+  // 온프레는 Agent 차트 수집기가 따로 있다 (onprem.ts). 시험·상태 조회(이전 번호 없음)는 안 켠다
+  const metrics = ingress?.length && t.metricsEndpoint && t.migrationId && (t.provider === "aws" || t.provider === "gcp")
+    ? { migration: t.migrationId, env: "target" as const, sidecar: { image: METRIC_COLLECTOR_IMAGE, endpoint: t.metricsEndpoint, tokenSecret: METRIC_SECRET } }
+    : undefined;
+  if (metrics) {
+    keys.set(METRIC_SECRET, new Set(["token"]));
+    warnings.push(`트래픽 판정: 도착 환경의 지표 토큰을 비밀 저장소 ${w.remoteKey(METRIC_SECRET)} (키 token) 에 넣어야 도착 지표가 들어옴`);
+  }
   const secrets = [...keys.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([name, ks]) => ({
     name, remoteKey: w.remoteKey(name),
     // DRAFT(ai): 원격 값은 {키: 값} JSON 한 덩어리. 키 목록이 비면(envFrom·마운트) 전체를 그대로
@@ -202,6 +214,7 @@ export function buildWorkloadValues(spec: AppSpecV2, out: TfOutputs, t: Target, 
     ingress: ingress ? {
       // DRAFT(ai): v1 과 같이 기본 cloudflared. Cloudflare 전환은 호스트 단위 → hosts 목록이 전환 단위
       mode: "cloudflared", className: w.ingressClass ?? "", tunnelTokenSecret: TUNNEL_SECRET, hosts: ingress,
+      ...(metrics ? { metrics } : {}),
     } : undefined,
     warnings: [...new Set(warnings)].sort(),
   })) as HelmValues;

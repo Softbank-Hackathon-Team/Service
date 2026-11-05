@@ -5,6 +5,12 @@
 {{- $first := dict }}
 {{- range $h := $ing.hosts }}{{- range $p := $h.paths }}{{- if not $first.service }}{{- $first = $p }}{{- end }}{{- end }}{{- end }}
 {{- if and (eq $ing.mode "cloudflared") $first.service }}
+{{- $side := dict }}
+{{- with $ing.metrics }}{{- with .sidecar }}{{- $side = . }}{{- end }}{{- end }}
+{{- if $side.image }}
+{{- if not (regexMatch "^[^@ ]+@sha256:[0-9a-f]{64}$" $side.image) }}{{ fail "ingress.metrics.sidecar.image 는 digest 고정" }}{{ end }}
+{{- if not (regexMatch "^https://[^/ ]+/[^ ]+$" $side.endpoint) }}{{ fail "ingress.metrics.sidecar.endpoint 는 https://<호스트>/<경로>" }}{{ end }}
+{{- end }}
 {{- /* DRAFT(ai): 토큰 방식 터널은 호스트별 길을 Cloudflare 쪽에서 정한다 → 여기선 첫 대상 하나로 보낸다.
        대상이 여럿이면 Builder 가 경고 줄을 띄운다 */}}
 apiVersion: apps/v1
@@ -34,7 +40,10 @@ spec:
       containers:
         - name: cloudflared
           image: cloudflare/cloudflared:2025.9.1
-          {{- if $ing.metrics }}
+          {{- if $side.image }}
+          {{- /* 클라우드 도착: 수집기가 같은 파드라 127.0.0.1 로 충분하다. 파드 밖으로 열지 않아 NetworkPolicy 가 필요 없다 */}}
+          args: ["tunnel", "--no-autoupdate", "--metrics", "127.0.0.1:2000", "run", "--url", {{ printf "http://%s:%v" $first.service $first.port | quote }}]
+          {{- else if $ing.metrics }}
           {{- /* --metrics 는 tunnel 단계 옵션이라 run 앞. 파드 주소로 열어야 다른 파드(수집기)가 읽는다. 들어오는 길은 아래 NetworkPolicy 로 수집기만 */}}
           args: ["tunnel", "--no-autoupdate", "--metrics", "0.0.0.0:2000", "run", "--url", {{ printf "http://%s:%v" $first.service $first.port | quote }}]
           ports: [{ name: metrics, containerPort: 2000, protocol: TCP }]
@@ -45,6 +54,81 @@ spec:
             - name: TUNNEL_TOKEN
               valueFrom: { secretKeyRef: { name: {{ $ing.tunnelTokenSecret }}, key: token } }
           resources: { requests: { cpu: 50m, memory: 64Mi }, limits: { memory: 128Mi } }
+        {{- if $side.image }}
+        - name: metrics
+          image: {{ $side.image }}
+          args: ["--config=/etc/svc-metrics/config.yaml"]
+          env:
+            - name: POD_NAME
+              valueFrom: { fieldRef: { fieldPath: metadata.name } }
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+            seccompProfile: { type: RuntimeDefault }
+          volumeMounts:
+            - { name: metrics-config, mountPath: /etc/svc-metrics, readOnly: true }
+            - { name: metrics-token, mountPath: /var/run/svc-metric, readOnly: true }
+          resources: { requests: { cpu: 20m, memory: 64Mi }, limits: { memory: 192Mi } }
+      volumes:
+        - name: metrics-config
+          configMap: { name: {{ $.Values.app.name }}-cloudflared-metrics }
+        {{- /* optional: 전환 중에 Secret 이 사라져도 cloudflared(입구)는 떠 있어야 한다. 수집기만 재시작한다. 처음 값이 없는 경우는 배포 전 비밀 점검이 막는다 */}}
+        - name: metrics-token
+          secret: { secretName: {{ $side.tokenSecret }}, optional: true, items: [{ key: token, path: token }] }
+---
+# 트래픽 판정 지표 수집기 설정 (#245). 온프레 수집기(deploy/helm/onprem-agent metrics)와 같은 변환, 긁는 대상만 같은 파드
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $.Values.app.name }}-cloudflared-metrics
+  labels: {{- include "app.labels" $ | nindent 4 }}
+data:
+  config.yaml: |
+    extensions:
+      bearertokenauth:
+        filename: /var/run/svc-metric/token
+    receivers:
+      prometheus:
+        config:
+          scrape_configs:
+            - job_name: svc-cloudflared
+              scrape_interval: 5s
+              static_configs:
+                - targets: ["127.0.0.1:2000"]
+                  labels:
+                    migration: {{ $ing.metrics.migration | quote }}
+                    env: {{ $ing.metrics.env | quote }}
+                    replica: ${env:POD_NAME}
+              metric_relabel_configs:
+                - { source_labels: [__name__], regex: 'cloudflared_tunnel_response_by_code(_total)?', action: keep }
+                - { source_labels: [status_code], target_label: code }
+                - { regex: status_code, action: labeldrop }
+    processors:
+      transform/svc:
+        error_mode: ignore
+        metric_statements:
+          - context: metric
+            statements:
+              - 'set(name, "svc_ingress_requests_total") where name == "cloudflared_tunnel_response_by_code" or name == "cloudflared_tunnel_response_by_code_total"'
+      batch:
+        timeout: 2s
+    exporters:
+      otlphttp:
+        metrics_endpoint: {{ $side.endpoint | quote }}
+        auth: { authenticator: bearertokenauth }
+    service:
+      extensions: [bearertokenauth]
+      telemetry:
+        metrics: { level: none }
+      pipelines:
+        metrics:
+          receivers: [prometheus]
+          processors: [transform/svc, batch]
+          exporters: [otlphttp]
+        {{- else }}
 {{- with $ing.metrics }}
 ---
 # cloudflared 는 밖으로 나가는 연결만 쓴다 (터널). 들어오는 것은 지표 :2000 하나이고, 고객 클러스터 수집기 네임스페이스에서만 받는다.
@@ -65,6 +149,7 @@ spec:
       ports:
         - { protocol: TCP, port: 2000 }
 {{- end }}
+        {{- end }}
 {{- else if eq $ing.mode "lb" }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress

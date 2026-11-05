@@ -33,7 +33,9 @@ export function approvedValues(i: DeployInput): HelmValues {
   if (stableHash(v) !== i.plan.helmValuesHash) {
     throw new GitopsError("GITOPS_VALUES_DRIFT", "승인한 Helm 값 지문과 지금 만든 값 지문이 다르다 (어댑터·명세가 승인 뒤 바뀜)");
   }
-  return v;
+  // 트래픽 지표 수집기는 플랫폼 운영 설정이라 승인 지문 밖이다. 지문을 본 뒤에 붙인다 (리허설·배포·비밀 점검이 모두 이 값을 쓴다)
+  const metricsEndpoint = process.env.TRAFFIC_METRICS_ENDPOINT?.trim();
+  return metricsEndpoint ? helmValuesV2(i.spec, { ...t, metricsEndpoint }) : v;
 }
 
 // DRAFT(ai): "<env:키>" 채울 사실. environments 표에 칸이 없는 것은 환경변수로 받는다 (STUB)

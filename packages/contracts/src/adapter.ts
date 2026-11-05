@@ -5,6 +5,7 @@ export interface TargetEnv {
   envId: string; provider: Provider; region: string;
   // 아래는 선택. 없으면 어댑터가 "<env:키>" 자리표시를 넣고, apply 직전 워커가 채운다
   tenantId?: string; migrationId?: string;
+  metricsEndpoint?: string; // 트래픽 판정 지표를 보낼 플랫폼 주소 (TRAFFIC_METRICS_ENDPOINT). 있으면 클라우드 도착 cloudflared 에 수집기를 붙인다
   accountId?: string;      // aws
   projectId?: string;      // gcp
   networkId?: string;      // gcp: env 모듈 출력 (VPC self link)

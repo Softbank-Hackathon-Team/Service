@@ -207,6 +207,25 @@ kubectl -n platform get secret worker-env -o json | python3 -c 'import json,sys;
 
 확인: 고객 Agent 보고 뒤 `agent_reports` 의 facts 에 `sealing.certPem`·`egressIp` 가 있으면 이전 계획이 봉인 인증서와 중계 SSH 허용 IP 를 쓸 수 있다.
 
+## 클라우드 도착 트래픽 지표 (AWS·GCP)
+
+`trafficMetrics.endpoint` 를 주면 도착 cloudflared 파드 안에 수집기가 같이 뜬다. 배포 권한에 RBAC·NetworkPolicy 가 없어 온프레처럼 따로 띄우지 않는다. 비우면 아무것도 안 그린다.
+
+```
+# 1. 도착 환경의 지표 토큰 받기 (POST /api/v1/environments/:id/metric-token). 원문은 응답에 한 번만 나온다
+# 2. 도착 비밀 저장소의 svc-metric-token 에 {"token": "<값>"} 넣기. 정확한 이름은 이전 계획의 경고 줄에 나온다
+# 3. 차트 값 주기
+helm upgrade platform deploy/helm/platform -n platform --reset-then-reuse-values --set trafficMetrics.endpoint=https://metrics.<도메인>/v1/metrics
+# 4. 도착 지표가 Prometheus 에 들어오는 것을 본 뒤에 판정을 켠다. 먼저 켜면 표본 부족으로 롤백된다
+helm upgrade platform deploy/helm/platform -n platform --reset-then-reuse-values --set trafficMetrics.promUrl=http://monitoring-kube-prometheus-prometheus.monitoring:9090
+```
+
+- 값을 켜면 토큰은 필수다. 저장소에 없으면 배포가 커밋 전에 `SECRET_VALUES_MISSING` 으로 멈추고 어느 이름이 없는지 알려 준다. 넣고 재개하면 된다. 이때 트래픽은 아직 출발에 있다.
+- 값을 켠 시점 이후 배포부터 수집기가 붙는다. 지문에는 안 들어가서 이미 승인한 계획도 그대로 간다.
+- 응답 시간은 잴 수 없어 판정은 오류율로만 하고 "지연 미측정"으로 남는다.
+- gitops 레포의 `charts/app` 을 이 레포와 같게 맞춰야 수집기가 그려진다.
+- TODO(human): 토큰을 사람이 넣는다. worker 가 이전마다 발급해 넣는 길은 아직 없다.
+
 ## 아직 없는 것
 
 - TODO(human): worker 의 비밀 아닌 설정(`PROM_URL`, `TF_WORK_DIR` 등)을 차트로 넘기는 길. 지금 앱 Deployment 는 `<이름>-env` 비밀과 포트·`HOME` 만 준다
