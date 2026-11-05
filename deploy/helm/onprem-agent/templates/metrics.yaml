@@ -1,0 +1,160 @@
+{{- with .Values.metrics }}{{- if .endpoint }}
+{{- if not (regexMatch "^https://[^/]+/" .endpoint) }}{{ fail "metrics.endpoint 는 https://<호스트>/<경로> (예 https://metrics.example.com/v1/metrics)" }}{{ end }}
+{{- if not (regexMatch "^[^@]+@sha256:[0-9a-f]{64}$" .image) }}{{ fail "metrics.image 는 digest 고정(repo:tag@sha256:<64자>)이어야 한다" }}{{ end }}
+# 트래픽 판정 지표 수집기 (#245). 도착 앱 cloudflared 파드(표시 svc.platform/metrics=cloudflared, 앱 차트 ingress.yaml)를 찾아
+#   상태 코드별 응답 수(cloudflared_tunnel_response_by_code{status_code})를 긁고, 플랫폼 계약 이름으로 바꿔 보낸다:
+#   svc_ingress_requests_total{code, env, migration, replica} (packages/traffic/src/metrics.ts, 플랫폼 otel-gateway 허용 목록)
+#   env·migration = 파드 주석(앱 차트가 이전마다 붙임), replica = 파드 이름. tenant·environment 는 플랫폼 게이트웨이가 토큰으로 덮어쓴다
+#   DRAFT(ai): 지연(p95)은 보내지 않는다. cloudflared 에는 요청 응답 시간 지표가 없다 (connect_latency 는 터널 연결 시간) → 판정은 오류율만
+#   권한: 파드 읽기만 (Agent L0 과 같은 범위의 일부). Secret·쓰기 없음. 들어오는 포트 없음
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: svc-metrics
+  namespace: {{ $.Release.Namespace }}
+  labels: {{- include "oa.labels" $ | nindent 4 }}
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: svc-onprem-metrics
+  labels: {{- include "oa.labels" $ | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: svc-onprem-metrics
+  labels: {{- include "oa.labels" $ | nindent 4 }}
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: svc-onprem-metrics }
+subjects:
+  - { kind: ServiceAccount, name: svc-metrics, namespace: {{ $.Release.Namespace }} }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: svc-metrics
+  namespace: {{ $.Release.Namespace }}
+  labels: {{- include "oa.labels" $ | nindent 4 }}
+data:
+  config.yaml: |
+    extensions:
+      bearertokenauth:
+        filename: /var/run/svc-metric/token
+    receivers:
+      prometheus:
+        config:
+          scrape_configs:
+            - job_name: svc-cloudflared
+              scrape_interval: {{ int .scrapeSeconds }}s
+              kubernetes_sd_configs: [{ role: pod }]
+              relabel_configs:
+                - { source_labels: [__meta_kubernetes_pod_label_svc_platform_metrics], regex: cloudflared, action: keep }
+                - { source_labels: [__meta_kubernetes_pod_phase], regex: Running, action: keep }
+                # 파드 주소 + 주석의 지표 포트 (설정 파일 안의 $ 는 $$ 로 적는다)
+                - source_labels: [__meta_kubernetes_pod_ip, __meta_kubernetes_pod_annotation_svc_platform_metrics_port]
+                  regex: '([^;]+);([0-9]+)'
+                  replacement: '$$1:$$2'
+                  target_label: __address__
+                - { source_labels: [__meta_kubernetes_pod_annotation_svc_platform_migration], target_label: migration }
+                - { source_labels: [__meta_kubernetes_pod_annotation_svc_platform_env], target_label: env }
+                - { source_labels: [__meta_kubernetes_pod_name], target_label: replica }
+              metric_relabel_configs:
+                - { source_labels: [__name__], regex: 'cloudflared_tunnel_response_by_code(_total)?', action: keep }
+                - { source_labels: [status_code], target_label: code }
+                - { regex: status_code, action: labeldrop }
+    processors:
+      transform/svc:
+        error_mode: ignore
+        metric_statements:
+          - context: metric
+            statements:
+              - 'set(name, "svc_ingress_requests_total") where name == "cloudflared_tunnel_response_by_code" or name == "cloudflared_tunnel_response_by_code_total"'
+      batch:
+        timeout: 2s
+    exporters:
+      otlphttp:
+        metrics_endpoint: {{ .endpoint | quote }}
+        auth: { authenticator: bearertokenauth }
+    service:
+      extensions: [bearertokenauth]
+      telemetry:
+        metrics: { level: none }
+      pipelines:
+        metrics:
+          receivers: [prometheus]
+          processors: [transform/svc, batch]
+          exporters: [otlphttp]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: svc-metrics
+  namespace: {{ $.Release.Namespace }}
+  labels: {{- include "oa.labels" $ | nindent 4 }}
+spec:
+  replicas: 1
+  # 두 개가 같은 파드를 긁어 보내면 같은 라벨의 누적 값이 두 번 들어간다
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: svc-metrics }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: svc-metrics, app.kubernetes.io/part-of: svc-onprem, svc.tenant: {{ $.Values.tenant | quote }} }
+      annotations:
+        checksum/config: {{ toJson . | sha256sum | trunc 16 }}
+    spec:
+      serviceAccountName: svc-metrics
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: collector
+          image: {{ .image }}
+          args: ["--config=/etc/svc-metrics/config.yaml"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: config, mountPath: /etc/svc-metrics, readOnly: true }
+            - { name: token, mountPath: /var/run/svc-metric, readOnly: true }
+          resources: {{- toYaml .resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap: { name: svc-metrics }
+        - name: token
+          secret: { secretName: {{ .tokenSecret }}, items: [{ key: token, path: token }] }
+---
+# 수집기는 들어오는 연결이 없고, 나가는 곳은 DNS · 쿠버네티스 API(파드 찾기) · 플랫폼 지표 주소(443) · cloudflared 지표(2000) 뿐이다
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: svc-metrics
+  namespace: {{ $.Release.Namespace }}
+  labels: {{- include "oa.labels" $ | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: svc-metrics }
+  policyTypes: ["Ingress", "Egress"]
+  ingress: []
+  egress:
+    - ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # 443 = 지표 주소 · kubernetes 서비스 주소, 6443 = k3s API 서버
+    - ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 6443 }
+    - to:
+        - namespaceSelector: {}
+          podSelector: { matchLabels: { svc.platform/metrics: cloudflared } }
+      ports:
+        - { protocol: TCP, port: 2000 }
+{{- end }}{{- end }}

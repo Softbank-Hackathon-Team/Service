@@ -11,6 +11,9 @@
 #   TENANT=t-0a1b2c3d GITOPS_REPO_URL=git@github.com:org/gitops.git AGENT_REPORT_URL=https://api.example \
 #   AGENT_IMAGE=ghcr.io/org/svc-onprem-agent@sha256:... AGENT_KEY_FILE=.agent-key.env \
 #   [GITOPS_SSH_KEY_FILE=~/.ssh/gitops_ro | GITOPS_TOKEN_FILE=~/gitops-read-token] [GRANTS_CLUSTER=1] [KUBE_CONTEXT=...] bash tools/onprem-install.sh
+#   [METRICS_URL=https://metrics.<도메인>/v1/metrics METRIC_TOKEN_FILE=~/svc-metric-token]  트래픽 판정 지표 수집기 (#245, 둘 다 주거나 둘 다 빼기)
+#   METRIC_TOKEN_FILE: 이 환경의 지표 토큰 (콘솔·API POST /api/v1/environments/:id/metric-token 응답의 token, 한 번만 보인다).
+#     다시 발급하면 이전 토큰이 끊기므로 새 토큰으로 이 스크립트를 다시 돌린다. 토큰은 파일로만 받는다 (명령줄·helm 기록에 안 남게)
 #   GITOPS_TOKEN_FILE: https 주소 + 읽기 전용 토큰 (플랫폼 Argo CD 의 gitops-repo Secret 과 같은 방식, 사용자 x-access-token).
 #     조직 정책으로 deploy key 를 못 쓰는 레포용 (2026-11-05 Softbank-Hackathon-Team 실측). 토큰은 명령줄·화면에 안 남게 파일로만 받는다
 # AGENT_IMAGE 를 레지스트리에서 못 받는 서버(이미지 파일을 옮겨 k3s ctr images import 로 넣는 경우)는 digest 이름표가 따로 있어야 한다.
@@ -42,6 +45,9 @@ grep -q '^AGENT_KEY_ID=' "$AGENT_KEY_FILE" && grep -q '^AGENT_KEY_SECRET=' "$AGE
 [ -z "${GITOPS_TOKEN_FILE:-}" ] || [ -f "$GITOPS_TOKEN_FILE" ] || die "GITOPS_TOKEN_FILE 없음"
 [ -z "${GITOPS_SSH_KEY_FILE:-}" ] || [ -z "${GITOPS_TOKEN_FILE:-}" ] || die "GITOPS_SSH_KEY_FILE 과 GITOPS_TOKEN_FILE 은 하나만"
 [ -z "${GITOPS_TOKEN_FILE:-}" ] || case "$GITOPS_REPO_URL" in https://*) ;; *) die "GITOPS_TOKEN_FILE 은 https 주소와 같이 쓴다";; esac
+[ -z "${METRICS_URL:-}" ] && [ -z "${METRIC_TOKEN_FILE:-}" ] || { [ -n "${METRICS_URL:-}" ] && [ -n "${METRIC_TOKEN_FILE:-}" ]; } || die "METRICS_URL 과 METRIC_TOKEN_FILE 은 같이 준다"
+[ -z "${METRIC_TOKEN_FILE:-}" ] || [ -f "$METRIC_TOKEN_FILE" ] || die "METRIC_TOKEN_FILE 없음"
+[ -z "${METRICS_URL:-}" ] || case "$METRICS_URL" in https://*/*) ;; *) die "METRICS_URL 은 https://<호스트>/<경로>";; esac
 got=$(sha256sum "$ARGO_YAML" 2>/dev/null | cut -d' ' -f1 || shasum -a 256 "$ARGO_YAML" | cut -d' ' -f1)
 [ "$got" = "$ARGO_SHA" ] || die "Argo 설치 파일 sha 불일치: $got"
 got=$(sha256sum "$SEALED_YAML" 2>/dev/null | cut -d' ' -f1 || shasum -a 256 "$SEALED_YAML" | cut -d' ' -f1)
@@ -82,6 +88,15 @@ echo "2/5 Agent 키 Secret"
 K create ns "$NS" --dry-run=client -o yaml | K apply -f - >/dev/null
 K -n "$NS" create secret generic agent-key --from-env-file="$AGENT_KEY_FILE" --dry-run=client -o yaml | K apply -f - >/dev/null
 
+if [ -n "${METRIC_TOKEN_FILE:-}" ]; then
+  # 지표 토큰 (#245). 줄바꿈을 뗀 사본을 600 임시 파일로. 모양(svc_mt_ + 43자)이 아니면 게이트웨이가 401 이라 여기서 멈춘다
+  mtok=$(umask 077; mktemp); trap 'rm -f "${mtok:-}"' EXIT
+  tr -d '\r\n' < "$METRIC_TOKEN_FILE" > "$mtok"
+  grep -Eq '^svc_mt_[A-Za-z0-9_-]{43}$' "$mtok" || { rm -f "$mtok"; die "METRIC_TOKEN_FILE 이 지표 토큰 모양(svc_mt_...)이 아니다"; }
+  K -n "$NS" create secret generic svc-metric-token --from-file=token="$mtok" --dry-run=client -o yaml | K apply -f - >/dev/null
+  rm -f "$mtok"
+fi
+
 echo "3/5 gitops 저장소 Secret (읽기 전용)"
 repo_secret="svc-gitops-$TENANT"
 # project 칸을 넣지 않는다 (전역 저장소 자격): ApplicationSet git 생성기는 프로젝트 전용 자격을 안 쓴다 →
@@ -92,7 +107,7 @@ args=(--from-literal=type=git --from-literal="url=$GITOPS_REPO_URL")
 tok=""
 if [ -n "${GITOPS_TOKEN_FILE:-}" ]; then
   # 줄바꿈을 뗀 사본을 600 임시 파일로 (끝 줄바꿈이 남으면 인증 실패). --from-literal 은 ps 에 값이 보여 안 쓴다
-  tok=$(umask 077; mktemp); trap 'rm -f "$tok"' EXIT
+  tok=$(umask 077; mktemp); trap 'rm -f "$tok" "${mtok:-}"' EXIT
   tr -d '\r\n' < "$GITOPS_TOKEN_FILE" > "$tok"
   [ -s "$tok" ] || die "GITOPS_TOKEN_FILE 이 비어 있다"
   args+=(--from-literal=username=x-access-token --from-file=password="$tok")
@@ -107,8 +122,10 @@ ssa=(); helm upgrade --help 2>/dev/null | grep -q -- '--force-conflicts' && ssa=
 helm ${KUBE_CONTEXT:+--kube-context "$KUBE_CONTEXT"} upgrade --install onprem-agent deploy/helm/onprem-agent -n "$NS" "${ssa[@]}" \
   --set tenant="$TENANT" --set gitops.repoURL="$GITOPS_REPO_URL" \
   --set agent.reportURL="$AGENT_REPORT_URL" --set agent.image="$AGENT_IMAGE" \
-  --set grants.cluster="$([ "${GRANTS_CLUSTER:-0}" = 1 ] && echo true || echo false)" >/dev/null
+  --set grants.cluster="$([ "${GRANTS_CLUSTER:-0}" = 1 ] && echo true || echo false)" \
+  --set metrics.endpoint="${METRICS_URL:-}" >/dev/null
 K -n "$NS" rollout status deploy/onprem-agent --timeout=180s >/dev/null
+[ -z "${METRICS_URL:-}" ] || K -n "$NS" rollout status deploy/svc-metrics --timeout=180s >/dev/null
 
 echo "5/5 Agent 권한 확인"
 SA="system:serviceaccount:$NS:onprem-agent"
@@ -120,4 +137,11 @@ check no create deployments -A
 check no delete pods -A
 check no get secrets -A
 check no get configmaps -A
+if [ -n "${METRICS_URL:-}" ]; then
+  SA="system:serviceaccount:$NS:svc-metrics"   # 지표 수집기: 파드 읽기만
+  check yes list pods -A
+  check no get secrets -A
+  check no create pods -A
+  check no list deployments.apps -A
+fi
 echo "onprem-install: 완료 (Agent 는 읽기만, 들어오는 포트 없음)"
