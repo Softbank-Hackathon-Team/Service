@@ -1,6 +1,6 @@
 import { MigrationJob, QUEUES } from "@svc/contracts";
 import { replicationFor } from "./_repl.js";
-import { ReplConfigError, replicationFromEnv, toMeasurements, withClient, appCanWrite } from "@svc/replication";
+import { ReplConfigError, toMeasurements, withClient, appCanWrite } from "@svc/replication";
 import { restoreSource } from "@svc/traffic";
 import { trafficLeaseState, withTenant, writeAudit } from "@svc/core";
 import { log } from "../instrument.js";

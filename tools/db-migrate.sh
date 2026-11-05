@@ -111,6 +111,7 @@ marker_sql() {
     0045) echo "to_regclass('public.metric_tokens') IS NOT NULL" ;;
     0046) echo "to_regclass('public.sandbox_runs') IS NOT NULL" ;;
     0047) echo "EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agent_reports_kind_check' AND pg_get_constraintdef(oid) LIKE '%facts%')" ;;
+    0050) echo "to_regclass('public.replication_endpoints') IS NOT NULL" ;;
     *) echo "" ;;
   esac
 }

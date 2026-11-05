@@ -27,6 +27,9 @@ export const FAILURE_CODES = [
   "ARGO_DEGRADED", "ARGO_TIMEOUT", "ARGO_APP_MISSING",      // deploy 반영 확인 (Z94 argo-watch): Degraded / 시간 초과 / Application 끝까지 없음
   "ARGO_AUTH_FAILED", "ARGO_UNREACHABLE", "ARGO_NOT_CONFIGURED", //   토큰·RBAC 거부 / 연속 일시 오류 / .env 에 Argo 설정 없음
   "SYNC_FAILED",                 // sync 재시도 소진 또는 영구 실패
+  "REPL_ENDPOINT_INCOMPLETE",    // db 0050: 이전의 복제 끝점 줄이 한쪽만 있음 (줄과 env 를 섞지 않는다) → sync paused
+  "REPL_SECRET_UNRESOLVED",      // db 0050: password_ref 를 못 풂 (REPL_SECRET_MASTER_KEY 없음·짧음, env:REPL_SECRET_* 없음) → sync paused
+  "REPL_TARGET_UNREACHABLE",     // db 0050: 도착 끝점 host:port 에 TCP 로 못 붙음 (재시도 소진 뒤) → sync paused
   "CUTOVER_CATCHUP_EXHAUSTED",   // 컷오버 C6' 되돌림 횟수 소진
   "CUTOVER_ERROR",               // 컷오버 도중 예외 (Z19 H2)
   "CUTOVER_HALFWAY",             //   C5 뒤 예외
