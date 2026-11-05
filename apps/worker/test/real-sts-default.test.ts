@@ -1,7 +1,7 @@
 // "mock 없이" 기본값: REAL_STS 가 비었거나 없으면 진짜 발급기, 0 일 때만 흉내 (클라우드 호출 없음: 발급기를 만들기만 한다)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { realStsEnabled, awsIssuer, gcpIssuer } from "../src/platform.js";
+import { realStsEnabled, refuseMockCredentials, awsIssuer, gcpIssuer } from "../src/platform.js";
 
 test("기본 켜짐: 값 없음·빈 값·1 = 진짜, 0 만 꺼짐", () => {
   assert.equal(realStsEnabled({}), true);
@@ -25,4 +25,14 @@ test("거부: 켜졌는데 GCP_PLATFORM_PROJECT 가 없으면 진짜 고객 SA �
   await assert.rejects(
     g.issue({ roleRef: "svc-observe@cust-proj-123.iam.gserviceaccount.com", req: { tenantId: "t", purpose: "observe", ttlSec: 900 }, now: new Date() } as never),
     (e: Error & { reason?: string }) => e.reason === "PLATFORM_SA_MISSING");
+});
+
+test("#241 refuseMockCredentials: 실환경 모드 + AWS·GCP + 흉내 자격일 때만 참", () => {
+  for (const provider of ["aws", "gcp"]) {
+    assert.equal(refuseMockCredentials({ stub: true }, provider, {}), true);       // REAL_STS 없음 = 켜짐
+    assert.equal(refuseMockCredentials({ stub: true }, provider, { REAL_STS: "1" }), true);
+    assert.equal(refuseMockCredentials({ stub: true }, provider, { REAL_STS: "0" }), false);
+    assert.equal(refuseMockCredentials({ stub: false }, provider, {}), false);
+  }
+  for (const provider of ["onprem", "azure_mock"]) assert.equal(refuseMockCredentials({ stub: true }, provider, {}), false);
 });
