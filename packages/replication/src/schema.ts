@@ -195,10 +195,12 @@ async function readSource(c: pg.Client, schema: string, tables: string[], appRol
   });
 
   // 앱 계정이 출발에서 가진 표·시퀀스 권한을 그대로 (펜스는 도착에서 이 권한을 걷고 되돌린다)
+  //   앱 계정이 표 주인이고 relacl 이 NULL 이면 주인 기본 권한(acldefault)을 센다 (예전: 0개 → 도착에서 앱 계정 권한 없음)
   const grants = (await c.query<{ kind: "table" | "sequence" | "view"; name: string; privs: string[] }>(
     `SELECT CASE WHEN c.relkind = 'S' THEN 'sequence' WHEN c.relkind = 'v' THEN 'view' ELSE 'table' END kind, c.relname name,
             array_agg(DISTINCT x.privilege_type ORDER BY x.privilege_type)::text[] privs
-       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace, aclexplode(c.relacl) x
+       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace,
+            aclexplode(COALESCE(c.relacl, acldefault(CASE WHEN c.relkind = 'S' THEN 's' ELSE 'r' END::"char", c.relowner))) x
       WHERE n.nspname = $1 AND x.grantee = (SELECT oid FROM pg_roles WHERE rolname = $2)
         AND (c.relname = ANY($3) OR c.relname = ANY($4) OR c.relkind = 'v')
       GROUP BY 1, 2 ORDER BY 1, 2`, [schema, appRole, tables, sequences.map((s) => s.name)])).rows;

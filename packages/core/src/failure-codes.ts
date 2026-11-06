@@ -33,6 +33,7 @@ export const FAILURE_CODES = [
   "REPL_ENDPOINT_INCOMPLETE",    // db 0050: 이전의 복제 끝점 줄이 한쪽만 있음 (줄과 env 를 섞지 않는다) → sync paused
   "REPL_SECRET_UNRESOLVED",      // db 0050: password_ref 를 못 풂 (REPL_SECRET_MASTER_KEY 없음·짧음, env:REPL_SECRET_* 없음) → sync paused
   "REPL_TARGET_UNREACHABLE",     // db 0050: 도착 끝점 host:port 에 TCP 로 못 붙음 (재시도 소진 뒤) → sync paused
+  "REPL_APP_ROLE_UNFENCEABLE",   // 앱 계정이 superuser·pg_write_all_data·rds_superuser 등을 물려받아 컷오버 울타리(REVOKE)로 쓰기를 못 막음 (sync 첫 점검 DB-08) → paused
   "REPL_SOURCE_UNREACHABLE",     // 출발 끝점 host:port(중계기 출발 입구 포함)에 TCP 로 못 붙음 (재시도 소진 뒤) → sync paused
   "CUTOVER_CATCHUP_EXHAUSTED",   // 컷오버 C6' 되돌림 횟수 소진
   "CUTOVER_ERROR",               // 컷오버 도중 예외 (Z19 H2)
