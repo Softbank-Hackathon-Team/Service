@@ -35,9 +35,12 @@ test("멈춘 도움말: 빠진 것만, 고치는 법만 있어도 읽는다", ()
     { error: null, missing: [], hint: "npm run ops:lb-release -- lb-1 로 회수한 뒤 재개" });
 });
 
-test("멈춘 도움말: 맨 위에 하나라도 있으면 맨 위가 이긴다", () => {
+test("멈춘 도움말: 빠진 것·고치는 법은 한 칸에서 짝으로(맨 위 먼저), 이유는 따로 맨 위 먼저", () => {
   assert.deepEqual(stopHelpOf({ missing: ["helm: sandbox.imageRegistry"], deploy: { error: "다른 이유", hint: "다른 법" } }),
-    { error: null, missing: ["helm: sandbox.imageRegistry"], hint: null });
+    { error: "다른 이유", missing: ["helm: sandbox.imageRegistry"], hint: null });
+  assert.deepEqual(stopHelpOf({ planId: "p1", provider: "gcp", error: "중계기를 못 만듦",
+    relay: { missing: ["PLATFORM_EGRESS_CIDRS"], hint: "worker-env 에 PLATFORM_EGRESS_CIDRS 를 넣고 다시 계획" } }),
+    { error: "중계기를 못 만듦", missing: ["PLATFORM_EGRESS_CIDRS"], hint: "worker-env 에 PLATFORM_EGRESS_CIDRS 를 넣고 다시 계획" });
 });
 
 test("멈춘 도움말: 글이 아닌 값은 버리고, 버린 맨 위 값이 단계 칸을 가리지 않는다", () => {

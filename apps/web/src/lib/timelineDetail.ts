@@ -114,16 +114,13 @@ function helpIn(o: Record<string, unknown>): StopHelp | null {
 /**
  * 멈춘·실패한 전이 detail 에서 도움말을 읽는다. 워커는 error|reason·missing·hint 를 detail 맨 위에 두거나
  * 단계 칸 하나 안에 둔다 (detail.shift·envLayer·deploy·relay·tempRole·rehearsal …).
- * 맨 위에 하나라도 있으면 맨 위를 쓰고, 없으면 그런 값이 있는 첫 단계 칸을 쓴다. 글이 아닌 값은 버린다 (서버 모양을 믿지 않는다)
+ * 이유는 맨 위 → 첫 단계 칸 순서로 찾는다. 빠진 것·고치는 법은 짝이라 둘 중 하나라도 가진 첫 칸(맨 위 먼저)에서 같이 읽는다.
+ * 둘이 갈라진 곳이 있다: apply 는 중계기 실패를 { error, relay: { missing, hint } } 로 남긴다. 글이 아닌 값은 버린다 (서버 모양을 믿지 않는다)
  */
 export function stopHelpOf(detail: Record<string, unknown>): StopHelp {
-  const top = helpIn(detail);
-  if (top) return top;
-  for (const value of Object.values(detail)) {
-    const nested = isObj(value) ? helpIn(value) : null;
-    if (nested) return nested;
-  }
-  return NO_HELP;
+  const found = [helpIn(detail), ...Object.values(detail).map((v) => (isObj(v) ? helpIn(v) : null))].filter((h): h is StopHelp => h !== null);
+  const fix = found.find((h) => h.missing.length > 0 || h.hint !== null);
+  return { error: found.find((h) => h.error !== null)?.error ?? null, missing: fix?.missing ?? [], hint: fix?.hint ?? null };
 }
 
 /**
