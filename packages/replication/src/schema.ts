@@ -15,6 +15,9 @@ import { listTables, type TableRef } from "./tables.js";
 // 도착에 이미 있는 표는 건드리지 않는다. 모든 DDL 은 도착에서 한 트랜잭션 → 중간에 실패하면 아무것도 안 남는다.
 // 대안 "pg_dump --schema-only | psql" 은 버림: 맥·컨테이너에 클라이언트 판 맞추기 + 셸 호출 + 전 스키마(함수·트리거까지)가 섞인다.
 
+/** 스키마 복사가 만든 표의 주석 앞머리 (뒤에 이전 id). resetCopiedTables 가 이것만 지운다 */
+export const COPY_MARK = "svc-copy:";
+
 export class SchemaCopyError extends Error {
   readonly code = "REPL_SCHEMA_COPY_FAILED";
 }
@@ -36,7 +39,7 @@ export interface SchemaCopyResult {
 interface Col { name: string; type: string; notnull: boolean; identity: string; generated: string; def: string | null; coll: string | null }
 
 /** 도착에 없는 표만 출발 모양대로 만든다. 만들 게 없으면 created=[] (아무 DDL 도 안 돌림, 역할 만들기는 따로 본다) */
-export async function copySchema(source: Endpoint, target: Endpoint, tables: TableRef[]): Promise<SchemaCopyResult> {
+export async function copySchema(source: Endpoint, target: Endpoint, tables: TableRef[], opts: { copiedBy?: string } = {}): Promise<SchemaCopyResult> {
   const t0 = now();
   const srcSchema = schemaOf(source), dstSchema = schemaOf(target);
   const have = await withClient(target, (c) => listTables(c, dstSchema));
@@ -78,6 +81,8 @@ export async function copySchema(source: Endpoint, target: Endpoint, tables: Tab
       });
       const cons = (plan.cons[t] ?? []).map((k) => `CONSTRAINT ${ident(k.name)} ${k.def}`);
       ddl.push(`CREATE TABLE ${ident(t)} (\n  ${[...cols, ...cons].join(",\n  ")}\n)`);
+      // 재시도 초기화(resetCopiedTables)가 "이 표는 우리 스키마 복사가 만들었다"를 알아보는 표지. 주인 넘기기·정리 뒤에도 남는다
+      if (opts.copiedBy) ddl.push(`COMMENT ON TABLE ${ident(t)} IS ${lit(`${COPY_MARK}${opts.copiedBy}`)}`);
     }
     for (const s of plan.sequences) if (s.owner) ddl.push(`ALTER SEQUENCE ${ident(s.name)} OWNED BY ${ident(s.owner.table)}.${ident(s.owner.col)}`);
     for (const i of plan.indexes) ddl.push(i);
@@ -279,4 +284,35 @@ export async function handOwnershipToApp(c: pg.Client, e: Endpoint): Promise<num
     PERFORM set_config('svc.owned', n::text, true);
   END $own$; SELECT current_setting('svc.owned', true)::int AS n`);
   return Number((r as unknown as pg.QueryResult<{ n: number }>[]).at?.(-1)?.rows[0]?.n ?? 0);
+}
+
+/** 재시도 전 도착 초기화 (ADR-030 자동화, 2026-11-07 보안·온프레 영역 결정: "안전한 범위만 자동").
+ *  지우는 것: 도착 앱 스키마에서 주석이 svc-copy:<id> 이고 <id> 가 allowedKeys 에 있는 표만 (= 이 이전, 또는 같은 도착에서 롤백·취소로 끝난 이전의 스키마 복사가 만든 표).
+ *  하나라도 "표지 없는 비어 있지 않은 표"(고객이 만든 데이터일 수 있음)가 있으면 아무것도 안 지우고 blocked 로 돌려준다 → 부르는 쪽이 예전처럼 DB-T5 로 멈춘다.
+ *  완료(completed)된 이전이 만든 표는 allowedKeys 에 안 넣는다 = 그 표가 이제 고객의 진짜 데이터다 (부르는 쪽 책임).
+ *  DROP … CASCADE 라 표에 묶인 시퀀스·인덱스·그 표를 쓰는 뷰도 같이 지워진다 → 이어지는 copySchema 가 출발 모양대로 다시 만든다 */
+export async function resetCopiedTables(target: Endpoint, allowedKeys: readonly string[]): Promise<{ dropped: string[]; blocked: string[] }> {
+  if (!allowedKeys.length) return { dropped: [], blocked: [] };
+  return withClient(target, async (c) => {
+    const sch = schemaOf(target);
+    const rows: { name: string; note: string | null; nonempty: boolean }[] = [];
+    for (const r of (await c.query<{ name: string; note: string | null }>(
+      `SELECT cl.relname AS name, obj_description(cl.oid, 'pg_class') AS note
+         FROM pg_class cl JOIN pg_namespace n ON n.oid = cl.relnamespace
+        WHERE n.nspname = $1 AND cl.relkind IN ('r','p') AND NOT cl.relispartition ORDER BY 1`, [sch])).rows) {
+      const any = await c.query(`SELECT 1 FROM ${ident(sch)}.${ident(r.name)} LIMIT 1`);
+      rows.push({ ...r, nonempty: (any.rowCount ?? 0) > 0 });
+    }
+    const ours = (n: string | null) => !!n && n.startsWith(COPY_MARK) && allowedKeys.includes(n.slice(COPY_MARK.length));
+    const blocked = rows.filter((r) => r.nonempty && !ours(r.note)).map((r) => r.name);
+    const drop = rows.filter((r) => ours(r.note)).map((r) => r.name);
+    if (blocked.length || !drop.length) return { dropped: [], blocked };
+    await c.query("BEGIN");
+    try {
+      await c.query(`SET LOCAL search_path TO ${ident(schemaOf(target))}`);
+      await c.query(`DROP TABLE ${drop.map(ident).join(", ")} CASCADE`);
+      await c.query("COMMIT");
+    } catch (e) { await c.query("ROLLBACK").catch(() => undefined); throw e; }
+    return { dropped: drop, blocked: [] };
+  });
 }

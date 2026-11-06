@@ -177,7 +177,7 @@ test("거부: 봉인 인증서 없음 SEALING_CERT_MISSING, 마스터 키 없음
   // 경고: 도착 줄 계정이 차트 이전 역할과 다르면 (봉인 비밀번호로 못 붙는다)
   const wrongUser = await decideDelivery(facts({ sealingCertPem: "not a pem", records: [ep("source"), ep("target", { username: "postgres" })] }));
   assert.ok(wrongUser.kind === "stop" && wrongUser.code === "SEALING_CERT_MISSING", "읽을 수 없는 봉인 인증서도 SEALING_CERT_MISSING");
-  assert.match(wrongUser.warnings.join(" "), /도착 줄 계정이 postgres/);
+  assert.match(wrongUser.warnings.join(" "), /온프레 줄 계정이 postgres/);
 });
 
 // 배달물을 넣은 값 (봉인 값은 가짜 글자, 정리·렌더 시험용)
@@ -263,4 +263,30 @@ test("CLI pubkey: 같은 입력이면 같은 공개 키 한 줄 (워커가 봉�
   const bad = run({ REPL_SECRET_MASTER_KEY: "short" });
   assert.equal(bad.status, 1);
   assert.match(bad.stderr, /MASTER_KEY_TOO_SHORT/);
+});
+
+// ADR-031 R4 온프레 → AWS: 온프레 CNPG 줄이 출발 쪽이다. 같은 배달물을 출발 묶음에 넣는다
+test("온프레 출발(onpremSide=source): 비밀번호는 source 쪽으로 파생, 터널 정방향은 도착 RDS, 되쓰기는 출발 줄·상대(도착) peer", { skip: noOpenssl }, async () => {
+  const seal = rsaTestCert();
+  const src = ep("source", { provider: "cnpg", host: "203.0.113.7", username: "svc_migrate", passwordRef: "derive:migrate",
+    peerHost: "10.0.1.20", peerPort: 5432, relayHost: "203.0.113.7", relayKnownHosts: KNOWN });
+  const tgt = ep("target", { provider: "rds", host: "203.0.113.7", port: 15432, username: "repl_admin", passwordRef: "tf:db_password",
+    peerHost: null, peerPort: null, tlsServername: RDS, relayHost: null, relayKnownHosts: null });
+  const d = await decideDelivery(facts({ onpremSide: "source", records: [src, tgt], sealingCertPem: seal.certPem }));
+  assert.equal(d.kind, "ok");
+  if (d.kind !== "ok") return;
+  assert.deepEqual(d.warnings, []);
+  assert.equal((d.delivery.dbTunnel as { forward: { target: string } }).forward.target, `${RDS}:5432`, "포트 15432 가 아니라 RDS 이름:5432");
+  const sealed = Object.fromEntries((d.delivery.sealedSecrets as Array<{ name: string; encryptedData: Record<string, string> }>).map((s) => [s.name, s]));
+  const pw = unseal(seal.keyPem, sealed["shop-db-migrate"]!.encryptedData.password!, "app-shop/shop-db-migrate");
+  assert.ok(pw === derivePassword(MK, T, M, "source", "migrate"), "워커가 출발 줄 derive:migrate 를 푸는 값과 같다");
+  assert.ok(pw !== derivePassword(MK, T, M, "target", "migrate"));
+  const w = d.delivery.write!;
+  assert.equal(w.onpremSide, "source");
+  assert.equal(w.target.tlsServername, "shop-db-rw.app-shop.svc");
+  assert.deepEqual(w.sourcePeer, { host: "db-tunnel.app-shop.svc", port: 5432 }, "도착 RDS 줄 peer = 온프레 터널 Service (롤백 창 역구독)");
+  // 거부: 온프레(출발) 줄에 중계기 칸이 없으면 터널을 못 만든다
+  const bad = await decideDelivery(facts({ onpremSide: "source", records: [{ ...src, relayHost: null, relayKnownHosts: null }, tgt], sealingCertPem: seal.certPem }));
+  assert.equal(bad.kind, "stop");
+  assert.equal(bad.kind === "stop" && bad.code, "REPL_DELIVERY_FAILED");
 });

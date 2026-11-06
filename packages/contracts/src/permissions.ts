@@ -11,7 +11,7 @@ export const PermissionCloud = z.enum(["aws", "gcp"]);
 export type PermissionCloud = z.infer<typeof PermissionCloud>;
 /** 묶음이 필요한 조건 (명세·계획에서 계산). always = 그 쪽 클라우드면 늘 */
 export const PermissionRequiredWhen = z.enum(["always", "secrets", "postgres", "data", "env_layer_create",
-  "relay_aws_onprem", "relay_aws_gcp", "relay_gcp_aws", "argo_hub"]);
+  "relay_aws_onprem", "relay_aws_gcp", "relay_gcp_aws", "relay_onprem_aws", "argo_hub"]);
 export type PermissionRequiredWhen = z.infer<typeof PermissionRequiredWhen>;
 
 export const PermissionBundle = z.object({

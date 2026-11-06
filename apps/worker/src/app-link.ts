@@ -59,6 +59,15 @@ export async function targetBundle(tx: Tx, tenantId: string, m: { id: string; ta
   return { tenant: tenantSlug(tenantId), app, env: ENV_DIR[e.rows[0].provider as Provider] };
 }
 
+/** 복제 배달물(이전 역할·터널)이 든 온프레 묶음 위치: 온프레 도착이면 도착 묶음, 온프레 출발(ADR-031 온프레 → 클라우드)이면 출발 묶음.
+ *  둘 다 아니면 도착 묶음 (배달물이 없어 정리 커밋이 no_delivery 로 끝난다) */
+export async function replicationBundle(tx: Tx, tenantId: string, m: { id: string; sourceEnvId: string; targetEnvId: string }): Promise<BundleRef | null> {
+  const t = await tx.query("SELECT provider FROM environments WHERE id=$1", [m.targetEnvId]);
+  if (t.rows[0]?.provider === "onprem") return targetBundle(tx, tenantId, m);
+  const s = await tx.query("SELECT provider FROM environments WHERE id=$1", [m.sourceEnvId]);
+  return s.rows[0]?.provider === "onprem" ? targetBundle(tx, tenantId, { id: m.id, targetEnvId: m.sourceEnvId }) : targetBundle(tx, tenantId, m);
+}
+
 /** APP-22 (가): 컷오버를 울타리 치기 전에 멈춰야 하나 (도착 앱 DB 주소를 바꿀 길이 없음). 멈출 이유 글자, 아니면 null */
 export function cutoverAppLinkBlock(i: { on: boolean; proxy: boolean; appKind: "gitops" | "no_app" | "terraform_runtime"; bundle: boolean; runtimeReady?: boolean }): string | null {
   if (!i.on || i.proxy || i.appKind === "no_app") return null;

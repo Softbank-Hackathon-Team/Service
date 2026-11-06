@@ -100,6 +100,17 @@ test("보기: 제 회사는 목록·lastHeartbeatAt, 남의 회사 헤더는 404
   assert.equal(o.status, 404);
 });
 
+test("inventory: 서명 POST → 201 + DB CHECK(0058) 통과, 받은 보고 목록에는 안 실림 · kind=inventory 질의는 400", { skip }, async () => {
+  const inv: AgentReport = { kind: "inventory", agentVersion: "t", sentAt: new Date().toISOString(), collectedAt: new Date().toISOString(),
+    apiResources: { names: [] }, lists: [{ resource: "nodes", items: [{ metadata: { name: "n1" } }] }] };
+  const r = await send(inv);
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+  assert.equal((await owner.query(`SELECT count(*)::int AS n FROM agent_reports WHERE env_id = $1 AND kind = 'inventory'`, [E])).rows[0].n, 1);
+  const l = await fetch(`${base}${P}/environments/${E}/agent-reports?limit=100`, { headers: { "x-dev-tenant": T } });
+  assert.ok(!((await l.json()) as { items: Array<{ kind: string }> }).items.some((i) => i.kind === "inventory"));
+  assert.equal((await fetch(`${base}${P}/environments/${E}/agent-reports?kind=inventory`, { headers: { "x-dev-tenant": T } })).status, 400);
+});
+
 test("회사 벽: app_user 로 회사 표시 없이 agent_keys·agent_reports 직접 읽기 = 0줄, 키 찾기 함수는 됨", { skip }, async () => {
   const c = await core.pool.connect();
   try {

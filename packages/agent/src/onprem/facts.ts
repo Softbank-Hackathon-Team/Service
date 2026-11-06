@@ -4,7 +4,7 @@ import type { CollectBase } from "./collect.js";
 
 // W5: 온프레 보안 사실 (kind "facts"). 보안 판정이 온프레를 "모름" 대신 측정값으로 보게 한다 (ADR-005 D3)
 //   읽기만 한다 (get · auth can-i). 못 읽은 칸은 null 로 보낸다 (지어내지 않는다)
-//   grants.level: 노드 목록을 읽을 수 있으면 L1 (설치 차트 grants.cluster=true), 아니면 L0
+//   grants.level: 클러스터 바인딩 목록을 읽을 수 있으면 L1 (설치 차트 grants.cluster=true), 아니면 L0
 //   dbs: CloudNativePG Cluster 마다 TLS 강제·버전·인증 방식·바깥 노출
 export type FactsReport = Extract<AgentReport, { kind: "facts" }>;
 export type DbFact = FactsReport["dbs"][number];
@@ -88,7 +88,9 @@ export async function fetchEgressIp(url: string, o: { fetch?: typeof fetch; time
 export async function collectFacts(o: CollectBase & { sealingCert?: () => Promise<string>; egressIp?: () => Promise<string> }): Promise<FactsReport> {
   const sentAt = (o.now?.() ?? new Date()).toISOString();
   // kubectl auth can-i 는 "no" 면 0 이 아닌 코드로 끝난다 → 실패 = L0
-  const level = await o.kubectl(["auth", "can-i", "list", "nodes"]).then((s) => (s.trim() === "yes" ? "L1" : "L0"), () => "L0" as const);
+  // DRAFT(ai): L1 표시는 클러스터 바인딩 목록 읽기로 잰다 (L1 역할에만 있음). 예전 기준(노드 목록)은 인벤토리 역할(rbac.yaml grants.inventory,
+  //   온프레 출발 가져오기 discover 가 노드 목록을 꼭 읽는다)에도 들어가 L0 설치를 L1 로 잘못 보게 된다
+  const level = await o.kubectl(["auth", "can-i", "list", "clusterrolebindings.rbac.authorization.k8s.io"]).then((s) => (s.trim() === "yes" ? "L1" : "L0"), () => "L0" as const);
   let clusters: CnpgCluster[] = [];
   try { clusters = items<CnpgCluster>(await o.kubectl(["get", "clusters.postgresql.cnpg.io", "-A", "-o", "json"])); } catch { /* CNPG 가 없으면 DB 사실 없음 */ }
   let services: Service[] | null = null;

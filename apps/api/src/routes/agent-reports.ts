@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import {
-  AgentReportAccepted, AgentReportKinds, AgentReportList, ApiError, canTransition, envNumber,
+  AGENT_INVENTORY_MAX_BYTES, AgentReportAccepted, AgentReportList, AgentReportListKinds, ApiError, canTransition, envNumber,
   type AgentReport, type ConnectionStatus, type Provider,
 } from "@svc/contracts";
 import { advanceConnection, DomainError, pool, withTenant, type Tx } from "@svc/core";
@@ -29,7 +29,7 @@ export interface AgentReportStore {
   keys: AgentKeyRegistry;
   save(a: { tenantId: string; envId: string; keyId: string; signature: string; report: AgentReport }):
     Promise<{ id: string; receivedAt: string } | "replay">;
-  list(tenantId: string, envId: string, o: { limit: number; kind?: AgentReport["kind"] }): Promise<AgentReportList | null>;
+  list(tenantId: string, envId: string, o: { limit: number; kind?: Exclude<AgentReport["kind"], "inventory"> }): Promise<AgentReportList | null>;
 }
 
 export class AgentReportsDisabled extends DomainError {
@@ -119,7 +119,7 @@ export function pgAgentReportStore(env: NodeJS.ProcessEnv = process.env): AgentR
       const items = await tx.query(
         `SELECT id, kind, key_id AS "keyId", ${isoUtc("sent_at")} AS "sentAt", ${isoUtc("received_at")} AS "receivedAt",
                 migration_id AS "migrationId", body AS report
-           FROM agent_reports WHERE env_id = $1 AND ($2::text IS NULL OR kind = $2)
+           FROM agent_reports WHERE env_id = $1 AND ($2::text IS NULL OR kind = $2) AND kind <> 'inventory'
           ORDER BY received_at DESC, id LIMIT $3`, [envId, o.kind ?? null, o.limit]);
       const hb = await tx.query(
         `SELECT ${isoUtc("max(received_at)")} AS at, max(received_at) < now() - make_interval(secs => $2) AS stale
@@ -141,7 +141,9 @@ export function agentReportRoutesWith(store: AgentReportStore) {
     // 서명은 받은 글자 그대로에 건다 → 이 경로만 JSON 을 문자열로 받는다 (Fastify 는 플러그인마다 파서가 따로라 다른 경로는 그대로)
     await app.register(async (inner) => {
       inner.removeContentTypeParser("application/json");
-      inner.addContentTypeParser("application/json", { parseAs: "string", bodyLimit: 1024 * 1024 },
+      // inventory(온프레 출발 가져오기 스냅숏)는 수 MB 가 될 수 있다 → 계약 상한(AGENT_INVENTORY_MAX_BYTES)까지 받는다. 넘으면 Fastify 가 413
+      //   다른 종류는 계약의 개수·길이 상한이 본문을 묶는다
+      inner.addContentTypeParser("application/json", { parseAs: "string", bodyLimit: AGENT_INVENTORY_MAX_BYTES },
         (_req, body, done) => done(null, body));
       const r = inner.withTypeProvider<ZodTypeProvider>();
       r.post("/agent/reports", {
@@ -177,7 +179,8 @@ export function agentReportRoutesWith(store: AgentReportStore) {
       schema: {
         params: IdParam,
         querystring: z.object({
-          kind: AgentReportKinds.optional(),
+          // inventory 는 본문이 커서 목록에 싣지 않는다 (워커 가져오기만 읽는다)
+          kind: AgentReportListKinds.optional(),
           limit: z.coerce.number().int().min(1).max(100).default(20),
         }),
         response: { 200: AgentReportList, ...errors(400, 401, 404, 500) },

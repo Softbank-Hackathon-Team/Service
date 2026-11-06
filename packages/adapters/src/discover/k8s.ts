@@ -6,7 +6,7 @@ import { pickItem, type RawPick } from "../common/unread.js";
 // Z88: 쿠버네티스(EKS·GKE·k3s 공통) 앱 네임스페이스 읽기 (전부 get -o json).
 // 비밀값은 안 읽는다(secretKeyRef 이름만, Secret 객체는 안 봄)
 
-const SYSTEM_NS = /^(kube-|cnpg-system$|cert-manager$|argocd$|external-secrets$|ingress-nginx$|monitoring$|gmp-|gke-)/;
+export const SYSTEM_NS = /^(kube-|cnpg-system$|cert-manager$|argocd$|external-secrets$|ingress-nginx$|monitoring$|gmp-|gke-)/;
 type Obj = Record<string, unknown>;
 
 const meta = (o: Obj, k: "name" | "namespace") => str(get(o, "metadata", k)) ?? "";
@@ -135,6 +135,12 @@ const ESO = { es: "externalsecrets.external-secrets.io", store: "secretstores.ex
 //   HTTPRoute parentRefs.name 은 CRD 검사가 길이만 보고, api-resources 는 집계 API 서버가 아무 이름이나 낼 수 있다 → "--…" 이면 kubectl 옵션으로 읽힘
 export const K8S_NAME = /^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$/;
 export const CRD_READ_ELSEWHERE = new Set(["clusters.postgresql.cnpg.io", ...Object.values(GATEWAY_API), ...Object.values(ESO)]);
+/** N12·PF-A16: api-resources 이름 목록 → 이름만 읽는 앱 CRD 종류 (이름순). 온프레 Agent 인벤토리 스냅숏도 같은 규칙으로 고른다 (inventory-snapshot.ts) */
+export const appCrdResources = (all: readonly string[]): string[] =>
+  all.filter((x) => K8S_NAME.test(x) && x.includes(".") && !BUILTIN_GROUP.test(x.slice(x.indexOf(".") + 1)) && !CRD_READ_ELSEWHERE.has(x)).sort();
+/** 스냅숏이 Gateway API·ExternalSecret 종류를 discover 와 같은 이름으로 모으도록 내보낸다 */
+export const GATEWAY_API_RESOURCES: readonly string[] = Object.values(GATEWAY_API);
+export const ESO_RESOURCES: readonly string[] = Object.values(ESO);
 
 /** 실행 중 Pod 에서 컨테이너 이름이 같은 imageID 의 sha256.
  *  G3-4: 고른 파드들의 digest 가 여럿이면(롤링 중·바뀌는 태그) 가장 많은 것(같으면 글자순 앞)을 쓰고 review 에 이유를 남긴다.
@@ -529,7 +535,7 @@ export async function readK8sNamespace(d: CliDeps, kube: string[], opts: K8sName
   try {
     const all = String(await runText(d, "kubectl", ["api-resources", "--namespaced=true", "--verbs=list", "-o", "name", ...kube, "--request-timeout=15s"], extra)).split(/\s+/);
     gatewayKinds = new Set(all.filter((x) => (Object.values(GATEWAY_API) as string[]).includes(x)));
-    const names = all.filter((x) => K8S_NAME.test(x) && x.includes(".") && !BUILTIN_GROUP.test(x.slice(x.indexOf(".") + 1)) && !CRD_READ_ELSEWHERE.has(x)).sort();   // PF-A16
+    const names = appCrdResources(all);   // PF-A16
     for (const r of names) for (const ns of namespaces) {
       for (const o of await listIn(ns, `CRD ${r}`, r)) items.push({ kind: "k8s.crdObject", metadata: metaOf(o), resource: r } as RawK8sItem);
     }

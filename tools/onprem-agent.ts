@@ -4,7 +4,8 @@
 //   npm run agent:onprem -- facts                    W5: 보안 사실 (TLS 강제·DB 버전·바깥 노출·권한 단계)
 //   npm run agent:onprem -- deploys                  W4: 클러스터 안 Argo Application 이 끝났으면 deploy 보고 (app + 적용 커밋)
 //   npm run agent:onprem -- deploy --migration <uuid> --bundle <해시>
-//   npm run agent:onprem -- loop [--every 30]         heartbeat·deploys 30초마다 + security·facts 10번에 1번 (Ctrl+C 로 멈춤)
+//   npm run agent:onprem -- inventory                온프레 출발 가져오기 재료 (클러스터 범위 읽기 전용 목록 스냅숏, Secret 제외)
+//   npm run agent:onprem -- loop [--every 30]         heartbeat·deploys 30초마다 + security·facts·inventory 10번에 1번 (Ctrl+C 로 멈춤)
 //     deploys 는 앱마다 (커밋, 결과)가 바뀔 때만 보낸다
 //   SVC_ENROLL_TOKEN=<토큰> AGENT_REPORT_URL=<API> npm run agent:onprem -- --enroll [--out .agent-key.env]
 //     L6: 화면에서 받은 10분 일회용 토큰으로 Agent 키를 받아 --out 파일(권한 600)에 쓰고 heartbeat 한 번 보낸다
@@ -13,10 +14,11 @@
 //   선택: AGENT_NAMESPACE(app), AGENT_CNPG_CLUSTER(app-db), AGENT_KUBE_CONTEXT, AGENT_ARGOCD_NAMESPACE(argocd), AGENT_TENANT(svc.tenant 라벨로 거름)
 //         SEALING_CERT_URL(facts 에 실을 sealed-secrets 공개 인증서 주소, 기본 클러스터 안 sealed-secrets-controller.kube-system:8080)
 //         EGRESS_IP_URL(facts 에 실을 나가는 공인 IP 를 물을 주소, 기본 https://checkip.amazonaws.com, off = 안 물음)
+//         AGENT_INVENTORY(0 = loop 에서 inventory 를 안 보냄. 설치 차트 grants.inventory=false 와 같이 쓴다)
 // 출력: 보낼 때마다 JSON 한 줄 {kind, status, ok, body}
 import { chmodSync, writeFileSync } from "node:fs";
 import {
-  collectArgoDeploys, collectDeploy, collectFacts, collectHeartbeat, collectSecurity, DEFAULT_EGRESS_IP_URL, DEFAULT_SEALING_CERT_URL, fetchEgressIp, fetchSealingCert, kubectlExec,
+  collectArgoDeploys, collectDeploy, collectFacts, collectHeartbeat, collectInventory, collectSecurity, DEFAULT_EGRESS_IP_URL, DEFAULT_SEALING_CERT_URL, fetchEgressIp, fetchSealingCert, kubectlExec,
   sendAgentReport, type AgentReport,
 } from "@svc/agent";
 
@@ -40,6 +42,9 @@ const sealingCert = () => fetchSealingCert(process.env.SEALING_CERT_URL || DEFAU
 const egressUrl = process.env.EGRESS_IP_URL || DEFAULT_EGRESS_IP_URL;
 const egressIp = egressUrl === "off" ? undefined : () => fetchEgressIp(egressUrl);
 const facts = async () => send(await collectFacts({ ...base, sealingCert, ...(egressIp ? { egressIp } : {}) }));
+// 온프레 출발 가져오기 재료. 워커는 이 스냅숏이 600초(IMPORT_INVENTORY_MAX_AGE_SEC)보다 오래되면 가져오기를 멈춘다
+const inventory = async () => send(await collectInventory({ agentVersion: VERSION, context: process.env.AGENT_KUBE_CONTEXT || undefined }));
+const inventoryOn = process.env.AGENT_INVENTORY !== "0";
 // W4: 앱마다 마지막으로 보낸 (커밋, 결과). 같은 상태를 30초마다 다시 보내지 않는다 (재시작하면 한 번 다시 보낸다 = 해롭지 않음)
 const lastDeploy = new Map<string, string>();
 const deploys = async () => {
@@ -74,7 +79,7 @@ async function enroll(): Promise<boolean> {
   return heartbeat();
 }
 
-const USAGE = "사용: onprem-agent --enroll [--out 파일] | heartbeat | security | facts | deploys | deploy --migration <uuid> --bundle <해시> | loop [--every 초]";
+const USAGE = "사용: onprem-agent --enroll [--out 파일] | heartbeat | security | facts | inventory | deploys | deploy --migration <uuid> --bundle <해시> | loop [--every 초]";
 
 async function main(): Promise<boolean> {
   // W1: 이미지 빌드 스모크(CI)가 부른다. 환경변수·kubectl 없이 끝나야 한다
@@ -84,6 +89,7 @@ async function main(): Promise<boolean> {
     case "heartbeat": return heartbeat();
     case "security": return security();
     case "facts": return facts();
+    case "inventory": return inventory();
     case "deploys": return deploys();
     case "deploy": {
       const migrationId = opt("migration"), bundleHash = opt("bundle");
@@ -102,6 +108,8 @@ async function main(): Promise<boolean> {
         if (n++ % 10 === 0) {
           await security().catch((e) => console.error(JSON.stringify({ kind: "security", ok: false, error: (e as Error).message })));
           await facts().catch((e) => console.error(JSON.stringify({ kind: "facts", ok: false, error: (e as Error).message })));
+          // DRAFT(ai): facts 와 같은 주기 (기본 30초 × 10 = 5분). 워커 신선도 상한 600초 안에 두 번 보낸다
+          if (inventoryOn) await inventory().catch((e) => console.error(JSON.stringify({ kind: "inventory", ok: false, error: (e as Error).message })));
         }
         for (let w = 0; w < every && !stop; w += 500) await new Promise((r) => setTimeout(r, 500));
       }

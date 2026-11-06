@@ -38,7 +38,7 @@ test("이미지 태그 → 주 버전, 못 읽으면 null", () => {
 
 test("facts: L1 + DB 하나는 NodePort 로 노출, 하나는 ClusterIP 만 → 계약 모양 그대로", async () => {
   const r = await collectFacts({ agentVersion: "t", now, kubectl: kube({
-    "auth can-i list nodes": "yes\n",
+    "auth can-i list clusterrolebindings.rbac.authorization.k8s.io": "yes\n",
     "get clusters.postgresql.cnpg.io -A": { items: [cluster("app-shop", "shop-db"), cluster("app-blog", "blog-db", { postgresql: { pg_hba: ["hostnossl all all all reject"] } })] },
     "get services -A": { items: [
       { metadata: { namespace: "app-shop" }, spec: { type: "NodePort", selector: { "cnpg.io/cluster": "shop-db", role: "primary" } } },
@@ -54,13 +54,13 @@ test("facts: L1 + DB 하나는 NodePort 로 노출, 하나는 ClusterIP 만 → 
 
 test("facts: 권한이 없으면 L0, Service 를 못 읽으면 노출 null (지어내지 않는다), CNPG 가 없으면 DB 0개", async () => {
   const r = await collectFacts({ agentVersion: "t", now, kubectl: kube({
-    "auth can-i list nodes": new Error("no"),
+    "auth can-i list clusterrolebindings.rbac.authorization.k8s.io": new Error("no"),
     "get clusters.postgresql.cnpg.io -A": { items: [cluster("app-shop", "shop-db")] },
     "get services -A": new Error("forbidden"),
   }) });
   assert.equal(r.grants.level, "L0");
   assert.equal(r.dbs[0]!.exposed, null);
-  const none = await collectFacts({ agentVersion: "t", now, kubectl: kube({ "auth can-i list nodes": "no", "get services -A": { items: [] } }) });
+  const none = await collectFacts({ agentVersion: "t", now, kubectl: kube({ "auth can-i list clusterrolebindings.rbac.authorization.k8s.io": "no", "get services -A": { items: [] } }) });
   assert.deepEqual(none.dbs, []);
   assert.equal(none.grants.level, "L0");
 });
@@ -82,7 +82,7 @@ function testCert(keyArgs: string[]): string {
     return readFileSync(join(d, "c.pem"), "utf8");
   } finally { rmSync(d, { recursive: true, force: true }); }
 }
-const noKube = kube({ "auth can-i list nodes": "no", "get services -A": { items: [] } });
+const noKube = kube({ "auth can-i list clusterrolebindings.rbac.authorization.k8s.io": "no", "get services -A": { items: [] } });
 
 test("facts: 봉인 인증서(RSA)를 받으면 sealing 칸에 싣는다 (계약 통과)", { skip: noOpenssl }, async () => {
   const pem = testCert(["-newkey", "rsa:2048"]);

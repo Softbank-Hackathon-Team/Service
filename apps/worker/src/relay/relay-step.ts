@@ -81,7 +81,9 @@ export async function readRelayFacts(tx: Tx, tenantId: string, m: Pick<Migration
     // GCP 출발: selfLink 에 프로젝트가 없으면(nativeKey 꼴) 출발 환경의 프로젝트(account_id)
     if (src?.provider === "gcp") cloudSql = cloudSqlInstanceFromIds(ids, postgres[0]!.id, src.account_id);
   }
-  const egress = dst?.provider === "onprem" ? await latestOnpremEgressIp(tx, tenantId, m.targetEnvId, env) : undefined;
+  // 온프레의 나가는 IP (중계 SSH 22 를 이 /32 만 받는다): 온프레가 도착이든(aws-onprem) 출발이든(onprem-aws)
+  const egress = dst?.provider === "onprem" ? await latestOnpremEgressIp(tx, tenantId, m.targetEnvId, env)
+    : src?.provider === "onprem" ? await latestOnpremEgressIp(tx, tenantId, m.sourceEnvId, env) : undefined;
   return { sourceProvider: src?.provider ?? null, sourceRegion: src?.region ?? null, sourceExternalId: src?.external_id ?? null,
            targetProvider: dst?.provider ?? null, targetRegion: dst?.region ?? null, targetExternalId: dst?.external_id ?? null,
            postgres, rdsIdentifier, cloudSql, onpremEgressIp: egress?.ip ?? null,
@@ -114,13 +116,20 @@ export const RELAY_ROUTES: Readonly<Record<string, RelayKind>> = {
   "aws->gcp": "aws-gcp",
   // 중계기는 도착 AWS 계정에 (relay/gcp-aws.ts). 빌리는 역할 = 도착 실행 역할 (relayHome)
   "gcp->aws": "gcp-aws",
+  // ADR-031 R4: 온프레 출발 → AWS 도착. 중계기는 도착 계정에 (relay/onprem-aws.ts), 모양은 aws-onprem 과 같다
+  "onprem->aws": "onprem-aws",
 };
 /** 중계기가 사는 쪽 (그 쪽 환경의 실행 역할을 빌린다) */
-export const relayHome = (kind: RelayKind): "source" | "target" => (kind === "gcp-aws" ? "target" : "source");
+export const relayHome = (kind: RelayKind): "source" | "target" => (kind === "gcp-aws" || kind === "onprem-aws" ? "target" : "source");
 /** 중계기를 다루는 단계 역할 (security STEP_ROLES): 출발 계정이면 relay, 도착 계정이면 relay_target */
 export const relayRoleStep = (kind: RelayKind) => (relayHome(kind) === "target" ? "relay_target" as const : "relay" as const);
 export const relayKindOf = (sourceProvider: string | null, targetProvider: string | null): RelayKind | null =>
   RELAY_ROUTES[`${sourceProvider}->${targetProvider}`] ?? null;
+
+/** 보안 12번: 중계기 호스트 키를 중계기가 스스로 만들고 공개 키만 콘솔 출력으로 알린다 (개인 키가 user-data 에 안 남는다).
+ *  고객 연결 템플릿에 ec2:GetConsoleOutput(RelayReadOwnConsole)이 들어간 뒤에 켠다. 꺼져 있으면 예전처럼 플랫폼이 파생한 키를 user-data 로 넣는다
+ *  DRAFT(ai): 기본 끔 (이미 연결한 고객 계정의 CFN 이 갱신되기 전에 켜면 중계기 만들기가 AccessDenied 로 멈춘다) */
+export const hostKeyFromConsoleOn = (env: NodeJS.ProcessEnv) => env.RELAY_HOSTKEY_FROM_CONSOLE === "1";
 
 /** 중계기를 다룰 이전인가 (만들기·지우기 공통). 아니면 건너뛸 이유 */
 export function relayApplies(f: Pick<RelayFacts, "sourceProvider" | "sourceExternalId" | "targetProvider"> & Pick<Partial<RelayFacts>, "targetExternalId">,
@@ -268,10 +277,11 @@ export async function provisionRelayStep(j: Job, m: MigrationRow, deps: RelaySte
       subnetId = net.subnetId;
       const plan = buildRelayPlan({ kind: "aws-onprem", migrationId: j.migrationId, rds, network: net, ami, platformEgressCidrs: g.platformCidrs, onpremEgressIp: g.egressIp,
         tunnelPublicKey: deriveSshKeypair(g.masterKey, j.tenantId, j.migrationId).publicKeyLine,
-        hostKey: deriveSshHostKey(g.masterKey, j.tenantId, j.migrationId) });
+        hostKey: hostKeyFromConsoleOn(env) ? null : deriveSshHostKey(g.masterKey, j.tenantId, j.migrationId) });
       res = await provisionRelay(d, plan);
     } catch (e) { return relayFailure(e, { rdsIdentifier: g.identifier }); }
-    const knownHosts = knownHostsLine(res.publicIp, deriveSshHostKey(g.masterKey, j.tenantId, j.migrationId).publicKeyLine);
+    const hostPub = res.hostPublicKey ?? deriveSshHostKey(g.masterKey, j.tenantId, j.migrationId).publicKeyLine;
+    const knownHosts = knownHostsLine(res.publicIp, hostPub);
     const rows = relayEndpointRows({ tenantId: j.tenantId, migrationId: j.migrationId, sourceEnvId: m.sourceEnvId, rds, db: g.db, appUser: g.user,
       publicIp: res.publicIp, privateIp: res.privateIp, knownHosts, existing: facts.existing });
     await (deps.save ?? ((r) => withTenant(j.tenantId, async (tx) => { for (const x of r) await upsertReplicationEndpoint(tx, x); })))(rows);

@@ -4,6 +4,7 @@ export * from "./onprem/report.js";
 export * from "./onprem/collect.js";
 export * from "./onprem/facts.js";
 export * from "./onprem/deploys.js";
+export * from "./onprem/inventory.js";
 export * from "./onprem/sender.js";
 export * from "./onprem/stub-agent.js";
 // AI 에이전트 루프 (agent-worker 가 쓴다)

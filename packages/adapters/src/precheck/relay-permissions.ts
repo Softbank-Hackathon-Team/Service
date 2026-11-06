@@ -19,6 +19,7 @@ export const RELAY_ACTIONS = [
   "ec2:DescribeSecurityGroups",
   "ec2:DescribeSubnets",
   "ec2:DescribeVpcs",                   // VPC 대역
+  "ec2:GetConsoleOutput",               // 보안 12번: 중계기가 스스로 만든 호스트 공개 키를 콘솔 출력에서 읽는다 (RELAY_HOSTKEY_FROM_CONSOLE=1 일 때만 부른다)
   "ec2:RevokeSecurityGroupEgress",      // 새 SG 기본 나가기 전부 허용 빼기, 정리 때 RDS 나가기 규칙 빼기
   "ec2:RevokeSecurityGroupIngress",     // 온프레 나가는 IP 가 바뀌면 옛 22 규칙 빼기, 정리 때 RDS 들어오기 규칙 빼기
   "ec2:RunInstances",
@@ -46,7 +47,9 @@ export const RELAY_PERM_FIX = "연결 스택을 지금 템플릿(infra/onboardin
  *  DRAFT(ai): 빠진 동작이 있어도 WARN (막지 않음). 흉내 평가는 자원 ARN 을 "*" 로 보고 조건 값을 우리가 넣은 것으로만 평가해,
  *    자원별 문(ARN 지정)을 실제와 다르게 볼 수 있다 【미확인】. 실제로 빠졌으면 apply 가 RELAY_PROVISION_FAILED(권한 없음)로 멈춘다
  *  TODO(human): 빠진 동작을 block(명세 검토로 되돌림)으로 올릴지 */
-export function relayPermVerdict(r: { code: number; stderr: string; json?: unknown }, roleArn: string): CloudCheck {
+/** 콘솔로 호스트 키 읽기 동작. RELAY_HOSTKEY_FROM_CONSOLE=1 일 때만 필요하다 (꺼져 있으면 빠져도 중계기는 만들어진다) */
+export const RELAY_CONSOLE_ACTION = "ec2:GetConsoleOutput";
+export function relayPermVerdict(r: { code: number; stderr: string; json?: unknown }, roleArn: string, o: { consoleRequired?: boolean } = {}): CloudCheck {
   const id = "PC-RELAY-PERM", side = "source" as const, item = "출발 실행 역할 중계기 권한";
   const all = RELAY_ACTIONS.join(", ");
   if (r.code !== 0) {
@@ -57,7 +60,10 @@ export function relayPermVerdict(r: { code: number; stderr: string; json?: unkno
   }
   const res = ((r.json as { EvaluationResults?: { EvalActionName?: string; EvalDecision?: string }[] })?.EvaluationResults ?? []);
   const allowed = new Set(res.filter((x) => x.EvalDecision === "allowed").map((x) => x.EvalActionName));
-  const missing = RELAY_ACTIONS.filter((a) => !allowed.has(a));
+  const all0 = RELAY_ACTIONS.filter((a) => !allowed.has(a));
+  const missing = o.consoleRequired ? all0 : all0.filter((a) => a !== RELAY_CONSOLE_ACTION);
+  if (!missing.length && all0.length) return { id, side, item, verdict: "PASS",
+    reason: `${roleArn.split(":").pop()} 에 중계기 동작 허용 (흉내 평가). ${RELAY_CONSOLE_ACTION} 은 없음 — 호스트 키를 콘솔로 읽는 방식(RELAY_HOSTKEY_FROM_CONSOLE=1)을 켜기 전에 연결 템플릿 갱신 필요`, fix: RELAY_PERM_FIX };
   if (!missing.length) return { id, side, item, verdict: "PASS", reason: `${roleArn.split(":").pop()} 에 중계기 동작 ${RELAY_ACTIONS.length}개 허용 (흉내 평가)` };
   return { id, side, item, verdict: "WARN", reason: `빠진 동작 ${missing.length}개: ${missing.join(", ")} — 이대로면 apply 가 중계기를 못 만든다`, fix: RELAY_PERM_FIX };
 }

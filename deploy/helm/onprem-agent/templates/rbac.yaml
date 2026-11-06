@@ -1,5 +1,6 @@
 {{- include "oa.required" . }}
-# 권한 단계 (ADR-005 D3). 쓰기 동사(create·update·patch·delete)는 어디에도 없다. Secret·ConfigMap 은 읽지 않는다
+# 권한 단계 (ADR-005 D3). 쓰기 동사(create·update·patch·delete)는 어디에도 없다. Secret 은 읽지 않는다
+#   ConfigMap 은 L0 에서 읽지 않고, 온프레 출발 가져오기 역할(grants.inventory, 아래)에서만 읽는다
 # DRAFT(ai): L0 을 클러스터 범위로 묶는다. 앱 네임스페이스(app-<앱>)는 설치 뒤 git 이 만들어서 설치 때 네임스페이스별 RoleBinding 을
 #   미리 둘 수 없고, git 으로 RoleBinding 을 만들게 하면 AppProject 가 RBAC 를 열어야 한다(더 위험). 대신 종류를 좁힌다
 apiVersion: rbac.authorization.k8s.io/v1
@@ -35,6 +36,48 @@ metadata:
 roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: svc-onprem-agent-l0 }
 subjects:
   - { kind: ServiceAccount, name: onprem-agent, namespace: {{ .Release.Namespace }} }
+{{- if .Values.grants.inventory }}
+---
+# 온프레 출발 가져오기 (Agent 인벤토리 스냅숏, contracts AgentInventorySnapshot). pull 모드에서 플랫폼은 클러스터에 들어올 길이 없어
+#   Agent 가 가져오기 discover 와 같은 종류를 클러스터 범위로 읽어 밖으로 보낸다 (packages/adapters/src/discover/inventory-snapshot.ts)
+#   L0 에 없는 것만 더한다. 왜 각각 필요한가:
+#   - configmaps: 앱 설정 값을 공통 명세로 옮긴다 (discover N3 이 data 값까지 읽음). Secret 은 여기에도 없다 (설치 확인이 막힘을 본다)
+#   - serviceaccounts: 앱 신원 이름·주석. ingresses: 앱 입구 (호스트·경로)
+#   - cronjobs·jobs: 일회성·정기 작업. horizontalpodautoscalers: 자동 확장. poddisruptionbudgets: 중단 예산
+#   - nodes: 가져오기가 첫 단계에서 클러스터 닿음 확인으로 노드 목록을 읽는다 (못 읽으면 가져오기가 멈춤). 그래서 facts 의 L1 판단은 노드 대신 바인딩 읽기로 잰다
+#   RBAC(roles·rolebindings·clusterrolebindings)·앱 CRD·Gateway API·ExternalSecret 은 더하지 않는다 → 가져오기에 "못 읽음" 검토 줄로 남는다 (L1 이면 바인딩은 읽힘)
+# DRAFT(ai): 기본 켬 (values grants.inventory). 끄면 온프레를 출발로 가져오기를 할 수 없다
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: svc-onprem-agent-inventory
+  labels: {{- include "oa.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps", "serviceaccounts", "nodes"]
+    verbs: ["get", "list"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get", "list"]
+  - apiGroups: ["batch"]
+    resources: ["cronjobs", "jobs"]
+    verbs: ["get", "list"]
+  - apiGroups: ["autoscaling"]
+    resources: ["horizontalpodautoscalers"]
+    verbs: ["get", "list"]
+  - apiGroups: ["policy"]
+    resources: ["poddisruptionbudgets"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: svc-onprem-agent-inventory
+  labels: {{- include "oa.labels" . | nindent 4 }}
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: svc-onprem-agent-inventory }
+subjects:
+  - { kind: ServiceAccount, name: onprem-agent, namespace: {{ .Release.Namespace }} }
+{{- end }}
 {{- if .Values.grants.cluster }}
 ---
 # L1 (고객 선택): 클러스터 보안 사실(노드, 남은 cluster-admin 바인딩, Kyverno 정책)을 읽는다

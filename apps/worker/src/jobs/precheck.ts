@@ -53,9 +53,11 @@ async function envInfo(tenantId: string, m: MigrationRow, env: NodeJS.ProcessEnv
     };
     const target = one(m.targetEnvId, "target");
     // pull 모드(ONPREM_FLOOR_VIA_GIT≠0, apply.ts 와 같은 기준)면 워커가 고객 클러스터에 kubectl 로 못 붙는다 → Agent 하트비트로 점검
-    //   출발 온프레는 그대로 (가져오기가 kubectl 로 읽는 경로라 점검도 같은 길을 본다)
+    //   출발 온프레도 pull 이면 같다 (가져오기는 Agent 재고 보고, 배달은 출발 묶음 + Agent 반영 보고 — 워커가 출발 클러스터에 안 붙는다, ADR-031)
     if (target.provider === "onprem" && env.ONPREM_FLOOR_VIA_GIT !== "0") target.agent = await onpremAgentInfo(tx, m.targetEnvId, env);
-    return { source: one(m.sourceEnvId, "source"), target };
+    const source = one(m.sourceEnvId, "source");
+    if (source.provider === "onprem" && env.ONPREM_FLOOR_VIA_GIT !== "0") source.agent = await onpremAgentInfo(tx, m.sourceEnvId, env);
+    return { source, target };
   });
 }
 
@@ -99,7 +101,7 @@ export async function realPrecheck(tenantId: string, m: MigrationRow, deps: Part
   const relayFacts = { sourceProvider: envs.source.provider, sourceExternalId: envs.source.externalId ?? null, targetProvider: envs.target.provider,
                        targetExternalId: envs.target.externalId ?? null };
   const relayDeferred = relayApplies(relayFacts, env) === null
-    && (relayKindOf(relayFacts.sourceProvider, relayFacts.targetProvider) !== "aws-onprem" || env.ONPREM_FLOOR_VIA_GIT !== "0");
+    && (!["aws-onprem", "onprem-aws"].includes(relayKindOf(relayFacts.sourceProvider, relayFacts.targetProvider) ?? "") || env.ONPREM_FLOOR_VIA_GIT !== "0");
   // 이 이전의 끝점 줄이 있으면 sync 는 env 가 아니라 그 줄로 붙는다 (_repl.ts) → env 주소로 출발 DB 를 보지 않는다
   const endpointRows = (await withTenant(tenantId, (tx) => replicationEndpointsFor(tx, m.id))).some((r) => r.tenantId === tenantId);
   const [db, repl, runtime] = await Promise.all([sourceDbFacts(endpointRows ? {} : env), replSourcePrecheck(env, { required, relayDeferred, endpointRows }), specRuntime(tenantId, m.id)]);

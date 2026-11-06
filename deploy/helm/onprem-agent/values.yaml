@@ -37,6 +37,9 @@ agent:
 grants:
   # L1: 클러스터 범위 읽기 허용 목록 (노드, 바인딩, Kyverno 정책 등). 기본 끔
   cluster: false
+  # 온프레 출발 가져오기: Agent 가 인벤토리 스냅숏(ConfigMap 값 포함, Secret 제외)을 읽어 보낸다 (rbac.yaml 의 svc-onprem-agent-inventory)
+  # DRAFT(ai): 기본 켬. 끄면 Agent 도 inventory 를 안 보내고(AGENT_INVENTORY=0), 이 환경을 출발로 가져오기는 "스냅숏 없음"으로 멈춘다
+  inventory: true
 
 # 트래픽 판정 지표 수집기 (#245). 도착 앱 cloudflared 의 상태 코드별 응답 수를 긁어 플랫폼 지표 주소로 보낸다.
 #   endpoint 를 비우면 안 만든다. 토큰은 이 회사 환경의 지표 토큰 하나 (콘솔·API POST /api/v1/environments/:id/metric-token).
