@@ -100,7 +100,7 @@ test("보기: 제 회사는 목록·lastHeartbeatAt, 남의 회사 헤더는 404
   assert.equal(o.status, 404);
 });
 
-test("inventory: 서명 POST → 201 + DB CHECK(0057) 통과, 받은 보고 목록에는 안 실림 · kind=inventory 질의는 400", { skip }, async () => {
+test("inventory: 서명 POST → 201 + DB CHECK(0058) 통과, 받은 보고 목록에는 안 실림 · kind=inventory 질의는 400", { skip }, async () => {
   const inv: AgentReport = { kind: "inventory", agentVersion: "t", sentAt: new Date().toISOString(), collectedAt: new Date().toISOString(),
     apiResources: { names: [] }, lists: [{ resource: "nodes", items: [{ metadata: { name: "n1" } }] }] };
   const r = await send(inv);

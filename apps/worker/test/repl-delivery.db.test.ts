@@ -165,7 +165,7 @@ test("배포 단계 거부: 봉인 인증서 없음 → paused SEALING_CERT_MISS
   assert.deepEqual(rows.map((x) => [x.peerHost, x.caPem, x.sslmode]), [[null, null, "require"], ["10.0.1.20", null, "require"]]);
 });
 
-// ADR-031 R4 (db 0056): 온프레 → 클라우드면 중계기 칸·봉인 값이 출발(cnpg) 줄에 붙는다. 되쓰기는 출발 줄 + 상대(도착) peer
+// ADR-031 R4 (db 0057): 온프레 → 클라우드면 중계기 칸·봉인 값이 출발(cnpg) 줄에 붙는다. 되쓰기는 출발 줄 + 상대(도착) peer
 test("온프레 출발: cnpg 출발 줄에 중계기 칸 저장 가능(출발 rds 줄은 여전히 거부), 되쓰기(onpremSide=source)는 출발 줄 CA·verify-full, 도착 줄 peer", { skip }, async () => {
   const { id: M } = await seed(T);
   const src = ep(T, M, "source", { provider: "cnpg", host: "203.0.113.7", username: "svc_migrate", passwordRef: "derive:migrate", peerHost: "10.0.1.20", peerPort: 5432,

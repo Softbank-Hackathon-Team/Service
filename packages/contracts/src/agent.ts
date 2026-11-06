@@ -91,7 +91,7 @@ export const AgentReport = z.discriminatedUnion("kind", [
 ]);
 export type AgentReport = z.infer<typeof AgentReport>;
 export type AgentReportKind = AgentReport["kind"];
-// 보고 종류 목록 한 곳 (받음 응답·목록 화면·API 질의·DB CHECK 0047·0057 이 같은 값을 쓴다)
+// 보고 종류 목록 한 곳 (받음 응답·목록 화면·API 질의·DB CHECK 0047·0058 이 같은 값을 쓴다)
 export const AgentReportKinds = z.enum(["security", "deploy", "heartbeat", "facts", "inventory"]);
 // 받은 보고 목록(GET agent-reports)에서 고를 수 있는 종류. inventory 는 본문이 수 MB 라 목록에 싣지 않는다 (워커 가져오기만 읽는다)
 export const AgentReportListKinds = AgentReportKinds.exclude(["inventory"]);
