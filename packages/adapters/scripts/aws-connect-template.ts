@@ -7,6 +7,7 @@ import { AWS_DATA_READ_ACTIONS } from "../src/discover/data.js";
 import { AWS_COMMAND_ACTIONS, actionsOfCommands } from "../src/common/observe-permissions.js";
 import { AWS_OBSERVE_PENDING } from "../src/common/observe-pending.js";
 import { sourceDbLinkOperatePolicy } from "../src/aws/source-db-link.js";
+import { AWS_PERMCHECK_ACTIONS, PERMISSIONS_VERSION } from "../src/permissions/bundles.js";
 
 // 온프레 복제 중계기 권한. 원본 = infra/permissions/aws-relay-statements.json (worker relay/aws-relay.ts 가 부르는 동작)
 // SourceDbEgressToRelay 는 출발 RDS 보안 그룹 하나로 좁혀서 스택 매개변수 SourceDbSecurityGroupId 로 받는다 (나가기: 롤백 역복제, 들어오기: 워커 출발 입구·온프레 정방향 터널).
@@ -41,6 +42,10 @@ export function relayOperatePolicy() {
 }
 
 type Json = Record<string, unknown>;
+
+// PERM-GATE: 이 템플릿의 권한 판. 관찰 역할이 iam:GetRole 로 두 역할의 태그를 읽어 고객 스택이 몇 판인지 본다 (실제 허용 여부는 흉내 평가가 본다)
+export const PERMS_VERSION_TAG = "platform-perms-version";
+const PERMS_TAGS = [{ Key: PERMS_VERSION_TAG, Value: String(PERMISSIONS_VERSION) }];
 
 // DRAFT(ai): 역할 이름 고정. worker/src/platform.ts resolveEnv가 이 이름으로 ARN을 조립한다
 export const OBSERVE_ROLE_NAME = "svc-observe";
@@ -157,7 +162,13 @@ export function buildAwsConnectTemplate(operatePolicy: Json, boundaryPolicy: Jso
           Policies: [{
             PolicyName: "observe-extra",
             PolicyDocument: { Version: "2012-10-17", Statement: [{ Effect: "Allow", Action: OBSERVE_EXTRA_ACTIONS, Resource: "*" }] },
+          }, {
+            // PERM-GATE: 사전 점검·환경 권한 확인이 실행 역할(svc-operate)·자기 정책을 흉내 평가한다 (읽기, 자원을 바꾸지 않음). 이 계정의 svc-* 역할에만
+            PolicyName: "observe-permcheck",
+            PolicyDocument: { Version: "2012-10-17", Statement: [{ Effect: "Allow", Action: [...AWS_PERMCHECK_ACTIONS],
+              Resource: { "Fn::Join": ["", ["arn:aws:iam::", { Ref: "AWS::AccountId" }, ":role/svc-*"]] } }] },
           }],
+          Tags: PERMS_TAGS,
         },
       },
       OperateRole: {
@@ -165,6 +176,7 @@ export function buildAwsConnectTemplate(operatePolicy: Json, boundaryPolicy: Jso
         Properties: {
           RoleName: OPERATE_ROLE_NAME, MaxSessionDuration: 3600,
           AssumeRolePolicyDocument: trust(),
+          Tags: PERMS_TAGS,
           ManagedPolicyArns: [{ Ref: "OperatePolicy" }],
           // APP-22 (가): 출발 RDS 보안 그룹에 도착 나가는 IP 규칙 열기·닫기. 표시 태그(svc:source-db-link=open)가 붙은 그룹에서만.
           //   관리형 정책(svc-operate-policy)은 6,144자 한도에 거의 차서 인라인으로 (역할과 같이 지워짐 → cloud-zero 세기 바뀜 없음)

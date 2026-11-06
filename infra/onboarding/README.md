@@ -87,7 +87,7 @@ GCP→AWS 이전의 도착은 그래서 이미 연결한 그 AWS 환경 줄을 �
 | `svc-plan`·`svc-operate` SA | 전용 프로젝트 | 계획(읽기)·실행. 권한은 전용 프로젝트 안에서만 |
 | `svc-env` SA (B-2) | 전용 프로젝트 | 환경 층(`infra/modules/gcp/env`: VPC·NAT·GKE·Artifact Registry·클러스터 안 ESO 설치) 만들기만. 플랫폼은 환경 층 단계에서만 빌린다. 지우기·IAM 정책 바꾸기 권한 없음 |
 | `svc-gke-node` SA (B-2) | 전용 프로젝트 | GKE 노드 SA (기본 Compute SA 대신). `roles/logging.logWriter`·`roles/monitoring.metricWriter`·`roles/artifactregistry.reader` 만. 플랫폼은 빌리지 않는다 |
-| 커스텀 역할 | 원래: `platform_observe`·`platform_observe_verify` / 전용: 그 둘 + `platform_plan`·`platform_operate`·`platform_operate_iam`·`platform_operate_db_secret`·`platform_env`(B-2)·`platform_hub_access`(회사 SA 에 `container.clusters.get` 만. Argo CD 허브의 GKE 접속용) | 권한 목록은 `infra/permissions`의 자동 생성 파일. `platform_observe`는 객체 내용·메시지·비밀값 권한 없음 |
+| 커스텀 역할 | 원래: `platform_observe`·`platform_observe_verify` / 전용: 그 둘 + `platform_observe_permcheck`(관찰 SA 가 플랫폼 역할 정의만 읽는 `iam.roles.get`, PERM-GATE) + `platform_plan`·`platform_operate`·`platform_operate_iam`·`platform_operate_db_secret`·`platform_env`(B-2)·`platform_hub_access`(회사 SA 에 `container.clusters.get` 만. Argo CD 허브의 GKE 접속용) | 권한 목록은 `infra/permissions`의 자동 생성 파일. `platform_observe`는 객체 내용·메시지·비밀값 권한 없음 |
 | 조건부 바인딩 | 전용 프로젝트 | 실행 SA의 IAM 정책 변경(`_iam`)·DB 비밀(`_db_secret`)은 `app-` 접두어 SA·시크릿에만 닿는 조건 (DRAFT(ai)) |
 | 노드 SA 붙이기 (B-2) | SA 단위 | `svc-gke-node` 자신의 정책에만 `svc-env` → `roles/iam.serviceAccountUser`(actAs). 프로젝트 전체 actAs 없음 (`permissions-lint` 가 DRY_RUN 출력으로 확인) |
 | 빌리기 허용 | SA 단위 | 플랫폼의 **이 회사 전용 SA**(`t-<16진 28자>@...`) 하나에게, 네 고객 SA(`svc-observe`·`svc-plan`·`svc-operate`·`svc-env`) 각각에 `roles/iam.serviceAccountTokenCreator` (프로젝트 전체가 아님) |
@@ -113,6 +113,14 @@ gcloud iam roles update platform_operate --project=<전용> --add-permissions=ar
 전용 프로젝트에는 연결 확인·빌리기·첫 up 이 부르는 API 9개(cloudresourcemanager·serviceusage·iam·iamcredentials·sts·container·sqladmin·compute·secretmanager)를, 원래 프로젝트에는 iamcredentials·cloudresourcemanager 를 켠다(켜져 있으면 건너뜀).
 `DRY_RUN=1`이면 명령만 출력한다. `PLATFORM_SA` 이름 규칙이 맞지 않거나 `TARGET_PROJECT_ID`가 없거나 원래 프로젝트와 같으면 아무것도 만들기 전에 멈춘다.
 
+### 권한 갱신: 빠진 묶음만 맞추기 (PERM-GATE, `ONLY_BUNDLES`)
+플랫폼은 단계 전에(사전 점검, 환경 화면 [다시 확인]) 고객 쪽 실제 상태를 관찰 역할로 읽어 **권한 묶음**(`infra/permissions/permission-bundles.json`, 권한표에서 자동 생성)과 견준다.
+빠진 묶음이 있으면 화면이 고치는 링크를 준다.
+- GCP: 연결과 같은 Cloud Shell 링크 + 명령에 `ONLY_BUNDLES=<묶음 id,…>`. 스크립트는 그 묶음의 역할에 **빠진 권한만 더하고**(있는 권한·고객이 따로 넣은 권한은 그대로), 그 역할 바인딩·그 묶음 API·빌리기 허용만 맞춘 뒤 끝난다. 실행 역할(`platform_operate`·`platform_env` …)도 이 모드에서만 더한다 (고객이 그 묶음을 골라 실행했으므로). 다시 돌리면 바꾸는 명령 0번
+- 묶음 표: `infra/permissions/gcp-bundles.tsv` (첫 줄 `#version<TAB>N` = 권한 판). 새로 만드는 역할 설명 끝과 묶음 모드가 맞춘 역할 설명 끝에 `[perms vN]` 이 붙어 관찰 SA 가 고객 쪽 판을 읽는다
+- AWS: 같은 연결 스택을 새 템플릿 판으로 업데이트한다 (콘솔 링크 또는 `aws cloudformation update-stack … UsePreviousValue=true`, 매개변수는 스택에 있는 값 그대로). 템플릿의 두 역할에 `platform-perms-version` 태그
+- 확인에 쓰는 관찰 권한: GCP `platform_observe_permcheck`(`iam.roles.get`, 전용 프로젝트만), AWS 인라인 `observe-permcheck`(`iam:SimulatePrincipalPolicy`, 이 계정 `svc-*` 역할만). 없으면 막지 않고 "확인 못 함"으로 알린다
+
 ### 이미 연결한 고객: 관찰 역할 권한 갱신
 플랫폼이 읽는 자원이 늘면 관찰 역할(`platform_observe`)에 읽기 권한이 더 필요하다. 예전 스크립트로 만든 고객의 역할에는 새 권한이 없다.
 - 갱신 방법: 고객이 **같은 스크립트를 같은 값으로 다시 실행**한다. 스크립트가 `platform_observe` 의 권한 목록을 읽어 **빠진 권한만 더한다**(`gcloud iam roles update ... --add-permissions`). 있는 권한은 지우지 않고, 고객이 따로 넣은 권한도 그대로 둔다. 최신이면 `= 역할 platform_observe 권한 최신` 만 나오고 바꾸는 명령은 0번이다
@@ -135,7 +143,7 @@ GCP (Cloud Shell, 원래·전용 프로젝트 각각). `<플랫폼 SA>`는 연�
    - `gcloud iam service-accounts remove-iam-policy-binding svc-observe@<원래>.iam.gserviceaccount.com --project <원래> --member=serviceAccount:<플랫폼 SA> --role=roles/iam.serviceAccountTokenCreator`
    - 같은 명령을 `svc-plan@<전용>…`·`svc-operate@<전용>…`·`svc-env@<전용>…` 에 `--project <전용>` 으로
 2. SA 지우기: `gcloud iam service-accounts delete svc-observe@<원래>.iam.gserviceaccount.com --project <원래> --quiet`, `svc-plan`·`svc-operate`·`svc-env`·`svc-gke-node` 는 `--project <전용>` (환경 층 GKE 를 먼저 지운다. 노드가 `svc-gke-node` 로 돈다)
-3. 커스텀 역할 지우기: 원래 `platform_observe`·`platform_observe_verify`, 전용 그 둘 + `platform_plan`·`platform_operate`·`platform_operate_iam`·`platform_operate_db_secret`·`platform_env`·`platform_hub_access`
+3. 커스텀 역할 지우기: 원래 `platform_observe`·`platform_observe_verify`, 전용 그 둘 + `platform_observe_permcheck`·`platform_plan`·`platform_operate`·`platform_operate_iam`·`platform_operate_db_secret`·`platform_env`·`platform_hub_access`
    - `gcloud iam roles delete <역할> --project <프로젝트> --quiet` (지운 역할은 7일 안에 되살릴 수 있고 그동안 같은 이름으로 못 만든다)
    - SA 를 지우면 프로젝트 바인딩은 `deleted:` 로 남는다. 깨끗이 하려면 `gcloud projects remove-iam-policy-binding <프로젝트> --member=deleted:serviceAccount:… --role=projects/<프로젝트>/roles/<역할> --all`
 4. 전용 프로젝트를 이전 전용으로만 썼다면 프로젝트째 끄기: `gcloud projects delete <전용>` (30일 안에 되살릴 수 있음)
