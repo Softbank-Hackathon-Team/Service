@@ -114,7 +114,7 @@ test("지표가 꺼진 배포(TRAFFIC_METRICS_ENDPOINT 없음)는 svc-metric-tok
   const cli = fakeCli();
   const log: string[] = [];
   setSecretValueExec(cli.exec);
-  setIngressSecretSources({ tunnel: async () => TUNNEL, metric: fakeMetric(log) });
+  setIngressSecretSources({ tunnel: async () => TUNNEL, metric: fakeMetric(log), audit: async () => {} });
   try {
     const r = await ingressSecretFill(job, mig, input("gcp"));
     assert.deepEqual(r?.filled, ["cloudflared-token"]);
@@ -167,6 +167,53 @@ test("지표 토큰 자동 발급 스위치: METRIC_TOKEN_AUTOFILL=1 일 때만 
   assert.deepEqual(r.filled, ["svc-metric-token"]);
   assert.deepEqual(log, ["issue", "committed"]);
   noToken(r);
+});
+
+test("터널 그릇을 채우면 감사 1건 (이름만, 토큰 원문·원격 키 없음). 이미 값이 있으면 감사 0건", async () => {
+  const saved = process.env.TRAFFIC_METRICS_ENDPOINT;
+  delete process.env.TRAFFIC_METRICS_ENDPOINT;
+  const i = input("gcp");
+  const tunnelKey = keysOf(i).find((k) => k.endsWith("cloudflared-token"))!;
+  const audits: Array<{ tenantId: string; a: unknown }> = [];
+  const cli = fakeCli();
+  setSecretValueExec(cli.exec);
+  setIngressSecretSources({ tunnel: async () => TUNNEL, audit: async (tenantId, a) => { audits.push({ tenantId, a }); } });
+  try {
+    const r = await ingressSecretFill(job, mig, i);
+    assert.deepEqual(r?.filled, ["cloudflared-token"]);
+    assert.equal(audits.length, 1);
+    assert.equal(audits[0]!.tenantId, job.tenantId);
+    assert.deepEqual(audits[0]!.a, { actor: "worker", action: "env.tunnel_token_filled", target: mig.targetEnvId, result: "ok",
+      detail: { by: "deploy", migrationId: job.migrationId, secret: "cloudflared-token" } });
+    noToken(audits);
+    assert.ok(!JSON.stringify(audits).includes(tunnelKey), "원격 키(회사 번호 포함)는 감사에 없다");
+    // 같은 그릇이 이제 찼다 → 다시 돌면 has_value, 감사 0건 추가
+    const r2 = await ingressSecretFill(job, mig, i);
+    assert.deepEqual(r2?.filled, []);
+    assert.ok(r2?.skipped.some((x) => x.name === "cloudflared-token" && x.why === "has_value"));
+    assert.equal(audits.length, 1);
+  } finally {
+    setSecretValueExec(undefined); setIngressSecretSources(undefined);
+    if (saved === undefined) delete process.env.TRAFFIC_METRICS_ENDPOINT; else process.env.TRAFFIC_METRICS_ENDPOINT = saved;
+  }
+});
+
+test("터널 채우기 감사 쓰기가 실패하면 그 이름을 failed 로 돌린다 (→ paused). 오류에 토큰 원문 없음", async () => {
+  const saved = process.env.TRAFFIC_METRICS_ENDPOINT;
+  delete process.env.TRAFFIC_METRICS_ENDPOINT;
+  setSecretValueExec(fakeCli().exec);
+  setIngressSecretSources({ tunnel: async () => TUNNEL, audit: async () => { throw new Error(`db down ${TUNNEL}`); } });
+  try {
+    const r = await ingressSecretFill(job, mig, input("gcp"));
+    assert.deepEqual(r?.filled, []);
+    assert.equal(r?.failed.length, 1);
+    assert.equal(r?.failed[0]!.name, "cloudflared-token");
+    assert.match(r!.failed[0]!.error, /감사 기록 실패/);
+    noToken(r);
+  } finally {
+    setSecretValueExec(undefined); setIngressSecretSources(undefined);
+    if (saved === undefined) delete process.env.TRAFFIC_METRICS_ENDPOINT; else process.env.TRAFFIC_METRICS_ENDPOINT = saved;
+  }
 });
 
 test("상태를 못 읽은 그릇은 건너뛰고(뒤 검사가 판정), 쓰기 실패면 failed + 원문 없는 오류. 지표 발급도 되돌린다", async () => {

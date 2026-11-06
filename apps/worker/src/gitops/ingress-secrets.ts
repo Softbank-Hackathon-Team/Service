@@ -12,7 +12,7 @@ import { scrubString, withTenant, writeAudit } from "@svc/core";
 import { checkSecretValues } from "./secret-values.js";
 
 // 차트가 읽는 입구 비밀 이름 (packages/adapters/src/target/cloud.ts TUNNEL_SECRET·METRIC_SECRET 과 같다)
-const TUNNEL_SECRET = "cloudflared-token";
+export const TUNNEL_SECRET = "cloudflared-token";
 const METRIC_SECRET = "svc-metric-token";
 const INGRESS_SECRETS: readonly string[] = [TUNNEL_SECRET, METRIC_SECRET];
 const CLI_TIMEOUT_MS = 30_000;
