@@ -17,6 +17,7 @@
 {{- fail "sandbox.rehearsal.enabled 는 sandbox.enabled 와 같이 켠다 (리허설은 sandbox 노드·호스트 가드·agent-worker 권한이 있어야 돈다)" }}
 {{- end }}
 {{- $traffic := default dict .Values.trafficMetrics }}
+{{- $tunnel := default dict .Values.targetTunnel }}
 {{- $hubRoleArn := (default dict .Values.argocd).hubRoleArn | default "" }}
 {{- if and $hubRoleArn (not (regexMatch "^arn:aws:iam::[0-9]{12}:role/.+$" $hubRoleArn)) }}
 {{- fail (printf "argocd.hubRoleArn 은 Terraform 출력 argocd_hub_role_arn 그대로 (IAM 역할 ARN, 받은 값 %q)" $hubRoleArn) }}
@@ -138,6 +139,11 @@ spec:
             {{- end }}
             {{- with $traffic.promUrl }}
             - { name: PROM_URL, value: {{ . | quote }} }
+            {{- end }}
+            {{- if and $tunnel.secretId $tunnel.secretKey }}
+            # 배포 단계가 빈 도착 터널 토큰 그릇을 채울 값의 출처 (values targetTunnel, worker gitops/ingress-secrets.ts). worker 자기 자격으로 읽는다
+            - { name: TARGET_TUNNEL_SECRET_ID, value: {{ $tunnel.secretId | quote }} }
+            - { name: TARGET_TUNNEL_SECRET_KEY, value: {{ $tunnel.secretKey | quote }} }
             {{- end }}
             {{- if (default dict $.Values.traffic).mock }}
             # 흉내 트래픽 (values traffic.mock). 진짜 지표·전환기 없이 shifting 을 넘긴다

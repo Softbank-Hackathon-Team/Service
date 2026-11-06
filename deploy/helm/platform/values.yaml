@@ -116,6 +116,14 @@ trafficMetrics:
   endpoint: ""      # 도착 수집기가 보낼 주소 (https://metrics.<도메인>/v1/metrics). 채우면 AWS·GCP 도착 cloudflared 에 수집기가 붙는다
   promUrl: ""       # 판정이 읽는 Prometheus. 도착 지표가 들어온 뒤에 켠다. 먼저 켜면 표본 부족으로 롤백된다
 
+# 도착 입구 터널 토큰 출처 (플랫폼 AWS 계정 Secrets Manager, aws.region). 둘 다 있으면 worker 에 TARGET_TUNNEL_SECRET_ID·_KEY 를 넣고,
+#   배포 단계가 GCP 도착의 빈 cloudflared-token 그릇을 이 값으로 채운다 (AWS 도착은 안 채움) (이미 값이 든 그릇은 안 덮는다). 비우면 예전처럼 SECRET_VALUES_MISSING 으로 멈춘다
+#   worker 역할에 이 비밀 읽기 권한이 있어야 한다 (infra/modules/aws/platform/pod-identity.tf ReadTargetTunnelToken)
+# DRAFT(ai): 기본값 = shop 데모 터널 비밀. TODO(human) 온프레 VM 도착과 같은 토큰이라 도착별로 키를 나눌지, 앱이 여럿이면 비밀 id 를 어떻게 고를지
+targetTunnel:
+  secretId: platform/shop-tunnels
+  secretKey: targetToken
+
 # 흉내 트래픽: worker 에 MOCK_TRAFFIC=1. 진짜 지표(trafficMetrics.promUrl)·LB 전환기가 없는 실측에서 shifting 을 가짜 지표·mock 전환기로 넘긴다.
 #   기본 끔 → 진짜 판은 설정이 없으면 shifting 이 TRAFFIC_NOT_CONFIGURED 로 멈춘다. DEMO_MODE=1 이면 worker 가 뜨지 않는다 (contracts config 가드)
 traffic:
