@@ -245,32 +245,38 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
     return r;
   }
 
-  // DB 비밀번호 꺼내기 (TF_FETCH_DB_SECRET=1, 기본 1). 복제 끝점 {tf:db_password} 가 읽는다
+  // DB 비밀번호 꺼내기 (TF_FETCH_DB_SECRET=1, 기본 1). 복제 끝점 {tf:db_password}·password_ref tf:db_admin_password 가 읽는다
+  // db-secret.json 에는 비밀번호만 둔다. 계정 이름은 outputs.json(db_username = 앱, db_admin_username = 관리자)이 진실이다.
+  //   예전엔 GCP(비밀 = 비밀번호 글자뿐)에서 db_username:"postgres" 를 써서 outputs 의 앱 계정 이름을 덮었다 → {tf:db_username} 이 남의 계정으로 붙었다
   async function fetchSecret(provider: Provider, out: TfOutputs, dir: string, steps: RealStep[], log: string[], signal?: AbortSignal) {
-    let cmd: string | null = null; let args: string[] = [];
-    if (provider === "aws" && out.db_master_secret_arn) {
-      cmd = env.AWS_BIN ?? "aws";
-      args = ["secretsmanager", "get-secret-value", "--secret-id", out.db_master_secret_arn, "--query", "SecretString", "--output", "text"];
-    } else if (provider === "gcp" && out.db_password_secret_id) {
-      cmd = env.GCLOUD_BIN ?? "gcloud";
-      // 도착 프로젝트 = 빌린 토큰 env 의 CLOUDSDK_CORE_PROJECT (gcpTerraformEnv 가 gcp_target_project 로 채움). 없을 때만 예전 TF_FACT_PROJECT_ID
-      //   (예전엔 TF_FACT_PROJECT_ID 가 먼저라 워커 env 에 남은 데모 프로젝트로 다른 회사의 비밀을 찾을 수 있었다)
-      const project = env.CLOUDSDK_CORE_PROJECT || env.TF_FACT_PROJECT_ID;
-      args = ["secrets", "versions", "access", "latest", `--secret=${out.db_password_secret_id}`, ...(project ? [`--project=${project}`] : [])];
+    // 도착 프로젝트 = 빌린 토큰 env 의 CLOUDSDK_CORE_PROJECT (gcpTerraformEnv 가 gcp_target_project 로 채움). 없을 때만 예전 TF_FACT_PROJECT_ID
+    //   (예전엔 TF_FACT_PROJECT_ID 가 먼저라 워커 env 에 남은 데모 프로젝트로 다른 회사의 비밀을 찾을 수 있었다)
+    const project = env.CLOUDSDK_CORE_PROJECT || env.TF_FACT_PROJECT_ID;
+    const gcpAccess = (secret: string) => ["secrets", "versions", "access", "latest", `--secret=${secret}`, ...(project ? [`--project=${project}`] : [])];
+    const want: { key: "db_password" | "db_admin_password"; cmd: string; args: string[] }[] = [];
+    if (provider === "aws" && out.db_master_secret_arn)
+      want.push({ key: "db_password", cmd: env.AWS_BIN ?? "aws",
+        args: ["secretsmanager", "get-secret-value", "--secret-id", out.db_master_secret_arn, "--query", "SecretString", "--output", "text"] });
+    if (provider === "gcp" && out.db_password_secret_id) want.push({ key: "db_password", cmd: env.GCLOUD_BIN ?? "gcloud", args: gcpAccess(out.db_password_secret_id) });
+    if (provider === "gcp" && out.db_admin_password_secret_id) want.push({ key: "db_admin_password", cmd: env.GCLOUD_BIN ?? "gcloud", args: gcpAccess(out.db_admin_password_secret_id) });
+    if (!want.length) return false;
+    const got: Partial<Record<(typeof want)[number]["key"], string>> = {};
+    for (const w of want) {
+      const r = await exec(w.cmd, w.args, { cwd: dir, env: o.secretEnv ? childEnv(o.secretEnv()) : cenv, signal, timeoutMs: 60_000 });
+      steps.push({ step: "secret", code: r.code, ms: round(r.ms) });
+      // 비밀값이 로그에 들어가지 않게: stdout 은 절대 log 에 안 넣는다
+      log.push(`$ ${w.cmd} ${w.args[0]} … (${w.key}) → exit ${r.code}`);
+      if (r.code !== 0) { log.push(...tail(r.stderr, 3)); continue; }
+      const s = r.stdout.trim();
+      let password = s;
+      try { const j = JSON.parse(s) as { password?: string }; if (j.password) password = j.password; } catch { /* gcp: 비밀번호 그대로 */ }
+      got[w.key] = password;
     }
-    if (!cmd) return false;
-    const r = await exec(cmd, args, { cwd: dir, env: o.secretEnv ? childEnv(o.secretEnv()) : cenv, signal, timeoutMs: 60_000 });
-    steps.push({ step: "secret", code: r.code, ms: round(r.ms) });
-    // 비밀값이 로그에 들어가지 않게: stdout 은 절대 log 에 안 넣는다
-    log.push(`$ ${cmd} ${args[0]} … → exit ${r.code}`);
-    if (r.code !== 0) { log.push(...tail(r.stderr, 3)); return false; }
-    const s = r.stdout.trim();
-    let user = "postgres", password = s;
-    try { const j = JSON.parse(s) as { username?: string; password?: string }; if (j.password) { password = j.password; user = j.username ?? user; } } catch { /* gcp: 비밀번호 그대로 */ }
+    if (!Object.keys(got).length) return false;
     const f = join(dir, "db-secret.json");
-    writeFileSync(f, JSON.stringify({ db_username: user, db_password: password }), { mode: 0o600 });
+    writeFileSync(f, JSON.stringify(got), { mode: 0o600 });
     chmodSync(f, 0o600);
-    return true;
+    return Object.keys(got).length === want.length;
   }
 
   // Z89: state 잠금을 기다리는 시간 (같은 폴더에서 사람이 tf:real destroy 를 돌리는 중일 때). 기본 60초
