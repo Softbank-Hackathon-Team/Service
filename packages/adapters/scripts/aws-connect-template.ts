@@ -192,15 +192,18 @@ export function buildAwsConnectTemplate(operatePolicy: Json, boundaryPolicy: Jso
         },
       },
       // ID-1: Argo CD 허브가 빌리는 배포 역할. IAM 권한 0 (토큰 서명만 하므로 필요 없음), k8s 권한은 아래 접근 항목 그룹으로만.
-      // DRAFT(ai): 신뢰 = 허브 역할 하나 + sts:AssumeRole 만. ExternalId 조건은 없다 — Argo CD 의 EKS 인증(awsAuthConfig.roleARN)은
+      // DRAFT(ai): 신뢰 = 허브 역할 하나 + sts:AssumeRole. ExternalId 조건은 없다 — Argo CD 의 EKS 인증(awsAuthConfig.roleARN)은
       //   ExternalId 를 넘기지 못한다【추정】. 대신 플랫폼은 관찰 역할로(ExternalId 확인) 연결이 확인된 계정에만 클러스터를 등록한다.
+      //   허브 역할은 Pod Identity 로 받은 세션이라 세션 태그가 같이 넘어온다【추정】 → 같은 주체에게 sts:TagSession 만 따로 (빌리기 권한은 AssumeRole 문장뿐)
       // TODO(human): 권한 회수 시점(이전 끝·롤백 창 끝에 RoleBinding 을 지울지, 연결 해제 때까지 둘지), ExternalId 없는 신뢰를 받아들일지
       DeployRole: {
         Type: "AWS::IAM::Role", Condition: "HasArgoHub",
         Properties: {
           RoleName: DEPLOY_ROLE_NAME, MaxSessionDuration: 3600,
           AssumeRolePolicyDocument: { Version: "2012-10-17", Statement: [{
-            Effect: "Allow", Principal: { AWS: { Ref: "ArgoHubRoleArn" } }, Action: "sts:AssumeRole",
+            Sid: "HubAssume", Effect: "Allow", Principal: { AWS: { Ref: "ArgoHubRoleArn" } }, Action: "sts:AssumeRole",
+          }, {
+            Sid: "HubSessionTags", Effect: "Allow", Principal: { AWS: { Ref: "ArgoHubRoleArn" } }, Action: "sts:TagSession",
           }] },
         },
       },

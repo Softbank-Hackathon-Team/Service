@@ -102,7 +102,30 @@ kubectl create configmap argocd-gcp-creds -n argocd --from-file=gcp-creds/ --dry
 
 - ponytail: 3번은 회사마다 손으로 한다. 회사가 늘면 환경 연결 때 워커가 이 ConfigMap 을 고치게 한다.
 - 고객 GKE 쪽 허용: `gcp-connect.sh` 가 회사 SA 에 `container.clusters.get` 만 주고, 앱 구역 Role·RoleBinding 은 apply 때 Terraform 이 만든다. 워커에 `GCP_PLATFORM_PROJECT` 가 있어야 회사 SA 를 넘긴다. 이미 연결한 고객은 `infra/onboarding/README.md` "이미 연결한 고객의 Argo CD 허브 권한" 을 따른다.
-- TODO(human): 허브가 고객 EKS 에 들어가는 권한과 cluster Secret. 이게 없으면 EKS 고객 Application 은 동기화되지 않는다.
+
+허브의 고객 EKS 로그인. 저장되는 키 없이, 허브 파드의 역할(Pod Identity `platform-argocd-hub`)로 고객 계정의 `svc-deploy` 를 빌려 EKS 토큰을 만든다 (`awsAuthConfig`).
+cluster Secret(`tenants/<회사>/argocd/cluster-aws-eks.yaml`)과 앱 구역 RoleBinding 은 워커가 이전마다 만든다. 사람이 하는 것은 플랫폼에 한 번뿐이다.
+
+```
+# 1. 허브 역할 만들기: infra/modules/aws/platform 적용 (argocd-hub.tf: 역할 + argocd 의 application-controller·server Pod Identity 연결)
+terraform -chdir=infra/modules/aws/platform plan     # 새 자원 4개(역할·정책·연결 2개)만 늘어나는지 본다
+terraform -chdir=infra/modules/aws/platform apply
+HUB_ROLE_ARN=$(terraform -chdir=infra/modules/aws/platform output -raw argocd_hub_role_arn)
+
+# 2. 허브 다시 띄우기: 값 파일의 AWS 지역 변수를 받고, 새 Pod Identity 연결은 파드를 새로 만들어야 먹는다
+helm upgrade --install argocd oci://ghcr.io/argoproj/argo-helm/argo-cd --version 10.11.7 -n argocd -f deploy/argocd/argo-cd.values.yaml [-f "$TMPDIR/gke-login.yaml"]
+kubectl rollout restart -n argocd statefulset/argocd-application-controller deployment/argocd-server
+
+# 3. api·worker 에 허브 역할 알려 주기 (api = 연결 링크가 고객 템플릿에 svc-deploy 를 만듦, worker = EKS 앱 구역 RoleBinding·cluster Secret)
+helm upgrade platform deploy/helm/platform -n platform --reset-then-reuse-values --set argocd.hubRoleArn="$HUB_ROLE_ARN"
+
+# 4. 확인: 허브 파드가 AWS 자격을 찾는지 (토큰은 서명만 하고 AWS 에 묻지 않는다. 실제 svc-deploy 빌리기는 첫 EKS 배포의 Argo 상태로 본다)
+kubectl exec -n argocd argocd-application-controller-0 -- sh -c 'argocd-k8s-auth aws --cluster-name x >/dev/null && echo creds-found'
+```
+
+- 고객 쪽: 연결 템플릿을 `ArgoHubRoleArn` 과 함께 다시 적용하고 RBAC 두 파일을 한 번 적용한다 (`infra/onboarding/README.md` "이미 연결한 고객: 배포 역할 더하기"). 안 하면 그 고객의 EKS 배포는 Argo CD 로그인 실패로 멈춘다.
+- 3번을 하지 않으면(값 없음) 예전과 같다: 워커는 EKS cluster Secret·RoleBinding 을 만들지 않고, 목적지는 사람이 등록한다.
+- DRAFT(ai) 【추정】 4번의 `argocd-k8s-auth aws` 가 Pod Identity 자격을 읽는지는 실측 전이다. 못 읽으면 허브 파드에 IRSA 를 쓰는 길로 바꾼다.
 
 ## 워커의 GCP 로그인 (GCP 연결·가져오기·이전에 필요)
 
