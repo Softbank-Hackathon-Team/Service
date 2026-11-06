@@ -83,6 +83,12 @@ ESO 신원은 이 스크립트가 만들지 않는다 (`svc-eso` 없음, B-2 (�
 gcloud iam roles update platform_operate --project=<전용> --add-permissions=container.roleBindings.create,container.roleBindings.delete,container.roleBindings.get,container.roleBindings.update,container.roles.bind,container.roles.create,container.roles.delete,container.roles.escalate,container.roles.get,container.roles.update
 ```
 
+이미 연결한 고객의 배포 이미지 복사 권한: 배포가 사설 이미지를 전용 프로젝트 Artifact Registry(`platform`, 환경 층이 만듦)에 다이제스트 그대로 올린다(worker `jobs/image-copy.ts`). 같은 이유로 실행 역할에 직접 더한다. 없으면 배포가 `IMAGE_COPY_FAILED` 로 멈춘다.
+
+```bash
+gcloud iam roles update platform_operate --project=<전용> --add-permissions=artifactregistry.repositories.downloadArtifacts,artifactregistry.repositories.uploadArtifacts
+```
+
 순서: 연결 화면에서 `PLATFORM_SA` 복사 → Cloud Shell에서 `PLATFORM_SA=... PROJECT_ID=<원래> TARGET_PROJECT_ID=<전용> ROLE_DIR=./permissions bash gcp-connect.sh`
 (전용 프로젝트가 아직 없으면 `CREATE_TARGET_PROJECT=1`, 결제 계정을 따로 쓰려면 `BILLING_ACCOUNT=...`) → 출력된 두 프로젝트를 화면에 입력 → "확인".
 전용 프로젝트에는 연결 확인·빌리기·첫 up 이 부르는 API 9개(cloudresourcemanager·serviceusage·iam·iamcredentials·sts·container·sqladmin·compute·secretmanager)를, 원래 프로젝트에는 iamcredentials·cloudresourcemanager 를 켠다(켜져 있으면 건너뜀).

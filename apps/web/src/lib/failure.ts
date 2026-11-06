@@ -47,6 +47,8 @@ const RULES: Rule[] = [
   // 배포 커밋 전 비밀 값 확인 (워커 deploy.ts secretValuesGate) → paused. 플랫폼은 비밀 값을 복사하지 않는다
   { match: /^SECRET_VALUES_MISSING$/, kind: "step", label: t('비밀 값 비어 있음'), title: t('도착 비밀 저장소에\n값이 비어 있습니다'), hint: t('앱을 올리기 전에 보니 도착 비밀 저장소의 그릇에 값이 없어 멈췄습니다. 플랫폼은 값을 복사하지 않습니다. 고객 도구로 값을 넣은 뒤 재개해 주세요.') },
   { match: /^SECRET_VALUES_UNKNOWN$/, kind: "step", label: t('비밀 값 확인 못 함'), title: t('도착 비밀 저장소를\n읽지 못했습니다'), hint: t('앱을 올리기 전에 도착 비밀 저장소의 그릇에 값이 들었는지 읽지 못해 멈췄습니다. 자격과 권한을 확인한 뒤 재개해 주세요.') },
+  // 배포 커밋 전 사설 이미지 복사 (워커 jobs/image-copy.ts) → paused. 재개하면 이미 옮긴 이미지는 건너뛴다
+  { match: /^IMAGE_COPY_FAILED$/, kind: "step", label: t('이미지 복사 실패'), title: t('이미지를 도착 레지스트리로\n복사하지 못했습니다'), hint: t('출발 레지스트리의 이미지를 도착 레지스트리로 다이제스트 그대로 복사하지 못해 앱을 올리기 전에 멈췄습니다. 고객 클러스터에는 아무것도 반영하지 않았습니다. 자격과 권한을 확인한 뒤 재개하면 남은 이미지만 다시 복사합니다.') },
   // DRAFT(ai) #253 이 더하는 코드 (온프레 CNPG 이전, 아직 main 에 없다). 문장은 그 PR 의 코드 주석으로 썼다
   { match: /^SEALING_CERT_MISSING$/, kind: "step", label: t('봉인 인증서 없음'), title: t('비밀을 봉인할\n인증서가 없습니다'), hint: t('도착 Agent 보고에 sealed-secrets 봉인 인증서가 없어 배포 커밋 전에 멈췄습니다. 설치 묶음으로 sealed-secrets 컨트롤러를 깔고 Agent 가 보고한 뒤 재개해 주세요.') },
   { match: /^REPL_DELIVERY_FAILED$/, kind: "step", label: t('복제 연결 준비 실패'), title: t('DB 복제 연결을\n준비하지 못했습니다'), hint: t('DB 복제에 쓸 서버 인증서·봉인한 비밀·터널 값을 만들지 못해 멈췄습니다.') },
