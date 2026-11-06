@@ -149,7 +149,7 @@ export function ackPlaces(acks: readonly PlanAcknowledgement[] | undefined) {
 /** 승인 버튼 글자. 모자라면 무엇이 모자란지 말한다. */
 export function approveLabel(o: { busy: boolean; expired: boolean; missing: number }): string {
   if (o.busy) return t('보내는 중');
-  if (o.expired) return t('승인 시간이 지났습니다');
+  if (o.expired) return t('승인 시간 지남');
   if (o.missing > 0) return t('확인 {0}개 남음', { 0: o.missing });
   return t('승인하고 실행 시작');
 }

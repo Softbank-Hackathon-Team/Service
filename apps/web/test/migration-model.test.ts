@@ -229,7 +229,7 @@ test("승인 확인 항목: 다 체크해야 승인, 버튼은 남은 수를 말
   assert.deepEqual(all.ids, ["cost", "failure_cost_policy", "runtime_change:web"]);
   assert.equal(approveLabel({ busy: false, expired: false, missing: 0 }), "승인하고 실행 시작");
   assert.equal(approveLabel({ busy: true, expired: false, missing: 2 }), "보내는 중");
-  assert.equal(approveLabel({ busy: false, expired: true, missing: 2 }), "승인 시간이 지났습니다");
+  assert.equal(approveLabel({ busy: false, expired: true, missing: 2 }), "승인 시간 지남");
   const old = ackState(undefined, new Set());
   assert.equal(old.ready, true);
   assert.deepEqual(old.ids, []);

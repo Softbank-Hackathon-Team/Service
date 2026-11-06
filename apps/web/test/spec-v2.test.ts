@@ -147,7 +147,7 @@ test("PATCH 본문: AI 초안 판이면 확인·끌어오기·보안·방화벽 
 test("명세 확정: 정하지 않은 출발 방화벽 줄이 있으면 막고 이유를 버튼에 쓴다 (확정해도 사전 점검이 되돌려 보냄)", () => {
   assert.equal(canConfirmSpec(0), true);
   assert.equal(canConfirmSpec(2), false);
-  assert.equal(confirmLabel(false, 3, 2), "출발 방화벽 2개를 먼저 정해 주세요");
+  assert.equal(confirmLabel(false, 3, 2), "출발 방화벽 2개를 정해 주세요");
   assert.equal(confirmLabel(false, 0, 0), "명세 확정");
   assert.equal(confirmLabel(true, 3, 2), "보내는 중");
 });

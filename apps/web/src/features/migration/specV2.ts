@@ -315,7 +315,7 @@ export const confirmLabel = (busy: boolean, reviews: number, undecidedFirewall =
   busy
     ? t('보내는 중')
     : undecidedFirewall > 0
-      ? t('출발 방화벽 {0}개를 먼저 정해 주세요', { 0: undecidedFirewall })
+      ? t('출발 방화벽 {0}개를 정해 주세요', { 0: undecidedFirewall })
       : reviews > 0
         ? t('{0}칸 확인하고 명세 확정', { 0: reviews })
         : t('명세 확정');
