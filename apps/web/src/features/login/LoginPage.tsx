@@ -6,6 +6,7 @@ import { PRODUCT_NAME } from '../../components/ui/Logo';
 import { API_BASE, auth } from '../../lib/api';
 import { AuthError, githubErrorText, githubStartUrl, takeGithubError } from '../../lib/auth';
 import s from './LoginPage.module.css';
+import { SignupForm } from './SignupForm';
 import { t } from '../../lib/i18n';
 
 const LOGIN: BentoLayout = { columns: ['fill', 'side'], areas: 'hero form' };
@@ -16,15 +17,31 @@ export function LoginPage({ notice }: { notice: string | null }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [github, setGithub] = useState(false);
+  const [signup, setSignup] = useState(false);
+  const [mode, setMode] = useState<'login' | 'signup'>('login');
   const emailRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => emailRef.current?.focus(), []);
+  // 가입에서 돌아와도 이메일 칸에 바로 쓸 수 있게
+  useEffect(() => {
+    if (mode === 'login') emailRef.current?.focus();
+  }, [mode]);
 
   // GitHub 버튼은 서버가 켜 둔 경우만 (GET /auth/config 의 github.enabled). 못 읽으면 띄우지 않는다
   useEffect(() => {
     let alive = true;
     void auth.config().then((config) => {
       if (alive) setGithub(config?.github?.enabled === true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // "회원가입"은 서버가 가입을 열어 둔 경우만 (GET /auth/signup/config 의 enabled). 404(예전 서버)·못 읽음은 띄우지 않는다
+  useEffect(() => {
+    let alive = true;
+    void auth.signupConfig().then((config) => {
+      if (alive) setSignup(config?.enabled === true);
     });
     return () => {
       alive = false;
@@ -55,54 +72,64 @@ export function LoginPage({ notice }: { notice: string | null }) {
     }
   };
 
+  const openSignup = () => {
+    setError(null);
+    setMode('signup');
+  };
+
   return (
     <ConsoleLayout layout={LOGIN}>
       <Hero tone="run" back={false} meta={t('{0} 콘솔', { 0: PRODUCT_NAME })} title={t('돌고 있는 앱을\n멈추지 않고 옮깁니다')} />
-      <Tile area="form">
-        <form className={s.form} onSubmit={submit} noValidate aria-label={t('로그인')}>
-          <TileHeader title={t('로그인')} />
-          {notice && (
-            <p className={`${s.notice} t-body-md`} role="status">
-              {notice}
-            </p>
-          )}
-          <div className={s.fields}>
-            <label className={s.field}>
-              <span className="t-label-md c-secondary">{t('이메일')}</span>
-              <input
-                ref={emailRef}
-                className={`${s.input} t-body-md`}
-                type="email"
-                name="email"
-                autoComplete="username"
-                spellCheck={false}
-                value={email}
-                aria-invalid={error ? true : undefined}
-                onChange={(event) => setEmail(event.target.value)}
-              />
-            </label>
-            <label className={s.field}>
-              <span className="t-label-md c-secondary">{t('비밀번호')}</span>
-              <input
-                className={`${s.input} t-body-md`}
-                type="password"
-                name="password"
-                autoComplete="current-password"
-                value={password}
-                aria-invalid={error ? true : undefined}
-                onChange={(event) => setPassword(event.target.value)}
-              />
-            </label>
-            {/* 오류가 떠도 입력칸이 움직이지 않게 자리를 미리 잡아 둔다. */}
-            <div className={s.message} role="alert">
-              {error && <p className={`${s.error} t-body-md`}>{error}</p>}
+      <Tile area="form" scroll={mode === 'signup'}>
+        {mode === 'signup' ? (
+          <SignupForm onBack={() => setMode('login')} />
+        ) : (
+          <form className={s.form} onSubmit={submit} noValidate aria-label={t('로그인')}>
+            <TileHeader title={t('로그인')} />
+            {notice && (
+              <p className={`${s.notice} t-body-md`} role="status">
+                {notice}
+              </p>
+            )}
+            <div className={s.fields}>
+              <label className={s.field}>
+                <span className="t-label-md c-secondary">{t('이메일')}</span>
+                <input
+                  ref={emailRef}
+                  className={`${s.input} t-body-md`}
+                  type="email"
+                  name="email"
+                  autoComplete="username"
+                  spellCheck={false}
+                  value={email}
+                  aria-invalid={error ? true : undefined}
+                  onChange={(event) => setEmail(event.target.value)}
+                />
+              </label>
+              <label className={s.field}>
+                <span className="t-label-md c-secondary">{t('비밀번호')}</span>
+                <input
+                  className={`${s.input} t-body-md`}
+                  type="password"
+                  name="password"
+                  autoComplete="current-password"
+                  value={password}
+                  aria-invalid={error ? true : undefined}
+                  onChange={(event) => setPassword(event.target.value)}
+                />
+              </label>
+              {/* 오류가 떠도 입력칸이 움직이지 않게 자리를 미리 잡아 둔다. */}
+              <div className={s.message} role="alert">
+                {error && <p className={`${s.error} t-body-md`}>{error}</p>}
+              </div>
             </div>
-          </div>
-          <div className={s.submit}>
-            {github && <BarPill label={t('GitHub로 로그인')} icon="github" onClick={busy ? undefined : () => window.location.assign(githubStartUrl(API_BASE))} />}
-            <ActionPill type="submit" label={busy ? t('확인 중') : t('로그인')} disabled={busy} />
-          </div>
-        </form>
+            <div className={s.submit}>
+              {signup && <BarPill label={t('회원가입')} icon="user-check" onClick={busy ? undefined : openSignup} />}
+              {github && <BarPill label={t('GitHub로 로그인')} icon="github" onClick={busy ? undefined : () => window.location.assign(githubStartUrl(API_BASE))} />}
+              <ActionPill type="submit" label={busy ? t('확인 중') : t('로그인')} disabled={busy} />
+            </div>
+          </form>
+        )}
       </Tile>
     </ConsoleLayout>
   );

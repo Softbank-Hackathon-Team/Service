@@ -10,6 +10,10 @@ import { t } from './i18n';
 //   GET /auth/github/start (브라우저 이동) → GitHub → 서버 콜백 → 화면으로 302. 성공이면 refresh 쿠키가 생겨 bootstrap 이 들어가고,
 //     실패면 ?github_error=<코드> 가 붙어 온다 (contracts github-login.ts GITHUB_LOGIN_ERRORS)
 //   GET /auth/me 는 화면이 부르지 않는다 (로그인·refresh 응답에 user 가 이미 있다)
+//   GET  /auth/signup/config {enabled} 인증 없이. 로그인 화면이 "회원가입"을 띄울지만 본다. 404(가입 경로가 없는 예전 서버)는 꺼짐
+//   POST /auth/signup {login, code, password(8자 이상)} → 201 로그인과 같은 모양 + 같은 refresh 쿠키.
+//     403 SIGNUP_NOT_ALLOWED(모르는 아이디·틀린 초대 코드·닫힌 칸을 한 문장으로) · 409 SIGNUP_EXISTS · 400 입력 모양
+//     가입하면 서버가 그 칸의 환경을 회사에 미리 만들어 둔다. 화면은 로그인 성공과 같은 길(accept)로 들어가 환경 화면을 연다
 //   TODO(human): 서버가 시험용 헤더 인증(devAuth=true)으로 떠 있을 때 화면이 로그인을 건너뛸지. 지금은 언제나 로그인 화면을 거친다
 //     참고: 화면은 x-dev-tenant 를 보내지 않고, devAuth 서버에서도 Bearer 로그인이 그대로 된다. 그래서 로그인 화면을 두는 쪽이 더 단순하다
 //
@@ -73,6 +77,40 @@ export function takeGithubError(href: string): { code: string | null; clean: str
   return { code, clean: `${url.pathname}${url.search}${url.hash}` };
 }
 
+/** GET /auth/signup/config */
+export interface SignupConfig { enabled: boolean }
+/** POST /auth/signup 본문 */
+export interface SignupBody { login: string; code: string; password: string }
+/** 가입 화면의 입력칸 그대로 (비밀번호 확인 포함) */
+export interface SignupForm { login: string; code: string; password: string; confirm: string }
+
+// 서버 계약(POST /auth/signup password min 8)과 같은 하한. 상한은 로그인과 같은 서버 PASSWORD_MAX(apps/api auth/password.ts)
+export const SIGNUP_PASSWORD_MIN = 8;
+export const SIGNUP_PASSWORD_MAX = 256;
+
+/** 보내기 전에 화면에서 거르는 것. 문제 없으면 null, 있으면 먼저 고칠 한 문장 */
+export function signupFormError(f: SignupForm): string | null {
+  if (!f.login.trim() || !f.code.trim() || !f.password || !f.confirm) return t('아이디, 초대 코드, 비밀번호를 모두 입력해 주세요.');
+  if (f.password.length < SIGNUP_PASSWORD_MIN) return t('비밀번호는 {0}자 이상이어야 합니다.', { 0: SIGNUP_PASSWORD_MIN });
+  if (f.password.length > SIGNUP_PASSWORD_MAX) return t('비밀번호는 {0}자를 넘을 수 없습니다.', { 0: SIGNUP_PASSWORD_MAX });
+  if (f.password !== f.confirm) return t('비밀번호와 비밀번호 확인이 다릅니다.');
+  return null;
+}
+
+/** 입력칸 → 서버 본문. 아이디·초대 코드는 앞뒤 공백을 떼고, 비밀번호는 그대로 보낸다 */
+export const signupBody = (f: SignupForm): SignupBody => ({ login: f.login.trim(), code: f.code.trim(), password: f.password });
+
+/**
+ * 가입 실패 코드 → 사람 말. 403 은 아이디·초대 코드·닫힌 칸을 가리지 않는다 (서버가 어느 쪽이 틀렸는지 알려 주지 않는다).
+ * 모르는 코드는 지어내지 않고 실패와 HTTP 상태만 말한다
+ */
+export function signupErrorText(status: number, code?: string): string {
+  if (code === "SIGNUP_NOT_ALLOWED") return t('아이디나 초대 코드가 맞지 않습니다.');
+  if (code === "SIGNUP_EXISTS") return t('이미 가입된 아이디입니다. 로그인하세요.');
+  if (status === 429) return t('시도가 너무 많습니다. 잠시 뒤 다시 시도해 주세요.');
+  return t('가입하지 못했습니다 (HTTP {0})', { 0: status });
+}
+
 export function createAuth(o: AuthOptions) {
   const doFetch = o.fetch ?? ((...a: Parameters<typeof fetch>) => fetch(...a));
   const now = o.now ?? (() => Date.now());
@@ -134,6 +172,16 @@ export function createAuth(o: AuthOptions) {
       }
       accept(await res.json() as TokenResponse);
     },
+    // 가입 성공(201)은 로그인과 같은 응답·같은 쿠키라 login 과 같은 accept 로 들어간다. 비밀번호·초대 코드는 오류에도 싣지 않는다
+    async signup(body: SignupBody): Promise<void> {
+      const res = await post("signup", body);
+      if (!res.ok) {
+        let b: { code?: string } = {};
+        try { b = await res.json() as typeof b; } catch { /* JSON 아님 */ }
+        throw new AuthError(res.status, b.code ?? `HTTP_${res.status}`, signupErrorText(res.status, b.code));
+      }
+      accept(await res.json() as TokenResponse);
+    },
     async logout(): Promise<void> {
       try { await post("logout"); } catch { /* 서버가 없어도 화면은 로그아웃 */ }
       drop(null);
@@ -156,6 +204,17 @@ export function createAuth(o: AuthOptions) {
       try {
         const res = await doFetch(`${o.base}/auth/config`, { method: "GET", credentials: "same-origin" });
         return res.ok ? (await res.json() as AuthConfig) : null;
+      } catch { return null; }
+    },
+    // 로그인 화면의 "회원가입"을 띄울지. 404 는 가입 경로가 아직 없는 예전 서버라 꺼짐으로 본다.
+    // DRAFT(ai): 그 밖의 실패(네트워크·5xx)는 null = 모름 → 화면은 GitHub 버튼처럼 띄우지 않는다. 로그인 자체가 같은 서버라 그쪽에서 실패가 보인다
+    async signupConfig(): Promise<SignupConfig | null> {
+      try {
+        const res = await doFetch(`${o.base}/auth/signup/config`, { method: "GET", credentials: "same-origin" });
+        if (res.status === 404) return { enabled: false };
+        if (!res.ok) return null;
+        const b = await res.json() as Partial<SignupConfig>;
+        return { enabled: b.enabled === true };
       } catch { return null; }
     },
     get: () => state,
