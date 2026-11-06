@@ -11,14 +11,20 @@ export interface RunRow {
   bundleSha256: string | null; reusedFrom: string | null; sandboxName: string | null;
   leftSec: number | null;                 // 지금 단계(queued = 줄 서기, running = 실행) 기한까지 남은 초 (DB 시계). 음수면 지남
   result: RehearsalResult | null;
+  // 결과 없이 끝난 줄(failed·error, agent-worker 입력 거부·처리기 오류)의 이유. agent-worker 는 이유를 감사(sandbox.rehearsal)에만 쓴다 (pg-sandbox-run-store)
+  errorReason: string | null;
 }
 
 export async function readRun(tx: Tx, k: Pick<RunKey, "migrationId" | "epoch">): Promise<RunRow | null> {
   const r = await tx.query(
     `SELECT id, status, skip_reason AS "skipReason", failure_code AS "failureCode", bundle_sha256 AS "bundleSha256",
             reused_from AS "reusedFrom", sandbox_name AS "sandboxName", result,
-            EXTRACT(EPOCH FROM (deadline_at - now()))::float8 AS "leftSec"
-       FROM sandbox_runs WHERE migration_id = $1 AND epoch = $2 AND purpose = 'rehearsal'`, [k.migrationId, k.epoch]);
+            EXTRACT(EPOCH FROM (deadline_at - now()))::float8 AS "leftSec",
+            CASE WHEN s.status IN ('failed', 'error') AND s.result IS NULL THEN
+              (SELECT a.detail->>'reason' FROM audit_events a
+                WHERE a.target = s.migration_id::text AND a.action = 'sandbox.rehearsal' AND a.detail->>'sandboxRunId' = s.id::text
+                ORDER BY a.seq DESC LIMIT 1) END AS "errorReason"
+       FROM sandbox_runs s WHERE migration_id = $1 AND epoch = $2 AND purpose = 'rehearsal'`, [k.migrationId, k.epoch]);
   const x = r.rows[0] as (Omit<RunRow, "result"> & { result: unknown }) | undefined;
   if (!x) return null;
   const parsed = RehearsalResult.safeParse(x.result);
