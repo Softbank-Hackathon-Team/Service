@@ -13,10 +13,8 @@ export const DELIVERY: Record<GitopsEnv, Delivery> = {
   "aws-eks": "argocd-push", "gcp-gke": "argocd-push", "onprem-k3s": "agent-pull", "azure-mock": "mock",
 };
 
-// DRAFT(ai): 회사 폴더 이름 = "t-" + 회사 uuid 앞 8글자. 회사가 수천 곳이 되면 겹칠 수 있다
-export function tenantSlug(tenantId: string): string {
-  return "t-" + tenantId.replace(/-/g, "").slice(0, 8).toLowerCase();
-}
+// 회사 폴더 이름 규칙은 계약(@svc/contracts gitops.ts)에 있다 (API 의 회사 레포 이름과 같아야 한다)
+export { tenantSlug } from "@svc/contracts";
 
 export interface BundleRef { tenant: string; app: string; env: GitopsEnv }
 export const bundlePath = (b: BundleRef) => `tenants/${b.tenant}/apps/${b.app}/${b.env}`;

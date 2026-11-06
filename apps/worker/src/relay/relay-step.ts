@@ -14,7 +14,7 @@ import { realStsEnabled } from "../platform.js";
 import { latestOnpremEgressIp } from "./onprem-egress.js";
 import {
   buildRelayPlan, discoverRelayNetwork, discoverRelaySource, isIpv4, platformEgressCidrs, provisionRelay, RelayError, resolveRelayAmi, teardownRelay,
-  PG_PORT, type RelayAwsDeps, type RelayResources, type RelaySource,
+  PG_PORT, RELAY_SOURCE_PORT, type RelayAwsDeps, type RelayResources, type RelaySource,
 } from "./aws-relay.js";
 
 // 차트 이전 역할 (adapters target/onprem.ts replication.role, gitops replication-delivery 기본값과 같은 글자)
@@ -117,24 +117,29 @@ export function relayGate(f: RelayFacts, env: NodeJS.ProcessEnv): RelayGate {
 
 /** 끝점 두 줄 (순수). 배달(deploy)이 채우는 칸(도착 ca_pem·tls_servername·sslmode, 출발 peer)은 같은 중계기면 그대로 둔다 */
 export function relayEndpointRows(i: {
-  tenantId: string; migrationId: string; rds: RelaySource; db: string; appUser: string;
+  tenantId: string; migrationId: string; sourceEnvId: string; rds: RelaySource; db: string; appUser: string;
   publicIp: string; privateIp: string; knownHosts: string; existing: readonly ReplicationEndpoint[];
 }): [ReplicationEndpoint, ReplicationEndpoint] {
   const id8 = i.migrationId.replace(/-/g, "").slice(0, 8);
   const oldS = i.existing.find((e) => e.side === "source"), oldT = i.existing.find((e) => e.side === "target");
   const sameRelay = oldT?.relayHost === i.publicIp;
+  // DRAFT(ai): 워커는 출발 RDS 에 직접 못 닿는다 (비공개 RDS·다른 VPC, 2026-11-06 실측 TIMEOUT) → 중계기 출발 입구(공개 IP:15432, TCP 그대로)로 붙는다.
+  //   진짜 RDS 이름은 tls_servername 에 둔다: 서버 인증서 이름이고, 온프레 정방향 터널 목적지(replication-delivery forwardTarget)도 이 이름이다.
+  //   (relay_* 칸은 DB 검사 replication_endpoints_relay_side 가 도착 줄에만 허용해서 출발 줄에는 못 쓴다)
   const source: ReplicationEndpoint = {
     tenantId: i.tenantId, migrationId: i.migrationId, side: "source", label: `rds-src-${id8}`, provider: "rds",
-    host: i.rds.endpoint, port: i.rds.port, dbname: i.db,
+    host: i.publicIp, port: RELAY_SOURCE_PORT, dbname: i.db,
     // 마스터 사용자 (RDS 에서 복제 슬롯·발행을 만들 권한). 못 읽었으면 앱 계정
     username: i.rds.masterUsername ?? i.appUser,
     // TODO(human): 운영에서는 RDS 가 관리하는 마스터 비밀(rds!…, RelaySource.masterSecretArn)을 빌린 역할로 풀어야 한다
     //   (새 password_ref 문법·secretsmanager:GetSecretValue 권한·워커 메모리에만 두기를 사람이 정한다). 지금은 예전과 같은 env: 참조이고,
-    //   값은 운영자가 워커 env REPL_SECRET_SRC_<id8> 에 넣는다 (tools/onprem-relay.sh register 와 같은 이름). 운영자가 바꾼 참조는 그대로 둔다
-    passwordRef: oldS?.passwordRef ?? `env:REPL_SECRET_SRC_${id8.toUpperCase()}`,
+    //   값은 운영자가 워커 env REPL_SECRET_SRC_<출발 환경 id8> 에 넣는다 (아래 DRAFT(ai)). 운영자가 바꾼 참조는 그대로 둔다
+    // DRAFT(ai): 이름은 이전이 아니라 출발 환경 기준 (REPL_SECRET_SRC_<출발 환경 앞 8자>). 같은 출발 RDS 로 이전을 다시 만들 때마다
+    //   워커 env 키를 새로 넣고 다시 배포하던 일을 없앤다 (2026-11-06 실측: 이전마다 platform/app 키 + secretKeys + helm). 값은 같은 DB 의 같은 비밀번호다
+    passwordRef: oldS?.passwordRef ?? `env:REPL_SECRET_SRC_${(i.sourceEnvId.replace(/[^A-Za-z0-9]/g, "").slice(0, 8) || id8).toUpperCase()}`,
     peerHost: oldS?.peerHost ?? null, peerPort: oldS?.peerPort ?? null,
     appRole: i.appUser, fenceRoles: oldS?.fenceRoles ?? [], schemaName: oldS?.schemaName ?? null,
-    sslmode: oldS?.sslmode ?? "require", tlsServername: oldS?.tlsServername ?? null, caPem: oldS?.caPem ?? null,
+    sslmode: oldS?.sslmode ?? "require", tlsServername: i.rds.endpoint, caPem: oldS?.caPem ?? null,
     relayHost: null, relayKnownHosts: null, relayPort: 22,
   };
   const target: ReplicationEndpoint = {
@@ -196,11 +201,12 @@ export async function provisionRelayStep(j: Job, m: MigrationRow, deps: RelaySte
       res = await provisionRelay(d, plan);
     } catch (e) { return relayFailure(e, { rdsIdentifier: g.identifier }); }
     const knownHosts = knownHostsLine(res.publicIp, deriveSshHostKey(g.masterKey, j.tenantId, j.migrationId).publicKeyLine);
-    const rows = relayEndpointRows({ tenantId: j.tenantId, migrationId: j.migrationId, rds, db: g.db, appUser: g.user,
+    const rows = relayEndpointRows({ tenantId: j.tenantId, migrationId: j.migrationId, sourceEnvId: m.sourceEnvId, rds, db: g.db, appUser: g.user,
       publicIp: res.publicIp, privateIp: res.privateIp, knownHosts, existing: facts.existing });
     await (deps.save ?? ((r) => withTenant(j.tenantId, async (tx) => { for (const x of r) await upsertReplicationEndpoint(tx, x); })))(rows);
     // 감사 detail: 번호·주소만 (키·비밀번호 없음). 자원의 진실은 태그다 (이 detail 은 사람이 찾기 쉽게)
     return { kind: "ok", detail: { instanceId: res.instanceId, securityGroupId: res.securityGroupId, dbEgressRuleId: res.dbEgressRuleId, ...(res.dbEgressCoveredBy ? { dbEgressCoveredBy: res.dbEgressCoveredBy } : {}),
+      dbIngressRuleId: res.dbIngressRuleId, ...(res.dbIngressCoveredBy ? { dbIngressCoveredBy: res.dbIngressCoveredBy } : {}), sourceEntryPort: RELAY_SOURCE_PORT,
       publicIp: res.publicIp, privateIp: res.privateIp, subnetId, rdsIdentifier: rds.identifier, rdsSecurityGroupId: rds.securityGroupIds[0],
       created: res.created, reused: res.reused, region: g.region, endpointRows: ["source", "target"] } };
   });

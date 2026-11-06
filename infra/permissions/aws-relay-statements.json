@@ -190,7 +190,9 @@
       "Effect": "Allow",
       "Action": [
         "ec2:AuthorizeSecurityGroupEgress",
-        "ec2:RevokeSecurityGroupEgress"
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupIngress"
       ],
       "Resource": "arn:aws:ec2:ap-northeast-2:${AccountId}:security-group/${SourceDbSecurityGroupId}"
     }

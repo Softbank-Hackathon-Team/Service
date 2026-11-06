@@ -39,7 +39,7 @@
       "Type": "String",
       "Default": "",
       "AllowedPattern": "^$|^sg-[0-9a-f]{8,17}$",
-      "Description": "온프레 복제를 쓸 때 출발 RDS 보안 그룹 ID. 비우면 중계기의 RDS 나가기 규칙 권한을 넣지 않는다"
+      "Description": "온프레 복제를 쓸 때 출발 RDS 보안 그룹 ID. 비우면 중계기의 RDS 나가기·들어오기 규칙 권한을 넣지 않는다"
     }
   },
   "Conditions": {
@@ -884,7 +884,9 @@
                       "Effect": "Allow",
                       "Action": [
                         "ec2:AuthorizeSecurityGroupEgress",
-                        "ec2:RevokeSecurityGroupEgress"
+                        "ec2:AuthorizeSecurityGroupIngress",
+                        "ec2:RevokeSecurityGroupEgress",
+                        "ec2:RevokeSecurityGroupIngress"
                       ],
                       "Resource": {
                         "Fn::Join": [

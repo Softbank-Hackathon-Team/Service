@@ -14,14 +14,18 @@ export function envNumber(v: string | undefined, def: number): number {
 // 이제 실행기는 작업 전체 예산(JOB) 안에서만 단계를 돌리고, 실패 뒤 지우기는 따로 예산(DESTROY)을 갖는다.
 // 큐 기한 = 예산 합 + 예산마다 정지 유예(GRACE, 시간 초과 뒤 SIGINT → SIGKILL 까지) + 여유 5분 → 기한이 먼저 오지 않는다
 // DRAFT(ai): 기본 단계 2700·작업 2700·지우기 1800·유예 1200초. 실측 apply·destroy 시간으로 확정
-export interface TfBudget { stepSec: number; jobSec: number; destroySec: number; graceSec: number; applyExpireSec: number; destroyExpireSec: number }
+// 환경 층(ENV_LAYER_AUTO=1): apply 작업 맨 앞에서 GKE 를 만들 수 있다 → 그 예산(TF_ENV_LAYER_BUDGET_SEC, 1·2차 apply 가 나눠 씀) + 유예를 큐 기한에 더한다.
+//   꺼져 있으면(기본) 큐 기한은 예전 값 그대로. DRAFT(ai): 기본 1800초 (GKE 영역 클러스터 5~10분 + 노드 풀 + ESO, 실측 전)
+export interface TfBudget { stepSec: number; jobSec: number; destroySec: number; graceSec: number; envLayerSec: number; applyExpireSec: number; destroyExpireSec: number }
 export function tfBudget(env: Record<string, string | undefined> = process.env): TfBudget {
   const stepSec = envNumber(env.TF_APPLY_TIMEOUT_SEC, 2700);
   const jobSec = envNumber(env.TF_JOB_BUDGET_SEC, 2700);
   const destroySec = envNumber(env.TF_DESTROY_BUDGET_SEC, 1800);
   const graceSec = envNumber(env.TF_STOP_GRACE_SEC, 1200);
   const margin = 300;
-  return { stepSec, jobSec, destroySec, graceSec,
-    applyExpireSec: jobSec + graceSec + destroySec + graceSec + margin,   // apply 길 + 실패 즉시 지우기
+  const envLayerSec = envNumber(env.TF_ENV_LAYER_BUDGET_SEC, 1800);
+  const envLayer = env.ENV_LAYER_AUTO === "1" ? envLayerSec + graceSec : 0;
+  return { stepSec, jobSec, destroySec, graceSec, envLayerSec,
+    applyExpireSec: envLayer + jobSec + graceSec + destroySec + graceSec + margin,   // apply 길 + 실패 즉시 지우기
     destroyExpireSec: Math.max(3600, destroySec + graceSec + margin) };
 }

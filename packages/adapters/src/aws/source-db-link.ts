@@ -81,16 +81,17 @@ const dbFromUrl = (u: string | undefined) => {
   try { return u ? decodeURIComponent(new URL(u).pathname.replace(/^\//, "")) || undefined : undefined; } catch { return undefined; }
 };
 // 도착 나가는 IP: SOURCE_DB_LINK_EGRESS_IPS(쉼표) 가 먼저, 없으면 8nr2 계획 사실 TF_FACT_NAT_EGRESS_IPS_JSON (gcp/env 출력 nat_egress_ips, JSON 목록, /32 없음)
-function egressIpsOf(env: NodeJS.ProcessEnv): string[] {
+//   facts.natEgressIpsJson (환경 층 DB 사실을 mergeFacts 로 합친 값)이 있으면 TF_FACT_* 보다 먼저
+function egressIpsOf(env: NodeJS.ProcessEnv, facts?: Record<string, string>): string[] {
   const csv = (env.SOURCE_DB_LINK_EGRESS_IPS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   if (csv.length) return csv;
   try {
-    const j: unknown = JSON.parse(env.TF_FACT_NAT_EGRESS_IPS_JSON ?? "[]");
+    const j: unknown = JSON.parse(facts?.natEgressIpsJson ?? env.TF_FACT_NAT_EGRESS_IPS_JSON ?? "[]");
     return Array.isArray(j) ? j.filter((x): x is string => typeof x === "string").map((x) => x.trim()).filter(Boolean) : [];
   } catch { return []; }
 }
-export function sourceDbLinkInputFromEnv(env: NodeJS.ProcessEnv = process.env): Record<string, unknown> {
-  const ips = egressIpsOf(env).map((s) => (s.includes("/") ? s : `${s}/32`));
+export function sourceDbLinkInputFromEnv(env: NodeJS.ProcessEnv = process.env, facts?: Record<string, string>): Record<string, unknown> {
+  const ips = egressIpsOf(env, facts).map((s) => (s.includes("/") ? s : `${s}/32`));
   return {
     region: env.SOURCE_DB_LINK_REGION?.trim() || env.AWS_REGION?.trim() || "ap-northeast-2",
     dbInstanceId: env.SOURCE_DB_LINK_INSTANCE?.trim() ?? "",

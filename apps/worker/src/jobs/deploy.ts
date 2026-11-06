@@ -235,7 +235,8 @@ async function deployTerraformRuntime(j: MigrationJob, l: Loaded & { runtime: Te
   const facts = factsFromEnv(process.env);
   const h = await checkTerraformRuntime({
     provider: l.env.provider, runtime: l.runtime, spec: l.spec, tfOutputs: l.infra.tfOutputs ?? {},
-    live: !iacMockEnabled(), projectId: facts.projectId ?? null,   // region = 계획과 같은 "default" 규칙 (checkTerraformRuntime)
+    // 도착 프로젝트 = 환경 표(A안 gcp_target_project). 워커 TF_FACT_PROJECT_ID 는 그게 없을 때만 (apply·plan 의 사실 규칙과 같음)
+    live: !iacMockEnabled(), projectId: l.env.accountId ?? facts.projectId ?? null,   // region = 계획과 같은 "default" 규칙 (checkTerraformRuntime)
   }, { ...runtimeHealthDeps, ...(roles?.awsEnv?.target && !runtimeHealthDeps.env ? { env: envFor(roles.awsEnv.target) } : {}) });
   if (!h.ok)
     return { to: "paused", failureCode: h.code, detail: { deploy: { error: h.code, reason: scrubString(h.reason), resources: h.resources, attempts: h.attempts }, gitops, rehearsal: { skipped: rehearsal } } };

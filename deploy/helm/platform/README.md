@@ -36,7 +36,7 @@ helm install external-secrets external-secrets/external-secrets -n external-secr
 
 # 2. 비밀값 넣기 (값은 채팅·레포에 남기지 않는다)
 aws secretsmanager put-secret-value --secret-id platform/app --secret-string file://<레포 밖 app.json>
-#    app.json 키: DATABASE_URL, JWT_SECRET, PLATFORM_PRINCIPAL_ARN, AGENT_REPORT_MASTER_KEY, PUBLIC_API_URL, GITOPS_REPO_URL, GITOPS_WRITE_TOKEN, GITOPS_PUSH, REPL_SECRET_MASTER_KEY, PLATFORM_EGRESS_CIDRS, ANTHROPIC_API_KEY
+#    app.json 키: DATABASE_URL, JWT_SECRET, PLATFORM_PRINCIPAL_ARN, AGENT_REPORT_MASTER_KEY, PUBLIC_API_URL, CONNECT_TEMPLATE_URL, GITOPS_REPO_URL, GITOPS_WRITE_TOKEN, GITOPS_PUSH, REPL_SECRET_MASTER_KEY, PLATFORM_EGRESS_CIDRS, ANTHROPIC_API_KEY
 #    values.yaml secretKeys 에 적힌 키가 JSON 에 하나라도 없으면 그 컴포넌트의 비밀 동기화가 멈춘다 → 키를 더할 때는 값부터 넣고 helm upgrade
 aws secretsmanager put-secret-value --secret-id platform/cloudflared --secret-string file://<레포 밖 cf.json>
 
@@ -55,7 +55,7 @@ helm upgrade --install platform deploy/helm/platform -n platform --create-namesp
 helm upgrade --install platform deploy/helm/platform -n platform --create-namespace --reset-then-reuse-values --set apps.image.registry=725072160743.dkr.ecr.ap-northeast-2.amazonaws.com --set apps.image.tag=<태그>
 ```
 
-`platform/app` JSON 에 넣을 키: `components.*.secretKeys` 에 적은 것 전부 (`DATABASE_URL`, `JWT_SECRET`, `PLATFORM_PRINCIPAL_ARN`, `ANTHROPIC_API_KEY`). 키를 늘리면 JSON 과 `secretKeys` 를 같이 고친다.
+`platform/app` JSON 에 넣을 키: `components.*.secretKeys` 에 적은 것 전부 (`DATABASE_URL`, `JWT_SECRET`, `PLATFORM_PRINCIPAL_ARN`, `CONNECT_TEMPLATE_URL`, `ANTHROPIC_API_KEY` 등). 키를 늘리면 JSON 과 `secretKeys` 를 같이 고친다.
 
 Cloudflare 쪽: Zero Trust 에서 원격 관리 터널을 만들고 토큰을 `platform/cloudflared` 에 넣는다. 공개 호스트 이름의 서비스는 `http://web.platform.svc.cluster.local:8080` (web 배포가 올라온 뒤), 지표 주소(예: metrics.<도메인>)는 `http://otel-gateway.platform.svc.cluster.local:4318`.
 
@@ -209,6 +209,66 @@ kubectl -n platform get secret worker-env -o json | python3 -c 'import json,sys;
 
 확인: 고객 Agent 보고 뒤 `agent_reports` 의 facts 에 `sealing.certPem`·`egressIp` 가 있으면 이전 계획이 봉인 인증서와 중계 SSH 허용 IP 를 쓸 수 있다.
 
+## 온프레 설치 한 줄 켜기 (한 번)
+
+고객은 콘솔 연결 화면의 명령 한 줄(`curl -fsSL <플랫폼>/api/v1/install/onprem.sh | SVC_ENROLL_TOKEN=et_... bash`)만 자기 서버에서 실행한다. GitHub 작업은 고객이 하지 않는다.
+등록 순간에 플랫폼이 회사 전용 gitops 레포(`gitops-t-<회사>`)를 만들고, 고객 서버가 만든 SSH 공개 키를 그 레포에만 읽기 전용 배포 키로 건다. 워커는 온프레 묶음을 그 레포로 복사한다.
+그래서 고객 Argo CD 자격이 새도 그 회사 폴더만 보인다 (공용 gitops 레포 읽기 토큰을 고객에게 주지 않는다).
+
+```bash
+# 1. GitHub 조직 설정: Settings → Member privileges(또는 Repository) → Deploy keys 허용 (꺼져 있으면 등록이 TENANT_REPO_DEPLOY_KEY_DENIED 로 멈춘다)
+# 2. 플랫폼용 GitHub 토큰 1개 (fine-grained, 조직 소유, 모든 레포: Administration 쓰기 + Contents 쓰기). 레포 만들기·배포 키 걸기(api)·회사 레포 push(worker)에 쓴다
+# 3. Agent 이미지 공개: Actions → publish-onprem-agent 실행 → 조직 Packages 에서 svc-onprem-agent 를 Public 으로 (처음 한 번). 요약 끝의 이름@sha256 을 적어 둔다
+# 4. platform/app JSON 에 키 넣기 (값은 채팅·레포에 남기지 않는다). secretKeys 보다 먼저 넣는다
+#    GITOPS_TENANT_REPO_URL = https://github.com/<조직>/gitops-{tenant}.git   ({tenant} 그대로. 회사마다 바뀐다)
+#    GITOPS_TENANT_TOKEN    = 2번 토큰
+#    ONPREM_AGENT_IMAGE     = 3번 이름@sha256
+#    ONPREM_METRICS_URL     = https://metrics.<도메인>/v1/metrics   (트래픽 판정 지표 수집기가 보낼 곳. 등록 응답에 지표 토큰이 같이 나간다)
+# 5. helm upgrade 로 api·worker 가 새 키를 받게 한다 (기본 values 에는 안 넣었다: 다른 사람이 키 없이 upgrade 해도 동기화가 멈추지 않게)
+helm upgrade platform deploy/helm/platform -n platform --reset-then-reuse-values \
+  --set 'components.api.secretKeys={DATABASE_URL,JWT_SECRET,PLATFORM_PRINCIPAL_ARN,AGENT_REPORT_MASTER_KEY,PUBLIC_API_URL,CONNECT_TEMPLATE_URL,GITOPS_TENANT_REPO_URL,GITOPS_TENANT_TOKEN,ONPREM_AGENT_IMAGE,ONPREM_METRICS_URL}' \
+  --set 'components.worker.secretKeys={DATABASE_URL,GITOPS_REPO_URL,GITOPS_WRITE_TOKEN,GITOPS_PUSH,REPL_SECRET_MASTER_KEY,PLATFORM_EGRESS_CIDRS,GITOPS_TENANT_REPO_URL,GITOPS_TENANT_TOKEN}'
+# 6. 확인: 로그인 없이 스크립트가 나오면 된다 (503 이면 ONPREM_AGENT_IMAGE 가 없거나 모양이 틀림)
+curl -fsS https://console.<도메인>/api/v1/install/onprem.sh | head -3
+```
+
+- 이미 설치된 고객(손으로 설치, 공용 레포 토큰)은 콘솔에서 새 등록 명령을 받아 `SVC_REENROLL=1` 을 앞에 붙여 다시 돌리면 회사 레포·배포 키로 바뀐다. 그 다음 그 서버의 공용 레포 토큰 파일은 지운다.
+- 키를 안 넣으면 예전과 같다: 콘솔 명령은 레포 스크립트(`npm run agent:onprem -- --enroll`), 워커는 공용 레포에만 쓴다.
+
+## worker Terraform 작업 폴더 디스크
+
+자원 생성 작업은 worker 안 작업 폴더에 state·입력값·출력값·DB 비밀 파일을 둔다. 기본값(`/tmp`)이면 파드가 지워질 때 함께 사라져, 만든 자원을 Terraform 으로 지우지 못한다. 실제 자원을 만들기 전에 디스크를 켠다.
+
+```bash
+# 1. 플랫폼 Terraform apply 로 aws-ebs-csi-driver 애드온을 만든다
+# 2. worker 를 1개로 줄이고 디스크를 켠다
+helm upgrade platform deploy/helm/platform -n platform --reset-then-reuse-values \
+  --set apps.worker.replicas=1 --set apps.worker.tfWorkDir.size=20Gi
+```
+
+- worker 는 1개만 뜬다. EBS 는 파드 하나만 붙기 때문이다. 재배포 때는 이전 파드를 먼저 내려 잠깐 작업이 멈춘다 (`Recreate`).
+- 디스크는 첫 파드가 뜬 가용 영역에 묶인다. cred 노드가 다른 영역으로 바뀌면 파드가 `Pending` 이 된다. 그 영역에 노드를 늘리면 다시 뜬다.
+- `helm uninstall` 이나 PVC 삭제로도 디스크는 남는다 (`resource-policy: keep`, `reclaimPolicy: Retain`). 지우는 것은 사람이 한다.
+
+## 클라우드 도착 트래픽 지표 (AWS·GCP)
+
+`trafficMetrics.endpoint` 를 주면 도착 cloudflared 파드 안에 수집기가 같이 뜬다. 배포 권한에 RBAC·NetworkPolicy 가 없어 온프레처럼 따로 띄우지 않는다. 비우면 아무것도 안 그린다.
+
+```
+# 1. 도착 환경의 지표 토큰 받기 (POST /api/v1/environments/:id/metric-token). 원문은 응답에 한 번만 나온다
+# 2. 도착 비밀 저장소의 svc-metric-token 에 {"token": "<값>"} 넣기. 정확한 이름은 이전 계획의 경고 줄에 나온다
+# 3. 차트 값 주기
+helm upgrade platform deploy/helm/platform -n platform --reset-then-reuse-values --set trafficMetrics.endpoint=https://metrics.<도메인>/v1/metrics
+# 4. 도착 지표가 Prometheus 에 들어오는 것을 본 뒤에 판정을 켠다. 먼저 켜면 표본 부족으로 롤백된다
+helm upgrade platform deploy/helm/platform -n platform --reset-then-reuse-values --set trafficMetrics.promUrl=http://monitoring-kube-prometheus-prometheus.monitoring:9090
+```
+
+- 값을 켜면 토큰은 필수다. 저장소에 없으면 배포가 커밋 전에 `SECRET_VALUES_MISSING` 으로 멈추고 어느 이름이 없는지 알려 준다. 넣고 재개하면 된다. 이때 트래픽은 아직 출발에 있다.
+- 값을 켠 시점 이후 배포부터 수집기가 붙는다. 지문에는 안 들어가서 이미 승인한 계획도 그대로 간다.
+- 응답 시간은 잴 수 없어 판정은 오류율로만 하고 "지연 미측정"으로 남는다.
+- gitops 레포의 `charts/app` 을 이 레포와 같게 맞춰야 수집기가 그려진다.
+- TODO(human): 토큰을 사람이 넣는다. worker 가 이전마다 발급해 넣는 길은 아직 없다.
+
 ## 아직 없는 것
 
 - TODO(human): worker 의 비밀 아닌 설정(`PROM_URL`, `TF_WORK_DIR` 등)을 차트로 넘기는 길. 지금 앱 Deployment 는 `<이름>-env` 비밀과 포트·`HOME` 만 준다
@@ -217,7 +277,7 @@ kubectl -n platform get secret worker-env -o json | python3 -c 'import json,sys;
 - 지표 토큰을 콘솔 화면에서 받는 길. 지금은 API 만 있다
 - TODO(human): Collector 설정(`templates/otel-gateway.yaml`)을 실제 Collector 0.164.0 으로 돌려 보지 않았다. 첫 설치 때 파드 로그와 라벨 덮어쓰기를 확인한다
 - `monitoring` 접근 제한(NetworkPolicy). Prometheus 는 로그인이 없어 클러스터 안 파드면 읽을 수 있다
-- TODO(human): 플랫폼 Terraform 에 `aws-ebs-csi-driver` addon 이 없다. 없으면 `sbx-standard`(provisioner `ebs.csi.aws.com`) PVC 와 vCluster 제어판 PVC 가 묶이지 않는다
+- 플랫폼 Terraform `aws-ebs-csi-driver` 애드온은 코드에 있다. apply 전에는 worker 작업 폴더 PVC, `sbx-standard` PVC, vCluster 제어판 PVC 가 묶이지 않는다
 - TODO(human): sandbox 노드에 runsc 설치 (`main.tf` sandbox launch template). 그 전에는 `sandbox.gvisor.enabled=false` 로 두고, 수정 고리(remediation) 샌드박스 워크로드는 뜨지 않는다
 - TODO(human): DATABASE_URL 의 TLS. RDS 는 TLS 만 받는다. `sslmode=require` 는 pg 가 인증서 검증까지 하므로 RDS CA 묶음(`NODE_EXTRA_CA_CERTS`)을 같이 줘야 한다.
 - TODO(human): `0001_init.sql` 의 고정 `app_user` 비밀번호를 바꾼 뒤 `DATABASE_URL` 을 넣는다.
@@ -244,7 +304,7 @@ agent-worker 결정 코드만 호스트 샌드박스 권한을 쥔다. worker �
 
 - 복사 자리와 런타임 이름을 호스트 가드와 같은 값 하나에서 꺼낸다. 비밀 JSON 에 따로 넣어 두면 가드와 어긋날 수 있다. 같은 키가 JSON 에도 있으면 차트 env 가 이긴다.
 - AI 점검에는 읽기 토큰만 준다. agent-worker 는 고객 로그를 LLM 에 넣는 곳이고, gitops 레포 `main` 에는 보호 규칙이 없어 쓰기 토큰이 새면 고객 클러스터 배포로 이어진다. 수정안은 원격에 push 하지 않고 패치로 남는다(`GITOPS_PUSH` 없음).
-- 값은 helm 이 기억하지 않는다. 이후 `helm upgrade` 마다 같은 `--set` 을 준다. `--reuse-values` 로 이 칸이 없는 예전 릴리스 값을 써도 렌더는 돈다(꺼진 것으로 본다).
+- 한 번 준 `--set` 은 이후 `helm upgrade --reset-then-reuse-values` 가 그대로 이어 쓴다. 이 칸이 없는 예전 릴리스 값으로 올려도 렌더는 돈다(꺼진 것으로 본다).
 
 ### 라벨 계약 (네임스페이스)
 

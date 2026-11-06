@@ -45,6 +45,28 @@ terraform apply -var expected_account_id=$(aws sts get-caller-identity --query A
 - 이미 로컬 state 로 platform 을 apply 한 적이 있으면 `terraform init -migrate-state` 로 옮긴다.
 - bootstrap 의 로컬 `terraform.tfstate` 는 레포 밖에 보관한다. 잃어버려도 버킷은 남고 `terraform import` 로 다시 잡는다.
 
+## 환경 층 자동 생성 (`ENV_LAYER_AUTO`, GCP 도착만)
+
+상태: AI 초안. 아키텍처 이전 9단계의 "4 기반 생성". 도착 GCP 프로젝트(`gcp_target_project`)에 GKE 가 없으면 worker 가 apply 단계 맨 앞에서 `modules/gcp/env` 로 VPC·GKE·Artifact Registry·ESO 를 만든다.
+
+| 항목 | 내용 |
+|---|---|
+| 켜기 | worker env `ENV_LAYER_AUTO=1` (DRAFT(ai) 기본 꺼짐. 꺼져 있으면 예전과 같다: `TF_FACT_*` 또는 `TF_FACTS_MISSING`) |
+| 사실 고르는 순서 | ① DB `environment_layers` 줄이 ready ② worker `TF_FACT_*` ③ 둘 다 없고 켜져 있으면 만든다. 도착 프로젝트에 클러스터가 이미 있는데 ①이 없으면 만들지 않고 `NEEDS_HUMAN` |
+| 승인 | 계획서 `envLayer.mode=create` + 확인 항목 `env_layer_create`(GKE 비용 고지). apply 는 계획 때의 입력 지문(`varsHash`)·모듈 지문이 같을 때만 만든다 |
+| 실행 | 작업 폴더 `TF_WORK_DIR/<회사>/env-<환경 id>/`, 1차 `create_eso=false`(클러스터) → 2차 `create_eso=true`(ESO). 두 번이 예산 `TF_ENV_LAYER_BUDGET_SEC`(DRAFT 1800초)를 나눠 쓰고, 켜져 있으면 apply 큐 기한에 그만큼 더한다 |
+| 자격 | 빌린 실행 토큰(svc-operate)만. 토큰이 없으면 `ENV_LAYER_CRED_MISSING` 으로 멈춘다 (worker 자기 SA 로 만들지 않음) |
+| state | 작업 폴더 로컬 파일 (`envLayerBackend()` 한 곳, TODO(human): 원격 저장) |
+| 실패 | 줄 `status=failed`, 이전은 `ENV_LAYER_APPLY_FAILED`. 만들다 만 자원은 지우지 않는다. 다시 계획·apply 하면 같은 state 로 이어 만든다 |
+
+운영 주의
+- 비용: e2-standard-2 노드 2대 + Cloud NAT + 고정 외부 IP 1개가 이전이 끝나도 계속 과금된다.
+- 이전의 롤백·정리(target-destroy)는 환경 층을 지우지 않는다 (환경 소유). 지울 때는 사람이 그 작업 폴더에서
+  `cd modules/gcp/env && terraform destroy -var-file=../../../terraform.tfvars.json` 뒤 DB 줄을 지운다. 먼저 그 환경을 쓰는 이전이 없는지 확인한다.
+  `google_service_networking_connection` 은 ABANDON 이라 피어링은 `gcloud services vpc-peerings delete` 로 따로 지운다 (위 UPREV 주석).
+- worker 디스크(#265 EBS)를 잃으면 state 도 잃는다. 그때는 `terraform import` 로 다시 잡거나 줄을 ready 로 두고 사실만 쓴다.
+- 고객 svc-operate 에 환경 층을 만들 권한이 아직 없다 (별도 권한 PR). 없으면 1차 apply 가 403 으로 `ENV_LAYER_APPLY_FAILED`.
+
 ## 검증 명령
 ```
 cd infra/modules/aws/app

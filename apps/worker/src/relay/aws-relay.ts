@@ -8,6 +8,10 @@
 //   다시 돌면 태그로 찾은 것을 그대로 쓴다 (중복 생성 없음). 지울 때는 두 태그(managed-by=platform AND svc:migration=<이 이전>)가
 //   응답에서 다시 확인된 것만 지운다 (필터만 믿지 않는다)
 // 실측 (2026-11-05, 대역 RDS + 중계 + 온프레 VM CNPG): 롤백 창 역방향 구독은 출발 RDS 보안 그룹에 "중계 사설 IP/32:5432 로 나가기" 규칙이 있어야 붙었다
+// 실측 (2026-11-06, 플랫폼 EKS 워커 + 비공개 RDS 다른 VPC): 워커 파드에서 출발 RDS:5432 는 TIMEOUT (같은 계정이라도 VPC 가 다르면 안 닿는다),
+//   중계기 → RDS:5432 도 RDS 보안 그룹이 클러스터 보안 그룹만 받아 TIMEOUT. 그래서 길 두 개를 더 연다:
+//   - 출발 입구(RELAY_SOURCE_PORT): 워커 → 중계 공개 IP:15432 → RDS:5432 (TCP 그대로 넘김, TLS 는 워커↔RDS 끝까지). 보안 그룹은 플랫폼 나가는 대역만
+//   - RDS 들어오기: RDS 보안 그룹에 "중계 보안 그룹에서 5432" (이미 허용돼 있으면 안 단다)
 import { mkdtemp, rm, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -17,12 +21,16 @@ import { OPENSSH_PEM, type SshKeypair } from "../gitops/migration-secrets.js";
 export const RELAY_TAG = { managedBy: "managed-by", migration: "svc:migration", role: "svc:role" } as const;
 export const RELAY_ROLE = "relay";
 export const RELAY_DB_EGRESS_ROLE = "relay-db-egress";
+export const RELAY_DB_INGRESS_ROLE = "relay-db-ingress";
 export const RELAY_AMI_PARAM = "/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64";
 // DRAFT(ai): 데모 모듈(demo-relay)과 같은 t4g.nano. 터널 몇 개만 나르는 SSH 중계라 충분하다 【추정】
 export const RELAY_INSTANCE_TYPE = "t4g.nano";
 export const PG_PORT = 5432;
+// DRAFT(ai): 워커가 출발 RDS 에 붙는 중계기 입구 포트. 5432(역방향 터널 → 온프레 CNPG)와 겹치지 않는 비특권 포트 (forwarder 가 root 없이 연다)
+export const RELAY_SOURCE_PORT = 15432;
 
-export type RelayErrorCode = "RELAY_PROVISION_FAILED" | "RELAY_TEARDOWN_FAILED" | "RELAY_SOURCE_DB_UNKNOWN" | "RELAY_CONFIG_MISSING" | "RELAY_DB_EGRESS_DENIED";
+export type RelayErrorCode = "RELAY_PROVISION_FAILED" | "RELAY_TEARDOWN_FAILED" | "RELAY_SOURCE_DB_UNKNOWN" | "RELAY_CONFIG_MISSING" | "RELAY_DB_EGRESS_DENIED"
+  | "RELAY_DB_INGRESS_DENIED";
 export class RelayError extends Error {
   constructor(readonly code: RelayErrorCode, message: string, readonly awsCode?: string) { super(message); this.name = "RelayError"; }
 }
@@ -72,6 +80,8 @@ export interface RelayPlan {
   /** RDS 보안 그룹에 달 나가기 규칙 (대상 = 중계 사설 IP/32, 사설 IP 를 안 뒤에 정해진다).
    *  groupIds = RDS 의 활성 보안 그룹 전부: 이미 나가기가 열려 있는지는 합집합으로 본다. 규칙을 달 때는 groupId(첫 번째) 하나에만 */
   dbEgress: { groupId: string; groupIds: string[]; port: number; tags: Tag[] };
+  /** RDS 보안 그룹에 달 들어오기 규칙 (출처 = 중계 보안 그룹 참조: EC2 를 다시 만들어도 그대로). 모양은 dbEgress 와 같다 */
+  dbIngress: { groupId: string; groupIds: string[]; port: number; tags: Tag[] };
   hostPublicKey: string;
 }
 
@@ -98,7 +108,42 @@ export function platformEgressCidrs(raw: string | undefined): string[] {
   });
 }
 
+/** 출발 입구 forwarder (python3 표준 라이브러리만: AL2023 기본 이미지에 있고, 중계기는 나가는 인터넷이 없어 패키지를 못 받는다).
+ *  TCP 바이트를 그대로 넘긴다 (TLS 를 풀지 않는다 → 중계기는 DB 내용·비밀번호를 못 본다). 목적지는 실행 인자 하나로 고정 */
+export const RELAY_FORWARDER_PY = [
+  "import asyncio, sys",
+  "UP_HOST, UP_PORT, LISTEN = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])",
+  "async def pipe(r, w):",
+  "    try:",
+  "        while True:",
+  "            b = await r.read(65536)",
+  "            if not b:",
+  "                break",
+  "            w.write(b)",
+  "            await w.drain()",
+  "    except Exception:",
+  "        pass",
+  "    finally:",
+  "        try:",
+  "            w.close()",
+  "        except Exception:",
+  "            pass",
+  "async def handle(cr, cw):",
+  "    try:",
+  "        ur, uw = await asyncio.wait_for(asyncio.open_connection(UP_HOST, UP_PORT), 10)",
+  "    except Exception:",
+  "        cw.close()",
+  "        return",
+  "    await asyncio.gather(pipe(cr, uw), pipe(ur, cw))",
+  "async def main():",
+  "    s = await asyncio.start_server(handle, '0.0.0.0', LISTEN)",
+  "    async with s:",
+  "        await s.serve_forever()",
+  "asyncio.run(main())",
+].join("\n");
+
 /** 중계기 user-data (bash). 호스트 키를 넣고 다른 종류 호스트 키는 지우고, tunnel 계정은 포트 전달 두 칸만 (demo-relay 모듈과 같은 sshd 모양).
+ *  그리고 워커용 출발 입구 forwarder(RELAY_SOURCE_PORT → RDS:5432)를 systemd 로 띄운다 (sshd 다음: 실패해도 터널은 산다).
  *  ec2-user 키는 없다 (관리 SSH 없음). 바깥 패키지 설치가 없어 나가는 인터넷이 필요 없다 */
 export function relayUserData(i: { migrationId: string; rdsEndpoint: string; tunnelPublicKey: string; hostKey: SshKeypair }): string {
   if (!NAME.test(i.rdsEndpoint)) throw new RelayError("RELAY_SOURCE_DB_UNKNOWN", "RDS 엔드포인트는 이름(영숫자·.·-)만");
@@ -154,12 +199,38 @@ export function relayUserData(i: { migrationId: string; rdsEndpoint: string; tun
     "SVC_TUNNEL",
     "sshd -t",
     "systemctl restart sshd",
+    // 출발 입구: 워커 → 중계 :15432 → RDS:5432. 보안 그룹이 플랫폼 나가는 대역만 받는다. root 아닌 일회용 계정(DynamicUser)으로 돈다
+    "cat > /usr/local/bin/svc-relay-fwd.py <<'SVC_FWD'",
+    RELAY_FORWARDER_PY,
+    "SVC_FWD",
+    "cat > /etc/systemd/system/svc-relay-fwd.service <<'SVC_UNIT'",
+    "[Unit]",
+    "Description=svc relay source entry (platform worker to source RDS, TCP passthrough)",
+    "After=network-online.target",
+    "Wants=network-online.target",
+    "[Service]",
+    `ExecStart=/usr/bin/python3 /usr/local/bin/svc-relay-fwd.py ${i.rdsEndpoint} ${PG_PORT} ${RELAY_SOURCE_PORT}`,
+    "DynamicUser=yes",
+    "NoNewPrivileges=yes",
+    "ProtectSystem=strict",
+    "ProtectHome=yes",
+    "PrivateTmp=yes",
+    "Restart=always",
+    "RestartSec=2",
+    "[Install]",
+    "WantedBy=multi-user.target",
+    "SVC_UNIT",
+    // umask 077 로 만들어진 파일을 일회용 계정이 읽게
+    "chmod 644 /usr/local/bin/svc-relay-fwd.py /etc/systemd/system/svc-relay-fwd.service",
+    "systemctl daemon-reload",
+    "systemctl enable --now svc-relay-fwd.service",
     "",
   ].join("\n");
 }
 
 /** 보안 그룹 규칙 (demo-relay 와 같은 모양):
- *  들어오기 22 = 온프레 나가는 IP/32 만, 5432 = VPC 대역(RDS 역방향 구독) + 플랫폼 워커 나가는 대역. 나가기 5432 = VPC 안만 */
+ *  들어오기 22 = 온프레 나가는 IP/32 만, 5432 = VPC 대역(RDS 역방향 구독) + 플랫폼 워커 나가는 대역,
+ *  15432(출발 입구) = 플랫폼 워커 나가는 대역만. 나가기 5432 = VPC 안만 */
 export function relayRules(i: { onpremEgressIp: string; vpcCidrs: string[]; platformEgressCidrs: string[] }): SgRule[] {
   if (!IPV4.test(i.onpremEgressIp)) throw new RelayError("RELAY_PROVISION_FAILED", "온프레 나가는 IP 가 IPv4 가 아니다");
   const vpc = i.vpcCidrs.map((c) => cidr(c, 8));
@@ -171,6 +242,7 @@ export function relayRules(i: { onpremEgressIp: string; vpcCidrs: string[]; plat
     { direction: "ingress", port: 22, cidr: `${i.onpremEgressIp}/32`, description: "SSH tunnel from on-prem cluster egress" },
     ...uniq(vpc).map((c): SgRule => ({ direction: "ingress", port: PG_PORT, cidr: c, description: "Postgres from source VPC (RDS reverse subscription)" })),
     ...uniq(plat).filter((c) => !vpc.includes(c)).map((c): SgRule => ({ direction: "ingress", port: PG_PORT, cidr: c, description: "Postgres from platform worker egress" })),
+    ...uniq(plat).map((c): SgRule => ({ direction: "ingress", port: RELAY_SOURCE_PORT, cidr: c, description: "Source DB entry for platform worker (TCP passthrough to RDS)" })),
     ...uniq(vpc).map((c): SgRule => ({ direction: "egress", port: PG_PORT, cidr: c, description: "Postgres to RDS inside the VPC" })),
   ];
 }
@@ -193,6 +265,7 @@ export function buildRelayPlan(i: RelayPlanInput): RelayPlan {
                 rootDeviceName: i.ami.rootDeviceName, tags: relayTags(i.migrationId, RELAY_ROLE) },
     userData: relayUserData({ migrationId: i.migrationId, rdsEndpoint: i.rds.endpoint, tunnelPublicKey: i.tunnelPublicKey, hostKey: i.hostKey }),
     dbEgress: { groupId, groupIds: [...new Set(i.rds.securityGroupIds)], port: PG_PORT, tags: relayTags(i.migrationId, RELAY_DB_EGRESS_ROLE) },
+    dbIngress: { groupId, groupIds: [...new Set(i.rds.securityGroupIds)], port: PG_PORT, tags: relayTags(i.migrationId, RELAY_DB_INGRESS_ROLE) },
     hostPublicKey: i.hostKey.publicKeyLine.trim(),
   };
 }
@@ -331,10 +404,24 @@ export function existingDbEgressCover(rows: SgRuleRow[], privateIp: string, port
   })?.SecurityGroupRuleId;
 }
 
+/** RDS 보안 그룹들(합집합)의 들어오기 규칙이 이미 중계기(사설 IP 또는 중계 보안 그룹)에서 port(TCP)를 허용하면 그 규칙 번호.
+ *  existingDbEgressCover 와 같은 기준: 플랫폼이 단 규칙(svc:role=relay-db-ingress, 다른 이전 것 포함)·접두 목록·IPv6 는 허용으로 치지 않는다 */
+export function existingDbIngressCover(rows: SgRuleRow[], privateIp: string, port: number, relaySgId: string): string | undefined {
+  return rows.find((r) => {
+    if (r.IsEgress || !r.SecurityGroupRuleId) return false;
+    if ((r.Tags ?? []).some((t) => t.Key === RELAY_TAG.role && t.Value === RELAY_DB_INGRESS_ROLE)) return false;
+    const proto = r.IpProtocol === "-1" || ((r.IpProtocol === "tcp" || r.IpProtocol === "6") && (r.FromPort ?? -1) <= port && port <= (r.ToPort ?? -1));
+    const src = (r.CidrIpv4 !== undefined && cidrHas(r.CidrIpv4, privateIp)) || (!!relaySgId && r.ReferencedGroupInfo?.GroupId === relaySgId);
+    return proto && src;
+  })?.SecurityGroupRuleId;
+}
+
 export interface RelayResources {
   securityGroupId: string; instanceId: string; publicIp: string; privateIp: string;
   /** 우리가 단 RDS 나가기 규칙 번호. 이미 열려 있어 안 달았으면 "" (그때 dbEgressCoveredBy = 이미 허용하던 규칙 번호) */
   dbEgressRuleId: string; dbEgressCoveredBy?: string;
+  /** 우리가 단 RDS 들어오기 규칙 번호 (중계 보안 그룹 → RDS:5432). 이미 허용돼 있어 안 달았으면 "" (그때 dbIngressCoveredBy) */
+  dbIngressRuleId: string; dbIngressCoveredBy?: string;
   /** 이번에 새로 만든 것 / 이미 있어 그대로 쓴 것 (감사 detail 용, 번호만) */
   created: string[]; reused: string[];
 }
@@ -446,7 +533,45 @@ export async function provisionRelay(d: RelayAwsDeps, plan: RelayPlan): Promise<
       created.push(dbEgressRuleId);
     }
   }
-  return { securityGroupId: sgId, instanceId, publicIp, privateIp, dbEgressRuleId: dbEgressRuleId ?? "", ...(dbEgressCoveredBy ? { dbEgressCoveredBy } : {}), created, reused };
+
+  // ⑤ RDS 보안 그룹 들어오기 ← 중계 보안 그룹:5432 (출발 입구 forwarder 와 온프레 정방향 터널이 RDS 에 붙는 길).
+  //   출처를 보안 그룹 참조로 둬서 EC2 를 다시 만들어도 규칙은 그대로다. 이미 허용돼 있으면 고객 보안 그룹을 고치지 않는다
+  const inRules = ((await aws.call<{ SecurityGroupRules?: SgRuleRow[] }>(["ec2", "describe-security-group-rules", "--filters",
+    j([{ Name: "group-id", Values: [plan.dbIngress.groupId] }, ...tagFilters(plan.migrationId, RELAY_DB_INGRESS_ROLE)])], "RDS 들어오기 규칙 찾기", P))
+    .SecurityGroupRules ?? []).filter((r) => r.SecurityGroupRuleId && ownedBy(r.Tags, plan.migrationId));
+  const inKeep = inRules.find((r) => !r.IsEgress && r.ReferencedGroupInfo?.GroupId === sgId && r.FromPort === plan.dbIngress.port && r.ToPort === plan.dbIngress.port);
+  const inStale = inRules.filter((r) => r !== inKeep).map((r) => r.SecurityGroupRuleId!);
+  if (inStale.length) await aws.call(["ec2", "revoke-security-group-ingress", "--group-id", plan.dbIngress.groupId, "--security-group-rule-ids", ...inStale.sort()],
+    "RDS 옛 들어오기 규칙 빼기", P);
+  let dbIngressRuleId = inKeep?.SecurityGroupRuleId;
+  let dbIngressCoveredBy: string | undefined;
+  if (dbIngressRuleId) reused.push(dbIngressRuleId);
+  else {
+    const all = (await aws.call<{ SecurityGroupRules?: SgRuleRow[] }>(["ec2", "describe-security-group-rules", "--filters",
+      j([{ Name: "group-id", Values: plan.dbIngress.groupIds.length ? plan.dbIngress.groupIds : [plan.dbIngress.groupId] }])], "RDS 들어오기 규칙 읽기", P)).SecurityGroupRules ?? [];
+    dbIngressCoveredBy = existingDbIngressCover(all, privateIp, plan.dbIngress.port, sgId);
+    if (!dbIngressCoveredBy) {
+      let a: { SecurityGroupRules?: SgRuleRow[] };
+      try {
+        a = await aws.call<{ SecurityGroupRules?: SgRuleRow[] }>(["ec2", "authorize-security-group-ingress", "--group-id", plan.dbIngress.groupId,
+          "--ip-permissions", j([{ IpProtocol: "tcp", FromPort: plan.dbIngress.port, ToPort: plan.dbIngress.port,
+            UserIdGroupPairs: [{ GroupId: sgId, Description: "Postgres from svc relay (platform worker entry and on-prem tunnel)" }] }]),
+          "--tag-specifications", j([tagSpec("security-group-rule", plan.dbIngress.tags)])], "RDS 들어오기 규칙 열기", P);
+      } catch (e) {
+        if (e instanceof RelayError && /^(UnauthorizedOperation|AccessDenied)/.test(e.awsCode ?? ""))
+          throw new RelayError("RELAY_DB_INGRESS_DENIED", `출발 RDS 보안 그룹 ${plan.dbIngress.groupId} 이 중계기(보안 그룹 ${sgId})에서 들어오는 TCP ${plan.dbIngress.port} 를 받지 않고, 열 권한도 없다. `
+            + `워커의 출발 DB 접속과 온프레 정방향 터널에 필요하다. 연결 스택을 새 템플릿으로 업데이트하고(SourceDbSecurityGroupId=${plan.dbIngress.groupId}) 다시 승인하거나, `
+            // 고객이 직접 열 때는 VPC 대역으로 안내한다: 중계 보안 그룹을 참조하는 고객 규칙(우리 태그 없음)이 남으면 정리 때 중계 보안 그룹을 못 지운다
+            + `고객이 그 보안 그룹에 들어오기 TCP ${plan.dbIngress.port} ← 중계기가 있는 VPC 대역(중계 보안 그룹 참조는 쓰지 않는다)을 직접 연 뒤 다시 승인한다`, e.awsCode);
+        throw e;
+      }
+      dbIngressRuleId = a.SecurityGroupRules?.[0]?.SecurityGroupRuleId;
+      if (!dbIngressRuleId) throw new RelayError(P, "authorize-security-group-ingress 가 규칙 번호를 안 돌려줬다");
+      created.push(dbIngressRuleId);
+    }
+  }
+  return { securityGroupId: sgId, instanceId, publicIp, privateIp, dbEgressRuleId: dbEgressRuleId ?? "", ...(dbEgressCoveredBy ? { dbEgressCoveredBy } : {}),
+    dbIngressRuleId: dbIngressRuleId ?? "", ...(dbIngressCoveredBy ? { dbIngressCoveredBy } : {}), created, reused };
 }
 
 // user-data 에 호스트 개인 키가 들어 있다 → argv(ps 에 보임) 대신 0600 임시 파일(0700 폴더)로 넘기고 바로 지운다
@@ -474,13 +599,24 @@ async function runInstance(aws: AwsCli, plan: RelayPlan, sgId: string): Promise<
   }
 }
 
-/** 정리: RDS 나가기 규칙 → EC2 종료(terminated 까지 기다림) → 중계 보안 그룹. 두 태그가 응답에서 다시 확인된 것만 지운다. 여러 번 불러도 된다 */
+/** 정리: RDS 들어오기 규칙(중계 보안 그룹 참조 → 이게 남으면 보안 그룹을 못 지운다) → RDS 나가기 규칙 → EC2 종료(terminated 까지 기다림) → 중계 보안 그룹.
+ *  두 태그가 응답에서 다시 확인된 것만 지운다. 여러 번 불러도 된다 */
 export async function teardownRelay(d: RelayAwsDeps, migrationId: string): Promise<{ removed: string[] }> {
   const aws = new AwsCli(d);
   const T = "RELAY_TEARDOWN_FAILED" as const;
   const removed: string[] = [];
   const sleep = d.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   const tries = d.pollTries ?? 60, every = d.pollMs ?? 5000;
+
+  const inRules = ((await aws.call<{ SecurityGroupRules?: SgRuleRow[] }>(["ec2", "describe-security-group-rules", "--filters",
+    j(tagFilters(migrationId, RELAY_DB_INGRESS_ROLE))], "RDS 들어오기 규칙 찾기", T)).SecurityGroupRules ?? [])
+    .filter((r) => r.SecurityGroupRuleId && r.GroupId && ownedBy(r.Tags, migrationId));
+  for (const r of inRules) {
+    try {
+      await aws.call(["ec2", "revoke-security-group-ingress", "--group-id", r.GroupId!, "--security-group-rule-ids", r.SecurityGroupRuleId!], "RDS 들어오기 규칙 빼기", T);
+    } catch (e) { if (!(e instanceof RelayError && e.awsCode === "InvalidPermission.NotFound")) throw e; }
+    removed.push(r.SecurityGroupRuleId!);
+  }
 
   const rules = ((await aws.call<{ SecurityGroupRules?: SgRuleRow[] }>(["ec2", "describe-security-group-rules", "--filters",
     j(tagFilters(migrationId, RELAY_DB_EGRESS_ROLE))], "RDS 나가기 규칙 찾기", T)).SecurityGroupRules ?? [])

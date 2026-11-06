@@ -81,7 +81,7 @@ kubectl -n app-<앱> rollout status deploy/db-tunnel   # 준비 = 정방향 입�
    - `--source-db-sg` 를 주면 모듈이 출발 RDS 보안 그룹에 "중계 사설 IP:5432 로 나가기" 규칙을 더한다. 실측: 이 규칙이 없으면 롤백 창 역복제(RDS 의 구독)가 중계로 못 붙었다.
 2. 사람이 찍힌 `terraform init -from-module` · `plan` · `apply` 를 돌린다.
 3. `bash tools/onprem-relay.sh register …`: 중계기 호스트 키(`ssh-keyscan`)를 받고 끝점 줄을 넣는다.
-   - 출발 줄: `rds`, host = RDS 엔드포인트, 비밀번호 참조 `env:REPL_SECRET_SRC_<id8>`.
+   - 출발 줄: `rds`, host = RDS 엔드포인트, 비밀번호 참조 `env:REPL_SECRET_SRC_<출발 환경 id8>` (자동 중계기, 이전마다가 아니라 출발 환경마다 한 번). 손으로 세운 중계기(`tools/onprem-relay.sh`)는 예전처럼 `<이전 id8>`.
    - 도착 줄: `cnpg`, host = 중계 공개 IP:5432 (워커 → 역방향 터널), peer = 중계 사설 IP:5432 (RDS → 역방향 터널), 계정 `svc_migrate` + `derive:migrate`, 중계기 칸(`--relay-host`·`--relay-known-hosts-file`·`--relay-port`).
 4. 워커 deploy (온프레, `ONPREM_FLOOR_VIA_GIT` 가 `0` 아님, CNPG `replication.enabled`, 끝점 줄 두 개)가 `apps/worker/src/gitops/replication-delivery.ts` 로 값에 넣는다.
    - `postgres[i].certificates`, `sealedSecrets[]` 네 개 (`<cnpg>-migrate`, `<cnpg>-server-ca`, `<cnpg>-server-tls`, `db-tunnel-key`), `dbTunnel` (중계기 칸 + 정방향 = 출발 host:5432 + 역방향 켬).

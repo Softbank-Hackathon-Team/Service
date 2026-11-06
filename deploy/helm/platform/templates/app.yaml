@@ -16,6 +16,7 @@
 {{- if and $rehearsal.enabled (not $sbx.enabled) }}
 {{- fail "sandbox.rehearsal.enabled 는 sandbox.enabled 와 같이 켠다 (리허설은 sandbox 노드·호스트 가드·agent-worker 권한이 있어야 돈다)" }}
 {{- end }}
+{{- $traffic := default dict .Values.trafficMetrics }}
 {{- /* 플랫폼 앱 4개. 이미지 registry·tag 는 배포 때 준다. 둘 중 하나라도 비어 있으면 앱을 하나도 안 만든다 (값 없이도 비밀·입구 차트는 검사된다) */}}
 {{- if and $apps.image.registry $apps.image.tag }}
 {{- /* 앱마다 고정인 것: 실행 사용자(이미지 USER), 검사 경로, 쓰기 자리. 값으로 빼지 않는다 (이미지와 같이 바뀐다)
@@ -29,6 +30,7 @@
 {{- $a := index $apps $name }}
 {{- $f := index $fixed $name }}
 {{- if $a.enabled }}
+{{- $tfDisk := and (eq $name "worker") (default dict $a.tfWorkDir).size }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -39,6 +41,10 @@ metadata:
     app.kubernetes.io/part-of: platform
 spec:
   replicas: {{ $a.replicas }}
+  {{- if $tfDisk }}
+  # EBS 는 파드 하나만 붙는다. 새 파드를 먼저 띄우면 디스크를 못 붙여 멈춘다
+  strategy: { type: Recreate }
+  {{- end }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ $name }}
@@ -66,6 +72,9 @@ spec:
         runAsNonRoot: true
         runAsUser: {{ $f.uid }}
         runAsGroup: {{ $f.uid }}
+        {{- if $tfDisk }}
+        fsGroup: {{ $f.uid }}
+        {{- end }}
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: {{ $name }}
@@ -85,6 +94,9 @@ spec:
             - { name: METRICS_PORT, value: {{ $a.metricsPort | quote }} }
             {{- else if eq $name "worker" }}
             - { name: WORKER_METRICS_PORT, value: {{ $a.metricsPort | quote }} }
+            {{- if $tfDisk }}
+            - { name: TF_WORK_DIR, value: /var/lib/svc-tf }
+            {{- end }}
             {{- else if eq $name "web" }}
             # nginx 템플릿(deploy/docker/web-nginx.conf.template)이 /api/* 를 여기로 보낸다
             - { name: API_UPSTREAM, value: {{ printf "http://api:%v" $apps.api.port | quote }} }
@@ -111,6 +123,14 @@ spec:
             {{- if and $remediation.sandboxMode (eq $name "agent-worker") }}
             # AI 점검 샌드박스 (values agentRemediation.sandboxMode). 비우면 agent-worker 기본(memory)
             - { name: SANDBOX_MODE, value: {{ $remediation.sandboxMode | quote }} }
+            {{- end }}
+            {{- if eq $name "worker" }}
+            {{- with $traffic.endpoint }}
+            - { name: TRAFFIC_METRICS_ENDPOINT, value: {{ . | quote }} }
+            {{- end }}
+            {{- with $traffic.promUrl }}
+            - { name: PROM_URL, value: {{ . | quote }} }
+            {{- end }}
             {{- end }}
           {{- if or $a.port $a.metricsPort }}
           ports:
@@ -168,9 +188,16 @@ spec:
             - { name: gcp-token, mountPath: /var/run/secrets/tokens/gcp, readOnly: true }
             - { name: gcp-cred, mountPath: /var/run/gcp-cred, readOnly: true }
             {{- end }}
+            {{- if $tfDisk }}
+            - { name: tf-work, mountPath: /var/lib/svc-tf }
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- if $tfDisk }}
+        - name: tf-work
+          persistentVolumeClaim: { claimName: worker-tf-work }
+        {{- end }}
         {{- if eq $name "web" }}
         - name: nginx-conf
           emptyDir: {}
