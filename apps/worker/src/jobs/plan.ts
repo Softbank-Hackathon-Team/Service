@@ -137,8 +137,7 @@ export function buildPlanDoc(i: PlanInput, env: NodeJS.ProcessEnv = process.env)
   const helm = helmValuesV2(i.spec, target);
   const from = i.source?.provider ?? i.target.provider;
   // 출발 관리형 상품이 도착에서 다른 상품이 되는 자원 = substitute 확인 항목 (명세에 출발 벤더가 없어 여기서 출발을 넘긴다)
-  // TODO(human): 앱 코드를 고쳐야 하는 대체(appChange)를 이 확인 하나로 넘길지, 따로 켜야(opt-in) 되게 할지 사람이 정한다.
-  //   후보 자리: ① 명세 칸(구성요소마다 대체 허용) ② 이전 옵션(이전 만들 때 대체 허용) ③ 지금처럼 승인 확인 자체
+  // 앱 코드를 고쳐야 하는 대체(appChange)도 따로 켜는 자리 없이 이 확인 항목(계획 승인 체크)으로 받는다 (11/06 설계 스레드 합의)
   const v2Approvals = [...(i.v2Approvals ?? []), ...(targetBuilderFor(i.target.provider).substitutionsV2?.(i.spec, from) ?? [])];
   // DRAFT(ai): 단계별 예상 시간·게이트는 설계 문서 수치가 정해지기 전 임시값
   const steps: Step[] = [

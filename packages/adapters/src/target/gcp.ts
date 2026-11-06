@@ -12,6 +12,7 @@ import { secretStoreName } from "./capability-checks.js";
 import { buildWorkloadValues, cloudPostgresValues, INGRESS_SECRETS } from "./cloud.js";
 import { cacheVars, cachesOf, dataTypesOf, objectStoreVars, objectStoresOf, queueVars, queuesOf } from "./data.js";
 import { assertDataFit, dbIdentityFor } from "./data-fit.js";
+import { cloudSubstitutes } from "./cloud-substitutes.js";
 import { AdapterError } from "../common/errors.js";
 import { managedJobJson, managedServiceJson, managedWorkloadValues } from "./managed.js";
 import { vmServiceJson, vmWorkloadValues } from "./vm.js";
@@ -81,6 +82,7 @@ export const gcpTarget: TargetBuilder = {
   imageRef: (src, t) => gcpAdapter.imageRef(src, t),
   // GCP 는 세션 정책이 없다 → 이 목록 = 테넌트 SA 커스텀 역할 + testIamPermissions 사전 점검 (v1 과 같음)
   operateActionsV2: (spec, purpose) => actionsFor(PERMS, resourceTypesV2(spec), purpose),
+  substitutionsV2: (spec, source) => cloudSubstitutes("gcp", spec, source),
   toTerraformV2(spec: AppSpecV2, t: Target): TfRootCall {
     assertRenderable(spec, CAPS);
     assertGrants("gcp", spec);
