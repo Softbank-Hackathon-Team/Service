@@ -63,6 +63,8 @@ Cloudflare 쪽: Zero Trust 에서 원격 관리 터널을 만들고 토큰을 `p
 
 공식 차트 argo-cd 를 `argocd` 네임스페이스의 `cred` 노드에 올린다. 값은 `deploy/argocd/argo-cd.values.yaml`. 공개 주소 없이 port-forward 로만 본다.
 
+워커는 배포 동기화를 이 클러스터의 Application 으로 읽는다. 차트가 worker 에만 `ARGO_SOURCE=k8s`·`ARGOCD_NAMESPACE`(values `argocd.namespace`, 기본 `argocd`)를 넣고, kubectl 은 context 없이 파드 서비스 계정 토큰으로 부른다. 권한은 `templates/worker-argocd-rbac.yaml` 의 Role 하나(같은 네임스페이스). Argo CD 를 다른 네임스페이스에 올렸으면 `argocd.namespace` 를 같이 바꾼다.
+
 ```
 # 1. Argo CD
 helm upgrade --install argocd oci://ghcr.io/argoproj/argo-helm/argo-cd --version 10.11.7 -n argocd --create-namespace -f deploy/argocd/argo-cd.values.yaml
