@@ -1,4 +1,4 @@
-import type { Provider } from "./types";
+import type { PlanAcknowledgement, Provider } from "./types";
 import { t } from './i18n';
 // Z83-08: "출발 → 도착 자원 대응표" 화면 타입. 값은 서버 GET /migrations/:id/plan/resources (Z86,
 // apps/api env-inventory.ts PlanResources, packages/adapters service-map.ts · service-map-v2.ts) 가 준다.
@@ -59,3 +59,12 @@ export function planResourceRows(view: Pick<PlanResourcesView, "rows"> | null | 
   const boundary = rows.find((row) => row.category === "boundary") ?? null;
   return { listed, boundary, runtimeChanges: listed.filter(({ row }) => row.runtimeChange).length };
 }
+
+/** 출발 상품이 도착에서 다른 상품이 되는 자원 한 줄. 계획서 substitute 확인 항목에서 오고, 확인은 그 항목(ackId) 체크다 */
+export interface SubstituteRow { ackId: string; resource: string; from: string; to: string; lost: string[]; appChange: boolean }
+
+/** "자원 대응" 카드의 상품 대체 줄. 서버 순서(자원 id 순) 그대로, 글은 파싱하지 않고 구조 칸만 쓴다 */
+export const substituteRows = (acks: readonly PlanAcknowledgement[] | undefined): SubstituteRow[] =>
+  (acks ?? []).flatMap((ack) => ack.kind !== "substitute" ? [] : [{
+    ackId: ack.id, resource: ack.ref ?? ack.id, from: ack.from ?? "?", to: ack.to ?? "?", lost: ack.lost ?? [], appChange: ack.appChange === true,
+  }]);

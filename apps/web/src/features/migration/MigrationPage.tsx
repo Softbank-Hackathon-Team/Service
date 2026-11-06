@@ -10,7 +10,7 @@ import { aboutMigration } from '../../lib/events';
 import { errorCode, errorText } from '../../lib/errors';
 import { stopReasonOf } from '../../lib/failure';
 import { is404, or404 } from '../../lib/http';
-import { planResourceRows, runtimeChangeNote } from '../../lib/resourceMap';
+import { planResourceRows, runtimeChangeNote, substituteRows } from '../../lib/resourceMap';
 import { LABEL } from '../../lib/status';
 import { failureDetail, lastPrecheckBounce } from '../../lib/timelineDetail';
 import type { MigrationView, PlanAckKind, PrecheckItem } from '../../lib/types';
@@ -30,8 +30,10 @@ import {
 import { LeftoverFold, StopFold } from './EvidenceFolds';
 import { DoneScreen, CleanupScreen, PausedScreen, RolledBackScreen, RollingBackScreen, RunningScreen, WindowScreen } from './RunScreens';
 import { RequirementsFold, SourceFactsFold, VerdictFold } from './SecurityFolds';
+import { SubstituteMap } from './SubstituteMap';
 import { isSecItem, precheckLine, secAckLabel, type SecuritySpecV2 } from './securityV2';
 import { ConfirmPill, Frame, useAction, useCostConsent, type ScreenProps } from './shared';
+import { Section } from '../common/Section';
 import s from '../common/page.module.css';
 import { localeTag, t } from '../../lib/i18n';
 
@@ -320,6 +322,7 @@ const ACK_KIND: Record<PlanAckKind, string> = {
   public_bucket: t('공개 버킷'),
   provision_reuse: t('있는 자원 다시 씀'),
   env_layer_create: t('도착 클러스터 새로 만듦'),
+  substitute: t('상품 대체'),
 };
 
 // 승인·시작이 이 코드로 막히면 계획서가 바뀌었거나 시간이 지난 것이다 → 계획서를 다시 읽고 체크는 새 지문에서 처음부터
@@ -360,6 +363,7 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
   const warns = checks.filter((item) => item.level !== 'info').length;
   const expired = doc ? Date.parse(doc.expiresAt) <= Date.now() : false;
   const mapped = planResourceRows(resources.data);
+  const substitutes = substituteRows(doc?.acknowledgements);
 
   return (
     <Frame migration={migration} route={route}>
@@ -430,29 +434,38 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
         </FoldTile>
         {doc && <VerdictFold items={doc.precheck} />}
         <FoldTile
+          key={`map-${substitutes.length > 0}`}
           title={t('자원 대응')}
-          summary={resources.data ? t('{0}개{1}', { 0: mapped.listed.length, 1: mapped.runtimeChanges > 0 ? t(' · 실행 방식 바뀜 {0}', { 0: mapped.runtimeChanges }) : '' }) : ''}
-          defaultOpen={false}
+          summary={resources.data ? t('{0}개{1}', { 0: mapped.listed.length, 1: [
+            substitutes.length > 0 ? t(' · 상품 대체 {0}', { 0: substitutes.length }) : '',
+            mapped.runtimeChanges > 0 ? t(' · 실행 방식 바뀜 {0}', { 0: mapped.runtimeChanges }) : '',
+          ].join('') }) : ''}
+          defaultOpen={substitutes.length > 0}
         >
-          <ul className={s.rows}>
-            {mapped.listed.map(({ key, row }) => (
-              <li key={key}>
-                <div className={s.row}>
-                  <span className="t-label-md">{row.label}</span>
-                  <span className={`${s.rowValue} t-caption c-tertiary`}>
-                    {row.source?.service ?? t('없음')} → {row.target?.service ?? t('없음')}
-                  </span>
-                </div>
-                {runtimeChangeNote(row) && <p className={`${s.rowCaption} t-caption c-warning`}>{runtimeChangeNote(row)}</p>}
-              </li>
-            ))}
-          </ul>
-          {/* 경계 밖 자원은 옮기는 자원이 아니라 "건드리지 않는 것" 안내라 표 밖에 한 줄로 둔다 */}
-          {mapped.boundary && (
-            <p className={`${s.note} t-caption c-tertiary`}>
-              {mapped.boundary.label} · {mapped.boundary.afterSource ?? t('옮기지 않음')}
-            </p>
+          {doc && (
+            <SubstituteMap rows={substitutes} source={resources.data?.source.provider ?? null} target={resources.data?.target.provider ?? null} checked={ticks} />
           )}
+          <Section title={t('전체 자원')} summary={t('{0}개', { 0: mapped.listed.length })} defaultOpen={substitutes.length === 0}>
+            <ul className={s.rows}>
+              {mapped.listed.map(({ key, row }) => (
+                <li key={key}>
+                  <div className={s.row}>
+                    <span className="t-label-md">{row.label}</span>
+                    <span className={`${s.rowValue} t-caption c-tertiary`}>
+                      {row.source?.service ?? t('없음')} → {row.target?.service ?? t('없음')}
+                    </span>
+                  </div>
+                  {runtimeChangeNote(row) && <p className={`${s.rowCaption} t-caption c-warning`}>{runtimeChangeNote(row)}</p>}
+                </li>
+              ))}
+            </ul>
+            {/* 경계 밖 자원은 옮기는 자원이 아니라 "건드리지 않는 것" 안내라 표 밖에 한 줄로 둔다 */}
+            {mapped.boundary && (
+              <p className={`${s.note} t-caption c-tertiary`}>
+                {mapped.boundary.label} · {mapped.boundary.afterSource ?? t('옮기지 않음')}
+              </p>
+            )}
+          </Section>
         </FoldTile>
         <SecurityFold migration={migration} />
         <ActionRow notice={error ?? (plan.error != null && !doc ? errorText(plan.error) : null)}>

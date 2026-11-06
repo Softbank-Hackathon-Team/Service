@@ -4,8 +4,8 @@ import {
   ackState, approveLabel, canPick, canReplan, canRollback, failureChoices, formatClock, judgementRows, leftoversOf, leftoverValue, migrationSteps, needsStepAnchor, stepsPhase,
   pollMs, screenOf, shiftNote, signalCovers, specRows, stepAnchorFrom, stepGate, trafficPercent, trafficReportRows,
 } from "../src/features/migration/model";
-import { planResourceRows, runtimeChangeNote, type ResourceRow } from "../src/lib/resourceMap";
-import { MIGRATION_STATUSES, type EnvApp, type EnvironmentView, type FootprintResource } from "../src/lib/types";
+import { planResourceRows, runtimeChangeNote, substituteRows, type ResourceRow } from "../src/lib/resourceMap";
+import { MIGRATION_STATUSES, type EnvApp, type EnvironmentView, type FootprintResource, type PlanAcknowledgement } from "../src/lib/types";
 
 test("상태 22개가 모두 화면 하나로 묶인다", () => {
   assert.equal(MIGRATION_STATUSES.length, 22);
@@ -262,4 +262,22 @@ test("자원 대응 v2: 같은 칸 여러 줄도 열쇠가 겹치지 않고, 건
   assert.equal(v1.listed.length, 1);
   assert.equal(v1.boundary, null);
   assert.equal(planResourceRows(null).listed.length, 0);
+});
+
+test("상품 대체 줄: substitute 확인 항목만 서버 순서대로 한 줄씩, 빠진 칸은 없음·코드 그대로, 체크는 그 확인 항목 id 로 승인에 셈", () => {
+  const acks: PlanAcknowledgement[] = [
+    { id: "cost", kind: "cost", text: "월 비용" },
+    { id: "substitute:jobs", kind: "substitute", ref: "jobs", text: "SQS → Pub/Sub 토픽 + 구독 · 앱 코드 변경 필요",
+      from: "SQS", to: "Pub/Sub 토픽 + 구독", lost: ["남은 메시지 (출발 큐에서 옮기지 않음)"], appChange: true },
+    { id: "runtime_change:web", kind: "runtime_change", ref: "web", text: "ECS → k8s" },
+    { id: "substitute:db", kind: "substitute", ref: "db", text: "RDS for PostgreSQL → Cloud SQL for PostgreSQL", from: "RDS for PostgreSQL", to: "Cloud SQL for PostgreSQL" },
+  ];
+  const rows = substituteRows(acks);
+  assert.deepEqual(rows, [
+    { ackId: "substitute:jobs", resource: "jobs", from: "SQS", to: "Pub/Sub 토픽 + 구독", lost: ["남은 메시지 (출발 큐에서 옮기지 않음)"], appChange: true },
+    { ackId: "substitute:db", resource: "db", from: "RDS for PostgreSQL", to: "Cloud SQL for PostgreSQL", lost: [], appChange: false },
+  ]);
+  const ticked = new Set(rows.map((row) => row.ackId));
+  assert.deepEqual(ackState(acks, ticked).missing, ["cost", "runtime_change:web"]);
+  assert.deepEqual(substituteRows(undefined), []);
 });

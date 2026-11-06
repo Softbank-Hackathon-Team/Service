@@ -120,8 +120,12 @@ export interface PlanCostSummary {
 }
 // contracts plan.ts PlanAcknowledgement: 승인 때 사람이 하나씩 확인하는 항목. 승인 본문 acks 가 이 id 를 덮는다
 export type PlanAckKind = "cost" | "failure_cost_policy" | "runtime_change" | "build" | "precheck_warn" | "low_confidence"
-  | "tls_relaxed" | "host_access" | "public_bucket" | "provision_reuse" | "env_layer_create";
-export interface PlanAcknowledgement { id: string; kind: PlanAckKind; text: string; ref?: string }
+  | "tls_relaxed" | "host_access" | "public_bucket" | "provision_reuse" | "env_layer_create" | "substitute";
+// substitute 항목만 from·to·lost·appChange 를 싣는다 (출발 상품 → 도착 상품, 옮기지 못하는 것, 앱 코드를 고쳐야 붙는지)
+export interface PlanAcknowledgement {
+  id: string; kind: PlanAckKind; text: string; ref?: string;
+  from?: string; to?: string; lost?: string[]; appChange?: boolean;
+}
 export interface PlanDoc {
   planId: string;
   migrationId: string;
