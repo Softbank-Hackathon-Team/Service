@@ -16,6 +16,14 @@ export const PriceItem = z.enum([
   "lb",             // 로드 밸런서 1개 (시간당). 기본 인그레스가 cloudflared 터널이라 합계 제외
   "lb_capacity",    // 로드 밸런서 용량 단위 LCU (시간당)
   "volume",         // 노드 디스크 블록 스토리지 (GB·월). TODO(human): 노드당 루트 디스크 크기 정하면 합계에 넣기
+  // 근거 있는 비용 내역(cost-evidence.ts)이 쓰는 줄. 예전 합계(estimateCost)는 이 줄을 보지 않는다
+  //   node·db 는 예전 합계가 후보로 훑는 줄이라 늘리면 예전 금액이 바뀐다 → 실자원 단가 찾기용은 따로 둔다
+  "instance",       // VM 1대 (시간당). 실자원에서 읽은 인스턴스 종류의 단가. attrs 에 vcpu, memGiB
+  "db_class",       // 관리형 Postgres 등급 1개 (시간당). attrs 에 vcpu, memGiB, multiAz
+  "public_ip",      // 쓰는 공인 IPv4 1개 (시간당)
+  "nat",            // NAT 게이트웨이 1개 (시간당). 처리 GB 요금은 사용량을 몰라 합계 밖
+  "db_vcpu",        // 관리형 Postgres vCPU 1개 (시간당). 등급 이름에서 vCPU·메모리를 읽는 벤더(GCP Cloud SQL)
+  "db_mem",         // 관리형 Postgres 메모리 1 GiB (시간당)
 ]);
 export type PriceItem = z.infer<typeof PriceItem>;
 
@@ -38,10 +46,14 @@ export const PriceRow = z.object({
     vcpu: z.number().positive().optional(),
     memGiB: z.number().positive().optional(),
     capVcpu: z.number().positive().optional(),
+    multiAz: z.boolean().optional(),   // db 줄: 다중 AZ(대기 복제본 포함) 가격인가
   }).strict().default({}),
   evidence: Evidence,
   source: z.string(),          // 출처 한 줄 (문서 이름, API 이름)
   fetchedAt: z.iso.datetime({ offset: true }),
+  // 근거를 화면에 보이려고 더한 칸 (없으면 source 한 줄만)
+  sourceUrl: z.string().optional(),      // 사람이 열어 볼 수 있는 주소 (API 키 없는 것만)
+  sourceKind: z.enum(["official_api", "official_page", "secondary", "assumption"]).optional(),
 }).strict();
 export type PriceRow = z.infer<typeof PriceRow>;
 export type PriceRowInput = z.input<typeof PriceRow>;

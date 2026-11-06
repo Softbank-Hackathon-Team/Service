@@ -11,10 +11,13 @@ import { realStsEnabled, tempRoles } from "../platform.js";
 // DRAFT(ai): 15분 (STS 최소값, 연결 확인과 같음). 읽기가 끝나면 바로 돌려준다
 export const INVENTORY_TTL_SEC = 900;
 // readInventory·readAwsTargetFacts 가 부르는 명령과 같은 목록. 표(observe-permissions)에 없는 명령이면 던진다
+// 뒤 세 개(AWS)·세 개(GCP)는 비용 화면용 사실 (adapters inventory-billing.ts). 관찰 권한 표에 이미 있는 읽기 명령
 const AWS_COMMANDS = ["sts get-caller-identity", "eks list-clusters", "rds describe-db-instances", "ec2 describe-vpcs",
-  "elbv2 describe-load-balancers", "ecr describe-repositories", "eks describe-cluster", "ec2 describe-subnets"] as const;
+  "elbv2 describe-load-balancers", "ecr describe-repositories", "eks describe-cluster", "ec2 describe-subnets",
+  "ec2 describe-instances", "ec2 describe-nat-gateways", "ec2 describe-addresses"] as const;
 const GCP_COMMANDS = ["container clusters list", "sql instances list", "compute networks list", "compute forwarding-rules list",
-  "artifacts repositories list"] as const;
+  "artifacts repositories list",
+  "compute instances list", "compute addresses list", "compute routers list"] as const;
 export const inventoryObserveActions = (provider: "aws" | "gcp"): string[] =>
   provider === "aws" ? actionsOfCommands("aws", AWS_COMMANDS) : actionsOfCommands("gcp", GCP_COMMANDS);
 

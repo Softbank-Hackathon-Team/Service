@@ -1,24 +1,28 @@
 {
   "vendor": "aws",
   "region": "ap-northeast-2",
-  "fetchedAt": "2026-10-31T16:37:08.532Z",
+  "fetchedAt": "2026-11-06T02:36:04.833Z",
   "origin": "live",
   "sources": [
     {
       "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
-      "publishedAt": "2026-10-29T17:56:34Z"
-    },
-    {
-      "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEKS/current/ap-northeast-2/index.csv",
-      "publishedAt": "2026-10-27T19:16:39Z"
+      "publishedAt": "2026-11-05T16:26:28Z"
     },
     {
       "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
       "publishedAt": "2026-10-29T07:06:35Z"
     },
     {
+      "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonVPC/current/ap-northeast-2/index.csv",
+      "publishedAt": "2026-11-05T18:19:45Z"
+    },
+    {
+      "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEKS/current/ap-northeast-2/index.csv",
+      "publishedAt": "2026-10-27T19:16:39Z"
+    },
+    {
       "url": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSELB/current/ap-northeast-2/index.csv",
-      "publishedAt": "2026-09-11T12:45:44Z"
+      "publishedAt": "2026-11-05T22:02:41Z"
     }
   ],
   "missing": [],
@@ -34,7 +38,2555 @@
       "attrs": {},
       "evidence": "fact",
       "source": "AWS Price List Bulk AmazonEKS ap-northeast-2 SKU 8HAE52ZNS3QC3Q8Q (발행 2026-10-27T19:16:39Z)",
-      "fetchedAt": "2026-10-31T16:37:08.532Z"
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEKS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m5.12xlarge",
+      "unit": "hour",
+      "usd": 5.928,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 48,
+        "memGiB": 192,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU BCEE7K5KG5XTMCJ3 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m5.16xlarge",
+      "unit": "hour",
+      "usd": 7.904,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 64,
+        "memGiB": 256,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 6P9XDSPQGJ8WNPPV (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m5.24xlarge",
+      "unit": "hour",
+      "usd": 11.856,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 96,
+        "memGiB": 384,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU KK4F5FRM86SJHAVM (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m5.2xlarge",
+      "unit": "hour",
+      "usd": 0.988,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU TGDJZJBDZ4FK9RZD (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m5.4xlarge",
+      "unit": "hour",
+      "usd": 1.976,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 64,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU AZX2QJYXCJ32X7CV (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m5.8xlarge",
+      "unit": "hour",
+      "usd": 3.952,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 32,
+        "memGiB": 128,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 869FCJQETXK4J7B5 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m5.large",
+      "unit": "hour",
+      "usd": 0.247,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 9WQFMV6V25278ZP7 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m5.xlarge",
+      "unit": "hour",
+      "usd": 0.494,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 7SKS6TY975Q7554K (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m6g.12xlarge",
+      "unit": "hour",
+      "usd": 5.295,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 48,
+        "memGiB": 192,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU R6WWT475PAJF5FF2 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m6g.16xlarge",
+      "unit": "hour",
+      "usd": 7.06,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 64,
+        "memGiB": 256,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU S35ZY7FX5994UDH3 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m6g.2xlarge",
+      "unit": "hour",
+      "usd": 0.883,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU P962WMQSDDK98DGC (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m6g.4xlarge",
+      "unit": "hour",
+      "usd": 1.765,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 64,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU UQFSUVM8C2YQ6E9J (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m6g.8xlarge",
+      "unit": "hour",
+      "usd": 3.53,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 32,
+        "memGiB": 128,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 4VQMQHST2VAFNKXU (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m6g.large",
+      "unit": "hour",
+      "usd": 0.221,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 3TUXAC4FS4AGBZX8 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m6g.xlarge",
+      "unit": "hour",
+      "usd": 0.441,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU BHMPG5XJMSAJC4V3 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m6i.12xlarge",
+      "unit": "hour",
+      "usd": 5.928,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 48,
+        "memGiB": 192,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU RHZZRXSDKD5T236B (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m6i.16xlarge",
+      "unit": "hour",
+      "usd": 7.904,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 64,
+        "memGiB": 256,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU QQ5V4WNHEVBY3YG8 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m6i.24xlarge",
+      "unit": "hour",
+      "usd": 11.856,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 96,
+        "memGiB": 384,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 8Y354U2UEVHEB3NV (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m6i.2xlarge",
+      "unit": "hour",
+      "usd": 0.988,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU MM4RFCXGE3MUWZRT (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m6i.32xlarge",
+      "unit": "hour",
+      "usd": 15.808,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 128,
+        "memGiB": 512,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU XBJKS7GEQKJWMTPT (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m6i.4xlarge",
+      "unit": "hour",
+      "usd": 1.976,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 64,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU Z6CD48XAF7JRNT4Z (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m6i.8xlarge",
+      "unit": "hour",
+      "usd": 3.952,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 32,
+        "memGiB": 128,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU YD2V5APCU2EKJZ3D (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m6i.large",
+      "unit": "hour",
+      "usd": 0.247,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 2KZFRV8AE99Y7H3Q (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m6i.xlarge",
+      "unit": "hour",
+      "usd": 0.494,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU FGR3NN3ENE6UQS45 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m7g.12xlarge",
+      "unit": "hour",
+      "usd": 5.6256,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 48,
+        "memGiB": 192,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU PMNR5MXKWB677YC6 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m7g.16xlarge",
+      "unit": "hour",
+      "usd": 7.5008,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 64,
+        "memGiB": 256,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU A55E3UEWC4UKBMYW (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m7g.2xlarge",
+      "unit": "hour",
+      "usd": 0.9376,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU BEM3FW24SPBMHXB2 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m7g.4xlarge",
+      "unit": "hour",
+      "usd": 1.8752,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 64,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU UYFMA3T3BCNUTKE3 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m7g.8xlarge",
+      "unit": "hour",
+      "usd": 3.7504,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 32,
+        "memGiB": 128,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU R8TY93SHEZQP32NH (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m7g.large",
+      "unit": "hour",
+      "usd": 0.2344,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU JD9YPRJWTATRSNCN (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.m7g.xlarge",
+      "unit": "hour",
+      "usd": 0.4688,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU B9XFBYB786PZJSV9 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.r5.12xlarge",
+      "unit": "hour",
+      "usd": 7.2,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 48,
+        "memGiB": 384,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU CM7S3XDSKUK4UGR5 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.r5.16xlarge",
+      "unit": "hour",
+      "usd": 9.6,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 64,
+        "memGiB": 512,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 7KPJ6G7SCNEC42YF (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.r5.24xlarge",
+      "unit": "hour",
+      "usd": 14.4,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 96,
+        "memGiB": 768,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU WCME9DPPUH66GWRA (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.r5.2xlarge",
+      "unit": "hour",
+      "usd": 1.2,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 64,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 4CJZR9Z5XVXESBZS (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.r5.4xlarge",
+      "unit": "hour",
+      "usd": 2.4,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 128,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 6EKYEJ7FCJZ69EEP (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.r5.8xlarge",
+      "unit": "hour",
+      "usd": 4.8,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 32,
+        "memGiB": 256,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU QQSPVWDM86H53JQS (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.r5.large",
+      "unit": "hour",
+      "usd": 0.3,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 16,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 79JJSJVTQ6WA6YN2 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.r5.xlarge",
+      "unit": "hour",
+      "usd": 0.6,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 32,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 3ZH3YC6NC8NEGHUT (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.r6g.12xlarge",
+      "unit": "hour",
+      "usd": 6.474,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 48,
+        "memGiB": 384,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU THEE748QDKDXS4XA (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.r6g.16xlarge",
+      "unit": "hour",
+      "usd": 8.632,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 64,
+        "memGiB": 512,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU KTP33XJ7JZ9R779N (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.r6g.2xlarge",
+      "unit": "hour",
+      "usd": 1.079,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 64,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU HASEJTCTTJ6GJ3NP (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.r6g.4xlarge",
+      "unit": "hour",
+      "usd": 2.158,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 128,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU JSH9UNTGVWWHS9D5 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.r6g.8xlarge",
+      "unit": "hour",
+      "usd": 4.316,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 32,
+        "memGiB": 256,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU GE4PHECR7NDS66SQ (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.r6g.large",
+      "unit": "hour",
+      "usd": 0.27,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 16,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU A6AJP2J5T4JE554P (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.r6g.xlarge",
+      "unit": "hour",
+      "usd": 0.54,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 32,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU PHXUNTEPT77K7BTM (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.r6i.12xlarge",
+      "unit": "hour",
+      "usd": 7.2,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 48,
+        "memGiB": 384,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 9HCFMYPM3VSU5NTJ (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.r6i.16xlarge",
+      "unit": "hour",
+      "usd": 9.6,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 64,
+        "memGiB": 512,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU HWXYQZTC5WPDSC8R (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.r6i.24xlarge",
+      "unit": "hour",
+      "usd": 14.4,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 96,
+        "memGiB": 768,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU Q5PK374C8JFSK4RF (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.r6i.2xlarge",
+      "unit": "hour",
+      "usd": 1.2,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 64,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU RYMK4KRKYYYGU5E7 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.r6i.32xlarge",
+      "unit": "hour",
+      "usd": 19.2,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 128,
+        "memGiB": 1024,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU D572YSAUQVTSBUW3 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.r6i.4xlarge",
+      "unit": "hour",
+      "usd": 2.4,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 128,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 58YFEGWGE58GYW94 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.r6i.8xlarge",
+      "unit": "hour",
+      "usd": 4.8,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 32,
+        "memGiB": 256,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU VTYAHWQ3CHVK3HEY (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.r6i.large",
+      "unit": "hour",
+      "usd": 0.3,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 16,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU MGMM3232B93UER9E (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.r6i.xlarge",
+      "unit": "hour",
+      "usd": 0.6,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 32,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU SSRGC4HQ9DN7GHH4 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.t3.2xlarge",
+      "unit": "hour",
+      "usd": 0.896,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU RHER4359A3P2TPZY (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.t3.large",
+      "unit": "hour",
+      "usd": 0.224,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU QBAMKKGS8B3WCKDM (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.t3.medium",
+      "unit": "hour",
+      "usd": 0.112,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 4,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 6KUMP4JGWJQWTHP2 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.t3.micro",
+      "unit": "hour",
+      "usd": 0.028,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 1,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU ZGG2J4HPEAESP6A3 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.t3.small",
+      "unit": "hour",
+      "usd": 0.056,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 2,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU NABKM7H7GBN8RYXN (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.t3.xlarge",
+      "unit": "hour",
+      "usd": 0.448,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 6JAYBC4TGT375FGS (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.t4g.2xlarge",
+      "unit": "hour",
+      "usd": 0.813,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 9TMVE2WDB5CMTMT6 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.t4g.large",
+      "unit": "hour",
+      "usd": 0.203,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU D3JPS5HFEVWQ2BSZ (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.t4g.medium",
+      "unit": "hour",
+      "usd": 0.102,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 4,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 4ZDDNAKXUY992B26 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.t4g.micro",
+      "unit": "hour",
+      "usd": 0.025,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 1,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU ZBMXF2F4CYQ2FT96 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.t4g.small",
+      "unit": "hour",
+      "usd": 0.051,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 2,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU UMH398UHTY46K8BK (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-db.t4g.xlarge",
+      "unit": "hour",
+      "usd": 0.406,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16,
+        "multiAz": false
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 6THZBVEGV2N64DFQ (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m5.12xlarge",
+      "unit": "hour",
+      "usd": 11.856,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 48,
+        "memGiB": 192,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU MBNVHWV5GXE4WM9E (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m5.16xlarge",
+      "unit": "hour",
+      "usd": 15.808,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 64,
+        "memGiB": 256,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU H49HT7PW3ZQKZU4D (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m5.24xlarge",
+      "unit": "hour",
+      "usd": 23.712,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 96,
+        "memGiB": 384,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 2DFJGJN9U4EP289W (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m5.2xlarge",
+      "unit": "hour",
+      "usd": 1.976,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU AT66YGDKQ2GEPR8S (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m5.4xlarge",
+      "unit": "hour",
+      "usd": 3.952,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 64,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU NC4AJCZ5CWPN5RFJ (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m5.8xlarge",
+      "unit": "hour",
+      "usd": 7.904,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 32,
+        "memGiB": 128,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU RB2K44D9VXEPDUPR (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m5.large",
+      "unit": "hour",
+      "usd": 0.494,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU N9HA9C42WFA2AYCU (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m5.xlarge",
+      "unit": "hour",
+      "usd": 0.988,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU WTCTYC3S6B9U7W9N (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m6g.12xlarge",
+      "unit": "hour",
+      "usd": 10.59,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 48,
+        "memGiB": 192,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU HYFZY5GSBRJJ4NB6 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m6g.16xlarge",
+      "unit": "hour",
+      "usd": 14.121,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 64,
+        "memGiB": 256,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU RDRWWBJ54YDFAUY2 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m6g.2xlarge",
+      "unit": "hour",
+      "usd": 1.765,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 52GH4MGQF7CC5DEB (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m6g.4xlarge",
+      "unit": "hour",
+      "usd": 3.53,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 64,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU QKHM6V45WNBRBFRS (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m6g.8xlarge",
+      "unit": "hour",
+      "usd": 7.06,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 32,
+        "memGiB": 128,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU FRNFNWRQG8ZDTCQD (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m6g.large",
+      "unit": "hour",
+      "usd": 0.441,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU KDV9RFB5DQHT6U3H (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m6g.xlarge",
+      "unit": "hour",
+      "usd": 0.883,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU PXRWTQD45HS4DMGZ (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m6i.12xlarge",
+      "unit": "hour",
+      "usd": 11.856,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 48,
+        "memGiB": 192,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU SSZ2Z7YKEV3F6CJJ (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m6i.16xlarge",
+      "unit": "hour",
+      "usd": 15.808,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 64,
+        "memGiB": 256,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU AUBD82KHA72KYKQV (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m6i.24xlarge",
+      "unit": "hour",
+      "usd": 23.712,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 96,
+        "memGiB": 384,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 2HRZNJV5PAECQAJ4 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m6i.2xlarge",
+      "unit": "hour",
+      "usd": 1.976,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 9UBDTQUDR9Q7NXBY (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m6i.32xlarge",
+      "unit": "hour",
+      "usd": 31.616,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 128,
+        "memGiB": 512,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU RK456V8WWGNHS4GC (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m6i.4xlarge",
+      "unit": "hour",
+      "usd": 3.952,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 64,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU S4CTS2D93S65H7RT (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m6i.8xlarge",
+      "unit": "hour",
+      "usd": 7.904,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 32,
+        "memGiB": 128,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU C7KGMQQEFJGVMSUF (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m6i.large",
+      "unit": "hour",
+      "usd": 0.494,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU B6WG2BME83A6S75T (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m6i.xlarge",
+      "unit": "hour",
+      "usd": 0.988,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU H6JUHK3Y7EXJ9YXM (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m7g.12xlarge",
+      "unit": "hour",
+      "usd": 11.2512,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 48,
+        "memGiB": 192,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU UNGVZDPFM48KK36N (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m7g.16xlarge",
+      "unit": "hour",
+      "usd": 15.0016,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 64,
+        "memGiB": 256,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU BT37Z5F8HJFBGDDY (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m7g.2xlarge",
+      "unit": "hour",
+      "usd": 1.8752,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU HBDEARJYRPUF79J6 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m7g.4xlarge",
+      "unit": "hour",
+      "usd": 3.7504,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 64,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU D682SRJXRVQ7R6B7 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m7g.8xlarge",
+      "unit": "hour",
+      "usd": 7.5008,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 32,
+        "memGiB": 128,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU B6BPGUPGNBXQGZMK (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m7g.large",
+      "unit": "hour",
+      "usd": 0.4688,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU BRKFDNB5W9AJ8XBH (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.m7g.xlarge",
+      "unit": "hour",
+      "usd": 0.9376,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 8A5MMP8ETTGWCR7J (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.r5.12xlarge",
+      "unit": "hour",
+      "usd": 14.4,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 48,
+        "memGiB": 384,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU P6HQ64JD6J5Z2S3U (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.r5.16xlarge",
+      "unit": "hour",
+      "usd": 19.2,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 64,
+        "memGiB": 512,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 4JSAGCF5HAJMZBA8 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.r5.24xlarge",
+      "unit": "hour",
+      "usd": 28.8,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 96,
+        "memGiB": 768,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU FZR2RW86YB2KSHPJ (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.r5.2xlarge",
+      "unit": "hour",
+      "usd": 2.4,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 64,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU AHHGUDU7VNKJV7FC (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.r5.4xlarge",
+      "unit": "hour",
+      "usd": 4.8,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 128,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU SKHVKHR5DE7G84PN (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.r5.8xlarge",
+      "unit": "hour",
+      "usd": 9.6,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 32,
+        "memGiB": 256,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 94793JEQAPTYEUJF (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.r5.large",
+      "unit": "hour",
+      "usd": 0.6,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 16,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU YNJM29R8SDK6PN8Y (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.r5.xlarge",
+      "unit": "hour",
+      "usd": 1.2,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 32,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU RZYTPUPWKCX57XAA (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.r6g.12xlarge",
+      "unit": "hour",
+      "usd": 12.948,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 48,
+        "memGiB": 384,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU D3AXEMPD96CKUYJ4 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.r6g.16xlarge",
+      "unit": "hour",
+      "usd": 17.265,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 64,
+        "memGiB": 512,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 8FY2ZYA4WZBHJ4SD (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.r6g.2xlarge",
+      "unit": "hour",
+      "usd": 2.158,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 64,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU UZ8A7QC9WWHP2G5R (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.r6g.4xlarge",
+      "unit": "hour",
+      "usd": 4.316,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 128,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 7T9EJG95UX7SWN46 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.r6g.8xlarge",
+      "unit": "hour",
+      "usd": 8.632,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 32,
+        "memGiB": 256,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 6DUWCRJTHBW6VVYR (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.r6g.large",
+      "unit": "hour",
+      "usd": 0.54,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 16,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU CW6HFDHBZ96K9K54 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.r6g.xlarge",
+      "unit": "hour",
+      "usd": 1.079,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 32,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 4MNFBTMZMMDGZAPK (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.r6i.12xlarge",
+      "unit": "hour",
+      "usd": 14.4,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 48,
+        "memGiB": 384,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU CEQH8855B657GDN5 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.r6i.16xlarge",
+      "unit": "hour",
+      "usd": 19.2,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 64,
+        "memGiB": 512,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 9K7XWYXM7UU2Y84J (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.r6i.24xlarge",
+      "unit": "hour",
+      "usd": 28.8,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 96,
+        "memGiB": 768,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU Q5X8MXR25VT23GSM (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.r6i.2xlarge",
+      "unit": "hour",
+      "usd": 2.4,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 64,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 5AKKCZM3K5YC8SHA (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.r6i.32xlarge",
+      "unit": "hour",
+      "usd": 38.4,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 128,
+        "memGiB": 1024,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU D5WGH5NMQ46KSNSS (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.r6i.4xlarge",
+      "unit": "hour",
+      "usd": 4.8,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 128,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU BDKXJWUFF2DVHR9B (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.r6i.8xlarge",
+      "unit": "hour",
+      "usd": 9.6,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 32,
+        "memGiB": 256,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU UUBDFC2CSAFR37CC (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.r6i.large",
+      "unit": "hour",
+      "usd": 0.6,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 16,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU X7RY2JCAYZXEBQVS (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.r6i.xlarge",
+      "unit": "hour",
+      "usd": 1.2,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 32,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU X7TJT3RWR8M2KUNG (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.t3.2xlarge",
+      "unit": "hour",
+      "usd": 1.792,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 5H7Z4P9UBKT8KZPF (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.t3.large",
+      "unit": "hour",
+      "usd": 0.448,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 43288NB8BCSTMFJD (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.t3.medium",
+      "unit": "hour",
+      "usd": 0.224,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 4,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 95ZN5CFGUHAV45ZD (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.t3.micro",
+      "unit": "hour",
+      "usd": 0.056,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 1,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU XWTGXDNYFBADS2FT (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.t3.small",
+      "unit": "hour",
+      "usd": 0.112,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 2,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU W3KTRUPZG79YDEQB (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.t3.xlarge",
+      "unit": "hour",
+      "usd": 0.896,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU BPV9RYVXCJ5WDNPR (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.t4g.2xlarge",
+      "unit": "hour",
+      "usd": 1.626,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 63QPEPB3CGKESWBR (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.t4g.large",
+      "unit": "hour",
+      "usd": 0.406,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 7USHX8WFQFTXQC5Q (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.t4g.medium",
+      "unit": "hour",
+      "usd": 0.203,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 4,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 3GGJ3ABPNWP3V2Y5 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.t4g.micro",
+      "unit": "hour",
+      "usd": 0.051,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 1,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU EX549T3JDQKJT8ZK (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.t4g.small",
+      "unit": "hour",
+      "usd": 0.102,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 2,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU KGBHEYKRMK38Z92B (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "db_class",
+      "sku": "rds-pg-maz-db.t4g.xlarge",
+      "unit": "hour",
+      "usd": 0.813,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16,
+        "multiAz": true
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 96Q9AJX95ZAU26B5 (발행 2026-10-29T07:06:35Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
     },
     {
       "vendor": "aws",
@@ -47,7 +2599,1557 @@
       "attrs": {},
       "evidence": "fact",
       "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 6KUMP4JGWJQWTHP2 (발행 2026-10-29T07:06:35Z)",
-      "fetchedAt": "2026-10-31T16:37:08.532Z"
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "c5.2xlarge",
+      "unit": "hour",
+      "usd": 0.384,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 16
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU 3PJ9XNY2REM5NDKX (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "c5.4xlarge",
+      "unit": "hour",
+      "usd": 0.768,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 32
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU TRZY7P9CKPQ9DJMF (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "c5.large",
+      "unit": "hour",
+      "usd": 0.096,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 4
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU T5ZECHGMNCH9CDGT (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "c5.xlarge",
+      "unit": "hour",
+      "usd": 0.192,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 8
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU YBWGSBF6QZ6AJWXB (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "c6g.2xlarge",
+      "unit": "hour",
+      "usd": 0.308,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 16
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU A6B2NVHVFD2KRKC7 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "c6g.4xlarge",
+      "unit": "hour",
+      "usd": 0.616,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 32
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU XX2XXW22XHUD24S3 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "c6g.large",
+      "unit": "hour",
+      "usd": 0.077,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 4
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU S8QNXURUGT3VMRTN (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "c6g.medium",
+      "unit": "hour",
+      "usd": 0.0385,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 1,
+        "memGiB": 2
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU RKUZCRKG6P6PCV5D (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "c6g.xlarge",
+      "unit": "hour",
+      "usd": 0.154,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 8
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU JQCH3ZH4KPXGJT4S (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "c6i.2xlarge",
+      "unit": "hour",
+      "usd": 0.384,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 16
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU 6XC2EC6DFEEC9C5H (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "c6i.4xlarge",
+      "unit": "hour",
+      "usd": 0.768,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 32
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU 8HR4UDJ5EET49ZCB (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "c6i.large",
+      "unit": "hour",
+      "usd": 0.096,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 4
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU 23MGE6DFM4A5NZ7M (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "c6i.xlarge",
+      "unit": "hour",
+      "usd": 0.192,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 8
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU WHU4CSZ7KFE7GT57 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "c7g.2xlarge",
+      "unit": "hour",
+      "usd": 0.3264,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 16
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU 2SUR587BDPFU9Y54 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "c7g.4xlarge",
+      "unit": "hour",
+      "usd": 0.6528,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 32
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU Z677UVMJ3JHHV66T (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "c7g.large",
+      "unit": "hour",
+      "usd": 0.0816,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 4
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU V9BZPZ3N9ENKPWWA (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "c7g.medium",
+      "unit": "hour",
+      "usd": 0.0408,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 1,
+        "memGiB": 2
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU ZKT52AJTSPZ26GTJ (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "c7g.xlarge",
+      "unit": "hour",
+      "usd": 0.1632,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 8
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU URCG3A9K4BHSYP2S (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "c7i.2xlarge",
+      "unit": "hour",
+      "usd": 0.4032,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 16
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU C8YNDY6DZQZ2Z7Q4 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "c7i.4xlarge",
+      "unit": "hour",
+      "usd": 0.8064,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 32
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU BPHKZFPKVKXBWJYV (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "c7i.large",
+      "unit": "hour",
+      "usd": 0.1008,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 4
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU TTVRCYNEPCXHDNYH (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "c7i.xlarge",
+      "unit": "hour",
+      "usd": 0.2016,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 8
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU FHEDA64W9JAYPX9U (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "m5.2xlarge",
+      "unit": "hour",
+      "usd": 0.472,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU DEHCSWHPKRSAJY9U (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "m5.4xlarge",
+      "unit": "hour",
+      "usd": 0.944,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 64
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU TEKAB27S96DBYQ84 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "m5.large",
+      "unit": "hour",
+      "usd": 0.118,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU EFB98K3UPBPJGD6V (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "m5.xlarge",
+      "unit": "hour",
+      "usd": 0.236,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU 2FN5PXDGXPZDCV43 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "m5a.2xlarge",
+      "unit": "hour",
+      "usd": 0.424,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU YB3WQDEK9B56JC2Z (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "m5a.4xlarge",
+      "unit": "hour",
+      "usd": 0.848,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 64
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU BHJ6N6GGF9FKAWDC (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "m5a.large",
+      "unit": "hour",
+      "usd": 0.106,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU 6BMCTPSH3XTS2RCB (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "m5a.xlarge",
+      "unit": "hour",
+      "usd": 0.212,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU FRMQP4SZM2ECSFWJ (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "m6g.2xlarge",
+      "unit": "hour",
+      "usd": 0.376,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU Z4G8GDPWEAZUJ9CG (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "m6g.4xlarge",
+      "unit": "hour",
+      "usd": 0.752,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 64
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU MSGS68Y7XP6QPH2Z (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "m6g.large",
+      "unit": "hour",
+      "usd": 0.094,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU C6U9XKNXX3P4M6H8 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "m6g.medium",
+      "unit": "hour",
+      "usd": 0.047,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 1,
+        "memGiB": 4
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU WNVAB8VEYQ6TCJUG (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "m6g.xlarge",
+      "unit": "hour",
+      "usd": 0.188,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU UT993RDVVNCCZUQ8 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "m6i.2xlarge",
+      "unit": "hour",
+      "usd": 0.472,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU FWJH7A9GTFQNGWDK (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "m6i.4xlarge",
+      "unit": "hour",
+      "usd": 0.944,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 64
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU KY9U5UVF7XKNFGUM (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "m6i.large",
+      "unit": "hour",
+      "usd": 0.118,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU YNF8U8R6NK3DHPTM (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "m6i.xlarge",
+      "unit": "hour",
+      "usd": 0.236,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU Q6HXHW4DPS5JVYN3 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "m7g.2xlarge",
+      "unit": "hour",
+      "usd": 0.4012,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU S5QDBEAV9KZGK7Q2 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "m7g.4xlarge",
+      "unit": "hour",
+      "usd": 0.8024,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 64
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU C5CEEFSMEBNM3GM5 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "m7g.large",
+      "unit": "hour",
+      "usd": 0.1003,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU K3TG5Y2ZZCAB7FJX (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "m7g.medium",
+      "unit": "hour",
+      "usd": 0.0502,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 1,
+        "memGiB": 4
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU 9YD8A6KYQCNFNGC4 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "m7g.xlarge",
+      "unit": "hour",
+      "usd": 0.2006,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU TFYB4QHRSUYQ6MFB (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "m7i.2xlarge",
+      "unit": "hour",
+      "usd": 0.4956,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU 4KK9E7MX32C7VZZG (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "m7i.4xlarge",
+      "unit": "hour",
+      "usd": 0.9912,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 64
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU GWH4AHNUEF8Q8XBX (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "m7i.large",
+      "unit": "hour",
+      "usd": 0.1239,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU UJJMFBN4RBJ2G2DD (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "m7i.xlarge",
+      "unit": "hour",
+      "usd": 0.2478,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU AFGD7C6YY6TQZHWM (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "r5.2xlarge",
+      "unit": "hour",
+      "usd": 0.608,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 64
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU 63XZGHB96R37WYRD (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "r5.4xlarge",
+      "unit": "hour",
+      "usd": 1.216,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 128
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU NBPZFPF467GMKYF4 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "r5.large",
+      "unit": "hour",
+      "usd": 0.152,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 16
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU RZG8ZGBGC38SDDXZ (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "r5.xlarge",
+      "unit": "hour",
+      "usd": 0.304,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 32
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU JGHY7JDPX64CRY3F (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "r6g.2xlarge",
+      "unit": "hour",
+      "usd": 0.488,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 64
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU VWRNSGVT8255X75W (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "r6g.4xlarge",
+      "unit": "hour",
+      "usd": 0.976,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 128
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU AWVHFPP2ZCKU6H6Y (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "r6g.large",
+      "unit": "hour",
+      "usd": 0.122,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 16
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU B5YBTEKVSTRE3SGP (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "r6g.medium",
+      "unit": "hour",
+      "usd": 0.061,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 1,
+        "memGiB": 8
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU VQG3Z9EEBKRA8C8Q (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "r6g.xlarge",
+      "unit": "hour",
+      "usd": 0.244,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 32
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU SR9V6R4Z2U75ND5R (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "r6i.2xlarge",
+      "unit": "hour",
+      "usd": 0.608,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 64
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU VKTQTV5XEQQ2ZKH6 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "r6i.4xlarge",
+      "unit": "hour",
+      "usd": 1.216,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 128
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU FSN4BP2RFFHKC26W (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "r6i.large",
+      "unit": "hour",
+      "usd": 0.152,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 16
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU NQVPCXQR68VNFKMK (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "r6i.xlarge",
+      "unit": "hour",
+      "usd": 0.304,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 32
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU HAY8KFEQ4GUPFWRD (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "r7i.2xlarge",
+      "unit": "hour",
+      "usd": 0.6384,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 64
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU JW6HMHZP5MN4P7W5 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "r7i.4xlarge",
+      "unit": "hour",
+      "usd": 1.2768,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 128
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU 5G4P39XNN6XSKG8F (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "r7i.large",
+      "unit": "hour",
+      "usd": 0.1596,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 16
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU TN4EKTPETAWSTA45 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "r7i.xlarge",
+      "unit": "hour",
+      "usd": 0.3192,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 32
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU V69HPSF56JBYZ7EX (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "t3.2xlarge",
+      "unit": "hour",
+      "usd": 0.416,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU 6Q3NTPW2WSVHKCT3 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "t3.large",
+      "unit": "hour",
+      "usd": 0.104,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU 822X28N5YHCZG5KZ (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "t3.medium",
+      "unit": "hour",
+      "usd": 0.052,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 4
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU G5CAZXC4M5ENHEZN (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "t3.micro",
+      "unit": "hour",
+      "usd": 0.013,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 1
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU NYVHMS44MY8N2F3M (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "t3.nano",
+      "unit": "hour",
+      "usd": 0.0065,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 0.5
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU H7ZUWUQM6CR4EC83 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "t3.small",
+      "unit": "hour",
+      "usd": 0.026,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 2
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU PZHVQ3KFPA3RHA5V (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "t3.xlarge",
+      "unit": "hour",
+      "usd": 0.208,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU B63NDMZ5NURV4FVB (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "t3a.2xlarge",
+      "unit": "hour",
+      "usd": 0.3744,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU C692EUTFHN2R6EY9 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "t3a.large",
+      "unit": "hour",
+      "usd": 0.0936,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU 5U4PTNB2JS3SSWPQ (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "t3a.medium",
+      "unit": "hour",
+      "usd": 0.0468,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 4
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU 38WTDXMUU954VY9X (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "t3a.micro",
+      "unit": "hour",
+      "usd": 0.0117,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 1
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU WC53THR2WCPKTNYN (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "t3a.nano",
+      "unit": "hour",
+      "usd": 0.0059,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 0.5
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU KDAX3D9XVMGQ7UP4 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "t3a.small",
+      "unit": "hour",
+      "usd": 0.0234,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 2
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU C2X6J7RSNDMJVBF6 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "t3a.xlarge",
+      "unit": "hour",
+      "usd": 0.1872,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU 6YKYHPH3Z2YWUVDG (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "t4g.2xlarge",
+      "unit": "hour",
+      "usd": 0.3328,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU 9ZJMJ2M4MAC6VGSS (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "t4g.large",
+      "unit": "hour",
+      "usd": 0.0832,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU GU562Z42RJY96AYF (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "t4g.medium",
+      "unit": "hour",
+      "usd": 0.0416,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 4
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU 445XHR7HD5M549M9 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "t4g.micro",
+      "unit": "hour",
+      "usd": 0.0104,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 1
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU MMJ3GRNDH5K2Z9KY (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "t4g.nano",
+      "unit": "hour",
+      "usd": 0.0052,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 0.5
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU CCR2AHAVFYPUQTQ9 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "t4g.small",
+      "unit": "hour",
+      "usd": 0.0208,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 2
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU AW8AKUMZKQEQXMSZ (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "instance",
+      "sku": "t4g.xlarge",
+      "unit": "hour",
+      "usd": 0.1664,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16
+      },
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU 2ZKDT5TXAX5VK8CY (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
     },
     {
       "vendor": "aws",
@@ -59,8 +4161,10 @@
       "tierFrom": 0,
       "attrs": {},
       "evidence": "fact",
-      "source": "AWS Price List Bulk AWSELB ap-northeast-2 SKU CX4ZBV2SE6F5HJV3 (발행 2026-09-11T12:45:44Z)",
-      "fetchedAt": "2026-10-31T16:37:08.532Z"
+      "source": "AWS Price List Bulk AWSELB ap-northeast-2 SKU CX4ZBV2SE6F5HJV3 (발행 2026-11-05T22:02:41Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSELB/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
     },
     {
       "vendor": "aws",
@@ -72,8 +4176,25 @@
       "tierFrom": 0,
       "attrs": {},
       "evidence": "fact",
-      "source": "AWS Price List Bulk AWSELB ap-northeast-2 SKU VUV9M7PZ543S2SC9 (발행 2026-09-11T12:45:44Z)",
-      "fetchedAt": "2026-10-31T16:37:08.532Z"
+      "source": "AWS Price List Bulk AWSELB ap-northeast-2 SKU VUV9M7PZ543S2SC9 (발행 2026-11-05T22:02:41Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AWSELB/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "nat",
+      "sku": "nat-gateway",
+      "unit": "hour",
+      "usd": 0.059,
+      "tierFrom": 0,
+      "attrs": {},
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU P63FHTYZXQBC6HX5 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
     },
     {
       "vendor": "aws",
@@ -88,8 +4209,10 @@
         "memGiB": 4
       },
       "evidence": "fact",
-      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU 23MGE6DFM4A5NZ7M (발행 2026-10-29T17:56:34Z)",
-      "fetchedAt": "2026-10-31T16:37:08.532Z"
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU 23MGE6DFM4A5NZ7M (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
     },
     {
       "vendor": "aws",
@@ -104,8 +4227,10 @@
         "memGiB": 8
       },
       "evidence": "fact",
-      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU WHU4CSZ7KFE7GT57 (발행 2026-10-29T17:56:34Z)",
-      "fetchedAt": "2026-10-31T16:37:08.532Z"
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU WHU4CSZ7KFE7GT57 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
     },
     {
       "vendor": "aws",
@@ -120,8 +4245,10 @@
         "memGiB": 8
       },
       "evidence": "fact",
-      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU YNF8U8R6NK3DHPTM (발행 2026-10-29T17:56:34Z)",
-      "fetchedAt": "2026-10-31T16:37:08.532Z"
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU YNF8U8R6NK3DHPTM (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
     },
     {
       "vendor": "aws",
@@ -136,8 +4263,10 @@
         "memGiB": 16
       },
       "evidence": "fact",
-      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU Q6HXHW4DPS5JVYN3 (발행 2026-10-29T17:56:34Z)",
-      "fetchedAt": "2026-10-31T16:37:08.532Z"
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU Q6HXHW4DPS5JVYN3 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
     },
     {
       "vendor": "aws",
@@ -152,8 +4281,10 @@
         "memGiB": 8
       },
       "evidence": "fact",
-      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU 822X28N5YHCZG5KZ (발행 2026-10-29T17:56:34Z)",
-      "fetchedAt": "2026-10-31T16:37:08.532Z"
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU 822X28N5YHCZG5KZ (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
     },
     {
       "vendor": "aws",
@@ -168,8 +4299,10 @@
         "memGiB": 4
       },
       "evidence": "fact",
-      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU G5CAZXC4M5ENHEZN (발행 2026-10-29T17:56:34Z)",
-      "fetchedAt": "2026-10-31T16:37:08.532Z"
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU G5CAZXC4M5ENHEZN (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
     },
     {
       "vendor": "aws",
@@ -184,8 +4317,25 @@
         "memGiB": 16
       },
       "evidence": "fact",
-      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU B63NDMZ5NURV4FVB (발행 2026-10-29T17:56:34Z)",
-      "fetchedAt": "2026-10-31T16:37:08.532Z"
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU B63NDMZ5NURV4FVB (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
+    },
+    {
+      "vendor": "aws",
+      "region": "ap-northeast-2",
+      "item": "public_ip",
+      "sku": "public-ipv4-in-use",
+      "unit": "hour",
+      "usd": 0.005,
+      "tierFrom": 0,
+      "attrs": {},
+      "evidence": "fact",
+      "source": "AWS Price List Bulk AmazonVPC ap-northeast-2 SKU ZKBHEVDXYBRCKFQ8 (발행 2026-11-05T18:19:45Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonVPC/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
     },
     {
       "vendor": "aws",
@@ -198,7 +4348,9 @@
       "attrs": {},
       "evidence": "fact",
       "source": "AWS Price List Bulk AmazonRDS ap-northeast-2 SKU 8TFTRRBWJSP95DQP (발행 2026-10-29T07:06:35Z)",
-      "fetchedAt": "2026-10-31T16:37:08.532Z"
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonRDS/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
     },
     {
       "vendor": "aws",
@@ -210,8 +4362,10 @@
       "tierFrom": 0,
       "attrs": {},
       "evidence": "fact",
-      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU MTK7D9SGKGYR3JD6 (발행 2026-10-29T17:56:34Z)",
-      "fetchedAt": "2026-10-31T16:37:08.532Z"
+      "source": "AWS Price List Bulk AmazonEC2 ap-northeast-2 SKU MTK7D9SGKGYR3JD6 (발행 2026-11-05T16:26:28Z)",
+      "fetchedAt": "2026-11-06T02:36:04.833Z",
+      "sourceUrl": "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws/AmazonEC2/current/ap-northeast-2/index.csv",
+      "sourceKind": "official_api"
     }
   ]
 }

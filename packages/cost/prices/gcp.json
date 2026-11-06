@@ -1,111 +1,1678 @@
 {
   "vendor": "gcp",
   "region": "asia-northeast3",
-  "fetchedAt": "2026-10-31T00:00:00Z",
+  "fetchedAt": "2026-11-06T02:30:13.447Z",
   "origin": "seed",
-  "note": "API 호출 실패(GCP_BILLING_API_KEY 없음 → 캐시 사용). 샘플 가격표 값을 그대로 옮김. 【미확인】",
-  "sources": [],
+  "note": "API 키가 없어 Billing Catalog 를 직접 못 부른다. 공식 가격 페이지(서울)에서 확인한 값과, 같은 카탈로그에서 생성한 Cyclenerd pricing.yml(Thu Nov  5 11:35:36 2026) 값을 옮김. e2-medium·e2-standard-2·e2-standard-4·e2-highmem-2·Cloud SQL·디스크·IP·포워딩 규칙·NAT·GKE 는 공식 페이지와 값을 맞춰 봄 (2026-11-06)",
+  "sources": [
+    {
+      "url": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "publishedAt": "2026-11-05T11:35:36.000Z"
+    },
+    {
+      "url": "https://cloud.google.com/products/compute/pricing/general-purpose"
+    },
+    {
+      "url": "https://cloud.google.com/kubernetes-engine/pricing"
+    },
+    {
+      "url": "https://cloud.google.com/sql/pricing"
+    },
+    {
+      "url": "https://cloud.google.com/vpc/network-pricing"
+    },
+    {
+      "url": "https://cloud.google.com/nat/pricing"
+    },
+    {
+      "url": "https://cloud.google.com/compute/disks-image-pricing"
+    }
+  ],
   "missing": [],
   "rows": [
     {
       "vendor": "gcp",
       "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {},
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
       "item": "cluster",
       "sku": "gke-management",
       "unit": "hour",
       "usd": 0.1,
-      "tierFrom": 0,
-      "attrs": {},
       "evidence": "fact",
-      "source": "GKE 가격 페이지",
-      "fetchedAt": "2026-10-31T00:00:00Z"
+      "sourceKind": "official_page",
+      "sourceUrl": "https://cloud.google.com/kubernetes-engine/pricing",
+      "source": "Google Cloud 공식 가격 페이지 GKE 클러스터 관리비 $0.10/클러스터·시간 (서울, 2026-11-06 확인)"
     },
     {
       "vendor": "gcp",
       "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {},
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
       "item": "cluster_credit",
       "sku": "gke-free-tier",
       "unit": "month",
       "usd": 74.4,
-      "tierFrom": 0,
-      "attrs": {},
       "evidence": "fact",
-      "source": "GKE 가격 페이지 (결제 계정당 존 클러스터 1개)",
-      "fetchedAt": "2026-10-31T00:00:00Z"
+      "sourceKind": "official_page",
+      "sourceUrl": "https://cloud.google.com/kubernetes-engine/pricing",
+      "source": "Google Cloud 공식 가격 페이지 GKE 무료 등급 결제 계정당 월 $74.40 (존·Autopilot 클러스터만) (서울, 2026-11-06 확인)"
     },
     {
       "vendor": "gcp",
       "region": "asia-northeast3",
-      "item": "node",
-      "sku": "e2-medium",
-      "unit": "hour",
-      "usd": 0.043,
       "tierFrom": 0,
       "attrs": {
         "vcpu": 2,
         "memGiB": 4
       },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "db",
+      "sku": "cloudsql-pg-2vcpu-4gb",
+      "unit": "hour",
+      "usd": 0.1438,
       "evidence": "fact",
-      "source": "gcloud-compute.com",
-      "fetchedAt": "2026-10-31T00:00:00Z"
+      "sourceKind": "official_page",
+      "sourceUrl": "https://cloud.google.com/sql/pricing",
+      "source": "Google Cloud 공식 가격 페이지 Cloud SQL Enterprise 범용 vCPU $0.0537 x 2 + 메모리 $0.0091/GiB x 4 (서울, 2026-11-06 확인)"
     },
     {
       "vendor": "gcp",
       "region": "asia-northeast3",
-      "item": "node",
-      "sku": "e2-standard-2",
+      "tierFrom": 0,
+      "attrs": {},
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "db_mem",
+      "sku": "cloudsql-ent-mem",
       "unit": "hour",
-      "usd": 0.0862,
+      "usd": 0.0091,
+      "evidence": "fact",
+      "sourceKind": "official_page",
+      "sourceUrl": "https://cloud.google.com/sql/pricing",
+      "source": "Google Cloud 공식 가격 페이지 Cloud SQL Enterprise 범용 메모리 1 GiB (존). HA 는 2배 (서울, 2026-11-06 확인)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {},
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "db_vcpu",
+      "sku": "cloudsql-ent-vcpu",
+      "unit": "hour",
+      "usd": 0.0537,
+      "evidence": "fact",
+      "sourceKind": "official_page",
+      "sourceUrl": "https://cloud.google.com/sql/pricing",
+      "source": "Google Cloud 공식 가격 페이지 Cloud SQL Enterprise 범용 vCPU (존). HA 는 2배 (서울, 2026-11-06 확인)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
       "tierFrom": 0,
       "attrs": {
-        "vcpu": 2,
-        "memGiB": 8
+        "vcpu": 22,
+        "memGiB": 44
       },
-      "evidence": "assumed",
-      "source": "추정값, Billing Catalog API로 확인 필요",
-      "fetchedAt": "2026-10-31T00:00:00Z"
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "c3-highcpu-22",
+      "unit": "hour",
+      "usd": 1.20146158,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.c3-highcpu-22 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
     },
     {
       "vendor": "gcp",
       "region": "asia-northeast3",
-      "item": "node",
-      "sku": "e2-standard-4",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 8
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "c3-highcpu-4",
       "unit": "hour",
-      "usd": 0.1724,
+      "usd": 0.21844756,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.c3-highcpu-4 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 16
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "c3-highcpu-8",
+      "unit": "hour",
+      "usd": 0.43689512,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.c3-highcpu-8 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 22,
+        "memGiB": 176
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "c3-highmem-22",
+      "unit": "hour",
+      "usd": 1.86900934,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.c3-highmem-22 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 32
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "c3-highmem-4",
+      "unit": "hour",
+      "usd": 0.33981988,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.c3-highmem-4 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 64
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "c3-highmem-8",
+      "unit": "hour",
+      "usd": 0.67963976,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.c3-highmem-8 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 22,
+        "memGiB": 88
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "c3-standard-22",
+      "unit": "hour",
+      "usd": 1.4239775,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.c3-standard-22 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
       "tierFrom": 0,
       "attrs": {
         "vcpu": 4,
         "memGiB": 16
       },
-      "evidence": "assumed",
-      "source": "추정값, Billing Catalog API로 확인 필요",
-      "fetchedAt": "2026-10-31T00:00:00Z"
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "c3-standard-4",
+      "unit": "hour",
+      "usd": 0.258905,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.c3-standard-4 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
     },
     {
       "vendor": "gcp",
       "region": "asia-northeast3",
-      "item": "db",
-      "sku": "cloudsql-pg-2vcpu-4gb",
-      "unit": "month",
-      "usd": 80.738,
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "c3-standard-8",
+      "unit": "hour",
+      "usd": 0.51781,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.c3-standard-8 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 16
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "e2-highcpu-16",
+      "unit": "hour",
+      "usd": 0.50824848,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.e2-highcpu-16 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 2
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "e2-highcpu-2",
+      "unit": "hour",
+      "usd": 0.06353106,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.e2-highcpu-2 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 32,
+        "memGiB": 32
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "e2-highcpu-32",
+      "unit": "hour",
+      "usd": 1.01649696,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.e2-highcpu-32 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 4
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "e2-highcpu-4",
+      "unit": "hour",
+      "usd": 0.12706212,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.e2-highcpu-4 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 8
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "e2-highcpu-8",
+      "unit": "hour",
+      "usd": 0.25412424,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.e2-highcpu-8 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 128
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "e2-highmem-16",
+      "unit": "hour",
+      "usd": 0.9270288,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.e2-highmem-16 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 16
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "e2-highmem-2",
+      "unit": "hour",
+      "usd": 0.1158786,
+      "evidence": "fact",
+      "sourceKind": "official_page",
+      "sourceUrl": "https://cloud.google.com/products/compute/pricing/general-purpose",
+      "source": "Google Cloud 공식 가격 페이지 범용 머신 e2-highmem-2 온디맨드 (서울, 2026-11-06 확인)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 32
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "e2-highmem-4",
+      "unit": "hour",
+      "usd": 0.2317572,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.e2-highmem-4 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 64
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "e2-highmem-8",
+      "unit": "hour",
+      "usd": 0.4635144,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.e2-highmem-8 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 4
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "e2-medium",
+      "unit": "hour",
+      "usd": 0.04298286,
+      "evidence": "fact",
+      "sourceKind": "official_page",
+      "sourceUrl": "https://cloud.google.com/products/compute/pricing/general-purpose",
+      "source": "Google Cloud 공식 가격 페이지 범용 머신 e2-medium 온디맨드 (서울, 2026-11-06 확인)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 1
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "e2-micro",
+      "unit": "hour",
+      "usd": 0.010745715,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.e2-micro (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 2
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "e2-small",
+      "unit": "hour",
+      "usd": 0.02149143,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.e2-small (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 64
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "e2-standard-16",
+      "unit": "hour",
+      "usd": 0.68772576,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.e2-standard-16 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "e2-standard-2",
+      "unit": "hour",
+      "usd": 0.08596572,
+      "evidence": "fact",
+      "sourceKind": "official_page",
+      "sourceUrl": "https://cloud.google.com/products/compute/pricing/general-purpose",
+      "source": "Google Cloud 공식 가격 페이지 범용 머신 e2-standard-2 온디맨드 (서울, 2026-11-06 확인)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 32,
+        "memGiB": 128
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "e2-standard-32",
+      "unit": "hour",
+      "usd": 1.37545152,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.e2-standard-32 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "e2-standard-4",
+      "unit": "hour",
+      "usd": 0.17193144,
+      "evidence": "fact",
+      "sourceKind": "official_page",
+      "sourceUrl": "https://cloud.google.com/products/compute/pricing/general-purpose",
+      "source": "Google Cloud 공식 가격 페이지 범용 머신 e2-standard-4 온디맨드 (서울, 2026-11-06 확인)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "e2-standard-8",
+      "unit": "hour",
+      "usd": 0.34386288,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.e2-standard-8 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 14.4
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n1-highcpu-16",
+      "unit": "hour",
+      "usd": 0.7279216,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n1-highcpu-16 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 1.8
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n1-highcpu-2",
+      "unit": "hour",
+      "usd": 0.0909902,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n1-highcpu-2 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 32,
+        "memGiB": 28.8
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n1-highcpu-32",
+      "unit": "hour",
+      "usd": 1.4558432,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n1-highcpu-32 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 3.6
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n1-highcpu-4",
+      "unit": "hour",
+      "usd": 0.1819804,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n1-highcpu-4 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 7.2
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n1-highcpu-8",
+      "unit": "hour",
+      "usd": 0.3639608,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n1-highcpu-8 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 104
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n1-highmem-16",
+      "unit": "hour",
+      "usd": 1.213464,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n1-highmem-16 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 13
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n1-highmem-2",
+      "unit": "hour",
+      "usd": 0.151683,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n1-highmem-2 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 32,
+        "memGiB": 208
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n1-highmem-32",
+      "unit": "hour",
+      "usd": 2.426928,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n1-highmem-32 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 26
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n1-highmem-4",
+      "unit": "hour",
+      "usd": 0.303366,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n1-highmem-4 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 52
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n1-highmem-8",
+      "unit": "hour",
+      "usd": 0.606732,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n1-highmem-8 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 1,
+        "memGiB": 3.75
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n1-standard-1",
+      "unit": "hour",
+      "usd": 0.06093925,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n1-standard-1 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 60
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n1-standard-16",
+      "unit": "hour",
+      "usd": 0.975028,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n1-standard-16 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 7.5
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n1-standard-2",
+      "unit": "hour",
+      "usd": 0.1218785,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n1-standard-2 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 32,
+        "memGiB": 120
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n1-standard-32",
+      "unit": "hour",
+      "usd": 1.950056,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n1-standard-32 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 15
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n1-standard-4",
+      "unit": "hour",
+      "usd": 0.243757,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n1-standard-4 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 30
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n1-standard-8",
+      "unit": "hour",
+      "usd": 0.487514,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n1-standard-8 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 16
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2-highcpu-16",
+      "unit": "hour",
+      "usd": 0.736576,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2-highcpu-16 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 2
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2-highcpu-2",
+      "unit": "hour",
+      "usd": 0.092072,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2-highcpu-2 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 32,
+        "memGiB": 32
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2-highcpu-32",
+      "unit": "hour",
+      "usd": 1.473152,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2-highcpu-32 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 4
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2-highcpu-4",
+      "unit": "hour",
+      "usd": 0.184144,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2-highcpu-4 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 8
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2-highcpu-8",
+      "unit": "hour",
+      "usd": 0.368288,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2-highcpu-8 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 128
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2-highmem-16",
+      "unit": "hour",
+      "usd": 1.345968,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2-highmem-16 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 16
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2-highmem-2",
+      "unit": "hour",
+      "usd": 0.168246,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2-highmem-2 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 32,
+        "memGiB": 256
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2-highmem-32",
+      "unit": "hour",
+      "usd": 2.691936,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2-highmem-32 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 32
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2-highmem-4",
+      "unit": "hour",
+      "usd": 0.336492,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2-highmem-4 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 64
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2-highmem-8",
+      "unit": "hour",
+      "usd": 0.672984,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2-highmem-8 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 64
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2-standard-16",
+      "unit": "hour",
+      "usd": 0.997744,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2-standard-16 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2-standard-2",
+      "unit": "hour",
+      "usd": 0.124718,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2-standard-2 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 32,
+        "memGiB": 128
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2-standard-32",
+      "unit": "hour",
+      "usd": 1.995488,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2-standard-32 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2-standard-4",
+      "unit": "hour",
+      "usd": 0.249436,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2-standard-4 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2-standard-8",
+      "unit": "hour",
+      "usd": 0.498872,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2-standard-8 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 16
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2d-highcpu-16",
+      "unit": "hour",
+      "usd": 0.640832,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2d-highcpu-16 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 2
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2d-highcpu-2",
+      "unit": "hour",
+      "usd": 0.080104,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2d-highcpu-2 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 32,
+        "memGiB": 32
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2d-highcpu-32",
+      "unit": "hour",
+      "usd": 1.281664,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2d-highcpu-32 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 4
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2d-highcpu-4",
+      "unit": "hour",
+      "usd": 0.160208,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2d-highcpu-4 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 8
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2d-highcpu-8",
+      "unit": "hour",
+      "usd": 0.320416,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2d-highcpu-8 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 128
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2d-highmem-16",
+      "unit": "hour",
+      "usd": 1.17104,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2d-highmem-16 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 16
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2d-highmem-2",
+      "unit": "hour",
+      "usd": 0.14638,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2d-highmem-2 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 32,
+        "memGiB": 256
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2d-highmem-32",
+      "unit": "hour",
+      "usd": 2.34208,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2d-highmem-32 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 32
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2d-highmem-4",
+      "unit": "hour",
+      "usd": 0.29276,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2d-highmem-4 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 64
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2d-highmem-8",
+      "unit": "hour",
+      "usd": 0.58552,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2d-highmem-8 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 64
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2d-standard-16",
+      "unit": "hour",
+      "usd": 0.868064,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2d-standard-16 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2d-standard-2",
+      "unit": "hour",
+      "usd": 0.108508,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2d-standard-2 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 32,
+        "memGiB": 128
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2d-standard-32",
+      "unit": "hour",
+      "usd": 1.736128,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2d-standard-32 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2d-standard-4",
+      "unit": "hour",
+      "usd": 0.217016,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2d-standard-4 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "n2d-standard-8",
+      "unit": "hour",
+      "usd": 0.434032,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.n2d-standard-8 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 1,
+        "memGiB": 4
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "t2d-standard-1",
+      "unit": "hour",
+      "usd": 0.054254,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.t2d-standard-1 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 16,
+        "memGiB": 64
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "t2d-standard-16",
+      "unit": "hour",
+      "usd": 0.868064,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.t2d-standard-16 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "t2d-standard-2",
+      "unit": "hour",
+      "usd": 0.108508,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.t2d-standard-2 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 32,
+        "memGiB": 128
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "t2d-standard-32",
+      "unit": "hour",
+      "usd": 1.736128,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.t2d-standard-32 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "t2d-standard-4",
+      "unit": "hour",
+      "usd": 0.217016,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.t2d-standard-4 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "instance",
+      "sku": "t2d-standard-8",
+      "unit": "hour",
+      "usd": 0.434032,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.t2d-standard-8 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
       "tierFrom": 0,
       "attrs": {},
-      "evidence": "unverified",
-      "source": "Cloud SQL 아이오와 단가 (0.0413x2 + 0.007x4) x 730, 서울 값 아님",
-      "fetchedAt": "2026-10-31T00:00:00Z"
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "lb",
+      "sku": "forwarding-rule-regional",
+      "unit": "hour",
+      "usd": 0.038,
+      "evidence": "fact",
+      "sourceKind": "official_page",
+      "sourceUrl": "https://cloud.google.com/vpc/network-pricing",
+      "source": "Google Cloud 공식 가격 페이지 지역 포워딩 규칙 처음 5개 (서울, 2026-11-06 확인)"
     },
     {
       "vendor": "gcp",
       "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {},
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "nat",
+      "sku": "cloud-nat-per-vm",
+      "unit": "hour",
+      "usd": 0.0014,
+      "evidence": "fact",
+      "sourceKind": "official_page",
+      "sourceUrl": "https://cloud.google.com/nat/pricing",
+      "source": "Google Cloud 공식 가격 페이지 Cloud NAT 게이트웨이 VM 1대당 (32대 이상 $0.044/시간 고정) (서울, 2026-11-06 확인)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 4
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "node",
+      "sku": "e2-medium",
+      "unit": "hour",
+      "usd": 0.04298286,
+      "evidence": "fact",
+      "sourceKind": "official_page",
+      "sourceUrl": "https://cloud.google.com/products/compute/pricing/general-purpose",
+      "source": "Google Cloud 공식 가격 페이지 범용 머신 e2-medium 온디맨드 (서울, 2026-11-06 확인)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 2,
+        "memGiB": 8
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "node",
+      "sku": "e2-standard-2",
+      "unit": "hour",
+      "usd": 0.08596572,
+      "evidence": "fact",
+      "sourceKind": "official_page",
+      "sourceUrl": "https://cloud.google.com/products/compute/pricing/general-purpose",
+      "source": "Google Cloud 공식 가격 페이지 범용 머신 e2-standard-2 온디맨드 (서울, 2026-11-06 확인)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 4,
+        "memGiB": 16
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "node",
+      "sku": "e2-standard-4",
+      "unit": "hour",
+      "usd": 0.17193144,
+      "evidence": "fact",
+      "sourceKind": "official_page",
+      "sourceUrl": "https://cloud.google.com/products/compute/pricing/general-purpose",
+      "source": "Google Cloud 공식 가격 페이지 범용 머신 e2-standard-4 온디맨드 (서울, 2026-11-06 확인)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {
+        "vcpu": 8,
+        "memGiB": 32
+      },
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "node",
+      "sku": "e2-standard-8",
+      "unit": "hour",
+      "usd": 0.34386288,
+      "evidence": "fact",
+      "sourceKind": "secondary",
+      "sourceUrl": "https://raw.githubusercontent.com/Cyclenerd/google-cloud-pricing-cost-calculator/master/pricing.yml",
+      "source": "Cyclenerd pricing.yml compute.instance.e2-standard-8 (공식 Cloud Billing Catalog 에서 생성, Thu Nov  5 11:35:36 2026)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {},
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "public_ip",
+      "sku": "external-ipv4-in-use",
+      "unit": "hour",
+      "usd": 0.005,
+      "evidence": "fact",
+      "sourceKind": "official_page",
+      "sourceUrl": "https://cloud.google.com/vpc/network-pricing",
+      "source": "Google Cloud 공식 가격 페이지 표준 VM·NAT 가 쓰는 외부 IPv4 (서울, 2026-11-06 확인)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {},
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "public_ip",
+      "sku": "external-ipv4-unused",
+      "unit": "hour",
+      "usd": 0.015,
+      "evidence": "fact",
+      "sourceKind": "official_page",
+      "sourceUrl": "https://cloud.google.com/vpc/network-pricing",
+      "source": "Google Cloud 공식 가격 페이지 쓰지 않는 고정 외부 IPv4 (서울, 2026-11-06 확인)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
+      "tierFrom": 0,
+      "attrs": {},
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
       "item": "storage",
       "sku": "cloudsql-ssd",
       "unit": "gb_month",
-      "usd": 0.17,
+      "usd": 0.221,
+      "evidence": "fact",
+      "sourceKind": "official_page",
+      "sourceUrl": "https://cloud.google.com/sql/pricing",
+      "source": "Google Cloud 공식 가격 페이지 Cloud SQL SSD 저장 공간 (존). HA 는 2배 (서울, 2026-11-06 확인)"
+    },
+    {
+      "vendor": "gcp",
+      "region": "asia-northeast3",
       "tierFrom": 0,
       "attrs": {},
-      "evidence": "unverified",
-      "source": "Cloud SQL SSD 아이오와 단가, 서울 값 아님",
-      "fetchedAt": "2026-10-31T00:00:00Z"
+      "fetchedAt": "2026-11-06T02:30:13.447Z",
+      "item": "volume",
+      "sku": "pd-balanced",
+      "unit": "gb_month",
+      "usd": 0.13,
+      "evidence": "fact",
+      "sourceKind": "official_page",
+      "sourceUrl": "https://cloud.google.com/compute/disks-image-pricing",
+      "source": "Google Cloud 공식 가격 페이지 Balanced persistent disk (서울, 2026-11-06 확인)"
     }
   ]
 }

@@ -20,6 +20,7 @@ import { agentEnrollRoutes } from "./agent-enroll.js";
 import { onpremInstallRoutes } from "./onprem-install.js";
 import { eventRoutes } from "./events.js";
 import { rehearsalRoutes } from "./rehearsal.js";
+import { envCostRoutes } from "./env-cost.js";
 
 // Z81: 업무 경로 목록 한 곳. 예전엔 main.ts 와 tools/openapi/gen-openapi.ts 가 같은 목록을 따로 적었다
 //   (main.ts 가 import 하자마자 listen 해서 명세 생성기가 불러 쓸 수 없었다). 새 경로 파일은 여기에 한 줄만 넣는다.
@@ -48,4 +49,5 @@ export const ROUTE_PLUGINS: ReadonlyArray<{ file: string; plugin: (app: FastifyI
   { file: "apps/api/src/routes/onprem-install.ts", plugin: onpremInstallRoutes }, // 온프레 설치 한 줄이 받는 스크립트·묶음 (인증 없음)
   { file: "apps/api/src/routes/events.ts", plugin: eventRoutes }, // 화면 신호 (SSE, GET /events)
   { file: "apps/api/src/routes/rehearsal.ts", plugin: rehearsalRoutes }, // vCluster 리허설 줄 읽기 (GET /migrations/:id/rehearsal)
+  { file: "apps/api/src/routes/env-cost.ts", plugin: envCostRoutes }, // 근거 있는 비용: 환경 지금 월 비용·옮긴 뒤 한 달·1년 + 프로모션
 ];

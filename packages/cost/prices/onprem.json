@@ -1,7 +1,7 @@
 {
   "vendor": "onprem",
   "region": "local",
-  "fetchedAt": "2026-10-31T16:37:30.502Z",
+  "fetchedAt": "2026-11-06T02:36:04.833Z",
   "origin": "live",
   "sources": [
     {
@@ -23,7 +23,7 @@
       },
       "evidence": "assumed",
       "source": "고정 가정치 (서버 감가+전기+회선), packages/cost/src/sources/onprem.ts",
-      "fetchedAt": "2026-10-31T16:37:30.502Z"
+      "fetchedAt": "2026-11-06T02:36:04.833Z"
     },
     {
       "vendor": "onprem",
@@ -39,7 +39,7 @@
       },
       "evidence": "assumed",
       "source": "서버 안 가상 노드, 고정비에 포함",
-      "fetchedAt": "2026-10-31T16:37:30.502Z"
+      "fetchedAt": "2026-11-06T02:36:04.833Z"
     }
   ]
 }

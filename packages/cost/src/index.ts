@@ -10,3 +10,7 @@ export * from "./adapters/aws-price-list.js";
 export * from "./adapters/gcp-billing-catalog.js";
 export * from "./adapters/azure-retail-prices.js";
 export * from "./sources/index.js";
+export * from "./evidence-text.js";
+export * from "./onprem-model.js";
+export * from "./promotions.js";
+export * from "./evidence.js";
