@@ -91,10 +91,11 @@ variable "cred_nodes" {
   type    = object({ instance_type = string, desired = number, min = number, max = number })
   default = { instance_type = "t3.medium", desired = 1, min = 1, max = 2 }
 }
-# sandbox: vCluster, 앱 파드
+# sandbox: vCluster, 앱 파드. 리허설 동시 실행(agent-worker SANDBOX_REHEARSAL_CONCURRENCY)은 회사마다 노드 하나라 동시 실행 수 = desired 로 둔다
+# DRAFT(ai): 기본 desired 1 그대로(비용은 팀 결정), 최대만 5 로 올려 -var 로 늘릴 수 있게. 예 -var 'sandbox_nodes={instance_type="t3.medium",desired=3,min=1,max=5}'
 variable "sandbox_nodes" {
   type    = object({ instance_type = string, desired = number, min = number, max = number })
-  default = { instance_type = "t3.medium", desired = 1, min = 1, max = 2 }
+  default = { instance_type = "t3.medium", desired = 1, min = 1, max = 5 }
 }
 # sandbox 노드에 gVisor(runsc) 설치. 리허설은 runc 로 돌고 AI 에이전트 수정 고리만 RuntimeClass gvisor(handler runsc)를 쓴다 (ADR-006)
 # DRAFT(ai): 기본 끔. 켜고 끌 때마다 launch template 새 버전이 생겨 sandbox 노드가 교체된다.

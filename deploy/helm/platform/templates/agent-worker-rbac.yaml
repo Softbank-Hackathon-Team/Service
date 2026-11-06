@@ -11,6 +11,10 @@ rules:
   - apiGroups: [""]
     resources: ["namespaces"]
     verbs: ["get", "list", "watch", "create", "delete"]
+  # 리허설 동시 실행: 샌드박스마다 다른 회사가 없는 sandbox 노드를 고른다 (agent vcluster.ts listSandboxNodes). 읽기만
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["rolebindings"]
     verbs: ["create"]
