@@ -4,7 +4,7 @@ import { checkTerraformRuntime, envFor, factsFromEnv, gcpEnvFor, iacMockEnabled,
 import { nextJob, runStep, stubWait, stubFailIfAsked, type MigrationRow, type StepOutcome } from "./_step.js";
 import { withStepRoles, type StepRoles } from "./_roles.js";
 import { loadInfraReady, loadPlanById } from "./plan-store.js";
-import { approvedValues, configFromEnv, decideDelivery, deployToGitops, envFacts, filledValues, fillPlaceholders, GitopsError, GitopsRepo, ENV_DIR, tenantSlug, withDelivery, type BundleRef, type DeployInput, type PlanFile, type SyncWatcher } from "../gitops/index.js";
+import { approvedValues, configFromEnv, decideDelivery, deployToGitops, envFacts, filledValues, fillPlaceholders, GitopsError, GitopsRepo, bundlePath, bundleRefFor, tenantSlug, withDelivery, type BundleRef, type DeployInput, type PlanFile, type SyncWatcher } from "../gitops/index.js";
 import { latestSealingCert } from "../gitops/sealing-cert.js";
 import { checkSecretValues } from "../gitops/secret-values.js";
 import { realStsEnabled } from "../platform.js";
@@ -177,7 +177,7 @@ export function withSourceReplication(values: HelmValues): HelmValues | null {
     ? { ...p, replication: { ...((p.replication as Record<string, unknown> | undefined) ?? {}), enabled: true, ensure: "present" } } : p)) };
 }
 
-type SourceRepo = Pick<GitopsRepo, "chartVersion" | "readValues" | "readPlan" | "commitBundle">;
+type SourceRepo = Pick<GitopsRepo, "chartVersion" | "readValues" | "readPlan" | "commitBundle" | "resolve">;
 /** 온프레 → AWS: 출발 온프레 묶음(이 플랫폼이 그린 묶음)에 배달물을 넣어 커밋하고, 출발 환경 Agent 보고를 기다린다.
  *  묶음이 없으면(고객이 직접 올린 앱) 손대지 않고 paused — 출발 클러스터에 우리가 모르는 것을 쓰지 않는다 */
 export async function sourceReplicationStep(j: MigrationJob, m: MigrationRow, input: DeployInput, f: ReplFacts, repo: SourceRepo,
@@ -185,13 +185,15 @@ export async function sourceReplicationStep(j: MigrationJob, m: MigrationRow, in
   const stop = (code: string, reason: string, warnings: string[] = []): { outcome: StepOutcome } =>
     ({ outcome: { to: "paused", failureCode: code, detail: { deploy: { error: code, reason }, ...extra(warnings) } } });
   if (!input.spec) return stop("GITOPS_VALUES_DRIFT", "승인한 명세가 지금 판에 없다");
-  const b: BundleRef = { tenant: tenantSlug(j.tenantId), app: input.spec.app.name, env: ENV_DIR.onprem };
+  // 출발 온프레 묶음 = 앞선 이전이 이 온프레 환경에 그린 폴더 (환경별 폴더, 그 전 배포면 예전 폴더). Agent 보고 짝짓기도 고른 폴더 이름으로 한다
+  let b: BundleRef = bundleRefFor(j.tenantId, input.spec.app.name, "onprem", m.sourceEnvId);
   let values: HelmValues, plan: PlanFile;
   try {
     await repo.chartVersion();   // 작업 복사본 준비
+    b = await repo.resolve(b);
     [values, plan] = [await repo.readValues(b), await repo.readPlan(b)];
   } catch {
-    return stop("REPL_DELIVERY_FAILED", `출발 온프레 묶음 ${b.tenant}/${b.app}/${b.env} 이 gitops 레포에 없다: 플랫폼이 그린 출발 앱만 이전 역할·터널을 넣을 수 있다`);
+    return stop("REPL_DELIVERY_FAILED", `출발 온프레 묶음 ${bundlePath(b)} 이 gitops 레포에 없다: 플랫폼이 그린 출발 앱만 이전 역할·터널을 넣을 수 있다`);
   }
   const enabled = withSourceReplication(values);
   if (!enabled) return stop("REPL_DELIVERY_FAILED", "출발 온프레 묶음의 CNPG 가 하나가 아니다 (이전마다 출발 DB 하나)");

@@ -15,7 +15,7 @@ import { reapplyDbWriter, type RealApplyInput } from "./jobs/apply-real.js";
 import { withStepRoles } from "./jobs/_roles.js";
 import type { MigrationRow } from "./jobs/_step.js";
 import { latestAcceptedAppName, type Tx } from "@svc/core";
-import { configFromEnv, GitopsRepo, ENV_DIR, tenantSlug, type BundleRef } from "./gitops/index.js";
+import { configFromEnv, GitopsRepo, bundleRefFor, tenantSlug, type BundleRef } from "./gitops/index.js";
 
 export type Writer = "source" | "target";
 
@@ -51,12 +51,12 @@ export function appLinkMeasurements(rep: AppLinkReport | undefined, migrationId:
 }
 
 /** 도착 환경 묶음 위치 (gitops 설정이 없으면 null). shift.ts 의 load 와 같은 방식 */
-export async function targetBundle(tx: Tx, tenantId: string, m: { id: string; targetEnvId: string }): Promise<BundleRef | null> {
-  if (!configFromEnv()) return null;
+export async function targetBundle(tx: Tx, tenantId: string, m: { id: string; targetEnvId: string }, force = false): Promise<BundleRef | null> {
+  if (!force && !configFromEnv()) return null;
   const app = await latestAcceptedAppName(tx, m.id);
   const e = await tx.query("SELECT provider FROM environments WHERE id=$1", [m.targetEnvId]);
   if (!app || !e.rows[0]) return null;
-  return { tenant: tenantSlug(tenantId), app, env: ENV_DIR[e.rows[0].provider as Provider] };
+  return bundleRefFor(tenantId, app, e.rows[0].provider as Provider, m.targetEnvId);
 }
 
 /** 복제 배달물(이전 역할·터널)이 든 온프레 묶음 위치: 온프레 도착이면 도착 묶음, 온프레 출발(ADR-031 온프레 → 클라우드)이면 출발 묶음.

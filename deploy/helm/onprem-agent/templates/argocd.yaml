@@ -22,7 +22,10 @@ spec:
     - { group: "rbac.authorization.k8s.io", kind: "Role" }
     - { group: "rbac.authorization.k8s.io", kind: "RoleBinding" }
 ---
-# 앱마다 Application 하나. 이름 = <회사>-<앱>-onprem-k3s (워커 argoAppName 과 같다 → Agent 배포 보고가 이 이름으로 짝지어진다)
+# 앱마다 Application 하나. 이름 = <회사>-<앱>-<폴더 이름> (워커 argoAppName 과 같다 → Agent 배포 보고가 이 이름으로 짝지어진다)
+#   폴더 = onprem-k3s-<site> (이 환경 uuid 앞 8글자): 한 회사의 온프레 환경마다 다른 폴더를 본다 (워커 bundle.ts bundleRefFor)
+#   site 가 비면 예전 공용 폴더 onprem-k3s 만 본다 (예전 설치 그대로). gitops.legacyPath=true 면 새 폴더와 예전 폴더를 같이 본다
+#   (예전 폴더로 진행 중인 이전이 있는 클러스터를 다시 설치할 때 그 Application 이 지워지지 않게. 설치 스크립트가 알아서 켠다)
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -39,10 +42,15 @@ spec:
         # 새 앱 폴더를 찾는 주기. 앱의 첫 배포는 이 주기 뒤에 Application 이 생기고, 그다음 git 확인 주기를 또 기다린다
         requeueAfterSeconds: {{ .Values.argocd.discoverSeconds | int }}
         directories:
+          {{- if .Values.site }}
+          - path: "tenants/{{ .Values.tenant }}/apps/*/onprem-k3s-{{ .Values.site }}"
+          {{- end }}
+          {{- if or (not .Values.site) .Values.gitops.legacyPath }}
           - path: "tenants/{{ .Values.tenant }}/apps/*/onprem-k3s"
+          {{- end }}
   template:
     metadata:
-      name: '{{ .Values.tenant }}-{{`{{ index .path.segments 3 }}`}}-onprem-k3s'
+      name: '{{ .Values.tenant }}-{{`{{ index .path.segments 3 }}`}}-{{`{{ index .path.segments 4 }}`}}'
       labels:
         svc.tenant: {{ .Values.tenant | quote }}
         svc.app: '{{`{{ index .path.segments 3 }}`}}'

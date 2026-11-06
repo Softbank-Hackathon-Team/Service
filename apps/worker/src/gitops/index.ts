@@ -2,7 +2,7 @@ import type { AppSpecV2, DeployResult, HelmValues, PlanDoc, Provider, TfOutputs 
 import { flattenTfOutputsV2 } from "@svc/adapters";
 import { helmValuesV2 } from "../jobs/plan-v2.js";
 import { stableHash } from "../jobs/_step.js";
-import { ENV_DIR, DELIVERY, appNamespace, awsHubEnabled, clusterAccess, fillPlaceholders, planFile, tenantSlug, withTraffic, argoAppName, type BundleRef, type PlanFile } from "./bundle.js";
+import { bundleRefFor, DELIVERY, appNamespace, awsHubEnabled, clusterAccess, fillPlaceholders, planFile, tenantSlug, withTraffic, argoAppName, type BundleRef, type PlanFile } from "./bundle.js";
 import { GitopsError, GitopsRepo, type CommitOpts, type CommitResult, type RenderedBundle } from "./repo.js";
 import { withDelivery, type ReplicationDelivery } from "./replication-delivery.js";
 
@@ -55,7 +55,7 @@ export function envFacts(i: DeployInput): Record<string, string | undefined> {
 
 export function bundleRefOf(i: DeployInput): BundleRef {
   if (!i.spec) throw new GitopsError("GITOPS_VALUES_DRIFT", "승인한 명세가 지금 판에 없다");
-  return { tenant: tenantSlug(i.tenantId), app: i.spec.app.name, env: ENV_DIR[i.target.provider] };
+  return bundleRefFor(i.tenantId, i.spec.app.name, i.target.provider, i.target.envId);
 }
 
 // Z94: 커밋 뒤 반영 확인. 진짜 구현은 ./argo-watch.ts (Argo REST 또는 Application CR 실폴링)

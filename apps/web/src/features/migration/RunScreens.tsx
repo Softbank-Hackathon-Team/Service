@@ -316,7 +316,7 @@ export function RolledBackScreen({ migration, route }: ScreenProps) {
   const reason = stopReasonOf(migration.failureCode, migration.status);
   return (
     <Frame migration={migration} route={route}>
-      <Hero tone="run" meta={reason ? t('자동 롤백 완료 · {0}', { 0: reason.label }) : t('롤백 완료')} title={t('트래픽을 모두\n{0}로 되돌렸습니다', { 0: source })} foot={t('이 마이그레이션이 도착에 만든 자원은 자동으로 지웁니다')} />
+      <Hero tone="run" meta={reason ? t('자동 롤백 완료 · {0}', { 0: reason.label }) : t('롤백 완료')} title={t('트래픽을 모두\n{0}로 되돌렸습니다', { 0: source })} foot={t('이 마이그레이션이 도착에 만든 자원은 자동으로 지웁니다. 온프레 도착은 앱과 DB를 지우고 빈 앱 네임스페이스만 남깁니다')} />
       <Stack area="side">
         <LeftoverFold migration={migration} title={t('도착에 남은 자원')} />
         {reason && <StopFold migration={migration} reason={reason} into="rolling_back" defaultOpen={false} />}

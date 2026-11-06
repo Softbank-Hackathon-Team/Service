@@ -1,4 +1,5 @@
-import { dropRuntimeLinkSecret } from "../app-link.js";
+import { dropRuntimeLinkSecret, targetBundle } from "../app-link.js";
+import { configFromEnv, GitopsRepo, type BundleRef } from "../gitops/index.js";
 import { MigrationJob, QUEUES, redactText, type MigrationStatus } from "@svc/contracts";
 import { boss, withTenant, writeAudit } from "@svc/core";
 import { createRealTerraformRunner, envFor, gcpTerraformEnv, iacMockEnabled, readImported, workRootOf, type GcpTerraformCred, type RealTerraformRunner } from "@svc/adapters";
@@ -50,6 +51,8 @@ export interface TargetDestroyDeps {
   runner?: Pick<RealTerraformRunner, "destroy">;
   /** 시험용: 역할 빌리기 건너뛰기 */
   noRoles?: boolean;
+  /** 시험용: 온프레 도착 묶음을 지울 gitops 레포 (없으면 GITOPS_* 설정으로 만든다) */
+  gitopsRepo?: Pick<GitopsRepo, "removeBundle">;
   /** 시험용: 늦춰 다시 넣기 (없으면 pg-boss send startAfter) */
   requeue?: (j: MigrationJob, delaySec: number) => Promise<unknown>;
 }
@@ -69,6 +72,10 @@ export async function handleTargetDestroy(raw: unknown, d: TargetDestroyDeps = {
     return "skipped";
   }
   const { m, provider } = row;
+  // 온프레 도착: 이 이전이 gitops 에 그린 도착 묶음 폴더를 지운다 (고객 Argo CD 가 앱·CNPG DB 를 같이 지운다).
+  //   예전엔 Terraform state 만 지워서 롤백 뒤에도 온프레 클러스터에 앱·DB·PVC 가 남았고, 다음 이전이 그 DB 에 부딪혔다 (2026-11-07 onprem-vm SYNC_FAILED).
+  //   클라우드 도착은 Terraform destroy 가 클러스터째 지운다. 실패해도 아래 Terraform 지우기는 그대로 한다
+  if (provider === "onprem") await removeTargetBundle(j, m, d.gitopsRepo);
   // 흉내 (MOCK_IAC=1 시험·smoke, Azure Mock): 진짜 자원이 없다
   if (!d.runner && (iacMockEnabled(env) || provider === "azure_mock")) {
     await audit(j, "target_teardown.done", "ok", { provider, stub: true, iac: provider === "azure_mock" ? "azure_mock" : "mock" });
@@ -153,4 +160,18 @@ async function recordedWorkDir(j: MigrationJob): Promise<string | null> {
 async function audit(j: MigrationJob, action: string, result: "ok" | "error", detail: Record<string, unknown>) {
   await withTenant(j.tenantId, (tx) => writeAudit(tx, j.tenantId, { actor: "worker", action, target: j.migrationId, result,
     detail: { requestId: j.requestId, mode: "auto", ...detail } }));
+}
+
+// 온프레 도착 묶음 지우기. 결과는 감사 target_teardown.gitops (지움 commit / 건너뜀 skipped / 실패 error + 손 명령)
+async function removeTargetBundle(j: MigrationJob, m: { id: string; targetEnvId: string }, repo0?: Pick<GitopsRepo, "removeBundle">): Promise<void> {
+  const cfg = repo0 ? null : configFromEnv();
+  const b: BundleRef | null = await withTenant(j.tenantId, (tx) => targetBundle(tx, j.tenantId, m, !!repo0));
+  if (!b || (!repo0 && !cfg)) { await audit(j, "target_teardown.gitops", "ok", { skipped: "no_gitops" }); return; }
+  try {
+    const r = await (repo0 ?? new GitopsRepo(cfg!)).removeBundle(b, j.migrationId, "rollback: remove target bundle");
+    await audit(j, "target_teardown.gitops", "ok", { ...r });
+  } catch (e) {
+    await audit(j, "target_teardown.gitops", "error", { error: redactText((e as Error)?.message ?? String(e)).slice(0, 300),
+      hint: "gitops 회사 레포에서 tenants/<회사>/apps/<앱>/onprem-k3s-<환경> 폴더를 지워 커밋 (공용 레포도 같이)" });
+  }
 }
