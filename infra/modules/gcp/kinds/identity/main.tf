@@ -1,4 +1,9 @@
-# kind: identity (GCP) — 서비스·잡 하나의 앱 신원: 시크릿 그릇 + GSA + Workload Identity + 시크릿 읽기 바인딩.
+# kind: identity (GCP) — 서비스·잡 하나의 앱 신원: 시크릿 그릇 + 시크릿 읽기 바인딩.
+#   GSA 를 만들지 않는다: k8s SA(KSA)가 그대로 IAM 주체다 (Workload Identity Federation for GKE 직접 연결,
+#   principal://…/subject/ns/<구역>/sa/<KSA>). gcp/root ESO 바인딩(B-2 나)과 같은 모양.
+# DRAFT(ai, #317 가): 예전엔 GSA + roles/iam.workloadIdentityUser(SA 단위 setIamPolicy)였는데, 실행 SA 의 조건부 역할
+#   (only-app-prefixed)이 SA 를 숫자 고유 id 로 받아 늘 거짓 → TF_APPLY_FAILED 403. GSA 를 없애 SA setIamPolicy 자체를 안 부른다.
+#   그래서 KSA 에는 iam.gke.io/gcp-service-account 주석이 없어야 한다 (Builder target/gcp.ts saAnnotations)
 # for_each 키 = IR id. 변수 모양 = tf-kinds.ts IdentityTfVars
 terraform {
   required_version = ">= 1.11"
@@ -10,18 +15,22 @@ terraform {
 variable "cfg" {
   type = object({
     id                = string
-    name              = string # boundedName({prefix:"app-", max:30}) — SA account_id 규칙
-    service_account   = string # k8s SA 이름
+    name              = optional(string) # boundedName — GCP 에선 안 씀 (GSA 없음). 계약 모양만 aws 와 같게
+    service_account   = string           # k8s SA 이름 = IAM 주체
     secret_names_json = optional(string, "[]")
-    grants_json       = optional(string, "[]") # A8: 이 모듈은 안 읽음. root grants.tf 가 읽어 권한을 붙임
+    grants_json       = optional(string, "[]") # A8: 이 모듈은 안 읽음. root grants.tf 가 읽어 권한을 붙임 (주체 = 출력 principal)
   })
-  validation {
-    condition     = length(var.cfg.name) >= 6 && length(var.cfg.name) <= 30 && startswith(var.cfg.name, "app-")
-    error_message = "SA account_id는 6~30자, app- 로 시작 (setIamPolicy 조건 대상)."
-  }
 }
 variable "app_name" { type = string }
 variable "project_id" { type = string }
+# WI 풀 주체에 드는 프로젝트 번호 (root 가 data.google_project 에서 넘김)
+variable "project_number" {
+  type = string
+  validation {
+    condition     = can(regex("^[0-9]+$", var.project_number))
+    error_message = "project_number 는 숫자만 (principal:// 주체의 projects/<번호>)."
+  }
+}
 variable "namespace" { type = string }
 variable "labels" { type = map(string) }
 # 같은 이름 시크릿을 여러 신원이 적으면 root 가 id 가 가장 앞선 신원만 만들게 한다 (그릇 중복 방지)
@@ -45,6 +54,8 @@ locals {
     { for n, id in local.sid : "own-${n}" => "projects/${var.project_id}/secrets/${id}" },
     { for i, s in var.extra_readable_secrets : "extra-${i}" => s },
   )
+  # GKE 워크로드 풀(<프로젝트 id>.svc.id.goog, gcp/env workload_pool)의 KSA 주체
+  principal = "principal://iam.googleapis.com/projects/${var.project_number}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/subject/ns/${var.namespace}/sa/${var.cfg.service_account}"
 }
 
 resource "google_secret_manager_secret" "s" {
@@ -56,28 +67,18 @@ resource "google_secret_manager_secret" "s" {
   }
 }
 
-resource "google_service_account" "app" {
-  account_id   = var.cfg.name
-  display_name = "platform app ${var.app_name} ${var.cfg.id}"
-}
-
-resource "google_service_account_iam_member" "wi" {
-  service_account_id = google_service_account.app.name
-  role               = "roles/iam.workloadIdentityUser"
-  member             = "serviceAccount:${var.project_id}.svc.id.goog[${var.namespace}/${var.cfg.service_account}]"
-}
-
 # 다른 신원이 만든 그릇을 읽는 바인딩은 그 그릇이 만들어진 뒤여야 한다 (같은 apply 안에서 순서 경쟁 가능 → 실패하면 재시도)
 # TODO(human): 공유 시크릿 소유 신원과 읽는 신원의 순서를 root 에서 강제할지 (지금은 재시도에 맡김)
 resource "google_secret_manager_secret_iam_member" "read" {
   for_each   = local.readable
   secret_id  = each.value
   role       = "roles/secretmanager.secretAccessor"
-  member     = "serviceAccount:${google_service_account.app.email}"
+  member     = local.principal
   depends_on = [google_secret_manager_secret.s]
 }
 
-output "gsa_email" { value = google_service_account.app.email }
+# 이 신원의 IAM 주체 (root grants.tf 의 버킷·토픽·구독 바인딩, 출력 identity_principals)
+output "principal" { value = local.principal }
 output "secret_ids" { value = { for k, s in google_secret_manager_secret.s : k => s.secret_id } }
 # k8s 비밀 이름 → Secret Manager 가 돌려준 이름 projects/<번호>/secrets/… (gcp/root 의 ESO 읽기 바인딩용)
 output "secret_resource_names" { value = { for k, s in google_secret_manager_secret.s : k => s.name } }
