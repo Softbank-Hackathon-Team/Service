@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "login": {
+      "type": "string",
+      "maxLength": 254,
+      "pattern": "^[^@\\s]+@[^@\\s]+$"
+    },
+    "code": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "password": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 256
+    }
+  },
+  "required": [
+    "login",
+    "code",
+    "password"
+  ],
+  "additionalProperties": false
+}
