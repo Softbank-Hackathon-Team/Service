@@ -116,6 +116,16 @@ trafficMetrics:
   endpoint: ""      # 도착 수집기가 보낼 주소 (https://metrics.<도메인>/v1/metrics). 채우면 AWS·GCP 도착 cloudflared 에 수집기가 붙는다
   promUrl: ""       # 판정이 읽는 Prometheus. 도착 지표가 들어온 뒤에 켠다. 먼저 켜면 표본 부족으로 롤백된다
 
+# 흉내 트래픽: worker 에 MOCK_TRAFFIC=1. 진짜 지표(trafficMetrics.promUrl)·LB 전환기가 없는 실측에서 shifting 을 가짜 지표·mock 전환기로 넘긴다.
+#   기본 끔 → 진짜 판은 설정이 없으면 shifting 이 TRAFFIC_NOT_CONFIGURED 로 멈춘다. DEMO_MODE=1 이면 worker 가 뜨지 않는다 (contracts config 가드)
+traffic:
+  mock: false
+
+# GCP 도착에 GKE 가 없으면 worker 가 환경 층(VPC·GKE·AR·ESO)을 고객 svc-env 로 만든다: worker 에 ENV_LAYER_AUTO=1.
+#   기본 끔. 켠 뒤에 만든 계획부터 환경 층이 들어간다 (켜기 전에 승인한 계획은 apply 가 TF_PLAN_DRIFT 로 멈춘다)
+envLayer:
+  auto: false
+
 # 워커가 Application 을 읽고 새로고침 표시를 다는 Argo CD 네임스페이스 (Role·RoleBinding 이 여기 생긴다)
 argocd:
   namespace: argocd
