@@ -256,11 +256,12 @@ test("GET /events: 연결을 연 토큰이 만료되면 서버가 끊는다 (JWT
   const { hub } = fakeHub();
   const { app, url } = await serve(hub, { maxStreamMs: 60_000 });
   try {
-    const s = await open(url, { authorization: bearerFor(T, U, 1) });   // 1초짜리 토큰
+    // exp 는 초 단위라 ttl 1초면 남은 시간이 0~1초다. 0에 가까우면 붙자마자 끊겨 아래 확인이 흔들린다 → 2초 (남은 1~2초)
+    const s = await open(url, { authorization: bearerFor(T, U, 2) });
     assert.equal(s.status, 200);
     await s.until(/retry: 3000\n\n/);
     await waitFor(() => hub.size === 1);
-    await s.ended(3000);                       // 상한(60초)이 아니라 exp 에 끊긴다
+    await s.ended(4000);                       // 상한(60초)이 아니라 exp 에 끊긴다
     await waitFor(() => hub.size === 0);
   } finally {
     await app.close();
