@@ -216,10 +216,12 @@ locals {
       if !anytrue([for other in local.identity_ids : index(local.identity_ids, other) < index(local.identity_ids, id) && contains(jsondecode(coalesce(try(local.identity[other].secret_names_json, null), "[]")), n)])
     ]
   }
-  # 이 신원이 연결(connect)할 수 있는 postgres 의 마스터 비밀을 읽게 한다 (allow_from 에 신원 id)
+  # 이 신원이 연결(connect)할 수 있는 postgres 의 앱 비밀번호 그릇을 읽게 한다 (allow_from 에 신원 id).
+  #   그릇은 실행기가 apply 뒤 만들어 Terraform 이 ARN 을 모른다 → 이름 + Secrets Manager 접미사(-??????) 패턴.
+  #   관리자(마스터) 비밀(rds!db-…)은 앱 신원에 주지 않는다 (예전엔 앱 계정 = 마스터라 그것을 읽었다)
   db_secret_arns = {
     for id in local.identity_ids : id => [
-      for pid, p in local.postgres : module.postgres[pid].password_secret
+      for pid, p in local.postgres : "arn:aws:secretsmanager:${var.region}:${var.expected_account_id}:secret:${module.postgres[pid].password_secret}-??????"
       if contains(jsondecode(coalesce(try(p.allow_from_json, null), "[]")), id)
     ]
   }
@@ -312,6 +314,7 @@ module "postgres" {
   for_each      = local.postgres
   cfg           = each.value
   app_name      = var.app_name
+  tenant_id     = var.tenant_id
   vpc_id        = var.vpc_id
   subnet_ids    = jsondecode(var.db_subnet_ids_json)
   cluster_sg_id = local.app_sg_id
@@ -483,7 +486,12 @@ output "db_ca_cert_identifier" { value = local.repl_key != "" ? module.postgres[
 # E10-2: 도착 DB 앱 계정 이름 (= 모듈 user = 링크 user). 비밀 파일·복제가 "postgres"·"app_user" 같은 기본값 대신 이 값을 쓴다
 output "db_username" { value = local.repl_key != "" ? module.postgres[local.repl_key].user : "" }
 output "db_name" { value = local.repl_key != "" ? module.postgres[local.repl_key].db_name : "" }
-output "db_master_secret_arn" { value = local.repl_key != "" ? module.postgres[local.repl_key].password_secret : "" }
+# 도착 DB 관리자 계정 (= RDS 마스터, svc_admin_<해시>). 워커가 복제·스키마 복사·울타리에 쓴다. gcp/root 와 같은 이름 (중계기 gcp-aws targetAdminOf 가 읽는다)
+output "db_admin_username" { value = local.repl_key != "" ? module.postgres[local.repl_key].admin_user : "" }
+# 관리자(마스터) 비밀번호 = RDS 관리 비밀 ARN. 실행기 fetchSecret 이 db-secret.json db_admin_password 로 꺼낸다 (보안 수집기 live/aws 도 이 이름을 읽는다)
+output "db_master_secret_arn" { value = local.repl_key != "" ? module.postgres[local.repl_key].admin_password_secret : "" }
+# 앱 비밀번호 그릇 이름 (값 아님). 실행기가 apply 뒤 같은 이름으로 만들고(db-secret.json db_password), 앱은 ExternalSecret 으로 읽는다 (Builder passwordSecret)
+output "db_password_secret_name" { value = local.repl_key != "" ? module.postgres[local.repl_key].password_secret : "" }
 output "app_role_arn" { value = local.first_identity != "" ? module.identity[local.first_identity].role_arn : "" }
 output "namespace" { value = length(module.namespace) > 0 ? try(module.namespace[var.k8s_namespace].name, values(module.namespace)[0].name) : "" }
 # 허브 cluster Secret 재료 (apps/worker/src/gitops/bundle.ts clusterSecret). 클러스터 없으면 빈 값. 주소는 https:// 가 붙어 있다

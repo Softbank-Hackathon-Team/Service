@@ -72,6 +72,10 @@ export function resourceTypesV2(spec: AppSpecV2): string[] {
   return [...t].sort();
 }
 
+// 앱 DB 비밀번호 그릇 = aws/root 출력 db_password_secret_name (platform/<회사>/<앱>/<인스턴스>-db-password, {username,password} JSON).
+//   실행기(real-runner)가 apply 뒤 만든다. RDS 관리 비밀(db_master_secret_arn)은 이제 관리자(마스터) 몫이라 앱에 주지 않는다 (kinds/postgres admin_user)
+const APP_DB_SECRET_OUTPUT = "db_password_secret_name";
+
 export const awsTarget: TargetBuilder = {
   provider: "aws",
   version: "aws-target@0.1.0",
@@ -174,17 +178,16 @@ export const awsTarget: TargetBuilder = {
     assertRenderable(spec, CAPS);
     assertGrants("aws", spec);
     if (vmServicesOf(spec).length)
-      return vmWorkloadValues("aws", spec, out, t, cloudPostgresValues(spec, out, "db_master_secret_arn", { passwordProperty: "password" }));
+      return vmWorkloadValues("aws", spec, out, t, cloudPostgresValues(spec, out, APP_DB_SECRET_OUTPUT, { passwordProperty: "password" }));
     if (managedServicesOf(spec).length)
-      return managedWorkloadValues("aws", spec, out, t, cloudPostgresValues(spec, out, "db_master_secret_arn", { passwordProperty: "password" }));
+      return managedWorkloadValues("aws", spec, out, t, cloudPostgresValues(spec, out, APP_DB_SECRET_OUTPUT, { passwordProperty: "password" }));
     return buildWorkloadValues(spec, out, t, {
       imageRef: (src) => awsAdapter.imageRef(src, t),
       secretStore: { kind: "ClusterSecretStore", name: secretStoreName("aws", out) },   // CL-4: env 출력 secret_store_name 이 있으면 그것
       // = kinds/identity 의 aws_secretsmanager_secret 이름 규칙 (v1 과 같은 접두어)
       remoteKey: (s) => `platform/${tenantOf(t)}/${spec.app.name}/${s}`,
       saAnnotations: () => ({}),   // Pod Identity 는 Terraform 연결로 끝
-      // RDS 관리 비밀번호 시크릿은 {username,password} JSON
-      postgres: cloudPostgresValues(spec, out, "db_master_secret_arn", { passwordProperty: "password" }),
+      postgres: cloudPostgresValues(spec, out, APP_DB_SECRET_OUTPUT, { passwordProperty: "password" }),
       ingressClass: "alb",
     });
   },

@@ -248,3 +248,21 @@ run "reject_job_unresolved_placeholder" {
   }
   expect_failures = [terraform_data.job_env]
 }
+
+# 관리자(RDS 마스터)는 앱 계정과 이름·비밀이 다르고 이전(인스턴스 이름)마다 정해진다 (gcp/root 와 같은 규칙).
+#   앱 비밀번호 그릇은 이름만 (실행기가 apply 뒤 만든다). 앱 계정·링크 user 는 그대로
+run "admin_user_separate_from_app" {
+  command = plan
+  assert {
+    condition     = output.db_admin_username == "svc_admin_${substr(sha256("shop-db-ab12"), 0, 10)}" && output.db_admin_username != output.db_username
+    error_message = "관리자 계정 이름이 인스턴스 이름 해시가 아니거나 앱 계정과 같다"
+  }
+  assert {
+    condition     = output.db_password_secret_name == "platform/t-aaaa1111/shop/shop-db-ab12-db-password"
+    error_message = "앱 비밀번호 그릇 이름은 platform/<회사>/<앱>/<인스턴스>-db-password (ESO·앱 경계가 읽는 platform/* 아래)"
+  }
+  assert {
+    condition     = output.db_username == "app" && module.postgres["shop-db"].link.user == "app" && module.postgres["shop-db"].user == "app"
+    error_message = "앱 계정 출력은 그대로 (마스터 이름이 바뀌어도 앱 링크 user 는 앱 계정)"
+  }
+}
