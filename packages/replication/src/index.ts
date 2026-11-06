@@ -2,7 +2,7 @@
 // 워커는 Migration 클래스만 쓰면 된다: precheck → sync(반복) → cutover → (rollback) → teardown
 export { type Endpoint, type Provider, type SslMode, type EndpointTls, endpointFromEnv, connect, withClient, clientConfig, peerTlsProblem, workerTlsProblem, peerPathProblem, isPrivateHost, isManaged } from "./endpoint.js";
 export { namesFor, type Names } from "./names.js";
-export { precheck, precheckSource, ensureReplicationAttr, type Check, type PrecheckResult } from "./precheck.js";
+export { precheck, precheckSource, ensureReplicationAttr, ensureTableOwnerMembership, type Check, type PrecheckResult } from "./precheck.js";
 export { copyStatus, waitInitialCopy, sampleLag, markerLagMs, slotLag, type CopyStatus, type LagSample, type SlotLag } from "./lag.js";
 export { judgeCutoverReady, DEFAULT_GATE, type GateOpts, type GateResult } from "./judge.js";
 export { fence, unfence, appCanWrite, writableTables } from "./fence.js";
