@@ -8,12 +8,13 @@
 //   npm run cf:check -- --cleanup --apply
 //
 // 이 스크립트가 만드는 자원 이름은 전부 cf-check 로 시작한다. 그 밖의 자원은 읽기만 하고 절대 바꾸거나 지우지 않는다.
+// 둘째 LB·pool 짝은 CF_CHECK_PREFIX=cf-check2 처럼 앞머리를 바꿔 만든다 (첫 짝 cf-check-src·tgt 는 안 건드림). 정리·등록·--list 도 같은 값으로
 // 비밀값(토큰)과 계정·zone ID 는 화면에 앞 4자리만 찍는다.
 import {
   cfRequest, cfZoneByName, cloudflareLb, cloudflarePatchBody, cloudflarePreflight, cloudflareWeightsOf,
   setAndVerify, ProviderError, type CfLoadBalancer, type Weights,
 } from "@svc/traffic";
-import { authServers, directResolve4, dnsServersFromEnv, pinnedLookup, probeOnce, waitResolvable, withSystemFallback, judgeShare, zoneOf, poolHealthOf, isErrorKey, inCloudflareV4, originCheck, type PreflightFail } from "./cf-probe.js";
+import { authServers, directResolve4, dnsServersFromEnv, pinnedLookup, probeOnce, waitResolvable, withSystemFallback, judgeShare, zoneOf, poolHealthOf, isErrorKey, inCloudflareV4, originCheck, cfCheckPrefix, CF_CHECK_DEFAULT_PREFIX, type PreflightFail } from "./cf-probe.js";
 
 // ---------- 설정 ----------
 const argv = new Set(process.argv.slice(2));
@@ -47,7 +48,8 @@ const PROBE_EARLY_STOP = 5;
 
 const TOKEN = process.env.CLOUDFLARE_API_TOKEN || process.env.CF_API_TOKEN;
 const ZONE_NAME = process.env.CLOUDFLARE_ZONE_NAME || undefined;
-const PREFIX = "cf-check";
+// 자원 이름 앞머리. CF_CHECK_PREFIX 가 비면 예전 그대로 cf-check (cf-probe.ts cfCheckPrefix). 잘못된 값이면 API 를 부르기 전에 끝 코드 1
+const PREFIX = (() => { const r = cfCheckPrefix(process.env); if ("error" in r) fail(r.error); return r.prefix; })();
 // DRAFT(ai): 기본 LB 주소는 cf-check.<zone>. 이미 쓰는 이름(앱 주소)과 겹치지 않게
 const LB_HOST = process.env.CF_CHECK_LB_HOSTNAME || (ZONE_NAME ? `${PREFIX}.${ZONE_NAME}` : "");
 // 출발·도착 오리진 주소. 터널이면 <터널 UUID>.cfargotunnel.com, 아니면 공개 호스트 이름이나 IP
@@ -118,6 +120,7 @@ async function listMine() {
 async function main() {
   if (argv.has("--list")) return listMine();
   console.log(`cf-check 모드: ${APPLY ? (CLEANUP_ONLY ? "정리(실제 삭제)" : "실제 생성·전환") : "dry-run (읽기만)"}`);
+  if (PREFIX !== CF_CHECK_DEFAULT_PREFIX) console.log(`자원 이름 앞머리: ${PREFIX} (CF_CHECK_PREFIX) → ${PREFIX}-monitor·${PREFIX}-src·${PREFIX}-tgt·${LB_HOST || `${PREFIX}.<zone>`} 만 보고 바꾼다`);
   if (!TOKEN) fail("CLOUDFLARE_API_TOKEN 이 비어 있다 (.env 확인)");
   if (!ZONE_NAME) fail("CLOUDFLARE_ZONE_NAME 이 비어 있다 (.env 확인)");
 
@@ -188,7 +191,7 @@ async function main() {
   }
 
   if (REGISTER !== undefined && !APPLY) {
-    if (!mine.lb || !mine.src || !mine.tgt) fail("등록할 cf-check LB·풀이 없다 → 먼저 npm run cf:check -- --apply --keep");
+    if (!mine.lb || !mine.src || !mine.tgt) fail(`등록할 ${PREFIX} LB·풀이 없다 → 먼저 npm run cf:check -- --apply --keep`);
     await register(zone.id, { lbId: mine.lb.id, sourcePoolId: mine.src.id, targetPoolId: mine.tgt.id });
     return (await import("./cf-register.js")).closeDb();
   }
@@ -386,7 +389,7 @@ async function verifyGone(A: string, Z: string) {
     ...l.filter((x) => x.name === LB_HOST || x.description === `${PREFIX} lb`).map((x) => `LB ${x.name}`),
   ];
   if (left.length) { console.error(`  실패 정리 뒤에도 남음: ${left.join(", ")} → 다시 --cleanup --apply, 안 되면 대시보드`); process.exitCode = 1; }
-  else ok(`정리 확인: cf-check 모니터·pool·LB 0 (다른 자원: 모니터 ${m.length}, pool ${p.length}, LB ${l.length})`);
+  else ok(`정리 확인: ${PREFIX} 모니터·pool·LB 0 (다른 자원: 모니터 ${m.length}, pool ${p.length}, LB ${l.length})`);
 }
 
 // 지우는 순서: LB → pool → 모니터 (쓰는 쪽부터. 반대로 하면 "사용 중" 오류)
