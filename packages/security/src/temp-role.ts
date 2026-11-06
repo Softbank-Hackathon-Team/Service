@@ -48,7 +48,9 @@ export class TempRoleDenied extends Error {
 const READ_VERB = /^(describe|list|get|batchget|watch|lookup|search)/i;
 // GCP Artifact Registry(gcr.io 포함) 이미지 받기 = 매니페스트·층 읽기. 동사가 download 라 위 규칙으로는 못 가른다 (리허설 이미지 복사)
 export const AR_PULL_PERMISSIONS = ["artifactregistry.repositories.downloadArtifacts"] as const;
-const READ_ACTIONS: ReadonlySet<string> = new Set(AR_PULL_PERMISSIONS);
+// PERM-GATE: AWS 흉내 평가(iam:SimulatePrincipalPolicy)는 정책을 읽어 판정만 돌려준다 (자원·정책을 바꾸지 않음). 관찰 역할이 사전 점검·환경 권한 확인에서 부른다
+export const POLICY_SIMULATE_ACTIONS = ["iam:SimulatePrincipalPolicy"] as const;
+const READ_ACTIONS: ReadonlySet<string> = new Set([...AR_PULL_PERMISSIONS, ...POLICY_SIMULATE_ACTIONS]);
 function isRead(action: string): boolean {
   const verb = action.split(/[:.]/).pop() ?? "";
   return READ_VERB.test(verb) || READ_ACTIONS.has(action);
