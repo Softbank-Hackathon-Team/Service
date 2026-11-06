@@ -40,14 +40,17 @@ test("DRY_RUN 출력: 순서(SA → 역할 → 바인딩 → tokenCreator)와 SA
   assert.ok(idx(/projects add-iam-policy-binding cust-prj/) < idx(/serviceAccountTokenCreator/));
   assert.ok(idx(/projects add-iam-policy-binding cust-mig/) < idx(/svc-operate@cust-mig\.iam\.gserviceaccount\.com --project=cust-mig --member=\S+ --role=roles\/iam\.serviceAccountTokenCreator/));
   const tc = out.split("\n").filter((l) => l.includes("serviceAccountTokenCreator"));
-  assert.equal(tc.length, 3);
-  assert.ok(tc.some((l) => l.includes("svc-observe@cust-prj.iam")) && tc.some((l) => l.includes("svc-plan@cust-mig.iam")) && tc.some((l) => l.includes("svc-operate@cust-mig.iam")));
+  // B-2: 플랫폼이 빌리는 SA = svc-observe·svc-plan·svc-operate·svc-env. svc-gke-node 는 빌리지 않는다
+  assert.equal(tc.length, 4);
+  assert.ok(tc.some((l) => l.includes("svc-observe@cust-prj.iam")) && tc.some((l) => l.includes("svc-plan@cust-mig.iam")) && tc.some((l) => l.includes("svc-operate@cust-mig.iam"))
+    && tc.some((l) => l.includes("svc-env@cust-mig.iam")));
+  assert.ok(!tc.some((l) => l.includes("svc-gke-node@")));
   assert.ok(tc.every((l) => l.includes(`serviceAccount:${GOOD}`) && l.includes("service-accounts add-iam-policy-binding")));
 });
 
 test("스크립트가 참조하는 ROLE_DIR 파일 3개가 infra/permissions 에 실제로 있다", () => {
   const src = readFileSync(script, "utf8");
-  for (const f of src.match(/gcp-operate[a-z-]*\.(yaml|json)/g) ?? []) assert.ok(existsSync(join(permDir, f)), f);
+  for (const f of src.match(/gcp-(operate|env)[a-z-]*\.(yaml|json)/g) ?? []) assert.ok(existsSync(join(permDir, f)), f);
 });
 
 test("거부: PLATFORM_SA 경계 — 28자 정확히 통과, 27·29자·대문자·줄바꿈 덧붙임·다른 도메인은 gcloud 호출 전에 종료", () => {

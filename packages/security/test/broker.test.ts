@@ -142,3 +142,22 @@ test("GCP generateAccessToken 요청 모양: SA 경로, cloud-platform 범위, �
   assert.deepEqual(seen!.body, { scope: ["https://www.googleapis.com/auth/cloud-platform"], lifetime: "1800s" });
   assert.equal(out.expiresAt.toISOString(), "2026-11-07T01:30:00.000Z");
 });
+
+// B-2: 환경 층(policy env_layer)은 GCP 실행 역할에만, 천장은 svc-env 역할(gcp-env-custom-role.yaml). svc-operate 천장과 섞이지 않는다
+test("B-2 env_layer: 요청 동작 = svc-env 역할 전부(지우기 없음), 그 밖 동작·AWS·파일 없음은 거부", async () => {
+  const { STEP_ROLES, stepActions } = await import("../src/index.js");
+  const perms = loadPermissionSet(PERM_DIR);
+  const [r] = STEP_ROLES.env_layer;
+  const actions = stepActions(perms, "gcp", r.purpose, r.stage, r.policy);
+  assert.deepEqual(actions, [...perms.gcp.env!.ceiling].sort());
+  assert.ok(actions.includes("container.clusters.create") && !actions.some((a) => /\.delete$/.test(a)));
+  assert.ok(!perms.gcp.ceiling.includes("container.clusters.create"), "svc-operate 천장에는 클러스터 만들기가 없다");
+  assert.deepEqual(stepActions(perms, "aws", r.purpose, r.stage, r.policy), []);
+  const mk = (p = perms) => createTempRoleBroker({ issuers: { gcp: mockIssuer("gcp"), aws: mockIssuer("aws") }, permissions: p, now: () => t0,
+    ledger: memoryLedger({ durable: true }), resolveEnv: async () => ({ roleRef: "svc-operate@cust-mig.iam.gserviceaccount.com" }), audit: async () => {} });
+  const req = { tenantId: T, envId: E, provider: "gcp", purpose: "operate", migrationId: M, stage: "apply", policy: "env_layer", actions, ttlSec: 900 };
+  assert.equal((await mk().issue(req, { step: "env_layer" })).actions.length, actions.length);
+  await assert.rejects(mk().issue({ ...req, actions: [...actions, "container.clusters.delete"] }), (e: TempRoleDenied) => e.code === "ROLE_OUTSIDE_CEILING");
+  await assert.rejects(mk().issue({ ...req, provider: "aws" }), (e: TempRoleDenied) => e.code === "ROLE_POLICY_PROVIDER");
+  await assert.rejects(mk({ ...perms, gcp: { ceiling: perms.gcp.ceiling } }).issue(req), (e: TempRoleDenied) => e.code === "ROLE_NO_CEILING");
+});

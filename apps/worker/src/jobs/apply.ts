@@ -5,6 +5,7 @@ import { errorMessage, nextJob, runStep, stubWait } from "./_step.js";
 import { loadLatestApproval, loadLatestPlan, saveInfraReady } from "./plan-store.js";
 import { failedOnRenewFailure, withStepRoles } from "./_roles.js";
 import { realApplyWithEnvLayer } from "./apply-real.js";
+import { borrowEnvCred } from "../env-layer.js";
 import { withGcpCred } from "../gcp-token-server.js";
 import { runImageBuilds } from "./image-build.js";
 import { TARGET_ACCOUNT_SQL } from "./target-account.js";
@@ -98,9 +99,11 @@ export async function handleApply(raw: unknown) {
         // L5b: 진짜 발급기(REAL_STS=1 + external_id)로 빌린 AWS 실행 자격이 있으면 terraform 에 그것만 넘긴다 (맥 프로필 지움).
         //   빌린 GCP 토큰도 같다 (withGcpCred). STUB: 가짜 발급기·온프레는 지금처럼 프로세스 자격(AWS_PROFILE·gcloud 로그인)으로 돈다
         //   4 기반 생성: 앱 층 apply 앞에서 환경 층(도착 GCP 의 VPC·GKE·AR·ESO)을 확보한다 (ENV_LAYER_AUTO=1 일 때만 만듦, 꺼져 있으면 예전과 같음)
+        //   B-2: 환경 층은 svc-operate 가 아니라 그 단계에서만 빌리는 고객 svc-env 로 만든다 (borrowEnvCred)
         const r = await withGcpCred(roles, accountId, (gcpCred) => realApplyWithEnvLayer({ migrationId: j.migrationId, tenantId: j.tenantId, envId: m.targetEnvId,
                                     provider, accountId, spec, plan },
-                                  { signal: ctx.signal, ...(roles.awsEnv?.target ? { credEnv: roles.awsEnv.target } : {}), ...(gcpCred ? { gcpCred } : {}) }));
+                                  { signal: ctx.signal, ...(roles.awsEnv?.target ? { credEnv: roles.awsEnv.target } : {}), ...(gcpCred ? { gcpCred } : {}),
+                                    envLayer: { withEnvCred: borrowEnvCred(j, m, accountId) } }));
         if (!r.ok) return { to: "failed", failureCode: asFailureCode(r.failureCode), detail: r.detail };
         tfOutputs = r.tfOutputs;
         realDetail = r.detail;

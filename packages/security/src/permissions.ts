@@ -15,7 +15,8 @@ export interface PermissionSet {
     //   파일이 없으면 없음 → 중계기 역할 발급은 ROLE_NO_CEILING 으로 거부된다
     relay?: { ceiling: string[]; sessionPolicy: string };
   };
-  gcp: { ceiling: string[] };
+  // B-2: env = 환경 층을 만드는 svc-env 커스텀 역할 (gcp-env-custom-role.yaml). 파일이 없으면 없음 → env_layer 발급은 ROLE_NO_CEILING
+  gcp: { ceiling: string[]; env?: { ceiling: string[] } };
   onprem: { ceiling: string[] };
 }
 
@@ -73,13 +74,15 @@ export function loadPermissionSet(dir: string): PermissionSet {
   const read = (f: string) => readFileSync(join(dir, f), "utf8");
   const compact = (f: string) => JSON.stringify(JSON.parse(read(f)));
   const relay = loadRelay(dir);
+  let env: string | undefined;
+  try { env = read("gcp-env-custom-role.yaml"); } catch { /* 없으면 env_layer 발급 거부 */ }
   return {
     aws: {
       ceiling: actionsOfPolicy(JSON.parse(read("aws-operate-role-policy.json")) as PolicyDoc),
       sessionPolicies: { plan: compact("aws-session-policy-plan.json"), apply: compact("aws-session-policy-apply.json"), destroy: compact("aws-session-policy-destroy.json") },
       ...(relay ? { relay } : {}),
     },
-    gcp: { ceiling: parseGcpCustomRole(read("gcp-operate-custom-role.yaml")) },
+    gcp: { ceiling: parseGcpCustomRole(read("gcp-operate-custom-role.yaml")), ...(env ? { env: { ceiling: parseGcpCustomRole(env) } } : {}) },
     onprem: { ceiling: parseClusterRole(read("onprem-operate-clusterrole.yaml")) },
   };
 }

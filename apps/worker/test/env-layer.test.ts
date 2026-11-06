@@ -1,12 +1,12 @@
 // 환경 층 (도착 GCP 의 VPC·GKE·AR·ESO): 사실 고르는 순서, 만들기·멈춤, 계획 지문 대조 (DB·클라우드 없이, 실행기·저장소·gcloud 는 가짜)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ENV_LAYER_MODULE_DIGEST, envLayerVars, envLayerVarsHash, type EnvLayerFacts, type EnvLayerResult, type EnvLayerRunnerOpts, type Exec, type RealApplyResult } from "@svc/adapters";
+import { ENV_LAYER_MODULE_DIGEST, envLayerVars, envLayerVarsHash, type EnvLayerFacts, type EnvLayerResult, type EnvLayerRunnerOpts, type Exec, type GcpTerraformCred, type RealApplyResult } from "@svc/adapters";
 import { buildPlanDoc } from "../src/jobs/plan.js";
 import { stubPrecheck } from "../src/jobs/precheck.js";
 import { realApply, realApplyWithEnvLayer } from "../src/jobs/apply-real.js";
 import { factsDrift } from "../src/jobs/plan-facts.js";
-import { chooseEnvLayerSource, ensureEnvLayer, planEnvLayer, type EnvLayerRow, type EnvLayerStore } from "../src/env-layer.js";
+import { chooseEnvLayerSource, ensureEnvLayer, planEnvLayer, type EnvLayerRow, type EnvLayerStore, type WithEnvCred } from "../src/env-layer.js";
 import { ONE } from "./demo-one.js";
 
 const ENV_ID = "33333333-3333-4333-8333-333333333333";
@@ -64,7 +64,10 @@ const envRunner = (o: { fail?: boolean; order: string[]; tokens: (string | undef
 const gcloud = (names: string[] | "error"): Exec => async () =>
   names === "error" ? { code: 1, stdout: "", stderr: "ERROR: PERMISSION_DENIED", ms: 1 } : { code: 0, stdout: JSON.stringify(names.map((name) => ({ name }))), stderr: "", ms: 1 };
 let token = "tok-1";
+// 앱 층(svc-operate) 토큰 창구와 환경 층(B-2 svc-env) 토큰 창구를 다르게 둬서 환경 층이 어느 것을 쓰는지 본다
 const CRED = { metadataHost: "127.0.0.1:9", token: () => token, projectId: PROJECT };
+const ENV_CRED = { metadataHost: "127.0.0.1:8", token: () => "env-tok-1", projectId: PROJECT };
+const lend = (cred: GcpTerraformCred): WithEnvCred => (fn) => fn({ cred });
 const AUTO = { ENV_LAYER_AUTO: "1", PATH: "/bin", GOOGLE_APPLICATION_CREDENTIALS: "/var/run/worker-sa.json", CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: "/var/run/gcp-cred/worker.json" };
 
 test("사실 고르는 순서: DB ready > TF_FACT_* > (gcp + ENV_LAYER_AUTO=1) 만들기 > 없음", () => {
@@ -122,7 +125,7 @@ test("둘 다 없음 + ENV_LAYER_AUTO=1 → 1차(클러스터)·2차(ESO) 순서
   const listed: NodeJS.ProcessEnv[] = [];
   const exec: Exec = async (cmd, args, x) => { listed.push(x.env); return gcloud([])(cmd, args, x); };
   const r = await realApplyWithEnvLayer({ migrationId: MID, tenantId: TENANT, envId: ENV_ID, provider: "gcp", accountId: PROJECT, spec: ONE, plan: p },
-    { env: AUTO, runner: root.runner, gcpCred: CRED, envLayer: { store, exec, runner: envRunner(o) } });
+    { env: AUTO, runner: root.runner, gcpCred: CRED, envLayer: { store, exec, runner: envRunner(o), withEnvCred: lend(ENV_CRED) } });
   assert.equal(r.ok, true, JSON.stringify(r));
   assert.deepEqual(o.order, [`cluster:create_eso=false:${PROJECT}`, `eso:create_eso=true:${PROJECT}`]);
   assert.equal(s.row?.status, "ready");
@@ -131,14 +134,14 @@ test("둘 다 없음 + ENV_LAYER_AUTO=1 → 1차(클러스터)·2차(ESO) 순서
   assert.equal(root.seen.length, 1, "앱 층 apply 가 이어서 돈다");
   assert.equal(root.seen[0]!.cluster_name, "platform-target");
   assert.deepEqual(s.audits.map((a) => a.action), ["env_layer.creating", "env_layer.ready"]);
-  // 자식 환경: 빌린 토큰만, 워커 자기 자격(svc-worker 키 파일)은 없다
+  // 자식 환경: 빌린 svc-env 토큰만. 워커 자기 자격(svc-worker 키 파일)도, 앱 층의 svc-operate 토큰도 없다
   for (const e of [...o.envs, ...listed]) {
     assert.equal(e.GOOGLE_APPLICATION_CREDENTIALS, undefined);
     assert.equal(e.CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE, undefined);
-    assert.equal(e.GCE_METADATA_HOST, "127.0.0.1:9");
+    assert.equal(e.GCE_METADATA_HOST, "127.0.0.1:8");
     assert.equal(e.CLOUDSDK_CORE_PROJECT, PROJECT);
   }
-  assert.deepEqual(o.tokens, ["tok-1", "tok-1"]);
+  assert.deepEqual(o.tokens, ["env-tok-1", "env-tok-1"]);
   // 감사·결과에 토큰이 안 남는다
   assert.ok(!JSON.stringify({ r, a: s.audits }).includes("tok-"), "토큰이 결과·감사에 없다");
 });
@@ -149,7 +152,7 @@ test("단계마다 env() 를 다시 불러 재발급된 토큰으로 시작한�
   let n = 0;
   const cred = { metadataHost: "127.0.0.1:9", token: () => `tok-${++n}`, projectId: PROJECT };
   const r = await ensureEnvLayer({ tenantId: TENANT, migrationId: MID, envId: ENV_ID, provider: "gcp", projectId: PROJECT, region: REGION, plan: plan(AUTO, null) },
-    { env: AUTO, store, gcpCred: cred, exec: gcloud([]), runner: envRunner(o) });
+    { env: AUTO, store, withEnvCred: lend(cred), exec: gcloud([]), runner: envRunner(o) });
   assert.equal(r.ok, true);
   assert.equal(new Set(o.tokens).size, 2, `1차·2차가 서로 다른(최신) 토큰: ${o.tokens.join(",")}`);
 });
@@ -174,7 +177,7 @@ test("도착 프로젝트에 클러스터는 있는데 DB 사실 없음 → NEED
     const o = { order: [] as string[], tokens: [], envs: [] };
     const root = rootRunner();
     const r = await realApplyWithEnvLayer({ migrationId: MID, tenantId: TENANT, envId: ENV_ID, provider: "gcp", accountId: PROJECT, spec: ONE, plan: plan(AUTO, null) },
-      { env: AUTO, runner: root.runner, gcpCred: CRED, envLayer: { store, exec: gcloud(names as never), runner: envRunner(o) } });
+      { env: AUTO, runner: root.runner, gcpCred: CRED, envLayer: { store, exec: gcloud(names as never), runner: envRunner(o), withEnvCred: lend(ENV_CRED) } });
     assert.equal(r.ok, false);
     assert.equal((r as { failureCode: string }).failureCode, "NEEDS_HUMAN");
     assert.deepEqual(o.order, []);
@@ -191,7 +194,7 @@ test("env apply 실패 → status=failed, 이전 멈춤(ENV_LAYER_APPLY_FAILED),
   const root = rootRunner();
   const p = plan(AUTO, null);
   const r = await realApplyWithEnvLayer({ migrationId: MID, tenantId: TENANT, envId: ENV_ID, provider: "gcp", accountId: PROJECT, spec: ONE, plan: p },
-    { env: AUTO, runner: root.runner, gcpCred: CRED, envLayer: { store, exec: gcloud([]), runner: envRunner(o) } });
+    { env: AUTO, runner: root.runner, gcpCred: CRED, envLayer: { store, exec: gcloud([]), runner: envRunner(o), withEnvCred: lend(ENV_CRED) } });
   assert.equal(r.ok, false);
   assert.equal((r as { failureCode: string }).failureCode, "ENV_LAYER_APPLY_FAILED");
   assert.equal(s.row?.status, "failed");
@@ -203,9 +206,33 @@ test("env apply 실패 → status=failed, 이전 멈춤(ENV_LAYER_APPLY_FAILED),
   // 다시: 실패 줄이 있으면 (우리 state 로 이어 만드는 중) 이미 생긴 클러스터가 있어도 NEEDS_HUMAN 이 아니다
   o.fail = false; o.order.length = 0;
   const again = await realApplyWithEnvLayer({ migrationId: MID, tenantId: TENANT, envId: ENV_ID, provider: "gcp", accountId: PROJECT, spec: ONE, plan: p },
-    { env: AUTO, runner: root.runner, gcpCred: CRED, envLayer: { store, exec: gcloud(["platform-target"]), runner: envRunner(o) } });
+    { env: AUTO, runner: root.runner, gcpCred: CRED, envLayer: { store, exec: gcloud(["platform-target"]), runner: envRunner(o), withEnvCred: lend(ENV_CRED) } });
   assert.equal(again.ok, true, JSON.stringify(again));
   assert.equal(s.row?.status, "ready");
+});
+
+test("B-2: svc-env 를 못 빌리면 앱 층 svc-operate 토큰이 있어도 만들지 않고 ENV_LAYER_CRED_MISSING + 연결 스크립트 다시 실행 안내. 만들 일이 없으면 svc-env 를 빌리지 않는다", async () => {
+  const { s, store } = memStore(null);
+  const o = { order: [] as string[], tokens: [], envs: [] };
+  const root = rootRunner();
+  const notFound: WithEnvCred = (fn) => fn({ why: "ROLE_NOT_FOUND" });
+  const r = await realApplyWithEnvLayer({ migrationId: MID, tenantId: TENANT, envId: ENV_ID, provider: "gcp", accountId: PROJECT, spec: ONE, plan: plan(AUTO, null) },
+    { env: AUTO, runner: root.runner, gcpCred: CRED, envLayer: { store, exec: gcloud([]), runner: envRunner(o), withEnvCred: notFound } });
+  assert.equal(r.ok, false);
+  assert.equal((r as { failureCode: string }).failureCode, "ENV_LAYER_CRED_MISSING");
+  const err = String((r as unknown as { detail: { envLayer: { error: string } } }).detail.envLayer.error);
+  assert.match(err, /ROLE_NOT_FOUND/);
+  assert.match(err, /gcp-connect\.sh/);
+  assert.deepEqual(o.order, [], "환경 층 apply 없음");
+  assert.equal(s.claims, 0);
+  assert.equal(root.seen.length, 0, "앱 층도 안 돈다");
+
+  let borrowed = 0;
+  const spy: WithEnvCred = (fn) => { borrowed++; return fn({ cred: ENV_CRED }); };
+  const ready = await realApplyWithEnvLayer({ migrationId: MID, tenantId: TENANT, envId: ENV_ID, provider: "gcp", accountId: PROJECT, spec: ONE, plan: plan(TF_GCP, READY) },
+    { env: TF_GCP, runner: rootRunner().runner, gcpCred: CRED, envLayer: { store: memStore(READY).store, runner: envRunner(o), withEnvCred: spy } });
+  assert.equal(ready.ok, true, JSON.stringify(ready));
+  assert.equal(borrowed, 0, "DB 사실 ready 면 svc-env 를 빌리지 않는다");
 });
 
 test("빌린 토큰이 없으면 만들지 않는다 (svc-worker 로 떨어지지 않음) / 다른 이전이 만드는 중이면 ENV_LAYER_BUSY", async () => {
@@ -218,7 +245,7 @@ test("빌린 토큰이 없으면 만들지 않는다 (svc-worker 로 떨어지�
   assert.deepEqual(o.order, []);
   const b = memStore({ status: "creating", facts: null, varsHash: VARS_HASH, moduleDigest: ENV_LAYER_MODULE_DIGEST });
   const busy = await ensureEnvLayer({ tenantId: TENANT, migrationId: MID, envId: ENV_ID, provider: "gcp", projectId: PROJECT, region: REGION, plan: plan(AUTO, null) },
-    { env: AUTO, store: b.store, gcpCred: CRED, exec: gcloud([]), runner: envRunner(o) });
+    { env: AUTO, store: b.store, withEnvCred: lend(ENV_CRED), exec: gcloud([]), runner: envRunner(o) });
   assert.equal((busy as { failureCode: string }).failureCode, "ENV_LAYER_BUSY");
   assert.deepEqual(o.order, []);
 });
@@ -226,10 +253,10 @@ test("빌린 토큰이 없으면 만들지 않는다 (svc-worker 로 떨어지�
 test("승인 대조: 계획서에 환경 층 생성이 없거나 입력 지문이 다르면 만들지 않는다 (TF_PLAN_DRIFT)", async () => {
   const o = { order: [] as string[], tokens: [], envs: [] };
   const noCreate = await ensureEnvLayer({ tenantId: TENANT, migrationId: MID, envId: ENV_ID, provider: "gcp", projectId: PROJECT, region: REGION, plan: plan({}, null) },
-    { env: AUTO, store: memStore(null).store, gcpCred: CRED, exec: gcloud([]), runner: envRunner(o) });
+    { env: AUTO, store: memStore(null).store, withEnvCred: lend(ENV_CRED), exec: gcloud([]), runner: envRunner(o) });
   assert.equal((noCreate as { failureCode: string }).failureCode, "TF_PLAN_DRIFT");
   const otherRegion = await ensureEnvLayer({ tenantId: TENANT, migrationId: MID, envId: ENV_ID, provider: "gcp", projectId: PROJECT, region: "us-central1", plan: plan(AUTO, null) },
-    { env: AUTO, store: memStore(null).store, gcpCred: CRED, exec: gcloud([]), runner: envRunner(o) });
+    { env: AUTO, store: memStore(null).store, withEnvCred: lend(ENV_CRED), exec: gcloud([]), runner: envRunner(o) });
   assert.equal((otherRegion as { failureCode: string }).failureCode, "TF_PLAN_DRIFT");
   assert.deepEqual(o.order, []);
 });

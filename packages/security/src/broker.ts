@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { hostname } from "node:os";
 import type { Provider } from "@svc/contracts";
-import { checkLeastPrivilege, TempCredential, TempRoleDenied, TempRoleRequest } from "./temp-role.js";
+import { checkLeastPrivilege, POLICY_PROVIDER, TempCredential, TempRoleDenied, TempRoleRequest } from "./temp-role.js";
 import { AWS_SESSION_POLICY_MAX, checkSessionPolicy, checkWithinCeiling, compactSessionPolicy, type PermissionSet } from "./permissions.js";
 import type { ProviderIssuer } from "./issuers.js";
 import { CredentialVault, type SecretMaterial } from "./vault.js";
@@ -110,8 +110,8 @@ export function createTempRoleBroker(d: BrokerDeps) {
         if (parsed.purpose === "operate") {
           // 권한 파일 없이 실행 역할을 주면 AWS plan 단계도 역할 전체 권한을 받는다 → 거부 (T-ROLE-6)
           if (!d.permissions) throw new TempRoleDenied("ROLE_NO_CEILING", "최소 권한 파일(infra/permissions)이 없어 실행 역할을 줄 수 없다");
-          if (parsed.policy && parsed.provider !== "aws")
-            throw new TempRoleDenied("ROLE_POLICY_PROVIDER", `세션 정책 ${parsed.policy} 는 AWS 실행 역할에만 쓴다`);
+          if (parsed.policy && POLICY_PROVIDER[parsed.policy] !== parsed.provider)
+            throw new TempRoleDenied("ROLE_POLICY_PROVIDER", `정책 ${parsed.policy} 는 ${POLICY_PROVIDER[parsed.policy]} 실행 역할에만 쓴다`);
           if (parsed.provider === "aws") {
             if (!parsed.stage) throw new TempRoleDenied("ROLE_OPERATE_NO_STAGE", "AWS 실행 역할은 단계(plan|apply|destroy)가 필요하다");
             // 중계기(policy relay): 천장 = 고객이 따로 붙인 중계기 문 묶음, 세션 정책 = 그 동작만. 단계 세션 정책은 안 쓴다
@@ -128,7 +128,13 @@ export function createTempRoleBroker(d: BrokerDeps) {
             if (sessionPolicy.length > AWS_SESSION_POLICY_MAX)
               throw new TempRoleDenied("ROLE_POLICY_TOO_LARGE", `세션 정책 ${sessionPolicy.length}자 > ${AWS_SESSION_POLICY_MAX}`);
             checkWithinCeiling(parsed.actions, allowed);   // 요청이 세션 정책보다 넓으면 설계 실수
-          } else if (parsed.provider === "gcp") checkWithinCeiling(parsed.actions, d.permissions.gcp.ceiling);
+          } else if (parsed.provider === "gcp") {
+            // B-2: 환경 층(policy env_layer)은 svc-env 역할이 천장 (svc-operate 천장과 따로)
+            const env = parsed.policy === "env_layer" ? d.permissions.gcp.env : undefined;
+            if (parsed.policy === "env_layer" && !env)
+              throw new TempRoleDenied("ROLE_NO_CEILING", "환경 층 권한 파일(infra/permissions/gcp-env-custom-role.yaml)이 없어 svc-env 를 줄 수 없다");
+            checkWithinCeiling(parsed.actions, env ? env.ceiling : d.permissions.gcp.ceiling);
+          }
           else if (parsed.provider === "onprem") checkWithinCeiling(parsed.actions, d.permissions.onprem.ceiling);
         }
       } catch (e) {

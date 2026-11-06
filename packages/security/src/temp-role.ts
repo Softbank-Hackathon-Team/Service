@@ -11,14 +11,18 @@ export const TempRoleRequest = z.object({
   migrationId: z.uuid().optional(),      // 실행 역할은 반드시 이전 한 건에 묶는다
   // 실행 역할의 단계. AWS 는 이 단계의 세션 정책(infra/permissions/aws-session-policy-<stage>.json)으로 다시 좁힌다
   stage: z.enum(["plan", "apply", "destroy"]).optional(),
-  // DRAFT(ai): 단계 세션 정책 대신 쓰는 이름 붙은 세션 정책. "relay" = 출발 계정에 온프레 이전 중계기를 만들고 지우는 동작만
-  //   (infra/permissions/aws-relay-statements.json). AWS 실행 역할에만. stage 는 장부(0009 CHECK)용으로 그대로 둔다
-  policy: z.enum(["relay"]).optional(),
+  // DRAFT(ai): 단계 세션 정책 대신 쓰는 이름 붙은 정책. 클라우드는 POLICY_PROVIDER 하나뿐. stage 는 장부(0009 CHECK)용으로 그대로 둔다
+  //   "relay" = 출발 AWS 계정에 온프레 이전 중계기를 만들고 지우는 동작만 (infra/permissions/aws-relay-statements.json)
+  //   "env_layer" = B-2: 도착 GCP 환경 층(gcp/env)을 만드는 고객 svc-env (infra/permissions/gcp-env-custom-role.yaml)
+  policy: z.enum(["relay", "env_layer"]).optional(),
   actions: z.array(z.string().min(3)).max(200),   // ID-8: 50 → 200 (AWS apply 세션 정책 66개가 잘리지 않게, STEP_ROLE_MAX_ACTIONS 와 같음)
   // DRAFT(ai): 최대 1시간. AWS AssumeRole 기본값(1h)과 같게 잡았다. 긴 작업은 다시 빌린다
   ttlSec: z.number().int().min(60).max(3600),
 }).strict();
 export type TempRoleRequest = z.infer<typeof TempRoleRequest>;
+export type RolePolicy = NonNullable<TempRoleRequest["policy"]>;
+/** 이름 붙은 정책 → 쓸 수 있는 클라우드 (다른 클라우드 요청은 중개자가 ROLE_POLICY_PROVIDER 로 거부, 단계 배선은 묻지 않음) */
+export const POLICY_PROVIDER = { relay: "aws", env_layer: "gcp" } as const satisfies Record<RolePolicy, Provider>;
 
 export const TempCredential = z.object({
   provider: Provider,

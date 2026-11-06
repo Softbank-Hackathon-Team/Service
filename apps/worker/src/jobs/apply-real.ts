@@ -181,11 +181,12 @@ export async function realApply(i: RealApplyInput, d: RealApplyDeps = {}): Promi
 }
 
 /** apply 작업의 진짜 길: ① 환경 층 확보(ensureEnvLayer, apply 맨 앞 = 승인 뒤 provisioning 에서만) → ② 앱 층 realApply (환경 층 사실을 씀).
- *  reapplyDbWriter(컷오버·롤백)는 이 함수를 거치지 않는다 → 그때 GKE 를 만들 일이 없다 */
-export async function realApplyWithEnvLayer(i: RealApplyInput, d: RealApplyDeps & { envLayer?: Omit<EnsureEnvLayerDeps, "gcpCred" | "signal" | "env"> } = {}): Promise<RealApplyOutcome> {
+ *  reapplyDbWriter(컷오버·롤백)는 이 함수를 거치지 않는다 → 그때 GKE 를 만들 일이 없다.
+ *  B-2: 환경 층은 d.gcpCred(svc-operate)를 쓰지 않는다. d.envLayer.withEnvCred 가 그 단계에서만 svc-env 를 빌린다 */
+export async function realApplyWithEnvLayer(i: RealApplyInput, d: RealApplyDeps & { envLayer?: Omit<EnsureEnvLayerDeps, "signal" | "env"> } = {}): Promise<RealApplyOutcome> {
   const el = await ensureEnvLayer({ tenantId: i.tenantId, migrationId: i.migrationId, envId: i.envId, provider: i.provider, projectId: i.accountId,
     region: regionOf({ envId: i.envId, provider: i.provider, region: "default" }), plan: i.plan },
-    { ...d.envLayer, ...(d.env ? { env: d.env } : {}), ...(d.gcpCred ? { gcpCred: d.gcpCred } : {}), ...(d.signal ? { signal: d.signal } : {}) });
+    { ...d.envLayer, ...(d.env ? { env: d.env } : {}), ...(d.signal ? { signal: d.signal } : {}) });
   if (!el.ok) return { ok: false, failureCode: el.failureCode, detail: { planId: i.plan.planId, provider: i.provider, real: true, ...el.detail } };
   const out = await realApply({ ...i, ...(el.layer ? { envLayer: el.layer } : {}) }, d);
   return el.source === "db" ? { ...out, detail: { ...out.detail, envLayer: el.detail } } : out;

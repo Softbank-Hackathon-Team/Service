@@ -305,3 +305,18 @@ test("FM-TRF-23: entry 가 있으면 터널 토큰 ExternalSecret(키 token) + �
   assert.ok(!n.externalSecrets.secrets.some((x) => x.name === "cloudflared-token"));
   assert.ok(!n.warnings.some((w) => w.startsWith("입구:")));
 });
+
+// B-2 (나): ESO 는 그릇마다 받은 읽기만 있다 → 입구 파드 비밀 그릇(터널·지표 토큰)은 GCP 앱 층 Terraform 이 값 없이 만든다
+test("B-2 GCP: entry 가 있으면 입구 비밀 그릇을 Terraform 이 만들고 경고는 값만 넣으라고, entry 없으면 그릇도 권한도 없다", () => {
+  const b = targetBuilderFor("gcp");
+  const tf = b.toTerraformV2(TIER3(), T("gcp"));
+  assert.deepEqual(JSON.parse(String(tf.vars.ingress_secret_names_json)), ["cloudflared-token", "svc-metric-token"]);
+  const v = ChartValues.parse(b.toWorkloadValues(TIER3(), {}, T("gcp")));
+  assert.equal(v.externalSecrets.secrets.find((x) => x.name === "cloudflared-token")?.remoteKey, "app-shop-cloudflared-token", "gcp/root 그릇 이름 규칙과 같다");
+  assert.ok(v.warnings.includes("입구: cloudflared 터널 토큰을 apply 가 값 없이 만든 비밀 그릇 app-shop-cloudflared-token 에 키 token 으로 넣어야 도착 입구 파드가 뜸"));
+  assert.equal("ingress_secret_names_json" in b.toTerraformV2(AppSpecV2.parse({ ...TIER3(), entry: undefined }), T("gcp")).vars, false);
+  const plain = (entry: boolean) => AppSpecV2.parse({ ...BASE, components: [{ ...BASE.components[0]!, props: { ...BASE.components[0]!.props, env: [{ name: "LOG_LEVEL", value: "info" }] } }],
+    links: [], ...(entry ? {} : { entry: undefined }) });
+  assert.ok(b.operateActionsV2(plain(true), "apply").includes("secretmanager.secrets.create"), "사전 점검이 그릇 만들기 권한을 본다");
+  assert.ok(!b.operateActionsV2(plain(false), "apply").includes("secretmanager.secrets.create"));
+});
