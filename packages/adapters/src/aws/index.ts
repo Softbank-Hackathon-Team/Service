@@ -20,7 +20,10 @@ export const PERMS: PermTable = {
   kubernetes_namespace_v1: { read: [], write: [], remove: [] },
   aws_db_instance: {
     read: ["rds:DescribeDBInstances", "rds:ListTagsForResource"],
-    write: ["rds:CreateDBInstance", "rds:ModifyDBInstance", "rds:AddTagsToResource"],
+    // 2026-11-07 온프레 → AWS 실측 KMSKeyNotAccessibleFault: storage_encrypted(기본 aws/rds 키) + manage_master_user_password(aws/secretsmanager 키)는
+    //   만드는 쪽 자격에 kms:DescribeKey 가 있어야 한다 (AWS RDS 문서 "Permissions required for Secrets Manager integration"). 암호화 저장소 grant 는 kms:CreateGrant.
+    //   두 동작은 export-permissions 의 AppDbKms 문장으로만 나간다 (kms:ViaService = rds·secretsmanager 리전 끝점일 때만)
+    write: ["rds:CreateDBInstance", "rds:ModifyDBInstance", "rds:AddTagsToResource", "kms:DescribeKey", "kms:CreateGrant"],
     remove: ["rds:DeleteDBInstance"] },
   aws_db_parameter_group: {
     read: ["rds:DescribeDBParameterGroups", "rds:DescribeDBParameters"],
@@ -70,7 +73,8 @@ export const PERMS: PermTable = {
     write: ["sns:CreateTopic", "sns:SetTopicAttributes", "sns:TagResource"],
     remove: ["sns:DeleteTopic"] },
   aws_security_group: {
-    read: ["ec2:DescribeSecurityGroups", "ec2:DescribeSecurityGroupRules"],
+    // 2026-11-07 실측: 지우기 전에 provider 가 이 SG 를 쓰는 ENI 를 찾는다 (DescribeNetworkInterfaces 403 으로 target-destroy 실패)
+    read: ["ec2:DescribeSecurityGroups", "ec2:DescribeSecurityGroupRules", "ec2:DescribeNetworkInterfaces"],
     write: ["ec2:CreateSecurityGroup", "ec2:AuthorizeSecurityGroupIngress",
       "ec2:RevokeSecurityGroupEgress", "ec2:CreateTags"],
     remove: ["ec2:DeleteSecurityGroup"] },

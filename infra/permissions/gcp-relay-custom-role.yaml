@@ -1,5 +1,5 @@
 title: platform-relay
-description: DB 복제 중계기 GCE VM·방화벽·복제 계정 (자동 생성) [perms v3]
+description: DB 복제 중계기 GCE VM·방화벽·복제 계정 (자동 생성) [perms v4]
 stage: GA
 includedPermissions:
 - cloudsql.instances.get

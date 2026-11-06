@@ -30,7 +30,7 @@ test("AWS 실행 역할: 데이터 자원 동작이 들어 있고 와일드카�
 });
 
 test("AWS 세션 정책: 단계별로 맞는 동작만 (plan 은 읽기뿐, destroy 는 삭제, apply 는 생성), 2,048자 이내, 역할 정책의 부분집합", () => {
-  const role = acts("aws-operate-role-policy.json");
+  const role = new Set([...acts("aws-operate-role-policy.json"), ...acts("aws-operate-db-kms-policy.json")]);   // 실행 역할 = 관리형 정책 + 인라인 db-kms (KMS 는 관리형 정책 한도 때문에 인라인, export-permissions)
   for (const p of ["plan", "apply", "destroy"]) {
     const f = `aws-session-policy-${p}.json`;
     // 보내는 판(security compactSessionPolicy)이 2,048자 - 여유 300 이내인지는 security z39-evidence 시험이 본다. 파일(하나하나 적은 판)은 6,144자 상한
@@ -44,7 +44,7 @@ test("AWS 세션 정책: 단계별로 맞는 동작만 (plan 은 읽기뿐, dest
 });
 
 test("어댑터 권한표 ↔ 정책 파일: v2 데이터 명세의 apply/destroy 동작이 전부 실행 역할 정책(천장) 안에 있음 (AWS)", () => {
-  const role = acts("aws-operate-role-policy.json");
+  const role = new Set([...acts("aws-operate-role-policy.json"), ...acts("aws-operate-db-kms-policy.json")]);   // 실행 역할 = 관리형 정책 + 인라인 db-kms (KMS 는 관리형 정책 한도 때문에 인라인, export-permissions)
   const spec = dataSpec();
   for (const purpose of ["plan", "apply", "destroy"] as const) {
     const missing = targetBuilderFor("aws").operateActionsV2(spec, purpose).filter((a) => !role.has(a));

@@ -1,0 +1,22 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AppDbKms",
+      "Effect": "Allow",
+      "Action": [
+        "kms:CreateGrant",
+        "kms:DescribeKey"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "kms:ViaService": [
+            "rds.ap-northeast-2.amazonaws.com",
+            "secretsmanager.ap-northeast-2.amazonaws.com"
+          ]
+        }
+      }
+    }
+  ]
+}

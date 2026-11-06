@@ -53,7 +53,7 @@ test("AWS: GetSecretValue 는 RDS 관리형 시크릿 조건 문장과 apply 단
 });
 
 test("AWS: 세션 정책(plan·apply·destroy)은 실행 역할 정책의 부분집합", () => {
-  const role = actionsOf("aws-operate-role-policy.json");
+  const role = new Set([...actionsOf("aws-operate-role-policy.json"), ...actionsOf("aws-operate-db-kms-policy.json")]);   // 실행 역할 = 관리형 정책 + 인라인 db-kms (KMS 는 관리형 정책 한도 때문에 인라인, export-permissions)
   for (const p of ["plan", "apply", "destroy"]) {
     const extra = [...actionsOf(`aws-session-policy-${p}.json`)].filter((a) => !role.has(a));
     assert.deepEqual(extra, [], `${p}: 역할에 없는 동작`);

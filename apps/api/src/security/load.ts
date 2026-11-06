@@ -26,10 +26,18 @@ export interface FileInputs {
   evidenceFiles: SecurityInput["evidenceFiles"];
 }
 
+function withInline(managed: string | null, inline: string | null): string | null {
+  if (!managed || !inline) return managed;
+  try {
+    const a = JSON.parse(managed) as { Statement: unknown[] }, b = JSON.parse(inline) as { Statement: unknown[] };
+    return JSON.stringify({ ...a, Statement: [...a.Statement, ...b.Statement] });
+  } catch { return managed; }
+}
 // 권한 파일·차트는 요청마다 읽는다 (작은 파일 9개, 데모 중 파일을 고치면 바로 보이게)
 export function loadFileInputs(dir = PERMISSIONS_DIR, chartDir = CHART_DIR): FileInputs {
   const f = (n: string) => tryRead(join(dir, n));
-  const awsCeil = f("aws-operate-role-policy.json");
+  // 실행 역할 천장 = 관리형 정책 + 인라인 db-kms (새 도착 RDS 기본 키 KMS, 관리형 정책 6,144자 한도 때문에 따로). 둘을 한 문서로 합쳐 본다
+  const awsCeil = withInline(f("aws-operate-role-policy.json"), f("aws-operate-db-kms-policy.json"));
   const sessions = Object.fromEntries((["plan", "apply", "destroy"] as const)
     .map((s) => [s, f(`aws-session-policy-${s}.json`)]).filter(([, v]) => v !== null)) as Record<string, string>;
   const gcp = f("gcp-operate-custom-role.yaml");
