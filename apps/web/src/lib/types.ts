@@ -119,7 +119,8 @@ export interface PlanCostSummary {
   stub?: boolean;
 }
 // contracts plan.ts PlanAcknowledgement: 승인 때 사람이 하나씩 확인하는 항목. 승인 본문 acks 가 이 id 를 덮는다
-export type PlanAckKind = "cost" | "failure_cost_policy" | "runtime_change" | "build" | "precheck_warn" | "low_confidence";
+export type PlanAckKind = "cost" | "failure_cost_policy" | "runtime_change" | "build" | "precheck_warn" | "low_confidence"
+  | "tls_relaxed" | "host_access" | "public_bucket" | "provision_reuse" | "env_layer_create";
 export interface PlanAcknowledgement { id: string; kind: PlanAckKind; text: string; ref?: string }
 export interface PlanDoc {
   planId: string;

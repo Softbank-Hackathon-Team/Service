@@ -315,6 +315,11 @@ const ACK_KIND: Record<PlanAckKind, string> = {
   build: t('도착에서 이미지 빌드'),
   precheck_warn: t('사전 점검 주의'),
   low_confidence: t('낮은 신뢰도'),
+  tls_relaxed: t('평문 DB 연결'),
+  host_access: t('노드 직접 사용'),
+  public_bucket: t('공개 버킷'),
+  provision_reuse: t('있는 자원 다시 씀'),
+  env_layer_create: t('도착 클러스터 새로 만듦'),
 };
 
 // 승인·시작이 이 코드로 막히면 계획서가 바뀌었거나 시간이 지난 것이다 → 계획서를 다시 읽고 체크는 새 지문에서 처음부터
