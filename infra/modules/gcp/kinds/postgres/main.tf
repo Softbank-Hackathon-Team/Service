@@ -32,6 +32,12 @@ variable "cfg" {
     peer_cidrs_json        = optional(string, "[]")
     public_subnet_ids_json = optional(string) # aws 만 쓰는 칸 (gcp 는 무시)
     deletion_protection    = optional(bool, true)
+    # 앱 계정을 Cloud SQL API 사용자로 만들지 않는다 (API 사용자는 늘 cloudsqlsuperuser 라 컷오버 울타리 DB-08 이 막는다).
+    # true 면 워커가 관리자 계정으로 같은 비밀번호의 일반 LOGIN 역할을 만든다 (apps/worker relay-step ensureTargetAppLogin)
+    app_login_sql = optional(bool, false)
+    # 복제 길 전용 공개 주소 (중계기 이전 apply 가 덧씌운다). 앱이 붙는 주소(link.host)는 바꾸지 않는다: 앱은 사설 IP 그대로
+    repl_public          = optional(bool, false)
+    repl_peer_cidrs_json = optional(string, "[]")
   })
   validation {
     condition     = contains(["15", "16", "17"], var.cfg.major_version)
@@ -57,11 +63,17 @@ variable "network_id" { type = string }
 variable "labels" { type = map(string) }
 
 locals {
+  # 플랫폼 관리자 계정: 인스턴스 이름(이전마다 해시)에서 정해져 재시도·다시 apply 해도 같다.
+  #   postgres·cloudsql*·앱 계정·복제 임시 계정(repl_*_u)·svc_link_* 과 겹치지 않는 접두어
+  admin_user = "svc_admin_${substr(sha256(var.cfg.name), 0, 10)}"
   # DRAFT(ai): 못 고른 값의 상품 기본값 (가장 싼 급). 공유 코어는 ha 와 같이 못 씀 → ha=true 면 IR 에서 tier 를 골라 넘겨야 함
   tier       = coalesce(var.cfg.instance_class, "db-f1-micro")
   replicas   = coalesce(var.cfg.read_replicas, 0)
   peer_cidrs = jsondecode(var.cfg.peer_cidrs_json)
-  db_name    = coalesce(var.cfg.db_name, replace(var.app_name, "-", "_"))
+  # 공개 주소 = 앱 공개(posture·DB_PUBLIC) 또는 복제 길. 허용 주소는 둘을 합친다
+  ipv4_enabled = var.cfg.public || var.cfg.repl_public
+  authorized   = distinct(concat(var.cfg.public ? local.peer_cidrs : [], var.cfg.repl_public ? jsondecode(var.cfg.repl_peer_cidrs_json) : []))
+  db_name      = coalesce(var.cfg.db_name, replace(var.app_name, "-", "_"))
   # DRAFT(ai): PITR 트랜잭션 로그 기본 보관이 7일이라 백업 보관이 7 미만이면 Cloud SQL 생성이 실패한다
   #   ("backup retention should be >= transaction log retention"). 출발 백업이 1~6일이면 도착은 7로 올린다 (BK-1 과 다름)
   retained_backups = contains([1, 2, 3, 4, 5, 6], coalesce(var.cfg.backup_retention_days, 0)) ? 7 : var.cfg.backup_retention_days
@@ -80,8 +92,8 @@ resource "google_sql_database_instance" "db" {
 
   lifecycle {
     precondition {
-      condition     = !var.cfg.public || length(local.peer_cidrs) >= 1
-      error_message = "public=true 면 허용 CIDR 1개 이상(peer_cidrs_json)이 필요하다."
+      condition     = (!var.cfg.public || length(local.peer_cidrs) >= 1) && (!var.cfg.repl_public || length(jsondecode(var.cfg.repl_peer_cidrs_json)) >= 1)
+      error_message = "public=true 면 허용 CIDR 1개 이상(peer_cidrs_json), repl_public=true 면 repl_peer_cidrs_json 1개 이상이 필요하다."
     }
   }
 
@@ -94,11 +106,11 @@ resource "google_sql_database_instance" "db" {
     availability_type     = var.cfg.ha == true ? "REGIONAL" : "ZONAL"
     user_labels           = var.labels
     ip_configuration {
-      ipv4_enabled    = var.cfg.public
+      ipv4_enabled    = local.ipv4_enabled
       private_network = var.network_id
       ssl_mode        = var.cfg.require_tls ? "ENCRYPTED_ONLY" : "ALLOW_UNENCRYPTED_AND_ENCRYPTED" # SSL-1
       dynamic "authorized_networks" {
-        for_each = var.cfg.public ? local.peer_cidrs : []
+        for_each = local.authorized
         content {
           name  = "peer-${replace(replace(authorized_networks.value, ".", "-"), "/", "-")}"
           value = authorized_networks.value
@@ -166,9 +178,47 @@ resource "random_password" "db" {
 }
 
 resource "google_sql_user" "app" {
+  count    = var.cfg.app_login_sql ? 0 : 1
   name     = var.cfg.app_user
   instance = google_sql_database_instance.db.name
   password = random_password.db.result
+}
+
+moved {
+  from = google_sql_user.app
+  to   = google_sql_user.app[0]
+}
+
+# 워커가 복제·스키마 복사·울타리에 쓰는 관리자 (cloudsqlsuperuser). 앱 계정과 비밀번호·비밀 그릇을 나눈다
+resource "random_password" "admin" {
+  length  = 32
+  special = false
+}
+
+resource "google_sql_user" "admin" {
+  name     = local.admin_user
+  instance = google_sql_database_instance.db.name
+  password = random_password.admin.result
+  lifecycle {
+    precondition {
+      condition     = local.admin_user != var.cfg.app_user
+      error_message = "관리자 계정 이름이 앱 계정과 같다."
+    }
+  }
+}
+
+# 이름 끝 -db-password: 플랫폼 실행 역할의 비밀 읽기 조건(gcp-operate-db-secret-condition)과 같은 모양. 앱 신원에는 읽기를 주지 않는다
+resource "google_secret_manager_secret" "admin_password" {
+  secret_id = "app-${var.app_name}-${var.cfg.id}-admin-db-password"
+  labels    = var.labels
+  replication {
+    auto {}
+  }
+}
+
+resource "google_secret_manager_secret_version" "admin_password" {
+  secret      = google_secret_manager_secret.admin_password.id
+  secret_data = random_password.admin.result
 }
 
 resource "google_secret_manager_secret" "db_password" {
@@ -192,15 +242,17 @@ locals {
 
 output "address" { value = local.host }
 output "private_ip" { value = local.private_ip }
-output "public_ip" { value = var.cfg.public ? google_sql_database_instance.db.public_ip_address : "" }
+output "public_ip" { value = local.ipv4_enabled ? google_sql_database_instance.db.public_ip_address : "" }
 output "outgoing_ip" {
-  value = var.cfg.public ? try([for a in google_sql_database_instance.db.ip_address : a.ip_address if a.type == "OUTGOING"][0], "") : ""
+  value = local.ipv4_enabled ? try([for a in google_sql_database_instance.db.ip_address : a.ip_address if a.type == "OUTGOING"][0], "") : ""
 }
 output "server_ca_cert" { value = nonsensitive(google_sql_database_instance.db.server_ca_cert[0].cert) } # 공개 정보 (verify-ca 에 씀)
 output "connection_name" { value = google_sql_database_instance.db.connection_name }
 output "port" { value = 5432 }
 output "db_name" { value = local.db_name }
 output "user" { value = var.cfg.app_user }
+output "admin_user" { value = google_sql_user.admin.name }
+output "admin_password_secret" { value = google_secret_manager_secret.admin_password.secret_id }
 # 비밀 "이름"만. KIND_INTERNAL_OUTPUTS.postgres = ["password_secret"]
 output "password_secret" { value = google_secret_manager_secret.db_password.secret_id }
 output "password_secret_resource" { value = google_secret_manager_secret.db_password.id }

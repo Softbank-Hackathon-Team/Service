@@ -12,6 +12,8 @@
 //   중계기 → RDS:5432 도 RDS 보안 그룹이 클러스터 보안 그룹만 받아 TIMEOUT. 그래서 길 두 개를 더 연다:
 //   - 출발 입구(RELAY_SOURCE_PORT): 워커 → 중계 공개 IP:15432 → RDS:5432 (TCP 그대로 넘김, TLS 는 워커↔RDS 끝까지). 보안 그룹은 플랫폼 나가는 대역만
 //   - RDS 들어오기: RDS 보안 그룹에 "중계 보안 그룹에서 5432" (이미 허용돼 있으면 안 단다)
+// GCP 도착(aws-gcp): SSH 터널 없이 TCP 입구 둘. 출발 입구(15432 → RDS)는 플랫폼 나가는 대역 + Cloud SQL 나가는 IP/32 만 받고,
+//   역방향 입구(중계 사설 IP:5432 → Cloud SQL 공개 IP:5432)는 VPC 안(RDS 역방향 구독)만 받는다. TLS 는 양 끝 DB 사이 그대로 (중계기는 못 푼다)
 import { mkdtemp, rm, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -28,9 +30,14 @@ export const RELAY_INSTANCE_TYPE = "t4g.nano";
 export const PG_PORT = 5432;
 // DRAFT(ai): 워커가 출발 RDS 에 붙는 중계기 입구 포트. 5432(역방향 터널 → 온프레 CNPG)와 겹치지 않는 비특권 포트 (forwarder 가 root 없이 연다)
 export const RELAY_SOURCE_PORT = 15432;
+// GCP 도착 중계기 EC2 의 역방향 목적지(Cloud SQL 공개 IP) 태그. 다시 돌 때 user-data 의 목적지가 지금 Cloud SQL 과 같은지 이 값으로 본다
+export const RELAY_REVERSE_TAG = "svc:reverse-target";
+
+/** 중계기 종류 = 출발 계정의 중계기가 무엇을 나르나 (relay-step RELAY_ROUTES 가 (출발, 도착) 짝에서 고른다) */
+export type RelayKind = "aws-onprem" | "aws-gcp";
 
 export type RelayErrorCode = "RELAY_PROVISION_FAILED" | "RELAY_TEARDOWN_FAILED" | "RELAY_SOURCE_DB_UNKNOWN" | "RELAY_CONFIG_MISSING" | "RELAY_DB_EGRESS_DENIED"
-  | "RELAY_DB_INGRESS_DENIED";
+  | "RELAY_DB_INGRESS_DENIED" | "RELAY_TARGET_DB_UNKNOWN";
 export class RelayError extends Error {
   constructor(readonly code: RelayErrorCode, message: string, readonly awsCode?: string) { super(message); this.name = "RelayError"; }
 }
@@ -60,18 +67,22 @@ export interface RelaySource {
 }
 export interface RelayNetwork { vpcCidrs: string[]; subnetId: string }
 export interface RelayAmi { imageId: string; rootDeviceName: string }
-export interface RelayPlanInput {
-  migrationId: string;
-  rds: RelaySource; network: RelayNetwork; ami: RelayAmi;
-  platformEgressCidrs: string[];
+/** GCP 도착 Cloud SQL 의 공개 주소 둘 (terraform 출력 db_public_ip·db_outgoing_ip) */
+export interface CloudSqlPeer { publicIp: string; outgoingIp: string }
+interface RelayPlanBase { migrationId: string; rds: RelaySource; network: RelayNetwork; ami: RelayAmi; platformEgressCidrs: string[] }
+export interface OnpremRelayPlanInput extends RelayPlanBase {
+  kind: "aws-onprem";
   onpremEgressIp: string;
   /** 터널 계정 authorized_keys 한 줄 (migration-secrets deriveSshKeypair().publicKeyLine) */
   tunnelPublicKey: string;
   /** 중계기 sshd 호스트 키 (migration-secrets deriveSshHostKey) */
   hostKey: SshKeypair;
 }
+export interface GcpRelayPlanInput extends RelayPlanBase { kind: "aws-gcp"; cloudSql: CloudSqlPeer }
+export type RelayPlanInput = OnpremRelayPlanInput | GcpRelayPlanInput;
 export interface SgRule { direction: "ingress" | "egress"; port: number; cidr: string; description: string }
 export interface RelayPlan {
+  kind: RelayKind;
   migrationId: string; vpcId: string;
   sgName: string; sgDescription: string; sgTags: Tag[];
   rules: SgRule[];
@@ -82,7 +93,10 @@ export interface RelayPlan {
   dbEgress: { groupId: string; groupIds: string[]; port: number; tags: Tag[] };
   /** RDS 보안 그룹에 달 들어오기 규칙 (출처 = 중계 보안 그룹 참조: EC2 를 다시 만들어도 그대로). 모양은 dbEgress 와 같다 */
   dbIngress: { groupId: string; groupIds: string[]; port: number; tags: Tag[] };
-  hostPublicKey: string;
+  /** 온프레 중계기 sshd 호스트 공개 키 (GCP 중계기는 SSH 가 없어 null) */
+  hostPublicKey: string | null;
+  /** GCP 중계기 역방향 목적지 (user-data 에 고정, EC2 태그 svc:reverse-target 과 같다). 온프레는 null */
+  reverseTarget: string | null;
 }
 
 const IPV4 = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/;
@@ -200,16 +214,23 @@ export function relayUserData(i: { migrationId: string; rdsEndpoint: string; tun
     "sshd -t",
     "systemctl restart sshd",
     // 출발 입구: 워커 → 중계 :15432 → RDS:5432. 보안 그룹이 플랫폼 나가는 대역만 받는다. root 아닌 일회용 계정(DynamicUser)으로 돈다
-    "cat > /usr/local/bin/svc-relay-fwd.py <<'SVC_FWD'",
-    RELAY_FORWARDER_PY,
-    "SVC_FWD",
-    "cat > /etc/systemd/system/svc-relay-fwd.service <<'SVC_UNIT'",
+    ...forwarderScript(),
+    ...forwarderUnit("svc-relay-fwd", "svc relay source entry (platform worker to source RDS, TCP passthrough)", i.rdsEndpoint, RELAY_SOURCE_PORT),
+    "",
+  ].join("\n");
+}
+
+const forwarderScript = () => ["cat > /usr/local/bin/svc-relay-fwd.py <<'SVC_FWD'", RELAY_FORWARDER_PY, "SVC_FWD", "chmod 644 /usr/local/bin/svc-relay-fwd.py"];
+/** forwarder systemd 단위 하나 (upHost:5432 ← listen). root 아닌 일회용 계정(DynamicUser), 죽으면 2초 뒤 다시 */
+function forwarderUnit(name: string, description: string, upHost: string, listen: number): string[] {
+  return [
+    `cat > /etc/systemd/system/${name}.service <<'SVC_UNIT'`,
     "[Unit]",
-    "Description=svc relay source entry (platform worker to source RDS, TCP passthrough)",
+    `Description=${description}`,
     "After=network-online.target",
     "Wants=network-online.target",
     "[Service]",
-    `ExecStart=/usr/bin/python3 /usr/local/bin/svc-relay-fwd.py ${i.rdsEndpoint} ${PG_PORT} ${RELAY_SOURCE_PORT}`,
+    `ExecStart=/usr/bin/python3 /usr/local/bin/svc-relay-fwd.py ${upHost} ${PG_PORT} ${listen}`,
     "DynamicUser=yes",
     "NoNewPrivileges=yes",
     "ProtectSystem=strict",
@@ -221,9 +242,25 @@ export function relayUserData(i: { migrationId: string; rdsEndpoint: string; tun
     "WantedBy=multi-user.target",
     "SVC_UNIT",
     // umask 077 로 만들어진 파일을 일회용 계정이 읽게
-    "chmod 644 /usr/local/bin/svc-relay-fwd.py /etc/systemd/system/svc-relay-fwd.service",
+    `chmod 644 /etc/systemd/system/${name}.service`,
     "systemctl daemon-reload",
-    "systemctl enable --now svc-relay-fwd.service",
+    `systemctl enable --now ${name}.service`,
+  ];
+}
+
+/** GCP 도착 중계기 user-data: SSH 설정 없음 (보안 그룹에 22 가 없다). 입구 둘:
+ *  출발 입구 15432 → RDS:5432 (워커·Cloud SQL 정방향 구독), 역방향 입구 5432 → Cloud SQL 공개 IP:5432 (롤백 창 RDS 역방향 구독) */
+export function gcpRelayUserData(i: { migrationId: string; rdsEndpoint: string; cloudSqlIp: string }): string {
+  if (!NAME.test(i.rdsEndpoint)) throw new RelayError("RELAY_SOURCE_DB_UNKNOWN", "RDS 엔드포인트는 이름(영숫자·.·-)만");
+  if (!IPV4.test(i.cloudSqlIp)) throw new RelayError("RELAY_TARGET_DB_UNKNOWN", "Cloud SQL 공개 IP 가 IPv4 가 아니다");
+  return [
+    "#!/bin/bash",
+    `# svc relay (managed-by=platform) for migration ${i.migrationId} (aws-gcp)`,
+    "set -euo pipefail",
+    "umask 077",
+    ...forwarderScript(),
+    ...forwarderUnit("svc-relay-fwd", "svc relay source entry (platform worker and Cloud SQL to source RDS, TCP passthrough)", i.rdsEndpoint, RELAY_SOURCE_PORT),
+    ...forwarderUnit("svc-relay-rev", "svc relay reverse entry (source RDS to Cloud SQL public IP, TCP passthrough)", i.cloudSqlIp, PG_PORT),
     "",
   ].join("\n");
 }
@@ -247,6 +284,27 @@ export function relayRules(i: { onpremEgressIp: string; vpcCidrs: string[]; plat
   ];
 }
 
+/** GCP 도착 중계기 보안 그룹 규칙: 22 없음.
+ *  들어오기 15432(출발 입구) = 플랫폼 나가는 대역 + Cloud SQL 나가는 IP/32, 5432(역방향 입구) = VPC 대역(RDS 역방향 구독)만.
+ *  나가기 5432 = VPC 안(RDS) + Cloud SQL 공개 IP/32 */
+export function gcpRelayRules(i: { vpcCidrs: string[]; platformEgressCidrs: string[]; cloudSql: CloudSqlPeer }): SgRule[] {
+  if (!IPV4.test(i.cloudSql.publicIp) || !IPV4.test(i.cloudSql.outgoingIp))
+    throw new RelayError("RELAY_TARGET_DB_UNKNOWN", "Cloud SQL 공개·나가는 IP 가 IPv4 가 아니다");
+  const vpc = i.vpcCidrs.map((c) => cidr(c, 8));
+  if (!vpc.length || vpc.some((c) => !c)) throw new RelayError("RELAY_PROVISION_FAILED", "VPC 대역이 IPv4 CIDR 가 아니다");
+  const plat = i.platformEgressCidrs.map((c) => cidr(c, PLATFORM_EGRESS_MIN_PREFIX));
+  if (!plat.length || plat.some((c) => !c)) throw new RelayError("RELAY_CONFIG_MISSING", "플랫폼 나가는 대역이 비었거나 틀렸다");
+  const uniq = (xs: (string | null)[]) => [...new Set(xs as string[])].sort();
+  const sqlOut = `${i.cloudSql.outgoingIp}/32`;
+  return [
+    ...uniq(vpc).map((c): SgRule => ({ direction: "ingress", port: PG_PORT, cidr: c, description: "Postgres from source VPC (RDS reverse subscription to Cloud SQL)" })),
+    ...uniq(plat).map((c): SgRule => ({ direction: "ingress", port: RELAY_SOURCE_PORT, cidr: c, description: "Source DB entry for platform worker (TCP passthrough to RDS)" })),
+    ...(plat.includes(sqlOut) ? [] : [{ direction: "ingress" as const, port: RELAY_SOURCE_PORT, cidr: sqlOut, description: "Source DB entry for Cloud SQL subscription (TCP passthrough to RDS)" }]),
+    ...uniq(vpc).map((c): SgRule => ({ direction: "egress", port: PG_PORT, cidr: c, description: "Postgres to RDS inside the VPC" })),
+    { direction: "egress", port: PG_PORT, cidr: `${i.cloudSql.publicIp}/32`, description: "Postgres to Cloud SQL public IP (reverse subscription)" },
+  ];
+}
+
 export function buildRelayPlan(i: RelayPlanInput): RelayPlan {
   if (!/^[0-9a-f-]{36}$/.test(i.migrationId)) throw new RelayError("RELAY_PROVISION_FAILED", "이전 번호가 uuid 가 아니다");
   if (i.rds.port !== PG_PORT)
@@ -255,18 +313,25 @@ export function buildRelayPlan(i: RelayPlanInput): RelayPlan {
   if (!groupId) throw new RelayError("RELAY_SOURCE_DB_UNKNOWN", "출발 RDS 에 활성 보안 그룹이 없다 (나가기 규칙을 달 곳이 없음)");
   if (!/^ami-[0-9a-f]+$/.test(i.ami.imageId)) throw new RelayError("RELAY_PROVISION_FAILED", "AMI 번호 모양이 틀렸다");
   if (!/^subnet-[0-9a-f]+$/.test(i.network.subnetId)) throw new RelayError("RELAY_PROVISION_FAILED", "서브넷 번호 모양이 틀렸다");
+  const gcp = i.kind === "aws-gcp";
+  const reverseTarget = gcp ? i.cloudSql.publicIp : null;
   return {
+    kind: i.kind,
     migrationId: i.migrationId, vpcId: i.rds.vpcId,
     sgName: `svc-relay-${i.migrationId}`,
     sgDescription: `svc relay for migration ${i.migrationId} (managed-by platform)`,
     sgTags: relayTags(i.migrationId, RELAY_ROLE),
-    rules: relayRules({ onpremEgressIp: i.onpremEgressIp, vpcCidrs: i.network.vpcCidrs, platformEgressCidrs: i.platformEgressCidrs }),
+    rules: gcp ? gcpRelayRules({ vpcCidrs: i.network.vpcCidrs, platformEgressCidrs: i.platformEgressCidrs, cloudSql: i.cloudSql })
+      : relayRules({ onpremEgressIp: i.onpremEgressIp, vpcCidrs: i.network.vpcCidrs, platformEgressCidrs: i.platformEgressCidrs }),
     instance: { imageId: i.ami.imageId, instanceType: RELAY_INSTANCE_TYPE, subnetId: i.network.subnetId,
-                rootDeviceName: i.ami.rootDeviceName, tags: relayTags(i.migrationId, RELAY_ROLE) },
-    userData: relayUserData({ migrationId: i.migrationId, rdsEndpoint: i.rds.endpoint, tunnelPublicKey: i.tunnelPublicKey, hostKey: i.hostKey }),
+                rootDeviceName: i.ami.rootDeviceName,
+                tags: [...relayTags(i.migrationId, RELAY_ROLE), ...(reverseTarget ? [{ Key: RELAY_REVERSE_TAG, Value: reverseTarget }] : [])] },
+    userData: gcp ? gcpRelayUserData({ migrationId: i.migrationId, rdsEndpoint: i.rds.endpoint, cloudSqlIp: i.cloudSql.publicIp })
+      : relayUserData({ migrationId: i.migrationId, rdsEndpoint: i.rds.endpoint, tunnelPublicKey: i.tunnelPublicKey, hostKey: i.hostKey }),
     dbEgress: { groupId, groupIds: [...new Set(i.rds.securityGroupIds)], port: PG_PORT, tags: relayTags(i.migrationId, RELAY_DB_EGRESS_ROLE) },
     dbIngress: { groupId, groupIds: [...new Set(i.rds.securityGroupIds)], port: PG_PORT, tags: relayTags(i.migrationId, RELAY_DB_INGRESS_ROLE) },
-    hostPublicKey: i.hostKey.publicKeyLine.trim(),
+    hostPublicKey: gcp ? null : i.hostKey.publicKeyLine.trim(),
+    reverseTarget,
   };
 }
 
@@ -482,6 +547,12 @@ export async function provisionRelay(d: RelayAwsDeps, plan: RelayPlan): Promise<
   let inst = live[0];
   if (inst?.State?.Name === "stopped" || inst?.State?.Name === "stopping")
     throw new RelayError(P, `중계 EC2 ${inst.InstanceId} 가 멈춰 있다 (${inst.State.Name}). 사람이 켜거나 지운 뒤 재개`);
+  // GCP 중계기: user-data 의 역방향 목적지(Cloud SQL 공개 IP)가 지금과 다르면(Cloud SQL 을 다시 만듦) 그 EC2 는 못 고친다 → 지우고 새로 만든다
+  if (inst?.InstanceId && plan.reverseTarget && inst.Tags?.find((t) => t.Key === RELAY_REVERSE_TAG)?.Value !== plan.reverseTarget) {
+    await aws.call(["ec2", "terminate-instances", "--instance-ids", inst.InstanceId], "옛 목적지 중계 EC2 종료", P);
+    await waitTerminated(aws, [inst.InstanceId], tries, every, sleep, P);
+    inst = undefined;
+  }
   let instanceId = inst?.InstanceId;
   if (instanceId) reused.push(instanceId);
   else instanceId = await runInstance(aws, plan, sgId);
@@ -599,6 +670,19 @@ async function runInstance(aws: AwsCli, plan: RelayPlan, sgId: string): Promise<
   }
 }
 
+async function waitTerminated(aws: AwsCli, ids: string[], tries: number, every: number, sleep: (ms: number) => Promise<void>, code: RelayErrorCode) {
+  for (let n = 0; ids.length; n++) {
+    let left: InstanceRow[];
+    try {
+      const r = await aws.call<{ Reservations?: { Instances?: InstanceRow[] }[] }>(["ec2", "describe-instances", "--instance-ids", ...ids], "중계 EC2 종료 기다리기", code);
+      left = (r.Reservations ?? []).flatMap((x) => x.Instances ?? []).filter((x) => x.State?.Name !== "terminated");
+    } catch (e) { if (e instanceof RelayError && e.awsCode === "InvalidInstanceID.NotFound") left = []; else throw e; }
+    if (!left.length) return;
+    if (n + 1 >= tries) throw new RelayError(code, `중계 EC2 ${left.map((x) => x.InstanceId).join(",")} 가 ${tries}번 기다려도 terminated 가 아니다`);
+    await sleep(every);
+  }
+}
+
 /** 정리: RDS 들어오기 규칙(중계 보안 그룹 참조 → 이게 남으면 보안 그룹을 못 지운다) → RDS 나가기 규칙 → EC2 종료(terminated 까지 기다림) → 중계 보안 그룹.
  *  두 태그가 응답에서 다시 확인된 것만 지운다. 여러 번 불러도 된다 */
 export async function teardownRelay(d: RelayAwsDeps, migrationId: string): Promise<{ removed: string[] }> {
@@ -632,16 +716,7 @@ export async function teardownRelay(d: RelayAwsDeps, migrationId: string): Promi
   const ids = insts.map((x) => x.InstanceId!).filter(Boolean).sort();
   const toStop = insts.filter((x) => x.State?.Name !== "shutting-down").map((x) => x.InstanceId!).sort();
   if (toStop.length) await aws.call(["ec2", "terminate-instances", "--instance-ids", ...toStop], "중계 EC2 종료", T);
-  for (let n = 0; ids.length; n++) {
-    let left: InstanceRow[];
-    try {
-      const r = await aws.call<{ Reservations?: { Instances?: InstanceRow[] }[] }>(["ec2", "describe-instances", "--instance-ids", ...ids], "중계 EC2 종료 기다리기", T);
-      left = (r.Reservations ?? []).flatMap((x) => x.Instances ?? []).filter((x) => x.State?.Name !== "terminated");
-    } catch (e) { if (e instanceof RelayError && e.awsCode === "InvalidInstanceID.NotFound") left = []; else throw e; }
-    if (!left.length) break;
-    if (n + 1 >= tries) throw new RelayError(T, `중계 EC2 ${left.map((x) => x.InstanceId).join(",")} 가 ${tries}번 기다려도 terminated 가 아니다`);
-    await sleep(every);
-  }
+  await waitTerminated(aws, ids, tries, every, sleep, T);
   removed.push(...ids);
 
   const sgs = ((await aws.call<{ SecurityGroups?: { GroupId?: string; Tags?: Tag[] }[] }>(["ec2", "describe-security-groups", "--filters",

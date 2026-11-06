@@ -49,6 +49,24 @@ export async function ensureReplUser(c: pg.Client, e: Endpoint, name: string): P
   return { user, password };
 }
 
+// DB-08 과 같은 목록: 이 역할을 물려받으면 표 권한 REVOKE(울타리)가 안 먹는다
+const PRIVILEGED_ROLES = ["pg_write_all_data", "rds_superuser", "cloudsqlsuperuser", "azure_pg_admin"];
+
+/** 앱 로그인 역할을 관리자 세션 c 로 맞춘다: 없으면 일반 LOGIN 역할로 만들고, 있으면 LOGIN·비밀번호만 맞춘다 (여러 번 불러도 같다).
+ *  클라우드 API 로 만든 사용자는 관리자 역할(cloudsqlsuperuser 등)을 물려받아 컷오버 울타리가 안 먹는다 → 일반 역할은 SQL 로만 만든다.
+ *  이미 관리자 역할을 물려받은 계정이면 손대지 않고 "privileged" (sync 첫 점검 DB-08 이 이유와 함께 막는다). 표 권한은 스키마 복사·앱 마이그레이션이 준다 */
+export async function ensureLoginRole(c: pg.Client, role: string, password: string): Promise<"created" | "updated" | "privileged"> {
+  const r = await c.query<{ su: boolean; via: string[] }>(
+    `SELECT r.rolsuper su, ARRAY(SELECT g FROM unnest($2::text[]) g WHERE to_regrole(g) IS NOT NULL AND pg_has_role(r.oid, g::regrole, 'USAGE')) via
+       FROM pg_roles r WHERE r.rolname = $1`, [role, PRIVILEGED_ROLES]);
+  const row = r.rows[0];
+  if (row && (row.su || row.via.length)) return "privileged";
+  await c.query(`SET log_statement = 'none'`).catch(() => {});
+  await c.query(`${row ? "ALTER" : "CREATE"} ROLE ${ident(role)} WITH LOGIN PASSWORD ${lit(scramVerifier(password))}`);
+  await c.query(`RESET log_statement`).catch(() => {});
+  return row ? "updated" : "created";
+}
+
 /** PF-E20: RFC 5802/7677 SCRAM-SHA-256 저장 모양 (Postgres pg_authid 와 같은 꼴). 비밀번호는 base64url 글자라 SASLprep 이 바꿀 게 없다 */
 export function scramVerifier(password: string, salt: Buffer = randomBytes(16), iterations = 4096): string {
   const salted = pbkdf2Sync(password, salt, iterations, 32, "sha256");

@@ -134,3 +134,24 @@ test("거부: 다른 비밀·Aurora 클러스터 비밀은 문법 오류, 워커
     (e: unknown) => e instanceof ReplConfigError && e.code === "REPL_SECRET_UNRESOLVED" && !e.message.includes("pw-sm"));
   assert.ok(replicationFromRecords(M, recs, { REPL_SECRET_MASTER_KEY: MASTER }, new Map([[SM_ARN, "pw-sm"]])));
 });
+
+// 도착 클라우드 DB 관리자 (tf:). 실행기가 이전 작업 폴더 db-secret.json(0600)에 둔 값을 {tf:키} 와 같은 폴더 규칙으로 읽는다
+test("tf: _password 키만 받고 이전 작업 폴더 db-secret.json 에서 풀린다. 다른 키·없는 값은 거부 (오류에 값 없음)", async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const root = mkdtempSync(join(tmpdir(), "tf-ref-"));
+  mkdirSync(join(root, "t-11111111", M), { recursive: true });
+  writeFileSync(join(root, "t-11111111", M, "outputs.json"), JSON.stringify({ db_admin_username: "svc_admin_0123456789", db_address: "10.0.0.9" }));
+  writeFileSync(join(root, "t-11111111", M, "db-secret.json"), JSON.stringify({ db_password: "app-pw", db_admin_password: "adm-pw" }), { mode: 0o600 });
+  const env = { TF_WORK_DIR: root };
+  assert.deepEqual(parsePasswordRef("tf:db_admin_password"), { kind: "tf", key: "db_admin_password" });
+  assert.equal(resolvePasswordRef("tf:db_admin_password", { ...scope, side: "target" }, env), "adm-pw");
+  for (const bad of ["tf:db_address", "tf:db_admin_username", "tf:", "tf:../x_password"]) assert.throws(() => parsePasswordRef(bad), /tf:|문법/, bad);
+  assert.throws(() => resolvePasswordRef("tf:db_admin_password", { ...scope, migrationId: "33333333-3333-4333-8333-333333333333" }, env), /db-secret\.json/);
+  const e = endpointFromRecord(rec({ side: "target", provider: "cloudsql", username: "svc_admin_0123456789", passwordRef: "tf:db_admin_password",
+    host: "34.64.1.2", peerHost: "10.0.1.20", peerPort: 5432, sslmode: "verify-ca", caPem: PEM }), env);
+  assert.ok(e.adminUrl.startsWith("postgres://svc_admin_0123456789:adm-pw@34.64.1.2:5432/shop"));
+  assert.ok(e.peerUrl!.startsWith("postgres://svc_admin_0123456789:adm-pw@10.0.1.20:5432/shop?sslmode=require"));
+  assert.equal(e.tls?.mode, "verify-ca");
+});
