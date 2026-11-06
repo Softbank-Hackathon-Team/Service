@@ -144,6 +144,13 @@ test("DB 대체물: databases[] 한 줄마다 공식 Postgres(메이저 태그@�
     assert.deepEqual(pod.spec.volumes, [{ name: c.volumeMounts[0].name, emptyDir: {} }], "PGDATA 는 emptyDir");
     assert.ok(c.readinessProbe, "준비 검사가 있다");
     assert.ok(c.resources.requests.cpu && c.resources.requests.memory, "요청량이 적혀 있다");
+    assert.deepEqual([c.resources.requests["ephemeral-storage"], c.resources.limits["ephemeral-storage"]], ["256Mi", "2Gi"],
+      "임시 저장소를 직접 적는다 (PGDATA emptyDir 이 파드 한도에 든다, LimitRange 기본에 안 기댐)");
+    const probe = k.virtual.objects.get("app-shop/pods/rehearsal-probe");
+    assert.ok(probe, "검사 파드를 만들었다");
+    assert.deepEqual(probe.spec.containers[0].resources, {
+      requests: { cpu: "10m", memory: "16Mi", "ephemeral-storage": "16Mi" }, limits: { memory: "64Mi", "ephemeral-storage": "64Mi" },
+    }, "검사 파드는 임시 저장소까지 직접 적는다 (차트 기본 요청 3Gi 로 sandbox 노드에 못 올라간 11-06 측정)");
     assert.deepEqual(svcObj.spec.ports.map((p: any) => p.port), [5432]);
     assert.deepEqual(svcObj.spec.selector, pod.metadata.labels, "Service 가 대체물 파드를 고른다");
     for (const o of [dep, pod, svcObj]) assert.equal(o.metadata.labels[STAND_IN_LABEL], svc, "플랫폼이 만든 객체 표시");

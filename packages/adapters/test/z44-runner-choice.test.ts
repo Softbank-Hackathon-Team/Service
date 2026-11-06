@@ -30,8 +30,8 @@ test("runnerFor 는 예전 모양 그대로 (null | 실행기 | throw)", () => {
   assert.throws(() => runnerFor("azure_mock", { AZURE_MOCK: "0" }), (e) => e instanceof RunnerUnavailable);
 });
 
-test("STUB 값: 출력 9칸, 상태는 unknown + 받은 region 그대로", () => {
-  assert.equal(Object.keys(STUB_TF_OUTPUTS).length, 9);
+test("STUB 값: 출력 10칸, 상태는 unknown + 받은 region 그대로", () => {
+  assert.equal(Object.keys(STUB_TF_OUTPUTS).length, 10);
   assert.ok(Object.isFrozen(STUB_TF_OUTPUTS));
   const s = stubStatus({ envId: "e", provider: "gcp", region: "default" } as TargetEnv, () => new Date(0));
   assert.deepEqual(s, { provider: "gcp", mock: false, envId: "e", region: "default", health: "unknown",

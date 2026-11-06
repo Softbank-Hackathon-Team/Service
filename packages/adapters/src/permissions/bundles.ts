@@ -19,7 +19,7 @@ import { GRANT_TYPES_GCP } from "../target/grants.js";
  *  같은 번호가 연결 스크립트 역할 설명·연결 템플릿 역할 태그에 박힌다 → 고객 쪽에 붙은 판을 관찰 역할로 읽는다 */
 export const PERMISSIONS_VERSION = 1;
 /** 판 1 의 묶음 지문 (bundleDigest). 묶음을 바꿨으면 PERMISSIONS_VERSION 을 올리고 이 값을 새 지문으로 바꾼다 */
-export const PERMISSIONS_DIGEST = "5a1f1f8f74b8330c";
+export const PERMISSIONS_DIGEST = "b2c7859c08ee17cd";
 
 /** AWS 관찰 역할이 실행 역할 정책을 흉내 평가하는 권한 (같은 계정 svc-* 역할에만, 연결 템플릿 observe-permcheck 문) */
 export const AWS_PERMCHECK_ACTIONS = ["iam:SimulatePrincipalPolicy"] as const;

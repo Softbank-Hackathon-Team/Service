@@ -5,7 +5,7 @@ gcp.observe.target	target	svc-observe	platform_observe	-	plain	cloudbilling.goog
 gcp.permcheck	target	svc-observe	platform_observe_permcheck	-	plain	-
 gcp.plan	target	svc-plan	platform_plan	-	plain	cloudresourcemanager.googleapis.com,compute.googleapis.com,container.googleapis.com,iam.googleapis.com,secretmanager.googleapis.com,serviceusage.googleapis.com,sqladmin.googleapis.com
 gcp.env	target	svc-env	platform_env	gcp-env-custom-role.yaml	plain	cloudresourcemanager.googleapis.com,compute.googleapis.com,container.googleapis.com,serviceusage.googleapis.com
-gcp.operate	target	svc-operate	platform_operate	gcp-operate-custom-role.yaml	plain_only	compute.googleapis.com,container.googleapis.com,iam.googleapis.com,serviceusage.googleapis.com
+gcp.operate	target	svc-operate	platform_operate	gcp-operate-custom-role.yaml	plain_only	cloudresourcemanager.googleapis.com,compute.googleapis.com,container.googleapis.com,iam.googleapis.com,serviceusage.googleapis.com
 gcp.operate.secrets	target	svc-operate	platform_operate	gcp-operate-custom-role.yaml	plain_only	secretmanager.googleapis.com
 gcp.operate.postgres	target	svc-operate	platform_operate	gcp-operate-custom-role.yaml	plain_only	secretmanager.googleapis.com,sqladmin.googleapis.com
 gcp.operate.data	target	svc-operate	platform_operate	gcp-operate-custom-role.yaml	plain_only	-

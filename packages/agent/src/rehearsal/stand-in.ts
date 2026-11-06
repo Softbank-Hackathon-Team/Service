@@ -17,8 +17,11 @@ export const POSTGRES_IMAGES: Readonly<Record<string, string>> = {
   "16": "docker.io/library/postgres:16@sha256:5db6dac2ef5dcff512f4f00a009c3c332b9f2f28f24277175bf3e4a3d02ef83a",
   "17": "docker.io/library/postgres:17@sha256:3b0cda93be7c8dba2ed484d19393d93845dc3dafb88973e248ba8e6d99d784e1",
 };
-// DRAFT(ai): 빈 DB 하나 몫. 한도는 LimitRange 기본(512Mi)과 같게
-export const STAND_IN_RESOURCES = { requests: { cpu: "50m", memory: "128Mi" }, limits: { memory: "512Mi" } } as const;
+// DRAFT(ai): 빈 DB 하나 몫. 메모리 한도는 LimitRange 기본(512Mi)과 같게
+//   임시 저장소: PGDATA 가 emptyDir 이라 DB 파일·WAL 도 파드 한도(컨테이너 한도 합)에 든다. LimitRange 기본(1Gi)보다 넉넉히 2Gi
+export const STAND_IN_RESOURCES = {
+  requests: { cpu: "50m", memory: "128Mi", "ephemeral-storage": "256Mi" }, limits: { memory: "512Mi", "ephemeral-storage": "2Gi" },
+} as const;
 // 공식 이미지(데비안)의 postgres 사용자. 처음부터 이 사용자로 돌면 root·chown 이 필요 없어 restricted 에도 맞는다
 const POSTGRES_UID = 999;
 const DATA = "/var/lib/postgresql/data";
