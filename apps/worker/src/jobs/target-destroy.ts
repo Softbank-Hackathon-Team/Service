@@ -7,14 +7,15 @@ import { readMigration, type MigrationRow } from "./_step.js";
 import { withStepRoles } from "./_roles.js";
 import { tenantSlug } from "../gitops/bundle.js";
 
-// G5-1: 실패한 이전이 도착에 만든 자원 지우기. advance 가 provisioning → failed 와 같은 트랜잭션에 넣는다 (core advance.ts 5-2).
+// G5-1: 이전이 도착에 만든 자원 지우기. advance 가 rolled_back 으로 옮기는 트랜잭션에 넣는다 (core advance.ts 5-2 tearsDownTarget).
 // DECISION(team): 실패 → AI 원인 분석 → failed, 도착 자원이 일부 만들어졌으면 사람 확인 없이 자동으로 지우고 끝 (Jeong 11/3 20:02Z, ADR-066)
+//   위 결정은 11/4 01:53Z 결정(ADR-066 개정)으로 바뀌었다: failed 는 사람에게 재시도·거절을 묻고, 거절(롤백)로 rolled_back 이 될 때 지운다
 // 지우는 범위 = 이 이전의 terraform 작업 폴더 state 에 있는 것만 (apply 실행기와 같은 폴더 규칙 findWorkDir). 고객 원래 자원은 state 에 없다.
 //   가져오기가 찾은 기존 도착 자원(imported.json)은 우리가 만든 것이 아니라 지우지 않는다.
-// 상태는 바꾸지 않는다(failed 그대로, advance 없음). 결과는 감사 target_teardown.done(ok) / target_teardown.failed(error).
+// 상태는 바꾸지 않는다(끝 상태 그대로, advance 없음). 결과는 감사 target_teardown.done(ok) / target_teardown.failed(error).
 // 자격: 도착 destroy 실행 역할 (STEP_ROLES.rollback = target operate destroy). 진짜 AWS 자격이면 terraform env 에 그것만 넘긴다.
 // DRAFT(ai): 환경 잠금은 쥐지 않는다. provisioning 실패는 잠금을 풀고, 다른 이전은 다른 작업 폴더(state)를 쓰므로 겹치지 않는다.
-//   같은 이전의 다시 계획은 지우기가 끝날 때까지 409 TEARDOWN_PENDING (api plans.ts).
+//   같은 이전의 provisioning 재시도는 지우기가 끝날 때까지 409 TEARDOWN_PENDING (api control.ts failure-decision).
 // 실패하면 늦춰 다시 넣는다(teardownRetrySec, PF FM-ORC-12). 다 쓰면 감사 gave_up + 작업 폴더 경로 → 사람이 npm run tf:real -- destroy <이전 id>
 export const TEARDOWN_FROM: readonly MigrationStatus[] = ["failed", "cancelled", "rolled_back"];   // 지우기 전에 취소해도 지운다. PF FM-ORC-08: 롤백으로 끝나도
 
@@ -23,7 +24,7 @@ export type TargetDestroyOutcome = "destroyed" | "nothing" | "missing" | "blocke
 // PF FM-ORC-12·25: 예전 재시도는 pg-boss 2번×60초(약 2분)뿐이라, 멈추는 apply 가 정지 유예(20분) 동안 state 잠금을 쥐고 있으면
 //   STATE_LOCKED 로 몇 분 만에 포기 → 그 뒤 apply 가 끝낸 자원은 아무도 안 지웠다. 이제 처리기가 직접 늦춰 다시 넣는다(같은 작업 키).
 //   DRAFT(ai): 기본 1·2·5·10·20·20·20분(합 78분 > terraform 작업 예산 45분 + 정지 유예 20분). TEARDOWN_RETRY_SEC="60,120,…" 로 바꿈.
-//   다 쓰면 감사 target_teardown.gave_up(error) + 손 명령. 기다리는 동안은 다시 계획이 409 TEARDOWN_PENDING (예약 작업도 셈)
+//   다 쓰면 감사 target_teardown.gave_up(error) + 손 명령. 기다리는 동안은 재시도가 409 TEARDOWN_PENDING (예약 작업도 셈)
 export function teardownRetrySec(env: NodeJS.ProcessEnv = process.env): number[] {
   const raw = env.TEARDOWN_RETRY_SEC?.split(",").map((x) => Number(x.trim())).filter((n) => Number.isFinite(n) && n >= 0);
   return raw && raw.length ? raw : [60, 120, 300, 600, 1200, 1200, 1200];

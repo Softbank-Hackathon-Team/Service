@@ -31,7 +31,7 @@
       "type": "array",
       "items": {
         "type": "string",
-        "pattern": "^(components|app|links|entry|posture|security|check|secrets|unread)(\\.|$)\\S{0,300}$"
+        "pattern": "^(components|app|links|entry|posture|security|check|secrets|unread|namespaces)(\\.|$)\\S{0,300}$"
       }
     },
     "acceptDraft": {

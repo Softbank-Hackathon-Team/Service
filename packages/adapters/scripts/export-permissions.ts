@@ -71,6 +71,9 @@ const ECR_REPO_ACTS = ["ecr:BatchCheckLayerAvailability", "ecr:BatchGetImage", "
   "ecr:DescribeRepositories", "ecr:InitiateLayerUpload", "ecr:ListTagsForResource", "ecr:PutImage",
   "ecr:PutImageScanningConfiguration", "ecr:PutImageTagMutability", "ecr:TagResource", "ecr:UploadLayerPart"];
 const ECR_REPO_REMOVE = ["ecr:BatchDeleteImage", "ecr:DeleteRepository"];
+// 배포 이미지 복사(worker jobs/image-copy.ts)가 도착 실행 역할 apply 단계로 부르는 동작: 토큰, 저장소 만들기(태그 managed-by 포함), 레이어·매니페스트 올리기, 다이제스트 확인
+const ECR_PUSH_ACTS = ["ecr:BatchCheckLayerAvailability", "ecr:BatchGetImage", "ecr:CompleteLayerUpload", "ecr:CreateRepository",
+  "ecr:GetAuthorizationToken", "ecr:InitiateLayerUpload", "ecr:PutImage", "ecr:TagResource", "ecr:UploadLayerPart"];
 const awsOperatePolicy = {
   Version: "2012-10-17",
   Statement: [
@@ -89,7 +92,7 @@ const awsOperatePolicy = {
     { Sid: "AppDbSecretRead", Effect: "Allow", Action: ["secretsmanager:GetSecretValue"], Resource: "arn:aws:secretsmanager:*:*:secret:rds!db-*",
       Condition: { StringEquals: { ...REGION, "aws:ResourceTag/aws:secretsmanager:owningService": "rds" },
         StringLike: { "aws:ResourceTag/aws:rds:primaryDBInstanceArn": "arn:aws:rds:*:*:db:*-pg-??????" } } },
-    // APP-01·D (그대로 이식): 사설 이미지를 도착 ECR 이미지별 저장소(platform/<회사>/<이름>, aws root image_repos_json)로 복사.
+    // APP-01·D (그대로 이식): 사설 이미지를 도착 ECR 이미지별 저장소(platform/<회사>/<이름>)로 복사. 저장소는 배포 이미지 복사(worker jobs/image-copy.ts)가 만든다.
     //   저장소 만들기·올리기는 그 이름 아래만, 지우기는 우리 태그가 있는 것만. 토큰(GetAuthorizationToken)은 자원 단위가 없어 "*"
     { Sid: "AppImageRepos", Effect: "Allow", Action: ECR_REPO_ACTS, Resource: ECR_REPOS, Condition: { StringEquals: REGION } },
     { Sid: "AppImageReposOwned", Effect: "Allow", Action: ECR_REPO_REMOVE, Resource: ECR_REPOS, Condition: { StringEquals: { ...REGION, ...OWNED_TAG } } },
@@ -116,7 +119,8 @@ for (const p of purposes) {
   // 세션 정책 = 기본 앱 동작 + 데이터 자원 동작 (한 문장에 합침: 2,048자 제한). 실제 효력은 천장(역할 정책)과의 교집합이라 자원 접두어 제한이 같이 걸림
   const doc = JSON.parse(aws.sessionPolicy(spec("aws"), p)) as { Statement: Array<{ Action: string[] }> };
   // ID-2: apply 만 DB 비밀번호 읽기 (실효 범위는 천장 AppDbSecretRead 조건과의 교집합)
-  doc.Statement[0]!.Action = [...new Set([...doc.Statement[0]!.Action, ...awsDataFor(p), ...(p === "apply" ? ["secretsmanager:GetSecretValue"] : [])])].sort();
+  // 배포 이미지 복사도 apply 단계로 빌린다 (실효 범위는 천장 AppImageRepos = platform/* 저장소만)
+  doc.Statement[0]!.Action = [...new Set([...doc.Statement[0]!.Action, ...awsDataFor(p), ...(p === "apply" ? ["secretsmanager:GetSecretValue", ...ECR_PUSH_ACTS] : [])])].sort();
   // 파일은 동작을 하나하나 적는다(장부·시험용). AWS 로 보낼 때는 발급기가 와일드카드로 줄인 판(security compactSessionPolicy)을 쓰고,
   //   2,048자 검사도 그 판으로 한다 (security 시험이 여유 300자를 확인). 파일 자체는 넉넉한 상한만 본다
   const compact = JSON.stringify(doc);
@@ -128,7 +132,9 @@ for (const p of purposes) {
 // setIamPolicy 2개는 따로 떼어 "이름이 app-로 시작하는 SA·시크릿"에만 쓰이게 IAM 조건을 건다 (위협 모델 G-1, G-2)
 const GCP_DATA = [...Object.values(DATA_TYPES.gcp).flat(), ...GRANT_TYPES_GCP, ...gcp.ROOT_TYPES];   // FM-CLD-23: gcp/root API 켜기   // A8fix: 옮긴 권한 바인딩(자원 단위 setIamPolicy)
 // TA12b: 데이터 자원 권한도 천장에 포함. 【미확인】 GCP 커스텀 역할은 이름 접두어로 제한 못 함 (프로젝트 단위) — 필요하면 IAM 조건부 바인딩 추가 TODO(human)
-const gcpAll = [...new Set([...purposes.flatMap((p) => gcp.operateActions(spec("gcp"), p)), ...purposes.flatMap((p) => actionsFor(gcp.PERMS, GCP_DATA, p))])].sort();
+// 배포 이미지 복사(worker jobs/image-copy.ts): 전용 프로젝트 AR 저장소 platform(gcp/env)에 올리기 + 다이제스트 확인(받기). 실행 역할은 전용 프로젝트에만 붙는다
+const GCP_IMAGE_PUSH = ["artifactregistry.repositories.downloadArtifacts", "artifactregistry.repositories.uploadArtifacts"];
+const gcpAll = [...new Set([...purposes.flatMap((p) => gcp.operateActions(spec("gcp"), p)), ...purposes.flatMap((p) => actionsFor(gcp.PERMS, GCP_DATA, p)), ...GCP_IMAGE_PUSH])].sort();
 const gcpIam = gcpAll.filter((x) => x.endsWith(".setIamPolicy"));
 const gcpRest = gcpAll.filter((x) => !x.endsWith(".setIamPolicy"));
 const role = (title: string, desc: string, perms: string[]) =>

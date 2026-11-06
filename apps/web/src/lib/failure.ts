@@ -47,6 +47,8 @@ const RULES: Rule[] = [
   // 배포 커밋 전 비밀 값 확인 (워커 deploy.ts secretValuesGate) → paused. 플랫폼은 비밀 값을 복사하지 않는다
   { match: /^SECRET_VALUES_MISSING$/, kind: "step", label: t('비밀 값 비어 있음'), title: t('도착 비밀 저장소에\n값이 비어 있습니다'), hint: t('앱을 올리기 전에 보니 도착 비밀 저장소의 그릇에 값이 없어 멈췄습니다. 플랫폼은 값을 복사하지 않습니다. 고객 도구로 값을 넣은 뒤 재개해 주세요.') },
   { match: /^SECRET_VALUES_UNKNOWN$/, kind: "step", label: t('비밀 값 확인 못 함'), title: t('도착 비밀 저장소를\n읽지 못했습니다'), hint: t('앱을 올리기 전에 도착 비밀 저장소의 그릇에 값이 들었는지 읽지 못해 멈췄습니다. 자격과 권한을 확인한 뒤 재개해 주세요.') },
+  // 배포 커밋 전 사설 이미지 복사 (워커 jobs/image-copy.ts) → paused. 재개하면 이미 옮긴 이미지는 건너뛴다
+  { match: /^IMAGE_COPY_FAILED$/, kind: "step", label: t('이미지 복사 실패'), title: t('이미지를 도착 레지스트리로\n복사하지 못했습니다'), hint: t('출발 레지스트리의 이미지를 도착 레지스트리로 다이제스트 그대로 복사하지 못해 앱을 올리기 전에 멈췄습니다. 고객 클러스터에는 아무것도 반영하지 않았습니다. 자격과 권한을 확인한 뒤 재개하면 남은 이미지만 다시 복사합니다.') },
   // DRAFT(ai) #253 이 더하는 코드 (온프레 CNPG 이전, 아직 main 에 없다). 문장은 그 PR 의 코드 주석으로 썼다
   { match: /^SEALING_CERT_MISSING$/, kind: "step", label: t('봉인 인증서 없음'), title: t('비밀을 봉인할\n인증서가 없습니다'), hint: t('도착 Agent 보고에 sealed-secrets 봉인 인증서가 없어 배포 커밋 전에 멈췄습니다. 설치 묶음으로 sealed-secrets 컨트롤러를 깔고 Agent 가 보고한 뒤 재개해 주세요.') },
   { match: /^REPL_DELIVERY_FAILED$/, kind: "step", label: t('복제 연결 준비 실패'), title: t('DB 복제 연결을\n준비하지 못했습니다'), hint: t('DB 복제에 쓸 서버 인증서·봉인한 비밀·터널 값을 만들지 못해 멈췄습니다.') },
@@ -88,6 +90,8 @@ const RULES: Rule[] = [
   { match: /^TARGET_FACTS_UNAVAILABLE$/, kind: "step", label: t('도착 클러스터 정보 없음'), title: t('도착 클러스터의\n네트워크를 모릅니다'), hint: t('도착 EKS 의 VPC·서브넷을 읽어 둔 값이 없거나 쓸 수 없어 자원을 만들지 않았습니다. 도착 환경 화면을 열어 실자원을 다시 읽은 뒤 다시 계획해 주세요.') },
   { match: /^(TF|APPLY|AZURE_MOCK)_/, kind: "step", label: t('자원 생성 실패'), title: t('도착 자원을\n만들지 못했습니다'), hint: t('도착 클러스터와 DB를 만드는 중에 멈췄습니다. 일부만 생겼을 수 있습니다.') },
   { match: /^CRED_RENEW_FAILED$/, kind: "step", label: t('임시 권한 재발급 실패'), title: t('임시 권한을\n다시 받지 못했습니다'), hint: t('이 단계에 필요한 임시 역할을 다시 빌리지 못해 멈췄습니다.') },
+  // 워커 _roles.ts: 실환경에서 고객 임시 역할 발급이 거부됨 (최소 권한 파일 없음 등 플랫폼 설정) → apply failed. 워커 자기 자격으로 넘어가지 않는다
+  { match: /^TEMP_ROLE_DENIED$/, kind: "system", label: t('임시 역할 거부'), title: t('고객 임시 역할을\n빌리지 못했습니다'), hint: t('이 단계에 필요한 고객 임시 역할 발급이 거부되어 도착 자원을 만들기 전에 멈췄습니다. 플랫폼은 자기 자격으로 고객 자원을 만들지 않습니다. 플랫폼 운영자에게 알려 주세요.') },
   // DRAFT(ai) #253: 복제 끝점 기록 (db 0050) → sync paused
   { match: /^REPL_ENDPOINT_INCOMPLETE$/, kind: "system", label: t('복제 끝점 빠짐'), title: t('DB 복제 끝점이\n한쪽만 있습니다'), hint: t('이 마이그레이션의 복제 끝점 기록에 출발·도착 중 한쪽만 있어 DB 복제를 멈췄습니다.') },
   { match: /^REPL_SECRET_UNRESOLVED$/, kind: "system", label: t('복제 비밀번호 못 찾음'), title: t('DB 복제 비밀번호를\n찾지 못했습니다'), hint: t('플랫폼 설정에서 복제 비밀번호를 풀지 못해 DB 복제를 멈췄습니다. 고객 쪽은 고칠 것이 없습니다. 플랫폼 운영자에게 알려 주세요.') },
@@ -96,6 +100,11 @@ const RULES: Rule[] = [
   { match: /^REPL_TARGET_UNREACHABLE$/, kind: "step", label: t('도착 DB에 못 닿음'), title: t('도착 DB에\n닿지 못했습니다'), hint: t('도착 DB 주소와 포트로 다시 시도해도 연결되지 않아 DB 복제를 멈췄습니다.') },
   // replication precheck DB-08: 앱 계정이 superuser·pg_write_all_data·rds_superuser 등을 물려받아 컷오버 울타리(REVOKE)가 쓰기를 못 막음 → sync paused
   { match: /^REPL_APP_ROLE_UNFENCEABLE$/, kind: "step", label: t('앱 계정이 관리자 권한'), title: t('앱 계정의 쓰기를\n막을 수 없습니다'), hint: t('앱이 관리자 권한을 물려받은 계정으로 DB에 붙어 있어 컷오버 때 출발 DB 쓰기를 막을 수 없습니다. 복제를 걸기 전에 멈췄습니다. 앱 전용 계정(표·시퀀스 권한만 직접 받은 계정)으로 바꿔야 합니다.') },
+  { match: /^RELAY_TARGET_DB_UNKNOWN$/, kind: "step", label: t('도착 DB 주소 모름'), title: t('도착 DB의 공개 주소를\n찾지 못했습니다'), hint: t('도착 Cloud SQL 의 공개·나가는 주소나 관리자 계정이 자원 생성 결과에 없어 DB 중계기를 잇지 않았습니다.') },
+  { match: /^TARGET_APP_LOGIN_FAILED$/, kind: "step", label: t('도착 앱 계정 못 만듦'), title: t('도착 DB에 앱 계정을\n만들지 못했습니다'), hint: t('플랫폼이 도착 DB에 관리자로 붙어 앱 계정을 만들다 실패했습니다. 도착 DB 접속 허용 주소와 관리자 비밀을 확인해야 합니다.') },
+  // 워커 _repl.ts: 진짜 판에 명세 postgres 가 있는데 끝점(줄·env)이 없음 / 끝점 주소의 {tf:} 를 못 채움 → sync·cleanup paused, cutover failed
+  { match: /^REPL_ENDPOINT_MISSING$/, kind: "system", label: t('복제 끝점 없음'), title: t('DB 복제 끝점이\n없습니다'), hint: t('명세에 DB가 있는데 이 마이그레이션의 복제 끝점 기록이 없어 DB 단계(복제·전환·정리)를 멈췄습니다.') },
+  { match: /^REPL_TF_FACTS_MISSING$/, kind: "system", label: t('복제 주소 못 채움'), title: t('DB 복제 주소를\n만들지 못했습니다'), hint: t('자원 생성 결과(Terraform 출력)에 DB 주소가 없어 DB 단계(복제·전환·정리)를 멈췄습니다.') },
   { match: /^SYNC_FAILED$/, kind: "step", label: t('DB 복제 실패'), title: t('DB 복제가\n이어지지 않습니다'), hint: t('출발 DB에서 도착 DB로 가는 논리 복제가 다시 시도해도 실패했습니다.') },
   { match: /^APP_LINK_UNAVAILABLE$/, kind: "system", label: t('앱 DB 주소 못 바꿈'), title: t('도착 앱의 DB 주소를\n바꿀 길이 없습니다'), hint: t('도착 앱이 쓸 DB 주소를 도착으로 바꿀 길(GitOps 설정·연결 프록시)이 없어 출발 DB 쓰기를 막기 전에 멈췄습니다. 출발 DB 가 그대로 주인이라 서비스는 그대로 돕니다.') },
   { match: /^CUTOVER_UNFENCE_FAILED$/, kind: "step", label: t('출발 쓰기 막힘 남음'), title: t('출발 DB 쓰기 막힘을\n풀지 못했습니다'), hint: t('컷오버를 되돌리다 출발 DB의 쓰기 막힘을 풀지 못했습니다. 바로 확인해야 합니다.') },

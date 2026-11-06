@@ -144,11 +144,12 @@ const CROSS: Partial<Record<ConfigService, (env: NodeJS.ProcessEnv) => string[]>
 };
 
 // z75-68 (Z62): 시험 전용 스위치. 켜져 있으면 진짜 대신 흉내(데모 원본·IaC·Argo·사전 점검·가짜 LLM·개발 헤더 인증)로 돈다.
-//   MOCK_CREDS 는 Z105-01, MOCK_REPL·MOCK_TRAFFIC 은 Z100 (Z38 R8-50 로 추가)
+//   IMAGE_BUILD: 빌드 대신 입력으로 만든 고정 digest (worker jobs/image-build.ts STUB, 진짜 빌더 없음)
 //   MOCK_SANDBOX: 클러스터 없이 정해진 리허설 결과 (기본 통과, MOCK_SANDBOX_RESULT=fail 이면 실패). 로컬 화면 작업용
+//   목록의 이름은 읽는 코드가 있어야 한다 (시험 z81-config). 예전 MOCK_CREDS·MOCK_REPL·MOCK_TRAFFIC 은 읽는 곳이 없어 뺐다
 //   데모(DEMO_MODE=1)에서 하나라도 켜져 있으면 서비스가 뜨지 않는다 (끝 코드 2, 이름만 찍음). 빈 값·"0" 은 꺼짐
 //   NODE_ENV=production 은 조건에 넣지 않았다: 운영 이미지(Dockerfile)가 늘 production 이고 운영 e2e(verify-round prod-e2e)가 이 스위치로 돈다
-export const TEST_ONLY_SWITCHES = ["MOCK_SEED", "MOCK_IAC", "MOCK_ARGO", "MOCK_PRECHECK", "FAKE_LLM", "DEV_AUTH", "MOCK_CREDS", "MOCK_REPL", "MOCK_TRAFFIC",
+export const TEST_ONLY_SWITCHES = ["MOCK_SEED", "MOCK_IAC", "MOCK_ARGO", "MOCK_PRECHECK", "FAKE_LLM", "DEV_AUTH", "IMAGE_BUILD",
   "MOCK_SANDBOX", "MOCK_SANDBOX_RESULT"] as const;
 export function testSwitchesOn(env: NodeJS.ProcessEnv = process.env): string[] {
   return TEST_ONLY_SWITCHES.filter((k) => { const v = env[k]?.trim(); return !!v && v !== "0"; });

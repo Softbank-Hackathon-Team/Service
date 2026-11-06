@@ -1,14 +1,15 @@
-import type { SandboxMode } from "@svc/contracts";
+import type { AgentRunSandbox, SandboxMode } from "@svc/contracts";
+import { KubeError } from "./kube.js";
 
 // 샌드박스와 작업 복사본. 도구 실행기가 이 인터페이스만 본다.
-// 구현: memory (메모리 안 가짜 클러스터, 기본) / k3d (로컬 k3d 안 일회용 네임스페이스, ./k3d-sandbox.ts)
-//   / vcluster (플랫폼 클러스터 vCluster 안에 k3d 와 같은 네임스페이스, ./select.ts)
+// 구현: memory (메모리 안 가짜 클러스터, 대본 LLM 전용) / k3d (로컬 k3d 안 일회용 네임스페이스, ./k3d-sandbox.ts)
+//   / vcluster (플랫폼 클러스터 vCluster 안에 k3d 와 같은 네임스페이스, ./select.ts) / none (샌드박스 없음, noSandbox)
 // 고르는 법은 ./select.ts 의 sandboxFromEnv (SANDBOX_MODE=memory|k3d|vcluster)
 // 반환값은 값 또는 Promise 다 (메모리는 바로, k3d 는 kube API 를 기다린다). 루프는 항상 await 한다
 type MaybePromise<T> = T | Promise<T>;
 export type { SandboxMode };
 export interface Sandbox {
-  readonly mode?: SandboxMode;
+  readonly mode?: AgentRunSandbox;
   readonly namespace?: string;   // 지우기 실패 로그용 (k3d·vcluster)
   get(kind: string, name: string | null): MaybePromise<unknown>;
   logs(pod: string, tail: number): MaybePromise<string | null>;
@@ -50,3 +51,14 @@ export function memorySandbox(): Sandbox {
 }
 // 예전 이름 (시험·handle-agent-run 이 쓴다)
 export const stubSandbox = memorySandbox;
+
+// none 구현: 진짜 샌드박스가 없는 배포. 도구마다 SANDBOX_NOT_CONFIGURED 를 던지고, 루프가 그 코드를 도구 오류로 LLM 에 돌려준다.
+//   가짜 클러스터 값을 진짜 LLM 에 주면 고객 앱과 상관없는 장면으로 원인과 "샌드박스 확인"을 지어내기 때문이다
+export const SANDBOX_NOT_CONFIGURED = "SANDBOX_NOT_CONFIGURED";
+export function noSandbox(): Sandbox {
+  const refuse = (): never => {
+    throw new KubeError(SANDBOX_NOT_CONFIGURED,
+      "이 배포에는 진짜 샌드박스가 없어 샌드박스 도구는 모두 거부된다. 작업 복사본과 작업 설명만으로 판단하고, 샌드박스에서 확인하지 못한 것은 not_verified 에 적는다");
+  };
+  return { mode: "none", get: refuse, logs: refuse, apply: refuse, check: refuse };
+}
