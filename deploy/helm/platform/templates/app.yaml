@@ -139,6 +139,10 @@ spec:
             {{- with $traffic.promUrl }}
             - { name: PROM_URL, value: {{ . | quote }} }
             {{- end }}
+            {{- if (default dict $.Values.traffic).mock }}
+            # 흉내 트래픽 (values traffic.mock). 진짜 지표·전환기 없이 shifting 을 넘긴다
+            - { name: MOCK_TRAFFIC, value: "1" }
+            {{- end }}
             {{- end }}
           {{- if or $a.port $a.metricsPort }}
           ports:
