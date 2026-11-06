@@ -73,9 +73,9 @@ for (const p of PROVIDERS) {
   });
 }
 
-// 온프레 캐시·객체 저장소·큐는 TA12에서 TODO(human)(클러스터 안 대체물 미정)라 아직 막힘
+// 온프레 객체 저장소·큐는 TODO(human)(클러스터 안 대체물을 그릴지 미정)라 아직 막힘. 캐시는 차트 Valkey 로 그림
 // TA13: 관리형 컨테이너는 aws(ECS)·gcp(Cloud Run)가 그림 → 온프레·azure 만 막힘
-const EXTRA: Partial<Record<Provider, string[]>> = { onprem: ["캐시", "객체 저장소", "큐", "관리형 컨테이너 실행"], gcp: ["IAM grants(I4)"], azure_mock: ["관리형 컨테이너 실행"] };   // gcp: 시험 grant(s3 action)는 대응표 밖이라 A8 TODO(human) block
+const EXTRA: Partial<Record<Provider, string[]>> = { onprem: ["객체 저장소", "큐", "관리형 컨테이너 실행"], gcp: ["IAM grants(I4)"], azure_mock: ["관리형 컨테이너 실행"] };   // gcp: 시험 grant(s3 action)는 대응표 밖이라 A8 TODO(human) block
 test("기대값 고정: 도착별로 어떤 조합이 막히나 (바뀌면 설계 27번 3.6 과 같이 고친다)", () => {
   const blocked = (p: Provider) => Object.keys(VARIANTS).filter((n) => unsup(p, variant(n)!).some((b) => b.id.startsWith("PC-V2-UNSUP")));
   // TA12: 캐시·객체 저장소·큐는 이제 도착 Builder가 그린다 → 막힘 목록에서 빠짐 (환경별 실제 값은 아래 출력으로 고정)

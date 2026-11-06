@@ -55,7 +55,7 @@ const IDENTITY_TARGET: Partial<Record<Provider, Partial<Record<Runtime, string>>
   gcp: { managedContainer: "서비스 계정 (Cloud Run)", vm: "서비스 계정 (VM)" },
 };
 const DATA_NAME = {
-  cache: { aws: "Amazon ElastiCache", gcp: "Memorystore for Redis", onprem: "클러스터 안 캐시 (미정)", azure_mock: "Cache for Redis (Mock)" },
+  cache: { aws: "Amazon ElastiCache", gcp: "Memorystore for Redis", onprem: "Valkey", azure_mock: "Cache for Redis (Mock)" },
   queue: { aws: "Amazon SQS / SNS", gcp: "Cloud Pub/Sub", onprem: "클러스터 안 큐 (미정)", azure_mock: "Service Bus (Mock)" },
 } as const;
 
