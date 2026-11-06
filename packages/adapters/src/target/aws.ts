@@ -12,6 +12,7 @@ import { secretStoreName } from "./capability-checks.js";
 import { buildWorkloadValues, cloudPostgresValues } from "./cloud.js";
 import { cacheVars, cachesOf, dataTypesOf, objectStoreVars, objectStoresOf, queueVars, queuesOf } from "./data.js";
 import { assertDataFit, dbIdentityFor } from "./data-fit.js";
+import { cloudSubstitutes } from "./cloud-substitutes.js";
 import { AdapterError } from "../common/errors.js";
 import { managedJobJson, managedServiceJson, managedWorkloadValues } from "./managed.js";
 import { vmServiceJson, vmWorkloadValues } from "./vm.js";
@@ -77,6 +78,7 @@ export const awsTarget: TargetBuilder = {
   capabilities: () => [...CAPS].sort(),
   imageRef: (src, t) => awsAdapter.imageRef(src, t),
   operateActionsV2: (spec, purpose) => actionsFor(PERMS, resourceTypesV2(spec), purpose),
+  substitutionsV2: (spec, source) => cloudSubstitutes("aws", spec, source),
   toTerraformV2(spec: AppSpecV2, t: Target): TfRootCall {
     assertRenderable(spec, CAPS);
     assertGrants("aws", spec);
