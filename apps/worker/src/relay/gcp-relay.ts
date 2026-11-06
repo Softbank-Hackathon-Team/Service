@@ -289,7 +289,9 @@ export async function dropCloudSqlReplUser(d: RelayGcpDeps, sql: Pick<CloudSqlPr
 export async function discoverGcpRelayNetwork(d: RelayGcpDeps, sql: CloudSqlPrivate): Promise<{ subnetUrl: string; psaRanges: string[] }> {
   if (!sql.network || !sql.region) throw new RelayError("RELAY_PROVISION_FAILED", `Cloud SQL ${sql.instance} 의 VPC·지역을 모른다`);
   const netUrl = `https://www.googleapis.com/compute/v1/${sql.network}`;
-  const subs = must(await gcloud(d, ["compute", "networks", "subnets", "list", `--project=${sql.project}`, `--network=${netUrl}`, `--regions=${sql.region}`]),
+  // gcloud subnets list --network 는 이름만 비교한다 (주소를 주면 늘 0개 → 2026-11-07 실측 RELAY_PROVISION_FAILED). 공유 VPC 는 plan 이 막으니 이름으로 충분
+  const netName = sql.network.split("/").pop()!;
+  const subs = must(await gcloud(d, ["compute", "networks", "subnets", "list", `--project=${sql.project}`, `--network=${netName}`, `--regions=${sql.region}`]),
     "RELAY_PROVISION_FAILED", "서브넷 목록") as { selfLink?: string; stackType?: string }[] | null;
   const subnetUrl = (subs ?? []).map((s) => s.selfLink ?? "").filter(Boolean).sort()[0];
   if (!subnetUrl) throw new RelayError("RELAY_PROVISION_FAILED", `VPC ${sql.network} 에 ${sql.region} 서브넷이 없다 (중계 VM 을 둘 곳이 없음)`);
