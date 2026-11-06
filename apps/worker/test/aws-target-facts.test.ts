@@ -84,6 +84,10 @@ test("거부: 실자원 사실을 못 쓰면 Terraform 을 부르지 않고 TARG
   assert.equal(r.ok, false);
   assert.equal((r as { failureCode: string }).failureCode, "TARGET_FACTS_UNAVAILABLE");
   assert.match(JSON.stringify(r.detail), /아직 읽지 않았다/);
+  const d = (r.detail as { envLayer: { missing: string[]; hint: string } }).envLayer;
+  assert.deepEqual(d.missing, ["inventory.targetFacts"]);
+  assert.match(d.hint, /도착 환경 화면을 다시 열어/);
+  assert.match(d.hint, /TF_FACT_VPC_ID/);
   assert.equal(root.seen.length, 0, "Terraform 안 부름");
   assert.deepEqual(audits.map((a) => a.action), ["env_layer.facts_unavailable"]);
 });
