@@ -14,6 +14,7 @@ import { addRelayPeer, cloudSqlPeerOf, ensureTargetAppLogin, gcpEndpointRows, pr
   type GcpRelayGate } from "../relay/relay-step.js";
 import { RelayError } from "../relay/aws-relay.js";
 import { prepareGcpAwsRelayStep, provisionGcpAwsRelayStep } from "../relay/gcp-aws.js";
+import { prepareOnpremGcpRelayStep, provisionGcpOnpremRelayStep, provisionOnpremGcpRelayStep } from "../relay/gcp-relay.js";
 import type { MigrationRow } from "./_step.js";
 
 // TA3: spec = 받아들인 최신 판의 명세. 없거나 모양이 틀리면 null (→ TF_PLAN_DRIFT)
@@ -94,7 +95,9 @@ export async function handleApply(raw: unknown) {
         realDetail = { iac: "git", note: "ONPREM_FLOOR_VIA_GIT 켬(기본): 온프레 바닥은 gitops 묶음(floor.yaml)과 고객 Argo CD 가 만든다" };
         // 출발 AWS 계정에 DB 복제 중계기를 만들고 복제 끝점 두 줄을 채운다 (출발 실행 역할, 중계기 세션 정책).
         //   출발이 AWS 아님·시드 환경·명세에 postgres 없음이면 건너뛴다 (예전처럼 사람이 tools/onprem-relay.sh). 실패면 failed (다시 계획하면 태그로 이어 간다)
-        const relay = await provisionRelayStep(j, m);
+        let relay = await provisionRelayStep(j, m);
+        // GCP 출발이면 출발 Cloud SQL VPC 에 GCE 중계기 (relay/gcp-relay.ts, 모양은 위 AWS 중계기와 같다)
+        if (relay.kind === "skipped" && relay.reason === "not_onprem_relay") relay = await provisionGcpOnpremRelayStep(j, m);
         if (relay.kind === "failed")
           return { to: "failed", failureCode: asFailureCode(relay.failureCode),
                    detail: { planId: j.planId, provider, error: relay.reason, ...(relay.detail ? { relay: relay.detail } : {}) } };
@@ -125,6 +128,12 @@ export async function handleApply(raw: unknown) {
         const oaGate = provider === "aws" ? await prepareOnpremAwsRelayStep(j, m) : null;
         if (oaGate?.kind === "fail")
           return { to: "failed", failureCode: asFailureCode(oaGate.failureCode), detail: { planId: j.planId, provider, error: oaGate.reason } };
+        // 온프레 → GCP 중계기 (relay/gcp-relay.ts): ① 문(나가는 IP·마스터 키·플랫폼 대역) ② terraform ③ 도착 Cloud SQL VPC 에 GCE 중계기·끝점 두 줄.
+        //   짝이 onprem->gcp 가 아니면 null (예전 그대로)
+        const ogGate = provider === "gcp" ? await prepareOnpremGcpRelayStep(j, m) : null;
+        if (ogGate?.kind === "fail")
+          return { to: "failed", failureCode: asFailureCode(ogGate.failureCode), detail: { planId: j.planId, provider, error: ogGate.reason,
+            relay: { ...(ogGate.missing ? { missing: ogGate.missing } : {}), ...(ogGate.hint ? { hint: ogGate.hint } : {}) } } };
         let r = await tfApply();
         if (!r.ok) return { to: "failed", failureCode: asFailureCode(r.failureCode), detail: r.detail };
         if (gate?.kind === "go") {
@@ -145,6 +154,12 @@ export async function handleApply(raw: unknown) {
             return { to: "failed", failureCode: asFailureCode(oa.failureCode), detail: { planId: j.planId, provider, error: oa.reason, ...(oa.detail ? { relay: oa.detail } : {}) } };
           relayDetail = oa.kind === "ok" ? oa.detail : { skipped: oa.reason };
         } else if (oaGate) relayDetail = { skipped: oaGate.reason };
+        if (ogGate?.kind === "go") {
+          const og = await provisionOnpremGcpRelayStep(j, m, ogGate, r.tfOutputs);
+          if (og.kind === "failed")
+            return { to: "failed", failureCode: asFailureCode(og.failureCode), detail: { planId: j.planId, provider, error: og.reason, ...(og.detail ? { relay: og.detail } : {}) } };
+          relayDetail = og.kind === "ok" ? og.detail : { skipped: og.reason };
+        } else if (ogGate) relayDetail = { skipped: ogGate.reason };
         tfOutputs = r.tfOutputs;
         realDetail = r.detail;
       } else {

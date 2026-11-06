@@ -64,7 +64,8 @@ export async function bundleNeedsFor(tenantId: string, m: MigrationSides, envs: 
     sourceProvider: envs.source.provider, targetProvider: envs.target.provider,
     secrets: (spec?.secrets?.length ?? 0) > 0, postgres: kinds.has("postgres"), data: kinds.has("cache") || kinds.has("objectStore") || kinds.has("queue"),
     envLayerCreate: chooseEnvLayerSource(envs.target.provider, layer, env) === "create",
-    relay: relay ?? null,
+    // TODO(human): GCP ↔ 온프레 중계기(gcp-onprem·onprem-gcp)의 권한 묶음은 아직 없다 (감사 로그로 뽑은 뒤 bundles.ts 에 더한다). 지금은 묶음 확인 밖
+    relay: relay === "gcp-onprem" || relay === "onprem-gcp" ? null : relay ?? null,
     argoHub: envs.target.provider === "gcp" && !!env.GCP_PLATFORM_PROJECT?.trim(),
   };
 }
