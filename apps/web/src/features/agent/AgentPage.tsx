@@ -8,7 +8,7 @@ import { useAction } from '../migration/shared';
 import { ShellLayout } from '../shell/ShellLayout';
 import { useChosenMigration } from '../shell/useChosenMigration';
 import { agentSummary, isRunning, RemediateBody, useAgentReview } from './AgentResult';
-import { agentBlock, agentStepEntry, spendRows, spendText } from './model';
+import { agentBlock, agentStepEntry, realSandbox, spendRows, spendText } from './model';
 import s from '../common/page.module.css';
 import { t } from '../../lib/i18n';
 
@@ -29,7 +29,7 @@ function AgentBody({ migrationId }: { migrationId: string }) {
   const block = agentBlock(view?.llm);
   const blocked = block !== null;
   const spend = view?.llm?.spend;
-  const steps = (result?.steps ?? []).map(agentStepEntry);
+  const steps = (result?.steps ?? []).map((step) => agentStepEntry(step, realSandbox(result?.sandbox)));
   const title = block
     ? block.title
     : running

@@ -4,7 +4,7 @@ import { delimiter, dirname, join } from "node:path";
 import { parseAllDocuments } from "yaml";
 import type { LlmProvider } from "./llm.js";
 import { scriptedLlm } from "./llm.js";
-import { memorySandbox, type Sandbox, type WorkingCopy } from "./sandbox.js";
+import { memorySandbox, noSandbox, type Sandbox, type WorkingCopy } from "./sandbox.js";
 import { asHostKube, kubeClient, KubeError, type HostKube, type KubeClient } from "./kube.js";
 import { createK3dSandbox } from "./k3d-sandbox.js";
 import {
@@ -27,6 +27,7 @@ import { llmCallOptionsFromEnv } from "../llm/select.js";
 //   AGENT_LLM_EFFORT / AGENT_LLM_TIMEOUT_MS / AGENT_LLM_MAX_RETRIES  ../llm/select.ts 와 같음
 //   AGENT_LLM=real     예전 이름. 지금은 기본이라 없어도 된다. scripted 는 무시하고 경고만 (가짜는 FAKE_LLM=1)
 //   SANDBOX_MODE       memory | k3d | vcluster  (기본 memory. 맥에서 k3d, 플랫폼 EKS 에서 vcluster)
+//                      memory 는 FAKE_LLM=1 때만 가짜 클러스터. 진짜 LLM 설정이면 샌드박스 없음 (noSandbox, 도구가 모두 거부됨)
 //   SANDBOX_KUBE_URL   샌드박스 클러스터 kube API. k3d 기본 http://127.0.0.1:8001 (kubectl proxy).
 //                      vcluster·리허설은 비면 클러스터 안 서비스 계정 (KUBERNETES_SERVICE_HOST + 토큰·CA 파일).
 //                      값이 있으면 클러스터 밖 실행으로 보고 가상 API 는 kubectl port-forward 로 닿는다
@@ -61,7 +62,10 @@ export function sandboxFromEnv(env: Env = process.env, o: { kube?: KubeClient; h
   const parsed = SandboxMode.safeParse(raw);
   if (!parsed.success) throw new Error(`SANDBOX_MODE 값이 틀림: ${raw} (${SandboxMode.options.join(" | ")})`);
   const mode = parsed.data;
-  if (mode === "memory") return { mode, describe: "memory (가짜 클러스터)", create: async () => memorySandbox() };
+  // memory 는 대본 LLM(FAKE_LLM=1) 전용. LLM 을 고르는 remediateLlmFromEnv 와 같은 env 로 가른다 (키 없음도 진짜 LLM 설정이다)
+  if (mode === "memory") return agentLlmStatusFromEnv(env, { keyFlag: false }).state === "fake"
+    ? { mode, describe: "memory (가짜 클러스터, FAKE_LLM 전용)", create: async () => memorySandbox() }
+    : { mode, describe: "없음 (memory 는 진짜 LLM 에 주지 않음, 샌드박스 도구는 SANDBOX_NOT_CONFIGURED)", create: async () => noSandbox() };
   if (mode === "vcluster") {
     // 수정 고리를 vCluster 로: 실행마다 vCluster(restricted, SANDBOX_RUNTIME_CLASS) 하나, 그 안에 k3d 와 같은 일회용 네임스페이스.
     // LLM 도구를 조회 전용 kubeconfig(Vcluster.agent) 로 옮기는 일은 다음 단계 (수정 고리 vCluster PR)

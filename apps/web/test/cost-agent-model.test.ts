@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { agentBlock, agentStepEntry, analysisCaption, failureAnalysisOf, spendRows, spendText } from "../src/features/agent/model";
+import { agentBlock, agentStepEntry, analysisCaption, failureAnalysisOf, sandboxNote, spendRows, spendText } from "../src/features/agent/model";
 import { costCaveats, costNote, costSummary, envCaption, planCostCaveats, planCostSummary } from "../src/features/cost/model";
 
 const estimate = (priceStale: boolean) => ({
@@ -57,25 +57,40 @@ test("계획서 비용: 차이를 머리줄에, 계산 못 한 칸과 고정값�
   assert.doesNotMatch(costNote(undefined), /기준일/);
 });
 
-test("실패 원인 분석: 끝난 분석만 쓰고, 없거나 진행 중이면 아무것도 그리지 않는다", () => {
+test("실패 원인 분석: 끝난 분석과 못 한 이유만 쓰고, 없거나 진행 중이면 아무것도 그리지 않는다", () => {
   const run = { source: "db" as const, runId: "r", status: "finished" as const, model: null, createdAt: null, finishedAt: null, reason: null, usage: { input: 0, output: 0 }, steps: [] };
   const analysis = { cause: "원인", evidence: ["근거"], fix: ["고칠 것"], retryable: true, confidence: 0.72 };
   const review = { migrationId: "m", remediate: null, specDraft: null };
   assert.equal(failureAnalysisOf({ ...review }), null);
   assert.equal(failureAnalysisOf({ ...review, failureAnalysis: { ...run, status: "running", analysis: null } }), null);
-  assert.deepEqual(failureAnalysisOf({ ...review, failureAnalysis: { ...run, analysis } }), analysis);
+  assert.deepEqual(failureAnalysisOf({ ...review, failureAnalysis: { ...run, analysis } }), { kind: "analysis", analysis });
   assert.equal(failureAnalysisOf(null), null);
+  // 분석 실행이 실패했으면 그 이유를 말한다. 아는 코드는 문장, 모르는 이유는 그대로
+  const failed = (reason: string) => failureAnalysisOf({ ...review, failureAnalysis: { ...run, status: "failed", reason, analysis: null } });
+  assert.deepEqual(failed("GITOPS_NOT_CONFIGURED"), { kind: "failed", why: "AI 가 읽을 GitOps 저장소가 서버에 설정되지 않았습니다." });
+  assert.deepEqual(failed("LLM_RATE_LIMIT"), { kind: "failed", why: "LLM_RATE_LIMIT" });
   assert.equal(analysisCaption(analysis), "AI 추정 · 확신 72% · 고치지 않고 다시 해도 될 것으로 봄");
   assert.equal(analysisCaption({ confidence: 0.5, retryable: false }), "AI 추정 · 확신 50%");
 });
 
 test("에이전트 단계: 안정성 확인은 통과·실패가 다르게 보이고, 거부된 호출은 그대로 거부로 보인다 (#179)", () => {
-  const bad = agentStepEntry({ seq: 3, tool: "run_check", ok: true, note: "check_bad" });
-  const good = agentStepEntry({ seq: 7, tool: "run_check", ok: true, note: "check_ok" });
+  const bad = agentStepEntry({ seq: 3, tool: "run_check", ok: true, note: "check_bad" }, true);
+  const good = agentStepEntry({ seq: 7, tool: "run_check", ok: true, note: "check_ok" }, true);
   assert.deepEqual([bad.kind, bad.detail], ["fail", "점검 실패"]);
   assert.deepEqual([good.kind, good.detail], ["pass", "점검 통과"]);
   assert.equal(bad.title, good.title);
-  assert.equal(agentStepEntry({ seq: 1, tool: "repo_edit", ok: false, note: "TOOL-05" }).kind, "denied");
-  assert.deepEqual(agentStepEntry({ seq: 2, tool: "repo_read", ok: true, note: "deploy/app.yaml" }), { kind: "tool", title: "배포 파일 읽기", detail: "deploy/app.yaml", time: "2" });
-  assert.equal(agentStepEntry({ seq: 8, tool: "finish", ok: true, note: "proposed" }).detail, "수정안 있음");
+  assert.equal(agentStepEntry({ seq: 1, tool: "repo_edit", ok: false, note: "TOOL-05" }, true).kind, "denied");
+  assert.deepEqual(agentStepEntry({ seq: 2, tool: "repo_read", ok: true, note: "deploy/app.yaml" }, true), { kind: "tool", title: "배포 파일 읽기", detail: "deploy/app.yaml", time: "2" });
+  assert.equal(agentStepEntry({ seq: 8, tool: "finish", ok: true, note: "proposed" }, true).detail, "수정안 있음");
+});
+
+test("가짜·없는 샌드박스: 안정성 확인을 통과로 그리지 않고, 결론에 '실제 샌드박스에서 돌려 보지 않음'을 붙인다", () => {
+  const fake = agentStepEntry({ seq: 7, tool: "run_check", ok: true, note: "check_ok" }, false);
+  assert.deepEqual([fake.kind, fake.detail], ["tool", "실제 샌드박스 아님"]);
+  const refused = agentStepEntry({ seq: 1, tool: "sandbox_get", ok: false, note: "SANDBOX_NOT_CONFIGURED" }, false);
+  assert.deepEqual([refused.kind, refused.detail], ["denied", "샌드박스 없음"]);
+  const note = "실제 샌드박스에서 돌려 보지 않은 결과입니다. 적용하기 전에 사람이 확인해야 합니다.";
+  for (const sandbox of ["memory", "none", null] as const) assert.equal(sandboxNote({ outcome: "proposed", sandbox }), note, String(sandbox));
+  for (const sandbox of ["k3d", "vcluster"] as const) assert.equal(sandboxNote({ outcome: "proposed", sandbox }), null, sandbox);
+  assert.equal(sandboxNote({ outcome: null, sandbox: "none" }), null, "결론이 없으면 붙일 것도 없다");
 });
