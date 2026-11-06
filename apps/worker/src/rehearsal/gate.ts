@@ -2,8 +2,9 @@ import { randomUUID } from "node:crypto";
 import { QUEUES, RehearsalTarget, rehearsalSettings, type RehearsalEvidence, type RehearsalFailureCode } from "@svc/contracts";
 import { withTenant } from "@svc/core";
 import { RetryLater, jobData, type MigrationRow, type StepJob, type StepOutcome } from "../jobs/_step.js";
+import type { StopHint } from "../jobs/_stop-hint.js";
 import { ENV_DIR, renderForRehearsal, type DeployInput, type GitopsRepo } from "../gitops/index.js";
-import { mirrorImages } from "./image-mirror.js";
+import { mirrorFix, mirrorImages } from "./image-mirror.js";
 import { podImages, unsupportedOf } from "./substitute.js";
 import { buildRehearsalInput, imagePairs, parseManifests } from "./input.js";
 import { expireRun, insertFinished, insertQueued, insertReused, insertSkipped, readRun, type RunKey, type RunRow } from "./store.js";
@@ -53,7 +54,7 @@ export async function rehearsalGate(j: StepJob, m: MigrationRow, epoch: number, 
   const mirrored = await (deps.mirror ?? mirrorImages)(j, m, imagePairs(i, podImages(docs)), deps.env ? { env: deps.env } : {});
   if (!mirrored.ok)
     return finishEarly(j, key, { status: "error", code: mirrored.code, bundleSha256: rendered.bundleSha256 },
-      `이미지 복사 실패 (${mirrored.reason}): ${mirrored.message}`, { mirror: { reason: mirrored.reason, image: mirrored.image } });
+      `이미지 복사 실패 (${mirrored.reason}): ${mirrored.message}`, { mirror: { reason: mirrored.reason, image: mirrored.image } }, mirrorFix(mirrored));
 
   const input = buildRehearsalInput({ target: target.data, i, values, rendered, docs, images: mirrored.images, mirrored: !mirrored.skipped,
     runBudgetSec: s.timeoutSec });
@@ -70,7 +71,8 @@ async function fromRow(j: StepJob, key: RunKey, row: RunRow, deps: GateDeps): Pr
     case "passed":
       return { kind: "commit", evidence: row.reusedFrom ? "reused" : "passed", expectBundleSha: row.bundleSha256!, detail: passDetail(row) };
     case "failed": case "error":
-      return { kind: "stop", outcome: paused(row.failureCode ?? "REHEARSAL_SANDBOX_UNAVAILABLE", failReason(row), { sandboxRunId: row.id, status: row.status, failedChecks: failedChecks(row) }) };
+      return { kind: "stop", outcome: paused(row.failureCode ?? "REHEARSAL_SANDBOX_UNAVAILABLE", failReason(row), { sandboxRunId: row.id, status: row.status, failedChecks: failedChecks(row) },
+        sandboxFix(row)) };
     case "queued": case "running": {
       const s = rehearsalSettings(deps.env ?? process.env);
       if (row.leftSec !== null && row.leftSec <= 0) {
@@ -93,18 +95,37 @@ async function fromRow(j: StepJob, key: RunKey, row: RunRow, deps: GateDeps): Pr
 }
 
 async function finishEarly(j: StepJob, key: RunKey, x: { status: "failed" | "error"; code: RehearsalFailureCode; bundleSha256: string },
-  reason: string, extra: Record<string, unknown>): Promise<Gate> {
+  reason: string, extra: Record<string, unknown>, fix?: StopHint): Promise<Gate> {
   await withTenant(j.tenantId, (tx) => insertFinished(tx, key, x));
-  return { kind: "stop", outcome: paused(x.code, reason, { status: x.status, ...extra }) };
+  return { kind: "stop", outcome: paused(x.code, reason, { status: x.status, ...extra }, fix) };
 }
 
-const paused = (code: RehearsalFailureCode, reason: string, rehearsal: Record<string, unknown>): StepOutcome =>
-  ({ to: "paused", failureCode: code, detail: { deploy: { error: code, reason }, rehearsal } });
+// fix = 설정·권한이 모자라 멈췄을 때 고칠 자리 (deploy 칸의 error·reason 옆)
+const paused = (code: RehearsalFailureCode, reason: string, rehearsal: Record<string, unknown>, fix?: StopHint): StepOutcome =>
+  ({ to: "paused", failureCode: code, detail: { deploy: { error: code, reason, ...fix }, rehearsal } });
+
+// agent-worker 쪽이 설정이 없어 샌드박스를 못 띄운 경우의 고칠 자리. 키 = 실패한 sandbox_ready 줄의 앞머리(KubeError 코드 "<코드>: <글>"),
+//   워커가 이미지를 안 복사한 입력(agent rehearsal/run.ts: sandbox_ready + REHEARSAL_IMAGE_MIRROR_FAILED)은 NOT_MIRRORED
+const SANDBOX_FIX: Record<"SANDBOX_NO_HOST" | "NOT_MIRRORED", StopHint> = {
+  SANDBOX_NO_HOST: { missing: ["SANDBOX_KUBE_URL"],
+    hint: "agent-worker 가 호스트 클러스터에 닿지 않는다: 플랫폼 클러스터 안이면 차트 sandbox.enabled=true(agent-worker 서비스 계정 토큰·샌드박스 권한)로 올리고, 밖에서 돌리면 agent-worker env SANDBOX_KUBE_URL(+SANDBOX_KUBE_TOKEN_FILE·SANDBOX_KUBE_CA_FILE)을 준 뒤 재개한다 (시험·로컬 흉내면 agent-worker MOCK_SANDBOX=1)" },
+  NOT_MIRRORED: { missing: ["helm: sandbox.imageRegistry"],
+    hint: "워커가 MOCK_SANDBOX=1 이라 이미지를 샌드박스 자리로 복사하지 않았는데 agent-worker 는 진짜 샌드박스다: 워커 MOCK_SANDBOX 를 끄고 차트 sandbox.imageRegistry(worker SANDBOX_IMAGE_REGISTRY)를 채운 뒤 재개한다 (시험·로컬 흉내면 agent-worker 에도 MOCK_SANDBOX=1)" },
+};
+function sandboxFix(row: RunRow): StopHint | undefined {
+  const ready = (row.result?.checks ?? []).filter((c) => c.required && !c.ok && c.id === "sandbox_ready");
+  if (!ready.length) return undefined;
+  if (row.failureCode === "REHEARSAL_IMAGE_MIRROR_FAILED") return SANDBOX_FIX.NOT_MIRRORED;
+  const code = ready.map((c) => /^([A-Z_]+): /.exec(c.detail)?.[1]).find((x) => x && x in SANDBOX_FIX);
+  return code ? SANDBOX_FIX[code as keyof typeof SANDBOX_FIX] : undefined;
+}
 const failedChecks = (row: RunRow) => (row.result?.checks ?? []).filter((c) => c.required && !c.ok).slice(0, 5)
   .map((c) => ({ id: c.id, subject: c.subject, detail: c.detail }));
+// 결과가 없는 끝(agent-worker 입력 거부·처리기 오류)은 agent-worker 가 감사에만 쓴 이유를 그대로 (store readRun errorReason)
 const failReason = (row: RunRow) => {
   const first = failedChecks(row)[0];
-  return first ? `리허설 실패 ${first.id} ${first.subject}: ${first.detail}`.slice(0, 500) : `리허설 ${row.status} (${row.failureCode ?? "?"})`;
+  return first ? `리허설 실패 ${first.id} ${first.subject}: ${first.detail}`.slice(0, 500)
+    : `리허설 ${row.status} (${row.failureCode ?? "?"})${row.errorReason ? `: ${row.errorReason}` : ""}`.slice(0, 500);
 };
 function passDetail(row: RunRow): Record<string, unknown> {
   const counts: Record<string, number> = { identical: 0, substituted: 0, not_checked: 0 };

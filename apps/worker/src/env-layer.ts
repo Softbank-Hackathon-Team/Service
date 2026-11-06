@@ -9,6 +9,7 @@ import { tenantSlug } from "./gitops/bundle.js";
 import { withGcpCred } from "./gcp-token-server.js";
 import { withStepRoles } from "./jobs/_roles.js";
 import type { MigrationRow } from "./jobs/_step.js";
+import type { StopHint } from "./jobs/_stop-hint.js";
 
 // 환경 층 (도착 GCP 프로젝트의 VPC·GKE·AR·ESO) 확보. 아키텍처 이전 9단계 "4 기반 생성".
 // 부르는 곳: apply 작업 맨 앞 (승인 뒤 provisioning). apply-real prepare() 안에서는 만들지 않는다 —
@@ -187,6 +188,16 @@ export type EnsureEnvLayerOutcome =
 
 const dbInventoryFacts = (tenantId: string, envId: string) => withTenant(tenantId, (tx) => readInventoryFacts(tx, envId));
 
+// 설정·연결이 모자라 멈출 때 고칠 자리 (envLayer 칸의 error 옆). 실패 코드마다 하나
+const ENV_LAYER_FIX: Record<"TARGET_FACTS_UNAVAILABLE" | "TF_FACTS_MISSING" | "ENV_LAYER_CRED_MISSING", StopHint> = {
+  TARGET_FACTS_UNAVAILABLE: { missing: ["inventory.targetFacts"],
+    hint: "도착 환경 화면을 다시 열어 관찰 역할로 도착 EKS 를 다시 읽게 하거나(연결 스택이 옛 판이면 새 템플릿으로 업데이트해 ec2:DescribeSubnets 를 더함), worker-env 에 TF_FACT_VPC_ID·TF_FACT_DB_SUBNET_IDS_JSON 을 넣은 뒤 다시 계획한다" },
+  TF_FACTS_MISSING: { missing: ["environments.gcp_target_project"],
+    hint: "환경 연결 화면에서 도착(이전 전용) 프로젝트를 넣고 고객이 infra/onboarding/gcp-connect.sh 를 TARGET_PROJECT_ID 와 함께 다시 실행한 뒤 다시 계획한다" },
+  ENV_LAYER_CRED_MISSING: { missing: ["gcp: svc-env"],
+    hint: "고객이 infra/onboarding/gcp-connect.sh 를 TARGET_PROJECT_ID 와 함께 다시 실행해 도착 프로젝트에 svc-env·svc-gke-node 를 만든 뒤 다시 계획한다" },
+};
+
 export async function ensureEnvLayer(i: EnsureEnvLayerInput, d: EnsureEnvLayerDeps = {}): Promise<EnsureEnvLayerOutcome> {
   const env = d.env ?? process.env;
   const store = d.store ?? dbEnvLayerStore;
@@ -201,14 +212,14 @@ export async function ensureEnvLayer(i: EnsureEnvLayerInput, d: EnsureEnvLayerDe
   if (src === "db") return { ok: true, source: "db", layer: { facts: factsOfLayer(row!.facts!), varsHash: row!.varsHash }, detail: { ...base, source: "db" } };
   if (src === "inventory") {
     const f = await (d.inventory ?? dbInventoryFacts)(i.tenantId, i.envId);
-    if (!f.ok) return fail("TARGET_FACTS_UNAVAILABLE", { error: f.reason }, "env_layer.facts_unavailable");
+    if (!f.ok) return fail("TARGET_FACTS_UNAVAILABLE", { error: f.reason, ...ENV_LAYER_FIX.TARGET_FACTS_UNAVAILABLE }, "env_layer.facts_unavailable");
     return { ok: true, source: "inventory", layer: { facts: f.facts }, detail: { ...base, source: "inventory", keys: Object.keys(f.facts).sort() } };
   }
   if (src !== "create") return { ok: true, source: src, detail: { ...base, source: src } };
 
   // ---- 만들기 ----
   const projectId = i.projectId;
-  if (!projectId) return fail("TF_FACTS_MISSING", { error: "도착 프로젝트(gcp_target_project·account_id)가 없다" });
+  if (!projectId) return fail("TF_FACTS_MISSING", { error: "도착 프로젝트(gcp_target_project·account_id)가 없다", ...ENV_LAYER_FIX.TF_FACTS_MISSING });
   const vars = envLayerVars({ projectId, region: i.region });
   const varsHash = envLayerVarsHash(vars);
   // 승인 대조: 사람이 본 계획이 "GKE 새로 만들기"였고, 그때와 같은 입력·모듈인가. 아니면 만들지 않는다 (비용 드는 자원을 승인 없이 만들지 않음)
@@ -221,7 +232,7 @@ export async function ensureEnvLayer(i: EnsureEnvLayerInput, d: EnsureEnvLayerDe
   // B-2: 여기서부터 끝까지만 고객 svc-env 를 빌린다 (앱 층 apply 는 svc-operate 그대로)
   return (d.withEnvCred ?? noEnvCred)(async ({ cred, why, signal: envSignal }) => {
     if (!cred) return fail("ENV_LAYER_CRED_MISSING", { error: `고객 svc-env 를 빌리지 못했다${why ? ` (${why})` : ""}. 환경 층은 svc-env 로만 만든다 (워커 자기 자격·svc-operate 로는 안 만든다). `
-      + "고객이 infra/onboarding/gcp-connect.sh 를 다시 실행해 svc-env·svc-gke-node 를 만든 뒤 다시 계획한다" });
+      + "고객이 infra/onboarding/gcp-connect.sh 를 다시 실행해 svc-env·svc-gke-node 를 만든 뒤 다시 계획한다", ...ENV_LAYER_FIX.ENV_LAYER_CRED_MISSING });
     const runEnv = () => gcpTerraformEnv(cred, env);   // 부를 때마다 그 순간의 토큰
     const signal = envSignal && d.signal ? AbortSignal.any([d.signal, envSignal]) : envSignal ?? d.signal;
 

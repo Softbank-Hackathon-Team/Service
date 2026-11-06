@@ -3,11 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rehearsalSettings, type RehearsalInput } from "@svc/contracts";
 import { scrubString } from "@svc/core";
-import { TempRoleDenied } from "@svc/security";
+import { AR_PULL_PERMISSIONS, ECR_PULL_ACTIONS, TempRoleDenied } from "@svc/security";
 import { envFor, isPublicImage, registryOf, spawnExec, type Exec } from "@svc/adapters";
 import { withStepRoles, type StepRoles } from "../jobs/_roles.js";
 import { MOCK_CREDENTIALS, realStsEnabled } from "../platform.js";
 import type { MigrationRow } from "../jobs/_step.js";
+import type { StopHint } from "../jobs/_stop-hint.js";
 
 // 리허설 이미지 복사 (설계 결정 38: 이미지는 해시로 회사별 플랫폼 저장소에 복사, 샌드박스에 고객 자격 없음).
 // 고객 이미지를 다이제스트 그대로 플랫폼 ECR 샌드박스 자리(SANDBOX_IMAGE_REGISTRY = <호스트>/<접두어>)로 복사하고
@@ -19,9 +20,11 @@ import type { MigrationRow } from "../jobs/_step.js";
 export interface MirrorImage { ref: string; source: string }
 export type MirrorFailReason = "registry_unset" | "not_by_digest" | "unsupported_registry" | "role_denied"
   | "tool_missing" | "auth_failed" | "copy_failed" | "digest_mismatch" | "budget_exceeded";
+// at = 고칠 자리를 고르는 사실 (어느 출발 레지스트리 받기 권한인가, 어느 도구가 없나). 감사 detail 에는 mirrorFix 가 만든 missing·hint 만 간다
+type FixAt = { kinds?: ReadonlyArray<"ecr" | "ar">; tool?: string };
 export type MirrorOutcome =
   | { ok: true; images: RehearsalInput["images"]; skipped?: "mock" }
-  | { ok: false; code: "REHEARSAL_IMAGE_MIRROR_FAILED"; reason: MirrorFailReason; image: string | null; message: string };
+  | { ok: false; code: "REHEARSAL_IMAGE_MIRROR_FAILED"; reason: MirrorFailReason; image: string | null; message: string; at?: FixAt };
 export interface MirrorDeps { exec?: Exec; env?: NodeJS.ProcessEnv; withRoles?: typeof withStepRoles; now?: () => number }
 
 // 원본 레지스트리 종류. platform = 이미 이 회사 샌드박스 자리에 있음(샌드박스 노드가 바로 읽음, 복사 없음)
@@ -45,8 +48,30 @@ const PLAIN_ENV = /^(PATH|HOME|TMPDIR|LANG|SSL_CERT_FILE|SSL_CERT_DIR|HTTPS?_PRO
 // 빌린 자격으로 부를 때 워커 자기 신원(Pod Identity·IRSA)이 뒤에서 대신 쓰이지 않게 지운다 (envFor 는 프로필·키만 지움)
 const OWN_IDENTITY = /^AWS_(CONTAINER_[A-Z_]+|WEB_IDENTITY_TOKEN_FILE|ROLE_ARN|ROLE_SESSION_NAME)$/;
 
-const fail = (reason: MirrorFailReason, image: string | null, message: string): MirrorOutcome =>
-  ({ ok: false, code: "REHEARSAL_IMAGE_MIRROR_FAILED", reason, image, message: scrubString(message).trim().slice(-300) });
+const fail = (reason: MirrorFailReason, image: string | null, message: string, at?: FixAt): MirrorOutcome =>
+  ({ ok: false, code: "REHEARSAL_IMAGE_MIRROR_FAILED", reason, image, message: scrubString(message).trim().slice(-300), ...(at ? { at } : {}) });
+
+// ── 고칠 자리 (실패 이유마다 하나). 플랫폼 설정·출발 받기 권한·도구가 모자란 이유만 ──
+// 출발 관찰 역할(STEP_ROLES.image_mirror)에 있어야 하는 받기 권한과 그걸 더하는 고객 쪽 길
+const PULL: Record<"ecr" | "ar", { need: string[]; grant: string }> = {
+  ecr: { need: ECR_PULL_ACTIONS.map((a) => `aws: ${a}`),
+    grant: "출발 AWS 연결 스택(CloudFormation svc-connect-*)을 새 템플릿으로 업데이트해 svc-observe 에 ECR 받기 권한을 더한 뒤 재개한다" },
+  ar: { need: AR_PULL_PERMISSIONS.map((p) => `gcp: ${p}`),
+    grant: "고객이 출발 프로젝트에서 infra/onboarding/gcp-connect.sh 를 다시 실행해 svc-observe 에 Artifact Registry 받기 권한을 더한 뒤 재개한다" },
+};
+const MIRROR_FIX: Partial<Record<MirrorFailReason, (at: FixAt) => StopHint>> = {
+  registry_unset: () => ({ missing: ["helm: sandbox.imageRegistry"],
+    hint: "차트 sandbox.imageRegistry(<계정>.dkr.ecr.<리전>.amazonaws.com/<접두어>, worker SANDBOX_IMAGE_REGISTRY)를 채워 helm upgrade 하거나 sandbox.rehearsal.enabled=false 로 리허설을 끈 뒤 재개한다 (시험·로컬 흉내면 MOCK_SANDBOX=1, DEMO_MODE=1 에서는 못 켬)" }),
+  role_denied: (at) => {
+    const kinds = at.kinds?.length ? [...new Set(at.kinds)] : (["ecr", "ar"] as const);
+    return { missing: kinds.flatMap((k) => PULL[k].need),
+      hint: `worker 이미지의 권한 파일(infra/permissions, PERMISSIONS_DIR)이 받기 동작을 허락하는 판인지 확인하고, ${kinds.map((k) => PULL[k].grant).join(" / ")}` };
+  },
+  tool_missing: (at) => ({ missing: [at.tool ?? "crane"],
+    hint: `워커 이미지에 ${at.tool ?? "crane"} 이 없다: deploy/docker/Dockerfile 로 빌드한 worker 이미지(차트 apps.image.tag)로 올린 뒤 재개한다` }),
+};
+/** 리허설 문이 멈춤 detail(deploy 칸)에 더할 고칠 자리. 설정·권한·도구 문제가 아니면 없음 */
+export const mirrorFix = (o: Extract<MirrorOutcome, { ok: false }>): StopHint | undefined => MIRROR_FIX[o.reason]?.(o.at ?? {});
 
 function plan(i: MirrorImage, reg: { host: string; prefix: string }, tenantId: string): Planned | MirrorOutcome {
   const d = i.source.match(DIGEST)?.[1];
@@ -89,14 +114,16 @@ export async function mirrorImages(j: { tenantId: string; migrationId: string },
   try {
     return planned.some((p) => p.kind === "ecr" || p.kind === "ar") ? await (deps.withRoles ?? withStepRoles)("image_mirror", j, m, copy) : await copy(null);
   } catch (e) {
-    if (e instanceof TempRoleDenied) return fail("role_denied", null, e.code);
+    if (e instanceof TempRoleDenied) return fail("role_denied", null, e.code, { kinds: sourceKinds(planned) });
     throw e;
   }
 }
 
+const sourceKinds = (planned: Planned[]) => planned.flatMap((p) => (p.kind === "ecr" || p.kind === "ar" ? [p.kind] : []));
+
 async function copyAll(planned: Planned[], reg: { host: string; prefix: string }, r: StepRoles | null, exec: Exec,
   env: NodeJS.ProcessEnv, leftMs: () => number): Promise<MirrorOutcome> {
-  if (r?.denied.length) return fail("role_denied", null, r.denied.map((d) => d.code).join(","));
+  if (r?.denied.length) return fail("role_denied", null, r.denied.map((d) => d.code).join(","), { kinds: sourceKinds(planned) });
   const dir = mkdtempSync(join(tmpdir(), "svc-mirror-"));
   chmodSync(dir, 0o700);
   try {
@@ -112,7 +139,7 @@ async function copyAll(planned: Planned[], reg: { host: string; prefix: string }
     const token = async (region: string, e: NodeJS.ProcessEnv) => {
       const t = await run("aws", ["ecr", "get-login-password", "--region", region], e, TOKEN_MS);
       return t.code === 0 ? { auth: Buffer.from(`AWS:${t.stdout.trim()}`).toString("base64") }
-        : fail(t.code === 127 ? "tool_missing" : "auth_failed", null, `ecr get-login-password (${region}): ${t.stderr}`);
+        : fail(t.code === 127 ? "tool_missing" : "auth_failed", null, `ecr get-login-password (${region}): ${t.stderr}`, { tool: "aws" });
     };
     // STUB 발급기(REAL_STS=0·시드 환경)는 빌린 자격 파일이 없다 → 가져오기와 같이 프로세스 자격 (import.ts borrowObserve)
     const borrowed = r?.awsEnv?.source;
@@ -130,10 +157,10 @@ async function copyAll(planned: Planned[], reg: { host: string; prefix: string }
     const arHosts = new Set(planned.filter((p) => p.kind === "ar").map((p) => p.host));
     if (arHosts.size) {
       let t = r?.gcpToken?.source;
-      if (!t && realStsEnabled(env)) return fail("role_denied", null, `Artifact Registry 를 읽을 출발 관찰 SA 토큰 없음 (${MOCK_CREDENTIALS} 이거나 출발이 GCP 아님)`);
+      if (!t && realStsEnabled(env)) return fail("role_denied", null, `Artifact Registry 를 읽을 출발 관찰 SA 토큰 없음 (${MOCK_CREDENTIALS} 이거나 출발이 GCP 아님)`, { kinds: ["ar"] });
       if (!t) {
         const own = await run("gcloud", ["auth", "print-access-token"], env, TOKEN_MS);
-        if (own.code !== 0) return fail(own.code === 127 ? "tool_missing" : "auth_failed", null, `gcloud auth print-access-token: ${own.stderr}`);
+        if (own.code !== 0) return fail(own.code === 127 ? "tool_missing" : "auth_failed", null, `gcloud auth print-access-token: ${own.stderr}`, { tool: "gcloud" });
         t = own.stdout.trim();
       }
       for (const h of arHosts) auths[h] = { auth: Buffer.from(`oauth2accesstoken:${t}`).toString("base64") };
@@ -152,14 +179,14 @@ async function copyAll(planned: Planned[], reg: { host: string; prefix: string }
 
     for (const p of toCopy) {
       const have = await crane(["digest", p.sandboxRef], DIGEST_MS, p.ref);
-      if (have.code === 127) return fail("tool_missing", p.ref, have.stderr);
+      if (have.code === 127) return fail("tool_missing", p.ref, have.stderr, { tool: "crane" });
       if (have.code === 0 && have.stdout.trim() === p.digest) continue;   // 이미 있으면 안 올림
       if (platformRegion) {
         // 회사별 저장소. 플랫폼 앱 저장소와 같이 태그 못 바꿈 + 올릴 때 스캔
         const c = await run("aws", ["ecr", "create-repository", "--region", platformRegion, "--repository-name", p.repository,
           "--image-tag-mutability", "IMMUTABLE", "--image-scanning-configuration", "scanOnPush=true"], env, TOKEN_MS, p.ref);
         if (c.code !== 0 && !c.stderr.includes("RepositoryAlreadyExistsException"))
-          return fail(c.code === 127 ? "tool_missing" : "copy_failed", p.ref, `ecr create-repository: ${c.stderr}`);
+          return fail(c.code === 127 ? "tool_missing" : "copy_failed", p.ref, `ecr create-repository: ${c.stderr}`, { tool: "aws" });
       }
       const c = await crane(["copy", `${p.from}@${p.digest}`, p.sandboxRef], COPY_MS, p.ref);
       if (c.code !== 0) return fail("copy_failed", p.ref, `crane copy: ${c.stderr}`);

@@ -45,7 +45,51 @@ test("env 모듈 사실이 비면 TF_FACTS_MISSING + 넣어야 할 환경변수 
   assert.equal(r.ok, false);
   assert.equal((r as { failureCode: string }).failureCode, "TF_FACTS_MISSING");
   assert.deepEqual((r.detail.missing as string[]).sort(), ["TF_FACT_CLUSTER_NAME", "TF_FACT_DB_SUBNET_IDS_JSON", "TF_FACT_VPC_ID"]);
+  // 멈춤 화면용: 무엇이 비었나(error) + 어디에 넣나(hint). AWS 는 worker-env 또는 도착 EKS 실자원 사실
+  assert.match(String(r.detail.error), /도착 사실/);
+  assert.match(String(r.detail.hint), /worker-env/);
+  assert.match(String(r.detail.hint), /inventory\.targetFacts/);
+  assert.match(String(r.detail.hint), /TF_FACT_VPC_ID/);
   assert.equal(f.seen.length, 0);
+});
+
+test("TF_BIN_MISSING (init 127): missing=[terraform] + 워커 이미지·TF_BIN 안내, 정리 명령은 없음", async () => {
+  const runner = { apply: async (): Promise<RealApplyResult> => ({ ok: false, tfOutputs: {}, workDir: "/w", steps: [{ step: "init", code: 127, ms: 1 }],
+    elapsedMs: 1, log: [], failedStep: "init" }) } as never;
+  const r = await realApply(input, { env: FACTS, runner });
+  assert.equal((r as { failureCode: string }).failureCode, "TF_BIN_MISSING");
+  assert.deepEqual(r.detail.missing, ["terraform"]);
+  assert.match(String(r.detail.hint), /Dockerfile.*TF_BIN|TF_BIN/);
+  assert.match(String(r.detail.hint), /시험·로컬 흉내면 MOCK_IAC=1/);
+  assert.equal(r.detail.cleanup, undefined);
+  const other = await realApply(input, { env: FACTS, runner: fakeRunner(false).runner });
+  assert.equal(other.detail.missing, undefined, "설정 문제가 아닌 apply 실패에는 없다");
+});
+
+test("Argo 허브를 안 켠 플랫폼: 멈추지 않고 성공 detail 에 argoHub{skipped,missing,hint} (AWS = argocd.hubRoleArn, GCP = gcpPlatform.project). 켜면 없다", async () => {
+  const off = await realApply(input, { env: FACTS, runner: fakeRunner().runner });
+  assert.equal(off.ok, true);
+  const hub = off.detail.argoHub as { skipped: boolean; missing: string[]; hint: string };
+  assert.equal(hub.skipped, true);
+  assert.deepEqual(hub.missing, ["helm: argocd.hubRoleArn"]);
+  assert.match(hub.hint, /ARGO_HUB_ROLE_ARN/);
+  assert.match(hub.hint, /직접 등록/);
+  const on = fakeRunner();
+  const r = await realApply(input, { env: { ...FACTS, ARGO_HUB_ROLE_ARN: "arn:aws:iam::123456789012:role/hub" }, runner: on.runner });
+  assert.equal(r.ok, true);
+  assert.equal(r.detail.argoHub, undefined);
+  assert.equal(on.seen[0]!.vars.hub_deploy, true);
+
+  const gplan = buildPlanDoc({ ...planInput, spec, target: { envId: ENV_ID, provider: "gcp", region: "default" } }, {});
+  const gin = { ...input, provider: "gcp" as const, accountId: "finals-demo", plan: gplan };
+  const genv = { TF_FACT_CLUSTER_NAME: "c", TF_FACT_NETWORK_ID: "n", TF_FACT_CLUSTER_LOCATION: "l" };
+  const g = await realApply(gin, { env: genv, runner: fakeRunner().runner });
+  assert.equal(g.ok, true, JSON.stringify(g.detail));
+  assert.deepEqual((g.detail.argoHub as { missing: string[] }).missing, ["helm: gcpPlatform.project"]);
+  const gf = fakeRunner();
+  const gOn = await realApply(gin, { env: { ...genv, GCP_PLATFORM_PROJECT: "plat-prj" }, runner: gf.runner, gcpPlatformSa: async () => "t-0123456789abcdef0123456789ab" });
+  assert.equal(gOn.detail.argoHub, undefined);
+  assert.equal(gf.seen[0]!.vars.hub_principal, "t-0123456789abcdef0123456789ab@plat-prj.iam.gserviceaccount.com");
 });
 
 test("자리표시를 다 채워 실행기로 넘기고, 출력 + cluster_name 을 돌려준다", async () => {
@@ -167,7 +211,13 @@ test("Z77: gcp 는 클러스터 없이 안 된다 (TF_FACT_CLUSTER_NAME=\"\" →
     { env: { TF_FACT_CLUSTER_NAME: "", TF_FACT_NETWORK_ID: "n", TF_FACT_CLUSTER_LOCATION: "l" }, runner: f.runner });
   assert.equal((r as { failureCode: string }).failureCode, "TF_FACTS_MISSING");
   assert.deepEqual(r.detail.missing, ["TF_FACT_CLUSTER_NAME"]);
+  assert.match(String(r.detail.hint), /ENV_LAYER_AUTO=1/);
   assert.equal(f.seen.length, 0);
+  // gcp 사실이 비면 worker-env 또는 환경 층(environment_layers) 안내
+  const empty = await realApply({ ...input, provider: "gcp", accountId: "finals-demo", spec: gspec, plan: gplan }, { env: {}, runner: f.runner });
+  assert.equal((empty as { failureCode: string }).failureCode, "TF_FACTS_MISSING");
+  assert.ok((empty.detail.missing as string[]).includes("TF_FACT_NETWORK_ID"));
+  assert.match(String(empty.detail.hint), /environment_layers\(gcp\/env\)/);
 });
 
 test("AWS→GCP 중계기: 작업 폴더 repl-network.json 이 있으면 postgres_json 에 복제 길(repl_public·허용 주소)·앱 로그인 SQL 을 덧씌운다 (지문 밖, 감사 detail 에 남김)", async () => {

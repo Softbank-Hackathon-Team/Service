@@ -8,7 +8,7 @@ import { QUEUES } from "@svc/contracts";
 import { policyOf } from "@svc/core";
 import type { Exec } from "@svc/adapters";
 import { AR_PULL_PERMISSIONS, ECR_PULL_ACTIONS, STEP_ROLES, TempRoleDenied, checkLeastPrivilege } from "@svc/security";
-import { MIRROR_BUDGET_MS, mirrorImages, type MirrorImage } from "../src/rehearsal/image-mirror.js";
+import { MIRROR_BUDGET_MS, mirrorFix, mirrorImages, type MirrorImage, type MirrorOutcome } from "../src/rehearsal/image-mirror.js";
 import type { StepRoles, withStepRoles } from "../src/jobs/_roles.js";
 
 const T = "11111111-2222-4333-8444-555555555555";
@@ -263,4 +263,26 @@ test("image_mirror 역할 요청 = 출발 클라우드의 받기 동작만, 관�
   for (const a of ECR_PULL_ACTIONS) assert.ok(inline.includes(a), `고객 관찰 역할에 없음: ${a}`);
   const sh = readFileSync(new URL("../../../infra/onboarding/gcp-connect.sh", import.meta.url), "utf8").split("\n").filter((l) => l.startsWith("OBSERVE_PERMS="));
   for (const p of AR_PULL_PERMISSIONS) assert.ok(sh.join(",").split(/[",]/).includes(p), `고객 관찰 SA 역할에 없음: ${p}`);
+});
+
+test("고칠 자리(mirrorFix): 복사 자리 없음 = helm sandbox.imageRegistry, 받기 거부 = 출발 클라우드 받기 권한, 도구 없음 = 그 도구. 그 밖은 없음", async () => {
+  const ecr = [{ ref: `x/api@${D2}`, source: `${CUSTOMER}/api@${D2}` }];
+  const ar = [{ ref: `x/web@${D1}`, source: `${AR}/cust-prj/shop/web@${D1}` }];
+  const fixOf = async (go: Promise<MirrorOutcome>) => { const o = await go; assert.equal(o.ok, false); return mirrorFix(o as Extract<MirrorOutcome, { ok: false }>); };
+  const unset = await fixOf(run(ecr, fakes(), { PATH: "/bin" }));
+  assert.deepEqual(unset?.missing, ["helm: sandbox.imageRegistry"]);
+  assert.match(unset!.hint, /SANDBOX_IMAGE_REGISTRY/);
+  assert.match(unset!.hint, /시험·로컬 흉내면 MOCK_SANDBOX=1/);
+  const deniedEcr = await fixOf(run(ecr, fakes({ denied: true })));
+  assert.deepEqual(deniedEcr?.missing, ECR_PULL_ACTIONS.map((a) => `aws: ${a}`));
+  assert.match(deniedEcr!.hint, /svc-connect/);
+  const deniedAr = await fixOf(mirrorImages(j, m, ar, { exec: fakes().exec, env: ENV,
+    withRoles: (async () => { throw new TempRoleDenied("ROLE_OUTSIDE_CEILING", "x"); }) as typeof withStepRoles }));
+  assert.deepEqual(deniedAr?.missing, AR_PULL_PERMISSIONS.map((p) => `gcp: ${p}`));
+  assert.match(deniedAr!.hint, /gcp-connect\.sh/);
+  const noCrane = await fixOf(run(ecr, fakes({ fail: { crane: 127 } })));
+  assert.deepEqual(noCrane?.missing, ["crane"]);
+  const noAws = await fixOf(run(ecr, fakes({ fail: { token: 127 } })));
+  assert.deepEqual(noAws?.missing, ["aws"]);
+  assert.equal(await fixOf(run(ecr, fakes({ fail: { copy: 1 } }))), undefined, "복사 실패는 설정 문제로 단정하지 않는다");
 });

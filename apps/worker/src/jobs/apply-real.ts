@@ -15,6 +15,7 @@ import { gcpPlatformSa } from "../platform.js";
 import { appLinkFromEnv } from "@svc/dbproxy";
 import { awsHubEnabled, tenantSlug } from "../gitops/bundle.js";
 import { stableHash } from "./_step.js";
+import type { StopHint } from "./_stop-hint.js";
 import { envNumber, redactText } from "@svc/contracts";
 
 // Z70 DRAFT(ai): apply 작업의 "진짜 terraform" 길. Z89: 기본이 이 길이다 (MOCK_IAC=1 인 시험만 흉내 길).
@@ -56,12 +57,24 @@ export interface RealApplyDeps {
 // Argo CD 허브가 고객 클러스터에 들어오는 신원. 플랫폼 사실이라 계획 지문 밖에 두고 apply 때 더한다 (db_writer_json 과 같은 자리).
 // 비면 앱 구역에 허브 권한을 안 만든다. 그러면 허브 배포가 거절되어 Argo 상태로 드러난다
 //   GKE = 회사 전용 플랫폼 SA, EKS = 고정 그룹 platform:deploy (고객 svc-deploy 접근 항목) → 허브를 켰는지만 넘긴다
-async function hubPrincipalVar(i: RealApplyInput, env: NodeJS.ProcessEnv, d: RealApplyDeps): Promise<Record<string, string | boolean>> {
-  if (i.provider === "aws") return awsHubEnabled(env) ? { hub_deploy: true } : {};
+//   멈추지는 않는다 (운영자가 Argo CD 에 클러스터를 손으로 등록했을 수 있다). 대신 성공 detail 에 argoHub 로 남겨 타임라인에 보이게 한다
+//   (예전엔 조용히 건너뛰어 배포 단계의 Argo 실패만 보였다)
+export type ArgoHubSkip = { skipped: true } & StopHint;
+const ARGO_HUB_SKIP: Record<"aws" | "gcp_project" | "gcp_sa", ArgoHubSkip> = {
+  aws: { skipped: true, missing: ["helm: argocd.hubRoleArn"],
+    hint: "허브가 EKS 앱 구역 RoleBinding·Argo cluster Secret 을 안 만든다: 차트 argocd.hubRoleArn(Terraform 출력 argocd_hub_role_arn → worker ARGO_HUB_ROLE_ARN)을 채우고 고객 연결 스택 ArgoHubRoleArn 으로 svc-deploy 를 만들거나, 운영자가 Argo CD 에 이 클러스터를 직접 등록한다" },
+  gcp_project: { skipped: true, missing: ["helm: gcpPlatform.project"],
+    hint: "GKE 앱 구역에 허브 권한(hub_principal)을 안 만든다: 차트 gcpPlatform.project(worker GCP_PLATFORM_PROJECT)를 채우거나, 운영자가 허브에 이 클러스터 권한을 직접 준다" },
+  gcp_sa: { skipped: true, missing: ["tenants.gcp_platform_sa"],
+    hint: "회사 전용 플랫폼 SA 이름이 DB 에 없다: DB 마이그레이션(0029_gcp_platform_sa)을 적용한 뒤 다시 계획한다" },
+};
+async function hubPrincipalVar(i: RealApplyInput, env: NodeJS.ProcessEnv, d: RealApplyDeps): Promise<{ vars: Record<string, string | boolean>; skip?: ArgoHubSkip }> {
+  if (i.provider === "aws") return awsHubEnabled(env) ? { vars: { hub_deploy: true } } : { vars: {}, skip: ARGO_HUB_SKIP.aws };
+  if (i.provider !== "gcp") return { vars: {} };
   const project = env.GCP_PLATFORM_PROJECT?.trim();
-  if (i.provider !== "gcp" || !project) return {};
+  if (!project) return { vars: {}, skip: ARGO_HUB_SKIP.gcp_project };
   const sa = await (d.gcpPlatformSa ?? gcpPlatformSa)(i.tenantId);
-  return sa ? { hub_principal: `${sa}@${project}.iam.gserviceaccount.com` } : {};
+  return sa ? { vars: { hub_principal: `${sa}@${project}.iam.gserviceaccount.com` } } : { vars: {}, skip: ARGO_HUB_SKIP.gcp_sa };
 }
 
 /** 실행기 환경: 빌린 GCP 토큰 > 빌린 AWS 자격 > 워커 환경 */
@@ -73,7 +86,19 @@ export function runnerOpts(d: Pick<RealApplyDeps, "credEnv" | "gcpCred">, env: N
 
 interface Prepared {
   env: NodeJS.ProcessEnv; base: Record<string, unknown>; target: { envId: string; provider: Provider; region: string; migrationId: string };
-  imp: ReturnType<typeof importedFor>; facts: Record<string, string>; noCluster: boolean; vars: Record<string, unknown>;
+  imp: ReturnType<typeof importedFor>; facts: Record<string, string>; noCluster: boolean; vars: Record<string, unknown>; argoHub?: ArgoHubSkip;
+}
+
+const NO_CLUSTER_HINT: StopHint = { missing: ["TF_FACT_CLUSTER_NAME"],
+  hint: "worker-env 의 TF_FACT_CLUSTER_NAME=\"\"(클러스터 없이)을 지우고 도착 GKE 이름을 넣거나, 지운 채 ENV_LAYER_AUTO=1 로 환경 층을 만든 뒤 다시 계획한다" };
+/** TF_FACTS_MISSING 의 고칠 자리. 도착 사실은 환경 층 DB 줄 > worker TF_FACT_* (> AWS 실자원 사실) 순으로 채운다 (env-layer chooseEnvLayerSource) */
+function factsMissingHint(provider: Provider, missing: string[]): StopHint {
+  const account = missing.filter((k) => k === "TF_FACT_ACCOUNT_ID" || k === "TF_FACT_PROJECT_ID");
+  const where = provider === "gcp"
+    ? "worker-env 비밀에 넣거나 ENV_LAYER_AUTO=1(worker-env)로 도착 프로젝트에 환경 층(environment_layers(gcp/env) 줄)을 만든 뒤"
+    : provider === "aws" ? "worker-env 비밀에 넣거나 도착 환경 화면을 다시 열어 실자원 사실(inventory.targetFacts)을 다시 읽은 뒤"
+    : "worker-env 비밀에 넣은 뒤";
+  return { missing, hint: `${missing.join("·")} 를 ${where} 다시 계획한다${account.length ? " (계정·프로젝트는 환경 연결의 account_id·gcp_target_project 에서 온다)" : ""}` };
 }
 /** ①② 계획과 같은 입력 다시 만들기 → 지문·사실 대조 → 자리표시 채우기. apply 와 APP-22 다시 apply 가 같이 쓴다 */
 async function prepare(i: RealApplyInput, d: RealApplyDeps): Promise<Prepared | Extract<RealApplyOutcome, { ok: false }>> {
@@ -105,11 +130,12 @@ async function prepare(i: RealApplyInput, d: RealApplyDeps): Promise<Prepared | 
   const facts = mergedFactsOf(env, i.provider, i.accountId, i.envLayer?.facts, { tenantId: tenantSlug(i.tenantId), migrationId: i.migrationId });
   // Z77: 클러스터 없이(TF_FACT_CLUSTER_NAME="")는 aws 만. gcp 앱 모듈은 GKE 조회가 필수라 빈 값이면 모자란 사실로 본다
   if (facts.clusterName === "" && i.provider !== "aws")
-    return { ok: false, failureCode: "TF_FACTS_MISSING", detail: { ...base, missing: ["TF_FACT_CLUSTER_NAME"], error: "클러스터 없이 만들기는 aws 도착만" } };
+    return { ok: false, failureCode: "TF_FACTS_MISSING", detail: { ...base, error: "클러스터 없이 만들기는 aws 도착만", ...NO_CLUSTER_HINT } };
   const noCluster = facts.clusterName === "";
   const filled = fillTfVars(tf.vars, facts);
   if (filled.missing.length)
-    return { ok: false, failureCode: "TF_FACTS_MISSING", detail: { ...base, missing: filled.missing.map(factEnvName) } };
+    return { ok: false, failureCode: "TF_FACTS_MISSING", detail: { ...base, error: "도착 사실이 비어 Terraform 입력의 자리표시를 못 채움 (apply 안 함)",
+      ...factsMissingHint(i.provider, filled.missing.map(factEnvName)) } };
   // 중계기 이전(aws-gcp)의 도착 DB 복제 길 (relay-step 이 작업 폴더 repl-network.json 에 둠): 복제 전용 공개 주소 + 허용 주소(플랫폼 나가는 대역·
   //   중계 공개 IP) + 앱 로그인은 SQL. 앱이 붙는 주소(link.host)는 사설 IP 그대로. 중계 IP 는 apply 때 생겨서 계획 지문 밖 (hub_principal·db_writer_json 과 같은 자리). 컷오버·롤백의 다시 apply 도 같은 파일을 읽는다
   let vars = filled.vars;
@@ -121,8 +147,13 @@ async function prepare(i: RealApplyInput, d: RealApplyDeps): Promise<Prepared | 
     base.replicationNetwork = { replPublic: true, peerCidrs, relayIp: rn.relayIp, appLoginSql: rn.appLoginSql };
   }
 
-  return { env, base, target, imp, facts, noCluster, vars: { ...(vars as Record<string, unknown>), ...(await hubPrincipalVar(i, env, d)) } };
+  const hub = await hubPrincipalVar(i, env, d);
+  return { env, base, target, imp, facts, noCluster, vars: { ...(vars as Record<string, unknown>), ...hub.vars }, ...(hub.skip ? { argoHub: hub.skip } : {}) };
 }
+
+// init 이 127 = 워커 이미지에 terraform 이 없다 (deploy/docker/Dockerfile 이 넣는다)
+const TF_BIN_MISSING_HINT: StopHint = { missing: ["terraform"],
+  hint: "워커 이미지에 terraform 이 없다: deploy/docker/Dockerfile 로 빌드한 worker 이미지(차트 apps.image.tag)로 올리거나 TF_BIN 으로 실행 파일 경로를 준다 (시험·로컬 흉내면 MOCK_IAC=1, DEMO_MODE=1 에서는 못 켬)" };
 
 export async function realApply(i: RealApplyInput, d: RealApplyDeps = {}): Promise<RealApplyOutcome> {
   const p = await prepare(i, d);
@@ -165,6 +196,7 @@ export async function realApply(i: RealApplyInput, d: RealApplyDeps = {}): Promi
     // apply 실패 뒤 자동 destroy 가 성공했으면 남은 자원 없음 → 정리 명령 대신 그 사실을 남긴다
     const cleaned = r.destroyedAfterFail?.ok === true;
     return { ok: false, failureCode: binMissing ? "TF_BIN_MISSING" : "TF_APPLY_FAILED", detail: { ...base, ...runDetail, failedStep: r.failedStep,
+      ...(binMissing ? TF_BIN_MISSING_HINT : {}),
       ...(r.destroyedAfterFail ? { destroyedAfterFail: r.destroyedAfterFail } : {}),
       ...(cleaned || binMissing || r.failedStep === "init" || r.failedStep === "plan" ? {} : { cleanup: `npm run tf:real -- destroy ${i.migrationId}` }) } };
   }
@@ -191,7 +223,7 @@ export async function realApply(i: RealApplyInput, d: RealApplyDeps = {}): Promi
     }
   }
   return { ok: true, tfOutputs, detail: { ...base, ...runDetail, outputs: Object.keys(tfOutputs).sort(), ...(appLink ? { appLink } : {}),
-    ...(noCluster ? { noCluster: true } : {}) } };
+    ...(noCluster ? { noCluster: true } : {}), ...(p.argoHub ? { argoHub: p.argoHub } : {}) } };
 }
 
 /** apply 작업의 진짜 길: ① 환경 층 확보(ensureEnvLayer, apply 맨 앞 = 승인 뒤 provisioning 에서만) → ② 앱 층 realApply (환경 층 사실을 씀).

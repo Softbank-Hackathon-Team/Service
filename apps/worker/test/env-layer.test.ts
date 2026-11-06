@@ -225,6 +225,10 @@ test("B-2: svc-env 를 못 빌리면 앱 층 svc-operate 토큰이 있어도 만
   const err = String((r as unknown as { detail: { envLayer: { error: string } } }).detail.envLayer.error);
   assert.match(err, /ROLE_NOT_FOUND/);
   assert.match(err, /gcp-connect\.sh/);
+  // 멈춤 화면용 고칠 자리 (envLayer 칸의 error 옆)
+  const fix = (r as unknown as { detail: { envLayer: { missing: string[]; hint: string } } }).detail.envLayer;
+  assert.deepEqual(fix.missing, ["gcp: svc-env"]);
+  assert.match(fix.hint, /infra\/onboarding\/gcp-connect\.sh/);
   assert.deepEqual(o.order, [], "환경 층 apply 없음");
   assert.equal(s.claims, 0);
   assert.equal(root.seen.length, 0, "앱 층도 안 돈다");
@@ -249,6 +253,18 @@ test("빌린 토큰이 없으면 만들지 않는다 (svc-worker 로 떨어지�
   const busy = await ensureEnvLayer({ tenantId: TENANT, migrationId: MID, envId: ENV_ID, provider: "gcp", projectId: PROJECT, region: REGION, plan: plan(AUTO, null) },
     { env: AUTO, store: b.store, withEnvCred: lend(ENV_CRED), exec: gcloud([]), runner: envRunner(o) });
   assert.equal((busy as { failureCode: string }).failureCode, "ENV_LAYER_BUSY");
+  assert.deepEqual(o.order, []);
+});
+
+test("도착 프로젝트가 없으면 만들지 않고 TF_FACTS_MISSING + missing=gcp_target_project, 연결 스크립트 안내", async () => {
+  const o = { order: [] as string[], tokens: [], envs: [] };
+  const r = await ensureEnvLayer({ tenantId: TENANT, migrationId: MID, envId: ENV_ID, provider: "gcp", projectId: null, region: REGION, plan: plan(AUTO, null) },
+    { env: AUTO, store: memStore(null).store, withEnvCred: lend(ENV_CRED), exec: gcloud([]), runner: envRunner(o) });
+  assert.equal((r as { failureCode: string }).failureCode, "TF_FACTS_MISSING");
+  const d = (r as unknown as { detail: { envLayer: { error: string; missing: string[]; hint: string } } }).detail.envLayer;
+  assert.match(d.error, /도착 프로젝트/);
+  assert.deepEqual(d.missing, ["environments.gcp_target_project"]);
+  assert.match(d.hint, /TARGET_PROJECT_ID/);
   assert.deepEqual(o.order, []);
 });
 

@@ -327,7 +327,70 @@ test("켬: 치환 표 밖 종류 → failed(REHEARSAL_UNSUPPORTED_KIND), 이미�
   await dp.handleDeploy(job(b));
   assert.deepEqual([(await mig(b)).status, (await mig(b)).failure_code], ["paused", "REHEARSAL_IMAGE_MIRROR_FAILED"]);
   assert.deepEqual((await runs(b)).map((r) => [r.status, r.failure_code, r.phase]), [["error", "REHEARSAL_IMAGE_MIRROR_FAILED", "done"]]);
-  assert.equal((await lastAudit(b, "deploy.paused"))!.rehearsal.mirror.reason, "registry_unset");
+  const pb = (await lastAudit(b, "deploy.paused"))!;
+  assert.equal(pb.rehearsal.mirror.reason, "registry_unset");
+  // 멈춤 화면용 고칠 자리 (deploy 칸의 error·reason 옆): 차트 값 이름 + 고칠 길
+  assert.deepEqual(pb.deploy.missing, ["helm: sandbox.imageRegistry"]);
+  assert.match(pb.deploy.hint, /SANDBOX_IMAGE_REGISTRY/);
+});
+
+/** agent-worker 가 결과 없이 끝낸 줄 (입력 거부·처리기 오류): 이유는 감사 sandbox.rehearsal 에만 남는다 (agent-worker pg-sandbox-run-store finish 와 같은 모양) */
+async function errorAsAgentWorker(runId: string, reason: string) {
+  const row = (await owner.query(`SELECT tenant_id, migration_id FROM sandbox_runs WHERE id=$1`, [runId])).rows[0] as Raw;
+  await core.withTenant(row.tenant_id, async (tx) => {
+    const u = await tx.query(`UPDATE sandbox_runs SET status='error', failure_code='REHEARSAL_SANDBOX_UNAVAILABLE', phase='done', finished_at=now()
+      WHERE id=$1 AND status IN ('queued','running')`, [runId]);
+    assert.equal(u.rowCount, 1);
+    await core.writeAudit(tx, row.tenant_id, { actor: "agent_worker", action: "sandbox.rehearsal", target: row.migration_id, result: "error",
+      detail: { sandboxRunId: runId, status: "error", failureCode: "REHEARSAL_SANDBOX_UNAVAILABLE", reason } });
+    await core.wakeQueued(tx, contracts.QUEUES.deploy, core.jobKey(contracts.QUEUES.deploy, { migrationId: row.migration_id })!);
+  });
+}
+/** agent-worker 가 샌드박스를 못 띄운 결과 (sandbox_ready 실패 줄 하나) */
+async function sandboxNotReady(runId: string, code: "REHEARSAL_SANDBOX_UNAVAILABLE" | "REHEARSAL_IMAGE_MIRROR_FAILED", detail: string) {
+  const row = (await owner.query(`SELECT tenant_id, migration_id, input FROM sandbox_runs WHERE id=$1`, [runId])).rows[0] as Raw;
+  const input = contracts.RehearsalInput.parse(row.input);
+  const result = contracts.RehearsalResult.parse({
+    verdict: "error", failureCode: code,
+    sandbox: { name: "sbx-test", hostNamespace: "sbx-test", chart: "vcluster-0.37.6", k8sVersion: "", podSecurity: "baseline", runtimeClass: null, mock: false },
+    bundleSha256: input.bundleSha256,
+    checks: [{ id: "sandbox_ready", subject: "sbx-test", required: true, ok: false, ms: 0, detail }],
+    fidelity: input.fidelity, warnings: [], timingsMs: { create: 0, apply: 0, check: 0, delete: 0 }, deleted: false,
+  });
+  await core.withTenant(row.tenant_id, async (tx) => {
+    await tx.query(`UPDATE sandbox_runs SET status='error', failure_code=$2, phase='done', result=$3, finished_at=now() WHERE id=$1`, [runId, code, JSON.stringify(result)]);
+    await core.wakeQueued(tx, contracts.QUEUES.deploy, core.jobKey(contracts.QUEUES.deploy, { migrationId: row.migration_id })!);
+  });
+}
+
+test("agent-worker 쪽 설정 없음: 호스트 클러스터 없음(SANDBOX_NO_HOST)·워커가 이미지를 안 복사한 입력은 paused + deploy 칸 missing·hint, 결과 없는 끝은 감사의 이유를 그대로", { skip }, async () => {
+  Object.assign(process.env, { SANDBOX_REHEARSAL: "on", MOCK_SANDBOX: "1" });
+  const cases: Array<[string, (runId: string) => Promise<void>, (d: Raw) => void]> = [
+    ["no_host", (r) => sandboxNotReady(r, "REHEARSAL_SANDBOX_UNAVAILABLE", "SANDBOX_NO_HOST: 호스트 클러스터 접속 설정이 없음 (SANDBOX_KUBE_URL 또는 클러스터 안 실행)"), (d) => {
+      assert.equal(d.error, "REHEARSAL_SANDBOX_UNAVAILABLE");
+      assert.match(d.reason, /SANDBOX_NO_HOST/);
+      assert.deepEqual(d.missing, ["SANDBOX_KUBE_URL"]);
+      assert.match(d.hint, /sandbox\.enabled/);
+    }],
+    ["not_mirrored", (r) => sandboxNotReady(r, "REHEARSAL_IMAGE_MIRROR_FAILED", "이미지를 플랫폼 샌드박스 자리로 복사하지 않은 입력 (워커 MOCK_SANDBOX=1)"), (d) => {
+      assert.equal(d.error, "REHEARSAL_IMAGE_MIRROR_FAILED");
+      assert.deepEqual(d.missing, ["helm: sandbox.imageRegistry"]);
+      assert.match(d.hint, /워커 MOCK_SANDBOX 를 끄고/);
+    }],
+    ["no_result", (r) => errorAsAgentWorker(r, "리허설 입력이 계약에 안 맞음: images.0.ref Invalid"), (d) => {
+      assert.equal(d.reason, "리허설 error (REHEARSAL_SANDBOX_UNAVAILABLE): 리허설 입력이 계약에 안 맞음: images.0.ref Invalid", "예전엔 코드 자리표시만");
+      assert.equal(d.missing, undefined, "설정 문제로 단정하지 않는다");
+    }],
+  ];
+  for (const [name, finish, check] of cases) {
+    const id = await seed();
+    await dp.handleDeploy(job(id));
+    const [run] = await runs(id);
+    await finish(run!.id);
+    await dp.handleDeploy(job(id));
+    assert.equal((await mig(id)).status, "paused", name);
+    check((await lastAudit(id, "deploy.paused"))!.deploy);
+  }
 });
 
 test("켬: 건너뜀 표 — ECS 도착 non_k8s, 클러스터 없음 no_cluster, Azure Mock unsupported_target, GitOps 없이 MOCK_ARGO 흉내 mock. 모두 syncing + 근거", { skip }, async () => {
