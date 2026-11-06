@@ -119,6 +119,10 @@ export const CONFIG_RULES = {
     SANDBOX_RUNTIME_CLASS: { check: runtimeClassName },
     // 기본값은 contracts sandbox.ts sandboxSettings
     SANDBOX_TTL_SEC: { check: num({ int: true, min: 300 }) },
+    // 리허설 동시 실행 수 (2 이상이면 회사마다 sandbox 노드 고정). sandbox 노드 수 이하로
+    SANDBOX_REHEARSAL_CONCURRENCY: { check: num({ int: true, min: 1, max: 20 }) },
+    SANDBOX_NODE_PIN: { check: oneOf("0", "1") },
+    SANDBOX_NODE_WAIT_SEC: { check: num({ int: true, min: 0, max: 3600 }) },
     SANDBOX_VCLUSTER_CHART: { check: (v) => (v.trim().endsWith(".tgz") ? null : "차트 묶음(.tgz) 경로가 아님") },
     MOCK_SANDBOX: { check: oneOf("0", "1") },
     MOCK_SANDBOX_RESULT: { check: oneOf("pass", "fail") },

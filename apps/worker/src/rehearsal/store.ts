@@ -70,9 +70,9 @@ export async function insertQueued(tx: Tx, k: RunKey & { id: string; requestId: 
     `INSERT INTO sandbox_runs (id, tenant_id, migration_id, epoch, status, plan_id, bundle_sha256, input, deadline_at)
      VALUES ($1, $2, $3, $4, 'queued', $5, $6, $7, now() + make_interval(secs => $8))`,
     [k.id, k.tenantId, k.migrationId, k.epoch, k.planId, input.bundleSha256, JSON.stringify(input), queueTimeoutSec]);
-  // 리허설 격리: 모든 작업이 같은 키 = 샌드박스 노드에 한 번에 1건 (core boss.ts sandbox-rehearsal 정책)
+  // 리허설 격리: 회사마다 키 하나 = 같은 회사는 한 번에 1건, 다른 회사는 같이 (core boss.ts sandbox-rehearsal 정책, 노드는 agent-worker 가 회사마다 나눔)
   const job = await boss.send(QUEUES.sandboxRehearsal, { tenantId: k.tenantId, requestId: k.requestId, sandboxRunId: k.id },
-    { singletonKey: jobKey(QUEUES.sandboxRehearsal, {}), db: asBossDb(tx) });
+    { singletonKey: jobKey(QUEUES.sandboxRehearsal, { tenantId: k.tenantId }), db: asBossDb(tx) });
   if (!job) throw new Error("sandbox-rehearsal job not created");
 }
 
