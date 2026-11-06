@@ -9,7 +9,8 @@ import { hasTfRef, resolveTfRefs } from "./tf-facts.js";
  *  재시도로 안 바뀐다 → 워커는 바로 paused REPL_TF_FACTS_MISSING (예전: 'Invalid URL' 로 재시도 4번 뒤 SYNC_FAILED) */
 // 이전마다 끝점(db 0050)의 설정 오류도 같은 꼴 (재시도로 안 바뀜 → paused):
 //   REPL_ENDPOINT_INCOMPLETE = 줄이 한쪽만 있음 / REPL_SECRET_UNRESOLVED = password_ref 를 못 풂 (마스터 키 없음·env 없음·문법)
-export type ReplConfigCode = "REPL_TF_FACTS_MISSING" | "REPL_ENDPOINT_INCOMPLETE" | "REPL_SECRET_UNRESOLVED";
+//   REPL_ENDPOINT_MISSING = 진짜 판인데 명세 postgres 의 끝점(줄·env)이 하나도 없음 (워커 _repl.ts 가 낸다)
+export type ReplConfigCode = "REPL_TF_FACTS_MISSING" | "REPL_ENDPOINT_INCOMPLETE" | "REPL_SECRET_UNRESOLVED" | "REPL_ENDPOINT_MISSING";
 export class ReplConfigError extends Error {
   constructor(message: string, readonly code: ReplConfigCode = "REPL_TF_FACTS_MISSING") { super(message); }
 }

@@ -102,7 +102,8 @@ export const TransitionEvidence = z.object({
   applyOk: z.boolean().optional(),   // T17 Terraform apply 성공
   argoHealthy: z.boolean().optional(),   // T20 Argo Synced+Healthy (온프레는 Agent "넣었음")
   rehearsal: RehearsalEvidence.optional(),   // T20 커밋 전 vCluster 리허설 (통과·재사용·건너뜀 이유)
-  securityParity: z.boolean().optional(),   // T20 보안 동등성 MG-2-07
+  // T20 보안 동등성 MG-2-07: true = 쟀고 지켜짐, false = 쟀고 나빠짐, "not_measured" = 이 배포에서 출발·도착 보안을 맞대어 잰 근거가 없음
+  securityParity: z.union([z.boolean(), z.literal("not_measured")]).optional(),
   replicationLagBytes: z.number().optional(),   // T21 복제 지연
   rowCountMatch: z.boolean().optional(),
   markerRoundTripMs: z.number().optional(),   // T21 마커 한 줄이 출발→도착에 보이기까지 ms

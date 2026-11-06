@@ -1,5 +1,5 @@
 import { replicationFromEnv, replicationFromRecords, ReplConfigError, type ManagedSecrets, type Migration } from "@svc/replication";
-import { specV2ForPlan } from "@svc/adapters";
+import { iacMockEnabled, specV2ForPlan } from "@svc/adapters";
 import type { ReplicationEndpoint } from "@svc/contracts";
 import { latestAcceptedSpecV2, replicationEndpointsFor, withTenant, type Tx } from "@svc/core";
 import { fetchManagedSecrets, managedSecretArns } from "../relay/source-secret.js";
@@ -7,7 +7,7 @@ import { readMigration } from "./_step.js";
 
 // PF FM-ORC-09 ①: 복제 끝점은 워커 전역 REPL_* 하나라, 명세에 postgres 가 없는 앱(DB 없는 2티어)도 진짜 복제를 시도했다
 //   → {tf:db_address} 를 못 채운 채 접속 실패 → paused(SYNC_FAILED). 받아들인 명세에 postgres 부품이 하나도 없으면 복제 없음(null = STUB 길).
-//   명세를 못 읽으면(옛 판·시험) 예전처럼 env 를 따른다.
+//   명세를 못 읽으면(옛 판·시험) 예전처럼 env 를 따른다. 명세에 postgres 가 있는데 끝점이 없으면 진짜 판은 REPL_ENDPOINT_MISSING (pickReplication).
 // DECISION(team): 끝점은 이전마다 DB 행으로 (2026-11-05, 보안·온프레 영역)
 //   replication_endpoints(db 0050)에 이 이전의 source·target 두 줄이 있으면 그 줄로, 둘 다 없으면 예전 env(REPL_*), 한 줄만이면 오류.
 //   복제 객체를 얻는 길은 replicationFor 하나 (sync·cutover·rollback·cleanup·repl-cleanup·리퍼)
@@ -20,11 +20,17 @@ async function specHasPostgresTx(tx: Tx, migrationId: string): Promise<boolean |
   return spec ? spec.components.some((c) => c.kind === "postgres") : null;
 }
 
-/** 읽은 값으로 고르기 (순수, 시험용). 명세에 postgres 없음 → null / 줄 두 개 → 줄 / 줄 없음 → env / 한 줄 → ReplConfigError */
+/** 읽은 값으로 고르기 (순수, 시험용). 명세에 postgres 없음 → null / 줄 두 개 → 줄 / 줄 없음 → env / 한 줄 → ReplConfigError
+ *  줄도 env 도 없음: 진짜 판(MOCK_IAC≠1)에 명세 postgres 가 있으면 REPL_ENDPOINT_MISSING (precheck RV-28 required 와 같은 기준).
+ *  흉내 판·명세를 못 읽음(옛 판)이면 null = STUB 길. 예전엔 진짜 판에서도 null 이라 sync·cutover·cleanup·rollback 이 가짜 성공으로 넘어갔다 */
 export function pickReplication(migrationId: string, hasPostgres: boolean | null, records: readonly ReplicationEndpoint[],
   env: NodeJS.ProcessEnv = process.env, managed?: ManagedSecrets): Migration | null {
   if (hasPostgres === false) return null;
-  return replicationFromRecords(migrationId, records, env, managed) ?? replicationFromEnv(migrationId, env);
+  const repl = replicationFromRecords(migrationId, records, env, managed) ?? replicationFromEnv(migrationId, env);
+  if (!repl && hasPostgres === true && !iacMockEnabled(env))
+    throw new ReplConfigError("REPL_ENDPOINT_MISSING: 명세에 postgres 가 있는데 복제 끝점이 없다 (replication_endpoints 줄 없음, 워커 REPL_SOURCE_URL·REPL_TARGET_URL 없음). "
+      + "AWS 출발 중계기 이전이면 apply 의 중계기 단계 감사(relay)를, 아니면 npm run repl:endpoint -- set 으로 두 쪽을 넣고 다시", "REPL_ENDPOINT_MISSING");
+  return repl;
 }
 
 /** 이전 하나의 복제 객체. 회사 벽(withTenant) 안에서 명세·끝점 줄을 읽는다.
