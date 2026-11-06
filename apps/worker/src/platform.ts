@@ -60,10 +60,10 @@ export function missingTrafficConfig(provider: TrafficProvider | undefined, env:
 }
 
 /** 판정 지표. PROM_URL 이면 Prometheus, 흉내를 허락한 판이면 TRAFFIC_STUB_SCENARIO(clean|err|slow|down) 가짜, 아니면 없음 */
-export function trafficMetrics(tenantId: string, o: { sourceBaselineRps?: number } = {},
+export function trafficMetrics(tenantId: string, o: { sourceBaselineRps?: number; windowSec?: number } = {},
   env: NodeJS.ProcessEnv = process.env): MetricsSource | undefined {
   if (env.PROM_URL) return prometheusMetrics({ baseUrl: env.PROM_URL, tenantId, baselineP95Ms: envNumber(env.TRAFFIC_BASELINE_P95_MS, 200),
-    ...(o.sourceBaselineRps ? { sourceBaselineRps: o.sourceBaselineRps } : {}) });
+    ...(o.sourceBaselineRps ? { sourceBaselineRps: o.sourceBaselineRps } : {}), ...(o.windowSec ? { windowSec: o.windowSec } : {}) });
   if (!trafficStubAllowed(env)) return undefined;
   const sc = (env.TRAFFIC_STUB_SCENARIO ?? "clean") as "clean" | "err" | "slow" | "down";
   return stubMetrics(sc, { failAt: envNumber(env.TRAFFIC_STUB_FAIL_AT, 50) });

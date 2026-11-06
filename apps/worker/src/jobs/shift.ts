@@ -1,6 +1,6 @@
 import { MigrationJob, QUEUES, envNumber, type Provider } from "@svc/contracts";
 import { latestAcceptedAppName, withTenant, observeMinSec, takeTrafficLease, POLICY } from "@svc/core";
-import { runShift, shiftTransition, MigrationMoved, MAX_REOBSERVE, SHARE_TOL_PCT, type ShiftProgress } from "@svc/traffic";
+import { runShift, ruleFromCriteria, shiftTransition, MigrationMoved, MAX_REOBSERVE, SHARE_TOL_PCT, type ShiftProgress } from "@svc/traffic";
 import { jobData, nextJob, readMigration, RetryLater, runStep, stubFailIfAsked } from "./_step.js";
 import { loadLatestPlan } from "./plan-store.js";
 import { configFromEnv, commitTrafficWeight, GitopsRepo, ENV_DIR, tenantSlug, type BundleRef } from "../gitops/index.js";
@@ -98,10 +98,12 @@ export async function handleShift(raw: unknown) {
       // #245: 진짜 지표로 몫을 볼 때만 전환 직전 출발 요청 수를 읽는다. 가중치를 바꾸기 전이라 출발이 전부 받고 있다
       const baseline = process.env.PROM_URL && process.env.TRAFFIC_SHARE_CHECK?.trim() !== "0"
         ? await sourceBaselineFor(j.tenantId, j.migrationId, m.sourceEnvId, sw, !reentered) : null;
+      // 판정 기준·창은 사람이 승인한 계획 값 (계획이 없으면 기본값). 예전엔 계획 값은 화면에만 쓰였다
+      const criteria = plan?.rollbackCriteria;
       // 위 missingTrafficConfig 가 "PROM_URL 없음 + 흉내 아님" 을 이미 멈췄으니 지표는 늘 있다
-      const metrics = trafficMetrics(j.tenantId, { sourceBaselineRps: baseline && "rps" in baseline ? baseline.rps : undefined })!;
+      const metrics = trafficMetrics(j.tenantId, { sourceBaselineRps: baseline && "rps" in baseline ? baseline.rps : undefined, windowSec: criteria?.windowSec })!;
       const r = await runShift({
-        migrationId: j.migrationId, lbId, switcher: sw, metrics, steps: runSteps.length ? runSteps : steps, onWeight, resumeFromPct,
+        migrationId: j.migrationId, lbId, switcher: sw, metrics, rule: ruleFromCriteria(criteria), steps: runSteps.length ? runSteps : steps, onWeight, resumeFromPct,
         sleep: () => new Promise((res) => setTimeout(res, trafficTickMs())),
         observeSec: obs.sec,   // M7: 시계로 관찰. pf-d FM-TRF-15: 승인 계획 holdSec (T22 최소보다 짧지 않게)
         // z75-38: 단계마다 "최소 관찰(TRAFFIC_OBSERVE_SEC) 지남 + 실측 도착 몫이 목표 ±10%p" 라야 다음 단계. 못 미치면 2번 더 본 뒤 paused
