@@ -149,4 +149,18 @@ if helm template platform "$CHART" -n platform "${IMG[@]}" --set apps.worker.tfW
   echo "FAIL worker 2개에 디스크를 켰는데 렌더가 됐다"; fail=1
 fi
 [ $fail -eq 0 ] && echo "ok   worker Terraform 디스크 (값 없음·worker 만·2개 거부)"
+# Argo CD 허브 역할 (values argocd.hubRoleArn): 값 없으면 안 그린다, 있으면 api·worker 에만, 역할 ARN 이 아니면 렌더 실패, 칸 없는 릴리스 값으로도 렌더
+HUB=arn:aws:iam::000000000000:role/platform-argocd-hub
+DOC=$(helm template platform "$CHART" -n platform "${IMG[@]}")
+for a in api worker agent-worker web; do hasnt app.yaml Deployment "$a" ARGO_HUB_ROLE_ARN "허브 기본"; done
+DOC=$(helm template platform "$CHART" -n platform "${IMG[@]}" --set "argocd.hubRoleArn=$HUB")
+for a in api worker; do has app.yaml Deployment "$a" "{ name: ARGO_HUB_ROLE_ARN, value: \"$HUB\" }" "허브 켬"; done
+for a in agent-worker web; do hasnt app.yaml Deployment "$a" ARGO_HUB_ROLE_ARN "허브 켬"; done
+for bad in "arn:aws:iam::000000000000:user/x" "platform-argocd-hub"; do
+  if helm template platform "$CHART" -n platform "${IMG[@]}" --set "argocd.hubRoleArn=$bad" >/dev/null 2>&1; then echo "FAIL argocd.hubRoleArn='$bad' 인데 렌더가 됐다"; fail=1; fi
+done
+if ! helm template platform "$CHART" -n platform "${IMG[@]}" --set argocd.hubRoleArn=null >/dev/null 2>&1; then
+  echo "FAIL argocd.hubRoleArn 칸이 없는 릴리스 값으로 렌더가 안 된다"; fail=1
+fi
+[ $fail -eq 0 ] && echo "ok   Argo CD 허브 역할 (값 없음·api·worker 만·틀린 모양 거부·예전 릴리스 값)"
 exit $fail

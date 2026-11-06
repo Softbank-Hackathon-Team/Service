@@ -18,6 +18,12 @@ const T = randomUUID();
 const bin = mkdtempSync(join(tmpdir(), "inv-bin-"));
 const envLog = join(bin, "env.log");
 const saved = { PATH: process.env.PATH, AWS_PROFILE: process.env.AWS_PROFILE, REAL_STS: process.env.REAL_STS };
+const VPC = "vpc-0aaa1111bbbb2222c";
+const DESCRIBED = { cluster: { name: "customer-eks", status: "ACTIVE", resourcesVpcConfig: { vpcId: VPC, subnetIds: ["subnet-0a1a1a1a1a1a1a1a1", "subnet-0c3c3c3c3c3c3c3c3"] } } };
+const SUBNETS = { Subnets: [
+  { SubnetId: "subnet-0a1a1a1a1a1a1a1a1", AvailabilityZone: "ap-northeast-2a", VpcId: VPC, MapPublicIpOnLaunch: false },
+  { SubnetId: "subnet-0c3c3c3c3c3c3c3c3", AvailabilityZone: "ap-northeast-2c", VpcId: VPC, MapPublicIpOnLaunch: false },
+] };
 
 before(async () => {
   if (skip) return;
@@ -32,6 +38,8 @@ echo "$1 $2 key=$AWS_ACCESS_KEY_ID region=$AWS_REGION profile=\${AWS_PROFILE:-no
 case "$1 $2" in
   "sts get-caller-identity") echo '{"Account":"111122223333"}' ;;
   "eks list-clusters") echo '{"clusters":["customer-eks"]}' ;;
+  "eks describe-cluster") echo '${JSON.stringify(DESCRIBED)}' ;;
+  "ec2 describe-subnets") echo '${JSON.stringify(SUBNETS)}' ;;
   *) echo '{}' ;;
 esac
 `);
@@ -53,10 +61,10 @@ after(async () => {
   await core.pool.end(); await owner.end();
 });
 
-async function seed(provider: string, o: { status?: string; account?: string | null; external?: string | null; region?: string | null } = {}) {
+async function seed(provider: string, o: { status?: string; account?: string | null; external?: string | null; region?: string | null; cluster?: string } = {}) {
   const id = randomUUID();
-  await owner.query(`INSERT INTO environments (id, tenant_id, provider, name, connection_status, account_id, external_id, region) VALUES ($1,$2,$3,'e',$4,$5,$6,$7)`,
-    [id, T, provider, o.status ?? "connected", o.account === undefined ? "111122223333" : o.account, o.external ?? null, o.region ?? null]);
+  await owner.query(`INSERT INTO environments (id, tenant_id, provider, name, connection_status, account_id, external_id, region, cluster_name) VALUES ($1,$2,$3,'e',$4,$5,$6,$7,$8)`,
+    [id, T, provider, o.status ?? "connected", o.account === undefined ? "111122223333" : o.account, o.external ?? null, o.region ?? null, o.cluster ?? null]);
   return id;
 }
 const job = (envId: string, tenantId = T) => ({ tenantId, requestId: `r-inv-${envId.slice(0, 8)}`, envId });
@@ -78,6 +86,24 @@ test("inventory-refresh 정상: 빌린 관찰 키로만 읽고 저장, AWS_PROFI
   assert.ok(!JSON.stringify(row.result).includes("inv-secret"));
   assert.ok(!row.result.scope.includes("worker-own-profile"), row.result.scope);
   assert.deepEqual(await creds(id), [{ status: "revoked", stub: false, purpose: "observe", step: "inventory", revoke_reason: "inventory_done" }]);
+});
+
+test("inventory-refresh AWS 도착 사실: 연결 때 적은 EKS 를 같은 빌린 키로 읽어 targetFacts 로 두고, 계획·apply 의 읽기가 그 값을 쓴다", { skip }, async () => {
+  const envLayer = await import("../src/env-layer.js");
+  const id = await seed("aws", { external: `ext-${randomUUID()}`, region: "ap-northeast-2", cluster: "customer-eks" });
+  const before = logText();
+  assert.equal(await inv.handleInventoryRefresh(job(id)), "saved");
+  const lines = logText().slice(before.length).trim().split("\n");
+  for (const c of ["eks describe-cluster", "ec2 describe-subnets"])
+    assert.ok(lines.some((l) => l.startsWith(c) && l.includes("key=ASIAINVENTORY region=ap-northeast-2 profile=none")), `${c}: ${lines.join("\n")}`);
+  const [row] = await saved1(id);
+  assert.equal(row.result.targetFacts.ok, true, JSON.stringify(row.result.targetFacts));
+  const facts = { clusterName: "customer-eks", vpcId: VPC, dbSubnetIdsJson: '["subnet-0a1a1a1a1a1a1a1a1","subnet-0c3c3c3c3c3c3c3c3"]' };
+  assert.deepEqual(await core.withTenant(T, (tx) => envLayer.readInventoryFacts(tx, id)), { ok: true, facts });
+  // 연결 때 적은 클러스터가 바뀌면 예전 읽기는 쓰지 않는다
+  await owner.query("UPDATE environments SET cluster_name = 'other-eks' WHERE id = $1", [id]);
+  const stale = await core.withTenant(T, (tx) => envLayer.readInventoryFacts(tx, id));
+  assert.ok(!stale.ok && /other-eks/.test(stale.reason));
 });
 
 test("inventory-refresh 거부: 진짜 발급기인데 가짜 자격(시드 환경)이면 CLI 안 부르고 MOCK_CREDENTIALS 저장, 장부 회수", { skip }, async () => {

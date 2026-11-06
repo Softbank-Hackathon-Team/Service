@@ -65,9 +65,18 @@ const get = (envId: string, h = T, tail = "inventory") => app.inject({ method: "
 const jobs = async (envId: string) => Number((await owner.query(
   "SELECT count(*) FROM pgboss.job WHERE name='inventory-refresh' AND data->>'envId'=$1", [envId])).rows[0].count);
 const line = async (envId: string) => (await owner.query("SELECT requested_at, checked_at FROM environment_inventory WHERE environment_id=$1", [envId])).rows[0];
-const saveResult = (envId: string, ago: string) => owner.query(
+const saveResult = (envId: string, ago: string, result: object = STORED) => owner.query(
   `INSERT INTO environment_inventory (environment_id, tenant_id, result, requested_at, checked_at) VALUES ($1,$2,$3, now() - $4::interval - interval '1 second', now() - $4::interval)`,
-  [envId, T, JSON.stringify(STORED), ago]);
+  [envId, T, JSON.stringify(result), ago]);
+
+test("워커가 같은 줄에 둔 AWS 도착 사실(targetFacts)은 실자원으로 읽히고 화면 응답에는 안 나간다", { skip }, async () => {
+  const id = await seed();
+  await saveResult(id, "10 seconds", { ...STORED, targetFacts: { ok: true, cluster: "customer-eks", region: "ap-northeast-2", facts: { vpcId: "vpc-0aaa1111bbbb2222c" } } });
+  const r = await get(id);
+  assert.equal(r.statusCode, 200, r.body);
+  assert.equal(r.json().cloud.groups[0].items[0].name, "customer-eks");
+  assert.ok(!r.body.includes("targetFacts") && !r.body.includes("vpc-0aaa1111bbbb2222c"));
+});
 
 test("결과 없음: 첫 GET 은 바로 unavailable + refreshing, 작업 1개. 같은 화면을 또 불러도 작업은 그대로 1개", { skip }, async () => {
   const id = await seed();

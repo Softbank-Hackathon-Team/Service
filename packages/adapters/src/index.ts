@@ -39,6 +39,7 @@ export { discoverSource, inventoryForAudit, discoverAws, discoverGcp, discoverOn
 export { AWS_NET_READ_ACTIONS, GCP_NET_READ_PERMISSIONS } from "./discover/net.js";
 export { AWS_COMMAND_ACTIONS, GCP_COMMAND_PERMISSIONS, actionsOfCommands } from "./common/observe-permissions.js";
 export { readAlbRequestRate, ALB_RATE_AWS_COMMANDS, type AlbRate, type AlbRateResult } from "./aws/alb-request-rate.js";
+export { AWS_TARGET_FACT_KEYS, awsTargetFactsOf, readAwsTargetFacts, type AwsTargetFactsRead } from "./aws/target-facts.js";
 export { AWS_DATA_READ_ACTIONS, GCP_DATA_READ_PERMISSIONS, AWS_DATA_READ_PENDING, GCP_DATA_READ_PENDING } from "./discover/data.js";
 export { readK8sNamespace, type K8sNamespaceRead, type K8sNamespaceOpts } from "./discover/k8s.js";
 // I2: k8s 원본 타입 + 종류 문자열

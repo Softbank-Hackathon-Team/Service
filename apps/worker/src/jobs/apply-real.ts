@@ -8,12 +8,12 @@ import { specV2ForPlan, terraformRuntimeOf } from "@svc/adapters";
 import { latestAcceptedSpecV2, loadLatestApproval, loadPlanById } from "@svc/core";
 import { DbWriterError, dbWriterApplies, loadWriterState, prepareSourceWriter, saveWriterState, writerVar, type ManagedProvider, type SecretPut } from "../db-writer.js";
 import { factsDrift, importedFor, mergedFactsOf, targetFactsOf } from "./plan-facts.js";
-import { ensureEnvLayer, readEnvLayer, type EnsureEnvLayerDeps } from "../env-layer.js";
+import { chooseEnvLayerSource, ensureEnvLayer, readEnvLayer, readInventoryFacts, type EnsureEnvLayerDeps } from "../env-layer.js";
 import { factsOfLayer, regionOf } from "@svc/adapters";
 import { TARGET_ACCOUNT_SQL } from "./target-account.js";
 import { gcpPlatformSa } from "../platform.js";
 import { appLinkFromEnv } from "@svc/dbproxy";
-import { tenantSlug } from "../gitops/bundle.js";
+import { awsHubEnabled, tenantSlug } from "../gitops/bundle.js";
 import { stableHash } from "./_step.js";
 import { envNumber, redactText } from "@svc/contracts";
 
@@ -27,8 +27,9 @@ import { envNumber, redactText } from "@svc/contracts";
 export interface RealApplyInput {
   migrationId: string; tenantId: string; envId: string;
   provider: Provider; accountId: string | null; spec: AppSpecV2; plan: PlanDoc;
-  /** 환경 층 DB 사실 (ready 줄, ensureEnvLayer·loadReapplyInput 이 채움). 있으면 TF_FACT_* 보다 먼저. 없으면 예전 그대로 */
-  envLayer?: { facts: Record<string, string>; varsHash: string } | null;
+  /** 도착 사실 (환경 층 DB ready 줄 또는 AWS 실자원 사실, ensureEnvLayer·loadReapplyInput 이 채움). 있으면 TF_FACT_* 보다 먼저. 없으면 예전 그대로.
+   *  varsHash 는 만든 환경 층에만 (create 계획 대조) */
+  envLayer?: { facts: Record<string, string>; varsHash?: string } | null;
 }
 export type RealApplyOutcome =
   | { ok: true; tfOutputs: TfOutputs; detail: Record<string, unknown> }
@@ -52,9 +53,11 @@ export interface RealApplyDeps {
   gcpPlatformSa?: (tenantId: string) => Promise<string | undefined>;
 }
 
-// Argo CD 허브가 고객 GKE 에 들어오는 신원. 회사 사실이라 계획 지문 밖에 두고 apply 때 더한다 (db_writer_json 과 같은 자리).
+// Argo CD 허브가 고객 클러스터에 들어오는 신원. 플랫폼 사실이라 계획 지문 밖에 두고 apply 때 더한다 (db_writer_json 과 같은 자리).
 // 비면 앱 구역에 허브 권한을 안 만든다. 그러면 허브 배포가 거절되어 Argo 상태로 드러난다
-async function hubPrincipalVar(i: RealApplyInput, env: NodeJS.ProcessEnv, d: RealApplyDeps): Promise<Record<string, string>> {
+//   GKE = 회사 전용 플랫폼 SA, EKS = 고정 그룹 platform:deploy (고객 svc-deploy 접근 항목) → 허브를 켰는지만 넘긴다
+async function hubPrincipalVar(i: RealApplyInput, env: NodeJS.ProcessEnv, d: RealApplyDeps): Promise<Record<string, string | boolean>> {
+  if (i.provider === "aws") return awsHubEnabled(env) ? { hub_deploy: true } : {};
   const project = env.GCP_PLATFORM_PROJECT?.trim();
   if (i.provider !== "gcp" || !project) return {};
   const sa = await (d.gcpPlatformSa ?? gcpPlatformSa)(i.tenantId);
@@ -200,7 +203,7 @@ export async function realApplyWithEnvLayer(i: RealApplyInput, d: RealApplyDeps 
     { ...d.envLayer, ...(d.env ? { env: d.env } : {}), ...(d.signal ? { signal: d.signal } : {}) });
   if (!el.ok) return { ok: false, failureCode: el.failureCode, detail: { planId: i.plan.planId, provider: i.provider, real: true, ...el.detail } };
   const out = await realApply({ ...i, ...(el.layer ? { envLayer: el.layer } : {}) }, d);
-  return el.source === "db" ? { ...out, detail: { ...out.detail, envLayer: el.detail } } : out;
+  return el.source === "db" || el.source === "inventory" ? { ...out, detail: { ...out.detail, envLayer: el.detail } } : out;
 }
 
 /** APP-22 (가) DECISION(team): Terraform 이 앱을 띄우는 도착의 앱 DB 주소 바꾸기 = db_writer_json active 만 바꿔 같은 입력으로 다시 apply.
@@ -232,11 +235,14 @@ export async function loadReapplyInput(tx: { query: (sql: string, args: unknown[
   // apply 와 같은 도착 계정 규칙 (A안: GCP = gcp_target_project). 예전엔 account_id 라 전용 프로젝트 환경에서 다시 apply 가 TF_PLAN_DRIFT 였다
   const e = await tx.query(`SELECT provider, ${TARGET_ACCOUNT_SQL} AS account_id FROM environments WHERE id=$1`, [m.targetEnvId]);
   if (!plan || !spec || !e.rows[0]) return null;
-  // 환경 층으로 만든 도착이면 다시 apply 도 같은 사실로 (없으면 TF_FACTS_MISSING). 여기서는 읽기만, 만들지 않는다
-  const layer = e.rows[0].provider === "gcp" ? await readEnvLayer(tx as never, m.targetEnvId) : null;
-  return { migrationId: m.id, tenantId: m.tenantId, envId: m.targetEnvId, provider: e.rows[0].provider as Provider,
+  // 환경 층으로 만든 도착·AWS 실자원 사실로 만든 도착이면 다시 apply 도 apply 와 같은 사실로 (없으면 TF_FACTS_MISSING). 여기서는 읽기만, 만들지 않는다
+  const provider = e.rows[0].provider as Provider;
+  const layer = provider === "gcp" ? await readEnvLayer(tx as never, m.targetEnvId) : null;
+  const src = chooseEnvLayerSource(provider, layer, process.env);
+  const inv = src === "inventory" ? await readInventoryFacts(tx as never, m.targetEnvId) : null;
+  return { migrationId: m.id, tenantId: m.tenantId, envId: m.targetEnvId, provider,
            accountId: (e.rows[0].account_id as string | null) ?? null, spec, plan,
-           ...(layer?.status === "ready" && layer.facts ? { envLayer: { facts: factsOfLayer(layer.facts), varsHash: layer.varsHash } } : {}) };
+           ...(src === "db" ? { envLayer: { facts: factsOfLayer(layer!.facts!), varsHash: layer!.varsHash } } : inv?.ok ? { envLayer: { facts: inv.facts } } : {}) };
 }
 
 async function setTargetUpstream(urls: string[], host: string, port: number, token: string | undefined, f: typeof fetch, timeoutMs: number) {

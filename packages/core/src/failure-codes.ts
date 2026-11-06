@@ -19,6 +19,7 @@ export const FAILURE_CODES = [
   "ENV_LAYER_APPLY_FAILED",      // 환경 층(gcp/env: VPC·GKE·ESO) apply 실패. 만들다 만 자원은 지우지 않는다 (environment_layers.status=failed)
   "ENV_LAYER_BUSY",              //   같은 환경의 환경 층을 다른 이전이 만드는 중 (status=creating)
   "ENV_LAYER_CRED_MISSING",      //   환경 층을 만들 빌린 GCP 실행 토큰이 없음 (워커 자기 자격으로는 만들지 않는다)
+  "TARGET_FACTS_UNAVAILABLE",    // AWS 도착: TF_FACT_* 가 없고, 실자원 읽기가 둔 도착 EKS 사실(VPC·서브넷)도 못 씀 (아직 안 읽음·클러스터 다름·사설 서브넷 부족 등). 아무것도 안 만듦
   "TF_BIN_MISSING",              // Z89: 진짜 Terraform 이 기본인데 실행 파일이 없음 (MOCK_IAC=1 이 아닌데 terraform 미설치)
   "CRED_RENEW_FAILED",           // 임시 자격 재발급 실패 (Z61)
   "TEMP_ROLE_DENIED",            // 실환경(진짜 발급기)에서 고객 임시 역할 발급 거부 (최소 권한 파일 없음 등) → apply failed. 워커 자기 자격으로 넘어가지 않는다

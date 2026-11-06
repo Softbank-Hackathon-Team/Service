@@ -68,6 +68,21 @@ test("허브 신원: gcp 만 회사 SA 를 hub_principal 로 넘기고, 계획 �
   assert.equal(await go("aws", { ...FACTS, GCP_PLATFORM_PROJECT: "platform-proj" }, SA), undefined, "aws 는 해당 없음");
 });
 
+test("허브 묶음: aws 는 ARGO_HUB_ROLE_ARN 이 있을 때만 hub_deploy, gcp 엔 안 넘긴다. 계획 지문은 그대로", async () => {
+  const HUB = "arn:aws:iam::725072160743:role/platform-argocd-hub";
+  const go = async (provider: "aws" | "gcp", env: Record<string, string>) => {
+    const f = fakeRunner();
+    const r = await realApply({ migrationId: MID_A, tenantId: TENANT, envId: ENV_ID, provider, accountId: provider === "gcp" ? "demo-project" : "111122223333",
+      spec, plan: plan(provider, MID_A) }, { env, runner: f.runner, gcpPlatformSa: async () => undefined });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    return f.seen[0]!.hub_deploy;
+  };
+  assert.equal(await go("aws", { ...FACTS, ARGO_HUB_ROLE_ARN: HUB }), true);
+  assert.equal(await go("aws", FACTS), undefined, "허브를 안 켠 플랫폼은 묶음을 만들지 않는다");
+  const GCP = { TF_FACT_NETWORK_ID: "net-1", TF_FACT_CLUSTER_NAME: "finals-gke", TF_FACT_CLUSTER_LOCATION: "asia-northeast3-a" };
+  assert.equal(await go("gcp", { ...GCP, ARGO_HUB_ROLE_ARN: HUB }), undefined, "gcp 는 hub_principal 길");
+});
+
 test("거부: 다른 이전의 계획서로 apply 하면 TF_PLAN_DRIFT, 배포 값도 이전 번호가 다르면 승인 지문과 다름", async () => {
   const f = fakeRunner();
   const r = await realApply({ migrationId: MID_B, tenantId: TENANT, envId: ENV_ID, provider: "aws", accountId: "111122223333",

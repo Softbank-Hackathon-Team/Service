@@ -1,6 +1,6 @@
 import { InventoryRefreshJob, type Provider } from "@svc/contracts";
 import { withTenant, scrubString } from "@svc/core";
-import { actionsOfCommands, envFor, gcpEnvFor, inventoryUnavailable, readInventory, type CloudInventory, type InventoryDeps } from "@svc/adapters";
+import { actionsOfCommands, envFor, gcpEnvFor, inventoryUnavailable, readAwsTargetFacts, readInventory, type AwsTargetFactsRead, type CloudInventory, type InventoryDeps } from "@svc/adapters";
 import { StsCliError, TempRoleDenied, type TempRoleBroker } from "@svc/security";
 import { realStsEnabled, tempRoles } from "../platform.js";
 
@@ -10,9 +10,9 @@ import { realStsEnabled, tempRoles } from "../platform.js";
 
 // DRAFT(ai): 15분 (STS 최소값, 연결 확인과 같음). 읽기가 끝나면 바로 돌려준다
 export const INVENTORY_TTL_SEC = 900;
-// readInventory 가 부르는 명령과 같은 목록. 표(observe-permissions)에 없는 명령이면 던진다
+// readInventory·readAwsTargetFacts 가 부르는 명령과 같은 목록. 표(observe-permissions)에 없는 명령이면 던진다
 const AWS_COMMANDS = ["sts get-caller-identity", "eks list-clusters", "rds describe-db-instances", "ec2 describe-vpcs",
-  "elbv2 describe-load-balancers", "ecr describe-repositories"] as const;
+  "elbv2 describe-load-balancers", "ecr describe-repositories", "eks describe-cluster", "ec2 describe-subnets"] as const;
 const GCP_COMMANDS = ["container clusters list", "sql instances list", "compute networks list", "compute forwarding-rules list",
   "artifacts repositories list"] as const;
 export const inventoryObserveActions = (provider: "aws" | "gcp"): string[] =>
@@ -22,12 +22,14 @@ export const MOCK_CREDENTIALS_REASON = "확인 불가: 가짜 자격 (MOCK_CREDE
 
 export interface InventoryRefreshDeps { roles?: Pick<TempRoleBroker, "issue" | "use" | "revoke">; realSts?: boolean; read?: Pick<InventoryDeps, "exec">; env?: NodeJS.ProcessEnv }
 
-interface EnvRow { provider: Provider; connection_status: string; account_id: string | null; region: string | null }
+interface EnvRow { provider: Provider; connection_status: string; account_id: string | null; region: string | null; cluster_name: string | null }
+// 저장 모양 = 실자원(화면용) + AWS 도착 사실(계획·apply 가 읽음, env-layer.ts readInventoryFacts). api 는 targetFacts 를 빼고 읽는다
+export type StoredInventory = CloudInventory & { targetFacts?: AwsTargetFactsRead };
 
 export async function handleInventoryRefresh(raw: unknown, deps: InventoryRefreshDeps = {}): Promise<"saved" | "skipped"> {
   const job = InventoryRefreshJob.parse(raw);   // 큐 내용은 믿지 않는다: 모양부터
   const env = await withTenant(job.tenantId, async (tx) => (await tx.query(
-    `SELECT provider, connection_status, account_id, region FROM environments WHERE id=$1`, [job.envId])).rows[0] as EnvRow | undefined);
+    `SELECT provider, connection_status, account_id, region, cluster_name FROM environments WHERE id=$1`, [job.envId])).rows[0] as EnvRow | undefined);
   if (!env) return "skipped";
   // Azure Mock·온프레 Agent 보고는 api 가 바로 읽는다. 옛 설정에서 넣은 작업이 와도 저장하지 않는다
   const penv = deps.env ?? process.env;
@@ -41,8 +43,11 @@ export async function handleInventoryRefresh(raw: unknown, deps: InventoryRefres
   return "saved";
 }
 
-async function readFor(job: InventoryRefreshJob, env: EnvRow, deps: InventoryRefreshDeps, penv: NodeJS.ProcessEnv): Promise<CloudInventory> {
+async function readFor(job: InventoryRefreshJob, env: EnvRow, deps: InventoryRefreshDeps, penv: NodeJS.ProcessEnv): Promise<StoredInventory> {
   const read = deps.read ?? {};
+  // AWS 는 같은 자격으로 연결 때 적은 도착 EKS 의 VPC·서브넷도 읽는다 (TF_FACT_* 없이 계획·apply 하려고)
+  const readAws = async (e: NodeJS.ProcessEnv): Promise<StoredInventory> => ({
+    ...(await readInventory("aws", { ...read, env: e })), targetFacts: await readAwsTargetFacts(env.cluster_name, { ...read, env: e }) });
   if (penv.INVENTORY_CLI === "0") return inventoryUnavailable(env.provider, "INVENTORY_CLI=0 (실자원 읽기 끔)");
   // 온프레 push 시연: 고객 역할이 없다. 워커의 kubectl context 로 읽는다
   if (env.provider !== "aws" && env.provider !== "gcp") return readInventory(env.provider, { ...read, env: penv });
@@ -59,7 +64,8 @@ async function readFor(job: InventoryRefreshJob, env: EnvRow, deps: InventoryRef
     if (cred.stub) {
       // #241 과 같은 규칙: 진짜 발급기 판에서 가짜 자격 = 연결 링크를 안 거친 환경. 프로세스 자격으로 읽으면 플랫폼 계정을 고객 자원처럼 보여 준다
       if (deps.realSts ?? realStsEnabled(penv)) return inventoryUnavailable(env.provider, MOCK_CREDENTIALS_REASON);
-      return await readInventory(env.provider, { ...read, env: penv });   // 로컬·시험(REAL_STS=0): 지금처럼 프로세스 자격
+      // 로컬·시험(REAL_STS=0): 지금처럼 프로세스 자격
+      return env.provider === "aws" ? await readAws(penv) : await readInventory(env.provider, { ...read, env: penv });
     }
     const k = roles.use(ref, job.tenantId);
     if (env.provider === "gcp") {
@@ -73,7 +79,7 @@ async function readFor(job: InventoryRefreshJob, env: EnvRow, deps: InventoryRef
     // DRAFT(ai): 환경에 리전이 없으면 서울 (import.ts borrowObserve 와 같음)
     const e = envFor({ AWS_ACCESS_KEY_ID: k.accessKeyId, AWS_SECRET_ACCESS_KEY: k.secretAccessKey, AWS_SESSION_TOKEN: k.sessionToken,
       AWS_REGION: env.region || "ap-northeast-2" }, penv);
-    return await readInventory("aws", { ...read, env: e });
+    return await readAws(e);
   } catch (e) {
     if (e instanceof TempRoleDenied) return inventoryUnavailable(env.provider, `확인 불가: 관찰 역할을 못 빌림 (${e.code})`);
     if (e instanceof StsCliError && e.awsCode) return inventoryUnavailable(env.provider, `확인 불가: 관찰 역할을 못 빌림 (${e.awsCode})`);

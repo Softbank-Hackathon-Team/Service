@@ -86,6 +86,8 @@ const RULES: Rule[] = [
   { match: /^ENV_LAYER_APPLY_FAILED$/, kind: "step", label: t('환경 층 만들기 실패'), title: t('도착 환경 층을\n만들지 못했습니다'), hint: t('도착 VPC·클러스터·비밀 연동(환경 층)을 만들다 실패했습니다. 만들다 만 자원은 지우지 않고 남겨 둡니다.') },
   { match: /^ENV_LAYER_BUSY$/, kind: "step", label: t('환경 층 만드는 중'), title: t('다른 마이그레이션이\n환경 층을 만들고 있습니다'), hint: t('같은 도착 환경의 환경 층을 다른 마이그레이션이 만드는 중입니다. 끝난 뒤 다시 시도해 주세요.') },
   { match: /^ENV_LAYER_CRED_MISSING$/, kind: "step", label: t('환경 층 권한 없음'), title: t('환경 층을 만들\n권한이 없습니다'), hint: t('도착 GCP 실행 역할을 빌리지 못해 환경 층을 만들지 않았습니다. 플랫폼은 자기 자격으로 고객 자원을 만들지 않습니다.') },
+  // 워커 env-layer.ts: AWS 도착 EKS 의 VPC·서브넷을 실자원 읽기에서 못 얻음 (아무것도 안 만듦)
+  { match: /^TARGET_FACTS_UNAVAILABLE$/, kind: "step", label: t('도착 클러스터 정보 없음'), title: t('도착 클러스터의\n네트워크를 모릅니다'), hint: t('도착 EKS 의 VPC·서브넷을 읽어 둔 값이 없거나 쓸 수 없어 자원을 만들지 않았습니다. 도착 환경 화면을 열어 실자원을 다시 읽은 뒤 다시 계획해 주세요.') },
   { match: /^(TF|APPLY|AZURE_MOCK)_/, kind: "step", label: t('자원 생성 실패'), title: t('도착 자원을\n만들지 못했습니다'), hint: t('도착 클러스터와 DB를 만드는 중에 멈췄습니다. 일부만 생겼을 수 있습니다.') },
   { match: /^CRED_RENEW_FAILED$/, kind: "step", label: t('임시 권한 재발급 실패'), title: t('임시 권한을\n다시 받지 못했습니다'), hint: t('이 단계에 필요한 임시 역할을 다시 빌리지 못해 멈췄습니다.') },
   // 워커 _roles.ts: 실환경에서 고객 임시 역할 발급이 거부됨 (최소 권한 파일 없음 등 플랫폼 설정) → apply failed. 워커 자기 자격으로 넘어가지 않는다

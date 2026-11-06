@@ -40,6 +40,8 @@ const httpsUrl: Check = (v) => {
 const registryPrefix: Check = (v) => (/^[a-z0-9.-]+(:\d{1,5})?(\/[a-z0-9._-]+)+$/.test(v.trim()) ? null : "<호스트>/<접두어> 모양이 아님");
 // 쿠버네티스 RuntimeClass 이름 (DNS 하위 도메인 모양)
 const runtimeClassName: Check = (v) => (/^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$/.test(v.trim()) ? null : "RuntimeClass 이름 모양이 아님 (소문자·숫자·-·.)");
+// 플랫폼 Argo CD 허브 역할 (infra/modules/aws/platform 출력 argocd_hub_role_arn). 연결 템플릿 ArgoHubRoleArn 패턴과 같게 역할만
+const hubRoleArn: Check = (v) => (/^arn:aws:iam::\d{12}:role\/.+$/.test(v.trim()) ? null : "IAM 역할 ARN 모양이 아님");
 const switchOn = (v: string | undefined) => v?.trim() === "1";
 
 // 이름 → 검사. required 가 아니면 비어 있어도 된다 (비면 코드 기본값)
@@ -71,9 +73,11 @@ export const CONFIG_RULES = {
     CONNECT_TEMPLATE_URL: { check: httpsUrl },
     // DRAFT(ai) PRINCIPALUSER: 플랫폼 주체는 IAM 역할 또는 IAM 사용자 (데모 계정 finals 는 사용자 키). :root·sts assumed-role 은 거부
     PLATFORM_PRINCIPAL_ARN: { check: (v) => (/^arn:aws:iam::\d{12}:(role|user)\/[\w+=,.@\/-]+$/.test(v.trim()) ? null : "IAM 역할·사용자 ARN 모양이 아님") },
+    ARGO_HUB_ROLE_ARN: { check: hubRoleArn },   // 있으면 연결 링크가 템플릿에 svc-deploy 를 만들게 한다
   },
   worker: {
     ...COMMON,
+    ARGO_HUB_ROLE_ARN: { check: hubRoleArn },   // 있으면 EKS 도착에 허브 RoleBinding·Argo cluster Secret 을 만든다
     WORKER_METRICS_PORT: { check: port },
     STEP_ROLE_TTL_SEC: { check: num({ min: 1 }) },
     CRED_RENEW_SEC: { check: num({ min: 0 }) },

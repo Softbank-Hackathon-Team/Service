@@ -12,7 +12,7 @@ import { ONE } from "./demo-one.js";
 import { buildPlanDoc } from "../src/jobs/plan.js";
 import { stubPrecheck } from "../src/jobs/precheck.js";
 import { mockArgoWatcher } from "../src/gitops/argo-watch.js";
-import { bundlePath, bundleRefOf, deployToGitops, GitopsError, GitopsRepo, GKE_SECRET_FILE, renderForRehearsal, type DeployInput } from "../src/gitops/index.js";
+import { bundlePath, bundleRefOf, deployToGitops, GitopsError, GitopsRepo, clusterSecretFile, renderForRehearsal, type DeployInput } from "../src/gitops/index.js";
 
 const FIXTURE = process.env.GITOPS_FIXTURE_DIR;
 const hasHelm = (() => { try { execFileSync("helm", ["version", "--short"], { stdio: "ignore" }); return true; } catch { return false; } })();
@@ -61,7 +61,7 @@ test("GKE 접속 정보: 배포 때 cluster Secret 을 같이 커밋하고, 다�
   try {
     const gke = { ...input, tfOutputs: { ...input.tfOutputs, cluster_endpoint: "34.0.0.1", cluster_ca_certificate: "Y2E=" } };
     const b = bundleRefOf(gke);
-    const file = join(tmp, "tenants", b.tenant, "argocd", GKE_SECRET_FILE);
+    const file = join(tmp, "tenants", b.tenant, "argocd", clusterSecretFile("gcp-gke"));
     const plain = await renderForRehearsal(repo, gke);
     const out = await deployToGitops(repo, gke, mockArgoWatcher, { expectBundleSha: plain.rendered.bundleSha256 });
     assert.equal(out.result.bundleHash, plain.rendered.bundleSha256, "Secret 은 묶음 지문 밖");
@@ -85,8 +85,31 @@ test("GKE 출력이 없으면(흉내 길) cluster Secret 을 만들지 않는다
   const { tmp, repo } = workRepo();
   try {
     await deployToGitops(repo, input, mockArgoWatcher);
-    assert.equal(existsSync(join(tmp, "tenants", bundleRefOf(input).tenant, "argocd", GKE_SECRET_FILE)), false);
+    assert.equal(existsSync(join(tmp, "tenants", bundleRefOf(input).tenant, "argocd", clusterSecretFile("gcp-gke"))), false);
   } finally { rmSync(tmp, { recursive: true, force: true }); }
+});
+
+test("EKS 접속 정보: 허브를 켜면 배포 커밋에 svc-deploy cluster Secret 이 같이 들어가고 validate 를 통과한다", { skip }, async () => {
+  const { tmp, sh, repo } = workRepo();
+  const awsPlan = buildPlanDoc({ planId: "7f000000-0000-4000-8000-000000000003", migrationId: "4a8c0000-0000-4000-8000-000000000003",
+    spec: ONE, target: { envId: ENV_ID, provider: "aws", region: "default" }, precheck: stubPrecheck(), now: new Date() });
+  const aws: DeployInput = { ...input, plan: awsPlan, target: { envId: ENV_ID, provider: "aws", region: "default", accountId: "111122223333" },
+    tfOutputs: { ...input.tfOutputs, cluster_name: "customer-eks", cluster_endpoint: "https://ABC.gr7.ap-northeast-2.eks.amazonaws.com", cluster_ca_certificate: "Y2E=" } };
+  const prev = process.env.ARGO_HUB_ROLE_ARN;
+  process.env.ARGO_HUB_ROLE_ARN = "arn:aws:iam::725072160743:role/platform-argocd-hub";
+  try {
+    const out = await deployToGitops(repo, aws, mockArgoWatcher);
+    const b = bundleRefOf(aws);
+    const rel = `tenants/${b.tenant}/argocd/${clusterSecretFile("aws-eks")}`;
+    assert.ok(sh("show", "--name-only", "--format=", out.commit).split("\n").includes(rel), "Secret 이 배포 커밋에 있다");
+    const s = JSON.parse(readFileSync(join(tmp, rel), "utf8"));
+    assert.equal(s.stringData.name, `${b.tenant}-aws-eks`);
+    assert.equal(s.stringData.namespaces, `app-${b.app}`);
+    assert.deepEqual(JSON.parse(s.stringData.config).awsAuthConfig, { clusterName: "customer-eks", roleARN: "arn:aws:iam::111122223333:role/svc-deploy" });
+  } finally {
+    if (prev === undefined) delete process.env.ARGO_HUB_ROLE_ARN; else process.env.ARGO_HUB_ROLE_ARN = prev;
+    rmSync(tmp, { recursive: true, force: true });
+  }
 });
 
 test("지문이 다르면 커밋하지 않고 REHEARSAL_BUNDLE_MISMATCH, 작업 복사본은 되돌린다", { skip }, async () => {
