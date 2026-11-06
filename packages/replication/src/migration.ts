@@ -5,7 +5,7 @@ import { DEFAULT_GATE, type GateOpts, type GateResult, judgeCutoverReady } from 
 import { copyStatus, type CopyStatus, sampleLagOn, slotLag, waitInitialCopyOn } from "./lag.js";
 import { MARKER_SCHEMA, namesFor, type Names } from "./names.js";
 import { ensureReplicationAttr, precheck, type PrecheckResult } from "./precheck.js";
-import { copySchema, type SchemaCopyResult } from "./schema.js";
+import { copySchema, type SchemaCopyResult, handOwnershipToApp } from "./schema.js";
 import { dropSlotIfIdle, dropSubscription, startForwardOn, subscriptionExists } from "./replicate.js";
 import { ident, lit } from "./sql.js";
 import { dropReplUser, replUserOf } from "./repluser.js";
@@ -276,6 +276,9 @@ export class Migration {
         }
         // ADR-031 R2: 역방향 적용용으로 관리자에게 직접 준 쓰기 권한을 되돌린다 (_repl 을 지우기 전에. 표·적은 줄이 없으면 아무것도 안 함)
         if (await revokeApplyGrants(c)) removed.push(`${ep.label}:apply_grants`);
+        // ADR-029 후속: 스키마 복사로 관리자(svc_migrate)가 주인이 된 앱 객체를 앱 계정에 넘긴다 → CNPG 가 svc_migrate 를 지울 수 있다
+        const owned = await handOwnershipToApp(c, ep);
+        if (owned) removed.push(`${ep.label}:ownership_to_app:${owned}`);
         // PF-E30 (hdd-09): 울타리 저장본(_repl.fence_saved)이 있으면 남긴다 = "이 DB 는 우리가 쓰기를 걷었다"는 흔적.
         //   예전엔 스키마째 지워, 컷오버 마친 옛 출발로 다시 이전하면 흔적이 없어 sync 가 못 걷고 출발 앱이 계속 permission denied 였다
         await c.query(`DO $pfe30$ DECLARE n bigint := 0; BEGIN

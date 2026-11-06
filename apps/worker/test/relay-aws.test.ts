@@ -572,3 +572,17 @@ test("relayTags·ownedBy: 두 태그가 다 있어야 우리 것", () => {
   assert.ok(!ownedBy([{ Key: "svc:migration", Value: M }], M));
   assert.ok(!ownedBy([{ Key: "managed-by", Value: "platform" }], M));
 });
+
+test("보안 12번: aws-onprem 출발 줄은 워커 → RDS 를 verify-full (RDS 서울 CA + 진짜 RDS 이름). 지역 모르면 예전처럼 require", () => {
+  const base = { tenantId: T, migrationId: M, sourceEnvId: "783df2ef-8dbf-4a20-904d-bb02aeb96332", rds: planInput().rds, db: "shop", appUser: "shop_app", publicIp: "203.0.113.50", privateIp: "10.0.1.20", knownHosts: "203.0.113.50 ssh-ed25519 AAAA" };
+  const [s] = relayEndpointRows({ ...base, existing: [] });
+  assert.equal(s.sslmode, "verify-full");
+  assert.equal(s.tlsServername, RDS);
+  assert.match(s.caPem ?? "", /^-----BEGIN CERTIFICATE-----/);
+  assert.equal((s.caPem ?? "").match(/BEGIN CERTIFICATE/g)?.length, 3);
+  // 운영자가 바꾼 값(같은 중계기로 다시 쓴 줄)은 그대로 둔다
+  const [again] = relayEndpointRows({ ...base, existing: [{ ...s, sslmode: "require", caPem: null }] });
+  assert.equal(again.sslmode, "require");
+  const [other] = relayEndpointRows({ ...base, rds: { ...base.rds, endpoint: "db.x.us-east-1.rds.amazonaws.com" }, existing: [] });
+  assert.deepEqual([other.sslmode, other.caPem], ["require", null]);
+});
