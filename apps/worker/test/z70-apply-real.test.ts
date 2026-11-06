@@ -170,6 +170,35 @@ test("Z77: gcp 는 클러스터 없이 안 된다 (TF_FACT_CLUSTER_NAME=\"\" →
   assert.equal(f.seen.length, 0);
 });
 
+test("AWS→GCP 중계기: 작업 폴더 repl-network.json 이 있으면 postgres_json 에 공개·허용 주소·앱 로그인 SQL 을 덧씌운다 (지문 밖, 감사 detail 에 남김)", async () => {
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const root = mkdtempSync(join(tmpdir(), "repl-net-"));
+  const gplan = buildPlanDoc({ ...planInput, spec, target: { envId: ENV_ID, provider: "gcp", region: "default" } }, {});
+  const gin = { ...input, provider: "gcp" as const, accountId: "finals-demo", plan: gplan };
+  const env = { TF_WORK_DIR: root, TF_FACT_CLUSTER_NAME: "c", TF_FACT_NETWORK_ID: "n", TF_FACT_CLUSTER_LOCATION: "l" };
+  const pg = (vars: Record<string, unknown>) => JSON.parse(String(vars.postgres_json)) as Record<string, unknown>[];
+  const before = fakeRunner();
+  const r0 = await realApply(gin, { env, runner: before.runner });
+  assert.equal(r0.ok, true, JSON.stringify(r0.detail));
+  assert.ok(pg(before.seen[0]!.vars).length >= 1 && pg(before.seen[0]!.vars).every((p) => p.app_login_sql === undefined), "파일 없으면 그대로");
+  mkdirSync(join(root, "t-11111111", MID), { recursive: true });
+  writeFileSync(join(root, "t-11111111", MID, "repl-network.json"), JSON.stringify({ peerCidrs: ["198.51.100.7/32", "203.0.113.50/32"], appLoginSql: true }));
+  const f = fakeRunner();
+  const r = await realApply(gin, { env, runner: f.runner });
+  assert.equal(r.ok, true);
+  for (const p of pg(f.seen[0]!.vars)) {
+    assert.equal(p.public, true);
+    assert.equal(p.app_login_sql, true);
+    assert.ok((JSON.parse(String(p.peer_cidrs_json)) as string[]).includes("203.0.113.50/32"));
+  }
+  assert.deepEqual(r.detail.replicationNetwork, { public: true, peerCidrs: ["198.51.100.7/32", "203.0.113.50/32"], appLoginSql: true });
+  writeFileSync(join(root, "t-11111111", MID, "repl-network.json"), JSON.stringify({ peerCidrs: ["0.0.0.0/0"], appLoginSql: true }));
+  const bad = await realApply(gin, { env, runner: fakeRunner().runner });
+  assert.equal((bad as { failureCode: string }).failureCode, "DB_NETWORK_INVALID", "세상 전체는 허용 주소로 안 받는다");
+});
+
 // Z89-03: imported.json 이 있으면 terraform(실행기)을 안 부르고, 같은 폴더에 outputs.json 을 남긴다 (복제 {tf:키} 가 읽는다)
 test("Z89-03: imported 길 — 실행기 안 부름, outputs.json = imported tfOutputs, db-secret.json 없으면 dbSecret=false", async () => {
   const { mkdtempSync, mkdirSync, writeFileSync, readFileSync, statSync } = await import("node:fs");

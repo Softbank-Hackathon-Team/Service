@@ -122,6 +122,9 @@
     },
     "deletion_protection": {
       "type": "boolean"
+    },
+    "app_login_sql": {
+      "type": "boolean"
     }
   },
   "required": [

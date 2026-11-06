@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cidrProblem, createRealTerraformRunner, DbNetworkError, dbNetworkFromEnv, DEMO_SPEC, targetBuilderFor, withDbNetworkV2,
+import { cidrProblem, createRealTerraformRunner, DbNetworkError, dbNetworkFromEnv, DEMO_SPEC, targetBuilderFor, withDbNetworkV2, withReplicationNetworkV2,
   type Exec } from "../src/index.js";
 
 const tfOf = (p: "aws" | "gcp") => targetBuilderFor(p).toTerraformV2(DEMO_SPEC, { envId: "33333333-3333-4333-8333-333333333333", provider: p, region: "default",
@@ -46,6 +46,17 @@ test("넓은 범위·빈 허용 목록·잘못된 조합은 DB_NETWORK_INVALID",
   }
   assert.equal(cidrProblem(MAC), null);
   assert.match(cidrProblem("256.1.1.1/32")!, /255/);
+});
+
+test("중계기 이전 덧씌우기: 공개 + 허용 주소 합집합(출발 posture 값 유지) + app_login_sql, 길 없으면 같은 객체, 넓은 범위는 거부", () => {
+  const tf = { vars: { postgres_json: JSON.stringify([{ id: "db", public: false, peer_cidrs_json: JSON.stringify(["10.9.0.0/24"]) }]), app_name: "shop" } };
+  assert.equal(withReplicationNetworkV2(tf, null), tf);
+  assert.equal(withReplicationNetworkV2(tf, { peerCidrs: [], appLoginSql: true }), tf);
+  const out = withReplicationNetworkV2(tf, { peerCidrs: ["203.0.113.50/32", "198.51.100.7/32"], appLoginSql: true });
+  assert.deepEqual(JSON.parse(String(out.vars.postgres_json)), [{ id: "db", public: true, app_login_sql: true,
+    peer_cidrs_json: JSON.stringify(["10.9.0.0/24", "198.51.100.7/32", "203.0.113.50/32"]) }]);
+  assert.equal(out.vars.app_name, "shop");
+  assert.throws(() => withReplicationNetworkV2(tf, { peerCidrs: ["0.0.0.0/0"], appLoginSql: true }), DbNetworkError);
 });
 
 test("Cloud SQL 서버 CA 출력은 db-ca.pem 파일로 빼고 경로만 남긴다 (감사 기록에 PEM 안 들어감)", async () => {

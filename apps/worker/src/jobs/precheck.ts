@@ -150,11 +150,11 @@ export function appLinkPrecheck(env: NodeJS.ProcessEnv, o: { terraformRuntime: b
  *  REPL_SOURCE_URL 이 없으면 아무것도 안 낸다(복제 없는 STUB 길). 못 붙으면 warn (TCP 점검이 이유를 따로 낸다) */
 export async function replSourcePrecheck(env: NodeJS.ProcessEnv = process.env,
   o: { required?: boolean; relayDeferred?: boolean } = {}): Promise<PrecheckItem[]> {
-  // DRAFT(ai): AWS→온프레 중계기 이전은 출발 끝점 줄을 apply 의 중계기 단계가 만든다 (relay/relay-step.ts).
+  // DRAFT(ai): AWS 출발 중계기 이전(→온프레·→GCP, relay-step RELAY_ROUTES)은 출발 끝점 줄을 apply 의 중계기 단계가 만든다 (relay/relay-step.ts).
   //   사전 점검 때는 출발 주소가 아직 없는 것이 정상이라 막지 않고 warn 으로 남긴다. 같은 규칙(precheckSource)은 sync 첫 점검이 그 줄로 다시 본다.
   //   대가: 출발 DB 설정이 틀리면 중계기를 만든 뒤 sync 에서 SYNC_FAILED 로 멈춘다 (트래픽은 아직 출발에 있다)
   if (!env.REPL_SOURCE_URL && o.required && o.relayDeferred) return [PrecheckItem.parse({ id: "PC-REPL-RELAY", level: "warn",
-    message: "출발 DB 논리 복제 점검을 미룸: AWS→온프레 이전은 자원 생성(apply)이 출발 계정에 중계기를 만들고 복제 끝점을 그때 채운다",
+    message: "출발 DB 논리 복제 점검을 미룸: AWS 출발 중계기 이전(→온프레·→GCP)은 자원 생성(apply)이 출발 계정에 중계기를 만들고 복제 끝점을 그때 채운다",
     fix: "sync 첫 점검이 같은 규칙(rds.logical_replication·슬롯·권한·기본키)을 중계기 경로로 본다. 미리 보려면 출발 RDS 파라미터 그룹의 rds.logical_replication=1 을 확인" })];
   if (!env.REPL_SOURCE_URL) return o.required ? [PrecheckItem.parse({ id: "PC-REPL-CONN", level: "block",
     message: "FAIL 명세에 postgres 가 있는데 출발 DB 주소(REPL_SOURCE_URL)가 없어 논리 복제 준비를 못 봄 — 이대로면 sync 에서 멈춘다",

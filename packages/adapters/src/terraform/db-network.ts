@@ -70,3 +70,19 @@ export function withDbNetworkV2<T extends { vars: TfVars }>(tf: T, provider: Pro
   }));
   return { ...tf, vars: { ...tf.vars, postgres_json: JSON.stringify(items) } };
 }
+
+/** 중계기 이전(aws-gcp)의 도착 DB 복제 길을 postgres_json 각 항목에 덧씌운다 (apply 때, 계획 지문 밖).
+ *  공개 주소를 켜고 허용 주소에 플랫폼 나가는 대역·중계 공개 IP 를 더한다 (출발 posture·DB_PEER_CIDRS 값은 그대로 둔다).
+ *  appLoginSql 이면 앱 계정을 Cloud SQL API 사용자로 만들지 않는다 (워커가 일반 역할로 만든다). 길이 없으면 같은 객체 그대로 */
+export function withReplicationNetworkV2<T extends { vars: TfVars }>(tf: T, n: { peerCidrs: readonly string[]; appLoginSql: boolean } | null): T {
+  if (!n || !n.peerCidrs.length || typeof tf.vars.postgres_json !== "string") return tf;
+  const bad = n.peerCidrs.map((c) => cidrProblem(c)).filter((x): x is string => !!x);
+  if (bad.length) throw new DbNetworkError(`복제 길 허용 주소: ${bad.join("; ")}`);
+  const items = (JSON.parse(tf.vars.postgres_json) as Array<Record<string, unknown>>).map((p) => ({
+    ...p,
+    public: true,
+    peer_cidrs_json: JSON.stringify([...new Set([...(JSON.parse(String(p.peer_cidrs_json ?? "[]")) as string[]), ...n.peerCidrs])].sort()),
+    ...(n.appLoginSql ? { app_login_sql: true } : {}),
+  }));
+  return { ...tf, vars: { ...tf.vars, postgres_json: JSON.stringify(items) } };
+}

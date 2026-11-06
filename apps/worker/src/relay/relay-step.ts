@@ -2,10 +2,13 @@
 //   정리(cleanup·롤백 걷기·repl-cleanup)가 복제 걷기와 gitops 정리 커밋(터널 걷음) 뒤에 중계기를 지운다.
 // 이 파일은 "언제·누구 자격으로·무엇을 줄에 쓰나"만 정한다. 클라우드 호출은 aws-relay.ts
 // 자격: 출발 환경 실행 역할(svc-operate)을 빌리고, 세션 정책은 중계기 동작만 (security STEP_ROLES.relay, policy relay)
-// 건너뜀(아무것도 안 함): 도착이 온프레 pull 이 아님 / 출발이 AWS 아님 / 명세에 postgres 없음 / 출발 자격이 흉내(시드 환경·REAL_STS=0) / RELAY_AUTO=0
+// 건너뜀(아무것도 안 함): (출발, 도착) 짝이 RELAY_ROUTES 에 없음 / 온프레 도착이 pull 이 아님 / 명세에 postgres 없음 / 출발 자격이 흉내(시드 환경·REAL_STS=0) / RELAY_AUTO=0
 //   → 로컬 데모·시드 환경은 예전 그대로 (끝점 줄은 사람이 tools/onprem-relay.sh 로 넣는다)
-import { PASSWORD_REF_RE, type AppSpecV2, type ReplicationEndpoint } from "@svc/contracts";
+// GCP 도착(aws-gcp): apply 가 terraform 앞에서 도착 DB 공개 길(repl-network.json)을 정하고, terraform 뒤에 Cloud SQL 주소로 중계기를 만든다.
+//   중계 공개 IP 가 새로 생겼으면 apply 가 terraform 을 한 번 더 돌려 Cloud SQL 허용 주소에 넣는다. 그다음 끝점 두 줄·도착 앱 로그인 역할 (apply.ts)
+import { PASSWORD_REF_RE, type AppSpecV2, type ReplicationEndpoint, type TfOutputs } from "@svc/contracts";
 import { envFor, dbIdentityFor, specV2ForPlan } from "@svc/adapters";
+import { endpointFromRecord, ensureLoginRole, readTfFacts, withClient } from "@svc/replication";
 import { latestAcceptedSpecV2, replicationEndpointsFor, upsertReplicationEndpoint, withTenant, type Tx } from "@svc/core";
 import { deriveSshHostKey, deriveSshKeypair, knownHostsLine, MIN_MASTER_KEY_LENGTH } from "../gitops/migration-secrets.js";
 import { withStepRoles, type StepRoles } from "../jobs/_roles.js";
@@ -14,8 +17,10 @@ import { realStsEnabled } from "../platform.js";
 import { latestOnpremEgressIp } from "./onprem-egress.js";
 import {
   buildRelayPlan, discoverRelayNetwork, discoverRelaySource, isIpv4, platformEgressCidrs, provisionRelay, RelayError, resolveRelayAmi, teardownRelay,
-  PG_PORT, RELAY_SOURCE_PORT, type RelayAwsDeps, type RelayResources, type RelaySource,
+  PG_PORT, RELAY_SOURCE_PORT, type CloudSqlPeer, type RelayAwsDeps, type RelayKind, type RelayResources, type RelaySource,
 } from "./aws-relay.js";
+import { loadReplNetwork, saveReplNetwork, withPeers } from "../repl-network.js";
+import { tenantSlug } from "../gitops/bundle.js";
 
 // 차트 이전 역할 (adapters target/onprem.ts replication.role, gitops replication-delivery 기본값과 같은 글자)
 export const RELAY_TARGET_USER = "svc_migrate";
@@ -76,7 +81,7 @@ const pick = (x: { db: string; user: string }) => ({ db: x.db, user: x.user });
 
 /** 중계기 종류 = 출발 계정의 중계기가 무엇을 나르나.
  *  aws-onprem: 출발 AWS 에 SSH 터널(온프레 Agent) + 워커 출발 입구. aws-gcp: 출발 AWS 에 워커·Cloud SQL 출발 입구 + Cloud SQL 로 가는 역방향 입구 */
-export type RelayKind = "aws-onprem" | "aws-gcp";
+export type { RelayKind };
 // (출발, 도착) → 중계기 종류. 표에 없는 짝은 중계기 없음 (사람이 tools/onprem-relay.sh·DB_PUBLIC 으로 길을 낸다)
 export const RELAY_ROUTES: Readonly<Record<string, RelayKind>> = {
   "aws->onprem": "aws-onprem",
@@ -139,12 +144,31 @@ export function relayEndpointRows(i: {
   publicIp: string; privateIp: string; knownHosts: string; existing: readonly ReplicationEndpoint[];
 }): [ReplicationEndpoint, ReplicationEndpoint] {
   const id8 = i.migrationId.replace(/-/g, "").slice(0, 8);
-  const oldS = i.existing.find((e) => e.side === "source"), oldT = i.existing.find((e) => e.side === "target");
+  const oldT = i.existing.find((e) => e.side === "target");
   const sameRelay = oldT?.relayHost === i.publicIp;
+  const source = relaySourceRow(i);
+  const target: ReplicationEndpoint = {
+    tenantId: i.tenantId, migrationId: i.migrationId, side: "target", label: `onprem-cnpg-${id8}`, provider: "cnpg",
+    // 워커 → 중계 공개 IP:5432 (역방향 터널) → 온프레 CNPG. RDS(롤백 창 역복제)는 중계 사설 IP:5432 로 붙는다
+    host: i.publicIp, port: PG_PORT, dbname: i.db, username: RELAY_TARGET_USER, passwordRef: RELAY_TARGET_PASSWORD_REF,
+    peerHost: i.privateIp, peerPort: PG_PORT,
+    appRole: i.appUser, fenceRoles: oldT?.fenceRoles ?? [], schemaName: oldT?.schemaName ?? null,
+    sslmode: sameRelay ? oldT?.sslmode ?? "require" : "require",
+    tlsServername: sameRelay ? oldT?.tlsServername ?? null : null, caPem: sameRelay ? oldT?.caPem ?? null : null,
+    relayHost: i.publicIp, relayKnownHosts: i.knownHosts, relayPort: 22,
+  };
+  return [source, target];
+}
+
+/** 출발 줄 (순수, 온프레·GCP 중계기 공통): 워커와 상대 DB 가 중계 공개 IP:15432(출발 입구)로 RDS 에 붙는다 */
+function relaySourceRow(i: { tenantId: string; migrationId: string; sourceEnvId: string; rds: RelaySource; db: string; appUser: string;
+  publicIp: string; existing: readonly ReplicationEndpoint[] }): ReplicationEndpoint {
+  const id8 = i.migrationId.replace(/-/g, "").slice(0, 8);
+  const oldS = i.existing.find((e) => e.side === "source");
   // DRAFT(ai): 워커는 출발 RDS 에 직접 못 닿는다 (비공개 RDS·다른 VPC, 2026-11-06 실측 TIMEOUT) → 중계기 출발 입구(공개 IP:15432, TCP 그대로)로 붙는다.
   //   진짜 RDS 이름은 tls_servername 에 둔다: 서버 인증서 이름이고, 온프레 정방향 터널 목적지(replication-delivery forwardTarget)도 이 이름이다.
   //   (relay_* 칸은 DB 검사 replication_endpoints_relay_side 가 도착 줄에만 허용해서 출발 줄에는 못 쓴다)
-  const source: ReplicationEndpoint = {
+  return {
     tenantId: i.tenantId, migrationId: i.migrationId, side: "source", label: `rds-src-${id8}`, provider: "rds",
     host: i.publicIp, port: RELAY_SOURCE_PORT, dbname: i.db,
     // 마스터 사용자 (RDS 에서 복제 슬롯·발행을 만들 권한). 못 읽었으면 앱 계정
@@ -160,17 +184,6 @@ export function relayEndpointRows(i: {
     sslmode: oldS?.sslmode ?? "require", tlsServername: i.rds.endpoint, caPem: oldS?.caPem ?? null,
     relayHost: null, relayKnownHosts: null, relayPort: 22,
   };
-  const target: ReplicationEndpoint = {
-    tenantId: i.tenantId, migrationId: i.migrationId, side: "target", label: `onprem-cnpg-${id8}`, provider: "cnpg",
-    // 워커 → 중계 공개 IP:5432 (역방향 터널) → 온프레 CNPG. RDS(롤백 창 역복제)는 중계 사설 IP:5432 로 붙는다
-    host: i.publicIp, port: PG_PORT, dbname: i.db, username: RELAY_TARGET_USER, passwordRef: RELAY_TARGET_PASSWORD_REF,
-    peerHost: i.privateIp, peerPort: PG_PORT,
-    appRole: i.appUser, fenceRoles: oldT?.fenceRoles ?? [], schemaName: oldT?.schemaName ?? null,
-    sslmode: sameRelay ? oldT?.sslmode ?? "require" : "require",
-    tlsServername: sameRelay ? oldT?.tlsServername ?? null : null, caPem: sameRelay ? oldT?.caPem ?? null : null,
-    relayHost: i.publicIp, relayKnownHosts: i.knownHosts, relayPort: 22,
-  };
-  return [source, target];
 }
 
 // ── 단계 ──────────────────────────────────────────────────────────────────────────
@@ -213,7 +226,7 @@ export async function provisionRelayStep(j: Job, m: MigrationRow, deps: RelaySte
       rds = await discoverRelaySource(d, g.identifier);
       const [net, ami] = await Promise.all([discoverRelayNetwork(d, rds.vpcId), resolveRelayAmi(d)]);
       subnetId = net.subnetId;
-      const plan = buildRelayPlan({ migrationId: j.migrationId, rds, network: net, ami, platformEgressCidrs: g.platformCidrs, onpremEgressIp: g.egressIp,
+      const plan = buildRelayPlan({ kind: "aws-onprem", migrationId: j.migrationId, rds, network: net, ami, platformEgressCidrs: g.platformCidrs, onpremEgressIp: g.egressIp,
         tunnelPublicKey: deriveSshKeypair(g.masterKey, j.tenantId, j.migrationId).publicKeyLine,
         hostKey: deriveSshHostKey(g.masterKey, j.tenantId, j.migrationId) });
       res = await provisionRelay(d, plan);
@@ -254,4 +267,113 @@ export async function teardownRelayStep(j: Job, m: Pick<MigrationRow, "id" | "so
     if (e instanceof RelayError) return relayFailure(e);
     return { kind: "failed", failureCode: "RELAY_TEARDOWN_FAILED", reason: `중계기 정리 실패: ${((e as Error)?.message ?? String(e)).slice(0, 300)}` };
   }
+}
+
+// ── GCP 도착 (aws-gcp) ──────────────────────────────────────────────────────────────
+
+// 도착 관리자 비밀번호 = 실행기가 Secret Manager 에서 꺼내 이전 작업 폴더 db-secret.json 에 둔 값 (real-runner fetchSecret)
+export const GCP_TARGET_PASSWORD_REF = "tf:db_admin_password";
+
+export type GcpRelayGate =
+  | { kind: "skip"; reason: string }
+  | { kind: "fail"; failureCode: string; reason: string }
+  | { kind: "go"; identifier: string; platformCidrs: string[]; region: string; db: string; user: string };
+
+/** GCP 도착 중계기를 만들 이전인가 (순수). 온프레 문(relayGate)과 같은 앞 조건, SSH·온프레 IP·마스터 키는 안 본다 */
+export function gcpRelayGate(f: RelayFacts, env: NodeJS.ProcessEnv): GcpRelayGate {
+  const no = relayApplies(f, env);
+  if (no) return { kind: "skip", reason: no };
+  if (relayKindOf(f.sourceProvider, f.targetProvider) !== "aws-gcp") return { kind: "skip", reason: "not_gcp_relay" };
+  if (!f.postgres.length) return { kind: "skip", reason: "no_postgres" };
+  if (f.postgres.length !== 1) return { kind: "fail", failureCode: "RELAY_SOURCE_DB_UNKNOWN", reason: `명세에 postgres 가 ${f.postgres.length}개다 (중계기·끝점 줄은 이전마다 하나)` };
+  if (!f.rdsIdentifier) return { kind: "fail", failureCode: "RELAY_SOURCE_DB_UNKNOWN", reason: "명세의 postgres 에 출발 RDS 인스턴스 이름이 없다 (spec_v2.ids). 가져오기를 다시 하거나 RELAY_AUTO=0 으로 사람이 길을 낸다" };
+  let platformCidrs: string[];
+  try { platformCidrs = platformEgressCidrs(env.PLATFORM_EGRESS_CIDRS); }
+  catch (e) { return { kind: "fail", failureCode: (e as RelayError).code ?? "RELAY_CONFIG_MISSING", reason: (e as Error).message }; }
+  const pg = f.postgres[0]!;
+  return { kind: "go", identifier: f.rdsIdentifier, platformCidrs, region: f.sourceRegion || DEFAULT_REGION, db: pg.db, user: pg.user };
+}
+
+/** apply 의 terraform 앞: 문을 보고, 도착 DB 공개 길(플랫폼 나가는 대역 + 앞 실행에서 넣은 중계 IP, 앱 로그인은 SQL)을 작업 폴더에 둔다.
+ *  apply-real prepare 가 이 파일을 postgres_json 에 덧씌운다 (계획 지문 밖, 감사 detail.replicationNetwork) */
+export async function prepareGcpRelayStep(j: Job, m: MigrationRow, deps: Pick<RelayStepDeps, "env" | "facts"> = {}): Promise<GcpRelayGate> {
+  const env = deps.env ?? process.env;
+  const facts = deps.facts ?? await withTenant(j.tenantId, (tx) => readRelayFacts(tx, j.tenantId, m, env));
+  const g = gcpRelayGate(facts, env);
+  if (g.kind !== "go") return g;
+  const tenant = tenantSlug(j.tenantId);
+  saveReplNetwork(env, tenant, j.migrationId, withPeers(loadReplNetwork(env, tenant, j.migrationId), g.platformCidrs));
+  return g;
+}
+
+/** terraform 출력 → Cloud SQL 공개 주소 둘. 없으면(공개가 안 켜짐) null */
+export function cloudSqlPeerOf(out: TfOutputs): CloudSqlPeer | null {
+  const publicIp = out.db_public_ip ?? "", outgoingIp = out.db_outgoing_ip ?? "";
+  return isIpv4(publicIp) && isIpv4(outgoingIp) ? { publicIp, outgoingIp } : null;
+}
+
+export type GcpRelayProvisioned = { kind: "ok"; res: RelayResources; rds: RelaySource; subnetId: string } | Extract<RelayStepOutcome, { kind: "failed" }>;
+
+/** apply 의 terraform 뒤: 출발 계정에 GCP 도착 중계기를 만든다(이미 있으면 그대로, Cloud SQL 이 바뀌었으면 새로). 끝점 줄은 아직 안 쓴다 */
+export async function provisionGcpRelayStep(j: Job, m: MigrationRow, g: Extract<GcpRelayGate, { kind: "go" }>, cloudSql: CloudSqlPeer,
+  deps: Omit<RelayStepDeps, "facts" | "save"> = {}): Promise<GcpRelayProvisioned> {
+  const env = deps.env ?? process.env;
+  const borrow = deps.borrow ?? (<T>(fn: (r: StepRoles) => Promise<T>) => withStepRoles("relay", j, m, fn));
+  return borrow(async (roles): Promise<GcpRelayProvisioned> => {
+    const cred = roles.awsEnv?.source;
+    if (!cred) return { kind: "failed", failureCode: "RELAY_ROLE_DENIED", reason: roles.denied.length
+      ? `출발 실행 역할(중계기 세션 정책)을 못 빌렸다: ${roles.denied.map((x) => x.code).join(",")} (infra/permissions/aws-relay-statements.json 을 svc-operate 에 붙였는지)`
+      : "출발 실행 역할 자격이 없다 (출발 환경이 AWS 인지, 연결이 끝났는지)" };
+    const d: RelayAwsDeps = { env: envFor(cred, env), region: g.region, ...(roles.signal ? { signal: roles.signal } : {}), ...deps.aws };
+    try {
+      const rds = await discoverRelaySource(d, g.identifier);
+      const [net, ami] = await Promise.all([discoverRelayNetwork(d, rds.vpcId), resolveRelayAmi(d)]);
+      const res = await provisionRelay(d, buildRelayPlan({ kind: "aws-gcp", migrationId: j.migrationId, rds, network: net, ami, platformEgressCidrs: g.platformCidrs, cloudSql }));
+      return { kind: "ok", res, rds, subnetId: net.subnetId };
+    } catch (e) { return relayFailure(e, { rdsIdentifier: g.identifier }) as Extract<RelayStepOutcome, { kind: "failed" }>; }
+  });
+}
+
+/** 중계 공개 IP 를 도착 DB 공개 길에 더한다. 새로 더했으면 true (apply 가 terraform 을 한 번 더 돌려 Cloud SQL 허용 주소에 넣는다) */
+export function addRelayPeer(j: Job, publicIp: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  const tenant = tenantSlug(j.tenantId);
+  const before = loadReplNetwork(env, tenant, j.migrationId);
+  const after = withPeers(before, [`${publicIp}/32`]);
+  if (before && after.peerCidrs.join(",") === before.peerCidrs.join(",")) return false;
+  saveReplNetwork(env, tenant, j.migrationId, after);
+  return true;
+}
+
+/** GCP 도착 끝점 두 줄 (순수). 출발 = 중계 출발 입구(온프레와 같은 줄). 도착 = Cloud SQL 공개 IP(워커, verify-ca) + 중계 사설 IP:5432(RDS 역방향 구독) */
+export function gcpEndpointRows(i: {
+  tenantId: string; migrationId: string; sourceEnvId: string; rds: RelaySource; db: string; appUser: string;
+  publicIp: string; privateIp: string; cloudSql: CloudSqlPeer; out: TfOutputs; existing: readonly ReplicationEndpoint[];
+}): [ReplicationEndpoint, ReplicationEndpoint] {
+  const id8 = i.migrationId.replace(/-/g, "").slice(0, 8);
+  const oldT = i.existing.find((e) => e.side === "target");
+  const ca = /-----BEGIN CERTIFICATE-----/.test(i.out.db_server_ca_cert ?? "") && !/PRIVATE KEY/.test(i.out.db_server_ca_cert ?? "") ? i.out.db_server_ca_cert! : null;
+  const admin = i.out.db_admin_username;
+  if (!admin) throw new RelayError("RELAY_TARGET_DB_UNKNOWN", "terraform 출력에 도착 관리자 계정(db_admin_username)이 없다 (gcp/root 모듈이 옛 판)");
+  const target: ReplicationEndpoint = {
+    tenantId: i.tenantId, migrationId: i.migrationId, side: "target", label: `cloudsql-tgt-${id8}`, provider: "cloudsql",
+    host: i.cloudSql.publicIp, port: PG_PORT, dbname: i.out.db_name || i.db, username: admin, passwordRef: GCP_TARGET_PASSWORD_REF,
+    // RDS 는 사설 VPC 라 Cloud SQL 공개 IP 로 바로 못 나간다 → 중계 사설 IP:5432(역방향 입구) → Cloud SQL 공개 IP:5432 (온프레 역방향 터널과 같은 자리)
+    peerHost: i.privateIp, peerPort: PG_PORT,
+    appRole: i.out.db_username || i.appUser, fenceRoles: oldT?.fenceRoles ?? [], schemaName: oldT?.schemaName ?? null,
+    // 워커 → Cloud SQL 은 서버 CA 로 확인 (인증서에 공개 IP 이름이 없어 verify-full 대신 verify-ca). 상대(RDS)가 붙을 때는 require (endpoint.ts peerTlsProblem)
+    sslmode: ca ? "verify-ca" : "require", tlsServername: null, caPem: ca,
+    relayHost: null, relayKnownHosts: null, relayPort: 22,
+  };
+  return [relaySourceRow(i), target];
+}
+
+/** 도착 앱 로그인 역할을 관리자로 맞춘다 (Cloud SQL API 사용자는 cloudsqlsuperuser 라 울타리가 안 먹음 → app_login_sql). 비밀번호 = 앱 비밀 그릇 값 */
+export async function ensureTargetAppLogin(target: ReplicationEndpoint, env: NodeJS.ProcessEnv = process.env): Promise<"created" | "updated" | "privileged"> {
+  const appPassword = readTfFacts(target.migrationId, env).db_password;
+  if (!appPassword) throw new RelayError("RELAY_TARGET_DB_UNKNOWN", "이전 작업 폴더 db-secret.json 에 앱 비밀번호(db_password)가 없다 (apply 의 비밀 꺼내기 실패)");
+  return withClient(endpointFromRecord(target, env), (c) => ensureLoginRole(c, target.appRole, appPassword));
+}
+
+export async function saveEndpointRows(tenantId: string, rows: ReplicationEndpoint[]): Promise<void> {
+  await withTenant(tenantId, async (tx) => { for (const x of rows) await upsertReplicationEndpoint(tx, x); });
 }

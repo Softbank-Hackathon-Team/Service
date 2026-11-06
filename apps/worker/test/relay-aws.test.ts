@@ -13,20 +13,20 @@ import { FakeAws, fakeDeps } from "./fake-aws-relay.js";
 import { actionsOfPolicy, createTempRoleBroker, loadPermissionSet, memoryLedger, mockIssuer, STEP_ROLES, stepActions, TempRoleDenied, type AuditRecord } from "@svc/security";
 import { deriveSshHostKey, deriveSshKeypair, knownHostsLine } from "../src/gitops/migration-secrets.js";
 import {
-  buildRelayPlan, existingDbEgressCover, existingDbIngressCover, ownedBy, RELAY_FORWARDER_PY, pickPublicSubnet, platformEgressCidrs, provisionRelay, RelayError, relayTags, teardownRelay, type RelayPlanInput,
+  buildRelayPlan, existingDbEgressCover, existingDbIngressCover, ownedBy, RELAY_FORWARDER_PY, pickPublicSubnet, platformEgressCidrs, provisionRelay, RelayError, relayTags, teardownRelay, type GcpRelayPlanInput, type OnpremRelayPlanInput,
 } from "../src/relay/aws-relay.js";
 import { forwardTarget } from "../src/gitops/replication-delivery.js";
-import { provisionRelayStep, rdsIdentifierFromIds, relayEndpointRows, relayGate, relayKindOf, sourcePasswordRef, teardownRelayStep, type RelayFacts } from "../src/relay/relay-step.js";
-import { PASSWORD_REF_RE } from "@svc/contracts";
+import { addRelayPeer, cloudSqlPeerOf, gcpEndpointRows, gcpRelayGate, prepareGcpRelayStep, provisionRelayStep, rdsIdentifierFromIds, relayEndpointRows, relayGate, relayKindOf, sourcePasswordRef, teardownRelayStep, type RelayFacts } from "../src/relay/relay-step.js";
+import { PASSWORD_REF_RE, ReplicationEndpoint } from "@svc/contracts";
 
 const MK = "test-master-key-0123456789abcdef-xyz";   // 시험용 가짜 키
 const T = "11111111-1111-4111-8111-111111111111", M = "22222222-2222-4222-8222-222222222222";
 const RDS = "shop-db.c1abcdefgh.ap-northeast-2.rds.amazonaws.com";
 const PERM_DIR = new URL("../../../infra/permissions/", import.meta.url).pathname;
 
-function planInput(o: Partial<RelayPlanInput> = {}): RelayPlanInput {
+function planInput(o: Partial<OnpremRelayPlanInput> = {}): OnpremRelayPlanInput {
   return {
-    migrationId: M,
+    kind: "aws-onprem", migrationId: M,
     rds: { identifier: "shop-db", endpoint: RDS, port: 5432, vpcId: "vpc-0a1", securityGroupIds: ["sg-0rds"], masterUsername: "postgres", dbName: "shop", masterSecretArn: null },
     network: { vpcCidrs: ["10.0.0.0/16"], subnetId: "subnet-0b0b" },
     ami: { imageId: "ami-0abc", rootDeviceName: "/dev/xvda" },
@@ -66,7 +66,7 @@ test("계획: user-data 에 PermitOpen <rds>:5432·파생 호스트 키 하나�
   assert.deepEqual([p.dbEgress.groupId, p.instance.instanceType, p.instance.subnetId], ["sg-0rds", "t4g.nano", "subnet-0b0b"]);
   assert.deepEqual(buildRelayPlan(planInput()), p, "같은 입력 → 같은 계획");
   // known_hosts 줄은 EC2 를 만들기 전에 정해진다 (공개 키 = 파생 값)
-  assert.equal(knownHostsLine("203.0.113.50", p.hostPublicKey), `203.0.113.50 ${host.publicKeyLine.split(" ").slice(0, 2).join(" ")}`);
+  assert.equal(knownHostsLine("203.0.113.50", p.hostPublicKey!), `203.0.113.50 ${host.publicKeyLine.split(" ").slice(0, 2).join(" ")}`);
   assert.notEqual(host.publicKeyLine.split(" ")[1], deriveSshKeypair(MK, T, M).publicKeyLine.split(" ")[1], "호스트 키 ≠ 터널 키");
 });
 
@@ -306,6 +306,98 @@ test("중계기 종류 표: (출발, 도착) 짝만 본다. 표에 없는 짝은
   assert.equal(relayKindOf("aws", "onprem"), "aws-onprem");
   assert.equal(relayKindOf("aws", "gcp"), "aws-gcp");
   for (const [s, t] of [["gcp", "onprem"], ["aws", "aws"], ["onprem", "gcp"], [null, "gcp"], ["aws", null]] as const) assert.equal(relayKindOf(s, t), null, `${s}->${t}`);
+});
+
+// ── GCP 도착 (aws-gcp) ──────────────────────────────────────────────────────────────
+
+const SQL = { publicIp: "34.64.10.20", outgoingIp: "34.64.10.99" };
+const gcpInput = (o: Partial<GcpRelayPlanInput> = {}): GcpRelayPlanInput => {
+  const { kind: _k, onpremEgressIp: _e, tunnelPublicKey: _t, hostKey: _h, ...base } = planInput();
+  return { ...base, kind: "aws-gcp", cloudSql: SQL, ...o };
+};
+
+test("GCP 계획: 22·SSH 없음, 15432 = 플랫폼 대역 + Cloud SQL 나가는 IP/32, 5432 = VPC 만, 나가기 = VPC + Cloud SQL 공개 IP/32", () => {
+  const p = buildRelayPlan(gcpInput());
+  assert.equal(p.kind, "aws-gcp");
+  assert.deepEqual(p.rules.map((r) => [r.direction, r.port, r.cidr]), [
+    ["ingress", 5432, "10.0.0.0/16"], ["ingress", 15432, "198.51.100.7/32"], ["ingress", 15432, "34.64.10.99/32"],
+    ["egress", 5432, "10.0.0.0/16"], ["egress", 5432, "34.64.10.20/32"]]);
+  assert.ok(!p.rules.some((r) => r.port === 22), "SSH 없음");
+  assert.ok(!p.userData.includes("sshd") && !p.userData.includes("PRIVATE KEY") && !p.userData.includes("tunnel"), "SSH 설정·키 없음");
+  assert.ok(p.userData.includes(`ExecStart=/usr/bin/python3 /usr/local/bin/svc-relay-fwd.py ${RDS} 5432 15432\n`), "출발 입구 → RDS");
+  assert.ok(p.userData.includes("ExecStart=/usr/bin/python3 /usr/local/bin/svc-relay-fwd.py 34.64.10.20 5432 5432\n"), "역방향 입구 → Cloud SQL 공개 IP");
+  assert.ok(p.userData.includes("systemctl enable --now svc-relay-rev.service") && p.userData.includes("systemctl enable --now svc-relay-fwd.service"));
+  assert.equal(p.instance.tags.find((t) => t.Key === "svc:reverse-target")?.Value, "34.64.10.20");
+  assert.deepEqual([p.hostPublicKey, p.reverseTarget], [null, "34.64.10.20"]);
+  assert.deepEqual(buildRelayPlan(gcpInput()), p, "같은 입력 → 같은 계획");
+  // 나가는 IP 가 플랫폼 대역과 같으면 15432 규칙을 겹쳐 달지 않는다
+  assert.equal(buildRelayPlan(gcpInput({ platformEgressCidrs: ["34.64.10.99/32"] })).rules.filter((r) => r.port === 15432).length, 1);
+  assert.throws(() => buildRelayPlan(gcpInput({ cloudSql: { publicIp: "", outgoingIp: "34.64.10.99" } })), (e: RelayError) => e.code === "RELAY_TARGET_DB_UNKNOWN");
+});
+
+test("GCP 실행기: 만들기 → 다시 돌면 그대로, Cloud SQL 공개 IP 가 바뀌면 옛 EC2 를 지우고 새 목적지로 만든다, 정리는 태그로 전부", async () => {
+  const f = newFake();
+  const r1 = await provisionRelay(deps(f), buildRelayPlan(gcpInput()));
+  assert.ok(f.userData.includes("svc-relay-fwd.py 34.64.10.20 5432 5432"));
+  const sgRules = () => f.rules.filter((x) => x.group === r1.securityGroupId).map((x) => `${x.egress ? "out" : "in"}:${x.from}:${x.cidr}`).sort();
+  assert.deepEqual(sgRules(), ["in:15432:198.51.100.7/32", "in:15432:34.64.10.99/32", "in:5432:10.0.0.0/16", "out:5432:10.0.0.0/16", "out:5432:34.64.10.20/32"]);
+  const r2 = await provisionRelay(deps(f), buildRelayPlan(gcpInput()));
+  assert.equal(r2.instanceId, r1.instanceId); assert.deepEqual(r2.created, []);
+  const r3 = await provisionRelay(deps(f), buildRelayPlan(gcpInput({ cloudSql: { publicIp: "34.64.10.21", outgoingIp: "34.64.10.98" } })));
+  assert.notEqual(r3.instanceId, r1.instanceId);
+  assert.equal(f.insts.get(r1.instanceId)!.state, "terminated");
+  assert.ok(f.userData.includes("svc-relay-fwd.py 34.64.10.21 5432 5432"));
+  assert.deepEqual(sgRules(), ["in:15432:198.51.100.7/32", "in:15432:34.64.10.98/32", "in:5432:10.0.0.0/16", "out:5432:10.0.0.0/16", "out:5432:34.64.10.21/32"], "옛 Cloud SQL 규칙은 빠진다");
+  await teardownRelay(deps(f), M);
+  assert.equal([...f.sgs.keys()].filter((id) => ownedBy(f.sgs.get(id)!.tags, M)).length, 0);
+  assert.equal(f.rules.filter((x) => ownedBy(x.tags, M)).length, 0, "RDS·중계 규칙 남지 않음");
+});
+
+test("GCP 단계 문: 표의 aws->gcp 만 go, 시드·명세 postgres 없음·플랫폼 대역 없음은 건너뜀·거부 (SSH·온프레 IP·마스터 키는 안 봄)", () => {
+  const gf = (o: Partial<RelayFacts> = {}) => facts({ targetProvider: "gcp", onpremEgressIp: null, ...o });
+  const env = { PLATFORM_EGRESS_CIDRS: "198.51.100.7/32" } as NodeJS.ProcessEnv;
+  assert.deepEqual(gcpRelayGate(gf(), env), { kind: "go", identifier: "shop-db", platformCidrs: ["198.51.100.7/32"], region: "ap-northeast-2", db: "shop", user: "shop_app" });
+  assert.deepEqual(gcpRelayGate(facts(), env), { kind: "skip", reason: "not_gcp_relay" });
+  assert.deepEqual(relayGate(gf(), GOOD), { kind: "skip", reason: "not_onprem_relay" });
+  assert.deepEqual(gcpRelayGate(gf({ sourceExternalId: null }), env), { kind: "skip", reason: "source_creds_mock" });
+  assert.deepEqual(gcpRelayGate(gf({ postgres: [] }), env), { kind: "skip", reason: "no_postgres" });
+  assert.equal((gcpRelayGate(gf(), {}) as { failureCode?: string }).failureCode, "RELAY_CONFIG_MISSING");
+  assert.equal((gcpRelayGate(gf({ rdsIdentifier: null }), env) as { failureCode?: string }).failureCode, "RELAY_SOURCE_DB_UNKNOWN");
+});
+
+test("GCP 순서: terraform 앞에 플랫폼 대역을 작업 폴더에, 중계 IP 는 처음 한 번만 '다시 terraform', 재시도는 앞 실행 IP 를 그대로 품는다", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gcp-order-"));
+  const env = { TF_WORK_DIR: root, PLATFORM_EGRESS_CIDRS: "198.51.100.7/32" } as NodeJS.ProcessEnv;
+  const m = { id: M, status: "provisioning" as const, sourceEnvId: randomUUID(), targetEnvId: randomUUID() };
+  const gf = facts({ targetProvider: "gcp", onpremEgressIp: null });
+  const file = join(root, "t-11111111", M, "repl-network.json");
+  assert.equal((await prepareGcpRelayStep({ tenantId: T, migrationId: M }, m, { env, facts: gf })).kind, "go");
+  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), { peerCidrs: ["198.51.100.7/32"], appLoginSql: true });
+  assert.equal(addRelayPeer({ tenantId: T, migrationId: M }, "203.0.113.50", env), true, "새 중계 IP → terraform 한 번 더");
+  assert.equal(addRelayPeer({ tenantId: T, migrationId: M }, "203.0.113.50", env), false, "같은 IP → 더 안 돎");
+  await prepareGcpRelayStep({ tenantId: T, migrationId: M }, m, { env, facts: gf });
+  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")).peerCidrs, ["198.51.100.7/32", "203.0.113.50/32"], "재시도 첫 terraform 도 중계 IP 를 뺐다 넣지 않는다");
+  assert.equal((await prepareGcpRelayStep({ tenantId: T, migrationId: M }, m, { env, facts: facts() })).kind, "skip", "온프레 도착은 파일을 안 만진다");
+  rmSync(root, { recursive: true, force: true });
+});
+
+test("GCP 끝점 줄: 출발 = 중계 출발 입구(aws-sm), 도착 = Cloud SQL 공개 IP·관리자(tf:)·verify-ca, 역방향 peer = 중계 사설 IP:5432", () => {
+  const PEM = "-----BEGIN CERTIFICATE-----\nMIIBx\n-----END CERTIFICATE-----";
+  const out = { db_admin_username: "svc_admin_0123456789", db_username: "shop_app", db_name: "shop", db_server_ca_cert: PEM };
+  const [s, t] = gcpEndpointRows({ tenantId: T, migrationId: M, sourceEnvId: "783df2ef-8dbf-4a20-904d-bb02aeb96332",
+    rds: { ...planInput().rds, masterSecretArn: "arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:rds!db-x" }, db: "shop", appUser: "shop_app",
+    publicIp: "203.0.113.50", privateIp: "10.0.1.20", cloudSql: SQL, out, existing: [] });
+  for (const r of [s, t]) assert.ok(ReplicationEndpoint.safeParse(r).success, JSON.stringify(ReplicationEndpoint.safeParse(r).error?.issues));
+  assert.deepEqual([s.host, s.port, s.peerHost, s.passwordRef, s.sslmode, s.tlsServername], ["203.0.113.50", 15432, null, "aws-sm:arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:rds!db-x", "require", RDS]);
+  assert.deepEqual([t.provider, t.host, t.port, t.username, t.passwordRef, t.peerHost, t.peerPort, t.appRole, t.sslmode, t.caPem, t.relayHost],
+    ["cloudsql", "34.64.10.20", 5432, "svc_admin_0123456789", "tf:db_admin_password", "10.0.1.20", 5432, "shop_app", "verify-ca", PEM, null]);
+  assert.notEqual(t.username, t.appRole, "관리자 ≠ 앱 계정");
+  assert.equal(gcpEndpointRows({ tenantId: T, migrationId: M, sourceEnvId: "s", rds: planInput().rds, db: "shop", appUser: "shop_app",
+    publicIp: "203.0.113.50", privateIp: "10.0.1.20", cloudSql: SQL, out: { ...out, db_server_ca_cert: "" }, existing: [] })[1].sslmode, "require");
+  assert.throws(() => gcpEndpointRows({ tenantId: T, migrationId: M, sourceEnvId: "s", rds: planInput().rds, db: "shop", appUser: "shop_app",
+    publicIp: "203.0.113.50", privateIp: "10.0.1.20", cloudSql: SQL, out: {}, existing: [] }), (e: RelayError) => e.code === "RELAY_TARGET_DB_UNKNOWN");
+  assert.deepEqual(cloudSqlPeerOf({ db_public_ip: "34.64.10.20", db_outgoing_ip: "34.64.10.99" }), SQL);
+  assert.equal(cloudSqlPeerOf({ db_public_ip: "", db_outgoing_ip: "" }), null);
 });
 
 test("단계 거부: 온프레 나가는 IP 모름 → ONPREM_EGRESS_UNKNOWN (22 를 세상에 안 엶), 플랫폼 대역 없음 → RELAY_CONFIG_MISSING", async () => {

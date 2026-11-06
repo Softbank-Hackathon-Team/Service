@@ -32,6 +32,8 @@ export const PostgresTfVars = z.object({
   public_subnet_ids_json: z.string().nullable(),     // aws 만
   // DRAFT(ai): deletion_protection 은 IR 에 없는 플랫폼 값. 데모 정리(disposable) 때 false
   deletion_protection: z.boolean(),
+  // 어댑터는 안 넣는다. 중계기 이전(aws-gcp) apply 가 덧씌운다 (adapters withReplicationNetworkV2): 앱 계정을 클라우드 API 사용자 대신 워커가 SQL 로 만든다
+  app_login_sql: z.boolean().optional(),
 }).strict();
 export type PostgresTfVars = z.infer<typeof PostgresTfVars>;
 
