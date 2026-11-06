@@ -237,9 +237,11 @@ button.linkPill {
   gap: var(--space-8);
   padding: 0 var(--space-12) var(--space-8);
 }
+/* 요청 수는 자릿수가 늘어난다 (210,734). 같은 너비 세 칸이면 첫 숫자가 옆 칸에 붙어서 칸 너비를 내용에 맞추고 사이를 고르게 벌린다 */
 .stats {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, auto);
+  justify-content: space-between;
   gap: var(--space-8);
   padding: 0 var(--space-12) var(--space-8);
 }
