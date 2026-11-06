@@ -11,6 +11,9 @@ import { teardownRelayStep, type RelayStepOutcome } from "../relay/relay-step.js
 
 // 정리. rollback_window → cleanup → completed
 // 창이 끝나기 전에 깨어나면(시계 차이 등) 남은 시간 뒤로 자신을 다시 넣는다 (L8)
+// 정리는 고객 출발 앱을 줄이거나 지우지 않는다. 트래픽 0 인 채 그대로 돌고, 내리는 일은 사람이 한다 (감사 cleanup.completed 의 sourceApp)
+const SOURCE_APP = { touched: false, decommission: "human" } as const;
+
 export async function handleCleanup(raw: unknown) {
   const job = MigrationJob.parse(raw);
 
@@ -23,7 +26,9 @@ export async function handleCleanup(raw: unknown) {
         `SELECT rollback_window_ends_at <= now() AS over FROM migrations WHERE id=$1`, [j.migrationId]);
       return q.rows[0]?.over ? (true as const) : null;
     },
-    // DRAFT(ai): 정리 승인 단계가 아직 없어서 "창이 끝나면 자동 정리 = 승인"으로 본다 (TODO(human) 아래와 같은 질문)
+    // DRAFT(ai): 따로 누르는 정리 승인 단계는 없다. 정리는 이 이전이 만든 임시 객체(복제 객체·중계기·출발 전용 비밀 그릇·빌린 역할)만 걷고
+    //   고객 출발 앱·DB 는 건드리지 않는다 (SOURCE_APP). 그 범위는 사람이 승인한 계획서의 cleanup 단계·롤백 창 길이에 있어 "창이 끝남 = 정리 승인"으로 본다.
+    //   출발을 줄이거나 지우는 일을 넣는다면 따로 승인을 받는다 (아래 TODO(human))
     work: async () => ({ to: "cleanup", evidence: { cleanupApproved: true } }),
   });
   if (first === "skipped") {
@@ -66,7 +71,7 @@ export async function handleCleanup(raw: unknown) {
         // 출발 계정 중계기 (복제 설정이 없어도 태그로 남은 것이 있으면 지운다. 출발이 AWS 아님·시드 환경이면 건너뜀)
         const relay = await teardownRelayStep(j, m);
         if (relay.kind === "failed") return relayPaused(relay, { stub: true });
-        return { to: "completed", detail: { removed: ["STUB: replication slot", "STUB: source app scaled to 0"], roles, stub: true, relay: relayView(relay), ...(linkSecret.skipped ? {} : { linkSecret }) },
+        return { to: "completed", detail: { removed: ["STUB: replication slot"], sourceApp: SOURCE_APP, roles, stub: true, relay: relayView(relay), ...(linkSecret.skipped ? {} : { linkSecret }) },
                  evidence: { tempResources: 0, ...(await evidenceAfterRelay(j, relay, roles.evidence)) } };   // STUB: 임시 자원 장부
       }
       // 복제 슬롯·발행·구독·마커를 양쪽에서 지우고, 남은 게 없는지 다시 센다 (T27 tempResources)
@@ -81,7 +86,7 @@ export async function handleCleanup(raw: unknown) {
       //   지우기가 실패하면 paused(RELAY_TEARDOWN_FAILED) — 자원은 태그를 단 채 남고, 재개하면 이 단계가 다시 돈다 (여러 번 불러도 됨)
       const relay: RelayStepOutcome = left.length === 0 ? await teardownRelayStep(j, m) : { kind: "skipped", reason: "replication_leftovers" };
       if (relay.kind === "failed") return relayPaused(relay, { removed, leftovers: left, gitopsReplication: gitopsRepl });
-      return { to: "completed", detail: { removed: [...removed, "STUB: source app scaled to 0"], leftovers: left, roles, gitopsReplication: gitopsRepl, relay: relayView(relay), ...(linkSecret.skipped ? {} : { linkSecret }) },
+      return { to: "completed", detail: { removed, sourceApp: SOURCE_APP, leftovers: left, roles, gitopsReplication: gitopsRepl, relay: relayView(relay), ...(linkSecret.skipped ? {} : { linkSecret }) },
                evidence: { tempResources: left.length, ...(await evidenceAfterRelay(j, relay, roles.evidence)) } };
     }),
     // 재발급 실패(Z61) → cleanup → paused(CRED_RENEW_FAILED). 그 밖의 예외는 지금처럼 pg-boss 재시도

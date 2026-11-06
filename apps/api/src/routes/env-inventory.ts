@@ -233,10 +233,10 @@ export function sourceResources(m: MigrationRow, s: Summary): Res[] {
   const st = effectiveStatus(m);
   const k = SOURCE_KIND[m.sourceProvider];
   const done = m.status === "completed";
-  const removedStub = (m.cleanupRemoved ?? []).some((x) => /source app scaled to 0/.test(x));
-  const app: FState = done ? "stopped" : st === "rollback_window" ? "standby" : st === "cleanup" ? "stopping" : "running";
+  // 정리는 출발 앱을 줄이거나 지우지 않는다 (worker cleanup.ts SOURCE_APP): 창·정리 동안은 트래픽 0 대기, 끝난 뒤엔 사람이 내릴 때까지 남는다
+  const app: FState = done ? "left" : st === "rollback_window" || st === "cleanup" ? "standby" : "running";
   const out: Res[] = [{ category: "compute", type: k.app[0], label: `${k.app[1]} · 컨테이너 ${s.replicas}개`, state: app,
-                        evidence: done && removedStub ? "audit" : "discovered" }];
+                        evidence: "discovered" }];
   if (s.database) {
     // 컷오버 뒤 출발 DB 는 쓰기 권한을 회수한 채 남는다 (지울지는 TODO(human), 워커 cleanup.ts)
     const db: FState = reached(st, "rollback_window") && m.status !== "rolled_back" ? "standby" : "running";
