@@ -333,7 +333,16 @@ export async function readK8sNamespace(d: CliDeps, kube: string[], opts: K8sName
   //   예전: 자동 고르기에서만 뺐고(PF-A1), IMPORT_NAMESPACE·sourceScope 로 app-demo 를 잘못 주면 경고 없이 served-by 를 고객 앱으로 옮겼다
   for (const [ns, r] of per) if (r.nsObjs.some((o) => (get(o, "metadata", "labels") as Record<string, unknown> | undefined)?.["managed-by"] === "platform"))
     picked.push(pickItem("platform-namespace", `네임스페이스 ${ns} 는 이 플랫폼이 만든 것(라벨 managed-by=platform) → 옮길 고객 앱이 맞는지 확인 (출발 범위 namespaces 를 다시 볼 것)`));
-  const deps = depList.filter((o) => nsSet.has(meta(o, "namespace")));
+  // 왕복 이전: 이 플랫폼 앱 차트가 그린 Cloudflare 입구(templates/ingress.yaml: <앱>-cloudflared Deployment, 파드 라벨 svc.platform/metrics=cloudflared,
+  //   지표 ConfigMap·NetworkPolicy <앱>-cloudflared-metrics)는 고객 앱이 아니다. 앱 부품으로 읽으면 도착에 터널 연결기를 다시 만들고,
+  //   그 NetworkPolicy 가 posture.networkPolicy 로 잡혀 NetworkPolicy 를 못 그리는 도착(AWS·GCP)이 막힌다 (2026-11-07 온프레 → AWS 실측 PC-V2-UNSUP)
+  const isPlatformEntry = (o: Obj) => str(get(o, "spec", "template", "metadata", "labels", "svc.platform/metrics")) === "cloudflared";
+  const entryApps = new Set(depList.filter((o) => nsSet.has(meta(o, "namespace")) && isPlatformEntry(o))
+    .map((o) => `${meta(o, "namespace")}/${str(get(o, "spec", "template", "metadata", "labels", "app.kubernetes.io/name")) ?? meta(o, "name")}`));
+  const entryNetpol = (o: Obj) => entryApps.has(`${meta(o, "namespace")}/${str(get(o, "spec", "podSelector", "matchLabels", "app.kubernetes.io/name")) ?? ""}`);
+  const entryConfig = (o: Obj) => entryApps.has(`${meta(o, "namespace")}/${meta(o, "name").replace(/-metrics$/, "")}`) && meta(o, "name").endsWith("-metrics");
+  if (entryApps.size) notes.push(`플랫폼이 그린 Cloudflare 입구 ${[...entryApps].sort().join(",")} (Deployment·지표 ConfigMap·NetworkPolicy)는 고객 앱이 아니라 뺐다 (도착 입구는 도착 차트가 다시 그린다)`);
+  const deps = depList.filter((o) => nsSet.has(meta(o, "namespace")) && !isPlatformEntry(o));
   const crons = cat("crons");
   const stss = cat("stss"), dss = cat("dss");
   // F-1 DRAFT(ai): 핵심 종류(Service·Ingress·ConfigMap)를 못 읽으면 라우팅·설정이 빈 채로 "다 읽은 것처럼" 나온다 → 가져오기를 멈춘다.
@@ -474,7 +483,7 @@ export async function readK8sNamespace(d: CliDeps, kube: string[], opts: K8sName
       maxReplicas: get(o, "spec", "maxReplicas") as number, metrics: Array.isArray(get(o, "spec", "metrics")) ? get(o, "spec", "metrics") as Obj[] : undefined,
       behavior: get(o, "spec", "behavior") && typeof get(o, "spec", "behavior") === "object" ? get(o, "spec", "behavior") as Obj : undefined }),   // N7
   } as RawK8sItem);
-  for (const o of cat("nps")) items.push({
+  for (const o of cat("nps").filter((x) => !entryNetpol(x))) items.push({
     kind: "k8s.networkPolicy", metadata: metaOf(o),
     spec: defined({ podSelector: get(o, "spec", "podSelector") as Obj | undefined, policyTypes: get(o, "spec", "policyTypes") as string[] | undefined,
       ingress: get(o, "spec", "ingress") as unknown[] | undefined, egress: get(o, "spec", "egress") as unknown[] | undefined }),
@@ -487,7 +496,7 @@ export async function readK8sNamespace(d: CliDeps, kube: string[], opts: K8sName
     items.push({ kind: "k8s.serviceAccount", metadata: metaOf(o), ...(irsa ? { irsaRoleArn: irsa } : {}), ...(gsa ? { gcpServiceAccount: gsa } : {}) } as RawK8sItem);
   }
   // N3: ConfigMap 은 data 값까지 (평문 비밀 검사·가리기는 파이프라인). binaryData 는 키 이름만
-  for (const o of cat("cms")) {
+  for (const o of cat("cms").filter((x) => !entryConfig(x))) {
     const data = strMap(get(o, "data"));
     const bin = Object.keys((get(o, "binaryData") as Obj | undefined) ?? {}).sort();
     items.push({
