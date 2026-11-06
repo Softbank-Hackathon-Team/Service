@@ -639,12 +639,15 @@ export type ImportResultV2 = z.infer<typeof ImportResultV2>;
 
 // checkV2 가 내는 "사람 승인 필요" 줄. 계획서 확인 항목(acknowledgements)으로 간다
 export const ApprovalRowV2 = z.object({
-  kind: z.enum(["runtime_change", "build", "tls_relaxed", "host_access", "public_bucket"]),   // HN-1: host_access = 노드 네트워크·프로세스·경로·포트를 직접 씀 (보안 낮음)
+  kind: z.enum(["runtime_change", "build", "tls_relaxed", "host_access", "public_bucket", "substitute"]),   // HN-1: host_access = 노드 네트워크·프로세스·경로·포트를 직접 씀 (보안 낮음)
   // B-2: public_bucket = 출발이 공개 버킷 → 도착도 공개로 엶 (보안 낮음, 보안 영역 승인)
   // SSL-1: tls_relaxed = 출발이 평문 DB 연결을 허용 → 도착도 같게 (보안 낮음)
+  // substitute = 출발 상품을 도착의 다른 상품으로 바꿈 (예: ElastiCache → Memorystore). checkV2 가 아니라 도착 Builder substitutionsV2 가 낸다
   subject: Id,                                          // 리소스 id
   from: z.string().optional(),
   to: z.string().optional(),
   detail: z.string().optional(),
+  lost: z.array(z.string()).optional(),                 // substitute: 도착 상품으로 옮기지 못하는 출발 설정·데이터
+  appChange: z.boolean().optional(),                    // substitute: 앱 코드를 고쳐야 붙는다 (SDK·주소 모양이 바뀜)
 }).strict();
 export type ApprovalRowV2 = z.infer<typeof ApprovalRowV2>;

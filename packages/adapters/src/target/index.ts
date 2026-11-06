@@ -12,6 +12,7 @@ const view = (b: TargetBuilder): TargetBuilder => ({
   toTerraformV2: (spec, t) => b.toTerraformV2(renderViewV2(spec), t),
   toWorkloadValues: (spec, out, t) => b.toWorkloadValues(renderViewV2(spec), out, t),
   operateActionsV2: (spec, purpose) => b.operateActionsV2(renderViewV2(spec), purpose),
+  substitutionsV2: (spec, source) => b.substitutionsV2?.(renderViewV2(spec), source) ?? [],
 });
 const TARGETS: Record<Provider, TargetBuilder> = { aws: view(awsTarget), gcp: view(gcpTarget), onprem: view(onpremTarget), azure_mock: view(azureMockTarget) };
 export const targetBuilderFor = (p: Provider) => TARGETS[p];

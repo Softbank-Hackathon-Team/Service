@@ -15516,7 +15516,8 @@
           "host_access",
           "public_bucket",
           "provision_reuse",
-          "env_layer_create"
+          "env_layer_create",
+          "substitute"
         ]
       },
       "PlanAcknowledgement": {
@@ -15534,6 +15535,21 @@
           },
           "ref": {
             "type": "string"
+          },
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "lost": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "appChange": {
+            "type": "boolean"
           }
         },
         "required": [

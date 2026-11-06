@@ -9,7 +9,8 @@
         "build",
         "tls_relaxed",
         "host_access",
-        "public_bucket"
+        "public_bucket",
+        "substitute"
       ]
     },
     "subject": {
@@ -24,6 +25,15 @@
     },
     "detail": {
       "type": "string"
+    },
+    "lost": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "appChange": {
+      "type": "boolean"
     }
   },
   "required": [
