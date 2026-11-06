@@ -195,4 +195,52 @@ for old in "--set argocd=null" "--set argocd.namespace=null"; do
   has worker-argocd-rbac.yaml Role platform-worker-applications "namespace: argocd" "Argo 읽기 '$old'"
 done
 [ $fail -eq 0 ] && echo "ok   워커 Argo 동기화 읽기 (worker 만·Role 과 같은 네임스페이스·예전 릴리스 값)"
+# 비밀 아닌 설정 (values apps.<이름>.env): 값 없으면 아무 데도 없다 / 준 앱에만, 차트 env 뒤에 / 차트가 넣는 이름·그 앱 비밀 이름·비밀처럼 보이는 이름은 렌더 실패 / 칸 없는 릴리스 값으로도 렌더
+DOC=$(helm template platform "$CHART" -n platform "${IMG[@]}")
+for a in api worker agent-worker web; do hasnt app.yaml Deployment "$a" "values apps.$a.env" "env 기본"; done
+DOC=$(helm template platform "$CHART" -n platform "${IMG[@]}" --set traffic.mock=true \
+  --set apps.worker.env.INVENTORY_TIMEOUT_MS=30000 --set apps.worker.env.STEP_CONCURRENCY=5 --set apps.web.env.WEB_ONLY=1)
+printf '%s\n' "$DOC" > "$OUT/app-env-on.yaml"
+kubeconform -strict -summary -kubernetes-version "$K8S_VERSION" \
+  -schema-location default \
+  -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+  "$OUT/app-env-on.yaml"
+has app.yaml Deployment worker '{ name: INVENTORY_TIMEOUT_MS, value: "30000" }' "env"
+has app.yaml Deployment worker '{ name: STEP_CONCURRENCY, value: "5" }' "env"
+has app.yaml Deployment web '{ name: WEB_ONLY, value: "1" }' "env"
+for a in api agent-worker web; do hasnt app.yaml Deployment "$a" STEP_CONCURRENCY "env (worker 만)"; done
+for a in api worker agent-worker; do hasnt app.yaml Deployment "$a" WEB_ONLY "env (web 만)"; done
+order=$(part app.yaml Deployment worker | grep -oE 'name: (WORKER_METRICS_PORT|MOCK_TRAFFIC|INVENTORY_TIMEOUT_MS|STEP_CONCURRENCY),' | tr -d ',' | awk '{printf "%s ", $2}')
+[ "$order" = "WORKER_METRICS_PORT MOCK_TRAFFIC INVENTORY_TIMEOUT_MS STEP_CONCURRENCY " ] || { echo "FAIL env 순서 (차트 env 뒤에 와야 한다): $order"; fail=1; }
+# 값 파일의 큰 정수는 float64 로 들어온다. "1e+06" 이 아니라 "1000000". 앞서 준 이름은 null 로 뺀다 (릴리스 값 + --set X=null 과 같은 모양)
+printf 'apps:\n  worker:\n    env:\n      INVENTORY_TIMEOUT_MS: 1000000\n      STEP_CONCURRENCY: 5\n' > "$OUT/env-values.yaml"
+DOC=$(helm template platform "$CHART" -n platform "${IMG[@]}" -f "$OUT/env-values.yaml" --set apps.worker.env.STEP_CONCURRENCY=null)
+has app.yaml Deployment worker '{ name: INVENTORY_TIMEOUT_MS, value: "1000000" }' "env 값 파일 정수"
+hasnt app.yaml Deployment worker STEP_CONCURRENCY "env null 로 빼기"
+# 차트가 넣는 이름은 템플릿에서 뽑는다: env 블록에 이름을 더하고 금지 목록에 안 더하면 여기서 걸린다
+chartEnv=$(grep -oE '^ +- \{ name: [A-Z_]+,' "$CHART/templates/app.yaml" | awk '{print $4}' | tr -d ',' | sort -u)
+grep -qx HOME <<<"$chartEnv" && grep -qx ENV_LAYER_AUTO <<<"$chartEnv" || { echo "FAIL 템플릿에서 차트 env 이름을 못 뽑았다"; fail=1; }
+bad=()
+for k in $chartEnv; do bad+=("apps.worker.env.$k=x"); done
+# 그 앱 비밀 이름 / 비밀처럼 보이는 이름 / 소문자 / 맵·목록 값
+bad+=(apps.worker.env.GITOPS_PUSH=1 apps.api.env.PUBLIC_API_URL=x apps.agent-worker.env.DATABASE_URL=x
+  apps.worker.env.GITHUB_TOKEN=x apps.web.env.CLIENT_SECRET=x apps.worker.env.DB_PASSWORD=x apps.api.env.SIGNING_KEY=x
+  apps.web.env.DATABASE_URL=x apps.worker.env.OWNER_DATABASE_URL=x apps.worker.env.step_concurrency=5 'apps.worker.env.STEP_CONCURRENCY[0]=5')
+for b in "${bad[@]}"; do
+  if helm template platform "$CHART" -n platform "${IMG[@]}" --set "$b" >/dev/null 2>&1; then echo "FAIL --set $b 인데 렌더가 됐다"; fail=1; fi
+done
+if helm template platform "$CHART" -n platform "${IMG[@]}" --set agentRemediation.gitopsRead=true --set apps.agent-worker.env.GITOPS_REPO_URL=x >/dev/null 2>&1; then
+  echo "FAIL agentRemediation.gitopsRead 로 비밀이 된 GITOPS_REPO_URL 을 agent-worker env 로 받았다"; fail=1
+fi
+if ! helm template platform "$CHART" -n platform "${IMG[@]}" --set apps.api.env=null --set apps.worker.env=null --set apps.agent-worker.env=null --set apps.web.env=null >/dev/null 2>&1; then
+  echo "FAIL apps.<이름>.env 칸이 없는 릴리스 값으로 렌더가 안 된다"; fail=1
+fi
+[ $fail -eq 0 ] && echo "ok   앱 비밀 아닌 env (값 없음·준 앱만·차트 env 뒤·금지 이름 ${#bad[@]}개 거부·예전 릴리스 값)"
+# worker 크기: 기본 requests 500m·512Mi, 상한 2Gi. 값으로 바꿀 수 있다
+DOC=$(helm template platform "$CHART" -n platform "${IMG[@]}")
+res=$(part app.yaml Deployment worker | awk '/^          resources:/{f=1;next} f&&/^          [a-z]/{exit} f' | tr -d ' \n')
+[ "$res" = "limits:memory:2Girequests:cpu:500mmemory:512Mi" ] || { echo "FAIL worker 기본 resources: $res"; fail=1; }
+DOC=$(helm template platform "$CHART" -n platform "${IMG[@]}" --set apps.worker.resources.requests.cpu=250m)
+has app.yaml Deployment worker 'cpu: 250m' "worker resources 값"
+[ $fail -eq 0 ] && echo "ok   worker 크기 (기본 500m·512Mi·상한 2Gi, 값으로 바꿈)"
 exit $fail

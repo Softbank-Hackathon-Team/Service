@@ -46,7 +46,8 @@ export const AuthConfig = z.object({ devAuth: z.boolean(), loginRequired: z.bool
 
 const limiter = new LoginLimiter();
 
-async function issue(req: FastifyRequest, reply: FastifyReply, user: AuthUserRow, sid: string, fam: string, refresh: string, expiresAt: Date) {
+// 접근 토큰 + 리프레시 쿠키 응답 (로그인·갱신·팀 가입이 같이 쓴다: routes/signup.ts)
+export async function issue(req: FastifyRequest, reply: FastifyReply, user: AuthUserRow, sid: string, fam: string, refresh: string, expiresAt: Date) {
   const secret = jwtSecret();
   if (!secret) return sendError(req, reply, 503, "AUTH_NOT_CONFIGURED", "JWT_SECRET is not set");
   const s = authSettings();

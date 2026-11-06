@@ -119,9 +119,25 @@ export function agentInventory(a: AgentInventory, t0: number, now: Date): CloudI
     source: "agent", scope, region: "local", checkedAt: now.toISOString(), elapsedMs: Math.round(performance.now() - t0), groups };
 }
 
+// 11/06 실플랫폼: 환경 두 개를 같이 새로 읽으면 CLI 가 환경마다 ~8개씩 한꺼번에 떠서(aws·gcloud 는 Python 시작만 ≈0.7초 CPU)
+//   CPU 요청이 작은 워커에서 전부 시간 초과로 끝났다 (혼자 읽으면 1초 안). 그래서 프로세스 하나에서 실자원 읽기 CLI 는
+//   INVENTORY_MAX_PROCS 개(기본 4)까지만 동시에 돌리고 나머지는 줄을 선다. 시간 제한은 exec 안에서 재므로 줄에서 기다린 시간은 안 든다
+// DRAFT(ai): 기본 4 (워커 CPU 요청·t3.medium 2 vCPU 기준). 사람 다섯이 같이 써도 CLI 수가 늘지 않는다
+let running = 0;
+const waiting: (() => void)[] = [];
+const maxProcs = () => Math.max(1, Math.floor(Number(process.env.INVENTORY_MAX_PROCS)) || 4);
+/** 실자원 읽기용 exec: 프로세스 전체에서 INVENTORY_MAX_PROCS 개까지만 동시에. 자리는 끝난 명령이 다음 대기자에게 바로 넘긴다 */
+export const inventoryExec = (exec: Exec = spawnExec): Exec => async (cmd, args, o) => {
+  if (running < maxProcs()) running++;
+  else await new Promise<void>((r) => waiting.push(r));
+  try { return await exec(cmd, args, o); }
+  finally { const next = waiting.shift(); if (next) next(); else running--; }
+};
+
 // 명령 하나 → JSON 또는 이유. 묶음과 비용 사실이 같이 쓴다
+// 기본 20초 (11/06 실측: 예전 10초는 환경 두 개를 같이 읽을 때 명령마다 SIGINT 로 끊김). 줄 선 시간은 안 들고 시작부터 잰다
 async function runRaw(bin: string, args: string[], exec: Exec, env: NodeJS.ProcessEnv): Promise<RawByKey[string] & object> {
-  const r = await exec(bin, args, { cwd: process.cwd(), env, timeoutMs: envNumber(env.INVENTORY_TIMEOUT_MS, 10000) });
+  const r = await exec(bin, args, { cwd: process.cwd(), env, timeoutMs: envNumber(env.INVENTORY_TIMEOUT_MS, 20000) });
   if (r.code !== 0) return { ok: false, error: lastLine(r.stderr) || `exit ${r.code}` };
   try { return { ok: true, json: JSON.parse(r.stdout || "null") }; }
   catch (e) { return { ok: false, error: `응답 해석 실패: ${(e as Error).message.slice(0, 100)}` }; }
@@ -161,7 +177,7 @@ export function inventoryUnavailable(provider: Provider, reason: string, now: Da
 
 /** 환경 하나의 실자원. 저장은 부르는 쪽 몫 */
 export async function readInventory(provider: Provider, d: InventoryDeps = {}): Promise<CloudInventory> {
-  const env = d.env ?? process.env, exec = d.exec ?? spawnExec, now = d.now ?? (() => new Date());
+  const env = d.env ?? process.env, exec = inventoryExec(d.exec), now = d.now ?? (() => new Date());
   const t0 = performance.now();
   if (provider === "azure_mock") {
     if (!d.azureStatus) return unavailable(provider, "azure-mock", "Azure Mock 실행기가 꺼져 있음 (AZURE_MOCK=0)", t0, now());
