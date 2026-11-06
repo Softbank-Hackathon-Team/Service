@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { AppSpecV2, envNumber, InventoryRefreshJob, MigrationStatus, Provider, QUEUES, type MigrationStatus as Status } from "@svc/contracts";
+import { AppSpecV2, BillingFacts, envNumber, InventoryRefreshJob, MigrationStatus, Provider, QUEUES, type MigrationStatus as Status } from "@svc/contracts";
 import { asBossDb, boss, jobKey, SPEC_DRAFT_KEY, withTenant } from "@svc/core";
 import { chooseRunner, gcp, inventoryUnavailable, onprem, readInventory, resourceTypesV2For, serviceMapV2, stubStatus, type CloudInventory as ReadInventory, type RunnerStatus } from "@svc/adapters";
 import { EnvironmentStatus, errors } from "./responses.js";
@@ -68,6 +68,7 @@ export const CloudInventory = z.object({
     items: z.array(z.object({ name: z.string(), status: z.string().nullable(), detail: z.string().nullable() }).strict()),
     error: z.string().nullable(),
   }).strict()),
+  billing: BillingFacts.optional(),         // 비용 화면용 사실 (GET /environments/:id/cost 가 씀). 예전에 저장한 결과에는 없다
 }).strict();
 
 // 저장된 줄 = 실자원 + 워커가 같이 둔 AWS 도착 사실(targetFacts, 계획·apply 전용). 화면 응답에는 빼고 실자원만

@@ -812,6 +812,115 @@ paths:
         "503":
           $ref: "#/components/responses/E503"
           description: "ApiError"
+  "/api/v1/environments/{id}/cost":
+    get:
+      operationId: "getEnvironmentsByIdCost"
+      tags:
+        - "environments"
+      summary: "/api/v1/environments/{id}/cost"
+      description: "코드: apps/api/src/routes/env-cost.ts"
+      security:
+        - bearerAuth: []
+        - devTenant: []
+      parameters:
+        - name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+            pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        - name: "lang"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+            enum:
+              - "ko"
+              - "en"
+              - "ja"
+        - $ref: "#/components/parameters/DevTenant"
+      responses:
+        "200":
+          description: "OK"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/EnvCostView"
+        "400":
+          $ref: "#/components/responses/E400"
+          description: "BAD_REQUEST (Zod 검증 실패)"
+        "401":
+          $ref: "#/components/responses/E401"
+          description: "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+        "404":
+          $ref: "#/components/responses/E404"
+          description: "ApiError"
+        "429":
+          $ref: "#/components/responses/E429"
+          description: "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+        "500":
+          $ref: "#/components/responses/E500"
+          description: "INTERNAL"
+  "/api/v1/environments/{id}/cost/move":
+    post:
+      operationId: "postEnvironmentsByIdCostMove"
+      tags:
+        - "environments"
+      summary: "/api/v1/environments/{id}/cost/move"
+      description: "코드: apps/api/src/routes/env-cost.ts"
+      requestBody:
+        required: true
+        content:
+          "application/json":
+            schema:
+              $ref: "#/components/schemas/MoveCostRequest"
+      security:
+        - bearerAuth: []
+        - devTenant: []
+      parameters:
+        - name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+            pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        - name: "lang"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+            enum:
+              - "ko"
+              - "en"
+              - "ja"
+        - $ref: "#/components/parameters/DevTenant"
+      responses:
+        "200":
+          description: "OK"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/MoveCostView"
+        "400":
+          $ref: "#/components/responses/E400"
+          description: "BAD_REQUEST (Zod 검증 실패)"
+        "401":
+          $ref: "#/components/responses/E401"
+          description: "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+        "403":
+          $ref: "#/components/responses/E403"
+          description: "TUNNEL_READ_ONLY (개발 헤더 인증 + Cloudflare 터널로 온 쓰기, Z47)"
+        "404":
+          $ref: "#/components/responses/E404"
+          description: "ApiError"
+        "429":
+          $ref: "#/components/responses/E429"
+          description: "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+        "500":
+          $ref: "#/components/responses/E500"
+          description: "INTERNAL"
   "/api/v1/environments/{id}/inventory":
     get:
       operationId: "getEnvironmentsByIdInventory"
@@ -936,6 +1045,8 @@ paths:
                             - "items"
                             - "error"
                           additionalProperties: false
+                      billing:
+                        $ref: "#/components/schemas/BillingFacts"
                     required:
                       - "provider"
                       - "status"
@@ -4728,6 +4839,190 @@ components:
         - "displayName"
         - "tenantId"
         - "tenantName"
+      additionalProperties: false
+    BillingFacts:
+      type: "object"
+      properties:
+        clusters:
+          type: "array"
+          items:
+            type: "object"
+            properties:
+              name:
+                type: "string"
+              location:
+                type:
+                  - "string"
+                  - "null"
+              zonal:
+                type:
+                  - "boolean"
+                  - "null"
+              autopilot:
+                type:
+                  - "boolean"
+                  - "null"
+              nodeCount:
+                anyOf:
+                  - type: "integer"
+                    minimum: -9007199254740991
+                    maximum: 9007199254740991
+                  - type: "null"
+              machineTypes:
+                type: "array"
+                items:
+                  type: "string"
+            required:
+              - "name"
+              - "location"
+              - "zonal"
+              - "autopilot"
+              - "nodeCount"
+              - "machineTypes"
+            additionalProperties: false
+        instances:
+          type: "array"
+          items:
+            type: "object"
+            properties:
+              name:
+                type: "string"
+              type:
+                type: "string"
+              state:
+                type:
+                  - "string"
+                  - "null"
+              spot:
+                type: "boolean"
+              cluster:
+                type:
+                  - "string"
+                  - "null"
+              publicIp:
+                type:
+                  - "string"
+                  - "null"
+            required:
+              - "name"
+              - "type"
+              - "state"
+              - "spot"
+              - "cluster"
+              - "publicIp"
+            additionalProperties: false
+        databases:
+          type: "array"
+          items:
+            type: "object"
+            properties:
+              name:
+                type: "string"
+              engine:
+                type:
+                  - "string"
+                  - "null"
+              cls:
+                type:
+                  - "string"
+                  - "null"
+              storageGb:
+                type:
+                  - "number"
+                  - "null"
+              storageType:
+                type:
+                  - "string"
+                  - "null"
+              multiAz:
+                type:
+                  - "boolean"
+                  - "null"
+            required:
+              - "name"
+              - "engine"
+              - "cls"
+              - "storageGb"
+              - "storageType"
+              - "multiAz"
+            additionalProperties: false
+        loadBalancers:
+          type: "array"
+          items:
+            type: "object"
+            properties:
+              name:
+                type: "string"
+              type:
+                type:
+                  - "string"
+                  - "null"
+              internetFacing:
+                type:
+                  - "boolean"
+                  - "null"
+              zones:
+                anyOf:
+                  - type: "integer"
+                    minimum: -9007199254740991
+                    maximum: 9007199254740991
+                  - type: "null"
+            required:
+              - "name"
+              - "type"
+              - "internetFacing"
+              - "zones"
+            additionalProperties: false
+        natGateways:
+          type: "array"
+          items:
+            type: "object"
+            properties:
+              name:
+                type: "string"
+              state:
+                type:
+                  - "string"
+                  - "null"
+              publicIps:
+                type: "array"
+                items:
+                  type: "string"
+            required:
+              - "name"
+              - "state"
+              - "publicIps"
+            additionalProperties: false
+        addresses:
+          type: "array"
+          items:
+            type: "object"
+            properties:
+              name:
+                type: "string"
+              ip:
+                type:
+                  - "string"
+                  - "null"
+              inUse:
+                type: "boolean"
+            required:
+              - "name"
+              - "ip"
+              - "inUse"
+            additionalProperties: false
+        errors:
+          type: "array"
+          items:
+            type: "string"
+      required:
+        - "clusters"
+        - "instances"
+        - "databases"
+        - "loadBalancers"
+        - "natGateways"
+        - "addresses"
+        - "errors"
       additionalProperties: false
     Breakpoint:
       type: "object"
@@ -8911,6 +9206,53 @@ components:
         - "origins"
         - "methods"
       additionalProperties: false
+    CostBasis:
+      type: "object"
+      properties:
+        kind:
+          type: "string"
+          enum:
+            - "inventory"
+            - "mapped"
+            - "assumption"
+        text:
+          type: "string"
+        refs:
+          type: "array"
+          items:
+            type: "string"
+      required:
+        - "kind"
+        - "text"
+        - "refs"
+      additionalProperties: false
+    CostBreakdown:
+      type: "object"
+      properties:
+        provider:
+          $ref: "#/components/schemas/Provider"
+        region:
+          type: "string"
+        monthlyUsd:
+          type: "number"
+        lines:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/CostLine"
+        gaps:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/CostGap"
+        priceAsOf:
+          type: "string"
+      required:
+        - "provider"
+        - "region"
+        - "monthlyUsd"
+        - "lines"
+        - "gaps"
+        - "priceAsOf"
+      additionalProperties: false
     CostEstimate:
       type: "object"
       properties:
@@ -8974,6 +9316,90 @@ components:
         - "recommendations"
         - "breakpoints"
       additionalProperties: false
+    CostGap:
+      type: "object"
+      properties:
+        id:
+          type: "string"
+        label:
+          type: "string"
+        reason:
+          type: "string"
+        estimateUsd:
+          type:
+            - "number"
+            - "null"
+      required:
+        - "id"
+        - "label"
+        - "reason"
+        - "estimateUsd"
+      additionalProperties: false
+    CostGroup:
+      type: "string"
+      enum:
+        - "cluster"
+        - "compute"
+        - "database"
+        - "storage"
+        - "network"
+        - "fixed"
+    CostLine:
+      type: "object"
+      properties:
+        id:
+          type: "string"
+        group:
+          $ref: "#/components/schemas/CostGroup"
+        label:
+          type: "string"
+        quantity:
+          type: "number"
+        quantityUnit:
+          type: "string"
+        hours:
+          type:
+            - "number"
+            - "null"
+        monthlyUsd:
+          type: "number"
+        formula:
+          type: "string"
+        basis:
+          $ref: "#/components/schemas/CostBasis"
+        price:
+          $ref: "#/components/schemas/CostPriceRef"
+      required:
+        - "id"
+        - "group"
+        - "label"
+        - "quantity"
+        - "quantityUnit"
+        - "hours"
+        - "monthlyUsd"
+        - "formula"
+        - "basis"
+        - "price"
+      additionalProperties: false
+    CostMapping:
+      type: "object"
+      properties:
+        group:
+          $ref: "#/components/schemas/CostGroup"
+        from:
+          type: "string"
+        to:
+          type:
+            - "string"
+            - "null"
+        why:
+          type: "string"
+      required:
+        - "group"
+        - "from"
+        - "to"
+        - "why"
+      additionalProperties: false
     CostParts:
       type: "object"
       properties:
@@ -8993,6 +9419,132 @@ components:
         - "db"
         - "storage"
         - "fixed"
+      additionalProperties: false
+    CostPriceRef:
+      type: "object"
+      properties:
+        item:
+          $ref: "#/components/schemas/PriceItem"
+        sku:
+          type: "string"
+        unitUsd:
+          type: "number"
+        unit:
+          $ref: "#/components/schemas/PriceUnit"
+        evidence:
+          $ref: "#/components/schemas/Evidence"
+        sourceKind:
+          type: "string"
+          enum:
+            - "official_api"
+            - "official_page"
+            - "secondary"
+            - "assumption"
+        source:
+          type: "string"
+        sourceUrl:
+          type:
+            - "string"
+            - "null"
+        fetchedAt:
+          type: "string"
+      required:
+        - "item"
+        - "sku"
+        - "unitUsd"
+        - "unit"
+        - "evidence"
+        - "sourceKind"
+        - "source"
+        - "sourceUrl"
+        - "fetchedAt"
+      additionalProperties: false
+    CostProjection:
+      type: "object"
+      properties:
+        monthlyUsd:
+          type: "number"
+        yearlyUsd:
+          type: "number"
+        appliedYearlyUsd:
+          type: "number"
+        conditionalYearlyUsd:
+          type: "number"
+        appliedMonthlyUsd:
+          type: "number"
+        promotions:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/CostPromotion"
+      required:
+        - "monthlyUsd"
+        - "yearlyUsd"
+        - "appliedYearlyUsd"
+        - "conditionalYearlyUsd"
+        - "appliedMonthlyUsd"
+        - "promotions"
+      additionalProperties: false
+    CostPromotion:
+      type: "object"
+      properties:
+        id:
+          type: "string"
+        provider:
+          $ref: "#/components/schemas/Provider"
+        title:
+          type: "string"
+        kind:
+          type: "string"
+          enum:
+            - "recurring_credit"
+            - "trial_credit"
+            - "signup_credit"
+            - "program_credit"
+            - "data_transfer_waiver"
+        status:
+          type: "string"
+          enum:
+            - "applied"
+            - "conditional"
+            - "not_applicable"
+        condition:
+          type: "string"
+        appliesTo:
+          type: "string"
+        firstYearUsd:
+          type: "number"
+        monthlyUsd:
+          minItems: 12
+          maxItems: 12
+          type: "array"
+          items:
+            type: "number"
+        validUntil:
+          type:
+            - "string"
+            - "null"
+        sourceUrl:
+          type: "string"
+        checkedAt:
+          type: "string"
+        note:
+          type:
+            - "string"
+            - "null"
+      required:
+        - "id"
+        - "provider"
+        - "title"
+        - "kind"
+        - "status"
+        - "condition"
+        - "appliesTo"
+        - "firstYearUsd"
+        - "monthlyUsd"
+        - "validUntil"
+        - "sourceUrl"
+        - "checkedAt"
+        - "note"
       additionalProperties: false
     CreateEnvironmentBody:
       type: "object"
@@ -9230,6 +9782,49 @@ components:
         - "via"
         - "hosts"
       additionalProperties: false
+    EnvCostView:
+      type: "object"
+      properties:
+        envId:
+          type: "string"
+          format: "uuid"
+          pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        name:
+          type: "string"
+        provider:
+          $ref: "#/components/schemas/Provider"
+        status:
+          type: "string"
+          enum:
+            - "ok"
+            - "partial"
+            - "unavailable"
+        reason:
+          type:
+            - "string"
+            - "null"
+        inventoryCheckedAt:
+          type:
+            - "string"
+            - "null"
+        breakdown:
+          anyOf:
+            - $ref: "#/components/schemas/CostBreakdown"
+            - type: "null"
+        projection:
+          anyOf:
+            - $ref: "#/components/schemas/CostProjection"
+            - type: "null"
+      required:
+        - "envId"
+        - "name"
+        - "provider"
+        - "status"
+        - "reason"
+        - "inventoryCheckedAt"
+        - "breakdown"
+        - "projection"
+      additionalProperties: false
     EnvEstimate:
       type: "object"
       properties:
@@ -9377,6 +9972,13 @@ components:
         - "lastVerifiedAt"
         - "failureReason"
       additionalProperties: false
+    Evidence:
+      type: "string"
+      enum:
+        - "fact"
+        - "unverified"
+        - "assumed"
+        - "mock"
     EvidenceReport:
       type: "object"
       properties:
@@ -10568,6 +11170,84 @@ components:
         - "service"
         - "vm"
         - "netpol"
+    MoveCostRequest:
+      type: "object"
+      properties:
+        targetEnvIds:
+          minItems: 1
+          maxItems: 10
+          type: "array"
+          items:
+            type: "string"
+            format: "uuid"
+            pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        sourceScope:
+          $ref: "#/components/schemas/SourceScope"
+      required:
+        - "targetEnvIds"
+      additionalProperties: false
+    MoveCostTarget:
+      type: "object"
+      properties:
+        envId:
+          type: "string"
+          format: "uuid"
+          pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        name:
+          type: "string"
+        provider:
+          $ref: "#/components/schemas/Provider"
+        feasible:
+          type: "boolean"
+        reason:
+          type:
+            - "string"
+            - "null"
+        breakdown:
+          anyOf:
+            - $ref: "#/components/schemas/CostBreakdown"
+            - type: "null"
+        projection:
+          anyOf:
+            - $ref: "#/components/schemas/CostProjection"
+            - type: "null"
+        mappings:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/CostMapping"
+        deltaMonthlyUsd:
+          type:
+            - "number"
+            - "null"
+      required:
+        - "envId"
+        - "name"
+        - "provider"
+        - "feasible"
+        - "reason"
+        - "breakdown"
+        - "projection"
+        - "mappings"
+        - "deltaMonthlyUsd"
+      additionalProperties: false
+    MoveCostView:
+      type: "object"
+      properties:
+        source:
+          $ref: "#/components/schemas/EnvCostView"
+        scopeNote:
+          type:
+            - "string"
+            - "null"
+        targets:
+          type: "array"
+          items:
+            $ref: "#/components/schemas/MoveCostTarget"
+      required:
+        - "source"
+        - "scopeNote"
+        - "targets"
+      additionalProperties: false
     NamespaceV2:
       type: "object"
       properties:
@@ -11098,6 +11778,24 @@ components:
         - "level"
         - "message"
       additionalProperties: false
+    PriceItem:
+      type: "string"
+      enum:
+        - "cluster"
+        - "cluster_credit"
+        - "node"
+        - "db"
+        - "storage"
+        - "fixed"
+        - "lb"
+        - "lb_capacity"
+        - "volume"
+        - "instance"
+        - "db_class"
+        - "public_ip"
+        - "nat"
+        - "db_vcpu"
+        - "db_mem"
     PriceSourceSummary:
       type: "object"
       properties:
@@ -11121,6 +11819,12 @@ components:
         - "fetchedAt"
         - "urls"
       additionalProperties: false
+    PriceUnit:
+      type: "string"
+      enum:
+        - "hour"
+        - "month"
+        - "gb_month"
     PrivateDnsRecordV2:
       type: "object"
       properties:

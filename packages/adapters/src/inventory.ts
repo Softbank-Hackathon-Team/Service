@@ -1,8 +1,9 @@
-import { envNumber, type Provider } from "@svc/contracts";
+import { envNumber, type BillingFacts, type Provider } from "@svc/contracts";
 import { spawnExec, type Exec } from "./terraform/real-runner.js";
 import type { ResourceState, RunnerStatus } from "./common/runner.js";
 import { SERVICE_NAME, type ServiceCategory } from "./common/service-map.js";
 import { arr, str as s, get, lastLine, maskAccount, awsRegion, gcpRegion, onpremContext } from "./common/cli.js";
+import { AWS_BILLING_EXTRA, GCP_BILLING_EXTRA, awsBilling, gcpBilling, type RawByKey } from "./inventory-billing.js";
 
 // Z86: 환경 실자원 읽기 (읽기 전용). 클라우드 SDK 를 새로 넣지 않고 맥에 이미 있는 CLI 를 쓴다 — tools/cloud-zero.sh 와 같은 명령 묶음
 //   AWS  : aws sts get-caller-identity → eks list-clusters · rds describe-db-instances · ec2 describe-vpcs · elbv2 describe-load-balancers · ecr describe-repositories
@@ -27,9 +28,12 @@ export interface CloudInventory {
   checkedAt: string;
   elapsedMs: number;
   groups: InventoryGroup[];
+  /** 비용 계산용 사실 (inventory-billing.ts). AWS·GCP 만. 예전에 저장한 결과에는 없다 */
+  billing?: BillingFacts;
 }
 
-interface Cmd { category: ServiceCategory; args: string[]; parse: (j: unknown) => InventoryItem[] }
+// key = 관찰 권한 표(common/observe-permissions.ts)의 "서비스 동사". 비용 사실이 같은 응답을 다시 쓸 때 이 열쇠로 찾는다
+interface Cmd { key: string; category: ServiceCategory; args: string[]; parse: (j: unknown) => InventoryItem[] }
 
 // Z104: JSON 읽기 조각·리전 기본값·계정 가림은 common/cli.ts 하나로 (Z88 discover·Z97 precheck 와 같은 함수)
 export { maskAccount };
@@ -37,16 +41,16 @@ export { maskAccount };
 function awsCmds(region: string): Cmd[] {
   const r = ["--region", region, "--output", "json"];
   return [
-    { category: "cluster", args: ["eks", "list-clusters", ...r], parse: (j) => arr(get(j, "clusters")).map((n) => ({ name: String(n), status: null, detail: null })) },
-    { category: "database", args: ["rds", "describe-db-instances", ...r], parse: (j) => arr(get(j, "DBInstances")).map((d) => ({
+    { key: "eks list-clusters", category: "cluster", args: ["eks", "list-clusters", ...r], parse: (j) => arr(get(j, "clusters")).map((n) => ({ name: String(n), status: null, detail: null })) },
+    { key: "rds describe-db-instances", category: "database", args: ["rds", "describe-db-instances", ...r], parse: (j) => arr(get(j, "DBInstances")).map((d) => ({
       name: s(d.DBInstanceIdentifier) ?? "?", status: s(d.DBInstanceStatus),
       detail: [s(d.Engine), s(d.EngineVersion), s(d.DBInstanceClass), d.AllocatedStorage ? `${s(d.AllocatedStorage)}GB` : null].filter(Boolean).join(" · ") })) },
-    { category: "network", args: ["ec2", "describe-vpcs", ...r], parse: (j) => arr(get(j, "Vpcs")).map((v) => ({
+    { key: "ec2 describe-vpcs", category: "network", args: ["ec2", "describe-vpcs", ...r], parse: (j) => arr(get(j, "Vpcs")).map((v) => ({
       name: s(arr(v.Tags).find((t) => t.Key === "Name")?.Value) ?? s(v.VpcId) ?? "?", status: s(v.State),
       detail: [s(v.VpcId), s(v.CidrBlock), v.IsDefault ? "기본 VPC" : null].filter(Boolean).join(" · ") })) },
-    { category: "ingress", args: ["elbv2", "describe-load-balancers", ...r], parse: (j) => arr(get(j, "LoadBalancers")).map((l) => ({
+    { key: "elbv2 describe-load-balancers", category: "ingress", args: ["elbv2", "describe-load-balancers", ...r], parse: (j) => arr(get(j, "LoadBalancers")).map((l) => ({
       name: s(l.LoadBalancerName) ?? "?", status: s(get(l, "State", "Code")), detail: [s(l.Type), s(l.Scheme)].filter(Boolean).join(" · ") })) },
-    { category: "registry", args: ["ecr", "describe-repositories", ...r], parse: (j) => arr(get(j, "repositories")).map((x) => ({
+    { key: "ecr describe-repositories", category: "registry", args: ["ecr", "describe-repositories", ...r], parse: (j) => arr(get(j, "repositories")).map((x) => ({
       name: s(x.repositoryName) ?? "?", status: null, detail: null })) },
   ];
 }
@@ -54,15 +58,15 @@ function awsCmds(region: string): Cmd[] {
 function gcpCmds(project: string): Cmd[] {
   const p = ["--project", project, "--format", "json"];
   return [
-    { category: "cluster", args: ["container", "clusters", "list", ...p], parse: (j) => arr(j).map((c) => ({
+    { key: "container clusters list", category: "cluster", args: ["container", "clusters", "list", ...p], parse: (j) => arr(j).map((c) => ({
       name: s(c.name) ?? "?", status: s(c.status), detail: [s(c.location), s(c.currentMasterVersion), c.currentNodeCount ? `노드 ${s(c.currentNodeCount)}개` : null].filter(Boolean).join(" · ") })) },
-    { category: "database", args: ["sql", "instances", "list", ...p], parse: (j) => arr(j).map((d) => ({
+    { key: "sql instances list", category: "database", args: ["sql", "instances", "list", ...p], parse: (j) => arr(j).map((d) => ({
       name: s(d.name) ?? "?", status: s(d.state), detail: [s(d.databaseVersion), s(get(d, "settings", "tier")), s(d.region)].filter(Boolean).join(" · ") })) },
-    { category: "network", args: ["compute", "networks", "list", ...p], parse: (j) => arr(j).map((n) => ({
+    { key: "compute networks list", category: "network", args: ["compute", "networks", "list", ...p], parse: (j) => arr(j).map((n) => ({
       name: s(n.name) ?? "?", status: null, detail: n.autoCreateSubnetworks ? "자동 서브넷" : "사용자 서브넷" })) },
-    { category: "ingress", args: ["compute", "forwarding-rules", "list", ...p], parse: (j) => arr(j).map((f) => ({
+    { key: "compute forwarding-rules list", category: "ingress", args: ["compute", "forwarding-rules", "list", ...p], parse: (j) => arr(j).map((f) => ({
       name: s(f.name) ?? "?", status: null, detail: [s(f.IPAddress), s(f.loadBalancingScheme)].filter(Boolean).join(" · ") })) },
-    { category: "registry", args: ["artifacts", "repositories", "list", ...p], parse: (j) => arr(j).map((x) => ({
+    { key: "artifacts repositories list", category: "registry", args: ["artifacts", "repositories", "list", ...p], parse: (j) => arr(j).map((x) => ({
       name: (s(x.name) ?? "?").split("/").pop()!, status: null, detail: s(x.format) })) },
   ];
 }
@@ -73,15 +77,15 @@ function kubeCmds(ctx: string): Cmd[] {
   const nm = (o: Record<string, unknown>) => `${s(get(o, "metadata", "namespace")) ? s(get(o, "metadata", "namespace")) + "/" : ""}${s(get(o, "metadata", "name")) ?? "?"}`;
   const sys = (o: Record<string, unknown>) => /^(kube-|cnpg-system|cert-manager|argocd|external-secrets)/.test(s(get(o, "metadata", "namespace")) ?? "");
   return [
-    { category: "cluster", args: ["get", "nodes", ...k], parse: (j) => items(j).map((n) => ({
+    { key: "get nodes", category: "cluster", args: ["get", "nodes", ...k], parse: (j) => items(j).map((n) => ({
       name: s(get(n, "metadata", "name")) ?? "?",
       status: arr(get(n, "status", "conditions")).find((c) => c.type === "Ready")?.status === "True" ? "Ready" : "NotReady",
       detail: [s(get(n, "status", "nodeInfo", "kubeletVersion")), s(get(n, "status", "capacity", "cpu")) ? `CPU ${s(get(n, "status", "capacity", "cpu"))}` : null].filter(Boolean).join(" · ") })) },
-    { category: "database", args: ["get", "clusters.postgresql.cnpg.io", "-A", ...k], parse: (j) => items(j).map((c) => ({
+    { key: "get cnpg", category: "database", args: ["get", "clusters.postgresql.cnpg.io", "-A", ...k], parse: (j) => items(j).map((c) => ({
       name: nm(c), status: s(get(c, "status", "phase")), detail: [`인스턴스 ${s(get(c, "spec", "instances")) ?? "?"}개`, s(get(c, "spec", "storage", "size"))].filter(Boolean).join(" · ") })) },
-    { category: "workload", args: ["get", "deployments", "-A", ...k], parse: (j) => items(j).filter((d) => !sys(d)).map((d) => ({
+    { key: "get deployments", category: "workload", args: ["get", "deployments", "-A", ...k], parse: (j) => items(j).filter((d) => !sys(d)).map((d) => ({
       name: nm(d), status: `${s(get(d, "status", "readyReplicas")) ?? 0}/${s(get(d, "spec", "replicas")) ?? 0} 준비`, detail: s(get(d, "spec", "template", "spec", "containers", "0", "image")) })) },
-    { category: "ingress", args: ["get", "services", "-A", ...k], parse: (j) => items(j).filter((v) => !sys(v) && s(get(v, "metadata", "name")) !== "kubernetes").map((v) => ({
+    { key: "get services", category: "ingress", args: ["get", "services", "-A", ...k], parse: (j) => items(j).filter((v) => !sys(v) && s(get(v, "metadata", "name")) !== "kubernetes").map((v) => ({
       name: nm(v), status: s(get(v, "spec", "type")), detail: arr(get(v, "spec", "ports")).map((p) => s(p.port)).join(",") || null })) },
   ];
 }
@@ -115,15 +119,28 @@ export function agentInventory(a: AgentInventory, t0: number, now: Date): CloudI
     source: "agent", scope, region: "local", checkedAt: now.toISOString(), elapsedMs: Math.round(performance.now() - t0), groups };
 }
 
-async function runGroups(bin: string, cmds: Cmd[], provider: Provider, exec: Exec, env: NodeJS.ProcessEnv): Promise<InventoryGroup[]> {
-  const timeoutMs = envNumber(env.INVENTORY_TIMEOUT_MS, 10000);
+// 명령 하나 → JSON 또는 이유. 묶음과 비용 사실이 같이 쓴다
+async function runRaw(bin: string, args: string[], exec: Exec, env: NodeJS.ProcessEnv): Promise<RawByKey[string] & object> {
+  const r = await exec(bin, args, { cwd: process.cwd(), env, timeoutMs: envNumber(env.INVENTORY_TIMEOUT_MS, 10000) });
+  if (r.code !== 0) return { ok: false, error: lastLine(r.stderr) || `exit ${r.code}` };
+  try { return { ok: true, json: JSON.parse(r.stdout || "null") }; }
+  catch (e) { return { ok: false, error: `응답 해석 실패: ${(e as Error).message.slice(0, 100)}` }; }
+}
+
+async function runGroups(bin: string, cmds: Cmd[], provider: Provider, exec: Exec, env: NodeJS.ProcessEnv, raw: RawByKey = {}): Promise<InventoryGroup[]> {
   return Promise.all(cmds.map(async (c) => {
-    const r = await exec(bin, c.args, { cwd: process.cwd(), env, timeoutMs });
+    const r = await runRaw(bin, c.args, exec, env);
+    raw[c.key] = r;
     const service = SERVICE_NAME[provider][c.category];
-    if (r.code !== 0) return { category: c.category, service, items: [], error: lastLine(r.stderr) || `exit ${r.code}` };
-    try { return { category: c.category, service, items: c.parse(JSON.parse(r.stdout || "null")), error: null }; }
+    if (!r.ok) return { category: c.category, service, items: [], error: r.error };
+    try { return { category: c.category, service, items: c.parse(r.json), error: null }; }
     catch (e) { return { category: c.category, service, items: [], error: `응답 해석 실패: ${(e as Error).message.slice(0, 100)}` }; }
   }));
+}
+
+// 비용 사실용으로 더 부르는 명령 (묶음과 동시에). 실패해도 묶음·건강에는 영향 없음
+async function runExtra(bin: string, extra: Record<string, string[]>, exec: Exec, env: NodeJS.ProcessEnv, raw: RawByKey): Promise<void> {
+  await Promise.all(Object.entries(extra).map(async ([key, args]) => { raw[key] = await runRaw(bin, args, exec, env); }));
 }
 
 const unavailable = (provider: Provider, source: CloudInventory["source"], reason: string, t0: number, now: Date, scope: string | null = null, region: string | null = null): CloudInventory =>
@@ -170,7 +187,11 @@ export async function readInventory(provider: Provider, d: InventoryDeps = {}): 
     try { account = s(get(JSON.parse(id.stdout), "Account")); } catch { /* 계정 번호 못 읽어도 목록은 읽는다 */ }
     // Z38 R8-46: 계정 번호 12자리는 화면·응답에 내지 않는다 (끝 4자리만)
     const scope = `계정 ${maskAccount(account)}${env.AWS_PROFILE ? ` · 프로필 ${env.AWS_PROFILE}` : ""}`;
-    return done(provider, "aws-cli", scope, region, await runGroups("aws", awsCmds(region), provider, exec, env), t0, now());
+    const raw: RawByKey = {};
+    const r = ["--region", region, "--output", "json"];
+    const extra = Object.fromEntries(Object.entries(AWS_BILLING_EXTRA).map(([k, a]) => [k, [...a, ...r]]));
+    const [groups] = await Promise.all([runGroups("aws", awsCmds(region), provider, exec, env, raw), runExtra("aws", extra, exec, env, raw)]);
+    return { ...done(provider, "aws-cli", scope, region, groups, t0, now()), billing: awsBilling(raw) };
   }
   if (provider === "gcp") {
     let project = env.GCP_PROJECT ?? env.GOOGLE_CLOUD_PROJECT ?? "";
@@ -181,7 +202,10 @@ export async function readInventory(provider: Provider, d: InventoryDeps = {}): 
     }
     if (!project || project === "(unset)") return unavailable(provider, "gcloud", "확인 불가: GCP 프로젝트가 정해지지 않음 (GCP_PROJECT)", t0, now());
     const region = gcpRegion(env);
-    return done(provider, "gcloud", `프로젝트 ${project}`, region, await runGroups("gcloud", gcpCmds(project), provider, exec, env), t0, now());
+    const raw: RawByKey = {};
+    const extra = Object.fromEntries(Object.entries(GCP_BILLING_EXTRA).map(([k, a]) => [k, a(project)]));
+    const [groups] = await Promise.all([runGroups("gcloud", gcpCmds(project), provider, exec, env, raw), runExtra("gcloud", extra, exec, env, raw)]);
+    return { ...done(provider, "gcloud", `프로젝트 ${project}`, region, groups, t0, now()), billing: gcpBilling(raw) };
   }
   // onprem push 시연 (d.agent 없음): kubectl
   const ctx = onpremContext(env);
