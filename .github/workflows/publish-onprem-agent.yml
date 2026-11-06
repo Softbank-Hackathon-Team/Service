@@ -11,6 +11,7 @@ on:
     paths:
       - "tools/onprem-agent.ts"
       - "packages/agent/**"
+      - "packages/adapters/**"
       - "packages/contracts/**"
       - "deploy/docker/Dockerfile"
       - ".github/workflows/publish-onprem-agent.yml"

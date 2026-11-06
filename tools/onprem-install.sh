@@ -12,6 +12,7 @@
 #   TENANT=t-0a1b2c3d GITOPS_REPO_URL=git@github.com:org/gitops.git AGENT_REPORT_URL=https://api.example \
 #   AGENT_IMAGE=ghcr.io/org/svc-onprem-agent@sha256:... AGENT_KEY_FILE=.agent-key.env \
 #   [GITOPS_SSH_KEY_FILE=~/.ssh/gitops_ro | GITOPS_TOKEN_FILE=~/gitops-read-token] [GRANTS_CLUSTER=1] [KUBE_CONTEXT=...] bash tools/onprem-install.sh
+#   [INVENTORY=0]  온프레 출발 가져오기 권한·스냅숏 끄기 (기본 켬: Agent 가 ConfigMap·노드 등 읽기 전용 목록을 보낸다. Secret 은 안 읽음)
 #   [METRICS_URL=https://metrics.<도메인>/v1/metrics METRIC_TOKEN_FILE=~/svc-metric-token]  트래픽 판정 지표 수집기 (#245, 둘 다 주거나 둘 다 빼기)
 #   METRIC_TOKEN_FILE: 이 환경의 지표 토큰 (콘솔·API POST /api/v1/environments/:id/metric-token 응답의 token, 한 번만 보인다).
 #     다시 발급하면 이전 토큰이 끊기므로 새 토큰으로 이 스크립트를 다시 돌린다. 토큰은 파일로만 받는다 (명령줄·helm 기록에 안 남게)
@@ -142,6 +143,7 @@ helm ${KUBE_CONTEXT:+--kube-context "$KUBE_CONTEXT"} upgrade --install onprem-ag
   --set tenant="$TENANT" --set gitops.repoURL="$GITOPS_REPO_URL" \
   --set agent.reportURL="$AGENT_REPORT_URL" --set agent.image="$AGENT_IMAGE" \
   --set grants.cluster="$([ "${GRANTS_CLUSTER:-0}" = 1 ] && echo true || echo false)" \
+  --set grants.inventory="$([ "${INVENTORY:-1}" = 0 ] && echo false || echo true)" \
   --set metrics.endpoint="${METRICS_URL:-}" >/dev/null
 K -n "$NS" rollout status deploy/onprem-agent --timeout=180s >/dev/null
 [ -z "${METRICS_URL:-}" ] || K -n "$NS" rollout status deploy/svc-metrics --timeout=180s >/dev/null
@@ -155,7 +157,8 @@ check yes list applications.argoproj.io -n "$ARGO_NS"
 check no create deployments -A
 check no delete pods -A
 check no get secrets -A
-check no get configmaps -A
+# 온프레 출발 가져오기 역할(grants.inventory, 기본 켬)은 ConfigMap·노드를 읽는다. 끄면(INVENTORY=0) 읽지 못해야 한다
+if [ "${INVENTORY:-1}" = 0 ]; then check no get configmaps -A; else check yes list configmaps -A; check yes list nodes; fi
 if [ -n "${METRICS_URL:-}" ]; then
   SA="system:serviceaccount:$NS:svc-metrics"   # 지표 수집기: 파드 읽기만
   check yes list pods -A

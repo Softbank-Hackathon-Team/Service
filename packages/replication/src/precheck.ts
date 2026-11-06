@@ -70,7 +70,7 @@ export async function precheck(source: Endpoint, target: Endpoint, opts: { table
       }
       add({ id: "DB-T5", side: "target", ok: nonEmpty.length === 0,
         detail: nonEmpty.length ? `target not empty: ${nonEmpty.join(", ")}` : "target tables empty",
-        hint: "초기 복사(copy_data)는 빈 표를 가정한다. 비우거나 copyData:false" });
+        hint: "초기 복사(copy_data)는 빈 표를 가정한다. 이 이전이나 같은 도착에서 롤백·취소로 끝난 이전의 스키마 복사가 만든 표(주석 svc-copy:<이전 id>)는 sync 가 스스로 지운다. 그 밖의 표는 사람이 비운다 (온프레: tools/onprem-db-reset.sh) 또는 copyData:false" });
     }
   });
 

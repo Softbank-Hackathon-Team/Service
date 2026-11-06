@@ -17,9 +17,9 @@ import { GRANT_TYPES_GCP } from "../target/grants.js";
 
 /** 권한 판. 묶음 내용이 바뀌면 올린다 (시험 permission-bundles 가 PERMISSIONS_DIGEST 와 대조해 안 올리면 실패).
  *  같은 번호가 연결 스크립트 역할 설명·연결 템플릿 역할 태그에 박힌다 → 고객 쪽에 붙은 판을 관찰 역할로 읽는다 */
-export const PERMISSIONS_VERSION = 1;
-/** 판 1 의 묶음 지문 (bundleDigest). 묶음을 바꿨으면 PERMISSIONS_VERSION 을 올리고 이 값을 새 지문으로 바꾼다 */
-export const PERMISSIONS_DIGEST = "b2c7859c08ee17cd";
+export const PERMISSIONS_VERSION = 2;
+/** 판 2 의 묶음 지문 (bundleDigest). 판 2 = 온프레 → AWS 중계기(aws.relay.target 필요 조건 relay_onprem_aws) + 템플릿에 RelayReadOwnConsole(선택, 필요 조건 밖). 묶음을 바꿨으면 PERMISSIONS_VERSION 을 올리고 이 값을 새 지문으로 바꾼다 */
+export const PERMISSIONS_DIGEST = "1ef6705476dcbe10";
 
 /** AWS 관찰 역할이 실행 역할 정책을 흉내 평가하는 권한 (같은 계정 svc-* 역할에만, 연결 템플릿 observe-permcheck 문) */
 export const AWS_PERMCHECK_ACTIONS = ["iam:SimulatePrincipalPolicy"] as const;
@@ -103,7 +103,9 @@ export function buildPermissionBundles(i: BundleInputs): PermissionBundle[] {
   const dataAws = sidActs((s) => s.startsWith("Data"));
   const pgAwsActs = uniq([...sidActs((s) => s === "AppDbSecretRead"), ...sidActs((s) => s.startsWith("App")).filter((a) => pgAws.has(a))]);
   const baseAws = sidActs((s) => !s.startsWith("Data") && s !== "AppDbSecretRead").filter((a) => !pgAws.has(a));
-  const relayStatements = i.aws.relayPolicy.Statement.filter((s) => !["SourceDbEgressToRelay", "SourceDbMasterSecretRead"].includes(s.Sid ?? ""));
+  // RelayReadOwnConsole(콘솔로 호스트 키 읽기)은 템플릿에는 넣지만 필요 조건에서는 뺀다: 워커가 RELAY_HOSTKEY_FROM_CONSOLE=1 일 때만 부른다.
+  //   필수로 두면 템플릿을 아직 안 고친 고객 계정의 AWS → 온프레 사전 점검이 그 동작 하나로 막힌다 (스위치를 켜기 전엔 안 쓰는 동작)
+  const relayStatements = i.aws.relayPolicy.Statement.filter((s) => !["SourceDbEgressToRelay", "SourceDbMasterSecretRead", "RelayReadOwnConsole"].includes(s.Sid ?? ""));
   const relaySource = uniq(relayStatements.filter((s) => s.Sid !== "TargetDbRulesForRelay").flatMap(actionsOf));
   const relayTarget = uniq(relayStatements.flatMap(actionsOf));
   const awsBundles: PermissionBundle[] = [
@@ -120,7 +122,7 @@ export function buildPermissionBundles(i: BundleInputs): PermissionBundle[] {
     b({ id: "aws.relay.source", cloud: "aws", stage: "relay", side: "source", principal: "svc-operate", role: "relay",
       permissions: relaySource, requiredWhen: ["relay_aws_onprem", "relay_aws_gcp"] }),
     b({ id: "aws.relay.target", cloud: "aws", stage: "relay", side: "target", principal: "svc-operate", role: "relay",
-      permissions: relayTarget, requiredWhen: ["relay_gcp_aws"] }),
+      permissions: relayTarget, requiredWhen: ["relay_gcp_aws", "relay_onprem_aws"] }),
   ];
   return [...gcpBundles, ...awsBundles].filter((x) => x.permissions.length > 0);
 }
@@ -162,11 +164,12 @@ export function gcpBundlesTsv(version: number, bundles: PermissionBundle[]): str
 export interface BundleNeeds {
   sourceProvider: string; targetProvider: string;
   secrets: boolean; postgres: boolean; data: boolean; envLayerCreate: boolean;
-  relay: "aws-onprem" | "aws-gcp" | "gcp-aws" | null; argoHub: boolean;
+  relay: "aws-onprem" | "aws-gcp" | "gcp-aws" | "onprem-aws" | null; argoHub: boolean;
 }
 const met = (w: PermissionRequiredWhen, n: BundleNeeds): boolean => w === "always" ? true
   : w === "secrets" ? n.secrets : w === "postgres" ? n.postgres : w === "data" ? n.data : w === "env_layer_create" ? n.envLayerCreate
-  : w === "argo_hub" ? n.argoHub : w === "relay_aws_onprem" ? n.relay === "aws-onprem" : w === "relay_aws_gcp" ? n.relay === "aws-gcp" : n.relay === "gcp-aws";
+  : w === "argo_hub" ? n.argoHub : w === "relay_aws_onprem" ? n.relay === "aws-onprem" : w === "relay_aws_gcp" ? n.relay === "aws-gcp"
+  : w === "relay_onprem_aws" ? n.relay === "onprem-aws" : n.relay === "gcp-aws";
 /** 이 이전이 쓰는 묶음 (쪽 = 그 쪽 환경이 묶음 클라우드일 때만) */
 export function requiredBundles(bundles: PermissionBundle[], n: BundleNeeds): (PermissionBundle & { onSide: "source" | "target" })[] {
   const out: (PermissionBundle & { onSide: "source" | "target" })[] = [];

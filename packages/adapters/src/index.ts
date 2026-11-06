@@ -43,12 +43,14 @@ export { readAlbRequestRate, ALB_RATE_AWS_COMMANDS, type AlbRate, type AlbRateRe
 export { AWS_TARGET_FACT_KEYS, awsTargetFactsOf, readAwsTargetFacts, type AwsTargetFactsRead } from "./aws/target-facts.js";
 export { AWS_DATA_READ_ACTIONS, GCP_DATA_READ_PERMISSIONS, AWS_DATA_READ_PENDING, GCP_DATA_READ_PENDING } from "./discover/data.js";
 export { readK8sNamespace, type K8sNamespaceRead, type K8sNamespaceOpts } from "./discover/k8s.js";
+// 온프레 출발 가져오기 (pull 모드): Agent 가 모은 인벤토리 스냅숏을 discover 의 kubectl 대신 재생한다
+export { collectInventorySnapshot, snapshotExec, snapshotBytes, parseKubectl, type InventorySnapshotOpts } from "./discover/inventory-snapshot.js";
 // I2: k8s 원본 타입 + 종류 문자열
 export * from "./import/raw-k8s.js";
 export { mockSeed, CliError, classifyCliError, sourceFail, type CliErrorKind, type CliDeps } from "./common/cli.js";
 export { runCloudPrecheck, toPrecheckItems, mockPrecheckEnabled, mockChecks, cliProblem, tcpProbe, apiEndpoint, AWS_QUOTAS, GCP_APIS, CLOUDSQL_PG_MAJORS_DEFAULT, MIN_REPL_PG_MAJOR,
   type CloudCheck, type Verdict, type PrecheckEnvInfo, type PrecheckInput, type PrecheckDeps, type CloudProvider } from "./precheck/cloud-precheck.js";
-export { relayPathApplies } from "./precheck/cloud-precheck.js";
+export { relayPathApplies, relayPermSide } from "./precheck/cloud-precheck.js";
 export { RELAY_ACTIONS, relayPermVerdict, relaySimArgs, relaySimContext, RELAY_PERM_FIX } from "./precheck/relay-permissions.js";   // 온프레 이전 중계기 권한
 // L4: 연결 확인 (빌린 관찰 역할로 고객 AWS 읽어 보기)
 export { verifyAwsObserve, envFor, EKS_CLUSTER_NAME_RE, trustHasExternalId, type VerifyAwsInput, type VerifyAwsResult } from "./verify/aws.js";

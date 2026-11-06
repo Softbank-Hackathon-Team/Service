@@ -14,6 +14,7 @@ import { actionsOfPolicy, createTempRoleBroker, loadPermissionSet, memoryLedger,
 import { deriveSshHostKey, deriveSshKeypair, knownHostsLine } from "../src/gitops/migration-secrets.js";
 import {
   buildRelayPlan, existingDbEgressCover, existingDbIngressCover, ownedBy, RELAY_FORWARDER_PY, pickPublicSubnet, platformEgressCidrs, provisionRelay, RelayError, relayTags, teardownRelay, type GcpRelayPlanInput, type OnpremRelayPlanInput,
+  hostKeyFromConsole,
 } from "../src/relay/aws-relay.js";
 import { forwardTarget } from "../src/gitops/replication-delivery.js";
 import { addRelayPeer, cloudSqlPeerOf, gcpEndpointRows, gcpRelayGate, prepareGcpRelayStep, provisionGcpRelayStep, provisionRelayStep, rdsIdentifierFromIds, relayEndpointRows, relayGate, relayKindOf, sourcePasswordRef, teardownRelayStep, type RelayFacts } from "../src/relay/relay-step.js";
@@ -585,4 +586,37 @@ test("보안 12번: aws-onprem 출발 줄은 워커 → RDS 를 verify-full (RDS
   assert.equal(again.sslmode, "require");
   const [other] = relayEndpointRows({ ...base, rds: { ...base.rds, endpoint: "db.x.us-east-1.rds.amazonaws.com" }, existing: [] });
   assert.deepEqual([other.sslmode, other.caPem], ["require", null]);
+});
+
+test("보안 12번: 호스트 키 콘솔 방식 = user-data 에 개인 키 없음, 중계기가 만든 공개 키를 콘솔 출력에서 읽는다 (아직 안 찍혔으면 기다린다)", async () => {
+  const f = newFake();
+  const pub = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGnHostKeyMadeOnTheRelayItselfxxxxxxxxxxxxxx";
+  f.consoleOutput = `[   12.3] cloud-init ...\r\nSVC_RELAY_HOSTKEY ${pub}\r\n`; f.consoleDelay = 2;
+  const plan = buildRelayPlan(planInput({ hostKey: null }));
+  assert.equal(plan.hostKeyFromConsole, true);
+  assert.equal(plan.hostPublicKey, null);
+  assert.doesNotMatch(plan.userData, /PRIVATE KEY/);
+  assert.match(plan.userData, /ssh-keygen -q -t ed25519 -N '' -f \/etc\/ssh\/ssh_host_ed25519_key/);
+  assert.match(plan.userData, /svc-relay-hostkey\.service/);
+  const r = await provisionRelay(deps(f), plan);
+  assert.equal(r.hostPublicKey, pub);
+  assert.equal(f.consoleCalls, 3);
+  // 끝내 안 찍히면 이유와 함께 멈춘다
+  const g = newFake(); g.consoleOutput = "boot only"; 
+  await assert.rejects(provisionRelay(deps(g), buildRelayPlan(planInput({ hostKey: null }))), /SVC_RELAY_HOSTKEY/);
+  // 예전 방식(기본)은 그대로: 개인 키를 user-data 로, 콘솔을 안 부른다
+  const h = newFake();
+  const old = buildRelayPlan(planInput());
+  assert.equal(old.hostKeyFromConsole, false);
+  await provisionRelay(deps(h), old);
+  assert.equal(h.consoleCalls, 0);
+});
+
+test("콘솔 출력 해석: 마지막 표시 줄, base64 그대로여도 읽는다, 모양이 틀리면 null", () => {
+  const a = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const b = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  assert.equal(hostKeyFromConsole(`SVC_RELAY_HOSTKEY ${a}\nnoise\nSVC_RELAY_HOSTKEY ${b}\n`), b);
+  assert.equal(hostKeyFromConsole(Buffer.from(`x\nSVC_RELAY_HOSTKEY ${a}\n`).toString("base64")), a);
+  assert.equal(hostKeyFromConsole("SVC_RELAY_HOSTKEY ssh-rsa AAAA"), null);
+  assert.equal(hostKeyFromConsole(""), null);
 });

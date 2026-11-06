@@ -63,7 +63,7 @@ export async function bundleNeedsFor(tenantId: string, m: MigrationSides, envs: 
     sourceProvider: envs.source.provider, targetProvider: envs.target.provider,
     secrets: (spec?.secrets?.length ?? 0) > 0, postgres: kinds.has("postgres"), data: kinds.has("cache") || kinds.has("objectStore") || kinds.has("queue"),
     envLayerCreate: chooseEnvLayerSource(envs.target.provider, layer, env) === "create",
-    relay: relay === "aws-onprem" || relay === "aws-gcp" || relay === "gcp-aws" ? relay : null,
+    relay: relay ?? null,
     argoHub: envs.target.provider === "gcp" && !!env.GCP_PLATFORM_PROJECT?.trim(),
   };
 }

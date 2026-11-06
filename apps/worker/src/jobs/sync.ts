@@ -96,9 +96,19 @@ export async function handleSync(raw: unknown) {
       let r: Awaited<ReturnType<typeof repl.sync>>, ev: Awaited<ReturnType<typeof repl.catchUpEvidence>>;
       let schemaCopy: Awaited<ReturnType<typeof repl.prepareTarget>> = null;
       let replicationAttr: Awaited<ReturnType<typeof repl.prepareReplicationRoles>> | null = null;
+      let targetReset: { dropped: string[]; blocked: string[] } | null = null;
       try {
         // 처음 온 작업이면 복제 가능한지 먼저 본다 (precheck 작업의 DB 점검은 아직 STUB이라 여기서 한 번 더)
         if ((await repl.phase()) === "idle") {
+          // 재시도 전 도착 초기화 (ADR-030 자동화): 이 이전, 또는 같은 도착에서 롤백·취소로 끝난 이전의 스키마 복사가 만든 표만 지운다.
+          //   완료된 이전이 만든 표(= 고객의 진짜 데이터)·표지 없는 표는 건드리지 않는다. 표지 없는 비어 있지 않은 표가 있으면 아무것도 안 지우고 아래 DB-T5 가 예전처럼 멈춘다
+          // DRAFT(ai): REPL_RESET_COPIED=0 이면 끈다 (기본 켬, 2026-11-07 보안·온프레 영역 결정 "안전한 범위만 자동")
+          if (process.env.REPL_RESET_COPIED !== "0") {
+            const ended = await withTenant(j.tenantId, async (tx) => (await tx.query<{ id: string }>(
+              `SELECT o.id FROM migrations o JOIN migrations m ON m.id = $1
+                WHERE o.target_env_id = m.target_env_id AND o.id <> m.id AND o.status IN ('rolled_back','cancelled')`, [j.migrationId])).rows.map((r) => r.id));
+            targetReset = await repl.resetTarget(ended);
+          }
           // Z77: REPL_COPY_SCHEMA=1 이면 점검 전에 도착에 없는 표를 출발 모양대로 만든다 (실패하면 한 트랜잭션이라 남는 것 없음 → 재시도 무의미)
           try { schemaCopy = await repl.prepareTarget(); }
           catch (e) {
@@ -140,6 +150,7 @@ export async function handleSync(raw: unknown) {
         detail: { measurements: toMeasurements(r.measures, j.migrationId, "target"), replication: {
           names: r.names, copy: r.copy, gate: r.gate, slotLagBytes: ev.replicationLagBytes, counts: ev.counts, ...(r.staleFences ? { staleFences: r.staleFences } : {}),
           ...(replicationAttr ? { replicationAttr: replicationAttr.filter((x) => x.result !== "skipped") } : {}),
+          ...(targetReset && (targetReset.dropped.length || targetReset.blocked.length) ? { targetReset } : {}),
           ...(schemaCopy ? { schemaCopy: { created: schemaCopy.created, types: schemaCopy.types, sequences: schemaCopy.sequences, indexes: schemaCopy.indexes,
             foreignKeys: schemaCopy.foreignKeys, skippedForeignKeys: schemaCopy.skippedForeignKeys, roleCreated: schemaCopy.roleCreated,
             grants: schemaCopy.grants, ms: Math.round(schemaCopy.ms), ...(schemaCopy.objects?.length ? { objects: schemaCopy.objects } : {}) } } : {}) } },

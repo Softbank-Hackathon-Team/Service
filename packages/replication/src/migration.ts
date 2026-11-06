@@ -5,7 +5,7 @@ import { DEFAULT_GATE, type GateOpts, type GateResult, judgeCutoverReady } from 
 import { copyStatus, type CopyStatus, sampleLagOn, slotLag, waitInitialCopyOn } from "./lag.js";
 import { MARKER_SCHEMA, namesFor, type Names } from "./names.js";
 import { ensureReplicationAttr, precheck, type PrecheckResult } from "./precheck.js";
-import { copySchema, type SchemaCopyResult, handOwnershipToApp } from "./schema.js";
+import { copySchema, type SchemaCopyResult, handOwnershipToApp, resetCopiedTables } from "./schema.js";
 import { dropSlotIfIdle, dropSubscription, startForwardOn, subscriptionExists } from "./replicate.js";
 import { ident, lit } from "./sql.js";
 import { dropReplUser, replUserOf } from "./repluser.js";
@@ -95,8 +95,11 @@ export class Migration {
   /** Z77: copySchema 가 켜져 있으면 도착에 없는 표·앱 계정을 만든다. 꺼져 있으면 null (예전 그대로: 앱 마이그레이션이 만든다) */
   async prepareTarget(): Promise<SchemaCopyResult | null> {
     if (!this.cfg.copySchema) return null;
-    return copySchema(this.cfg.source, this.cfg.target, await this.tables());
+    return copySchema(this.cfg.source, this.cfg.target, await this.tables(), { copiedBy: this.cfg.key });
   }
+
+  /** 재시도 전 도착 초기화: 이 이전(또는 allowedKeys 의 끝난 이전)의 스키마 복사가 만든 표만 지운다 (schema.ts resetCopiedTables) */
+  resetTarget(otherKeys: readonly string[] = []) { return resetCopiedTables(this.cfg.target, [this.cfg.key, ...otherKeys]); }
 
   /** Z77: Cloud SQL 쪽 계정에 REPLICATION 속성 (정방향 구독·역방향 슬롯 둘 다 필요). 그 밖 제공자는 skipped */
   async prepareReplicationRoles() {

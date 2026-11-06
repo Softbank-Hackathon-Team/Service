@@ -5,6 +5,38 @@ import { Finding } from "./results.js";
 // 회사·환경은 본문이 아니라 Agent 키(agent_keys 표)로 정한다. 본문에 tenantId 를 넣으면 strict 가 막는다
 const Common = { agentVersion: z.string().max(40), sentAt: z.iso.datetime({ offset: true }) };
 
+// 온프레 출발 가져오기용 인벤토리 스냅숏 (kind "inventory"). pull 모드에서 워커는 고객 클러스터에 들어갈 길이 없다(들어오는 포트 0)
+//   → Agent 가 안에서 읽기 전용 kubectl 목록을 클러스터 범위로 모아 밖으로 보내고, 워커 가져오기는 이 목록으로 같은 discover 를 다시 돌린다
+//   DECISION(team): 온프레 출발 가져오기는 Agent 인벤토리 스냅숏으로 한다. 플랫폼은 VM 안으로 들어가지 않는다 (온프레 영역 결정, 2026-11-07)
+// DRAFT(ai): 본문 상한 4 MiB (서명한 JSON 한 덩어리. API 받기 상한·Agent 보내기 전 검사가 같은 값을 쓴다)
+export const AGENT_INVENTORY_MAX_BYTES = 4 * 1024 * 1024;
+// kubectl 이 실패한 읽기 (권한 없음·CRD 없음 등). 워커가 같은 종료 코드·오류 글로 다시 재생해 discover 가 직접 읽을 때와 같은 판단(검토 줄·재시도)을 한다
+const InventoryReadError = z.object({ exitCode: z.number().int(), stderr: z.string().max(2000) }).strict();
+// 자원 이름 = kubectl get 의 첫 인자 (deployments, clusters.postgresql.cnpg.io …)
+const InventoryResource = z.string().min(1).max(253).regex(/^[a-z0-9][a-z0-9.-]*$/);
+/** Secret(core secrets, 같은 이름의 CRD 포함)은 어떤 경우에도 목록 내용을 담지 않는다. Agent 는 안 읽고 오류 칸으로만 남긴다 (받는 쪽에서도 막음) */
+export const isSecretResource = (r: string) => /^secrets?($|\.)/.test(r);
+export const AgentInventoryList = z.union([
+  // DRAFT(ai): 자원 하나당 5000개 (데모 k3s 는 수십 개. 넘으면 Agent 가 보내기 전에 크기 상한에 먼저 걸린다)
+  z.object({ resource: InventoryResource.refine((r) => !isSecretResource(r), { message: "Secret 은 인벤토리에 담지 않는다" }),
+    items: z.array(z.record(z.string(), z.unknown())).max(5000) }).strict(),
+  z.object({ resource: InventoryResource, error: InventoryReadError }).strict(),
+]);
+export type AgentInventoryList = z.infer<typeof AgentInventoryList>;
+export const AgentInventorySnapshot = z.object({
+  kind: z.literal("inventory"), ...Common,
+  // Agent 가 kubectl 로 다 읽은 시각. 신선도는 플랫폼이 받은 시각(received_at)으로 판단한다 (Agent 시계를 믿지 않는다)
+  collectedAt: z.iso.datetime({ offset: true }),
+  // kubectl api-resources --namespaced=true --verbs=list -o name 결과 (discover 가 앱 CRD·Gateway API·ExternalSecret 을 고르는 재료)
+  apiResources: z.union([
+    z.object({ names: z.array(z.string().max(253)).max(2000) }).strict(),
+    z.object({ error: InventoryReadError }).strict(),
+  ]),
+  // 자원별 클러스터 범위 목록 (get <자원> -A -o json 의 items). DRAFT(ai): 300종
+  lists: z.array(AgentInventoryList).max(300),
+}).strict();
+export type AgentInventorySnapshot = z.infer<typeof AgentInventorySnapshot>;
+
 export const AgentReport = z.discriminatedUnion("kind", [
   // Kyverno 정책 보고서(PolicyReport)·Falco 경보·점검 스크립트 결과를 Finding 모양으로
   z.object({ kind: z.literal("security"), ...Common, findings: z.array(Finding).max(500) }).strict(),
@@ -54,11 +86,15 @@ export const AgentReport = z.discriminatedUnion("kind", [
     //   못 받으면 칸이 없다 (보고 실패 아님). 없으면 중계기를 만들지 않고 ONPREM_EGRESS_UNKNOWN 으로 멈춘다 (22 를 세상에 열지 않는다)
     egressIp: z.ipv4().optional(),
   }).strict(),
+  // 온프레 출발 가져오기 재료 (위 AgentInventorySnapshot). 크다 → 받은 보고 목록 화면에는 안 싣는다 (apps/api agent-reports.ts)
+  AgentInventorySnapshot,
 ]);
 export type AgentReport = z.infer<typeof AgentReport>;
 export type AgentReportKind = AgentReport["kind"];
-// 보고 종류 목록 한 곳 (받음 응답·목록 화면·API 질의·DB CHECK 0047 이 같은 값을 쓴다)
-export const AgentReportKinds = z.enum(["security", "deploy", "heartbeat", "facts"]);
+// 보고 종류 목록 한 곳 (받음 응답·목록 화면·API 질의·DB CHECK 0047·0057 이 같은 값을 쓴다)
+export const AgentReportKinds = z.enum(["security", "deploy", "heartbeat", "facts", "inventory"]);
+// 받은 보고 목록(GET agent-reports)에서 고를 수 있는 종류. inventory 는 본문이 수 MB 라 목록에 싣지 않는다 (워커 가져오기만 읽는다)
+export const AgentReportListKinds = AgentReportKinds.exclude(["inventory"]);
 
 // 받음 응답 (201)
 export const AgentReportAccepted = z.object({

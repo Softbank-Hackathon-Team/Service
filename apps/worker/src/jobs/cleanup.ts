@@ -1,4 +1,4 @@
-import { dropRuntimeLinkSecret, targetBundle } from "../app-link.js";
+import { dropRuntimeLinkSecret, replicationBundle } from "../app-link.js";
 import { commitReplicationCleanup } from "../gitops/index.js";
 import { MigrationJob, QUEUES } from "@svc/contracts";
 import { replicationFor } from "./_repl.js";
@@ -81,7 +81,7 @@ export async function handleCleanup(raw: unknown) {
       // 온프레 CNPG 이전: 복제 걷기가 끝난 뒤에만 gitops 값에서 이전 역할(ensure absent)·터널·터널 키·역할 비밀번호를 걷는다.
       //   찌꺼기가 남았으면 그대로 둔다 (터널이 사라지면 워커가 도착 DB 에 못 붙어 repl-cleanup 으로 다시 걷을 길이 없다)
       const gitopsRepl = left.length === 0
-        ? await commitReplicationCleanup(await withTenant(j.tenantId, (tx) => targetBundle(tx, j.tenantId, m)))
+        ? await commitReplicationCleanup(await withTenant(j.tenantId, (tx) => replicationBundle(tx, j.tenantId, m)))
         : { skipped: "replication_leftovers" };
       // 출발 계정 중계기: 복제 걷기와 터널 정리 커밋 뒤에만 지운다 (찌꺼기가 남으면 repl-cleanup 이 같은 중계기로 다시 걷는다).
       //   지우기가 실패하면 paused(RELAY_TEARDOWN_FAILED) — 자원은 태그를 단 채 남고, 재개하면 이 단계가 다시 돈다 (여러 번 불러도 됨)

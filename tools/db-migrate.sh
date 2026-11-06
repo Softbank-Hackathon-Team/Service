@@ -114,6 +114,11 @@ marker_sql() {
     0050) echo "to_regclass('public.replication_endpoints') IS NOT NULL" ;;
     0051) echo "to_regclass('public.environment_inventory') IS NOT NULL" ;;
     0052) echo "to_regclass('public.environment_layers') IS NOT NULL" ;;
+    0053) echo "EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'replication_endpoints_password_ref_check' AND pg_get_constraintdef(oid) LIKE '%aws-sm%')" ;;
+    0054) echo "EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'replication_endpoints_password_ref_check' AND pg_get_constraintdef(oid) LIKE '%tf:%')" ;;
+    0055) echo "to_regclass('public.environment_permissions') IS NOT NULL" ;;
+    0056) echo "EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'replication_endpoints_relay_side' AND pg_get_constraintdef(oid) LIKE '%cnpg%')" ;;
+    0057) echo "EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agent_reports_kind_check' AND pg_get_constraintdef(oid) LIKE '%inventory%')" ;;
     *) echo "" ;;
   esac
 }

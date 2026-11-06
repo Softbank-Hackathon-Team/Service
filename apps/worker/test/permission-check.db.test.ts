@@ -77,7 +77,7 @@ test("permission-check: 빌린 관찰 토큰으로만 읽고 GCP 차이를 저�
   assert.ok(row.checked_at);
   const env = row.result.gaps.find((g: { bundleId: string }) => g.bundleId === "gcp.env");
   assert.deepEqual([env.level, env.missing], ["block", [...MEASURED].sort()]);
-  assert.equal(row.result.requiredVersion, 1);
+  assert.equal(row.result.requiredVersion, 2);
   assert.ok(w.calls.every((c) => /^(services list|projects get-iam-policy|iam roles describe)/.test(c)), w.calls.join("\n"));
   assert.deepEqual(r.revoked, ["permission_check_done"]);
   assert.equal(r.issued[0]!.purpose, "observe");

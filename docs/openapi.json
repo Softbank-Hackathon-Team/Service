@@ -6813,6 +6813,160 @@
           "unverifiable"
         ]
       },
+      "AgentInventoryList": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "resource": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 253,
+                "pattern": "^[a-z0-9][a-z0-9.-]*$"
+              },
+              "items": {
+                "maxItems": 5000,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "propertyNames": {
+                    "type": "string"
+                  },
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "required": [
+              "resource",
+              "items"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "resource": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 253,
+                "pattern": "^[a-z0-9][a-z0-9.-]*$"
+              },
+              "error": {
+                "type": "object",
+                "properties": {
+                  "exitCode": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "stderr": {
+                    "type": "string",
+                    "maxLength": 2000
+                  }
+                },
+                "required": [
+                  "exitCode",
+                  "stderr"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "resource",
+              "error"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      },
+      "AgentInventorySnapshot": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "inventory"
+          },
+          "agentVersion": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "sentAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "collectedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          },
+          "apiResources": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "names": {
+                    "maxItems": 2000,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "maxLength": 253
+                    }
+                  }
+                },
+                "required": [
+                  "names"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "error": {
+                    "type": "object",
+                    "properties": {
+                      "exitCode": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      "stderr": {
+                        "type": "string",
+                        "maxLength": 2000
+                      }
+                    },
+                    "required": [
+                      "exitCode",
+                      "stderr"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "error"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "lists": {
+            "maxItems": 300,
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentInventoryList"
+            }
+          }
+        },
+        "required": [
+          "kind",
+          "agentVersion",
+          "sentAt",
+          "collectedAt",
+          "apiResources",
+          "lists"
+        ],
+        "additionalProperties": false
+      },
       "AgentReport": {
         "oneOf": [
           {
@@ -7105,6 +7259,9 @@
               "dbs"
             ],
             "additionalProperties": false
+          },
+          {
+            "$ref": "#/components/schemas/AgentInventorySnapshot"
           }
         ]
       },
@@ -7142,7 +7299,8 @@
           "security",
           "deploy",
           "heartbeat",
-          "facts"
+          "facts",
+          "inventory"
         ]
       },
       "AgentReportList": {
@@ -17040,6 +17198,7 @@
           "relay_aws_onprem",
           "relay_aws_gcp",
           "relay_gcp_aws",
+          "relay_onprem_aws",
           "argo_hub"
         ]
       },

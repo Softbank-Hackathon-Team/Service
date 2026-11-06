@@ -9,7 +9,7 @@ import { errorMessage, runStep, failedAttempts, recordAttemptFailure, RetryLater
 import { withStepRoles } from "./_roles.js";
 import { transientTrafficError, rollbackTransientDelaysSec } from "./_transient.js";
 import { tempRoles, trafficFor, trafficMetrics } from "../platform.js";
-import { appLinkHooks, appLinkMeasurements, appLinkOn, recordActiveWriter, switchRuntimeWriter, targetBundle } from "../app-link.js";
+import { appLinkHooks, appLinkMeasurements, appLinkOn, recordActiveWriter, replicationBundle, switchRuntimeWriter, targetBundle } from "../app-link.js";
 import { appDbSwitchKind } from "./deploy.js";
 import { loadReapplyInput, type RealApplyInput } from "./apply-real.js";
 import { commitReplicationCleanup, commitTrafficWeight, configFromEnv, GitopsRepo, type BundleRef } from "../gitops/index.js";
@@ -33,13 +33,13 @@ export async function handleRollback(raw: unknown) {
     // APP-22 (가): Terraform 실행 방식 도착은 컷오버 뒤 롤백 때 db_writer_json=source 로 다시 apply → 승인 계획서·명세를 미리 읽는다
     load: async (tx, job, m) => {
       const appKind = await appDbSwitchKind(tx, m);
-      return { bundle: await targetBundle(tx, job.tenantId, m), appKind,
+      return { bundle: await targetBundle(tx, job.tenantId, m), replBundle: await replicationBundle(tx, job.tenantId, m), appKind,
                runtimeInput: appKind === "terraform_runtime" ? await loadReapplyInput(tx, { id: m.id, tenantId: job.tenantId, targetEnvId: m.targetEnvId }) : null };
     },
     // PF FM-ORC-20: 이 이전의 실행 역할 회수는 withStepRoles 가 끝난 뒤(재발급 고리가 멈춘 뒤)에 한다.
     //   예전엔 단계 안에서 회수해, 뒤의 DB 되돌림·복제 걷기가 재발급 주기를 넘기면 ROLE_RENEW_UNKNOWN → 롤백 실패·재시도로 일이 겹쳤다 (cleanup 과 같은 모양)
     work: async (j, m, loaded, ctx) => withRevokeAfter(j, await withStepRoles("rollback", j, m, async () => {
-      const { bundle, appKind, runtimeInput } = loaded as { bundle: Awaited<ReturnType<typeof targetBundle>>; appKind: Awaited<ReturnType<typeof appDbSwitchKind>>; runtimeInput: RealApplyInput | null };
+      const { bundle, replBundle, appKind, runtimeInput } = loaded as { bundle: Awaited<ReturnType<typeof targetBundle>>; replBundle: Awaited<ReturnType<typeof targetBundle>>; appKind: Awaited<ReturnType<typeof appDbSwitchKind>>; runtimeInput: RealApplyInput | null };
       // PF-E32 (RV-19) + orch RV-19 (FM-INT-12 합침): 복제 주소를 못 만들면(ReplConfigError: outputs.json 없음·빈 {tf:}) 예전엔 트래픽을 되돌리기 전에 던져 롤백이 영영 실패했다.
       //   컷오버 전이면 출발이 DB 주인이라 트래픽은 먼저 되돌리고, 복제 걷기는 못 한 채(감사 cleanup_incomplete) rolled_back.
       //   컷오버 뒤면 DB 주인이 도착일 수 있어 트래픽을 옮기지 않고 던진다 (TRF-19 와 같은 규칙). 단 지난 시도가 DB 를 이미 되돌렸으면(orch) 트래픽은 되돌린다
@@ -138,7 +138,7 @@ export async function handleRollback(raw: unknown) {
       const sourceHealthy = await withClient(repl.cfg.source, (c) => appCanWrite(c, repl.cfg.source, (repl.cfg.tables?.[0]) ?? "orders"));
       // 온프레 CNPG 이전: 걷기가 다 끝났을 때만 gitops 에서 이전 역할(ensure absent)·터널을 걷는다. 실패해도 롤백은 이어 간다 (detail 에만)
       //   덜 걷었으면 터널을 남긴다: repl-cleanup 이 같은 터널로 다시 걷고 그때 이 커밋을 한다
-      const gitopsReplication = cleanup.ok ? await commitReplicationCleanup(bundle) : { skipped: "replication_leftovers" };
+      const gitopsReplication = cleanup.ok ? await commitReplicationCleanup(replBundle) : { skipped: "replication_leftovers" };
       // 출발 계정 중계기: 걷기와 터널 정리 커밋이 끝났을 때만 지운다. 실패해도 롤백은 rolled_back (걷기 실패와 같은 규칙, Z69) → 경고 감사 + repl-cleanup 으로 다시
       const relay = cleanup.ok ? await teardownRelayStep(j, m) : { kind: "skipped" as const, reason: "replication_leftovers" };
       if (relay.kind === "failed") log.warn({ migration_id: j.migrationId, code: relay.failureCode, reason: relay.reason }, "rollback: relay teardown incomplete");

@@ -37,7 +37,9 @@ export const RELAY_SOURCE_PORT = 15432;
 export const RELAY_REVERSE_TAG = "svc:reverse-target";
 
 /** 중계기 종류 = 출발 계정의 중계기가 무엇을 나르나 (relay-step RELAY_ROUTES 가 (출발, 도착) 짝에서 고른다) */
-export type RelayKind = "aws-onprem" | "aws-gcp" | "gcp-aws";
+// onprem-aws (ADR-031 R4): 온프레 출발 → AWS 도착. 중계기는 도착 계정에 살고(gcp-aws 처럼), 모양(sshd·규칙·입구)은 aws-onprem 과 같다.
+//   rds = 도착 RDS. 온프레 터널이 -R 로 출발 CNPG 를 중계 :5432 에 내놓아 도착 RDS 가 구독하고, 롤백 창에는 -L 로 온프레가 도착 RDS 를 구독한다
+export type RelayKind = "aws-onprem" | "aws-gcp" | "gcp-aws" | "onprem-aws";
 
 export type RelayErrorCode = "RELAY_PROVISION_FAILED" | "RELAY_TEARDOWN_FAILED" | "RELAY_SOURCE_DB_UNKNOWN" | "RELAY_CONFIG_MISSING" | "RELAY_DB_EGRESS_DENIED"
   | "RELAY_DB_INGRESS_DENIED" | "RELAY_TARGET_DB_UNKNOWN";
@@ -74,12 +76,13 @@ export interface RelayAmi { imageId: string; rootDeviceName: string }
 export interface CloudSqlPeer { publicIp: string; outgoingIp: string }
 interface RelayPlanBase { migrationId: string; rds: RelaySource; network: RelayNetwork; ami: RelayAmi; platformEgressCidrs: string[] }
 export interface OnpremRelayPlanInput extends RelayPlanBase {
-  kind: "aws-onprem";
+  kind: "aws-onprem" | "onprem-aws";
   onpremEgressIp: string;
   /** 터널 계정 authorized_keys 한 줄 (migration-secrets deriveSshKeypair().publicKeyLine) */
   tunnelPublicKey: string;
-  /** 중계기 sshd 호스트 키 (migration-secrets deriveSshHostKey) */
-  hostKey: SshKeypair;
+  /** 중계기 sshd 호스트 키 (migration-secrets deriveSshHostKey). null = 중계기가 스스로 만들고 공개 키만 콘솔 출력으로 알린다
+   *  (보안 12번: 개인 키가 EC2 user-data 에 평문으로 남지 않는다. 고객 연결 템플릿에 ec2:GetConsoleOutput 이 있어야 한다, RelayReadOwnConsole) */
+  hostKey: SshKeypair | null;
 }
 export interface GcpRelayPlanInput extends RelayPlanBase { kind: "aws-gcp"; cloudSql: CloudSqlPeer }
 /** GCP 출발 → AWS 도착: rds = 도착 RDS (terraform 이 만든 것), cloudSql = 출발 Cloud SQL 의 공개·나가는 IP (gcloud sql instances describe) */
@@ -99,8 +102,10 @@ export interface RelayPlan {
   dbEgress: { groupId: string; groupIds: string[]; port: number; tags: Tag[]; peerIp: string | null };
   /** RDS 보안 그룹에 달 들어오기 규칙 (출처 = 중계 보안 그룹 참조: EC2 를 다시 만들어도 그대로). 모양은 dbEgress 와 같다 */
   dbIngress: { groupId: string; groupIds: string[]; port: number; tags: Tag[] };
-  /** 온프레 중계기 sshd 호스트 공개 키 (GCP 중계기는 SSH 가 없어 null) */
+  /** 온프레 중계기 sshd 호스트 공개 키 (GCP 중계기는 SSH 가 없어 null, 콘솔 방식이면 띄운 뒤에 안다 = null) */
   hostPublicKey: string | null;
+  /** true = 띄운 뒤 콘솔 출력(RELAY_HOSTKEY_MARK 줄)에서 호스트 공개 키를 읽는다 (provisionRelay → RelayResources.hostPublicKey) */
+  hostKeyFromConsole: boolean;
   /** user-data 에 고정한 목적지 (EC2 태그 svc:reverse-target 과 같다). aws-gcp = Cloud SQL 공개 IP(역방향 입구), gcp-aws = 도착 RDS 엔드포인트(입구).
    *  다시 돌 때 태그와 다르면 그 EC2 는 못 고친다 → 지우고 새로 만든다. 온프레는 null */
   reverseTarget: string | null;
@@ -166,27 +171,40 @@ export const RELAY_FORWARDER_PY = [
 /** 중계기 user-data (bash). 호스트 키를 넣고 다른 종류 호스트 키는 지우고, tunnel 계정은 포트 전달 두 칸만 (demo-relay 모듈과 같은 sshd 모양).
  *  그리고 워커용 출발 입구 forwarder(RELAY_SOURCE_PORT → RDS:5432)를 systemd 로 띄운다 (sshd 다음: 실패해도 터널은 산다).
  *  ec2-user 키는 없다 (관리 SSH 없음). 바깥 패키지 설치가 없어 나가는 인터넷이 필요 없다 */
-export function relayUserData(i: { migrationId: string; rdsEndpoint: string; tunnelPublicKey: string; hostKey: SshKeypair }): string {
+export function relayUserData(i: { migrationId: string; rdsEndpoint: string; tunnelPublicKey: string; hostKey: SshKeypair | null }): string {
   if (!NAME.test(i.rdsEndpoint)) throw new RelayError("RELAY_SOURCE_DB_UNKNOWN", "RDS 엔드포인트는 이름(영숫자·.·-)만");
   if (!SSH_PUB.test(i.tunnelPublicKey.trim())) throw new RelayError("RELAY_PROVISION_FAILED", "터널 공개 키가 ssh-ed25519 한 줄이 아니다");
-  if (!SSH_PUB.test(i.hostKey.publicKeyLine.trim())) throw new RelayError("RELAY_PROVISION_FAILED", "호스트 공개 키가 ssh-ed25519 한 줄이 아니다");
-  const priv = i.hostKey.privateKeyOpenssh.trim();
-  if (!new RegExp(`^-----BEGIN ${OPENSSH_PEM}-----\\n[A-Za-z0-9+/=\\n]+\\n-----END ${OPENSSH_PEM}-----$`).test(priv))
-    throw new RelayError("RELAY_PROVISION_FAILED", "호스트 개인 키가 OpenSSH 형식이 아니다");
+  let hostKeyLines: string[];
+  if (i.hostKey) {
+    if (!SSH_PUB.test(i.hostKey.publicKeyLine.trim())) throw new RelayError("RELAY_PROVISION_FAILED", "호스트 공개 키가 ssh-ed25519 한 줄이 아니다");
+    const priv = i.hostKey.privateKeyOpenssh.trim();
+    if (!new RegExp(`^-----BEGIN ${OPENSSH_PEM}-----\\n[A-Za-z0-9+/=\\n]+\\n-----END ${OPENSSH_PEM}-----$`).test(priv))
+      throw new RelayError("RELAY_PROVISION_FAILED", "호스트 개인 키가 OpenSSH 형식이 아니다");
+    hostKeyLines = [
+      "cat > /etc/ssh/ssh_host_ed25519_key <<'SVC_HOST_KEY'",
+      priv,
+      "SVC_HOST_KEY",
+      "chown root:root /etc/ssh/ssh_host_ed25519_key",
+      "chmod 600 /etc/ssh/ssh_host_ed25519_key",
+      `printf '%s\\n' '${i.hostKey.publicKeyLine.trim()}' > /etc/ssh/ssh_host_ed25519_key.pub`,
+      "chmod 644 /etc/ssh/ssh_host_ed25519_key.pub",
+    ];
+  } else {
+    // 보안 12번: 중계기가 자기 ed25519 키를 만든다 (개인 키는 이 EC2 밖으로 안 나간다). 공개 키는 아래 svc-relay-hostkey 단위가 부팅마다 콘솔에 찍는다
+    hostKeyLines = [
+      "test -s /etc/ssh/ssh_host_ed25519_key || ssh-keygen -q -t ed25519 -N '' -f /etc/ssh/ssh_host_ed25519_key",
+      "chown root:root /etc/ssh/ssh_host_ed25519_key",
+      "chmod 600 /etc/ssh/ssh_host_ed25519_key",
+    ];
+  }
   return [
     "#!/bin/bash",
     `# svc relay (managed-by=platform) for migration ${i.migrationId}`,
     "set -euo pipefail",
     "umask 077",
-    // 호스트 키: 플랫폼이 파생한 ed25519 하나만. 처음 부팅에 만들어진 다른 종류 키는 지우고 다시 안 만들게 막는다
+    // 호스트 키: ed25519 하나만. 처음 부팅에 만들어진 다른 종류 키는 지우고 다시 안 만들게 막는다
     "rm -f /etc/ssh/ssh_host_rsa_key /etc/ssh/ssh_host_rsa_key.pub /etc/ssh/ssh_host_ecdsa_key /etc/ssh/ssh_host_ecdsa_key.pub",
-    "cat > /etc/ssh/ssh_host_ed25519_key <<'SVC_HOST_KEY'",
-    priv,
-    "SVC_HOST_KEY",
-    "chown root:root /etc/ssh/ssh_host_ed25519_key",
-    "chmod 600 /etc/ssh/ssh_host_ed25519_key",
-    `printf '%s\\n' '${i.hostKey.publicKeyLine.trim()}' > /etc/ssh/ssh_host_ed25519_key.pub`,
-    "chmod 644 /etc/ssh/ssh_host_ed25519_key.pub",
+    ...hostKeyLines,
     "systemctl mask sshd-keygen@rsa.service sshd-keygen@ecdsa.service || true",
     // 본 설정 파일의 HostKey 줄은 막는다 → 아래 HostKey 한 줄만 남는다
     "sed -i -E 's/^[[:space:]]*HostKey[[:space:]]/#&/' /etc/ssh/sshd_config",
@@ -220,11 +238,42 @@ export function relayUserData(i: { migrationId: string; rdsEndpoint: string; tun
     "SVC_TUNNEL",
     "sshd -t",
     "systemctl restart sshd",
+    ...(i.hostKey ? [] : hostKeyConsoleUnit()),
     // 출발 입구: 워커 → 중계 :15432 → RDS:5432. 보안 그룹이 플랫폼 나가는 대역만 받는다. root 아닌 일회용 계정(DynamicUser)으로 돈다
     ...forwarderScript(),
     ...forwarderUnit("svc-relay-fwd", "svc relay source entry (platform worker to source RDS, TCP passthrough)", i.rdsEndpoint, RELAY_SOURCE_PORT),
     "",
   ].join("\n");
+}
+
+/** 호스트 공개 키를 콘솔(시리얼)에 찍는 단위. 부팅마다 다시 찍어 EC2 를 다시 켜도 워커가 읽을 수 있다 (get-console-output --latest) */
+export const RELAY_HOSTKEY_MARK = "SVC_RELAY_HOSTKEY";
+// ExecStart 에 직접 쓰면 systemd 가 %s·$ 를 자기 문법(지정자·환경 변수)으로 바꾼다 → 스크립트 파일로 뺀다
+const hostKeyConsoleUnit = () => [
+  "cat > /usr/local/bin/svc-relay-hostkey.sh <<'SVC_HK'",
+  "#!/bin/sh",
+  `printf '%s %s\\n' ${RELAY_HOSTKEY_MARK} "$(cut -d' ' -f1,2 /etc/ssh/ssh_host_ed25519_key.pub)" > /dev/ttyS0`,
+  "SVC_HK",
+  "chmod 755 /usr/local/bin/svc-relay-hostkey.sh",
+  "cat > /etc/systemd/system/svc-relay-hostkey.service <<'SVC_UNIT'",
+  "[Unit]",
+  "Description=svc relay: print sshd ed25519 host public key to the serial console",
+  "After=sshd.service",
+  "[Service]",
+  "Type=oneshot",
+  "ExecStart=/usr/local/bin/svc-relay-hostkey.sh",
+  "[Install]",
+  "WantedBy=multi-user.target",
+  "SVC_UNIT",
+  "systemctl daemon-reload",
+  "systemctl enable --now svc-relay-hostkey.service",
+];
+
+/** 콘솔 출력에서 호스트 공개 키 한 줄 (가장 마지막 표시 줄). 없으면 null */
+export function hostKeyFromConsole(output: string): string | null {
+  const find = (t: string) => [...t.matchAll(new RegExp(`${RELAY_HOSTKEY_MARK} (ssh-ed25519 [A-Za-z0-9+/]+={0,3})`, "g"))].at(-1)?.[1] ?? null;
+  // AWS CLI v2 는 Output 을 풀어서 준다. 혹시 base64 그대로면 풀어서 한 번 더 본다
+  return find(output) ?? (/^[A-Za-z0-9+/=\s]+$/.test(output) ? find(Buffer.from(output, "base64").toString("utf8")) : null);
 }
 
 const forwarderScript = () => ["cat > /usr/local/bin/svc-relay-fwd.py <<'SVC_FWD'", RELAY_FORWARDER_PY, "SVC_FWD", "chmod 644 /usr/local/bin/svc-relay-fwd.py"];
@@ -373,7 +422,8 @@ export function buildRelayPlan(i: RelayPlanInput): RelayPlan {
     dbEgress: { groupId, groupIds: [...new Set(i.rds.securityGroupIds)], port: PG_PORT, tags: relayTags(i.migrationId, RELAY_DB_EGRESS_ROLE),
                 peerIp: i.kind === "gcp-aws" ? i.cloudSql.publicIp : null },
     dbIngress: { groupId, groupIds: [...new Set(i.rds.securityGroupIds)], port: PG_PORT, tags: relayTags(i.migrationId, RELAY_DB_INGRESS_ROLE) },
-    hostPublicKey: i.kind === "aws-onprem" ? i.hostKey.publicKeyLine.trim() : null,
+    hostPublicKey: (i.kind === "aws-onprem" || i.kind === "onprem-aws") && i.hostKey ? i.hostKey.publicKeyLine.trim() : null,
+    hostKeyFromConsole: (i.kind === "aws-onprem" || i.kind === "onprem-aws") && !i.hostKey,
     reverseTarget,
   };
 }
@@ -532,6 +582,8 @@ export interface RelayResources {
   dbIngressRuleId: string; dbIngressCoveredBy?: string;
   /** 이번에 새로 만든 것 / 이미 있어 그대로 쓴 것 (감사 detail 용, 번호만) */
   created: string[]; reused: string[];
+  /** 콘솔 방식(plan.hostKeyFromConsole)일 때 중계기가 알린 호스트 공개 키 */
+  hostPublicKey?: string;
 }
 
 async function instancesByTag(aws: AwsCli, migrationId: string, states: string[], code: RelayErrorCode): Promise<InstanceRow[]> {
@@ -610,6 +662,17 @@ export async function provisionRelay(d: RelayAwsDeps, plan: RelayPlan): Promise<
     await sleep(every);
   }
   const publicIp = inst.PublicIpAddress!, privateIp = inst.PrivateIpAddress!;
+  // 보안 12번: 중계기가 스스로 만든 호스트 키의 공개 키를 콘솔 출력에서 읽는다 (부팅·sshd 뒤에 찍힌다, 수십 초~몇 분)
+  let hostPublicKey: string | undefined;
+  if (plan.hostKeyFromConsole) {
+    for (let n = 0; ; n++) {
+      const c = await aws.call<{ Output?: string }>(["ec2", "get-console-output", "--instance-id", instanceId, "--latest"], "중계 EC2 콘솔 출력(호스트 공개 키)", P);
+      const k = c.Output ? hostKeyFromConsole(c.Output) : null;
+      if (k) { hostPublicKey = k; break; }
+      if (n + 1 >= tries) throw new RelayError(P, `중계 EC2 ${instanceId} 의 콘솔 출력에 호스트 공개 키(${RELAY_HOSTKEY_MARK})가 ${tries}번 기다려도 없다`);
+      await sleep(every);
+    }
+  }
 
   // ④ RDS 보안 그룹 나가기 → 중계 사설 IP/32:5432 (롤백 창 역방향 구독). 사설 IP 가 바뀌었으면(EC2 다시 만듦) 옛 규칙을 뺀다
   //   gcp-aws: 대상 = 출발 Cloud SQL 공개 IP/32 (도착 RDS 의 정방향 구독이 VPC NAT 로 나간다). Cloud SQL 을 다시 만들어 IP 가 바뀌면 옛 규칙을 뺀다
@@ -698,7 +761,7 @@ export async function provisionRelay(d: RelayAwsDeps, plan: RelayPlan): Promise<
     }
   }
   return { securityGroupId: sgId, instanceId, publicIp, privateIp, dbEgressRuleId: dbEgressRuleId ?? "", ...(dbEgressCoveredBy ? { dbEgressCoveredBy } : {}),
-    dbIngressRuleId: dbIngressRuleId ?? "", ...(dbIngressCoveredBy ? { dbIngressCoveredBy } : {}), created, reused };
+    dbIngressRuleId: dbIngressRuleId ?? "", ...(dbIngressCoveredBy ? { dbIngressCoveredBy } : {}), created, reused, ...(hostPublicKey ? { hostPublicKey } : {}) };
 }
 
 // user-data 에 호스트 개인 키가 들어 있다 → argv(ps 에 보임) 대신 0600 임시 파일(0700 폴더)로 넘기고 바로 지운다

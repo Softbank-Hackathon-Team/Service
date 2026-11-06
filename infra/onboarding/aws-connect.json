@@ -617,7 +617,7 @@
         "Tags": [
           {
             "Key": "platform-perms-version",
-            "Value": "1"
+            "Value": "2"
           }
         ]
       }
@@ -665,7 +665,7 @@
         "Tags": [
           {
             "Key": "platform-perms-version",
-            "Value": "1"
+            "Value": "2"
           }
         ],
         "ManagedPolicyArns": [
@@ -911,6 +911,22 @@
                   "Effect": "Allow",
                   "Action": [
                     "ec2:TerminateInstances"
+                  ],
+                  "Resource": "arn:aws:ec2:ap-northeast-2:*:instance/*",
+                  "Condition": {
+                    "StringEquals": {
+                      "aws:ResourceTag/managed-by": "platform"
+                    },
+                    "Null": {
+                      "aws:ResourceTag/svc:migration": "false"
+                    }
+                  }
+                },
+                {
+                  "Sid": "RelayReadOwnConsole",
+                  "Effect": "Allow",
+                  "Action": [
+                    "ec2:GetConsoleOutput"
                   ],
                   "Resource": "arn:aws:ec2:ap-northeast-2:*:instance/*",
                   "Condition": {

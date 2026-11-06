@@ -1,3 +1,4 @@
+import { prepareOnpremAwsRelayStep, provisionOnpremAwsRelayStep } from "../relay/onprem-aws.js";
 import { ApplyJob, QUEUES, redactText, type AppSpecV2, type PlanDoc, type Provider, type TfOutputs } from "@svc/contracts";
 import { azureMockOutputsV2, chooseRunner, iacMockEnabled, onpremGitFloorOutputs, specV2ForPlan, STUB_TF_OUTPUTS, stubTfOutputsV2 } from "@svc/adapters";
 import { asFailureCode, latestAcceptedSpecV2, planExpired, replicationEndpointsFor, withTenant, type Tx } from "@svc/core";
@@ -119,6 +120,11 @@ export async function handleApply(raw: unknown) {
         if (gaGate?.kind === "fail")
           return { to: "failed", failureCode: asFailureCode(gaGate.failureCode), detail: { planId: j.planId, provider, error: gaGate.reason,
             relay: { ...(gaGate.missing ? { missing: gaGate.missing } : {}), ...(gaGate.hint ? { hint: gaGate.hint } : {}) } } };
+        // 온프레 → AWS 중계기 (relay/onprem-aws.ts, ADR-031 R4): ① 문(나가는 IP·마스터 키·플랫폼 대역) ② terraform ③ 도착 계정에 중계기·RDS 규칙·끝점 두 줄.
+        //   짝이 onprem->aws 가 아니면 null (예전 그대로)
+        const oaGate = provider === "aws" ? await prepareOnpremAwsRelayStep(j, m) : null;
+        if (oaGate?.kind === "fail")
+          return { to: "failed", failureCode: asFailureCode(oaGate.failureCode), detail: { planId: j.planId, provider, error: oaGate.reason } };
         let r = await tfApply();
         if (!r.ok) return { to: "failed", failureCode: asFailureCode(r.failureCode), detail: r.detail };
         if (gate?.kind === "go") {
@@ -133,6 +139,12 @@ export async function handleApply(raw: unknown) {
             return { to: "failed", failureCode: asFailureCode(ga.failureCode), detail: { planId: j.planId, provider, error: ga.reason, ...(ga.detail ? { relay: ga.detail } : {}) } };
           relayDetail = ga.kind === "ok" ? ga.detail : { skipped: ga.reason };
         } else if (gaGate) relayDetail = { skipped: gaGate.reason };
+        if (oaGate?.kind === "go") {
+          const oa = await provisionOnpremAwsRelayStep(j, m, oaGate, r.tfOutputs);
+          if (oa.kind === "failed")
+            return { to: "failed", failureCode: asFailureCode(oa.failureCode), detail: { planId: j.planId, provider, error: oa.reason, ...(oa.detail ? { relay: oa.detail } : {}) } };
+          relayDetail = oa.kind === "ok" ? oa.detail : { skipped: oa.reason };
+        } else if (oaGate) relayDetail = { skipped: oaGate.reason };
         tfOutputs = r.tfOutputs;
         realDetail = r.detail;
       } else {

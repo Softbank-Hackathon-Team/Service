@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "bundles": [
     {
       "conditional": false,
@@ -893,7 +893,8 @@
         "ssm:GetParameter"
       ],
       "requiredWhen": [
-        "relay_gcp_aws"
+        "relay_gcp_aws",
+        "relay_onprem_aws"
       ]
     }
   ]

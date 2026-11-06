@@ -51,7 +51,7 @@ export const ReplicationEndpoint = z.object({
     .refine((s) => s.includes("-----BEGIN CERTIFICATE-----"), "caPem: CERTIFICATE PEM 이어야 한다")
     .refine((s) => !/PRIVATE KEY/.test(s), "caPem: 개인 키는 넣지 않는다")
     .nullable(),
-  /** 중계기 공개 주소 (온프레 터널 dbTunnel.relay.host). 도착 줄에만 */
+  /** 중계기 공개 주소 (온프레 터널 dbTunnel.relay.host). 도착 줄 또는 온프레 CNPG 줄에만 (db 0056) */
   relayHost: z.string().min(1).max(253).regex(/^[A-Za-z0-9.-]+$/, "relayHost: IP 또는 이름만").nullable(),
   /** 중계기 호스트 키 줄 (ssh-keyscan 출력, 공개 값). 터널이 처음 보는 키를 거부하도록 고정한다. 개인 키는 받지 않는다 */
   relayKnownHosts: z.string().min(1).max(8192)
@@ -62,7 +62,8 @@ export const ReplicationEndpoint = z.object({
   relayPort: PORT,
 }).strict()
   .refine((e) => e.peerPort === null || e.peerHost !== null, { message: "peerPort 는 peerHost 와 같이", path: ["peerPort"] })
-  .refine((e) => e.side === "target" || (e.relayHost === null && e.relayKnownHosts === null), { message: "relay* 는 도착(target) 줄에만", path: ["relayHost"] })
+  // db 0056: 온프레 CNPG 줄이면 출발(source)이어도 중계기 칸을 쓴다 (온프레 → 클라우드, ADR-031 R4)
+  .refine((e) => e.side === "target" || e.provider === "cnpg" || (e.relayHost === null && e.relayKnownHosts === null), { message: "relay* 는 도착(target) 줄 또는 CNPG 줄에만", path: ["relayHost"] })
   .refine((e) => (e.relayHost === null) === (e.relayKnownHosts === null), { message: "relayHost 와 relayKnownHosts 는 같이", path: ["relayKnownHosts"] });
 export type ReplicationEndpoint = z.infer<typeof ReplicationEndpoint>;
 

@@ -14,7 +14,7 @@ const inline = (name: string) => tpl.Resources.OperateRole.Properties.Policies.f
 test("실행 역할 인라인 relay 에 원본 문장이 그대로 들어가고, 인라인 합계가 IAM 한도 안이다", () => {
   const plain = inline("relay").Statement.filter((s: { Sid?: string }) => s.Sid);
   assert.deepEqual(plain, src.Statement.filter((s: { Sid: string }) => !GATED.includes(s.Sid)));
-  assert.equal(plain.length, 13);   // + TargetDbRulesForRelay (GCP→AWS 도착 RDS 보안 그룹)
+  assert.equal(plain.length, 14);   // + TargetDbRulesForRelay (GCP→AWS 도착 RDS 보안 그룹) + RelayReadOwnConsole (중계기 호스트 공개 키, 보안 12번)
   const size = tpl.Resources.OperateRole.Properties.Policies.reduce((n: number, p: { PolicyDocument: unknown }) => n + JSON.stringify(p.PolicyDocument).length, 0);
   assert.ok(size < 10240, `인라인 합계 ${size}`);
 });

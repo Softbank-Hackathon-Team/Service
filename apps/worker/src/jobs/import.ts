@@ -1,11 +1,12 @@
 import { ImportResultV2, MigrationJob, SourceScope, checkV2, checkV2Reviews, syncCheckReviews, specIssueLines, type ObserveSession, type Provider, type RawInventory } from "@svc/contracts";
 import { withTenant, advance, scrubString } from "@svc/core";
-import { applyInclude, gcpEnvFor, AWS_DATA_READ_ACTIONS, AWS_NET_READ_ACTIONS, GCP_NET_READ_PERMISSIONS, measureImportAccuracy, targetBuilderFor, GCP_DATA_READ_PERMISSIONS, actionsOfCommands, AdapterError, CLOUDRUN_OBSERVE_PERMISSIONS, discoverForImport, ECS_OBSERVE_ACTIONS, EC2_OBSERVE_ACTIONS, GCE_OBSERVE_PERMISSIONS, envFor, inventoryForAudit, isAdapterError, normalizeV2, carryHumanEdits, type PrevSpecV2 } from "@svc/adapters";
+import { applyInclude, type CliDeps, gcpEnvFor, AWS_DATA_READ_ACTIONS, AWS_NET_READ_ACTIONS, GCP_NET_READ_PERMISSIONS, measureImportAccuracy, targetBuilderFor, GCP_DATA_READ_PERMISSIONS, actionsOfCommands, AdapterError, CLOUDRUN_OBSERVE_PERMISSIONS, discoverForImport, ECS_OBSERVE_ACTIONS, EC2_OBSERVE_ACTIONS, GCE_OBSERVE_PERMISSIONS, envFor, inventoryForAudit, isAdapterError, normalizeV2, carryHumanEdits, type PrevSpecV2 } from "@svc/adapters";
 import { StsCliError, TempRoleDenied } from "@svc/security";
 import { MOCK_CREDENTIALS, refuseMockCredentials, tempRoles } from "../platform.js";
 import { failedAttempts, recordAttemptFailure, isLastAttempt } from "./_step.js";
 import { envNumber } from "@svc/contracts";
 import { log } from "../instrument.js";
+import { onpremPullSource, onpremSnapshotDeps } from "./_onprem-snapshot.js";
 import { CLOUDRUN_RAW_KINDS, VM_RAW_KIND } from "@svc/adapters";
 
 // 가져오기가 옮길 원본 워크로드 종류. 하나도 없으면 옮길 앱이 없다 → SOURCE_INCOMPLETE (영구 실패)
@@ -81,11 +82,17 @@ async function importOnce(job: MigrationJob): Promise<boolean> {
   if (!scope.success) throw new AdapterError("SOURCE_UNAVAILABLE", "이전의 출발 범위(source_scope) 모양이 계약과 안 맞음");
 
   // ② 바깥 호출 (트랜잭션 밖). L5: 출발 환경 관찰 역할을 빌려 읽고, 끝나면 바로 돌려준다
+  // 온프레 pull 모드 출발은 빌릴 자격도 들어갈 길도 없다 → 관찰 역할 없이 Agent 인벤토리 스냅숏으로 같은 discover 를 돌린다 (_onprem-snapshot.ts)
+  if (onpremPullSource(row.provider)) {
+    const cli = await onpremSnapshotDeps(job.tenantId, row.source_env_id);
+    return saveImport(job, await importSpec(row.provider as Provider, cli, await previousImports(job), scope.data));
+  }
   const sess = await borrowObserve(job, row);
   try {
     // PREVIDS: 같은 이전의 직전 판의 ids(벤더 키 → id)를 넘겨, 다시 가져와도 같은 자원 = 같은 id. 첫 가져오기는 빈 값
     // PREVIDS2: 같은 이전의 앞 판들(가장 새 것부터)에서 id 와, 사람이 손댄 칸을 읽는다
-    const imp = await importSpec(row.provider as Provider, sess.session, await previousImports(job), scope.data);
+    const cli: CliDeps = sess.session.cliEnv ? { env: observeEnv(sess.session.cliEnv) } : {};
+    const imp = await importSpec(row.provider as Provider, cli, await previousImports(job), scope.data);
     return await saveImport(job, imp);
   } finally {
     await sess.release();
@@ -227,11 +234,12 @@ type SpecImport = { inv: RawInventory; result: ImportResultV2; note?: string; ca
 // #241: 자식 CLI 환경. 워커 자기 AWS 자격을 지우고(envFor), GCP 토큰이면 워커 자기 gcloud 자격(서비스 계정 파일·대리 설정 등)까지 지운다(gcpEnvFor)
 const observeEnv = (c: Record<string, string>): NodeJS.ProcessEnv => c.CLOUDSDK_AUTH_ACCESS_TOKEN && c.CLOUDSDK_CORE_PROJECT
   ? gcpEnvFor(c.CLOUDSDK_AUTH_ACCESS_TOKEN, c.CLOUDSDK_CORE_PROJECT, envFor(c)) : envFor(c);
-async function importSpec(p: Provider, sess: ObserveSession, previous: PreviousImports = { ids: {}, history: [] }, scope: SourceScope = {}): Promise<SpecImport> {
+// cli = discover 의 CLI 의존성 (빌린 관찰 자격 env, 또는 온프레 pull 모드의 스냅숏 재생 exec)
+async function importSpec(p: Provider, cli: CliDeps, previous: PreviousImports = { ids: {}, history: [] }, scope: SourceScope = {}): Promise<SpecImport> {
   // I4: 앱 신원의 IAM 정책도 읽어 grants·기준선을 채운다.
   // ID-5 DRAFT(ai): 기본 켬 (그대로 이식: 권한 없이 옮기면 도착 앱이 403). IMPORT_AWS_IAM=0 이면 끔. 못 읽으면 unread.IAM 검토 줄
   // K-1: 출발 범위(이전마다)를 discover 에 넘긴다. 빈 칸은 워커 환경변수(개발용) → 자동 고르기 + 검토 줄
-  const inv = await importDeps.discover(p, { iam: process.env.IMPORT_AWS_IAM !== "0", scope }, sess.cliEnv ? { env: observeEnv(sess.cliEnv) } : {});
+  const inv = await importDeps.discover(p, { iam: process.env.IMPORT_AWS_IAM !== "0", scope }, cli);
   if (!(inv.items as Array<{ kind?: string }>).some((i) => WORKLOAD_KINDS.has(String(i.kind))))
     throw new AdapterError("SOURCE_INCOMPLETE", "출발 환경에 옮길 워크로드(k8s·ECS·Cloud Run·VM)가 없음");
   // PARTOF: 앱 묶음 값 = 출발 범위 partOf (K-1) → IMPORT_APP(개발용). 없으면 라벨이 가장 많은 묶음 + 검토 표시

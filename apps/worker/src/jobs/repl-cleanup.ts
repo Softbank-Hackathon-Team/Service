@@ -2,7 +2,7 @@ import { MigrationJob, TERMINAL, type MigrationStatus } from "@svc/contracts";
 import { withTenant, writeAudit } from "@svc/core";
 import { replicationFor } from "./_repl.js";
 import { ReplConfigError } from "@svc/replication";
-import { targetBundle } from "../app-link.js";
+import { replicationBundle } from "../app-link.js";
 import { commitReplicationCleanup } from "../gitops/index.js";
 import { cleanupAfterRollback, type ReplCleaner, type RollbackCleanup } from "./rollback-cleanup.js";
 import { teardownRelayStep, type RelayStepOutcome, type RelayStepDeps } from "../relay/relay-step.js";
@@ -42,7 +42,7 @@ export async function handleReplCleanup(raw: unknown, cleaner?: ReplCleaner | nu
   const m = await withTenant(j.tenantId, async (tx) => (await tx.query<{ id: string; sourceEnvId: string; targetEnvId: string }>(
     `SELECT id, source_env_id AS "sourceEnvId", target_env_id AS "targetEnvId" FROM migrations WHERE id=$1`, [j.migrationId])).rows[0]);
   // 온프레 CNPG 이전: 다 걷었으면 gitops 에서 이전 역할(ensure absent)·터널도 걷는다 (롤백·정리 때 찌꺼기로 남겨 둔 터널)
-  const gitopsReplication = c.ok ? await commitReplicationCleanup(m ? await withTenant(j.tenantId, (tx) => targetBundle(tx, j.tenantId, m)) : null)
+  const gitopsReplication = c.ok ? await commitReplicationCleanup(m ? await withTenant(j.tenantId, (tx) => replicationBundle(tx, j.tenantId, m)) : null)
     : { skipped: "replication_leftovers" };
   // 그다음 출발 계정 중계기 (터널이 걷힌 뒤). 실패하면 덜 끝남 → 큐가 다시 부른다 (지우기는 여러 번 불러도 됨)
   const relay: RelayStepOutcome = c.ok && m ? await teardownRelayStep(j, m, relayDeps) : { kind: "skipped", reason: c.ok ? "migration_missing" : "replication_leftovers" };

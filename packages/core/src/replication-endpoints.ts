@@ -46,16 +46,19 @@ export async function upsertReplicationEndpoint(tx: Tx, e: ReplicationEndpoint):
   if (r.rowCount !== 1) throw new Error(`복제 끝점을 못 썼다: 이전 ${v.migrationId} 이 이 회사에 없다`);
 }
 
-/** 도착 줄의 봉인 값 (워커 gitops 렌더가 다시 쓰려고 남긴 것). 없거나 모양이 틀리면 null (그러면 워커가 새로 봉인한다) */
-export async function replicationSealedMaterialFor(tx: Tx, migrationId: string): Promise<ReplicationSealedMaterial | null> {
+/** 온프레 줄의 봉인 값 (워커 gitops 렌더가 다시 쓰려고 남긴 것). 없거나 모양이 틀리면 null (그러면 워커가 새로 봉인한다).
+ *  onpremSide = 온프레 CNPG 가 있는 쪽 (AWS→온프레 = target, 온프레→AWS = source, ADR-031) */
+export async function replicationSealedMaterialFor(tx: Tx, migrationId: string, onpremSide: "source" | "target" = "target"): Promise<ReplicationSealedMaterial | null> {
   const r = await tx.query<{ sealed_material: unknown }>(
-    `SELECT sealed_material FROM replication_endpoints WHERE migration_id = $1 AND side = 'target'`, [migrationId]);
+    `SELECT sealed_material FROM replication_endpoints WHERE migration_id = $1 AND side = $2`, [migrationId, onpremSide]);
   const p = ReplicationSealedMaterial.safeParse(r.rows[0]?.sealed_material);
   return p.success ? p.data : null;
 }
 
 export interface ReplicationDeliveryWrite {
   migrationId: string;
+  /** 온프레 CNPG 쪽 (기본 target). 아래 target 칸은 "온프레 줄", sourcePeer 는 "상대 줄" 로 읽는다 (ADR-031 온프레 → 클라우드) */
+  onpremSide?: "source" | "target";
   /** 도착 줄: 플랫폼이 발급한 CNPG 서버 CA (공개 인증서), 확인할 이름, verify-full, 봉인 값 */
   target: { caPem: string; tlsServername: string; sealed: ReplicationSealedMaterial };
   /** 출발 줄 peer 주소 (온프레 CNPG 가 터널 Service 로 출발을 구독). peer_host 가 비어 있을 때만 채운다 */
@@ -67,14 +70,15 @@ export async function recordReplicationDelivery(tx: Tx, w: ReplicationDeliveryWr
   const sealed = ReplicationSealedMaterial.parse(w.target.sealed);
   const v = ReplicationEndpoint.shape;
   const caPem = v.caPem.parse(w.target.caPem), servername = v.tlsServername.parse(w.target.tlsServername);
+  const onprem = w.onpremSide ?? "target", other = onprem === "target" ? "source" : "target";
   const t = await tx.query(
     `UPDATE replication_endpoints SET ca_pem = $2, tls_servername = $3, sslmode = 'verify-full', sealed_material = $4, updated_at = now()
-      WHERE migration_id = $1 AND side = 'target'`, [w.migrationId, caPem, servername, JSON.stringify(sealed)]);
-  if (t.rowCount !== 1) throw new Error(`복제 끝점을 못 썼다: 이전 ${w.migrationId} 의 도착 줄이 이 회사에 없다`);
+      WHERE migration_id = $1 AND side = $5`, [w.migrationId, caPem, servername, JSON.stringify(sealed), onprem]);
+  if (t.rowCount !== 1) throw new Error(`복제 끝점을 못 썼다: 이전 ${w.migrationId} 의 ${onprem === "target" ? "도착" : "출발"} 줄이 이 회사에 없다`);
   if (!w.sourcePeer) return { sourcePeerSet: false };
   const host = v.peerHost.parse(w.sourcePeer.host), port = v.port.parse(w.sourcePeer.port);
   const s = await tx.query(
     `UPDATE replication_endpoints SET peer_host = $2, peer_port = $3, updated_at = now()
-      WHERE migration_id = $1 AND side = 'source' AND peer_host IS NULL`, [w.migrationId, host, port]);
+      WHERE migration_id = $1 AND side = $4 AND peer_host IS NULL`, [w.migrationId, host, port, other]);
   return { sourcePeerSet: s.rowCount === 1 };
 }

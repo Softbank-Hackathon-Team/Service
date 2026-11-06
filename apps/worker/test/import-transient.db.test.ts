@@ -16,7 +16,7 @@ let owner: pg.Client;
 const T = randomUUID();
 const bin = mkdtempSync(join(tmpdir(), "l5fix-bin-"));
 const msgFile = join(bin, "msg");
-const saved = { PATH: process.env.PATH, MOCK_SEED: process.env.MOCK_SEED };
+const saved = { PATH: process.env.PATH, MOCK_SEED: process.env.MOCK_SEED, ONPREM_FLOOR_VIA_GIT: process.env.ONPREM_FLOOR_VIA_GIT };
 
 before(async () => {
   if (skip) return;
@@ -24,6 +24,8 @@ before(async () => {
   chmodSync(join(bin, "kubectl"), 0o755);
   process.env.PATH = `${bin}:${saved.PATH}`;
   delete process.env.MOCK_SEED;
+  // kubectl 로 직접 읽는 길(push)을 본다. pull 이면 가져오기는 Agent 인벤토리 스냅숏을 쓴다 (_onprem-snapshot.ts, import-onprem-snapshot 시험)
+  process.env.ONPREM_FLOOR_VIA_GIT = "0";
   core = await import("@svc/core");
   imp = await import("../src/jobs/import.js");
   owner = new pg.Client({ connectionString: OWNER }); await owner.connect();
@@ -33,6 +35,7 @@ after(async () => {
   if (skip) return;
   process.env.PATH = saved.PATH;
   if (saved.MOCK_SEED !== undefined) process.env.MOCK_SEED = saved.MOCK_SEED;
+  if (saved.ONPREM_FLOOR_VIA_GIT === undefined) delete process.env.ONPREM_FLOOR_VIA_GIT; else process.env.ONPREM_FLOOR_VIA_GIT = saved.ONPREM_FLOOR_VIA_GIT;
   await core.pool.end(); await owner.end(); rmSync(bin, { recursive: true, force: true });
 });
 

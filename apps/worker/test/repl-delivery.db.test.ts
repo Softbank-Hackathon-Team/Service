@@ -164,3 +164,25 @@ test("배포 단계 거부: 봉인 인증서 없음 → paused SEALING_CERT_MISS
   const rows = await core.withTenant(T, (tx) => core.replicationEndpointsFor(tx, M));
   assert.deepEqual(rows.map((x) => [x.peerHost, x.caPem, x.sslmode]), [[null, null, "require"], ["10.0.1.20", null, "require"]]);
 });
+
+// ADR-031 R4 (db 0056): 온프레 → 클라우드면 중계기 칸·봉인 값이 출발(cnpg) 줄에 붙는다. 되쓰기는 출발 줄 + 상대(도착) peer
+test("온프레 출발: cnpg 출발 줄에 중계기 칸 저장 가능(출발 rds 줄은 여전히 거부), 되쓰기(onpremSide=source)는 출발 줄 CA·verify-full, 도착 줄 peer", { skip }, async () => {
+  const { id: M } = await seed(T);
+  const src = ep(T, M, "source", { provider: "cnpg", host: "203.0.113.7", username: "svc_migrate", passwordRef: "derive:migrate", peerHost: "10.0.1.20", peerPort: 5432,
+    relayHost: "203.0.113.7", relayKnownHosts: KNOWN });
+  const tgt = ep(T, M, "target", { provider: "rds", host: "203.0.113.7", port: 15432, username: "repl_admin", passwordRef: "tf:db_password", peerHost: null, peerPort: null,
+    tlsServername: RDS, relayHost: null, relayKnownHosts: null });
+  await put(T, src); await put(T, tgt);
+  await assert.rejects(put(T, ep(T, randomUUID(), "source", { relayHost: "203.0.113.7", relayKnownHosts: KNOWN })), /relay/);
+  const sealed = { version: 1 as const, digest: "d".repeat(64), caSha256: "c".repeat(64), sealedSecrets: [{ name: "db-tunnel-key", encryptedData: { id: "QUJD" } }] };
+  const caPem = "-----BEGIN CERTIFICATE-----\nMIIBfake\n-----END CERTIFICATE-----\n";
+  const r = await core.withTenant(T, (tx) => core.recordReplicationDelivery(tx, { migrationId: M, onpremSide: "source",
+    target: { caPem, tlsServername: "shop-db-rw.app-shop.svc", sealed }, sourcePeer: { host: "db-tunnel.app-shop.svc", port: 5432 } }));
+  assert.deepEqual(r, { sourcePeerSet: true });
+  const rows = await core.withTenant(T, (tx) => core.replicationEndpointsFor(tx, M));
+  const s = rows.find((x) => x.side === "source")!, t = rows.find((x) => x.side === "target")!;
+  assert.deepEqual([s.sslmode, s.tlsServername, s.relayHost], ["verify-full", "shop-db-rw.app-shop.svc", "203.0.113.7"]);
+  assert.deepEqual([t.peerHost, t.peerPort, t.sslmode, t.tlsServername], ["db-tunnel.app-shop.svc", 5432, "require", RDS]);
+  assert.ok(await core.withTenant(T, (tx) => core.replicationSealedMaterialFor(tx, M, "source")));
+  assert.equal(await core.withTenant(T, (tx) => core.replicationSealedMaterialFor(tx, M, "target")), null);
+});

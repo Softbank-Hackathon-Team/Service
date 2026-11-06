@@ -8,7 +8,7 @@ DRAFT(ai): 나중에 `@svc/onprem-agent`와 `@svc/agent`로 쪼갤지 팀이 정
 | 항목 | 온프레 Agent 보고 (`onprem/`) | AI 에이전트 루프 (`ai/`) |
 |---|---|---|
 | 목적 | 온프레에서 안→밖으로 보낸 보고를 검사해 회사·환경을 붙인다 | 샌드박스 안에서 도구 7개로 점검·수정하고 `finish`로 제안만 넘긴다 |
-| 받는 것 | HTTP 헤더(키 번호, 서명, 시각) + 본문 `AgentReport`(security / deploy / heartbeat) | 작업 설명, 작업 복사본, `LlmProvider`, `Sandbox`, 예산 |
+| 받는 것 | HTTP 헤더(키 번호, 서명, 시각) + 본문 `AgentReport`(security / deploy / heartbeat / facts / inventory). inventory = 온프레 출발 가져오기 스냅숏 (`onprem/inventory.ts`, 읽기 전용 클러스터 범위 목록, Secret 제외, 4 MiB 상한) | 작업 설명, 작업 복사본, `LlmProvider`, `Sandbox`, 예산 |
 | 넘기는 것 | `{tenantId, envId, report}`, `toDeployResult()` → `DeployResult` | `RunResult` (`AgentFinish`, 단계 기록, 바뀐 파일), `gateChanges()` 결과 |
 | 부작용 | 없음 (키 저장소는 주입, STUB은 메모리) | 없음 (LLM·샌드박스 주입, STUB은 대본 LLM·메모리 샌드박스) |
 | 실패 코드 | 401 `AGENT_AUTH_MISSING`, `AGENT_KEY_UNKNOWN`, `AGENT_TS_SKEW`, `AGENT_BAD_SIGNATURE` / 400 `AGENT_BAD_JSON`, `AGENT_BAD_SHAPE` | 실행 실패는 예외가 아니라 `state: "failed"` + 이유(예산 초과, finish 없음, 모델 거부) |
