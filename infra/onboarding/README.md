@@ -91,6 +91,7 @@ gcloud iam roles update platform_operate --project=<전용> --add-permissions=co
 ### 이미 연결한 고객: 관찰 역할 권한 갱신
 플랫폼이 읽는 자원이 늘면 관찰 역할(`platform_observe`)에 읽기 권한이 더 필요하다. 예전 스크립트로 만든 고객의 역할에는 새 권한이 없다.
 - 갱신 방법: 고객이 **같은 스크립트를 같은 값으로 다시 실행**한다. 스크립트가 `platform_observe` 의 권한 목록을 읽어 **빠진 권한만 더한다**(`gcloud iam roles update ... --add-permissions`). 있는 권한은 지우지 않고, 고객이 따로 넣은 권한도 그대로 둔다. 최신이면 `= 역할 platform_observe 권한 최신` 만 나오고 바꾸는 명령은 0번이다
+- 리허설 이미지 복사가 출발 Artifact Registry(gcr.io 포함)에서 받으려면 `platform_observe` 에 `artifactregistry.repositories.downloadArtifacts` 가 있어야 한다. 이 줄이 없을 때 연결한 고객은 다시 실행해야 GCP 출발 리허설이 이미지를 받는다 (없으면 `copy_failed` 로 멈춤)
 - 실행 역할(`platform_operate`, `platform_operate_iam`)은 자동으로 바꾸지 않는다. 권한이 늘면 할 수 있는 일이 늘기 때문에 사람이 파일을 보고 정한다 (TODO(human))
 - 알림: 사용자가 누르는 "확인"에서 플랫폼이 선택 읽기 권한 11곳을 한 건씩 찔러 본다. 빠진 게 있어도 연결은 `connected` 로 두고, `verify_detail.missingPermissions`(권한 이름)와 `verify_detail.needsHuman`(고객이 할 일 한 줄)과 감사 기록 `env.verified` 에 남긴다. 주기 재확인은 찌르지 않는다. API가 꺼진 프로젝트·조직 정책은 권한 문제로 세지 않는다
 - STUB: `verify_detail` 을 화면·API 응답에 보이는 일은 아직 없음 (입력층 묶음 몫). 권한 목록을 못 읽는 고객(`iam.roles.get` 없음)은 경고만 하고 바꾸지 않는다

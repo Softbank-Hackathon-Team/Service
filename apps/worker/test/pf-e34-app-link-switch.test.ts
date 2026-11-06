@@ -48,3 +48,11 @@ test("AWS→온프레 중계기 이전: 출발 주소가 아직 없으면 막지
   // 복제가 필요 없는 명세면 아무것도 안 낸다
   assert.deepEqual(await replSourcePrecheck({}, { relayDeferred: true }), []);
 });
+
+test("끝점 줄이 있는 이전: env 주소로 출발 DB 를 보지 않는다 (sync 는 줄로 붙음). env 가 없어도 거짓 block 대신 warn", async () => {
+  assert.deepEqual(ids(await replSourcePrecheck({}, { required: true, endpointRows: true })), ["PC-REPL-ROWS:warn"]);
+  assert.deepEqual(ids(await replSourcePrecheck({ REPL_SOURCE_URL: "postgres://u:p@127.0.0.1:1/x" }, { required: true, endpointRows: true })), ["PC-REPL-ROWS:warn"]);
+  assert.deepEqual(await replSourcePrecheck({}, { endpointRows: true }), []);
+  // 줄이 없으면 예전 그대로
+  assert.deepEqual(ids(await replSourcePrecheck({}, { required: true, endpointRows: false })), ["PC-REPL-CONN:block"]);
+});

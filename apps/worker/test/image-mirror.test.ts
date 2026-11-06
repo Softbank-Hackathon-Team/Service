@@ -1,5 +1,5 @@
-// 리허설 이미지 복사: 다이제스트 그대로 복사, 태그 거부, 흉내 건너뜀, 출발 자격은 출발 토큰 자식 프로세스에만, 실패 → 닫힌 사유
-// aws·crane 은 가짜 exec (레지스트리 상태를 Map 으로 흉내). 실제 클라우드·레지스트리 호출 없음
+// 리허설 이미지 복사: 다이제스트 그대로 복사, 태그 거부, 흉내 건너뜀, 출발 자격은 출발 토큰 자식 프로세스·crane 설정 파일에만, 실패 → 닫힌 사유
+// aws·gcloud·crane 은 가짜 exec (레지스트리 상태를 Map 으로 흉내). 실제 클라우드·레지스트리 호출 없음
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { QUEUES } from "@svc/contracts";
 import { policyOf } from "@svc/core";
 import type { Exec } from "@svc/adapters";
-import { ECR_PULL_ACTIONS, STEP_ROLES, TempRoleDenied, checkLeastPrivilege } from "@svc/security";
+import { AR_PULL_PERMISSIONS, ECR_PULL_ACTIONS, STEP_ROLES, TempRoleDenied, checkLeastPrivilege } from "@svc/security";
 import { MIRROR_BUDGET_MS, mirrorImages, type MirrorImage } from "../src/rehearsal/image-mirror.js";
 import type { StepRoles, withStepRoles } from "../src/jobs/_roles.js";
 
@@ -17,13 +17,16 @@ const m = { id: j.migrationId, status: "deploying" as const, sourceEnvId: "src",
 const D1 = `sha256:${"a".repeat(64)}`, D2 = `sha256:${"b".repeat(64)}`, D3 = `sha256:${"c".repeat(64)}`;
 const PLATFORM = "999999999999.dkr.ecr.ap-northeast-2.amazonaws.com";
 const CUSTOMER = "111122223333.dkr.ecr.us-west-2.amazonaws.com";
+const AR = "asia-northeast3-docker.pkg.dev";
+const OTHER_T = "77777777-8888-4999-8aaa-bbbbbbbbbbbb";
+const GCP_TOKEN = "ya29.borrowed-observe-token-0123456789", OWN_GCP = "ya29.worker-own-login-0123456789";
 const ENV = { SANDBOX_IMAGE_REGISTRY: `${PLATFORM}/sandbox`, PATH: "/bin", HOME: "/home/node",
   AWS_ACCESS_KEY_ID: "AKIAWORKER", AWS_CONTAINER_CREDENTIALS_FULL_URI: "http://169.254.170.23/v1/credentials" };
 const BORROWED = { AWS_CONFIG_FILE: "/tmp/svc-aws-x/config", AWS_SHARED_CREDENTIALS_FILE: "/tmp/svc-aws-x/credentials", AWS_REGION: "us-west-2" };
 
 interface Call { cmd: string; args: string[]; env: NodeJS.ProcessEnv; inScope: boolean; dockerConfig: string | null }
-function fakes(o: { present?: Record<string, string>; fail?: Partial<Record<"token" | "copy" | "crane", number>>; wrongDigest?: boolean;
-  denied?: boolean; borrowed?: boolean } = {}) {
+function fakes(o: { present?: Record<string, string>; fail?: Partial<Record<"token" | "copy" | "crane" | "gcloud", number>>; wrongDigest?: boolean;
+  denied?: boolean; borrowed?: boolean; gcpToken?: string } = {}) {
   const store = new Map(Object.entries(o.present ?? {}));
   const calls: Call[] = [];
   const scope = { inScope: false, steps: [] as string[], released: 0 };
@@ -33,6 +36,7 @@ function fakes(o: { present?: Record<string, string>; fail?: Partial<Record<"tok
     const r = (code: number, stdout = "", stderr = "") => ({ code, stdout, stderr, ms: 1 });
     if (cmd === "aws" && args[1] === "get-login-password") return o.fail?.token ? r(o.fail.token, "", "An error occurred (AccessDeniedException)") : r(0, `tok-${args[3]}\n`);
     if (cmd === "aws" && args[1] === "create-repository") return r(0, "{}");
+    if (cmd === "gcloud") return o.fail?.gcloud ? r(o.fail.gcloud, "", "ERROR: (gcloud.auth.print-access-token) no active account") : r(0, `${OWN_GCP}\n`);
     if (o.fail?.crane) return r(o.fail.crane, "", "crane: not found");
     if (args[0] === "digest") return store.has(args[1]!) ? r(0, `${store.get(args[1]!)}\n`) : r(1, "", "MANIFEST_UNKNOWN");
     if (args[0] === "copy") {
@@ -47,7 +51,7 @@ function fakes(o: { present?: Record<string, string>; fail?: Partial<Record<"tok
     scope.inScope = true;
     try {
       return await fn({ creds: [], skipped: [], denied: o.denied ? [{ side: "source", purpose: "observe", code: "ROLE_NO_ISSUER" }] : [],
-        ...(o.borrowed === false ? {} : { awsEnv: { source: BORROWED } }) });
+        ...(o.borrowed === false ? {} : { awsEnv: { source: BORROWED } }), ...(o.gcpToken ? { gcpToken: { source: o.gcpToken } } : {}) });
     } finally { scope.inScope = false; scope.released++; }
   }) as typeof withStepRoles;
   return { exec, withRoles, calls, scope, store };
@@ -55,18 +59,18 @@ function fakes(o: { present?: Record<string, string>; fail?: Partial<Record<"tok
 const run = (images: MirrorImage[], f: ReturnType<typeof fakes>, env: NodeJS.ProcessEnv = ENV) =>
   mirrorImages(j, m, images, { exec: f.exec, withRoles: f.withRoles, env });
 
-test("정상: 공개·고객 ECR 이미지를 다이제스트 그대로 회사 자리로 복사, 플랫폼에 이미 있는 이미지는 그 주소 그대로", async () => {
+test("정상: 공개·고객 ECR 이미지를 다이제스트 그대로 회사 자리로 복사, 이 회사 샌드박스 자리에 이미 있는 이미지는 그 주소 그대로", async () => {
   const f = fakes();
   const images = [
     { ref: `docker.io/library/nginx@${D1}`, source: `docker.io/library/nginx:1.27@${D1}` },
     { ref: `<env:registryHost>/platform/${T}/api@${D2}`, source: `${CUSTOMER}/shop/api@${D2}` },
-    { ref: `${PLATFORM}/platform/${T}/web@${D3}`, source: `${PLATFORM}/platform/${T}/web@${D3}` },
+    { ref: `${PLATFORM}/sandbox/${T}/web@${D3}`, source: `${PLATFORM}/sandbox/${T}/web@${D3}` },
   ];
   const out = await run(images, f);
   assert.deepEqual(out, { ok: true, images: [
     { ref: images[0]!.ref, sandboxRef: `${PLATFORM}/sandbox/${T}/nginx@${D1}` },
     { ref: images[1]!.ref, sandboxRef: `${PLATFORM}/sandbox/${T}/api@${D2}` },
-    { ref: images[2]!.ref, sandboxRef: `${PLATFORM}/platform/${T}/web@${D3}` },
+    { ref: images[2]!.ref, sandboxRef: `${PLATFORM}/sandbox/${T}/web@${D3}` },
   ] });
   const copies = f.calls.filter((c) => c.args[0] === "copy").map((c) => c.args.slice(1));
   assert.deepEqual(copies, [[`docker.io/library/nginx@${D1}`, `${PLATFORM}/sandbox/${T}/nginx@${D1}`], [`${CUSTOMER}/shop/api@${D2}`, `${PLATFORM}/sandbox/${T}/api@${D2}`]],
@@ -132,17 +136,65 @@ test("자격 범위: 출발 ECR 이 있을 때만 image_mirror 역할을 빌리�
   assert.deepEqual(pub.scope.steps, [], "공개 이미지만이면 고객 역할을 안 빌림");
 });
 
-test("실패 사유: 레지스트리 없음·미지원·역할 거부·도구 없음·토큰 실패·복사 실패·다이제스트 다름", async () => {
+test("Artifact Registry·gcr.io: 빌린 출발 관찰 SA 토큰을 oauth2accesstoken 암호로 crane 설정 파일에만 넣고 회사 자리로 복사", async () => {
+  const f = fakes({ gcpToken: GCP_TOKEN, borrowed: false });
+  const images = [
+    { ref: `<env:registryHost>/platform/${T}/web@${D1}`, source: `${AR}/cust-prj/shop/web:v3@${D1}` },
+    { ref: `<env:registryHost>/platform/${T}/worker@${D2}`, source: `gcr.io/cust-prj/worker@${D2}` },
+  ];
+  const out = await run(images, f);
+  assert.deepEqual(out, { ok: true, images: [
+    { ref: images[0]!.ref, sandboxRef: `${PLATFORM}/sandbox/${T}/web@${D1}` },
+    { ref: images[1]!.ref, sandboxRef: `${PLATFORM}/sandbox/${T}/worker@${D2}` },
+  ] });
+  assert.deepEqual(f.scope.steps, ["image_mirror"]);
+  assert.ok(f.calls.every((c) => c.inScope), "모든 명령이 대여 안에서");
+  const copies = f.calls.filter((c) => c.args[0] === "copy").map((c) => c.args.slice(1));
+  assert.deepEqual(copies, [[`${AR}/cust-prj/shop/web@${D1}`, `${PLATFORM}/sandbox/${T}/web@${D1}`],
+    [`gcr.io/cust-prj/worker@${D2}`, `${PLATFORM}/sandbox/${T}/worker@${D2}`]], "태그 없이 다이제스트로만");
+  assert.deepEqual(f.calls.filter((c) => c.args[1] === "get-login-password").map((c) => c.args[3]), ["ap-northeast-2"], "ECR 토큰은 플랫폼 쪽만");
+  assert.equal(f.calls.filter((c) => c.cmd === "gcloud").length, 0, "빌린 토큰이 있으면 gcloud 를 안 부름");
+  const cranes = f.calls.filter((c) => c.cmd === "crane");
+  const auths = JSON.parse(cranes[0]!.dockerConfig!).auths;
+  assert.deepEqual(Object.keys(auths).sort(), [AR, "gcr.io", PLATFORM].sort());
+  for (const h of [AR, "gcr.io"]) assert.equal(Buffer.from(auths[h].auth, "base64").toString(), `oauth2accesstoken:${GCP_TOKEN}`);
+  assert.ok(!JSON.stringify([out, f.calls.map((c) => [c.args, c.env])]).includes(GCP_TOKEN), "토큰은 명령 인자·환경·결과에 없음");
+  assert.equal(existsSync(cranes[0]!.env.DOCKER_CONFIG!), false, "토큰 파일은 끝나면 지움");
+});
+
+test("Artifact Registry: 빌린 토큰이 없으면 진짜 발급기 모드는 명령 없이 role_denied, REAL_STS=0 이면 워커 자기 gcloud 로그인 토큰", async () => {
+  const ar = [{ ref: `x/web@${D1}`, source: `${AR}/cust-prj/shop/web@${D1}` }];
+  const real = fakes();
+  const refused = await run(ar, real);
+  assert.equal(!refused.ok && refused.reason, "role_denied");
+  assert.equal(real.calls.length, 0, "워커 자기 계정으로 고객 레지스트리를 읽지 않음");
+  assert.equal(real.scope.released, 1);
+
+  const local = fakes({ borrowed: false });
+  const out = await run(ar, local, { ...ENV, REAL_STS: "0" });
+  assert.equal(out.ok, true);
+  assert.deepEqual(local.calls.filter((c) => c.cmd === "gcloud").map((c) => c.args), [["auth", "print-access-token"]]);
+  const auths = JSON.parse(local.calls.find((c) => c.cmd === "crane")!.dockerConfig!).auths;
+  assert.equal(Buffer.from(auths[AR].auth, "base64").toString(), `oauth2accesstoken:${OWN_GCP}`);
+});
+
+test("실패 사유: 레지스트리 없음·미지원·플랫폼 회사 자리 밖·역할 거부·도구 없음·토큰 실패·복사 실패·다이제스트 다름", async () => {
   const ecr = [{ ref: `x/api@${D2}`, source: `${CUSTOMER}/api@${D2}` }];
+  const ar = [{ ref: `x/web@${D1}`, source: `${AR}/cust-prj/shop/web@${D1}` }];
+  const local = { ...ENV, REAL_STS: "0" };
   const cases: Array<[string, () => Promise<unknown>]> = [
     ["registry_unset", () => run(ecr, fakes(), { PATH: "/bin" })],
-    ["unsupported_registry", () => run([{ ref: `x/api@${D1}`, source: `asia-northeast3-docker.pkg.dev/p/r/api@${D1}` }], fakes())],
+    ["unsupported_registry", () => run([{ ref: `x/api@${D1}`, source: `registry.onprem.local:5000/shop/api@${D1}` }], fakes())],
+    ["unsupported_registry", () => run([{ ref: `x/web@${D1}`, source: `${PLATFORM}/platform/${T}/web@${D1}` }], fakes())],
+    ["unsupported_registry", () => run([{ ref: `x/web@${D1}`, source: `${PLATFORM}/sandbox/${OTHER_T}/web@${D1}` }], fakes())],
     ["role_denied", () => run(ecr, fakes({ denied: true }))],
     ["role_denied", () => mirrorImages(j, m, ecr, { exec: fakes().exec, env: ENV,
       withRoles: (async () => { throw new TempRoleDenied("ROLE_OBSERVE_WRITE", "x"); }) as typeof withStepRoles })],
     ["tool_missing", () => run(ecr, fakes({ fail: { crane: 127 } }))],
     ["tool_missing", () => run(ecr, fakes({ fail: { token: 127 } }))],
     ["auth_failed", () => run(ecr, fakes({ fail: { token: 255 } }))],
+    ["tool_missing", () => run(ar, fakes({ fail: { gcloud: 127 } }), local)],
+    ["auth_failed", () => run(ar, fakes({ fail: { gcloud: 1 } }), local)],
     ["copy_failed", () => run(ecr, fakes({ fail: { copy: 1 } }))],
     ["digest_mismatch", () => run(ecr, fakes({ wrongDigest: true }))],
   ];
@@ -154,30 +206,33 @@ test("실패 사유: 레지스트리 없음·미지원·역할 거부·도구 �
   }
 });
 
-test("예산: 단계마다 시간 상한 = min(단계 상한, 남은 예산), 다 쓰면 그 이미지에서 budget_exceeded", async () => {
-  const clock = { t: 0 };
-  const store = new Map<string, string>();
-  const copyTimeouts: number[] = [];
-  // 복사 하나에 250초 걸리는 레지스트리. 시간 상한이 그보다 짧으면 끊겨서 실패한다
-  const exec: Exec = async (cmd, args, x) => {
-    const step = cmd === "aws" ? args[1]! : args[0]!;
-    if (step === "copy") copyTimeouts.push(x.timeoutMs);
-    const need = step === "copy" ? 250_000 : 1_000;
-    clock.t += Math.min(need, x.timeoutMs);
-    const r = (code: number, stdout = "", stderr = "") => ({ code, stdout, stderr, ms: Math.min(need, x.timeoutMs) });
-    if (need > x.timeoutMs) return r(1, "", `[z70] timeout ${x.timeoutMs}ms`);
-    if (step === "digest") return store.has(args[1]!) ? r(0, `${store.get(args[1]!)}\n`) : r(1, "", "MANIFEST_UNKNOWN");
-    if (step === "copy") { store.set(args[2]!, args[1]!.split("@")[1]!); return r(0); }
-    return r(0, step === "get-login-password" ? "tok\n" : "{}");
-  };
-  const images = [D1, D2, D3].map((d, n) => ({ ref: `img${n}@${d}`, source: `docker.io/library/img${n}@${d}` }));
-  const out = await mirrorImages(j, m, images, { exec, env: ENV, now: () => clock.t });
-  assert.deepEqual(copyTimeouts, [300_000, 300_000, 91_000], "세 번째 복사는 남은 91초만 받는다");
-  assert.equal(out.ok, false);
-  assert.equal(!out.ok && out.code, "REHEARSAL_IMAGE_MIRROR_FAILED");
-  assert.equal(!out.ok && out.reason, "budget_exceeded");
-  assert.equal(!out.ok && out.image, images[2]!.ref);
-  assert.equal(clock.t, MIRROR_BUDGET_MS);
+test("예산: 단계마다 시간 상한 = min(단계 상한, 남은 예산), 다 쓰면 그 이미지에서 budget_exceeded (공개·Artifact Registry 같음)", async () => {
+  const sources = { public: (n: number, d: string) => `docker.io/library/img${n}@${d}`, ar: (n: number, d: string) => `${AR}/cust-prj/shop/img${n}@${d}` };
+  for (const [kind, source] of Object.entries(sources)) {
+    const clock = { t: 0 };
+    const store = new Map<string, string>();
+    const copyTimeouts: number[] = [];
+    // 복사 하나에 250초 걸리는 레지스트리. 시간 상한이 그보다 짧으면 끊겨서 실패한다
+    const exec: Exec = async (cmd, args, x) => {
+      const step = cmd === "aws" ? args[1]! : args[0]!;
+      if (step === "copy") copyTimeouts.push(x.timeoutMs);
+      const need = step === "copy" ? 250_000 : 1_000;
+      clock.t += Math.min(need, x.timeoutMs);
+      const r = (code: number, stdout = "", stderr = "") => ({ code, stdout, stderr, ms: Math.min(need, x.timeoutMs) });
+      if (need > x.timeoutMs) return r(1, "", `[z70] timeout ${x.timeoutMs}ms`);
+      if (step === "digest") return store.has(args[1]!) ? r(0, `${store.get(args[1]!)}\n`) : r(1, "", "MANIFEST_UNKNOWN");
+      if (step === "copy") { store.set(args[2]!, args[1]!.split("@")[1]!); return r(0); }
+      return r(0, step === "get-login-password" ? "tok\n" : "{}");
+    };
+    const images = [D1, D2, D3].map((d, n) => ({ ref: `img${n}@${d}`, source: source(n, d) }));
+    const out = await mirrorImages(j, m, images, { exec, env: ENV, now: () => clock.t, withRoles: fakes({ gcpToken: GCP_TOKEN }).withRoles });
+    assert.deepEqual(copyTimeouts, [300_000, 300_000, 91_000], `${kind}: 세 번째 복사는 남은 91초만 받는다`);
+    assert.equal(out.ok, false);
+    assert.equal(!out.ok && out.code, "REHEARSAL_IMAGE_MIRROR_FAILED");
+    assert.equal(!out.ok && out.reason, "budget_exceeded", kind);
+    assert.equal(!out.ok && out.image, images[2]!.ref);
+    assert.equal(clock.t, MIRROR_BUDGET_MS);
+  }
 });
 
 test("예산: 역할 대여가 예산을 다 쓰면 명령을 하나도 시작하지 않고 budget_exceeded", async () => {
@@ -195,12 +250,17 @@ test("예산은 deploy 작업 만료보다 300초 이상 짧다 (만료를 줄�
   assert.ok(MIRROR_BUDGET_MS <= expireSec * 1000 - 300_000, `예산 ${MIRROR_BUDGET_MS}ms, deploy 만료 ${expireSec}s`);
 });
 
-test("image_mirror 역할 요청 = ECR 받기 세 동작, 관찰 최소 권한 검사 통과, 고객 관찰 역할 인라인에 모두 있음", () => {
+test("image_mirror 역할 요청 = 출발 클라우드의 받기 동작만, 관찰 최소 권한 검사 통과, 고객 관찰 역할(AWS 인라인·GCP 연결 스크립트)에 모두 있음", () => {
   const [r] = STEP_ROLES.image_mirror;
-  assert.deepEqual({ side: r.side, purpose: r.purpose, actions: [...r.actions] },
-    { side: "source", purpose: "observe", actions: ["ecr:BatchGetImage", "ecr:GetAuthorizationToken", "ecr:GetDownloadUrlForLayer"] });
-  assert.doesNotThrow(() => checkLeastPrivilege({ tenantId: T, envId: T, provider: "aws", purpose: "observe", actions: [...ECR_PULL_ACTIONS], ttlSec: 900 }));
+  assert.deepEqual({ side: r.side, purpose: r.purpose, actions: r.actions }, { side: "source", purpose: "observe", actions: {
+    aws: ["ecr:BatchGetImage", "ecr:GetAuthorizationToken", "ecr:GetDownloadUrlForLayer"], gcp: ["artifactregistry.repositories.downloadArtifacts"] } });
+  for (const [provider, actions] of [["aws", ECR_PULL_ACTIONS], ["gcp", AR_PULL_PERMISSIONS]] as const)
+    assert.doesNotThrow(() => checkLeastPrivilege({ tenantId: T, envId: T, provider, purpose: "observe", actions: [...actions], ttlSec: 900 }));
+  assert.throws(() => checkLeastPrivilege({ tenantId: T, envId: T, provider: "gcp", purpose: "observe", actions: ["artifactregistry.repositories.uploadArtifacts"], ttlSec: 900 }),
+    (e) => e instanceof TempRoleDenied && e.code === "ROLE_OBSERVE_WRITE", "올리기는 관찰이 아님");
   const tpl = JSON.parse(readFileSync(new URL("../../../infra/onboarding/aws-connect.json", import.meta.url), "utf8"));
   const inline: string[] = tpl.Resources.ObserveRole.Properties.Policies[0].PolicyDocument.Statement.flatMap((s: { Action: string[] }) => s.Action);
   for (const a of ECR_PULL_ACTIONS) assert.ok(inline.includes(a), `고객 관찰 역할에 없음: ${a}`);
+  const sh = readFileSync(new URL("../../../infra/onboarding/gcp-connect.sh", import.meta.url), "utf8").split("\n").filter((l) => l.startsWith("OBSERVE_PERMS="));
+  for (const p of AR_PULL_PERMISSIONS) assert.ok(sh.join(",").split(/[",]/).includes(p), `고객 관찰 SA 역할에 없음: ${p}`);
 });

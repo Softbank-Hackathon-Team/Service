@@ -243,3 +243,20 @@ run "reject_job_unresolved_placeholder" {
   }
   expect_failures = [terraform_data.job_env]
 }
+
+# 관리자 계정은 앱 계정과 이름·비밀이 다르고 이전(인스턴스 이름)마다 정해진다. app_login_sql 이면 앱 API 사용자를 만들지 않는다
+run "admin_user_separate_from_app" {
+  command = plan
+  assert {
+    condition     = output.db_admin_username == "svc_admin_${substr(sha256("shop-db-ab12"), 0, 10)}" && output.db_admin_username != output.db_username
+    error_message = "관리자 계정 이름이 인스턴스 이름 해시가 아니거나 앱 계정과 같다"
+  }
+  assert {
+    condition     = output.db_admin_password_secret_id == "app-shop-shop-db-admin-db-password" && output.db_password_secret_id == "app-shop-shop-db-db-password"
+    error_message = "관리자 비밀 그릇이 앱 비밀 그릇과 따로여야 한다 (이름 끝 -db-password)"
+  }
+  assert {
+    condition     = length(module.postgres["shop-db"].link.user) > 0 && output.db_username == "app"
+    error_message = "앱 계정 출력은 그대로"
+  }
+}

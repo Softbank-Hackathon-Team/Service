@@ -29,6 +29,14 @@ test("PF-A11: 여러 읽기 실패를 섞어도 모든 검토 키가 confirm 경
   for (const k of keys) assert.ok(SpecConfirmPath.safeParse(k).success, `confirm 못 함: ${k}`);
 });
 
+// NS-1: GKE 관찰 역할에 container.namespaces.get 이 없으면 kubectl get namespace <ns> 가 거부된다 (list 만으로는 이름 조회 불가)
+const GKE_NS_DENY = 'Error from server (Forbidden): namespaces "real-app" is forbidden: User "svc-observe@cust-prj.iam.gserviceaccount.com" cannot get resource "namespaces" in API group "" in the namespace "real-app": requires one of ["container.namespaces.get"] permission(s).';
+test("NS-1: 네임스페이스 객체 읽기가 거부돼도 namespaces.<ns> 검토 키를 confirm 경로로 확인 가능", async () => {
+  const keys = await keysOf({ fail: (l) => l.startsWith("kubectl get namespace real-app") ? { code: 1, err: GKE_NS_DENY } : null });
+  assert.ok(keys.includes("namespaces.real-app"), keys.join(","));
+  for (const k of keys) assert.ok(SpecConfirmPath.safeParse(k).success, `confirm 못 함: ${k}`);
+});
+
 test("PF-A11 거부 쪽: 빈칸이 있는 키는 confirm 경로가 막는다(계약은 그대로)", () => {
   assert.equal(SpecConfirmPath.safeParse("unread.CRD policyendpoints.networking.k8s.aws").success, false);
 });

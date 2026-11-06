@@ -32,3 +32,12 @@ test("거부: 명세에 postgres 없으면 줄이 있어도 null, 한 줄만 있
   assert.throws(() => pickReplication(M, true, [row("target")], ENV),
     (e: unknown) => e instanceof ReplConfigError && e.code === "REPL_ENDPOINT_INCOMPLETE");
 });
+
+test("끝점이 하나도 없음: 진짜 판 + 명세 postgres 면 REPL_ENDPOINT_MISSING, 흉내 판·postgres 없음·명세 못 읽음은 null (STUB 길)", () => {
+  assert.throws(() => pickReplication(M, true, [], {}),
+    (e: unknown) => e instanceof ReplConfigError && e.code === "REPL_ENDPOINT_MISSING" && /REPL_ENDPOINT_MISSING/.test((e as Error).message));
+  assert.equal(pickReplication(M, true, [], { MOCK_IAC: "1" }), null);
+  assert.equal(pickReplication(M, false, [], {}), null);
+  assert.equal(pickReplication(M, null, [], {}), null);
+  assert.ok(pickReplication(M, true, [], ENV), "env 끝점이 있으면 그대로 쓴다");
+});

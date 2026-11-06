@@ -519,6 +519,9 @@ output "db_connection_name" { value = local.repl_key != "" ? module.postgres[loc
 output "db_username" { value = local.repl_key != "" ? module.postgres[local.repl_key].user : "" }
 output "db_name" { value = local.repl_key != "" ? module.postgres[local.repl_key].db_name : "" }
 output "db_password_secret_id" { value = local.repl_key != "" ? module.postgres[local.repl_key].password_secret : "" }
+# 워커 관리자 계정 (앱 계정 db_username 과 다른 이름·다른 비밀). 실행기가 비밀번호를 db-secret.json 의 db_admin_password 로 꺼낸다
+output "db_admin_username" { value = local.repl_key != "" ? module.postgres[local.repl_key].admin_user : "" }
+output "db_admin_password_secret_id" { value = local.repl_key != "" ? module.postgres[local.repl_key].admin_password_secret : "" }
 output "app_gsa_email" { value = local.first_identity != "" ? module.identity[local.first_identity].gsa_email : "" }
 output "namespace" { value = length(module.namespace) > 0 ? try(module.namespace[var.k8s_namespace].name, values(module.namespace)[0].name) : "" }
 # 허브 cluster Secret 재료 (apps/worker/src/gitops/bundle.ts gkeClusterSecret). GKE 없으면 빈 값

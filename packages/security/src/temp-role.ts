@@ -46,9 +46,12 @@ export class TempRoleDenied extends Error {
 
 // 읽기 동작인가. AWS "ec2:DescribeInstances", GCP "compute.instances.get", k8s "pods:list"
 const READ_VERB = /^(describe|list|get|batchget|watch|lookup|search)/i;
+// GCP Artifact Registry(gcr.io 포함) 이미지 받기 = 매니페스트·층 읽기. 동사가 download 라 위 규칙으로는 못 가른다 (리허설 이미지 복사)
+export const AR_PULL_PERMISSIONS = ["artifactregistry.repositories.downloadArtifacts"] as const;
+const READ_ACTIONS: ReadonlySet<string> = new Set(AR_PULL_PERMISSIONS);
 function isRead(action: string): boolean {
   const verb = action.split(/[:.]/).pop() ?? "";
-  return READ_VERB.test(verb);
+  return READ_VERB.test(verb) || READ_ACTIONS.has(action);
 }
 const isWildcard = (a: string) => a === "*" || a.endsWith(":*") || a.endsWith(".*") || a.includes("*");
 

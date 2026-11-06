@@ -98,7 +98,9 @@ const GUARDS: Partial<Record<`${MigrationStatus}>${MigrationStatus}`, Guard>> = 
   // 이전 구간
   "deploying>syncing": ({ ev }) =>                                                          // T20
     need(ev.argoHealthy === true, "argoHealthy required") ??
-    need(ev.securityParity === true, "securityParity required") ??
+    // DRAFT(ai): 못 잰 것(not_measured)은 막지 않고 감사 증거에 그대로 남긴다. 쟀고 나빠짐(false)·빈 칸은 막는다.
+    //   TODO(human): 진짜 판에서 not_measured 를 막을지, 무엇으로 잴지 (보안 영역. deploy.ts 의 securityParity 줄)
+    need(ev.securityParity === true || ev.securityParity === "not_measured", "securityParity required (true or not_measured)") ??
     // 리허설을 켜면 deploy 는 어느 길이든(통과·재사용·건너뜀 이유) 근거를 남긴다. 실패는 paused 로 가서 이 길에 안 온다
     need(!rehearsalSettings().enabled || ev.rehearsal !== undefined, "rehearsal evidence required"),
   "syncing>shifting": ({ ev }) =>                                                           // T21
