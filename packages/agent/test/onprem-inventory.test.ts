@@ -34,3 +34,15 @@ test("inventory 거부: 상한(AGENT_INVENTORY_MAX_BYTES)을 넘으면 보내지
   const k = fake((r) => (r === "configmaps" ? Array.from({ length: n }, (_, i) => ({ metadata: { name: `c${i}`, namespace: "app" }, data: { A: big } })) : []));
   await assert.rejects(collectInventory({ agentVersion: "t", exec: k.exec, now }), InventoryTooLarge);
 });
+
+// 2026-11-07 온프레 VM 실측: kubectl v1.36.5 는 --request-timeout 이 붙으면 in-cluster(ServiceAccount) 설정을 안 쓰고 localhost:8080 으로 가서
+//   스냅숏 목록 21개가 전부 실패했다. 클러스터 안(context 없음)에서는 그 옵션을 붙이지 않는다. context 로 밖에서 볼 때만 붙인다
+test("inventory: 클러스터 안(context 없음)은 --request-timeout 을 안 붙이고, context 가 있으면 붙인다", async () => {
+  const inCluster = fake(() => []);
+  await collectInventory({ agentVersion: "t", exec: inCluster.exec, now });
+  assert.ok(inCluster.calls.length > 5);
+  assert.ok(inCluster.calls.every((c) => !c.some((a) => a.startsWith("--request-timeout"))), inCluster.calls.map((c) => c.join(" ")).join("\n"));
+  const outside = fake(() => []);
+  await collectInventory({ agentVersion: "t", exec: outside.exec, context: "k3d-onprem", now });
+  assert.ok(outside.calls.every((c) => c.includes("--request-timeout=15s")));
+});

@@ -60,12 +60,16 @@ export interface InventorySnapshotOpts {
   agentVersion: string;
   /** kubectl 앞 인자 (예: ["--context", "k3d-x"]). 클러스터 안 Agent 는 빈 값 = ServiceAccount 토큰 */
   kube?: string[];
+  /** kubectl --request-timeout 을 붙이나. 기본 = kube 인자가 있을 때만 (클러스터 밖에서 context 로 볼 때).
+   *  클러스터 안(ServiceAccount 토큰)에서는 붙이지 않는다: kubectl v1.36.5 는 이 옵션이 있으면 in-cluster 설정을 쓰지 않고
+   *  localhost:8080 으로 간다 (2026-11-07 온프레 VM Agent 파드에서 실측, 목록 21개 전부 실패). 시간 상한은 자식 프로세스 timeoutMs(CLOUD_READ_TIMEOUT_MS)가 지킨다 */
+  requestTimeout?: boolean;
   now?: () => Date;
 }
 
 /** Agent 쪽: 스냅숏 모으기. 실패한 읽기는 오류 칸으로 남긴다 (워커가 같은 오류로 다시 재생). kubectl 실행 자체가 안 되면(CliError 아님) 던진다 */
 export async function collectInventorySnapshot(d: CliDeps, o: InventorySnapshotOpts): Promise<AgentInventorySnapshot> {
-  const kube = o.kube ?? [];
+  const kube = [...(o.kube ?? []), ...((o.requestTimeout ?? (o.kube?.length ?? 0) > 0) ? [KUBE_TIMEOUT] : [])];
   const errOf = (e: unknown) => {
     if (!(e instanceof CliError)) throw e;
     return { exitCode: e.exitCode, stderr: e.stderr.slice(0, STDERR_MAX) };
@@ -73,7 +77,7 @@ export async function collectInventorySnapshot(d: CliDeps, o: InventorySnapshotO
   let apiResources: AgentInventorySnapshot["apiResources"];
   let names: string[] = [];
   try {
-    names = String(await runText(d, "kubectl", ["api-resources", "--namespaced=true", "--verbs=list", "-o", "name", ...kube, KUBE_TIMEOUT])).split(/\s+/).filter(Boolean);
+    names = String(await runText(d, "kubectl", ["api-resources", "--namespaced=true", "--verbs=list", "-o", "name", ...kube])).split(/\s+/).filter(Boolean);
     apiResources = { names };
   } catch (e) { apiResources = { error: errOf(e) }; }
   const dynamic = [...appCrdResources(names), ...ESO_RESOURCES.filter((r) => names.includes(r)), ...GATEWAY_API_RESOURCES.filter((r) => names.includes(r))];
@@ -83,7 +87,7 @@ export async function collectInventorySnapshot(d: CliDeps, o: InventorySnapshotO
     // Secret 이름의 자원(같은 이름의 CRD 포함)은 부르지 않는다. 오류 칸으로 남겨 워커 discover 가 "못 읽음"으로 본다
     if (isSecretResource(resource)) { lists.push({ resource, error: { exitCode: 1, stderr: `Agent 는 Secret 이름의 자원(${resource})을 읽지 않는다` } }); continue; }
     try {
-      const raw = arr(get(await runJson(d, "kubectl", ["get", resource, ...(clusterScoped ? [] : ["-A"]), ...kube, KUBE_TIMEOUT, "-o", "json"]), "items"));
+      const raw = arr(get(await runJson(d, "kubectl", ["get", resource, ...(clusterScoped ? [] : ["-A"]), ...kube, "-o", "json"]), "items"));
       const kept = clusterScoped || KEEP_SYSTEM_NS.has(resource) ? raw : raw.filter((x) => !SYSTEM_NS.test(str(get(x, "metadata", "namespace")) ?? ""));
       const shape = crd.has(resource) ? metaOnly : resource === "secretstores.external-secrets.io" ? storeOnly : slim;
       lists.push({ resource, items: kept.map(shape) });
