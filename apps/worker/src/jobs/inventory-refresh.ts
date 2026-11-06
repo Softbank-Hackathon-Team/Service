@@ -1,6 +1,6 @@
 import { InventoryRefreshJob, type Provider } from "@svc/contracts";
 import { withTenant, scrubString } from "@svc/core";
-import { actionsOfCommands, envFor, gcpEnvFor, inventoryUnavailable, readAwsTargetFacts, readInventory, type AwsTargetFactsRead, type CloudInventory, type InventoryDeps } from "@svc/adapters";
+import { actionsOfCommands, envFor, gcpEnvFor, inventoryExec, inventoryUnavailable, readAwsTargetFacts, readInventory, type AwsTargetFactsRead, type CloudInventory, type InventoryDeps } from "@svc/adapters";
 import { StsCliError, TempRoleDenied, type TempRoleBroker } from "@svc/security";
 import { realStsEnabled, tempRoles } from "../platform.js";
 
@@ -49,8 +49,9 @@ export async function handleInventoryRefresh(raw: unknown, deps: InventoryRefres
 async function readFor(job: InventoryRefreshJob, env: EnvRow, deps: InventoryRefreshDeps, penv: NodeJS.ProcessEnv): Promise<StoredInventory> {
   const read = deps.read ?? {};
   // AWS 는 같은 자격으로 연결 때 적은 도착 EKS 의 VPC·서브넷도 읽는다 (TF_FACT_* 없이 계획·apply 하려고)
+  // 도착 사실 CLI 도 실자원 읽기와 같은 동시 실행 한도로 (readInventory 는 안에서 이미 건다 — 두 번 감싸지 않는다)
   const readAws = async (e: NodeJS.ProcessEnv): Promise<StoredInventory> => ({
-    ...(await readInventory("aws", { ...read, env: e })), targetFacts: await readAwsTargetFacts(env.cluster_name, { ...read, env: e }) });
+    ...(await readInventory("aws", { ...read, env: e })), targetFacts: await readAwsTargetFacts(env.cluster_name, { exec: inventoryExec(read.exec), env: e }) });
   if (penv.INVENTORY_CLI === "0") return inventoryUnavailable(env.provider, "INVENTORY_CLI=0 (실자원 읽기 끔)");
   // 온프레 push 시연: 고객 역할이 없다. 워커의 kubectl context 로 읽는다
   if (env.provider !== "aws" && env.provider !== "gcp") return readInventory(env.provider, { ...read, env: penv });
