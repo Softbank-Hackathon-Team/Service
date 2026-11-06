@@ -29,7 +29,7 @@ const CACHE_LOST: Loss<Cache>[] = [
   { what: "Newer source version features (rendered on an older Valkey line)", when: (c) => versionOf(c) > Number(valkeyLine(c)) },
   { what: "Cluster mode and shards (rendered as a single server, cluster-only clients need a config change)", when: (c) => c.props.clusterMode === true || (c.props.shards ?? 0) > 1 },
   { what: "Replicas and automatic failover (rendered as a single server)", when: (c) => c.props.ha === true },
-  { what: "In-transit encryption (plain redis:// inside the cluster, apps that force TLS need a config change)", when: (c) => c.props.tls !== false },
+  { what: "In-transit encryption (rediss:// addresses become redis://, apps that force TLS in other settings need a config change)", when: (c) => c.props.tls !== false },
   { what: "Cached data (starts empty)" },
 ];
 

@@ -66,6 +66,28 @@ test("거부: 캐시 이름이 CNPG Service(shop-db-rw)와 겹치면 값과 링�
   assert.equal((v.workloads[0]!.env as Array<{ value: string }>)[0]!.value, name);
 });
 
+test("rediss 주소: 캐시로 가면 env·args·설정 파일 모두 redis:// 로. 다른 서버로 가는 rediss:// 는 그대로, 글자 값도 그대로", () => {
+  const s = spec([cache({ tls: true })], [
+    { name: "REDIS_URL", template: "rediss://${sess.host}:${sess.port}/0" },
+    { name: "WITH_USER", template: "rediss://app@${sess.host}:6379" },
+    { name: "OTHER", template: "rediss://${shop.host}:6379" },
+    { name: "LITERAL", value: "rediss://outside.example.com:6379" },
+  ]);
+  const shop = s.components[0]!.props as Raw;
+  Object.assign(shop, { args: ["--cache", "rediss://${sess.host}:${sess.port}"], argTemplates: [1],
+    configs: [{ name: "app", data: { url: "rediss://${sess.host}:${sess.port}" }, templateKeys: ["url"] }] });
+  const w = ChartValues.parse(on.toWorkloadValues(s, {}, T)).workloads[0]! as unknown as { env: Array<{ value: string }>; args: string[]; configs: Array<{ data: { url: string } }> };
+  assert.deepEqual(w.env.map((e) => e.value), ["redis://shop-sess:6379/0", "redis://app@shop-sess:6379", "rediss://shop.app-shop.svc:6379","rediss://outside.example.com:6379"]);
+  assert.equal(w.args[1], "redis://shop-sess:6379");
+  assert.equal(w.configs[0]!.data.url, "redis://shop-sess:6379");
+});
+
+test("rediss 주소: 클라우드 도착은 그대로 둔다", () => {
+  const s = spec([cache({ tls: true })], [{ name: "REDIS_URL", template: "rediss://${sess.host}:6379" }]);
+  const v = ChartValues.parse(targetBuilderFor("gcp").toWorkloadValues(s, {}, { ...T, provider: "gcp" }));
+  assert.match((v.workloads[0]!.env as Array<{ value: string }>)[0]!.value, /^rediss:\/\//);
+});
+
 test("할당량에 Valkey 몫을 더하고, 생길 자원에 Deployment·Service 권한을 넣는다", () => {
   const quotaOf = (s: AppSpecV2) => JSON.parse(on.toTerraformV2(s, T).vars.namespace_json as string)[0];
   const base = quotaOf(spec([]));

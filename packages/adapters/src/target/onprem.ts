@@ -50,6 +50,11 @@ const valkeyName = (spec: AppSpecV2, id: string) => {
   return taken ? `${name}-${hash6(spec.app.name, id)}` : name;
 };
 const cachePort = (c: Extract<ComponentV2, { kind: "cache" }>) => c.props.port ?? 6379;
+// 출발 주소가 rediss://${<캐시>.host} 면 도착 평문 Valkey 에 TLS 로 붙어 실패한다 → 이 캐시로 가는 주소만 redis:// 로. 뜻은 승인 항목에 적는다
+const plainCacheUrl = (spec: AppSpecV2) => {
+  const ids = new Set(cachesOf(spec).map((c) => c.id));
+  return (tpl: string) => tpl.replace(/rediss:\/\/([^\s,;'"]*?\$\{([a-z][a-z0-9-]*)\.host)/gi, (m, rest: string, id: string) => (ids.has(id) ? `redis://${rest}` : m));
+};
 const dataLink = (spec: AppSpecV2) => (c: ComponentV2, output: string): string | undefined => {
   if (c.kind === "cache") {
     const host = valkeyName(spec, c.id), port = cachePort(c);
@@ -198,6 +203,7 @@ function workloadValues(spec0: AppSpecV2, out: TfOutputs, t: Target) {
         replication: { enabled: true, role: "svc_migrate", passwordSecret: `${cnpgName(spec, c.id)}-migrate` },
       })),
       link: dataLink(spec),
+      prepareTemplate: plainCacheUrl(spec),
     });
     const caches = cachesOf(spec);
     const dataServices = caches.map((c) => compact({
