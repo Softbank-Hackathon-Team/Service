@@ -46,7 +46,7 @@ resource "kubernetes_resource_quota_v1" "this" {
 }
 
 # 허브는 이 구역 안에서만 앱을 배포한다. 클러스터 전체 권한(ClusterRoleBinding)은 없다.
-# 목록은 infra/permissions/eks-deploy-rbac.yaml 과 같다. Secret 은 External Secrets 가 만들어서 없다
+# 목록은 infra/permissions/eks-deploy-rbac.yaml 과 같다. 쓰기에 Secret 은 External Secrets 가 만들어서 없다. 읽기는 Argo 캐시 때문에 구역 안 전부
 # DRAFT(ai): EKS 와 달리 고객이 kubectl 을 돌리지 않게 Role 도 Terraform 이 만든다. 그래서 실행 역할에 container.roles.escalate·bind 가 필요하다
 resource "kubernetes_role_v1" "hub_deploy" {
   count = var.hub_principal != "" ? 1 : 0
@@ -89,6 +89,13 @@ resource "kubernetes_role_v1" "hub_deploy" {
     resources  = ["externalsecrets"]
     verbs      = ["get", "list", "watch", "create", "update", "patch", "delete"]
   }
+  # Argo CD 클러스터 캐시는 이 구역의 네임스페이스 종류를 전부 list·watch 한다 (replicationcontrollers·CRD 포함).
+  # 하나라도 막히면 캐시가 안 서서 동기화가 멈추므로 읽기만 전부 연다. 쓰기는 위 목록 그대로. Secret 도 읽힌다 (이 구역 안만)
+  rule {
+    api_groups = ["*"]
+    resources  = ["*"]
+    verbs      = ["get", "list", "watch"]
+  }
 }
 
 resource "kubernetes_role_binding_v1" "hub_deploy" {
@@ -113,3 +120,5 @@ resource "kubernetes_role_binding_v1" "hub_deploy" {
 output "name" { value = kubernetes_namespace_v1.this.metadata[0].name }
 output "hub_subject" { value = one(kubernetes_role_binding_v1.hub_deploy[*].subject[0].name) }
 output "hub_role_resources" { value = flatten(kubernetes_role_v1.hub_deploy[*].rule[*].resources) }
+# 모든 종류(*)에 걸린 동사. 읽기(get·list·watch)만이어야 한다
+output "hub_role_wildcard_verbs" { value = flatten([for role in kubernetes_role_v1.hub_deploy : [for r in role.rule : r.verbs if contains(r.resources, "*")]]) }

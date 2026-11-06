@@ -133,6 +133,9 @@ test("ID-1: 배포 RBAC 은 ClusterRoleBinding 없음, Secret·RBAC 쓰기 없�
   const rbac = readFileSync(new URL("permissions/eks-deploy-rbac.yaml", root), "utf8");
   assert.ok(!/kind:\s*ClusterRoleBinding/.test(rbac));
   assert.ok(!/"secrets"/.test(rbac) && !/rbac\.authorization/.test(rbac.replace(/^apiVersion:.*$/gm, "")));
+  // Argo CD 캐시용 읽기 전부: 모든 종류(*) 규칙은 get·list·watch 만
+  assert.match(rbac, /- apiGroups: \["\*"\]\n\s+resources: \["\*"\]\n\s+verbs: \["get", "list", "watch"\]\n/);
+  assert.equal((rbac.match(/resources: \["\*"\]/g) ?? []).length, 1);
   const op = readFileSync(new URL("permissions/eks-operate-namespace-rbac.yaml", root), "utf8");
   assert.match(op, /resourceNames: \["platform-deploy-app"\]\n\s+verbs: \["bind"\]/);
   assert.equal((op.match(/"bind"/g) ?? []).length, 1);
