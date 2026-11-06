@@ -3,7 +3,8 @@
 #
 # 이 파일을 읽는 것:
 #   - 플랫폼 API: 회원가입(초대 코드) 때 그 칸의 environments 를 회사 안에 만든다 (이름으로 찾고, 있으면 건드리지 않음)
-#   - tools/team-env.sh <slot>: 그 칸의 GCP 연결 명령을 값까지 채워 찍는다 (--check 는 읽기 전용 확인)
+#   - tools/team-env.sh <slot>: 그 칸의 GCP 연결 명령을 값까지 채워 찍는다 (--check 는 읽기 전용 확인,
+#     source 는 출발 샘플 앱 명령: gcp 는 gcp.original_project·region, aws 는 cluster·region·name(kubectl 컨텍스트))
 #   모양을 바꾸면 두 곳이 같이 깨진다. 키는 아래 것만 쓴다 (environments 항목의 키: name·provider·region·cluster·gcp·notes)
 #
 # 규칙

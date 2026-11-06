@@ -22,6 +22,7 @@
 ```bash
 bash tools/team-env.sh slot-2          # 자기 칸의 GCP 연결 명령을 값까지 채워 찍는다 (실행은 안 함)
 bash tools/team-env.sh slot-2 --check  # 읽기 전용 gcloud 로 프로젝트·API 가 다 있는지만 본다
+bash tools/team-env.sh slot-2 source   # 자기 칸 환경마다 출발 샘플 앱을 올리는 명령 (3절, 실행은 안 함)
 ```
 
 ## 2. GCP 도착 (전용 프로젝트)
@@ -72,20 +73,50 @@ bash tools/team-env.sh slot-2 --check  # 읽기 전용 gcloud 로 프로젝트·
    ```
    읽기는 그 네임스페이스의 Secret 까지 포함한다 (#323 과 같은 트레이드오프, 쓰기는 없음). EKS 도착이면 subject 를 `{ apiGroup: rbac.authorization.k8s.io, kind: Group, name: platform:deploy }` 로 바꾸고, #323 머지 뒤에는 `kubectl apply -f infra/permissions/eks-deploy-rbac.yaml` 로 대신한다.
 
-## 3. GCP 출발 (샘플 앱)
+## 3. 출발 샘플 앱 (GCP·AWS)
 
-`tools/gcp-source.sh` 가 원래 프로젝트에 3티어 샘플(VPC·GKE `platform-target`·Cloud SQL `sample-shop-db`, 네임스페이스 `real-app`, `orders` 100행)을 만든다 (`infra/samples/gcp-source`). 약 $0.30/시간, 끝나면 `down`.
+이전해 볼 "이미 운영 중인 서비스" 자리다. 모양은 하나: `shop-web`·`shop-api` + Postgres `orders` 100행, 네임스페이스 `real-app`.
+명령은 등록부 자기 칸에서 값까지 채워 찍는다. 찍힌 줄을 위에서부터 차례로 친다.
 
 ```bash
-export GCP_PROJECT=<원래> TF_STATE_BUCKET=<원래>-tfstate   # 리전 기본 asia-northeast3
-bash tools/gcp-source.sh up --dry-run   # 명령 순서만 확인
-bash tools/gcp-source.sh up             # 25~35분 (API 켜기 → state 버킷 → apply → kubeconfig)
-bash tools/gcp-source.sh app            # shop-web·shop-api
-bash tools/gcp-source.sh seed           # orders 100행
-bash tools/gcp-source.sh down           # 다 쓴 뒤
+bash tools/team-env.sh slot-2 source   # 칸의 환경마다: gcp → tools/gcp-source.sh, aws → tools/aws-source-app.sh
 ```
 
+- 환경마다 "이미 있는지" 읽기 줄이 있다. 이미 올라가 있으면 건너뛴다
+- 공유 환경(slot-1)은 이미 올라가 있을 수 있다 (확인 줄로 본다). 팀 채널에 알리고 쓰고, `down` 은 치지 않는다
+- `down` 은 주석으로만 찍힌다 (붙여 넣어도 지우지 않게)
+- `app`·`seed` 는 `docker buildx` 로 이미지 digest 를 구한다. 없으면 `WEB_IMAGE`·`API_IMAGE`·`SEED_IMAGE` 를 `repo@sha256:…` 로 준다
+
+### GCP
+
+`tools/gcp-source.sh` 가 원래 프로젝트에 VPC·GKE `platform-target`·Cloud SQL `sample-shop-db` 까지 만든다 (`infra/samples/gcp-source`, 서울 고정). 약 $0.30/시간, 끝나면 `down`.
+찍히는 줄은 `GCP_PROJECT=<원래> TF_STATE_BUCKET=<원래>-tfstate REGION=<등록부 region> bash tools/gcp-source.sh up|app|seed` 다. 줄 끝에 `--dry-run` 을 붙이면 명령 순서만 본다.
+
 샘플도 `platform-target` 이름을 쓰니 **원래 프로젝트에만** 올린다 (전용 프로젝트에 올리면 도착 환경 층과 부딪힌다).
+
+### AWS
+
+`tools/aws-source-app.sh` 는 **이미 있는** EKS(등록부 `cluster`)와 RDS PostgreSQL 에 앱만 올린다. EKS·RDS 는 만들지 않는다.
+
+1. 먼저 만든다: 콘솔(EKS 클러스터 생성, RDS → PostgreSQL) 또는 aws CLI. RDS 마스터 비밀번호는 "Secrets Manager 에서 관리" 가 편하다 (찍힌 줄이 그 비밀 id 를 찾는다)
+2. RDS 보안 그룹이 EKS 클러스터 보안 그룹에서 5432 를 받게 한다 (안 받으면 `seed` 가 300초 뒤 실패)
+3. `team-env.sh <slot> source` 가 찍은 줄: kubeconfig(컨텍스트 이름 = 환경 이름) → 확인 → DB 값 → `app` → `seed`
+
+| 입력 | 값 |
+|---|---|
+| `KUBE_CONTEXT` | 필수. 현재 컨텍스트는 쓰지 않는다 |
+| `DB_HOST` | RDS 엔드포인트. 찍힌 줄은 그 리전의 첫 PostgreSQL RDS 를 찾는다 (여럿이면 직접) |
+| `DB_NAME`·`DB_USER` | 기본 `postgres`. `DB_USER` 를 비우면 RDS 관리 비밀의 `username` |
+| `DB_PASSWORD_SECRET_ID` 또는 `DB_PASSWORD_FILE` | Secrets Manager id, 또는 비밀번호 한 줄 파일(600). 화면·명령줄에 안 쓴다 |
+
+```bash
+bash tools/aws-source-app.sh app  --dry-run   # 명령 순서만
+bash tools/aws-source-app.sh app              # 네임스페이스 → Secret(shop-db-app = DB 비밀번호) → shop-web·shop-api
+bash tools/aws-source-app.sh seed             # orders 표 + 100행 (다시 돌려도 100행)
+bash tools/aws-source-app.sh down             # 네임스페이스만 (라벨 m-import=1 인 것만). EKS·RDS·orders 는 그대로
+```
+
+로그는 `~/.svc-tf/aws-source/<명령>-<시각>.log`, 화면에는 단계만 나온다.
 
 ## 4. AWS (출발 또는 도착)
 

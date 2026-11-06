@@ -2,6 +2,8 @@
 # 팀 환경 등록부(docs/team-env/registry.yaml)에서 칸 하나를 읽어 GCP 연결 명령을 값까지 채워 찍는다. 상태: AI 초안
 #   bash tools/team-env.sh <slot-N>           명령만 찍는다 (아무것도 실행하지 않음). 줄마다 명령 하나, 자리 값(<…>) 없음
 #   bash tools/team-env.sh <slot-N> --check   읽기 전용 gcloud(projects describe, services list)로 빠진 프로젝트·API 만 알려 준다
+#   bash tools/team-env.sh <slot-N> source    출발 샘플(3티어 shop, 네임스페이스 real-app, orders 100행)을 칸의 환경마다 올리는 명령만 찍는다
+#                                             gcp → tools/gcp-source.sh (원래 프로젝트), aws → tools/aws-source-app.sh (이미 있는 EKS·RDS 에 앱만)
 # 환경 변수
 #   TEAM_ENV_REGISTRY      등록부 파일 (기본 docs/team-env/registry.yaml)
 #   PLATFORM_GCP_PROJECT   플랫폼 GCP 프로젝트 (기본 sb-iron-platform). 회사 전용 SA = t-<md5(회사 번호) 앞 28자>@<이 프로젝트>
@@ -15,9 +17,9 @@ CONNECT="$ROOT/infra/onboarding/gcp-connect.sh"
 die() { echo "team-env: $*" >&2; exit 2; }
 
 SLOT="${1:-}"; MODE="${2:-print}"
-case "$SLOT" in -h|--help|"") sed -n '2,10p' "$0"; [ -n "$SLOT" ]; exit $? ;; esac
+case "$SLOT" in -h|--help|"") sed -n '2,12p' "$0"; [ -n "$SLOT" ]; exit $? ;; esac
 [[ "$SLOT" =~ ^slot-[1-9][0-9]*$ ]] || die "칸 이름은 slot-<번호>: $SLOT"
-case "$MODE" in print|--check) ;; *) die "모르는 옵션: $MODE (--check 만 있음)" ;; esac
+case "$MODE" in print|--check|source) ;; *) die "모르는 옵션: $MODE (--check·source 만 있음)" ;; esac
 [ -f "$REG" ] || die "등록부 없음: $REG"
 
 # 등록부 → "경로=값" 줄 (예: slots.0.environments.1.gcp.dedicated_project=iron-target-gcp).
@@ -154,13 +156,21 @@ fi
 dup="$(printf '%s\n' "$FLAT" | sed -n 's/^slots\.[0-9][0-9]*\.environments\.[0-9][0-9]*\.name=//p' | sort | uniq -d | head -1)"
 [ -z "$dup" ] || die "환경 이름 $dup 이 두 칸 이상에 있음 (공유 환경은 한 칸에만 적고 notes 에 공유라고 쓴다)"
 PROJ_RE='^[a-z][a-z0-9-]{4,28}[a-z0-9]$'
-GCP_ENVS=()
+# 칸의 환경 번호 (등록부 순서). 빈 목록도 bash 3.2 + set -u 에서 안 깨지게 배열 대신 빈칸으로 나눈 글자
+GCP_ENVS=""; AWS_ENVS=""; SRC_ENVS=""
 for j in $(printf '%s\n' "$FLAT" | sed -n "s/^slots\.$SI_\.environments\.\([0-9][0-9]*\)\.name=.*/\1/p"); do
   e="slots.$SI_.environments.$j"
-  [ "$(get "$e.provider")" = gcp ] && GCP_ENVS+=("$j")
+  case "$(get "$e.provider")" in
+    gcp) GCP_ENVS="$GCP_ENVS $j"; SRC_ENVS="$SRC_ENVS $j" ;;
+    aws) AWS_ENVS="$AWS_ENVS $j"; SRC_ENVS="$SRC_ENVS $j" ;;
+  esac
 done
-[ ${#GCP_ENVS[@]} -gt 0 ] || die "$SLOT 에 provider: gcp 환경이 없음 (등록부 environments 에 gcp 환경과 두 프로젝트를 적는다. AWS 는 콘솔의 \"AWS 연결\" 링크로 연결: docs/team-env/README.md)"
-for j in "${GCP_ENVS[@]}"; do
+if [ "$MODE" = source ]; then
+  [ -n "$SRC_ENVS" ] || die "$SLOT 에 provider: aws·gcp 환경이 없음 (등록부 environments 에 출발 환경을 적는다: docs/team-env/README.md)"
+else
+  [ -n "$GCP_ENVS" ] || die "$SLOT 에 provider: gcp 환경이 없음 (등록부 environments 에 gcp 환경과 두 프로젝트를 적는다. AWS 는 콘솔의 \"AWS 연결\" 링크로 연결: docs/team-env/README.md)"
+fi
+for j in $GCP_ENVS; do
   e="slots.$SI_.environments.$j"; n="$(get "$e.name")"
   o="$(get "$e.gcp.original_project")"; d="$(get "$e.gcp.dedicated_project")"
   [ -n "$o" ] && [ -n "$d" ] || die "$SLOT/$n: gcp.original_project·gcp.dedicated_project 를 둘 다 채운다"
@@ -212,8 +222,73 @@ check_project() { # 프로젝트, 켜져 있어야 할 API(짧은 이름)…
   return "$miss"
 }
 
+# source: 출발 샘플(3티어 shop: shop-web·shop-api·Postgres orders 100행, 네임스페이스 real-app)을 올리는 명령. 실행은 안 함
+#   gcp 는 원래 프로젝트에 tools/gcp-source.sh (VPC·GKE·Cloud SQL 까지 만든다), aws 는 이미 있는 EKS·RDS 에 tools/aws-source-app.sh (앱만)
+shared() { case "$(get "$1.notes")" in *공유*) return 0 ;; esac; return 1; }
+source_gcp() { # 환경 경로
+  local e="$1" n o d r v
+  n="$(get "$e.name")"; o="$(get "$e.gcp.original_project")"; d="$(get "$e.gcp.dedicated_project")"; r="$(get "$e.region")"
+  v="GCP_PROJECT=$o TF_STATE_BUCKET=$o-tfstate REGION=$r"
+  echo "# === $SLOT / $n: GCP 출발 샘플 → 원래 프로젝트 $o ($r). GKE platform-target·Cloud SQL sample-shop-db, 네임스페이스 real-app, orders 100행 ==="
+  echo "# 원래 프로젝트에만 올린다 (전용 $d 에 올리면 도착 환경 층과 이름이 부딪힌다). 약 \$0.30/시간. 원래 프로젝트 소유자로 gcloud 로그인 (Cloud Shell), 레포 루트에서"
+  [ "$r" = asia-northeast3 ] || echo "# 샘플 모듈(infra/samples/gcp-source)은 asia-northeast3 고정이다. REGION 은 state 버킷 위치만 바꾼다"
+  if shared "$e"; then echo "# 공유 환경: 팀 채널에 알리고 쓴다. 이미 올라가 있으면 up·app·seed 는 건너뛰고, down 은 치지 않는다 (남도 쓴다)"; fi
+  echo "# 0) 이미 있는지 (읽기만. platform-target 이 보이면 up 은 끝난 것)"
+  echo "gcloud container clusters list --project=$o --format='value(name)'"
+  echo "# 1) VPC·GKE·Cloud SQL (25~35분) → shop-web·shop-api → orders 100행. 줄 끝에 --dry-run 을 붙이면 명령 순서만 찍는다"
+  echo "#    app·seed 는 docker buildx 로 이미지 digest 를 구한다 (Cloud Shell 에 있음). 없으면 WEB_IMAGE·API_IMAGE·SEED_IMAGE 를 repo@sha256:… 로"
+  echo "$v bash tools/gcp-source.sh up"
+  echo "$v bash tools/gcp-source.sh app"
+  echo "$v bash tools/gcp-source.sh seed"
+  echo "# 다 쓴 뒤 (GKE·Cloud SQL 을 지운다. state 버킷은 남김): $v bash tools/gcp-source.sh down"
+}
+source_aws() { # 환경 경로
+  local e="$1" n c r q
+  n="$(get "$e.name")"; c="$(get "$e.cluster")"; r="$(get "$e.region")"
+  q='DBInstances[?Engine==`postgres`]|[0]'
+  echo "# === $SLOT / $n: AWS 출발 샘플 → EKS $c ($r), 네임스페이스 real-app (shop-web·shop-api), RDS PostgreSQL 에 orders 100행 ==="
+  echo "# 먼저 있어야 하는 것 (이 도구는 만들지 않는다): EKS 클러스터 $c, 같은 VPC 의 RDS PostgreSQL 하나. RDS 보안 그룹은 EKS 클러스터 보안 그룹에서 5432 를 받는다"
+  echo "#   만드는 법: 콘솔(EKS → 클러스터 생성 / RDS → 데이터베이스 생성 → PostgreSQL, 마스터 비밀번호 \"Secrets Manager 에서 관리\") 또는 aws CLI(aws eks create-cluster …, aws rds create-db-instance --engine postgres --manage-master-user-password …)"
+  if shared "$e"; then echo "# 공유 환경: 팀 채널에 알리고 쓴다. 이미 올라가 있으면 app·seed 는 건너뛰고, down 은 치지 않는다 (남도 쓴다)"; fi
+  echo "# 1) kubeconfig (자기 AWS 계정으로 aws 로그인한 맥, 레포 루트에서). 컨텍스트 이름 = 환경 이름"
+  echo "aws eks update-kubeconfig --name $c --region $r --alias $n"
+  echo "# 2) 이미 있는지 (읽기만. shop-web·shop-api 가 보이면 4) 는 건너뛴다)"
+  echo "kubectl --context $n -n real-app get deployment shop-web shop-api"
+  echo "# 3) DB 주소·비밀번호 위치 = 그 리전의 첫 PostgreSQL RDS (여럿이면 DB_HOST 를 직접). 비밀번호를 직접 정한 RDS 면 DB_PASSWORD_SECRET_ID 대신 DB_PASSWORD_FILE=<한 줄 파일(600)>"
+  echo "export KUBE_CONTEXT=$n NS=real-app AWS_REGION=$r DB_NAME=postgres"
+  echo "export DB_HOST=\"\$(aws rds describe-db-instances --region $r --query '$q.Endpoint.Address' --output text)\""
+  echo "export DB_PASSWORD_SECRET_ID=\"\$(aws rds describe-db-instances --region $r --query '$q.MasterUserSecret.SecretArn' --output text)\""
+  echo "# 4) shop-web·shop-api → orders 100행. 줄 끝에 --dry-run 을 붙이면 명령 순서만 찍는다"
+  echo "#    app·seed 는 docker buildx 로 이미지 digest 를 구한다. 없으면 WEB_IMAGE·API_IMAGE·SEED_IMAGE 를 repo@sha256:… 로"
+  echo "bash tools/aws-source-app.sh app"
+  echo "bash tools/aws-source-app.sh seed"
+  echo "# 다 쓴 뒤 (네임스페이스만 지운다. EKS·RDS·orders 표는 그대로): bash tools/aws-source-app.sh down"
+}
+if [ "$MODE" = source ]; then
+  # 값 검사를 다 통과한 뒤에만 찍는다 (찍힌 줄이 그대로 명령이 되므로 셸에 안전한 모양만)
+  NAME_RE='^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$'; EKS_RE='^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$'
+  AWS_REGION_RE='^[a-z]{2}(-[a-z]+)+-[0-9]+$'; GCP_REGION_RE='^[a-z]+-[a-z]+[0-9]+$'
+  for j in $AWS_ENVS; do
+    e="slots.$SI_.environments.$j"; n="$(get "$e.name")"; c="$(get "$e.cluster")"; r="$(get "$e.region")"
+    [[ "$n" =~ $NAME_RE ]] || die "$SLOT/$n: 환경 이름을 kubectl 컨텍스트 이름으로 못 씀 (영문·숫자·. _ - 만)"
+    [ -n "$c" ] || die "$SLOT/$n: aws 환경에 cluster(EKS 이름)를 채운다"
+    [[ "$c" =~ $EKS_RE ]] || die "$SLOT/$n: cluster 가 EKS 이름 모양이 아님: $c"
+    [[ "$r" =~ $AWS_REGION_RE ]] || die "$SLOT/$n: region 이 AWS 리전 모양이 아님: $r"
+  done
+  for j in $GCP_ENVS; do
+    e="slots.$SI_.environments.$j"; n="$(get "$e.name")"; r="$(get "$e.region")"
+    [[ "$r" =~ $GCP_REGION_RE ]] || die "$SLOT/$n: region 이 GCP 리전 모양이 아님: $r"
+  done
+  echo "# 출발 샘플 (3티어 shop: shop-web·shop-api·Postgres orders 100행, 네임스페이스 real-app). 줄마다 명령 하나, 위에서부터 차례로"
+  for j in $SRC_ENVS; do
+    e="slots.$SI_.environments.$j"
+    case "$(get "$e.provider")" in gcp) source_gcp "$e" ;; aws) source_aws "$e" ;; esac
+  done
+  exit 0
+fi
+
 rc=0
-for j in "${GCP_ENVS[@]}"; do
+for j in $GCP_ENVS; do
   e="slots.$SI_.environments.$j"; n="$(get "$e.name")"
   o="$(get "$e.gcp.original_project")"; d="$(get "$e.gcp.dedicated_project")"
   if [ "$MODE" = print ]; then print_cmds "$n" "$o" "$d"; continue; fi
