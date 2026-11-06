@@ -1,5 +1,6 @@
 import type { Provider } from "@svc/contracts";
 import { actionsOfPolicy, type PermissionSet, type Stage } from "./permissions.js";
+import type { RolePolicy } from "./temp-role.js";
 
 // 작업 단계가 임시 역할을 빌릴 때 "무슨 동작을 달라고 할지" (작업 Z39). 순수 함수.
 // 동작 목록을 손으로 다시 쓰지 않고 최소 권한 파일(infra/permissions)에서 뽑는다 → 파일이 바뀌면 요청도 같이 바뀐다
@@ -19,12 +20,14 @@ const isDelete = (a: string) => DELETE_VERB.test(verbOf(a));
 // Azure 는 Mock 전용이라 천장 파일이 없다. 관찰 요청 모양만 맞춘다
 const AZURE_OBSERVE = ["resources.list", "resourcegroups.get"];
 
-export function stepActions(p: PermissionSet | null, provider: Provider, purpose: "observe" | "operate", stage?: Stage, policy?: "relay"): string[] {
+export function stepActions(p: PermissionSet | null, provider: Provider, purpose: "observe" | "operate", stage?: Stage, policy?: RolePolicy): string[] {
   const cap = (xs: string[]) => [...new Set(xs)].sort();
   if (provider === "azure_mock") return purpose === "observe" ? AZURE_OBSERVE : [];
   if (!p) return [];
   // 중계기: 고객 실행 역할에 따로 붙인 중계기 문 묶음의 동작 전부 (AWS 만, 파일이 없으면 빈 목록 → 발급이 거부된다)
   if (policy === "relay") return provider === "aws" && purpose === "operate" ? cap(p.aws.relay?.ceiling ?? []) : [];
+  // B-2 환경 층: svc-env 역할의 동작 전부 (읽기 + 만들기. GCP 만, 파일이 없으면 빈 목록 → 발급이 거부된다)
+  if (policy === "env_layer") return provider === "gcp" && purpose === "operate" ? cap(p.gcp.env?.ceiling ?? []) : [];
   const ceiling = provider === "aws" ? p.aws.ceiling : provider === "gcp" ? p.gcp.ceiling : p.onprem.ceiling;
   if (purpose === "observe") return cap(ceiling.filter(isRead));
   const st = stage ?? "plan";
@@ -60,5 +63,8 @@ export const STEP_ROLES = {
   //   출발 실행 역할을 빌리되 세션 정책은 중계기 동작만 (policy relay). stage apply 는 장부 칸(0009 CHECK)용
   // DRAFT(ai): 만들기·지우기를 한 세션 정책으로 (지우기 전용으로 더 좁히지 않음). 지우는 대상은 코드가 두 태그로 한 번 더 거른다
   relay: [{ side: "source", purpose: "operate", stage: "apply", policy: "relay" }],
-} as const satisfies Record<string, ReadonlyArray<{ side: "source" | "target"; purpose: "observe" | "operate"; stage?: Stage; actions?: readonly string[]; policy?: "relay" }>>;
+  // B-2: 도착 GCP 환경 층(VPC·GKE·AR·ESO 설치) 만들기 (worker env-layer.ts). apply 단계 안에서 만들 때만 따로 빌린다.
+  //   발급기는 svc-operate 대신 고객 svc-env 를 빌린다 (gcp-cli.ts gcpTargetFor). stage apply 는 장부 칸(0009 CHECK)용
+  env_layer: [{ side: "target", purpose: "operate", stage: "apply", policy: "env_layer" }],
+} as const satisfies Record<string, ReadonlyArray<{ side: "source" | "target"; purpose: "observe" | "operate"; stage?: Stage; actions?: readonly string[]; policy?: RolePolicy }>>;
 export type RoleStep = keyof typeof STEP_ROLES;

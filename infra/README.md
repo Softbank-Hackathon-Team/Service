@@ -55,7 +55,7 @@ terraform apply -var expected_account_id=$(aws sts get-caller-identity --query A
 | 사실 고르는 순서 | ① DB `environment_layers` 줄이 ready ② worker `TF_FACT_*` ③ 둘 다 없고 켜져 있으면 만든다. 도착 프로젝트에 클러스터가 이미 있는데 ①이 없으면 만들지 않고 `NEEDS_HUMAN` |
 | 승인 | 계획서 `envLayer.mode=create` + 확인 항목 `env_layer_create`(GKE 비용 고지). apply 는 계획 때의 입력 지문(`varsHash`)·모듈 지문이 같을 때만 만든다 |
 | 실행 | 작업 폴더 `TF_WORK_DIR/<회사>/env-<환경 id>/`, 1차 `create_eso=false`(클러스터) → 2차 `create_eso=true`(ESO). 두 번이 예산 `TF_ENV_LAYER_BUDGET_SEC`(DRAFT 1800초)를 나눠 쓰고, 켜져 있으면 apply 큐 기한에 그만큼 더한다 |
-| 자격 | 빌린 실행 토큰(svc-operate)만. 토큰이 없으면 `ENV_LAYER_CRED_MISSING` 으로 멈춘다 (worker 자기 SA 로 만들지 않음) |
+| 자격 | B-2: 만드는 동안만 고객 `svc-env` 를 빌린다 (`STEP_ROLES.env_layer`, 역할 `platform_env` = 읽기 + 만들기, 지우기 없음). 노드는 고객 `svc-gke-node` 로 돈다(`node_service_account`). 못 빌리면 `ENV_LAYER_CRED_MISSING` 으로 멈춘다 (worker 자기 SA·`svc-operate` 로 만들지 않음). 고객이 `gcp-connect.sh` 를 다시 실행하면 생긴다 |
 | state | 작업 폴더 로컬 파일 (`envLayerBackend()` 한 곳, TODO(human): 원격 저장) |
 | 실패 | 줄 `status=failed`, 이전은 `ENV_LAYER_APPLY_FAILED`. 만들다 만 자원은 지우지 않는다. 다시 계획·apply 하면 같은 state 로 이어 만든다 |
 
@@ -65,7 +65,7 @@ terraform apply -var expected_account_id=$(aws sts get-caller-identity --query A
   `cd modules/gcp/env && terraform destroy -var-file=../../../terraform.tfvars.json` 뒤 DB 줄을 지운다. 먼저 그 환경을 쓰는 이전이 없는지 확인한다.
   `google_service_networking_connection` 은 ABANDON 이라 피어링은 `gcloud services vpc-peerings delete` 로 따로 지운다 (위 UPREV 주석).
 - worker 디스크(#265 EBS)를 잃으면 state 도 잃는다. 그때는 `terraform import` 로 다시 잡거나 줄을 ready 로 두고 사실만 쓴다.
-- 고객 svc-operate 에 환경 층을 만들 권한이 아직 없다 (별도 권한 PR). 없으면 1차 apply 가 403 으로 `ENV_LAYER_APPLY_FAILED`.
+- TODO(human) B-2: ESO 신원(GSA·`app-` secretAccessor·Workload Identity 바인딩)은 `svc-env` 권한 밖이다 (svc-eso setIamPolicy·프로젝트 setIamPolicy 금지). 정할 때까지 2차(`create_eso=true`)가 403 으로 `ENV_LAYER_APPLY_FAILED`(failedPhase=eso) 가 된다. 1차 클러스터는 남고, 결정 뒤 다시 계획·apply 하면 같은 state 로 이어 만든다.
 
 ## 검증 명령
 ```
