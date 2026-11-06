@@ -12,6 +12,7 @@ import { syncWatcherFor } from "../gitops/agent-watch.js";
 import { TARGET_ACCOUNT_SQL } from "./target-account.js";
 import { recordSkip, rehearsalGate, type Gate } from "../rehearsal/gate.js";
 import { imageCopyStep } from "./image-copy.js";
+import { prepareTrafficEntry } from "../traffic-entry.js";
 
 // GitOps 배포. deploying → syncing
 // GITOPS_REPO_DIR가 있으면 gitops 레포에 묶음을 커밋한다 (계약: parallel/N/gitops/WORKER-CONTRACT.md).
@@ -71,6 +72,7 @@ export async function handleDeploy(raw: unknown) {
       // 온프레 CNPG 이전 배달물 판정의 경고 (끝점 줄 없음 등). 감사 detail.warnings 로 남긴다
       let warnings: string[] = [];
       let delivery: Record<string, unknown> | undefined;
+      let trafficEntry: Record<string, unknown> | undefined;
       // Z77: 클러스터 없이 RDS 만 만든 이전(env 모듈 create_eks=false, 맥 B 회차)은 올릴 곳이 없다 → GitOps 가 켜져 있어도 STUB
       const noCluster = isNoCluster(l.infra.tfOutputs);
       // Z89: GitOps 설정이 없으면 예전엔 조용히 STUB 성공 → 이제 MOCK_ARGO=1(시험 전용)일 때만 흉내. 아니면 paused(GITOPS_NOT_CONFIGURED)
@@ -105,6 +107,15 @@ export async function handleDeploy(raw: unknown) {
           warnings = d.warnings;
           delivery = d.detail;
         }
+        // 이전마다 실제 트래픽 입구 (TRAFFIC_AUTO_LB=1): Cloudflare 도착 터널·LB 를 만들고 등록, 터널 토큰은 봉인 비밀로 같은 커밋에. 리허설 앞이라 같은 값을 렌더한다
+        let filledForEntry: HelmValues | null = null;
+        try { filledForEntry = filledValues(input); } catch { /* 자리표시 문제는 아래 리허설·커밋 길이 같은 이유로 멈춘다 */ }
+        const te = filledForEntry ? await prepareTrafficEntry({ tenantId: j.tenantId, migrationId: j.migrationId, provider: input.target.provider,
+          values: filledForEntry, sealingCertPem: l.repl?.sealingCertPem ?? null }) : { kind: "off" as const };
+        if (te.kind === "stop")
+          return { to: "paused", failureCode: te.code, detail: { deploy: { error: te.code, reason: te.reason, ...(te.hint ? { hint: te.hint } : {}) }, ...extra(warnings, delivery) } };
+        if (te.kind === "ok") { input.trafficEntry = te.sealedSecret; trafficEntry = te.detail; }
+        else if (te.kind === "skipped") trafficEntry = { skipped: te.reason };
         try {
           // APP-20: 커밋 전에 도착 비밀 그릇에 값이 들었나 (흉내 IaC 면 그릇이 없으니 안 본다)
           const sv = await borrowedSecretGate(j, m, input);
@@ -147,7 +158,7 @@ export async function handleDeploy(raw: unknown) {
         return { to: "paused", failureCode: code, detail: { deploy: result, ...(gitops ? { gitops } : {}), rehearsal: gate.detail, ...extra(warnings, delivery) } };
       }
       return {
-        to: "syncing", detail: { deploy: result, ...(gitops ? { gitops } : {}), rehearsal: gate.detail, ...extra(warnings, delivery) },
+        to: "syncing", detail: { deploy: result, ...(gitops ? { gitops } : {}), rehearsal: gate.detail, ...extra(warnings, delivery), ...(trafficEntry ? { trafficEntry } : {}) },
         // Z94: argoHealthy = 반영 확인 결과 (argocd-push 는 Synced+Healthy, 온프레는 Agent applied). 여기 오면 failed 는 위에서 걸렀다
         // 보안 동등성(MG-2-07): 이 단계엔 출발·도착 보안을 맞대어 잰 근거가 아직 없다 → true 라고 하지 않고 not_measured (예전: 늘 true 고정)
         evidence: { argoHealthy: result.status === "synced_healthy" || result.status === "applied", securityParity: "not_measured", rehearsal: gate.evidence },

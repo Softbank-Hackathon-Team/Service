@@ -9,6 +9,7 @@ import { tempRoles } from "../platform.js";
 import { pausedOnRenewFailure, withStepRoles } from "./_roles.js";
 import { envNumber } from "@svc/contracts";
 import { teardownRelayStep, type RelayStepOutcome } from "../relay/relay-step.js";
+import { teardownTrafficEntry } from "../traffic-entry.js";
 
 // 정리. rollback_window → cleanup → completed
 // 창이 끝나기 전에 깨어나면(시계 차이 등) 남은 시간 뒤로 자신을 다시 넣는다 (L8)
@@ -72,7 +73,8 @@ export async function handleCleanup(raw: unknown) {
         // 출발 계정 중계기 (복제 설정이 없어도 태그로 남은 것이 있으면 지운다. 출발이 AWS 아님·시드 환경이면 건너뜀)
         const relay = await teardownRelayStep(j, m);
         if (relay.kind === "failed") return relayPaused(relay, { stub: true });
-        return { to: "completed", detail: { removed: ["STUB: replication slot"], sourceApp: SOURCE_APP, roles, stub: true, relay: relayView(relay), ...(linkSecret.skipped ? {} : { linkSecret }) },
+        const cfEntry = await teardownTrafficEntry(j.migrationId, { keepTarget: true });
+        return { to: "completed", detail: { removed: ["STUB: replication slot"], sourceApp: SOURCE_APP, roles, stub: true, relay: relayView(relay), cfEntry, ...(linkSecret.skipped ? {} : { linkSecret }) },
                  evidence: { tempResources: 0, ...(await evidenceAfterRelay(j, relay, roles.evidence)) } };   // STUB: 임시 자원 장부
       }
       // 복제 슬롯·발행·구독·마커를 양쪽에서 지우고, 남은 게 없는지 다시 센다 (T27 tempResources)
@@ -87,7 +89,9 @@ export async function handleCleanup(raw: unknown) {
       //   지우기가 실패하면 paused(RELAY_TEARDOWN_FAILED) — 자원은 태그를 단 채 남고, 재개하면 이 단계가 다시 돈다 (여러 번 불러도 됨)
       const relay: RelayStepOutcome = left.length === 0 ? await teardownRelayStep(j, m) : { kind: "skipped", reason: "replication_leftovers" };
       if (relay.kind === "failed") return relayPaused(relay, { removed, leftovers: left, gitopsReplication: gitopsRepl });
-      return { to: "completed", detail: { removed, sourceApp: SOURCE_APP, leftovers: left, roles, gitopsReplication: gitopsRepl, relay: relayView(relay), ...(linkSecret.skipped ? {} : { linkSecret }) },
+      // 이전마다 만든 Cloudflare 입구: 앱 호스트가 계속 도착을 가리키게 LB·도착 pool·터널은 남기고 출발 pool 만 뺀다. 실패는 detail 에만
+      const cfEntry = await teardownTrafficEntry(j.migrationId, { keepTarget: true });
+      return { to: "completed", detail: { removed, sourceApp: SOURCE_APP, leftovers: left, roles, gitopsReplication: gitopsRepl, relay: relayView(relay), cfEntry, ...(linkSecret.skipped ? {} : { linkSecret }) },
                evidence: { tempResources: left.length, ...(await evidenceAfterRelay(j, relay, roles.evidence)) } };
     }),
     // 재발급 실패(Z61) → cleanup → paused(CRED_RENEW_FAILED). 복제 끝점을 못 만듦(REPL_ENDPOINT_MISSING 등) → 재시도로 안 바뀌니 바로 paused(그 코드).
