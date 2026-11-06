@@ -6,6 +6,7 @@
 //   → 로컬 데모·시드 환경은 예전 그대로 (끝점 줄은 사람이 tools/onprem-relay.sh 로 넣는다)
 // GCP 도착(aws-gcp): apply 가 terraform 앞에서 도착 DB 공개 길(repl-network.json)을 정하고, terraform 뒤에 Cloud SQL 주소로 중계기를 만든다.
 //   중계 공개 IP 가 새로 생겼으면 apply 가 terraform 을 한 번 더 돌려 Cloud SQL 허용 주소에 넣는다. 그다음 끝점 두 줄·도착 앱 로그인 역할 (apply.ts)
+// GCP 출발(gcp-aws, relay/gcp-aws.ts): 중계기는 도착 AWS 계정에 산다 → 도착 실행 역할을 빌린다 (security STEP_ROLES.relay_target). 지우기도 이 파일 teardownRelayStep 이 같은 표로 고른다
 import { PASSWORD_REF_RE, type AppSpecV2, type ReplicationEndpoint, type TfOutputs } from "@svc/contracts";
 import { envFor, dbIdentityFor, specV2ForPlan } from "@svc/adapters";
 import { endpointFromRecord, ensureLoginRole, readTfFacts, withClient } from "@svc/replication";
@@ -39,6 +40,10 @@ export type RelayStepOutcome =
 export interface RelayFacts {
   sourceProvider: string | null; sourceRegion: string | null; sourceExternalId: string | null;
   targetProvider: string | null;
+  /** 도착 환경 지역·연결 번호 (gcp-aws: 중계기가 도착 계정에 산다). 없으면 출발 쪽만 보는 예전 중계기 */
+  targetRegion?: string | null; targetExternalId?: string | null;
+  /** gcp-aws: 명세 postgres 의 출발 Cloud SQL (spec_v2.ids 의 selfLink 에서). 못 찾으면 null */
+  cloudSql?: CloudSqlInstanceRef | null;
   /** 명세의 postgres 구성요소 (id · 앱 DB · 앱 계정) */
   postgres: { id: string; db: string; user: string }[];
   /** 그 postgres 의 출발 RDS 인스턴스 이름 (spec_v2.ids 의 벤더 키에서). 못 찾으면 null */
@@ -61,22 +66,41 @@ export function rdsIdentifierFromIds(ids: Record<string, unknown> | null | undef
 
 export async function readRelayFacts(tx: Tx, tenantId: string, m: Pick<MigrationRow, "id" | "sourceEnvId" | "targetEnvId">,
   env: NodeJS.ProcessEnv = process.env): Promise<RelayFacts> {
-  const e = await tx.query<{ id: string; provider: string; region: string | null; external_id: string | null }>(
-    `SELECT id, provider, region, external_id FROM environments WHERE id = ANY($1::uuid[])`, [[m.sourceEnvId, m.targetEnvId]]);
+  const e = await tx.query<{ id: string; provider: string; region: string | null; external_id: string | null; account_id: string | null }>(
+    `SELECT id, provider, region, external_id, account_id FROM environments WHERE id = ANY($1::uuid[])`, [[m.sourceEnvId, m.targetEnvId]]);
   const src = e.rows.find((r) => r.id === m.sourceEnvId), dst = e.rows.find((r) => r.id === m.targetEnvId);
   const row = await latestAcceptedSpecV2(tx, m.id);
   const spec: AppSpecV2 | null = row ? specV2ForPlan(row) : null;
   const postgres = (spec?.components ?? []).flatMap((c) => c.kind === "postgres" ? [{ id: c.id, ...pick(dbIdentityFor(spec!, c)) }] : []);
-  let rdsIdentifier: string | null = null;
+  let rdsIdentifier: string | null = null, cloudSql: CloudSqlInstanceRef | null = null;
   if (row && postgres.length === 1) {
     const ids = (await tx.query<{ ids: Record<string, unknown> | null }>(
       `SELECT to_jsonb(s)->'spec_v2'->'ids' AS ids FROM spec_versions s WHERE s.migration_id = $1 AND s.version = $2`, [m.id, row.version])).rows[0]?.ids;
     rdsIdentifier = rdsIdentifierFromIds(ids, postgres[0]!.id);
+    // GCP 출발: selfLink 에 프로젝트가 없으면(nativeKey 꼴) 출발 환경의 프로젝트(account_id)
+    if (src?.provider === "gcp") cloudSql = cloudSqlInstanceFromIds(ids, postgres[0]!.id, src.account_id);
   }
   const egress = dst?.provider === "onprem" ? await latestOnpremEgressIp(tx, tenantId, m.targetEnvId, env) : undefined;
   return { sourceProvider: src?.provider ?? null, sourceRegion: src?.region ?? null, sourceExternalId: src?.external_id ?? null,
-           targetProvider: dst?.provider ?? null, postgres, rdsIdentifier, onpremEgressIp: egress?.ip ?? null,
+           targetProvider: dst?.provider ?? null, targetRegion: dst?.region ?? null, targetExternalId: dst?.external_id ?? null,
+           postgres, rdsIdentifier, cloudSql, onpremEgressIp: egress?.ip ?? null,
            existing: await replicationEndpointsFor(tx, m.id) };
+}
+
+/** 출발 Cloud SQL 인스턴스 (프로젝트·이름) */
+export interface CloudSqlInstanceRef { project: string; instance: string }
+/** spec_v2.ids(벤더 키 → 구성요소 id)에서 Cloud SQL 인스턴스. 키 = selfLink(…/projects/<p>/instances/<이름>) 또는 "cloudsql.instance/<범위>/<ns>/<이름>" (import ids.ts nativeKey).
+ *  nativeKey 꼴은 범위가 프로젝트가 아닐 수 있어 출발 환경 프로젝트(fallbackProject)를 쓴다 */
+export function cloudSqlInstanceFromIds(ids: Record<string, unknown> | null | undefined, componentId: string, fallbackProject: string | null = null): CloudSqlInstanceRef | null {
+  const PROJECT = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/, NAME = /^[a-z][a-z0-9-]{0,97}$/;
+  for (const [k, v] of Object.entries(ids ?? {})) {
+    if (v !== componentId) continue;
+    const self = /^https:\/\/(?:sqladmin|www)\.googleapis\.com\/sql\/v1(?:beta4)?\/projects\/([^/]+)\/instances\/([^/?#]+)$/.exec(k);
+    if (self && PROJECT.test(self[1]!) && NAME.test(self[2]!)) return { project: self[1]!, instance: self[2]! };
+    const nk = /^cloudsql\.instance\/.*\/([a-z][a-z0-9-]{0,97})$/.exec(k);
+    if (nk && fallbackProject && PROJECT.test(fallbackProject)) return { project: fallbackProject, instance: nk[1]! };
+  }
+  return null;
 }
 const pick = (x: { db: string; user: string }) => ({ db: x.db, user: x.user });
 
@@ -87,17 +111,27 @@ export type { RelayKind };
 export const RELAY_ROUTES: Readonly<Record<string, RelayKind>> = {
   "aws->onprem": "aws-onprem",
   "aws->gcp": "aws-gcp",
+  // 중계기는 도착 AWS 계정에 (relay/gcp-aws.ts). 빌리는 역할 = 도착 실행 역할 (relayHome)
+  "gcp->aws": "gcp-aws",
 };
+/** 중계기가 사는 쪽 (그 쪽 환경의 실행 역할을 빌린다) */
+export const relayHome = (kind: RelayKind): "source" | "target" => (kind === "gcp-aws" ? "target" : "source");
+/** 중계기를 다루는 단계 역할 (security STEP_ROLES): 출발 계정이면 relay, 도착 계정이면 relay_target */
+export const relayRoleStep = (kind: RelayKind) => (relayHome(kind) === "target" ? "relay_target" as const : "relay" as const);
 export const relayKindOf = (sourceProvider: string | null, targetProvider: string | null): RelayKind | null =>
   RELAY_ROUTES[`${sourceProvider}->${targetProvider}`] ?? null;
 
 /** 중계기를 다룰 이전인가 (만들기·지우기 공통). 아니면 건너뛸 이유 */
-export function relayApplies(f: Pick<RelayFacts, "sourceProvider" | "sourceExternalId" | "targetProvider">, env: NodeJS.ProcessEnv): string | null {
-  if (!relayKindOf(f.sourceProvider, f.targetProvider)) return "no_relay_route";
+export function relayApplies(f: Pick<RelayFacts, "sourceProvider" | "sourceExternalId" | "targetProvider"> & Pick<Partial<RelayFacts>, "targetExternalId">,
+  env: NodeJS.ProcessEnv): string | null {
+  const kind = relayKindOf(f.sourceProvider, f.targetProvider);
+  if (!kind) return "no_relay_route";
   // DRAFT(ai): RELAY_AUTO=0 = 운영자가 중계기를 직접 다룬다 (tools/onprem-relay.sh). 기본 켬
   if (env.RELAY_AUTO === "0") return "relay_auto_off";
-  // 흉내 자격(시드 환경 = external_id 없음, 또는 REAL_STS=0)으로는 고객 계정을 못 부른다 (platform.ts awsIssuer·perEnvAwsIssuer 와 같은 기준)
-  if (!realStsEnabled(env) || !f.sourceExternalId) return "source_creds_mock";
+  // 흉내 자격(시드 환경 = external_id 없음, 또는 REAL_STS=0)으로는 고객 계정을 못 부른다 (platform.ts awsIssuer·perEnvAwsIssuer 와 같은 기준).
+  //   중계기가 사는 쪽(relayHome)의 AWS 환경을 본다
+  const home = relayHome(kind);
+  if (!realStsEnabled(env) || !(home === "target" ? f.targetExternalId : f.sourceExternalId)) return `${home}_creds_mock`;
   return null;
 }
 
@@ -244,20 +278,24 @@ export async function provisionRelayStep(j: Job, m: MigrationRow, deps: RelaySte
   });
 }
 
-/** 정리: 이 이전 태그가 달린 중계기 자원을 지운다 (RDS 나가기 규칙 → EC2 → 보안 그룹). 던지지 않는다 (실패는 failed 로) */
+/** 정리: 이 이전 태그가 달린 중계기 자원을 지운다 (RDS 나가기 규칙 → EC2 → 보안 그룹). 던지지 않는다 (실패는 failed 로).
+ *  중계기가 사는 계정(relayHome: aws-onprem·aws-gcp = 출발, gcp-aws = 도착)의 실행 역할을 빌린다. 부르는 쪽(cleanup·롤백·repl-cleanup)은 짝을 몰라도 된다 */
 export async function teardownRelayStep(j: Job, m: Pick<MigrationRow, "id" | "sourceEnvId" | "targetEnvId">, deps: RelayStepDeps = {}): Promise<RelayStepOutcome> {
   const env = deps.env ?? process.env;
   try {
     const facts = deps.facts ?? await withTenant(j.tenantId, (tx) => readRelayFacts(tx, j.tenantId, m, env));
     const no = relayApplies(facts, env) ?? (facts.postgres.length ? null : "no_postgres");
     if (no) return { kind: "skipped", reason: no };
-    const borrow = deps.borrow ?? (<T>(fn: (r: StepRoles) => Promise<T>) => withStepRoles("relay", j, m as MigrationRow, fn));
+    const kind = relayKindOf(facts.sourceProvider, facts.targetProvider)!;
+    const home = relayHome(kind), sideName = home === "target" ? "도착" : "출발";
+    const borrow = deps.borrow ?? (<T>(fn: (r: StepRoles) => Promise<T>) => withStepRoles(relayRoleStep(kind), j, m as MigrationRow, fn));
     return await borrow(async (roles) => {
-      const cred = roles.awsEnv?.source;
+      const cred = roles.awsEnv?.[home];
       if (!cred) return roles.denied.length
-        ? { kind: "failed", failureCode: "RELAY_TEARDOWN_FAILED", reason: `출발 실행 역할(중계기 세션 정책)을 못 빌려 중계기를 못 지웠다: ${roles.denied.map((x) => x.code).join(",")}` }
-        : { kind: "skipped", reason: "source_creds_mock" };
-      const d: RelayAwsDeps = { env: envFor(cred, env), region: facts.sourceRegion || DEFAULT_REGION, ...(roles.signal ? { signal: roles.signal } : {}), ...deps.aws };
+        ? { kind: "failed", failureCode: "RELAY_TEARDOWN_FAILED", reason: `${sideName} 실행 역할(중계기 세션 정책)을 못 빌려 중계기를 못 지웠다: ${roles.denied.map((x) => x.code).join(",")}` }
+        : { kind: "skipped", reason: `${home}_creds_mock` };
+      const region = (home === "target" ? facts.targetRegion : facts.sourceRegion) || DEFAULT_REGION;
+      const d: RelayAwsDeps = { env: envFor(cred, env), region, ...(roles.signal ? { signal: roles.signal } : {}), ...deps.aws };
       try {
         const r = await teardownRelay(d, j.migrationId);
         return { kind: "ok", detail: { removed: r.removed } };
