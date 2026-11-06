@@ -19,7 +19,7 @@ import {
   buildRelayPlan, discoverRelayNetwork, discoverRelaySource, isIpv4, platformEgressCidrs, provisionRelay, RelayError, resolveRelayAmi, teardownRelay,
   PG_PORT, RELAY_SOURCE_PORT, type CloudSqlPeer, type RelayAwsDeps, type RelayKind, type RelayResources, type RelaySource,
 } from "./aws-relay.js";
-import { loadReplNetwork, saveReplNetwork, withPeers } from "../repl-network.js";
+import { loadReplNetwork, saveReplNetwork } from "../repl-network.js";
 import { tenantSlug } from "../gitops/bundle.js";
 
 // 차트 이전 역할 (adapters target/onprem.ts replication.role, gitops replication-delivery 기본값과 같은 글자)
@@ -302,7 +302,8 @@ export async function prepareGcpRelayStep(j: Job, m: MigrationRow, deps: Pick<Re
   const g = gcpRelayGate(facts, env);
   if (g.kind !== "go") return g;
   const tenant = tenantSlug(j.tenantId);
-  saveReplNetwork(env, tenant, j.migrationId, withPeers(loadReplNetwork(env, tenant, j.migrationId), g.platformCidrs));
+  // 중계 IP 는 앞 실행 값을 그대로 품는다 (재시도의 첫 terraform 이 Cloud SQL 허용 주소에서 중계 IP 를 뺐다 넣지 않게)
+  saveReplNetwork(env, tenant, j.migrationId, { platformCidrs: g.platformCidrs, relayIp: loadReplNetwork(env, tenant, j.migrationId)?.relayIp ?? null, appLoginSql: true });
   return g;
 }
 
@@ -334,13 +335,12 @@ export async function provisionGcpRelayStep(j: Job, m: MigrationRow, g: Extract<
   });
 }
 
-/** 중계 공개 IP 를 도착 DB 공개 길에 더한다. 새로 더했으면 true (apply 가 terraform 을 한 번 더 돌려 Cloud SQL 허용 주소에 넣는다) */
+/** 중계 공개 IP 를 도착 DB 복제 길에 둔다 (바뀌었으면 옛 IP 는 빠진다). 바뀌었으면 true (apply 가 terraform 을 한 번 더 돌려 Cloud SQL 허용 주소를 맞춘다) */
 export function addRelayPeer(j: Job, publicIp: string, env: NodeJS.ProcessEnv = process.env): boolean {
   const tenant = tenantSlug(j.tenantId);
   const before = loadReplNetwork(env, tenant, j.migrationId);
-  const after = withPeers(before, [`${publicIp}/32`]);
-  if (before && after.peerCidrs.join(",") === before.peerCidrs.join(",")) return false;
-  saveReplNetwork(env, tenant, j.migrationId, after);
+  if (before?.relayIp === publicIp) return false;
+  saveReplNetwork(env, tenant, j.migrationId, { platformCidrs: before?.platformCidrs ?? [], appLoginSql: true, relayIp: publicIp });
   return true;
 }
 

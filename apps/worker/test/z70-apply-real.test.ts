@@ -184,7 +184,7 @@ test("AWS→GCP 중계기: 작업 폴더 repl-network.json 이 있으면 postgre
   assert.equal(r0.ok, true, JSON.stringify(r0.detail));
   assert.ok(pg(before.seen[0]!.vars).length >= 1 && pg(before.seen[0]!.vars).every((p) => p.app_login_sql === undefined), "파일 없으면 그대로");
   mkdirSync(join(root, "t-11111111", MID), { recursive: true });
-  writeFileSync(join(root, "t-11111111", MID, "repl-network.json"), JSON.stringify({ peerCidrs: ["198.51.100.7/32", "203.0.113.50/32"], appLoginSql: true }));
+  writeFileSync(join(root, "t-11111111", MID, "repl-network.json"), JSON.stringify({ platformCidrs: ["198.51.100.7/32"], relayIp: "203.0.113.50", appLoginSql: true }));
   const f = fakeRunner();
   const r = await realApply(gin, { env, runner: f.runner });
   assert.equal(r.ok, true);
@@ -194,8 +194,8 @@ test("AWS→GCP 중계기: 작업 폴더 repl-network.json 이 있으면 postgre
     assert.deepEqual(JSON.parse(String(p.repl_peer_cidrs_json)), ["198.51.100.7/32", "203.0.113.50/32"]);
     assert.equal(p.public, pg(before.seen[0]!.vars)[0]!.public, "앱 공개 값은 그대로 (앱 주소 link.host 가 안 바뀜)");
   }
-  assert.deepEqual(r.detail.replicationNetwork, { replPublic: true, peerCidrs: ["198.51.100.7/32", "203.0.113.50/32"], appLoginSql: true });
-  writeFileSync(join(root, "t-11111111", MID, "repl-network.json"), JSON.stringify({ peerCidrs: ["0.0.0.0/0"], appLoginSql: true }));
+  assert.deepEqual(r.detail.replicationNetwork, { replPublic: true, peerCidrs: ["198.51.100.7/32", "203.0.113.50/32"], relayIp: "203.0.113.50", appLoginSql: true });
+  writeFileSync(join(root, "t-11111111", MID, "repl-network.json"), JSON.stringify({ platformCidrs: ["0.0.0.0/0"], relayIp: null, appLoginSql: true }));
   const bad = await realApply(gin, { env, runner: fakeRunner().runner });
   assert.equal((bad as { failureCode: string }).failureCode, "DB_NETWORK_INVALID", "세상 전체는 허용 주소로 안 받는다");
 });

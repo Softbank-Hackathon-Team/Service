@@ -365,19 +365,23 @@ test("GCP 단계 문: 표의 aws->gcp 만 go, 시드·명세 postgres 없음·�
   assert.equal((gcpRelayGate(gf({ rdsIdentifier: null }), env) as { failureCode?: string }).failureCode, "RELAY_SOURCE_DB_UNKNOWN");
 });
 
-test("GCP 순서: terraform 앞에 플랫폼 대역을 작업 폴더에, 중계 IP 는 처음 한 번만 '다시 terraform', 재시도는 앞 실행 IP 를 그대로 품는다", async () => {
+test("GCP 순서: terraform 앞에 플랫폼 대역을 작업 폴더에, 중계 IP 가 바뀔 때만 '다시 terraform', 재시도는 앞 실행 IP 를 품고 옛 IP 는 뺀다", async () => {
   const root = mkdtempSync(join(tmpdir(), "gcp-order-"));
   const env = { TF_WORK_DIR: root, PLATFORM_EGRESS_CIDRS: "198.51.100.7/32" } as NodeJS.ProcessEnv;
   const m = { id: M, status: "provisioning" as const, sourceEnvId: randomUUID(), targetEnvId: randomUUID() };
   const gf = facts({ targetProvider: "gcp", onpremEgressIp: null });
   const file = join(root, "t-11111111", M, "repl-network.json");
-  assert.equal((await prepareGcpRelayStep({ tenantId: T, migrationId: M }, m, { env, facts: gf })).kind, "go");
-  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), { peerCidrs: ["198.51.100.7/32"], appLoginSql: true });
-  assert.equal(addRelayPeer({ tenantId: T, migrationId: M }, "203.0.113.50", env), true, "새 중계 IP → terraform 한 번 더");
-  assert.equal(addRelayPeer({ tenantId: T, migrationId: M }, "203.0.113.50", env), false, "같은 IP → 더 안 돎");
-  await prepareGcpRelayStep({ tenantId: T, migrationId: M }, m, { env, facts: gf });
-  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")).peerCidrs, ["198.51.100.7/32", "203.0.113.50/32"], "재시도 첫 terraform 도 중계 IP 를 뺐다 넣지 않는다");
-  assert.equal((await prepareGcpRelayStep({ tenantId: T, migrationId: M }, m, { env, facts: facts() })).kind, "skip", "온프레 도착은 파일을 안 만진다");
+  const j = { tenantId: T, migrationId: M };
+  assert.equal((await prepareGcpRelayStep(j, m, { env, facts: gf })).kind, "go");
+  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), { platformCidrs: ["198.51.100.7/32"], relayIp: null, appLoginSql: true });
+  assert.equal(addRelayPeer(j, "203.0.113.50", env), true, "새 중계 IP → terraform 한 번 더");
+  assert.equal(addRelayPeer(j, "203.0.113.50", env), false, "같은 IP → 더 안 돎");
+  await prepareGcpRelayStep(j, m, { env: { ...env, PLATFORM_EGRESS_CIDRS: "198.51.100.8/32" }, facts: gf });
+  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), { platformCidrs: ["198.51.100.8/32"], relayIp: "203.0.113.50", appLoginSql: true },
+    "재시도 첫 terraform 도 중계 IP 를 품고, 플랫폼 대역은 지금 값");
+  assert.equal(addRelayPeer(j, "203.0.113.77", env), true, "중계기를 다시 만들어 IP 가 바뀜");
+  assert.equal(JSON.parse(readFileSync(file, "utf8")).relayIp, "203.0.113.77");
+  assert.equal((await prepareGcpRelayStep(j, m, { env, facts: facts() })).kind, "skip", "온프레 도착은 파일을 안 만진다");
   rmSync(root, { recursive: true, force: true });
 });
 

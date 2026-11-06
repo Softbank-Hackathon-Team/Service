@@ -2,7 +2,7 @@ import type { AppSpecV2, PlanDoc, Provider, TfOutputs } from "@svc/contracts";
 import { existsSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createRealTerraformRunner, envFor, dbNetworkFromEnv, DbNetworkError, factEnvName, fillTfVars, flattenTfOutputsV2, gcpTerraformEnv, withReplicationNetworkV2, type GcpTerraformCred, type RealTerraformRunner } from "@svc/adapters";
-import { loadReplNetwork } from "../repl-network.js";
+import { loadReplNetwork, peerCidrsOf } from "../repl-network.js";
 import { tfCallV2 } from "./plan-v2.js";
 import { specV2ForPlan, terraformRuntimeOf } from "@svc/adapters";
 import { latestAcceptedSpecV2, loadLatestApproval, loadPlanById } from "@svc/core";
@@ -112,9 +112,10 @@ async function prepare(i: RealApplyInput, d: RealApplyDeps): Promise<Prepared | 
   let vars = filled.vars;
   const rn = i.provider === "gcp" ? loadReplNetwork(env, tenantSlug(i.tenantId), i.migrationId) : null;
   if (rn) {
-    try { vars = withReplicationNetworkV2({ vars }, rn).vars; }
+    const peerCidrs = peerCidrsOf(rn);
+    try { vars = withReplicationNetworkV2({ vars }, { peerCidrs, appLoginSql: rn.appLoginSql }).vars; }
     catch (e) { if (e instanceof DbNetworkError) return { ok: false, failureCode: e.code, detail: { ...base, error: e.message } }; throw e; }
-    base.replicationNetwork = { replPublic: true, peerCidrs: rn.peerCidrs, appLoginSql: rn.appLoginSql };
+    base.replicationNetwork = { replPublic: true, peerCidrs, relayIp: rn.relayIp, appLoginSql: rn.appLoginSql };
   }
 
   return { env, base, target, imp, facts, noCluster, vars: { ...(vars as Record<string, unknown>), ...(await hubPrincipalVar(i, env, d)) } };
