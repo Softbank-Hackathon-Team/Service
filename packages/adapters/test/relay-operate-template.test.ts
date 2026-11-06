@@ -35,7 +35,7 @@ test("거부: 보안 그룹 ID 모양이 아니면 매개변수가 받지 않고
   assert.ok(re.test("") && re.test("sg-0123456789abcdef0"));
   for (const bad of ["*", "sg-*", "sg-XYZ", "sg-12345678/x"]) assert.ok(!re.test(bad), bad);
   assert.ok(!JSON.stringify(tpl.Resources.ObserveRole).includes("ec2:RunInstances"));
-  assert.equal(Object.keys(tpl.Parameters).length, 7);
+  assert.equal(Object.keys(tpl.Parameters).length, 8);   // + RoleSuffix (한 계정에 환경 여럿, 0056)
 });
 
 test("출발 관리 비밀 읽기: 매개변수로 DB 하나의 RDS 관리 비밀만 (ARN 이 아니라 RDS 태그), 비우면 빠진다", () => {

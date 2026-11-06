@@ -1,4 +1,4 @@
-import type { HelmValues, PlanDoc, Provider } from "@svc/contracts";
+import { awsRoleName, type HelmValues, type PlanDoc, type Provider } from "@svc/contracts";
 
 // gitops 레포 계약 (notes/skeleton/parallel/N/gitops/WORKER-CONTRACT.md) 중 순수 함수 부분.
 // 파일·git·helm을 만지는 부분은 repo.ts에 있다.
@@ -104,19 +104,20 @@ export type ClusterAccess =
 
 export const clusterSecretFile = (env: ClusterAccess["env"]) => `cluster-${env}.yaml`;
 
-// 고객 계정 안 배포 역할 이름. 연결 템플릿(infra/onboarding/aws-connect.json DeployRole)과 같아야 한다 (시험이 대조)
+// 고객 계정 안 배포 역할 이름 바탕. 연결 템플릿(infra/onboarding/aws-connect.json DeployRole)과 같아야 한다 (시험이 대조)
+//   실제 이름 = 바탕 + 도착 환경 꼬리 (environments.aws_role_suffix, 템플릿 RoleSuffix). 꼬리 없음 = 옛 환경 = svc-deploy
 export const AWS_DEPLOY_ROLE_NAME = "svc-deploy";
 // 플랫폼 Argo CD 허브의 AWS 역할 (infra/modules/aws/platform 출력 argocd_hub_role_arn → 차트 argocd.hubRoleArn). 모양은 시작 때 config 가 본다
 export const awsHubEnabled = (env: NodeJS.ProcessEnv = process.env) => !!env.ARGO_HUB_ROLE_ARN?.trim();
 
 // tf = 앱 층 apply 출력 (gcp/root·aws/root 의 cluster_endpoint·cluster_ca_certificate, apply-real 이 채운 cluster_name).
 // EKS 는 허브를 켠 플랫폼(awsHub = ARGO_HUB_ROLE_ARN)에서만: 끈 플랫폼은 사람이 등록한 목적지를 덮지 않는다
-export function clusterAccess(env: GitopsEnv, tf: Record<string, string>, o: { accountId: string | null; awsHub: boolean }): ClusterAccess | undefined {
+export function clusterAccess(env: GitopsEnv, tf: Record<string, string>, o: { accountId: string | null; awsHub: boolean; roleSuffix?: string | null }): ClusterAccess | undefined {
   const endpoint = tf.cluster_endpoint, caData = tf.cluster_ca_certificate;
   if (!endpoint || !caData) return undefined;
   if (env === "gcp-gke") return { env, endpoint, caData };
   if (env === "aws-eks" && o.awsHub && tf.cluster_name && o.accountId)
-    return { env, endpoint, caData, clusterName: tf.cluster_name, roleArn: `arn:aws:iam::${o.accountId}:role/${AWS_DEPLOY_ROLE_NAME}` };
+    return { env, endpoint, caData, clusterName: tf.cluster_name, roleArn: `arn:aws:iam::${o.accountId}:role/${awsRoleName(AWS_DEPLOY_ROLE_NAME, o.roleSuffix)}` };
   return undefined;
 }
 

@@ -24,10 +24,14 @@ export const TeamEnvironment = z.object({
   cluster: CreateEnvironmentBody.shape.clusterName,
   // GCP 결정 3번 A안: 원래 프로젝트(관찰) + 이전 전용 프로젝트(도착). verify 경로와 같은 규칙 (모양 같음, 서로 달라야 함)
   gcp: z.object({ original_project: GcpProjectId, dedicated_project: GcpProjectId }).strict().optional(),
+  // AWS 출발 샘플의 RDS 식별자 (aws 만, 선택). tools/team-env.sh source 가 이 이름으로만 RDS 를 찾는다 (같은 계정의 플랫폼 DB 를 고르지 않게).
+  //   플랫폼은 쓰지 않는다. 모양 = RDS DB 인스턴스 식별자 (소문자 시작, 소문자·숫자·하이픈, 하이픈 연속·끝 하이픈 없음, 63자까지). team-env.sh 와 같은 규칙
+  db_instance: z.string().trim().max(63).regex(/^[a-z](?:-?[a-z0-9])*$/, "RDS DB instance identifier").optional(),
   // 사람이 읽는 메모 (공유 여부·계정 별칭 등). 플랫폼은 쓰지 않는다. 비밀값·계정 번호는 적지 않는다 (명부 머리말 규칙)
   notes: z.string().max(500).optional(),
 }).strict().superRefine((e, ctx) => {
   if (e.gcp && e.provider !== "gcp") ctx.addIssue({ code: "custom", path: ["gcp"], message: "gcp block is for provider gcp only" });
+  if (e.db_instance !== undefined && e.provider !== "aws") ctx.addIssue({ code: "custom", path: ["db_instance"], message: "db_instance is for provider aws only" });
   if (e.gcp && e.gcp.original_project === e.gcp.dedicated_project)
     ctx.addIssue({ code: "custom", path: ["gcp", "dedicated_project"], message: "dedicated_project must differ from original_project" });
 });

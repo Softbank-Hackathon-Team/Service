@@ -4,6 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { buildAwsConnectTemplate, OBSERVE_ROLE_NAME, OPERATE_ROLE_NAME, VIEW_ONLY_ARN } from "../scripts/aws-connect-template.js";
+import { AWS_ROLE_SUFFIX_RE, awsRoleName, awsRoleSuffixFor } from "@svc/contracts";
 
 const root = new URL("../../../infra/", import.meta.url);
 const readJson = (rel: string) => JSON.parse(readFileSync(new URL(rel, root), "utf8"));
@@ -11,15 +12,20 @@ const load = () => readJson("onboarding/aws-connect.json");
 
 type J = any; // JSON 구조 시험이라 느슨하게 (경계 타입 아님)
 const arr = (x: unknown): string[] => (Array.isArray(x) ? x : [x]) as string[];
+// 한 계정에 환경 여럿 (0056): 역할·정책 이름 = 바탕 + 매개변수 RoleSuffix (Fn::Join)
+const joined = (base: string) => ({ "Fn::Join": ["", [base, { Ref: "RoleSuffix" }]] });
+/** CloudFormation 이 풀 이름 (Fn::Join [바탕, Ref RoleSuffix] 만 푼다. 시험용) */
+const resolveName = (v: J, suffix: string): string =>
+  typeof v === "string" ? v : v?.["Fn::Join"]?.[1]?.map((x: J) => (typeof x === "string" ? x : x?.Ref === "RoleSuffix" ? suffix : "?")).join("") ?? "?";
 const TRUST_ACTIONS = ["sts:AssumeRole", "sts:TagSession", "sts:SetSourceIdentity"];
 
 // 템플릿 검사 함수: 문제 목록을 돌려준다(빈 배열 = 통과)
 function checkTemplate(t: J): string[] {
   const bad: string[] = [];
-  const names = [OBSERVE_ROLE_NAME, OPERATE_ROLE_NAME];
+  const names = [OBSERVE_ROLE_NAME, OPERATE_ROLE_NAME].map((n) => JSON.stringify(joined(n)));
   for (const key of ["ObserveRole", "OperateRole"]) {
     const props = t.Resources?.[key]?.Properties;
-    if (!names.includes(props?.RoleName)) bad.push(`${key}: 역할 이름`);
+    if (!names.includes(JSON.stringify(props?.RoleName))) bad.push(`${key}: 역할 이름`);
     for (const s of props?.AssumeRolePolicyDocument?.Statement ?? []) {
       const p = s.Principal?.AWS;
       if (JSON.stringify(p) !== JSON.stringify({ Ref: "PlatformPrincipalArn" })) bad.push(`${key}: Principal이 파라미터 참조가 아님`);
@@ -42,8 +48,8 @@ function checkTemplate(t: J): string[] {
 
 test("정상: 역할 2개 이름·신뢰 정책(Action 3개·ExternalId·Principal 파라미터)", () => {
   const t = load();
-  assert.equal(t.Resources.ObserveRole.Properties.RoleName, "svc-observe");
-  assert.equal(t.Resources.OperateRole.Properties.RoleName, "svc-operate");
+  assert.deepEqual(t.Resources.ObserveRole.Properties.RoleName, joined("svc-observe"));
+  assert.deepEqual(t.Resources.OperateRole.Properties.RoleName, joined("svc-operate"));
   assert.deepEqual(checkTemplate(t), []);
   assert.equal(t.Resources.ObserveRole.Properties.MaxSessionDuration, 3600);
   assert.equal(t.Resources.OperateRole.Properties.MaxSessionDuration, 3600);
@@ -111,7 +117,7 @@ test("ID-1 정상: 배포 역할·접근 항목은 ArgoHubRoleArn 이 있을 때
   assert.equal(t.Parameters.ArgoHubRoleArn.Default, "");
   for (const k of ["DeployRole", "DeployAccess"]) assert.equal(t.Resources[k].Condition, "HasArgoHub", k);
   const role = t.Resources.DeployRole.Properties;
-  assert.equal(role.RoleName, "svc-deploy");
+  assert.deepEqual(role.RoleName, joined("svc-deploy"));
   assert.equal(role.ManagedPolicyArns, undefined);
   assert.equal(role.Policies, undefined);
   // 신뢰 = 허브 역할 하나에게 AssumeRole, 같은 주체에게 TagSession 따로 (Pod Identity 세션 태그). 다른 주체·동작 없음
@@ -181,4 +187,49 @@ test("FM-CON-08: 발급기가 보내는 세션 동작마다 조건 없는 Allow,
     for (const a of needed) assert.ok(st.some((s) => s.Effect === "Allow" && arr(s.Action).includes(a) && s.Condition === undefined), `${key}: ${a} 조건 없는 Allow 없음`);
     assert.ok(st.some((s) => arr(s.Action).includes("sts:AssumeRole") && s.Condition?.StringEquals?.["sts:ExternalId"]), `${key}: AssumeRole ExternalId 조건`);
   }
+});
+
+// 한 계정에 환경 여럿 (0056): 같은 계정에 두 번째 연결 스택을 만들어도 이름이 부딪히지 않는다. 옛 스택은 기본값 "" 로 이름 그대로
+test("RoleSuffix 정상: 매개변수 기본값 빈 값(옛 이름), 역할 셋·실행 정책 이름이 꼬리를 붙이고, 꼬리 = 환경 번호 앞 8자", () => {
+  const t = load();
+  const p = t.Parameters.RoleSuffix;
+  assert.equal(p.Type, "String");
+  assert.equal(p.Default, "");
+  const re = new RegExp(p.AllowedPattern);
+  const suffix = awsRoleSuffixFor("783df2ef-1234-4abc-8def-000000000001");
+  assert.equal(suffix, "-783df2ef");
+  assert.ok(re.test("") && re.test(suffix) && AWS_ROLE_SUFFIX_RE.test(suffix));
+  for (const bad of ["783df2ef", "-783DF2EF", "-783df2e", "-783df2ef0", "-*", "-783df2ef/x"]) {
+    assert.ok(!re.test(bad), bad);
+    assert.ok(!AWS_ROLE_SUFFIX_RE.test(bad), bad);   // 템플릿 패턴 = contracts 모양 (DB CHECK 도 같음)
+  }
+  const named = { ObserveRole: "svc-observe", OperateRole: "svc-operate", DeployRole: "svc-deploy" } as const;
+  for (const [k, base] of Object.entries(named)) {
+    assert.equal(resolveName(t.Resources[k].Properties.RoleName, ""), base, `${k} 옛 이름`);
+    assert.equal(resolveName(t.Resources[k].Properties.RoleName, suffix), `${base}-783df2ef`, `${k} 새 이름`);
+    assert.equal(resolveName(t.Resources[k].Properties.RoleName, suffix), awsRoleName(base, suffix), `${k} = worker·api 가 조립하는 이름`);
+  }
+  assert.deepEqual(t.Resources.OperatePolicy.Properties.ManagedPolicyName, joined("svc-operate-policy"));
+  assert.equal(resolveName(t.Resources.OperatePolicy.Properties.ManagedPolicyName, suffix), "svc-operate-policy-783df2ef");
+});
+
+test("RoleSuffix: 이름이 고정인 자원은 경계 정책 하나뿐이고 CreateBoundaryPolicy 로 끌 수 있다 (두 번째 스택 = false)", () => {
+  const t = load();
+  const NAME_KEYS = ["RoleName", "ManagedPolicyName", "PolicyName", "InstanceProfileName", "GroupName", "UserName"];
+  const fixed: string[] = [];
+  for (const [k, r] of Object.entries(t.Resources as Record<string, J>))
+    for (const n of NAME_KEYS) if (typeof r.Properties?.[n] === "string") fixed.push(`${k}.${n}=${r.Properties[n]}`);
+  assert.deepEqual(fixed, ["BoundaryPolicy.ManagedPolicyName=platform-app-boundary"]);
+  assert.equal(t.Resources.BoundaryPolicy.Condition, "CreateBoundary");
+  // 인스턴스 프로필·사용자·그룹 같은 계정 전역 이름 자원은 없다. 접근 항목은 (클러스터, 역할 ARN) 마다라 역할 이름이 다르면 안 부딪힌다
+  const types = new Set(Object.values(t.Resources as Record<string, J>).map((r) => r.Type));
+  assert.deepEqual([...types].sort(), ["AWS::EKS::AccessEntry", "AWS::IAM::ManagedPolicy", "AWS::IAM::Role"]);
+  for (const k of ["ObserveAccess", "OperateAccess", "DeployAccess"]) assert.equal(t.Resources[k].Properties.PrincipalArn["Fn::GetAtt"][1], "Arn", k);
+});
+
+test("RoleSuffix 거부: 정책 문서 안에는 꼬리 자리가 없다 (Fn::Sub·${RoleSuffix} 로 정책 본문이 바뀌지 않음)", () => {
+  const s = JSON.stringify(load());
+  assert.ok(!s.includes("Fn::Sub"));
+  assert.ok(!s.includes("${RoleSuffix}"));
+  assert.deepEqual(load().Resources.OperatePolicy.Properties.PolicyDocument, readJson("permissions/aws-operate-role-policy.json"));
 });

@@ -60,3 +60,15 @@ test("거부: 관찰 역할에 흉내 평가 권한이 없으면 WARN 으로 필
   const off = await runCloudPrecheck(input(), deps([], denied, { RELAY_AUTO: "0" }));
   assert.equal(off.find((y) => y.id === "PC-RELAY-PERM"), undefined);
 });
+
+// 한 계정에 환경 여럿 (0056): 출발 환경에 꼬리가 있으면 그 환경 실행 역할(svc-operate-<8자>)을 흉내 평가한다
+test("RoleSuffix: 출발 환경 꼬리가 있으면 svc-operate-<8자> 를, 없으면 옛 이름 svc-operate 를 흉내 평가", async () => {
+  const arnOf = async (awsRoleSuffix: string | null) => {
+    const calls: string[][] = [];
+    await runCloudPrecheck(input({ source: { side: "source", provider: "aws", accountId: "111111111111", awsRoleSuffix } }), deps(calls, () => evalOf([])));
+    const sim = calls.find((a) => a[1] === "iam")!;
+    return sim[sim.indexOf("--policy-source-arn") + 1];
+  };
+  assert.equal(await arnOf("-783df2ef"), "arn:aws:iam::111111111111:role/svc-operate-783df2ef");
+  assert.equal(await arnOf(null), "arn:aws:iam::111111111111:role/svc-operate");
+});

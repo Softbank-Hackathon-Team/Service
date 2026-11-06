@@ -15,7 +15,8 @@ export interface DeployInput {
   // TA3: 받아들인 최신 판의 명세. 없거나 모양이 틀리면 null → GITOPS_VALUES_DRIFT
   spec: AppSpecV2 | null;
   plan: PlanDoc;
-  target: { envId: string; provider: Provider; region: string; accountId: string | null };
+  // awsRoleSuffix: 도착 AWS 환경 역할 이름 꼬리 (0056, 배포 역할 svc-deploy<꼬리>). 승인 지문 밖 (approvedValues 는 envId·provider·region 만 본다)
+  target: { envId: string; provider: Provider; region: string; accountId: string | null; awsRoleSuffix?: string | null };
   tfOutputs: TfOutputs;
   // 온프레 CNPG 이전 배달물 (서버 인증서·봉인 비밀·터널). 배포 단계가 끝점 줄이 있을 때만 넣는다 (replication-delivery.ts).
   //   승인 지문(helmValuesHash)은 채우기 전 값으로 비교하므로 이 칸은 승인 검사에 안 걸린다 (withServedBy 와 같은 자리)
@@ -86,7 +87,7 @@ export async function renderForRehearsal(repo: GitopsRepo, i: DeployInput): Prom
 export async function deployToGitops(repo: GitopsRepo, i: DeployInput, watcher: SyncWatcher, opts: CommitOpts = {}):
   Promise<{ result: DeployResult; commit: string; app: string; argo?: SyncWatchResult["observed"] }> {
   const { b, plan, values } = await bundleValues(i, repo);
-  const cluster = clusterAccess(b.env, i.tfOutputs, { accountId: i.target.accountId, awsHub: awsHubEnabled() });
+  const cluster = clusterAccess(b.env, i.tfOutputs, { accountId: i.target.accountId, awsHub: awsHubEnabled(), roleSuffix: i.target.awsRoleSuffix ?? null });
   const c = await repo.commitBundle("deploy", b, values, plan, `plan ${i.plan.planId.slice(0, 8)}`, { ...opts, cluster });
   const w = await watcher.wait(b, c);
   const status = !w.ok ? "failed" : DELIVERY[b.env] === "argocd-push" ? "synced_healthy" : "applied";

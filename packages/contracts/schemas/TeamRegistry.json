@@ -82,6 +82,11 @@
                   ],
                   "additionalProperties": false
                 },
+                "db_instance": {
+                  "type": "string",
+                  "maxLength": 63,
+                  "pattern": "^[a-z](?:-?[a-z0-9])*$"
+                },
                 "notes": {
                   "type": "string",
                   "maxLength": 500

@@ -3,7 +3,7 @@ import { statfs } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import type { Exec } from "../terraform/real-runner.js";
 import { awsRegion, gcpRegion, maskAccount, onpremContext, scrubAccountIds } from "../common/cli.js";
-import { envNumber } from "@svc/contracts";
+import { awsRoleName, envNumber } from "@svc/contracts";
 import { relayPermVerdict, relaySimArgs } from "./relay-permissions.js";
 
 // Z97: 사전 점검(precheck) 실조회. 예전 STUB(PC-01·02 "확인됨" 고정 글자)을 실제 읽기 호출로 바꾼다.
@@ -18,6 +18,7 @@ export interface PrecheckEnvInfo {
   side: "source" | "target"; provider: CloudProvider; name?: string;
   accountId?: string | null;   // environments.account_id (AWS 계정 번호 / GCP 프로젝트)
   externalId?: string | null;
+  awsRoleSuffix?: string | null;   // environments.aws_role_suffix (한 계정에 환경 여럿, 0056). 실행 역할 svc-operate<꼬리>, 없으면 옛 이름
   // pull 모드(ONPREM_FLOOR_VIA_GIT≠0) 온프레 도착: 워커는 고객 클러스터에 들어가지 않는다 (들어오는 포트 0, 고객 Argo CD 가 당긴다).
   //   그래서 자격·API 를 kubectl 대신 Agent 하트비트로 본다. 워커가 채운다 (agent_keys·agent_reports). 없으면 예전처럼 kubectl (push 시연: 로컬 k3d)
   agent?: { keys: number; lastHeartbeatAgeSec: number | null; staleSec: number; k3sVersion?: string | null } | null;
@@ -138,7 +139,7 @@ async function relayPermCheck(c: Ctx, e: PrecheckEnvInfo, side: "source" | "targ
   const who = side === "source" ? "출발" : "도착";
   if (!e.accountId || !/^\d{12}$/.test(e.accountId))
     return { id: "PC-RELAY-PERM", side, item: `${who} 실행 역할 중계기 권한`, verdict: "WARN", reason: `${who} 환경 계정 번호가 없어 실행 역할을 못 정함 — 확인 못 함` };
-  const arn = `arn:aws:iam::${e.accountId}:role/svc-operate`;
+  const arn = `arn:aws:iam::${e.accountId}:role/${awsRoleName("svc-operate", e.awsRoleSuffix)}`;
   const v = relayPermVerdict(await aws(c, relaySimArgs(arn, c.region)), arn, { consoleRequired });
   return side === "source" ? v : { ...v, side, item: `${who} 실행 역할 중계기 권한` };
 }

@@ -12,7 +12,7 @@ import { permissionBundles } from "../permission-hints.js";
 
 // DRAFT(ai): 15분 (STS 최소값, 연결 확인과 같음). 확인이 끝나면 바로 돌려준다
 export const PERMISSION_CHECK_TTL_SEC = 900;
-interface EnvRow { provider: Provider; connection_status: string; account_id: string | null; gcp_target_project: string | null; region: string | null }
+interface EnvRow { provider: Provider; connection_status: string; account_id: string | null; gcp_target_project: string | null; region: string | null; aws_role_suffix?: string | null }
 
 /** 환경 하나의 확인 대상 묶음: 그 클라우드 묶음 전부 (도착 묶음은 GCP 전용 프로젝트가 있을 때만). 이전이 쓰는 것만 막는 일은 사전 점검이 한다.
  *  허브 묶음(gcp.hub)은 플랫폼이 허브를 쓸 때(GCP_PLATFORM_PROJECT 있음)만 — 사전 점검의 argo_hub 조건과 같은 기준 */
@@ -27,7 +27,7 @@ export interface PermissionCheckDeps extends GateDeps { roles?: Pick<TempRoleBro
 export async function handlePermissionCheck(raw: unknown, deps: PermissionCheckDeps = {}): Promise<"saved" | "skipped"> {
   const job = PermissionCheckJob.parse(raw);   // 큐 내용은 믿지 않는다: 모양부터
   const env = await withTenant(job.tenantId, async (tx) => (await tx.query<EnvRow>(
-    `SELECT provider, connection_status, account_id, gcp_target_project, region FROM environments WHERE id=$1`, [job.envId])).rows[0]);
+    `SELECT provider, connection_status, account_id, gcp_target_project, region, aws_role_suffix FROM environments WHERE id=$1`, [job.envId])).rows[0]);
   if (!env || (env.provider !== "aws" && env.provider !== "gcp")) return "skipped";
   const result = await checkFor(job, env, deps);
   await withTenant(job.tenantId, (tx) => tx.query(
@@ -69,7 +69,7 @@ async function checkFor(job: PermissionCheckJob, env: EnvRow, deps: PermissionCh
     // 허브 묶음의 주체 = 이 회사 플랫폼 SA (사전 점검과 같은 값). 없으면 허브 묶음만 "확인 못 함" (리뷰 11/06: 예전엔 안 넘겨 늘 확인 못 함)
     const platformSa = hub ? await platformSaOf(job.tenantId, penv).catch(() => null) : null;
     const gaps = await checkEnvBundles({ envId: job.envId, provider: env.provider, accountId: env.account_id, targetProject: env.gcp_target_project,
-      region: env.region, platformSa, ...side }, bundles, file.version, deps);
+      region: env.region, awsRoleSuffix: env.aws_role_suffix ?? null, platformSa, ...side }, bundles, file.version, deps);
     // 빠진 묶음이 없으면 고객 쪽 실제 상태 = 지금 판 (역할 설명·태그가 옛 판이어도 권한은 다 있음)
     return { requiredVersion: file.version, grantedVersion: gaps.length ? minVersion(gaps) : file.version, gaps };
   } catch (e) {

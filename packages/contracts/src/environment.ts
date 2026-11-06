@@ -78,6 +78,19 @@ export function checkAccountId(provider: Provider, id: string): boolean {
   return re !== undefined && re.test(id);
 }
 
+// AWS 연결 역할 이름 꼬리 (environments.aws_role_suffix, 0056). 한 AWS 계정에 환경을 여럿 연결하려고 환경마다 역할 이름을 다르게 한다
+//   새 AWS 연결(확인 문구를 새로 만들 때) = "-" + 환경 번호 앞 8자 (연결 스택 이름 svc-connect-<같은 8자> 와 같음)
+//   옛 환경 = NULL → 꼬리 없음 (svc-observe·svc-operate·svc-deploy 그대로, 고객이 할 일 없음)
+// 템플릿 매개변수 RoleSuffix 의 AllowedPattern 과 DB CHECK 가 같은 모양이다
+export const AWS_ROLE_SUFFIX_RE = /^-[0-9a-f]{8}$/;
+export function awsRoleSuffixFor(envId: string): string {
+  return `-${envId.replace(/[^A-Za-z0-9]/g, "").slice(0, 8).toLowerCase()}`;
+}
+/** 고객 계정 안 역할·정책 이름 (svc-observe·svc-operate·svc-deploy·svc-operate-policy) + 환경 꼬리. 꼬리가 없거나 모양이 틀리면 옛 이름 */
+export function awsRoleName(base: string, suffix?: string | null): string {
+  return suffix && AWS_ROLE_SUFFIX_RE.test(suffix) ? `${base}${suffix}` : base;
+}
+
 // 연결 링크 발급 응답. AWS = CloudFormation 빠른 생성 url, GCP = Cloud Shell url 또는 명령 한 줄, 온프레 = 설치 명령 한 줄
 export const ConnectionLinkKind = z.enum(["aws_quick_create", "gcp_cloud_shell", "onprem_install"]);
 export type ConnectionLinkKind = z.infer<typeof ConnectionLinkKind>;

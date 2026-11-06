@@ -11,7 +11,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 
-function run(fix: boolean) {
+function run(fix: boolean, extra: string[] = []) {
   const bin = mkdtempSync(join(tmpdir(), "acc-bin-"));
   const log = join(bin, "aws.log");
   writeFileSync(join(bin, "aws"), `#!/bin/sh
@@ -27,7 +27,7 @@ case "$*" in
 esac
 `);
   chmodSync(join(bin, "aws"), 0o755);
-  const r = spawnSync(process.execPath, ["--import", "tsx", "tools/env-connect.ts", "access-check", "--cluster", "shop", "--region", "ap-northeast-2", ...(fix ? ["--fix"] : [])],
+  const r = spawnSync(process.execPath, ["--import", "tsx", "tools/env-connect.ts", "access-check", "--cluster", "shop", "--region", "ap-northeast-2", ...(fix ? ["--fix"] : []), ...extra],
     { cwd: ROOT, encoding: "utf8", env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, DEV_AUTH: "1", DEMO_USER_PASSWORD: "", API_URL: "http://127.0.0.1:9" } });
   return { code: r.status, out: r.stdout + r.stderr, log: existsSync(log) ? readFileSync(log, "utf8") : "" };
 }
@@ -51,4 +51,15 @@ test("거부(보기만): --fix 없으면 지우거나 만들지 않고 고칠 �
   assert.match(r.out, /접근 항목 옛 역할에 묶임  svc-observe/);
   assert.match(r.out, /다시 만든 접근 항목  0/);
   assert.doesNotMatch(r.log, /delete-access-entry|create-access-entry|associate-access-policy/);
+});
+
+// 한 계정에 환경 여럿 (0056): --role-suffix 를 주면 그 환경 역할(svc-observe-<8자> 등)만 본다. 가짜 aws 에 그 이름이 없으면 건너뜀
+test("--role-suffix: 꼬리 붙은 역할 이름으로 조회하고, 다른 환경의 옛 이름 역할은 안 건드림", () => {
+  const r = run(true, ["--role-suffix", "-783df2ef"]);
+  assert.equal(r.code, 0, r.out);
+  for (const n of ["svc-observe-783df2ef", "svc-operate-783df2ef", "svc-deploy-783df2ef"]) assert.match(r.log, new RegExp(`iam get-role --role-name ${n} `));
+  assert.doesNotMatch(r.log, /--role-name svc-(observe|operate|deploy) /);
+  // 가짜 aws 는 이름 앞부분으로 맞춰서 관찰 역할 항목이 옛 것 → 그 환경 역할 항목만 다시 만든다. 다른 환경의 꼬리 없는 역할 ARN 은 안 건드림
+  assert.match(r.log, /eks delete-access-entry --cluster-name shop --principal-arn arn:aws:iam::111122223333:role\/svc-observe-783df2ef /);
+  assert.doesNotMatch(r.log, /role\/svc-(observe|operate|deploy) /);
 });

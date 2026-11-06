@@ -18,6 +18,21 @@ type CloudSql = {
   // N8
   replicaNames?: string[] | null; databases?: string[] | null;
 };
+const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/;
+/** GCP-SQL-NET DRAFT(ai): Cloud SQL 의 들어오는 길 = 인스턴스의 ipConfiguration (RDS 보안 그룹 자리, FM-IR-02 와 같은 모양).
+ *  예전: authorizedNetworks 칸이 없으면 unknown → 사설 IP 만 쓰는 인스턴스도 점검이 "출발 방화벽을 못 읽음" 으로 막았다
+ *  【추정: 빈 목록은 응답에 칸이 없음. 실 이전 79efc820(sample-shop-db, 사설 IP 만)이 unknown 이 된 이유, #317】.
+ *  - 사설 IP 만(ipv4Enabled false) → [] = VPC 안에서만 닿음. 거기서 붙는 건 옮기는 앱이라 도착은 연결 의존성으로 엶 (RDS 의 "출발 클러스터 SG 만" 과 같음)
+ *  - 공개 IP(ipv4Enabled true) → 승인된 네트워크 그대로 (IP 하나는 /32). 공개 여부는 public 칸
+ *  - ipConfiguration 을 못 읽었거나 ipv4Enabled 가 없으면 null (→ unknown, 예전과 같음 = 조용히 열거나 닫지 않음) */
+export function cloudSqlIngress(ipc: unknown): Array<{ from: string }> | null {
+  const o = ipc && typeof ipc === "object" ? ipc as { ipv4Enabled?: unknown; authorizedNetworks?: unknown } : null;
+  if (!o || typeof o.ipv4Enabled !== "boolean") return null;
+  if (!o.ipv4Enabled) return [];
+  if (o.authorizedNetworks !== undefined && !Array.isArray(o.authorizedNetworks)) return null;
+  const nets = ((o.authorizedNetworks ?? []) as Array<{ value?: unknown } | null>).map((a) => String(a?.value ?? "").trim()).filter(Boolean);
+  return [...new Set(nets.map((v) => (IPV4.test(v) ? `${v}/32` : v)))].sort().map((from) => ({ from }));
+}
 export const cloudSqlMapper: KindMapper = {
   nativeTypes: [DB_RAW_KINDS.cloudsql],
   kind: "postgres",
@@ -70,6 +85,10 @@ export const cloudSqlMapper: KindMapper = {
       extra.maintenanceWindow = [`cloudsql:${it.name}.settings.maintenanceWindow`, 1];
     }
     if (it.settings && "ipConfiguration" in it.settings) { const tls = cloudSqlTls(ipc, it.name); props.tlsRequired = tls.v; extra.tlsRequired = tls.meta; }
+    // 근거 줄은 읽었을 때만 (RDS 의 0.9 와 같음). 못 읽음(unknown)은 예전처럼 줄 없이 posture 와 사전 점검이 사람에게 묻는다 (데모 원본 판이 안 바뀜)
+    const ingress = cloudSqlIngress(ipc);
+    if (ingress) extra.network = [`cloudsql:${it.name}.settings.ipConfiguration`, 0.9, ipc?.ipv4Enabled ? `공개 IP · 승인된 네트워크 ${ingress.length}개에서 읽음`
+      : "사설 IP 만 (공개 IP 꺼짐) → VPC 안에서만 닿음. 옮기는 앱은 도착에서 연결 의존성으로 엶"];
     return {
       name: it.name, kind: "postgres",
       native: { type: DB_RAW_KINDS.cloudsql, name: it.name, endpoint, uid: it.selfLink ?? null,
@@ -82,10 +101,7 @@ export const cloudSqlMapper: KindMapper = {
         ...(props.ha !== undefined ? { ha: [`cloudsql:${it.name}.settings.availabilityType`, 1] as [string, 1] } : {}),
         ...extra,
       },
-      network: {
-        ingress: ipc?.authorizedNetworks ? ipc.authorizedNetworks.map((a) => ({ from: String(a.value ?? a.name ?? "") })) : "unknown",
-        public: typeof ipc?.ipv4Enabled === "boolean" ? ipc.ipv4Enabled : null,
-      },
+      network: { ingress: ingress ?? "unknown", public: typeof ipc?.ipv4Enabled === "boolean" ? ipc.ipv4Enabled : null },
     };
   },
 };

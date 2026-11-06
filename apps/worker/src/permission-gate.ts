@@ -15,6 +15,7 @@ import { chooseEnvLayerSource, dbEnvLayerStore } from "./env-layer.js";
 /** 환경 한 쪽의 확인 재료 (DB 에서 다시 읽은 값 + 빌린 관찰 자격) */
 export interface EnvSideCheck {
   envId: string; provider: Provider; accountId: string | null; targetProject: string | null; region: string | null;
+  awsRoleSuffix?: string | null;             // 한 계정에 환경 여럿 (0056): AWS 역할 이름 꼬리. 없으면 옛 이름
   platformSa?: string | null;
   gcpToken?: string;                         // 빌린 관찰 토큰 (진짜 발급기일 때만)
   awsEnv?: NodeJS.ProcessEnv;                // 빌린 관찰 자격 env (envFor 로 워커 자기 자격을 지운 것)
@@ -36,7 +37,7 @@ export async function checkEnvBundles(s: EnvSideCheck, bundles: (PermissionBundl
     if (!s.awsEnv || !s.accountId || !/^\d{12}$/.test(s.accountId))
       return [unverifiedAll(mine, base, !s.awsEnv ? "빌린 관찰 자격이 없어(흉내 발급기) 고객 권한을 확인 못 함" : "환경 계정 번호가 없음")];
     return checkAwsPermissions({ ...(d.aws?.exec ? { exec: d.aws.exec } : {}), env: s.awsEnv },
-      { ...base, accountId: s.accountId, region: s.region || "ap-northeast-2", bundles: mine, policies: awsPolicies(env) });
+      { ...base, accountId: s.accountId, region: s.region || "ap-northeast-2", bundles: mine, policies: awsPolicies(env), roleSuffix: s.awsRoleSuffix ?? null });
   }
   return [];
 }
@@ -50,7 +51,7 @@ function unverifiedAll(bs: PermissionBundle[], base: { envId: string; version: n
 
 // ───────────────────── ① 사전 점검 ─────────────────────
 interface MigrationSides { id: string; sourceEnvId: string; targetEnvId: string }
-interface EnvRow { id: string; provider: Provider; account_id: string | null; gcp_target_project: string | null; region: string | null }
+interface EnvRow { id: string; provider: Provider; account_id: string | null; gcp_target_project: string | null; region: string | null; aws_role_suffix?: string | null }
 export interface PrecheckRoles { gcpToken?: Partial<Record<"source" | "target", string>>; awsEnv?: Partial<Record<"source" | "target", Record<string, string>>> }
 
 /** 이 이전이 쓰는 묶음의 필요 조건 (명세 + 환경 층 + 중계기 + 허브) */
@@ -88,7 +89,7 @@ export async function permissionPrecheck(tenantId: string, m: MigrationSides, ro
     message: "고객 권한 묶음 파일(infra/permissions/permission-bundles.json)이 없어 단계 전 권한 확인을 못 함",
     fix: "npx tsx packages/adapters/scripts/export-permissions.ts infra/permissions infra/onboarding 로 다시 내고 worker 이미지에 넣는다" })], detail: null };
   const rows = await withTenant(tenantId, async (tx) => (await tx.query<EnvRow>(
-    `SELECT id, provider, account_id, gcp_target_project, region FROM environments WHERE id = ANY($1::uuid[])`, [[m.sourceEnvId, m.targetEnvId]])).rows);
+    `SELECT id, provider, account_id, gcp_target_project, region, aws_role_suffix FROM environments WHERE id = ANY($1::uuid[])`, [[m.sourceEnvId, m.targetEnvId]])).rows);
   const source = rows.find((r) => r.id === m.sourceEnvId), target = rows.find((r) => r.id === m.targetEnvId);
   if (!source || !target) return { items: [], detail: null };
   const need = await bundleNeedsFor(tenantId, m, { source, target }, env);
@@ -101,7 +102,7 @@ export async function permissionPrecheck(tenantId: string, m: MigrationSides, ro
     if (!bs.length) continue;
     const awsEnv = roles?.awsEnv?.[side];
     gaps.push(...await checkEnvBundles({ envId: r.id, provider: r.provider, accountId: r.account_id, targetProject: r.gcp_target_project, region: r.region,
-      platformSa, ...(roles?.gcpToken?.[side] ? { gcpToken: roles.gcpToken[side] } : {}), ...(awsEnv ? { awsEnv: envFor(awsEnv, env) } : {}) }, bs, file.version, d));
+      awsRoleSuffix: r.aws_role_suffix ?? null, platformSa, ...(roles?.gcpToken?.[side] ? { gcpToken: roles.gcpToken[side] } : {}), ...(awsEnv ? { awsEnv: envFor(awsEnv, env) } : {}) }, bs, file.version, d));
   }
   const level = (g: PermissionGap) => (mode === "warn" ? "warn" : g.level);
   const what = (g: PermissionGap) => g.missing.length || g.missingApis.length

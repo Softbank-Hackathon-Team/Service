@@ -158,6 +158,19 @@ test("AWS: #315 이전 스택(중계기 도착 RDS 규칙 없음)이면 aws.rela
   assert.ok(sims.every((c) => !c.join(" ").includes("*")), "견본에 와일드카드 없음");
 });
 
+// 한 계정에 환경 여럿 (0056): 흉내 평가·판 태그 읽기 모두 그 환경 역할(svc-operate-<8자>·svc-observe-<8자>). 묶음 주체 이름(화면)은 바탕 그대로
+test("AWS RoleSuffix: 꼬리가 있으면 그 환경 역할을 흉내 평가하고 태그도 그 역할에서 읽는다. 없으면 옛 이름", async () => {
+  const f = awsFake({ tag: "1" });
+  const gaps = await checkAwsPermissions({ exec: f.exec, env: {} }, { ...awsIn(["aws.operate", "aws.permcheck"]), roleSuffix: "-783df2ef" });
+  assert.deepEqual(gaps, []);
+  const src = f.calls.filter((c) => c[1] === "simulate-principal-policy").map((c) => c[c.indexOf("--policy-source-arn") + 1]);
+  assert.deepEqual([...new Set(src)].sort(), [`arn:aws:iam::${ACCT}:role/svc-observe-783df2ef`, `arn:aws:iam::${ACCT}:role/svc-operate-783df2ef`]);
+  assert.deepEqual(f.calls.filter((c) => c[1] === "get-role").map((c) => c[3]).sort(), ["svc-observe-783df2ef", "svc-operate-783df2ef"]);
+  const old = awsFake({ tag: "1" });
+  await checkAwsPermissions({ exec: old.exec, env: {} }, { ...awsIn(["aws.operate"]), roleSuffix: null });
+  assert.ok(old.calls.filter((c) => c[1] === "simulate-principal-policy").every((c) => c.includes(`arn:aws:iam::${ACCT}:role/svc-operate`)));
+});
+
 test("AWS: 관찰 역할에 흉내 평가 권한이 없으면 확인용 묶음 warn(빠짐), 나머지는 확인 못 함 (막지 않음)", async () => {
   const gaps = await checkAwsPermissions({ exec: awsFake({ simulateDenied: true }).exec, env: {} }, awsIn(["aws.permcheck", "aws.operate"]));
   assert.deepEqual(gaps.map((g) => [g.bundleId, g.level]), [["aws.permcheck", "warn"], ["aws.operate", "warn"]]);

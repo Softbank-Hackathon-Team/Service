@@ -27,8 +27,8 @@ run "hub_identity" {
     error_message = "허브 역할은 argocd 의 application-controller·server 두 서비스 계정에만 묶인다 (repo-server·applicationset 은 클러스터에 안 붙음)"
   }
   assert {
-    condition     = jsondecode(aws_iam_role_policy.argocd_hub.policy).Statement == [{ Sid = "AssumeCustomerDeployRole", Effect = "Allow", Action = ["sts:AssumeRole", "sts:TagSession"], Resource = ["arn:aws:iam::*:role/svc-deploy"] }]
-    error_message = "허브 권한은 고객 svc-deploy 빌리기 하나뿐 (role/* · 다른 동작 없음)"
+    condition     = jsondecode(aws_iam_role_policy.argocd_hub.policy).Statement == [{ Sid = "AssumeCustomerDeployRole", Effect = "Allow", Action = ["sts:AssumeRole", "sts:TagSession"], Resource = ["arn:aws:iam::*:role/svc-deploy", "arn:aws:iam::*:role/svc-deploy-*"] }]
+    error_message = "허브 권한은 고객 svc-deploy(+ 환경 꼬리 -*) 빌리기 하나뿐 (role/* · 다른 동작 없음)"
   }
   assert {
     condition     = output.argocd_hub_role_arn == "arn:aws:iam::123456789012:role/platform-argocd-hub"

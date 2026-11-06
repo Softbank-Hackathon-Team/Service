@@ -47,9 +47,16 @@ type Json = Record<string, unknown>;
 export const PERMS_VERSION_TAG = "platform-perms-version";
 const PERMS_TAGS = [{ Key: PERMS_VERSION_TAG, Value: String(PERMISSIONS_VERSION) }];
 
-// DRAFT(ai): 역할 이름 고정. worker/src/platform.ts resolveEnv가 이 이름으로 ARN을 조립한다
+// 역할 이름 바탕. 실제 이름 = 바탕 + 스택 매개변수 RoleSuffix (contracts awsRoleName, worker/src/platform.ts roleRefFor 가 같은 규칙으로 ARN 을 조립한다)
+//   RoleSuffix 기본값 "" = 예전 고정 이름 (이미 연결한 스택을 새 템플릿으로 업데이트해도 이름이 안 바뀐다 → 역할 교체 없음)
+//   새 연결은 api 연결 링크가 "-<환경 번호 앞 8자>" 를 넘긴다 → 한 계정에 연결 스택을 여럿 둬도 이름이 안 부딪힌다
 export const OBSERVE_ROLE_NAME = "svc-observe";
 export const OPERATE_ROLE_NAME = "svc-operate";
+export const OPERATE_POLICY_NAME = "svc-operate-policy";
+// 템플릿 매개변수 RoleSuffix 모양 (contracts AWS_ROLE_SUFFIX_RE·DB 0056 CHECK 와 같음) — 빈 값 또는 "-" + 16진 8자
+export const ROLE_SUFFIX_PATTERN = "^$|^-[0-9a-f]{8}$";
+/** 이름 + 스택 매개변수 RoleSuffix (Fn::Join. Fn::Sub 는 쓰지 않는다: 정책 문서의 ${aws:...} 와 섞이지 않게) */
+export const suffixed = (base: string): Json => ({ "Fn::Join": ["", [base, { Ref: "RoleSuffix" }]] });
 export const BOUNDARY_POLICY_NAME = "platform-app-boundary";
 // DRAFT(ai): 관찰 역할 관리형 정책은 이 하나로 고정. ReadOnlyAccess는 S3·DynamoDB 데이터까지 읽어서 금지
 export const VIEW_ONLY_ARN = "arn:aws:iam::aws:policy/job-function/ViewOnlyAccess";
@@ -103,7 +110,7 @@ const trust = (): Json => ({
 export function buildAwsConnectTemplate(operatePolicy: Json, boundaryPolicy: Json): Json {
   return {
     AWSTemplateFormatVersion: "2010-09-09",
-    Description: "플랫폼 연결: 관찰 역할(svc-observe)·실행 역할(svc-operate)과 EKS 접근 항목을 만든다 (자동 생성, 직접 고치지 않음)",
+    Description: "플랫폼 연결: 관찰 역할(svc-observe<RoleSuffix>)·실행 역할(svc-operate<RoleSuffix>)과 EKS 접근 항목을 만든다 (자동 생성, 직접 고치지 않음)",
     Parameters: {
       ExternalId: {
         Type: "String", MinLength: 32, // NoEcho 쓰지 않음: NoEcho면 빠른 생성 링크로 못 넘김
@@ -126,6 +133,12 @@ export function buildAwsConnectTemplate(operatePolicy: Json, boundaryPolicy: Jso
         Type: "String", Default: "true", AllowedValues: ["true", "false"],
         Description: "같은 계정에 platform-app-boundary 정책이 이미 있으면 false (이름 충돌 방지)",
       },
+      // 한 계정에 환경 여럿: 역할·실행 정책 이름 꼬리. 비우면 예전 고정 이름 (svc-observe·svc-operate·svc-deploy·svc-operate-policy)
+      RoleSuffix: {
+        Type: "String", Default: "", AllowedPattern: ROLE_SUFFIX_PATTERN,
+        ConstraintDescription: "비우거나 \"-\" + 16진 8자 (플랫폼 연결 링크가 채운다)",
+        Description: "플랫폼이 알려 준 값 그대로 (환경마다 다름). 역할·실행 정책 이름 끝에 붙는다. 비우면 예전 이름",
+      },
       SourceDbSecurityGroupId: {
         Type: "String", Default: "", AllowedPattern: "^$|^sg-[0-9a-f]{8,17}$",
         Description: "온프레 복제를 쓸 때 출발 RDS 보안 그룹 ID. 비우면 중계기의 RDS 나가기·들어오기 규칙 권한을 넣지 않는다",
@@ -144,6 +157,8 @@ export function buildAwsConnectTemplate(operatePolicy: Json, boundaryPolicy: Jso
     },
     Resources: {
       // 실행 정책이 앱 역할에 요구하는 권한 경계. svc-operate에는 붙이지 않는다(붙이면 실행 역할이 거의 아무것도 못 함)
+      // 이름은 RoleSuffix 를 붙이지 않는다: 실행 정책 조건(iam:PermissionsBoundary)과 앱 층 Terraform 이 이 이름 하나를 가리킨다.
+      //   계정에 하나를 같이 쓰고(내용 같음), 두 번째 연결 스택부터는 CreateBoundaryPolicy=false. 만든 스택을 먼저 지우면 다른 스택의 앱 역할 만들기가 막힌다
       BoundaryPolicy: {
         Type: "AWS::IAM::ManagedPolicy", Condition: "CreateBoundary",
         Properties: { ManagedPolicyName: BOUNDARY_POLICY_NAME, PolicyDocument: boundaryPolicy },
@@ -151,12 +166,12 @@ export function buildAwsConnectTemplate(operatePolicy: Json, boundaryPolicy: Jso
       // 문서에 ${aws:PrincipalAccount}가 있으나 Fn::Sub를 쓰지 않으므로 문자열 그대로 남고 IAM이 푼다
       OperatePolicy: {
         Type: "AWS::IAM::ManagedPolicy",
-        Properties: { ManagedPolicyName: "svc-operate-policy", PolicyDocument: operatePolicy },
+        Properties: { ManagedPolicyName: suffixed(OPERATE_POLICY_NAME), PolicyDocument: operatePolicy },
       },
       ObserveRole: {
         Type: "AWS::IAM::Role",
         Properties: {
-          RoleName: OBSERVE_ROLE_NAME, MaxSessionDuration: 3600,
+          RoleName: suffixed(OBSERVE_ROLE_NAME), MaxSessionDuration: 3600,
           AssumeRolePolicyDocument: trust(),
           ManagedPolicyArns: [VIEW_ONLY_ARN],
           Policies: [{
@@ -164,6 +179,7 @@ export function buildAwsConnectTemplate(operatePolicy: Json, boundaryPolicy: Jso
             PolicyDocument: { Version: "2012-10-17", Statement: [{ Effect: "Allow", Action: OBSERVE_EXTRA_ACTIONS, Resource: "*" }] },
           }, {
             // PERM-GATE: 사전 점검·환경 권한 확인이 실행 역할(svc-operate)·자기 정책을 흉내 평가한다 (읽기, 자원을 바꾸지 않음). 이 계정의 svc-* 역할에만
+            //   한 계정에 연결이 여럿이면 다른 환경의 svc-*-<꼬리> 역할도 흉내 평가할 수 있다: 같은 고객 계정 안이고, 판정만 돌려받는 읽기라 나누지 않는다
             PolicyName: "observe-permcheck",
             PolicyDocument: { Version: "2012-10-17", Statement: [{ Effect: "Allow", Action: [...AWS_PERMCHECK_ACTIONS],
               Resource: { "Fn::Join": ["", ["arn:aws:iam::", { Ref: "AWS::AccountId" }, ":role/svc-*"]] } }] },
@@ -174,7 +190,7 @@ export function buildAwsConnectTemplate(operatePolicy: Json, boundaryPolicy: Jso
       OperateRole: {
         Type: "AWS::IAM::Role",
         Properties: {
-          RoleName: OPERATE_ROLE_NAME, MaxSessionDuration: 3600,
+          RoleName: suffixed(OPERATE_ROLE_NAME), MaxSessionDuration: 3600,
           AssumeRolePolicyDocument: trust(),
           Tags: PERMS_TAGS,
           ManagedPolicyArns: [{ Ref: "OperatePolicy" }],
@@ -211,7 +227,7 @@ export function buildAwsConnectTemplate(operatePolicy: Json, boundaryPolicy: Jso
       DeployRole: {
         Type: "AWS::IAM::Role", Condition: "HasArgoHub",
         Properties: {
-          RoleName: DEPLOY_ROLE_NAME, MaxSessionDuration: 3600,
+          RoleName: suffixed(DEPLOY_ROLE_NAME), MaxSessionDuration: 3600,
           AssumeRolePolicyDocument: { Version: "2012-10-17", Statement: [{
             Sid: "HubAssume", Effect: "Allow", Principal: { AWS: { Ref: "ArgoHubRoleArn" } }, Action: "sts:AssumeRole",
           }, {

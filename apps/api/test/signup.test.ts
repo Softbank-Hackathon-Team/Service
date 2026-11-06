@@ -108,6 +108,19 @@ test("계약: 가입 비밀번호 길이는 로그인·auth:seed 와 같은 규�
   assert.equal(SignupBody.safeParse({ login: "a@iron", code: "   ", password: "x".repeat(PASSWORD_MIN) }).success, false);
 });
 
+test("계약: 환경의 db_instance(출발 샘플 RDS 식별자)는 aws 환경에만, RDS 식별자 모양만 (tools/team-env.sh 와 같은 규칙)", () => {
+  const slot = (env: Record<string, unknown>) => ({ version: 1, tenant: T, slots: [{ id: "slot-1", login: "a@iron", signup_code_sha256: "", environments: [env] }] });
+  const aws = { name: "s1-src-aws", provider: "aws", region: "ap-northeast-2", cluster: "a-eks" };
+  assert.equal(TeamRegistry.safeParse(slot(aws)).success, true, "없어도 된다 (선택)");
+  assert.equal(TeamRegistry.safeParse(slot({ ...aws, db_instance: "sample-shop-db" })).success, true);
+  for (const bad of ["Sample-Shop", "shop--db", "shop-db-", "1shop", "shop_db", "<샘플 RDS 식별자>", "a".repeat(64)])
+    assert.equal(TeamRegistry.safeParse(slot({ ...aws, db_instance: bad })).success, false, bad);
+  const gcp = { name: "s1-gcp", provider: "gcp", region: "asia-northeast3", gcp: { original_project: "x-src-prj", dedicated_project: "x-mig-prj" } };
+  const r = TeamRegistry.safeParse(slot({ ...gcp, db_instance: "shop-db" }));
+  assert.equal(r.success, false);
+  assert.ok(r.error!.issues.some((i) => i.message === "db_instance is for provider aws only"));
+});
+
 test("인증 훅: 가입 두 경로는 토큰 없이 처리기까지 간다 (그 밖의 /auth/signup* 은 아님)", () => {
   assert.equal(isPublicAuthPath("/api/v1/auth/signup"), true);
   assert.equal(isPublicAuthPath("/api/v1/auth/signup/config"), true);
