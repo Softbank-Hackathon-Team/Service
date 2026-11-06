@@ -4,7 +4,11 @@ import { createEnvLayerRunner, ENV_LAYER_KEYS, ENV_LAYER_MODULE_DIGEST, envLayer
   spawnExec, type EnvLayerFacts, type EnvLayerRunner, type EnvLayerRunnerOpts, type Exec, type GcpTerraformCred } from "@svc/adapters";
 import { redactText } from "@svc/contracts";
 import { withTenant, writeAudit, type Tx } from "@svc/core";
+import { GcpIssueError } from "@svc/security";
 import { tenantSlug } from "./gitops/bundle.js";
+import { withGcpCred } from "./gcp-token-server.js";
+import { withStepRoles } from "./jobs/_roles.js";
+import type { MigrationRow } from "./jobs/_step.js";
 
 // 환경 층 (도착 GCP 프로젝트의 VPC·GKE·AR·ESO) 확보. 아키텍처 이전 9단계 "4 기반 생성".
 // 부르는 곳: apply 작업 맨 앞 (승인 뒤 provisioning). apply-real prepare() 안에서는 만들지 않는다 —
@@ -127,11 +131,15 @@ export interface EnsureEnvLayerInput {
   region: string;             // 앱 층과 같은 지역 (regionOf)
   plan: Pick<PlanDoc, "envLayer">;
 }
+/** B-2: 만드는 동안만 고객 svc-env 를 빌려 fn 을 부른다. 못 빌리면 cred 없이 사유(why). signal = svc-env 재발급 실패 */
+export type WithEnvCred = <T>(fn: (b: { cred?: GcpTerraformCred; why?: string; signal?: AbortSignal }) => Promise<T>) => Promise<T>;
+const noEnvCred: WithEnvCred = (fn) => fn({});
+
 export interface EnsureEnvLayerDeps {
   env?: NodeJS.ProcessEnv;
   store?: EnvLayerStore;
-  /** 빌린 GCP 실행 토큰 (withGcpCred). 없으면 만들지 않는다 (워커 자기 자격으로 고객 프로젝트에 GKE 를 만들지 않음) */
-  gcpCred?: GcpTerraformCred;
+  /** B-2: 고객 svc-env 빌리기 (borrowEnvCred). 없거나 못 빌리면 만들지 않는다 (워커 자기 자격·svc-operate 로 고객 프로젝트에 GKE 를 만들지 않음) */
+  withEnvCred?: WithEnvCred;
   runner?: (o: EnvLayerRunnerOpts) => EnvLayerRunner;
   exec?: Exec;   // gcloud 클러스터 목록 (시험이 가짜로)
   signal?: AbortSignal;
@@ -155,47 +163,71 @@ export async function ensureEnvLayer(i: EnsureEnvLayerInput, d: EnsureEnvLayerDe
     await store.audit(i.tenantId, i.migrationId, action, "error", { ...base, failureCode, ...detail });
     return { ok: false, failureCode, detail: { ...base, envLayer: { failureCode, ...detail } } };
   };
-  if (!i.projectId) return fail("TF_FACTS_MISSING", { error: "도착 프로젝트(gcp_target_project·account_id)가 없다" });
-  const vars = envLayerVars({ projectId: i.projectId, region: i.region });
+  const projectId = i.projectId;
+  if (!projectId) return fail("TF_FACTS_MISSING", { error: "도착 프로젝트(gcp_target_project·account_id)가 없다" });
+  const vars = envLayerVars({ projectId, region: i.region });
   const varsHash = envLayerVarsHash(vars);
   // 승인 대조: 사람이 본 계획이 "GKE 새로 만들기"였고, 그때와 같은 입력·모듈인가. 아니면 만들지 않는다 (비용 드는 자원을 승인 없이 만들지 않음)
   const p = i.plan.envLayer;
   if (p?.mode !== "create")
     return fail("TF_PLAN_DRIFT", { error: "승인한 계획서에 환경 층 생성이 없다 (승인 뒤 ENV_LAYER_AUTO 를 켬, 또는 환경 층 줄이 사라짐). 다시 계획한다" });
   if (p.varsHash !== varsHash || p.moduleDigest !== ENV_LAYER_MODULE_DIGEST)
-    return fail("TF_PLAN_DRIFT", { error: p.varsHash !== varsHash ? "환경 층 입력(프로젝트·지역·이름)이 승인 때와 다르다" : "gcp/env 모듈이 승인 뒤 바뀌었다" });
-  if (!d.gcpCred) return fail("ENV_LAYER_CRED_MISSING", { error: "빌린 GCP 실행 토큰이 없다 (REAL_STS=1 + 실행 역할 svc-operate). 워커 자기 자격으로는 만들지 않는다" });
-  const cred = d.gcpCred;
-  const runEnv = () => gcpTerraformEnv(cred, env);   // 부를 때마다 그 순간의 토큰
+    return fail("TF_PLAN_DRIFT", { error: p.varsHash !== varsHash ? "환경 층 입력(프로젝트·지역·이름·노드 SA)이 승인 때와 다르다" : "gcp/env 모듈이 승인 뒤 바뀌었다" });
 
-  // 고객 GKE 를 덮어쓰지 않게: 우리 줄이 없는데(처음) 도착 프로젝트에 클러스터가 있으면 멈춘다.
-  //   failed 줄이 있으면 우리 작업 폴더 state 로 이어 만드는 중이라 이미 생긴 클러스터는 우리 것 → 이 검사를 건너뛴다
-  if (!row) {
-    const l = await listGkeClusters(i.projectId, runEnv(), d.exec);
-    if (!l.ok) return fail("NEEDS_HUMAN", { error: `도착 프로젝트 클러스터 목록을 못 읽어 만들지 않음: ${l.error}` }, "env_layer.needs_human");
-    if (l.names.length)
-      return fail("NEEDS_HUMAN", { clusters: l.names.slice(0, 10), error: "도착 프로젝트에 이미 GKE 가 있는데 환경 층 기록이 없다. 그 클러스터를 쓸지(TF_FACT_* 또는 environment_layers 줄) 사람이 정한다" }, "env_layer.needs_human");
-  }
-  if (!(await store.claim(i.tenantId, i.envId, varsHash, ENV_LAYER_MODULE_DIGEST)))
-    return fail("ENV_LAYER_BUSY", { error: "같은 환경의 환경 층을 다른 이전이 만드는 중이다" });
-  await store.audit(i.tenantId, i.migrationId, "env_layer.creating", "ok", { ...base, projectId: i.projectId, region: i.region, zone: vars.zone, varsHash, moduleDigest: ENV_LAYER_MODULE_DIGEST, resumed: !!row });
+  // B-2: 여기서부터 끝까지만 고객 svc-env 를 빌린다 (앱 층 apply 는 svc-operate 그대로)
+  return (d.withEnvCred ?? noEnvCred)(async ({ cred, why, signal: envSignal }) => {
+    if (!cred) return fail("ENV_LAYER_CRED_MISSING", { error: `고객 svc-env 를 빌리지 못했다${why ? ` (${why})` : ""}. 환경 층은 svc-env 로만 만든다 (워커 자기 자격·svc-operate 로는 안 만든다). `
+      + "고객이 infra/onboarding/gcp-connect.sh 를 다시 실행해 svc-env·svc-gke-node 를 만든 뒤 다시 계획한다" });
+    const runEnv = () => gcpTerraformEnv(cred, env);   // 부를 때마다 그 순간의 토큰
+    const signal = envSignal && d.signal ? AbortSignal.any([d.signal, envSignal]) : envSignal ?? d.signal;
 
-  let r;
-  try {
-    r = await (d.runner ?? createEnvLayerRunner)({ env: runEnv }).apply(tenantSlug(i.tenantId), i.envId, vars, d.signal);
-  } catch (e) {
-    await store.failed(i.tenantId, i.envId);
-    return fail("ENV_LAYER_APPLY_FAILED", { error: redactText((e as Error)?.message ?? String(e)).slice(0, 300), autoDestroy: false });
-  }
-  const run = { workDir: r.workDir, steps: r.steps, elapsedMs: r.elapsedMs, log: r.log.slice(-20) };
-  if (!r.ok || !r.facts) {
-    await store.failed(i.tenantId, i.envId);
-    // 만들다 만 자원은 지우지 않는다 (환경 소유). 다시 계획·apply 하면 같은 작업 폴더 state 로 이어 만든다
-    return fail("ENV_LAYER_APPLY_FAILED", { ...run, failedPhase: r.failedPhase, failedStep: r.failedStep, autoDestroy: false,
-      cleanup: `사람이 확인 뒤: cd ${r.workDir}/modules/gcp/env && terraform destroy -var-file=../../../terraform.tfvars.json` });
-  }
-  await store.ready(i.tenantId, i.envId, r.facts, varsHash, ENV_LAYER_MODULE_DIGEST);
-  await store.audit(i.tenantId, i.migrationId, "env_layer.ready", "ok", { ...base, ...run, clusterName: r.facts.cluster_name, clusterLocation: r.facts.cluster_location });
-  return { ok: true, source: "db", created: true, layer: { facts: factsOfLayer(r.facts), varsHash },
-           detail: { ...base, source: "db", created: true, workDir: r.workDir, elapsedMs: r.elapsedMs } };
+    // 고객 GKE 를 덮어쓰지 않게: 우리 줄이 없는데(처음) 도착 프로젝트에 클러스터가 있으면 멈춘다.
+    //   failed 줄이 있으면 우리 작업 폴더 state 로 이어 만드는 중이라 이미 생긴 클러스터는 우리 것 → 이 검사를 건너뛴다
+    if (!row) {
+      const l = await listGkeClusters(projectId, runEnv(), d.exec);
+      if (!l.ok) return fail("NEEDS_HUMAN", { error: `도착 프로젝트 클러스터 목록을 못 읽어 만들지 않음: ${l.error}` }, "env_layer.needs_human");
+      if (l.names.length)
+        return fail("NEEDS_HUMAN", { clusters: l.names.slice(0, 10), error: "도착 프로젝트에 이미 GKE 가 있는데 환경 층 기록이 없다. 그 클러스터를 쓸지(TF_FACT_* 또는 environment_layers 줄) 사람이 정한다" }, "env_layer.needs_human");
+    }
+    if (!(await store.claim(i.tenantId, i.envId, varsHash, ENV_LAYER_MODULE_DIGEST)))
+      return fail("ENV_LAYER_BUSY", { error: "같은 환경의 환경 층을 다른 이전이 만드는 중이다" });
+    await store.audit(i.tenantId, i.migrationId, "env_layer.creating", "ok", { ...base, projectId, region: i.region, zone: vars.zone, varsHash, moduleDigest: ENV_LAYER_MODULE_DIGEST, resumed: !!row });
+
+    let r;
+    try {
+      r = await (d.runner ?? createEnvLayerRunner)({ env: runEnv }).apply(tenantSlug(i.tenantId), i.envId, vars, signal);
+    } catch (e) {
+      await store.failed(i.tenantId, i.envId);
+      return fail("ENV_LAYER_APPLY_FAILED", { error: redactText((e as Error)?.message ?? String(e)).slice(0, 300), autoDestroy: false });
+    }
+    const run = { workDir: r.workDir, steps: r.steps, elapsedMs: r.elapsedMs, log: r.log.slice(-20) };
+    if (!r.ok || !r.facts) {
+      await store.failed(i.tenantId, i.envId);
+      // 만들다 만 자원은 지우지 않는다 (환경 소유). 다시 계획·apply 하면 같은 작업 폴더 state 로 이어 만든다
+      return fail("ENV_LAYER_APPLY_FAILED", { ...run, failedPhase: r.failedPhase, failedStep: r.failedStep, autoDestroy: false,
+        cleanup: `사람이 확인 뒤: cd ${r.workDir}/modules/gcp/env && terraform destroy -var-file=../../../terraform.tfvars.json` });
+    }
+    await store.ready(i.tenantId, i.envId, r.facts, varsHash, ENV_LAYER_MODULE_DIGEST);
+    await store.audit(i.tenantId, i.migrationId, "env_layer.ready", "ok", { ...base, ...run, clusterName: r.facts.cluster_name, clusterLocation: r.facts.cluster_location });
+    return { ok: true, source: "db", created: true, layer: { facts: factsOfLayer(r.facts), varsHash },
+             detail: { ...base, source: "db", created: true, workDir: r.workDir, elapsedMs: r.elapsedMs } };
+  });
+}
+
+/** B-2: apply 작업이 쓰는 svc-env 빌리기. 환경 층 단계(STEP_ROLES.env_layer)에서만 빌리고 끝나면 회수한다 (svc-plan 과 같은 길, 발급기가 svc-operate → svc-env).
+ *  svc-env 가 없거나(예전 연결 스크립트) 거부되면 cred 없이 사유만 넘긴다 → ENV_LAYER_CRED_MISSING. svc-operate 로 넘어가지 않는다 */
+export function borrowEnvCred(j: { tenantId: string; migrationId: string }, m: MigrationRow, projectId: string | null): WithEnvCred {
+  return async (fn) => {
+    let borrowed = false;
+    try {
+      return await withStepRoles("env_layer", j, m, (roles) => {
+        borrowed = true;
+        const why = roles.denied.map((x) => x.code).join(",");
+        return withGcpCred(roles, projectId, (cred) => fn({ ...(cred ? { cred } : {}), ...(why ? { why } : {}), ...(roles.signal ? { signal: roles.signal } : {}) }));
+      });
+    } catch (e) {
+      if (!borrowed && e instanceof GcpIssueError) return fn({ why: e.reason });
+      throw e;
+    }
+  };
 }

@@ -37,13 +37,19 @@ export type PlanCostSummary = z.infer<typeof PlanCostSummary>;
 // PA4: 승인할 때 사람이 하나씩 확인해야 하는 항목 종류 (계획 26 3.1)
 //   cost·failure_cost_policy = 항상 / runtime_change·build = IR v2 승인 행 / precheck_warn = 사전 점검 warn / low_confidence = 문턱값(A3)
 // G7-4: provision_reuse = 새로 만들지 않고 이미 있는 도착 자원을 다시 씀 (imported.json). 사람이 그 사실을 보고 확인
-export const PlanAckKind = z.enum(["cost", "failure_cost_policy", "runtime_change", "build", "precheck_warn", "low_confidence", "tls_relaxed", "host_access", "public_bucket", "provision_reuse", "env_layer_create"]);   // env_layer_create: 도착 GKE 를 새로 만든다 (비용)   // SSL-1: tls_relaxed, HN-1: host_access, B-2: public_bucket
+// substitute = 출발 상품을 도착의 다른 상품으로 바꿈 (도착 Builder substitutionsV2 승인 행)
+export const PlanAckKind = z.enum(["cost", "failure_cost_policy", "runtime_change", "build", "precheck_warn", "low_confidence", "tls_relaxed", "host_access", "public_bucket", "provision_reuse", "env_layer_create", "substitute"]);   // env_layer_create: 도착 GKE 를 새로 만든다 (비용)   // SSL-1: tls_relaxed, HN-1: host_access, B-2: public_bucket
 export type PlanAckKind = z.infer<typeof PlanAckKind>;
 export const PlanAcknowledgement = z.object({
   id: z.string().min(1),                // 승인 본문 acks 가 이 id 를 덮어야 한다 (예: cost, runtime_change:<자원 id>)
   kind: PlanAckKind,
   text: z.string(),
   ref: z.string().optional(),           // 가리키는 것 (자원 id, 점검 id)
+  // substitute 항목만: 화면이 글을 파싱하지 않고 출발 → 도착 대응 카드를 그리는 칸 (ApprovalRowV2 의 같은 이름 칸 그대로)
+  from: z.string().optional(),
+  to: z.string().optional(),
+  lost: z.array(z.string()).optional(),
+  appChange: z.boolean().optional(),
 }).strict();
 export type PlanAcknowledgement = z.infer<typeof PlanAcknowledgement>;
 

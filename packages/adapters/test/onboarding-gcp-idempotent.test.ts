@@ -74,11 +74,12 @@ function env() {
 const MUTATING = /^(services enable|iam service-accounts create|iam roles create|iam roles update|iam roles undelete|projects add-iam-policy-binding|projects remove-iam-policy-binding|iam service-accounts add-iam-policy-binding)/;
 const mutations = (calls: string[]) => calls.filter((c) => MUTATING.test(c));
 
-test("처음 실행 (A안 두 프로젝트): API 11(원래 2·전용 9) + SA 3 + 역할 9(원래 2·전용 7) + 프로젝트 바인딩 9(원래 2·전용 7) + tokenCreator 3 = 변경 35번", () => {
+// B-2: + SA 2(svc-env·svc-gke-node) + 역할 1(platform_env) + 프로젝트 바인딩 4(env 역할 1·노드 3) + SA 단위 2(svc-env tokenCreator·svc-gke-node actAs)
+test("처음 실행 (A안 두 프로젝트): API 11(원래 2·전용 9) + SA 5 + 역할 10(원래 2·전용 8) + 프로젝트 바인딩 13(원래 2·전용 11) + SA 단위 5(tokenCreator 4·actAs 1) = 변경 44번", () => {
   const e = env();
   const r = e.run();
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(mutations(e.calls()).length, 35);
+  assert.equal(mutations(e.calls()).length, 44);
   // 새 전용 프로젝트: 연결 확인·빌리기·첫 up 이 부르는 API 9개를 켬 (실측에서 cloudresourcemanager 손으로 켠 것 없앰)
   for (const a of ["cloudresourcemanager", "serviceusage", "iam", "iamcredentials", "sts", "container", "sqladmin", "compute", "secretmanager"])
     assert.ok(e.calls().some((x) => x.startsWith(`services enable ${a}.googleapis.com`) && x.includes(`--project=${TPRJ}`)), a);
@@ -95,7 +96,7 @@ test("재실행: 변경 명령 0번, 전부 '건너뜀', 종료 0 (확인 명령
   assert.equal(r.status, 0, r.stderr);
   const second = e.calls().slice(before);
   assert.equal(mutations(second).length, 0, "재실행에서 변경 명령: " + mutations(second).join(" | "));
-  assert.equal((r.stdout.match(/이미 있음, 건너뜀/g) ?? []).length, 36);   // + 전용 프로젝트 있음
+  assert.equal((r.stdout.match(/이미 있음, 건너뜀/g) ?? []).length, 45);   // + 전용 프로젝트 있음
   assert.ok(second.length >= 10, "각 항목을 먼저 확인");
 });
 
@@ -106,7 +107,7 @@ test("부분 상태: 관찰 SA·관찰 역할만 있으면 나머지만 만든�
   assert.equal(r.status, 0, r.stderr);
   const m = mutations(e.calls());
   // OBSROLE3: 있는 관찰 역할에 권한이 비어 있으면 create 가 아니라 update(add-permissions) 1번이 더해진다 (8 → 9)
-  assert.equal(m.length, 34);   // + API 9 (원래 cloudresourcemanager 1·전용 8)
+  assert.equal(m.length, 43);   // + API 9 (원래 cloudresourcemanager 1·전용 8)
   assert.equal(m.filter((c) => c.startsWith("iam roles update platform_observe ")).length, 1);
   assert.ok(!m.some((c) => c.includes("service-accounts create svc-observe")) && !m.some((c) => c.includes("roles create platform_observe ") && c.includes("--project=cust-prj")));
   assert.ok(m.some((c) => c.includes("service-accounts create svc-operate")));
@@ -213,9 +214,9 @@ test("tokenCreator 는 SA 단위로 확인: 한쪽만 있으면 다른 쪽만 �
   const e = env();
   appendFileSync(join(e.state, "sabind"), `${OBS} serviceAccount:${SA}\n`);
   assert.equal(e.run().status, 0);
-  const tc = mutations(e.calls()).filter((c) => c.startsWith("iam service-accounts add-iam-policy-binding"));
-  assert.equal(tc.length, 2);
-  assert.ok(tc.some((c) => c.includes(OPR)) && tc.some((c) => c.includes("svc-plan@")) && !tc.some((c) => c.includes(OBS)));
+  const tc = mutations(e.calls()).filter((c) => c.startsWith("iam service-accounts add-iam-policy-binding") && c.includes("serviceAccountTokenCreator"));
+  assert.equal(tc.length, 3);
+  assert.ok(tc.some((c) => c.includes(OPR)) && tc.some((c) => c.includes("svc-plan@")) && tc.some((c) => c.includes("svc-env@")) && !tc.some((c) => c.includes(OBS)));
 });
 
 test("거부: 다른 회사 SA 가 이미 tokenCreator 여도 이 회사 SA 는 추가된다(주체 구분)", () => {
@@ -223,7 +224,19 @@ test("거부: 다른 회사 SA 가 이미 tokenCreator 여도 이 회사 SA 는 
   const other = "t-ffffffffffffffffffffffffffff@platform-prj.iam.gserviceaccount.com";
   appendFileSync(join(e.state, "sabind"), `${OBS} serviceAccount:${other}\n${OPR} serviceAccount:${other}\n`);
   assert.equal(e.run().status, 0);
-  assert.equal(mutations(e.calls()).filter((c) => c.startsWith("iam service-accounts add-iam-policy-binding")).length, 3);
+  assert.equal(mutations(e.calls()).filter((c) => c.startsWith("iam service-accounts add-iam-policy-binding") && c.includes(`--member=serviceAccount:${SA}`)).length, 4);
+});
+
+test("B-2: svc-gke-node 의 actAs 는 svc-env 에게만 SA 단위로, 다시 실행하면 건너뜀. 플랫폼 SA 는 svc-gke-node 를 빌리지 못한다", () => {
+  const e = env();
+  assert.equal(e.run().status, 0);
+  const node = `svc-gke-node@${TPRJ}.iam.gserviceaccount.com`;
+  const onNode = mutations(e.calls()).filter((c) => c.startsWith(`iam service-accounts add-iam-policy-binding ${node} `));
+  assert.deepEqual(onNode, [`iam service-accounts add-iam-policy-binding ${node} --project=${TPRJ} --member=serviceAccount:svc-env@${TPRJ}.iam.gserviceaccount.com --role=roles/iam.serviceAccountUser`]);
+  const before = e.calls().length;
+  const again = e.run();
+  assert.equal(mutations(e.calls().slice(before)).length, 0);
+  assert.match(again.stdout, new RegExp(`건너뜀: User svc-env@${TPRJ}\\.iam\\.gserviceaccount\\.com → ${node.replace(/\./g, "\\.")}`));
 });
 
 test("확인이 권한 오류로 실패하면 '없다'로 보고 만들기를 시도, 만들기 오류는 그대로 종료(비0)", () => {
@@ -242,7 +255,7 @@ test("DRY_RUN 은 확인 명령도 안 부르고, 이미 있어도 전부 출력
   const r = e.run({ DRY_RUN: "1" });
   assert.equal(r.status, 0);
   assert.equal(e.calls().length, before, "DRY_RUN 중 gcloud 호출 없음");
-  assert.equal((r.stdout.match(/^\+ gcloud/gm) ?? []).length, 35);
+  assert.equal((r.stdout.match(/^\+ gcloud/gm) ?? []).length, 44);
 });
 
 // ── OBSROLE3: 이미 만든 관찰 역할 권한 갱신 ──
@@ -364,8 +377,9 @@ test("VOBSROLE3 거부: 권한 추가(update)가 거절돼도 나머지 연결 �
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stderr, /권한 추가 실패/);
   const calls = e.calls();
-  assert.equal(calls.filter((c) => c.startsWith("projects add-iam-policy-binding")).length, 9);   // A안: 원래 2(관찰) + 전용 7(관찰 2·plan·실행·_iam·_db_secret·허브)
-  assert.equal(calls.filter((c) => c.startsWith("iam service-accounts add-iam-policy-binding")).length, 3);
+  // A안: 원래 2(관찰) + 전용 11(관찰 2·plan·실행·_iam·_db_secret·허브·B-2 env 역할·노드 3)
+  assert.equal(calls.filter((c) => c.startsWith("projects add-iam-policy-binding")).length, 13);
+  assert.equal(calls.filter((c) => c.startsWith("iam service-accounts add-iam-policy-binding")).length, 5);   // tokenCreator 4 + svc-gke-node actAs 1
   assert.deepEqual(permsOf(e).sort(), OLD7.split(",").sort(), "실패했으니 권한은 그대로");
 });
 

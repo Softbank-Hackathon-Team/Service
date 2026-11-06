@@ -1,6 +1,7 @@
 import { endpointFromEnv, type Endpoint } from "./endpoint.js";
 import { Migration, type MigrationConfig } from "./migration.js";
 import { endpointFromRecord, type EndpointRecord } from "./record.js";
+import type { ManagedSecrets } from "./secret-ref.js";
 import type { StepMeasure } from "./switchover.js";
 import { hasTfRef, resolveTfRefs } from "./tf-facts.js";
 
@@ -44,7 +45,8 @@ export function replicationFromEnv(migrationId: string, env0: NodeJS.ProcessEnv 
 // DECISION(team): 끝점은 이전마다 DB 행으로 (2026-11-05, 보안·온프레 영역)
 /** replication_endpoints 줄로 Migration 만들기. 줄이 없으면 null (부르는 쪽이 예전 env 길로), 한쪽만 있으면 오류 (줄과 env 를 섞지 않는다).
  *  표 목록·지연 한도 같은 조절값(REPL_TABLES·REPL_MAX_LAG_MS …)은 끝점이 아니라서 예전처럼 env */
-export function replicationFromRecords(migrationId: string, records: readonly EndpointRecord[], env: NodeJS.ProcessEnv = process.env): Migration | null {
+export function replicationFromRecords(migrationId: string, records: readonly EndpointRecord[], env: NodeJS.ProcessEnv = process.env,
+  managed?: ManagedSecrets): Migration | null {
   const mine = records.filter((r) => r.migrationId === migrationId);
   if (mine.length !== records.length) throw new ReplConfigError(`복제 끝점 줄의 이전 번호가 ${migrationId} 와 다르다`, "REPL_ENDPOINT_INCOMPLETE");
   if (!mine.length) return null;
@@ -53,7 +55,7 @@ export function replicationFromRecords(migrationId: string, records: readonly En
     throw new ReplConfigError(`복제 끝점 줄이 한쪽만 있다 (source ${src.length}·target ${dst.length}). tools/repl-endpoint.ts set 으로 두 쪽을 다 등록한다`, "REPL_ENDPOINT_INCOMPLETE");
   if (src[0]!.tenantId !== dst[0]!.tenantId) throw new ReplConfigError("복제 끝점 두 줄의 회사가 다르다", "REPL_ENDPOINT_INCOMPLETE");
   const ep = (r: EndpointRecord) => {
-    try { return endpointFromRecord(r, env); }
+    try { return endpointFromRecord(r, env, managed); }
     catch (e) { throw new ReplConfigError(`${r.side} 끝점(${r.label}): ${(e as Error).message}`, "REPL_SECRET_UNRESOLVED"); }
   };
   return new Migration({

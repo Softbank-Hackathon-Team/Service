@@ -11,13 +11,31 @@ import { sourceDbLinkOperatePolicy } from "../src/aws/source-db-link.js";
 // 온프레 복제 중계기 권한. 원본 = infra/permissions/aws-relay-statements.json (worker relay/aws-relay.ts 가 부르는 동작)
 // SourceDbEgressToRelay 는 출발 RDS 보안 그룹 하나로 좁혀서 스택 매개변수 SourceDbSecurityGroupId 로 받는다 (나가기: 롤백 역복제, 들어오기: 워커 출발 입구·온프레 정방향 터널).
 // DRAFT(ai): 매개변수 기본값은 빈 값. 비우면 이 문장을 빼서 온프레 복제를 안 쓰는 고객의 스택이 그대로 만들어진다 (그때 중계기 RDS 나가기 규칙은 AccessDenied)
-const RELAY_SG_PARAM_SID = "SourceDbEgressToRelay";
+// SourceDbMasterSecretRead 는 출발 RDS 가 관리하는 마스터 비밀(rds!db-…) 하나만 읽는다. 비밀 이름 끝이 무작위라 ARN 대신
+//   RDS 가 붙이는 태그 aws:rds:primaryDBInstanceArn = 그 DB 로 묶는다 (AppDbSecretRead 와 같은 방식). 스택 매개변수 SourceDbInstanceId 로 받는다.
+// DRAFT(ai): 이 매개변수도 기본값은 빈 값이고, 비우면 문장이 빠진다 (그때 워커는 예전 env: 비밀번호 참조로만 돈다)
+const PARAM_GATED_SIDS: Record<string, string> = {
+  SourceDbEgressToRelay: "HasSourceDbSecurityGroup",
+  SourceDbMasterSecretRead: "HasSourceDbInstance",
+};
+const STACK_PARAMS = new Set(["SourceDbSecurityGroupId", "SourceDbInstanceId"]);
+/** "${AccountId}"·"${매개변수}" 자리가 있는 글자 → Fn::Join (자리가 없으면 그대로) */
+const joinRefs = (s: string): unknown => {
+  if (!/\$\{/.test(s)) return s;
+  return { "Fn::Join": ["", s.split(/\$\{(AccountId|SourceDbSecurityGroupId|SourceDbInstanceId)\}/).map((part, i) =>
+    i % 2 === 0 ? part : part === "AccountId" ? { Ref: "AWS::AccountId" } : STACK_PARAMS.has(part) ? { Ref: part } : part)] };
+};
+const withRefs = (v: unknown): unknown =>
+  typeof v === "string" ? joinRefs(v)
+    : Array.isArray(v) ? v.map(withRefs)
+      : v && typeof v === "object" ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, withRefs(x)])) : v;
 export function relayOperatePolicy() {
   const doc = JSON.parse(readFileSync(new URL("../../../infra/permissions/aws-relay-statements.json", import.meta.url), "utf8")) as { Version: string; Statement: ({ Sid: string; Resource: unknown } & Json)[] };
   return {
     Version: doc.Version,
-    Statement: doc.Statement.map((x) => x.Sid !== RELAY_SG_PARAM_SID ? x : {
-      "Fn::If": ["HasSourceDbSecurityGroup", { ...x, Resource: { "Fn::Join": ["", String(x.Resource).split(/\$\{(AccountId|SourceDbSecurityGroupId)\}/).map((part) => part === "AccountId" ? { Ref: "AWS::AccountId" } : part === "SourceDbSecurityGroupId" ? { Ref: part } : part)] } }, { Ref: "AWS::NoValue" }],
+    Statement: doc.Statement.map((x) => {
+      const cond = PARAM_GATED_SIDS[x.Sid];
+      return cond ? { "Fn::If": [cond, withRefs(x), { Ref: "AWS::NoValue" }] } : x;
     }),
   };
 }
@@ -107,9 +125,15 @@ export function buildAwsConnectTemplate(operatePolicy: Json, boundaryPolicy: Jso
         Type: "String", Default: "", AllowedPattern: "^$|^sg-[0-9a-f]{8,17}$",
         Description: "온프레 복제를 쓸 때 출발 RDS 보안 그룹 ID. 비우면 중계기의 RDS 나가기·들어오기 규칙 권한을 넣지 않는다",
       },
+      // RDS DB 식별자 규칙: 글자로 시작, 글자·숫자·하이픈, 63자 이하
+      SourceDbInstanceId: {
+        Type: "String", Default: "", AllowedPattern: "^$|^[a-zA-Z][a-zA-Z0-9-]{0,62}$",
+        Description: "온프레 복제를 쓸 때 출발 RDS DB 식별자. RDS 가 관리하는 그 DB 의 마스터 비밀(Secrets Manager) 하나만 읽게 한다. 비우면 이 권한을 넣지 않는다",
+      },
     },
     Conditions: {
       HasSourceDbSecurityGroup: { "Fn::Not": [{ "Fn::Equals": [{ Ref: "SourceDbSecurityGroupId" }, ""] }] },
+      HasSourceDbInstance: { "Fn::Not": [{ "Fn::Equals": [{ Ref: "SourceDbInstanceId" }, ""] }] },
       CreateBoundary: { "Fn::Equals": [{ Ref: "CreateBoundaryPolicy" }, "true"] },
       HasArgoHub: { "Fn::Not": [{ "Fn::Equals": [{ Ref: "ArgoHubRoleArn" }, ""] }] },
     },

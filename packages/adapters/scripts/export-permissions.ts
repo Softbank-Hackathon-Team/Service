@@ -137,6 +137,9 @@ writeFileSync(join(out, "gcp-operate-custom-role.yaml"),
   role("platform-operate", "infra/modules/gcp/app plan/apply/destroy, IAM 정책 바꾸기 제외 (자동 생성)", gcpRest));
 writeFileSync(join(out, "gcp-operate-iam-custom-role.yaml"),
   role("platform-operate-iam", "app- 접두어 SA·시크릿·버킷·토픽·구독의 IAM 정책만 (조건부 바인딩 필수, 자동 생성)", gcpIam));
+// B-2: 환경 층(gcp/env)을 만드는 svc-env 역할 = 읽기 + 만들기 (지우기 없음: 환경 층은 사람이 지운다). worker 가 env 층 단계에서만 빌린다
+writeFileSync(join(out, "gcp-env-custom-role.yaml"),
+  role("platform-env", "infra/modules/gcp/env 만들기 (지우기·IAM 정책 바꾸기 없음, 자동 생성)", actionsFor(gcp.PERMS, [...gcp.ENV_LAYER_TYPES], "apply")));
 writeFileSync(join(out, "gcp-operate-iam-binding-condition.json"), JSON.stringify({
   title: "only-app-prefixed",
   description: "플랫폼이 만든 app- 접두어 서비스 계정·시크릿·버킷·토픽·구독에만",

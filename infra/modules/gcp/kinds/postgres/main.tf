@@ -201,6 +201,8 @@ output "user" { value = var.cfg.app_user }
 # 비밀 "이름"만. KIND_INTERNAL_OUTPUTS.postgres = ["password_secret"]
 output "password_secret" { value = google_secret_manager_secret.db_password.secret_id }
 output "password_secret_resource" { value = google_secret_manager_secret.db_password.id }
+# Secret Manager 가 돌려준 이름 projects/<번호>/secrets/… (gcp/root 의 ESO 읽기 바인딩이 프로젝트 번호를 여기서 읽는다)
+output "password_secret_name" { value = google_secret_manager_secret.db_password.name }
 output "replica_names" { value = [for r in google_sql_database_instance.replica : r.name] }
 # LINK_OUTPUTS.postgres = host·port·url·user (비밀번호 없음)
 output "link" {

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AppSpecV2, FieldMetaV2, OutOfBoundaryV2 } from "./spec-v2.js";
+import { AppSpecV2, ApprovalRowV2, FieldMetaV2, OutOfBoundaryV2 } from "./spec-v2.js";
 import { ImportAccuracy } from "./import-accuracy.js";
 
 // 명세 보기·고치기 API 계약. 명세(IR)는 하나뿐이다 (spec-v2.ts). 예전 v1 명세(서비스 1개 + DB 1개)는 없앴다.
@@ -53,6 +53,8 @@ export const MigrationSpecView = z.object({
   accuracy: ImportAccuracy.optional(),
   /** BOUNDVIEW: 앱 경계 밖이라 명세에 안 넣은 자원 (이름·종류·이유만, 값 없음). 판에 그 칸이 있을 때만(빈 배열도 그대로) */
   outOfBoundary: z.array(OutOfBoundaryV2).optional(),
+  /** 출발 관리형 상품이 도착에서 다른 상품이 되는 자원 (substitute 줄만, 계획 확인 항목과 같은 계산). 미리보기라 저장하지 않는다. 키가 없으면 옛 응답 */
+  substitutions: z.array(ApprovalRowV2).optional(),
   // DRAFT(ai): 화면(apps/web)이 아직 예전 이름으로 읽는다. 값은 위 spec·fieldMeta·needsReview 와 같다. 화면이 새 이름으로 옮기면 지운다
   specV2: AppSpecV2,
   fieldMetaV2: FieldMetaV2,

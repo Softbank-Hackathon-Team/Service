@@ -99,6 +99,23 @@ test("ID-7 거부: 예전 스크립트 고객(svc-plan 없음)만 svc-operate �
     (e: unknown) => e instanceof GcpIssueError && e.reason === "ROLE_ASSUME_DENIED");
 });
 
+test("B-2: 환경 층(policy env_layer)은 svc-env 를 빌리고, svc-env 가 없으면 svc-operate 로 넘어가지 않고 ROLE_NOT_FOUND", async () => {
+  const ENV = "svc-env@cust-proj-123.iam.gserviceaccount.com";
+  const MID = "44444444-4444-4444-8444-444444444444";
+  const f = fake();
+  const ok = await issuer(f.run).issue(ctx(T1, OPR, { purpose: "operate", stage: "apply", policy: "env_layer", migrationId: MID }));
+  assert.deepEqual(f.calls.map((c) => target(c.args)), [ENV]);
+  assert.equal(ok.detail.serviceAccount, ENV);
+  const calls: string[] = [];
+  const missing: GcloudRun = async (args) => {
+    calls.push(target(args)!);
+    return target(args) === ENV ? { code: 1, stdout: "", stderr: "ERROR: NOT_FOUND: Service account svc-env does not exist" } : { code: 0, stdout: `${TOKEN}\n`, stderr: "" };
+  };
+  await assert.rejects(issuer(missing).issue(ctx(T1, OPR, { purpose: "operate", stage: "apply", policy: "env_layer", migrationId: MID })),
+    (e: unknown) => e instanceof GcpIssueError && e.reason === "ROLE_NOT_FOUND");
+  assert.deepEqual(calls, [ENV], "svc-operate 로 다시 빌리지 않는다");
+});
+
 // FM-GCP-02: 네트워크·프록시 실패는 사유(끝)가 아니라 재시도 (null). 진짜 거부·없음은 그대로
 test("FM-GCP-02: 연결·프록시·DNS·시간 초과 글은 null(재시도), 권한 거부·SA 없음은 그대로", async () => {
   const { gcloudFailure } = await import("../src/gcp-cli.js");

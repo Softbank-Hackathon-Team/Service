@@ -9,6 +9,6 @@ test("upgrade_freeze_hours: 기본 0(끔), 0~720 만 받음, 켜면 NO_UPGRADES�
   assert.match(tf, /variable "upgrade_freeze_hours" \{[\s\S]*?default = 0[\s\S]*?upgrade_freeze_hours >= 0 && var\.upgrade_freeze_hours <= 720/);
   assert.match(tf, /dynamic "maintenance_policy" \{\s*for_each = var\.upgrade_freeze_hours > 0 \? \[1\] : \[\]/);
   assert.match(tf, /scope = "NO_UPGRADES"/);
-  assert.match(tf, /ignore_changes = \[maintenance_policy\]/);
+  assert.match(tf, /ignore_changes = \[[^\]]*\bmaintenance_policy\b/);
   assert.doesNotMatch(tf, /20\d\d-\d\d-\d\dT/, "날짜를 레포에 적지 않음");
 });

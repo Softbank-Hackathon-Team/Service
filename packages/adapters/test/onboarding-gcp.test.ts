@@ -48,7 +48,7 @@ test("A안: 이름 조건(A/B·-pg-) 파일이 없고, 원래 프로젝트(cust-
 test("tokenCreator는 회사 전용 SA에게, SA 단위로만", () => {
   const out = dryOut();
   const bindings = out.split("\n").filter((l) => l.includes("roles/iam.serviceAccountTokenCreator"));
-  assert.equal(bindings.length, 3);   // 관찰·plan(ID-7)·실행
+  assert.equal(bindings.length, 4);   // 관찰·plan(ID-7)·실행·환경 층(B-2 svc-env)
   assert.ok(bindings.every((l) => l.includes(`--member=serviceAccount:${SA}`) && l.includes("service-accounts add-iam-policy-binding")));
   // 프로젝트 전체에 tokenCreator 금지
   assert.ok(!out.split("\n").some((l) => l.includes("projects add-iam-policy-binding") && l.includes("tokenCreator")));

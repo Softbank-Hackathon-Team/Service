@@ -9,9 +9,10 @@ import {
 } from "./shared.js";
 import { assertGrants, gcpGrantTypes, grantsJsonFor } from "./grants.js";
 import { secretStoreName } from "./capability-checks.js";
-import { buildWorkloadValues, cloudPostgresValues } from "./cloud.js";
+import { buildWorkloadValues, cloudPostgresValues, INGRESS_SECRETS } from "./cloud.js";
 import { cacheVars, cachesOf, dataTypesOf, objectStoreVars, objectStoresOf, queueVars, queuesOf } from "./data.js";
 import { assertDataFit, dbIdentityFor } from "./data-fit.js";
+import { cloudSubstitutes } from "./cloud-substitutes.js";
 import { AdapterError } from "../common/errors.js";
 import { managedJobJson, managedServiceJson, managedWorkloadValues } from "./managed.js";
 import { vmServiceJson, vmWorkloadValues } from "./vm.js";
@@ -45,6 +46,11 @@ const CAPS = [...K8S_RENDER_CAPS, "volume.pvc", "kind.postgres.15", "kind.postgr
   // RUNTIMEMAP v2: VM 출발 → GCE (root vm_json + kinds/vm). 못 그리는 칸은 vmBlockers
   "runtime.vm"];
 
+// B-2 (나): k8s 도착에 입구가 있으면(buildWorkloadValues 가 cloudflared 를 그리는 조건) 입구 파드 비밀 그릇을 루트가 값 없이 만든다.
+//   ESO 는 그릇마다 받은 읽기만 있어서 사람이 손으로 만든 그릇은 못 읽는다
+const ingressSecretsOf = (spec: AppSpecV2): string[] =>
+  managedServicesOf(spec).length || vmServicesOf(spec).length || !spec.entry?.hosts.length ? [] : [...INGRESS_SECRETS];
+
 export function resourceTypesV2(spec: AppSpecV2): string[] {
   const t = new Set(["data.google_client_config", "data.google_container_cluster", "kubernetes_namespace_v1"]);
   const managed = managedServicesOf(spec).length > 0;
@@ -61,7 +67,7 @@ export function resourceTypesV2(spec: AppSpecV2): string[] {
     if (vms.some((w) => secretNamesOf(w).length)) ["google_secret_manager_secret", "google_secret_manager_secret_iam_member"].forEach((x) => t.add(x));
   }
   if (!managed && !vms.length && identitiesOf(spec).length) ["google_service_account", "google_service_account_iam_member"].forEach((x) => t.add(x));
-  if (!managed && !vms.length && workloadsOf(spec).some((w) => secretNamesOf(w).length)) ["google_secret_manager_secret", "google_secret_manager_secret_iam_member"].forEach((x) => t.add(x));
+  if (!managed && !vms.length && (workloadsOf(spec).some((w) => secretNamesOf(w).length) || ingressSecretsOf(spec).length)) ["google_secret_manager_secret", "google_secret_manager_secret_iam_member"].forEach((x) => t.add(x));
   if (postgresOf(spec).length) ["google_sql_database_instance", "google_sql_database", "google_sql_user", "random_password",
     "google_secret_manager_secret", "google_secret_manager_secret_version", "google_secret_manager_secret_iam_member"].forEach((x) => t.add(x));
   dataTypesOf("gcp", spec).forEach((x) => t.add(x));
@@ -76,6 +82,7 @@ export const gcpTarget: TargetBuilder = {
   imageRef: (src, t) => gcpAdapter.imageRef(src, t),
   // GCP 는 세션 정책이 없다 → 이 목록 = 테넌트 SA 커스텀 역할 + testIamPermissions 사전 점검 (v1 과 같음)
   operateActionsV2: (spec, purpose) => actionsFor(PERMS, resourceTypesV2(spec), purpose),
+  substitutionsV2: (spec, source) => cloudSubstitutes("gcp", spec, source),
   toTerraformV2(spec: AppSpecV2, t: Target): TfRootCall {
     assertRenderable(spec, CAPS);
     assertGrants("gcp", spec);
@@ -126,6 +133,7 @@ export const gcpTarget: TargetBuilder = {
       secret_names_json: JSON.stringify([...new Set(i.workloads.flatMap((w) => secretNamesOf(byId.get(w)!)))].sort()),
       ...grantsJsonFor("gcp", spec, i.id),
     }));
+    const ingressSecrets = ingressSecretsOf(spec);
     const instances = instancesOf("gcp", [
       ...postgres.map((p) => ({ kind: "postgres" as const, id: p.id })),
       ...identity.map((i) => ({ kind: "identity" as const, id: i.id })),
@@ -160,6 +168,7 @@ export const gcpTarget: TargetBuilder = {
         // JOBBUILD: 관리형 앱의 예약 잡이 있을 때만 키를 둔다 (없으면 기존 계획 지문 그대로)
         ...(managedJobsOf(spec).length ? { job_json: managedJobJson("gcp", spec, t, (src) => gcpAdapter.imageRef(src, t)) } : {}),
         ...(vm ? { vm_json: vmServiceJson("gcp", spec, t, (src) => gcpAdapter.imageRef(src, t)) } : {}),
+        ...(ingressSecrets.length ? { ingress_secret_names_json: JSON.stringify(ingressSecrets) } : {}),
       },
       instances,
     };
@@ -178,6 +187,7 @@ export const gcpTarget: TargetBuilder = {
       saAnnotations: (id) => ({ "iam.gke.io/gcp-service-account": fromOut(out, `identity.${id}.gsa_email`) }),
       postgres: cloudPostgresValues(spec, out, "db_password_secret_id", {}, 5432),   // Cloud SQL 은 5432 고정 (모듈 link port 도 "5432")
       ingressClass: "gce",
+      ingressSecretsByApply: true,
     });
   },
 };

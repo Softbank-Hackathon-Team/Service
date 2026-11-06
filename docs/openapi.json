@@ -6979,6 +6979,49 @@
         ],
         "additionalProperties": false
       },
+      "ApprovalRowV2": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "runtime_change",
+              "build",
+              "tls_relaxed",
+              "host_access",
+              "public_bucket",
+              "substitute"
+            ]
+          },
+          "subject": {
+            "type": "string",
+            "pattern": "^[a-z](?:[a-z0-9-]{0,38}[a-z0-9])?$"
+          },
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "lost": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "appChange": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "subject"
+        ],
+        "additionalProperties": false
+      },
       "AuthConfig": {
         "type": "object",
         "properties": {
@@ -15240,6 +15283,12 @@
               "$ref": "#/components/schemas/OutOfBoundaryV2"
             }
           },
+          "substitutions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApprovalRowV2"
+            }
+          },
           "specV2": {
             "$ref": "#/components/schemas/AppSpecV2"
           },
@@ -15516,7 +15565,8 @@
           "host_access",
           "public_bucket",
           "provision_reuse",
-          "env_layer_create"
+          "env_layer_create",
+          "substitute"
         ]
       },
       "PlanAcknowledgement": {
@@ -15534,6 +15584,21 @@
           },
           "ref": {
             "type": "string"
+          },
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          },
+          "lost": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "appChange": {
+            "type": "boolean"
           }
         },
         "required": [

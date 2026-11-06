@@ -7,9 +7,12 @@ import { ChartSealedSecret } from "./chart-values.js";
 
 /** 비밀번호 참조 문법.
  *  derive:<용도>  = REPL_SECRET_MASTER_KEY 로 HMAC 유도 (회사·이전·쪽·용도마다 다름)
- *  env:<이름>     = 워커 환경 변수. 이름은 REPL_SECRET_ 로 시작해야 한다 (행이 DATABASE_URL 같은 다른 비밀을 못 읽게) */
-// DRAFT(ai): 용도 글자는 소문자·숫자·_·- 1~64자. db 0050 의 CHECK 와 같은 규칙
-export const PASSWORD_REF_RE = /^(derive:[a-z0-9_-]{1,64}|env:REPL_SECRET_[A-Z0-9_]+)$/;
+ *  env:<이름>     = 워커 환경 변수. 이름은 REPL_SECRET_ 로 시작해야 한다 (행이 DATABASE_URL 같은 다른 비밀을 못 읽게)
+ *  aws-sm:<ARN>   = 출발 RDS 가 관리하는 마스터 비밀(Secrets Manager rds!db-…). 워커가 출발 실행 역할을 빌려 그때그때 읽고 메모리에만 둔다 */
+// DRAFT(ai): 용도 글자는 소문자·숫자·_·- 1~64자. db 0050·0053 의 CHECK 와 같은 규칙
+// DRAFT(ai): aws-sm 은 RDS 관리 비밀(rds!db-)만 받는다. 줄이 고객 계정의 다른 비밀을 가리키지 못하게 (고객 역할 문장도 rds!db-* + 그 DB 태그로만 허용)
+export const PASSWORD_REF_RE =
+  /^(derive:[a-z0-9_-]{1,64}|env:REPL_SECRET_[A-Z0-9_]+|aws-sm:arn:aws:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:rds!db-[A-Za-z0-9-]+)$/;
 
 export const ReplicationSide = z.enum(["source", "target"]);
 export type ReplicationSide = z.infer<typeof ReplicationSide>;
@@ -32,7 +35,7 @@ export const ReplicationEndpoint = z.object({
   port: PORT,
   dbname: NAME,
   username: NAME,
-  passwordRef: z.string().regex(PASSWORD_REF_RE, "passwordRef: derive:<용도> | env:REPL_SECRET_<이름>"),
+  passwordRef: z.string().regex(PASSWORD_REF_RE, "passwordRef: derive:<용도> | env:REPL_SECRET_<이름> | aws-sm:<RDS 관리 비밀 ARN>"),
   /** 상대 DB 가 이 DB 에 붙을 때(CREATE SUBSCRIPTION) 쓰는 주소. 없으면 host/port */
   peerHost: HOST.nullable(),
   peerPort: PORT.nullable(),

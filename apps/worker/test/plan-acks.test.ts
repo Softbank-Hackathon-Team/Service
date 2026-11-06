@@ -17,12 +17,12 @@ const base = {
 const cost = (target: number): PlanCostSummary =>
   ({ currency: "USD", monthlyTarget: target, monthlySource: 100, deltaMonthly: target - 100, unknownFields: [] });
 
-test("정상: 비용 요약이 있으면 계획서에 costSummary·확인 항목 2개(cost·failure_cost_policy)가 실린다", () => {
+test("정상: 비용 요약이 있으면 계획서에 costSummary·확인 항목(cost·failure_cost_policy, AWS→GCP 라 DB 대체 substitute)이 실린다", () => {
   const p = buildPlanDoc({ ...base, costSummary: cost(80) }, {});
   assert.equal(PlanDoc.safeParse(p).success, true);
   assert.equal(p.specVersion, 3);
   assert.equal(p.costSummary?.monthlyTarget, 80);
-  assert.deepEqual(p.acknowledgements?.map((a) => a.id), ["cost", "failure_cost_policy"]);
+  assert.deepEqual(p.acknowledgements?.map((a) => a.id), ["cost", "failure_cost_policy", "substitute:shop-db"]);
   assert.match(p.acknowledgements![0]!.text, /\$80/);
 });
 
