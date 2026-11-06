@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Icon, type IconName } from './Icon';
 import s from './controls.module.css';
 import { t } from '../../lib/i18n';
@@ -12,14 +12,34 @@ type ActionPillProps = {
   onClick?: () => void;
 };
 
-/** 화면에 하나뿐인 지금 할 행동. 항상 오른쪽 아래에 둔다. */
+/** 글이 칸보다 길어 끝이 잘렸을 때만 전체 글을 툴팁으로 단다 */
+function useClippedTitle(label: string) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [clipped, setClipped] = useState(false);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const check = () => setClipped(el.scrollWidth > el.clientWidth);
+    check();
+    const observer = new ResizeObserver(check);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [label]);
+  return { ref, title: clipped ? label : undefined };
+}
+
+/**
+ * 화면에 하나뿐인 지금 할 행동. 항상 오른쪽 아래에 둔다.
+ * 행동 줄(ActionRow)에서는 작은 버튼 오른쪽 끝에 붙고(data-primary), 줄이 모자라면 줄을 바꾸지 않고 글 끝을 줄인다
+ */
 export function ActionPill({ label, icon = 'arrow-right', tone = 'tile', disabled, type = 'button', onClick }: ActionPillProps) {
+  const text = useClippedTitle(label);
   return (
-    <button type={type} className={`${s.action} ${s[tone]} t-h3`} disabled={disabled} onClick={onClick}>
+    <button type={type} data-primary className={`${s.action} ${s[tone]} t-h3`} disabled={disabled} title={text.title} onClick={onClick}>
       <span className={s.disc}>
         <Icon name={icon} size={20} />
       </span>
-      {label}
+      <span ref={text.ref} className={s.actionLabel}>{label}</span>
     </button>
   );
 }

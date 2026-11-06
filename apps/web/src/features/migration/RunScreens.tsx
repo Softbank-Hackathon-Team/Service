@@ -187,8 +187,12 @@ export function WindowScreen({ migration, route, onChanged }: ScreenProps) {
         <SecurityFold migration={migration} />
         {!over && (
           <ActionRow notice={error}>
-            <RollbackPill migration={migration} busy={busy} onConfirm={() => void run(() => api.rollback(migration.id))} />
-            {asking && <BarPill label={t('그만두기')} onClick={() => setAsking(false)} />}
+            {/* 회수를 되묻는 동안은 롤백을 비켜 둔다. 되돌릴 수 없다는 글이 줄지 않고 한 줄에 다 보인다 */}
+            {asking ? (
+              <BarPill label={t('그만두기')} onClick={() => setAsking(false)} />
+            ) : (
+              <RollbackPill migration={migration} busy={busy} onConfirm={() => void run(() => api.rollback(migration.id))} />
+            )}
             <ActionPill
               label={busy ? t('보내는 중') : asking ? t('되돌릴 수 없습니다. 회수하기') : t('리소스 회수')}
               icon="server"

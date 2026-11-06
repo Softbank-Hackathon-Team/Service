@@ -126,6 +126,7 @@ export function useCostConsent(code: string | null) {
 
 /**
  * 되돌리기 어려운 보조 행동. 한 번 더 눌러야 실행한다.
+ * 묻는 동안(data-asking)은 행동 줄의 다른 작은 버튼이 비켜서 줄이 한 줄로 남는다 (tiles.module.css .actionRow)
  * TODO(human): 서버는 거절(POST /plans/:id/approvals)·롤백·취소·재개에 선택 칸 reason(500자)을 받아 감사 기록에 남긴다.
  *   화면은 아직 보내지 않는다. 이유 입력을 둘지, 둔다면 어느 행동에서 필수로 할지는 사람이 정한다.
  */
@@ -133,7 +134,7 @@ export function ConfirmPill({ label, confirmLabel, icon, tone, disabled, onConfi
   const [asking, setAsking] = useState(false);
   if (!asking) return <BarPill label={label} icon={icon} tone={tone} onClick={disabled ? undefined : () => setAsking(true)} />;
   return (
-    <span className={s.confirm}>
+    <span className={s.confirm} data-asking>
       <BarPill label={confirmLabel} icon={icon} tone="danger" onClick={onConfirm} />
       <BarPill label={t('그만두기')} onClick={() => setAsking(false)} />
     </span>

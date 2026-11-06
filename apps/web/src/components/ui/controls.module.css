@@ -9,6 +9,13 @@
   white-space: nowrap;
   cursor: pointer;
   transition: background-color 160ms ease;
+  max-width: 100%;
+  min-width: 0;
+}
+.actionLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .action:disabled {
   background: var(--color-bg-action-disabled);
@@ -17,6 +24,7 @@
 }
 .disc {
   display: grid;
+  flex: none;
   place-items: center;
   width: var(--size-control-m);
   height: var(--size-control-m);

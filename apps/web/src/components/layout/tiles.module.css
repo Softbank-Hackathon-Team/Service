@@ -52,12 +52,25 @@
   gap: var(--space-8);
   min-width: 0;
 }
+/* 행동 버튼 줄은 늘 한 줄이다. 작은 버튼은 칸 왼쪽 끝부터, 주 버튼(ActionPill)은 오른쪽 끝. 모자라면 주 버튼 글 끝을 줄인다.
+   근거 칸 너비(--col-side)는 화면 너비와 상관없이 같아서 버튼 사이는 되묻기 버튼 쌍(.confirm)과 같은 8px */
 .actionRow {
   display: flex;
+  align-self: stretch;
   align-items: center;
-  justify-content: flex-end;
-  flex-wrap: wrap;
-  gap: var(--space-12);
+  gap: var(--space-8);
+  min-width: 0;
+}
+.actionRow > * {
+  flex: none;
+}
+.actionRow > [data-primary] {
+  flex: 0 1 auto;
+  margin-inline-start: auto;
+}
+/* 작은 버튼 하나가 되묻는 동안(ConfirmPill)은 다른 작은 버튼이 비킨다. 되묻는 두 버튼과 주 버튼만 남아도 한 줄이다 */
+.actionRow:has(> [data-asking]) > :not([data-asking], [data-primary]) {
+  display: none;
 }
 .actionNotice {
   align-self: stretch;
