@@ -39,3 +39,29 @@ test("DB-08 거부: superuser 앱 계정도 막는다", { skip }, async () => {
   assert.equal(c.ok, false);
   assert.match(c.detail, /is superuser/);
 });
+
+// 2026-11-07 GCP → 온프레 실측: Cloud SQL API 로 만든 앱 계정은 cloudsqlsuperuser 만 물려받는다 (쓰기 전부 권한 없음) → 이름만으로 막지 않는다
+test("DB-08 통과: cloudsqlsuperuser 만 물려받은 앱 계정(Cloud SQL API 사용자 모양)은 막지 않고 그 사실을 남긴다", { skip }, async () => {
+  await q(SOURCE, `
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='cloudsqlsuperuser') THEN CREATE ROLE cloudsqlsuperuser NOLOGIN; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='db08_csql_app') THEN CREATE ROLE db08_csql_app LOGIN; END IF;
+    END $$;
+    GRANT cloudsqlsuperuser TO db08_csql_app;`);
+  const c = await db08({ ...SOURCE, appRole: "db08_csql_app" });
+  assert.equal(c.ok, true, c.detail);
+  assert.match(c.detail, /inherits cloudsqlsuperuser only/);
+});
+
+test("DB-08 거부: cloudsqlsuperuser 가 pg_write_all_data 를 주는 서버면 그 길로 막는다", { skip }, async () => {
+  await q(SOURCE, `
+    DO $$ BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='db08_csql_wa') THEN CREATE ROLE db08_csql_wa NOLOGIN; END IF;
+      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='db08_csql_wa_app') THEN CREATE ROLE db08_csql_wa_app LOGIN; END IF;
+    END $$;
+    GRANT pg_write_all_data TO db08_csql_wa; GRANT db08_csql_wa TO db08_csql_wa_app;`);
+  // 이름이 다른 역할로 흉내 낸다: 공유 cloudsqlsuperuser 에 pg_write_all_data 를 붙이면 다른 시험이 흔들린다
+  const c = await db08({ ...SOURCE, appRole: "db08_csql_wa_app" });
+  assert.equal(c.ok, false);
+  assert.match(c.detail, /inherits pg_write_all_data/);
+});
