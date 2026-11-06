@@ -208,6 +208,20 @@ async function serverChecks(c: pg.Client, e: Endpoint, side: "source" | "target"
       detail: f.su ? `app role ${e.appRole} is superuser` : f.via.length ? `app role ${e.appRole} inherits ${f.via.join(", ")}` : `app role ${e.appRole} has direct grants only`,
       hint: `앱이 관리자 계정(마스터 등)으로 붙으면 컷오버 때 쓰기를 막을 수 없다. 앱 전용 계정(LOGIN, 표·시퀀스 권한만 직접 GRANT)을 만들어 앱이 그 계정으로 붙게 하고, 명세 appUser 를 그 계정으로 바꾼다` });
   }
+  // DB-09 (ADR-029): 전환은 DB 단위 설정(ALTER DATABASE … default_transaction_read_only)을 바꾼다 → 관리자가 DB 주인이거나 주인 역할을 물려받아야 한다.
+  //   CNPG 의 svc_migrate 는 Cluster initdb.owner 역할의 멤버로만 권한을 얻는다. 이미 있는 Cluster 는 initdb 가 다시 안 돌아서
+  //   실제 DB 주인이 명세 appUser(차트가 initdb.owner 로 렌더)와 다르면, 복제·컷오버까지 간 뒤 "must be owner of database" 로 깨졌다
+  //   (2026-11-06 실플랫폼 b76540b7 CUTOVER_HALFWAY). 복제를 걸기 전에 여기서 멈춘다
+  const o = (await c.query<{ owner: string; member: boolean; su: boolean }>(
+    `SELECT pg_get_userbyid(d.datdba) AS owner, pg_has_role(current_user, d.datdba, 'MEMBER') AS member,
+            (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) AS su
+       FROM pg_database d WHERE d.datname = current_database()`)).rows[0]!;
+  // DRAFT(ai): CNPG(실측된 실패)만 막고, RDS·Cloud SQL·Azure 는 권고(warn). 관리형 DB 는 관리자=마스터가 DB 를 만들어 보통 주인이지만 실측 전이라 결선 전에 새로 막지 않는다
+  add({ id: "DB-09", side, ok: o.su || o.member, ...(e.provider === "cnpg" ? {} : { level: "warn" as const }),
+    detail: `database owner ${o.owner}, ${o.su ? "admin is superuser" : o.member ? "admin can act as owner" : "admin is not a member of the owner role"}`,
+    hint: e.provider === "cnpg"
+      ? `CNPG Cluster initdb.owner(= 명세 appUser ${e.appRole})와 실제 DB 주인(${o.owner})이 다르다. 처음 이전하는 도착이면 DB 를 비우고 ALTER DATABASE <db> OWNER TO ${e.appRole}, 아니면 명세 appUser 를 ${o.owner} 로 맞춘다`
+      : `관리자 계정에 DB 주인 역할을 준다: GRANT ${o.owner} TO <관리자>` });
 }
 
 /** Z77: Cloud SQL 관리자(cloudsqlsuperuser)는 자기에게 REPLICATION 을 줄 수 있다 (Cloud SQL 논리 복제 안내의 ALTER USER … WITH REPLICATION).
