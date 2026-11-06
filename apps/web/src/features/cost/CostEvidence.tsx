@@ -3,8 +3,6 @@ import { FoldTile } from '../../components/layout/tiles';
 import { Badge } from '../../components/ui/controls';
 import { Icon } from '../../components/ui/Icon';
 import { api } from '../../lib/api';
-import { errorText } from '../../lib/errors';
-import { is404 } from '../../lib/http';
 import { t } from '../../lib/i18n';
 import { ago } from '../../lib/text';
 import type { CostBreakdown, CostGap, CostLine, CostMapping, CostPromotion, MoveCostTarget, MoveCostView, SourceScope } from '../../lib/types';
@@ -16,6 +14,8 @@ import {
   PROMO_STATUS,
   basisTag,
   changeText,
+  costAbsent,
+  costErrorText,
   envCostCaption,
   envCostSummary,
   extraRefs,
@@ -60,9 +60,6 @@ export function useMoveCost(sourceId: string | null, scope: SourceScope, targetI
   useEffect(() => setWaiting(unavailable), [unavailable]);
   return move;
 }
-
-/** 404 는 이 환경의 비용 경로가 없다는 뜻이라 따로 말한다 */
-const costErrorText = (error: unknown) => (is404(error) ? t('서버에서 이 환경의 비용을 찾지 못했습니다.') : errorText(error));
 
 function Amount({ value, className = 't-label-md' }: { value: number; className?: string }) {
   return <span className={`${c.amount} ${className}`}>{money(value)}</span>;
@@ -273,11 +270,11 @@ function CostFoot({ breakdown, checkedAt }: { breakdown: CostBreakdown | null; c
 
 /**
  * 환경 목록 줄 아래 "월 $X 추산". 일부만 셌으면 주의 색, 계산할 수 없으면 짧은 이유.
- * DRAFT(ai): 404(비용 경로가 없는 서버)는 아무 말도 하지 않는다. 목록이 오류 글로 덮이지 않게
+ * DRAFT(ai): 비용 경로가 없는 서버(costAbsent)면 아무 말도 하지 않는다. 줄마다 같은 말로 목록을 덮지 않게
  */
 export function EnvCostCaption({ envId }: { envId: string }) {
   const cost = useEnvCost(envId);
-  const caption = envCostCaption(cost.data, cost.error != null && !is404(cost.error));
+  const caption = envCostCaption(cost.data, cost.error);
   if (!caption) return null;
   return <span className={`t-caption ${caption.warn ? 'c-warning' : 'c-tertiary'}`}>{caption.text}</span>;
 }
@@ -293,7 +290,7 @@ export function EnvCostFold({ envId }: { envId: string }) {
   const breakdown = view?.breakdown ?? null;
   const f = projection ? figuresOf(projection) : null;
   return (
-    <FoldTile title={t('월 비용')} summary={envCostSummary(view, cost.loading)} defaultOpen={false}>
+    <FoldTile title={t('월 비용')} summary={envCostSummary(view, cost.loading, cost.error)} defaultOpen={false}>
       {view && f && projection && breakdown ? (
         <>
           <p className={`${c.figure} ${c.headline}`}>
@@ -364,7 +361,7 @@ export function MoveCostFold({ move, loading, error, targetId }: MoveCostFoldPro
   const tf = target?.feasible && target.projection ? figuresOf(target.projection) : null;
   const sf = source?.projection ? figuresOf(source.projection) : null;
   const delta = source && target ? monthlyChange(source, target) : null;
-  const summary = !move ? (loading ? t('계산 중') : t('계산 못 함')) : tf ? t('{0}/월', { 0: money(tf.monthly) }) : t('계산 못 함');
+  const summary = !move ? (loading ? t('계산 중') : costAbsent(error) ? t('볼 수 없음') : t('계산 못 함')) : tf ? t('{0}/월', { 0: money(tf.monthly) }) : t('계산 못 함');
   return (
     <FoldTile title={t('예상 요금')} summary={summary}>
       {!move || !source ? (

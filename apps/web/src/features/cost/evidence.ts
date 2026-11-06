@@ -11,6 +11,8 @@ import type {
   SourceScope,
 } from '../../lib/types';
 import type { BadgeTone } from '../../components/ui/controls';
+import { errorText } from '../../lib/errors';
+import { HttpError } from '../../lib/http';
 import { t } from '../../lib/i18n';
 
 // 근거 있는 비용(GET /environments/:id/cost, POST /environments/:id/cost/move)을 화면 글로 바꾸는 순수 함수.
@@ -75,11 +77,21 @@ export function figureRows(f: Figures): { name: string; value: string }[] {
 export type Caption = { text: string; warn: boolean };
 
 /**
+ * 비용 경로가 없는 서버(404, 501)이거나 닿지 못함(네트워크). 오류가 아니라 "아직 볼 수 없음"으로 짧게 말한다.
+ * main 에는 비용 경로가 아직 없다 (feat/cost-evidence 에만 있음)
+ */
+export const costAbsent = (error: unknown) =>
+  error instanceof TypeError || (error instanceof HttpError && (error.status === 404 || error.status === 501));
+
+/** 비용 카드 본문 한 문장. 그 밖의 오류는 공통 문장 */
+export const costErrorText = (error: unknown) => (costAbsent(error) ? t('비용 정보를 아직 볼 수 없습니다.') : errorText(error));
+
+/**
  * 환경 목록 줄 아래 한 마디. 아직 응답이 없으면 null (읽는 동안 줄이 흔들리지 않게 비워 둔다).
  * failed = 404 가 아닌 오류로 못 읽음 (404 = 경로가 없는 서버이거나 지워진 환경이라 아무 말도 하지 않는다)
  */
-export function envCostCaption(view: EnvCostView | null, failed = false): Caption | null {
-  if (!view) return failed ? { text: t('월 비용을 읽지 못함'), warn: false } : null;
+export function envCostCaption(view: EnvCostView | null, error: unknown = null): Caption | null {
+  if (!view) return error != null && !costAbsent(error) ? { text: t('월 비용을 읽지 못함'), warn: false } : null;
   if (view.status === 'unavailable' || !view.projection) return { text: t('비용 모름 · {0}', { 0: view.reason ?? t('계산하지 못했습니다') }), warn: false };
   const month = money(figuresOf(view.projection).monthly);
   // partial = 일부 자원을 못 읽어 실제보다 낮을 수 있음. 이유(못 읽은 명령)는 길어서 "월 비용" 카드에 둔다
@@ -87,8 +99,8 @@ export function envCostCaption(view: EnvCostView | null, failed = false): Captio
 }
 
 /** "월 비용" 카드 머리줄 오른쪽 */
-export function envCostSummary(view: EnvCostView | null, loading: boolean): string {
-  if (!view) return loading ? t('읽는 중') : t('읽지 못함');
+export function envCostSummary(view: EnvCostView | null, loading: boolean, error: unknown = null): string {
+  if (!view) return loading ? t('읽는 중') : costAbsent(error) ? t('볼 수 없음') : t('읽지 못함');
   if (view.status === 'unavailable' || !view.projection) return t('계산 못 함');
   const month = t('{0}/월', { 0: money(figuresOf(view.projection).monthly) });
   return view.status === 'partial' ? t('{0} · 일부만', { 0: month }) : month;

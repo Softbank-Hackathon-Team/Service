@@ -13,6 +13,7 @@ import { CATEGORY_LABEL } from '../../lib/resourceMap';
 import type { EnvironmentView } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
 import { MoveCostFold, TargetPriceAside, useMoveCost } from '../cost/CostEvidence';
+import { costAbsent } from '../cost/evidence';
 import { realEnvs, type CloudInventory } from '../dashboard/model';
 import { RegisterEnvEntry } from '../environments/EnvEntry';
 import { ShellLayout } from '../shell/ShellLayout';
@@ -335,7 +336,7 @@ export function NewMigrationPage() {
             );
           })}
           {move.error != null && !move.data && options.length > 0 && (
-            <p className={`${s.pickNote} t-caption c-tertiary`}>{t('예상 요금을 계산하지 못했습니다. 마이그레이션은 그대로 만들 수 있습니다.')}</p>
+            <p className={`${s.pickNote} t-caption c-tertiary`}>{costAbsent(move.error) ? t('{0} 마이그레이션은 그대로 만들 수 있습니다.', { 0: t('비용 정보를 아직 볼 수 없습니다.') }) : t('예상 요금을 계산하지 못했습니다. 마이그레이션은 그대로 만들 수 있습니다.')}</p>
           )}
           {sameVendor.length > 0 && (
             <p className={`${s.pickNote} t-caption c-tertiary`}>

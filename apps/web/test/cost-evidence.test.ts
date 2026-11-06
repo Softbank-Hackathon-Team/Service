@@ -1,8 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { HttpError } from "../src/lib/http";
 import {
   basisTag,
   changeText,
+  costErrorText,
   envCostCaption,
   envCostSummary,
   extraRefs,
@@ -81,15 +83,27 @@ test("환경 목록 한 마디: 정상은 월 추산, 일부만 셌으면 주의
   assert.deepEqual(envCostCaption(env({})), { text: "월 $307.40 추산", warn: false });
   assert.deepEqual(envCostCaption(env({ status: "partial", reason: "일부 자원을 읽지 못해…" })), { text: "월 $307.40 추산 · 일부만 셈", warn: true });
   assert.deepEqual(envCostCaption(env({ status: "unavailable", reason: "실자원을 아직 읽지 않았습니다", projection: null })), { text: "비용 모름 · 실자원을 아직 읽지 않았습니다", warn: false });
-  assert.equal(envCostCaption(null), null, "읽는 중이거나 404");
-  assert.deepEqual(envCostCaption(null, true), { text: "월 비용을 읽지 못함", warn: false });
+  assert.equal(envCostCaption(null), null, "읽는 중");
+  assert.deepEqual(envCostCaption(null, new HttpError(500, { code: "INTERNAL" })), { text: "월 비용을 읽지 못함", warn: false });
   // 늘 받는 할인이 있는 환경(GKE 무료 등급)은 할인 뒤 한 달
   assert.equal(envCostCaption(env({ provider: "gcp", projection: GCP }))?.text, "월 $203.83 추산");
 });
 
+// main 에는 비용 경로가 아직 없다 (feat/cost-evidence). 404·501·닿지 못함은 오류가 아니라 "아직 볼 수 없음"
+const ABSENT = [new HttpError(404, { code: "NOT_FOUND", message: "route GET /api/v1/environments/x/cost not found" }), new HttpError(501, null), new TypeError("Failed to fetch")];
+
+test("비용 API 가 없는 서버: 목록은 말하지 않고, 카드는 짧게 \"아직 볼 수 없음\"", () => {
+  for (const error of ABSENT) {
+    assert.equal(envCostCaption(null, error), null);
+    assert.equal(envCostSummary(null, false, error), "볼 수 없음");
+    assert.equal(costErrorText(error), "비용 정보를 아직 볼 수 없습니다.");
+  }
+  assert.equal(costErrorText(new HttpError(500, { code: "INTERNAL" })), "서버에 문제가 생겼습니다. 잠시 뒤 다시 시도해 주세요.");
+});
+
 test("월 비용 카드 머리줄 요약", () => {
   assert.equal(envCostSummary(null, true), "읽는 중");
-  assert.equal(envCostSummary(null, false), "읽지 못함");
+  assert.equal(envCostSummary(null, false, new HttpError(500, null)), "읽지 못함");
   assert.equal(envCostSummary(env({}), false), "$307.40/월");
   assert.equal(envCostSummary(env({ status: "partial" }), false), "$307.40/월 · 일부만");
   assert.equal(envCostSummary(env({ status: "unavailable", projection: null }), false), "계산 못 함");
