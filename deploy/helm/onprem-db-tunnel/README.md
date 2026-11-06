@@ -54,6 +54,48 @@ kubectl -n app-<앱> rollout status deploy/db-tunnel   # 준비 = 정방향 입�
 
 `forward.target` 의 글자는 중계 `forward_pg_targets_json` 과 같아야 한다. sshd `PermitOpen` 은 이름을 그대로 비교한다.
 
+## 앱 차트 안 터널 (끌어오기 모델, 사람 손 없음)
+
+위 순서는 사람이 `kubectl`·`helm` 으로 하는 시연용이다. 같은 터널을 앱 차트(`gitops/charts/app`)가 `dbTunnel` 값으로 그린다. 워커가 이전을 시작할 때 배포 값에 넣고, Argo CD 가 끌어와 적용하고, 정리 때 값을 빼면 지운다.
+
+| 값 | 뜻 |
+|---|---|
+| `dbTunnel.relay.host` / `port`(기본 22) / `knownHosts`(필수) | 중계 주소와 호스트 키 고정. `host` 가 IPv4 면 나가는 22 를 그 주소/32 로만 연다. 이름이면 포트만 묶는다 |
+| `dbTunnel.keySecret`(필수) | 키 `id` = 개인키가 든 Secret. `sealedSecrets[]` 로 들어온다 |
+| `dbTunnel.forward.target`(필수) | `"<출발 DB>:5432"`. 중계 `forward_pg_targets_json` 과 같은 글자 |
+| `dbTunnel.reverse.enabled` / `cnpgName` | 역방향(-R)을 `<cnpgName>-rw:5432` 로. `cnpgName` 이 없으면 `postgres[]` 의 CNPG 가 하나일 때 그 이름 |
+| `dbTunnel.image`(필수) | `@sha256:` 다이제스트 고정 |
+
+- 구독 주소: Service `db-tunnel` (`db-tunnel.<namespace>.svc:5432`, `sslmode=require`).
+- 이 차트와 다른 점: 정방향은 항상 켜고, 중계 계정은 `tunnel` 고정, 이름은 `db-tunnel` 고정, NetworkPolicy 는 같은 Cluster(`cnpg.io/cluster`)의 CNPG 인스턴스로만 묶는다.
+- 같은 앱 차트에서 함께 쓰는 값: `postgres[].replication`(이전 전용 역할 `svc_migrate`, superuser 없음), `postgres[].certificates`(플랫폼이 준 서버 CA·TLS), `sealedSecrets[]`(역할 비밀번호·터널 키·서버 인증서를 봉인한 값, 범위 strict).
+- 시험: `packages/adapters/test/onprem-migrate-chart.test.ts`, CI 값 `deploy/ci/values/v2-onprem-migrate.json`(`deploy/ci/check-gitops.sh` 가 스키마 검사).
+
+## 워커가 배포 때 채우는 길 (이전 한 건)
+
+사람이 비밀을 옮기지 않는다. 운영자는 중계기를 세우고 끝점 줄 두 개만 넣는다.
+
+1. `bash tools/onprem-relay.sh prepare --tenant … --migration … --vpc … --subnet … --rds-endpoint … --region … --ssh-cidr <VM 나가는 IP>/32 --worker-cidr <플랫폼 NAT IP>/32 [--source-db-sg sg-…]`
+   - 터널 공개 키를 `REPL_SECRET_MASTER_KEY` 로 파생해 찍는다 (`npm run repl:endpoint -- pubkey`). 개인 키는 워커만 만들고 봉인해서만 내보낸다.
+   - 레포 밖 작업 폴더에 `relay.tfvars` 를 쓰고 terraform 명령을 찍는다. 도구는 terraform 을 실행하지 않는다.
+   - `--source-db-sg` 를 주면 모듈이 출발 RDS 보안 그룹에 "중계 사설 IP:5432 로 나가기" 규칙을 더한다. 실측: 이 규칙이 없으면 롤백 창 역복제(RDS 의 구독)가 중계로 못 붙었다.
+2. 사람이 찍힌 `terraform init -from-module` · `plan` · `apply` 를 돌린다.
+3. `bash tools/onprem-relay.sh register …`: 중계기 호스트 키(`ssh-keyscan`)를 받고 끝점 줄을 넣는다.
+   - 출발 줄: `rds`, host = RDS 엔드포인트, 비밀번호 참조 `env:REPL_SECRET_SRC_<출발 환경 id8>` (자동 중계기, 이전마다가 아니라 출발 환경마다 한 번). 손으로 세운 중계기(`tools/onprem-relay.sh`)는 예전처럼 `<이전 id8>`.
+   - 도착 줄: `cnpg`, host = 중계 공개 IP:5432 (워커 → 역방향 터널), peer = 중계 사설 IP:5432 (RDS → 역방향 터널), 계정 `svc_migrate` + `derive:migrate`, 중계기 칸(`--relay-host`·`--relay-known-hosts-file`·`--relay-port`).
+4. 워커 deploy (온프레, `ONPREM_FLOOR_VIA_GIT` 가 `0` 아님, CNPG `replication.enabled`, 끝점 줄 두 개)가 `apps/worker/src/gitops/replication-delivery.ts` 로 값에 넣는다.
+   - `postgres[i].certificates`, `sealedSecrets[]` 네 개 (`<cnpg>-migrate`, `<cnpg>-server-ca`, `<cnpg>-server-tls`, `db-tunnel-key`), `dbTunnel` (중계기 칸 + 정방향 = 출발 host:5432 + 역방향 켬).
+   - 봉인 인증서가 Agent 보고에 없으면 `SEALING_CERT_MISSING` 으로 멈춘다. 중계기 칸이 없거나 출발 포트가 5432 가 아니면 `REPL_DELIVERY_FAILED`.
+   - 끝점 줄에 되쓴다: 도착 줄 `ca_pem`(플랫폼이 발급한 CA)·`tls_servername` `<cnpg>-rw.<ns>.svc`·`verify-full`, 출발 줄 peer `db-tunnel.<ns>.svc:5432`(비어 있을 때만).
+   - 봉인 암호문은 도착 줄 `sealed_material` 에 남겨 다시 렌더할 때 그대로 쓴다. 그래서 리허설 지문과 커밋 지문이 같다.
+5. 정리 (`cleanup`, 롤백의 복제 걷기, `repl-cleanup`): 복제 걷기가 다 끝난 뒤에만 `replication.ensure=absent`, `dbTunnel` 빼기, `db-tunnel-key`·`<cnpg>-migrate` 봉인 비밀 빼기를 커밋한다. 서버 인증서는 남긴다. 걷기에 찌꺼기가 남으면 터널을 남긴다 (`repl-cleanup` 이 같은 터널로 다시 걷는다).
+6. 이전이 끝나면 사람이 `terraform destroy` 로 중계기를 지운다.
+
+고객 실행 역할이 중계기를 이전마다 세우고 지우는 데 필요한 권한은 `infra/permissions/aws-relay-statements.json` 이다.
+- 만드는 동작은 `aws:RequestTag/managed-by=platform`, 지우기·고치기는 `aws:ResourceTag/managed-by=platform` 으로 묶었다. 모듈의 `default_tags` 가 이 태그를 단다.
+- `SourceDbEgressToRelay` 는 출발 RDS 보안 그룹 하나에만 쓴다. `${AccountId}`·`${SourceDbSecurityGroupId}` 는 고객 값으로 바꾼다.
+- 이 파일은 CloudFormation 연결 템플릿 생성기에 아직 안 붙였다 (그 생성기는 다른 영역 작업이다). DRAFT(ai): 실제 AWS 에서 이 권한만으로 apply·destroy 해 보지 않았다.
+
 ## 아직 안 된 것
 
 - 워커가 관리 SQL 을 역방향 터널로 온프레 CNPG 에 넣는 것은 시연용이다 (ADR-005 원칙 위반: 플랫폼이 온프레 DB 관리자 접속을 쥔다). 원칙대로라면 클러스터 안 실행기(W7)다.

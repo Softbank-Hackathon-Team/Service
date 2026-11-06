@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import type { HelmValues } from "@svc/contracts";
-import { APP_NS_PREFIX, GKE_SECRET_FILE, bundlePath, commitMessage, fenceDoc, gkeClusterSecret, resourceId, type BundleRef, type GkeAccess, type PlanFile } from "./bundle.js";
+import { APP_NS_PREFIX, DELIVERY, GKE_SECRET_FILE, bundlePath, commitMessage, fenceDoc, gkeClusterSecret, resourceId, type BundleRef, type GkeAccess, type PlanFile } from "./bundle.js";
+import { TenantMirror, TenantMirrorError, tenantMirrorFromEnv, type TenantMirrorConfig } from "./tenant-mirror.js";
 
 const run = promisify(execFile);
 
@@ -20,6 +21,8 @@ export interface GitopsConfig {
   push: boolean;               // origin이 있고 push를 켰을 때만
   author: { name: string; email: string };
   maxPushTries: number;
+  // 있으면 온프레(agent-pull) 묶음을 회사 전용 레포에도 올린다 (GITOPS_TENANT_REPO_URL, tenant-mirror.ts)
+  tenantRepo?: TenantMirrorConfig;
 }
 
 // .env 이름 (계정 세팅에서 정함): GITOPS_REPO_URL, GITOPS_WRITE_TOKEN(워커), GITOPS_READ_TOKEN(Argo CD 몫, 워커는 안 씀).
@@ -28,7 +31,7 @@ export interface GitopsConfig {
 export function configFromEnv(env = process.env): GitopsConfig | null {
   // GITOPS_DISABLE=1 이면 설정이 있어도 STUB (test:db 가 이걸로 gitops 길을 끈다)
   if (env.GITOPS_DISABLE === "1" || (!env.GITOPS_REPO_DIR && !env.GITOPS_REPO_URL)) return null;
-  return {
+  const base = {
     dir: env.GITOPS_REPO_DIR ?? join(tmpdir(), "platform-gitops"),
     url: env.GITOPS_REPO_URL,
     token: env.GITOPS_WRITE_TOKEN,
@@ -38,6 +41,8 @@ export function configFromEnv(env = process.env): GitopsConfig | null {
     author: { name: env.GITOPS_AUTHOR_NAME ?? "platform-worker", email: env.GITOPS_AUTHOR_EMAIL ?? "worker@platform.invalid" },
     maxPushTries: 3,
   };
+  const tenantRepo = tenantMirrorFromEnv(env, base);
+  return tenantRepo ? { ...base, tenantRepo } : base;
 }
 
 // Z38 REVIEW-6 R6-2: 워커 이미지를 WITH_GIT=0 (git 없음, 검증 VM 전용)으로 굽고 GitOps 를 켜면
@@ -85,7 +90,10 @@ function serial<T>(f: () => Promise<T>): Promise<T> {
 }
 
 export class GitopsRepo {
-  constructor(readonly cfg: GitopsConfig) {}
+  private readonly mirror: TenantMirror | null;
+  constructor(readonly cfg: GitopsConfig) {
+    this.mirror = cfg.tenantRepo ? new TenantMirror(cfg.tenantRepo, () => childEnv()) : null;
+  }
 
   // 토큰은 GIT_CONFIG_* 환경변수로만 넘긴다 (argv에 넣으면 실패 메시지에 그대로 찍힌다)
   private gitEnv(): NodeJS.ProcessEnv {
@@ -157,7 +165,7 @@ export class GitopsRepo {
   }
 
   // 계약 3절 1~7번. values.yaml은 JSON으로 쓴다 (JSON은 그대로 YAML이라 helm·검증 도구가 읽는다)
-  commitBundle(kind: "deploy" | "traffic", b: BundleRef, values: HelmValues, plan: PlanFile, title: string, opts: CommitOpts = {}): Promise<CommitResult> {
+  commitBundle(kind: "deploy" | "traffic" | "cleanup", b: BundleRef, values: HelmValues, plan: PlanFile, title: string, opts: CommitOpts = {}): Promise<CommitResult> {
     return serial(async () => {
       // 렌더·검사가 실패하면 쓴 파일을 되돌린다. 안 그러면 커밋 안 된 묶음이 작업 복사본에 남고,
       //   validate 는 디스크의 모든 회사를 보므로 같은 워커의 다음 배포(다른 회사 포함)가 전부 같은 이유로 실패한다 (2026-11-04 재현)
@@ -173,7 +181,8 @@ export class GitopsRepo {
       await this.git("add", "-A", "--", rel, `tenants/${b.tenant}/argocd`);
       let changed = true;
       try { await this.git("diff", "--cached", "--quiet"); changed = false; } catch { /* 바뀐 게 있다 */ }
-      if (changed) await this.git("commit", "-q", "-m", commitMessage(kind, b, written, title));
+      const message = commitMessage(kind, b, written, title);
+      if (changed) await this.git("commit", "-q", "-m", message);
       // push 가 끝내 실패하면 로컬 커밋을 걷어 원격과 같게 돌린다. 남기면 다음 회사 배포의 push 에 실려 멈춘 묶음이 몰래 올라가고,
       //   그 사이 원격이 앞서면 pull --ff-only 가 깨져 이 워커의 모든 배포가 막힌다 (2026-11-04 재현). 재개하면 다시 렌더·커밋한다
       if (remote) await this.pushWithRetry().catch(async (e: unknown) => {
@@ -181,7 +190,14 @@ export class GitopsRepo {
         await this.revert(b).catch(() => undefined);
         throw e;
       });
-      const commit = await this.git("rev-parse", "HEAD");
+      let commit = await this.git("rev-parse", "HEAD");
+      // 온프레(agent-pull): 고객 Argo CD 는 회사 전용 레포를 본다 → 그 레포 커밋을 돌려준다 (Agent 가 보고하는 revision 과 맞춘다).
+      //   공용 레포는 이미 올라갔다. 여기서 실패하면 배포는 멈추고, 재개하면 공용 쪽은 그대로(바뀐 것 없음) 회사 레포만 다시 올린다
+      if (this.mirror && DELIVERY[b.env] === "agent-pull") {
+        commit = await this.mirror.sync(this.cfg.dir, b.tenant, `${message}\n\nsource: ${commit}`).catch((e: unknown) => {
+          throw new GitopsError(e instanceof TenantMirrorError ? e.code : "GITOPS_TENANT_REPO_FAILED", (e as Error).message);
+        });
+      }
       return { commit, bundleSha256: written.bundleSha256, resources: await this.resources(b), changed };
     });
   }

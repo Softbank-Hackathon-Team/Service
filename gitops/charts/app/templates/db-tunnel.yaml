@@ -1,0 +1,172 @@
+{{- /* 온프레 DB 이전 터널 (dbTunnel, 선택. 값이 없으면 아무것도 안 그린다).
+       deploy/helm/onprem-db-tunnel 차트를 앱 네임스페이스로 옮긴 것. 보안 모양은 그 차트와 같다:
+       루트 아님(nobody), 읽기 전용 루트, 권한 0, 클러스터 API 토큰 없음, 중계 호스트 키 고정(StrictHostKeyChecking=yes).
+       이전 동안만 산다: 워커가 이전을 시작할 때 dbTunnel 값을 넣고, 정리 때 값을 빼면 Argo CD 가 지운다.
+         정방향(-L, 항상): 이 파드 Service db-tunnel:5432 → 중계 → 출발 DB(forward.target). 온프레 CNPG 의 구독이 여기로 붙는다.
+         역방향(-R, reverse.enabled): 중계 0.0.0.0:5432 → 이 파드 → <reverse.cnpgName>-rw:5432. 클라우드 쪽이 온프레 CNPG 에 붙는다(롤백 창 역복제).
+       구독 주소 = Service 이름 "db-tunnel" (네임스페이스 = values.namespace):
+         host=db-tunnel.<namespace>.svc port=5432 sslmode=require (터널 안에서 CNPG 와 출발 DB 가 직접 TLS).
+         DRAFT(ai): 주소가 db-tunnel 이라 출발 DB 인증서 이름 확인(verify-full)은 못 한다. 중계 호스트 키 고정 + 중계 PermitOpen 으로 목적지를 묶는다.
+       비밀키는 값에 없다. keySecret(키 id = ed25519 개인키) 비밀은 sealedSecrets[] 로 들어온다.
+       DRAFT(ai): 중계 계정은 tunnel 고정 (infra/modules/aws/demo-relay 의 포트 전달 전용 계정, 셸 없음).
+       DRAFT(ai): NetworkPolicy 나가는 22 는 relay.host 가 IPv4 면 그 주소/32 로만, 이름이면 포트만 묶는다 (NetworkPolicy 는 이름을 못 받는다). */}}
+{{- with .Values.dbTunnel }}
+{{- $t := . }}
+{{- $relay := required "dbTunnel.relay 가 필요하다" $t.relay }}
+{{- $host := required "dbTunnel.relay.host 가 필요하다 (중계 공개 주소)" $relay.host | toString }}
+{{- if not (regexMatch "^[A-Za-z0-9.-]+$" $host) }}{{ fail "dbTunnel.relay.host 는 IP 또는 이름만" }}{{ end }}
+{{- $port := int ($relay.port | default 22) }}
+{{- $known := required "dbTunnel.relay.knownHosts 가 필요하다 (중계 호스트 키 고정, 처음 보는 키는 거부)" $relay.knownHosts | toString }}
+{{- $key := required "dbTunnel.keySecret 이 필요하다 (키 id = 개인키가 든 Secret 이름)" $t.keySecret }}
+{{- $image := required "dbTunnel.image 가 필요하다" $t.image | toString }}
+{{- if not (regexMatch "@sha256:[0-9a-f]{64}$" $image) }}{{ fail "dbTunnel.image 는 다이제스트(@sha256:...)로 고정해야 한다" }}{{ end }}
+{{- $fwd := required "dbTunnel.forward 가 필요하다" $t.forward }}
+{{- $target := required "dbTunnel.forward.target 이 필요하다 (\"<출발 DB 주소>:5432\")" $fwd.target | toString }}
+{{- if not (regexMatch "^[A-Za-z0-9.-]+:5432$" $target) }}{{ fail "dbTunnel.forward.target 은 \"<출발 DB 주소>:5432\"" }}{{ end }}
+{{- $rev := $t.reverse | default dict }}
+{{- /* 이 터널을 쓰는 CNPG Cluster 이름: reverse.cnpgName, 없으면 postgres[] 의 mode cnpg 가 하나일 때 그 이름 */}}
+{{- $cnpgs := list }}
+{{- range ($.Values.postgres | default list) }}{{- if eq (toString .mode) "cnpg" }}{{- $cnpgs = append $cnpgs .name }}{{- end }}{{- end }}
+{{- $cluster := $rev.cnpgName | default (ternary (first $cnpgs) "" (eq (len $cnpgs) 1)) }}
+{{- if not $cluster }}{{ fail "dbTunnel.reverse.cnpgName 이 필요하다 (postgres[] 에 mode cnpg 가 하나가 아님)" }}{{ end }}
+{{- range ($.Values.workloads | default list) }}{{- if eq (toString .name) "db-tunnel" }}{{ fail "workloads[] 에 db-tunnel 이름이 있어 터널과 라벨이 겹친다" }}{{ end }}{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: db-tunnel-known-hosts
+  labels: {{- include "app.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: db-tunnel
+data:
+  known_hosts: |
+{{ $known | trim | indent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db-tunnel
+  labels: {{- include "app.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: db-tunnel
+spec:
+  replicas: 1   # 같은 중계 포트(-R 5432)를 두 파드가 잡으면 하나는 실패한다
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: {{ $.Values.app.name }}, app.kubernetes.io/component: db-tunnel }
+  template:
+    metadata:
+      labels: {{- include "app.labels" $ | nindent 8 }}
+        app.kubernetes.io/component: db-tunnel
+      annotations:
+        checksum/known-hosts: {{ $known | sha256sum }}
+    spec:
+      automountServiceAccountToken: false   # 클러스터 API 를 안 쓴다
+      enableServiceLinks: false
+      securityContext:
+        # ssh 는 /etc/passwd 에 있는 사용자로만 돈다 (없으면 "No user exists for uid"). 이미지의 nobody
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534   # Secret 키 파일을 그룹으로 읽는다 (0440). 그대로 쓰면 ssh 가 "너무 열린 권한"으로 거부 → /tmp 로 0600 복사
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: ssh
+          image: {{ $image }}
+          imagePullPolicy: IfNotPresent
+          # 끊기면 2초 뒤 다시 붙는다 (파드 안에서 되붙음). 비밀키는 0600 이어야 ssh 가 읽는다 → 쓰기 가능한 /tmp 로 복사
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -u
+              # 키를 못 읽으면 바로 끝낸다 (되붙기 루프가 실패를 가리지 않게. 파드 재시작으로 보인다)
+              install -m 600 /etc/db-tunnel/key/id /tmp/id || { echo "키 파일을 못 읽음: Secret {{ $key }} 의 id" >&2; exit 1; }
+              n=0
+              while :; do
+                n=$((n + 1))
+                echo "$(date -u +%H:%M:%SZ) 터널 연결 ${n}번째"
+                ssh -N -i /tmp/id -p {{ $port }} \
+                  -o BatchMode=yes -o IdentitiesOnly=yes \
+                  -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/etc/db-tunnel/known_hosts \
+                  -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes \
+                  -L 0.0.0.0:5432:{{ $target }} \
+                  {{- if $rev.enabled }}
+                  -R 0.0.0.0:5432:{{ $cluster }}-rw:5432 \
+                  {{- end }}
+                  tunnel@{{ $host }}
+                echo "$(date -u +%H:%M:%SZ) 끊김 (끝 코드 $?), 2초 뒤 다시"
+                sleep 2
+              done
+          env:
+            - { name: HOME, value: /tmp }
+          ports:
+            - { name: pg, containerPort: 5432 }
+          # 준비 = 정방향 입구가 열렸다 (ssh 인증·전달 허가가 끝나야 열린다: ExitOnForwardFailure)
+          readinessProbe:
+            tcpSocket: { port: pg }
+            periodSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { memory: 64Mi }
+          volumeMounts:
+            - { name: key, mountPath: /etc/db-tunnel/key, readOnly: true }
+            - { name: known-hosts, mountPath: /etc/db-tunnel/known_hosts, subPath: known_hosts, readOnly: true }
+            - { name: tmp, mountPath: /tmp }
+      volumes:
+        - name: key
+          secret: { secretName: {{ $key }}, defaultMode: 0440 }
+        - name: known-hosts
+          configMap: { name: db-tunnel-known-hosts }
+        - name: tmp
+          emptyDir: { medium: Memory, sizeLimit: 1Mi }
+---
+# 구독 주소: db-tunnel.<namespace>.svc:5432 (CNPG 구독의 출발 쪽 연결 문자열 host). 클러스터 밖에 안 연다
+apiVersion: v1
+kind: Service
+metadata:
+  name: db-tunnel
+  labels: {{- include "app.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: db-tunnel
+spec:
+  type: ClusterIP
+  selector: { app.kubernetes.io/name: {{ $.Values.app.name }}, app.kubernetes.io/component: db-tunnel }
+  ports:
+    - { name: pg, port: 5432, targetPort: pg }
+---
+# 들어오는 것: 정방향 입구 5432 에 이 Cluster 의 CNPG 인스턴스만. 나가는 것: DNS, 중계 port, (역방향이면) 이 Cluster CNPG 5432
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: db-tunnel
+  labels: {{- include "app.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: db-tunnel
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: {{ $.Values.app.name }}, app.kubernetes.io/component: db-tunnel }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { cnpg.io/cluster: {{ $cluster }}, cnpg.io/podRole: instance }
+      ports:
+        - { port: 5432, protocol: TCP }
+  egress:
+    - ports:
+        - { port: 53, protocol: UDP }
+        - { port: 53, protocol: TCP }
+    - ports:
+        - { port: {{ $port }}, protocol: TCP }
+      {{- if regexMatch "^[0-9]{1,3}(\\.[0-9]{1,3}){3}$" $host }}
+      to:
+        - ipBlock: { cidr: {{ $host }}/32 }
+      {{- end }}
+    {{- if $rev.enabled }}
+    - to:
+        - podSelector:
+            matchLabels: { cnpg.io/cluster: {{ $cluster }}, cnpg.io/podRole: instance }
+      ports:
+        - { port: 5432, protocol: TCP }
+    {{- end }}
+{{- end }}

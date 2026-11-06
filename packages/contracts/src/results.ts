@@ -19,6 +19,7 @@ export const TrafficJudgement = z.object({
   sourceErrorRatePct: z.number(),
   targetP95Ms: z.number(),
   sourceP95Ms: z.number(),
+  latencyMeasured: z.boolean().optional(),   // false = 도착 응답 시간 지표가 없어 오류율로만 판정. 이때 p95 칸의 0 은 값이 아니다
   verdict: z.enum(["ok", "hold", "bad", "bad_shortcut"]),
   at: z.string(),
 }).strict();

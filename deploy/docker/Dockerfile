@@ -28,6 +28,10 @@ ARG KUBECTL_IMAGE=registry.k8s.io/kubectl:v1.35.10@sha256:4e1d541a3d62f74637974e
 #   출발이 무엇이든 가져오기가 IMPORT_SOURCE_UNAVAILABLE 로 멈췄다 (2026-11-05 실측). 공식 alpine 판은 musl 용 python 을 SDK 안에 담고 있어 바탕에 python 을 따로 안 넣는다
 #   판 592.0.0, 다이제스트 = 여러 아키텍처 index (amd64·arm64)
 ARG GCLOUD_IMAGE=gcr.io/google.com/cloudsdktool/google-cloud-cli:592.0.0-alpine@sha256:9040d28a6512f32c495322a3af6ea000f803a0ae001cec055937154efe5a2230
+# worker 의 terraform (도착 자원 만들기·지우기: packages/adapters/src/terraform/real-runner.ts). 없으면 aws·gcp·onprem apply 가 TF_BIN_MISSING 으로 멈춘다
+#   (2026-11-05 플랫폼 worker 시작 로그 "terraform 실행 파일 없음"). helm 과 같은 방식으로 공식 이미지에서 정적 바이너리만 꺼낸다
+#   판 1.16.4 = 모듈 required_version ">= 1.11" 을 만족하고 개발에서 쓰는 판. 다이제스트 = 여러 아키텍처 index (amd64·arm64)
+ARG TERRAFORM_IMAGE=hashicorp/terraform:1.16.4@sha256:985cdc6c1d9b0a65b83377f666efd2f740b47f02ac55be1ced3d18f7d3b0e829
 # worker 의 aws CLI (AWS 출발 가져오기·STS). 공식 설치본은 glibc 전용이라 musl 바탕에서 못 돈다 → alpine community 패키지
 # DRAFT(ai): 2.34 계열로 고정. alpine 저장소는 같은 가지의 최신 판만 남겨서 정확한 판(-rN)으로 묶으면 나중에 빌드가 깨진다
 ARG AWS_CLI_APK=aws-cli~2.34
@@ -89,6 +93,7 @@ RUN set -e; mkdir -p /out; \
 
 FROM ${CRANE_IMAGE} AS crane
 FROM ${HELM_IMAGE} AS helm
+FROM ${TERRAFORM_IMAGE} AS terraform
 FROM ${KUBECTL_IMAGE} AS kubectl
 FROM ${ONPREM_KUBECTL_IMAGE} AS onprem-kubectl
 # GKE 클러스터 kubeconfig(get-credentials)는 gke-gcloud-auth-plugin 을 부른다. 기본 묶음에 없어 여기서 더한다.
@@ -114,6 +119,9 @@ ENV API_HOST=0.0.0.0
 #   없으면 apps/api/src/security/load.ts 가 못 읽어 "정적" 근거·LP-AWS-BOUNDARY 가 비고 prod e2e 2건 실패
 COPY infra/permissions /app/infra/permissions
 COPY gitops/charts /app/gitops/charts
+# 온프레 설치 한 줄이 받는 파일 (routes/onprem-install.ts, GET /api/v1/install/onprem*). 레포와 같은 상대 경로로 둔다
+COPY tools/onprem-bootstrap.sh tools/onprem-install.sh tools/argocd-core-install-v2.13.3.yaml tools/sealed-secrets-controller-v0.40.0.yaml tools/onprem-argocd-health.yaml tools/cnpg-1.30.1.yaml /app/onprem-bundle/tools/
+COPY deploy/helm/onprem-agent /app/onprem-bundle/deploy/helm/onprem-agent
 ENV PERMISSIONS_DIR=/app/infra/permissions
 ENV CHART_DIR=/app/gitops/charts/app
 # 파일 주인은 root(읽기만 가능) → 앱이 자기 코드를 못 바꾼다
@@ -125,7 +133,7 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
   CMD ["node", "healthcheck.mjs", "http://127.0.0.1:3000/healthz"]
 
 FROM runtime AS worker
-# gitops 배포(N2)는 git 명령을 부른다. helm 은 gitops 레포 render 도구가 필요할 때만 (TODO(human): helm 바이너리 넣을지)
+# gitops 배포(N2)는 git 명령을 부른다. 묶음 렌더(gitops 레포 tools/render.mjs)는 helm template 을 부른다 → helm 은 아래 crane 다음에 넣는다
 # Z75: apk add 대신 git 단계에서 복사(패키지 서버가 막힌 곳에서도 빌드됨). 바탕에 이미 있는 라이브러리(libz·libssl 등)는 덮어쓰지 않는다.
 #      층에 임시 파일이 안 남게 bind 로 붙인다. WITH_GIT=0 은 git 없이 만드는 검증용(4차 apps/worker/Dockerfile 과 같은 뜻, 기본 1)
 ARG WITH_GIT=1
@@ -139,6 +147,12 @@ RUN --mount=type=bind,from=git,source=/out,target=/g set -e; [ "$WITH_GIT" = "1"
     ! ldd /usr/libexec/git-core/git-remote-https 2>&1 | grep -q "not found"
 # 리허설 이미지 복사 도구. 정적 Go 바이너리라 라이브러리가 필요 없다 (TLS 루트는 바탕의 /etc/ssl/certs)
 COPY --from=crane /ko-app/crane /usr/local/bin/crane
+# 묶음 렌더 도구. gitops 레포 tools/lib.mjs 가 helm template 을 부른다 (apps/worker/src/gitops/repo.ts tool("render.mjs")).
+#   배포 커밋과 리허설이 같은 렌더를 쓴다. agent-worker 와 같은 helm 단계(다이제스트 고정), 정적 Go 바이너리
+COPY --from=helm /usr/bin/helm /usr/local/bin/helm
+RUN helm version --short
+COPY --from=terraform /bin/terraform /usr/local/bin/terraform
+RUN terraform version
 # 가져오기(discover)·사전 점검·역할 빌리기가 부르는 클라우드 CLI (packages/adapters/src/discover/index.ts, precheck/cloud-precheck.ts)
 #   kubectl = EKS·GKE 안의 Deployment·Service 읽기 (플랫폼 EKS 와 같은 판 단계를 같이 쓴다)
 #   설정·캐시는 HOME(/tmp, 차트가 emptyDir 로 준다) 아래에 쓴다. 사용 통계·업데이트 확인은 끈다 (바깥으로 나가는 호출을 줄인다)
@@ -149,12 +163,20 @@ ENV PATH=/opt/google-cloud-sdk/bin:$PATH \
     CLOUDSDK_COMPONENT_MANAGER_DISABLE_UPDATE_CHECK=true \
     AWS_CLI_AUTO_PROMPT=off
 ARG AWS_CLI_APK
+# openssl = 이전별 CNPG 서버 인증서 발급 (apps/worker/src/gitops/migration-secrets.ts issueServerCert). Node 에 X.509 만드는 API 가 없다
 # hadolint ignore=DL3018
-RUN apk add --no-cache "$AWS_CLI_APK" \
- && aws --version && gcloud --version >/dev/null && kubectl version --client >/dev/null && gke-gcloud-auth-plugin --version >/dev/null
+RUN apk add --no-cache "$AWS_CLI_APK" openssl \
+ && aws --version && gcloud --version >/dev/null && kubectl version --client >/dev/null && gke-gcloud-auth-plugin --version >/dev/null \
+ && openssl version
 # 최소 권한 파일(J2): 묶음 파일 하나에는 안 들어가서 따로 복사. 없으면 실행 역할 발급이 전부 거부된다
 COPY infra/permissions /app/infra/permissions
 ENV PERMISSIONS_DIR=/app/infra/permissions
+# terraform 모듈 (infra/modules/<환경>/{root,kinds,app}). 실행기가 이전마다 TF_WORK_DIR 로 복사해서 돈다.
+#   묶음(dist/worker)은 레포 뿌리를 import.meta.url 로 못 찾으므로 경로를 env 로 준다. state·tfvars·.terraform 은 .dockerignore 가 뺀다
+COPY infra/modules /app/infra/modules
+# 환경 층(gcp/env)이 ${path.module}/../../../charts/cluster-secret-store 를 쓴다 → 모듈과 같은 깊이에 차트도 (worker env-layer.ts 가 작업 폴더로 복사)
+COPY infra/charts /app/infra/charts
+ENV TF_MODULE_ROOT=/app/infra/modules
 COPY --from=build-worker /src/dist/worker/ ./
 USER node
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
@@ -180,8 +202,10 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
 #   docker run --rm svc-onprem-agent:dev --help
 FROM runtime AS onprem-agent
 COPY --from=onprem-kubectl /bin/kubectl /usr/local/bin/kubectl
-COPY --from=build-onprem-agent /src/dist/onprem-agent/ ./
+# 고객이 받는 공개 이미지(GHCR)다 → 소스맵(main.mjs.map, 원본 소스·주석 전체)은 넣지 않는다. 오류 줄 번호는 main.mjs 기준
+COPY --from=build-onprem-agent /src/dist/onprem-agent/main.mjs ./
+COPY --from=build-onprem-agent /src/dist/onprem-agent/data ./data
 USER node
-ENTRYPOINT ["node", "--enable-source-maps", "main.mjs"]
+ENTRYPOINT ["node", "main.mjs"]
 # 30초마다 heartbeat, 10번에 1번 security (tools/onprem-agent.ts loop)
 CMD ["loop", "--every", "30"]

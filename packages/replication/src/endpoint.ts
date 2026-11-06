@@ -22,6 +22,8 @@ export interface Endpoint {
   schema?: string;
   /** Z77: 워커 → 이 DB 접속의 TLS. 없으면 예전처럼 adminUrl 그대로 (로컬·k3d 데모) */
   tls?: EndpointTls;
+  /** 이 끝점을 어디서 만들었나. "db" = replication_endpoints 줄 (이전마다). 없으면 워커 .env (REPL_*) */
+  origin?: "db";
 }
 
 // Z77 DRAFT(ai): 클라우드 DB 는 TLS + CA 파일로 상대를 확인한다. 규칙은 Z64 PgBouncer server_tls_ca_file 과 같다:
@@ -29,7 +31,15 @@ export interface Endpoint {
 //   verify-full = CA + 주소 이름까지 확인 (RDS 엔드포인트 이름). verify-ca = CA 만 (Cloud SQL 공인 IP: 인증서에 IP 이름이 없을 수 있다【미확인】)
 //   require = 암호화만 (CA 확인 없음). 워커 쪽에는 쓰지 않기를 권한다
 export type SslMode = "require" | "verify-ca" | "verify-full";
-export interface EndpointTls { mode: SslMode; caFile?: string }
+export interface EndpointTls {
+  mode: SslMode;
+  caFile?: string;
+  /** CA 인증서 PEM 글자 (replication_endpoints.ca_pem). 있으면 caFile 보다 먼저 */
+  caPem?: string;
+  /** host 가 IP 일 때 서버 인증서에서 확인할 이름 (verify-full). node-pg 는 host 가 IP 면 ssl.servername 을 덮어쓰지 않는다
+   *  (node_modules/pg/lib/connection.js upgradeToSSL: net.isIP(host) === 0 일 때만 servername = host). host 가 이름이면 pg 가 host 로 덮는다 */
+  servername?: string;
+}
 const SSL_MODES: SslMode[] = ["require", "verify-ca", "verify-full"];
 
 /** 접속 문자열에서 ssl 관련 값을 뺀다. pg 는 문자열 안 sslmode 가 ssl 객체를 덮어써서, CA 파일 규칙이 조용히 무시될 수 있다 */
@@ -54,15 +64,15 @@ const connectTimeoutMs = (env: NodeJS.ProcessEnv = process.env) => {
 export function clientConfig(e: Endpoint, env: NodeJS.ProcessEnv = process.env): pg.ClientConfig {
   const base = { application_name: "svc-replication", keepAlive: true, keepAliveInitialDelayMillis: 10_000, connectionTimeoutMillis: connectTimeoutMs(env) };
   if (!e.tls) return { ...base, connectionString: e.adminUrl };
-  const { mode, caFile } = e.tls;
-  if (mode !== "require" && !caFile) throw new Error(`${e.label}: sslmode=${mode} 는 CA 파일(REPL_CA_FILE)이 필요하다`);
-  let ca: string | undefined;
-  if (caFile) {
+  const { mode, caFile, caPem, servername } = e.tls;
+  if (mode !== "require" && !caFile && !caPem) throw new Error(`${e.label}: sslmode=${mode} 는 CA 파일(REPL_CA_FILE) 또는 ca_pem 이 필요하다`);
+  let ca: string | undefined = caPem;
+  if (!ca && caFile) {
     try { ca = readFileSync(caFile, "utf8"); } catch (err) { throw new Error(`${e.label}: CA 파일을 못 읽었다 ${caFile} (${(err as Error).message})`); }
   }
   const ssl: pg.ClientConfig["ssl"] = mode === "require"
     ? { rejectUnauthorized: false }
-    : { ca, rejectUnauthorized: true, ...(mode === "verify-ca" ? { checkServerIdentity: () => undefined } : {}) };
+    : { ca, rejectUnauthorized: true, ...(servername ? { servername } : {}), ...(mode === "verify-ca" ? { checkServerIdentity: () => undefined } : {}) };
   return { ...base, connectionString: stripSslParams(e.adminUrl), ssl };
 }
 

@@ -1,8 +1,10 @@
 import { MigrationJob, TERMINAL, type MigrationStatus } from "@svc/contracts";
 import { withTenant, writeAudit } from "@svc/core";
-import { replicationFromEnv } from "@svc/replication";
 import { replicationFor } from "./_repl.js";
+import { targetBundle } from "../app-link.js";
+import { commitReplicationCleanup } from "../gitops/index.js";
 import { cleanupAfterRollback, type ReplCleaner, type RollbackCleanup } from "./rollback-cleanup.js";
+import { teardownRelayStep, type RelayStepOutcome, type RelayStepDeps } from "../relay/relay-step.js";
 
 // F8-5: 끝난 이전에 남은 복제 객체(구독·슬롯·발행·마커)를 사람이 다시 걷는 작업. 상태는 안 바꾼다(advance 없음).
 // 롤백 작업의 걷기가 실패하면 rolled_back + 감사 rollback.cleanup_incomplete 만 남고 다시 걷을 길이 없었다.
@@ -13,7 +15,7 @@ export const REPL_CLEANUP_FROM: readonly MigrationStatus[] = TERMINAL;
 
 export type ReplCleanupOutcome = "done" | "incomplete" | "skipped" | "stub";
 
-export async function handleReplCleanup(raw: unknown, cleaner?: ReplCleaner | null): Promise<ReplCleanupOutcome> {
+export async function handleReplCleanup(raw: unknown, cleaner?: ReplCleaner | null, relayDeps?: RelayStepDeps): Promise<ReplCleanupOutcome> {
   const j = MigrationJob.parse(raw);
   // 작업 내용은 믿지 않는다: 상태는 DB 에서 다시 읽는다
   const status = await withTenant(j.tenantId, async (tx) =>
@@ -29,15 +31,24 @@ export async function handleReplCleanup(raw: unknown, cleaner?: ReplCleaner | nu
     return "stub";
   }
   const c: RollbackCleanup = await cleanupAfterRollback(repl);
-  await audit(j, c.ok ? "ok" : "error", { status, removed: c.removed, leftovers: c.leftovers,
+  const m = await withTenant(j.tenantId, async (tx) => (await tx.query<{ id: string; sourceEnvId: string; targetEnvId: string }>(
+    `SELECT id, source_env_id AS "sourceEnvId", target_env_id AS "targetEnvId" FROM migrations WHERE id=$1`, [j.migrationId])).rows[0]);
+  // 온프레 CNPG 이전: 다 걷었으면 gitops 에서 이전 역할(ensure absent)·터널도 걷는다 (롤백·정리 때 찌꺼기로 남겨 둔 터널)
+  const gitopsReplication = c.ok ? await commitReplicationCleanup(m ? await withTenant(j.tenantId, (tx) => targetBundle(tx, j.tenantId, m)) : null)
+    : { skipped: "replication_leftovers" };
+  // 그다음 출발 계정 중계기 (터널이 걷힌 뒤). 실패하면 덜 끝남 → 큐가 다시 부른다 (지우기는 여러 번 불러도 됨)
+  const relay: RelayStepOutcome = c.ok && m ? await teardownRelayStep(j, m, relayDeps) : { kind: "skipped", reason: c.ok ? "migration_missing" : "replication_leftovers" };
+  const ok = c.ok && relay.kind !== "failed";
+  await audit(j, ok ? "ok" : "error", { status, removed: c.removed, leftovers: c.leftovers, gitopsReplication,
+    relay: relay.kind === "ok" ? relay.detail : relay.kind === "skipped" ? { skipped: relay.reason } : { failed: relay.failureCode, error: relay.reason },
     ...(c.warning ? { warning: c.warning } : {}) });
-  return c.ok ? "done" : "incomplete";
+  return ok ? "done" : "incomplete";
 }
 
 /** PF-E25 (RV-12): 큐 처리기. 예전엔 걷기가 덜 끝나도(incomplete) 정상 끝 → 큐의 재시도(2번·30초)가 안 돌았다.
  *  덜 끝났으면 감사(error)를 남긴 뒤 던져서 큐가 다시 부르게 한다 (teardown 은 여러 번 불러도 안전). 재시도를 다 쓰면 작업이 failed 로 남는다 */
-export async function replCleanupJob(raw: unknown, cleaner?: ReplCleaner | null): Promise<ReplCleanupOutcome> {
-  const r = await handleReplCleanup(raw, cleaner);
+export async function replCleanupJob(raw: unknown, cleaner?: ReplCleaner | null, relayDeps?: RelayStepDeps): Promise<ReplCleanupOutcome> {
+  const r = await handleReplCleanup(raw, cleaner, relayDeps);
   if (r === "incomplete") throw new Error("replication cleanup incomplete (leftovers remain; queue will retry)");
   return r;
 }

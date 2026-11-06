@@ -4,9 +4,11 @@ import { asFailureCode, latestAcceptedSpecV2, planExpired, type Tx } from "@svc/
 import { errorMessage, nextJob, runStep, stubWait } from "./_step.js";
 import { loadLatestApproval, loadLatestPlan, saveInfraReady } from "./plan-store.js";
 import { failedOnRenewFailure, withStepRoles } from "./_roles.js";
-import { realApply } from "./apply-real.js";
+import { realApplyWithEnvLayer } from "./apply-real.js";
+import { withGcpCred } from "../gcp-token-server.js";
 import { runImageBuilds } from "./image-build.js";
 import { TARGET_ACCOUNT_SQL } from "./target-account.js";
+import { provisionRelayStep } from "../relay/relay-step.js";
 
 // TA3: spec = 받아들인 최신 판의 명세. 없거나 모양이 틀리면 null (→ TF_PLAN_DRIFT)
 interface ApplyLoaded { plan: PlanDoc; provider: Provider; spec: AppSpecV2 | null; accountId: string | null }
@@ -57,6 +59,7 @@ export async function handleApply(raw: unknown) {
       let tfOutputs: TfOutputs;
       let mockDetail: Record<string, unknown> | undefined;
       let realDetail: Record<string, unknown> | undefined;
+      let relayDetail: Record<string, unknown> | undefined;
 
       // 이미지 빌드 (23번 3.3): 서비스 중 image.source=build 가 있을 때만. IMAGE_BUILD=1 이 아니면 아무 일도 안 한다.
       //   실패하면 던져서 onError 가 failed 로 보낸다
@@ -83,14 +86,22 @@ export async function handleApply(raw: unknown) {
         //   DRAFT(ai): 기본 켬 (2026-11-04 온프레 영역 결정). ONPREM_FLOOR_VIA_GIT=0 이면 예전처럼 Terraform (고객 Argo CD 가 없는 로컬 k3d 시연 등)
         tfOutputs = { ...onpremGitFloorOutputs(spec) };
         realDetail = { iac: "git", note: "ONPREM_FLOOR_VIA_GIT 켬(기본): 온프레 바닥은 gitops 묶음(floor.yaml)과 고객 Argo CD 가 만든다" };
+        // 출발 AWS 계정에 DB 복제 중계기를 만들고 복제 끝점 두 줄을 채운다 (출발 실행 역할, 중계기 세션 정책).
+        //   출발이 AWS 아님·시드 환경·명세에 postgres 없음이면 건너뛴다 (예전처럼 사람이 tools/onprem-relay.sh). 실패면 failed (다시 계획하면 태그로 이어 간다)
+        const relay = await provisionRelayStep(j, m);
+        if (relay.kind === "failed")
+          return { to: "failed", failureCode: asFailureCode(relay.failureCode),
+                   detail: { planId: j.planId, provider, error: relay.reason, ...(relay.detail ? { relay: relay.detail } : {}) } };
+        relayDetail = relay.kind === "ok" ? relay.detail : { skipped: relay.reason };
       } else if (!iacMockEnabled()) {
         // Z89: 기본 = 진짜 terraform (Z70 의 스위치 둘 대신 MOCK_IAC=1 이 아니면 항상). 잠금을 잃으면 ctx.signal → terraform 에 SIGINT
         // L5b: 진짜 발급기(REAL_STS=1 + external_id)로 빌린 AWS 실행 자격이 있으면 terraform 에 그것만 넘긴다 (맥 프로필 지움).
-        //   STUB: 가짜 발급기·GCP·온프레는 지금처럼 프로세스 자격(AWS_PROFILE·gcloud 로그인)으로 돈다
-        const r = await realApply({ migrationId: j.migrationId, tenantId: j.tenantId, envId: m.targetEnvId,
+        //   빌린 GCP 토큰도 같다 (withGcpCred). STUB: 가짜 발급기·온프레는 지금처럼 프로세스 자격(AWS_PROFILE·gcloud 로그인)으로 돈다
+        //   4 기반 생성: 앱 층 apply 앞에서 환경 층(도착 GCP 의 VPC·GKE·AR·ESO)을 확보한다 (ENV_LAYER_AUTO=1 일 때만 만듦, 꺼져 있으면 예전과 같음)
+        const r = await withGcpCred(roles, accountId, (gcpCred) => realApplyWithEnvLayer({ migrationId: j.migrationId, tenantId: j.tenantId, envId: m.targetEnvId,
                                     provider, accountId, spec, plan },
-                                  { signal: ctx.signal, ...(roles.awsEnv?.target ? { credEnv: roles.awsEnv.target } : {}) });
-        if (!r.ok) return { to: "failed", failureCode: r.failureCode, detail: r.detail };
+                                  { signal: ctx.signal, ...(roles.awsEnv?.target ? { credEnv: roles.awsEnv.target } : {}), ...(gcpCred ? { gcpCred } : {}) }));
+        if (!r.ok) return { to: "failed", failureCode: asFailureCode(r.failureCode), detail: r.detail };
         tfOutputs = r.tfOutputs;
         realDetail = r.detail;
       } else {
@@ -105,7 +116,7 @@ export async function handleApply(raw: unknown) {
         to: "deploying",
         // SECAUDIT: 감사엔 출력 이름만 (값 = DB 주소·ARN 은 infra_ready 표)
         detail: { planId: j.planId, outputs: Object.keys(tfOutputs).sort(), ...(imageBuilds.length ? { imageBuilds } : {}), iac: mockDetail ? "azure_mock" : realDetail ? (realDetail.imported ? "imported" : "terraform") : "mock",
-                  ...(mockDetail ? { runner: mockDetail } : {}), ...(realDetail ? { terraform: realDetail } : {}) },
+                  ...(mockDetail ? { runner: mockDetail } : {}), ...(realDetail ? { terraform: realDetail } : {}), ...(relayDetail ? { relay: relayDetail } : {}) },
         evidence: { applyOk: true },   // STUB(aws/gcp/onprem): terraform apply 종료 코드 0. Azure는 Mock 결과 ok
         inTx: (tx) => saveInfraReady(tx, {
           tenantId: j.tenantId, migrationId: j.migrationId, planId: j.planId, tfOutputs,

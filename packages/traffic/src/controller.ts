@@ -24,8 +24,8 @@ export interface ShiftProgress {
   stepStartedAt: string; at: string;
 }
 /** 지표 창 하나의 실측 도착 몫(0~100, 정수). 표본이 없으면 null */
-export function observedTargetPct(w: { target: { n: number }; source: { n: number } }): number | null {
-  const total = w.target.n + w.source.n;
+export function observedTargetPct(w: { target: { n: number }; source: { n: number }; estimatedSourceN?: number }): number | null {
+  const total = w.target.n + (w.estimatedSourceN ?? w.source.n);
   return total > 0 ? Math.round((w.target.n / total) * 100) : null;
 }
 
@@ -61,6 +61,7 @@ export interface ShiftResult {
   observeRequiredSec: number;        // 이번 전환이 요구한 관찰 초 (기본 30, 압축 데모면 더 짧다)
   // pf-d FM-TRF-10: 판정·몫에 쓴 지표 출처. "stub" 이면 stepShares 의 observedPct 는 가중치로 계산한 값 (실측 아님)
   metricsSource: "prometheus" | "stub" | "unknown";
+  latencyUnmeasured?: true;          // 도착 응답 시간을 못 잰 판정이 있었다 → 오류율로만 판정한 전환
   finalWeights: { source: number; target: number };
 }
 
@@ -190,6 +191,8 @@ export async function runShift(o: {
         targetErrorRatePct: +(d.targetRatio * 100).toFixed(3), sourceErrorRatePct: +(d.sourceRatio * 100).toFixed(3),
         // 표본 0 이면 p95 가 NaN → 계약(z.number)이 NaN 을 거부해서 0 으로 적는다. samples 로 구분한다
         targetP95Ms: fin(d.targetP95Ms), sourceP95Ms: fin(d.refP95Ms), verdict, at: now().toISOString(),
+        // 표본이 있는데 p95 가 없으면 0ms 가 정상으로 읽히지 않게 표시한다
+        ...(w.target.n > 0 && !d.latencyMeasured ? { latencyMeasured: false } : {}),
       });
       judgements.push(j);
       await o.onJudgement?.(j);
@@ -211,7 +214,8 @@ export async function runShift(o: {
     let finalWeights = pctWeights(reachedPct);
     try { finalWeights = await o.switcher.get(o.lbId); } catch { /* 읽기 실패면 마지막으로 확인된 값 */ }
     return { outcome, judgements, rollbackReason: reason, failureCode: code, reachedPct, observedSecAt100, observeRequiredSec: observeSec, finalWeights,
-             metricsSource: o.metrics.source ?? "unknown", ...(shareOn ? { stepShares } : {}) };
+             metricsSource: o.metrics.source ?? "unknown", ...(shareOn ? { stepShares } : {}),
+             ...(judgements.some((j) => j.latencyMeasured === false) ? { latencyUnmeasured: true } : {}) };
   }
 
   // pf-d RV-11: 플랫폼 오류 → 출발 100% (가드 없이, 늘 안전) 뒤 paused. 되돌리기도 실패하면 rollback_failed (rollback 작업이 다시 시도)

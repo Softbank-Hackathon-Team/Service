@@ -312,12 +312,13 @@ test("켬: 통과 뒤 차트가 바뀌어 커밋 직전 렌더가 다르면 커�
 
 test("켬: 치환 표 밖 종류 → failed(REHEARSAL_UNSUPPORTED_KIND), 이미지 복사 실패 → error(REHEARSAL_IMAGE_MIRROR_FAILED). 둘 다 paused, 작업 없음", { skip }, async () => {
   Object.assign(process.env, { SANDBOX_REHEARSAL: "on", MOCK_SANDBOX: "1" });
-  setExtra([{ apiVersion: "networking.k8s.io/v1", kind: "NetworkPolicy", metadata: { name: "deny" }, spec: { podSelector: {} } }]);
+  // NetworkPolicy 는 온프레 DB 이전 터널 때문에 표에 들어왔다 → 표 밖 종류의 예는 Role
+  setExtra([{ apiVersion: "rbac.authorization.k8s.io/v1", kind: "Role", metadata: { name: "deny" }, rules: [] }]);
   const a = await seed();
   await dp.handleDeploy(job(a));
   assert.deepEqual([(await mig(a)).status, (await mig(a)).failure_code], ["paused", "REHEARSAL_UNSUPPORTED_KIND"]);
   assert.deepEqual((await runs(a)).map((r) => [r.status, r.failure_code, r.phase]), [["failed", "REHEARSAL_UNSUPPORTED_KIND", "done"]]);
-  assert.match((await lastAudit(a, "deploy.paused"))!.deploy.reason, /NetworkPolicy/);
+  assert.match((await lastAudit(a, "deploy.paused"))!.deploy.reason, /Role\/(.*\/)?deny/);
   setExtra([]);
   // 진짜 복사 길인데 샌드박스 레지스트리 설정이 없음
   delete process.env.MOCK_SANDBOX; delete process.env.SANDBOX_IMAGE_REGISTRY;

@@ -27,4 +27,5 @@ export const MODULE_DIGEST = {
   "onprem/root": "content-abe3eca7ffc7",
   "onprem/kinds/namespace": "content-26fecb0caf7e",
   "onprem/kinds/netpol": "content-fa8d42518f31",
+  "gcp/env": "content-5cb458458b10",
 } as const;

@@ -16,7 +16,8 @@ export type RuleOpts = typeof RULE_DEFAULTS;
 // p95Ms 가 있으면 그 값을 쓴다 (Prometheus 처럼 이미 분위수를 계산해 주는 지표). 없으면 latenciesMs 로 계산
 export interface Side { n: number; err5xx: number; latenciesMs: number[]; p95Ms?: number }
 const sideP95 = (s: Side) => s.p95Ms ?? p95(s.latenciesMs);
-export interface Window { target: Side; source: Side; baselineP95Ms: number }
+// #245: estimatedSourceN = 출발 지표가 없을 때 기준값으로 추정한 출발 수. 단계별 몫 계산에만 쓰고 판정(evaluate)에는 안 쓴다
+export interface Window { target: Side; source: Side; baselineP95Ms: number; estimatedSourceN?: number }
 
 export function p95(xs: number[]): number {
   if (!xs.length) return NaN;
@@ -28,6 +29,7 @@ export type Reason = "error_rate" | "error_rate_hard" | "latency" | "insufficien
 export interface Evaluation {
   hit: boolean; reason: Reason;
   targetRatio: number; sourceRatio: number; targetP95Ms: number; refP95Ms: number;
+  latencyMeasured: boolean;   // false 면 지연 조건을 판정하지 못했다 (NaN 비교는 항상 통과). 오류율로만 본 판정이다
 }
 
 export function evaluate(w: Window, opts: Partial<RuleOpts> = {}): Evaluation {
@@ -37,7 +39,7 @@ export function evaluate(w: Window, opts: Partial<RuleOpts> = {}): Evaluation {
   const sourceRatio = s.n > 0 ? s.err5xx / s.n : 0;
   const targetP95Ms = sideP95(t);
   const refP95Ms = s.n >= o.minSourceSamples ? sideP95(s) : w.baselineP95Ms;
-  const base = { targetRatio, sourceRatio, targetP95Ms, refP95Ms };
+  const base = { targetRatio, sourceRatio, targetP95Ms, refP95Ms, latencyMeasured: Number.isFinite(targetP95Ms) && Number.isFinite(refP95Ms) };
   // 지름길: 도착이 통째로 죽었으면 표본 하한과 상관없이 바로
   if (t.err5xx >= o.hardErrors && targetRatio > 0.5) return { ...base, hit: true, reason: "error_rate_hard" };
   if (t.n < o.minSamples) return { ...base, hit: false, reason: "insufficient_samples" };

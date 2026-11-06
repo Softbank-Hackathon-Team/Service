@@ -17,6 +17,7 @@ import { agentReportRoutes } from "./agent-reports.js";
 import { specRoutes } from "./spec.js";
 import { tokenRoutes } from "./tokens.js";
 import { agentEnrollRoutes } from "./agent-enroll.js";
+import { onpremInstallRoutes } from "./onprem-install.js";
 import { eventRoutes } from "./events.js";
 import { rehearsalRoutes } from "./rehearsal.js";
 
@@ -44,6 +45,7 @@ export const ROUTE_PLUGINS: ReadonlyArray<{ file: string; plugin: (app: FastifyI
   { file: "apps/api/src/routes/spec.ts", plugin: specRoutes }, // Z100: 이전의 최신 명세 한 판 (읽기 전용)
   { file: "apps/api/src/routes/tokens.ts", plugin: tokenRoutes }, // L8b: CLI 개인 토큰
   { file: "apps/api/src/routes/agent-enroll.ts", plugin: agentEnrollRoutes }, // L6: 온프레 등록 토큰 → Agent 키
+  { file: "apps/api/src/routes/onprem-install.ts", plugin: onpremInstallRoutes }, // 온프레 설치 한 줄이 받는 스크립트·묶음 (인증 없음)
   { file: "apps/api/src/routes/events.ts", plugin: eventRoutes }, // 화면 신호 (SSE, GET /events)
   { file: "apps/api/src/routes/rehearsal.ts", plugin: rehearsalRoutes }, // vCluster 리허설 줄 읽기 (GET /migrations/:id/rehearsal)
 ];

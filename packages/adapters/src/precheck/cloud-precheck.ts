@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import type { Exec } from "../terraform/real-runner.js";
 import { awsRegion, gcpRegion, maskAccount, onpremContext, scrubAccountIds } from "../common/cli.js";
 import { envNumber } from "@svc/contracts";
+import { relayPermVerdict, relaySimArgs } from "./relay-permissions.js";
 
 // Z97: 사전 점검(precheck) 실조회. 예전 STUB(PC-01·02 "확인됨" 고정 글자)을 실제 읽기 호출로 바꾼다.
 // 읽기만 한다: aws/gcloud/kubectl 의 describe·list·get 과 TCP 연결, 디스크 statfs. 자원 생성·변경 명령은 없다.
@@ -129,6 +130,18 @@ function agentCredCheck(id: string, side: CloudCheck["side"], item: string, a: N
   if (a.lastHeartbeatAgeSec > a.staleSec) return { id, side, item, verdict: "FAIL", reason: `AGENT_HEARTBEAT_STALE — 마지막 하트비트 ${a.lastHeartbeatAgeSec}초 전 (기준 ${a.staleSec}초)`, fix: "고객 서버에서 kubectl -n svc-agent get pods 로 Agent 가 도는지 확인" };
   return { id, side, item, verdict: "PASS", reason: `Agent 하트비트 ${a.lastHeartbeatAgeSec}초 전 (살아 있는 키 ${a.keys}개, pull 모드라 워커는 클러스터에 직접 안 붙음)` };
 }
+
+// ── 1b. 출발 실행 역할의 중계기 권한 (출발 AWS → 온프레 pull 도착) ──────────────
+//   apply 가 출발 계정에 중계기를 만든다 (worker relay/). 그 동작이 실행 역할 svc-operate 에 있는지 관찰 역할로 흉내 평가한다 (읽기만)
+async function relayPermCheck(c: Ctx, e: PrecheckEnvInfo): Promise<CloudCheck> {
+  if (!e.accountId || !/^\d{12}$/.test(e.accountId))
+    return { id: "PC-RELAY-PERM", side: "source", item: "출발 실행 역할 중계기 권한", verdict: "WARN", reason: "출발 환경 계정 번호가 없어 실행 역할을 못 정함 — 확인 못 함" };
+  const arn = `arn:aws:iam::${e.accountId}:role/svc-operate`;
+  return relayPermVerdict(await aws(c, relaySimArgs(arn, c.region)), arn);
+}
+/** 중계기를 워커가 만드는 길인가: 출발 AWS + 온프레 pull 도착(Agent 하트비트로 점검하는 길) + RELAY_AUTO≠0 */
+export const relayPathApplies = (i: Pick<PrecheckInput, "source" | "target">, env: NodeJS.ProcessEnv) =>
+  i.source.provider === "aws" && i.target.provider === "onprem" && !!i.target.agent && env.RELAY_AUTO !== "0";
 
 // ── 2. 도착 리전·API 활성 ─────────────────────────────────────
 async function apiCheck(c: Ctx, e: PrecheckEnvInfo): Promise<CloudCheck | null> {
@@ -337,6 +350,7 @@ export async function runCloudPrecheck(i: PrecheckInput, deps: PrecheckDeps): Pr
   if (ct.verdict !== "FAIL") tasks.push(apiCheck(cT, i.target), billingCheck(cT, i.target, ct), quotaChecks(cT, i.target));
   else out.push({ id: "PC-SKIP", side: "target", item: "도착 클라우드 조회", verdict: "FAIL", reason: "도착 자격이 없어 API·결제·할당량 조회를 건너뜀" });
   tasks.push(dbVersionCheck(cT, i));   // 도착이 받는 버전 조회 (출발 버전은 REPL_SOURCE_URL 로 이미 앎)
+  if (cs.verdict !== "FAIL" && relayPathApplies(i, env)) tasks.push(relayPermCheck(cS, i.source));
   for (const r of await Promise.all(tasks)) { if (Array.isArray(r)) out.push(...r); else if (r) out.push(r); }
   out.push({ id: "PC-TIME", side: "both", item: "점검 시간", verdict: "PASS", reason: `실조회 ${out.length}항목 ${Date.now() - t0}ms` });
   return out;

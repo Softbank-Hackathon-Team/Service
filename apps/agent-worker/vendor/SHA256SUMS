@@ -1,3 +1,4 @@
 7ee1116efcadfd2132b4978f04bc8c061d34f713cd467e1e355beaeddd39bd8e  vcluster-0.37.6.tgz
 59bff4c16b8bf0795cf5474a6d519de6eab4db36aeabfb0694904531641c1919  crds/clusters.postgresql.cnpg.io-1.30.1.yaml
 30716728e505299982355f0471ef0fb45e3dc369184182a83bfeb962a9d47399  crds/externalsecrets.external-secrets.io-v2.14.0.yaml
+4c6f54d8dbf72ffffac5eef124a17c89e762b692cf8cbe1490601d45e42b7646  crds/sealedsecrets.bitnami.com-v0.40.0.yaml

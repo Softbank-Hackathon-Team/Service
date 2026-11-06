@@ -43,6 +43,16 @@ export const AgentReport = z.discriminatedUnion("kind", [
       // 이 Cluster 파드를 가리키는 NodePort·LoadBalancer Service 가 있으면 true (클러스터 밖에서 닿음)
       exposed: z.boolean().nullable(),
     }).strict()).max(50),
+    // 클러스터 안 sealed-secrets 컨트롤러의 공개 봉인 인증서 (GET /v1/cert.pem). 워커가 이전별 비밀을 SealedSecret 으로 봉인할 때 쓴다
+    //   못 받으면 칸이 없다 (보고 실패 아님). 선택 칸이라 이 칸을 모르는 예전 Agent 보고도 그대로 받는다
+    // DRAFT(ai): 최대 16384자 (RSA 4096 인증서 PEM 은 약 1.8KB)
+    sealing: z.object({
+      certPem: z.string().max(16384).startsWith("-----BEGIN CERTIFICATE-----"),
+      fetchedAt: z.iso.datetime({ offset: true }),
+    }).strict().optional(),
+    // 온프레 클러스터가 밖으로 나갈 때 쓰는 공인 IPv4 (Agent 가 EGRESS_IP_URL 에 물어본 값). 워커가 출발 계정 중계기 SSH(22)를 이 /32 에만 연다
+    //   못 받으면 칸이 없다 (보고 실패 아님). 없으면 중계기를 만들지 않고 ONPREM_EGRESS_UNKNOWN 으로 멈춘다 (22 를 세상에 열지 않는다)
+    egressIp: z.ipv4().optional(),
   }).strict(),
 ]);
 export type AgentReport = z.infer<typeof AgentReport>;
