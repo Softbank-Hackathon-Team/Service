@@ -71,7 +71,8 @@ class FakeGcloud {
       this.users.set(args[3]!, flag("password")); return ok({}); }
     if (a.startsWith("sql users set-password")) { this.users.set(args[3]!, flag("password")); return ok({}); }
     if (a.startsWith("sql users delete")) { if (!this.users.delete(args[3]!)) return nf(args[3]!); return ok({}); }
-    if (a.startsWith("compute networks subnets list")) return ok([{ selfLink: SUBNET }]);
+    // 진짜 gcloud 처럼 --network 를 이름으로만 비교한다 (주소를 주면 0개)
+    if (a.startsWith("compute networks subnets list")) return ok(/^[a-z][a-z0-9-]*$/.test(flag("network")) ? [{ selfLink: SUBNET }] : []);
     if (a.startsWith("compute addresses list")) return ok([{ address: "10.20.0.0", prefixLength: 16, network: "https://www.googleapis.com/compute/v1/projects/src-proj-1/global/networks/app-vpc" },
       { address: "10.99.0.0", prefixLength: 16, network: "https://www.googleapis.com/compute/v1/projects/src-proj-1/global/networks/other" }]);
     if (a.startsWith("compute firewall-rules describe")) { const f = this.fws.get(args[3]!); return f ? ok(f) : nf(args[3]!); }
