@@ -73,7 +73,8 @@ export const POLICY: Record<string, QueuePolicy> = {
   // PF RV-09: 1시간 고정이면 init·plan·apply 단계 상한 합 + 실패 즉시 지우기가 기한을 넘었다 → tfBudget 합 (기본 7200초)
   [QUEUES.apply]: { policy: "stately", retryLimit: 1, expireInSeconds: tfBudget().applyExpireSec },
   // DRAFT(ai) Z19: 아래 대기는 초. 바깥 시스템(Argo·LB)이 잠깐 안 될 때를 넘기는 정도
-  [QUEUES.deploy]: { policy: "stately", retryLimit: 2, retryDelay: 10 },
+  // 2026-11-07 감사: deploy 한 번 안에 이미지 복사(최대 480초)·출발 번들 Agent 대기(600초)·Argo 대기가 이어져 기본 만료 900초를 넘을 수 있다 → 30분
+  [QUEUES.deploy]: { policy: "stately", retryLimit: 2, retryDelay: 10, expireInSeconds: 1800 },
   // sync는 pg-boss 재시도를 안 쓴다: 처리기가 5·15·45초 간격으로 스스로 다시 넣는다(SYNC_RETRY_DELAYS_SEC). 0 = 예상 못 한 예외는 바로 죽은 작업 처리
   [QUEUES.sync]: { policy: "stately", retryLimit: 1 },     // Z32: 위 apply 와 같은 뜻 (START_ONLY_RETRY)
   // shift는 판정 도중 상태를 다시 읽고 시작하므로 한 번 더 해도 안전 (지표 오류는 컨트롤러 안에서 처리)
