@@ -177,3 +177,16 @@ test("실자원: 온프레 kubectl — CNPG 종류가 없으면 0개(오류 아�
   assert.equal(inv.status, "ok");
   assert.equal(inv.groups.find((g) => g.category === "cluster")?.items[0]?.status, "Ready");
 });
+
+test("온프레 도착 롤백: 정리가 묶음 폴더를 지웠으면(target_teardown.gitops commit) 앱·DB 는 걷음, 빈 네임스페이스만 남음. 안 지웠으면 예전처럼 남음", () => {
+  const base = { status: "rolled_back" as const, targetProvider: "onprem" as const, sourceProvider: "gcp" as const, applyEvidence: "stub" as const };
+  const gone = footprintOf(DST, row({ ...base, targetBundleRemoved: true })).resources;
+  const left = gone.filter((r) => r.state === "left").map((r) => r.type);
+  assert.ok(left.length >= 1 && left.every((t) => t === "kubernetes_namespace_v1" || t === "core/namespaces"), JSON.stringify(left));
+  assert.equal(state(gone, "helm.release"), "removed");
+  const kept = footprintOf(DST, row({ ...base })).resources;
+  assert.equal(state(kept, "helm.release"), "left");
+  assert.ok(kept.filter((r) => r.state === "left").length > left.length);
+  // 클라우드 도착은 이 칸을 안 본다 (Terraform destroy 가 지우는 길)
+  assert.equal(state(footprintOf(DST, row({ ...base, targetProvider: "aws", targetBundleRemoved: true })).resources, "helm.release"), "left");
+});
