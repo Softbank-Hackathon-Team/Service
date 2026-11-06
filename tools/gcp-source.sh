@@ -217,13 +217,16 @@ entry)
     jq -c '.result' <<<"$out"
   }
   A="/accounts/$CLOUDFLARE_ACCOUNT_ID" Z="/zones/$CLOUDFLARE_ZONE_ID"
+  # 파이프 앞쪽(cf) 실패를 놓치지 않게 (없으면 인증 실패도 "터널 만듦" 으로 찍혔다, 2026-11-07 실측). 이 단계에서만 켠다
+  set -o pipefail
+  cf GET "/user/tokens/verify" > /dev/null || { say "Cloudflare 토큰 인증 실패 (값이 토큰이 아니거나 만료. 로그 $LOGF)"; exit 1; }
   TID=$(cf GET "$A/cfd_tunnel?name=$TUN_NAME&is_deleted=false" | jq -r '.[0].id // empty') || { say "터널 조회 실패 (로그 $LOGF)"; exit 1; }
   if [ -z "$TID" ]; then
-    TID=$(cf POST "$A/cfd_tunnel" "$(jq -nc --arg n "$TUN_NAME" '{name:$n, config_src:"cloudflare"}')" | jq -r '.id') || { say "터널 만들기 실패"; exit 1; }
+    TID=$(cf POST "$A/cfd_tunnel" "$(jq -nc --arg n "$TUN_NAME" '{name:$n, config_src:"cloudflare"}')" | jq -r '.id // empty') && [ -n "$TID" ] || { say "터널 만들기 실패 (로그 $LOGF)"; exit 1; }
     say "터널 $TUN_NAME 만듦"
   else say "터널 $TUN_NAME 다시 씀"; fi
   cf PUT "$A/cfd_tunnel/$TID/configurations" "$(jq -nc --arg h "$ENTRY_HOST" --arg s "http://shop-web.$NS:80" \
-    '{config:{ingress:[{hostname:$h, service:$s}, {service:"http_status:404"}]}}')" > /dev/null || { say "터널 규칙 실패"; exit 1; }
+    '{config:{ingress:[{hostname:$h, service:$s}, {service:"http_status:404"}]}}')" > /dev/null || { say "터널 규칙 실패 (로그 $LOGF)"; exit 1; }
   REC=$(jq -nc --arg h "$ENTRY_HOST" --arg c "$TID.cfargotunnel.com" '{type:"CNAME", name:$h, content:$c, proxied:true, comment:"gcp-source entry"}')
   RID=$(cf GET "$Z/dns_records?name=$ENTRY_HOST" | jq -r '.[0].id // empty') || { say "DNS 조회 실패"; exit 1; }
   if [ -z "$RID" ]; then cf POST "$Z/dns_records" "$REC" > /dev/null || { say "DNS 줄 만들기 실패"; exit 1; }
