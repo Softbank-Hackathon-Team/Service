@@ -70,13 +70,15 @@ const ENV_CRED = { metadataHost: "127.0.0.1:8", token: () => "env-tok-1", projec
 const lend = (cred: GcpTerraformCred): WithEnvCred => (fn) => fn({ cred });
 const AUTO = { ENV_LAYER_AUTO: "1", PATH: "/bin", GOOGLE_APPLICATION_CREDENTIALS: "/var/run/worker-sa.json", CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE: "/var/run/gcp-cred/worker.json" };
 
-test("사실 고르는 순서: DB ready > TF_FACT_* > (gcp + ENV_LAYER_AUTO=1) 만들기 > 없음", () => {
+test("사실 고르는 순서: DB ready > TF_FACT_* > (gcp + ENV_LAYER_AUTO=1) 만들기 > (aws) 실자원 사실 > 없음", () => {
   assert.equal(chooseEnvLayerSource("gcp", READY, { ...TF_GCP, ENV_LAYER_AUTO: "1" }), "db");
   assert.equal(chooseEnvLayerSource("gcp", { ...READY, status: "failed" }, TF_GCP), "env");
   assert.equal(chooseEnvLayerSource("gcp", null, { ENV_LAYER_AUTO: "1" }), "create");
   assert.equal(chooseEnvLayerSource("gcp", null, {}), "none");
-  assert.equal(chooseEnvLayerSource("aws", null, { ENV_LAYER_AUTO: "1" }), "none", "gcp 만 만든다");
+  assert.equal(chooseEnvLayerSource("aws", null, { ENV_LAYER_AUTO: "1" }), "inventory", "aws 는 만들지 않고 실자원 사실");
   assert.equal(chooseEnvLayerSource("aws", null, { TF_FACT_CLUSTER_NAME: "" }), "env", "클러스터 없이(\"\") 뜻은 그대로");
+  assert.equal(chooseEnvLayerSource("aws", null, { TF_FACT_VPC_ID: "vpc-1" }), "env", "aws TF_FACT_* 하나라도 있으면 예전 길");
+  assert.equal(chooseEnvLayerSource("aws", null, { TF_FACT_ACCOUNT_ID: "111122223333" }), "inventory", "계정 번호는 도착 사실 키가 아니다");
 });
 
 test("DB 사실 ready → env apply 안 함, 앱 층이 DB 값을 쓴다 (워커 TF_FACT_* 보다 먼저)", async () => {

@@ -549,6 +549,7 @@
                     "rds:DescribeDBParameters",
                     "rds:DescribeDBEngineVersions",
                     "ec2:DescribeVpcs",
+                    "ec2:DescribeSubnets",
                     "ec2:DescribeSecurityGroups",
                     "ec2:DescribeRegions",
                     "ec2:DescribeAddresses",

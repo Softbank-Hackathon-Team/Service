@@ -1,7 +1,7 @@
 import type { PlanDoc, Provider } from "@svc/contracts";
 import { tfBudget } from "@svc/contracts";
-import { createEnvLayerRunner, ENV_LAYER_KEYS, ENV_LAYER_MODULE_DIGEST, envLayerVars, envLayerVarsHash, factsFromEnv, factsOfLayer, gcpTerraformEnv,
-  spawnExec, type EnvLayerFacts, type EnvLayerRunner, type EnvLayerRunnerOpts, type Exec, type GcpTerraformCred } from "@svc/adapters";
+import { AWS_TARGET_FACT_KEYS, createEnvLayerRunner, ENV_LAYER_KEYS, ENV_LAYER_MODULE_DIGEST, envLayerVars, envLayerVarsHash, factsFromEnv, factsOfLayer, gcpTerraformEnv,
+  regionOf, spawnExec, type EnvLayerFacts, type EnvLayerRunner, type EnvLayerRunnerOpts, type Exec, type GcpTerraformCred } from "@svc/adapters";
 import { redactText } from "@svc/contracts";
 import { withTenant, writeAudit, type Tx } from "@svc/core";
 import { GcpIssueError } from "@svc/security";
@@ -20,27 +20,49 @@ import type { MigrationRow } from "./jobs/_step.js";
 //   2) 없으면 워커 TF_FACT_* (예전 데모 방식). TF_FACT_CLUSTER_NAME="" (클러스터 없이, aws) 뜻은 그대로
 //   3) 둘 다 없고 GCP 이고 ENV_LAYER_AUTO=1 → 만든다
 //      - 도착 프로젝트에 클러스터가 이미 있는데 DB 줄이 없으면 만들지 않고 NEEDS_HUMAN (고객 GKE 를 덮어쓰지 않게)
-//   4) 그 밖 → 아무것도 안 함 (realApply 가 예전처럼 TF_FACTS_MISSING)
+//   4) 둘 다 없고 AWS → 연결 때 적은 도착 EKS 를 실자원 읽기(inventory-refresh, 관찰 역할)가 읽어 둔 사실 (VPC·서브넷).
+//      못 쓰면 만들지 않고 TARGET_FACTS_UNAVAILABLE (이유 한 줄)
+//   5) 그 밖 → 아무것도 안 함 (realApply 가 예전처럼 TF_FACTS_MISSING)
 // DRAFT(ai): ENV_LAYER_AUTO 기본 꺼짐. 꺼져 있으면 DB 줄이 없는 한 예전과 완전히 같다 (DB 줄은 켜져 있을 때만 생긴다)
 
 export type EnvLayerStatus = "creating" | "ready" | "failed";
 export interface EnvLayerRow { status: EnvLayerStatus; facts: EnvLayerFacts | null; varsHash: string; moduleDigest: string; updatedAt?: string }
-export type EnvLayerSource = "db" | "env" | "create" | "none";
+export type EnvLayerSource = "db" | "env" | "create" | "inventory" | "none";
 
 export const envLayerAuto = (env: NodeJS.ProcessEnv = process.env) => env.ENV_LAYER_AUTO === "1";
 
-/** 워커 env 에 환경 층 사실(TF_FACT_NETWORK_ID 등)이 있는가. TF_FACT_CLUSTER_NAME="" 도 "있음" (클러스터 없이 만들기) */
-export function hasEnvFacts(env: NodeJS.ProcessEnv): boolean {
+/** 워커 env 에 그 클라우드의 도착 사실(TF_FACT_NETWORK_ID·TF_FACT_VPC_ID 등)이 있는가. TF_FACT_CLUSTER_NAME="" 도 "있음" (클러스터 없이 만들기) */
+export function hasEnvFacts(env: NodeJS.ProcessEnv, provider: Provider): boolean {
   const f = factsFromEnv(env);
-  return (ENV_LAYER_KEYS as readonly string[]).some((k) => f[k] !== undefined);
+  const keys: readonly string[] = provider === "aws" ? AWS_TARGET_FACT_KEYS : ENV_LAYER_KEYS;
+  return keys.some((k) => f[k] !== undefined);
 }
 
-/** 순수 함수: 위 순서 1)~4) */
+/** 순수 함수: 위 순서 1)~5) */
 export function chooseEnvLayerSource(provider: Provider, row: EnvLayerRow | null, env: NodeJS.ProcessEnv): EnvLayerSource {
   if (row?.status === "ready" && row.facts) return "db";
-  if (hasEnvFacts(env)) return "env";
+  if (hasEnvFacts(env, provider)) return "env";
   if (provider === "gcp" && envLayerAuto(env)) return "create";
+  if (provider === "aws") return "inventory";
   return "none";
+}
+
+/** AWS 도착 사실 (실자원 읽기가 저장한 targetFacts). 못 쓰면 사람이 읽을 이유 */
+export type InventoryFacts = { ok: true; facts: Record<string, string> } | { ok: false; reason: string };
+
+/** 순수 함수: 저장된 targetFacts(adapters AwsTargetFactsRead) → 사실. 지금 환경의 클러스터·도착 지역과 같은 읽기일 때만 */
+export function inventoryFactsOf(stored: unknown, cluster: string | null, region: string): InventoryFacts {
+  const t = stored as { ok?: unknown; cluster?: unknown; region?: unknown; facts?: unknown; reason?: unknown } | null | undefined;
+  if (!t || typeof t !== "object" || typeof t.ok !== "boolean")
+    return { ok: false, reason: "도착 EKS 를 아직 읽지 않았다. 도착 환경 화면을 열면 실자원을 읽는다" };
+  if (!t.ok) return { ok: false, reason: `도착 EKS 를 읽었지만 쓸 수 없다: ${String(t.reason ?? "이유 없음")}` };
+  if (t.cluster !== cluster)
+    return { ok: false, reason: `읽어 둔 클러스터(${String(t.cluster)})가 환경의 클러스터(${cluster ?? "없음"})와 다르다. 도착 환경 화면을 다시 열어 실자원을 다시 읽는다` };
+  if (t.region !== region) return { ok: false, reason: `도착 EKS 지역 ${String(t.region)} 은 아직 못 쓴다 (도착 자원은 ${region} 에 만든다)` };
+  const facts = t.facts as Record<string, unknown> | null;
+  if (!facts || typeof facts !== "object" || !Object.values(facts).every((v) => typeof v === "string"))
+    return { ok: false, reason: "읽어 둔 도착 사실 모양이 틀리다. 도착 환경 화면을 다시 열어 실자원을 다시 읽는다" };
+  return { ok: true, facts: facts as Record<string, string> };
 }
 
 // ---- DB ----
@@ -53,6 +75,16 @@ export async function readEnvLayer(tx: Pick<Tx, "query">, envId: string): Promis
   if (!x) return null;
   const facts = x.facts && typeof x.facts === "object" && "cluster_name" in x.facts ? x.facts : null;
   return { status: x.status, facts, varsHash: x.vars_hash, moduleDigest: x.module_digest, updatedAt: new Date(x.updated_at).toISOString() };
+}
+
+/** AWS 도착 사실 읽기 (environment_inventory.result.targetFacts + 환경의 cluster_name). 도착 지역 = 계획과 같은 regionOf("default") */
+export async function readInventoryFacts(tx: Pick<Tx, "query">, envId: string): Promise<InventoryFacts> {
+  const t = await tx.query(`SELECT to_regclass('public.environment_inventory') IS NOT NULL AS ok`, []);
+  if (!t.rows[0]?.ok) return { ok: false, reason: "실자원 표(environment_inventory)가 없는 DB 다" };
+  const r = await tx.query(
+    `SELECT e.cluster_name, i.result->'targetFacts' AS facts FROM environments e LEFT JOIN environment_inventory i ON i.environment_id = e.id WHERE e.id = $1`, [envId]);
+  const x = r.rows[0] as { cluster_name: string | null; facts: unknown } | undefined;
+  return inventoryFactsOf(x?.facts, x?.cluster_name ?? null, regionOf({ envId, provider: "aws", region: "default" }));
 }
 
 export interface EnvLayerStore {
@@ -111,11 +143,13 @@ export async function listGkeClusters(projectId: string, env: NodeJS.ProcessEnv,
 }
 
 // ---- 계획 ----
-/** 계획서 envLayer 칸 + 계획 때 쓸 DB 사실. TF_FACT_* 길·흉내 길은 칸 없음 (예전 지문) */
-export function planEnvLayer(provider: Provider, row: EnvLayerRow | null, env: NodeJS.ProcessEnv, projectId: string | null, region: string):
-    { envLayer?: NonNullable<PlanDoc["envLayer"]>; dbFacts?: Record<string, string> } {
+/** 계획서 envLayer 칸 + 계획 때 쓸 DB 사실. TF_FACT_* 길·흉내 길은 칸 없음 (예전 지문).
+ *  AWS 실자원 사실은 칸 없이 사실만 (계획서 targetFacts 에 실려 사람이 본다). 못 쓰면 계획은 그대로 두고 apply 가 이유를 들고 멈춘다 */
+export function planEnvLayer(provider: Provider, row: EnvLayerRow | null, env: NodeJS.ProcessEnv, projectId: string | null, region: string,
+    inventory?: InventoryFacts | null): { envLayer?: NonNullable<PlanDoc["envLayer"]>; dbFacts?: Record<string, string> } {
   const src = chooseEnvLayerSource(provider, row, env);
   if (src === "db") return { envLayer: { mode: "existing", moduleDigest: row!.moduleDigest }, dbFacts: factsOfLayer(row!.facts!) };
+  if (src === "inventory") return inventory?.ok ? { dbFacts: inventory.facts } : {};
   if (src === "create" && projectId) {
     const vars = envLayerVars({ projectId, region });
     return { envLayer: { mode: "create", moduleDigest: ENV_LAYER_MODULE_DIGEST, varsHash: envLayerVarsHash(vars),
@@ -143,10 +177,15 @@ export interface EnsureEnvLayerDeps {
   runner?: (o: EnvLayerRunnerOpts) => EnvLayerRunner;
   exec?: Exec;   // gcloud 클러스터 목록 (시험이 가짜로)
   signal?: AbortSignal;
+  /** AWS 실자원 사실 읽기 (시험이 가짜로). 기본 = DB readInventoryFacts */
+  inventory?: (tenantId: string, envId: string) => Promise<InventoryFacts>;
 }
+/** layer.varsHash 는 만든 환경 층(DB 줄)에만 있다. AWS 실자원 사실은 사실만 */
 export type EnsureEnvLayerOutcome =
-  | { ok: true; source: Exclude<EnvLayerSource, "create">; created?: boolean; layer?: { facts: Record<string, string>; varsHash: string }; detail: Record<string, unknown> }
+  | { ok: true; source: Exclude<EnvLayerSource, "create">; created?: boolean; layer?: { facts: Record<string, string>; varsHash?: string }; detail: Record<string, unknown> }
   | { ok: false; failureCode: string; detail: Record<string, unknown> };
+
+const dbInventoryFacts = (tenantId: string, envId: string) => withTenant(tenantId, (tx) => readInventoryFacts(tx, envId));
 
 export async function ensureEnvLayer(i: EnsureEnvLayerInput, d: EnsureEnvLayerDeps = {}): Promise<EnsureEnvLayerOutcome> {
   const env = d.env ?? process.env;
@@ -155,14 +194,19 @@ export async function ensureEnvLayer(i: EnsureEnvLayerInput, d: EnsureEnvLayerDe
   const row = i.provider === "gcp" ? await store.get(i.tenantId, i.envId) : null;
   const src = chooseEnvLayerSource(i.provider, row, env);
   const base = { envId: i.envId, provider: i.provider };
-  if (src === "db") return { ok: true, source: "db", layer: { facts: factsOfLayer(row!.facts!), varsHash: row!.varsHash }, detail: { ...base, source: "db" } };
-  if (src !== "create") return { ok: true, source: src, detail: { ...base, source: src } };
-
-  // ---- 만들기 ----
   const fail = async (failureCode: string, detail: Record<string, unknown>, action = "env_layer.failed"): Promise<EnsureEnvLayerOutcome> => {
     await store.audit(i.tenantId, i.migrationId, action, "error", { ...base, failureCode, ...detail });
     return { ok: false, failureCode, detail: { ...base, envLayer: { failureCode, ...detail } } };
   };
+  if (src === "db") return { ok: true, source: "db", layer: { facts: factsOfLayer(row!.facts!), varsHash: row!.varsHash }, detail: { ...base, source: "db" } };
+  if (src === "inventory") {
+    const f = await (d.inventory ?? dbInventoryFacts)(i.tenantId, i.envId);
+    if (!f.ok) return fail("TARGET_FACTS_UNAVAILABLE", { error: f.reason }, "env_layer.facts_unavailable");
+    return { ok: true, source: "inventory", layer: { facts: f.facts }, detail: { ...base, source: "inventory", keys: Object.keys(f.facts).sort() } };
+  }
+  if (src !== "create") return { ok: true, source: src, detail: { ...base, source: src } };
+
+  // ---- 만들기 ----
   const projectId = i.projectId;
   if (!projectId) return fail("TF_FACTS_MISSING", { error: "도착 프로젝트(gcp_target_project·account_id)가 없다" });
   const vars = envLayerVars({ projectId, region: i.region });

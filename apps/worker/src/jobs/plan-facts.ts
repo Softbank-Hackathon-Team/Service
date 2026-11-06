@@ -46,7 +46,7 @@ export function importedFor(env: NodeJS.ProcessEnv, migrationId: string, tenantI
 
 /** apply 직전: 계획서에 실린 사실과 지금 다시 채운 값이 같은가. 다르면 이유 한 줄 (값 글자는 안 남기고 키 이름만) */
 export function factsDrift(plan: PlanDoc, now: Record<string, string> | undefined, imp: ImportedInfra | null,
-    layer?: { varsHash: string } | null): string | null {
+    layer?: { varsHash?: string } | null): string | null {
   // 환경 층 create 계획: 계획 때는 클러스터 이름·네트워크를 몰랐다 → 그 키는 빼고, 환경 층 입력 지문(varsHash)으로 대조
   const create = plan.envLayer?.mode === "create";
   const skip = new Set<string>(create ? ENV_LAYER_KEYS : []);

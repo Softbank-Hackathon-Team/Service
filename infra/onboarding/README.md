@@ -47,6 +47,7 @@
 2. 파라미터 `ArgoHubRoleArn` = 플랫폼이 알려 준 허브 역할 ARN (연결 화면에서 링크를 새로 받으면 채워져 있다). 나머지 값은 그대로
 3. "IAM 리소스를 만들 수 있음" 체크 → 업데이트. `UPDATE_COMPLETE` 뒤 출력에 `DeployRoleArn` 이 보이면 된다
 4. 도착 EKS 에 한 번: `kubectl apply -f infra/permissions/eks-operate-namespace-rbac.yaml -f infra/permissions/eks-deploy-rbac.yaml` (이미 적용했으면 그대로 다시 적용해도 바뀌지 않는다)
+5. 같은 업데이트로 관찰 역할에 `ec2:DescribeSubnets` 가 더해진다 (도착 EKS 의 서브넷 읽기, `TF_FACT_*` 없이 도착 사실을 얻는 데 필요). 업데이트 뒤 도착 환경 화면을 한 번 열면 플랫폼이 다시 읽는다
 
 CLI 로 하려면 (값은 화면에서 복사). 예전 스택에 `SourceDbSecurityGroupId`·`SourceDbInstanceId` 가 있으면 그 둘도 `UsePreviousValue=true` 로 더한다 (없던 스택에 붙이면 거부된다):
 ```bash
