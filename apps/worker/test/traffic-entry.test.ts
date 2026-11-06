@@ -102,7 +102,8 @@ test("거부: 켰는데 설정이 빠지면 TRAFFIC_ENTRY_NOT_CONFIGURED, 출발
 test("성공: 자원을 만들고 이 이전에 등록, 터널 토큰은 봉인 비밀로만 돌려준다. 롤백 정리는 모두 지운다", { skip: hasOpenssl ? false : "openssl 없음" }, async () => {
   const f = fakeCf([{ type: "CNAME", name: HOST, content: "11112222-3333-4444-5555-666677778888.cfargotunnel.com" }]);
   const reg: Array<[string, string, TrafficTarget]> = [];
-  const r = await prepareTrafficEntry({ tenantId: TENANT, migrationId: MIG, provider: "onprem", values, sealingCertPem: testCert() }, ON,
+  const cert = testCert();
+  const r = await prepareTrafficEntry({ tenantId: TENANT, migrationId: MIG, provider: "onprem", values, sealingCertPem: cert }, ON,
     { ctx: ctxOf(f.fetch), register: async (t, m, tt) => { reg.push([t, m, tt]); } });
   assert.equal(r.kind, "ok");
   if (r.kind !== "ok") return;
@@ -112,6 +113,10 @@ test("성공: 자원을 만들고 이 이전에 등록, 터널 토큰은 봉인 
   assert.deepEqual(reg[0]![2], { provider: "cloudflare", lbId: f.db.lbs[0].id, sourcePoolId: r.detail.sourcePoolId, targetPoolId: r.detail.targetPoolId, zoneId: "z".repeat(32) });
   assert.equal(f.db.pools.find((p) => p.id === r.detail.sourcePoolId).origins[0].address, "11112222-3333-4444-5555-666677778888.cfargotunnel.com");
   assert.ok(!JSON.stringify(r.detail).includes("5555-6666"), "출발 오리진은 가려서 남긴다");
+  // 리허설 렌더와 커밋 렌더(다른 작업 실행)가 같은 바이트여야 한다: 다시 불러도 같은 암호문
+  const again = await prepareTrafficEntry({ tenantId: TENANT, migrationId: MIG, provider: "onprem", values, sealingCertPem: cert }, ON,
+    { ctx: ctxOf(f.fetch), register: async () => {} });
+  assert.deepEqual(again.kind === "ok" && again.sealedSecret, r.sealedSecret);
   const t = await teardownTrafficEntry(MIG, { keepTarget: false }, ON, ctxOf(f.fetch));
   assert.ok("removed" in t && t.errors.length === 0);
   assert.deepEqual([f.db.lbs.length, f.db.pools.length, f.db.monitors.length], [0, 0, 0]);
