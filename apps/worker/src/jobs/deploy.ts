@@ -11,6 +11,7 @@ import { realStsEnabled } from "../platform.js";
 import { syncWatcherFor } from "../gitops/agent-watch.js";
 import { TARGET_ACCOUNT_SQL } from "./target-account.js";
 import { recordSkip, rehearsalGate, type Gate } from "../rehearsal/gate.js";
+import { imageCopyStep } from "./image-copy.js";
 
 // GitOps 배포. deploying → syncing
 // GITOPS_REPO_DIR가 있으면 gitops 레포에 묶음을 커밋한다 (계약: parallel/N/gitops/WORKER-CONTRACT.md).
@@ -114,11 +115,17 @@ export async function handleDeploy(raw: unknown) {
         });
         if (g.kind === "stop") return g.outcome;
         gate = g;
+        // 사설 이미지를 렌더 값이 가리키는 도착 레지스트리 자리로 복사 (리허설을 지난 뒤 한 번, 커밋 바로 앞). 실패면 paused(IMAGE_COPY_FAILED)
+        const ic = await imageCopyStep(j, m, input).catch((e: unknown) => {
+          if (e instanceof GitopsError) return { outcome: gitopsPaused(e) };
+          throw e;
+        });
+        if ("outcome" in ic) return ic.outcome;
         try {
           // W4: 온프레(agent-pull)는 AGENT_DEPLOY_CONFIRM=1 이면 Agent 배포 보고를 기다린다 (agent-watch.ts). 그 밖은 Argo 폴링 그대로
           const out = await deployToGitops(repo, input, syncWatcherFor({ tenantId: j.tenantId, targetEnvId: m.targetEnvId }), { expectBundleSha: g.expectBundleSha });
           result = DeployResult.parse(out.result);
-          gitops = { commit: out.commit, argoApp: out.app, ...(out.argo ? { argo: out.argo } : {}) };
+          gitops = { commit: out.commit, argoApp: out.app, ...(out.argo ? { argo: out.argo } : {}), imageCopy: ic.detail };
         } catch (e) { return gitopsPaused(e); }
       }
       if (result.status === "failed") {
