@@ -6,6 +6,7 @@ import { t } from './i18n';
 //   deploy: {…}, gitops: { commit, argoApp } | { skipped }   (deploy.ts — GitOps 커밋·Argo 앱)
 //   measurements, windowSec, revert: { reason }, attempts     (cutover.ts)
 //   recheck, error, step                      (apply.ts·cutover.ts 실패)
+//   error|reason, missing, hint — 맨 위 또는 단계 칸 하나 안 (멈춘·실패한 전이. stopHelpOf)
 // 모르는 키는 안 보여 준다(원문은 서버 report 에 있음)
 
 export interface DetailChip { label: string; tone?: "ok" | "wait" | "bad" | "run" }
@@ -95,22 +96,62 @@ export function stopEvidence(items: TimelineItem[], into: string): { at: string;
   return null;
 }
 
+/** 멈춘 전이에 서버가 남긴 도움말: 무슨 일이 있었나 / 무엇이 빠졌나(설정·권한·도구 이름 그대로) / 어떻게 고치나 */
+export interface StopHelp { error: string | null; missing: string[]; hint: string | null }
+
+const NO_HELP: StopHelp = { error: null, missing: [], hint: null };
+const text = (x: unknown): string | null => (typeof x === "string" && x.trim() ? x.trim() : null);
+// 사유 코드 모양(TRAFFIC_NOT_CONFIGURED). 단계 칸의 error 는 코드만 담고 사람 말은 reason 에 두는 곳이 많다 (워커 deploy·shift)
+const CODE_LIKE = /^[A-Z][A-Z0-9_]*$/;
+
+function helpIn(o: Record<string, unknown>): StopHelp | null {
+  const error = text(o.error), reason = text(o.reason);
+  const missing = Array.isArray(o.missing) ? [...new Set(o.missing.map(text).filter((x): x is string => x !== null))] : [];
+  const help = { error: error && CODE_LIKE.test(error) ? reason ?? error : error ?? reason, missing, hint: text(o.hint) };
+  return help.error || help.missing.length > 0 || help.hint ? help : null;
+}
+
+/**
+ * 멈춘·실패한 전이 detail 에서 도움말을 읽는다. 워커는 error|reason·missing·hint 를 detail 맨 위에 두거나
+ * 단계 칸 하나 안에 둔다 (detail.shift·envLayer·deploy·relay·tempRole·rehearsal …).
+ * 맨 위에 하나라도 있으면 맨 위를 쓰고, 없으면 그런 값이 있는 첫 단계 칸을 쓴다. 글이 아닌 값은 버린다 (서버 모양을 믿지 않는다)
+ */
+export function stopHelpOf(detail: Record<string, unknown>): StopHelp {
+  const top = helpIn(detail);
+  if (top) return top;
+  for (const value of Object.values(detail)) {
+    const nested = isObj(value) ? helpIn(value) : null;
+    if (nested) return nested;
+  }
+  return NO_HELP;
+}
+
 /**
  * 감사 줄 하나에 서버가 남긴 실패 이유 한 줄. 워커는 실패·재시도 이유를 detail.error 에 남긴다(500자, 워커 _step.ts SD-1·import.ts).
+ * 단계 칸 안의 error·reason(detail.envLayer.error, detail.deploy.reason …)도 읽는다 (stopHelpOf).
  * 계획 재확인 실패는 detail.recheck 에 글로 남긴다 (plan.ts). 없으면 null. 글자 그대로 보여 준다 (HTML 로 해석하지 않는다)
  */
 export function failureDetailOf(item: Pick<TimelineItem, "detail">): string | null {
-  const why = str(item.detail.error) ?? (typeof item.detail.recheck === "string" ? item.detail.recheck : null);
-  return why && why.trim() ? why.trim() : null;
+  return helpWithRecheck(item.detail).error;
+}
+
+function helpWithRecheck(detail: Record<string, unknown>): StopHelp {
+  const help = stopHelpOf(detail);
+  return help.error ? help : { ...help, error: text(detail.recheck) };
+}
+
+/** 이 상태(기본 failed)로 들어온 마지막 전이의 도움말 (이유는 failureDetailOf 와 같다). 전이가 없으면 빈 도움말 */
+export function stopHelp(items: TimelineItem[], into = "failed"): StopHelp {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i]!;
+    if (it.kind === "transition" && it.to === into) return helpWithRecheck(it.detail);
+  }
+  return NO_HELP;
 }
 
 /** 이 상태(기본 failed)로 들어온 마지막 전이의 실패 이유. 실패 화면의 큰 카드가 쓴다 */
 export function failureDetail(items: TimelineItem[], into = "failed"): string | null {
-  for (let i = items.length - 1; i >= 0; i--) {
-    const it = items[i]!;
-    if (it.kind === "transition" && it.to === into) return failureDetailOf(it);
-  }
-  return null;
+  return stopHelp(items, into).error;
 }
 
 // 가장 최근 측정값(이름별 1개). 복제 지연·컷오버 멈춤 같은 숫자를 상세·모니터링에서 바로 보이게

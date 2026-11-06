@@ -5,7 +5,7 @@ import { api } from '../../lib/api';
 import type { StopReason } from '../../lib/failure';
 import { or404 } from '../../lib/http';
 import { isTerminal } from '../../lib/status';
-import { stopEvidence } from '../../lib/timelineDetail';
+import { stopEvidence, stopHelp, type StopHelp } from '../../lib/timelineDetail';
 import type { MigrationStatus, MigrationView } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
 import { analysisCaption, type AnalysisView } from '../agent/model';
@@ -19,7 +19,7 @@ type StopFoldProps = {
   reason: StopReason;
   /** 타임라인에서 근거를 찾을 전이의 도착 상태. 롤백 완료는 롤백을 시작한 전이(rolling_back)를 본다 */
   into: MigrationStatus;
-  /** 큰 카드가 이미 같은 문장을 쓰면 끈다 */
+  /** 큰 카드가 이미 같은 문장(사유 문장과 서버가 남긴 이유·빠진 것·고치는 법)을 쓰면 끈다 */
   hint?: boolean;
   defaultOpen?: boolean;
   /** AI 실패 원인 분석 (끝난 분석 또는 분석을 못 한 이유). 없으면 아무것도 그리지 않는다 */
@@ -37,10 +37,12 @@ export function StopFold({ migration, reason, into, hint = true, defaultOpen = t
   const plan = usePoll(() => or404(api.latestPlan(migration.id)), null, [migration.id]);
   const evidence = timeline.data ? stopEvidence(timeline.data.items, into) : null;
   const rows = evidence?.judgement ? judgementRows(evidence.judgement, plan.data?.rollbackCriteria) : [];
+  const help = hint && timeline.data ? stopHelp(timeline.data.items, into) : null;
   return (
     <FoldTile title={t('멈춘 이유')} summary={reason.label} defaultOpen={defaultOpen}>
       {hint && <p className={`${s.note} t-body-sm c-secondary`}>{reason.hint}</p>}
       <ul className={s.rows}>
+        {help && <StopHelpRows help={help} />}
         {rows.map((row) => (
           <li key={row.name} className={s.row}>
             <span className="t-label-md">{row.name}</span>
@@ -95,6 +97,35 @@ export function StopFold({ migration, reason, into, hint = true, defaultOpen = t
         </div>
       )}
     </FoldTile>
+  );
+}
+
+/**
+ * 서버가 멈춘 전이에 남긴 이유·빠진 것·고치는 법 (워커 detail 의 error|reason·missing·hint). 있는 줄만 그린다.
+ * 서버 글은 데이터로만 그린다 (React 가 글자로 넣는다). 빠진 것은 운영자가 그대로 넣을 이름이라 고정폭 값으로 하나씩 둔다
+ */
+function StopHelpRows({ help }: { help: StopHelp }) {
+  return (
+    <>
+      {help.error && (
+        <li className={s.stackRow}>
+          <span className="t-label-md">{t('서버가 남긴 이유')}</span>
+          <span className="t-body-sm c-secondary">{help.error}</span>
+        </li>
+      )}
+      {help.missing.length > 0 && (
+        <li className={s.stackRow}>
+          <span className="t-label-md">{t('빠진 것')}</span>
+          {help.missing.map((name) => <CodeValue key={name} value={name} max={48} />)}
+        </li>
+      )}
+      {help.hint && (
+        <li className={s.stackRow}>
+          <span className="t-label-md">{t('고치는 법')}</span>
+          <span className="t-body-sm c-secondary">{help.hint}</span>
+        </li>
+      )}
+    </>
   );
 }
 

@@ -12,7 +12,7 @@ import { stopReasonOf } from '../../lib/failure';
 import { is404, or404 } from '../../lib/http';
 import { planResourceRows, runtimeChangeNote, specSubstituteRows } from '../../lib/resourceMap';
 import { LABEL } from '../../lib/status';
-import { failureDetail, lastPrecheckBounce } from '../../lib/timelineDetail';
+import { lastPrecheckBounce, stopHelp } from '../../lib/timelineDetail';
 import type { MigrationView, PlanAckKind, PrecheckItem } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
 import { useAgentReview } from '../agent/AgentResult';
@@ -631,9 +631,12 @@ function FailedScreen({ migration, route, onChanged }: ScreenProps) {
   const consent = useCostConsent(code);
   const review = useAgentReview(migration.id);
   const analysis = failureAnalysisOf(review.data);
-  // 서버가 실패 전이에 남긴 이유 (감사 detail.error). 사유 코드 문장만으로는 무엇을 고칠지 모를 때가 많다
+  // 서버가 실패 전이에 남긴 이유·빠진 것·고치는 법 (감사 detail 맨 위 또는 단계 칸). 사유 코드 문장만으로는 무엇을 고칠지 모를 때가 많다
   const timeline = usePoll(() => or404(api.timeline(migration.id)), null, [migration.id, migration.version]);
-  const why = timeline.data ? failureDetail(timeline.data.items) : null;
+  const help = timeline.data ? stopHelp(timeline.data.items) : null;
+  const why = help?.error ?? null;
+  const missing = help?.missing ?? [];
+  const fix = help?.hint ?? null;
   const [cleaned, setCleaned] = useState(false);
   const reason = stopReasonOf(migration.failureCode, migration.status);
   // 가져오기·점검·계획·자원 만들기에서 실패했으면 그 단계부터 다시 할 수 있다. 아니면 지금처럼 정리 확인 뒤 끝내는 길만
@@ -672,11 +675,13 @@ function FailedScreen({ migration, route, onChanged }: ScreenProps) {
         title={reason?.title ?? t('작업이\n끝나지 못했습니다')}
         foot={retry ? RETRY[retry].foot : t('남은 자원을 직접 정리한 뒤 이 마이그레이션을 끝냅니다')}
       >
-        {(reason || why) && (
+        {(reason || why || missing.length > 0 || fix) && (
           <div className={s.heroPanel}>
             {reason && <span className="t-body-md">{reason.hint}</span>}
             {/* 서버 글은 데이터로만 그린다 (React 가 글자로 넣는다) */}
             {why && <span className="t-body-sm c-secondary">{t('서버가 남긴 이유: {0}', { 0: why })}</span>}
+            {missing.length > 0 && <span className="t-body-sm c-secondary">{t('빠진 것: {0}', { 0: missing.join(', ') })}</span>}
+            {fix && <span className="t-body-sm c-secondary">{t('고치는 법: {0}', { 0: fix })}</span>}
           </div>
         )}
       </Hero>
