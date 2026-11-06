@@ -30,7 +30,8 @@ export type Presence = "hpa" | "cronjob" | "daemonset" | "ingress" | "tunnel" | 
 // DRAFT(ai): 요청량 상한. 샌드박스 노드(t3.medium 1대)에 3티어가 다 올라가게. 낮추기만 하고 한도(limits)는 그대로라 OOM 판정은 같다
 export const REQUEST_CAP = { cpu: "100m", memory: "128Mi" } as const;
 const CAP_MILLI = 100, CAP_BYTES = 128 * 2 ** 20;
-// 가상 클러스터 안에서 효과가 없는 클라우드 신원 주석 (IRSA, GKE Workload Identity). EKS Pod Identity 는 Terraform 연결이라 주석이 없다
+// 가상 클러스터 안에서 효과가 없는 클라우드 신원 주석 (IRSA, GKE Workload Identity GSA 빌리기). EKS Pod Identity 는 Terraform 연결이라 주석이 없다.
+//   #317 가: 플랫폼 GKE 도착은 KSA 가 그대로 IAM 주체라 주석을 안 단다. 남은 gcp-service-account 칸은 그 전에 그린 묶음·손으로 쓴 매니페스트 몫
 const IAM_ANNOTATIONS = ["eks.amazonaws.com/role-arn", "iam.gke.io/gcp-service-account"];
 const SCHEDULING_KEYS = ["nodeSelector", "affinity", "tolerations", "topologySpreadConstraints", "priorityClassName"];
 const LB_ONLY_SERVICE_KEYS = ["externalTrafficPolicy", "loadBalancerIP", "loadBalancerSourceRanges", "loadBalancerClass",

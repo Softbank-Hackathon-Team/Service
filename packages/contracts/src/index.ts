@@ -25,6 +25,7 @@ export * from "./tokens.js";
 export * from "./tf-kinds.js";     // 도착 Terraform 종류별 변수 (A0)
 export * from "./target.js";       // 도착 쪽 계약 TargetBuilder (A0)
 export * from "./github-login.js";   // GHLOGIN: GitHub OAuth 로그인 계약
+export * from "./team-registry.js";  // 팀 가입 명부(docs/team-env/registry.yaml) + POST /auth/signup 계약
 export * from "./import-accuracy.js"; // 가져오기 정확도 % (ALIGN-v2 IR-10)
 export * from "./redact.js";          // 비밀·주소 가리기 규칙 한 곳 (LLM-1)
 export * from "./k8s-probe.js";   // PB-1·PR-1 k8s 프로브 모양
@@ -32,3 +33,4 @@ export * from "./chart-values.js";   // PB-1: 앱 Helm 차트 값 (Builder ↔ �
 export * from "./sandbox.js";        // vCluster 리허설 (sandbox_runs·충실도 표·실패 코드)
 export * from "./replication-endpoint.js";   // 이전마다 복제 끝점 (db 0050)
 export * from "./source-db-link.js"; // APP-22 (가): 컷오버 전 도착 앱 → 출발 DB 잇기
+export * from "./permissions.js";    // PERM-GATE: 고객 권한 묶음·차이·고치는 법

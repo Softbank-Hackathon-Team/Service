@@ -164,7 +164,7 @@ test("aws: RDS 주소·비밀·터널·Ingress·이미지·복제 수·요청량
   assert.deepEqual(x.images.map((m) => m.ref).sort(), podImages(docs));
 });
 
-test("gcp: Cloud SQL 사설 IP 를 바꾸고 Workload Identity 주석을 뺀다", { skip }, () => {
+test("gcp: Cloud SQL 사설 IP 를 바꾸고, KSA 는 Workload Identity 주석 없이 그대로 (#317 가: KSA 직접 주체)", { skip }, () => {
   const i = inputFor("gcp");
   const { values, rendered } = render(i);
   const docs = parseManifests(rendered);
@@ -173,7 +173,10 @@ test("gcp: Cloud SQL 사설 IP 를 바꾸고 Workload Identity 주석을 뺀다"
   assert.ok(x.original.some((m) => m.yaml.includes(CLOUDSQL)));
   const sa = applyDoc(x, `ServiceAccount/${x.namespace}/shop-api`)!;
   assert.equal(sa.metadata.annotations?.["iam.gke.io/gcp-service-account"], undefined);
-  assert.ok(items(x).cloud_identity!.refs.some((r) => r.includes('["iam.gke.io/gcp-service-account"]')));
+  const orig = x.original.map((m) => parse(m.yaml) as K8sDoc).find((d) => d.kind === "ServiceAccount" && d.metadata.name === "shop-api")!;
+  assert.equal(orig.metadata.annotations?.["iam.gke.io/gcp-service-account"], undefined, "렌더 원본에도 GSA 주석이 없다 (없는 GSA 를 빌리면 파드 신원이 깨짐)");
+  assert.deepEqual(items(x).cloud_identity!.refs, [], "뺄 주석이 없어 바꾼 자리 없음");
+  assert.equal(items(x).cloud_identity!.status, "not_checked");
   assert.equal(items(x).images!.status, "identical", "흉내(복사 안 함)면 이미지 주소는 그대로");
   assert.equal(x.imagesMirrored, false, "복사하지 않았다는 사실이 입력에 실린다 (진짜 agent-worker 가 거부할 근거)");
 });

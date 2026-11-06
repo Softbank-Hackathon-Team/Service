@@ -15,6 +15,7 @@ import { agentStaleSec } from "./verify-connection.js";
 import { relayApplies, relayKindOf } from "../relay/relay-step.js";
 import { gcpAwsRelayPrecheck } from "../relay/gcp-aws.js";
 import { chooseEnvLayerSource, readInventoryFacts, type InventoryFacts } from "../env-layer.js";
+import { permissionPrecheck } from "../permission-gate.js";
 
 // 사전 점검: 이전해도 되는지 본다. block(FAIL)이 하나라도 있으면 명세 검토로 되돌린다
 // Z97: STUB(고정 "확인됨")을 실조회로 바꿨다 — 자격(STS·tokeninfo·kubectl)·도착 API·결제·할당량·DB 버전·TCP·디스크.
@@ -276,16 +277,18 @@ export async function handlePrecheck(raw: unknown) {
     name: "precheck",
     expect: "prechecking",
     work: async (j, m) => withStepRoles("precheck", j, m, async (roles) => {
-      const items = [...await realPrecheck(j.tenantId, m, {}, roles), ...await v2PrecheckFor(j.tenantId, m), ...await securityPrecheckFor(j.tenantId, m)];
+      // PERM-GATE: 이 이전이 쓰는 고객 권한 묶음이 빠졌으면 block 항목 PC-PERM-<묶음> (새 실패 코드 없음 → 명세 검토로). 빌린 관찰 역할로만 읽는다
+      const perm = await permissionPrecheck(j.tenantId, m, roles);
+      const items = [...await realPrecheck(j.tenantId, m, {}, roles), ...await v2PrecheckFor(j.tenantId, m), ...await securityPrecheckFor(j.tenantId, m), ...perm.items];
       const precheckBlockers = items.filter((i) => i.level === "block").length;
       const precheckWarnings = items.filter((i) => i.level === "warn").length;
       const mock = process.env.MOCK_PRECHECK === "1";
       if (precheckBlockers > 0)
-        return { to: "spec_review", detail: { precheck: items, precheckWarnings, ...(mock ? { stub: true } : {}) }, evidence: { precheckBlockers } };
+        return { to: "spec_review", detail: { precheck: items, precheckWarnings, ...(perm.detail ? { permissions: perm.detail } : {}), ...(mock ? { stub: true } : {}) }, evidence: { precheckBlockers } };
       const planId = randomUUID();
       return {
         to: "planning",
-        detail: { precheck: items, precheckWarnings, planId, ...(mock ? { stub: true } : {}) },
+        detail: { precheck: items, precheckWarnings, planId, ...(perm.detail ? { permissions: perm.detail } : {}), ...(mock ? { stub: true } : {}) },
         evidence: { precheckBlockers },
         next: { queue: QUEUES.plan,
                 // 작업 키는 core jobKey 한 곳(plan:<이전 번호>). 환경 겹침은 env_locks 예약이 막는다 (Z43 F3)

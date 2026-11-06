@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "number",
+      "const": 1
+    },
+    "tenant": {
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+    },
+    "slots": {
+      "maxItems": 100,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9][a-z0-9-]*$"
+          },
+          "login": {
+            "type": "string",
+            "maxLength": 254,
+            "pattern": "^[^@\\s]+@[^@\\s]+$"
+          },
+          "signup_code_sha256": {
+            "type": "string",
+            "pattern": "^(?:[0-9a-f]{64})?$"
+          },
+          "tenant": {
+            "type": "string",
+            "format": "uuid",
+            "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+          },
+          "environments": {
+            "default": [],
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64
+                },
+                "provider": {
+                  "type": "string",
+                  "enum": [
+                    "aws",
+                    "gcp",
+                    "onprem",
+                    "azure_mock"
+                  ]
+                },
+                "region": {
+                  "type": "string",
+                  "maxLength": 32
+                },
+                "cluster": {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                "gcp": {
+                  "type": "object",
+                  "properties": {
+                    "original_project": {
+                      "type": "string"
+                    },
+                    "dedicated_project": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "original_project",
+                    "dedicated_project"
+                  ],
+                  "additionalProperties": false
+                },
+                "notes": {
+                  "type": "string",
+                  "maxLength": 500
+                }
+              },
+              "required": [
+                "name",
+                "provider"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "id",
+          "login",
+          "signup_code_sha256",
+          "environments"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "version",
+    "tenant",
+    "slots"
+  ],
+  "additionalProperties": false
+}

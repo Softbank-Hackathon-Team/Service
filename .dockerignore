@@ -20,6 +20,8 @@
 .omc
 documents
 docs
+# api 이미지가 팀 가입 명부를 복사한다 (deploy/docker/Dockerfile api 단계, TEAM_REGISTRY_PATH)
+!docs/team-env/registry.yaml
 # docs/openapi.* 는 보내지 않는다. api 이미지가 빌드 중에 코드로 만든다 (Z75, deploy/docker/Dockerfile)
 infra
 # 워커·api 이미지가 최소 권한 파일을 복사한다 (deploy/docker/Dockerfile 의 worker·api 단계)

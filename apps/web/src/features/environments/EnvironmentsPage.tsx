@@ -17,6 +17,7 @@ import { FoundResources } from '../migration/NewMigrationPage';
 import { vendorLine } from '../migration/source';
 import { ShellLayout } from '../shell/ShellLayout';
 import { AgentCommand, until, useAgentToken } from './AgentToken';
+import { PermissionFold } from './Permissions';
 import { REGISTER_PATH, isLinked } from './connect';
 import { RegisterEnvEntry } from './EnvEntry';
 import s from '../common/page.module.css';
@@ -82,6 +83,7 @@ function ConnectedEnv({ env }: { env: EnvironmentView }) {
         {inventory.error != null && !data && <p className={`${s.error} t-body-md`}>{errorText(inventory.error)}</p>}
       </Hero>
       <Stack area="side">
+        {(env.provider === 'aws' || env.provider === 'gcp') && <PermissionFold env={env} />}
         <FoldTile title={t('이 환경의 마이그레이션')} summary={t('{0}건', { 0: data?.apps.length ?? 0 })}>
           {data && data.apps.length > 0 ? (
             <ul className={s.rows}>
@@ -219,6 +221,7 @@ export function EnvironmentsPage({ id }: { id: string | null }) {
                 <span className={s.formRow}>
                   <span className="t-label-md">{item.name}</span>
                   {item.connectionStatus !== 'connected' && <Badge tone="danger">{CONN_LABEL[item.connectionStatus]}</Badge>}
+                  {(item.permissionGaps ?? 0) > 0 && <Badge tone="warning">{t('권한 갱신 필요 ({0}개)', { 0: item.permissionGaps })}</Badge>}
                 </span>
                 <span className="t-caption c-tertiary">{vendorLine(item.provider)}</span>
                 <EnvCostCaption envId={item.id} />

@@ -148,6 +148,102 @@ test("TF_FETCH_DB_SECRET=0 이면 비밀번호를 꺼내지 않는다. azure_moc
   await assert.rejects(r.apply("aws", "../../etc", {}), /bad migration id/);
 });
 
+// aws 관리자 나눔 (kinds/postgres admin_user): RDS 관리 비밀 = 마스터 = 관리자. 앱 비밀번호는 실행기가 만들어 그릇을 "만들면서" 값을 넣는다
+const SPLIT_OUT = JSON.stringify({
+  db_address: { value: "shop-db-ab12.abc.ap-northeast-2.rds.amazonaws.com", sensitive: false },
+  db_username: { value: "app", sensitive: false },
+  db_admin_username: { value: "svc_admin_0123456789", sensitive: false },
+  db_master_secret_arn: { value: "arn:aws:secretsmanager:ap-northeast-2:111122223333:secret:rds!db-x", sensitive: false },
+  db_password_secret_name: { value: "platform/t-aaaa1111/shop/shop-db-ab12-db-password", sensitive: false },
+});
+const ADMIN_PW = "admin-pw-should-not-leak";
+function splitExec(create: (args: string[]) => ExecResult = () => ({ code: 0, stdout: "{}", stderr: "", ms: 1 })) {
+  const calls: { cmd: string; args: string[]; body?: { text: string; mode: number } }[] = [];
+  const exec: Exec = async (cmd, args) => {
+    const call: (typeof calls)[number] = { cmd, args };
+    calls.push(call);
+    const sub = args.find((a) => !a.startsWith("-"));
+    if (sub === "output") return { code: 0, stdout: SPLIT_OUT, stderr: "", ms: 1 };
+    if (cmd === "aws" && args[1] === "create-secret") {
+      const f = args[args.indexOf("--secret-string") + 1]!.replace(/^file:\/\//, "");
+      call.body = { text: readFileSync(f, "utf8"), mode: statSync(f).mode & 0o777 };
+      return create(args);
+    }
+    if (cmd === "aws" && args[1] === "get-secret-value") return { code: 0, stdout: JSON.stringify({ username: "svc_admin_0123456789", password: ADMIN_PW }), stderr: "", ms: 1 };
+    if (cmd === "aws" && args[1] === "delete-secret") return create(args);
+    return { code: 0, stdout: "ok", stderr: "", ms: 1 };
+  };
+  return { exec, calls };
+}
+const VARS = { app_name: "shop", tenant_id: "t-aaaa1111", region: "ap-northeast-2" };
+const EXISTS: ExecResult = { code: 254, stdout: "", stderr: "An error occurred (ResourceExistsException) when calling the CreateSecret operation: the secret already exists.", ms: 1 };
+
+test("aws 관리자 나눔: 앱 비밀번호 그릇을 값과 함께 만들고(0600 파일, 명령줄에 값 없음) 마스터 비밀은 db_admin_password. 재시도는 같은 값", async () => {
+  const root = tmp(); const f = splitExec();
+  const r = createRealTerraformRunner({ exec: f.exec, workRoot: root, env: { PATH: "/bin" } });
+  const res = await r.apply("aws", MID, VARS);
+  assert.equal(res.ok, true); assert.equal(res.secretFetched, true);
+  assert.deepEqual(f.calls.map((c) => `${c.cmd} ${c.cmd === "aws" ? c.args[1] : subOf(c.args)}`),
+    ["terraform init", "terraform plan", "terraform apply", "terraform output", "aws create-secret", "aws get-secret-value"]);
+  const create = f.calls[4]!;
+  const arg = (k: string) => create.args[create.args.indexOf(k) + 1];
+  assert.equal(arg("--name"), "platform/t-aaaa1111/shop/shop-db-ab12-db-password");
+  assert.equal(arg("--region"), "ap-northeast-2");
+  assert.deepEqual(JSON.parse(arg("--tags")!), [{ Key: "managed-by", Value: "platform" }, { Key: "tenant", Value: "t-aaaa1111" }, { Key: "app", Value: "shop" }]);
+  // 그릇 값 = {username: 앱 계정, password}. ExternalSecret 이 password 칸을 읽는다 (Builder passwordProperty)
+  const body = JSON.parse(create.body!.text) as { username: string; password: string };
+  assert.equal(body.username, "app"); assert.equal(create.body!.mode, 0o600);
+  assert.ok(body.password.length >= 32 && body.password !== ADMIN_PW);
+  assert.equal(existsSync(arg("--secret-string")!.replace(/^file:\/\//, "")), false, "임시 파일은 지운다");
+  const sf = join(root, MID, "db-secret.json");
+  assert.deepEqual(JSON.parse(readFileSync(sf, "utf8")), { db_password: body.password, db_admin_password: ADMIN_PW });
+  assert.equal(statSync(sf).mode & 0o777, 0o600);
+  for (const pw of [body.password, ADMIN_PW]) {
+    assert.equal(f.calls.some((c) => c.args.some((a) => a.includes(pw))), false, "비밀번호는 명령줄에 없다");
+    assert.equal(JSON.stringify(res).includes(pw) || readFileSync(join(root, MID, "outputs.json"), "utf8").includes(pw), false);
+  }
+  // 재시도 (같은 폴더): 그릇이 이미 있음 → 앞 시도 값 그대로
+  const g = splitExec(() => EXISTS);
+  const again = await createRealTerraformRunner({ exec: g.exec, workRoot: root, env: { PATH: "/bin" } }).apply("aws", MID, VARS);
+  assert.equal(again.ok, true);
+  assert.equal(JSON.parse(g.calls.find((c) => c.args[1] === "create-secret")!.body!.text).password, body.password);
+  assert.deepEqual(JSON.parse(readFileSync(sf, "utf8")), { db_password: body.password, db_admin_password: ADMIN_PW });
+});
+
+test("aws 관리자 나눔 거부: 그릇이 이미 있는데 이 폴더에 값이 없으면 멈춘다 (값을 지어내 남기지 않음), 다른 실패도 apply 실패", async () => {
+  const root = tmp(); const f = splitExec(() => EXISTS);
+  const res = await createRealTerraformRunner({ exec: f.exec, workRoot: root, env: { PATH: "/bin" } }).apply("aws", MID, VARS);
+  assert.equal(res.ok, false); assert.equal(res.failedStep, "secret");
+  assert.equal(f.calls.some((c) => c.args[1] === "get-secret-value"), false);
+  const sf = join(root, MID, "db-secret.json");
+  assert.equal(existsSync(sf) ? JSON.parse(readFileSync(sf, "utf8")).db_password : undefined, undefined, "이번에 지은 값은 버린다");
+  assert.ok(res.log.some((l) => /값을 모르니 멈춘다/.test(l)));
+  const denied = splitExec(() => ({ code: 254, stdout: "", stderr: "An error occurred (AccessDeniedException) when calling the CreateSecret operation", ms: 1 }));
+  const d = await createRealTerraformRunner({ exec: denied.exec, workRoot: tmp(), env: { PATH: "/bin" } }).apply("aws", MID, VARS);
+  assert.equal(d.ok, false); assert.equal(d.failedStep, "secret");
+  assert.ok(d.log.some((l) => /AccessDeniedException/.test(l)));
+});
+
+test("aws destroy: 실행기가 만든 앱 비밀번호 그릇도 지운다 (없으면 성공, 못 지우면 실패로 다시). 옛 출력(앱 = 마스터)·다른 프로바이더는 안 부른다", async () => {
+  const root = tmp(); const f = splitExec();
+  await createRealTerraformRunner({ exec: f.exec, workRoot: root, env: { PATH: "/bin" } }).apply("aws", MID, VARS);
+  const del = (r: ExecResult) => splitExec(() => r);
+  const ok = del({ code: 0, stdout: "{}", stderr: "", ms: 1 });
+  assert.equal((await createRealTerraformRunner({ exec: ok.exec, workRoot: root, env: {} }).destroy(MID)).ok, true);
+  assert.deepEqual(ok.calls.map((c) => `${c.cmd} ${c.cmd === "aws" ? c.args[1] : subOf(c.args)}`), ["terraform init", "terraform destroy", "aws delete-secret"]);
+  assert.deepEqual(ok.calls[2]!.args.slice(2), ["--secret-id", "platform/t-aaaa1111/shop/shop-db-ab12-db-password", "--force-delete-without-recovery", "--region", "ap-northeast-2"]);
+  const gone = del({ code: 254, stdout: "", stderr: "An error occurred (ResourceNotFoundException) when calling the DeleteSecret operation", ms: 1 });
+  assert.equal((await createRealTerraformRunner({ exec: gone.exec, workRoot: root, env: {} }).destroy(MID)).ok, true);
+  const denied = del({ code: 254, stdout: "", stderr: "An error occurred (AccessDeniedException) when calling the DeleteSecret operation", ms: 1 });
+  assert.equal((await createRealTerraformRunner({ exec: denied.exec, workRoot: root, env: {} }).destroy(MID)).ok, false);
+  // 옛 출력(나누기 전 모듈)으로 만든 aws 폴더는 그릇이 없다 → 지우기 안 부름
+  const old = tmp(); const o = fakeExec();
+  await createRealTerraformRunner({ exec: o.exec, workRoot: old, env: {} }).apply("aws", MID, { app_name: "shop" });
+  o.calls.length = 0;
+  assert.equal((await createRealTerraformRunner({ exec: o.exec, workRoot: old, env: {} }).destroy(MID)).ok, true);
+  assert.equal(o.calls.some((c) => c.cmd === "aws"), false);
+});
+
 test("destroy·list: 같은 작업 폴더에서 -var-file 로 파기, state 자원 수를 센다", async () => {
   const root = tmp(); const { exec, calls } = fakeExec();
   const r = createRealTerraformRunner({ exec, workRoot: root, env: {} });

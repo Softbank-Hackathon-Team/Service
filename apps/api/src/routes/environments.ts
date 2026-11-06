@@ -31,7 +31,11 @@ const VIEW_COLUMNS = `id, provider, name,
   ${isoUtc("last_verified_at")} AS "lastVerifiedAt",
   failure_reason AS "failureReason",
   verify_detail AS "verifyDetail",
-  gcp_target_project AS "targetProjectId"`;
+  gcp_target_project AS "targetProjectId",
+  -- PERM-GATE: 마지막 권한 확인에서 고칠 것(빠진 권한·API)이 있는 묶음 수. 확인한 적 없으면 NULL (칸 없음)
+  (SELECT CASE WHEN p.result IS NULL THEN NULL ELSE (SELECT count(*)::int FROM jsonb_array_elements(p.result->'gaps') g
+      WHERE jsonb_array_length(g->'missing') + jsonb_array_length(g->'missingApis') > 0) END
+     FROM environment_permissions p WHERE p.environment_id = environments.id) AS "permissionGaps"`;
 
 // VERIFYAPI: verify_detail(jsonb) 에서 화면에 줄 두 칸만 꺼낸다. 비었거나 문자열 목록이 아니면 칸을 안 붙인다 (clusters·checkedAt 은 안 내보냄)
 // DRAFT(ai): 화면에 내보내는 목록은 100개·한 줄 300자까지만. 12자리 숫자(AWS 계정 ID, ARN 계정 칸 포함)는 끝 4자리만 남기고 가린다
@@ -41,11 +45,12 @@ const strList = (x: unknown): string[] | null =>
   Array.isArray(x) && x.length > 0 && x.every((v) => typeof v === "string")
     ? (x as string[]).slice(0, VERIFY_LIST_MAX).map((v) => maskIds(v).slice(0, VERIFY_ITEM_MAX)) : null;
 export function toEnvironmentView(row: Record<string, unknown>): EnvironmentView {
-  const { verifyDetail, targetProjectId, ...rest } = row;
+  const { verifyDetail, targetProjectId, permissionGaps, ...rest } = row;
   const d = (verifyDetail && typeof verifyDetail === "object" ? verifyDetail : {}) as Record<string, unknown>;
   const missing = strList(d.missingPermissions), todo = strList(d.needsHuman);
   // RV-24: 흉내 자격으로 닫힌 연결(시험·로컬 REAL_STS=0)은 보기에 mock 표시 (예전엔 버려서 진짜 연결과 구별 못 함)
   return { ...rest, ...(typeof targetProjectId === "string" ? { targetProjectId } : {}),
+    ...(typeof permissionGaps === "number" ? { permissionGaps } : {}),
     ...(missing ? { missingPermissions: missing } : {}), ...(todo ? { needsHuman: todo } : {}),
     ...(d.mock === true ? { mock: true as const } : {}) } as EnvironmentView;
 }
@@ -86,6 +91,52 @@ async function writeExternalId(tx: Tx, id: string): Promise<string> {
   }
 }
 
+// 환경 만들기 입력 검사 (POST /environments 와 팀 가입 명부가 같이 쓴다). 틀리면 400. 앞뒤 빈칸은 지운 값을 돌려준다
+export function checkCreateEnvironment(b: CreateEnvironmentBody): { region?: string; clusterName?: string } {
+  // PF01 FM-CLD-03: AWS 리전 모양 확인 (오타·빈칸이면 링크 주소·확인 CLI 가 다른 곳을 봄). 앞뒤 빈칸은 지운다
+  const region = b.region?.trim() || undefined;
+  if (b.provider === "aws" && region !== undefined && !AWS_REGION_RE.test(region))
+    throw new BadRequest("BAD_REGION", "aws region shape (e.g. ap-northeast-2)");
+  // PF02: 클러스터 이름은 연결 템플릿 파라미터·워커 CLI 인자로 들어간다 → AWS EKS 이름 규칙만 받음 ("--…" 같은 값 막기)
+  const clusterName = b.clusterName?.trim() || undefined;
+  if (b.provider === "aws" && clusterName !== undefined && !EKS_CLUSTER_NAME_RE.test(clusterName))
+    throw new BadRequest("BAD_CLUSTER_NAME", "eks cluster name shape");
+  return { ...(region ? { region } : {}), ...(clusterName ? { clusterName } : {}) };
+}
+
+// 환경 한 줄 넣기 (상태 draft) + 감사 env.create. tx 는 withTenant(tenantId) 안이어야 한다 (RLS)
+//   ifExists "throw" = 같은 이름이면 409 ENV_NAME_TAKEN (POST /environments), "skip" = 그 환경은 건드리지 않고 null (팀 가입)
+export async function insertEnvironment(tx: Tx, tenantId: string, actor: string, b: CreateEnvironmentBody,
+  opts: { ifExists?: "throw" | "skip"; auditDetail?: Record<string, unknown> } = {}): Promise<EnvironmentView | null> {
+  const { region, clusterName } = checkCreateEnvironment(b);
+  // 같은 이름 두 요청이 동시에 와도 하나만 (회사·이름 단위 잠금, 트랜잭션 끝에 풀림)
+  await tx.query("SELECT pg_advisory_xact_lock(hashtext('env-name:' || $1 || ':' || $2))", [tenantId, b.name]);
+  const dup = await tx.query("SELECT 1 FROM environments WHERE name = $1 LIMIT 1", [b.name]);
+  if (dup.rowCount) {
+    if (opts.ifExists === "skip") return null;
+    throw err(409, "ENV_NAME_TAKEN", `environment name ${b.name}`);
+  }
+  const ins = await tx.query(
+    `INSERT INTO environments (tenant_id, provider, name, connection_status, region, cluster_name)
+     VALUES ($1, $2, $3, 'draft', $4, $5) RETURNING ${VIEW_COLUMNS}`,
+    [tenantId, b.provider, b.name, region ?? null, clusterName ?? null]);
+  const view = toEnvironmentView(ins.rows[0]);
+  await writeAudit(tx, tenantId, { actor, action: "env.create", target: view.id, result: "ok",
+    detail: { provider: b.provider, ...opts.auditDetail } });
+  return view;
+}
+
+// GCP 원래 프로젝트(account_id) + 이전 전용 프로젝트(gcp_target_project)를 미리 적는다 (팀 가입 명부).
+//   검사는 verify 경로와 같은 규칙: 둘 다 GCP 프로젝트 ID 모양, 서로 다름 (DB CHECK 도 같음). 연결 상태는 건드리지 않는다
+//   → 사용자는 그대로 연결 링크 → verify 를 한다 (verify 가 같은 값을 다시 적는다)
+export async function presetGcpProjects(tx: Tx, envId: string, originalProject: string, dedicatedProject: string): Promise<void> {
+  const accountId = normalizeAccountId("gcp", originalProject), target = normalizeAccountId("gcp", dedicatedProject);
+  if (!checkAccountId("gcp", accountId)) throw new BadRequest("BAD_ACCOUNT_ID", "account id shape for gcp");
+  if (!checkAccountId("gcp", target) || target === accountId)
+    throw new BadRequest("BAD_TARGET_PROJECT", "targetProjectId: gcp only, project id shape, must differ from accountId");
+  await tx.query("UPDATE environments SET account_id = $2, gcp_target_project = $3 WHERE id = $1 AND provider = 'gcp'", [envId, accountId, target]);
+}
+
 export async function environmentRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
 
@@ -101,27 +152,8 @@ export async function environmentRoutes(app: FastifyInstance) {
   r.post("/environments", { schema: { body: CreateEnvironmentBody,
     response: { 201: EnvironmentView, ...errors(400, 401, 403, 409, 500) } } }, async (req, reply) => {
     return req.idempotent(reply, async (tx) => {
-      const b = req.body;
-      // PF01 FM-CLD-03: AWS 리전 모양 확인 (오타·빈칸이면 링크 주소·확인 CLI 가 다른 곳을 봄). 앞뒤 빈칸은 지운다
-      const region = b.region?.trim() || undefined;
-      if (b.provider === "aws" && region !== undefined && !AWS_REGION_RE.test(region))
-        throw new BadRequest("BAD_REGION", "aws region shape (e.g. ap-northeast-2)");
-      // PF02: 클러스터 이름은 연결 템플릿 파라미터·워커 CLI 인자로 들어간다 → AWS EKS 이름 규칙만 받음 ("--…" 같은 값 막기)
-      const clusterName = b.clusterName?.trim() || undefined;
-      if (b.provider === "aws" && clusterName !== undefined && !EKS_CLUSTER_NAME_RE.test(clusterName))
-        throw new BadRequest("BAD_CLUSTER_NAME", "eks cluster name shape");
-      // 같은 이름 두 요청이 동시에 와도 하나만 (회사·이름 단위 잠금, 트랜잭션 끝에 풀림)
-      await tx.query("SELECT pg_advisory_xact_lock(hashtext('env-name:' || $1 || ':' || $2))", [req.tenantId, b.name]);
-      const dup = await tx.query("SELECT 1 FROM environments WHERE name = $1 LIMIT 1", [b.name]);
-      if (dup.rowCount) throw err(409, "ENV_NAME_TAKEN", `environment name ${b.name}`);
-      const ins = await tx.query(
-        `INSERT INTO environments (tenant_id, provider, name, connection_status, region, cluster_name)
-         VALUES ($1, $2, $3, 'draft', $4, $5) RETURNING ${VIEW_COLUMNS}`,
-        [req.tenantId, b.provider, b.name, region ?? null, clusterName ?? null]);
-      const view = toEnvironmentView(ins.rows[0]);
-      await writeAudit(tx, req.tenantId, { actor: req.actor, action: "env.create", target: view.id, result: "ok",
-        detail: { provider: b.provider } });
-      return { status: 201, body: view };
+      const view = await insertEnvironment(tx, req.tenantId, req.actor, req.body);
+      return { status: 201, body: view! };
     });
   });
 

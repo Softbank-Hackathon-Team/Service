@@ -6,7 +6,8 @@ import { envRef, regionOf, type Target } from "../common/target.js";
 // DRAFT(ai): 권한 목록은 문서 기준 추정. 실계정 PERMISSION_DENIED 로그로 확인 필요
 export const PERMS: PermTable = {
   "data.google_client_config": { read: [], write: [], remove: [] },   // 현재 자격 증명의 토큰만 읽음
-  "data.google_container_cluster": { read: ["container.clusters.get"], write: [], remove: [] },
+  // 클러스터 읽기는 노드 풀 instance_group_urls 를 위해 관리형 인스턴스 그룹도 읽는다 (11/06 실측 403, 앱 층 plan)
+  "data.google_container_cluster": { read: ["container.clusters.get", "compute.instanceGroupManagers.get"], write: [], remove: [] },
   // GKE는 k8s API 호출도 IAM 권한으로 확인한다 (container.namespaces.*)
   kubernetes_namespace_v1: {
     read: ["container.namespaces.get"],
@@ -18,16 +19,23 @@ export const PERMS: PermTable = {
     read: ["container.roles.get"],
     write: ["container.roles.create", "container.roles.update", "container.roles.escalate"],
     remove: ["container.roles.delete"] },
+  // kinds/namespace 의 구역 한도 (namespace_json 에 CPU·메모리 한도가 있을 때만 만든다). GCP Builder 는 한도를 null 로 넘겨 지금은 안 만든다
+  //   → resourceTypesV2 에도 실행 역할 파일에도 없다. 한도를 켜면 resourceTypesV2 가 이 행을 더하고, 천장 대조 시험(ta12b)이 역할 파일 갱신을 요구한다
+  kubernetes_resource_quota_v1: {
+    read: ["container.resourceQuotas.get"],
+    write: ["container.resourceQuotas.create", "container.resourceQuotas.update"],
+    remove: ["container.resourceQuotas.delete"] },
   kubernetes_role_binding_v1: {
     read: ["container.roleBindings.get"],
     write: ["container.roleBindings.create", "container.roleBindings.update", "container.roles.bind"],
     remove: ["container.roleBindings.delete"] },
   google_sql_database_instance: {
-    read: ["cloudsql.instances.get"],
-    write: ["cloudsql.instances.create", "cloudsql.instances.update"],
+    read: ["cloudsql.instances.get"],   // 작업(operation) 기다리기 = operations.get 도 cloudsql.instances.get
+    // provider 는 만든 직후 사용자 목록을 읽어 MySQL 기본 root@% 를 지운다 (Postgres 도 목록은 읽음, v6.50 resource_sql_database_instance.go)
+    write: ["cloudsql.instances.create", "cloudsql.instances.update", "cloudsql.users.list"],
     remove: ["cloudsql.instances.delete"] },
   google_sql_database: {
-    read: ["cloudsql.databases.get"],
+    read: ["cloudsql.databases.get", "cloudsql.instances.get"],   // 읽기 전에 인스턴스를 읽고(Instances.Get), 만들기·지우기 작업도 instances.get 으로 기다린다
     write: ["cloudsql.databases.create", "cloudsql.databases.update"],
     remove: ["cloudsql.databases.delete"] },
   // TA12 DRAFT(ai): 데이터 자원 종류 권한. 【미확인】 gcp-operate-custom-role.yaml 에는 아직 없음(경계 밖 TODO)
@@ -47,22 +55,28 @@ export const PERMS: PermTable = {
   google_pubsub_subscription: {
     read: ["pubsub.subscriptions.get"], write: ["pubsub.subscriptions.create", "pubsub.subscriptions.update", "pubsub.topics.attachSubscription"], remove: ["pubsub.subscriptions.delete"] },
   google_sql_user: {
-    read: ["cloudsql.users.list"],
+    read: ["cloudsql.users.list", "cloudsql.instances.get"],   // 읽기 전에 인스턴스가 켜져 있는지 본다(Instances.Get)
     write: ["cloudsql.users.create", "cloudsql.users.update"],
     remove: ["cloudsql.users.delete"] },
   google_secret_manager_secret: {
     read: ["secretmanager.secrets.get"],
     write: ["secretmanager.secrets.create", "secretmanager.secrets.update"],
     remove: ["secretmanager.secrets.delete"] },
+  // 읽기는 값도 꺼낸다(:access = secretmanager.versions.access, secret_data 를 state 에 맞춤). 주 역할 금지 권한이라 표에 안 넣고
+  //   이름 조건 역할(gcp-operate-db-secret-role.yaml, app-…-db-password 만)이 준다. 그 이름 밖의 버전(kinds/cache 의 -cache-auth)은 TODO(human)
   google_secret_manager_secret_version: {
     read: ["secretmanager.versions.get"],
-    write: ["secretmanager.versions.add"],
+    // provider 는 버전을 넣은 뒤 enabled=true 를 맞추려 enable 을 부른다 (11/06 실측 403, 도착 DB 비밀번호 버전)
+    write: ["secretmanager.versions.add", "secretmanager.versions.enable"],
     remove: ["secretmanager.versions.destroy"] },
   random_password: { read: [], write: [], remove: [] },   // 로컬 자원 (클라우드 권한 불필요)
   // FM-CLD-hunt-cloud-23: gcp/root 가 IR 종류에 맞춰 API 를 켠다(FM-CLD-14 google_project_service). provider 는 켜진 목록을 읽고(get·list) 없으면 enable.
   //   disable_on_destroy=false 라 지울 때는 아무것도 안 부른다. 결정 3번 A안: 전용 프로젝트 안에서만
+  // provider 는 API 켜기 자원을 읽을 때 프로젝트가 살아 있는지 먼저 본다 (projects.get, 11/06 실측 403)
+  // 켜기는 오래 걸리는 작업이라 provider 가 끝날 때까지 작업을 읽는다 (serviceusage.operations.get, 이미 켜진 API 면 안 부름)
   google_project_service: {
-    read: ["serviceusage.services.get", "serviceusage.services.list"], write: ["serviceusage.services.enable"], remove: [] },
+    read: ["serviceusage.services.get", "serviceusage.services.list", "resourcemanager.projects.get"],
+    write: ["serviceusage.services.enable", "serviceusage.operations.get"], remove: [] },
   google_secret_manager_secret_iam_member: {
     read: ["secretmanager.secrets.getIamPolicy"],
     write: ["secretmanager.secrets.setIamPolicy"],
@@ -99,19 +113,21 @@ export const PERMS: PermTable = {
   google_compute_subnetwork: {
     read: ["compute.subnetworks.get"], write: ["compute.subnetworks.create", "compute.networks.updatePolicy", "compute.regionOperations.get"], remove: [] },
   google_compute_global_address: {
-    read: ["compute.globalAddresses.get"], write: ["compute.globalAddresses.createInternal", "compute.networks.use", "compute.globalOperations.get"], remove: [] },
+    read: ["compute.globalAddresses.get"], write: ["compute.globalAddresses.createInternal", "compute.globalAddresses.setLabels", "compute.networks.use", "compute.globalOperations.get"], remove: [] },
   // provider 가 연결을 읽을 때 프로젝트 번호를 찾는다 (resourcemanager.projects.get)
   google_service_networking_connection: {
     read: ["servicenetworking.services.get", "resourcemanager.projects.get"], write: ["servicenetworking.services.addPeering", "servicenetworking.operations.get"], remove: [] },
   google_compute_router: {
     read: ["compute.routers.get"], write: ["compute.routers.create", "compute.networks.updatePolicy", "compute.regionOperations.get"], remove: [] },
-  google_compute_address: { read: ["compute.addresses.get"], write: ["compute.addresses.create", "compute.regionOperations.get"], remove: [] },
+  // provider 는 라벨을 만들기 뒤 setLabels 로 따로 붙인다 (전역·지역 주소 둘 다, 11/06 실측 403)
+  google_compute_address: { read: ["compute.addresses.get"], write: ["compute.addresses.create", "compute.addresses.setLabels", "compute.regionOperations.get"], remove: [] },
   google_compute_router_nat: {
     read: ["compute.routers.get"], write: ["compute.routers.update", "compute.addresses.use", "compute.regionOperations.get"], remove: [] },
   // 노드 풀 만들기·기본 풀 걷기 = container.clusters.update (GKE API 권한표). 노드 SA 를 붙이는 actAs 는 역할이 아니라 svc-gke-node 한 SA 에만 (gcp-connect.sh)
   google_container_cluster: {
-    read: ["container.clusters.get", "container.operations.get"], write: ["container.clusters.create", "container.clusters.update"], remove: [] },
-  google_container_node_pool: { read: ["container.clusters.get", "container.operations.get"], write: ["container.clusters.update"], remove: [] },
+    read: ["container.clusters.get", "container.operations.get", "compute.instanceGroupManagers.get"], write: ["container.clusters.create", "container.clusters.update"], remove: [] },
+  // 노드 풀 읽기는 instance_group_urls 를 위해 관리형 인스턴스 그룹을 읽는다 (11/06 실측 403)
+  google_container_node_pool: { read: ["container.clusters.get", "container.operations.get", "compute.instanceGroupManagers.get"], write: ["container.clusters.update"], remove: [] },
   google_artifact_registry_repository: { read: ["artifactregistry.repositories.get"], write: ["artifactregistry.repositories.create"], remove: [] },
   // ESO 차트 + cluster-secret-store 차트가 클러스터 안에 만드는 것 (CRD·ClusterRole·ClusterRoleBinding·웹훅·배포·CR). GKE 는 k8s 호출을 IAM 권한으로도 본다.
   //   helm 은 릴리스 기록을 Secret 에 둔다 (secrets get·list·create·update). 자기보다 큰 ClusterRole 을 만들고 묶으려면 escalate·bind

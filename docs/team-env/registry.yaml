@@ -1,0 +1,63 @@
+# 팀 환경 등록부 — 누가 어떤 환경을 쓰는지 (칸마다 회사를 나눈다: slot-1 은 dev-company, slot-2~5 는 각자 회사)
+# 상태: AI 초안
+#
+# 이 파일을 읽는 것:
+#   - 플랫폼 API: 회원가입(초대 코드) 때 그 칸의 environments 를 회사 안에 만든다 (이름으로 찾고, 있으면 건드리지 않음)
+#   - tools/team-env.sh <slot>: 그 칸의 GCP 연결 명령을 값까지 채워 찍는다 (--check 는 읽기 전용 확인)
+#   모양을 바꾸면 두 곳이 같이 깨진다. 키는 아래 것만 쓴다 (environments 항목의 키: name·provider·region·cluster·gcp·notes)
+#
+# 규칙
+#   1. 환경 하나에 진행 중인 이전은 하나다 (플랫폼 잠금). 남이 쓰는 환경으로 이전을 만들면 409 로 거부된다
+#   2. AWS 계정 하나에 연결은 하나다. 역할 이름이 고정(svc-observe·svc-operate)이라 두 번째 연결 스택은 충돌한다
+#      (infra/onboarding/README.md "한 계정에 하나"). 같은 계정을 쓰는 사람은 이미 연결된 환경 줄을 같이 쓴다
+#   3. GCP 전용 프로젝트(dedicated_project)는 한 칸에만 적는다. 환경 층 이름(VPC·GKE platform-target 등)이 프로젝트 안에서
+#      고정이라 둘이 같은 프로젝트를 쓰면 서로의 자원과 부딪힌다. 다른 칸의 원래 프로젝트(original_project)로도 쓰지 않는다
+#      (GCP 출발 샘플도 platform-target 이름을 쓴다)
+#   4. 공유 환경(slot-1)을 쓰기 전에 팀 채널에 "<환경 이름> 지금부터 씀" 을 알리고, 끝나면 "다 씀" 을 남긴다
+#   5. 계정 번호·IP·비밀값·초대 코드 원문은 적지 않는다. AWS 는 계정 별칭만 notes 에 적는다
+#
+# 칸 채우는 법: login 은 운영자가 정한 아이디, signup_code_sha256 은 운영자가 채운다 (비어 있으면 그 칸은 가입 닫힘)
+#   environments 는 자기 클라우드에서 연결할 환경을 적는다. 이름은 회사 안에서 하나여야 한다 (예: s2-src-aws, s2-gcp)
+# 회사: 칸의 tenant 가 그 칸 사람의 회사다 (비우면 아래 맨 위 tenant). 회사가 다르면 회사 단위 큐 몫(TENANT_QUEUE_SHARE)·환경 목록·환경 이름이 따로라
+#   다섯 명이 서로 막지 않는다. GCP 연결의 PLATFORM_SA 는 회사마다 다르다 (t-<md5(회사 번호) 앞 28자>, tools/team-env.sh 가 계산)
+version: 1
+tenant: 11111111-1111-4111-8111-111111111111   # dev-company (slot-1 과 칸 회사가 없는 자리)
+slots:
+  - id: slot-1
+    login: member1@iron
+    signup_code_sha256: "df8ab1717a43ed4bfc0ffbfb9081920edcb2919bca83b36e7ee1ac1096de9a55"
+    environments:
+      - { name: src-aws-sample, provider: aws, region: ap-northeast-2, cluster: platform-target, notes: "공유 환경. EKS platform-target, 앱 네임스페이스 real-app, RDS sample-shop-db. AWS 계정 별칭 <alias>" }
+      - { name: GCP-sample, provider: gcp, region: asia-northeast3, gcp: { original_project: iron-source-gcp, dedicated_project: iron-target-gcp }, notes: "공유 환경. 원래 프로젝트에 GCP 출발 샘플(tools/gcp-source.sh), 전용 프로젝트에 도착 환경 층" }
+  - id: slot-2
+    tenant: 6ccb6f15-b354-496c-a4fe-3f7135961422   # slot-2 전용 회사 (team-slot-2)
+    login: member2@iron
+    signup_code_sha256: "d454729dba2f43641a77fa49f65854cfcb9931287d214d504acd691a62d4b084"
+    environments: []
+    # 예시 (주석을 풀고 값을 바꾼다)
+    #   - { name: s2-src-aws, provider: aws, region: ap-northeast-2, cluster: <EKS 이름>, notes: "AWS 계정 별칭 <alias>" }
+    #   - { name: s2-gcp, provider: gcp, region: asia-northeast3, gcp: { original_project: <원래 프로젝트>, dedicated_project: <전용 프로젝트> } }
+  - id: slot-3
+    tenant: 434eff69-a490-4f88-ae74-c12c5634d8dc   # slot-3 전용 회사 (team-slot-3)
+    login: member3@iron
+    signup_code_sha256: "ade584955a31f6512e8c878e80918ea5dcb9eb3725d46a775d282accd7fb2b06"
+    environments: []
+    # 예시
+    #   - { name: s3-src-aws, provider: aws, region: ap-northeast-2, cluster: <EKS 이름>, notes: "AWS 계정 별칭 <alias>" }
+    #   - { name: s3-gcp, provider: gcp, region: asia-northeast3, gcp: { original_project: <원래 프로젝트>, dedicated_project: <전용 프로젝트> } }
+  - id: slot-4
+    tenant: 83e69e99-0780-43cd-b86f-7d69aef5d989   # slot-4 전용 회사 (team-slot-4)
+    login: member4@iron
+    signup_code_sha256: "63d003ad7e9f675a51022695e9eb21c7269f415929d1291d0a12a950a62f118e"
+    environments: []
+    # 예시
+    #   - { name: s4-src-aws, provider: aws, region: ap-northeast-2, cluster: <EKS 이름>, notes: "AWS 계정 별칭 <alias>" }
+    #   - { name: s4-gcp, provider: gcp, region: asia-northeast3, gcp: { original_project: <원래 프로젝트>, dedicated_project: <전용 프로젝트> } }
+  - id: slot-5
+    tenant: 3505a0f7-4d51-403d-ae47-159f631efd76   # slot-5 전용 회사 (team-slot-5)
+    login: member5@iron
+    signup_code_sha256: "3b293b8d80c6a2fa64ccd534bf508e1ce12cae5d46eeb45924f4ee258f0c4172"
+    environments: []
+    # 예시
+    #   - { name: s5-src-aws, provider: aws, region: ap-northeast-2, cluster: <EKS 이름>, notes: "AWS 계정 별칭 <alias>" }
+    #   - { name: s5-gcp, provider: gcp, region: asia-northeast3, gcp: { original_project: <원래 프로젝트>, dedicated_project: <전용 프로젝트> } }

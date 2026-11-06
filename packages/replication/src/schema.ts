@@ -246,3 +246,37 @@ async function objectKeys(c: pg.Client, schema: string): Promise<Set<string>> {
      UNION ALL SELECT 'trigger:' || c.relname || '.' || t.tgname FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname = $1 AND NOT t.tgisinternal`, [schema])).rows.map((r) => r.k));
 }
+
+/** ADR-029 후속: 스키마 복사(copySchema)는 관리자(CNPG svc_migrate)가 표·시퀀스·뷰·함수·타입을 만들어 그 주인이 관리자가 된다.
+ *  그대로 두면 정리 뒤 CNPG 가 svc_migrate 를 지우려다 "role cannot be dropped because some objects depend on it" 로 멈췄다
+ *  (2026-11-06 실플랫폼 889c1257, 사람이 손으로 주인을 넘김). 정리 때 앱 스키마 안에서 관리자가 주인인 것만 앱 계정(= initdb.owner)으로 넘긴다.
+ *  _repl(울타리 흔적)·다른 스키마는 건드리지 않는다. CNPG 이고, 관리자가 superuser 가 아니고, 앱 계정으로 SET ROLE 할 수 있을 때만 (RDS 관리자는 보통 못 한다)
+ *  돌려주는 값: 넘긴 객체 수 */
+export async function handOwnershipToApp(c: pg.Client, e: Endpoint): Promise<number> {
+  if (e.provider !== "cnpg") return 0;
+  const ok = (await c.query<{ ok: boolean }>(
+    `SELECT NOT r.rolsuper AND current_user <> $1 AND to_regrole($1) IS NOT NULL AND pg_has_role(current_user, $1, 'SET') AS ok
+       FROM pg_roles r WHERE r.rolname = current_user`, [e.appRole])).rows[0]?.ok;
+  if (!ok) return 0;
+  const r = await c.query<{ n: number }>(`DO $own$ DECLARE x record; n int := 0; sch oid := to_regnamespace(${lit(schemaOf(e))}); app text := ${lit(e.appRole)};
+  BEGIN
+    IF sch IS NULL THEN PERFORM set_config('svc.owned', '0', true); RETURN; END IF;
+    -- 표·뷰 (ALTER TABLE 은 뷰에도 쓴다. 딸린 인덱스·표에 묶인 시퀀스도 같이 넘어간다)
+    FOR x IN SELECT cl.oid::regclass AS o FROM pg_class cl WHERE cl.relnamespace = sch AND cl.relowner = current_user::regrole
+                AND cl.relkind IN ('r','p','v','m','f') LOOP
+      EXECUTE format('ALTER TABLE %s OWNER TO %I', x.o, app); n := n + 1; END LOOP;
+    -- 표에 묶이지 않은 시퀀스만 (묶인 것은 위에서 표와 같이 넘어갔고, 따로 바꾸면 오류)
+    FOR x IN SELECT cl.oid::regclass AS o FROM pg_class cl WHERE cl.relnamespace = sch AND cl.relowner = current_user::regrole AND cl.relkind = 'S'
+                AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_class'::regclass AND d.objid = cl.oid AND d.deptype IN ('a','i')) LOOP
+      EXECUTE format('ALTER SEQUENCE %s OWNER TO %I', x.o, app); n := n + 1; END LOOP;
+    FOR x IN SELECT p.oid::regprocedure AS o FROM pg_proc p WHERE p.pronamespace = sch AND p.proowner = current_user::regrole LOOP
+      EXECUTE format('ALTER ROUTINE %s OWNER TO %I', x.o, app); n := n + 1; END LOOP;
+    FOR x IN SELECT t.oid::regtype AS o FROM pg_type t WHERE t.typnamespace = sch AND t.typowner = current_user::regrole AND t.typtype IN ('e','d','c')
+                AND (t.typtype <> 'c' OR EXISTS (SELECT 1 FROM pg_class cl WHERE cl.oid = t.typrelid AND cl.relkind = 'c')) LOOP
+      EXECUTE format('ALTER TYPE %s OWNER TO %I', x.o, app); n := n + 1; END LOOP;
+    IF EXISTS (SELECT 1 FROM pg_namespace WHERE oid = sch AND nspowner = current_user::regrole) THEN
+      EXECUTE format('ALTER SCHEMA %I OWNER TO %I', ${lit(schemaOf(e))}, app); n := n + 1; END IF;
+    PERFORM set_config('svc.owned', n::text, true);
+  END $own$; SELECT current_setting('svc.owned', true)::int AS n`);
+  return Number((r as unknown as pg.QueryResult<{ n: number }>[]).at?.(-1)?.rows[0]?.n ?? 0);
+}

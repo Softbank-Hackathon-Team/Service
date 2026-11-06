@@ -91,10 +91,12 @@ variable "cred_nodes" {
   type    = object({ instance_type = string, desired = number, min = number, max = number })
   default = { instance_type = "t3.medium", desired = 1, min = 1, max = 2 }
 }
-# sandbox: vCluster, 앱 파드
+# sandbox: vCluster, 앱 파드. 리허설 동시 실행(agent-worker SANDBOX_REHEARSAL_CONCURRENCY)은 회사마다 노드 하나라 동시 실행 수 = desired 로 둔다
+# 기본 desired 5 = 동시 리허설 5 (11/07 팀 결정, helm agent-worker SANDBOX_REHEARSAL_CONCURRENCY=5 와 같이). 실플랫폼은 11/07 00:08 에 이 값으로 apply 됨.
+#   비용 t3.medium 대당 약 $1.25/일. 줄일 때는 helm 동시 수를 먼저 낮춘 뒤 -var 'sandbox_nodes={instance_type="t3.medium",desired=N,min=1,max=5}'
 variable "sandbox_nodes" {
   type    = object({ instance_type = string, desired = number, min = number, max = number })
-  default = { instance_type = "t3.medium", desired = 1, min = 1, max = 2 }
+  default = { instance_type = "t3.medium", desired = 5, min = 1, max = 5 }
 }
 # sandbox 노드에 gVisor(runsc) 설치. 리허설은 runc 로 돌고 AI 에이전트 수정 고리만 RuntimeClass gvisor(handler runsc)를 쓴다 (ADR-006)
 # DRAFT(ai): 기본 끔. 켜고 끌 때마다 launch template 새 버전이 생겨 sandbox 노드가 교체된다.

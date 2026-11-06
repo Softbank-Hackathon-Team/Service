@@ -22,9 +22,12 @@ export const SANDBOX_LABEL = {
   run: "platform.svc/sandbox-run",
   // 회사 번호 (소문자 UUID). 호스트 VAP 가 이 네임스페이스 파드 이미지를 그 회사 샌드박스 ECR 자리로 묶는다 (PR #194). 만든 뒤 못 바꾼다
   tenant: "platform.svc/tenant",
+  // 동시 실행(pinNodes): 이 샌드박스가 고정된 sandbox 노드의 kubernetes.io/hostname. 다른 회사는 이 노드를 고르지 않는다 (pickSandboxNode)
+  node: "platform.svc/sandbox-node",
 } as const;
 const TENANT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const POOL = "sandbox";
+const HOSTNAME_LABEL = "kubernetes.io/hostname";
 const TOLERATION = { key: "dedicated", operator: "Equal", value: POOL, effect: "NoSchedule" } as const;
 
 // 가상 쿠버네티스 마이너 → 제어판 이미지 태그@다이제스트. 차트 기본(1.36)을 쓰지 않고 도착 마이너에 맞춘다
@@ -50,19 +53,23 @@ export interface VclusterSpec {
   quota: SandboxQuota;
   images: ReadonlyArray<{ ref: string; sandboxRef: string }>;   // translateImage: 가상 매니페스트는 그대로, 호스트 파드만 샌드박스 자리에서 받는다
   ttlSec: number;
+  // 고정할 sandbox 노드 (kubernetes.io/hostname 값). 없으면 예전처럼 pool=sandbox 어느 노드든. createVcluster 가 pinNodes 일 때 채운다
+  node?: string;
 }
 
 // 실행마다 바뀌는 칸까지 채운 차트 값 (순수 함수). 측정 값(kind 1.35, 11-04)을 바탕으로 한다
 export function vclusterValues(s: VclusterSpec, name: string): Record<string, unknown> {
   const svc = `${name}.${name}.svc`;
   const q = s.quota;
+  // 노드 고정: 제어판과 동기화된 파드 모두 같은 sandbox 노드 하나에만 (pool=sandbox 는 그대로 — VAP sbx-pod-guard 가 본다)
+  const nodeLabels: Record<string, string> = { pool: POOL, ...(s.node ? { [HOSTNAME_LABEL]: s.node } : {}) };
   return {
     controlPlane: {
       distro: { k8s: { enabled: true, image: { tag: VIRTUAL_K8S[s.k8sMinor] ?? VIRTUAL_K8S[DEFAULT_K8S_MINOR] } } },
       statefulSet: {
         image: { repository: "loft-sh/vcluster-oss", tag: VCLUSTER_IMAGE_TAG },
         resources: { requests: { cpu: "200m", memory: "256Mi" }, limits: { memory: "1Gi" } },
-        scheduling: { nodeSelector: { pool: POOL }, tolerations: [TOLERATION] },
+        scheduling: { nodeSelector: nodeLabels, tolerations: [TOLERATION] },
         // 결정(리드): 플랫폼 EKS 에 EBS CSI 가 없어 제어판 저장은 emptyDir. 차트는 이때 StatefulSet 대신 Deployment 를 그린다
         persistence: { volumeClaim: { enabled: false } },
       },
@@ -83,20 +90,21 @@ export function vclusterValues(s: VclusterSpec, name: string): Record<string, un
         // networkPolicies 는 끈다: 켜면 테넌트가 가상 안에서 쓴 허용 정책이 호스트로 내려와 sbx-default-deny 위에 더해진다
         persistentVolumes: { enabled: false }, ingresses: { enabled: false }, priorityClasses: { enabled: false }, networkPolicies: { enabled: false },
       },
-      // 노드는 동기화하지 않고, 동기화된 파드에 nodeSelector pool=sandbox 만 붙는다 (sbx-pod-guard 가 본다)
-      fromHost: { nodes: { enabled: false, clearImageStatus: true, selector: { labels: { pool: POOL } } } },
+      // 노드는 동기화하지 않고, 동기화된 파드에 이 nodeSelector 만 붙는다 (pool=sandbox 는 sbx-pod-guard 가 본다. 고정이면 + hostname)
+      fromHost: { nodes: { enabled: false, clearImageStatus: true, selector: { labels: nodeLabels } } },
     },
     policies: {
       podSecurityStandard: s.isolation.podSecurity,
       resourceQuota: {
         enabled: true,
-        // null 은 차트 기본 칸을 지운다. CPU 한도와 임시 저장소 합은 셈하지 않는다 (컨테이너마다 LimitRange 기본이 남는다)
+        // null 은 차트 기본 칸을 지운다. CPU 한도와 임시 저장소 합은 셈하지 않는다 (컨테이너마다 LimitRange 기본이 붙고 노드 축출이 지킨다)
         quota: {
           "requests.cpu": `${q.requests.cpuM}m`, "requests.memory": `${q.requests.memoryMi}Mi`, "limits.memory": `${q.limitsMemoryMi}Mi`,
           "limits.cpu": null, "requests.ephemeral-storage": null, "limits.ephemeral-storage": null,
           "count/pods": q.pods, "services.loadbalancers": 0, "services.nodeports": 0, "requests.storage": `${q.storageMi}Mi`,
         },
       },
+      // 칸마다 적는다: helm 이 맵을 합쳐 빠진 칸은 차트 기본(임시 저장소 요청 3Gi)이 남는다 (manifests.ts LIMIT_RANGE)
       limitRange: { enabled: true, default: LIMIT_RANGE.default, defaultRequest: LIMIT_RANGE.defaultRequest },
       networkPolicy: { enabled: true, workload: { publicEgress: { enabled: false } } },
     },
@@ -179,8 +187,56 @@ export interface VclusterHost {
   reach?: (name: string) => Promise<VirtualEndpoint>;   // 기본 클러스터 안 서비스 주소. 클러스터 밖은 kubectlPortForward
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
+  // 동시 실행: 샌드박스마다 sandbox 노드 하나를 골라 고정한다 (다른 회사 샌드박스가 있는 노드는 피함). 끄면 예전처럼 pool 만
+  pinNodes?: boolean;
+  nodeWaitMs?: number;   // 빈 노드를 기다리는 최대 시간 (기본 300초)
 }
 export interface DisposeReport { deleted: boolean; detail: string }
+
+// ── 노드 고정 (동시 실행) ──
+// 규칙: 다른 회사의 살아 있는 샌드박스가 있는 sandbox 노드에는 놓지 않는다 (ADR-006 "sandbox 노드에 한 번에 한 회사"를 노드 단위로).
+//   같은 회사 샌드박스만 있는 노드는 된다 (같은 회사 리허설은 큐에서 1건씩이라 대개 남은 것·수정 고리). 빈 노드가 여럿이면 샌드박스가 가장 적은 노드
+// 살아 있음 = 지우는 중이어도 만료 전이면 셈한다 (지우는 동안 파드가 노드에 남는다). 만료 라벨이 지난 것은 청소 대상이라 안 센다
+// 노드 라벨이 없는 옛 샌드박스(고정 전)는 어느 노드에 있는지 몰라 세지 않는다 — 켜는 순간 남은 것이 있으면 겹칠 수 있다 (PR 남은 위험)
+export interface SandboxNode { name: string; hostname: string }
+export function pickSandboxNode(nodes: readonly SandboxNode[], spaces: readonly SandboxNamespace[], tenantId: string, nowSec: number): SandboxNode | null {
+  const load = new Map<string, { others: number; mine: number }>();
+  for (const ns of spaces) {
+    const host = ns.labels[SANDBOX_LABEL.node];
+    if (!host) continue;
+    const at = Number(ns.labels[SANDBOX_LABEL.expiresAt]);
+    if (Number.isFinite(at) && at < nowSec) continue;
+    const e = load.get(host) ?? { others: 0, mine: 0 };
+    if (ns.labels[SANDBOX_LABEL.tenant] === tenantId) e.mine++; else e.others++;
+    load.set(host, e);
+  }
+  const free = nodes.filter((n) => (load.get(n.hostname)?.others ?? 0) === 0);
+  const score = (n: SandboxNode) => load.get(n.hostname)?.mine ?? 0;
+  return [...free].sort((a, b) => score(a) - score(b) || a.hostname.localeCompare(b.hostname))[0] ?? null;
+}
+/** pool=sandbox 노드 중 Ready 이고 스케줄 가능한 것 (agent-worker 에 nodes get·list 권한이 있어야 한다: 차트 sbx-provisioner) */
+export async function listSandboxNodes(kube: HostKube): Promise<SandboxNode[]> {
+  const r = await kube.call("GET", `/api/v1/nodes?labelSelector=${encodeURIComponent(`pool=${POOL}`)}`);
+  if (!ok2xx(r.status)) throw new KubeError("SANDBOX_NODES", `sandbox 노드 목록 실패 (${r.status}): ${statusMessage(r)} — 차트 sbx-provisioner 에 nodes get·list 가 있는지 본다`);
+  return ((r.body as { items?: any[] })?.items ?? [])
+    .filter((n) => !n?.spec?.unschedulable && (n?.status?.conditions ?? []).some((c: any) => c?.type === "Ready" && c?.status === "True"))
+    .map((n) => ({ name: String(n.metadata?.name ?? ""), hostname: String(n.metadata?.labels?.[HOSTNAME_LABEL] ?? n.metadata?.name ?? "") }))
+    .filter((n) => n.name && n.hostname);
+}
+async function listSandboxSpaces(kube: HostKube): Promise<SandboxNamespace[]> {
+  const r = await kube.call("GET", `/api/v1/namespaces?labelSelector=${encodeURIComponent(`${SANDBOX_LABEL.sandbox}=true`)}`);
+  if (!ok2xx(r.status)) throw new KubeError("SANDBOX_NODES", `샌드박스 네임스페이스 목록 실패 (${r.status}): ${statusMessage(r)}`);
+  return ((r.body as { items?: any[] })?.items ?? []).map((item) => ({ name: String(item?.metadata?.name ?? ""), labels: item?.metadata?.labels ?? {},
+    terminating: item?.status?.phase === "Terminating" }));
+}
+// 같은 agent-worker 안에서 두 실행이 같은 빈 노드를 동시에 고르지 않게: 고르기 → 네임스페이스(노드 라벨) 만들기까지 한 줄로 세운다.
+//   DRAFT(ai): 프로세스 안 잠금이라 agent-worker replicas 는 1 이어야 한다 (차트 기본 1). 여러 대면 DB 잠금이 필요하다
+let pinChain: Promise<unknown> = Promise.resolve();
+function serialize<T>(f: () => Promise<T>): Promise<T> {
+  const next = pinChain.then(f, f);
+  pinChain = next.catch(() => undefined);
+  return next;
+}
 export interface Vcluster {
   readonly name: string;       // = 호스트 네임스페이스 = helm 릴리스
   readonly admin: VirtualAdminKube;
@@ -212,7 +268,7 @@ export async function createVcluster(h: VclusterHost, s: VclusterSpec, o: { read
     const r = await h.kube.call(method, path, { body });
     if (!ok2xx(r.status)) throw new KubeError("SANDBOX_CREATE", `${what} 실패 (${r.status}): ${statusMessage(r)}`);
   };
-  await must("네임스페이스", "POST", "/api/v1/namespaces", {
+  const makeNamespace = (node: string | undefined) => must("네임스페이스", "POST", "/api/v1/namespaces", {
     apiVersion: "v1", kind: "Namespace",
     metadata: { name, labels: {
       [SANDBOX_LABEL.sandbox]: "true", [SANDBOX_LABEL.purpose]: s.kind,
@@ -220,8 +276,27 @@ export async function createVcluster(h: VclusterHost, s: VclusterSpec, o: { read
       "pod-security.kubernetes.io/enforce": "baseline",
       [SANDBOX_LABEL.run]: s.runId.slice(0, 63),
       [SANDBOX_LABEL.tenant]: s.tenantId,
+      ...(node ? { [SANDBOX_LABEL.node]: node } : {}),
     } },
   });
+  // 동시 실행: 빈 노드(다른 회사 샌드박스가 없는 노드)를 골라 네임스페이스에 적는다. 없으면 nodeWaitMs 동안 기다린다
+  let node = s.node;
+  if (h.pinNodes && !node) {
+    const waitUntil = now() + (h.nodeWaitMs ?? 300_000);
+    for (;;) {
+      const picked = await serialize(async () => {
+        const n = pickSandboxNode(await listSandboxNodes(h.kube), await listSandboxSpaces(h.kube), s.tenantId, Math.floor(now() / 1000));
+        if (n) await makeNamespace(n.hostname);
+        return n;
+      });
+      if (picked) { node = picked.hostname; break; }
+      if (now() >= waitUntil) throw new KubeError("SANDBOX_NO_NODE", `다른 회사가 쓰지 않는 sandbox 노드가 ${Math.round((h.nodeWaitMs ?? 300_000) / 1000)}초 안에 나지 않음 (sandbox 노드 수 < 동시 실행 수)`);
+      await sleep(5000);
+    }
+  } else {
+    await makeNamespace(node);
+  }
+  s = node ? { ...s, node } : s;
   let endpoint: VirtualEndpoint | null = null;
   let disposed: Promise<DisposeReport> | null = null;
   const dispose = () => (disposed ??= (async () => {
@@ -316,7 +391,9 @@ export const expiredSandbox = (nowSec: number) => (ns: SandboxNamespace) => {
   const at = Number(ns.labels[SANDBOX_LABEL.expiresAt]);
   return Number.isFinite(at) && at < nowSec;
 };
-// 리허설 하나를 시작하기 전: 지금 실행 말고 남은 리허설 네임스페이스 전부. 리허설 큐는 동시 1건(singleton)이라
-//   지금 실행이 아닌 리허설 네임스페이스는 죽은 실행이 남긴 것이다 (sandbox 노드에 한 번에 한 회사)
-export const leftoverRehearsal = (keep: string) => (ns: SandboxNamespace) =>
-  ns.labels[SANDBOX_LABEL.purpose] === "rehearsal" && ns.name !== keep;
+// 리허설 하나를 시작하기 전: 지금 실행 말고 남은 리허설 네임스페이스.
+//   tenantId 없음(동시 1건): 전부 — 플랫폼 전체에서 1건씩이라 지금 실행이 아닌 것은 죽은 실행이 남긴 것이다
+//   tenantId 있음(동시 실행): 그 회사 것만 — 같은 회사 리허설은 큐에서 1건씩(boss.ts 회사 키)이라 남은 것, 다른 회사 것은 지금 도는 중일 수 있다
+//     (다른 회사가 남긴 것은 만료 청소 sweepExpiredSandboxes 가 지운다)
+export const leftoverRehearsal = (keep: string, tenantId?: string) => (ns: SandboxNamespace) =>
+  ns.labels[SANDBOX_LABEL.purpose] === "rehearsal" && ns.name !== keep && (tenantId === undefined || ns.labels[SANDBOX_LABEL.tenant] === tenantId);

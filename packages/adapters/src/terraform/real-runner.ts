@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Provider, TfOutputs, TfVars } from "@svc/contracts";
@@ -14,7 +15,8 @@ import { envNumber, tfBudget } from "@svc/contracts";
 //   2) 어댑터 toTerraform 결과(자리표시를 채운 것)를 terraform.tfvars.json 으로 쓴다
 //   3) terraform init → plan -out=tfplan → apply tfplan → output -json
 //   4) 출력 중 sensitive 아닌 문자열만 TfOutputs 로 돌려준다 + outputs.json 저장 (복제 끝점 {tf:키} 가 읽는다)
-//   5) (선택) DB 비밀번호를 비밀 저장소에서 꺼내 db-secret.json(0600) 에 둔다. DB·감사 기록·로그에는 절대 안 남긴다
+//   5) (aws, 관리자 ≠ 앱) 앱 DB 비밀번호를 만들어 비밀 그릇을 만든다 (ensureAwsAppSecret, destroy 뒤 지운다)
+//   6) (선택) DB 비밀번호를 비밀 저장소에서 꺼내 db-secret.json(0600) 에 둔다. DB·감사 기록·로그에는 절대 안 남긴다
 // state 는 로컬 파일(작업 폴더 안). 결선 전 TF backend 로컬 유지 결정(Z67)과 같다. 파기는 같은 폴더에서 destroy
 // 클라우드 VM 스레드에서는 이 길을 켜지 않는다 (시험은 가짜 exec 로만)
 
@@ -191,6 +193,21 @@ export function parseOutputs(json: string): TfOutputs {
   return out;
 }
 
+type DbSecretKey = "db_password" | "db_admin_password";
+/** 작업 폴더 db-secret.json (0600). 없거나 깨졌으면 빈 표 */
+function readDbSecret(f: string): Partial<Record<DbSecretKey, string>> {
+  try {
+    const j = JSON.parse(readFileSync(f, "utf8")) as Record<string, unknown>;
+    return Object.fromEntries(Object.entries(j).filter(([, v]) => typeof v === "string" && v)) as Partial<Record<DbSecretKey, string>>;
+  } catch { return {}; }
+}
+function writeDbSecret(f: string, v: Partial<Record<DbSecretKey, string>>) {
+  writeFileSync(f, JSON.stringify(v), { mode: 0o600 });
+  chmodSync(f, 0o600);
+}
+/** aws/root 가 관리자(마스터)와 앱 계정을 나눈 출력인가 (kinds/postgres admin_user). 옛 모듈로 만든 작업 폴더는 아니다 (앱 = 마스터) */
+const awsAdminSplit = (out: TfOutputs): boolean => !!out.db_admin_username && !!out.db_password_secret_name;
+
 export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
   const env = o.env ?? process.env;
   const exec = o.exec ?? spawnExec;
@@ -245,17 +262,76 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
     return r;
   }
 
+  // AWS 도착 앱 DB 비밀번호 (관리자 ≠ 앱일 때: aws/root 출력 db_admin_username·db_password_secret_name).
+  //   RDS 관리 비밀(rds!db-…)은 마스터 = 플랫폼 관리자 몫이다. 앱 계정 비밀번호는 여기서 만들어, 비밀 그릇을 "만들면서" 값을 넣는다 (CreateSecret 한 번).
+  //   DRAFT(ai): Terraform 으로 못 넣는 이유 = 값 넣기(PutSecretValue)·refresh 의 값 읽기(GetSecretValue)가 실행 역할 천장 밖이다
+  //   (permissions-lint: PutSecretValue 금지, GetSecretValue 는 rds!db-* 만). 만들기(CreateSecret)·태그는 천장 안, 지우기(DeleteSecret)는 managed-by=platform 태그일 때만.
+  //   값은 db-secret.json(0600)에 먼저 적고 그릇을 만든다 → 재시도는 같은 값을 쓰고 "이미 있음"을 받아들인다.
+  //   이 폴더에 값이 없는데 그릇이 이미 있으면 값을 모르므로 멈춘다 (지어내지 않는다). 앱 LOGIN 역할은 워커가 같은 값으로 만든다 (relay ensureTargetAppLogin)
+  async function ensureAwsAppSecret(out: TfOutputs, vars: TfVars, dir: string, steps: RealStep[], log: string[], signal?: AbortSignal): Promise<boolean> {
+    if (!awsAdminSplit(out)) return true;
+    const f = join(dir, "db-secret.json");
+    const saved = readDbSecret(f);
+    const password = saved.db_password ?? randomBytes(24).toString("base64url");
+    if (!saved.db_password) writeDbSecret(f, { ...saved, db_password: password });
+    // 값은 명령줄에 안 싣는다 (ps 로 보임) → 0600 임시 파일을 file:// 로 넘기고 바로 지운다
+    const body = join(dir, "app-db-secret.tmp.json");
+    writeFileSync(body, JSON.stringify({ username: out.db_username ?? "", password }), { mode: 0o600 });
+    const tags = [{ Key: "managed-by", Value: "platform" }, ...(["tenant_id", "app_name"] as const)
+      .filter((k) => typeof vars[k] === "string" && vars[k]).map((k) => ({ Key: k === "tenant_id" ? "tenant" : "app", Value: String(vars[k]) }))];
+    const region = typeof vars.region === "string" && vars.region ? ["--region", vars.region] : [];
+    // 실행 역할(빌린 apply 세션) 명령: 천장 AppCreate(CreateSecret)·AppTag(TagResource). 관찰 역할 명령표(observe-permissions)와 무관
+    const create = { cmd: env.AWS_BIN ?? "aws",
+      args: ["secretsmanager", "create-secret", "--name", out.db_password_secret_name!, "--secret-string", `file://${body}`,
+        "--description", "platform app DB login (worker-created, deleted with the migration's terraform destroy)", "--tags", JSON.stringify(tags), ...region] };
+    try {
+      const r = await exec(create.cmd, create.args, { cwd: dir, env: cenv, signal, timeoutMs: 60_000 });
+      steps.push({ step: "secret", code: r.code, ms: round(r.ms) });
+      log.push(`$ aws secretsmanager create-secret … (db_password 그릇) → exit ${r.code}`);
+      if (r.code === 0) return true;
+      if (/ResourceExistsException/.test(r.stderr) && saved.db_password) { log.push("  이미 있음: 앞 시도에서 같은 값으로 만든 그릇을 그대로 쓴다"); return true; }
+      log.push(...tail(r.stderr, 3));
+      if (/ResourceExistsException/.test(r.stderr))
+        log.push(`  그릇 ${out.db_password_secret_name} 이 이미 있는데 이 작업 폴더에 값이 없다 → 값을 모르니 멈춘다 (그 그릇이 이 이전 것인지 확인하고 지운 뒤 다시 apply)`);
+      // 이번에 지은 값은 버린다 (다음 시도가 남의 그릇을 "앞 시도 것"으로 믿지 않게)
+      if (!saved.db_password) writeDbSecret(f, saved);
+      return false;
+    } finally { rmSync(body, { force: true }); }
+  }
+
+  // aws destroy 뒤: 실행기가 만든 앱 DB 비밀번호 그릇을 지운다 (Terraform state 밖이라 destroy 가 안 지운다). 없으면 그대로 성공
+  async function deleteAwsAppSecret(dir: string, steps: RealStep[], log: string[], signal?: AbortSignal): Promise<boolean> {
+    const at = (n: string) => { try { return JSON.parse(readFileSync(join(dir, n), "utf8")) as Record<string, unknown>; } catch { return {}; } };
+    const provider = existsSync(join(dir, "provider.txt")) ? readFileSync(join(dir, "provider.txt"), "utf8").trim() : "";
+    const out = at("outputs.json") as TfOutputs;
+    if (provider !== "aws" || !awsAdminSplit(out)) return true;
+    const vars = at("terraform.tfvars.json");
+    const region = typeof vars.region === "string" && vars.region ? ["--region", vars.region] : [];
+    // 실행 역할(빌린 destroy 세션) 명령: 천장 AppOwned(DeleteSecret, managed-by=platform 태그 = ensureAwsAppSecret 이 붙임)
+    const del = { cmd: env.AWS_BIN ?? "aws",
+      args: ["secretsmanager", "delete-secret", "--secret-id", out.db_password_secret_name!, "--force-delete-without-recovery", ...region] };
+    const r = await exec(del.cmd, del.args, { cwd: dir, env: cenv, signal, timeoutMs: 60_000 });
+    steps.push({ step: "secret", code: r.code, ms: round(r.ms) });
+    log.push(`$ aws secretsmanager delete-secret … (db_password 그릇) → exit ${r.code}`);
+    if (r.code === 0 || /ResourceNotFoundException/.test(r.stderr)) return true;
+    log.push(...tail(r.stderr, 3));
+    return false;
+  }
+
   // DB 비밀번호 꺼내기 (TF_FETCH_DB_SECRET=1, 기본 1). 복제 끝점 {tf:db_password}·password_ref tf:db_admin_password 가 읽는다
   // db-secret.json 에는 비밀번호만 둔다. 계정 이름은 outputs.json(db_username = 앱, db_admin_username = 관리자)이 진실이다.
   //   예전엔 GCP(비밀 = 비밀번호 글자뿐)에서 db_username:"postgres" 를 써서 outputs 의 앱 계정 이름을 덮었다 → {tf:db_username} 이 남의 계정으로 붙었다
+  // aws: 관리자를 나눈 출력이면 RDS 관리 비밀(마스터) = db_admin_password, 앱 비밀번호(db_password)는 ensureAwsAppSecret 이 이미 적었다.
+  //   옛 출력(앱 = 마스터)이면 예전처럼 마스터 = db_password
   async function fetchSecret(provider: Provider, out: TfOutputs, dir: string, steps: RealStep[], log: string[], signal?: AbortSignal) {
     // 도착 프로젝트 = 빌린 토큰 env 의 CLOUDSDK_CORE_PROJECT (gcpTerraformEnv 가 gcp_target_project 로 채움). 없을 때만 예전 TF_FACT_PROJECT_ID
     //   (예전엔 TF_FACT_PROJECT_ID 가 먼저라 워커 env 에 남은 데모 프로젝트로 다른 회사의 비밀을 찾을 수 있었다)
     const project = env.CLOUDSDK_CORE_PROJECT || env.TF_FACT_PROJECT_ID;
     const gcpAccess = (secret: string) => ["secrets", "versions", "access", "latest", `--secret=${secret}`, ...(project ? [`--project=${project}`] : [])];
     const want: { key: "db_password" | "db_admin_password"; cmd: string; args: string[] }[] = [];
+    const split = provider === "aws" && awsAdminSplit(out);
     if (provider === "aws" && out.db_master_secret_arn)
-      want.push({ key: "db_password", cmd: env.AWS_BIN ?? "aws",
+      want.push({ key: split ? "db_admin_password" : "db_password", cmd: env.AWS_BIN ?? "aws",
         args: ["secretsmanager", "get-secret-value", "--secret-id", out.db_master_secret_arn, "--query", "SecretString", "--output", "text"] });
     if (provider === "gcp" && out.db_password_secret_id) want.push({ key: "db_password", cmd: env.GCLOUD_BIN ?? "gcloud", args: gcpAccess(out.db_password_secret_id) });
     if (provider === "gcp" && out.db_admin_password_secret_id) want.push({ key: "db_admin_password", cmd: env.GCLOUD_BIN ?? "gcloud", args: gcpAccess(out.db_admin_password_secret_id) });
@@ -272,11 +348,12 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
       try { const j = JSON.parse(s) as { password?: string }; if (j.password) password = j.password; } catch { /* gcp: 비밀번호 그대로 */ }
       got[w.key] = password;
     }
-    if (!Object.keys(got).length) return false;
     const f = join(dir, "db-secret.json");
-    writeFileSync(f, JSON.stringify(got), { mode: 0o600 });
-    chmodSync(f, 0o600);
-    return Object.keys(got).length === want.length;
+    // aws 나눈 판: ensureAwsAppSecret 이 적은 앱 비밀번호는 남긴다
+    const app = split ? readDbSecret(f).db_password : undefined;
+    if (!Object.keys(got).length) return false;
+    writeDbSecret(f, { ...(app ? { db_password: app } : {}), ...got });
+    return Object.keys(got).length === want.length && (!split || !!app);
   }
 
   // Z89: state 잠금을 기다리는 시간 (같은 폴더에서 사람이 tf:real destroy 를 돌리는 중일 때). 기본 60초
@@ -330,6 +407,8 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
         tfOutputs.db_ca_file = join(dir, "db-ca.pem");
       }
       writeFileSync(join(dir, "outputs.json"), JSON.stringify(tfOutputs, null, 2), { mode: 0o600 });
+      // 앱 DB 비밀번호 그릇은 앱 배포(ExternalSecret)가 읽으니 TF_FETCH_DB_SECRET 과 상관없이 만든다. 못 만들면 apply 실패 (재시도는 같은 state·같은 값)
+      if (provider === "aws" && !(await ensureAwsAppSecret(tfOutputs, vars, dir, steps, log, signal))) return fail("secret");
       const secretFetched = (env.TF_FETCH_DB_SECRET ?? "1") === "1" ? await fetchSecret(provider, tfOutputs, dir, steps, log, signal) : false;
       return { ok: true, tfOutputs, workDir: dir, steps, elapsedMs: round(performance.now() - t0), log, secretFetched };
     },
@@ -358,7 +437,9 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
       if ((await run("init", [...G, "init", "-input=false", "-no-color"], dir, steps, log, signal)).code !== 0)
         return { ok: false, workDir: dir, steps, log, elapsedMs: round(performance.now() - t0) };
       const r = await run("destroy", [...G, "destroy", "-input=false", "-no-color", lockTimeout, "-auto-approve", `-var-file=${up(layout, "terraform.tfvars.json")}`], dir, steps, log, signal);
-      return { ok: r.code === 0, workDir: dir, steps, log, elapsedMs: round(performance.now() - t0) };
+      // aws: 실행기가 만든 앱 DB 비밀번호 그릇도 지운다 (state 밖). 못 지우면 실패로 돌려 다시 지우게 한다 (다시 불러도 안전: 없으면 성공)
+      const secretGone = r.code === 0 ? await deleteAwsAppSecret(dir, steps, log, signal) : true;
+      return { ok: r.code === 0 && secretGone, workDir: dir, steps, log, elapsedMs: round(performance.now() - t0) };
     },
     /** 작업 폴더 목록 (state 가 남은 것 = 클라우드 자원이 남았을 수 있는 것) */
     list() {

@@ -56,10 +56,18 @@ export function rehearsalSettings(env: NodeJS.ProcessEnv = process.env) {
 export function sandboxSettings(env: NodeJS.ProcessEnv = process.env) {
   const mockResult: "pass" | "fail" | null = env.MOCK_SANDBOX?.trim() !== "1" ? null
     : env.MOCK_SANDBOX_RESULT?.trim() === "fail" ? "fail" : "pass";
+  // 리허설 동시 실행 (agent-worker 한 대 안). 1 = 예전처럼 플랫폼 전체 1건. 2 이상이면 회사마다 다른 sandbox 노드에 고정한다 (pinNodes)
+  // DRAFT(ai): 기본 1. 올릴 때는 sandbox 노드 수(Terraform sandbox_nodes.desired) 이하로 둔다 — 노드보다 많으면 남는 실행은 빈 노드를 기다린다
+  const concurrency = Math.max(1, Math.floor(envNumber(env.SANDBOX_REHEARSAL_CONCURRENCY, 1)));
   return {
     ttlSec: envNumber(env.SANDBOX_TTL_SEC, 1800),
     vclusterChart: env.SANDBOX_VCLUSTER_CHART?.trim() || "/app/vendor/vcluster-0.37.6.tgz",
     mockResult,
+    concurrency,
+    // 회사마다 sandbox 노드 하나에 고정 (다른 회사 샌드박스가 있는 노드는 피함). 동시 실행이면 늘 켠다. SANDBOX_NODE_PIN=1 이면 1건이어도 켠다
+    pinNodes: concurrency > 1 || env.SANDBOX_NODE_PIN?.trim() === "1",
+    // DRAFT(ai): 빈 노드를 기다리는 최대 시간 300초. 넘으면 샌드박스를 못 만든 것(REHEARSAL_SANDBOX_UNAVAILABLE)으로 끝낸다
+    nodeWaitSec: Math.max(0, envNumber(env.SANDBOX_NODE_WAIT_SEC, 300)),
   };
 }
 

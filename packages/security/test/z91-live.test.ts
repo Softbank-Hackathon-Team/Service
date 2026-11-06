@@ -182,6 +182,22 @@ test("GCP 도착: 정상이면 pass, 승인 네트워크 0.0.0.0/0·평문 허�
   assert.equal(by(bad, "storage_encryption.k8s_secrets").state, "warn");
 });
 
+// #317 가: 앱 신원 = KSA 주체 (gcp/root 출력 app_principal). 예전 출력(app_gsa_email)은 위 시험이 그대로 본다
+test("GCP 도착 KSA 주체: 프로젝트 정책에서 principal:// 주체의 역할을 본다 (넓은 역할이면 fail), 출력 없으면 n_a", async () => {
+  const P = "principal://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/finals-demo.svc.id.goog/subject/ns/app-shop/sa/api";
+  const { app_gsa_email: _old, ...rest } = gcpTarget.tfOutputs!;
+  const t: LiveTarget = { ...gcpTarget, tfOutputs: { ...rest, app_principal: P } };
+  const ok = await runLiveChecks(t, { run: fake(gcpGood({ "gcloud projects get-iam-policy": { bindings: [{ role: "roles/cloudsql.client", members: [P] }] } })), env: ENV, now: NOW });
+  assert.equal(by(ok, "iam.app_identity").state, "pass");
+  assert.equal(by(ok, "iam.app_identity").resource, "KSA app-shop/api");
+  assert.match(by(ok, "iam.app_identity").evidence, /roles\/cloudsql\.client/);
+  const bad = await runLiveChecks(t, { run: fake(gcpGood({ "gcloud projects get-iam-policy": { bindings: [{ role: "roles/editor", members: [P] }] } })), env: ENV, now: NOW });
+  assert.equal(by(bad, "iam.app_identity").state, "fail");
+  const none = await runLiveChecks({ ...gcpTarget, tfOutputs: rest }, { run: fake(gcpGood()), env: ENV, now: NOW });
+  assert.equal(by(none, "iam.app_identity").state, "n_a");
+  assert.match(by(none, "iam.app_identity").evidence, /app_principal/);
+});
+
 test("온프레 출발: CNPG·k8s 로만 보고, 클라우드 전용 줄은 n_a·unavailable(이유)", async () => {
   const t: LiveTarget = { side: "source", provider: "onprem", envId: "e-on", accountId: null, tfOutputs: null, stubOutputs: false };
   const r = await runLiveChecks(t, { run: fake({ ...k8sOk,

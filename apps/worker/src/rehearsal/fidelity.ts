@@ -67,8 +67,8 @@ const ITEMS: Record<WorkerItem, (f: FidelityFacts, changed: boolean) => Row> = {
     : same("터널 없음"),
   cloud_identity: (f, c) => f.target === "onprem-k3s" && !c
     ? same("클라우드 신원 없음")
-    : row("not_checked", f.target === "aws-eks" ? "EKS Pod Identity·IRSA" : f.target === "gcp-gke" ? "GKE Workload Identity" : "클라우드 신원 주석",
-      "신원 주석을 빼고 돌림, 클라우드 권한 없음", "가상 클러스터 안에서는 클라우드 신원이 효과가 없다"),
+    : row("not_checked", f.target === "aws-eks" ? "EKS Pod Identity·IRSA" : f.target === "gcp-gke" ? "GKE Workload Identity (KSA 직접 주체)" : "클라우드 신원 주석",
+      f.target === "gcp-gke" && !c ? "주석 없는 같은 KSA 로 돌림, 클라우드 권한 없음" : "신원 주석을 빼고 돌림, 클라우드 권한 없음", "가상 클러스터 안에서는 클라우드 신원이 효과가 없다"),
   // vCluster 는 NetworkPolicy 를 호스트로 내리지 않는다 (packages/agent/src/ai/vcluster.ts networkPolicies.enabled=false, 샌드박스 기본 거부를 지키려고)
   network: (f) => f.present.has("network_policy")
     ? row("substituted", "도착 네트워크 그대로 + 묶음 NetworkPolicy (도착 CNI 가 적용)",

@@ -9,6 +9,9 @@ mock_provider "google" {
   mock_data "google_client_config" {
     defaults = { access_token = "mock-token" }
   }
+  mock_data "google_project" {
+    defaults = { number = "123456789012" }
+  }
 }
 mock_provider "kubernetes" {}
 mock_provider "random" {}
@@ -73,6 +76,10 @@ run "hub_deploy_in_app_namespace_only" {
     condition     = !contains(module.namespace["app-shop"].hub_role_resources, "secrets") && !contains(module.namespace["app-shop"].hub_role_resources, "rolebindings")
     error_message = "허브 Role 에 Secret·RBAC 쓰기가 없어야 함"
   }
+  assert {
+    condition     = toset(module.namespace["app-shop"].hub_role_wildcard_verbs) == toset(["get", "list", "watch"])
+    error_message = "허브 Role 의 모든 종류(*) 규칙은 읽기(get·list·watch)만 (Argo CD 캐시용)"
+  }
 }
 
 run "hub_deploy_off_by_default" {
@@ -134,13 +141,25 @@ run "reject_duplicate_id" {
   expect_failures = [var.identity_json]
 }
 
-# 거부: SA 이름이 30자 초과 (IR id 를 그대로 쓰면 생기는 사고)
-run "reject_long_sa_name" {
+# #317 가: 앱 신원은 GSA 없이 KSA 가 주체. 비밀 읽기·옮긴 권한 바인딩이 모두 그 주체에 간다 (SA 단위 setIamPolicy 없음)
+run "identity_bindings_use_ksa_principal" {
   command = plan
   variables {
-    identity_json = jsonencode([{ id = "api", name = "app-${join("", [for i in range(40) : "a"])}", service_account = "api" }])
+    object_store_json = jsonencode([{ id = "uploads", name = "app-shop-uploads-ab12", versioning = true }])
+    identity_json = jsonencode([
+      { id = "api", name = "app-shop-api", service_account = "api", secret_names_json = "[\"JWT_SECRET\"]",
+      grants_json = jsonencode([{ kind = "objectStore", target = "uploads", role = "roles/storage.objectViewer", scope = "bucket" }]) },
+      { id = "web", name = "app-shop-web", service_account = "web" },
+    ])
   }
-  expect_failures = [var.identity_json]
+  assert {
+    condition     = module.identity["api"].principal == "principal://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/demo-project.svc.id.goog/subject/ns/app-shop/sa/api"
+    error_message = "신원 주체는 KSA app-shop/api (비밀 읽기 바인딩은 kinds/identity/tests 가 본다)"
+  }
+  assert {
+    condition     = google_storage_bucket_iam_member.grant["api/uploads/roles/storage.objectViewer"].member == module.identity["api"].principal
+    error_message = "옮긴 권한(버킷) 바인딩 주체도 KSA 주체"
+  }
 }
 
 # --- A5 종류: cache·objectStore·queue (정상)

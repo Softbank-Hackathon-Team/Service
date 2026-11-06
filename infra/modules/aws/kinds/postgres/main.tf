@@ -55,6 +55,7 @@ variable "cfg" {
   }
 }
 variable "app_name" { type = string }
+variable "tenant_id" { type = string } # 앱 DB 비밀번호 그릇 이름 platform/<회사>/<앱>/… (kinds/identity·Builder remoteKey 와 같은 접두어)
 variable "vpc_id" { type = string }
 variable "subnet_ids" { type = list(string) }
 variable "cluster_sg_id" { # 클러스터 없이(cluster_name "") 만들면 빈 값 → 클러스터 쪽 허용 규칙 없음
@@ -63,6 +64,15 @@ variable "cluster_sg_id" { # 클러스터 없이(cluster_name "") 만들면 빈 
 }
 
 locals {
+  # 플랫폼 관리자 계정 = RDS 마스터 (rds_superuser). gcp/kinds/postgres 와 같은 규칙: 인스턴스 이름(이전마다 해시)에서 정해져 재시도·다시 apply 해도 같다.
+  #   앱 계정(cfg.app_user)은 마스터가 아니다 → 컷오버 울타리(REVOKE)가 앱 계정에 먹는다 (복제 점검 DB-08).
+  #   예전엔 앱 계정 = 마스터라 rds_superuser(→ pg_write_all_data)를 물려받아 sync 가 REPL_APP_ROLE_UNFENCEABLE 로 멈췄다.
+  #   RDS 에는 SQL 프로바이더가 없어 Terraform 이 앱 LOGIN 역할을 못 만든다 → 워커가 관리자로 붙어 만든다 (apps/worker relay-step ensureTargetAppLogin)
+  admin_user = "svc_admin_${substr(sha256(var.cfg.name), 0, 10)}"
+  # 앱 DB 비밀번호 그릇 "이름"만 정한다. 그릇과 값은 실행기(packages/adapters real-runner)가 apply 뒤 CreateSecret 한 번(값 포함)으로 만들고 destroy 뒤 지운다.
+  #   DRAFT(ai): Terraform(aws_secretsmanager_secret_version)으로 못 넣는 이유 = 값 넣기(PutSecretValue)·refresh 의 값 읽기(GetSecretValue)가
+  #   실행 역할 천장 밖이다 (permissions-lint: PutSecretValue 금지, GetSecretValue 는 rds!db-* 만). 이름에 인스턴스 이름(이전마다 해시)을 넣어 이전끼리 안 겹친다
+  app_password_secret_name = "platform/${var.tenant_id}/${var.app_name}/${var.cfg.name}-db-password"
   # DRAFT(ai): 못 고른 값의 상품 기본값 (가장 싼 급)
   instance_class    = coalesce(var.cfg.instance_class, "db.t4g.micro")
   replicas          = coalesce(var.cfg.read_replicas, 0)
@@ -150,8 +160,8 @@ resource "aws_db_instance" "db" {
   multi_az                    = var.cfg.ha == true
   storage_encrypted           = true
   db_name                     = local.db_name
-  username                    = var.cfg.app_user
-  manage_master_user_password = true # 비밀번호는 RDS 가 Secrets Manager 에 직접 관리 (state 에 비밀 0)
+  username                    = local.admin_user # 마스터 = 플랫폼 관리자 (앱 계정 아님, 위 locals)
+  manage_master_user_password = true             # 관리자 비밀번호는 RDS 가 Secrets Manager(rds!db-…)에 직접 관리 (state 에 비밀 0)
   db_subnet_group_name        = aws_db_subnet_group.db.name
   vpc_security_group_ids      = [aws_security_group.db.id]
   parameter_group_name        = aws_db_parameter_group.db.name
@@ -162,6 +172,12 @@ resource "aws_db_instance" "db" {
   deletion_protection         = var.cfg.deletion_protection
   skip_final_snapshot         = !var.cfg.deletion_protection
   final_snapshot_identifier   = var.cfg.deletion_protection ? "${var.cfg.name}-final" : null
+  lifecycle {
+    precondition {
+      condition     = local.admin_user != var.cfg.app_user
+      error_message = "관리자 계정 이름이 앱 계정과 같다."
+    }
+  }
 }
 
 resource "aws_db_instance" "replica" {
@@ -182,10 +198,13 @@ output "arn" { value = aws_db_instance.db.arn } # A8: 옮긴 IAM 권한의 Resou
 output "port" { value = local.port }
 output "db_name" { value = local.db_name }
 output "user" { value = var.cfg.app_user }
+output "admin_user" { value = local.admin_user }
 output "public" { value = var.cfg.public }
 output "ca_cert_identifier" { value = aws_db_instance.db.ca_cert_identifier }
-# 비밀 "이름"만 (값 아님). KIND_INTERNAL_OUTPUTS.postgres = ["password_secret"]
-output "password_secret" { value = aws_db_instance.db.master_user_secret[0].secret_arn }
+# 관리자(마스터) 비밀번호 = RDS 관리 비밀 ARN. 워커만 읽는다 (실행기 fetchSecret → db-secret.json db_admin_password). 앱 신원에는 읽기를 주지 않는다
+output "admin_password_secret" { value = aws_db_instance.db.master_user_secret[0].secret_arn }
+# 앱 비밀번호 그릇 이름만 (값 아님, 그릇은 실행기가 만든다). KIND_INTERNAL_OUTPUTS.postgres = ["password_secret"]
+output "password_secret" { value = local.app_password_secret_name }
 output "replica_addresses" { value = [for r in aws_db_instance.replica : r.address] }
 # LINK_OUTPUTS.postgres = host·port·url·user (비밀번호 없음)
 output "link" {

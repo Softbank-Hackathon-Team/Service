@@ -1,0 +1,230 @@
+#!/usr/bin/env bash
+# 팀 환경 등록부(docs/team-env/registry.yaml)에서 칸 하나를 읽어 GCP 연결 명령을 값까지 채워 찍는다. 상태: AI 초안
+#   bash tools/team-env.sh <slot-N>           명령만 찍는다 (아무것도 실행하지 않음). 줄마다 명령 하나, 자리 값(<…>) 없음
+#   bash tools/team-env.sh <slot-N> --check   읽기 전용 gcloud(projects describe, services list)로 빠진 프로젝트·API 만 알려 준다
+# 환경 변수
+#   TEAM_ENV_REGISTRY      등록부 파일 (기본 docs/team-env/registry.yaml)
+#   PLATFORM_GCP_PROJECT   플랫폼 GCP 프로젝트 (기본 sb-iron-platform). 회사 전용 SA = t-<md5(회사 번호) 앞 28자>@<이 프로젝트>
+#   PLATFORM_SA            회사 전용 SA 를 직접 줄 때 (연결 화면에 보이는 값과 같아야 한다)
+# 끝 코드: 0 정상  1 --check 에서 빠진 것 있음  2 인자·등록부 잘못 (무엇이 틀렸는지 한 줄씩)
+# 등록부 규칙(전용 프로젝트는 한 칸에만, 환경 이름은 회사 안에서 하나)을 어기면 명령을 찍지 않고 멈춘다.
+set -u
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REG="${TEAM_ENV_REGISTRY:-$ROOT/docs/team-env/registry.yaml}"
+CONNECT="$ROOT/infra/onboarding/gcp-connect.sh"
+die() { echo "team-env: $*" >&2; exit 2; }
+
+SLOT="${1:-}"; MODE="${2:-print}"
+case "$SLOT" in -h|--help|"") sed -n '2,10p' "$0"; [ -n "$SLOT" ]; exit $? ;; esac
+[[ "$SLOT" =~ ^slot-[1-9][0-9]*$ ]] || die "칸 이름은 slot-<번호>: $SLOT"
+case "$MODE" in print|--check) ;; *) die "모르는 옵션: $MODE (--check 만 있음)" ;; esac
+[ -f "$REG" ] || die "등록부 없음: $REG"
+
+# 등록부 → "경로=값" 줄 (예: slots.0.environments.1.gcp.dedicated_project=iron-target-gcp).
+# 이 등록부가 쓰는 YAML 만 읽는다: 블록 맵, "- " 목록, 한 줄 흐름 맵·목록({ } [ ]), 따옴표 값, # 주석. 그 밖의 모양은 끝 코드 2
+flatten() {
+  awk -v SQ="'" '
+  function trim(s) { sub(/^[ \t]+/, "", s); sub(/[ \t]+$/, "", s); return s }
+  function bad(m) { if (!ERR) printf "team-env: 등록부 %d번째 줄: %s\n", NR, m > "/dev/stderr"; ERR = 1 }
+  function emit(p, v) { print p "=" v }
+  function nocomment(s,    i, c, q, out) {
+    q = ""; out = ""
+    for (i = 1; i <= length(s); i++) {
+      c = substr(s, i, 1)
+      if (q != "") { if (c == q) q = ""; out = out c; continue }
+      if (c == "\"" || c == SQ) { q = c; out = out c; continue }
+      if (c == "#" && (i == 1 || substr(s, i - 1, 1) ~ /[ \t]/)) break
+      out = out c
+    }
+    if (q != "") bad("따옴표가 닫히지 않음")
+    return out
+  }
+  function ws() { while (FP <= length(FL) && substr(FL, FP, 1) ~ /[ \t]/) FP++ }
+  # 흐름 안 값 하나: 따옴표면 그 안, 아니면 , } ] 또는 ": " 앞까지
+  function scalar(    c, q, out) {
+    ws(); c = substr(FL, FP, 1); out = ""
+    if (c == "\"" || c == SQ) {
+      q = c; FP++
+      while (FP <= length(FL) && substr(FL, FP, 1) != q) { out = out substr(FL, FP, 1); FP++ }
+      if (FP > length(FL)) bad("따옴표가 닫히지 않음")
+      FP++; return out
+    }
+    while (FP <= length(FL)) {
+      c = substr(FL, FP, 1)
+      if (c != "" && index(",}]", c) > 0) break
+      if (c == ":" && (FP == length(FL) || substr(FL, FP + 1, 1) ~ /[ \t]/)) break
+      out = out c; FP++
+    }
+    return trim(out)
+  }
+  function node(p,    c, k, i) {
+    ws(); c = substr(FL, FP, 1)
+    if (c == "{") {
+      FP++
+      for (;;) {
+        ws(); if (substr(FL, FP, 1) == "}") { FP++; return }
+        k = scalar(); ws()
+        if (k == "" || substr(FL, FP, 1) != ":") { bad("흐름 맵 키 뒤에 : 없음"); FP = length(FL) + 1; return }
+        FP++; node(p "." k); ws(); c = substr(FL, FP, 1)
+        if (c == ",") { FP++; continue }
+        if (c == "}") { FP++; return }
+        bad("흐름 맵이 닫히지 않음"); FP = length(FL) + 1; return
+      }
+    }
+    if (c == "[") {
+      FP++; i = 0
+      for (;;) {
+        ws(); if (substr(FL, FP, 1) == "]") { FP++; return }
+        node(p "." i); i++; ws(); c = substr(FL, FP, 1)
+        if (c == ",") { FP++; continue }
+        if (c == "]") { FP++; return }
+        bad("흐름 목록이 닫히지 않음"); FP = length(FL) + 1; return
+      }
+    }
+    emit(p, scalar())
+  }
+  # 블록 값 (줄 끝까지). 흐름이면 펼치고, 따옴표면 벗기고, 아니면 그대로
+  function value(p, v,    c) {
+    v = trim(v); c = substr(v, 1, 1)
+    if (c == "{" || c == "[") { FL = v; FP = 1; node(p); ws(); if (FP <= length(FL)) bad("흐름 값 뒤에 남은 글자"); return }
+    if ((c == "\"" || c == SQ) && length(v) >= 2 && substr(v, length(v), 1) == c) v = substr(v, 2, length(v) - 2)
+    emit(p, v)
+  }
+  # "키: 값" 또는 "키:" (아래 줄에 자식). ind = 그 키의 칸 위치
+  function entry(parent, s, ind,    k, v, p) {
+    if (!match(s, /^[A-Za-z0-9_.-]+:([ \t]|$)/)) { bad("키: 값 모양이 아님"); return }
+    k = s; sub(/:.*/, "", k); v = substr(s, length(k) + 2)
+    p = (parent == "" ? k : parent "." k)
+    if (trim(v) == "") { N++; SI[N] = ind; SP[N] = p; SK[N] = "key"; SC[N] = 0 }
+    else value(p, v)
+  }
+  {
+    line = nocomment($0); sub(/[ \t]+$/, "", line)
+    if (line ~ /^[ \t]*$/) next
+    if (line ~ /^\t/ || line ~ /^ *\t/) { bad("들여쓰기에 탭"); next }
+    match(line, /^ */); ind = RLENGTH; s = substr(line, ind + 1)
+    if (s ~ /^- / || s == "-") {
+      while (N > 0 && (SI[N] > ind || (SI[N] == ind && SK[N] == "item"))) N--
+      if (N == 0 || SK[N] != "key") { bad("목록 항목의 부모 키가 없음"); next }
+      p = SP[N] "." SC[N]; SC[N]++
+      rest = trim(substr(s, 2))
+      N++; SI[N] = ind; SP[N] = p; SK[N] = "item"; SC[N] = 0
+      if (rest == "") next
+      if (rest ~ /^[{\[]/ || rest !~ /^[A-Za-z0-9_.-]+:([ \t]|$)/) { value(p, rest); next }
+      entry(p, rest, ind + 2)
+      next
+    }
+    while (N > 0 && SI[N] >= ind) N--
+    entry((N > 0 ? SP[N] : ""), s, ind)
+  }
+  END { exit ERR ? 2 : 0 }
+  ' "$1"
+}
+
+FLAT="$(flatten "$REG")" || die "등록부를 읽지 못함: $REG"
+get() { printf '%s\n' "$FLAT" | awk -v k="$1" 'index($0, k "=") == 1 { print substr($0, length(k) + 2); exit }'; }
+has() { printf '%s\n' "$FLAT" | awk -v k="$1" 'index($0, k "=") == 1 { f = 1 } END { exit !f }'; }
+
+[ "$(get version)" = 1 ] || die "등록부 version 이 1 이 아님"
+TENANT="$(get tenant)"
+[[ "$TENANT" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || die "등록부 tenant 가 회사 번호(UUID) 모양이 아님: $TENANT"
+
+# 칸 번호 찾기
+SI_=""
+for i in $(printf '%s\n' "$FLAT" | sed -n 's/^slots\.\([0-9][0-9]*\)\.id=.*/\1/p'); do
+  [ "$(get "slots.$i.id")" = "$SLOT" ] && { [ -z "$SI_" ] || die "칸 $SLOT 이 두 번 있음"; SI_="$i"; }
+done
+[ -n "$SI_" ] || die "등록부에 $SLOT 칸이 없음"
+# 칸마다 회사를 나눈 명부: 칸의 tenant 가 있으면 그 회사 (회사 전용 SA 도 그 회사 것)
+ST_="$(get "slots.$SI_.tenant")"
+if [ -n "$ST_" ]; then
+  [[ "$ST_" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || die "$SLOT 칸 tenant 가 회사 번호(UUID) 모양이 아님: $ST_"
+  TENANT="$ST_"
+fi
+
+# 회사 전용 SA: 연결 화면이 보여 주는 값과 같은 규칙 (apps/api 의 tenant SA 이름 = t-<md5(회사 번호) 앞 28자>)
+md5hex() { if command -v md5sum >/dev/null 2>&1; then printf %s "$1" | md5sum | awk '{print $1}'; else printf %s "$1" | md5 | awk '{print $NF}'; fi; }
+if [ -z "${PLATFORM_SA:-}" ]; then
+  h="$(md5hex "$TENANT")"; [ ${#h} -eq 32 ] || die "md5 를 계산하지 못함 (md5sum 또는 md5 필요)"
+  PLATFORM_SA="t-${h:0:28}@${PLATFORM_GCP_PROJECT:-sb-iron-platform}.iam.gserviceaccount.com"
+fi
+[[ "$PLATFORM_SA" =~ ^t-[0-9a-f]{28}@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$ ]] || die "PLATFORM_SA 모양이 아님: $PLATFORM_SA"
+
+# 규칙 검사 (등록부 전체): 환경 이름은 회사 안에서 하나, 전용 프로젝트는 다른 어떤 환경의 원래·전용 프로젝트와도 겹치지 않음
+dup="$(printf '%s\n' "$FLAT" | sed -n 's/^slots\.[0-9][0-9]*\.environments\.[0-9][0-9]*\.name=//p' | sort | uniq -d | head -1)"
+[ -z "$dup" ] || die "환경 이름 $dup 이 두 칸 이상에 있음 (공유 환경은 한 칸에만 적고 notes 에 공유라고 쓴다)"
+PROJ_RE='^[a-z][a-z0-9-]{4,28}[a-z0-9]$'
+GCP_ENVS=()
+for j in $(printf '%s\n' "$FLAT" | sed -n "s/^slots\.$SI_\.environments\.\([0-9][0-9]*\)\.name=.*/\1/p"); do
+  e="slots.$SI_.environments.$j"
+  [ "$(get "$e.provider")" = gcp ] && GCP_ENVS+=("$j")
+done
+[ ${#GCP_ENVS[@]} -gt 0 ] || die "$SLOT 에 provider: gcp 환경이 없음 (등록부 environments 에 gcp 환경과 두 프로젝트를 적는다. AWS 는 콘솔의 \"AWS 연결\" 링크로 연결: docs/team-env/README.md)"
+for j in "${GCP_ENVS[@]}"; do
+  e="slots.$SI_.environments.$j"; n="$(get "$e.name")"
+  o="$(get "$e.gcp.original_project")"; d="$(get "$e.gcp.dedicated_project")"
+  [ -n "$o" ] && [ -n "$d" ] || die "$SLOT/$n: gcp.original_project·gcp.dedicated_project 를 둘 다 채운다"
+  [[ "$o" =~ $PROJ_RE ]] || die "$SLOT/$n: original_project 가 GCP 프로젝트 ID 모양이 아님: $o"
+  [[ "$d" =~ $PROJ_RE ]] || die "$SLOT/$n: dedicated_project 가 GCP 프로젝트 ID 모양이 아님: $d"
+  [ "$o" != "$d" ] || die "$SLOT/$n: 원래 프로젝트와 전용 프로젝트가 같음 ($d)"
+  uses="$(printf '%s\n' "$FLAT" | grep -E "^slots\.[0-9]+\.environments\.[0-9]+\.gcp\.(original|dedicated)_project=${d}\$" | grep -vc "^$e\.gcp\.dedicated_project=")"
+  [ "$uses" -eq 0 ] || die "$SLOT/$n: 전용 프로젝트 $d 를 다른 환경도 쓴다 (규칙 3: 전용 프로젝트는 한 칸에만)"
+done
+
+# 고객 쪽 명령 (값이 모두 검사를 통과한 뒤에만 찍는다)
+print_cmds() {
+  local n="$1" o="$2" d="$3"
+  echo "# === $SLOT / $n: 원래 $o → 전용 $d (Cloud Shell 또는 두 프로젝트 소유자로 gcloud 로그인한 맥, 레포 루트에서) ==="
+  echo "# 1) 연결: SA·커스텀 역할·빌리기 허용·API 켜기 (다시 실행해도 됨, 있는 것은 건너뜀)"
+  echo "PLATFORM_SA=$PLATFORM_SA PROJECT_ID=$o TARGET_PROJECT_ID=$d bash infra/onboarding/gcp-connect.sh"
+  echo "# 2) Cloud Billing API (#313, 예전 스크립트로 연결한 프로젝트용. 켜져 있으면 바뀌는 것 없음)"
+  echo "gcloud services enable cloudbilling.googleapis.com --project=$o"
+  echo "gcloud services enable cloudbilling.googleapis.com --project=$d"
+  echo "# 3) 이미 있던 역할 맞추기 (#316 실측 403 권한·허브 RoleBinding·이미지 복사. gcp-connect.sh 는 있는 platform_env·platform_operate 를 건너뜀. 없는 권한만 더함)"
+  echo "gcloud iam roles update platform_env --project=$d --add-permissions=compute.addresses.setLabels,compute.globalAddresses.setLabels,compute.instanceGroupManagers.get,serviceusage.operations.get"
+  echo "gcloud iam roles update platform_operate --project=$d --add-permissions=compute.instanceGroupManagers.get,resourcemanager.projects.get,secretmanager.versions.enable,serviceusage.operations.get"
+  echo "gcloud iam roles update platform_plan --project=$d --add-permissions=compute.instanceGroupManagers.get,serviceusage.operations.get"
+  echo "gcloud iam roles update platform_operate --project=$d --add-permissions=container.roleBindings.create,container.roleBindings.delete,container.roleBindings.get,container.roleBindings.update,container.roles.bind,container.roles.create,container.roles.delete,container.roles.escalate,container.roles.get,container.roles.update"
+  echo "gcloud iam roles update platform_operate --project=$d --add-permissions=artifactregistry.repositories.downloadArtifacts,artifactregistry.repositories.uploadArtifacts"
+  echo "# 4) 첫 앱 층 apply 가 TF_APPLY_FAILED(iam.serviceAccounts.setIamPolicy 403)로 멈춘 뒤: app- SA 마다 실행 SA 에 SA IAM 권한 (#317 14번, 조건식 버그 우회). 그 뒤 다시 시도"
+  echo "for sa in \$(gcloud iam service-accounts list --project=$d --filter='email~^app-' --format='value(email)'); do gcloud iam service-accounts add-iam-policy-binding \"\$sa\" --project=$d --member=serviceAccount:svc-operate@$d.iam.gserviceaccount.com --role=projects/$d/roles/platform_operate_iam; done"
+}
+
+# --check: 읽기 전용 두 가지만 부른다 (projects describe, services list --enabled). 쓰기 0
+need_apis_target() {
+  local l; l="$(sed -n 's/^TARGET_APIS="\(.*\)"$/\1/p' "$CONNECT" | head -1)"
+  [ -n "$l" ] || die "gcp-connect.sh 에서 TARGET_APIS 줄을 못 찾음 ($CONNECT)"
+  echo "$l"
+}
+check_project() { # 프로젝트, 켜져 있어야 할 API(짧은 이름)…
+  local p="$1"; shift; local on a miss=0
+  if ! gcloud projects describe "$p" --format='value(projectId)' >/dev/null 2>&1; then
+    echo "MISSING project $p (없거나 볼 권한 없음 — 만들고 결제 계정을 붙인다)"; return 1
+  fi
+  echo "OK project $p"
+  if ! on="$(gcloud services list --enabled --project="$p" --format='value(config.name)' 2>/dev/null)"; then
+    echo "MISSING services $p (API 목록을 못 읽음 — serviceusage 권한 또는 API 꺼짐)"; return 1
+  fi
+  for a in "$@"; do
+    if printf '%s\n' "$on" | grep -qx "$a.googleapis.com"; then :; else echo "MISSING api $p $a.googleapis.com"; miss=1; fi
+  done
+  [ "$miss" = 0 ] && echo "OK apis $p ($# 개)"
+  return "$miss"
+}
+
+rc=0
+for j in "${GCP_ENVS[@]}"; do
+  e="slots.$SI_.environments.$j"; n="$(get "$e.name")"
+  o="$(get "$e.gcp.original_project")"; d="$(get "$e.gcp.dedicated_project")"
+  if [ "$MODE" = print ]; then print_cmds "$n" "$o" "$d"; continue; fi
+  command -v gcloud >/dev/null 2>&1 || die "gcloud 가 없음"
+  echo "# $SLOT / $n"
+  # 원래 프로젝트에 켜야 하는 API 는 gcp-connect.sh 의 ensure_api 줄(iamcredentials·cloudresourcemanager·cloudbilling)과 같다
+  check_project "$o" iamcredentials cloudresourcemanager cloudbilling || rc=1
+  # shellcheck disable=SC2046
+  check_project "$d" $(need_apis_target) || rc=1
+done
+if [ "$MODE" = --check ]; then
+  [ "$rc" = 0 ] && echo "다 있음" || echo "빠진 것이 있음 → bash tools/team-env.sh $SLOT 의 1)·2) 명령을 실행한 뒤 다시 --check"
+fi
+exit "$rc"

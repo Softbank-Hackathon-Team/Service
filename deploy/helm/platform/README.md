@@ -63,6 +63,8 @@ Cloudflare 쪽: Zero Trust 에서 원격 관리 터널을 만들고 토큰을 `p
 
 공식 차트 argo-cd 를 `argocd` 네임스페이스의 `cred` 노드에 올린다. 값은 `deploy/argocd/argo-cd.values.yaml`. 공개 주소 없이 port-forward 로만 본다.
 
+워커는 배포 동기화를 이 클러스터의 Application 으로 읽는다. 차트가 worker 에만 `ARGO_SOURCE=k8s`·`ARGOCD_NAMESPACE`(values `argocd.namespace`, 기본 `argocd`)를 넣고, kubectl 은 context 없이 파드 서비스 계정 토큰으로 부른다. 권한은 `templates/worker-argocd-rbac.yaml` 의 Role 하나(같은 네임스페이스). Argo CD 를 다른 네임스페이스에 올렸으면 `argocd.namespace` 를 같이 바꾼다.
+
 ```
 # 1. Argo CD
 helm upgrade --install argocd oci://ghcr.io/argoproj/argo-helm/argo-cd --version 10.11.7 -n argocd --create-namespace -f deploy/argocd/argo-cd.values.yaml
@@ -300,8 +302,7 @@ GCP 도착에 GKE 가 없을 때 worker 가 환경 층을 만들게 하려면 `-
 
 ## 아직 없는 것
 
-- TODO(human): worker 의 비밀 아닌 설정(`PROM_URL`, `TF_WORK_DIR` 등)을 차트로 넘기는 길. 지금 앱 Deployment 는 `<이름>-env` 비밀과 포트·`HOME` 만 준다
-  - 배포에 꼭 필요한 `GITOPS_REPO_URL`·`GITOPS_PUSH` 는 우선 `GITOPS_WRITE_TOKEN` 과 같이 `platform/app` JSON 으로 받는다 (`values.yaml` worker `secretKeys`). 없으면 배포 작업이 `GITOPS_NOT_CONFIGURED` 로 멈춘다
+- TODO(human): 비밀 JSON 에 들어 있는 비밀 아닌 키(`GITOPS_REPO_URL`·`GITOPS_PUSH`·`PLATFORM_EGRESS_CIDRS`·`PUBLIC_API_URL`·`CONNECT_TEMPLATE_URL`)를 `apps.<이름>.env` 로 옮길지. 옮기려면 같은 `helm upgrade` 에서 `secretKeys` 에서 빼고 `env` 에 넣는다 (둘 다 있으면 렌더가 멈춘다). 지금은 그대로 `platform/app` JSON 으로 받는다 (없으면 배포 작업이 `GITOPS_NOT_CONFIGURED` 로 멈춘다)
 - 고객 쪽 Collector 설치와 Ingress 지표(`svc_ingress_*`) 만들기. 게이트웨이는 받을 준비만 되어 있다
 - 지표 토큰을 콘솔 화면에서 받는 길. 지금은 API 만 있다
 - TODO(human): Collector 설정(`templates/otel-gateway.yaml`)을 실제 Collector 0.164.0 으로 돌려 보지 않았다. 첫 설치 때 파드 로그와 라벨 덮어쓰기를 확인한다
@@ -397,6 +398,44 @@ vCluster 차트 NetworkPolicy `vc-cp-<릴리스>`(`release=<릴리스>` 파드)�
 
 - 모두 비루트(node 1000, nginx 101), 뿌리 파일 시스템 읽기 전용, capabilities 전부 버림. 쓰기 자리는 `/tmp`(emptyDir), web 은 `/etc/nginx/conf.d` 도. node 앱은 `HOME=/tmp`.
 - web 은 `/api/*` 를 `http://api:3000` 으로 보낸다 (`API_UPSTREAM`).
+
+### 비밀 아닌 설정 (`apps.<이름>.env`)
+
+시간 제한·동시 처리 수처럼 비밀이 아닌 값은 Secrets Manager JSON·`secretKeys` 를 거치지 않고 차트 값으로 준다. 그 앱 Deployment 의 `env` 맨 뒤에 그대로 붙고, 다른 앱에는 안 간다.
+
+```bash
+# worker 만: 가져오기 명령 제한 30초, 단계 큐 워커당 5건
+helm upgrade platform deploy/helm/platform -n platform --reset-then-reuse-values \
+  --set apps.worker.env.INVENTORY_TIMEOUT_MS=30000 --set apps.worker.env.STEP_CONCURRENCY=5
+# 빼기: 그 이름을 null 로
+helm upgrade platform deploy/helm/platform -n platform --reset-then-reuse-values --set apps.worker.env.STEP_CONCURRENCY=null
+```
+
+- 한 번 준 값은 이후 `--reset-then-reuse-values` 가 이어 쓴다. 이 칸이 없는 예전 릴리스 값으로 올려도 렌더는 돈다 (빈 맵으로 본다).
+- 이름은 대문자·숫자·`_` 만. 값은 글자 하나로 넣는다 (`--set` 숫자·참거짓은 글자로 바뀐다. 값 파일의 큰 정수도 `1e+06` 이 아니라 `1000000`).
+- 다음 이름은 렌더가 멈춘다 (`helm upgrade` 전에 막힌다).
+  - 비밀처럼 보이는 이름: `*_TOKEN`, `*_SECRET`, `*_PASSWORD`, `*_KEY`, `*DATABASE_URL`. 비밀은 `platform/app` JSON 에 넣고 `components.<이름>.secretKeys` 에 더한다.
+  - 그 앱이 이미 비밀로 받는 이름 (`components.<이름>.secretKeys`, `agentRemediation.gitopsRead` 면 agent-worker 의 `GITOPS_REPO_URL` 도). `env` 가 `envFrom` 을 덮어 값이 두 곳이 되기 때문이다.
+  - 차트가 넣는 이름. 아래 값으로 바꾼다 (켜기 값과 가드를 건너뛰지 못하게, 지금 꺼져 있어도 막는다).
+
+| env | 바꾸는 값 |
+|---|---|
+| `HOME` | 없음 (node 앱 `/tmp` 고정) |
+| `API_PORT`·`METRICS_PORT`, web `API_UPSTREAM`·`API_PREFIX` | `apps.api.port`·`apps.api.metricsPort` |
+| `WORKER_METRICS_PORT`, `TF_WORK_DIR` | `apps.worker.metricsPort`, `apps.worker.tfWorkDir.size` |
+| `ARGO_HUB_ROLE_ARN` | `argocd.hubRoleArn` |
+| `GCP_PLATFORM_PROJECT`·`CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE` | `gcpPlatform.project` |
+| `SANDBOX_REHEARSAL`·`SANDBOX_IMAGE_REGISTRY`, `SANDBOX_RUNTIME_CLASS`, `SANDBOX_MODE` | `sandbox.rehearsal.enabled`·`sandbox.imageRegistry`, `sandbox.gvisor`, `agentRemediation.sandboxMode` |
+| `TRAFFIC_METRICS_ENDPOINT`·`PROM_URL`, `MOCK_TRAFFIC`, `ENV_LAYER_AUTO` | `trafficMetrics.endpoint`·`promUrl`, `traffic.mock`, `envLayer.auto` |
+
+템플릿 env 블록에 이름을 더하면 `templates/app.yaml` 의 `$chartEnv` 에도 더한다. `deploy/ci/check-platform.sh` 가 템플릿의 env 이름을 뽑아 하나씩 넣어 보고, 막히지 않으면 실패한다.
+
+### 크기 (`apps.<이름>.resources`)
+
+worker 기본은 requests `cpu 500m`·`memory 512Mi`, 상한 `memory 2Gi` (CPU 상한 없음). 이전 여러 건이 동시에 돌 때 노드가 worker 몫을 비워 두게 했다. 바꾸려면 `--set apps.worker.resources.requests.cpu=<값>`.
+
+- worker 는 cred 노드(t3.medium, Terraform `cred_nodes` 기본 1대, CPU 할당 가능 약 1930m)에 Argo CD 허브와 같이 뜬다. CPU requests 합: worker 2×500m + Argo CD 225m(`deploy/argocd/argo-cd.values.yaml`) + DaemonSet(kube-proxy·aws-node·ebs-csi-node 등) ≈ 1.4 코어 (약 73%).
+- 롤링 업데이트는 새 파드를 하나 먼저 띄운다 (2개면 maxSurge 1·maxUnavailable 0). 그때 약 1.9 코어라 cred 1대에서는 새 파드가 `Pending` 으로 남을 수 있다. 그러면 옛 파드 2개가 계속 돌고 새 이미지가 안 올라간다. `kubectl -n platform get pods -l app.kubernetes.io/name=worker` 에서 `Pending` 이면 cred 노드를 2대로 늘리거나 requests 를 낮춘다.
 
 ## 검증 (클라우드 없이)
 

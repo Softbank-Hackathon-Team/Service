@@ -91,7 +91,8 @@ export const GCP_COMMAND_PERMISSIONS: Record<string, string[] | null> = {
   "compute firewall-rules list": ["compute.firewalls.list"],
   "compute instances list": ["compute.instances.list"],   // VMIMPORT: GCE 출발 읽기(import/readers/gcp-gce.ts). metadata(startup-script)는 못 읽는 목록 권한만
   "compute regions describe": ["compute.regions.get"],
-  "artifacts repositories list": ["artifactregistry.repositories.list"],
+  // PERM-GATE (실측 11/6): --location 없이 부르면 gcloud 가 먼저 지역 목록(ListLocations)을 읽는다 → locations.list 없으면 IAM_PERMISSION_DENIED
+  "artifacts repositories list": ["artifactregistry.repositories.list", "artifactregistry.locations.list"],
   "secrets list": ["secretmanager.secrets.list"],   // 이름·메타데이터만. 값(versions.access)은 금지
   "iam service-accounts describe": ["iam.serviceAccounts.get"],
   "storage buckets list": ["storage.buckets.list"],

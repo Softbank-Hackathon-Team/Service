@@ -99,8 +99,15 @@ export function memoryMi(v: unknown): number | null {
 }
 
 // 샌드박스 호스트 네임스페이스의 LimitRange (vCluster 값 policies.limitRange). 요청·한도가 빈 컨테이너가 받는 값
-// DRAFT(ai): vCluster 0.37.6 차트 기본값을 그대로 박아 둔다 (차트 기본이 바뀌어도 셈이 어긋나지 않게)
-export const LIMIT_RANGE = { default: { cpu: "1", memory: "512Mi" }, defaultRequest: { cpu: "100m", memory: "128Mi" } } as const;
+// DRAFT(ai): cpu·memory 는 vCluster 0.37.6 차트 기본값을 그대로 박아 둔다 (차트 기본이 바뀌어도 셈이 어긋나지 않게)
+// 임시 저장소는 차트 기본(요청 3Gi·한도 8Gi)을 덮는다. helm 은 값 맵을 합쳐서 여기 안 적은 칸은 차트 기본이 남는다.
+//   측정(11-06 플랫폼 EKS): 컨테이너마다 3Gi 를 요청해 sandbox 노드(t3.medium, 임시 저장소 할당 약 18GB)에
+//   검사 파드가 못 올라감 ("Insufficient ephemeral-storage", REHEARSAL_SANDBOX_UNAVAILABLE)
+// DRAFT(ai): 요청 64Mi 는 스케줄 자리만 잡는 값. 한도 1Gi 는 쓰기 층·로그·emptyDir 이 커지면 kubelet 이 그 파드만 축출해 노드를 지키는 값
+export const LIMIT_RANGE = {
+  default: { cpu: "1", memory: "512Mi", "ephemeral-storage": "1Gi" },
+  defaultRequest: { cpu: "100m", memory: "128Mi", "ephemeral-storage": "64Mi" },
+} as const;
 
 interface Need { requests: Resources; limitsMemoryMi: number; limitsCpuM: number }
 const zero = (): Need => ({ requests: { cpuM: 0, memoryMi: 0 }, limitsMemoryMi: 0, limitsCpuM: 0 });
@@ -180,7 +187,10 @@ export interface SandboxQuota { requests: Resources; limitsMemoryMi: number; pod
 // 측정(kind 1.35, 차트 0.37.6): 제어판 200m/256Mi(한도 1Gi) + CoreDNS 20m/64Mi(한도 170Mi), 파드 2개
 export const CONTROL_PLANE_OVERHEAD = { requests: { cpuM: 220, memoryMi: 320 }, limitsMemoryMi: 1194, pods: 2 } as const;
 // 서비스 사이 연결을 보는 검사 파드 하나 (run.ts probePod 와 같은 값)
-export const PROBE_RESOURCES = { requests: { cpu: "10m", memory: "16Mi" }, limits: { memory: "64Mi" } } as const;
+//   임시 저장소도 적는다: 루트 파일 시스템이 읽기 전용이라 쓰는 건 로그 몇 줄뿐. LimitRange 기본에 기대지 않는다
+export const PROBE_RESOURCES = {
+  requests: { cpu: "10m", memory: "16Mi", "ephemeral-storage": "16Mi" }, limits: { memory: "64Mi", "ephemeral-storage": "64Mi" },
+} as const;
 // DRAFT(ai): sandbox 노드 할당량. agent-worker 는 nodes 를 읽을 권한이 없어(PR #194 sbx-provisioner) 표로 둔다.
 //   t3.medium(EKS, 파드 17개) 근사: CPU 2000m - 70m 예약, 메모리 3943Mi - kube 예약 442Mi - 축출 100Mi
 export const SANDBOX_NODE_ALLOCATABLE: Resources = { cpuM: 1930, memoryMi: 3400 };

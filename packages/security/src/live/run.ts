@@ -87,7 +87,9 @@ export async function runLiveChecks(t: LiveTarget, o: { run?: ExecRunner; env?: 
   } else if (t.provider === "gcp") {
     const g = await checkGcp(run, { projectId: t.accountId ?? env.GCP_PROJECT ?? "", region: env.GCP_REGION || GCP_DEFAULT_REGION_LIVE,
       dbConnectionName: tf.db_connection_name || undefined, clusterName: tf.cluster_name || undefined,
-      appGsaEmail: tf.app_gsa_email || undefined, dbPasswordSecretId: tf.db_password_secret_id || undefined });
+      // #317 가: 앱 신원 = KSA 주체(app_principal). 그 전에 만든 이전의 출력은 GSA 메일(app_gsa_email)
+      appMember: tf.app_principal || (tf.app_gsa_email ? `serviceAccount:${tf.app_gsa_email}` : undefined),
+      dbPasswordSecretId: tf.db_password_secret_id || undefined });
     out = { ...g, checks: [...g.checks, ...(tf.cluster_name ? await checkK8s(run, kf) : fill(["public_ports.services", "tls.ingress", "secrets.workload", "iam.k8s_rbac"], "n_a", "k8s", "클러스터 없이 만든 이전", "infra.ready tfOutputs"))] };
   } else {
     // 온프레: 클라우드 API 없음. k8s 하나로 본다. 클러스터 API 공개·보안그룹·클라우드 신원은 해당 없음

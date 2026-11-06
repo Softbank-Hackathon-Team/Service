@@ -1,7 +1,7 @@
 import type { AppSpecV2, TargetBuilder, TfOutputs, TfRootCall } from "@svc/contracts";
 import { actionsFor } from "../common/actions.js";
 import { appNamespace, dbInstanceName } from "../common/base.js";
-import { envRef, fromOut, regionOf, tenantOf, type Target } from "../common/target.js";
+import { envRef, regionOf, tenantOf, type Target } from "../common/target.js";
 import { gcpAdapter, PERMS } from "../gcp/index.js";
 import {
   asV1Name, assertRenderable, connectIdentities, identitiesOf, identityName, instancesOf, K8S_RENDER_CAPS, kindJson,
@@ -51,8 +51,15 @@ const CAPS = [...K8S_RENDER_CAPS, "volume.pvc", "kind.postgres.15", "kind.postgr
 const ingressSecretsOf = (spec: AppSpecV2): string[] =>
   managedServicesOf(spec).length || vmServicesOf(spec).length || !spec.entry?.hosts.length ? [] : [...INGRESS_SECRETS];
 
+// kinds/namespace 입력(namespace_json). 관리형·VM 도착엔 앱 구역이 없다. GCP 는 구역 한도를 안 건다(null → 모듈이 ResourceQuota 를 안 만듦).
+//   toTerraformV2 와 resourceTypesV2 가 같은 값을 봐서, 한도를 켜면 권한(kubernetes_resource_quota_v1)도 같이 따라온다
+type NamespaceCfg = { name: string; quota_cpu_m: number | null; quota_memory_mi: number | null };
+const namespaceCfgOf = (spec: AppSpecV2): NamespaceCfg[] =>
+  managedServicesOf(spec).length || vmServicesOf(spec).length ? [] : [{ name: appNamespace(asV1Name(spec)), quota_cpu_m: null, quota_memory_mi: null }];
+
 export function resourceTypesV2(spec: AppSpecV2): string[] {
   const t = new Set(["data.google_client_config", "data.google_container_cluster", "kubernetes_namespace_v1"]);
+  if (namespaceCfgOf(spec).some((n) => n.quota_cpu_m != null || n.quota_memory_mi != null)) t.add("kubernetes_resource_quota_v1");
   const managed = managedServicesOf(spec).length > 0;
   if (managed) {
     ["data.google_project", "google_service_account", "google_cloud_run_v2_service", "google_cloud_run_v2_service_iam_member"].forEach((x) => t.add(x));
@@ -66,7 +73,8 @@ export function resourceTypesV2(spec: AppSpecV2): string[] {
     ["google_service_account", "google_compute_instance"].forEach((x) => t.add(x));
     if (vms.some((w) => secretNamesOf(w).length)) ["google_secret_manager_secret", "google_secret_manager_secret_iam_member"].forEach((x) => t.add(x));
   }
-  if (!managed && !vms.length && identitiesOf(spec).length) ["google_service_account", "google_service_account_iam_member"].forEach((x) => t.add(x));
+  // #317 가: k8s 앱 신원은 GSA 없이 KSA 가 IAM 주체 (kinds/identity). 주체에 드는 프로젝트 번호만 읽는다 (projects.get, API 켜기와 같은 권한)
+  if (!managed && !vms.length && identitiesOf(spec).length) t.add("data.google_project");
   if (!managed && !vms.length && (workloadsOf(spec).some((w) => secretNamesOf(w).length) || ingressSecretsOf(spec).length)) ["google_secret_manager_secret", "google_secret_manager_secret_iam_member"].forEach((x) => t.add(x));
   if (postgresOf(spec).length) ["google_sql_database_instance", "google_sql_database", "google_sql_user", "random_password",
     "google_secret_manager_secret", "google_secret_manager_secret_version", "google_secret_manager_secret_iam_member"].forEach((x) => t.add(x));
@@ -128,7 +136,7 @@ export const gcpTarget: TargetBuilder = {
     const ns = appNamespace(asV1Name(spec));
     const identity = ids.map((i) => ({
       id: i.id,
-      name: identityName(spec, i.id, t, 30),   // SA account_id 6~30자
+      name: identityName(spec, i.id, t, 30),   // 계약 모양만 (aws 는 역할 이름). GCP 모듈은 안 씀: GSA 없이 KSA 가 주체 (#317 가)
       service_account: i.serviceAccount,
       secret_names_json: JSON.stringify([...new Set(i.workloads.flatMap((w) => secretNamesOf(byId.get(w)!)))].sort()),
       ...grantsJsonFor("gcp", spec, i.id),
@@ -158,7 +166,7 @@ export const gcpTarget: TargetBuilder = {
         cluster_name: t.clusterName ?? envRef("clusterName"),
         cluster_location: t.clusterLocation ?? envRef("clusterLocation"),
         postgres_json: kindJson("postgres", postgres),
-        namespace_json: kindJson("namespace", managed || vm ? [] : [{ name: ns, quota_cpu_m: null, quota_memory_mi: null }]),
+        namespace_json: kindJson("namespace", namespaceCfgOf(spec)),
         identity_json: kindJson("identity", identity),
         cache_json: cacheVars(spec, t, "gcp"),
         object_store_json: objectStoreVars(spec, t),
@@ -183,8 +191,9 @@ export const gcpTarget: TargetBuilder = {
       secretStore: { kind: "ClusterSecretStore", name: secretStoreName("gcp", out) },   // CL-4: env 출력 secret_store_name 이 있으면 그것
       // = kinds/identity 의 google_secret_manager_secret 규칙 (app- 접두어, v1 과 같음)
       remoteKey: (s) => `app-${spec.app.name}-${s.toLowerCase().replace(/[^a-z0-9-]/g, "-")}`,   // TF4-3: . 도 - (모듈 kinds/identity 와 같은 규칙)
-      // 신원별 GSA (루트 출력 identity_gsa_emails 를 펼친 키). 펼치기는 A3 배포 단계
-      saAnnotations: (id) => ({ "iam.gke.io/gcp-service-account": fromOut(out, `identity.${id}.gsa_email`) }),
+      // #317 가 DRAFT(ai): KSA 가 그대로 IAM 주체 (Workload Identity Federation for GKE 직접). iam.gke.io/gcp-service-account 주석을
+      //   달면 GKE 메타데이터 서버가 없는 GSA 를 빌리려다 실패한다 → 주석 없음 (aws Pod Identity 와 같은 모양)
+      saAnnotations: () => ({}),
       postgres: cloudPostgresValues(spec, out, "db_password_secret_id", {}, 5432),   // Cloud SQL 은 5432 고정 (모듈 link port 도 "5432")
       ingressClass: "gce",
       ingressSecretsByApply: true,

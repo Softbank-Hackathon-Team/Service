@@ -3,6 +3,7 @@ import { migrationRoutes } from "./migrations.js";
 import { planRoutes } from "./plans.js";
 import { environmentRoutes } from "./environments.js";
 import { envInventoryRoutes } from "./env-inventory.js";
+import { envPermissionRoutes } from "./env-permissions.js";
 import { costRoutes } from "./cost.js";
 import { agentReviewRoutes } from "./agent-review.js";
 import { docsRoutes } from "./docs.js";
@@ -13,6 +14,7 @@ import { timelineRoutes } from "./timeline.js";
 import { securityRoutes } from "./security.js";
 import { liveTrafficRoutes } from "./live-traffic.js";
 import { authRoutes } from "./auth.js";
+import { signupRoutes } from "./signup.js";
 import { agentReportRoutes } from "./agent-reports.js";
 import { specRoutes } from "./spec.js";
 import { tokenRoutes } from "./tokens.js";
@@ -32,6 +34,7 @@ export const ROUTE_PLUGINS: ReadonlyArray<{ file: string; plugin: (app: FastifyI
   { file: "apps/api/src/routes/plans.ts", plugin: planRoutes },
   { file: "apps/api/src/routes/environments.ts", plugin: environmentRoutes },
   { file: "apps/api/src/routes/env-inventory.ts", plugin: envInventoryRoutes }, // Z86: 환경별 자원 (읽기 전용)
+  { file: "apps/api/src/routes/env-permissions.ts", plugin: envPermissionRoutes }, // PERM-GATE: 고객 권한 묶음 상태·다시 확인
   { file: "apps/api/src/routes/cost.ts", plugin: costRoutes },
   { file: "apps/api/src/routes/agent-review.ts", plugin: agentReviewRoutes }, // Z58: AI 점검 결과 (S7)
   { file: "apps/api/src/routes/docs.ts", plugin: docsRoutes },
@@ -42,6 +45,7 @@ export const ROUTE_PLUGINS: ReadonlyArray<{ file: string; plugin: (app: FastifyI
   { file: "apps/api/src/routes/security.ts", plugin: securityRoutes },
   { file: "apps/api/src/routes/live-traffic.ts", plugin: liveTrafficRoutes },
   { file: "apps/api/src/routes/auth.ts", plugin: authRoutes }, // Z93: 로그인·갱신·로그아웃
+  { file: "apps/api/src/routes/signup.ts", plugin: signupRoutes }, // 팀 가입 명부(docs/team-env/registry.yaml)로 초대 코드 가입
   { file: "apps/api/src/routes/agent-reports.ts", plugin: agentReportRoutes }, // Z92: 온프레 Agent 보고 받기·보기
   { file: "apps/api/src/routes/spec.ts", plugin: specRoutes }, // Z100: 이전의 최신 명세 한 판 (읽기 전용)
   { file: "apps/api/src/routes/tokens.ts", plugin: tokenRoutes }, // L8b: CLI 개인 토큰

@@ -14,4 +14,4 @@ export { endpointFromRecord, endpointAddress, tcpReachProblem, type EndpointReco
 export { parsePasswordRef, deriveReplPassword, resolvePasswordRef, REPL_MASTER_KEY_MIN, type PasswordRef, type SecretScope, type ManagedSecrets } from "./secret-ref.js";
 export { ensureReplUser, dropReplUser, replUserOf, subscriptionConninfo, ephemeralEnabled, ensureLoginRole } from "./repluser.js";
 export { readTfFacts, resolveTfRefs, hasTfRef } from "./tf-facts.js";
-export { copySchema, SchemaCopyError, isTransient, type SchemaCopyResult } from "./schema.js";
+export { copySchema, SchemaCopyError, isTransient, handOwnershipToApp, type SchemaCopyResult } from "./schema.js";

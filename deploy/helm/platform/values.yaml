@@ -18,10 +18,10 @@ components:
     secretKeys: [DATABASE_URL, JWT_SECRET, PLATFORM_PRINCIPAL_ARN, AGENT_REPORT_MASTER_KEY, PUBLIC_API_URL, CONNECT_TEMPLATE_URL]
   worker:
     # GITOPS_*: 배포 단계가 gitops 레포에 커밋·push (없으면 모든 배포가 GITOPS_NOT_CONFIGURED 로 멈춘다, 클라우드·온프레 공통)
-    #   GITOPS_REPO_URL·GITOPS_PUSH 는 비밀이 아니지만 차트에 비밀 아닌 값을 넘기는 길이 아직 없어 같은 JSON 으로 받는다 (아래 README TODO)
+    #   GITOPS_REPO_URL·GITOPS_PUSH 는 비밀이 아니지만 apps.worker.env 가 생기기 전부터 같은 JSON 으로 받았다. 옮길지는 README "아직 없는 것" TODO
     # REPL_SECRET_MASTER_KEY: 이전별 비밀(온프레 이전 전용 계정 비밀번호·터널/중계 SSH 키·CA 씨앗)을 파생하는 마스터 키 (ADR-019, 32자 이상).
     #   바꾸면 진행 중인 이전의 파생 값이 모두 달라진다 → 이전이 없을 때만 교체
-    # PLATFORM_EGRESS_CIDRS: worker 가 밖으로 나가는 IP(NAT) 대역. 자동 중계의 5432 를 이 대역에만 연다 (비밀은 아니지만 비밀 아닌 값을 넘기는 길이 없어 같은 JSON)
+    # PLATFORM_EGRESS_CIDRS: worker 가 밖으로 나가는 IP(NAT) 대역. 자동 중계의 5432 를 이 대역에만 연다 (비밀은 아니지만 위와 같은 까닭으로 같은 JSON)
     secretKeys: [DATABASE_URL, GITOPS_REPO_URL, GITOPS_WRITE_TOKEN, GITOPS_PUSH, REPL_SECRET_MASTER_KEY, PLATFORM_EGRESS_CIDRS]
   agent-worker:
     secretKeys: [DATABASE_URL, ANTHROPIC_API_KEY]
@@ -45,6 +45,8 @@ otelGateway:
 # 플랫폼 앱 4개 (templates/app.yaml). 이미지 = <registry>/svc-<이름>:<tag> (ECR 이름은 infra/modules/aws/platform/main.tf local.images)
 # registry·tag 둘 중 하나라도 비어 있으면 앱을 하나도 안 만든다 (값 없이 치는 기존 helm upgrade 가 그대로 돈다)
 # envFrom 은 components.<이름> 이 있을 때만 <이름>-env (web 은 비밀이 없다)
+# env: 비밀 아닌 설정 (이름: 값). 그 앱 env 맨 뒤에 붙는다. 예 --set apps.worker.env.STEP_CONCURRENCY=5
+#   차트가 넣는 이름(HOME·PROM_URL·MOCK_TRAFFIC 등), 그 앱 secretKeys 에 있는 이름, 비밀처럼 보이는 이름(*_TOKEN·*_SECRET·*_PASSWORD·*_KEY·*DATABASE_URL)은 렌더가 멈춘다
 apps:
   image:
     registry: ""   # 예: 725072160743.dkr.ecr.ap-northeast-2.amazonaws.com
@@ -59,6 +61,7 @@ apps:
     serviceAccount: api            # Pod Identity platform/api
     automountServiceAccountToken: false
     service: true
+    env: {}
     # DRAFT(ai): 크기 전부 임시. general t3.medium ×2 에 cloudflared·otel·관측 스택과 같이 올라간다
     resources:
       requests: { cpu: 100m, memory: 192Mi }
@@ -79,17 +82,23 @@ apps:
     # 켜려면 플랫폼 Terraform 의 aws-ebs-csi-driver 애드온이 먼저 있어야 하고 replicas 는 1 이어야 한다 (README)
     tfWorkDir:
       size: ""   # DRAFT(ai): 예 20Gi. 이전마다 프로바이더 파일을 받아 수백 MB~1GB 를 쓴다
+    env: {}
+    # DRAFT(ai): 이전 여러 건이 동시에 돌아도 노드가 worker 몫을 비워 두게 requests 를 올렸다 (pg-boss 단계 큐가 워커당 4건, STEP_CONCURRENCY).
+    #   cred 노드 t3.medium 1대(CPU 할당 가능 약 1930m)에 Argo CD 허브와 같이 뜬다. 롤링 업데이트 때 파드가 하나 더 뜨는 것까지 README "앱 배포" 계산 참고
     resources:
-      requests: { cpu: 100m, memory: 256Mi }
+      requests: { cpu: 500m, memory: 512Mi }
       # DRAFT(ai): terraform plan·apply 를 같은 파드에서 돌려 512Mi 에서 올렸다. 실측 전 값
       limits: { memory: 2Gi }
   agent-worker:
     enabled: true
+    # DRAFT(ai): 1 로 둔다. 리허설 동시 실행 상한과 노드 고르기 잠금이 프로세스 하나 기준이다 (vcluster.ts serialize).
+    #   동시 실행은 env.SANDBOX_REHEARSAL_CONCURRENCY (sandbox 노드 수 이하, 2 이상이면 회사마다 다른 노드에 고정)
     replicas: 1
     pool: general                  # main.tf general_nodes 주석 "AI 워커". cred 노드에 안 간다 (고객 자격 0)
     serviceAccount: agent-worker   # Pod Identity 없음. 샌드박스 호스트 권한만 (agent-worker-rbac.yaml)
     automountServiceAccountToken: true   # sbx-* 네임스페이스·vCluster 를 helm·kubectl 로 다룬다
     service: false
+    env: {}
     resources:
       requests: { cpu: 100m, memory: 256Mi }
       limits: { memory: 512Mi }
@@ -101,6 +110,7 @@ apps:
     serviceAccount: ""  # 클러스터 API·클라우드 권한 없음 → 네임스페이스 default, 토큰 안 붙임
     automountServiceAccountToken: false
     service: true
+    env: {}
     resources:
       requests: { cpu: 20m, memory: 32Mi }
       limits: { memory: 128Mi }

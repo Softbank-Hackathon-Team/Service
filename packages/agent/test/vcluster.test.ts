@@ -217,6 +217,11 @@ test("차트 값: 도착 마이너에 맞는 제어판, RuntimeClass 는 격리 
   assert.equal("runtimeClassName" in v.sync.toHost.pods, false);
   assert.ok(v.controlPlane.proxy.extraSANs.includes("sbx-x.sbx-x.svc"));
   assert.equal(v.policies.resourceQuota.quota["services.loadbalancers"], 0);
+  // 임시 저장소도 칸마다 적는다. 빠지면 helm 이 차트 기본(요청 3Gi·한도 8Gi)을 남겨 sandbox 노드에 검사 파드가 못 올라간다 (11-06 측정)
+  assert.deepEqual(v.policies.limitRange.defaultRequest, { cpu: "100m", memory: "128Mi", "ephemeral-storage": "64Mi" });
+  assert.deepEqual(v.policies.limitRange.default, { cpu: "1", memory: "512Mi", "ephemeral-storage": "1Gi" });
+  assert.equal(v.policies.resourceQuota.quota["requests.ephemeral-storage"], null, "임시 저장소 합은 할당량이 세지 않는다 (차트 기본 칸을 지움)");
+  assert.equal(v.policies.resourceQuota.quota["limits.ephemeral-storage"], null);
   const rem = vclusterValues(spec({ kind: "remediation", isolation: { podSecurity: "restricted", runtimeClass: "gvisor" } }), "sbx-y") as any;
   assert.equal(rem.sync.toHost.pods.runtimeClassName, "gvisor");
   assert.equal(rem.policies.podSecurityStandard, "restricted");

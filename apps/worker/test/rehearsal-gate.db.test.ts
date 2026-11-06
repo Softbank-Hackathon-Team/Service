@@ -170,7 +170,7 @@ test("끔(기본): 예전처럼 커밋 → syncing, 근거 rehearsal=disabled �
   assert.deepEqual((await runs(id)).map((r) => [r.status, r.skip_reason, r.epoch, r.phase]), [["skipped", "disabled", (await mig(id)).version - 1, "done"]]);
 });
 
-test("켬: 줄 queued + sandbox-rehearsal 작업(노드 키) → 기다림(RetryLater), 두 번 배달해도 줄·작업 하나 → agent-worker 통과 + 깨우기 → 같은 지문으로 커밋 → syncing(passed)", { skip }, async () => {
+test("켬: 줄 queued + sandbox-rehearsal 작업(회사 키) → 기다림(RetryLater), 두 번 배달해도 줄·작업 하나 → agent-worker 통과 + 깨우기 → 같은 지문으로 커밋 → syncing(passed)", { skip }, async () => {
   Object.assign(process.env, { SANDBOX_REHEARSAL: "on", MOCK_SANDBOX: "1" });
   const id = await seed();
   const c0 = commits();
@@ -180,7 +180,7 @@ test("켬: 줄 queued + sandbox-rehearsal 작업(노드 키) → 기다림(Retry
   assert.equal(run!.status, "queued");
   assert.ok(run!.deadline_at > new Date(Date.now() + 3500_000), "queued 줄의 기한 = 줄 서기 기한 REHEARSAL_QUEUE_TIMEOUT_SEC(3600)");
   assert.deepEqual([run!.input.runBudgetSec, run!.input.imagesMirrored], [1200, false], "실행 기한은 agent-worker 가 잡을 때부터, 흉내 복사는 입력에 남는다");
-  assert.deepEqual(await rehearsalJobs(run!.id), [{ singleton_key: "sandbox-rehearsal:sandbox-node" }]);
+  assert.deepEqual(await rehearsalJobs(run!.id), [{ singleton_key: `sandbox-rehearsal:tenant:${run!.tenant_id}` }], "회사마다 키 하나 (다른 회사 리허설과 같이 돈다)");
   assert.deepEqual(await deployJobs(id), [{ state: "created", later: true }], "deploy 작업이 REHEARSAL_POLL_SEC 뒤로 다시 들어감");
   assert.deepEqual(await retryAudits(id), ["ok"], "리허설 기다림은 오류가 아니다");
   assert.equal(commits(), c0, "기다리는 동안 커밋 없음");

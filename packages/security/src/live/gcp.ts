@@ -8,7 +8,9 @@ export interface GcpFacts {
   region: string;
   dbConnectionName?: string;       // project:region:instance
   clusterName?: string;
-  appGsaEmail?: string;
+  /** 앱 신원의 IAM 주체 그대로 (gcp/root 출력 app_principal = principal://…/subject/ns/<구역>/sa/<KSA>).
+   *  #317 가 전에 만든 이전은 GSA 라 serviceAccount:<메일> 로 들어온다 (run.ts 가 app_gsa_email 에서 만듦) */
+  appMember?: string;
   dbPasswordSecretId?: string;
 }
 
@@ -64,11 +66,17 @@ export function analyzeGke(c: Json, src: string): LiveCheck[] {
 
 const BROAD_ROLES = new Set(["roles/owner", "roles/editor", "roles/iam.securityAdmin", "roles/iam.serviceAccountAdmin",
   "roles/iam.serviceAccountTokenCreator", "roles/resourcemanager.projectIamAdmin", "roles/secretmanager.admin", "roles/cloudsql.admin"]);
-export function analyzeGcpIam(policy: Json, gsa: string, src: string): LiveCheck {
-  const member = `serviceAccount:${gsa}`;
+// 표 칸 이름: KSA 주체면 "KSA <구역>/<이름>", 옛 GSA 면 "GSA <메일 앞부분>"
+export function appMemberLabel(member: string): string {
+  const ksa = /\/subject\/ns\/([^/]+)\/sa\/([^/]+)$/.exec(member);
+  if (member.startsWith("principal://") && ksa) return `KSA ${ksa[1]}/${ksa[2]}`;
+  return `GSA ${member.replace(/^serviceAccount:/, "").split("@")[0]}`;
+}
+// member = IAM 정책에 적힌 주체 그대로 (principal://… 또는 serviceAccount:<메일>). 프로젝트 정책에서 그 주체가 받은 역할을 본다
+export function analyzeGcpIam(policy: Json, member: string, src: string): LiveCheck {
   const roles = arr(policy.bindings).filter((b) => arr<string>(b.members).map(String).includes(member)).map((b) => String(b.role));
   const broad = roles.filter((r) => BROAD_ROLES.has(r));
-  return check("iam.app_identity", broad.length ? "fail" : roles.length > 3 ? "warn" : "pass", `GSA ${gsa.split("@")[0]}`,
+  return check("iam.app_identity", broad.length ? "fail" : roles.length > 3 ? "warn" : "pass", appMemberLabel(member),
     broad.length ? `프로젝트 전체 넓은 역할 ${broad.join(", ")}` : `프로젝트 수준 역할 ${roles.length}개${roles.length ? ` (${roles.join(", ")})` : ""}`.slice(0, 300), src);
 }
 
@@ -103,8 +111,8 @@ export async function checkGcp(run: ExecRunner, f: GcpFacts): Promise<ProviderOu
   const fw = await readJson(run, "gcloud", ["compute", "firewall-rules", "list", ...P]);
   checks.push(fw.ok ? analyzeFirewall(arr(fw.json), network, "gcloud compute firewall-rules list")
     : check("public_ports.network", "unavailable", "방화벽", fw.why, "gcloud compute firewall-rules list"));
-  checks.push(f.appGsaEmail ? analyzeGcpIam(obj(pol.json), f.appGsaEmail, "gcloud projects get-iam-policy")
-    : check("iam.app_identity", "n_a", "앱 GSA", "terraform 출력 app_gsa_email 없음", "infra.ready tfOutputs"));
+  checks.push(f.appMember ? analyzeGcpIam(obj(pol.json), f.appMember, "gcloud projects get-iam-policy")
+    : check("iam.app_identity", "n_a", "앱 신원", "terraform 출력 app_principal 없음", "infra.ready tfOutputs"));
   checks.push(f.dbPasswordSecretId ? check("secrets.db_credential", "pass", "Secret Manager", "DB 비밀번호 = Secret Manager 비밀 (값은 안 읽음)", "infra.ready tfOutputs db_password_secret_id")
     : check("secrets.db_credential", inst ? "warn" : "n_a", "DB 비밀번호", inst ? "Secret Manager 비밀 id 출력 없음" : "DB 없음", "infra.ready tfOutputs"));
   return { credentials: "ok", reason: null, checks };

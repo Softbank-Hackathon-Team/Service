@@ -68,10 +68,10 @@ test("precheck 대조: 명세 있으면 PC-V2-SOURCE info 한 줄로 시작, 없
 
 test("terraform 맵 출력 펼치기 + 자리표시 키에 . - 허용 (예전 키도 그대로)", () => {
   const out = flattenTfOutputsV2({ db_address: "x", link_outputs: JSON.stringify({ "shop-db": { host: "h", port: 5432 } }),
-    identity_gsa_emails: JSON.stringify({ api: "a@p.iam" }) });
+    identity_principals: JSON.stringify({ api: "principal://iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/p.svc.id.goog/subject/ns/app-shop/sa/api" }) });
   assert.equal(out["link.shop-db.host"], "h");
   assert.equal(out["link.shop-db.port"], "5432");
-  assert.equal(out["identity.api.gsa_email"], "a@p.iam");
+  assert.equal(out["identity.api.principal"], "principal://iam.googleapis.com/projects/1/locations/global/workloadIdentityPools/p.svc.id.goog/subject/ns/app-shop/sa/api");
   assert.equal(out.db_address, "x");
   const r = fillPlaceholders({ a: "<tf-output:link.shop-db.host>:<tf-output:db_address>", b: "<tf-output:link.none.host>" }, { tf: out, env: {} });
   assert.deepEqual(r.values, { a: "h:x", b: "<tf-output:link.none.host>" });

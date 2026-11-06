@@ -41,6 +41,8 @@ const SUPPLEMENT: Record<string, Sup> = {
   "POST /api/v1/plans/{id}/approvals": { desc: "승인/거절 결과" },
   "POST /api/v1/migrations/{id}/start": { desc: "apply 작업 예약 (approved→provisioning)" },
   "GET /api/v1/environments": { desc: "환경 목록" },
+  "GET /api/v1/auth/signup/config": { desc: "팀 가입을 받는지 (명부를 읽었고 열린 자리가 있을 때만 true). 인증 불필요" },
+  "POST /api/v1/auth/signup": { desc: "팀 가입: 명부 자리의 로그인 + 초대 코드 + 비밀번호 → 사용자·이름 없는 환경(draft) 만들기 + 로그인 세션 (POST /auth/login 과 같은 응답·쿠키)" },
   "POST /api/v1/cost/estimate": { desc: "환경별 월 비용 추정 (DB 쓰기 없음)" },
   "GET /api/v1/migrations/{id}/cost": { desc: "출발 vs 도착 월 비용 비교 (저장된 추정, 없으면 미리보기)" },
   "GET /api/v1/migrations/{id}/timeline": { desc: "감사 기록으로 만든 상태 전이 타임라인" },
@@ -76,6 +78,7 @@ const ERRORS: Record<string, Record<number, string>> = {
   "GET /api/v1/plans/{id}": { 404: "NOT_FOUND" },
   "POST /api/v1/plans/{id}/approvals": { 404: "NOT_FOUND", 409: "PLAN_SUPERSEDED · PLAN_HASH_MISMATCH · PLAN_EXPIRED · ENV_BUSY · INVALID_TRANSITION · GUARD_FAILED · IDEMPOTENCY_KEY_REUSED" },
   "POST /api/v1/migrations/{id}/start": { 404: "NOT_FOUND", 409: "PLAN_NOT_APPROVED · INVALID_TRANSITION · GUARD_FAILED · IDEMPOTENCY_KEY_REUSED" },
+  "POST /api/v1/auth/signup": { 403: "SIGNUP_NOT_ALLOWED (자리 닫힘·모르는 로그인·코드 틀림 모두 같음)", 404: "SIGNUP_DISABLED (명부 없음·틀림·열린 자리 없음)", 409: "SIGNUP_EXISTS (코드가 맞고 그 로그인 사용자가 이미 있음)", 429: "TOO_MANY_ATTEMPTS (IP+로그인 15분 5번, IP 15분 50번) · RATE_LIMITED", 503: "SIGNUP_NOT_CONFIGURED (명부의 회사가 DB 에 없음) · AUTH_NOT_CONFIGURED (JWT_SECRET 없음)" },
 };
 
 // 상태를 바꾸는 경로 = advance() 한 번. 설명에 전이 번호를 붙인다 (상태기계는 contracts/migration.ts VALID)
@@ -167,7 +170,7 @@ for (const r of routes) {
     if (named.has(sc.body) && differs(sc.body)) inputNamed.add(sc.body); else walkUse(sc.body);
     op.requestBody = { required: true, content: { "application/json": { schema: toSchema(sc.body, "input") } } };
   }
-  if (oapiPath.startsWith("/api/v1/docs") || /^\/api\/v1\/auth\/(login|refresh|logout|config)$/.test(oapiPath)) {
+  if (oapiPath.startsWith("/api/v1/docs") || /^\/api\/v1\/auth\/(login|refresh|logout|config|signup|signup\/config)$/.test(oapiPath)) {
     op.security = [];   // Z93: 로그인·갱신·로그아웃·설정은 토큰 없이 (리프레시는 HttpOnly 쿠키 svc_refresh)   // 개발 모드에서는 헤더 없이 열림 (DOCS_PUBLIC, apps/api/src/plugins/auth.ts)
   } else if (oapiPath.startsWith("/api/")) {
     params.push({ $ref: "#/components/parameters/DevTenant" });

@@ -8,6 +8,7 @@
 //   중계 공개 IP 가 새로 생겼으면 apply 가 terraform 을 한 번 더 돌려 Cloud SQL 허용 주소에 넣는다. 그다음 끝점 두 줄·도착 앱 로그인 역할 (apply.ts)
 // GCP 출발(gcp-aws, relay/gcp-aws.ts): 중계기는 도착 AWS 계정에 산다 → 도착 실행 역할을 빌린다 (security STEP_ROLES.relay_target). 지우기도 이 파일 teardownRelayStep 이 같은 표로 고른다
 import { PASSWORD_REF_RE, type AppSpecV2, type ReplicationEndpoint, type TfOutputs } from "@svc/contracts";
+import { rdsCaFor } from "./rds-ca.js";
 import { envFor, dbIdentityFor, specV2ForPlan } from "@svc/adapters";
 import { endpointFromRecord, ensureLoginRole, readTfFacts, withClient } from "@svc/replication";
 import { latestAcceptedSpecV2, replicationEndpointsFor, upsertReplicationEndpoint, withTenant, type Tx } from "@svc/core";
@@ -181,7 +182,7 @@ export function relayEndpointRows(i: {
   const id8 = i.migrationId.replace(/-/g, "").slice(0, 8);
   const oldT = i.existing.find((e) => e.side === "target");
   const sameRelay = oldT?.relayHost === i.publicIp;
-  const source = relaySourceRow(i);
+  const source = relaySourceRow(i, { verifyFull: true });
   const target: ReplicationEndpoint = {
     tenantId: i.tenantId, migrationId: i.migrationId, side: "target", label: `onprem-cnpg-${id8}`, provider: "cnpg",
     // 워커 → 중계 공개 IP:5432 (역방향 터널) → 온프레 CNPG. RDS(롤백 창 역복제)는 중계 사설 IP:5432 로 붙는다
@@ -197,9 +198,13 @@ export function relayEndpointRows(i: {
 
 /** 출발 줄 (순수, 온프레·GCP 중계기 공통): 워커와 상대 DB 가 중계 공개 IP:15432(출발 입구)로 RDS 에 붙는다 */
 function relaySourceRow(i: { tenantId: string; migrationId: string; sourceEnvId: string; rds: RelaySource; db: string; appUser: string;
-  publicIp: string; existing: readonly ReplicationEndpoint[] }): ReplicationEndpoint {
+  publicIp: string; existing: readonly ReplicationEndpoint[] }, o: { verifyFull?: boolean } = {}): ReplicationEndpoint {
   const id8 = i.migrationId.replace(/-/g, "").slice(0, 8);
   const oldS = i.existing.find((e) => e.side === "source");
+  // 보안 12번: 워커 → 중계 공개 IP:15432 → RDS 는 공개 인터넷을 지나는 TCP 그대로라 require(암호화만)면 가운데서 가로챌 수 있다.
+  //   서버 인증서 이름 = RDS 엔드포인트(tls_servername) 이므로 RDS 지역 CA 로 verify-full 이 된다. 상대 DB 구독은 record.ts 가 늘 require (SSH 터널 안)
+  // DRAFT(ai): aws-onprem 만 켠다. aws-gcp 는 같은 길이지만 결선 전 그 영역 시험을 흔들지 않으려 그대로 둔다 (같은 줄을 부르는 453행)
+  const ca = o.verifyFull ? rdsCaFor(i.rds.endpoint) : null;
   // DRAFT(ai): 워커는 출발 RDS 에 직접 못 닿는다 (비공개 RDS·다른 VPC, 2026-11-06 실측 TIMEOUT) → 중계기 출발 입구(공개 IP:15432, TCP 그대로)로 붙는다.
   //   진짜 RDS 이름은 tls_servername 에 둔다: 서버 인증서 이름이고, 온프레 정방향 터널 목적지(replication-delivery forwardTarget)도 이 이름이다.
   //   (relay_* 칸은 DB 검사 replication_endpoints_relay_side 가 도착 줄에만 허용해서 출발 줄에는 못 쓴다)
@@ -216,7 +221,7 @@ function relaySourceRow(i: { tenantId: string; migrationId: string; sourceEnvId:
     passwordRef: oldS?.passwordRef ?? sourcePasswordRef(i.rds.masterSecretArn, i.sourceEnvId, id8),
     peerHost: oldS?.peerHost ?? null, peerPort: oldS?.peerPort ?? null,
     appRole: i.appUser, fenceRoles: oldS?.fenceRoles ?? [], schemaName: oldS?.schemaName ?? null,
-    sslmode: oldS?.sslmode ?? "require", tlsServername: i.rds.endpoint, caPem: oldS?.caPem ?? null,
+    sslmode: oldS?.sslmode ?? (ca ? "verify-full" : "require"), tlsServername: i.rds.endpoint, caPem: oldS?.caPem ?? ca,
     relayHost: null, relayKnownHosts: null, relayPort: 22,
   };
 }

@@ -13,6 +13,9 @@ mock_provider "google" {
   mock_data "google_client_config" {
     defaults = { access_token = "mock-token" }
   }
+  mock_data "google_project" {
+    defaults = { number = "123456789012" }
+  }
 }
 mock_provider "kubernetes" {}
 mock_provider "random" {}

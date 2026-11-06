@@ -115,13 +115,10 @@ variable "ingress_secret_names_json" {
     error_message = "ingress_secret_names_json: JSON 배열이어야 함."
   }
 }
+# 신원 = KSA 직접 주체 (kinds/identity, GSA 없음). name 칸은 GCP 에선 안 써서 검사하지 않는다
 variable "identity_json" {
   type    = string
   default = "[]"
-  validation {
-    condition     = can(jsondecode(var.identity_json)) && alltrue([for i in jsondecode(var.identity_json) : length(i.name) >= 6 && length(i.name) <= 30 && startswith(i.name, "app-")])
-    error_message = "identity_json: name 은 app- 로 시작, 6~30자 (boundedName, SA account_id)."
-  }
   validation {
     condition     = can(jsondecode(var.identity_json)) && length(distinct([for i in jsondecode(var.identity_json) : i.id])) == length(jsondecode(var.identity_json))
     error_message = "identity_json: id 가 겹침."
@@ -245,6 +242,8 @@ locals {
   ))
   # Cloud Run 주소는 결정적: https://<서비스>-<프로젝트 번호>.<리전>.run.app (모듈 출력 uri 를 쓰면 같은 for_each 안에서 순환)
   project_number = local.svc_on == 1 ? data.google_project.this[0].number : ""
+  # 앱 신원(KSA 주체)도 프로젝트 번호가 필요하다. 비밀이 없는 신원(옮긴 권한만)도 있어서 ESO 처럼 그릇 이름에서 못 읽는다
+  project_on = local.svc_on == 1 || length(local.identity) > 0 ? 1 : 0
   link_values_target = merge(
     merge([for id, m in module.postgres : { for k, v in m.link : "${id}.${k}" => v }]...),
     merge([for id, m in module.cache : { for k, v in m.link : "${id}.${k}" => v }]...),
@@ -305,8 +304,10 @@ resource "google_project_service" "required" {
   disable_dependent_services = false
 }
 
+# DRAFT(ai, #317 가): 신원 주체에도 쓴다. resourcemanager.projects.get 은 이미 실행 역할에 있다
+#   (google_project_service 읽기가 부름, 신원이 있으면 iam·secretmanager API 켜기로 늘 있음) → 새 권한 아님
 data "google_project" "this" {
-  count      = local.svc_on
+  count      = local.project_on
   project_id = var.project_id
 }
 
@@ -352,6 +353,7 @@ module "identity" {
   app_name               = var.app_name
   project_id             = var.project_id
   labels                 = local.labels
+  project_number         = data.google_project.this[0].number
   owned_secret_names     = local.secret_owner[each.key]
   extra_readable_secrets = local.db_secrets[each.key]
   # DB 비밀번호 secret 이 만들어진 뒤에 바인딩하도록 postgres 모듈 전체에 의존
@@ -522,14 +524,16 @@ output "db_password_secret_id" { value = local.repl_key != "" ? module.postgres[
 # 워커 관리자 계정 (앱 계정 db_username 과 다른 이름·다른 비밀). 실행기가 비밀번호를 db-secret.json 의 db_admin_password 로 꺼낸다
 output "db_admin_username" { value = local.repl_key != "" ? module.postgres[local.repl_key].admin_user : "" }
 output "db_admin_password_secret_id" { value = local.repl_key != "" ? module.postgres[local.repl_key].admin_password_secret : "" }
-output "app_gsa_email" { value = local.first_identity != "" ? module.identity[local.first_identity].gsa_email : "" }
+# 대표 신원의 IAM 주체 (보안 실측 iam.app_identity). 예전 app_gsa_email 대신 (#317 가: GSA 없음)
+output "app_principal" { value = local.first_identity != "" ? module.identity[local.first_identity].principal : "" }
 output "namespace" { value = length(module.namespace) > 0 ? try(module.namespace[var.k8s_namespace].name, values(module.namespace)[0].name) : "" }
 # 허브 cluster Secret 재료 (apps/worker/src/gitops/bundle.ts gkeClusterSecret). GKE 없으면 빈 값
 output "cluster_endpoint" { value = try(data.google_container_cluster.this[0].endpoint, "") }
 output "cluster_ca_certificate" { value = try(data.google_container_cluster.this[0].master_auth[0].cluster_ca_certificate, "") }
 
-output "identity_gsa_emails" {
-  value = { for id, m in module.identity : id => m.gsa_email }
+# 신원별 IAM 주체 principal://…/subject/ns/<구역>/sa/<KSA> (워커가 identity.<id>.principal 로 펼침)
+output "identity_principals" {
+  value = { for id, m in module.identity : id => m.principal }
 }
 
 # TA13: 관리형 서비스 (IR id → Cloud Run 이름·주소). 없으면 빈 값

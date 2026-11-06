@@ -27,7 +27,8 @@ export const isAgentPath = (url: string) => url.startsWith("/agent/") || url.sta
 //   /auth/github/start·callback 이 같은 세션 표(auth_sessions)에 줄을 넣고 같은 svc_refresh 쿠키를 준다
 // 온프레 설치 한 줄이 받는 스크립트·묶음 파일 (routes/onprem-install.ts). 회사 데이터·비밀이 없다 (비밀은 등록 응답으로만)
 export const isPublicInstallPath = (url: string) => /^\/api\/v1\/install\/onprem(\.sh|\/[A-Za-z0-9._\/-]+)(\?|$)/.test(url);
-export const isPublicAuthPath = (url: string) => /^\/api\/v1\/auth\/(login|refresh|logout|config|github\/(start|callback))(\?|$)/.test(url);
+// 팀 가입(routes/signup.ts): POST /auth/signup 은 초대 코드로, GET /auth/signup/config 는 회사 데이터 없음
+export const isPublicAuthPath = (url: string) => /^\/api\/v1\/auth\/(login|refresh|logout|config|signup|signup\/config|github\/(start|callback))(\?|$)/.test(url);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 export const isViaCloudflare = (req: FastifyRequest) =>

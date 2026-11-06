@@ -1,4 +1,4 @@
-import type { PrecheckItem, TimelineItem } from "./types";
+import type { PermissionGap, PrecheckItem, TimelineItem } from "./types";
 import { t } from './i18n';
 
 // Z83-06: 타임라인 한 줄의 detail(JSON)을 사람이 읽는 조각으로. 워커가 넣는 키만 안다(apps/worker/src/jobs/*.ts):
@@ -48,13 +48,25 @@ export function summarizeDetail(detail: Record<string, unknown>): DetailChip[] {
   return out;
 }
 
-// 마지막으로 되돌아간(prechecking → spec_review) 전이의 점검 항목. 없으면 null
-export function lastPrecheckBounce(items: TimelineItem[]): { at: string; items: PrecheckItem[] } | null {
+/**
+ * PERM-GATE: 멈춘 전이에 서버가 남긴 고객 권한 차이 (워커 permission-hints.ts permissionDetail).
+ * 사전 점검은 detail.permissions.permissionGaps, apply 403 안전망은 detail.permissionGaps 또는 단계 칸 하나 안(detail.envLayer.permissionGaps).
+ * 모양이 틀린 줄은 버린다 (서버 모양을 믿지 않는다)
+ */
+export function permissionGapsOf(detail: Record<string, unknown>): PermissionGap[] {
+  const lists = [detail.permissionGaps, ...Object.values(detail).map((v) => (isObj(v) ? v.permissionGaps : undefined))];
+  const raw = lists.find((x): x is unknown[] => Array.isArray(x)) ?? [];
+  return raw.filter((g): g is PermissionGap => isObj(g) && typeof g.bundleId === "string" && typeof g.envId === "string"
+    && (g.cloud === "aws" || g.cloud === "gcp") && Array.isArray(g.missing) && Array.isArray(g.missingApis) && (g.level === "block" || g.level === "warn"));
+}
+
+// 마지막으로 되돌아간(prechecking → spec_review) 전이의 점검 항목·고객 권한 차이. 없으면 null
+export function lastPrecheckBounce(items: TimelineItem[]): { at: string; items: PrecheckItem[]; gaps: PermissionGap[] } | null {
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i]!;
     if (it.kind === "transition" && it.from === "prechecking" && it.to === "spec_review") {
       const pc = precheckOf(it.detail);
-      if (pc) return { at: it.at, items: pc };
+      if (pc) return { at: it.at, items: pc, gaps: permissionGapsOf(it.detail) };
     }
   }
   return null;
