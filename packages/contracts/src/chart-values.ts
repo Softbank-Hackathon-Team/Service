@@ -2,7 +2,7 @@ import { z } from "zod";
 import { K8sProbe } from "./k8s-probe.js";
 
 // DRAFT(ai): PB-1/BV-1 — 앱 Helm 차트(gitops/charts/app)가 받는 값의 모양. 쿠버네티스 도착(EKS·GKE·k3s) Builder 가 만들고
-//   차트 템플릿(workloads.yaml·cnpg.yaml·externalsecret.yaml·ingress.yaml)이 읽는다. 둘이 같은 이 계약을 보게 해서
+//   차트 템플릿(workloads.yaml·cnpg.yaml·externalsecret.yaml·ingress.yaml·db-tunnel.yaml·sealedsecret.yaml)이 읽는다. 둘이 같은 이 계약을 보게 해서
 //   "Builder 는 id·image.ref·IR 프로브를 내는데 차트는 name·image 글자·k8s 프로브를 읽는" 어긋남을 막는다.
 //   규칙: 우리 칸은 .strict() (오타·옛 칸을 바로 잡음). k8s 객체를 그대로 넘기는 칸(env·resources·프로브 본문·securityContext)은 느슨하게.
 //   없는 값은 키를 안 둔다 (차트 `with` 가 안 그림, 지문에도 안 남음).
@@ -119,6 +119,37 @@ export const ChartSecret = z.object({
   paired: z.array(z.object({ key: z.string(), component: z.string(), output: z.literal("password") }).strict()).optional(),
 }).strict();
 
+// 온프레 DB 이전 (cnpg.yaml·db-tunnel.yaml·sealedsecret.yaml). Builder 는 replication.enabled·role·passwordSecret 만 낸다.
+//   validUntil·ensure·certificates·dbTunnel·sealedSecrets 는 워커가 이전마다 더한다
+export const ChartPgReplication = z.object({
+  enabled: z.boolean(),
+  role: Name.optional(),
+  passwordSecret: Name.optional(),
+  validUntil: z.iso.datetime({ offset: true }).optional(),   // RFC3339. 지나면 이 역할 비밀번호로 못 붙는다
+  ensure: z.enum(["present", "absent"]).optional(),          // 정리: absent 로 한 번 배포해 역할을 지운 뒤 칸을 뺀다
+}).strict();
+export const ChartPgCertificates = z.object({ serverCASecret: Name, serverTLSSecret: Name }).strict();
+export type ChartPgCertificates = z.infer<typeof ChartPgCertificates>;
+// 이전 동안만 사는 SSH DB 터널 (deploy/helm/onprem-db-tunnel 과 같은 모양). Service 이름 db-tunnel
+export const ChartDbTunnel = z.object({
+  relay: z.object({
+    host: z.string().regex(/^[A-Za-z0-9.-]+$/),
+    port: z.number().int().min(1).max(65535).optional(),   // 기본 22
+    knownHosts: z.string().min(1),                          // 중계 호스트 키 고정 (처음 보는 키 거부)
+  }).strict(),
+  keySecret: Name,                                          // 키 id = 개인키
+  forward: z.object({ target: z.string().regex(/^[A-Za-z0-9.-]+:5432$/) }).strict(),
+  reverse: z.object({ enabled: z.boolean(), cnpgName: Name.optional() }).strict().optional(),
+  image: z.string().regex(/@sha256:[0-9a-f]{64}$/),         // 다이제스트 고정
+}).strict();
+export type ChartDbTunnel = z.infer<typeof ChartDbTunnel>;
+// 봉인 비밀 (bitnami SealedSecret, strict 범위 = 이름·네임스페이스에 묶임). 값은 암호문만
+export const ChartSealedSecret = z.object({
+  name: Name, type: z.string().optional(),
+  encryptedData: z.record(z.string(), z.string().min(1)).refine((m) => Object.keys(m).length > 0, "encryptedData 가 비었다"),
+}).strict();
+export type ChartSealedSecret = z.infer<typeof ChartSealedSecret>;
+
 export const ChartPostgres = z.discriminatedUnion("mode", [
   // 클라우드 관리형 DB: 접속 주소·비밀 위치만. 비밀은 ESO 로 secretName 에 받는다
   z.object({
@@ -135,7 +166,9 @@ export const ChartPostgres = z.discriminatedUnion("mode", [
     storageGb: z.number().int().nullable(),
     parameters: z.record(z.string(), z.string()).optional(),
     resources: K8sObj.optional(),
-    replication: z.object({ enabled: z.boolean(), role: z.string().optional() }).strict().optional(),   // DB 이전용 (cnpg.yaml 머리 주석)
+    // DB 이전용 (cnpg.yaml 머리 주석). 이전 전용 역할 하나: role 기본 svc_migrate, passwordSecret 기본 <name>-migrate, ensure 기본 present
+    replication: ChartPgReplication.optional(),
+    certificates: ChartPgCertificates.optional(),               // 플랫폼이 준 서버 CA·TLS 비밀 → Cluster spec.certificates (워커가 이전마다 넣음)
     host: z.string(), port: z.number().int(), passwordSecret: Name,
     walStorageGb: z.number().int().optional(),                  // DM-8: cnpg.yaml walStorage
     database: z.string().optional(), owner: z.string().optional(),   // DBN-1·E10-2: bootstrap.initdb
@@ -151,6 +184,21 @@ export const ChartIngress = z.object({
   className: z.string(),
   tunnelTokenSecret: z.string(),
   hosts: z.array(z.object({ hostnames: z.array(z.string()).min(1), tls: z.boolean().optional(), paths: z.array(ChartIngressPath) }).strict()),
+  // 트래픽 판정 지표 (#245). cloudflared 가 응답 수를 127.0.0.1 이 아닌 파드 주소 :2000 에 내고, 고객 클러스터의 수집기
+  //   (deploy/helm/onprem-agent metrics)가 파드 표시(svc.platform/*)를 보고 긁어 svc_ingress_requests_total{env,migration,code} 로 보낸다.
+  //   collectorNamespace = 그 수집기 네임스페이스. :2000 은 거기서만 들어올 수 있다 (차트 ingress.yaml NetworkPolicy)
+  metrics: z.object({
+    migration: z.string().regex(/^[0-9a-f-]{36}$/i),
+    env: z.enum(["source", "target"]),
+    collectorNamespace: Name.optional(),
+    // 클라우드 도착: 고객 클러스터에 수집기가 없고 배포 권한에 RBAC·NetworkPolicy 가 없다 → cloudflared 파드 안에 수집기를 같이 띄운다.
+    //   이때 :2000 은 127.0.0.1 에만 열고 수집기 바깥으로 안 나간다. 토큰 = tokenSecret 의 키 token. 배포 전 비밀 점검이 값 없음을 먼저 막는다
+    sidecar: z.object({
+      image: z.string().regex(/^[^@\s]+@sha256:[0-9a-f]{64}$/),
+      endpoint: z.string().regex(/^https:\/\/[^/\s]+\/\S+$/),
+      tokenSecret: Name,
+    }).strict().optional(),
+  }).strict().optional(),
 }).strict();
 
 export const ChartValues = z.object({
@@ -166,6 +214,8 @@ export const ChartValues = z.object({
     secrets: z.array(ChartSecret),
   }).strict(),
   postgres: z.array(ChartPostgres).optional(),
+  dbTunnel: ChartDbTunnel.optional(),                       // 온프레 DB 이전 터널 (워커가 이전마다, 차트 db-tunnel.yaml)
+  sealedSecrets: z.array(ChartSealedSecret).optional(),     // 봉인 비밀 (워커가 이전마다, 차트 sealedsecret.yaml)
   ingress: ChartIngress.optional(),
   // W3: 온프레 바닥(할당량)을 git 으로. enabled 는 배포 때 채우는 자리표시(<env:onpremFloorViaGit>) → "1"/"0". 차트 floor.yaml
   floor: z.object({

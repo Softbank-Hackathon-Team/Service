@@ -24,6 +24,10 @@ docs
 infra
 # 워커·api 이미지가 최소 권한 파일을 복사한다 (deploy/docker/Dockerfile 의 worker·api 단계)
 !infra/permissions
+# 워커 이미지가 terraform 모듈을 복사한다 (Dockerfile worker 단계, TF_MODULE_ROOT). tfstate·tfvars·.terraform 은 위 규칙이 뺀다
+!infra/modules
+# 환경 층(gcp/env)이 쓰는 작은 차트 (cluster-secret-store). 워커 env-layer 작업 폴더로 복사
+!infra/charts
 gitops
 # api 이미지가 보안 표용 앱 차트를 복사한다 (deploy/docker/Dockerfile 의 api 단계, Z66 3차)
 !gitops/charts

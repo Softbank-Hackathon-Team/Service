@@ -1,13 +1,23 @@
 {{- /* 온프레: CloudNativePG 가 Postgres 를 클러스터 안에 만든다. PB-1: postgres[] 한 줄(mode cnpg) = Cluster 하나.
        이름·접속 서비스(<name>-rw)·비밀(<name>-app)은 Builder(onprem.ts cnpgName)가 정한 값 그대로.
-       DRAFT(ai) O 스레드: replication.enabled=true 면 DB 이전에 필요한 것을 켠다.
-         - enableSuperuserAccess: 도착(구독) 쪽은 CREATE SUBSCRIPTION 에 superuser 가 필요 → Secret <name>-superuser
-         - managed.roles: REPLICATION 속성 계정. 비밀번호는 Secret <name>-repl (값은 차트에 없다. 스크립트/ESO 가 만든다)
+       DECISION(team): superuser 대신 이전 전용 역할 (pg_create_subscription + 소유 역할 멤버, 2026-11-05 보안·온프레 영역 실측)
+       replication.enabled=true 면 DB 이전(논리 복제)에 필요한 것을 켠다. enableSuperuserAccess 는 켜지 않는다.
+         - managed.roles: 이전 전용 역할 하나 (기본 svc_migrate). LOGIN REPLICATION CREATEROLE INHERIT,
+           inRoles = [pg_create_subscription, <initdb owner>]. PG16 실측: 이 권한으로 packages/replication 흐름 전체
+           (스키마 복사·구독·울타리 REVOKE·전환·롤백·정리)가 superuser 없이 돈다.
+           비밀번호 = Secret <replication.passwordSecret> (기본 <name>-migrate, kubernetes.io/basic-auth, username = 역할 이름).
+           값은 차트에 없다. sealedSecrets[](봉인 비밀)로 워커가 넣는다.
+         - replication.ensure: absent 면 역할을 지운다. CNPG 는 spec 에서 빠진 역할을 지우지 않고 "관리 안 함"으로 남기므로
+           정리 순서는 ensure=absent 로 한 번 배포 → 역할이 지워진 뒤 replication 칸·비밀 제거. absent 일 때는 비밀을 참조하지 않는다.
+           (역할이 가진 구독이 남아 있으면 DROP ROLE 이 실패한다. 구독 정리가 먼저)
          - max_replication_slots / max_wal_senders: fwd·rev 슬롯 2개 + 여유
-       TODO(human): superuser 대신 PG16 pg_create_subscription 역할로 줄일지 (최소 권한) */}}
+       certificates(선택): 플랫폼이 준 서버 CA·서버 TLS 비밀을 Cluster spec.certificates 로. 둘 다 같이 준다.
+         serverTLSSecret = kubernetes.io/tls (tls.crt·tls.key), serverCASecret = ca.crt (ca.key 없어도 된다: 서버 인증서를 받았으므로).
+         DRAFT(ai): 서버 인증서 SAN 에 "<name>-rw.<namespace>.svc" 가 있어야 한다. 워커는 복제·관리 연결을
+         sslmode=verify-full, servername "<name>-rw.<namespace>.svc", sslrootcert = serverCASecret 의 ca.crt 로 확인한다 */}}
 {{- /* CNPG-V2 DRAFT(ai): v2 값(irVersion "2")은 database 하나가 아니라 postgres 목록. mode cnpg 인 줄마다 Cluster 하나.
        이름·initdb(database·owner)·walStorage·resources·parameters 는 어댑터(onprem.ts)가 IR 에서 채운 값 그대로.
-       replication 칸은 v1 과 같은 뜻 (DB 이전 스레드가 값에 넣을 때만) */}}
+       replication·certificates 칸은 위 머리 주석 (어댑터는 replication 만, 나머지는 워커가 이전마다) */}}
 {{- range $pg := (.Values.postgres | default list) }}{{- if eq (toString $pg.mode) "cnpg" }}
 {{- $repl := ($pg.replication | default dict) }}
 ---
@@ -39,15 +49,31 @@ spec:
       max_replication_slots: "10"
       max_wal_senders: "10"
       {{- end }}
+  {{- with $pg.certificates }}
+  certificates:
+    serverCASecret: {{ required "postgres[].certificates.serverCASecret" .serverCASecret | quote }}
+    serverTLSSecret: {{ required "postgres[].certificates.serverTLSSecret" .serverTLSSecret | quote }}
+  {{- end }}
   {{- if $repl.enabled }}
-  enableSuperuserAccess: true
+  {{- $ensure := $repl.ensure | default "present" }}
+  {{- if not (has $ensure (list "present" "absent")) }}{{ fail "postgres[].replication.ensure 는 present 또는 absent" }}{{ end }}
   managed:
     roles:
-      - name: {{ $repl.role | default "repl" | quote }}
+      - name: {{ $repl.role | default "svc_migrate" | quote }}
+        {{- if eq $ensure "absent" }}
+        ensure: absent
+        {{- else }}
         ensure: present
         login: true
         replication: true
-        inRoles: [pg_read_all_data]
-        passwordSecret: { name: {{ printf "%s-repl" $pg.name | quote }} }
+        createrole: true
+        inherit: true
+        inRoles: [pg_create_subscription, {{ required "postgres[].owner (replication 역할이 소유 역할 멤버가 된다)" $pg.owner | quote }}]
+        passwordSecret: { name: {{ $repl.passwordSecret | default (printf "%s-migrate" $pg.name) | quote }} }
+        {{- with $repl.validUntil }}
+        {{- if not (regexMatch "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$" (toString .)) }}{{ fail "postgres[].replication.validUntil 은 RFC3339 (예 2026-11-30T00:00:00Z)" }}{{ end }}
+        validUntil: {{ . | quote }}
+        {{- end }}
+        {{- end }}
   {{- end }}
 {{- end }}{{- end }}

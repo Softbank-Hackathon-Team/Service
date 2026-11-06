@@ -273,7 +273,8 @@ export function judgementRows(judgement: Judgement, criteria?: PlanDoc['rollback
     },
     {
       name: t('도착 p95'),
-      value: t('{0}ms (출발 {1}ms{2})', { 0: Math.round(judgement.targetP95Ms), 1: Math.round(judgement.sourceP95Ms), 2: criteria ? t(' · 기준 {0}배', { 0: criteria.p95Multiplier }) : '' }),
+      value: judgement.latencyMeasured === false ? t('지연 미측정')
+        : t('{0}ms (출발 {1}ms{2})', { 0: Math.round(judgement.targetP95Ms), 1: Math.round(judgement.sourceP95Ms), 2: criteria ? t(' · 기준 {0}배', { 0: criteria.p95Multiplier }) : '' }),
     },
     { name: t('그때 도착 비율'), value: `${judgement.stepPct}%` },
     { name: t('판정에 쓴 요청'), value: t('{0}건', { 0: judgement.samples.toLocaleString('en-US') }) },

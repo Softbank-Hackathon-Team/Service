@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { AWS_COMMAND_ACTIONS, GCP_COMMAND_PERMISSIONS, actionsOfCommands } from "../src/index.js";
+import { AWS_COMMAND_ACTIONS, GCP_COMMAND_PERMISSIONS, SOURCE_DB_LINK_AWS_ACTIONS, actionsOfCommands } from "../src/index.js";
 
 const root = new URL("../../../", import.meta.url);
 const read = (p: string) => readFileSync(new URL(p, root), "utf8");
@@ -16,6 +16,8 @@ function walk(dir: string): string[] {
 const SOURCES = [...walk("packages/adapters/src/"), "packages/security/src/live/aws.ts", "packages/security/src/live/gcp.ts", "packages/security/src/live/exec.ts"];
 const code = (p: string) => read(p).split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
 
+// APP-22 (가) 출발 DB 잇기: 관찰 역할이 아니라 출발 쪽 실행 자격으로 부르는 파일. 이 파일의 명령은 SOURCE_DB_LINK_AWS_ACTIONS 표로 따로 대조 (아래 시험)
+const SOURCE_LINK_FILE = "packages/adapters/src/aws/source-db-link.ts";
 const PENDING_AWS = ["s3api get-bucket-notification-configuration", "sns list-topics", "sns list-subscriptions-by-topic"];
 const PENDING_GCP = ["storage buckets notifications"];
 /** 소스에서 부르는 명령 키 모음. aws: 서비스+동사 / gcloud: 동사 앞 단어들(옵션·이름 앞까지) */
@@ -23,6 +25,7 @@ function found(): { aws: Set<string>; gcp: Set<string> } {
   const aws = new Set<string>(), gcp = new Set<string>();
   const gcpKnown = Object.keys(GCP_COMMAND_PERMISSIONS);
   for (const p of SOURCES) {
+    if (p === SOURCE_LINK_FILE) continue;
     const c = code(p);
     for (const m of c.matchAll(/"aws",\s*\[\s*"([a-z0-9-]+)",\s*"([a-z0-9-]+)"/g)) aws.add(`${m[1]} ${m[2]}`);
     for (const m of c.matchAll(/\baws\(c,\s*\[\s*"([a-z0-9-]+)",\s*"([a-z0-9-]+)"/g)) aws.add(`${m[1]} ${m[2]}`);
@@ -108,4 +111,13 @@ test("ECS 읽기 권한 목록(ECS_OBSERVE_ACTIONS)은 표와 같음 — 따로 
   const { ECS_OBSERVE_ACTIONS } = await import("../src/index.js");
   const fromTable = actionsOfCommands("aws", Object.keys(AWS_COMMAND_ACTIONS)).filter((a) => /^(ecs:|application-autoscaling:|elasticloadbalancing:Describe(TargetGroups|Listeners|Rules))/.test(a));
   assert.deepEqual([...ECS_OBSERVE_ACTIONS].sort(), fromTable.sort());
+});
+
+test("APP-22: 출발 DB 잇기 파일이 부르는 aws 명령 = SOURCE_DB_LINK_AWS_ACTIONS 표 그대로, 그 밖의 파일은 그 쓰기 명령을 안 부름", () => {
+  const cmds = new Set([...code(SOURCE_LINK_FILE).matchAll(/"aws",\s*\[\s*"([a-z0-9-]+)",\s*"([a-z0-9-]+)"/g)].map((m) => `${m[1]} ${m[2]}`));
+  assert.deepEqual([...cmds].sort(), Object.keys(SOURCE_DB_LINK_AWS_ACTIONS).sort());
+  const writes = Object.keys(SOURCE_DB_LINK_AWS_ACTIONS).filter((k) => !(k in AWS_COMMAND_ACTIONS));
+  assert.ok(writes.includes("ec2 authorize-security-group-ingress") && writes.includes("ec2 revoke-security-group-ingress"));
+  // 관찰 표에는 쓰기가 끼지 않는다 (위 금지 시험과 같은 뜻)
+  for (const k of writes) assert.ok(!found().aws.has(k) || k === "ec2 describe-security-group-rules", k);
 });

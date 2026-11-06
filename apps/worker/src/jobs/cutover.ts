@@ -1,7 +1,7 @@
 import { restoreTrafficBeforeAsking } from "./_fail-traffic.js";
 import { Measurement, MigrationJob, QUEUES } from "@svc/contracts";
 import { replicationFor } from "./_repl.js";
-import { replicationFromEnv, toMeasurements, SwitchoverError } from "@svc/replication";
+import { toMeasurements, SwitchoverError } from "@svc/replication";
 import { errorMessage, nextJob, runStep, stubWait, stubFailIfAsked, type StepOutcome } from "./_step.js";
 import { appLinkHooks, appLinkMeans, cutoverAppLinkBlock, switchRuntimeWriter, appLinkMeasurements, recordActiveWriter, targetBundle } from "../app-link.js";
 import { DEFAULT_ROLLBACK_WINDOW_SEC, loadLatestApproval, loadPlanById, rollbackWindowSecFor } from "@svc/core";

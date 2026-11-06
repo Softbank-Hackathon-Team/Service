@@ -37,6 +37,7 @@
     "cf:check": "node --env-file=.env --import tsx scripts/cf-check.ts",
     "tf:real": "node --env-file-if-exists=.env --import tsx tools/tf-real.ts",
     "agent:key": "node --env-file-if-exists=.env --import tsx tools/agent-key.ts",
+    "repl:endpoint": "node --env-file-if-exists=.env --import tsx tools/repl-endpoint.ts",
     "agent:onprem": "node --env-file-if-exists=.env --import tsx tools/onprem-agent.ts"
   },
   "devDependencies": {

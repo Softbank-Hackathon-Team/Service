@@ -2,7 +2,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { AgentReport } from "@svc/contracts";
-import { collectFacts, pgHbaFacts, pgMajorFromImage, type Kubectl } from "../src/index.js";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { collectFacts, DEFAULT_EGRESS_IP_URL, DEFAULT_SEALING_CERT_URL, EGRESS_IP_TIMEOUT_MS, fetchEgressIp, fetchSealingCert, pgHbaFacts, pgMajorFromImage, type Kubectl } from "../src/index.js";
 
 const now = () => new Date("2026-11-04T00:00:00Z");
 const kube = (map: Record<string, unknown>): Kubectl => async (args) => {
@@ -66,4 +70,67 @@ test("facts 계약: 모르는 칸은 strict 가 막는다", () => {
   assert.ok(AgentReport.safeParse(ok).success);
   assert.ok(!AgentReport.safeParse({ ...ok, tenantId: "x" }).success);
   assert.ok(!AgentReport.safeParse({ ...ok, grants: { level: "L2" } }).success);
+});
+
+// sealed-secrets 공개 봉인 인증서 (facts.sealing). 시험 인증서는 openssl 로 만든다 (Node 에 X.509 만드는 API 가 없다)
+const hasOpenssl = (() => { try { execFileSync("openssl", ["version"], { stdio: "ignore" }); return true; } catch { return false; } })();
+const noOpenssl = hasOpenssl ? false : "openssl CLI 가 이 기계에 없다";
+function testCert(keyArgs: string[]): string {
+  const d = mkdtempSync(join(tmpdir(), "svc-agent-cert-"));
+  try {
+    execFileSync("openssl", ["req", "-x509", "-nodes", ...keyArgs, "-keyout", join(d, "k.pem"), "-out", join(d, "c.pem"), "-days", "2", "-subj", "/CN=t"], { stdio: "ignore" });
+    return readFileSync(join(d, "c.pem"), "utf8");
+  } finally { rmSync(d, { recursive: true, force: true }); }
+}
+const noKube = kube({ "auth can-i list nodes": "no", "get services -A": { items: [] } });
+
+test("facts: 봉인 인증서(RSA)를 받으면 sealing 칸에 싣는다 (계약 통과)", { skip: noOpenssl }, async () => {
+  const pem = testCert(["-newkey", "rsa:2048"]);
+  const seen: string[] = [];
+  const fake = (async (url: string) => { seen.push(url); return new Response(pem, { status: 200 }); }) as unknown as typeof fetch;
+  const r = await collectFacts({ agentVersion: "t", now, kubectl: noKube, sealingCert: () => fetchSealingCert(DEFAULT_SEALING_CERT_URL, { fetch: fake }) });
+  AgentReport.parse(r);
+  assert.equal(r.sealing?.certPem, `${pem.trim()}\n`);
+  assert.equal(r.sealing?.fetchedAt, "2026-11-04T00:00:00.000Z");
+  assert.deepEqual(seen, ["http://sealed-secrets-controller.kube-system.svc:8080/v1/cert.pem"]);
+});
+
+test("facts 거부: 인증서를 못 받거나(404·연결 실패) RSA 가 아니면 sealing 칸이 없고 보고는 그대로 간다", { skip: noOpenssl }, async () => {
+  const notFound = (async () => new Response("nope", { status: 404 })) as unknown as typeof fetch;
+  const a = await collectFacts({ agentVersion: "t", now, kubectl: noKube, sealingCert: () => fetchSealingCert("http://x/v1/cert.pem", { fetch: notFound }) });
+  assert.equal("sealing" in a, false);
+  AgentReport.parse(a);
+  const b = await collectFacts({ agentVersion: "t", now, kubectl: noKube, sealingCert: async () => { throw new Error("ECONNREFUSED"); } });
+  assert.equal("sealing" in b, false);
+  const ec = testCert(["-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:prime256v1"]);
+  const c = await collectFacts({ agentVersion: "t", now, kubectl: noKube, sealingCert: async () => ec });
+  assert.equal("sealing" in c, false);
+  // 계약: 인증서 PEM 이 아니면 받지 않는다 (예전 Agent 처럼 칸이 없는 보고는 받는다)
+  const ok = { kind: "facts", agentVersion: "t", sentAt: "2026-11-04T00:00:00Z", grants: { level: "L0" }, dbs: [] };
+  assert.ok(!AgentReport.safeParse({ ...ok, sealing: { certPem: "-----BEGIN PRIVATE KEY-----\n", fetchedAt: "2026-11-04T00:00:00Z" } }).success);
+});
+
+// 출발 계정 중계기 SSH(22)를 이 IP/32 에만 연다 (worker relay/). 못 받으면 칸이 없고 워커가 ONPREM_EGRESS_UNKNOWN 으로 멈춘다
+test("facts: 나가는 공인 IP 를 받으면 egressIp 칸에 싣는다 (기본 주소·5초 시간 제한·계약 통과)", async () => {
+  const seen: { url: string; signal: unknown }[] = [];
+  const fake = (async (url: string, init?: RequestInit) => { seen.push({ url, signal: init?.signal }); return new Response("203.0.113.9\n", { status: 200 }); }) as unknown as typeof fetch;
+  const r = await collectFacts({ agentVersion: "t", now, kubectl: noKube, egressIp: () => fetchEgressIp(DEFAULT_EGRESS_IP_URL, { fetch: fake }) });
+  AgentReport.parse(r);
+  assert.equal(r.egressIp, "203.0.113.9");
+  assert.equal(seen[0]!.url, "https://checkip.amazonaws.com");
+  assert.ok(seen[0]!.signal instanceof AbortSignal, "시간 제한 신호");
+  assert.equal(EGRESS_IP_TIMEOUT_MS, 5000);
+});
+
+test("facts 거부: 나가는 IP 를 못 받거나(500·시간 초과) IPv4 한 줄이 아니면 egressIp 칸이 없고 보고는 그대로 간다", async () => {
+  const bad = (status: number, body: string) => (async () => new Response(body, { status })) as unknown as typeof fetch;
+  for (const f of [bad(500, "203.0.113.9"), bad(200, "<html>proxy</html>"), bad(200, "0.0.0.0/0"), bad(200, "2001:db8::1")]) {
+    const r = await collectFacts({ agentVersion: "t", now, kubectl: noKube, egressIp: () => fetchEgressIp("https://x", { fetch: f }) });
+    assert.equal("egressIp" in r, false);
+    AgentReport.parse(r);
+  }
+  const t = await collectFacts({ agentVersion: "t", now, kubectl: noKube, egressIp: async () => { throw new DOMException("timeout", "TimeoutError"); } });
+  assert.equal("egressIp" in t, false);
+  const ok = { kind: "facts", agentVersion: "t", sentAt: "2026-11-04T00:00:00Z", grants: { level: "L0" }, dbs: [] };
+  assert.ok(!AgentReport.safeParse({ ...ok, egressIp: "203.0.113.0/24" }).success, "계약: IPv4 주소 하나만");
 });

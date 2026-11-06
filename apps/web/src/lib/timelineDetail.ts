@@ -64,6 +64,7 @@ export interface Judgement {
   stepPct: number; samples: number;
   targetErrorRatePct: number; sourceErrorRatePct: number;
   targetP95Ms: number; sourceP95Ms: number;
+  latencyMeasured?: boolean;
   verdict: string;
 }
 const num = (x: unknown): x is number => typeof x === "number" && Number.isFinite(x);
@@ -75,6 +76,7 @@ function judgementOf(x: unknown): Judgement | null {
     stepPct: x.stepPct as number, samples: x.samples as number,
     targetErrorRatePct: x.targetErrorRatePct as number, sourceErrorRatePct: x.sourceErrorRatePct as number,
     targetP95Ms: x.targetP95Ms as number, sourceP95Ms: x.sourceP95Ms as number,
+    ...(x.latencyMeasured === false ? { latencyMeasured: false } : {}),
     verdict: str(x.verdict) ?? "",
   };
 }

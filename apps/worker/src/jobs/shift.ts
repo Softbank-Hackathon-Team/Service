@@ -6,6 +6,7 @@ import { loadLatestPlan } from "./plan-store.js";
 import { configFromEnv, commitTrafficWeight, GitopsRepo, ENV_DIR, tenantSlug, type BundleRef } from "../gitops/index.js";
 import { trafficFor, trafficMetrics, trafficTickMs } from "../platform.js";
 import { restoredFromPct } from "../traffic-restore.js";
+import { sourceBaselineFor } from "../traffic-baseline.js";
 
 // 트래픽 가중치 전환. shifting → cutover (정상) | rolling_back (지표 나쁨, 긴급 되돌림 뒤) | paused (밖에서 멈춤)
 export async function handleShift(raw: unknown) {
@@ -29,7 +30,7 @@ export async function handleShift(raw: unknown) {
         `SELECT 1 FROM audit_events WHERE target = $1 AND detail->>'from' = 'shifting' LIMIT 1`, [m.id]);
       return { plan, bundle, reentered: (back.rowCount ?? 0) > 0 };
     },
-    work: async (j, _m, { plan, bundle, reentered }, ctx) => {
+    work: async (j, m, { plan, bundle, reentered }, ctx) => {
       // 단계마다 gitops 레포 traffic.weightPct 기록 (Z14 제안). 순서: Cloudflare 바꾸고 확인(setAndVerify) → 그 뒤 Git.
       // Git 기록이 실패해도 트래픽은 되돌리지 않는다. 결과 detail 에 gitopsWeightLag 로 남긴다
       const cfg = configFromEnv();
@@ -89,8 +90,11 @@ export async function handleShift(raw: unknown) {
           [j.migrationId, j.tenantId, p.stepPct, p.observedPct, p.reached, SHARE_TOL_PCT, p.reobserve, p.stepStartedAt, p.at]))
           .catch(() => { /* 표시용. 쓰기 실패로 전환을 멈추지 않는다 */ });
       };
+      // #245: 진짜 지표로 몫을 볼 때만 전환 직전 출발 요청 수를 읽는다. 가중치를 바꾸기 전이라 출발이 전부 받고 있다
+      const baseline = process.env.PROM_URL && process.env.TRAFFIC_SHARE_CHECK?.trim() !== "0"
+        ? await sourceBaselineFor(j.tenantId, j.migrationId, m.sourceEnvId, sw, !reentered) : null;
       const r = await runShift({
-        migrationId: j.migrationId, lbId, switcher: sw, metrics: trafficMetrics(j.tenantId), steps: runSteps.length ? runSteps : steps, onWeight, resumeFromPct,
+        migrationId: j.migrationId, lbId, switcher: sw, metrics: trafficMetrics(j.tenantId, baseline && "rps" in baseline ? baseline.rps : undefined), steps: runSteps.length ? runSteps : steps, onWeight, resumeFromPct,
         sleep: () => new Promise((res) => setTimeout(res, trafficTickMs())),
         observeSec: obs.sec,   // M7: 시계로 관찰. pf-d FM-TRF-15: 승인 계획 holdSec (T22 최소보다 짧지 않게)
         // z75-38: 단계마다 "최소 관찰(TRAFFIC_OBSERVE_SEC) 지남 + 실측 도착 몫이 목표 ±10%p" 라야 다음 단계. 못 미치면 2번 더 본 뒤 paused
@@ -131,7 +135,8 @@ export async function handleShift(raw: unknown) {
         detail: { ...t.detail, failureCode: t.failureCode, lbId, ...(resumeFromPct !== undefined ? { resumeFromPct } : {}), ...(restored ? { restartFromPct: restored } : {}), ...(repo ? { gitopsWeightLag } : {}),
                   observeRequiredSec: r.observeRequiredSec, ...(r.stepShares ? { stepShares: r.stepShares } : {}),
                   // pf-d FM-TRF-10: 가짜 지표(PROM_URL 없음)면 몫은 실측이 아니다 → 화면·감사에서 "실측"으로 읽지 않게 표시
-                  metricsSource: r.metricsSource,
+                  metricsSource: r.metricsSource, ...(baseline ? { sourceBaseline: baseline } : {}),
+                  ...(r.latencyUnmeasured ? { latencyUnmeasured: "지연 미측정: 도착 응답 시간 지표가 없어 오류율로만 판정" } : {}),
                   // pf-d FM-TRF-21: 전환기가 mock 이면 진짜 LB 는 안 바뀌었다 (TRAFFIC_PROVIDER 비었음). 실회차에서 조용히 성공처럼 안 보이게
                   trafficProvider: sw.provider, trafficLbFrom: lbFrom,
                   ...(sw.provider === "mock" ? { trafficStub: "STUB: mock 전환기 (TRAFFIC_PROVIDER 없음) — Cloudflare LB 가중치는 안 바뀜" } : {}),

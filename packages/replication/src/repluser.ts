@@ -24,15 +24,23 @@ export async function ensureReplUser(c: pg.Client, e: Endpoint, name: string): P
   const exists = (await c.query(`SELECT 1 FROM pg_roles WHERE rolname=$1`, [user])).rowCount === 1;
   // RDS는 관리자도 REPLICATION 속성을 못 준다 → rds_replication 역할을 준다. 나머지는 속성으로
   const replAttr = e.provider === "rds" ? "" : " REPLICATION";
+  // 2026-11-05 실측 (임시 RDS PG16): NOINHERIT 계정은 rds_replication 을 받아도 "permission denied to start WAL sender".
+  //   RDS 의 복제 권한은 역할 멤버십으로만 오므로 RDS 에서는 INHERIT 여야 한다 (주는 역할은 rds_replication 하나뿐이라 넓어지지 않음)
+  const inheritAttr = e.provider === "rds" ? " INHERIT" : " NOINHERIT";
   // 비밀번호가 서버 로그(log_statement=all)에 남지 않게 이 문장만 기록을 끈다(권한이 없으면 무시)
   await c.query(`SET log_statement = 'none'`).catch(() => {});
   // PF-E20 (FM-APP-hunt-deploy-db-01): 비superuser(RDS·Cloud SQL 관리자)는 위 SET 이 늘 실패해 log_statement=ddl 이면 평문 비밀번호가 서버 로그에 남았다
   //   → 평문 대신 SCRAM-SHA-256 검증자를 넘긴다 (Postgres 가 그대로 저장, 로그에는 해시만. 접속은 평문 비밀번호로 그대로 된다)
   const verifier = scramVerifier(password);
-  if (exists) await c.query(`ALTER ROLE ${ident(user)} WITH LOGIN${replAttr} PASSWORD ${lit(verifier)}`);
-  else await c.query(`CREATE ROLE ${ident(user)} WITH LOGIN${replAttr} NOINHERIT PASSWORD ${lit(verifier)}`);
+  if (exists) await c.query(`ALTER ROLE ${ident(user)} WITH LOGIN${replAttr}${inheritAttr} PASSWORD ${lit(verifier)}`);
+  else await c.query(`CREATE ROLE ${ident(user)} WITH LOGIN${replAttr}${inheritAttr} PASSWORD ${lit(verifier)}`);
   await c.query(`RESET log_statement`).catch(() => {});
-  if (e.provider === "rds") await c.query(`GRANT rds_replication TO ${ident(user)}`);
+  // PG16+: 멤버십마다 INHERIT 옵션이 따로 있고 기본값은 "부여할 때의 계정 INHERIT 속성"이다. 예전에 NOINHERIT 로 만든 계정의 멤버십은
+  //   ALTER ROLE … INHERIT 뒤에도 inherit=false 로 남아 WAL sender 가 계속 거부됐다 (2026-11-05 임시 RDS 실측) → 명시한다
+  if (e.provider === "rds") {
+    const v = Number((await c.query<{ v: string }>(`SELECT current_setting('server_version_num') v`)).rows[0]!.v);
+    await c.query(`GRANT rds_replication TO ${ident(user)}${v >= 160000 ? " WITH INHERIT TRUE" : ""}`);
+  }
   // 초기 복사(COPY)는 이 계정으로 표를 읽는다 → 발행에 든 표만 SELECT
   const t = await c.query<{ schemaname: string; tablename: string }>(
     `SELECT schemaname, tablename FROM pg_publication_tables WHERE pubname=$1`, [name]);

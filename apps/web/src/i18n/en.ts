@@ -122,6 +122,7 @@ export const EN: Table = {
   "{0} 콘솔": "{0} console",
   "{0} 환경 등록": "Register {0} environment",
   "{0}ms (출발 {1}ms{2})": "{0}ms (source {1}ms{2})",
+  "지연 미측정": "Latency not measured",
   "{0}{1} · 환경변수 {2}": "{0}{1} · env {2}",
   "{0}~{1}개": "{0}–{1}",
   "{0}가 최저": "{0} cheapest",

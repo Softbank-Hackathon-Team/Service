@@ -5,7 +5,7 @@ import { targetBuilderFor, withDbNetworkV2 } from "@svc/adapters";
 //   지문이 같다 (사람이 본 계획 = 실행할 계획)
 
 // G8-1: migrationId 는 자원 이름 seed (같은 앱을 같은 환경으로 다시 옮겨도 이름이 안 겹치게). 계획·apply·배포가 같은 값을 넣어야 지문이 같다
-export interface TargetRef { envId: string; provider: Provider; region: string; migrationId?: string }
+export interface TargetRef { envId: string; provider: Provider; region: string; migrationId?: string; metricsEndpoint?: string }
 
 /** 계획·적용이 같이 쓰는 Terraform 입력 (데모 DB 네트워크 변수 포함) */
 export function tfCallV2(spec: AppSpecV2, t: TargetRef, env: NodeJS.ProcessEnv = process.env): TfRootCall {

@@ -1,12 +1,13 @@
-import { dropRuntimeLinkSecret } from "../app-link.js";
+import { dropRuntimeLinkSecret, targetBundle } from "../app-link.js";
+import { commitReplicationCleanup } from "../gitops/index.js";
 import { MigrationJob, QUEUES } from "@svc/contracts";
 import { replicationFor } from "./_repl.js";
 import { asBossDb, boss, withTenant, writeAudit } from "@svc/core";
-import { replicationFromEnv } from "@svc/replication";
 import { jobData, readMigration, RetryLater, runStep, stubWait, stubFailIfAsked } from "./_step.js";
 import { tempRoles } from "../platform.js";
 import { pausedOnRenewFailure, withStepRoles } from "./_roles.js";
 import { envNumber } from "@svc/contracts";
+import { teardownRelayStep, type RelayStepOutcome } from "../relay/relay-step.js";
 
 // 정리. rollback_window → cleanup → completed
 // 창이 끝나기 전에 깨어나면(시계 차이 등) 남은 시간 뒤로 자신을 다시 넣는다 (L8)
@@ -62,18 +63,41 @@ export async function handleCleanup(raw: unknown) {
       if (!repl) {
         await stubWait();
         await stubFailIfAsked(j, "cleanup");
-        return { to: "completed", detail: { removed: ["STUB: replication slot", "STUB: source app scaled to 0"], roles, stub: true, ...(linkSecret.skipped ? {} : { linkSecret }) },
-                 evidence: { tempResources: 0, ...roles.evidence } };   // STUB: 임시 자원 장부
+        // 출발 계정 중계기 (복제 설정이 없어도 태그로 남은 것이 있으면 지운다. 출발이 AWS 아님·시드 환경이면 건너뜀)
+        const relay = await teardownRelayStep(j, m);
+        if (relay.kind === "failed") return relayPaused(relay, { stub: true });
+        return { to: "completed", detail: { removed: ["STUB: replication slot", "STUB: source app scaled to 0"], roles, stub: true, relay: relayView(relay), ...(linkSecret.skipped ? {} : { linkSecret }) },
+                 evidence: { tempResources: 0, ...(await evidenceAfterRelay(j, relay, roles.evidence)) } };   // STUB: 임시 자원 장부
       }
       // 복제 슬롯·발행·구독·마커를 양쪽에서 지우고, 남은 게 없는지 다시 센다 (T27 tempResources)
       const { removed } = await repl.teardown();
       const left = await repl.leftovers();
-      return { to: "completed", detail: { removed: [...removed, "STUB: source app scaled to 0"], leftovers: left, roles, ...(linkSecret.skipped ? {} : { linkSecret }) },
-               evidence: { tempResources: left.length, ...roles.evidence } };
+      // 온프레 CNPG 이전: 복제 걷기가 끝난 뒤에만 gitops 값에서 이전 역할(ensure absent)·터널·터널 키·역할 비밀번호를 걷는다.
+      //   찌꺼기가 남았으면 그대로 둔다 (터널이 사라지면 워커가 도착 DB 에 못 붙어 repl-cleanup 으로 다시 걷을 길이 없다)
+      const gitopsRepl = left.length === 0
+        ? await commitReplicationCleanup(await withTenant(j.tenantId, (tx) => targetBundle(tx, j.tenantId, m)))
+        : { skipped: "replication_leftovers" };
+      // 출발 계정 중계기: 복제 걷기와 터널 정리 커밋 뒤에만 지운다 (찌꺼기가 남으면 repl-cleanup 이 같은 중계기로 다시 걷는다).
+      //   지우기가 실패하면 paused(RELAY_TEARDOWN_FAILED) — 자원은 태그를 단 채 남고, 재개하면 이 단계가 다시 돈다 (여러 번 불러도 됨)
+      const relay: RelayStepOutcome = left.length === 0 ? await teardownRelayStep(j, m) : { kind: "skipped", reason: "replication_leftovers" };
+      if (relay.kind === "failed") return relayPaused(relay, { removed, leftovers: left, gitopsReplication: gitopsRepl });
+      return { to: "completed", detail: { removed: [...removed, "STUB: source app scaled to 0"], leftovers: left, roles, gitopsReplication: gitopsRepl, relay: relayView(relay), ...(linkSecret.skipped ? {} : { linkSecret }) },
+               evidence: { tempResources: left.length, ...(await evidenceAfterRelay(j, relay, roles.evidence)) } };
     }),
     // 재발급 실패(Z61) → cleanup → paused(CRED_RENEW_FAILED). 그 밖의 예외는 지금처럼 pg-boss 재시도
     onError: async (e) => pausedOnRenewFailure(e),
   });
+}
+
+const relayView = (r: RelayStepOutcome) => (r.kind === "ok" ? r.detail : r.kind === "skipped" ? { skipped: r.reason } : { failed: r.failureCode });
+function relayPaused(r: Extract<RelayStepOutcome, { kind: "failed" }>, extra: Record<string, unknown>) {
+  return { to: "paused" as const, failureCode: "RELAY_TEARDOWN_FAILED",
+           detail: { ...extra, relay: { error: r.reason, code: r.failureCode, ...(r.detail ?? {}) } } };
+}
+// 중계기를 지우려고 출발 실행 역할을 새로 빌렸다 → 그 회수까지 끝난 장부로 T27 증거를 다시 센다 (앞에서 센 값은 그 전 것)
+async function evidenceAfterRelay(j: MigrationJob, r: RelayStepOutcome, before: { operateRoleRevoked: boolean }) {
+  if (r.kind !== "ok") return before;
+  return (await tempRoles().revokeForMigration(j.tenantId, j.migrationId, "cleanup")).evidence;
 }
 
 // 다시 볼 때까지 초: 남은 실행 역할 중 가장 먼저 끝나는 것의 만료 + 1초, 다만 다른 워커 청소 주기의 2배를 넘지 않게

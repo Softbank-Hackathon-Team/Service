@@ -21,19 +21,24 @@ export { unexpectedPlanTypes, type Purpose } from "./common/actions.js";
 export { DEMO_INVENTORY } from "./common/fixtures.js";
 export { DEMO_SPEC } from "./common/demo-spec.js";
 export type { Target, TargetExtras } from "./common/target.js";
+export { regionOf } from "./common/target.js";   // env 층이 앱 층과 같은 지역을 쓰게 (worker env-layer)
 export { registryOf, isPublicImage } from "./common/base.js";
 // 리허설: 샌드박스 Postgres 가 도착과 같은 DB 이름·앱 계정을 쓰게 (worker rehearsal)
 export { dbIdentityFor } from "./target/data-fit.js";
 export { realTerraformEnabled, iacMockEnabled, findWorkDir, readImported, type ImportedInfra, TENANT_DIR_RE, createRealTerraformRunner, fillTfVars, factsFromEnv, factEnvName, parseOutputs, childEnv,
   workRootOf, workDirOf, PLAN_ONLY_ID, planOnlyId, spawnExec, REAL_MODULE_BASE, ROOT_DIR, layoutOf, type TfLayout, DEFAULT_MODULE_ROOT, type Exec, type ExecResult, type RealApplyResult, type RealTerraformRunner } from "./terraform/real-runner.js";
+// 환경 층 (도착 GCP 프로젝트의 VPC·GKE·AR·ESO). worker env-layer.ts 가 apply 맨 앞에서 부른다
+export { createEnvLayerRunner, envLayerVars, envLayerVarsHash, envLayerFactsOf, factsOfLayer, mergeFacts, envLayerBackend, envLayerDirOf, envLayerBudgetSec,
+  ENV_LAYER_KEYS, ENV_LAYER_MODULE, ENV_LAYER_MODULE_DIGEST, ENV_LAYER_NAME, type EnvLayerFacts, type EnvLayerVars, type EnvLayerResult, type EnvLayerRunner, type EnvLayerRunnerOpts } from "./terraform/env-layer.js";
 export { dbNetworkFromEnv, withDbNetworkV2, cidrProblem, DbNetworkError, type DbNetworkSummary } from "./terraform/db-network.js";
 // Z86: 환경 실자원 읽기(읽기 전용 CLI) + 클라우드 서비스 대응표
-export { readInventory, cachedInventory, clearInventoryCache, inventoryToStatus, itemState, agentInventory, type AgentInventory, type CloudInventory, type InventoryGroup, type InventoryItem, type InventoryDeps } from "./inventory.js";
+export { readInventory, inventoryUnavailable, inventoryToStatus, itemState, agentInventory, type AgentInventory, type CloudInventory, type InventoryGroup, type InventoryItem, type InventoryDeps } from "./inventory.js";
 export { SERVICE_NAME, METHOD_LABEL, type ServiceMapRow, type ServiceCategory, type MoveMethod, type PlanStepId } from "./common/service-map.js";
 // Z88: 출발 환경 진짜 읽기 (가져오기). MOCK_SEED=1 이면 어댑터 discover 는 데모 원본
 export { discoverSource, inventoryForAudit, discoverAws, discoverGcp, discoverOnprem, discoverForImport, type DiscoverOpts } from "./discover/index.js";
 export { AWS_NET_READ_ACTIONS, GCP_NET_READ_PERMISSIONS } from "./discover/net.js";
 export { AWS_COMMAND_ACTIONS, GCP_COMMAND_PERMISSIONS, actionsOfCommands } from "./common/observe-permissions.js";
+export { readAlbRequestRate, ALB_RATE_AWS_COMMANDS, type AlbRate, type AlbRateResult } from "./aws/alb-request-rate.js";
 export { AWS_DATA_READ_ACTIONS, GCP_DATA_READ_PERMISSIONS, AWS_DATA_READ_PENDING, GCP_DATA_READ_PENDING } from "./discover/data.js";
 export { readK8sNamespace, type K8sNamespaceRead, type K8sNamespaceOpts } from "./discover/k8s.js";
 // I2: k8s 원본 타입 + 종류 문자열
@@ -41,6 +46,8 @@ export * from "./import/raw-k8s.js";
 export { mockSeed, CliError, classifyCliError, sourceFail, type CliErrorKind, type CliDeps } from "./common/cli.js";
 export { runCloudPrecheck, toPrecheckItems, mockPrecheckEnabled, mockChecks, cliProblem, tcpProbe, apiEndpoint, AWS_QUOTAS, GCP_APIS, CLOUDSQL_PG_MAJORS_DEFAULT, MIN_REPL_PG_MAJOR,
   type CloudCheck, type Verdict, type PrecheckEnvInfo, type PrecheckInput, type PrecheckDeps, type CloudProvider } from "./precheck/cloud-precheck.js";
+export { relayPathApplies } from "./precheck/cloud-precheck.js";
+export { RELAY_ACTIONS, relayPermVerdict, relaySimArgs, relaySimContext, RELAY_PERM_FIX } from "./precheck/relay-permissions.js";   // 온프레 이전 중계기 권한
 // L4: 연결 확인 (빌린 관찰 역할로 고객 AWS 읽어 보기)
 export { verifyAwsObserve, envFor, EKS_CLUSTER_NAME_RE, trustHasExternalId, type VerifyAwsInput, type VerifyAwsResult } from "./verify/aws.js";
 // I3a: 가져오기 (원본 → 공통 명세)
@@ -52,7 +59,7 @@ export { renderViewV2, isInClusterData, targetBuilderFor, awsTarget, gcpTarget, 
   managedBlockers, managedServicesOf, managedServiceVars, managedSecretName, managedJobsOf, managedJobVars,
   dbWriterVar, dbLinkSecretName, type DbWriter, type SourceDbLinkRef } from "./target/index.js";   // TA13 · JOBBUILD · APP-22 (가)
 export { targetFactsV2, sourceFactsV2, sourceDbsV2, appEnvV2, workloadSecurityV2, MODULE_DB_FACTS, type EnvSide, type AgentFacts } from "./target/security-facts.js";   // 보안 판정용 환경 사실
-export { verifyGcpObserve, OPTIONAL_PROBES, gcpEnvFor, gcpReasonOf, type VerifyGcpInput, type VerifyGcpResult } from "./verify/gcp.js";   // L7i
+export { verifyGcpObserve, OPTIONAL_PROBES, gcpEnvFor, gcpTerraformEnv, gcpReasonOf, type GcpTerraformCred, type VerifyGcpInput, type VerifyGcpResult } from "./verify/gcp.js";   // L7i
 export { freezeGkeUpgrades, releaseGkeUpgrades, freezeArgs, releaseArgs, freezeExclusionName, FREEZE_DEFAULT_HOURS, FREEZE_MAX_HOURS, type GkeFreezeTarget, type GkeFreezeResult } from "./gcp/upgrade-freeze.js";
 // L5b: 빌린 AWS 실행 자격 → terraform 자식 프로세스 (credential_process 임시 파일)
 export { borrowedAwsCreds, type BorrowedAwsCreds, type AwsSessionKeys } from "./terraform/borrowed-aws.js";
@@ -78,3 +85,6 @@ export { measureImportAccuracy, ACCURACY_COMPARED, ACCURACY_NOT_COMPARED, type M
 export { carryHumanEdits, CARRY_NOTE, type PrevSpecV2, type CarryReport } from "./import/carry.js";
 export { applyInclude, IncludeError, type IncludeFailure, type IncludeOut } from "./import/include.js";
 export { serviceMapV2, categoryOfTypeV2, type ServiceMapRowV2, type ServiceCategoryV2 } from "./common/service-map-v2.js";
+// APP-22 (가): 컷오버 전 도착 앱 → 출발 RDS 잇기 (계획·SQL·사전 점검은 순수, 열기·걷기만 AWS CLI)
+export { planSourceDbLink, sourceDbLinkGrantSql, sourceDbLinkDropSql, sourceDbLinkMode, sourceDbLinkInputFromEnv, sourceDbLinkPrecheck,
+  openSourceDbLinkAws, closeSourceDbLinkAws, SOURCE_DB_LINK_AWS_ACTIONS, SOURCE_DB_LINK_SG_TAG, sourceDbLinkOperatePolicy, type SqlRunner, type SourceDbLinkMode, type OpenAwsResult } from "./aws/source-db-link.js";

@@ -62,6 +62,17 @@ variable "tunnel_reverse" {
   type    = bool
   default = true
 }
+# 출발 RDS 의 보안 그룹. 주면 그 그룹에 "중계 사설 IP:5432 로 나가기" 규칙 하나를 더한다 (롤백 창 역복제: RDS 의 구독이 중계로 붙는다).
+#   실측 (2026-11-05, 대역 RDS + 중계 + VM CNPG): RDS 보안 그룹에 이 나가는 규칙이 없으면 역방향 구독이 붙지 못했다 (그룹 나가기가 막힌 RDS).
+#   비우면 안 만든다 (예전과 같다). destroy 하면 이 규칙도 같이 지워진다
+variable "source_db_sg_id" {
+  type    = string
+  default = ""
+  validation {
+    condition     = var.source_db_sg_id == "" || can(regex("^sg-[0-9a-f]{8,17}$", var.source_db_sg_id))
+    error_message = "source_db_sg_id: 비우거나 sg-<16진수>."
+  }
+}
 
 locals {
   forward_targets = jsondecode(var.forward_pg_targets_json)
@@ -177,6 +188,16 @@ resource "aws_instance" "relay" {
     encrypted = true
   }
   tags = { Name = var.name }
+}
+
+resource "aws_vpc_security_group_egress_rule" "source_db_to_relay" {
+  count             = var.source_db_sg_id != "" ? 1 : 0
+  security_group_id = var.source_db_sg_id
+  description       = "Postgres from the source DB to the relay (rollback window reverse subscription)"
+  ip_protocol       = "tcp"
+  from_port         = 5432
+  to_port           = 5432
+  cidr_ipv4         = "${aws_instance.relay.private_ip}/32"
 }
 
 output "public_ip" { value = aws_instance.relay.public_ip }

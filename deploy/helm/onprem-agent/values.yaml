@@ -37,3 +37,19 @@ agent:
 grants:
   # L1: 클러스터 범위 읽기 허용 목록 (노드, 바인딩, Kyverno 정책 등). 기본 끔
   cluster: false
+
+# 트래픽 판정 지표 수집기 (#245). 도착 앱 cloudflared 의 상태 코드별 응답 수를 긁어 플랫폼 지표 주소로 보낸다.
+#   endpoint 를 비우면 안 만든다. 토큰은 이 회사 환경의 지표 토큰 하나 (콘솔·API POST /api/v1/environments/:id/metric-token).
+#   값은 이 파일·helm 기록에 넣지 않는다: 설치 스크립트가 METRIC_TOKEN_FILE 로 Secret 을 먼저 만든다
+metrics:
+  # 예: https://metrics.<도메인>/v1/metrics (Cloudflare 터널 → 플랫폼 otel-gateway)
+  endpoint: ""
+  # 키 token 이 든 Secret 이름
+  tokenSecret: svc-metric-token
+  # DRAFT(ai): 플랫폼 otel-gateway 와 같은 판 (deploy/helm/platform values otelGateway.collectorImage). digest 고정 필수
+  image: otel/opentelemetry-collector-contrib:0.164.0@sha256:340c9ca6a36617084c6661bdc4f0fe92b7cda5a805d61673ec8db375fddc522b
+  # DRAFT(ai): 긁는 주기(초). 판정 창 30초 안에 표본이 여러 번 들어오게 5
+  scrapeSeconds: 5
+  resources:
+    requests: { cpu: 20m, memory: 64Mi }
+    limits: { memory: 192Mi }
