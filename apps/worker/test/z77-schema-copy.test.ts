@@ -32,3 +32,9 @@ test("Z77 주제 60: 도착 복제 권한·설정 실패는 DEST_REPL_PRIVILEGE 
   assert.equal(precheckFailureCode([{ id: "DB-04", side: "source" }]), "SYNC_FAILED");
   assert.equal(precheckFailureCode([{ id: "NET-TLS0", side: "target" }, { id: "DB-04", side: "target" }]), "REPL_TLS_REQUIRED");
 });
+
+test("DB-08(앱 계정이 관리자 역할을 물려받음)은 REPL_APP_ROLE_UNFENCEABLE, TLS·도착 권한·표 없음이 먼저", () => {
+  assert.equal(precheckFailureCode([{ id: "DB-08", side: "source" }]), "REPL_APP_ROLE_UNFENCEABLE");
+  assert.equal(precheckFailureCode([{ id: "DB-08", side: "source" }, { id: "DB-T4" }]), "REPL_TARGET_SCHEMA_MISSING");
+  assert.equal(precheckFailureCode([{ id: "DB-05" }]), "SYNC_FAILED");
+});

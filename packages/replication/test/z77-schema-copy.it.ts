@@ -146,3 +146,20 @@ test("5 못 하는 모양(파티션·domain)은 바로 멈추고 도착에 아�
   await q(TARGET, `DROP SEQUENCE z77_orders_created`);
   await q(SOURCE, `DROP TABLE z77_parts, z77_dom; DROP DOMAIN z77_pos`);
 });
+
+// 실측(2026-11-06 실제 RDS): 앱 계정이 표 주인(relacl NULL)이면 권한이 0개로 읽혀 도착에서 앱 계정이 그 표를 못 썼다 (schemaCopy.grants 0)
+test("6 앱 계정이 주인인 표(기본 권한)도 도착에서 앱 계정이 쓸 수 있게 권한을 옮긴다", { skip }, async () => {
+  await q(TARGET, `DROP TABLE IF EXISTS z77_owned`);
+  await q(SOURCE, `DROP TABLE IF EXISTS z77_owned; CREATE TABLE z77_owned (id bigserial PRIMARY KEY, v int); ALTER TABLE z77_owned OWNER TO app_user`);
+  try {
+    const r = await copySchema(SOURCE, TARGET, [{ schema: "public", name: "z77_owned" }]);
+    assert.deepEqual(r.created, ["z77_owned"]);
+    assert.ok(r.grants >= 2, `표·시퀀스 권한이 옮겨져야 함 (grants=${r.grants})`);
+    const can = await q(TARGET, `SELECT p, has_table_privilege('app_user', 'public.z77_owned', p) ok FROM unnest(ARRAY['SELECT','INSERT','UPDATE','DELETE']) p ORDER BY 1`);
+    assert.deepEqual(can.filter((x) => x.ok).map((x) => x.p), ["DELETE", "INSERT", "SELECT", "UPDATE"]);
+    assert.equal((await q(TARGET, `SELECT has_sequence_privilege('app_user', 'public.z77_owned_id_seq', 'USAGE') ok`))[0].ok, true);
+  } finally {
+    await q(TARGET, `DROP TABLE IF EXISTS z77_owned`);
+    await q(SOURCE, `DROP TABLE IF EXISTS z77_owned`);
+  }
+});
