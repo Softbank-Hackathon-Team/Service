@@ -72,5 +72,6 @@
   "gate": {
     "ok": true,
     "violations": []
-  }
+  },
+  "sandbox": "memory"
 }

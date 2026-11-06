@@ -2605,6 +2605,16 @@
                                   "type": "null"
                                 }
                               ]
+                            },
+                            "sandbox": {
+                              "anyOf": [
+                                {
+                                  "$ref": "#/components/schemas/AgentRunSandbox"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
                             }
                           },
                           "required": [
@@ -2622,7 +2632,8 @@
                             "rationale",
                             "checked",
                             "notDone",
-                            "gate"
+                            "gate",
+                            "sandbox"
                           ],
                           "additionalProperties": false
                         },
@@ -6799,6 +6810,15 @@
           "report"
         ],
         "additionalProperties": false
+      },
+      "AgentRunSandbox": {
+        "type": "string",
+        "enum": [
+          "memory",
+          "k3d",
+          "vcluster",
+          "none"
+        ]
       },
       "ApiError": {
         "type": "object",
