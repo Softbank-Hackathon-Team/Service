@@ -164,7 +164,7 @@ test("3티어 스냅숏 (aws): 루트 변수·인스턴스·workloads 값", () =
   assert.deepEqual(v.externalSecrets.secrets, [
     { name: "cloudflared-token", remoteKey: "platform/11111111-1111-4111-8111-111111111111/shop/cloudflared-token", keys: ["token"] },
     { name: "shop-db", remoteKey: "platform/11111111-1111-4111-8111-111111111111/shop/shop-db", keys: ["password"] }]);
-  assert.deepEqual(v.postgres, [{ id: "db", mode: "external", host: "<tf-output:link.db.host>", port: 5432, passwordSecret: "<tf-output:db_master_secret_arn>", passwordProperty: "password", secretName: "shop-db-app" }]);
+  assert.deepEqual(v.postgres, [{ id: "db", mode: "external", host: "<tf-output:link.db.host>", port: 5432, passwordSecret: "<tf-output:db_password_secret_name>", passwordProperty: "password", secretName: "shop-db-app" }]);
   assert.deepEqual(v.ingress.hosts, [{ hostnames: ["shop.example.com"], tls: true, paths: [
     { path: "/api", pathType: "Prefix", service: "api", port: 80, workload: "api" },
     { path: "/", pathType: "Prefix", service: "web", port: 80, workload: "web" }] }]);

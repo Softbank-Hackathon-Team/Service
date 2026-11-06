@@ -42,7 +42,7 @@ export function runnerFor(p: Provider, env: NodeJS.ProcessEnv = process.env): In
 // 진짜 apply가 들어오면 Terraform output 그대로 바뀐다. (Z44: worker jobs/apply.ts 에 있던 표를 옮김, 값 같음)
 export const STUB_TF_OUTPUTS: Readonly<TfOutputs> = Object.freeze({
   db_endpoint: "pgbouncer.target.internal", cluster_name: "stub-target-cluster",
-  db_address: "stub-db.target.internal", db_master_secret_arn: "stub-db-master-secret",
+  db_address: "stub-db.target.internal", db_master_secret_arn: "stub-db-master-secret", db_password_secret_name: "stub-db-password",
   app_gsa_email: "stub-app@stub-project.iam.gserviceaccount.com", db_private_ip: "10.0.3.12",
   db_password_secret_id: "stub-db-password", app_identity_client_id: "00000000-0000-0000-0000-000000000000",
   db_fqdn: "stub-db.postgres.database.azure.com",
