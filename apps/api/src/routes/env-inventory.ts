@@ -100,6 +100,9 @@ export interface MigrationRow {
   applyEvidence: "runner" | "terraform" | "stub" | null;   // provisioning → deploying 감사 줄에 무엇이 있었나
   cleanupRemoved: string[] | null;                 // 정리(→completed)·롤백 때 걷었다고 적힌 것
   reachedPct: number | null;                       // 전환이 남긴 마지막 도달 % (0~100)
+  // 온프레 도착: 롤백 뒤 정리(worker target-destroy)가 gitops 묶음 폴더를 지워 커밋했나 (감사 target_teardown.gitops 의 commit).
+  //   폴더가 사라지면 고객 Argo CD 가 앱·CNPG DB 를 지운다. Argo 가 만든 앱 네임스페이스만 빈 채로 남는다
+  targetBundleRemoved?: boolean;
   specV2?: unknown;                                // 받아들인 최신 판의 spec_v2->'spec' (없으면 null)
   outOfBoundary?: unknown;                         // MAPV2: 같은 판 spec_v2->'outOfBoundary' (없으면 null)
 }
@@ -196,7 +199,9 @@ export function targetResources(m: MigrationRow, spec: AppSpecV2, s: Summary): R
   const applied = m.applyEvidence !== null;
   // 인프라(Terraform) 자원 상태
   let infra: FState;
-  if (m.status === "rolled_back") infra = "left";            // 롤백은 트래픽·복제만 되돌린다. 도착 자원은 남는다 (정리 확인 필요)
+  const bundleGone = m.status === "rolled_back" && m.targetProvider === "onprem" && m.targetBundleRemoved === true;
+  if (bundleGone) infra = "removed";                           // 온프레: 롤백 정리가 묶음 폴더를 지웠다 → Argo 가 지움 (네임스페이스는 아래에서 left)
+  else if (m.status === "rolled_back") infra = "left";       // 롤백은 트래픽·복제만 되돌린다. 도착 자원은 남는다 (정리 확인 필요)
   else if (m.status === "rolling_back") infra = "running";
   else if (cancelled) infra = applied ? "left" : "none";
   else if (failed && st === "provisioning") infra = "unknown";  // 만들다 멈춤: 일부만 생겼을 수 있다 (tf:real destroy 로 정리)
@@ -210,18 +215,20 @@ export function targetResources(m: MigrationRow, spec: AppSpecV2, s: Summary): R
     if (type.startsWith("data.")) continue;    // 읽기만 하는 data 원본은 자원이 아니다
     const [category, base] = KIND[type] ?? ["network", type];
     const label = category === "database" && /RDS PostgreSQL|Cloud SQL PostgreSQL|CNPG|Flexible Server$/.test(base) ? dbLabel(base, s) : base;
-    out.push({ category, type, label, state: infra, evidence: evInfra });
+    const nsLeft = bundleGone && (type === "kubernetes_namespace_v1" || type === "core/namespaces");
+    out.push({ category, type, label, state: nsLeft ? "left" : infra, evidence: bundleGone ? "audit" : evInfra });
   }
   // 앱 컨테이너 (Helm 차트 → Argo CD). deploying 에서 생긴다
   let app: FState;
-  if (m.status === "rolled_back") app = "left";
+  if (bundleGone) app = "removed";
+  else if (m.status === "rolled_back") app = "left";
   else if (m.status === "rolling_back") app = "standby";
   else if (cancelled) app = reached(st, "syncing") ? "left" : "none";
   else if (BEFORE.includes(st) || st === "provisioning") app = failed ? "none" : "planned";
   else if (st === "deploying") app = failed ? "unknown" : "creating";
   else app = failed ? "left" : "running";
   out.push({ category: "compute", type: "helm.release", label: `앱 컨테이너 ${s.replicas}개 (${s.cpu} CPU · ${s.memory})`,
-             state: app, evidence: reached(st, "syncing") || m.status === "rolled_back" ? (applied ? m.applyEvidence! : "stub") : "adapter" });
+             state: app, evidence: bundleGone ? "audit" : reached(st, "syncing") || m.status === "rolled_back" ? (applied ? m.applyEvidence! : "stub") : "adapter" });
   if (s.database) {
     // 논리 복제 받는 쪽(구독). syncing 에서 생기고 정리(cleanup)·롤백에서 걷는다
     const gone = m.status === "completed" || m.status === "rolled_back";
@@ -360,7 +367,9 @@ const MIGRATION_SQL = (where: string, limit: string) =>
           (SELECT a.detail->'removed' FROM audit_events a WHERE a.target = m.id::text AND jsonb_typeof(a.detail->'removed') = 'array'
             ORDER BY a.seq DESC LIMIT 1) AS "cleanupRemoved",
           (SELECT (a.detail->>'reachedPct')::float8 FROM audit_events a WHERE a.target = m.id::text
-              AND jsonb_typeof(a.detail->'reachedPct') = 'number' ORDER BY a.seq DESC LIMIT 1) AS "reachedPct"
+              AND jsonb_typeof(a.detail->'reachedPct') = 'number' ORDER BY a.seq DESC LIMIT 1) AS "reachedPct",
+          EXISTS (SELECT 1 FROM audit_events a WHERE a.target = m.id::text AND a.action = 'target_teardown.gitops'
+              AND a.result = 'ok' AND a.detail ? 'commit') AS "targetBundleRemoved"
      FROM migrations m
      JOIN environments se ON se.id = m.source_env_id
      JOIN environments te ON te.id = m.target_env_id
