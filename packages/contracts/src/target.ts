@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Provider } from "./common.js";
 import type { Capability, HelmValues, ModuleRef, TargetEnv, TfOutputs, TfVars } from "./adapter.js";
-import type { AppSpecV2 } from "./spec-v2.js";
+import type { AppSpecV2, ApprovalRowV2 } from "./spec-v2.js";
 import { TF_VAR_KINDS } from "./tf-kinds.js";
 
 // DRAFT(ai): 도착 쪽 계약(Builder). 설계 27번 3.1 (A0).
@@ -37,4 +37,7 @@ export interface TargetBuilder {
   toWorkloadValues(spec: AppSpecV2, out: TfOutputs, t: TargetEnv): HelmValues;   // runtime=k8s 인 것만
   operateActionsV2(spec: AppSpecV2, purpose: TargetPurpose): string[];
   imageRef(src: string, t: TargetEnv): string;
+  // 출발(source)의 관리형 상품을 이 도착의 다른 상품으로 바꾸는 자원마다 substitute 승인 행 하나. 명세에 출발 벤더가 없어 source 를 받는다.
+  //   없는 Builder = 바꾸는 것 없음 (0줄)
+  substitutionsV2?(spec: AppSpecV2, source: Provider): ApprovalRowV2[];
 }

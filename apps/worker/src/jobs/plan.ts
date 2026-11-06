@@ -2,7 +2,7 @@ import { ApprovalRowV2, PlanDoc, PlanJob, PrecheckItem, QUEUES, checkV2, AppSpec
   type PlanAcknowledgement, type PlanCostSummary, type PlanStep, type PriceCatalog, type Provider } from "@svc/contracts";
 import { PLAN_ROLLBACK_WINDOW_SEC, latestAcceptedSpecV2, retryBudget, SPEC_DRAFT_KEY, type AcceptedSpecV2Row, type Tx } from "@svc/core";
 import { estimateCostV2, loadCatalog } from "@svc/cost";
-import { DbNetworkError, isAdapterError, NEEDS_HUMAN, regionOf, specV2OrThrow, UNSUPPORTED_V2 } from "@svc/adapters";
+import { DbNetworkError, isAdapterError, NEEDS_HUMAN, regionOf, specV2OrThrow, targetBuilderFor, UNSUPPORTED_V2 } from "@svc/adapters";
 import { planEnvLayer, readEnvLayer, type EnvLayerRow } from "../env-layer.js";
 import type { z } from "zod";
 import { failedAttempts, jobData, recordAttemptFailure, RetryLater, runStep, stableHash, stubWait, type StepOutcome } from "./_step.js";
@@ -92,9 +92,12 @@ export function buildAcknowledgements(i: {
   for (const p of i.precheck) if (p.level === "warn")
     out.push({ id: `precheck_warn:${p.id}`, kind: "precheck_warn", text: p.message + (p.fix ? ` (조치: ${p.fix})` : ""), ref: p.id });
   for (const a of i.v2Approvals ?? []) {
-    const text = [a.from !== undefined || a.to !== undefined ? `${a.from ?? "?"} → ${a.to ?? "?"}` : "", a.detail ?? ""]
+    const text = [a.from !== undefined || a.to !== undefined ? `${a.from ?? "?"} → ${a.to ?? "?"}` : "", a.detail ?? "",
+      a.lost?.length ? `옮기지 못하는 것: ${a.lost.join(", ")}` : "", a.appChange ? "앱 코드 변경 필요" : ""]
       .filter(Boolean).join(" · ") || a.subject;
-    out.push({ id: `${a.kind}:${a.subject}`, kind: a.kind, text, ref: a.subject });
+    // 구조 칸은 substitute 만 싣는다 (다른 종류 항목은 예전 모양·지문 그대로)
+    out.push({ id: `${a.kind}:${a.subject}`, kind: a.kind, text, ref: a.subject,
+      ...(a.kind === "substitute" ? { from: a.from, to: a.to, lost: a.lost ?? [], appChange: a.appChange ?? false } : {}) });
   }
   // 같은 id 가 두 번이면 글을 합친다 (acks 는 id 로만 덮으므로)
   const byId = new Map<string, PlanAcknowledgement>();
@@ -132,6 +135,11 @@ export function buildPlanDoc(i: PlanInput, env: NodeJS.ProcessEnv = process.env)
   const tf = tfCallV2(i.spec, target, env);
   // STUB: 진짜 Terraform 출력값은 apply 뒤에 생긴다. 계획 단계에서는 빈 값으로 Helm 값 모양만 고정한다
   const helm = helmValuesV2(i.spec, target);
+  const from = i.source?.provider ?? i.target.provider;
+  // 출발 관리형 상품이 도착에서 다른 상품이 되는 자원 = substitute 확인 항목 (명세에 출발 벤더가 없어 여기서 출발을 넘긴다)
+  // TODO(human): 앱 코드를 고쳐야 하는 대체(appChange)를 이 확인 하나로 넘길지, 따로 켜야(opt-in) 되게 할지 사람이 정한다.
+  //   후보 자리: ① 명세 칸(구성요소마다 대체 허용) ② 이전 옵션(이전 만들 때 대체 허용) ③ 지금처럼 승인 확인 자체
+  const v2Approvals = [...(i.v2Approvals ?? []), ...(targetBuilderFor(i.target.provider).substitutionsV2?.(i.spec, from) ?? [])];
   // DRAFT(ai): 단계별 예상 시간·게이트는 설계 문서 수치가 정해지기 전 임시값
   const steps: Step[] = [
     { id: "provision", owner: "terraform", estSec: 300, rollback: "terraform destroy (사람 승인)" },
@@ -159,8 +167,7 @@ export function buildPlanDoc(i: PlanInput, env: NodeJS.ProcessEnv = process.env)
     ...(i.specVersion !== undefined ? { specVersion: i.specVersion } : {}),
     ...(i.costSummary ? {
       costSummary: i.costSummary,
-      acknowledgements: buildAcknowledgements({ cost: i.costSummary, from: i.source?.provider ?? i.target.provider,
-        to: i.target.provider, precheck: i.precheck, v2Approvals: i.v2Approvals, env }),
+      acknowledgements: buildAcknowledgements({ cost: i.costSummary, from, to: i.target.provider, precheck: i.precheck, v2Approvals, env }),
     } : {}),
   };
   // G7-3·G7-4: 도착 사실·재사용 — 있을 때만 칸 (없으면 예전 지문)
