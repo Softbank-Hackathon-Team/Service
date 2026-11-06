@@ -9,6 +9,9 @@ mock_provider "google" {
   mock_data "google_client_config" {
     defaults = { access_token = "mock-token" }
   }
+  mock_data "google_project" {
+    defaults = { number = "123456789012" }
+  }
 }
 mock_provider "kubernetes" {}
 mock_provider "random" {}
@@ -27,43 +30,35 @@ variables {
   identity_json    = "[]"
 }
 
-# 경계: 역할 이름 정확히 30자는 통과
-run "identity_name_30_ok" {
+# #317 가: 신원 = KSA 직접 주체 (GSA 없음). 주체는 프로젝트 번호(data.google_project) + WI 풀 + 구역/KSA
+run "identity_is_ksa_principal" {
   command = plan
   variables {
-    identity_json = jsonencode([{ id = "api", name = "app-${join("", [for i in range(26) : "a"])}", service_account = "api" }])
+    identity_json = jsonencode([{ id = "api", name = "app-shop-api", service_account = "api" }])
   }
   assert {
-    condition     = length(module.identity) == 1
-    error_message = "64자 이름은 통과해야 함"
+    condition     = module.identity["api"].principal == "principal://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/demo-project.svc.id.goog/subject/ns/app-shop/sa/api"
+    error_message = "신원 주체는 KSA app-shop/api 의 principal:// (프로젝트 번호는 data.google_project)"
+  }
+  assert {
+    condition     = output.identity_principals == { api = module.identity["api"].principal } && output.app_principal == module.identity["api"].principal
+    error_message = "출력 identity_principals·app_principal 은 신원 주체"
   }
 }
 
-# 거부: 31자
-run "reject_identity_name_31" {
+# name 은 예전 GSA account_id 였다. GSA 가 없어 길이·접두어를 보지 않는다 (예전 30자·app- 거부는 없앰)
+run "identity_name_not_checked" {
   command = plan
   variables {
-    identity_json = jsonencode([{ id = "api", name = "app-${join("", [for i in range(27) : "a"])}", service_account = "api" }])
+    identity_json = jsonencode([
+      { id = "api", name = "app-${join("", [for i in range(40) : "a"])}", service_account = "api" },
+      { id = "web", name = "shop-web", service_account = "web" },
+    ])
   }
-  expect_failures = [var.identity_json]
-}
-
-# 거부: 5자 이름 (GCP SA 최소 6자)
-run "reject_identity_name_5" {
-  command = plan
-  variables {
-    identity_json = jsonencode([{ id = "api", name = "app-a", service_account = "api" }])
+  assert {
+    condition     = length(module.identity) == 2 && endswith(module.identity["web"].principal, "/subject/ns/app-shop/sa/web")
+    error_message = "name 과 상관없이 KSA 마다 주체 하나"
   }
-  expect_failures = [var.identity_json]
-}
-
-# 거부: app- 접두어 없음
-run "reject_identity_name_no_prefix" {
-  command = plan
-  variables {
-    identity_json = jsonencode([{ id = "api", name = "shop-api", service_account = "api" }])
-  }
-  expect_failures = [var.identity_json]
 }
 
 # 거부: JSON 이 아닌 입력 (변수 검증이 먼저 막아야 함)
@@ -154,7 +149,7 @@ run "all_empty_lists" {
     error_message = "빈 목록은 아무것도 안 만듦"
   }
   assert {
-    condition     = output.app_gsa_email == "" && output.namespace == "" && output.db_private_ip == "" && length(output.identity_gsa_emails) == 0
+    condition     = output.app_principal == "" && output.namespace == "" && output.db_private_ip == "" && length(output.identity_principals) == 0
     error_message = "빈 출력"
   }
 }
@@ -180,7 +175,7 @@ run "no_identity_empty_role_output" {
     namespace_json = jsonencode([{ name = "app-shop", quota_cpu_m = null, quota_memory_mi = null }])
   }
   assert {
-    condition     = output.app_gsa_email == "" && output.namespace == "app-shop"
-    error_message = "신원 없음 → app_role_arn 빈 값, namespace 는 이름"
+    condition     = output.app_principal == "" && output.namespace == "app-shop" && length(data.google_project.this) == 0
+    error_message = "신원 없음 → app_principal 빈 값·프로젝트 읽기 없음, namespace 는 이름"
   }
 }

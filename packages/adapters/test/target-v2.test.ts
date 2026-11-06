@@ -4,7 +4,7 @@ import { AppSpecV2, ChartValues, ComponentV2, ModuleInstance, TF_KIND_VARS, type
 import { PINNED_TARGET_V1 } from "./pinned-target-v1.js";
 import {
   targetBuilderFor, requirementsV2, v2Blockers, V2_FIELD_COVERAGE, UNSUPPORTED_V2, AdapterError, aws, gcp, onprem,
-  rdsClassFor, cloudSqlTierFor, type Target,
+  rdsClassFor, cloudSqlTierFor, resourceTypesV2For, type Target,
 } from "../src/index.js";
 
 // TA1 (설계 27번 A1 = 24번 I5) 도착 Builder v2 시험
@@ -174,9 +174,15 @@ test("3티어 스냅숏 (aws): 루트 변수·인스턴스·workloads 값", () =
   assert.equal(filled.workloads[0].env[0].value, "shop.rds.local");
 });
 
-test("3티어 (gcp·onprem): GSA 표시는 신원별, 온프레 DB 는 CNPG 주소를 직접 계산", () => {
+test("3티어 (gcp·onprem): GKE KSA 는 신원별이고 GSA 주석 없음(#317 가: KSA 직접 주체), 온프레 DB 는 CNPG 주소를 직접 계산", () => {
   const g = targetBuilderFor("gcp").toWorkloadValues(TIER3(), {}, T("gcp")) as Record<string, any>;
-  assert.deepEqual(g.workloads[1].serviceAccount, { name: "api", create: true, annotations: { "iam.gke.io/gcp-service-account": "<tf-output:identity.api.gsa_email>" } }, "nightly 는 api 신원");
+  assert.deepEqual(g.workloads[1].serviceAccount, { name: "api", create: true, annotations: {} }, "nightly 는 api 신원, iam.gke.io/gcp-service-account 없음");
+  assert.ok(!JSON.stringify(g).includes("gcp-service-account") && !JSON.stringify(g).includes("gsa_email"), "값 어디에도 GSA 자리표시 없음");
+  const gtf = targetBuilderFor("gcp").toTerraformV2(TIER3(), T("gcp"));
+  assert.ok(gtf.instances.some((i) => i.kind === "identity"), "신원은 여전히 kinds/identity 로 (비밀 읽기·옮긴 권한 주체)");
+  const types = resourceTypesV2For("gcp", TIER3());
+  assert.ok(types.includes("data.google_project") && !types.includes("google_service_account") && !types.includes("google_service_account_iam_member"),
+    "k8s 신원은 GSA·SA setIamPolicy 없음, 주체용 프로젝트 번호만 읽음");
   const o = targetBuilderFor("onprem").toWorkloadValues(TIER3(), {}, T("onprem")) as Record<string, any>;
   assert.equal(o.workloads[0].env[0].value, "shop-db-rw");
   assert.equal(o.postgres[0].mode, "cnpg");
@@ -232,8 +238,14 @@ test("40자 IR id → 실행 역할·SA 이름은 boundedName (aws 64, gcp 30, a
 
 test("권한: v2 operateActionsV2 = 켜진 종류 행의 합, upconvert 판은 v1 operateActions 와 같다 (세션 정책 파일 안 바뀜)", () => {
   const v2 = structuredClone(BASE);
+  // #317 가: gcp k8s 신원은 GSA 없이 KSA 주체 → v1(gcp/app, GSA + WI)과 일부러 다르다: iam.serviceAccounts.* 가 빠지고 주체용 프로젝트 번호 읽기(projects.get)가 든다.
+  //   GCP 는 세션 정책 파일이 없어(커스텀 역할 천장 = v1 표 그대로) 이 목록은 testIamPermissions 사전 점검만 바꾼다
+  const v1Ops = (p: string, purpose: string): string[] => {
+    const ops: string[] = PINNED_TARGET_V1.ops[`${p}:${purpose}`]!;
+    return p !== "gcp" ? ops : [...ops.filter((a) => !a.startsWith("iam.serviceAccounts.")), "resourcemanager.projects.get"].sort();
+  };
   for (const p of ["aws", "gcp", "onprem"] as const) for (const purpose of ["plan", "apply", "destroy"] as const)
-    assert.deepEqual(targetBuilderFor(p).operateActionsV2(v2, purpose), PINNED_TARGET_V1.ops[`${p}:${purpose}`], `${p} ${purpose}`);
+    assert.deepEqual(targetBuilderFor(p).operateActionsV2(v2, purpose), v1Ops(p, purpose), `${p} ${purpose}`);
   // 잡이 있으면 온프레는 CronJob 권한이 더 생김
   assert.ok(targetBuilderFor("onprem").operateActionsV2(TIER3(), "apply").includes("batch/cronjobs:create"));
 });

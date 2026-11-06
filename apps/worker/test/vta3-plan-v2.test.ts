@@ -59,11 +59,11 @@ test("출력 펼치기 경계: 틀린 JSON 은 무시, 이미 있는 펼친 키�
   assert.deepEqual(flattenTfOutputsV2({ link_outputs: "{not json", db_address: "x" }), { link_outputs: "{not json", db_address: "x" });
   const out = flattenTfOutputsV2({
     "link.db.host": "given", link_outputs: JSON.stringify({ db: { host: "from-map", port: null }, arr: ["x"] }),
-    identity_role_arns: JSON.stringify({ api: "arn:aws:iam::1:role/app-api" }), identity_gsa_emails: "[]" });
+    identity_role_arns: JSON.stringify({ api: "arn:aws:iam::1:role/app-api" }), identity_principals: "[]" });
   assert.equal(out["link.db.host"], "given");
   assert.equal(out["link.db.port"], undefined);
   assert.equal(out["identity.api.role_arn"], "arn:aws:iam::1:role/app-api");
-  assert.equal(Object.keys(out).some((k) => k.startsWith("identity.") && k.endsWith("gsa_email")), false);
+  assert.equal(Object.keys(out).some((k) => k.startsWith("identity.") && k.endsWith(".principal")), false, "배열 모양 identity_principals 는 무시");
 });
 
 function fakeRunner() {

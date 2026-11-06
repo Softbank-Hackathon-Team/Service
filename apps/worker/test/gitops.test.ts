@@ -24,11 +24,12 @@ const plan = buildPlanDoc({
 const input: DeployInput = {
   tenantId: TENANT, spec, plan,
   target: { envId: ENV_ID, provider: "gcp", region: "default", accountId: "demo-project" },
-  // v2 값의 자리표시(link.<id>.* · identity.<id>.gsa_email)까지 채운다. 예전 v1 출력만 있으면 GITOPS_PLACEHOLDER_MISSING
+  // v2 값의 자리표시(link.<id>.*)까지 채운다. 예전 v1 출력만 있으면 GITOPS_PLACEHOLDER_MISSING
   //   (CI 는 GITOPS_FIXTURE_DIR 이 없어 실제 git 시험을 건너뛰어서 v2 전환 뒤 이 입력이 낡은 것이 안 보였다)
-  tfOutputs: { app_gsa_email: "app@demo-project.iam.gserviceaccount.com", db_private_ip: "10.0.3.12",
+  //   #317 가: GKE KSA 는 GSA 주석이 없어 신원 자리표시가 없다. 출력 identity_principals 는 보안 실측·기록용
+  tfOutputs: { db_private_ip: "10.0.3.12",
                db_password_secret_id: "db-password", ...stubTfOutputsV2(spec),
-               identity_gsa_emails: JSON.stringify({ "shop-api": "app@demo-project.iam.gserviceaccount.com" }) },
+               identity_principals: JSON.stringify({ "shop-api": "principal://iam.googleapis.com/projects/123456789012/locations/global/workloadIdentityPools/demo-project.svc.id.goog/subject/ns/app-shop/sa/shop-api" }) },
 };
 
 test("회사 폴더 이름과 자리표시 채우기", () => {

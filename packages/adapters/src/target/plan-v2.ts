@@ -124,7 +124,8 @@ export function flattenTfOutputsV2(out: TfOutputs): TfOutputs {
   };
   for (const [id, links] of Object.entries(obj(out.link_outputs) ?? {}))
     if (links && typeof links === "object") for (const [k, v] of Object.entries(links as Record<string, unknown>)) put(`link.${id}.${k}`, v);
-  for (const [id, v] of Object.entries(obj(out.identity_gsa_emails) ?? {})) put(`identity.${id}.gsa_email`, v);
+  // #317 가: gcp 신원은 GSA 대신 KSA 주체 (gcp/root 출력 identity_principals). 예전 identity_gsa_emails 는 이제 아무 값도 안 가리킨다
+  for (const [id, v] of Object.entries(obj(out.identity_principals) ?? {})) put(`identity.${id}.principal`, v);
   for (const [id, v] of Object.entries(obj(out.identity_role_arns) ?? {})) put(`identity.${id}.role_arn`, v);
   // TA13: 관리형 서비스 이름 (aws·gcp 루트 출력 service_names)
   for (const [id, v] of Object.entries(obj(out.service_names) ?? {})) put(`service.${id}.name`, v);
@@ -156,7 +157,7 @@ export function stubTfOutputsV2(spec: AppSpecV2): TfOutputs {
     }
   }
   for (const i of identitiesOf(spec)) {
-    out[`identity.${i.id}.gsa_email`] = `stub-${i.id}@stub-project.iam.gserviceaccount.com`;
+    out[`identity.${i.id}.principal`] = `principal://iam.googleapis.com/projects/000000000000/locations/global/workloadIdentityPools/stub-project.svc.id.goog/subject/ns/stub/sa/${i.serviceAccount}`;
     out[`identity.${i.id}.role_arn`] = `arn:aws:iam::000000000000:role/stub-${i.id}`;
   }
   // DEPLOYNONK8S STUB: 관리형 서비스 이름·VM 머신 종류·인스턴스 목록 (화면 값의 자리표시 없애기 + 배포 확인이 읽는 출력). 값은 id 에서 결정적
