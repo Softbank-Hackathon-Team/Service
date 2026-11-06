@@ -160,7 +160,7 @@ docker compose ps
 | `MOCK_IAC=1` | terraform을 부르지 않고 가짜 출력 |
 | `MOCK_ARGO=1` | Argo CD 반영을 바로 성공으로 봄 |
 | `MOCK_PRECHECK=1` | 클라우드 사전 점검을 가짜로 |
-| `MOCK_CREDS=1`, `MOCK_REPL=1`, `MOCK_TRAFFIC=1` | 임시 자격·복제·트래픽을 가짜로 |
+| `IMAGE_BUILD=1` | 이미지를 빌드하지 않고 고정 digest |
 | `FAKE_LLM=1` | AI 호출 대신 정해진 답 |
 | `DEV_AUTH=1` | 로그인 없이 `x-dev-tenant` 헤더로 회사 지정 |
 | `GITOPS_DISABLE=1` | gitops 레포에 쓰지 않음 |
@@ -172,8 +172,7 @@ docker compose ps
 
 ```bash
 MOCK_SEED=1 MOCK_IAC=1 MOCK_ARGO=1 \
-MOCK_CREDS=1 MOCK_REPL=1 \
-MOCK_TRAFFIC=1 MOCK_PRECHECK=1 \
+MOCK_PRECHECK=1 \
 FAKE_LLM=1 GITOPS_DISABLE=1 \
 GITOPS_REPO_URL= PROM_URL= \
 TRAFFIC_OBSERVE_SEC=0.5 \

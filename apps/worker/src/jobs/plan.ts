@@ -3,7 +3,7 @@ import { ApprovalRowV2, PlanDoc, PlanJob, PrecheckItem, QUEUES, checkV2, AppSpec
 import { PLAN_ROLLBACK_WINDOW_SEC, latestAcceptedSpecV2, retryBudget, SPEC_DRAFT_KEY, type AcceptedSpecV2Row, type Tx } from "@svc/core";
 import { estimateCostV2, loadCatalog } from "@svc/cost";
 import { DbNetworkError, isAdapterError, NEEDS_HUMAN, regionOf, specV2OrThrow, targetBuilderFor, UNSUPPORTED_V2 } from "@svc/adapters";
-import { planEnvLayer, readEnvLayer, type EnvLayerRow } from "../env-layer.js";
+import { planEnvLayer, readEnvLayer, readInventoryFacts, type EnvLayerRow, type InventoryFacts } from "../env-layer.js";
 import type { z } from "zod";
 import { failedAttempts, jobData, recordAttemptFailure, RetryLater, runStep, stableHash, stubWait, type StepOutcome } from "./_step.js";
 import { savePlan } from "./plan-store.js";
@@ -216,16 +216,18 @@ export async function handlePlan(raw: unknown) {
       const precheck = PrecheckItem.array().safeParse(pc.rows[0]?.items ?? []);
       const extras = await loadPlanSpecExtras(tx, m.id);
       const envLayerRow = env.provider === "gcp" ? await readEnvLayer(tx, m.targetEnvId) : null;
-      return { envLayerRow, specRow, provider: env.provider as Provider, precheck: precheck.success ? precheck.data : [],
+      // AWS 도착 사실 = 실자원 읽기가 저장한 도착 EKS 의 VPC·서브넷 (TF_FACT_* 가 없을 때 planEnvLayer 가 쓴다)
+      const inventoryFacts = env.provider === "aws" ? await readInventoryFacts(tx, m.targetEnvId) : null;
+      return { envLayerRow, inventoryFacts, specRow, provider: env.provider as Provider, precheck: precheck.success ? precheck.data : [],
                accountId: (env.account_id as string | null) ?? null,
                sourceProvider: (se.rows[0]?.provider ?? env.provider) as Provider, ...extras };
     },
     work: async (j, m, loaded) => "recheckFailed" in (loaded as object)
       ? planRecheckOutcome(j, loaded as PlanRecheckFailed)
       : withStepRoles("plan", j, m, async () => {
-      const { specRow, provider, precheck, sourceProvider, specVersion, v2Approvals, accountId, envLayerRow } = loaded as {
+      const { specRow, provider, precheck, sourceProvider, specVersion, v2Approvals, accountId, envLayerRow, inventoryFacts } = loaded as {
         specRow: AcceptedSpecV2Row; provider: Provider; precheck: PrecheckItem[]; accountId: string | null; envLayerRow: EnvLayerRow | null;
-        sourceProvider: Provider; specVersion?: number; v2Approvals: ApprovalRowV2[] };
+        inventoryFacts: InventoryFacts | null; sourceProvider: Provider; specVersion?: number; v2Approvals: ApprovalRowV2[] };
       await stubWait();
       const { spec } = specV2OrThrow(specRow);
       const plan = buildPlanDoc({
@@ -238,8 +240,8 @@ export async function handlePlan(raw: unknown) {
         // TA3 비용: Terraform 루트와 같은 명세로 센다
         costSummary: estimatePlanCost(spec, sourceProvider, provider),
         accountId, imported: importedFor(process.env, m.id, job.tenantId),
-        // 환경 층: DB ready 줄이면 existing(그 사실), 없고 ENV_LAYER_AUTO=1 이면 create(GKE 생성 고지). 그 밖은 칸 없음
-        ...(() => { const el = planEnvLayer(provider, envLayerRow, process.env, accountId, regionOf({ envId: m.targetEnvId, provider, region: "default" }));
+        // 환경 층: DB ready 줄이면 existing(그 사실), 없고 ENV_LAYER_AUTO=1 이면 create(GKE 생성 고지). AWS 는 실자원 사실(칸 없이). 그 밖은 칸 없음
+        ...(() => { const el = planEnvLayer(provider, envLayerRow, process.env, accountId, regionOf({ envId: m.targetEnvId, provider, region: "default" }), inventoryFacts);
           return { ...(el.envLayer ? { envLayer: el.envLayer } : {}), ...(el.dbFacts ? { envLayerFacts: el.dbFacts } : {}) }; })(),
       });
       return { to: "awaiting_approval", detail: { planId: plan.planId, planHash: plan.planHash },

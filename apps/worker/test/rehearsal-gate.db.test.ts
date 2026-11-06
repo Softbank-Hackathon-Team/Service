@@ -165,6 +165,7 @@ test("끔(기본): 예전처럼 커밋 → syncing, 근거 rehearsal=disabled �
   assert.equal(commits(), before + 1);
   const a = (await lastAudit(id, "deploy.syncing"))!;
   assert.equal(a.evidence.rehearsal, "disabled");
+  assert.equal(a.evidence.securityParity, "not_measured", "보안 동등성은 잰 근거가 없어 true 라고 하지 않는다");
   assert.ok(a.gitops.commit && a.gitops.argoApp && !("rehearsal" in a.gitops), "gitops detail 은 예전 칸 그대로");
   assert.deepEqual((await runs(id)).map((r) => [r.status, r.skip_reason, r.epoch, r.phase]), [["skipped", "disabled", (await mig(id)).version - 1, "done"]]);
 });

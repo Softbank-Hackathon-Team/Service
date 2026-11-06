@@ -17,6 +17,11 @@ variable "cfg" {
 }
 variable "app_name" { type = string }
 variable "tenant_label" { type = string } # 라벨에 넣을 수 있게 root가 정리해서 넘김
+# Argo CD 허브가 이 구역에 앱을 배포하게 할지. 허브를 켠 플랫폼(ARGO_HUB_ROLE_ARN)에서 워커가 apply 때 켠다
+variable "hub_deploy" {
+  type    = bool
+  default = false
+}
 
 resource "kubernetes_namespace_v1" "this" {
   metadata {
@@ -40,4 +45,27 @@ resource "kubernetes_resource_quota_v1" "this" {
   }
 }
 
+# 허브(고객 svc-deploy → 접근 항목 그룹 platform:deploy)는 이 구역 안에서만 앱을 배포한다. 클러스터 전체 묶음은 없다.
+# ClusterRole platform-deploy-app 은 고객이 부트스트랩 때 한 번 적용한다 (infra/permissions/eks-deploy-rbac.yaml).
+# 실행 그룹 platform:operate 가 만들 수 있는 묶음은 이 모양 하나뿐이다 (eks-operate-namespace-rbac.yaml 의 bind 와 VAP)
+resource "kubernetes_role_binding_v1" "hub_deploy" {
+  count = var.hub_deploy ? 1 : 0
+  metadata {
+    name      = "platform-deploy-app"
+    namespace = kubernetes_namespace_v1.this.metadata[0].name
+  }
+  role_ref {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "ClusterRole"
+    name      = "platform-deploy-app"
+  }
+  subject {
+    api_group = "rbac.authorization.k8s.io"
+    kind      = "Group"
+    name      = "platform:deploy"
+  }
+}
+
 output "name" { value = kubernetes_namespace_v1.this.metadata[0].name }
+output "hub_subject" { value = one(kubernetes_role_binding_v1.hub_deploy[*].subject[0].name) }
+output "hub_role_ref" { value = one(kubernetes_role_binding_v1.hub_deploy[*].role_ref[0]) }

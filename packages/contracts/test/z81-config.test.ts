@@ -1,7 +1,7 @@
 // Z81-09: 시작 설정 검사 표 시험. DB 없이 돈다
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { configProblems, CONFIG_RULES, TEST_ONLY_SWITCHES, testSwitchesOn, type ConfigService } from "../src/config.js";
 
 const SERVICES = Object.keys(CONFIG_RULES) as ConfigService[];
@@ -61,9 +61,24 @@ test("z75-68: DEMO_MODE=1 에서 시험 전용 스위치가 켜져 있으면 세
     assert.equal(configProblems(s, { DEMO_MODE: "1", MOCK_SEED: "0" }).filter((x) => /시험 전용/.test(x)).length, 0, s);
   }
   assert.deepEqual(testSwitchesOn({ MOCK_ARGO: " 1 ", MOCK_PRECHECK: "0", DEV_AUTH: "1" }), ["MOCK_ARGO", "DEV_AUTH"]);
-  assert.deepEqual([...TEST_ONLY_SWITCHES], ["MOCK_SEED", "MOCK_IAC", "MOCK_ARGO", "MOCK_PRECHECK", "FAKE_LLM", "DEV_AUTH", "MOCK_CREDS", "MOCK_REPL", "MOCK_TRAFFIC",
+  assert.deepEqual([...TEST_ONLY_SWITCHES], ["MOCK_SEED", "MOCK_IAC", "MOCK_ARGO", "MOCK_PRECHECK", "FAKE_LLM", "DEV_AUTH", "IMAGE_BUILD",
     "MOCK_SANDBOX", "MOCK_SANDBOX_RESULT"]);
-  assert.deepEqual(configProblems("worker", { DEMO_MODE: "1", MOCK_CREDS: "1", MOCK_REPL: "1", MOCK_TRAFFIC: "1" }).filter((x) => /시험 전용/.test(x)).map((x) => x.split(":")[0]), ["MOCK_CREDS", "MOCK_REPL", "MOCK_TRAFFIC"]);
+  // IMAGE_BUILD=1 이면 빌드 대신 입력으로 만든 고정 digest 를 돌려준다 (worker jobs/image-build.ts STUB)
+  assert.deepEqual(configProblems("worker", { DEMO_MODE: "1", IMAGE_BUILD: "1" }).filter((x) => /시험 전용/.test(x)).map((x) => x.split(":")[0]), ["IMAGE_BUILD"]);
+});
+
+// 읽는 코드가 없는 이름을 막으면 "데모에서 흉내를 막았다"는 착각만 남는다 (예전 MOCK_CREDS·MOCK_REPL·MOCK_TRAFFIC)
+test("TEST_ONLY_SWITCHES 의 이름마다 그 값을 읽는 소스가 있다", () => {
+  const root = new URL("../../../", import.meta.url);
+  const sources = ["apps", "packages"].flatMap((top) => readdirSync(new URL(top, root)).flatMap((pkg) => {
+    const src = new URL(`${top}/${pkg}/src/`, root);
+    if (!existsSync(src)) return [];
+    return (readdirSync(src, { recursive: true }) as string[]).filter((f) => /\.tsx?$/.test(f) && !`${top}/${pkg}/src/${f}`.endsWith("contracts/src/config.ts"))
+      .map((f) => readFileSync(new URL(f, src), "utf8"));
+  }));
+  assert.ok(sources.length > 100, "소스를 찾았다");
+  const unread = TEST_ONLY_SWITCHES.filter((k) => !sources.some((s) => new RegExp(`env\\.${k}\\b|env\\["${k}"\\]|"${k}"`).test(s)));
+  assert.deepEqual(unread, []);
 });
 
 test("PRINCIPALUSER: PLATFORM_PRINCIPAL_ARN 은 IAM 역할·사용자만 (:root·assumed-role·모양 틀림 거부)", () => {
@@ -75,6 +90,17 @@ test("PRINCIPALUSER: PLATFORM_PRINCIPAL_ARN 은 IAM 역할·사용자만 (:root�
   assert.equal(p("arn:aws:iam::123456789012:root").length, 1);
   assert.equal(p("arn:aws:sts::123456789012:assumed-role/x/y").length, 1);
   assert.equal(p("arn:aws:iam::1234:user/x").length, 1);
+});
+
+test("ARGO_HUB_ROLE_ARN 은 api·worker 둘 다 IAM 역할만 (사용자·:root·모양 틀림이면 뜨지 않는다)", () => {
+  for (const s of ["api", "worker"] as const) {
+    const p = (v: string) => configProblems(s, { DATABASE_URL: "postgres://u@localhost:5432/d", ARGO_HUB_ROLE_ARN: v })
+      .filter((x) => x.startsWith("ARGO_HUB_ROLE_ARN"));
+    assert.deepEqual(p("arn:aws:iam::725072160743:role/platform-argocd-hub"), [], s);
+    assert.equal(p("arn:aws:iam::725072160743:user/x").length, 1, s);
+    assert.equal(p("arn:aws:iam::725072160743:root").length, 1, s);
+    assert.equal(p("platform-argocd-hub").length, 1, s);
+  }
 });
 
 test("리허설 설정 (worker): 정상 값 통과 / 틀린 값은 이름: 이유, 켰는데 복사 자리 없으면 거부 (흉내면 통과)", () => {

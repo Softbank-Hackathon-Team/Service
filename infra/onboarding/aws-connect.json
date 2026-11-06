@@ -549,6 +549,7 @@
                     "rds:DescribeDBParameters",
                     "rds:DescribeDBEngineVersions",
                     "ec2:DescribeVpcs",
+                    "ec2:DescribeSubnets",
                     "ec2:DescribeSecurityGroups",
                     "ec2:DescribeRegions",
                     "ec2:DescribeAddresses",
@@ -1030,6 +1031,7 @@
           "Version": "2012-10-17",
           "Statement": [
             {
+              "Sid": "HubAssume",
               "Effect": "Allow",
               "Principal": {
                 "AWS": {
@@ -1037,6 +1039,16 @@
                 }
               },
               "Action": "sts:AssumeRole"
+            },
+            {
+              "Sid": "HubSessionTags",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": {
+                  "Ref": "ArgoHubRoleArn"
+                }
+              },
+              "Action": "sts:TagSession"
             }
           ]
         }

@@ -17,6 +17,7 @@ export const AWS_COMMAND_ACTIONS: Record<string, string | null> = {
   "rds describe-db-parameters": "rds:DescribeDBParameters",
   "rds describe-db-engine-versions": "rds:DescribeDBEngineVersions",
   "ec2 describe-vpcs": "ec2:DescribeVpcs",
+  "ec2 describe-subnets": "ec2:DescribeSubnets",   // 도착 사실: EKS 클러스터 서브넷의 영역·공개 여부 (aws/target-facts.ts)
   "ec2 describe-security-groups": "ec2:DescribeSecurityGroups",
   "ec2 describe-regions": "ec2:DescribeRegions",
   "ec2 describe-addresses": "ec2:DescribeAddresses",

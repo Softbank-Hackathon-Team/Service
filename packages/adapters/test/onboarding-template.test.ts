@@ -111,8 +111,11 @@ test("ID-1 정상: 배포 역할·접근 항목은 ArgoHubRoleArn 이 있을 때
   assert.equal(role.RoleName, "svc-deploy");
   assert.equal(role.ManagedPolicyArns, undefined);
   assert.equal(role.Policies, undefined);
-  assert.deepEqual(role.AssumeRolePolicyDocument.Statement[0].Principal, { AWS: { Ref: "ArgoHubRoleArn" } });
-  assert.equal(role.AssumeRolePolicyDocument.Statement[0].Action, "sts:AssumeRole");
+  // 신뢰 = 허브 역할 하나에게 AssumeRole, 같은 주체에게 TagSession 따로 (Pod Identity 세션 태그). 다른 주체·동작 없음
+  assert.deepEqual(role.AssumeRolePolicyDocument.Statement.map((s: { Principal: unknown; Action: unknown; Effect: string }) => [s.Effect, s.Principal, s.Action]), [
+    ["Allow", { AWS: { Ref: "ArgoHubRoleArn" } }, "sts:AssumeRole"],
+    ["Allow", { AWS: { Ref: "ArgoHubRoleArn" } }, "sts:TagSession"],
+  ]);
   assert.deepEqual(t.Resources.DeployAccess.Properties.KubernetesGroups, ["platform:deploy"]);
   assert.equal(t.Resources.DeployAccess.Properties.AccessPolicies, undefined);
 });

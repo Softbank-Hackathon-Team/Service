@@ -16,6 +16,11 @@ notifications:
 
 # DRAFT(ai): 노드 t3.medium 1대에 워커와 같이 뜬다. requests 를 작게 잡고 상한만 둔다
 controller:
+  # 고객 EKS 로그인(cluster Secret awsAuthConfig → argocd-k8s-auth aws)이 허브 역할(Pod Identity, infra/modules/aws/platform/argocd-hub.tf)로
+  #   고객 svc-deploy 를 빌릴 때 쓰는 STS 지역. DRAFT(ai) 【추정】 Pod Identity 는 지역 변수를 넣어 주지 않아 직접 둔다 (플랫폼 지역과 같게)
+  env: &awsLogin
+    - { name: AWS_REGION, value: ap-northeast-2 }
+    - { name: AWS_STS_REGIONAL_ENDPOINTS, value: regional }
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { memory: 768Mi }
@@ -24,6 +29,7 @@ repoServer:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { memory: 512Mi }
 server:
+  env: *awsLogin
   resources:
     requests: { cpu: 25m, memory: 64Mi }
     limits: { memory: 256Mi }

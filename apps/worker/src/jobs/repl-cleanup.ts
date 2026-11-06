@@ -1,6 +1,7 @@
 import { MigrationJob, TERMINAL, type MigrationStatus } from "@svc/contracts";
 import { withTenant, writeAudit } from "@svc/core";
 import { replicationFor } from "./_repl.js";
+import { ReplConfigError } from "@svc/replication";
 import { targetBundle } from "../app-link.js";
 import { commitReplicationCleanup } from "../gitops/index.js";
 import { cleanupAfterRollback, type ReplCleaner, type RollbackCleanup } from "./rollback-cleanup.js";
@@ -24,7 +25,14 @@ export async function handleReplCleanup(raw: unknown, cleaner?: ReplCleaner | nu
     await audit(j, "skipped", { status: status ?? null, reason: "not a finished migration" });
     return "skipped";
   }
-  const repl = cleaner === undefined ? await replicationFor(j.tenantId, j.migrationId) : cleaner;
+  let repl: ReplCleaner | null;
+  try { repl = cleaner === undefined ? await replicationFor(j.tenantId, j.migrationId) : cleaner; }
+  catch (e) {
+    // 끝점을 못 만듦(REPL_ENDPOINT_MISSING 등): 걷었다고 하지 않는다 → 감사 error + 덜 끝남 (끝점을 고친 뒤 다시 부른다)
+    if (!(e instanceof ReplConfigError)) throw e;
+    await audit(j, "error", { status, code: e.code, error: e.message.slice(0, 500) });
+    return "incomplete";
+  }
   if (!repl) {
     // STUB: 복제 설정(REPL_*)이 없는 개발 환경. 걷을 대상이 없다
     await audit(j, "ok", { status, stub: true, removed: [], leftovers: [] });

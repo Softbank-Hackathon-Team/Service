@@ -1729,6 +1729,10 @@ paths:
                                   - "violations"
                                 additionalProperties: false
                               - type: "null"
+                          sandbox:
+                            anyOf:
+                              - $ref: "#/components/schemas/AgentRunSandbox"
+                              - type: "null"
                         required:
                           - "source"
                           - "runId"
@@ -1745,6 +1749,7 @@ paths:
                           - "checked"
                           - "notDone"
                           - "gate"
+                          - "sandbox"
                         additionalProperties: false
                       - type: "null"
                   specDraft:
@@ -4496,6 +4501,13 @@ components:
         - "migrationId"
         - "report"
       additionalProperties: false
+    AgentRunSandbox:
+      type: "string"
+      enum:
+        - "memory"
+        - "k3d"
+        - "vcluster"
+        - "none"
     ApiError:
       type: "object"
       properties:
@@ -11903,7 +11915,7 @@ components:
       additionalProperties: false
     SpecConfirmPath:
       type: "string"
-      pattern: "^(components|app|links|entry|posture|security|check|secrets|unread)(\\.|$)\\S{0,300}$"
+      pattern: "^(components|app|links|entry|posture|security|check|secrets|unread|namespaces)(\\.|$)\\S{0,300}$"
     SpecFieldPath:
       type: "string"
       pattern: "^(components\\.[a-z][a-z0-9-]{0,39}\\.[A-Za-z][A-Za-z0-9]{0,39}|app\\.name|links|entry|posture|security|secrets)$"

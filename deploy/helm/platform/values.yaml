@@ -119,6 +119,9 @@ trafficMetrics:
 # 워커가 Application 을 읽고 새로고침 표시를 다는 Argo CD 네임스페이스 (Role·RoleBinding 이 여기 생긴다)
 argocd:
   namespace: argocd
+  # 허브의 AWS 역할 = Terraform(infra/modules/aws/platform) 출력 argocd_hub_role_arn. 비우면 아무것도 안 바뀐다 (EKS 도착 목적지는 사람이 등록)
+  # 채우면 api·worker 에 ARGO_HUB_ROLE_ARN: 연결 링크가 고객 템플릿에 svc-deploy 를 만들고, 워커가 EKS 앱 구역 RoleBinding·Argo cluster Secret 을 쓴다
+  hubRoleArn: ""
 
 # 샌드박스(vCluster 리허설·수정 고리) 호스트 쪽 권한과 가드. agent-worker 가 sbx-* 네임스페이스에 vCluster 를 하나씩 만들고 지운다
 # 끄면 agent-worker 권한·VAP·StorageClass·RuntimeClass 가 모두 빠진다 (서비스 계정은 남는다)

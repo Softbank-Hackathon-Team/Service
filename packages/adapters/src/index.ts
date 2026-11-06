@@ -30,7 +30,7 @@ export { realTerraformEnabled, iacMockEnabled, findWorkDir, readImported, type I
 // 환경 층 (도착 GCP 프로젝트의 VPC·GKE·AR·ESO). worker env-layer.ts 가 apply 맨 앞에서 부른다
 export { createEnvLayerRunner, envLayerVars, envLayerVarsHash, envLayerFactsOf, factsOfLayer, mergeFacts, envLayerBackend, envLayerDirOf, envLayerBudgetSec,
   ENV_LAYER_KEYS, ENV_LAYER_MODULE, ENV_LAYER_MODULE_DIGEST, ENV_LAYER_NAME, type EnvLayerFacts, type EnvLayerVars, type EnvLayerResult, type EnvLayerRunner, type EnvLayerRunnerOpts } from "./terraform/env-layer.js";
-export { dbNetworkFromEnv, withDbNetworkV2, cidrProblem, DbNetworkError, type DbNetworkSummary } from "./terraform/db-network.js";
+export { dbNetworkFromEnv, withDbNetworkV2, withReplicationNetworkV2, cidrProblem, DbNetworkError, type DbNetworkSummary } from "./terraform/db-network.js";
 // Z86: 환경 실자원 읽기(읽기 전용 CLI) + 클라우드 서비스 대응표
 export { readInventory, inventoryUnavailable, inventoryToStatus, itemState, agentInventory, type AgentInventory, type CloudInventory, type InventoryGroup, type InventoryItem, type InventoryDeps } from "./inventory.js";
 export { SERVICE_NAME, METHOD_LABEL, type ServiceMapRow, type ServiceCategory, type MoveMethod, type PlanStepId } from "./common/service-map.js";
@@ -39,6 +39,7 @@ export { discoverSource, inventoryForAudit, discoverAws, discoverGcp, discoverOn
 export { AWS_NET_READ_ACTIONS, GCP_NET_READ_PERMISSIONS } from "./discover/net.js";
 export { AWS_COMMAND_ACTIONS, GCP_COMMAND_PERMISSIONS, actionsOfCommands } from "./common/observe-permissions.js";
 export { readAlbRequestRate, ALB_RATE_AWS_COMMANDS, type AlbRate, type AlbRateResult } from "./aws/alb-request-rate.js";
+export { AWS_TARGET_FACT_KEYS, awsTargetFactsOf, readAwsTargetFacts, type AwsTargetFactsRead } from "./aws/target-facts.js";
 export { AWS_DATA_READ_ACTIONS, GCP_DATA_READ_PERMISSIONS, AWS_DATA_READ_PENDING, GCP_DATA_READ_PENDING } from "./discover/data.js";
 export { readK8sNamespace, type K8sNamespaceRead, type K8sNamespaceOpts } from "./discover/k8s.js";
 // I2: k8s 원본 타입 + 종류 문자열

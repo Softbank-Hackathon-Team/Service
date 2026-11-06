@@ -40,6 +40,8 @@ const httpsUrl: Check = (v) => {
 const registryPrefix: Check = (v) => (/^[a-z0-9.-]+(:\d{1,5})?(\/[a-z0-9._-]+)+$/.test(v.trim()) ? null : "<호스트>/<접두어> 모양이 아님");
 // 쿠버네티스 RuntimeClass 이름 (DNS 하위 도메인 모양)
 const runtimeClassName: Check = (v) => (/^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$/.test(v.trim()) ? null : "RuntimeClass 이름 모양이 아님 (소문자·숫자·-·.)");
+// 플랫폼 Argo CD 허브 역할 (infra/modules/aws/platform 출력 argocd_hub_role_arn). 연결 템플릿 ArgoHubRoleArn 패턴과 같게 역할만
+const hubRoleArn: Check = (v) => (/^arn:aws:iam::\d{12}:role\/.+$/.test(v.trim()) ? null : "IAM 역할 ARN 모양이 아님");
 const switchOn = (v: string | undefined) => v?.trim() === "1";
 
 // 이름 → 검사. required 가 아니면 비어 있어도 된다 (비면 코드 기본값)
@@ -71,9 +73,11 @@ export const CONFIG_RULES = {
     CONNECT_TEMPLATE_URL: { check: httpsUrl },
     // DRAFT(ai) PRINCIPALUSER: 플랫폼 주체는 IAM 역할 또는 IAM 사용자 (데모 계정 finals 는 사용자 키). :root·sts assumed-role 은 거부
     PLATFORM_PRINCIPAL_ARN: { check: (v) => (/^arn:aws:iam::\d{12}:(role|user)\/[\w+=,.@\/-]+$/.test(v.trim()) ? null : "IAM 역할·사용자 ARN 모양이 아님") },
+    ARGO_HUB_ROLE_ARN: { check: hubRoleArn },   // 있으면 연결 링크가 템플릿에 svc-deploy 를 만들게 한다
   },
   worker: {
     ...COMMON,
+    ARGO_HUB_ROLE_ARN: { check: hubRoleArn },   // 있으면 EKS 도착에 허브 RoleBinding·Argo cluster Secret 을 만든다
     WORKER_METRICS_PORT: { check: port },
     STEP_ROLE_TTL_SEC: { check: num({ min: 1 }) },
     CRED_RENEW_SEC: { check: num({ min: 0 }) },
@@ -140,11 +144,12 @@ const CROSS: Partial<Record<ConfigService, (env: NodeJS.ProcessEnv) => string[]>
 };
 
 // z75-68 (Z62): 시험 전용 스위치. 켜져 있으면 진짜 대신 흉내(데모 원본·IaC·Argo·사전 점검·가짜 LLM·개발 헤더 인증)로 돈다.
-//   MOCK_CREDS 는 Z105-01, MOCK_REPL·MOCK_TRAFFIC 은 Z100 (Z38 R8-50 로 추가)
+//   IMAGE_BUILD: 빌드 대신 입력으로 만든 고정 digest (worker jobs/image-build.ts STUB, 진짜 빌더 없음)
 //   MOCK_SANDBOX: 클러스터 없이 정해진 리허설 결과 (기본 통과, MOCK_SANDBOX_RESULT=fail 이면 실패). 로컬 화면 작업용
+//   목록의 이름은 읽는 코드가 있어야 한다 (시험 z81-config). 예전 MOCK_CREDS·MOCK_REPL·MOCK_TRAFFIC 은 읽는 곳이 없어 뺐다
 //   데모(DEMO_MODE=1)에서 하나라도 켜져 있으면 서비스가 뜨지 않는다 (끝 코드 2, 이름만 찍음). 빈 값·"0" 은 꺼짐
 //   NODE_ENV=production 은 조건에 넣지 않았다: 운영 이미지(Dockerfile)가 늘 production 이고 운영 e2e(verify-round prod-e2e)가 이 스위치로 돈다
-export const TEST_ONLY_SWITCHES = ["MOCK_SEED", "MOCK_IAC", "MOCK_ARGO", "MOCK_PRECHECK", "FAKE_LLM", "DEV_AUTH", "MOCK_CREDS", "MOCK_REPL", "MOCK_TRAFFIC",
+export const TEST_ONLY_SWITCHES = ["MOCK_SEED", "MOCK_IAC", "MOCK_ARGO", "MOCK_PRECHECK", "FAKE_LLM", "DEV_AUTH", "IMAGE_BUILD",
   "MOCK_SANDBOX", "MOCK_SANDBOX_RESULT"] as const;
 export function testSwitchesOn(env: NodeJS.ProcessEnv = process.env): string[] {
   return TEST_ONLY_SWITCHES.filter((k) => { const v = env[k]?.trim(); return !!v && v !== "0"; });

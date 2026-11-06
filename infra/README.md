@@ -59,6 +59,17 @@ terraform apply -var expected_account_id=$(aws sts get-caller-identity --query A
 | state | 작업 폴더 로컬 파일 (`envLayerBackend()` 한 곳, TODO(human): 원격 저장) |
 | 실패 | 줄 `status=failed`, 이전은 `ENV_LAYER_APPLY_FAILED`. 만들다 만 자원은 지우지 않는다. 다시 계획·apply 하면 같은 state 로 이어 만든다 |
 
+AWS 도착은 만들지 않는다. 고객 계정에 이미 있는 EKS(연결 때 적은 `EksClusterName`)를 쓴다.
+worker 의 실자원 읽기(inventory-refresh, 관찰 역할)가 그 클러스터를 `eks describe-cluster`·`ec2 describe-subnets` 로 읽어 `environment_inventory.result.targetFacts` 에 둔다.
+`TF_FACT_*`(`TF_FACT_VPC_ID`·`TF_FACT_DB_SUBNET_IDS_JSON`·`TF_FACT_CLUSTER_NAME`·`TF_FACT_DB_PUBLIC_SUBNET_IDS_JSON`)가 하나도 없으면 계획·apply·다시 apply 가 이 값을 쓴다.
+
+| 항목 | 내용 |
+|---|---|
+| 사실 | `clusterName` = 연결 때 적은 이름, `vpcId` = 클러스터 VPC, `dbSubnetIdsJson` = 클러스터 서브넷 중 사설(공개 IP 자동 배정 끔, 공개 ELB 표시 없음), `dbPublicSubnetIdsJson` = 나머지 (공개 DB 데모만) |
+| 쓰는 조건 | 읽은 클러스터 = 지금 환경의 클러스터, 읽은 지역 = 도착 지역(`ap-northeast-2`), 클러스터 ACTIVE, 사설 서브넷이 두 영역(AZ) 이상 |
+| 못 쓸 때 | apply 맨 앞에서 `TARGET_FACTS_UNAVAILABLE` + 이유 한 줄 (아직 안 읽음이면 도착 환경 화면을 열면 읽는다). Terraform 은 부르지 않는다 |
+| 승인 대조 | 계획서 `targetFacts` 에 위 값이 실린다. apply 때 다시 읽은 값이 다르면 `TF_PLAN_DRIFT` |
+
 운영 주의
 - 비용: e2-standard-2 노드 2대 + Cloud NAT + 고정 외부 IP 1개가 이전이 끝나도 계속 과금된다.
 - 이전의 롤백·정리(target-destroy)는 환경 층을 지우지 않는다 (환경 소유). 지울 때는 사람이 그 작업 폴더에서

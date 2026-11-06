@@ -70,6 +70,10 @@ export const CloudInventory = z.object({
   }).strict()),
 }).strict();
 
+// 저장된 줄 = 실자원 + 워커가 같이 둔 AWS 도착 사실(targetFacts, 계획·apply 전용). 화면 응답에는 빼고 실자원만
+const StoredCloudInventory = CloudInventory.extend({ targetFacts: z.unknown().optional() })
+  .transform(({ targetFacts: _workerOnly, ...inventory }) => inventory);
+
 export const EnvResources = z.object({
   envId: z.uuid(), name: z.string(), provider: Provider, generatedAt: z.string(),
   cloud: CloudInventory,                    // 실자원 (worker 가 클라우드에서 읽어 저장한 값)
@@ -233,10 +237,10 @@ export function sourceResources(m: MigrationRow, s: Summary): Res[] {
   const st = effectiveStatus(m);
   const k = SOURCE_KIND[m.sourceProvider];
   const done = m.status === "completed";
-  const removedStub = (m.cleanupRemoved ?? []).some((x) => /source app scaled to 0/.test(x));
-  const app: FState = done ? "stopped" : st === "rollback_window" ? "standby" : st === "cleanup" ? "stopping" : "running";
+  // 정리는 출발 앱을 줄이거나 지우지 않는다 (worker cleanup.ts SOURCE_APP): 창·정리 동안은 트래픽 0 대기, 끝난 뒤엔 사람이 내릴 때까지 남는다
+  const app: FState = done ? "left" : st === "rollback_window" || st === "cleanup" ? "standby" : "running";
   const out: Res[] = [{ category: "compute", type: k.app[0], label: `${k.app[1]} · 컨테이너 ${s.replicas}개`, state: app,
-                        evidence: done && removedStub ? "audit" : "discovered" }];
+                        evidence: "discovered" }];
   if (s.database) {
     // 컷오버 뒤 출발 DB 는 쓰기 권한을 회수한 채 남는다 (지울지는 TODO(human), 워커 cleanup.ts)
     const db: FState = reached(st, "rollback_window") && m.status !== "rolled_back" ? "standby" : "running";
@@ -413,7 +417,7 @@ export async function storedInventory(o: StoredInventoryRequest): Promise<Stored
        FROM environment_inventory WHERE environment_id = $1`, [o.envId, staleSec(env), inFlightSec(env)])).rows[0] as
     { result: unknown; checkedAt: string | null; stale: boolean; inFlight: boolean } | undefined);
   // 결과가 계약과 안 맞으면(옛 모양) 없는 것으로 본다. 지어내지 않고 다시 읽기를 기다린다
-  const parsed = CloudInventory.safeParse(row?.result);
+  const parsed = StoredCloudInventory.safeParse(row?.result);
   const out: StoredInventory = { inventory: parsed.success ? parsed.data : null, refreshing: row?.inFlight ?? false, checkedAt: row?.checkedAt ?? null };
   if (!row || (row.stale && !row.inFlight)) {
     // 큐가 안 되어도 화면은 있는 값을 보여 준다 (읽기 트랜잭션과 나눈 이유)

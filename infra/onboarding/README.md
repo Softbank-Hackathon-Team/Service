@@ -14,7 +14,7 @@
 | `svc-operate` | 이전에 필요한 서비스만 허용하는 관리형 정책(`svc-operate-policy`). 앱 역할(`app-*`)은 권한 경계가 붙어야만 만들 수 있음 |
 | `platform-app-boundary` | 앱 역할이 가질 수 있는 최대 권한. 실행 정책이 요구한다. `svc-operate` 자신에게는 붙이지 않는다 |
 | EKS 접근 항목 2개 | 관찰 = `AmazonEKSViewPolicy`(클러스터 범위), 실행 = 그룹 `platform:operate`만 |
-| (선택) `svc-deploy` + 접근 항목 | ID-1: `ArgoHubRoleArn`을 줄 때만. Argo CD 허브가 빌리는 배포 역할(IAM 권한 0) → 그룹 `platform:deploy`. 권한은 앱 네임스페이스 RoleBinding으로만(`infra/permissions/eks-deploy-rbac.yaml`, 클러스터 범위 없음). 신뢰에 ExternalId 없음(Argo가 못 넘김【추정】) TODO(human) |
+| (선택) `svc-deploy` + 접근 항목 | ID-1: `ArgoHubRoleArn`을 줄 때만. Argo CD 허브가 빌리는 배포 역할(IAM 권한 0) → 그룹 `platform:deploy`. 권한은 앱 네임스페이스 RoleBinding으로만(`infra/permissions/eks-deploy-rbac.yaml`, 클러스터 범위 없음). 신뢰 = 허브 역할에게 `sts:AssumeRole` + `sts:TagSession`(Pod Identity 세션 태그【추정】). ExternalId 없음(Argo가 못 넘김【추정】) TODO(human) |
 | 신뢰 정책(두 역할 공통) | 주체 = 플랫폼 워커 역할 하나, 동작 = `sts:AssumeRole`·`sts:TagSession`·`sts:SetSourceIdentity`, 조건 = `sts:ExternalId` 일치 |
 
 신뢰 정책에 `TagSession`·`SetSourceIdentity`가 있어야 한다. 플랫폼 발급기가 역할을 빌릴 때 항상 태그와 SourceIdentity를 넣기 때문에, 빠지면 AssumeRole이 전부 AccessDenied가 된다.
@@ -25,7 +25,7 @@
 | `ExternalId` | 플랫폼이 연결 화면에서 알려 준 값을 그대로 (32자 이상). NoEcho가 아니라 빠른 생성 링크로 넘길 수 있다 |
 | `PlatformPrincipalArn` | 플랫폼 워커 **역할 또는 사용자** ARN (데모 계정은 사용자 키). `:root`·assumed-role 은 패턴이 거부한다. API 설정 검사와 같은 규칙 (DRAFT(ai)) |
 | `EksClusterName` | 이전 대상 EKS 클러스터 이름 |
-| `ArgoHubRoleArn` | 선택. 플랫폼 Argo CD 허브 역할 ARN (API 설정 `ARGO_HUB_ROLE_ARN`이 있으면 링크가 채움). 비우면 배포 역할 없음 |
+| `ArgoHubRoleArn` | 선택. 플랫폼 Argo CD 허브 역할 ARN = `infra/modules/aws/platform` 출력 `argocd_hub_role_arn` (차트 `argocd.hubRoleArn` → API 설정 `ARGO_HUB_ROLE_ARN`, 있으면 링크가 채움). 비우면 배포 역할 없음 |
 | `CreateBoundaryPolicy` | 기본 `true`. 같은 계정에 `infra/modules/aws/env`가 이미 `platform-app-boundary`를 만들었으면 `false`. F17: 연결 링크가 알아서 `false`를 넣는 경우 = 링크 요청에 `?boundaryPolicyExists=true`(CLI `env:connect`가 `aws iam get-policy`로 확인해 붙임) 또는 고객 계정 번호 = 플랫폼 주체 계정 |
 
 ## 올리는 곳 (S3)
@@ -38,7 +38,25 @@
 3. "IAM 리소스를 만들 수 있음" 확인란에 체크하고 스택을 만든다 (`CAPABILITY_NAMED_IAM`: 역할 이름이 고정이라 필요)
 4. 스택이 `CREATE_COMPLETE`가 되면 연결 화면에서 "확인"을 누른다 (플랫폼이 관찰 역할을 빌려 읽기를 확인)
 5. 실행 역할이 클러스터에서 일하려면 RBAC를 한 번 적용한다: `kubectl apply -f infra/permissions/eks-operate-namespace-rbac.yaml` (네임스페이스 관리 + 배포 RoleBinding 만들기, bind는 `platform-deploy-app` 하나만). 배포 역할을 쓰면 `eks-deploy-rbac.yaml`도 같이
-   - 남은 일(범위 밖, GitOps·프로비저닝): 네임스페이스 모듈이 `platform:deploy` RoleBinding을 만들기, Argo CD 클러스터 등록(namespaces 한정, `awsAuthConfig.roleARN` = `svc-deploy`)
+   - 그 뒤로는 사람이 할 일이 없다 (플랫폼이 허브를 켰을 때, `ARGO_HUB_ROLE_ARN`): 이전마다 네임스페이스 모듈이 앱 구역에 `platform:deploy` RoleBinding 을 만들고(`infra/modules/aws/kinds/namespace`), 워커가 배포 커밋에 Argo CD cluster Secret(`tenants/<회사>/argocd/cluster-aws-eks.yaml`, namespaces 한정, `awsAuthConfig.roleARN` = 이 계정의 `svc-deploy`)을 같이 쓴다
+   - 클러스터 범위 RBAC(위 두 파일)는 플랫폼 역할이 만들 수 없다 (실행 그룹에 ClusterRole 쓰기 권한이 없다). 그래서 한 번은 고객이 적용한다
+
+### 이미 연결한 고객: 배포 역할 더하기 (허브를 켠 뒤 한 번)
+플랫폼이 허브 역할을 켜기 전에 연결한 스택에는 `svc-deploy` 가 없다. 그대로 두면 EKS 도착 배포가 Argo CD 로그인 실패로 멈춘다 (`ARGO_*` 실패, 사유에 AccessDenied).
+1. CloudFormation 콘솔 → 연결 스택(`svc-connect-<환경 앞 8자>`) → 업데이트 → "현재 템플릿 교체" → 새 템플릿 주소(연결 화면 링크의 `templateURL`)
+2. 파라미터 `ArgoHubRoleArn` = 플랫폼이 알려 준 허브 역할 ARN (연결 화면에서 링크를 새로 받으면 채워져 있다). 나머지 값은 그대로
+3. "IAM 리소스를 만들 수 있음" 체크 → 업데이트. `UPDATE_COMPLETE` 뒤 출력에 `DeployRoleArn` 이 보이면 된다
+4. 도착 EKS 에 한 번: `kubectl apply -f infra/permissions/eks-operate-namespace-rbac.yaml -f infra/permissions/eks-deploy-rbac.yaml` (이미 적용했으면 그대로 다시 적용해도 바뀌지 않는다)
+5. 같은 업데이트로 관찰 역할에 `ec2:DescribeSubnets` 가 더해진다 (도착 EKS 의 서브넷 읽기, `TF_FACT_*` 없이 도착 사실을 얻는 데 필요). 업데이트 뒤 도착 환경 화면을 한 번 열면 플랫폼이 다시 읽는다
+
+CLI 로 하려면 (값은 화면에서 복사). 예전 스택에 `SourceDbSecurityGroupId`·`SourceDbInstanceId` 가 있으면 그 둘도 `UsePreviousValue=true` 로 더한다 (없던 스택에 붙이면 거부된다):
+```bash
+aws cloudformation update-stack --stack-name svc-connect-<환경 앞 8자> --template-url <templateURL> --capabilities CAPABILITY_NAMED_IAM \
+  --parameters ParameterKey=ExternalId,UsePreviousValue=true ParameterKey=PlatformPrincipalArn,UsePreviousValue=true \
+    ParameterKey=EksClusterName,UsePreviousValue=true ParameterKey=CreateBoundaryPolicy,UsePreviousValue=true \
+    ParameterKey=ArgoHubRoleArn,ParameterValue=<허브 역할 ARN>
+aws cloudformation wait stack-update-complete --stack-name svc-connect-<환경 앞 8자>
+```
 
 ## IAM 확인 체크 (고객이 눈으로 확인)
 - [ ] 역할 `svc-observe`의 신뢰 주체가 **역할 또는 사용자 ARN 하나**(우리가 알려 준 값)이고 `:root`가 아니다
@@ -83,6 +101,12 @@ ESO 신원은 이 스크립트가 만들지 않는다 (`svc-eso` 없음, B-2 (�
 gcloud iam roles update platform_operate --project=<전용> --add-permissions=container.roleBindings.create,container.roleBindings.delete,container.roleBindings.get,container.roleBindings.update,container.roles.bind,container.roles.create,container.roles.delete,container.roles.escalate,container.roles.get,container.roles.update
 ```
 
+이미 연결한 고객의 배포 이미지 복사 권한: 배포가 사설 이미지를 전용 프로젝트 Artifact Registry(`platform`, 환경 층이 만듦)에 다이제스트 그대로 올린다(worker `jobs/image-copy.ts`). 같은 이유로 실행 역할에 직접 더한다. 없으면 배포가 `IMAGE_COPY_FAILED` 로 멈춘다.
+
+```bash
+gcloud iam roles update platform_operate --project=<전용> --add-permissions=artifactregistry.repositories.downloadArtifacts,artifactregistry.repositories.uploadArtifacts
+```
+
 순서: 연결 화면에서 `PLATFORM_SA` 복사 → Cloud Shell에서 `PLATFORM_SA=... PROJECT_ID=<원래> TARGET_PROJECT_ID=<전용> ROLE_DIR=./permissions bash gcp-connect.sh`
 (전용 프로젝트가 아직 없으면 `CREATE_TARGET_PROJECT=1`, 결제 계정을 따로 쓰려면 `BILLING_ACCOUNT=...`) → 출력된 두 프로젝트를 화면에 입력 → "확인".
 전용 프로젝트에는 연결 확인·빌리기·첫 up 이 부르는 API 9개(cloudresourcemanager·serviceusage·iam·iamcredentials·sts·container·sqladmin·compute·secretmanager)를, 원래 프로젝트에는 iamcredentials·cloudresourcemanager 를 켠다(켜져 있으면 건너뜀).
@@ -91,6 +115,7 @@ gcloud iam roles update platform_operate --project=<전용> --add-permissions=co
 ### 이미 연결한 고객: 관찰 역할 권한 갱신
 플랫폼이 읽는 자원이 늘면 관찰 역할(`platform_observe`)에 읽기 권한이 더 필요하다. 예전 스크립트로 만든 고객의 역할에는 새 권한이 없다.
 - 갱신 방법: 고객이 **같은 스크립트를 같은 값으로 다시 실행**한다. 스크립트가 `platform_observe` 의 권한 목록을 읽어 **빠진 권한만 더한다**(`gcloud iam roles update ... --add-permissions`). 있는 권한은 지우지 않고, 고객이 따로 넣은 권한도 그대로 둔다. 최신이면 `= 역할 platform_observe 권한 최신` 만 나오고 바꾸는 명령은 0번이다
+- 리허설 이미지 복사가 출발 Artifact Registry(gcr.io 포함)에서 받으려면 `platform_observe` 에 `artifactregistry.repositories.downloadArtifacts` 가 있어야 한다. 이 줄이 없을 때 연결한 고객은 다시 실행해야 GCP 출발 리허설이 이미지를 받는다 (없으면 `copy_failed` 로 멈춤)
 - 실행 역할(`platform_operate`, `platform_operate_iam`)은 자동으로 바꾸지 않는다. 권한이 늘면 할 수 있는 일이 늘기 때문에 사람이 파일을 보고 정한다 (TODO(human))
 - 알림: 사용자가 누르는 "확인"에서 플랫폼이 선택 읽기 권한 11곳을 한 건씩 찔러 본다. 빠진 게 있어도 연결은 `connected` 로 두고, `verify_detail.missingPermissions`(권한 이름)와 `verify_detail.needsHuman`(고객이 할 일 한 줄)과 감사 기록 `env.verified` 에 남긴다. 주기 재확인은 찌르지 않는다. API가 꺼진 프로젝트·조직 정책은 권한 문제로 세지 않는다
 - STUB: `verify_detail` 을 화면·API 응답에 보이는 일은 아직 없음 (입력층 묶음 몫). 권한 목록을 못 읽는 고객(`iam.roles.get` 없음)은 경고만 하고 바꾸지 않는다

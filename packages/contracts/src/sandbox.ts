@@ -8,6 +8,10 @@ import { envNumber } from "./env.js";
 // 샌드박스 방식 (SANDBOX_MODE 값). config.ts 검사가 이 목록을 본다
 export const SandboxMode = z.enum(["memory", "k3d", "vcluster"]);
 export type SandboxMode = z.infer<typeof SandboxMode>;
+// AI 점검 실행 한 건이 실제로 받은 샌드박스 (agent_runs.result.sandbox). 화면은 k3d·vcluster 만 "샌드박스에서 확인"으로 본다
+//   memory = 가짜 클러스터 (대본 LLM 전용), none = 샌드박스 없음 (샌드박스 도구가 모두 SANDBOX_NOT_CONFIGURED 로 거부됨)
+export const AgentRunSandbox = z.enum([...SandboxMode.options, "none"]);
+export type AgentRunSandbox = z.infer<typeof AgentRunSandbox>;
 
 // 샌드박스를 쓰는 실행 종류. 리허설 = 결정 코드가 앱 전체를 올림, 수정 고리 = LLM 이 고친 매니페스트를 돌림
 export const SandboxRunKind = z.enum(["rehearsal", "remediation"]);

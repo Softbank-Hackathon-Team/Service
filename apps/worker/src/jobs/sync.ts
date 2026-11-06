@@ -63,6 +63,7 @@ export async function handleSync(raw: unknown) {
     work: async (j) => {
       const next = nextJob(QUEUES.shift, j);
       // FM-ORC-09(orch replicationFor: 명세에 postgres 없으면 null) + PF-E22({tf:} 못 채운 주소는 바로 paused) 둘 다
+      // 진짜 판에 명세 postgres 가 있는데 끝점이 없으면 replicationFor 가 REPL_ENDPOINT_MISSING 을 던진다 → 아래에서 paused (가짜 지연 없음)
       let repl: Awaited<ReturnType<typeof replicationFor>>;
       try { repl = await replicationFor(j.tenantId, j.migrationId); }
       catch (e) {
