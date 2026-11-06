@@ -87,7 +87,8 @@ test("GCP 연결 스크립트의 관찰 역할 권한 = 표의 모든 권한을 
   const lacking = need.filter((p) => !perms.includes(p));
   assert.deepEqual(lacking, [], `관찰 역할에 없는 권한: ${lacking.join(", ")}`);
   assert.equal(new Set(perms).size, perms.length);
-  for (const p of perms) assert.match(p, /\.(get|list|getIamPolicy)$/, p);
+  // 리허설 이미지 받기 하나는 동사가 download 인 읽기 (security AR_PULL_PERMISSIONS)
+  for (const p of perms) assert.match(p, /\.(get|list|getIamPolicy)$|^artifactregistry\.repositories\.downloadArtifacts$/, p);
 });
 
 // NS-1: 가져오기(discover/k8s.ts)가 앱 네임스페이스 객체를 이름으로 읽는다 (kubectl get namespace <ns>). GKE 는 이 조회에 get 권한을 따로 본다.

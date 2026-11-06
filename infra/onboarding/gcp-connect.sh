@@ -250,6 +250,9 @@ OBSERVE_PERMS="${OBSERVE_PERMS},container.namespaces.list,container.namespaces.g
 OBSERVE_PERMS="${OBSERVE_PERMS},dns.managedZones.list,dns.resourceRecordSets.list,storage.buckets.get"
 # E-1: 출발 나가는 IP(Cloud NAT) 읽기 (사설 DNS 영역 읽기는 위 dns 두 개)
 OBSERVE_PERMS="${OBSERVE_PERMS},compute.routers.list,compute.addresses.list"
+# 리허설 이미지 복사(worker rehearsal/image-mirror.ts): 출발 Artifact Registry(gcr.io 포함)에서 다이제스트로 받기만. 올리기·지우기 없음.
+#   요청 원본 = security AR_PULL_PERMISSIONS (시험이 대조). 이 줄이 없는 예전 연결은 스크립트를 다시 실행해야 리허설이 AR 이미지를 받는다
+OBSERVE_PERMS="${OBSERVE_PERMS},artifactregistry.repositories.downloadArtifacts"
 # FM-GCP-14 (실측 11/4): 연결 확인(verify)이 첫 단계 projects describe 에서 PERMISSION_MISSING:resourcemanager.projects.get 으로 막혔다.
 #   큰 관찰 역할은 예전 판으로 만든 뒤 권한 추가(iam roles update)가 거절되면 빠진 채로 남는다(연결은 계속함). 맥은 roles/browser 를 손으로 붙여 넘김(우회).
 #   → 확인이 부르는 권한만 담은 작은 역할을 따로 두고 svc-observe 에 붙인다. 목록 원본 = packages/adapters/src/verify/gcp.ts step("…") (시험이 대조)

@@ -75,7 +75,7 @@ test("GCP 연결 스크립트: 관찰 역할 --permissions 에 데이터 읽기 
   for (const p of GCP_DATA_READ_PERMISSIONS) assert.ok(perms.includes(p), `없음: ${p}`);
   for (const p of perms) {
     assert.ok(!FORBIDDEN.some((r) => r.test(p)), `금지 권한 ${p}`);
-    assert.match(p, /\.(get|list|getIamPolicy)$/, `읽기 아님 ${p}`);
+    assert.match(p, /\.(get|list|getIamPolicy)$|^artifactregistry\.repositories\.downloadArtifacts$/, `읽기 아님 ${p}`);   // 리허설 이미지 받기는 동사가 download 인 읽기
   }
   assert.equal(new Set(perms).size, perms.length, "중복 권한");
   assert.match(sh, /OBSROLE/);
