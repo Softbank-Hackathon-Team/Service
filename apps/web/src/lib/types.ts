@@ -88,6 +88,22 @@ export interface EnvironmentView {
   needsHuman?: string[];
   /** 마지막 확인이 흉내 자격(클라우드 안 읽음)으로 닫혔으면 true */
   mock?: true;
+  /** PERM-GATE: 마지막 권한 확인에서 고칠 것이 있는 묶음 수. 확인한 적 없으면 칸이 없다 */
+  permissionGaps?: number;
+}
+
+// contracts permissions.ts (PERM-GATE). 고객 권한 묶음 차이와 고치는 법
+export interface PermissionFix { kind: 'cloudshell' | 'cloudformation' | 'command'; url?: string; command: string }
+export interface PermissionGap {
+  bundleId: string; envId: string; cloud: 'aws' | 'gcp';
+  stage: 'observe' | 'plan' | 'env' | 'operate' | 'relay' | 'deploy' | 'cleanup' | 'rollback';
+  side: 'source' | 'target' | 'both'; principal: string; role: string; requiredWhen: string[];
+  level: 'block' | 'warn'; missing: string[]; missingApis: string[]; notInTable?: string[]; unverified?: string;
+  grantedVersion: number | null; requiredVersion: number; fix?: PermissionFix;
+}
+export interface EnvPermissions {
+  envId: string; checkedAt: string | null; refreshing: boolean; requiredVersion: number; grantedVersion: number | null;
+  gaps: PermissionGap[]; error?: string; fix?: PermissionFix;
 }
 
 // contracts environment.ts CreateEnvironmentBody, ConnectionLink · api agent-enroll.ts AgentEnrollToken
