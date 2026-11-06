@@ -15,7 +15,7 @@ export type VerifyAwsResult = { ok: true; clusters: string[]; missingPermissions
 export const EKS_CLUSTER_NAME_RE = /^[0-9A-Za-z][A-Za-z0-9_-]{0,99}$/;
 
 // 워커 자기 자격이 섞이지 않게 지우는 이름 (프로필·장기 키·세션). 빌린 자격(cliEnv)만 쓰게 한다
-const OWN_CRED_KEYS = ["AWS_PROFILE", "AWS_DEFAULT_PROFILE", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"] as const;
+const OWN_CRED_KEYS = ["AWS_PROFILE", "AWS_DEFAULT_PROFILE", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_ROLE_ARN", "AWS_WEB_IDENTITY_TOKEN_FILE"] as const;
 
 /** 워커 환경에서 자기 자격을 지우고 빌린 자격을 덮은 환경 (HOME·PATH·CLOUD_READ_TIMEOUT_MS 등은 남김). L5 가 재사용 */
 export function envFor(cliEnv: Record<string, string>, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {

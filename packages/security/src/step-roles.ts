@@ -44,6 +44,8 @@ export const STEP_ROLES = {
   apply: [{ side: "target", purpose: "operate", stage: "apply" }],
   // VDEPLOYNONK8S: ECS·Cloud Run·VM 도착의 배포 확인은 도착 관찰 역할을 빌려 읽는다(상태 읽기만). 안 빌리면 워커 자기 자격으로 조회하게 된다
   deploy: [{ side: "target", purpose: "observe" }],
+  // 커밋 전 도착 비밀 그릇에 값이 있나 (worker gitops/secret-values.ts). 값은 안 읽는다. 관찰 역할엔 버전 메타데이터 권한이 없어 실행 역할(읽기만 부름)을 빌린다
+  secret_check: [{ side: "target", purpose: "operate", stage: "apply" }],
   // ID-4·ID-8: 정리 단계는 출발 쪽 destroy 자격을 빌리지 않는다. 지금 정리는 자격으로 아무것도 안 하고(cleanup.ts STUB),
   //   출발 destroy 자격은 고객 원래 자원(롤백 기준 출발 DB)을 지울 수 있는 자격이라 쓰지 않을 때 빌리면 위험만 남는다.
   //   또 빌린 자격을 일 중간에 revokeForMigration 으로 회수해 재발급 고리가 CRED_RENEW_FAILED 로 멈출 수 있었다.
