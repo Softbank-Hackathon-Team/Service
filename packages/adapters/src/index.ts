@@ -33,7 +33,7 @@ export { createEnvLayerRunner, envLayerVars, envLayerVarsHash, envLayerFactsOf, 
 export { dbNetworkFromEnv, withDbNetworkV2, withReplicationNetworkV2, cidrProblem, DbNetworkError, type DbNetworkSummary } from "./terraform/db-network.js";
 // Z86: 환경 실자원 읽기(읽기 전용 CLI) + 클라우드 서비스 대응표
 export { awsBilling, gcpBilling, AWS_BILLING_EXTRA, GCP_BILLING_EXTRA, type RawByKey } from "./inventory-billing.js";
-export { readInventory, inventoryUnavailable, inventoryToStatus, itemState, agentInventory, type AgentInventory, type CloudInventory, type InventoryGroup, type InventoryItem, type InventoryDeps } from "./inventory.js";
+export { readInventory, inventoryExec, inventoryUnavailable, inventoryToStatus, itemState, agentInventory, type AgentInventory, type CloudInventory, type InventoryGroup, type InventoryItem, type InventoryDeps } from "./inventory.js";
 export { SERVICE_NAME, METHOD_LABEL, type ServiceMapRow, type ServiceCategory, type MoveMethod, type PlanStepId } from "./common/service-map.js";
 // Z88: 출발 환경 진짜 읽기 (가져오기). MOCK_SEED=1 이면 어댑터 discover 는 데모 원본
 export { discoverSource, inventoryForAudit, discoverAws, discoverGcp, discoverOnprem, discoverForImport, type DiscoverOpts } from "./discover/index.js";
