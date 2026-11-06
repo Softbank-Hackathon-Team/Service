@@ -128,9 +128,10 @@ test("충실도 항목 주인: 샌드박스 쪽 두 항목만 agent-worker", () 
   assert.equal(fidelityOwner("images"), "worker");
 });
 
-test("설정 읽기: 비면 기본값 (리허설 꺼짐·실행 1200초·줄 서기 3600초·60초, 만료 1800초, 내장 차트, 진짜 샌드박스)", () => {
+test("설정 읽기: 비면 기본값 (리허설 꺼짐·실행 1200초·줄 서기 3600초·60초, 만료 1800초, 내장 차트, 진짜 샌드박스, 동시 1건)", () => {
   assert.deepEqual(rehearsalSettings({}), { enabled: false, timeoutSec: 1200, queueTimeoutSec: 3600, pollSec: 60, imageRegistry: null, mock: false });
-  assert.deepEqual(sandboxSettings({}), { ttlSec: 1800, vclusterChart: "/app/vendor/vcluster-0.37.6.tgz", mockResult: null });
+  assert.deepEqual(sandboxSettings({}), { ttlSec: 1800, vclusterChart: "/app/vendor/vcluster-0.37.6.tgz", mockResult: null, concurrency: 1, pinNodes: false, nodeWaitSec: 300 },
+    "리허설 동시 실행 기본 1건(노드 고정 끔), 빈 노드 기다림 300초");
   assert.equal(rehearsalSettings({ SANDBOX_REHEARSAL: "on", REHEARSAL_TIMEOUT_SEC: "600" }).timeoutSec, 600);
 });
 

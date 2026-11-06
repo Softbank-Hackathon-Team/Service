@@ -30,7 +30,7 @@ export const PROBE_IMAGE = "docker.io/curlimages/curl:8.17.0@sha256:935d9100e9ba
 
 export interface RehearsalBackend {
   create(spec: VclusterSpec): Promise<Vcluster>;
-  sweepLeftovers(keep: string): Promise<SweepReport>;
+  sweepLeftovers(keep: string, tenantId: string): Promise<SweepReport>;
   crds: readonly any[];             // 이미지에 넣은 CRD (ExternalSecret, CNPG Cluster). 원본 dry-run 용
   allocatable?: Resources;
   probeImage?: string;
@@ -164,7 +164,7 @@ export async function runRehearsal(input: RehearsalInput, run: RehearsalRun, b: 
     await phase("creating", "create");
     t = now();
     try {
-      const swept = await b.sweepLeftovers(name);
+      const swept = await b.sweepLeftovers(name, run.tenantId);
       if (swept.failed.length) throw new KubeError("SANDBOX_LEFTOVER", `남은 리허설 네임스페이스를 못 지움: ${swept.failed.map((f) => `${f.namespace} (${f.error})`).join(", ")}`);
       vc = await b.create({ kind: "rehearsal", runId: run.id, tenantId: run.tenantId, isolation: iso, k8sMinor: input.k8sMinor, quota: plan.quota, images: input.images, ttlSec: b.ttlSec });
       k8sVersion = vc.k8sVersion;

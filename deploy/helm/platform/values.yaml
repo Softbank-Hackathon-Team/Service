@@ -91,6 +91,8 @@ apps:
       limits: { memory: 2Gi }
   agent-worker:
     enabled: true
+    # DRAFT(ai): 1 로 둔다. 리허설 동시 실행 상한과 노드 고르기 잠금이 프로세스 하나 기준이다 (vcluster.ts serialize).
+    #   동시 실행은 env.SANDBOX_REHEARSAL_CONCURRENCY (sandbox 노드 수 이하, 2 이상이면 회사마다 다른 노드에 고정)
     replicas: 1
     pool: general                  # main.tf general_nodes 주석 "AI 워커". cred 노드에 안 간다 (고객 자격 0)
     serviceAccount: agent-worker   # Pod Identity 없음. 샌드박스 호스트 권한만 (agent-worker-rbac.yaml)

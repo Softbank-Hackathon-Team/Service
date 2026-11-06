@@ -1,4 +1,4 @@
-import { QUEUES } from "@svc/contracts";
+import { QUEUES, sandboxSettings } from "@svc/contracts";
 import { boss, startBoss, withTenant, createLogger, withLogContext, contextFromJob, currentLogContext, assertConfig, logEffectiveConfig } from "@svc/core";
 import { llmBudgetFromEnv } from "@svc/contracts";
 import { llmFromEnv, remediateLlmFromEnv, sandboxFromEnv, cachedLlm, llmCacheConfigFromEnv, llmCallOptionsFromEnv, withLlmCacheTally, budgetedLlm,
@@ -99,9 +99,12 @@ await boss.work(QUEUES.agentRun, async ([job]) =>
       throw e;
     }
   }));
-// 리허설 큐는 동시 1건 (core boss.ts: singleton + 키 하나). sandbox 노드에 한 번에 한 회사
+// 리허설 큐: 같은 회사는 한 번에 1건(core boss.ts 회사 키 + singleton), 여러 회사는 이 워커에서 SANDBOX_REHEARSAL_CONCURRENCY 건까지 같이.
+//   2 이상이면 샌드박스마다 다른 회사가 없는 sandbox 노드에 고정한다 (agent vcluster.ts). 기본 1 = 예전처럼 플랫폼 전체 1건
 const rehearsalDeps = { store: pgSandboxRunStore(), rehearse: rehearsal.rehearse };
-await boss.work(QUEUES.sandboxRehearsal, async ([job]) =>
+const rehearsalSettings = sandboxSettings();
+log.info({ concurrency: rehearsalSettings.concurrency, pin_nodes: rehearsalSettings.pinNodes }, "agent-worker rehearsal concurrency");
+await boss.work(QUEUES.sandboxRehearsal, { localConcurrency: rehearsalSettings.concurrency }, async ([job]) =>
   withLogContext(contextFromJob(QUEUES.sandboxRehearsal, job!.id, job!.data), async () => {
     const t0 = performance.now();
     try {

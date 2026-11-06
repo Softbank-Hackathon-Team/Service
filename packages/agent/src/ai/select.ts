@@ -132,8 +132,11 @@ export function vclusterHostFromEnv(env: Env = process.env, o: Partial<Pick<Vclu
   const kubeconfig = join(home, "host.kubeconfig");
   writeFileSync(kubeconfig, hostKubeconfig(access), { mode: 0o600 });
   const reach = access.outOfCluster ? kubectlPortForward({ bin: whichBin(env.SANDBOX_KUBECTL_BIN, "kubectl"), kubeconfig, home }) : undefined;
+  const st = sandboxSettings(env);
   return {
-    kube: access.kube, helm: helmRunner({ bin: whichBin(env.SANDBOX_HELM_BIN, "helm"), kubeconfig, home }), chart: sandboxSettings(env).vclusterChart, workDir,
+    kube: access.kube, helm: helmRunner({ bin: whichBin(env.SANDBOX_HELM_BIN, "helm"), kubeconfig, home }), chart: st.vclusterChart, workDir,
+    // 동시 실행(SANDBOX_REHEARSAL_CONCURRENCY ≥ 2)이면 샌드박스마다 회사 전용 sandbox 노드 하나에 고정 (vcluster.ts pickSandboxNode)
+    pinNodes: st.pinNodes, nodeWaitMs: st.nodeWaitSec * 1000,
     ...(reach ? { reach } : {}), ...o,
   };
 }
@@ -167,7 +170,8 @@ export function rehearsalFromEnv(env: Env = process.env, o: { host?: VclusterHos
     host,
     rehearse: (input, run) => runRehearsal(input, run, {
       create, crds, ttlSec: s.ttlSec,
-      sweepLeftovers: host ? (keep) => sweepSandboxes(host.kube, leftoverRehearsal(keep)) : async () => ({ deleted: [], failed: [] }),
+      // 동시 실행이면 남은 것 청소는 그 회사 것만 (다른 회사 리허설은 지금 도는 중일 수 있다)
+      sweepLeftovers: host ? (keep, tenantId) => sweepSandboxes(host.kube, leftoverRehearsal(keep, host.pinNodes ? tenantId : undefined)) : async () => ({ deleted: [], failed: [] }),
     }),
   };
 }
