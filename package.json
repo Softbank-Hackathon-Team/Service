@@ -38,7 +38,9 @@
     "tf:real": "node --env-file-if-exists=.env --import tsx tools/tf-real.ts",
     "agent:key": "node --env-file-if-exists=.env --import tsx tools/agent-key.ts",
     "repl:endpoint": "node --env-file-if-exists=.env --import tsx tools/repl-endpoint.ts",
-    "agent:onprem": "node --env-file-if-exists=.env --import tsx tools/onprem-agent.ts"
+    "agent:onprem": "node --env-file-if-exists=.env --import tsx tools/onprem-agent.ts",
+    "lab:reverse": "sh tools/reverse-lab/lab.sh",
+    "test:lab:reverse": "node --import tsx --test --test-concurrency=1 --test-timeout=240000 packages/replication/test/reverse-lab.it.ts"
   },
   "devDependencies": {
     "@types/node": "22.20.5",

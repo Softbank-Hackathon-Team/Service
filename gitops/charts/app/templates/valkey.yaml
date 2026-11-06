@@ -1,0 +1,101 @@
+{{- /* 온프레: 관리형 캐시(ElastiCache·Memorystore)를 대체하는 Valkey. dataServices[] 한 줄(kind valkey) = Deployment + Service 하나.
+       이름·포트·이미지·메모리는 Builder(onprem.ts)가 정한 값 그대로. 앱은 Service <name>:<port> 로 붙는다.
+       DRAFT(ai): 캐시는 빈 채로 시작하므로 디스크를 안 둔다 (PVC 없음, StatefulSet 아님). 파드가 다시 뜨면 비워진다.
+       DRAFT(ai): 인증·TLS 없음. 그 뜻은 계획서 승인 항목에 적는다 (auth=true 출발은 계획 전에 사람에게 묻는다) */}}
+{{- range $d := (.Values.dataServices | default list) }}{{- if eq (toString $d.kind) "valkey" }}
+{{- range ($.Values.workloads | default list) }}{{- if eq (toString .name) (toString $d.name) }}{{ fail (printf "workloads[] 와 dataServices[] 이름이 겹친다: %s" $d.name) }}{{ end }}{{- end }}
+{{- $image := required "dataServices[].image" $d.image | toString }}
+{{- if not (regexMatch "@sha256:[0-9a-f]{64}$" $image) }}{{ fail "dataServices[].image 는 다이제스트(@sha256:...)로 고정해야 한다" }}{{ end }}
+{{- $port := int (required "dataServices[].port" $d.port) }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ required "dataServices[].name" $d.name }}
+  labels: {{- include "app.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $d.name | quote }}
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: {{ $.Values.app.name }}, app.kubernetes.io/component: {{ $d.name | quote }} }
+  template:
+    metadata:
+      labels: {{- include "app.labels" $ | nindent 8 }}
+        app.kubernetes.io/component: {{ $d.name | quote }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999    # 공식 alpine 이미지의 valkey 사용자
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: valkey
+          image: {{ $image | quote }}
+          command:
+            - valkey-server
+            - --port
+            - {{ $port | quote }}
+            - --save
+            - ""
+            - --appendonly
+            - "no"
+            - --dir
+            - /data
+            - --maxmemory
+            - {{ printf "%dmb" (int (required "dataServices[].maxmemoryMi" $d.maxmemoryMi)) | quote }}
+            # DRAFT(ai): ElastiCache 기본 파라미터 그룹과 같은 교체 규칙
+            - --maxmemory-policy
+            - volatile-lru
+          ports:
+            - { name: valkey, containerPort: {{ $port }} }
+          readinessProbe:
+            tcpSocket: { port: valkey }
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: { port: valkey }
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources: {{- toYaml (required "dataServices[].resources" $d.resources) | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: data, mountPath: /data }
+      volumes:
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $d.name }}
+  labels: {{- include "app.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $d.name | quote }}
+spec:
+  type: ClusterIP
+  selector: { app.kubernetes.io/name: {{ $.Values.app.name }}, app.kubernetes.io/component: {{ $d.name | quote }} }
+  ports:
+    - { name: valkey, port: {{ $port }}, targetPort: valkey, protocol: TCP }
+---
+# 인증·TLS 가 없으니 같은 앱 파드만 들어온다. 나가는 쪽은 안 막는다 (Valkey 는 먼저 나가지 않음)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $d.name }}
+  labels: {{- include "app.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $d.name | quote }}
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: {{ $.Values.app.name }}, app.kubernetes.io/component: {{ $d.name | quote }} }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: {{ $.Values.app.name }} }
+      ports:
+        - { port: {{ $port }}, protocol: TCP }
+{{- end }}{{- end }}

@@ -1,0 +1,47 @@
+# 역방향(온프레 → 클라우드) 이전 로컬 실험장. ADR-031
+# 네트워크 두 개가 실제 경계를 흉내 낸다:
+#   onprem : 고객 VM 안. 들어오는 포트 0 → onprem-pg 는 호스트에 포트를 열지 않는다. 터널만 밖(relay)으로 나간다
+#   cloud  : 도착 VPC. cloud-pg 도 호스트에 포트를 열지 않는다. 플랫폼(호스트의 워커·시험)은 중계 입구로만 닿는다
+# 중계(relay)는 두 네트워크에 다 붙는다 = 실제 중계 EC2 의 공인 IP(온프레가 밖으로 붙음) + VPC 사설 IP(클라우드 DB 가 붙음)
+#
+# 호스트에서 보이는 입구 (127.0.0.1 만):
+#   56432 = 중계 :5432  = 역방향 터널(-R) 끝 → 온프레 DB   (워커의 온프레 관리 접속)
+#   56433 = 중계 :15432 = 플랫폼 입구          → 클라우드 DB (워커의 클라우드 관리 접속)
+name: svc-reverse-lab
+services:
+  onprem-pg:
+    image: postgres:16
+    command: ["postgres", "-c", "wal_level=logical", "-c", "max_replication_slots=10", "-c", "max_wal_senders=10"]
+    environment: { POSTGRES_PASSWORD: lab-onprem-super, POSTGRES_DB: postgres }
+    volumes: ["./init/onprem.sql:/docker-entrypoint-initdb.d/10-roles.sql:ro"]
+    networks: [onprem]
+    healthcheck: { test: ["CMD", "pg_isready", "-U", "postgres"], interval: 1s, timeout: 3s, retries: 30 }
+  cloud-pg:
+    image: postgres:16
+    command: ["postgres", "-c", "wal_level=logical", "-c", "max_replication_slots=10", "-c", "max_wal_senders=10"]
+    environment: { POSTGRES_PASSWORD: lab-cloud-super, POSTGRES_DB: postgres }
+    volumes: ["./init/cloud.sql:/docker-entrypoint-initdb.d/10-roles.sql:ro"]
+    networks: [cloud]
+    healthcheck: { test: ["CMD", "pg_isready", "-U", "postgres"], interval: 1s, timeout: 3s, retries: 30 }
+  relay:
+    build: ./ssh
+    image: svc-reverse-lab-ssh:local
+    command: ["/usr/local/bin/relay.sh"]
+    environment: { PERMIT_OPEN: "cloud-pg:5432" }
+    volumes: ["./.state:/lab:ro"]
+    networks: [onprem, cloud]
+    ports: ["127.0.0.1:56432:5432", "127.0.0.1:56433:15432"]
+    depends_on: { cloud-pg: { condition: service_healthy } }
+    healthcheck: { test: ["CMD", "nc", "-z", "127.0.0.1", "22"], interval: 1s, timeout: 3s, retries: 30 }
+  tunnel:
+    image: svc-reverse-lab-ssh:local
+    command: ["/usr/local/bin/tunnel.sh"]
+    environment: { REVERSE_TARGET: "onprem-pg:5432", FORWARD_TARGET: "cloud-pg:5432" }
+    volumes: ["./.state:/lab:ro"]
+    networks: [onprem]
+    depends_on: { relay: { condition: service_healthy }, onprem-pg: { condition: service_healthy } }
+    # 준비 = 정방향 입구(-L 0.0.0.0:5432)가 열렸다. ExitOnForwardFailure 라 -R 이 거부되면 이것도 안 열린다 (차트 readinessProbe 와 같은 뜻)
+    healthcheck: { test: ["CMD", "nc", "-z", "127.0.0.1", "5432"], interval: 1s, timeout: 3s, retries: 60 }
+networks:
+  onprem: {}
+  cloud: {}
