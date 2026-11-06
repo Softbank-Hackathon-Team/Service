@@ -10,6 +10,7 @@ import { ago } from '../../lib/text';
 import { CONN_LABEL, LABEL } from '../../lib/status';
 import type { AgentReportBody, EnvironmentView } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
+import { EnvCostCaption, EnvCostFold } from '../cost/CostEvidence';
 import { fromInventory, realEnvs } from '../dashboard/model';
 import { leftoversOf } from '../migration/model';
 import { FoundResources } from '../migration/NewMigrationPage';
@@ -108,6 +109,7 @@ function ConnectedEnv({ env }: { env: EnvironmentView }) {
             <p className={`${s.note} t-body-sm c-tertiary`}>{t('이 환경을 쓰는 마이그레이션이 없습니다.')}</p>
           )}
         </FoldTile>
+        <EnvCostFold envId={env.id} />
         {data && <FoundResources cloud={data.cloud} />}
         {env.provider === 'onprem' && <AgentReports envId={env.id} />}
         {env.provider === 'onprem' && <AgentEnrollFold env={env} />}
@@ -219,6 +221,7 @@ export function EnvironmentsPage({ id }: { id: string | null }) {
                   {item.connectionStatus !== 'connected' && <Badge tone="danger">{CONN_LABEL[item.connectionStatus]}</Badge>}
                 </span>
                 <span className="t-caption c-tertiary">{vendorLine(item.provider)}</span>
+                <EnvCostCaption envId={item.id} />
               </button>
             </li>
           ))}
