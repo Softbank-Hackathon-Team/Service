@@ -131,6 +131,10 @@ export async function handleRollback(raw: unknown) {
       // Z69: 컷오버 전·뒤·noop 모두 걷고, 실패하면 경고만 (rollback-cleanup.ts 결정 참고)
       const cleanup = await cleanupAfterRollback(repl);
       const { removed, leftovers } = cleanup;
+      // 출발 헬스 = 출발 DB에서 앱 계정이 다시 쓸 수 있나. 중계기를 지우기 전에 본다:
+      //   AWS→온프레 이전은 워커가 출발 DB 에 중계기(공인 IP:15432)로만 닿는다. 예전엔 중계기를 지운 뒤 같은 주소로 붙어
+      //   timeout expired → 재시도 때는 중계기가 없어 복제 걷기·헬스 모두 실패 → ROLLBACK_FAILED (2026-11-06 실제 플랫폼에서 확인)
+      const sourceHealthy = await withClient(repl.cfg.source, (c) => appCanWrite(c, repl.cfg.source, (repl.cfg.tables?.[0]) ?? "orders"));
       // 온프레 CNPG 이전: 걷기가 다 끝났을 때만 gitops 에서 이전 역할(ensure absent)·터널을 걷는다. 실패해도 롤백은 이어 간다 (detail 에만)
       //   덜 걷었으면 터널을 남긴다: repl-cleanup 이 같은 터널로 다시 걷고 그때 이 커밋을 한다
       const gitopsReplication = cleanup.ok ? await commitReplicationCleanup(bundle) : { skipped: "replication_leftovers" };
@@ -138,8 +142,6 @@ export async function handleRollback(raw: unknown) {
       const relay = cleanup.ok ? await teardownRelayStep(j, m) : { kind: "skipped" as const, reason: "replication_leftovers" };
       if (relay.kind === "failed") log.warn({ migration_id: j.migrationId, code: relay.failureCode, reason: relay.reason }, "rollback: relay teardown incomplete");
       if (!cleanup.ok) log.warn({ migration_id: j.migrationId, kind: r.kind, warning: cleanup.warning, leftovers }, "rollback: replication cleanup incomplete");
-      // 출발 헬스 = 출발 DB에서 앱 계정이 다시 쓸 수 있나
-      const sourceHealthy = await withClient(repl.cfg.source, (c) => appCanWrite(c, repl.cfg.source, (repl.cfg.tables?.[0]) ?? "orders"));
       return {
         to: "rolled_back",
         detail: { weights, traffic: traffic.detail, gitopsWeight, gitopsReplication,
