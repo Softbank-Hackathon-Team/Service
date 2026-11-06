@@ -1337,6 +1337,101 @@ paths:
         "500":
           $ref: "#/components/responses/E500"
           description: "INTERNAL"
+  "/api/v1/environments/{id}/permission-check":
+    post:
+      operationId: "postEnvironmentsByIdPermissioncheck"
+      tags:
+        - "environments"
+      summary: "/api/v1/environments/{id}/permission-check"
+      description: "코드: apps/api/src/routes/env-permissions.ts"
+      security:
+        - bearerAuth: []
+        - devTenant: []
+      parameters:
+        - name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+            pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        - $ref: "#/components/parameters/DevTenant"
+      responses:
+        "202":
+          description: "OK"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/PermissionCheckAccepted"
+        "400":
+          $ref: "#/components/responses/E400"
+          description: "BAD_REQUEST (Zod 검증 실패)"
+        "401":
+          $ref: "#/components/responses/E401"
+          description: "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+        "403":
+          $ref: "#/components/responses/E403"
+          description: "TUNNEL_READ_ONLY (개발 헤더 인증 + Cloudflare 터널로 온 쓰기, Z47)"
+        "404":
+          $ref: "#/components/responses/E404"
+          description: "ApiError"
+        "409":
+          $ref: "#/components/responses/E409"
+          description: "ApiError"
+        "429":
+          $ref: "#/components/responses/E429"
+          description: "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+        "500":
+          $ref: "#/components/responses/E500"
+          description: "INTERNAL"
+  "/api/v1/environments/{id}/permissions":
+    get:
+      operationId: "getEnvironmentsByIdPermissions"
+      tags:
+        - "environments"
+      summary: "/api/v1/environments/{id}/permissions"
+      description: "코드: apps/api/src/routes/env-permissions.ts"
+      security:
+        - bearerAuth: []
+        - devTenant: []
+      parameters:
+        - name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+            pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        - name: "bundles"
+          in: "query"
+          required: false
+          schema:
+            type: "string"
+            maxLength: 1000
+            pattern: "^[a-z0-9.,]*$"
+        - $ref: "#/components/parameters/DevTenant"
+      responses:
+        "200":
+          description: "OK"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/EnvPermissions"
+        "400":
+          $ref: "#/components/responses/E400"
+          description: "BAD_REQUEST (Zod 검증 실패)"
+        "401":
+          $ref: "#/components/responses/E401"
+          description: "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+        "404":
+          $ref: "#/components/responses/E404"
+          description: "ApiError"
+        "429":
+          $ref: "#/components/responses/E429"
+          description: "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+        "500":
+          $ref: "#/components/responses/E500"
+          description: "INTERNAL"
   "/api/v1/environments/{id}/status":
     get:
       operationId: "getEnvironmentsByIdStatus"
@@ -9879,6 +9974,47 @@ components:
         - "unverified"
         - "candidatesEvaluated"
       additionalProperties: false
+    EnvPermissions:
+      type: "object"
+      properties:
+        envId:
+          type: "string"
+          format: "uuid"
+          pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        checkedAt:
+          type:
+            - "string"
+            - "null"
+        refreshing:
+          type: "boolean"
+        requiredVersion:
+          type: "integer"
+          exclusiveMinimum: 0
+          maximum: 9007199254740991
+        grantedVersion:
+          anyOf:
+            - type: "integer"
+              minimum: 0
+              maximum: 9007199254740991
+            - type: "null"
+        gaps:
+          maxItems: 60
+          type: "array"
+          items:
+            $ref: "#/components/schemas/PermissionGap"
+        error:
+          type: "string"
+          maxLength: 300
+        fix:
+          $ref: "#/components/schemas/PermissionFix"
+      required:
+        - "envId"
+        - "checkedAt"
+        - "refreshing"
+        - "requiredVersion"
+        - "grantedVersion"
+        - "gaps"
+      additionalProperties: false
     EnvironmentList:
       type: "object"
       properties:
@@ -9963,6 +10099,10 @@ components:
         mock:
           type: "boolean"
           const: true
+        permissionGaps:
+          type: "integer"
+          minimum: 0
+          maximum: 9007199254740991
       required:
         - "id"
         - "provider"
@@ -11316,6 +11456,151 @@ components:
         - "kind"
         - "reason"
       additionalProperties: false
+    PermissionCheckAccepted:
+      type: "object"
+      properties:
+        envId:
+          type: "string"
+          format: "uuid"
+          pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        queued:
+          type: "boolean"
+      required:
+        - "envId"
+        - "queued"
+      additionalProperties: false
+    PermissionCloud:
+      type: "string"
+      enum:
+        - "aws"
+        - "gcp"
+    PermissionFix:
+      type: "object"
+      properties:
+        kind:
+          type: "string"
+          enum:
+            - "cloudshell"
+            - "cloudformation"
+            - "command"
+        url:
+          type: "string"
+          maxLength: 4000
+        command:
+          type: "string"
+          maxLength: 4000
+      required:
+        - "kind"
+        - "command"
+      additionalProperties: false
+    PermissionGap:
+      type: "object"
+      properties:
+        bundleId:
+          type: "string"
+          maxLength: 80
+        envId:
+          type: "string"
+          format: "uuid"
+          pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        cloud:
+          $ref: "#/components/schemas/PermissionCloud"
+        stage:
+          $ref: "#/components/schemas/PermissionStage"
+        side:
+          type: "string"
+          enum:
+            - "source"
+            - "target"
+            - "both"
+        principal:
+          type: "string"
+          maxLength: 64
+        role:
+          type: "string"
+          maxLength: 64
+        requiredWhen:
+          minItems: 1
+          maxItems: 5
+          type: "array"
+          items:
+            $ref: "#/components/schemas/PermissionRequiredWhen"
+        level:
+          type: "string"
+          enum:
+            - "block"
+            - "warn"
+        missing:
+          maxItems: 400
+          type: "array"
+          items:
+            type: "string"
+            maxLength: 120
+        missingApis:
+          maxItems: 40
+          type: "array"
+          items:
+            type: "string"
+            maxLength: 80
+        notInTable:
+          maxItems: 100
+          type: "array"
+          items:
+            type: "string"
+            maxLength: 120
+        unverified:
+          type: "string"
+          maxLength: 300
+        grantedVersion:
+          anyOf:
+            - type: "integer"
+              minimum: 0
+              maximum: 9007199254740991
+            - type: "null"
+        requiredVersion:
+          type: "integer"
+          exclusiveMinimum: 0
+          maximum: 9007199254740991
+        fix:
+          $ref: "#/components/schemas/PermissionFix"
+      required:
+        - "bundleId"
+        - "envId"
+        - "cloud"
+        - "stage"
+        - "side"
+        - "principal"
+        - "role"
+        - "requiredWhen"
+        - "level"
+        - "missing"
+        - "missingApis"
+        - "grantedVersion"
+        - "requiredVersion"
+      additionalProperties: false
+    PermissionRequiredWhen:
+      type: "string"
+      enum:
+        - "always"
+        - "secrets"
+        - "postgres"
+        - "data"
+        - "env_layer_create"
+        - "relay_aws_onprem"
+        - "relay_aws_gcp"
+        - "relay_gcp_aws"
+        - "argo_hub"
+    PermissionStage:
+      type: "string"
+      enum:
+        - "observe"
+        - "plan"
+        - "env"
+        - "operate"
+        - "relay"
+        - "deploy"
+        - "cleanup"
+        - "rollback"
     PlanAckKind:
       type: "string"
       enum:
