@@ -94,6 +94,26 @@ test("apply: init → plan -out → apply tfplan → output → 비밀번호 꺼
   assert.equal(statSync(join(root, MID, "outputs.json")).mode & 0o777, 0o600);
 });
 
+test("gcp: db-secret.json 에는 비밀번호만 (앱·관리자 따로). 계정 이름은 outputs 가 진실이라 db_username 을 덮지 않는다", async () => {
+  const root = tmp(); const calls: string[][] = [];
+  const GCP_OUT = JSON.stringify({ db_username: { value: "app", sensitive: false }, db_admin_username: { value: "svc_admin_0123456789", sensitive: false },
+    db_password_secret_id: { value: "app-shop-db-db-password", sensitive: false }, db_admin_password_secret_id: { value: "app-shop-db-admin-db-password", sensitive: false } });
+  const exec: Exec = async (cmd, args) => {
+    calls.push([cmd, ...args]);
+    const sub = args.find((a) => !a.startsWith("-"));
+    if (sub === "output") return { code: 0, stdout: GCP_OUT, stderr: "", ms: 1 };
+    if (cmd === "gcloud") return { code: 0, stdout: args.some((a) => a.includes("admin-db-password")) ? "admin-pw-x" : "app-pw-y", stderr: "", ms: 1 };
+    return { code: 0, stdout: "ok", stderr: "", ms: 1 };
+  };
+  const r = createRealTerraformRunner({ exec, workRoot: root, env: { PATH: "/bin", CLOUDSDK_CORE_PROJECT: "tgt-proj" } });
+  const res = await r.apply("gcp", MID, { app_name: "shop" });
+  assert.equal(res.ok, true); assert.equal(res.secretFetched, true);
+  assert.deepEqual(JSON.parse(readFileSync(join(root, MID, "db-secret.json"), "utf8")), { db_password: "app-pw-y", db_admin_password: "admin-pw-x" });
+  assert.equal(JSON.parse(readFileSync(join(root, MID, "outputs.json"), "utf8")).db_username, "app");
+  assert.deepEqual(calls.filter((c) => c[0] === "gcloud").map((c) => c.find((a) => a.startsWith("--secret="))), ["--secret=app-shop-db-db-password", "--secret=app-shop-db-admin-db-password"]);
+  assert.equal(res.log.join("\n").includes("pw-"), false, "비밀번호는 로그에 없다");
+});
+
 // 묶음 이미지(dist/worker)는 import.meta.url 로 레포 뿌리를 못 찾는다 → Dockerfile 이 TF_MODULE_ROOT=/app/infra/modules 를 준다
 test("TF_MODULE_ROOT: 모듈을 그 폴더에서 복사한다. 없으면 레포 infra/modules, 거기 루트 모듈이 없으면 apply 전에 멈춘다", async () => {
   const mods = tmp();

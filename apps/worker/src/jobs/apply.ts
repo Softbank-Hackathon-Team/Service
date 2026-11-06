@@ -1,15 +1,18 @@
 import { ApplyJob, QUEUES, redactText, type AppSpecV2, type PlanDoc, type Provider, type TfOutputs } from "@svc/contracts";
 import { azureMockOutputsV2, chooseRunner, iacMockEnabled, onpremGitFloorOutputs, specV2ForPlan, STUB_TF_OUTPUTS, stubTfOutputsV2 } from "@svc/adapters";
-import { asFailureCode, latestAcceptedSpecV2, planExpired, type Tx } from "@svc/core";
+import { asFailureCode, latestAcceptedSpecV2, planExpired, replicationEndpointsFor, withTenant, type Tx } from "@svc/core";
 import { errorMessage, nextJob, runStep, stubWait } from "./_step.js";
 import { loadLatestApproval, loadLatestPlan, saveInfraReady } from "./plan-store.js";
 import { failedOnRenewFailure, withStepRoles } from "./_roles.js";
-import { realApplyWithEnvLayer } from "./apply-real.js";
+import { realApplyWithEnvLayer, type RealApplyOutcome } from "./apply-real.js";
 import { borrowEnvCred } from "../env-layer.js";
 import { withGcpCred } from "../gcp-token-server.js";
 import { runImageBuilds } from "./image-build.js";
 import { TARGET_ACCOUNT_SQL } from "./target-account.js";
-import { provisionRelayStep } from "../relay/relay-step.js";
+import { addRelayPeer, cloudSqlPeerOf, ensureTargetAppLogin, gcpEndpointRows, prepareGcpRelayStep, provisionGcpRelayStep, provisionRelayStep, saveEndpointRows,
+  type GcpRelayGate } from "../relay/relay-step.js";
+import { RelayError } from "../relay/aws-relay.js";
+import type { MigrationRow } from "./_step.js";
 
 // TA3: spec = 받아들인 최신 판의 명세. 없거나 모양이 틀리면 null (→ TF_PLAN_DRIFT)
 interface ApplyLoaded { plan: PlanDoc; provider: Provider; spec: AppSpecV2 | null; accountId: string | null }
@@ -100,11 +103,23 @@ export async function handleApply(raw: unknown) {
         //   빌린 GCP 토큰도 같다 (withGcpCred). STUB: 가짜 발급기·온프레는 지금처럼 프로세스 자격(AWS_PROFILE·gcloud 로그인)으로 돈다
         //   4 기반 생성: 앱 층 apply 앞에서 환경 층(도착 GCP 의 VPC·GKE·AR·ESO)을 확보한다 (ENV_LAYER_AUTO=1 일 때만 만듦, 꺼져 있으면 예전과 같음)
         //   B-2: 환경 층은 svc-operate 가 아니라 그 단계에서만 빌리는 고객 svc-env 로 만든다 (borrowEnvCred)
-        const r = await withGcpCred(roles, accountId, (gcpCred) => realApplyWithEnvLayer({ migrationId: j.migrationId, tenantId: j.tenantId, envId: m.targetEnvId,
+        const tfApply = () => withGcpCred(roles, accountId, (gcpCred) => realApplyWithEnvLayer({ migrationId: j.migrationId, tenantId: j.tenantId, envId: m.targetEnvId,
                                     provider, accountId, spec, plan },
                                   { signal: ctx.signal, ...(roles.awsEnv?.target ? { credEnv: roles.awsEnv.target } : {}), ...(gcpCred ? { gcpCred } : {}),
                                     envLayer: { withEnvCred: borrowEnvCred(j, m, accountId) } }));
+        // AWS → GCP 중계기 (relay-step): ① 도착 DB 공개 길(플랫폼 나가는 대역)을 작업 폴더에 ② terraform ③ Cloud SQL 주소로 중계기
+        //   ④ 중계 공개 IP 가 새로 생겼으면 terraform 한 번 더 (Cloud SQL 허용 주소) ⑤ 끝점 두 줄·도착 앱 로그인 역할. 단계마다 다시 돌아도 같은 끝
+        const gate = provider === "gcp" ? await prepareGcpRelayStep(j, m) : null;
+        if (gate?.kind === "fail")
+          return { to: "failed", failureCode: asFailureCode(gate.failureCode), detail: { planId: j.planId, provider, error: gate.reason } };
+        let r = await tfApply();
         if (!r.ok) return { to: "failed", failureCode: asFailureCode(r.failureCode), detail: r.detail };
+        if (gate?.kind === "go") {
+          const g = await gcpRelayAfterTerraform(j, m, gate, r.tfOutputs, tfApply);
+          if (!g.ok) return { to: "failed", failureCode: asFailureCode(g.failureCode), detail: { planId: j.planId, provider, ...g.detail } };
+          if (g.rerun) r = g.rerun;
+          relayDetail = g.detail;
+        } else if (gate) relayDetail = { skipped: gate.reason };
         tfOutputs = r.tfOutputs;
         realDetail = r.detail;
       } else {
@@ -135,4 +150,39 @@ export async function handleApply(raw: unknown) {
     onError: async (e) => failedOnRenewFailure(e) ?? ({ to: "failed", failureCode: "APPLY_FAILED",
       detail: { error: redactText((e as Error)?.message ?? String(e)).slice(0, 500) } }),   // RV-16
   });
+}
+
+/** ③~⑤ (AWS → GCP 중계기). 실패는 failed (만든 중계기 자원은 태그를 단 채 남고 다시 계획하면 태그로 이어 간다, 취소하면 repl-cleanup 이 지운다) */
+async function gcpRelayAfterTerraform(j: { tenantId: string; migrationId: string }, m: MigrationRow, g: Extract<GcpRelayGate, { kind: "go" }>, out: TfOutputs,
+  rerun: () => Promise<RealApplyOutcome>): Promise<{ ok: true; detail: Record<string, unknown>; rerun?: Extract<RealApplyOutcome, { ok: true }> } | { ok: false; failureCode: string; detail: Record<string, unknown> }> {
+  const cloudSql = cloudSqlPeerOf(out);
+  if (!cloudSql) return { ok: false, failureCode: "RELAY_TARGET_DB_UNKNOWN",
+    detail: { error: "terraform 출력에 Cloud SQL 공개·나가는 IP(db_public_ip·db_outgoing_ip)가 없다: 도착 DB 공개 길이 안 켜졌다 (repl-network.json·조직 정책 sql.restrictPublicIp 확인)" } };
+  const relay = await provisionGcpRelayStep(j, m, g, cloudSql);
+  if (relay.kind === "failed") return { ok: false, failureCode: relay.failureCode, detail: { error: relay.reason, ...(relay.detail ? { relay: relay.detail } : {}) } };
+  let again: Extract<RealApplyOutcome, { ok: true }> | undefined;
+  if (addRelayPeer(j, relay.res.publicIp)) {
+    const r2 = await rerun();
+    if (!r2.ok) return { ok: false, failureCode: r2.failureCode, detail: { ...r2.detail, relayPublicIp: relay.res.publicIp, step: "authorize_relay_on_cloudsql" } };
+    again = r2;
+  }
+  const existing = await withTenant(j.tenantId, (tx) => replicationEndpointsFor(tx, j.migrationId));
+  let rows: ReturnType<typeof gcpEndpointRows>;
+  try {
+    rows = gcpEndpointRows({ tenantId: j.tenantId, migrationId: j.migrationId, sourceEnvId: m.sourceEnvId, rds: relay.rds, db: g.db, appUser: g.user,
+      publicIp: relay.res.publicIp, privateIp: relay.res.privateIp, cloudSql, out: again?.tfOutputs ?? out, existing });
+  } catch (e) { if (e instanceof RelayError) return { ok: false, failureCode: e.code, detail: { error: e.message } }; throw e; }
+  await saveEndpointRows(j.tenantId, rows);
+  let appLogin: Awaited<ReturnType<typeof ensureTargetAppLogin>>;
+  try { appLogin = await ensureTargetAppLogin(rows[1]); }
+  catch (e) {
+    return { ok: false, failureCode: "TARGET_APP_LOGIN_FAILED", detail: { error: redactText((e as Error)?.message ?? String(e)).slice(0, 300),
+      hint: "워커 → Cloud SQL 공개 IP:5432 (허용 주소 = PLATFORM_EGRESS_CIDRS)·관리자 비밀(db-secret.json db_admin_password) 확인" } };
+  }
+  // 감사 detail: 번호·주소만 (비밀번호 없음)
+  return { ok: true, ...(again ? { rerun: again } : {}), detail: { kind: "aws-gcp", instanceId: relay.res.instanceId, securityGroupId: relay.res.securityGroupId,
+    publicIp: relay.res.publicIp, privateIp: relay.res.privateIp, subnetId: relay.subnetId, rdsIdentifier: relay.rds.identifier,
+    dbIngressRuleId: relay.res.dbIngressRuleId, dbEgressRuleId: relay.res.dbEgressRuleId, created: relay.res.created, reused: relay.res.reused,
+    cloudSql: { publicIp: cloudSql.publicIp, outgoingIp: cloudSql.outgoingIp }, cloudSqlAuthorizedRelay: true, terraformReapplied: !!again,
+    appLogin, targetTls: rows[1].sslmode, endpointRows: ["source", "target"] } };
 }

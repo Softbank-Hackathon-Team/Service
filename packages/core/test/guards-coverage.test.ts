@@ -57,6 +57,8 @@ const CASES: Case[] = [
   // T20: 둘 다 있어야
   { name: "T20 Argo 건강 + 보안 동등", from: "deploying", to: "syncing", ev: { argoHealthy: true, securityParity: true } },
   { name: "T20 보안 동등 없음", from: "deploying", to: "syncing", ev: { argoHealthy: true }, blocked: /securityParity/ },
+  { name: "T20 보안 동등 못 잼(not_measured) → 통과, 감사 증거에 그대로 남음", from: "deploying", to: "syncing", ev: { argoHealthy: true, securityParity: "not_measured" } },
+  { name: "T20 보안 동등 쟀고 나빠짐(false) → 막힘", from: "deploying", to: "syncing", ev: { argoHealthy: true, securityParity: false }, blocked: /securityParity/ },
   { name: "T20 Argo 건강 없음", from: "deploying", to: "syncing", ev: { securityParity: true }, blocked: /argoHealthy/ },
   // T21 경계: 정확히 500ms 는 통과, 501ms 는 막힘, 마커 값 없으면 막힘
   { name: "T21 마커 500ms 경계 통과", from: "syncing", to: "shifting", ev: { snapshotDone: true, markerRoundTripMs: 500 } },
