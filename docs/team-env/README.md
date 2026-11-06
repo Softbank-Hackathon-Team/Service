@@ -2,12 +2,12 @@
 
 상태: AI 초안
 
-실플랫폼 회사 `dev-company`(회사 번호 `11111111-1111-4111-8111-111111111111`) 하나를 다섯 명이 같이 쓴다. 각자 자기 클라우드 계정에 출발·도착 환경을 만들어 연결하고, 누가 무엇을 쓰는지는 [`registry.yaml`](registry.yaml)에 적는다.
+칸마다 회사(테넌트)가 따로다: slot-1 은 `dev-company`(회사 번호 `11111111-1111-4111-8111-111111111111`), slot-2~5 는 등록부 칸의 `tenant` 회사. 회사가 다르면 회사 단위 큐 몫·환경 목록·환경 이름이 따로라 서로 막지 않고 동시에 이전한다. 가입은 같은 초대 코드로 하고, 그 칸의 회사로 들어간다. 각자 자기 클라우드 계정에 출발·도착 환경을 만들어 연결하고, 누가 무엇을 쓰는지는 [`registry.yaml`](registry.yaml)에 적는다.
 11/06 실측(`src-aws-sample` → `GCP-sample`)에서 멈춘 곳을 미리 피하는 순서다. 근거: 이슈 #317, PR #313·#316·#323.
 
 ## 0. 규칙 (등록부 맨 위와 같음)
 
-- 환경 하나에 진행 중인 이전은 하나다 (플랫폼 잠금). 같은 회사라 남의 환경도 콘솔에 보인다. 자기 칸 환경만 쓴다
+- 환경 하나에 진행 중인 이전은 하나다 (플랫폼 잠금). 회사가 칸마다 달라 남의 환경은 콘솔에 안 보인다
 - AWS 계정 하나에 연결은 하나다 (역할 이름 `svc-observe`·`svc-operate` 고정). 같은 계정이면 이미 연결된 환경을 같이 쓴다
 - GCP 전용 프로젝트는 한 사람만 쓴다. 환경 층 이름(`platform-target` 등)이 고정이라 같이 쓰면 부딪힌다
 - 공유 환경(slot-1: `src-aws-sample`, `GCP-sample`)은 팀 채널에 "쓴다/다 썼다"를 알리고 쓴다
@@ -43,7 +43,7 @@ bash tools/team-env.sh slot-2 --check  # 읽기 전용 gcloud 로 프로젝트·
    gcloud iam roles update platform_operate --project=<전용> --add-permissions=compute.instanceGroupManagers.get,resourcemanager.projects.get,secretmanager.versions.enable,serviceusage.operations.get
    gcloud iam roles update platform_plan --project=<전용> --add-permissions=compute.instanceGroupManagers.get,serviceusage.operations.get
    ```
-   `PLATFORM_SA` 는 dev-company 의 회사 전용 SA 다 (비밀 아님, 연결 화면에도 같은 값이 보인다). `gcp-connect.sh` 를 다시 돌려도 이미 있는 `platform_env`·`platform_operate` 는 건너뛴다. 그래서 위 `roles update` 를 따로 친다 (#316).
+   `PLATFORM_SA` 는 그 칸 회사의 회사 전용 SA 다 (`t-<md5(회사 번호) 앞 28자>`, 비밀 아님, 연결 화면에도 같은 값이 보인다. `tools/team-env.sh` 가 칸 회사로 계산한다). `gcp-connect.sh` 를 다시 돌려도 이미 있는 `platform_env`·`platform_operate` 는 건너뛴다. 그래서 위 `roles update` 를 따로 친다 (#316).
 4. **첫 앱 층 apply 뒤 (#317 14번)**: `TF_APPLY_FAILED` 에 `iam.serviceAccounts.setIamPolicy` 403 이 보이면, 앱 SA 마다 실행 SA 에 권한을 주고 다시 시도한다 (조건식이 SA 이름을 못 읽는 버그 우회. 이전마다 새 SA 가 생기면 또 한다)
    ```bash
    for sa in $(gcloud iam service-accounts list --project=<전용> --filter='email~^app-' --format='value(email)'); do

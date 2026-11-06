@@ -3,6 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtempSync, writeFileSync, chmodSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -72,6 +73,18 @@ test("레포 등록부: slot-1 은 공유 GCP 환경 명령을 값까지 채워 
   assert.deepEqual(cmds.filter((c) => c.includes("--project=iron-source-gcp")), ["gcloud services enable cloudbilling.googleapis.com --project=iron-source-gcp"]);
 });
 
+test("칸 회사: 칸에 tenant 가 있으면 GCP 연결의 회사 SA 는 그 칸 회사 것 (명부 맨 위 회사 SA 가 아님)", () => {
+  const T2 = "6ccb6f15-b354-496c-a4fe-3f7135961422";
+  const reg = `version: 1\ntenant: 11111111-1111-4111-8111-111111111111\nslots:\n  - id: slot-9\n    tenant: ${T2}\n    login: x@iron\n    signup_code_sha256: ""\n    environments:\n      - { name: x-gcp, provider: gcp, region: asia-northeast3, gcp: { original_project: x-src-prj, dedicated_project: x-mig-prj } }\n`;
+  const r = run(["slot-9"], reg);
+  assert.equal(r.status, 0, r.stderr);
+  const sa = `t-${createHash("md5").update(T2).digest("hex").slice(0, 28)}@sb-iron-platform.iam.gserviceaccount.com`;
+  assert.equal(commands(r.stdout)[0], `PLATFORM_SA=${sa} PROJECT_ID=x-src-prj TARGET_PROJECT_ID=x-mig-prj bash infra/onboarding/gcp-connect.sh`);
+  assert.ok(!r.stdout.includes(SA), "dev-company 회사 SA 가 아님");
+  const bad = run(["slot-9"], reg.replace(T2, "not-a-uuid"));
+  assert.equal(bad.status, 2);
+});
+
 test("레포 등록부: 환경을 안 적은 칸(slot-2)은 끝 코드 2 와 무엇을 채울지", () => {
   const r = run(["slot-2"]);
   assert.equal(r.status, 2);
@@ -97,7 +110,7 @@ test("PLATFORM_GCP_PROJECT·PLATFORM_SA 로 회사 SA 를 바꿀 수 있고, 모
 });
 
 test("거부: 칸 이름·없는 칸·모르는 옵션", () => {
-  assert.equal(run(["slot-x"], FIXTURE).status, 2);
+  assert.equal(run(["slot-9"], FIXTURE).status, 2);
   const missing = run(["slot-9"], FIXTURE);
   assert.equal(missing.status, 2);
   assert.match(missing.stderr, /등록부에 slot-9 칸이 없음/);

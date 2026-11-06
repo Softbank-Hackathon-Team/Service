@@ -135,6 +135,12 @@ for i in $(printf '%s\n' "$FLAT" | sed -n 's/^slots\.\([0-9][0-9]*\)\.id=.*/\1/p
   [ "$(get "slots.$i.id")" = "$SLOT" ] && { [ -z "$SI_" ] || die "칸 $SLOT 이 두 번 있음"; SI_="$i"; }
 done
 [ -n "$SI_" ] || die "등록부에 $SLOT 칸이 없음"
+# 칸마다 회사를 나눈 명부: 칸의 tenant 가 있으면 그 회사 (회사 전용 SA 도 그 회사 것)
+ST_="$(get "slots.$SI_.tenant")"
+if [ -n "$ST_" ]; then
+  [[ "$ST_" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || die "$SLOT 칸 tenant 가 회사 번호(UUID) 모양이 아님: $ST_"
+  TENANT="$ST_"
+fi
 
 # 회사 전용 SA: 연결 화면이 보여 주는 값과 같은 규칙 (apps/api 의 tenant SA 이름 = t-<md5(회사 번호) 앞 28자>)
 md5hex() { if command -v md5sum >/dev/null 2>&1; then printf %s "$1" | md5sum | awk '{print $1}'; else printf %s "$1" | md5 | awk '{print $NF}'; fi; }

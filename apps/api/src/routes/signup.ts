@@ -20,7 +20,7 @@ import { loadTeamRegistry, matchSlot, signupOpen } from "../auth/team-registry.j
 //   POST /auth/signup         {login, code, password} → 201 AuthTokenResponse + Set-Cookie svc_refresh (POST /auth/login 과 같은 모양)
 //     자리 닫힘·모르는 로그인·코드 틀림 → 모두 같은 403 SIGNUP_NOT_ALLOWED (있는 로그인을 알려 주지 않기, OWASP Authentication Cheat Sheet)
 //     코드가 맞고 그 로그인 사용자가 이미 있음 → 409 SIGNUP_EXISTS (코드를 아는 사람에게만 알려 줌)
-//     성공 → 한 트랜잭션(명부의 회사, RLS): 사용자(진짜 비밀번호 해시) + 이름이 없는 환경만 만들기(draft) + 감사 + 로그인 세션
+//     성공 → 한 트랜잭션(그 칸의 회사, 없으면 명부의 회사, RLS): 사용자(진짜 비밀번호 해시) + 이름이 없는 환경만 만들기(draft) + 감사 + 로그인 세션
 //            이미 있는 같은 이름 환경은 건드리지 않는다. 연결 상태는 draft 그대로 → 사용자가 연결 링크 → 확인을 직접 한다
 // 시도 제한: 로그인과 같은 LoginLimiter (접속 IP + 로그인 15분 5번, IP 15분 50번 → 429 TOO_MANY_ATTEMPTS). 칸은 로그인과 따로 센다
 // 사용자 만들기 권한: 앱 계정은 users 에 (id, tenant_id, email, display_name, github_id) 만 넣을 수 있고 password_hash 는 UPDATE 만 된다 (0019·0034)
@@ -64,7 +64,8 @@ export async function signupRoutes(app: FastifyInstance) {
     if (!jwtSecret()) return sendError(req, reply, 503, "AUTH_NOT_CONFIGURED", "JWT_SECRET is not set");
     if (await findLoginUser(slot.login)) return exists(req, reply);
 
-    const tenant = registry.tenant;
+    // 칸의 회사가 있으면 그 회사로 (칸마다 회사를 나눈 명부), 없으면 명부 맨 위 회사
+    const tenant = slot.tenant ?? registry.tenant;
     const userId = randomUUID(), actor = `user:${userId}`;
     const passwordHash = await hashPassword(password);
     const s = authSettings();
