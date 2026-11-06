@@ -3,6 +3,7 @@ import { migrationRoutes } from "./migrations.js";
 import { planRoutes } from "./plans.js";
 import { environmentRoutes } from "./environments.js";
 import { envInventoryRoutes } from "./env-inventory.js";
+import { envPermissionRoutes } from "./env-permissions.js";
 import { costRoutes } from "./cost.js";
 import { agentReviewRoutes } from "./agent-review.js";
 import { docsRoutes } from "./docs.js";
@@ -33,6 +34,7 @@ export const ROUTE_PLUGINS: ReadonlyArray<{ file: string; plugin: (app: FastifyI
   { file: "apps/api/src/routes/plans.ts", plugin: planRoutes },
   { file: "apps/api/src/routes/environments.ts", plugin: environmentRoutes },
   { file: "apps/api/src/routes/env-inventory.ts", plugin: envInventoryRoutes }, // Z86: 환경별 자원 (읽기 전용)
+  { file: "apps/api/src/routes/env-permissions.ts", plugin: envPermissionRoutes }, // PERM-GATE: 고객 권한 묶음 상태·다시 확인
   { file: "apps/api/src/routes/cost.ts", plugin: costRoutes },
   { file: "apps/api/src/routes/agent-review.ts", plugin: agentReviewRoutes }, // Z58: AI 점검 결과 (S7)
   { file: "apps/api/src/routes/docs.ts", plugin: docsRoutes },

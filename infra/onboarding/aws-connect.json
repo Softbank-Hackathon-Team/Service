@@ -586,6 +586,38 @@
                 }
               ]
             }
+          },
+          {
+            "PolicyName": "observe-permcheck",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "iam:SimulatePrincipalPolicy"
+                  ],
+                  "Resource": {
+                    "Fn::Join": [
+                      "",
+                      [
+                        "arn:aws:iam::",
+                        {
+                          "Ref": "AWS::AccountId"
+                        },
+                        ":role/svc-*"
+                      ]
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "platform-perms-version",
+            "Value": "1"
           }
         ]
       }
@@ -630,6 +662,12 @@
             }
           ]
         },
+        "Tags": [
+          {
+            "Key": "platform-perms-version",
+            "Value": "1"
+          }
+        ],
         "ManagedPolicyArns": [
           {
             "Ref": "OperatePolicy"

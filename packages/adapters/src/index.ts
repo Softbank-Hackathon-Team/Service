@@ -90,3 +90,8 @@ export { serviceMapV2, categoryOfTypeV2, type ServiceMapRowV2, type ServiceCateg
 // APP-22 (가): 컷오버 전 도착 앱 → 출발 RDS 잇기 (계획·SQL·사전 점검은 순수, 열기·걷기만 AWS CLI)
 export { planSourceDbLink, sourceDbLinkGrantSql, sourceDbLinkDropSql, sourceDbLinkMode, sourceDbLinkInputFromEnv, sourceDbLinkPrecheck,
   openSourceDbLinkAws, closeSourceDbLinkAws, SOURCE_DB_LINK_AWS_ACTIONS, SOURCE_DB_LINK_SG_TAG, sourceDbLinkOperatePolicy, type SqlRunner, type SourceDbLinkMode, type OpenAwsResult } from "./aws/source-db-link.js";
+// PERM-GATE: 고객 권한 묶음 (권한표에서 생성) · 고객 쪽 실제 상태와의 차이 · apply 403 안전망
+export { buildPermissionBundles, bundleDigest, loadPermissionBundles, requiredBundles, gcpBundlesTsv, PERMISSIONS_VERSION, PERMISSIONS_DIGEST,
+  PERMISSION_BUNDLES_FILE, GCP_BUNDLES_TSV, AWS_PERMCHECK_ACTIONS, GCP_PERMCHECK_ROLE, type BundleInputs, type BundleNeeds, type PolicyDoc } from "./permissions/bundles.js";
+export { checkGcpPermissions, checkAwsPermissions, testIamPermissions, deniedPermissionsFromLog, gapsFromDenied, sampleArn, contextOf,
+  GCP_ROLE_VERSION_RE, AWS_PERMS_VERSION_TAG, type GcpCheckInput, type GcpCheckDeps, type AwsCheckInput } from "./permissions/check.js";

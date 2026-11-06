@@ -64,7 +64,10 @@ test("파라미터: ExternalId는 NoEcho 아님·32자 이상, 주체는 역할 
 test("관찰 역할: 관리형은 ViewOnlyAccess 하나, 인라인에 금지 동작 0·쓰기 0", () => {
   const props = load().Resources.ObserveRole.Properties;
   assert.deepEqual(props.ManagedPolicyArns, [VIEW_ONLY_ARN]);
-  assert.equal(props.Policies.length, 1);
+  // PERM-GATE: 인라인 둘 = 읽기(observe-extra) + 흉내 평가(observe-permcheck: iam:SimulatePrincipalPolicy 하나, 이 계정 svc-* 역할만. 정책을 읽어 판정만 돌려준다)
+  assert.deepEqual(props.Policies.map((p: J) => p.PolicyName), ["observe-extra", "observe-permcheck"]);
+  assert.deepEqual(props.Policies[1].PolicyDocument.Statement, [{ Effect: "Allow", Action: ["iam:SimulatePrincipalPolicy"],
+    Resource: { "Fn::Join": ["", ["arn:aws:iam::", { Ref: "AWS::AccountId" }, ":role/svc-*"]] } }]);
   const stmts = props.Policies[0].PolicyDocument.Statement;
   const actions = stmts.flatMap((s: J) => arr(s.Action));
   const forbidden = [/^secretsmanager:GetSecretValue$/, /^ssm:GetParameter/, /^s3:GetObject/, /^kms:Decrypt$/, /\*$/, /^\*$/];

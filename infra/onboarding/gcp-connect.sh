@@ -14,6 +14,10 @@
 #   CREATE_TARGET_PROJECT=1  전용 프로젝트가 없으면 원래 프로젝트와 같은 폴더·조직 아래 만들고 결제 계정을 붙인다
 #   BILLING_ACCOUNT    만들 때 붙일 결제 계정 ID (비우면 원래 프로젝트의 결제 계정)
 #   ROLE_DIR      infra/permissions 폴더 (커스텀 역할 YAML·조건 JSON이 있는 곳, 기본 ./permissions)
+#   ONLY_BUNDLES  (PERM-GATE) 쉼표로 이은 권한 묶음 id (예 gcp.env,gcp.plan). 주면 "그 묶음만 맞추는 모드": 묶음 표(ROLE_DIR/gcp-bundles.tsv)의
+#                 역할에 빠진 권한만 더하고(있는 권한·고객이 따로 넣은 권한은 안 지움) 그 역할 바인딩·그 묶음 API 만 맞춘다. 다른 것은 손대지 않는다.
+#                 실행 역할(platform_operate·_env …)도 이 모드에서만 빠진 권한을 더한다 (전체 실행은 이미 있는 실행 역할을 바꾸지 않는다).
+#                 플랫폼 화면의 "권한 갱신" 링크가 이 값을 붙여 준다
 # 다시 실행해도 된다(이미 있는 것은 건너뜀).
 # 실행하는 사람에게 필요한 권한(11회차 고객 관점): 프로젝트 소유자(roles/owner), 또는 서비스 계정 관리자 + 역할 관리자 + 프로젝트 IAM 관리자
 #   + Service Usage 관리자(iamcredentials API 켜기). 두 프로젝트 모두에서. 전용 프로젝트를 만들면 프로젝트 생성자 + 결제 계정 사용자도. 모자라면 그 단계에서 gcloud 오류로 멈추고, 권한을 받은 뒤 다시 실행하면 남은 것만 한다
@@ -236,6 +240,9 @@ OBSERVE_PERMS="${OBSERVE_PERMS},storage.buckets.list,storage.buckets.getIamPolic
 # VMIMPORT: compute.instances.list (GCE VM 출발 읽기, 목록만 — metadata·접속 권한 없음)
 # OBSROLE2: 그 밖에 플랫폼이 관찰 SA 로 부르는 모든 gcloud 읽기 명령의 권한 (표 원본 = packages/adapters/src/common/observe-permissions.ts, 시험이 소스의 모든 명령과 대조). 비밀값(secretmanager.versions.access)은 없음
 OBSERVE_PERMS="${OBSERVE_PERMS},resourcemanager.projects.getIamPolicy,serviceusage.services.list,compute.networks.list,compute.forwardingRules.list,compute.globalForwardingRules.list,compute.firewalls.list,compute.regions.get,artifactregistry.repositories.list,secretmanager.secrets.list,compute.instances.list"
+# PERM-GATE (실측 11/6): gcloud artifacts repositories list 는 --location 없이 부르면 먼저 지역 목록(ListLocations)을 읽는다 →
+#   artifactregistry.locations.list 가 없으면 IAM_PERMISSION_DENIED (repositories.list 는 있어도). 관찰 쪽 실자원 읽기·가져오기·확인 모두 이 모양으로 부른다
+OBSERVE_PERMS="${OBSERVE_PERMS},artifactregistry.locations.list"
 # CRIMPORT: Cloud Run 출발(서비스·잡·도메인 매핑·Cloud Scheduler 일정) 메타데이터 읽기. 환경변수 비밀 값은 원본에도 없음(이름·버전만)
 OBSERVE_PERMS="${OBSERVE_PERMS},run.services.list,run.locations.list,run.revisions.get,run.services.getIamPolicy,run.domainmappings.list,run.jobs.list,cloudscheduler.jobs.list"
 # DEPLOYNONK8S: Cloud Run 도착 배포 확인(Ready 조건 읽기)
@@ -257,6 +264,103 @@ OBSERVE_PERMS="${OBSERVE_PERMS},artifactregistry.repositories.downloadArtifacts"
 #   큰 관찰 역할은 예전 판으로 만든 뒤 권한 추가(iam roles update)가 거절되면 빠진 채로 남는다(연결은 계속함). 맥은 roles/browser 를 손으로 붙여 넘김(우회).
 #   → 확인이 부르는 권한만 담은 작은 역할을 따로 두고 svc-observe 에 붙인다. 목록 원본 = packages/adapters/src/verify/gcp.ts step("…") (시험이 대조)
 VERIFY_PERMS="resourcemanager.projects.get,container.clusters.list,container.clusters.get,cloudsql.instances.list,iam.serviceAccounts.get"
+# PERM-GATE: 관찰 SA 가 전용 프로젝트의 플랫폼 역할 정의(빠진 권한·권한 판)를 읽는 작은 역할. 전용 프로젝트에만 붙인다 (원래 프로젝트 역할은 안 읽음)
+PERMCHECK_PERMS="iam.roles.get"
+# 허브(Argo CD)가 이 회사 플랫폼 SA 로 도착 GKE 에 들어올 때 보는 권한
+HUB_PERMS="container.clusters.get"
+# PERM-GATE: 권한 판 번호 (export-permissions 가 묶음 표 첫 줄에 쓴다). 새로 만드는 역할 설명 끝에 [perms vN] 으로 박혀 관찰 SA 가 읽는다
+BUNDLES_TSV="${ROLE_DIR}/gcp-bundles.tsv"
+PERMS_VERSION="$(awk -F'\t' '$1 == "#version" && $2 ~ /^[0-9]+$/ { print $2; exit }' "${BUNDLES_TSV}" 2>/dev/null || true)"
+PERMS_TAG="[perms v${PERMS_VERSION:-0}]"
+# ID-7 DRAFT(ai): plan 역할 = 실행 역할 파일(자동 생성)에서 읽기 동사(get·list·getIamPolicy)만 + 관찰 역할. 실행 역할이 바뀌면 다시 실행할 때 따라 바뀐다(빠진 것만 더함)
+#   파일이 없으면(ROLE_DIR 틀림) 관찰 권한만 → 실행 역할 만들기에서 파일 없음으로 멈춘다. 같은 권한이 두 번 들어가지 않게 정렬·중복 제거
+PLAN_READS="$( (grep -E '^- [a-zA-Z]+\.[a-zA-Z.]+\.(get|list|getIamPolicy)$' "${ROLE_DIR}/gcp-operate-custom-role.yaml" 2>/dev/null || true) | sed 's/^- //')"
+PLAN_PERMS="$(printf '%s\n%s\n' "${OBSERVE_PERMS//,/$'\n'}" "${PLAN_READS}" | sed '/^$/d' | sort -u | paste -sd, -)"
+
+# ── PERM-GATE 묶음 모드: ONLY_BUNDLES 의 묶음만 맞추고 끝낸다 ──
+#   묶음 = 표(gcp-bundles.tsv, export-permissions 가 권한표에서 만든다)의 한 줄: 쪽·주체 SA·역할·역할 파일·바인딩 모양·API.
+#   하는 일: 그 묶음 API 켜기 → 주체 SA 확인(없으면 만듦) → 역할 확인(없으면 만듦) 뒤 빠진 권한만 더함 → 역할 설명의 권한 판 갱신 → 바인딩 → 빌리기(tokenCreator).
+#   지우는 일은 없다(조건부 바인딩이 조건 파일과 다를 때 걷어내고 다시 넣는 것은 전체 실행과 같은 규칙). 다시 돌려도 같은 끝(멱등)
+role_perms() { # 역할ID 역할파일 → 쉼표 목록
+  case "$2" in
+    -) case "$1" in
+         platform_observe) printf '%s' "${OBSERVE_PERMS}" ;; platform_observe_verify) printf '%s' "${VERIFY_PERMS}" ;;
+         platform_plan) printf '%s' "${PLAN_PERMS}" ;; platform_hub_access) printf '%s' "${HUB_PERMS}" ;;
+         platform_observe_permcheck) printf '%s' "${PERMCHECK_PERMS}" ;; *) return 1 ;;
+       esac ;;
+    *) grep '^- ' "${ROLE_DIR}/$2" | sed 's/^- //' | paste -sd, - ;;
+  esac
+}
+role_desc() { # 역할ID 역할파일 → 설명 (판 표시 포함)
+  case "$2" in
+    -) case "$1" in
+         platform_observe) echo "platform read-only inventory ${PERMS_TAG}" ;; platform_observe_verify) echo "platform connection check (read-only) ${PERMS_TAG}" ;;
+         platform_plan) echo "platform plan stage (read only) ${PERMS_TAG}" ;; platform_hub_access) echo "platform argocd hub cluster access ${PERMS_TAG}" ;;
+         *) echo "platform role definition check (read-only) ${PERMS_TAG}" ;;
+       esac ;;
+    *) local d; d="$(sed -n 's/^description: //p' "${ROLE_DIR}/$2" | head -n 1)"; echo "${d% \[perms v*\]} ${PERMS_TAG}" ;;   # 손으로 쓴 역할 파일엔 판 표시가 없다
+  esac
+}
+# 역할 설명의 [perms vN] 이 지금 판이 아니면 설명만 바꾼다 (권한은 안 건드림)
+stamp_role() { # 역할ID 설명
+  local cur=""
+  if ! dry; then cur="$(gcloud iam roles describe "$1" --project="${P}" --format='value(description)' 2>/dev/null || true)"; fi
+  case "${cur}" in *"${PERMS_TAG}"*) echo "= 역할 $1 권한 판 최신 ${PERMS_TAG}" ;; *) run gcloud iam roles update "$1" --project="${P}" --description="$2" ;; esac
+}
+sync_bundle_role() { # 역할ID 역할파일 바인딩 주체SA
+  local id="$1" file="$2" binding="$3" sa="$4" perms desc
+  perms="$(role_perms "${id}" "${file}")" || { echo "묶음 표의 역할 ${id} 를 모름 (스크립트와 표 판이 다름)" >&2; exit 2; }
+  desc="$(role_desc "${id}" "${file}")"
+  if [ "${file}" = "-" ]; then ensure_role "${id}" --title="${id//_/-}" --description="${desc}" --permissions="${perms}" --stage=GA
+  else ensure_role "${id}" --file="${ROLE_DIR}/${file}"; fi
+  sync_role_permissions "${id}" "${perms}"
+  stamp_role "${id}" "${desc}"
+  case "${binding}" in
+    plain) ensure_project_binding "${sa}" "projects/${P}/roles/${id}" ;;
+    plain_only) ensure_plain_binding_only "${sa}" "projects/${P}/roles/${id}" ;;
+    cond:*) ensure_cond_bindings "${sa}" "projects/${P}/roles/${id}" "${ROLE_DIR}/${binding#cond:}" ;;
+    *) echo "묶음 표의 바인딩 모양을 모름: ${binding}" >&2; exit 2 ;;
+  esac
+}
+if [ -n "${ONLY_BUNDLES:-}" ]; then
+  [ -f "${BUNDLES_TSV}" ] || { echo "묶음 표 없음: ${BUNDLES_TSV} (infra 폴더에서 치거나 ROLE_DIR=<레포>/infra/permissions)" >&2; exit 2; }
+  if ! [[ "${ONLY_BUNDLES}" =~ ^[a-z0-9.]+(,[a-z0-9.]+)*$ ]]; then echo "ONLY_BUNDLES 형식이 아님: ${ONLY_BUNDLES}" >&2; exit 2; fi
+  # 모르는 묶음이 하나라도 있으면 아무것도 바꾸기 전에 멈춘다
+  for b in ${ONLY_BUNDLES//,/ }; do
+    awk -F'\t' -v id="${b}" '$1 == id { f = 1 } END { exit !f }' "${BUNDLES_TSV}" || { echo "모르는 권한 묶음: ${b} (gcp-bundles.tsv 에 없음)" >&2; exit 2; }
+  done
+  DONE_ROLES=" "
+  for b in ${ONLY_BUNDLES//,/ }; do
+    IFS=$'\t' read -r _id side principal role file binding apis < <(awk -F'\t' -v id="${b}" '$1 == id' "${BUNDLES_TSV}")
+    if [ "${side}" = "source" ]; then P="${PROJECT_ID}"; else P="${TARGET_PROJECT_ID}"; fi
+    echo "# 묶음 ${b}: ${principal} → ${role} (${P})"
+    if [ "${apis}" != "-" ]; then for a in ${apis//,/ }; do ensure_api "${a}"; done; fi
+    case " ${DONE_ROLES} " in *" ${side}/${role} "*) continue ;; esac
+    DONE_ROLES="${DONE_ROLES}${side}/${role} "
+    case "${principal}" in
+      platform) SA="${PLATFORM_SA}" ;;
+      svc-observe) SA="${OBSERVE_SA}" ;;
+      *) SA="${principal}@${TARGET_PROJECT_ID}.iam.gserviceaccount.com"; ensure_sa "${principal}" ;;
+    esac
+    sync_bundle_role "${role}" "${file}" "${binding}" "${SA}"
+    # 관찰 묶음은 확인 역할(platform_observe_verify)까지 한 묶음 (권한표의 관찰 권한 = 둘의 합)
+    if [ "${role}" = "platform_observe" ]; then sync_bundle_role platform_observe_verify - plain "${SA}"; fi
+    # 환경 층은 노드 SA 하나에만 actAs (전체 실행과 같은 규칙)
+    if [ "${role}" = "platform_env" ]; then
+      ensure_sa svc-gke-node
+      ensure_sa_binding "${NODE_SA}" "${ENV_SA}" roles/iam.serviceAccountUser
+      for nr in roles/logging.logWriter roles/monitoring.metricWriter roles/artifactregistry.reader; do ensure_project_binding "${NODE_SA}" "${nr}"; done
+    fi
+    # 빌리기: 고객 SA 는 그 SA 가 있는 프로젝트의 정책에 (관찰 SA 는 원래 프로젝트)
+    case "${principal}" in
+      platform) ;;
+      svc-observe) P="${PROJECT_ID}"; ensure_token_creator "${OBSERVE_SA}" ;;
+      *) ensure_token_creator "${SA}" ;;
+    esac
+  done
+  echo "완료 (묶음 모드 ${PERMS_TAG}): ${ONLY_BUNDLES}. 플랫폼 화면에서 [다시 확인]을 누른다"
+  exit 0
+fi
 
 # ── 원래 프로젝트: 읽기만 ──
 P="${PROJECT_ID}"
@@ -267,9 +371,9 @@ ensure_api cloudresourcemanager.googleapis.com
 # 결제 연결 확인(precheck PC-BILL, gcloud billing projects describe)은 빌린 SA 의 프로젝트로 할당량을 잡는다 → 그 API 가 꺼져 있으면 막힘
 ensure_api cloudbilling.googleapis.com
 ensure_sa svc-observe
-ensure_role platform_observe --title="platform-observe" --description="platform read-only inventory" --permissions="${OBSERVE_PERMS}" --stage=GA
+ensure_role platform_observe --title="platform-observe" --description="platform read-only inventory ${PERMS_TAG}" --permissions="${OBSERVE_PERMS}" --stage=GA
 sync_role_permissions platform_observe "${OBSERVE_PERMS}"
-ensure_role platform_observe_verify --title="platform-observe-verify" --description="platform connection check (read-only)" --permissions="${VERIFY_PERMS}" --stage=GA
+ensure_role platform_observe_verify --title="platform-observe-verify" --description="platform connection check (read-only) ${PERMS_TAG}" --permissions="${VERIFY_PERMS}" --stage=GA
 sync_role_permissions platform_observe_verify "${VERIFY_PERMS}"
 ensure_project_binding "${OBSERVE_SA}" "projects/${P}/roles/platform_observe"
 ensure_project_binding "${OBSERVE_SA}" "projects/${P}/roles/platform_observe_verify"
@@ -295,15 +399,12 @@ ensure_sa svc-operate
 ensure_sa svc-env
 ensure_sa svc-gke-node
 # 관찰 SA 도 전용 프로젝트를 읽는다 (연결 확인이 전용 프로젝트 번호·svc-operate 를 보고, 배포 확인·도착 GKE 읽기). 읽기 전용
-ensure_role platform_observe --title="platform-observe" --description="platform read-only inventory" --permissions="${OBSERVE_PERMS}" --stage=GA
+ensure_role platform_observe --title="platform-observe" --description="platform read-only inventory ${PERMS_TAG}" --permissions="${OBSERVE_PERMS}" --stage=GA
 sync_role_permissions platform_observe "${OBSERVE_PERMS}"
-ensure_role platform_observe_verify --title="platform-observe-verify" --description="platform connection check (read-only)" --permissions="${VERIFY_PERMS}" --stage=GA
+ensure_role platform_observe_verify --title="platform-observe-verify" --description="platform connection check (read-only) ${PERMS_TAG}" --permissions="${VERIFY_PERMS}" --stage=GA
 sync_role_permissions platform_observe_verify "${VERIFY_PERMS}"
-# ID-7 DRAFT(ai): plan 역할 = 실행 역할 파일(자동 생성)에서 읽기 동사(get·list·getIamPolicy)만 + 관찰 역할. 실행 역할이 바뀌면 다시 실행할 때 따라 바뀐다(빠진 것만 더함)
-#   파일이 없으면(ROLE_DIR 틀림) 관찰 권한만 → 실행 역할 만들기에서 파일 없음으로 멈춘다. 같은 권한이 두 번 들어가지 않게 정렬·중복 제거
-PLAN_READS="$( (grep -E '^- [a-zA-Z]+\.[a-zA-Z.]+\.(get|list|getIamPolicy)$' "${ROLE_DIR}/gcp-operate-custom-role.yaml" 2>/dev/null || true) | sed 's/^- //')"
-PLAN_PERMS="$(printf '%s\n%s\n' "${OBSERVE_PERMS//,/$'\n'}" "${PLAN_READS}" | sed '/^$/d' | sort -u | paste -sd, -)"
-ensure_role platform_plan --title="platform-plan" --description="platform plan stage (read only)" --permissions="${PLAN_PERMS}" --stage=GA
+# ID-7: plan 역할 권한(PLAN_PERMS)은 위에서 계산 (묶음 모드와 같은 값)
+ensure_role platform_plan --title="platform-plan" --description="platform plan stage (read only) ${PERMS_TAG}" --permissions="${PLAN_PERMS}" --stage=GA
 sync_role_permissions platform_plan "${PLAN_PERMS}"
 ensure_role platform_operate --file="${ROLE_DIR}/gcp-operate-custom-role.yaml"
 ensure_role platform_operate_iam --file="${ROLE_DIR}/gcp-operate-iam-custom-role.yaml"
@@ -314,6 +415,10 @@ ensure_role platform_operate_db_secret --file="${ROLE_DIR}/gcp-operate-db-secret
 ensure_role platform_env --file="${ROLE_DIR}/gcp-env-custom-role.yaml"
 ensure_project_binding "${OBSERVE_SA}" "projects/${P}/roles/platform_observe"
 ensure_project_binding "${OBSERVE_SA}" "projects/${P}/roles/platform_observe_verify"
+# PERM-GATE: 관찰 SA 가 이 프로젝트의 플랫폼 역할 정의만 읽게 (사전 점검·환경 화면 "권한 갱신 필요"). 읽기 전용, 전용 프로젝트에만
+ensure_role platform_observe_permcheck --title="platform-observe-permcheck" --description="platform role definition check (read-only) ${PERMS_TAG}" --permissions="${PERMCHECK_PERMS}" --stage=GA
+sync_role_permissions platform_observe_permcheck "${PERMCHECK_PERMS}"
+ensure_project_binding "${OBSERVE_SA}" "projects/${P}/roles/platform_observe_permcheck"
 ensure_project_binding "${PLAN_SA}" "projects/${P}/roles/platform_plan"
 # 결정 3번 A안: 실행 역할은 전용 프로젝트 전체에 조건 없이 (이름 조건 A/B 는 버림 — 방이 따로라 고객 자원이 없다)
 ensure_plain_binding_only "${OPERATE_SA}" "projects/${P}/roles/platform_operate"
@@ -333,7 +438,7 @@ ensure_token_creator "${OPERATE_SA}"
 ensure_token_creator "${ENV_SA}"
 # Argo CD 허브가 이 회사 SA 로 도착 GKE 에 들어온다. GKE 는 API 접속 때 clusters.get 을 본다.
 # 프로젝트 권한은 이것뿐이고, 배포 권한은 앱 구역 RoleBinding 으로만 받는다 (kinds/namespace)
-ensure_role platform_hub_access --title="platform-hub-access" --description="platform argocd hub cluster access" --permissions="container.clusters.get" --stage=GA
+ensure_role platform_hub_access --title="platform-hub-access" --description="platform argocd hub cluster access ${PERMS_TAG}" --permissions="${HUB_PERMS}" --stage=GA
 ensure_project_binding "${PLATFORM_SA}" "projects/${P}/roles/platform_hub_access"
 
 if [ "${DRY_RUN:-0}" = "1" ]; then

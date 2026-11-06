@@ -14,6 +14,7 @@ import type {
   EnvApp,
   EnvCostView,
   EnvironmentView,
+  EnvPermissions,
   EnvStatus,
   EvidenceReport,
   FailureDecisionResult,
@@ -48,6 +49,10 @@ export const api = {
   listMigrations: async () => unwrap(await get<MigrationView[] | { items: MigrationView[] }>('/migrations')),
   envStatus: (id: string) => get<EnvStatus>(`/environments/${id}/status`),
   envInventory: (id: string) => get<{ cloud: CloudInventory; apps: EnvApp[] }>(`/environments/${id}/inventory`),
+  // PERM-GATE: 고객 권한 묶음 상태 + 고치는 링크 (bundles = 사전 점검이 막은 묶음만). 다시 확인은 작업을 넣고 202
+  envPermissions: (id: string, bundles: string[] = []) =>
+    get<EnvPermissions>(`/environments/${id}/permissions${bundles.length ? `?bundles=${encodeURIComponent(bundles.join(','))}` : ''}`),
+  checkPermissions: (id: string) => post<{ envId: string; queued: boolean }>(`/environments/${id}/permission-check`),
   agentReports: (id: string, limit = 20) => get<AgentReportList>(`/environments/${id}/agent-reports?limit=${limit}`),
   // 근거 있는 비용 (contracts cost-evidence.ts). 근거 문장(항 이름·식·뺀 것·프로모션)은 서버가 화면 언어로 만든다
   envCost: (id: string) => get<EnvCostView>(`/environments/${id}/cost?lang=${locale()}`),

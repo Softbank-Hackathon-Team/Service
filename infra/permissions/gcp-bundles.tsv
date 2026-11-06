@@ -1,0 +1,14 @@
+#version	1
+#id	side	principal	role	role_file	binding	apis
+gcp.observe.source	source	svc-observe	platform_observe	-	plain	cloudbilling.googleapis.com,cloudresourcemanager.googleapis.com,iamcredentials.googleapis.com
+gcp.observe.target	target	svc-observe	platform_observe	-	plain	cloudbilling.googleapis.com,cloudresourcemanager.googleapis.com,compute.googleapis.com,container.googleapis.com,iam.googleapis.com,iamcredentials.googleapis.com,secretmanager.googleapis.com,serviceusage.googleapis.com,sqladmin.googleapis.com,sts.googleapis.com
+gcp.permcheck	target	svc-observe	platform_observe_permcheck	-	plain	-
+gcp.plan	target	svc-plan	platform_plan	-	plain	cloudresourcemanager.googleapis.com,compute.googleapis.com,container.googleapis.com,iam.googleapis.com,secretmanager.googleapis.com,serviceusage.googleapis.com,sqladmin.googleapis.com
+gcp.env	target	svc-env	platform_env	gcp-env-custom-role.yaml	plain	cloudresourcemanager.googleapis.com,compute.googleapis.com,container.googleapis.com,serviceusage.googleapis.com
+gcp.operate	target	svc-operate	platform_operate	gcp-operate-custom-role.yaml	plain_only	cloudresourcemanager.googleapis.com,compute.googleapis.com,container.googleapis.com,iam.googleapis.com,serviceusage.googleapis.com
+gcp.operate.secrets	target	svc-operate	platform_operate	gcp-operate-custom-role.yaml	plain_only	secretmanager.googleapis.com
+gcp.operate.postgres	target	svc-operate	platform_operate	gcp-operate-custom-role.yaml	plain_only	secretmanager.googleapis.com,sqladmin.googleapis.com
+gcp.operate.data	target	svc-operate	platform_operate	gcp-operate-custom-role.yaml	plain_only	-
+gcp.operate.iam	target	svc-operate	platform_operate_iam	gcp-operate-iam-custom-role.yaml	cond:gcp-operate-iam-binding-condition.json	-
+gcp.operate.dbsecret	target	svc-operate	platform_operate_db_secret	gcp-operate-db-secret-role.yaml	cond:gcp-operate-db-secret-condition.json	-
+gcp.hub	target	platform	platform_hub_access	-	plain	-

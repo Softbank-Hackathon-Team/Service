@@ -28,6 +28,7 @@ import {
   type FirewallRow, type MigrationSpecViewV2, type SpecRowV2,
 } from './specV2';
 import { LeftoverFold, StopFold } from './EvidenceFolds';
+import { PermissionGapFold } from '../environments/Permissions';
 import { DoneScreen, CleanupScreen, PausedScreen, RolledBackScreen, RollingBackScreen, RunningScreen, WindowScreen } from './RunScreens';
 import { RequirementsFold, SourceFactsFold, VerdictFold } from './SecurityFolds';
 import { SubstituteMap } from './SubstituteMap';
@@ -182,6 +183,8 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
         )}
       </Hero>
       <Stack area="side">
+        {/* PERM-GATE: 사전 점검이 고객 권한으로 막혔으면 막힌 묶음만 고치는 링크 */}
+        {bounce && bounce.gaps.length > 0 && <PermissionGapFold gaps={bounce.gaps} />}
         <FoldTile title={t('읽은 값')} summary={view ? t('{0}칸', { 0: v2 ? rowsV2.length : rows.length }) : t('읽는 중')}>
           {view && v2 ? (
             <ul className={s.rows}>

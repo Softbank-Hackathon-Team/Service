@@ -31,7 +31,11 @@ const VIEW_COLUMNS = `id, provider, name,
   ${isoUtc("last_verified_at")} AS "lastVerifiedAt",
   failure_reason AS "failureReason",
   verify_detail AS "verifyDetail",
-  gcp_target_project AS "targetProjectId"`;
+  gcp_target_project AS "targetProjectId",
+  -- PERM-GATE: 마지막 권한 확인에서 고칠 것(빠진 권한·API)이 있는 묶음 수. 확인한 적 없으면 NULL (칸 없음)
+  (SELECT CASE WHEN p.result IS NULL THEN NULL ELSE (SELECT count(*)::int FROM jsonb_array_elements(p.result->'gaps') g
+      WHERE jsonb_array_length(g->'missing') + jsonb_array_length(g->'missingApis') > 0) END
+     FROM environment_permissions p WHERE p.environment_id = environments.id) AS "permissionGaps"`;
 
 // VERIFYAPI: verify_detail(jsonb) 에서 화면에 줄 두 칸만 꺼낸다. 비었거나 문자열 목록이 아니면 칸을 안 붙인다 (clusters·checkedAt 은 안 내보냄)
 // DRAFT(ai): 화면에 내보내는 목록은 100개·한 줄 300자까지만. 12자리 숫자(AWS 계정 ID, ARN 계정 칸 포함)는 끝 4자리만 남기고 가린다
@@ -41,11 +45,12 @@ const strList = (x: unknown): string[] | null =>
   Array.isArray(x) && x.length > 0 && x.every((v) => typeof v === "string")
     ? (x as string[]).slice(0, VERIFY_LIST_MAX).map((v) => maskIds(v).slice(0, VERIFY_ITEM_MAX)) : null;
 export function toEnvironmentView(row: Record<string, unknown>): EnvironmentView {
-  const { verifyDetail, targetProjectId, ...rest } = row;
+  const { verifyDetail, targetProjectId, permissionGaps, ...rest } = row;
   const d = (verifyDetail && typeof verifyDetail === "object" ? verifyDetail : {}) as Record<string, unknown>;
   const missing = strList(d.missingPermissions), todo = strList(d.needsHuman);
   // RV-24: 흉내 자격으로 닫힌 연결(시험·로컬 REAL_STS=0)은 보기에 mock 표시 (예전엔 버려서 진짜 연결과 구별 못 함)
   return { ...rest, ...(typeof targetProjectId === "string" ? { targetProjectId } : {}),
+    ...(typeof permissionGaps === "number" ? { permissionGaps } : {}),
     ...(missing ? { missingPermissions: missing } : {}), ...(todo ? { needsHuman: todo } : {}),
     ...(d.mock === true ? { mock: true as const } : {}) } as EnvironmentView;
 }

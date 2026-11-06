@@ -1,5 +1,5 @@
 title: platform-operate
-description: infra/modules/gcp/app plan/apply/destroy, IAM 정책 바꾸기 제외 (자동 생성)
+description: infra/modules/gcp/app plan/apply/destroy, IAM 정책 바꾸기 제외 (자동 생성) [perms v1]
 stage: GA
 includedPermissions:
 - artifactregistry.repositories.downloadArtifacts
