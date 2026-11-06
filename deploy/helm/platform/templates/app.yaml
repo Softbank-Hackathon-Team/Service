@@ -22,6 +22,53 @@
 {{- if and $hubRoleArn (not (regexMatch "^arn:aws:iam::[0-9]{12}:role/.+$" $hubRoleArn)) }}
 {{- fail (printf "argocd.hubRoleArn 은 Terraform 출력 argocd_hub_role_arn 그대로 (IAM 역할 ARN, 받은 값 %q)" $hubRoleArn) }}
 {{- end }}
+{{- /* 비밀 아닌 설정 (values apps.<이름>.env, 이름: 값). 그 앱 env 맨 뒤에 그대로 붙는다. 아래 셋은 렌더를 멈춘다:
+       1) 차트가 넣는 이름 = 아래 env 블록의 이름 전부. 지금 꺼져 있어도 막는다 (traffic.mock·sandbox.rehearsal 같은 켜기 값과 가드를 건너뛰지 못하게)
+          env 블록에 이름을 더하면 여기에도 더한다 (deploy/ci/check-platform.sh 가 둘을 맞춰 본다)
+       2) 그 앱이 이미 비밀(<이름>-env, components.<이름>.secretKeys)로 받는 이름. env 가 envFrom 을 덮어 값이 두 곳이 된다
+       3) 비밀처럼 보이는 이름 (*_TOKEN·*_SECRET·*_PASSWORD·*_KEY·*DATABASE_URL). 비밀은 platform/app JSON + secretKeys 로만 넣는다
+       DRAFT(ai): 이름은 대문자·숫자·_ 만 받는다 (소문자 jwt_secret 같은 이름이 3) 을 비껴가지 못하게) */}}
+{{- $chartEnv := list "HOME" "ARGO_SOURCE" "ARGOCD_NAMESPACE" "API_PORT" "METRICS_PORT" "WORKER_METRICS_PORT" "TF_WORK_DIR" "API_UPSTREAM" "API_PREFIX" "ARGO_HUB_ROLE_ARN" "GCP_PLATFORM_PROJECT" "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE" "SANDBOX_REHEARSAL" "SANDBOX_IMAGE_REGISTRY" "SANDBOX_RUNTIME_CLASS" "SANDBOX_MODE" "TRAFFIC_METRICS_ENDPOINT" "PROM_URL" "MOCK_TRAFFIC" "ENV_LAYER_AUTO" }}
+{{- $extraEnv := dict }}
+{{- range $name := list "api" "worker" "agent-worker" "web" }}
+{{- /* 이 칸이 생기기 전 릴리스 값(--reuse-values)이면 env 가 없다 → 빈 맵 */}}
+{{- $env := (default dict (index $apps $name)).env | default dict }}
+{{- if not (kindIs "map" $env) }}
+{{- fail (printf "apps.%s.env 는 이름: 값 맵 (받은 값 %v)" $name $env) }}
+{{- end }}
+{{- $secretKeys := (default dict (index (default dict $.Values.components) $name)).secretKeys | default list }}
+{{- if and (eq $name "agent-worker") $remediation.gitopsRead }}
+{{- $secretKeys = concat $secretKeys (list "GITOPS_REPO_URL" "GITOPS_READ_TOKEN") }}
+{{- end }}
+{{- $out := dict }}
+{{- range $k, $v := $env }}
+{{- /* null = 빼기. 차트 기본에 없는 이름은 helm 이 null 을 지우지 않고 남긴다 (--set apps.worker.env.X=null) */}}
+{{- if not (kindIs "invalid" $v) }}
+{{- if not (regexMatch "^[A-Z_][A-Z0-9_]*$" $k) }}
+{{- fail (printf "apps.%s.env.%s: 이름은 대문자·숫자·_ 만 (예 STEP_CONCURRENCY)" $name $k) }}
+{{- end }}
+{{- if has $k $chartEnv }}
+{{- fail (printf "apps.%s.env.%s: 차트가 넣는 이름이다. 그 값(values)으로 바꾼다 (README \"앱 배포\")" $name $k) }}
+{{- end }}
+{{- if has $k $secretKeys }}
+{{- fail (printf "apps.%s.env.%s: 이미 비밀(components.%s.secretKeys)로 받는 이름이다. 한 곳에서만 준다" $name $k $name) }}
+{{- end }}
+{{- if regexMatch "(^|_)(TOKEN|SECRET|PASSWORD|KEY|DATABASE_URL)$" $k }}
+{{- fail (printf "apps.%s.env.%s: 비밀처럼 보이는 이름이다. platform/app JSON 에 넣고 components.%s.secretKeys 에 더한다" $name $k $name) }}
+{{- end }}
+{{- if or (kindIs "map" $v) (kindIs "slice" $v) }}
+{{- fail (printf "apps.%s.env.%s: 값은 글자·숫자·참거짓 하나 (받은 값 %v)" $name $k $v) }}
+{{- end }}
+{{- /* 값 파일의 숫자는 float64 로 들어와 1000000 이 "1e+06" 이 된다. 정수면 정수 글자로 */}}
+{{- $s := toString $v }}
+{{- if and (kindIs "float64" $v) (eq (float64 (int64 $v)) $v) }}
+{{- $s = printf "%d" (int64 $v) }}
+{{- end }}
+{{- $_ := set $out $k $s }}
+{{- end }}
+{{- end }}
+{{- $_ := set $extraEnv $name $out }}
+{{- end }}
 {{- /* 플랫폼 앱 4개. 이미지 registry·tag 는 배포 때 준다. 둘 중 하나라도 비어 있으면 앱을 하나도 안 만든다 (값 없이도 비밀·입구 차트는 검사된다) */}}
 {{- if and $apps.image.registry $apps.image.tag }}
 {{- /* 앱마다 고정인 것: 실행 사용자(이미지 USER), 검사 경로, 쓰기 자리. 값으로 빼지 않는다 (이미지와 같이 바뀐다)
@@ -153,6 +200,12 @@ spec:
             {{- if (default dict $.Values.envLayer).auto }}
             # GCP 도착 환경 층 자동 생성 (values envLayer.auto)
             - { name: ENV_LAYER_AUTO, value: "1" }
+            {{- end }}
+            {{- end }}
+            {{- with index $extraEnv $name }}
+            # 비밀 아닌 설정 (values apps.{{ $name }}.env)
+            {{- range $k, $v := . }}
+            - { name: {{ $k }}, value: {{ $v | quote }} }
             {{- end }}
             {{- end }}
           {{- if or $a.port $a.metricsPort }}
