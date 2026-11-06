@@ -943,6 +943,7 @@ export const EN: Table = {
   "예: ap-northeast-2": "e.g. ap-northeast-2",
   "예: 도착 쪽 앱이 502를 냅니다. 원인을 찾아 주세요.": "e.g. The target app returns 502. Find the cause.",
   "예상 요금": "Estimated price",
+  "예상 요금을 계산하지 못했습니다. 마이그레이션은 그대로 만들 수 있습니다.": "Couldn't estimate prices. You can still create the migration.",
   "예시 값": "Sample values",
   "예시 앱 기준": "Sample app",
   "예약 작업 실행": "CronJob runs",

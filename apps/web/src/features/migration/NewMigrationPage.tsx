@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { go } from '../../app/routes';
 import { withTransition } from '../../app/transition';
 import type { BentoLayout } from '../../components/layout/ConsoleLayout';
@@ -12,6 +12,7 @@ import { errorText } from '../../lib/errors';
 import { CATEGORY_LABEL } from '../../lib/resourceMap';
 import type { EnvironmentView } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
+import { MoveCostFold, TargetPriceAside, useMoveCost } from '../cost/CostEvidence';
 import { realEnvs, type CloudInventory } from '../dashboard/model';
 import { RegisterEnvEntry } from '../environments/EnvEntry';
 import { ShellLayout } from '../shell/ShellLayout';
@@ -64,10 +65,12 @@ type PickRowProps = {
   label?: string;
   onPick: () => void;
   transitionName?: string;
+  /** 줄 오른쪽 값 (도착 후보의 예상 요금) */
+  aside?: ReactNode;
 };
 
-/** 고르는 줄 하나: 위는 무엇, 아래는 어디와 상태. */
-function PickRow({ icon, title, caption, warn, selected, label, onPick, transitionName }: PickRowProps) {
+/** 고르는 줄 하나: 위는 무엇, 아래는 어디와 상태. 오른쪽에 값을 둘 수 있다 */
+function PickRow({ icon, title, caption, warn, selected, label, onPick, transitionName, aside }: PickRowProps) {
   return (
     <button
       type="button"
@@ -84,6 +87,7 @@ function PickRow({ icon, title, caption, warn, selected, label, onPick, transiti
           <span className={`t-caption ${warn ? 'c-warning' : 'c-secondary'}`}>{caption}</span>
         </span>
       </span>
+      {aside && <span className={s.pickAside}>{aside}</span>}
       {selected === undefined && <Icon name="chevron" />}
     </button>
   );
@@ -187,6 +191,9 @@ export function NewMigrationPage() {
   const source = connected.find((env) => env.id === sourceId);
   // 실자원은 worker 가 읽어 저장한다 (첫 응답엔 아직 없을 수 있음). 그래서 한 번만 읽지 않고 다시 읽는다
   const inventory = usePoll(sourceId ? () => api.envInventory(sourceId) : null, 5_000, [sourceId]);
+  // 도착 고르기가 뜨면 도착 후보 전부의 예상 요금을 한 번 묻는다 (고른 출발 범위로). 화면 단계가 갈려도 훅 순서는 그대로 둔다
+  const targetIds = source && scope ? targetOptions(all, source).options.map((env) => env.id) : [];
+  const move = useMoveCost(source && scope ? source.id : null, scope?.scope ?? {}, targetIds);
 
   const reset = () =>
     withTransition(() => {
@@ -323,9 +330,13 @@ export function NewMigrationPage() {
                 selected={env.id === targetId}
                 onPick={() => setTargetId(env.id)}
                 transitionName={`env-${env.id}`}
+                aside={<TargetPriceAside target={move.data?.targets.find((item) => item.envId === env.id) ?? null} loading={move.loading} />}
               />
             );
           })}
+          {move.error != null && !move.data && options.length > 0 && (
+            <p className={`${s.pickNote} t-caption c-tertiary`}>{t('예상 요금을 계산하지 못했습니다. 마이그레이션은 그대로 만들 수 있습니다.')}</p>
+          )}
           {sameVendor.length > 0 && (
             <p className={`${s.pickNote} t-caption c-tertiary`}>
               {t('같은 {0} 안의 마이그레이션은 지금 지원하지 않아 {1}은(는) 뺐습니다.', { 0: vendorLine(source.provider), 1: sameVendor.map((env) => env.name).join(', ') })}
@@ -336,6 +347,7 @@ export function NewMigrationPage() {
       </Hero>
       <Stack area="found">
         <CreateSteps source={source.name} scope={scope.label} target={target?.name} />
+        {target && <MoveCostFold move={move.data} loading={move.loading} error={move.error} targetId={target.id} />}
         {Object.keys(scope.scope).length > 0 && (
           <FoldTile title={t('옮길 서비스')} summary={scope.label}>
             <p className={`${s.note} t-body-sm c-secondary`}>{scopeSummary(scope.scope)}</p>

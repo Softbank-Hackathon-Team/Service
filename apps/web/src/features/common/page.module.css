@@ -57,6 +57,20 @@
 .pickSelected .pickText :global(.c-secondary) {
   color: inherit;
 }
+/* 고르는 줄 오른쪽 값 (도착 후보의 예상 요금): 위는 크게, 아래는 작게. 이유 글은 접어서 */
+.pickAside {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+  max-width: 45%;
+  text-align: right;
+}
+.pickSelected .pickAside :global(.c-secondary),
+.pickSelected .pickAside :global(.c-tertiary) {
+  color: inherit;
+}
 /* 새로 등록하기 줄: 고를 것이 아니라 새로 만드는 줄이라 점선으로 구분한다 */
 .pickAdd {
   border-style: dashed;
