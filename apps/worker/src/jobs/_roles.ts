@@ -1,7 +1,7 @@
 import type { Provider } from "@svc/contracts";
 import { withTenant, scrubString } from "@svc/core";
 import {
-  STEP_ROLES, stepActions, TempRoleDenied, CredRenewFailed, startRenewal, renewIntervalSec, CRED_RENEW_DEFAULT_SEC, POLICY_PROVIDER,
+  STEP_ROLES, listedActions, stepActions, TempRoleDenied, CredRenewFailed, startRenewal, renewIntervalSec, CRED_RENEW_DEFAULT_SEC, POLICY_PROVIDER,
   type RoleStep, type TempCredential,
 } from "@svc/security";
 import { borrowedAwsCreds, type BorrowedAwsCreds } from "@svc/adapters";
@@ -62,12 +62,15 @@ export async function borrowStepRoles(step: RoleStep, j: { tenantId: string; mig
     const policy = "policy" in r ? r.policy : undefined;
     // 이름 붙은 정책은 클라우드가 하나다 (중계기 = AWS, 환경 층 = GCP). 다른 클라우드면 묻지 않는다 (부르는 쪽이 먼저 거르지만 한 번 더)
     if (policy && POLICY_PROVIDER[policy] !== provider) { out.skipped.push({ side: r.side, reason: `${policy}_policy_${POLICY_PROVIDER[policy]}_only` }); continue; }
+    // 클라우드별로 적은 동작에 이 클라우드가 없으면 묻지 않는다 (예: 이미지 받기는 ECR·AR 만)
+    const listed = listedActions("actions" in r ? r.actions : undefined, provider);
+    if (listed?.length === 0) { out.skipped.push({ side: r.side, reason: `no_actions_${provider}` }); continue; }
     try {
       out.creds.push(await broker.issue({
         // 관찰 역할도 이전 번호를 붙인다 (필수는 아님) → 이 이전의 장부·감사·보안 표에 같이 보인다
         tenantId: j.tenantId, envId, provider, purpose: r.purpose, migrationId: j.migrationId,
         ...(stage ? { stage } : {}), ...(policy ? { policy } : {}),
-        actions: "actions" in r ? [...r.actions] : stepActions(perms, provider, r.purpose, stage, policy), ttlSec: STEP_ROLE_TTL_SEC,
+        actions: listed ?? stepActions(perms, provider, r.purpose, stage, policy), ttlSec: STEP_ROLE_TTL_SEC,
       }, { step }));
       out.sides!.push(r.side);
     } catch (e) {

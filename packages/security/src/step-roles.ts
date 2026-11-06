@@ -1,6 +1,6 @@
 import type { Provider } from "@svc/contracts";
 import { actionsOfPolicy, type PermissionSet, type Stage } from "./permissions.js";
-import type { RolePolicy } from "./temp-role.js";
+import { AR_PULL_PERMISSIONS, type RolePolicy } from "./temp-role.js";
 
 // 작업 단계가 임시 역할을 빌릴 때 "무슨 동작을 달라고 할지" (작업 Z39). 순수 함수.
 // 동작 목록을 손으로 다시 쓰지 않고 최소 권한 파일(infra/permissions)에서 뽑는다 → 파일이 바뀌면 요청도 같이 바뀐다
@@ -39,6 +39,8 @@ export function stepActions(p: PermissionSet | null, provider: Provider, purpose
 
 // ECR 이미지 받기 (토큰 + 매니페스트 + 층). 고객 관찰 역할 인라인(infra/onboarding/aws-connect.json)에도 같은 세 동작이 있어야 한다 (시험이 대조)
 export const ECR_PULL_ACTIONS = ["ecr:BatchGetImage", "ecr:GetAuthorizationToken", "ecr:GetDownloadUrlForLayer"] as const;
+// 출발 클라우드 → 이미지 받기 동작. GCP 는 고객 관찰 SA 역할(infra/onboarding/gcp-connect.sh OBSERVE_PERMS)에도 있어야 한다 (시험이 대조)
+export const IMAGE_PULL_ACTIONS = { aws: ECR_PULL_ACTIONS, gcp: AR_PULL_PERMISSIONS } as const satisfies Partial<Record<Provider, readonly string[]>>;
 
 // 단계 → 어느 환경에서 무슨 목적으로 빌리나. 작업 단계 배선(worker jobs/_roles.ts)이 이 표를 따른다
 export const STEP_ROLES = {
@@ -49,6 +51,9 @@ export const STEP_ROLES = {
   deploy: [{ side: "target", purpose: "observe" }],
   // 커밋 전 도착 비밀 그릇에 값이 있나 (worker gitops/secret-values.ts). 값은 안 읽는다. 관찰 역할엔 버전 메타데이터 권한이 없어 실행 역할(읽기만 부름)을 빌린다
   secret_check: [{ side: "target", purpose: "operate", stage: "apply" }],
+  // 배포 이미지 복사 (worker jobs/image-copy.ts, GitOps 커밋 직전). 출발 관찰 역할로 다이제스트 그대로 받고(출발 클라우드의 받기 동작만),
+  //   도착 실행 역할 apply 단계로 도착 레지스트리에 올린다 (ECR 저장소 만들기·올리기 = apply 세션 정책, AR 올리기 = platform_operate)
+  image_copy: [{ side: "source", purpose: "observe", actions: IMAGE_PULL_ACTIONS }, { side: "target", purpose: "operate", stage: "apply" }],
   // ID-4·ID-8: 정리 단계는 출발 쪽 destroy 자격을 빌리지 않는다. 지금 정리는 자격으로 아무것도 안 하고(cleanup.ts STUB),
   //   출발 destroy 자격은 고객 원래 자원(롤백 기준 출발 DB)을 지울 수 있는 자격이라 쓰지 않을 때 빌리면 위험만 남는다.
   //   또 빌린 자격을 일 중간에 revokeForMigration 으로 회수해 재발급 고리가 CRED_RENEW_FAILED 로 멈출 수 있었다.
@@ -68,5 +73,14 @@ export const STEP_ROLES = {
   // B-2: 도착 GCP 환경 층(VPC·GKE·AR·ESO 설치) 만들기 (worker env-layer.ts). apply 단계 안에서 만들 때만 따로 빌린다.
   //   발급기는 svc-operate 대신 고객 svc-env 를 빌린다 (gcp-cli.ts gcpTargetFor). stage apply 는 장부 칸(0009 CHECK)용
   env_layer: [{ side: "target", purpose: "operate", stage: "apply", policy: "env_layer" }],
-} as const satisfies Record<string, ReadonlyArray<{ side: "source" | "target"; purpose: "observe" | "operate"; stage?: Stage; actions?: readonly string[]; policy?: RolePolicy }>>;
+} as const satisfies Record<string, ReadonlyArray<{ side: "source" | "target"; purpose: "observe" | "operate"; stage?: Stage; actions?: StepActionList; policy?: RolePolicy }>>;
 export type RoleStep = keyof typeof STEP_ROLES;
+
+/** 단계 표에 적는 동작: 클라우드와 상관없는 목록, 또는 클라우드별 목록 (표에 없는 클라우드는 빌리지 않는다) */
+export type StepActionList = readonly string[] | Partial<Record<Provider, readonly string[]>>;
+const isList = (a: StepActionList): a is readonly string[] => Array.isArray(a);
+/** 단계 줄에 적은 동작 중 이 클라우드 것. 적지 않았으면 null (→ stepActions 가 권한 파일에서 뽑는다) */
+export function listedActions(actions: StepActionList | undefined, provider: Provider): string[] | null {
+  if (!actions) return null;
+  return [...(isList(actions) ? actions : actions[provider] ?? [])];
+}

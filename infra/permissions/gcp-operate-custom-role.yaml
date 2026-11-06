@@ -2,6 +2,8 @@ title: platform-operate
 description: infra/modules/gcp/app plan/apply/destroy, IAM 정책 바꾸기 제외 (자동 생성)
 stage: GA
 includedPermissions:
+- artifactregistry.repositories.downloadArtifacts
+- artifactregistry.repositories.uploadArtifacts
 - cloudsql.databases.create
 - cloudsql.databases.delete
 - cloudsql.databases.get

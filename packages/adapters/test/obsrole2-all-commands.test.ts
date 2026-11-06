@@ -87,7 +87,8 @@ test("GCP 연결 스크립트의 관찰 역할 권한 = 표의 모든 권한을 
   const lacking = need.filter((p) => !perms.includes(p));
   assert.deepEqual(lacking, [], `관찰 역할에 없는 권한: ${lacking.join(", ")}`);
   assert.equal(new Set(perms).size, perms.length);
-  for (const p of perms) assert.match(p, /\.(get|list|getIamPolicy)$/, p);
+  // 리허설 이미지 받기 하나는 동사가 download 인 읽기 (security AR_PULL_PERMISSIONS)
+  for (const p of perms) assert.match(p, /\.(get|list|getIamPolicy)$|^artifactregistry\.repositories\.downloadArtifacts$/, p);
 });
 
 test("거부: 표 전체에 쓰기·비밀값·내용 읽기 권한이 하나도 없음 (표에 넣으면 이 시험이 깨짐)", () => {
