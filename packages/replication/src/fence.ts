@@ -23,12 +23,14 @@ const REVOKED: Record<"table" | "sequence", readonly string[]> = {
 export interface SavedGrant { kind: "table" | "sequence"; name: string; privilege: string; grantable: boolean }
 
 /** 앱 계정에 직접 준 쓰기 권한 (fence 가 걷는 것만). 그룹·PUBLIC 경유 권한은 REVOKE 대상이 아니라 안 적는다 */
+// relacl 이 NULL 이면(GRANT·REVOKE 한 적 없는 표) 주인 기본 권한(acldefault)으로 읽는다. 앱 계정이 표 주인이면 그게 앱의 쓰기 권한이다.
+//   예전: aclexplode(NULL) 은 0줄 → 저장본이 비어, REVOKE 뒤 해제가 주인 쓰기 권한을 되돌리지 못했다 (2026-11-06 실제 RDS 에서 확인)
 // z75-31: fence 가 같은 질의를 한 번의 왕복 안에 넣을 수 있게 값을 글자로 박은 판도 만든다 (여러 문장 묶음은 $1 을 못 쓴다)
 const directWriteGrantsSql = (schema: string, role: string, p: (v: unknown) => string) =>
   `SELECT CASE WHEN cl.relkind = 'S' THEN 'sequence' ELSE 'table' END AS kind, cl.relname AS name,
           a.privilege_type AS privilege, a.is_grantable AS grantable
      FROM pg_class cl JOIN pg_namespace n ON n.oid = cl.relnamespace
-     CROSS JOIN LATERAL aclexplode(cl.relacl) a
+     CROSS JOIN LATERAL aclexplode(COALESCE(cl.relacl, acldefault(CASE WHEN cl.relkind = 'S' THEN 's' ELSE 'r' END::"char", cl.relowner))) a
     WHERE n.nspname = ${p(schema)} AND a.grantee = (SELECT oid FROM pg_roles WHERE rolname = ${p(role)})
       AND ((cl.relkind = ANY(${p(TABLE_KINDS)}) AND a.privilege_type = ANY(${p(REVOKED.table)})) OR (cl.relkind = 'S' AND a.privilege_type = ANY(${p(REVOKED.sequence)})))`;
 const textArray = (xs: readonly string[]) => `ARRAY[${xs.map(lit).join(", ")}]::text[]`;

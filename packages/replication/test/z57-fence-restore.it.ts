@@ -97,3 +97,32 @@ test("Z57 저장본 없는 DB(울타리 친 적 없는 도착)는 예전처럼 �
   assert.deepEqual(await privs(), ["customers:DELETE", "customers:INSERT", "customers:SELECT", "customers:UPDATE",
     "orders:DELETE", "orders:INSERT", "orders:SELECT", "orders:UPDATE"]);
 });
+
+// 실측(2026-11-06 실제 RDS): 앱 계정이 표 주인이고 권한을 따로 준 적 없으면(relacl = NULL, 주인 기본 권한) 저장본이 비었다.
+//   aclexplode(NULL) 은 0줄이라, REVOKE 뒤 해제가 아무것도 되돌리지 못해 주인이 자기 표에 INSERT·UPDATE·DELETE·TRUNCATE 를 잃었다
+//   (컷오버 실패·롤백 뒤 출발 앱 쓰기 실패). 기본 권한(acldefault)도 저장해 그대로 되돌려야 한다
+test("Z57 앱 계정이 주인인 표(기본 권한, relacl NULL)도 해제 뒤 쓰기 권한이 그대로 돌아온다", async (t) => {
+  if (!up) return t.skip("IT_SOURCE_URL DB 없음");
+  await reset();
+  await q(SOURCE, `
+    DROP TABLE IF EXISTS z57_owned;
+    CREATE TABLE z57_owned (id bigserial PRIMARY KEY, v int);
+    ALTER TABLE z57_owned OWNER TO app_user;`);
+  const owned = async () => (await q(SOURCE, `SELECT p, has_table_privilege('app_user', 'public.z57_owned', p) ok
+    FROM unnest(ARRAY['INSERT','UPDATE','DELETE','TRUNCATE']) p ORDER BY 1`)).filter((r) => r.ok).map((r) => r.p);
+  const ownedSeq = async () => (await q(SOURCE, `SELECT p, has_sequence_privilege('app_user', 'public.z57_owned_id_seq', p) ok
+    FROM unnest(ARRAY['USAGE','UPDATE']) p ORDER BY 1`)).filter((r) => r.ok).map((r) => r.p);
+  assert.equal((await q(SOURCE, `SELECT relacl IS NULL AS n FROM pg_class WHERE oid = 'public.z57_owned'::regclass`))[0].n, true, "전제: 기본 권한");
+  assert.deepEqual(await owned(), ["DELETE", "INSERT", "TRUNCATE", "UPDATE"]);
+  await withAdmin(async (c) => {
+    assert.deepEqual((await directWriteGrants(c, SOURCE)).filter((g) => g.name.startsWith("z57_owned")).map((g) => `${g.kind}:${g.privilege}`),
+      ["sequence:UPDATE", "sequence:USAGE", "table:DELETE", "table:INSERT", "table:TRUNCATE", "table:UPDATE"], "주인 기본 권한도 직접 권한으로 센다");
+    await fence(c, SOURCE);
+    assert.deepEqual(await owned(), [], "울타리 뒤 주인도 못 쓴다");
+    await unfence(c, SOURCE);
+  });
+  assert.deepEqual(await owned(), ["DELETE", "INSERT", "TRUNCATE", "UPDATE"], "해제 뒤 주인 쓰기 권한 복원");
+  assert.deepEqual(await ownedSeq(), ["UPDATE", "USAGE"], "시퀀스도 복원");
+  assert.deepEqual(await privs(), ["customers:SELECT", "orders:INSERT", "orders:SELECT"], "다른 표의 좁은 권한은 그대로");
+  await q(SOURCE, `DROP TABLE z57_owned`);
+});
