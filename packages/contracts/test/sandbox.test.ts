@@ -96,6 +96,11 @@ test("TransitionEvidence.rehearsal: 통과·재사용·건너뜀 이유만, 실�
   assert.equal(TransitionEvidence.safeParse({ rehearsal: "failed" }).success, false);
 });
 
+test("TransitionEvidence.securityParity: 쟀으면 true·false, 못 쟀으면 not_measured. 그 밖의 글자는 거부", () => {
+  for (const v of [true, false, "not_measured"]) assert.ok(TransitionEvidence.safeParse({ securityParity: v }).success, String(v));
+  assert.equal(TransitionEvidence.safeParse({ securityParity: "unknown" }).success, false);
+});
+
 test("SandboxMode: vcluster 를 받고 모르는 값은 거부", () => {
   assert.ok(SandboxMode.safeParse("vcluster").success);
   assert.equal(SandboxMode.safeParse("docker").success, false);
