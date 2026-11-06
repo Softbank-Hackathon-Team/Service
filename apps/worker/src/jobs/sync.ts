@@ -1,5 +1,6 @@
 import { envNumber, Measurement, MigrationJob, QUEUES } from "@svc/contracts";
-import { replicationFor } from "./_repl.js";
+import { iacMockEnabled } from "@svc/adapters";
+import { replicationFor, specHasPostgres } from "./_repl.js";
 import { ReplConfigError, SchemaCopyError, toMeasurements, endpointAddress, tcpReachProblem } from "@svc/replication";
 import { withTenant } from "@svc/core";
 import { MigrationMoved } from "@svc/traffic";
@@ -52,6 +53,10 @@ export const precheckFailureCode = (failed: { id: string; side?: string }[]) =>
   : failed.some((c) => c.id === "DB-T4") ? "REPL_TARGET_SCHEMA_MISSING"
   : failed.some((c) => c.id === "DB-08") ? "REPL_APP_ROLE_UNFENCEABLE" : "SYNC_FAILED";
 
+/** 끝점(줄·REPL_* env)이 하나도 없을 때 가짜 지연 길로 가면 안 되는가. 진짜 판(MOCK_IAC≠1)에 명세 postgres 가 있으면 멈춘다
+ *  (precheck RV-28 required 와 같은 기준). 명세에 postgres 가 없거나 못 읽으면(옛 판) 예전처럼 STUB 길 */
+export const endpointMissingBlocks = (hasPostgres: boolean | null, env: NodeJS.ProcessEnv = process.env) => !iacMockEnabled(env) && hasPostgres === true;
+
 // DB 논리 복제(CDC) 따라잡기. syncing → shifting
 // 복제 지연이 기준 아래로 내려와야 트래픽을 옮긴다 (컷오버 전 관문 T21)
 // REPL_SOURCE_URL이 있으면 @svc/replication으로 진짜 복제, 없으면 STUB (DB 하나로 도는 smoke 유지)
@@ -71,6 +76,10 @@ export async function handleSync(raw: unknown) {
         throw e;
       }
       if (!repl) {
+        // 예전엔 끝점이 없으면 진짜 판에서도 120ms 가짜 지연으로 shifting 에 갔다 (DB 를 안 옮기고 트래픽을 옮김) → 이유 코드로 멈춘다
+        if (endpointMissingBlocks(await specHasPostgres(j.tenantId, j.migrationId)))
+          return failed(new SyncPermanentError("REPL_ENDPOINT_MISSING: 명세에 postgres 가 있는데 복제 끝점이 없다 (replication_endpoints 줄 없음, 워커 REPL_SOURCE_URL·REPL_TARGET_URL 없음). "
+            + "AWS 출발 중계기 이전이면 apply 의 중계기 단계 감사(relay)를, 아니면 npm run repl:endpoint -- set 으로 두 쪽을 넣고 재개", "REPL_ENDPOINT_MISSING"));
         await stubWait();
         // 시험·데모용: 복제 실패를 흉내 낸다 (SYNC_STUB_FAIL=1). 진짜 복제 없이 자동 롤백 길을 보여 준다
         if (process.env.SYNC_STUB_FAIL === "1") return failed(new Error("STUB: replication not ready (SYNC_STUB_FAIL=1)"));
