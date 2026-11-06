@@ -16,6 +16,10 @@ def panel(kind, title, exprs, x, y, w, h, unit=None, thresholds=None, desc=None,
     if desc: p["description"] = desc
     return p
 ACTIVE = 'status!~"completed|rolled_back|cancelled|rejected|stale|draft"'
+MIG = 'migration=~"$migration"'
+# 워커가 여럿이면 옛 값을 쥔 워커가 남는다 → 가장 최근에 바꾼 워커의 값만 쓴다
+WEIGHT = (f'max by (migration) (svc_traffic_weight_pct{{{MIG}}} and (svc_traffic_weight_updated_seconds{{{MIG}}}'
+          f' == on (migration) group_left () max by (migration) (svc_traffic_weight_updated_seconds{{{MIG}}})))')
 panels = [
   panel("stat", "진행 중 이전", [(f'sum(svc_migrations{{{ACTIVE}}})', "")], 0, 0, 4, 4,
         thresholds=[("green", None)], desc="끝 상태·draft 를 뺀 이전 수"),
@@ -51,10 +55,25 @@ panels = [
         "{{route}}")], 0, 28, 12, 8, unit="s"),
   panel("timeseries", "API 5xx (5분)", [('sum by (route) (increase(svc_http_requests_total{status=~"5.."}[5m]))',
         "{{route}}")], 12, 28, 12, 8),
+  # 이전 측정: 새 패널은 뒤에 붙인다 (옛 화면이 패널 번호 1~14 를 쓴다)
+  panel("timeseries", "트래픽 교차 (LB 가중치, 출발 A · 도착 B)",
+        [(f'100 - {WEIGHT}', "출발 A {{migration}}"),
+         (WEIGHT, "도착 B {{migration}}")], 0, 36, 12, 8, unit="percent",
+        desc="LB 에서 확인한 설정값이다. 실제로 받은 요청은 옆 패널에서 본다"),
+  panel("timeseries", "실제 요청 수 (초당)",
+        [(f'sum by (migration) (rate(svc_ingress_requests_total{{env="target",{MIG}}}[1m]))', "도착 {{migration}}"),
+         (f'sum by (migration) (rate(svc_ingress_requests_total{{env="target",code=~"5..",{MIG}}}[1m]))', "도착 5xx {{migration}}"),
+         (f'sum by (migration) (rate(svc_ingress_requests_total{{env="source",{MIG}}}[1m]))', "출발 {{migration}}")], 12, 36, 12, 8, unit="reqps",
+        desc="도착 cloudflared 지표. 출발 수집기가 없는 환경은 출발 줄이 안 나온다"),
 ]
+panels[-2]["fieldConfig"]["defaults"].update({"min": 0, "max": 100, "custom": {"lineInterpolation": "stepAfter"}})
+MIGRATION_VAR = {"name": "migration", "label": "이전", "type": "query", "datasource": DS,
+        "query": {"query": "label_values(svc_traffic_weight_pct, migration)", "refId": "migration"},
+        "refresh": 2, "includeAll": True, "allValue": ".*", "multi": False, "sort": 0,
+        "current": {"text": "All", "value": "$__all"}}
 dash = {"uid": "svc-migrations", "title": "이전 관측 (Service)", "tags": ["service", "DRAFT(ai)"],
         "timezone": "browser", "schemaVersion": 39, "version": 1, "refresh": "10s",
-        "time": {"from": "now-30m", "to": "now"}, "panels": panels, "templating": {"list": []},
+        "time": {"from": "now-30m", "to": "now"}, "panels": panels, "templating": {"list": [MIGRATION_VAR]},
         "annotations": {"list": []}, "editable": True}
 json.dump(dash, open(sys.argv[1], "w"), ensure_ascii=False, indent=2)
 print(len(panels))
