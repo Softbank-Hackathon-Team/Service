@@ -104,7 +104,7 @@ test("읽기 동작 보강: ElastiCache 복제그룹 plan 에 멤버 클러스�
   assert.ok(acts(ROLE).has("elasticache:DescribeCacheClusters"));
   for (const f of SESSIONS) {
     assert.ok(acts(f).has("elasticache:DescribeCacheClusters"), f);   // plan·apply·destroy 모두 상태를 읽음
-    assert.deepEqual([...acts(f)].filter((a) => !acts(ROLE).has(a)), [], f);
+    assert.deepEqual([...acts(f)].filter((a) => !acts(ROLE).has(a) && !acts("aws-operate-db-kms-policy.json").has(a)), [], f);   // 천장 = 관리형 + 인라인 db-kms
     assert.ok(JSON.stringify(JSON.parse(readFileSync(new URL(f, dir), "utf8"))).length <= 6144, `${f} 길이 (보내는 판 2,048자는 security 시험)`);
   }
   assert.ok([...acts("aws-session-policy-plan.json")].every((a) => /:(Describe|Get|List)/.test(a)));

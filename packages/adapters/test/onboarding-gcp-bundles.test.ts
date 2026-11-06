@@ -88,9 +88,9 @@ test("묶음 모드: 11/06 처럼 platform_env 에 세 권한이 없으면 그 �
   const m = since(e, n);
   assert.deepEqual(m.map((c) => c.split(" --")[0]), ["iam roles update platform_env", "iam roles update platform_env"], m.join("\n"));
   assert.deepEqual(/--add-permissions=(\S+)/.exec(m[0]!)![1]!.split(",").sort(), [...MEASURED].sort());
-  assert.match(m[1]!, /--description=.*\[perms v3\]$/);
+  assert.match(m[1]!, /--description=.*\[perms v4\]$/);
   assert.ok(!e.calls().slice(n).some((c) => /platform_operate|platform_plan|svc-operate|svc-plan/.test(c) && MUTATING.test(c)), "다른 역할은 안 건드림");
-  assert.match(r.stdout, /완료 \(묶음 모드 \[perms v3\]\): gcp\.env/);
+  assert.match(r.stdout, /완료 \(묶음 모드 \[perms v4\]\): gcp\.env/);
   // 다시: 바꾸는 명령 0
   const n2 = e.calls().length;
   const r2 = e.run({ ONLY_BUNDLES: "gcp.env" });

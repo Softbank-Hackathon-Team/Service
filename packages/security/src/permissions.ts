@@ -74,11 +74,14 @@ export function loadPermissionSet(dir: string): PermissionSet {
   const read = (f: string) => readFileSync(join(dir, f), "utf8");
   const compact = (f: string) => JSON.stringify(JSON.parse(read(f)));
   const relay = loadRelay(dir);
+  const dbKms = (): string[] => { try { return actionsOfPolicy(JSON.parse(read("aws-operate-db-kms-policy.json")) as PolicyDoc); } catch { return []; } };
   let env: string | undefined;
   try { env = read("gcp-env-custom-role.yaml"); } catch { /* 없으면 env_layer 발급 거부 */ }
   return {
     aws: {
-      ceiling: actionsOfPolicy(JSON.parse(read("aws-operate-role-policy.json")) as PolicyDoc),
+      // 천장 = 관리형 정책 + 실행 역할 인라인 db-kms (새 도착 RDS 기본 키 KMS. 관리형 정책 6,144자 한도 때문에 인라인, 연결 템플릿이 같은 파일을 넣는다).
+      //   파일이 없으면(옛 권한 폴더) 관리형 정책만 → KMS 동작 요청은 ROLE_OUTSIDE_CEILING
+      ceiling: [...new Set([...actionsOfPolicy(JSON.parse(read("aws-operate-role-policy.json")) as PolicyDoc), ...dbKms()])].sort(),
       sessionPolicies: { plan: compact("aws-session-policy-plan.json"), apply: compact("aws-session-policy-apply.json"), destroy: compact("aws-session-policy-destroy.json") },
       ...(relay ? { relay } : {}),
     },

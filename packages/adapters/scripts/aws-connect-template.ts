@@ -199,6 +199,8 @@ export function buildAwsConnectTemplate(operatePolicy: Json, boundaryPolicy: Jso
           Policies: [
             { PolicyName: "source-db-link", PolicyDocument: sourceDbLinkOperatePolicy() },
             { PolicyName: "relay", PolicyDocument: relayOperatePolicy() },
+            // 새 도착 RDS 의 기본 키(aws/rds·aws/secretsmanager) 사용. 관리형 정책 한도 때문에 인라인 (export-permissions 가 파일을 쓴다)
+            { PolicyName: "db-kms", PolicyDocument: JSON.parse(readFileSync(new URL("../../../infra/permissions/aws-operate-db-kms-policy.json", import.meta.url), "utf8")) },
           ],
         },
       },
