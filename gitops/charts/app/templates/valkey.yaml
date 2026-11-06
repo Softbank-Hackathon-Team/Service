@@ -44,13 +44,11 @@ spec:
             - "no"
             - --dir
             - /data
-            {{- with $d.maxmemoryMi }}
             - --maxmemory
-            - {{ printf "%dmb" (int .) | quote }}
+            - {{ printf "%dmb" (int (required "dataServices[].maxmemoryMi" $d.maxmemoryMi)) | quote }}
             # DRAFT(ai): ElastiCache 기본 파라미터 그룹과 같은 교체 규칙
             - --maxmemory-policy
             - volatile-lru
-            {{- end }}
           ports:
             - { name: valkey, containerPort: {{ $port }} }
           readinessProbe:
@@ -82,4 +80,22 @@ spec:
   selector: { app.kubernetes.io/name: {{ $.Values.app.name }}, app.kubernetes.io/component: {{ $d.name | quote }} }
   ports:
     - { name: valkey, port: {{ $port }}, targetPort: valkey, protocol: TCP }
+---
+# 인증·TLS 가 없으니 같은 앱 파드만 들어온다. 나가는 쪽은 안 막는다 (Valkey 는 먼저 나가지 않음)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $d.name }}
+  labels: {{- include "app.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $d.name | quote }}
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: {{ $.Values.app.name }}, app.kubernetes.io/component: {{ $d.name | quote }} }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: {{ $.Values.app.name }} }
+      ports:
+        - { port: {{ $port }}, protocol: TCP }
 {{- end }}{{- end }}

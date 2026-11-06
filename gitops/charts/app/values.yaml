@@ -8,7 +8,7 @@ postgres: []
 # postgres[] mode cnpg 한 줄의 이전 칸 (templates/cnpg.yaml):
 #   replication: { enabled: true, role: svc_migrate, passwordSecret: <name>-migrate, validUntil: <RFC3339, 선택>, ensure: present|absent }
 #   certificates: { serverCASecret: <비밀>, serverTLSSecret: <비밀> }   # 선택
-# 온프레 대체 서버 (templates/valkey.yaml). [{ id, kind: valkey, name, image: <@sha256 고정>, port, maxmemoryMi?, resources }]
+# 온프레 대체 서버 (templates/valkey.yaml). [{ id, kind: valkey, name, image: <@sha256 고정>, port, maxmemoryMi, resources }]
 dataServices: []
 # 온프레 DB 이전 터널 (templates/db-tunnel.yaml). 없으면 안 그린다. 워커가 이전 동안만 넣는다
 #   dbTunnel: { relay: { host, port: 22, knownHosts }, keySecret, forward: { target: "<출발 DB>:5432" }, reverse: { enabled, cnpgName }, image: <@sha256 고정> }

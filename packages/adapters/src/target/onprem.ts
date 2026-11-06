@@ -42,12 +42,17 @@ export const cnpgName = (spec: AppSpecV2, id: string) => {
   const base = `${spec.app.name}-${id}`;
   return base.length <= 50 ? base : `${base.slice(0, 43).replace(/-+$/, "")}-${hash6(spec.app.name, id)}`;
 };
-// Valkey 이름 규칙은 CNPG 와 같다. CNPG 가 만드는 Service(<cluster>-rw·-ro·-r)와 겹치면 해시를 붙인다 (예: postgres db + 캐시 db-rw)
+// Valkey 이름 규칙은 CNPG 와 같다. 차트의 다른 Deployment·Service 와 겹치면 해시를 붙인다
+//   (CNPG <cluster>-rw·-ro·-r, 워크로드와 그 Service, 입구 <앱>-cloudflared, db-tunnel. 예: postgres db + 캐시 db-rw)
 // 포트 = 출발 포트 그대로 (Valkey 는 고를 수 있음). 서버가 평문이라 언제나 redis://
 const valkeyName = (spec: AppSpecV2, id: string) => {
   const name = cnpgName(spec, id);
-  const taken = postgresOf(spec).some((p) => ["rw", "ro", "r"].some((s) => `${cnpgName(spec, p.id)}-${s}` === name));
-  return taken ? `${name}-${hash6(spec.app.name, id)}` : name;
+  const taken = new Set([
+    ...postgresOf(spec).flatMap((p) => ["rw", "ro", "r"].map((s) => `${cnpgName(spec, p.id)}-${s}`)),
+    ...workloadsOf(spec).flatMap((w) => [w.id, ...(w.kind === "service" ? (w.props.endpoints ?? []).map((e) => e.name) : [])]),
+    `${spec.app.name}-cloudflared`, "db-tunnel",
+  ]);
+  return taken.has(name) ? `${name}-${hash6(spec.app.name, id)}` : name;
 };
 const cachePort = (c: Extract<ComponentV2, { kind: "cache" }>) => c.props.port ?? 6379;
 // 출발 주소가 rediss://${<캐시>.host} 면 도착 평문 Valkey 에 TLS 로 붙어 실패한다 → 이 캐시로 가는 주소만 redis:// 로. 뜻은 승인 항목에 적는다
@@ -74,9 +79,10 @@ const dataLink = (spec: AppSpecV2) => (c: ComponentV2, output: string): string |
 //   출발 DB 크기를 가져오면(예: 2000m) initdb 파드가 "exceeded quota" 로 못 떴다 (2026-11-04 VM 실측)
 const CNPG_DEFAULT_CPU_MILLI = 500, CNPG_DEFAULT_MEM_MIB = 1024;   // gitops/charts/app/templates/cnpg.yaml 기본값과 같게
 const cnpgInstances = (c: ReturnType<typeof postgresOf>[number]) => 1 + (c.props.ha ? 1 : 0) + (c.props.readReplicas ?? 0);
-// DRAFT(ai): Valkey 파드 크기. maxmemory = 출발 메모리, 파드 한도는 25% 여유 (넘치면 OOM). 출발 메모리를 못 읽으면 256Mi 에 maxmemory 없음
+// DRAFT(ai): Valkey 파드 크기. maxmemory = 출발 메모리 (못 읽으면 200, 교체 규칙이 돌게 늘 준다), 파드 한도는 25% 여유 (넘치면 OOM)
 const VALKEY_CPU_MILLI = 100;
-const valkeyMemMi = (c: ReturnType<typeof cachesOf>[number]) => (c.props.memoryMiB === null ? 256 : Math.ceil(c.props.memoryMiB * 1.25));
+const valkeyMaxMemoryMi = (c: ReturnType<typeof cachesOf>[number]) => c.props.memoryMiB ?? 200;
+const valkeyMemMi = (c: ReturnType<typeof cachesOf>[number]) => Math.ceil(valkeyMaxMemoryMi(c) * 1.25);
 function quota(spec: AppSpecV2): { cpu: number | null; mem: number | null } {
   let cpu: number | null = 0, mem: number | null = 0;
   for (const w of workloadsOf(spec)) {
@@ -208,7 +214,7 @@ function workloadValues(spec0: AppSpecV2, out: TfOutputs, t: Target) {
     const caches = cachesOf(spec);
     const dataServices = caches.map((c) => compact({
       id: c.id, kind: "valkey" as const, name: valkeyName(spec, c.id), image: VALKEY_IMAGES[valkeyLine(c)], port: cachePort(c),
-      maxmemoryMi: c.props.memoryMiB ?? undefined,
+      maxmemoryMi: valkeyMaxMemoryMi(c),
       resources: { requests: { cpu: `${VALKEY_CPU_MILLI}m`, memory: `${valkeyMemMi(c)}Mi` }, limits: { memory: `${valkeyMemMi(c)}Mi` } },
     }));
     // CNPG 가 만드는 비밀은 저장소에서 가져오지 않는다 (ExternalSecret 이 같은 이름을 덮어쓰면 CNPG 와 다툰다)

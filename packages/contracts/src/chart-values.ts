@@ -181,7 +181,7 @@ export const ChartDataService = z.object({
   id: z.string(), kind: z.literal("valkey"), name: Name,
   image: z.string().regex(/^[^@\s]+@sha256:[0-9a-f]{64}$/),
   port: z.number().int().min(1).max(65535),
-  maxmemoryMi: z.number().int().positive().optional(),
+  maxmemoryMi: z.number().int().positive(),
   resources: K8sObj,
 }).strict();
 export type ChartDataService = z.infer<typeof ChartDataService>;

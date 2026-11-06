@@ -27,7 +27,9 @@ test("RDS → CloudNativePG 승인 행: 앱 코드 그대로, 쓰는 설정만 �
 
 test("ElastiCache → Valkey 승인 행: 판을 고르고 단일 서버·평문·빈 캐시를 적는다 (조용히 안 버림)", () => {
   const [all] = subs(spec([cache({ version: "7.4", clusterMode: true, shards: 3, ha: true, tls: true })]), "aws");
-  assert.deepEqual([all!.from, all!.to, all!.appChange], ["ElastiCache (redis)", "Valkey 7.2", false]);
+  assert.deepEqual([all!.from, all!.to, all!.appChange], ["ElastiCache (redis)", "Valkey 7.2", true], "클러스터 모드는 클라이언트 설정을 바꿔야 함");
+  assert.match(all!.detail!, /Single-server client/);
+  assert.equal(subs(spec([cache()]), "aws")[0]!.appChange, false);
   assert.deepEqual(lostNames(all!.lost), ["Newer source version features", "Cluster mode and shards", "Replicas and automatic failover", "In-transit encryption", "Cached data"]);
   assert.deepEqual(lostNames(subs(spec([cache()]), "aws")[0]!.lost), ["Cached data"]);
   assert.equal(subs(spec([cache({ engine: "valkey", version: "8.0" })]), "aws")[0]!.to, "Valkey 8.1");
@@ -51,10 +53,10 @@ test("Valkey 값: 계약 통과, 이름·포트·메모리, 앱 env 링크는 �
   assert.deepEqual(env.map((e) => e.value), ["redis://shop-sess:6380", "shop-sess"]);
 });
 
-test("Valkey 값: 출발 메모리를 못 읽으면 maxmemory 없음. 캐시 없으면 칸 자체가 없음", () => {
+test("Valkey 값: 출발 메모리를 못 읽어도 maxmemory 를 줘서 OOM 대신 교체. 캐시 없으면 칸 자체가 없음", () => {
   const d = (on.toWorkloadValues(spec([cache({ memoryMiB: null })]), {}, T) as ChartValues).dataServices![0]!;
-  assert.equal(d.maxmemoryMi, undefined);
-  assert.deepEqual(d.resources, { requests: { cpu: "100m", memory: "256Mi" }, limits: { memory: "256Mi" } });
+  assert.equal(d.maxmemoryMi, 200);
+  assert.deepEqual(d.resources, { requests: { cpu: "100m", memory: "250Mi" }, limits: { memory: "250Mi" } });
   assert.equal("dataServices" in on.toWorkloadValues(spec([db()]), {}, T), false);
 });
 
@@ -64,6 +66,14 @@ test("거부: 캐시 이름이 CNPG Service(shop-db-rw)와 겹치면 값과 링�
   const name = v.dataServices![0]!.name;
   assert.match(name, /^shop-db-rw-[0-9a-f]{6}$/);
   assert.equal((v.workloads[0]!.env as Array<{ value: string }>)[0]!.value, name);
+});
+
+test("거부: 캐시 이름이 워크로드·입구와 겹쳐도 계획 값에서 다른 이름으로 (렌더까지 가서 실패하지 않음)", () => {
+  const nameOf = (s: AppSpecV2) => (on.toWorkloadValues(s, {}, T) as ChartValues).dataServices![0]!.name;
+  const worker = { ...SHOP(), id: "shop-sess" };
+  const s = AppSpecV2.parse({ ...spec([cache()]), components: [...spec([cache()]).components, worker] });
+  assert.match(nameOf(s), /^shop-sess-[0-9a-f]{6}$/);
+  assert.match(nameOf(spec([{ ...cache(), id: "cloudflared" }])), /^shop-cloudflared-[0-9a-f]{6}$/);
 });
 
 test("rediss 주소: 캐시로 가면 env·args·설정 파일 모두 redis:// 로. 다른 서버로 가는 rediss:// 는 그대로, 글자 값도 그대로", () => {

@@ -19,6 +19,7 @@ const versionOf = (c: Cache) => Number.parseFloat(c.props.version ?? "") || 0;
 export const valkeyLine = (c: Cache): ValkeyLine => (c.props.engine === "valkey" && versionOf(c) >= 8 ? "8.1" : "7.2");
 
 // 문구는 영어 (cloud-substitutes.ts 와 같음: 일본어 화면에 한글이 섞이지 않게)
+const clustered = (c: Cache) => c.props.clusterMode === true || (c.props.shards ?? 0) > 1;
 const POSTGRES_LOST: Loss<Postgres>[] = [
   { what: "Port (the CloudNativePG service is fixed at 5432)", when: (c) => c.props.port !== undefined && c.props.port !== 5432 },
   { what: "Automated backups and point-in-time recovery (CloudNativePG backups are configured separately)", when: (c) => !!c.props.backup && (!!c.props.backup.retentionDays || c.props.backup.pitr === true) },
@@ -27,7 +28,7 @@ const POSTGRES_LOST: Loss<Postgres>[] = [
 ];
 const CACHE_LOST: Loss<Cache>[] = [
   { what: "Newer source version features (rendered on an older Valkey line)", when: (c) => versionOf(c) > Number(valkeyLine(c)) },
-  { what: "Cluster mode and shards (rendered as a single server, cluster-only clients need a config change)", when: (c) => c.props.clusterMode === true || (c.props.shards ?? 0) > 1 },
+  { what: "Cluster mode and shards (rendered as a single server)", when: clustered },
   { what: "Replicas and automatic failover (rendered as a single server)", when: (c) => c.props.ha === true },
   { what: "In-transit encryption (rediss:// addresses become redis://, apps that force TLS in other settings need a config change)", when: (c) => c.props.tls !== false },
   { what: "Cached data (starts empty)" },
@@ -42,7 +43,8 @@ export function onpremSubstitutes(spec: AppSpecV2, source: Provider): ApprovalRo
     if (c.kind === "postgres")
       return [{ kind: "substitute", subject: c.id, from: CLOUD_PRODUCT[source].postgres(c), to: "CloudNativePG", lost: lostOf(POSTGRES_LOST, c), appChange: false }];
     if (c.kind === "cache" && c.props.engine !== "memcached")
-      return [{ kind: "substitute", subject: c.id, from: CLOUD_PRODUCT[source].cache(c), to: `Valkey ${valkeyLine(c)}`, lost: lostOf(CACHE_LOST, c), appChange: false }];
+      return [{ kind: "substitute", subject: c.id, from: CLOUD_PRODUCT[source].cache(c), to: `Valkey ${valkeyLine(c)}`, lost: lostOf(CACHE_LOST, c),
+        appChange: clustered(c), ...(clustered(c) ? { detail: "Single-server client instead of a Redis Cluster client" } : {}) }];
     return [];
   });
   return rows.sort((a, b) => a.subject.localeCompare(b.subject));
