@@ -1,9 +1,11 @@
 {{- /* 워커가 Argo CD Application 을 읽고 새로고침 표시를 단다 (apps/worker/src/gitops/argo-watch.ts: kubectl get / annotate applications.argoproj.io -n argocd) */}}
+{{- /* 칸이 없는 예전 릴리스 값(--reuse-values)에서도 app.yaml 의 worker ARGOCD_NAMESPACE 와 같은 값 */}}
+{{- $argoNs := (default dict .Values.argocd).namespace | default "argocd" }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: platform-worker-applications
-  namespace: {{ .Values.argocd.namespace }}
+  namespace: {{ $argoNs }}
   labels:
     app.kubernetes.io/part-of: platform
 rules:
@@ -15,7 +17,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: platform-worker-applications
-  namespace: {{ .Values.argocd.namespace }}
+  namespace: {{ $argoNs }}
   labels:
     app.kubernetes.io/part-of: platform
 roleRef:
