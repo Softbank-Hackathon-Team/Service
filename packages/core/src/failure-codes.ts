@@ -76,6 +76,7 @@ export const FAILURE_CODES = [
   "TRAFFIC_RESTORE_FAILED",      // Jeong 01:53Z: 실패 진입 때 트래픽 출발 100% 되돌리기가 재시도 뒤에도 실패
   "TRAFFIC_PLATFORM_ERROR",      // pf-d RV-11: 전환 도중 플랫폼 DB 오류가 이어짐 → 출발 100% 로 되돌린 뒤 paused
   "TRAFFIC_PREFLIGHT_FAILED", "TRAFFIC_LB_MISCONFIGURED",   // Z14-06: LB 점검 실패 / 전환 조건 안 맞음 → paused
+  "TRAFFIC_NOT_CONFIGURED",      // 진짜 판(MOCK_IAC·MOCK_TRAFFIC 꺼짐)에 PROM_URL·LB 전환기가 없음 → 가중치·LB 주인 자리 안 건드리고 paused
   // vCluster 리허설 (deploying, 커밋 전) → paused. contracts RehearsalFailureCode 와 같은 글자 (시험이 두 목록을 맞춘다)
   "REHEARSAL_DRY_RUN_REJECTED", "REHEARSAL_TARGET_POLICY_DENIED", "REHEARSAL_QUOTA_EXCEEDED",
   "REHEARSAL_ROLLOUT_FAILED", "REHEARSAL_CRASHLOOP", "REHEARSAL_NOT_READY", "REHEARSAL_JOB_FAILED", "REHEARSAL_CONNECTIVITY_FAILED",

@@ -5,7 +5,7 @@
 | 항목 | 내용 |
 |---|---|
 | 목적 | 도착 비율을 10→50→100%로 올리고, 지표가 나쁘면 출발 100%로 되돌린다. 결과를 상태 머신 한 칸으로 바꾼다 |
-| 받는 것 | 이전 번호, LB 번호, `TrafficSwitcher`(Cloudflare·GCLB·ALB·Mock), `MetricsSource`(Prometheus·STUB), 판정 기준, `shouldPause` |
+| 받는 것 | 이전 번호, LB 번호, `TrafficSwitcher`(Cloudflare·GCLB·ALB·Mock), `MetricsSource`(Prometheus·STUB), 판정 기준(워커는 승인 계획 `rollbackCriteria` 를 `ruleFromCriteria` 로 바꿔 넘긴다), `shouldPause` |
 | 넘기는 것 | `ShiftResult`(reached_100 / rolled_back / rollback_failed / paused), 판정마다 `TrafficJudgement`, `shiftTransition()` → `{to, evidence, enqueue, failureCode}`, `restoreSource()` → T35 증거 |
 | 부작용 | 전환기 `set()`(제공자 API PATCH), 지표 GET. DB·`advance()`·감사는 부르는 워커가 한다 |
 | 실패 코드 | `INVALID_WEIGHTS`, `TRAFFIC_SWITCH_FAILED`(3번 재시도 후), `TRAFFIC_PROVIDER_ERROR`. 결과 failureCode: `TRAFFIC_ERROR_RATE`, `TRAFFIC_LATENCY`, `TRAFFIC_INSUFFICIENT_SAMPLES`, `TRAFFIC_PAUSED` |
@@ -29,7 +29,7 @@
 - `providers/gcp-gclb.ts` URL map `defaultRouteAction.weightedBackendServices`, fingerprint 잠금, 전역 작업 DONE 대기
 - `providers/aws-alb.ts` 리스너 ForwardConfig 가중치, 고정 세션 끔. SDK 연결은 STUB(`AlbApi` 주입)
 - `providers/mock.ts` 메모리 LB + 실패 주입(set 실패, 옛 값 읽기)
-- `providers/index.ts` `switcherFromEnv`(기본 mock). 트래픽 전환은 임시 역할이 아니라 전역 CLOUDFLARE_API_TOKEN 으로 돈다 (apps/worker platform.ts trafficSwitcher). 토큰 범위: 워커(전환·롤백)는 Zone · Load Balancers: Edit 하나, 검증 스크립트(자원 생성)는 + Account · Load Balancing: Monitors and Pools: Edit
+- `providers/index.ts` `switcherFromEnv`(기본 mock. 워커는 흉내를 허락한 판(MOCK_IAC=1·MOCK_TRAFFIC=1)이 아니면 mock 전환기·가짜 지표로 shift 하지 않고 `TRAFFIC_NOT_CONFIGURED` 로 멈춘다). 트래픽 전환은 임시 역할이 아니라 전역 CLOUDFLARE_API_TOKEN 으로 돈다 (apps/worker platform.ts trafficSwitcher). 토큰 범위: 워커(전환·롤백)는 Zone · Load Balancers: Edit 하나, 검증 스크립트(자원 생성)는 + Account · Load Balancing: Monitors and Pools: Edit
 - `metrics.ts` `prometheusMetrics`(PromQL 3줄 × 2쪽, 이전 번호 UUID 검사로 주입 방지), `stubMetrics`
 
 ```bash

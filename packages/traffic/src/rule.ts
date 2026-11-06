@@ -13,6 +13,11 @@ export const RULE_DEFAULTS = {
 };
 export type RuleOpts = typeof RULE_DEFAULTS;
 
+/** 승인 계획의 롤백 기준(%·배수) → 판정 규칙. 계획이 없으면(옛 이전) 기본값. 보호 장치(표본 하한·연속 2번 등)는 계획에 칸이 없어 기본값 그대로 */
+export function ruleFromCriteria(c: { errorRatePct: number; p95Multiplier: number } | undefined): Partial<RuleOpts> {
+  return c ? { errRatio: c.errorRatePct / 100, p95Factor: c.p95Multiplier } : {};
+}
+
 // p95Ms 가 있으면 그 값을 쓴다 (Prometheus 처럼 이미 분위수를 계산해 주는 지표). 없으면 latenciesMs 로 계산
 export interface Side { n: number; err5xx: number; latenciesMs: number[]; p95Ms?: number }
 const sideP95 = (s: Side) => s.p95Ms ?? p95(s.latenciesMs);

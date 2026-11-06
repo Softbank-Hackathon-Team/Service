@@ -13,6 +13,7 @@ test("멈춘 이유: 트래픽 지표로 멈추면 가드레일, 단계 실패�
   assert.match(stopReasonOf("TRAFFIC_ERROR_RATE", "paused")!.title, /오류가\n기준을 넘었습니다/);
   assert.equal(stopReasonOf("TRAFFIC_LATENCY", "rolling_back")?.label, "응답 시간 기준 넘음");
   assert.equal(stopReasonOf("TRAFFIC_SWITCH_FAILED", "paused")?.kind, "step");
+  assert.equal(stopReasonOf("TRAFFIC_NOT_CONFIGURED", "paused")?.kind, "system");   // 설정 문제라 넓은 TRAFFIC_ 가드레일 줄보다 먼저
   assert.equal(stopReasonOf("TRAFFIC_PAUSED", "paused")?.label, "트래픽 이동 멈춤");
   assert.equal(stopReasonOf("TF_APPLY_FAILED", "failed")?.label, "자원 생성 실패");
   assert.equal(stopReasonOf("TF_BIN_MISSING", "failed")?.kind, "system");
