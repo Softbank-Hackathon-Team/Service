@@ -120,6 +120,12 @@ test("봉인 비밀: SealedSecret (template 이름 = name, type 그대로, 범�
   assert.ok(ds.every((d) => /apiVersion: bitnami\.com\/v1alpha1\nkind: SealedSecret/.test(d)));
   assert.match(ds[0]!, /encryptedData:\n\s+password: AgBfake2\n\s+username: AgBfake1\n\s+template:\n\s+metadata:\n\s+name: shop-db-migrate/);
   assert.match(ds[0]!, /type: "kubernetes\.io\/basic-auth"/);
+  // 풀린 Secret 에 cnpg.io/reload: CNPG 가 이전마다 바뀌는 이전 역할 비밀번호·서버 인증서를 다시 맞추게 (SealedSecret 자체에는 안 붙임)
+  for (const d of ds) {
+    const tpl = d.slice(d.indexOf("template:"));
+    assert.match(tpl, /labels:[\s\S]*cnpg\.io\/reload: "true"/);
+    assert.doesNotMatch(d.slice(0, d.indexOf("spec:")), /cnpg\.io\/reload/);
+  }
   assert.doesNotMatch(out, /sealedsecrets\.bitnami\.com\/(cluster|namespace)-wide/);
   assert.match(renderErr(values({ sealedSecrets: [{ name: "x", encryptedData: {} }] })), /sealedSecrets\[x\]\.encryptedData 가 비었다/);
 });
