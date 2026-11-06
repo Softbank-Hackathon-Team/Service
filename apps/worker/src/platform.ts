@@ -4,7 +4,7 @@ import { awsCliSts, awsStsIssuer, createTempRoleBroker, gcpCliIssuer, GcpIssueEr
 import { fileURLToPath } from "node:url";
 import { pgLedger } from "./temp-cred-ledger.js";
 import { withTenant, writeAudit, scrubString, trafficTargetFor } from "@svc/core";
-import { envNumber, type TrafficTarget } from "@svc/contracts";
+import { awsRoleName, envNumber, type TrafficTarget } from "@svc/contracts";
 
 // 워커 프로세스 하나에 하나씩 두는 외부 연결 (트래픽 전환기, 지표, 임시 역할 중개자)
 // 트래픽은 환경변수가 있으면 진짜, 없으면 흉내를 허락한 판(trafficStubAllowed)에서만 가짜. 비밀값은 환경변수 이름만 읽는다
@@ -88,7 +88,8 @@ export function permissionSet(): PermissionSet | null {
 
 // 환경 → 고객 역할 참조 (Z39). environments 의 provider·account_id·external_id 로 만든다. 값이 아니라 이름이다
 // DRAFT(ai): 역할 이름 규칙 svc-<observe|operate> (stubRoleIssuer 와 같음). 계정 번호가 비면 0 으로 채운 가짜
-export interface EnvRoleRow { provider: string; account_id: string | null; external_id: string | null; gcp_target_project?: string | null }
+// 한 AWS 계정에 환경 여럿 (0056): AWS 는 이름 끝에 환경 꼬리 aws_role_suffix (연결 템플릿 RoleSuffix). NULL = 옛 환경 = 예전 이름 그대로
+export interface EnvRoleRow { provider: string; account_id: string | null; external_id: string | null; gcp_target_project?: string | null; aws_role_suffix?: string | null }
 export function roleRefFor(e: EnvRoleRow | undefined, envId: string, purpose: "observe" | "operate"): { roleRef: string; externalId?: string } {
   const role = `svc-${purpose}`;
   // 결정 3번 A안: GCP 실행 역할(svc-operate, plan 단계는 발급기가 svc-plan 으로 바꿈)은 이전 전용 프로젝트에만 있다. 관찰은 원래 프로젝트(account_id)
@@ -98,12 +99,12 @@ export function roleRefFor(e: EnvRoleRow | undefined, envId: string, purpose: "o
   const roleRef = e?.provider === "gcp" ? `${role}@${acct}.iam.gserviceaccount.com`
     : e?.provider === "onprem" ? `agent://${envId}/${role}`
     : e?.provider === "azure_mock" ? `azure-mock://${acct}/${role}`
-    : `arn:aws:iam::${acct}:role/${role}`;
+    : `arn:aws:iam::${acct}:role/${awsRoleName(role, e?.aws_role_suffix)}`;
   return { roleRef, ...(e?.external_id ? { externalId: e.external_id } : {}) };
 }
 async function resolveEnv(tenantId: string, envId: string, purpose: "observe" | "operate") {
   const e = await withTenant(tenantId, async (tx) => (await tx.query(
-    `SELECT provider, account_id, external_id, gcp_target_project FROM environments WHERE id = $1`, [envId])).rows[0]) as EnvRoleRow | undefined;
+    `SELECT provider, account_id, external_id, gcp_target_project, aws_role_suffix FROM environments WHERE id = $1`, [envId])).rows[0]) as EnvRoleRow | undefined;
   return roleRefFor(e, envId, purpose);
 }
 

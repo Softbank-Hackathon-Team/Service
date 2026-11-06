@@ -6,7 +6,8 @@
 
 locals {
   # 고객 배포 역할 이름: packages/adapters/scripts/aws-connect-template.ts DEPLOY_ROLE_NAME 과 같아야 한다. 고객 계정 번호는 미리 모른다
-  customer_deploy_role_arn    = "arn:aws:iam::*:role/svc-deploy"
+  #   한 계정에 환경 여럿 (0056): 새 연결은 svc-deploy-<16진 8자> (템플릿 RoleSuffix) → 바탕-* 도 같이
+  customer_deploy_role_arns   = ["arn:aws:iam::*:role/svc-deploy", "arn:aws:iam::*:role/svc-deploy-*"]
   argocd_hub_service_accounts = toset(["argocd-application-controller", "argocd-server"])
 }
 
@@ -26,7 +27,7 @@ resource "aws_iam_role_policy" "argocd_hub" {
       Effect = "Allow"
       # DRAFT(ai) 【추정】 Pod Identity 세션 태그가 다음 빌리기로 넘어가서 TagSession 도 같이 둔다 (고객 svc-deploy 신뢰도 같은 두 동작)
       Action   = ["sts:AssumeRole", "sts:TagSession"]
-      Resource = [local.customer_deploy_role_arn]
+      Resource = local.customer_deploy_role_arns
     }]
   })
 }

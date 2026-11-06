@@ -6,8 +6,9 @@
 
 locals {
   # 고객 역할 이름: packages/adapters/scripts/aws-connect-template.ts 의 OBSERVE_ROLE_NAME·OPERATE_ROLE_NAME 과 같아야 한다
-  # DRAFT(ai): 고객 계정 번호를 미리 알 수 없어 계정 자리만 * 로 둔다. 역할 이름은 두 개로 고정 (role/* 아님)
-  customer_role_arns = ["arn:aws:iam::*:role/svc-observe", "arn:aws:iam::*:role/svc-operate"]
+  # DRAFT(ai): 고객 계정 번호를 미리 알 수 없어 계정 자리만 * 로 둔다. 역할 이름은 두 바탕으로 고정 (role/* 아님)
+  #   한 계정에 환경 여럿 (0056): 새 연결은 이름 끝에 환경 꼬리 "-<16진 8자>" (템플릿 RoleSuffix) → 바탕-* 도 같이. 옛 연결은 꼬리 없는 이름 그대로
+  customer_role_arns = ["arn:aws:iam::*:role/svc-observe", "arn:aws:iam::*:role/svc-operate", "arn:aws:iam::*:role/svc-observe-*", "arn:aws:iam::*:role/svc-operate-*"]
   # 리허설 이미지 복사 자리 (worker SANDBOX_IMAGE_REGISTRY = 출력 sandbox_image_registry). 회사별 저장소 sandbox/<회사>/<이름> 을 워커가 만든다
   # 플랫폼 ECR 은 샌드박스 접두어를 sandbox 하나만 쓴다 (네임스페이스·DNS 이름의 sbx- 와는 별개)
   sandbox_image_prefix = "sandbox"
