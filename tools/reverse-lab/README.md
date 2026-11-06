@@ -36,7 +36,9 @@ psql 은 없어도 된다 (컨테이너 안 psql 을 쓴다).
 npm run lab:reverse -- up
 ```
 
-`up` = 키 만들기(처음 한 번, `.state/`) → 컨테이너 4개 → 데이터 넣기 → 두 길 확인. 끝에 `ok: svc_migrate ... orders=500` 과 `ok: app` 이 나오면 된다.
+`up` = 키 만들기(처음 한 번, `.state/`) → 컨테이너 4개 → 데이터 넣기 → 두 길 확인. 끝에 `ok: svc_migrate ... orders=500`, `ok: app`, `ok: 호스트 입구가 이 실험장 DB 로 간다` 가 나오면 된다.
+
+Docker 엔진이 둘(예: Docker Desktop 과 OrbStack)이면 실험장은 한쪽에만 띄운다. 다른 엔진에 남은 실험장이 호스트 입구(56432·56433)를 쥐면 시험이 낡은 DB 에 붙고 `reset` 은 새 DB 만 비워 초기 복사가 멈춘다. `reset`·`status` 가 이것을 잡아 멈춘다 (`docker context ls` 로 확인하고 다른 쪽 실험장을 stop).
 
 ## 1. 복제 엔진만 시험 (1분)
 
@@ -57,7 +59,8 @@ npm run lab:reverse -- platform-stop
 ```
 
 - 같은 로컬 DB 를 보는 다른 worker(`npm run dev:worker`)는 꺼 둔다. 작업을 가로채 실험장 env 없이 돈다
-- `platform` 이 "DB 마이그레이션 N개를 안 넣음" 으로 api·worker 를 안 띄우면: `npm run db:migrate`. 로컬 DB 에 표는 있는데 기록이 빠진 경우만 `MIGRATION_CHECK=0 npm run lab:reverse -- platform`
+- `platform` 이 "DB 마이그레이션 N개를 안 넣음" 으로 api·worker 를 안 띄우면: `npm run db:migrate`. 로컬 DB 에 표는 있는데 기록이 빠져 migrate 가 `already exists` 로 멈추면 그 번호만 기록을 채운다 (`INSERT INTO migrate.applied(version,name,sha256,how) VALUES (…,'baseline')`) 뒤 다시 migrate. 급하면 `MIGRATION_CHECK=0 npm run lab:reverse -- platform` (새 표가 없으면 api 가 500)
+- 로컬 플랫폼 DB(`service-db-1`)가 기본이 아닌 Docker 엔진에 있으면 `DOCKER_CONTEXT=<그 엔진> npm run lab:reverse -- platform` (migrate 가 다른 엔진에 DB 를 새로 띄우지 않게)
 - 출발은 실험장 전용 온프레 환경 `reverse-lab-onprem` (없으면 만들고 Agent 키를 발급해 하트비트를 보낸다). 도착은 시드 AWS 환경 `22222222-…`
 
 ## 판과 판 사이

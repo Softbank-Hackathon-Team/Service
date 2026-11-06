@@ -67,6 +67,23 @@ INSERT INTO customers(name) SELECT 'c' || g FROM generate_series(1, 50) g;
 INSERT INTO orders(customer_id, item, amount) SELECT 1 + g % 50, 'seed-' || g, g FROM generate_series(1, 500) g;
 SQL
   echo "seed: 온프레 customers 50, orders 500 / 클라우드 빈 상태 / 양쪽 복제 객체 0"
+  hostcheck
+}
+
+# 호스트 입구(127.0.0.1:56432·56433)가 정말 이 실험장의 DB 로 가는지 본다. 2026-11-07 실측: Docker Desktop 에 오후 실험장이 남아
+#   포트를 쥔 채 OrbStack 에 새 실험장을 띄우니, 시험은 낡은 DB(남은 구독으로 초기 복사가 멈춤)에 붙고 reset 은 새 DB 만 비웠다 (조용히 실패)
+#   → 컨테이너 안에서 본 postmaster 시작 시각과 호스트 입구로 본 시각이 다르면 멈춘다
+hostcheck() {
+  for pair in "onprem-pg 56432 postgres://svc_migrate:lab-svc-migrate@127.0.0.1:56432/shop $ONPREM_SU" "cloud-pg 56433 postgres://app:lab-cloud-admin@127.0.0.1:56433/shop $CLOUD_SU"; do
+    set -- $pair
+    inside=$(psqlin "$1" "$4" -At -c "SELECT pg_postmaster_start_time()::text")
+    outside=$(cd "$ROOT" && node -e 'const pg=require("pg");const c=new pg.Client(process.argv[1]);c.connect().then(()=>c.query("SELECT pg_postmaster_start_time()::text t")).then(r=>{console.log(r.rows[0].t);return c.end()}).catch(e=>{console.log("ERR "+e.message);process.exit(0)})' "$3")
+    if [ "$inside" != "$outside" ]; then
+      echo "실패: 호스트 입구 127.0.0.1:$2 가 이 실험장의 $1 이 아닌 다른 DB 로 간다 (안: $inside / 입구: $outside)." >&2
+      echo "  다른 Docker 엔진에 실험장이 또 떠 있나 본다: docker context ls, docker --context <이름> ps | grep reverse-lab → 그쪽을 stop" >&2
+      return 1
+    fi
+  done
 }
 
 status() {
@@ -86,6 +103,7 @@ status() {
       || ' orders=' || coalesce((SELECT n_live_tup FROM pg_stat_user_tables WHERE relname = 'orders')::text, '-')"
   done
   echo "== 호스트 입구: 온프레 관리 127.0.0.1:56432 (svc_migrate), 클라우드 관리 127.0.0.1:56433 (app)"
+  hostcheck && echo "ok: 호스트 입구가 이 실험장 DB 로 간다"
 }
 
 ROOT=$(cd ../.. && pwd)
@@ -97,9 +115,11 @@ platform() {
   if command -v psql >/dev/null; then (cd "$ROOT" && sh tools/db-migrate.sh >/dev/null 2>&1)
   else (cd "$ROOT" && docker compose run --rm migrate >/dev/null 2>&1); fi \
     || echo "경고: 로컬 플랫폼 DB 마이그레이션 실패. 계속한다 (docker compose run --rm migrate 로 원인 확인)"
+  # 로그·pid 는 절대 경로로 (예전엔 하위 셸 안 $OLDPWD 로 잡아, 셸에 따라 레포 맨 위를 가리켜 api.pid 쓰기가 실패하고 worker 가 안 떴다. 2026-11-07 실측)
+  st="$(pwd)/$S"
   for app in api worker; do
     (cd "$ROOT/apps/$app" && nohup npx tsx --env-file=../../.env --env-file=../../tools/reverse-lab/platform.env src/main.ts \
-      < /dev/null > "$OLDPWD/$S/$app.log" 2>&1 & echo $! > "$OLDPWD/$S/$app.pid")
+      < /dev/null > "$st/$app.log" 2>&1 & echo $! > "$st/$app.pid")
   done
   for i in $(seq 1 60); do curl -fs -o /dev/null "http://localhost:3100/api/v1/migrations" -H 'x-dev-tenant: 11111111-1111-4111-8111-111111111111' && break; sleep 1; done
   echo "api :3100, worker 뒤에서 돎 (로그 tools/reverse-lab/$S/api.log, worker.log). 같은 로컬 DB 를 보는 다른 worker 는 꺼 둔다 (작업을 가로챈다)"
