@@ -92,6 +92,8 @@ const RULES: Rule[] = [
   // 워커 sync.ts: 출발 끝점(중계기 출발 입구 포함) TCP 실패, 재시도 소진 → sync paused
   { match: /^REPL_SOURCE_UNREACHABLE$/, kind: "step", label: t('출발 DB에 못 닿음'), title: t('출발 DB에\n닿지 못했습니다'), hint: t('출발 DB 주소와 포트(중계기 입구 포함)로 다시 시도해도 연결되지 않아 DB 복제를 멈췄습니다.') },
   { match: /^REPL_TARGET_UNREACHABLE$/, kind: "step", label: t('도착 DB에 못 닿음'), title: t('도착 DB에\n닿지 못했습니다'), hint: t('도착 DB 주소와 포트로 다시 시도해도 연결되지 않아 DB 복제를 멈췄습니다.') },
+  // replication precheck DB-08: 앱 계정이 superuser·pg_write_all_data·rds_superuser 등을 물려받아 컷오버 울타리(REVOKE)가 쓰기를 못 막음 → sync paused
+  { match: /^REPL_APP_ROLE_UNFENCEABLE$/, kind: "step", label: t('앱 계정이 관리자 권한'), title: t('앱 계정의 쓰기를\n막을 수 없습니다'), hint: t('앱이 관리자 권한을 물려받은 계정으로 DB에 붙어 있어 컷오버 때 출발 DB 쓰기를 막을 수 없습니다. 복제를 걸기 전에 멈췄습니다. 앱 전용 계정(표·시퀀스 권한만 직접 받은 계정)으로 바꿔야 합니다.') },
   { match: /^SYNC_FAILED$/, kind: "step", label: t('DB 복제 실패'), title: t('DB 복제가\n이어지지 않습니다'), hint: t('출발 DB에서 도착 DB로 가는 논리 복제가 다시 시도해도 실패했습니다.') },
   { match: /^APP_LINK_UNAVAILABLE$/, kind: "system", label: t('앱 DB 주소 못 바꿈'), title: t('도착 앱의 DB 주소를\n바꿀 길이 없습니다'), hint: t('도착 앱이 쓸 DB 주소를 도착으로 바꿀 길(GitOps 설정·연결 프록시)이 없어 출발 DB 쓰기를 막기 전에 멈췄습니다. 출발 DB 가 그대로 주인이라 서비스는 그대로 돕니다.') },
   { match: /^CUTOVER_UNFENCE_FAILED$/, kind: "step", label: t('출발 쓰기 막힘 남음'), title: t('출발 DB 쓰기 막힘을\n풀지 못했습니다'), hint: t('컷오버를 되돌리다 출발 DB의 쓰기 막힘을 풀지 못했습니다. 바로 확인해야 합니다.') },
