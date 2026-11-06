@@ -1,8 +1,9 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { AppSpecV2, FieldMetaV2, ImportAccuracy, OutOfBoundaryV2, ImportResultV2, MigrationSpecView, SpecPatchInput, checkV2, checkV2Reviews, reviewLabels, specIssueLines, syncCheckReviews } from "@svc/contracts";
-import { applyInclude, IncludeError } from "@svc/adapters";
+import { AppSpecV2, FieldMetaV2, ImportAccuracy, OutOfBoundaryV2, ImportResultV2, MigrationSpecView, SpecPatchInput, checkV2, checkV2Reviews, reviewLabels, specIssueLines, syncCheckReviews,
+         type ApprovalRowV2, type Provider } from "@svc/contracts";
+import { applyInclude, IncludeError, targetBuilderFor } from "@svc/adapters";
 import { BadRequest, DomainError, SPEC_DRAFT_KEY, applySpecV2Patch, notifyMigration, saveSpecRevision, withTenant, writeAudit,
          type SpecMeta, type Tx } from "@svc/core";
 import { errors } from "./responses.js";
@@ -21,7 +22,16 @@ const reviewKeys = (meta: unknown) => Object.entries((meta ?? {}) as Record<stri
 
 const specInvalid = (version: number, why: string) => new DomainError(409, "SPEC_INVALID", `spec version ${version} ${why}`);
 
-export function toSpecView(migrationId: string, row: Row): MigrationSpecView {
+// 명세 검토 화면의 상품 대체 미리보기. 계획 확인 항목과 같은 계산(도착 Builder substitutionsV2)이고 저장·계획 지문·승인과 상관없다.
+//   계산이 실패해도 명세 보기는 막지 않는다 (빈 배열)
+type Ends = { source: Provider; target: Provider };
+export function specSubstitutions(spec: AppSpecV2, ends: Ends | undefined): ApprovalRowV2[] {
+  if (!ends) return [];
+  try { return targetBuilderFor(ends.target).substitutionsV2?.(spec, ends.source) ?? []; }
+  catch { return []; }
+}
+
+export function toSpecView(migrationId: string, row: Row, ends?: Ends): MigrationSpecView {
   if (!row.specV2 || typeof row.specV2 !== "object") throw specInvalid(row.version, "has no spec (예전 형식 판, 다시 가져와야 함)");
   const v = row.specV2 as { spec?: unknown; fieldMeta?: unknown; outOfBoundary?: unknown };
   // I8api: AppSpec·FieldMeta 모양이 아니면 409 SPEC_INVALID (응답 직렬화 500 대신, 가짜 값으로 안 채움)
@@ -34,7 +44,7 @@ export function toSpecView(migrationId: string, row: Row): MigrationSpecView {
   // DRAFT(ai): complete = 구조 검증(checkV2 errors) 통과. 화면이 "계획을 만들 수 있는 판인가"를 본다
   return { migrationId, version: row.version, createdAt: row.createdAt, source: row.draft ? "ai_draft" : "accepted",
            complete: checkV2(spec.data).errors.length === 0, spec: spec.data, fieldMeta: meta.data, needsReview, reviewLabels: reviewLabels(needsReview),
-           ...(oob?.success ? { outOfBoundary: oob.data } : {}),
+           ...(oob?.success ? { outOfBoundary: oob.data } : {}), substitutions: specSubstitutions(spec.data, ends),
            specV2: spec.data, fieldMetaV2: meta.data, needsReviewV2: needsReview };
 }
 
@@ -44,6 +54,13 @@ async function shownSpec(tx: Tx, migrationId: string): Promise<Row | undefined> 
     `SELECT version, ${isoUtc("created_at")} AS "createdAt", (field_meta ? $2) AS draft, spec_v2 AS "specV2"
        FROM spec_versions sv WHERE migration_id = $1
       ORDER BY (field_meta ? $2), version DESC LIMIT 1`, [migrationId, SPEC_DRAFT_KEY])).rows[0] as Row | undefined;
+}
+
+// 이전의 출발·도착 환경 종류 (worker plan.ts 가 계획 때 읽는 두 환경 줄과 같은 출처)
+async function endsOf(tx: Tx, migrationId: string): Promise<Ends | undefined> {
+  return (await tx.query(
+    `SELECT s.provider AS source, t.provider AS target FROM migrations m
+       JOIN environments s ON s.id = m.source_env_id JOIN environments t ON t.id = m.target_env_id WHERE m.id = $1`, [migrationId])).rows[0] as Ends | undefined;
 }
 
 // ACCVIEW DRAFT(ai): 가장 최근 가져오기 감사(migration.spec_review)의 detail.accuracy. 없거나 모양이 안 맞으면 undefined (키를 뺀다, 화면 안 깨짐)
@@ -58,11 +75,12 @@ export async function specRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
   r.get("/migrations/:id/spec", { schema: { params: IdParam,
     response: { 200: MigrationSpecView, ...errors(400, 401, 404, 409, 500) } } }, async (req) => {
-    const { row, accuracy } = await withTenant(req.tenantId, async (tx) => {
+    const { row, accuracy, ends } = await withTenant(req.tenantId, async (tx) => {
       const found0 = await shownSpec(tx, req.params.id);
-      return { row: found0, accuracy: found0 ? await importAccuracyOf(tx, req.params.id) : undefined };
+      return { row: found0, accuracy: found0 ? await importAccuracyOf(tx, req.params.id) : undefined,
+               ends: found0 ? await endsOf(tx, req.params.id) : undefined };
     });
-    return { ...toSpecView(req.params.id, found(row, "spec", req.params.id)), ...(accuracy ? { accuracy } : {}) };
+    return { ...toSpecView(req.params.id, found(row, "spec", req.params.id), ends), ...(accuracy ? { accuracy } : {}) };
   });
 
   // PA2 (계획 26 · A2 v1): PATCH /api/v1/migrations/:id/spec — 사람이 칸을 고치거나(changes) 봤다고 확인(confirm)하거나
@@ -159,5 +177,5 @@ async function patchSpec(tx: Tx, req: Req, id: string, b: SpecPatchInput, base: 
     ...(included.length ? { included } : {}),   // BOUNDPULL: 끌어온 자원 이름만 (값 없음)
     ...(b.acceptDraft !== undefined ? { acceptedDraft: b.acceptDraft } : {}) }));
   await notifyMigration(tx, { t: req.tenantId, id, s: "spec_review" });
-  return { status: 200, body: toSpecView(id, { version: saved.version, createdAt: saved.createdAt, draft: false, specV2: result.data }) };
+  return { status: 200, body: toSpecView(id, { version: saved.version, createdAt: saved.createdAt, draft: false, specV2: result.data }, await endsOf(tx, id)) };
 }
