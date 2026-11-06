@@ -70,6 +70,11 @@ export const STEP_ROLES = {
   //   출발 실행 역할을 빌리되 세션 정책은 중계기 동작만 (policy relay). stage apply 는 장부 칸(0009 CHECK)용
   // DRAFT(ai): 만들기·지우기를 한 세션 정책으로 (지우기 전용으로 더 좁히지 않음). 지우는 대상은 코드가 두 태그로 한 번 더 거른다
   relay: [{ side: "source", purpose: "operate", stage: "apply", policy: "relay" }],
+  // GCP 출발 → AWS 도착 중계기 (worker relay/gcp-aws.ts): 중계기는 도착 AWS 계정에 산다 → 도착 실행 역할을 같은 relay 정책으로 (만들기·지우기)
+  relay_target: [{ side: "target", purpose: "operate", stage: "apply", policy: "relay" }],
+  // 같은 중계기의 출발 Cloud SQL 읽기 (공개·나가는 IP·서버 CA, gcloud sql instances describe). 출발 관찰 역할 (가져오기·사전 점검과 같은 읽기만).
+  //   지우기는 이 역할을 안 빌린다 (출발 연결이 끊겨도 도착 중계기는 지울 수 있게)
+  relay_source_read: [{ side: "source", purpose: "observe" }],
   // B-2: 도착 GCP 환경 층(VPC·GKE·AR·ESO 설치) 만들기 (worker env-layer.ts). apply 단계 안에서 만들 때만 따로 빌린다.
   //   발급기는 svc-operate 대신 고객 svc-env 를 빌린다 (gcp-cli.ts gcpTargetFor). stage apply 는 장부 칸(0009 CHECK)용
   env_layer: [{ side: "target", purpose: "operate", stage: "apply", policy: "env_layer" }],

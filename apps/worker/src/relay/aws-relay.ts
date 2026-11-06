@@ -14,6 +14,9 @@
 //   - RDS 들어오기: RDS 보안 그룹에 "중계 보안 그룹에서 5432" (이미 허용돼 있으면 안 단다)
 // GCP 도착(aws-gcp): SSH 터널 없이 TCP 입구 둘. 출발 입구(15432 → RDS)는 플랫폼 나가는 대역 + Cloud SQL 나가는 IP/32 만 받고,
 //   역방향 입구(중계 사설 IP:5432 → Cloud SQL 공개 IP:5432)는 VPC 안(RDS 역방향 구독)만 받는다. TLS 는 양 끝 DB 사이 그대로 (중계기는 못 푼다)
+// GCP 출발(gcp-aws): 중계기는 도착 AWS 계정(새 RDS 가 있는 EKS VPC 의 공개 서브넷)에 산다. 입구 하나(15432 → 도착 RDS:5432):
+//   워커(플랫폼 나가는 대역)와 롤백 창 역방향 구독(출발 Cloud SQL 나가는 IP/32)만 받는다. 정방향 구독(도착 RDS → Cloud SQL 공개 IP)은
+//   중계기를 안 지나고 VPC NAT 로 나간다 → 도착 RDS 보안 그룹에 "Cloud SQL 공개 IP/32:5432 로 나가기" 규칙(relay-db-egress 태그)을 단다
 import { mkdtemp, rm, writeFile, chmod } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -34,7 +37,7 @@ export const RELAY_SOURCE_PORT = 15432;
 export const RELAY_REVERSE_TAG = "svc:reverse-target";
 
 /** 중계기 종류 = 출발 계정의 중계기가 무엇을 나르나 (relay-step RELAY_ROUTES 가 (출발, 도착) 짝에서 고른다) */
-export type RelayKind = "aws-onprem" | "aws-gcp";
+export type RelayKind = "aws-onprem" | "aws-gcp" | "gcp-aws";
 
 export type RelayErrorCode = "RELAY_PROVISION_FAILED" | "RELAY_TEARDOWN_FAILED" | "RELAY_SOURCE_DB_UNKNOWN" | "RELAY_CONFIG_MISSING" | "RELAY_DB_EGRESS_DENIED"
   | "RELAY_DB_INGRESS_DENIED" | "RELAY_TARGET_DB_UNKNOWN";
@@ -79,7 +82,9 @@ export interface OnpremRelayPlanInput extends RelayPlanBase {
   hostKey: SshKeypair;
 }
 export interface GcpRelayPlanInput extends RelayPlanBase { kind: "aws-gcp"; cloudSql: CloudSqlPeer }
-export type RelayPlanInput = OnpremRelayPlanInput | GcpRelayPlanInput;
+/** GCP 출발 → AWS 도착: rds = 도착 RDS (terraform 이 만든 것), cloudSql = 출발 Cloud SQL 의 공개·나가는 IP (gcloud sql instances describe) */
+export interface GcpAwsRelayPlanInput extends RelayPlanBase { kind: "gcp-aws"; cloudSql: CloudSqlPeer }
+export type RelayPlanInput = OnpremRelayPlanInput | GcpRelayPlanInput | GcpAwsRelayPlanInput;
 export interface SgRule { direction: "ingress" | "egress"; port: number; cidr: string; description: string }
 export interface RelayPlan {
   kind: RelayKind;
@@ -89,13 +94,15 @@ export interface RelayPlan {
   instance: { imageId: string; instanceType: string; subnetId: string; rootDeviceName: string; tags: Tag[] };
   userData: string;
   /** RDS 보안 그룹에 달 나가기 규칙 (대상 = 중계 사설 IP/32, 사설 IP 를 안 뒤에 정해진다).
-   *  groupIds = RDS 의 활성 보안 그룹 전부: 이미 나가기가 열려 있는지는 합집합으로 본다. 규칙을 달 때는 groupId(첫 번째) 하나에만 */
-  dbEgress: { groupId: string; groupIds: string[]; port: number; tags: Tag[] };
+   *  groupIds = RDS 의 활성 보안 그룹 전부: 이미 나가기가 열려 있는지는 합집합으로 본다. 규칙을 달 때는 groupId(첫 번째) 하나에만.
+   *  peerIp = 대상이 중계기가 아닐 때 그 IP (gcp-aws: 출발 Cloud SQL 공개 IP, NAT 로 나가는 정방향 구독). null 이면 중계 사설 IP */
+  dbEgress: { groupId: string; groupIds: string[]; port: number; tags: Tag[]; peerIp: string | null };
   /** RDS 보안 그룹에 달 들어오기 규칙 (출처 = 중계 보안 그룹 참조: EC2 를 다시 만들어도 그대로). 모양은 dbEgress 와 같다 */
   dbIngress: { groupId: string; groupIds: string[]; port: number; tags: Tag[] };
   /** 온프레 중계기 sshd 호스트 공개 키 (GCP 중계기는 SSH 가 없어 null) */
   hostPublicKey: string | null;
-  /** GCP 중계기 역방향 목적지 (user-data 에 고정, EC2 태그 svc:reverse-target 과 같다). 온프레는 null */
+  /** user-data 에 고정한 목적지 (EC2 태그 svc:reverse-target 과 같다). aws-gcp = Cloud SQL 공개 IP(역방향 입구), gcp-aws = 도착 RDS 엔드포인트(입구).
+   *  다시 돌 때 태그와 다르면 그 EC2 는 못 고친다 → 지우고 새로 만든다. 온프레는 null */
   reverseTarget: string | null;
 }
 
@@ -265,6 +272,20 @@ export function gcpRelayUserData(i: { migrationId: string; rdsEndpoint: string; 
   ].join("\n");
 }
 
+/** GCP 출발 → AWS 도착 중계기 user-data: SSH 없음. 입구 하나 15432 → 도착 RDS:5432 (워커 접속 + 롤백 창 Cloud SQL 역방향 구독) */
+export function gcpAwsRelayUserData(i: { migrationId: string; rdsEndpoint: string }): string {
+  if (!NAME.test(i.rdsEndpoint)) throw new RelayError("RELAY_TARGET_DB_UNKNOWN", "도착 RDS 엔드포인트는 이름(영숫자·.·-)만");
+  return [
+    "#!/bin/bash",
+    `# svc relay (managed-by=platform) for migration ${i.migrationId} (gcp-aws)`,
+    "set -euo pipefail",
+    "umask 077",
+    ...forwarderScript(),
+    ...forwarderUnit("svc-relay-fwd", "svc relay target entry (platform worker and source Cloud SQL to target RDS, TCP passthrough)", i.rdsEndpoint, RELAY_SOURCE_PORT),
+    "",
+  ].join("\n");
+}
+
 /** 보안 그룹 규칙 (demo-relay 와 같은 모양):
  *  들어오기 22 = 온프레 나가는 IP/32 만, 5432 = VPC 대역(RDS 역방향 구독) + 플랫폼 워커 나가는 대역,
  *  15432(출발 입구) = 플랫폼 워커 나가는 대역만. 나가기 5432 = VPC 안만 */
@@ -305,6 +326,24 @@ export function gcpRelayRules(i: { vpcCidrs: string[]; platformEgressCidrs: stri
   ];
 }
 
+/** GCP 출발 → AWS 도착 중계기 보안 그룹 규칙: 22·5432 들어오기 없음.
+ *  들어오기 15432(입구) = 플랫폼 나가는 대역(L1 워커) + 출발 Cloud SQL 나가는 IP/32(L4 롤백 창 역방향 구독). 나가기 5432 = VPC 안(도착 RDS)만 */
+export function gcpAwsRelayRules(i: { vpcCidrs: string[]; platformEgressCidrs: string[]; cloudSql: CloudSqlPeer }): SgRule[] {
+  if (!IPV4.test(i.cloudSql.publicIp) || !IPV4.test(i.cloudSql.outgoingIp))
+    throw new RelayError("RELAY_SOURCE_DB_UNKNOWN", "출발 Cloud SQL 공개·나가는 IP 가 IPv4 가 아니다");
+  const vpc = i.vpcCidrs.map((c) => cidr(c, 8));
+  if (!vpc.length || vpc.some((c) => !c)) throw new RelayError("RELAY_PROVISION_FAILED", "VPC 대역이 IPv4 CIDR 가 아니다");
+  const plat = i.platformEgressCidrs.map((c) => cidr(c, PLATFORM_EGRESS_MIN_PREFIX));
+  if (!plat.length || plat.some((c) => !c)) throw new RelayError("RELAY_CONFIG_MISSING", "플랫폼 나가는 대역이 비었거나 틀렸다");
+  const uniq = (xs: (string | null)[]) => [...new Set(xs as string[])].sort();
+  const sqlOut = `${i.cloudSql.outgoingIp}/32`;
+  return [
+    ...uniq(plat).map((c): SgRule => ({ direction: "ingress", port: RELAY_SOURCE_PORT, cidr: c, description: "Target DB entry for platform worker (TCP passthrough to RDS)" })),
+    ...(plat.includes(sqlOut) ? [] : [{ direction: "ingress" as const, port: RELAY_SOURCE_PORT, cidr: sqlOut, description: "Target DB entry for source Cloud SQL reverse subscription (TCP passthrough to RDS)" }]),
+    ...uniq(vpc).map((c): SgRule => ({ direction: "egress", port: PG_PORT, cidr: c, description: "Postgres to RDS inside the VPC" })),
+  ];
+}
+
 export function buildRelayPlan(i: RelayPlanInput): RelayPlan {
   if (!/^[0-9a-f-]{36}$/.test(i.migrationId)) throw new RelayError("RELAY_PROVISION_FAILED", "이전 번호가 uuid 가 아니다");
   if (i.rds.port !== PG_PORT)
@@ -313,24 +352,28 @@ export function buildRelayPlan(i: RelayPlanInput): RelayPlan {
   if (!groupId) throw new RelayError("RELAY_SOURCE_DB_UNKNOWN", "출발 RDS 에 활성 보안 그룹이 없다 (나가기 규칙을 달 곳이 없음)");
   if (!/^ami-[0-9a-f]+$/.test(i.ami.imageId)) throw new RelayError("RELAY_PROVISION_FAILED", "AMI 번호 모양이 틀렸다");
   if (!/^subnet-[0-9a-f]+$/.test(i.network.subnetId)) throw new RelayError("RELAY_PROVISION_FAILED", "서브넷 번호 모양이 틀렸다");
-  const gcp = i.kind === "aws-gcp";
-  const reverseTarget = gcp ? i.cloudSql.publicIp : null;
+  // gcp-aws: user-data 목적지 = 도착 RDS 엔드포인트 (RDS 를 다시 만들어 이름이 바뀌면 EC2 를 새로). 나가기 규칙 대상 = Cloud SQL 공개 IP (NAT 로 나가는 정방향 구독)
+  const reverseTarget = i.kind === "aws-gcp" ? i.cloudSql.publicIp : i.kind === "gcp-aws" ? i.rds.endpoint : null;
+  if (i.kind === "gcp-aws" && !IPV4.test(i.cloudSql.publicIp)) throw new RelayError("RELAY_SOURCE_DB_UNKNOWN", "출발 Cloud SQL 공개 IP 가 IPv4 가 아니다");
   return {
     kind: i.kind,
     migrationId: i.migrationId, vpcId: i.rds.vpcId,
     sgName: `svc-relay-${i.migrationId}`,
     sgDescription: `svc relay for migration ${i.migrationId} (managed-by platform)`,
     sgTags: relayTags(i.migrationId, RELAY_ROLE),
-    rules: gcp ? gcpRelayRules({ vpcCidrs: i.network.vpcCidrs, platformEgressCidrs: i.platformEgressCidrs, cloudSql: i.cloudSql })
+    rules: i.kind === "aws-gcp" ? gcpRelayRules({ vpcCidrs: i.network.vpcCidrs, platformEgressCidrs: i.platformEgressCidrs, cloudSql: i.cloudSql })
+      : i.kind === "gcp-aws" ? gcpAwsRelayRules({ vpcCidrs: i.network.vpcCidrs, platformEgressCidrs: i.platformEgressCidrs, cloudSql: i.cloudSql })
       : relayRules({ onpremEgressIp: i.onpremEgressIp, vpcCidrs: i.network.vpcCidrs, platformEgressCidrs: i.platformEgressCidrs }),
     instance: { imageId: i.ami.imageId, instanceType: RELAY_INSTANCE_TYPE, subnetId: i.network.subnetId,
                 rootDeviceName: i.ami.rootDeviceName,
                 tags: [...relayTags(i.migrationId, RELAY_ROLE), ...(reverseTarget ? [{ Key: RELAY_REVERSE_TAG, Value: reverseTarget }] : [])] },
-    userData: gcp ? gcpRelayUserData({ migrationId: i.migrationId, rdsEndpoint: i.rds.endpoint, cloudSqlIp: i.cloudSql.publicIp })
+    userData: i.kind === "aws-gcp" ? gcpRelayUserData({ migrationId: i.migrationId, rdsEndpoint: i.rds.endpoint, cloudSqlIp: i.cloudSql.publicIp })
+      : i.kind === "gcp-aws" ? gcpAwsRelayUserData({ migrationId: i.migrationId, rdsEndpoint: i.rds.endpoint })
       : relayUserData({ migrationId: i.migrationId, rdsEndpoint: i.rds.endpoint, tunnelPublicKey: i.tunnelPublicKey, hostKey: i.hostKey }),
-    dbEgress: { groupId, groupIds: [...new Set(i.rds.securityGroupIds)], port: PG_PORT, tags: relayTags(i.migrationId, RELAY_DB_EGRESS_ROLE) },
+    dbEgress: { groupId, groupIds: [...new Set(i.rds.securityGroupIds)], port: PG_PORT, tags: relayTags(i.migrationId, RELAY_DB_EGRESS_ROLE),
+                peerIp: i.kind === "gcp-aws" ? i.cloudSql.publicIp : null },
     dbIngress: { groupId, groupIds: [...new Set(i.rds.securityGroupIds)], port: PG_PORT, tags: relayTags(i.migrationId, RELAY_DB_INGRESS_ROLE) },
-    hostPublicKey: gcp ? null : i.hostKey.publicKeyLine.trim(),
+    hostPublicKey: i.kind === "aws-onprem" ? i.hostKey.publicKeyLine.trim() : null,
     reverseTarget,
   };
 }
@@ -569,10 +612,13 @@ export async function provisionRelay(d: RelayAwsDeps, plan: RelayPlan): Promise<
   const publicIp = inst.PublicIpAddress!, privateIp = inst.PrivateIpAddress!;
 
   // ④ RDS 보안 그룹 나가기 → 중계 사설 IP/32:5432 (롤백 창 역방향 구독). 사설 IP 가 바뀌었으면(EC2 다시 만듦) 옛 규칙을 뺀다
+  //   gcp-aws: 대상 = 출발 Cloud SQL 공개 IP/32 (도착 RDS 의 정방향 구독이 VPC NAT 로 나간다). Cloud SQL 을 다시 만들어 IP 가 바뀌면 옛 규칙을 뺀다
   const dbRules = ((await aws.call<{ SecurityGroupRules?: SgRuleRow[] }>(["ec2", "describe-security-group-rules", "--filters",
     j([{ Name: "group-id", Values: [plan.dbEgress.groupId] }, ...tagFilters(plan.migrationId, RELAY_DB_EGRESS_ROLE)])], "RDS 나가기 규칙 찾기", P))
     .SecurityGroupRules ?? []).filter((r) => r.SecurityGroupRuleId && ownedBy(r.Tags, plan.migrationId));
-  const target = `${privateIp}/32`;
+  const egressIp = plan.dbEgress.peerIp ?? privateIp;
+  const target = `${egressIp}/32`;
+  const gcpSource = plan.kind === "gcp-aws";
   const keep = dbRules.find((r) => r.IsEgress && r.CidrIpv4 === target && r.FromPort === plan.dbEgress.port && r.ToPort === plan.dbEgress.port);
   const stale = dbRules.filter((r) => r !== keep).map((r) => r.SecurityGroupRuleId!);
   if (stale.length) await aws.call(["ec2", "revoke-security-group-egress", "--group-id", plan.dbEgress.groupId, "--security-group-rule-ids", ...stale.sort()],
@@ -584,19 +630,25 @@ export async function provisionRelay(d: RelayAwsDeps, plan: RelayPlan): Promise<
     // 이미 열려 있으면 고객 보안 그룹을 고치지 않는다 (연결 스택의 SourceDbSecurityGroupId 를 비운 고객은 이 권한이 없다)
     const all = (await aws.call<{ SecurityGroupRules?: SgRuleRow[] }>(["ec2", "describe-security-group-rules", "--filters",
       j([{ Name: "group-id", Values: plan.dbEgress.groupIds.length ? plan.dbEgress.groupIds : [plan.dbEgress.groupId] }])], "RDS 나가기 규칙 읽기", P)).SecurityGroupRules ?? [];
-    dbEgressCoveredBy = existingDbEgressCover(all, privateIp, plan.dbEgress.port, sgId);
+    // 중계 보안 그룹 참조로 열려 있는 것은 대상이 중계기일 때만 허용으로 친다
+    dbEgressCoveredBy = existingDbEgressCover(all, egressIp, plan.dbEgress.port, gcpSource ? "" : sgId);
     if (!dbEgressCoveredBy) {
       let a: { SecurityGroupRules?: SgRuleRow[] };
       try {
         a = await aws.call<{ SecurityGroupRules?: SgRuleRow[] }>(["ec2", "authorize-security-group-egress", "--group-id", plan.dbEgress.groupId,
           "--ip-permissions", j([{ IpProtocol: "tcp", FromPort: plan.dbEgress.port, ToPort: plan.dbEgress.port,
-            IpRanges: [{ CidrIp: target, Description: "Postgres from source DB to svc relay (rollback window reverse subscription)" }] }]),
+            IpRanges: [{ CidrIp: target, Description: gcpSource ? "Postgres from target RDS to source Cloud SQL public IP via NAT (forward subscription)"
+              : "Postgres from source DB to svc relay (rollback window reverse subscription)" }] }]),
           "--tag-specifications", j([tagSpec("security-group-rule", plan.dbEgress.tags)])], "RDS 나가기 규칙 열기", P);
       } catch (e) {
         if (e instanceof RelayError && /^(UnauthorizedOperation|AccessDenied)/.test(e.awsCode ?? ""))
-          throw new RelayError("RELAY_DB_EGRESS_DENIED", `출발 RDS 보안 그룹 ${plan.dbEgress.groupId} 에 나가기 규칙(→ 중계 ${target}:${plan.dbEgress.port})이 없고, 열 권한도 없다. `
-            + `롤백 창 역복제(출발 RDS → 중계기)에 필요하다. 연결 스택 입력값 SourceDbSecurityGroupId 에 ${plan.dbEgress.groupId} 를 넣어 스택을 업데이트하거나, `
-            + `고객이 그 보안 그룹에 나가기 TCP ${plan.dbEgress.port} → ${target} 를 직접 연 뒤 다시 승인한다`, e.awsCode);
+          throw new RelayError("RELAY_DB_EGRESS_DENIED", gcpSource
+            ? `도착 RDS 보안 그룹 ${plan.dbEgress.groupId} 에 나가기 규칙(→ 출발 Cloud SQL ${target}:${plan.dbEgress.port})이 없고, 열 권한도 없다. `
+              + "정방향 복제(도착 RDS 가 출발 Cloud SQL 을 구독)에 필요하다. 도착 AWS 연결 스택을 새 템플릿으로 업데이트해 svc-operate 의 relay 정책에 "
+              + "TargetDbRulesForRelay(플랫폼이 만든 보안 그룹의 규칙 더하기·빼기)를 붙인 뒤 다시 승인한다"
+            : `출발 RDS 보안 그룹 ${plan.dbEgress.groupId} 에 나가기 규칙(→ 중계 ${target}:${plan.dbEgress.port})이 없고, 열 권한도 없다. `
+              + `롤백 창 역복제(출발 RDS → 중계기)에 필요하다. 연결 스택 입력값 SourceDbSecurityGroupId 에 ${plan.dbEgress.groupId} 를 넣어 스택을 업데이트하거나, `
+              + `고객이 그 보안 그룹에 나가기 TCP ${plan.dbEgress.port} → ${target} 를 직접 연 뒤 다시 승인한다`, e.awsCode);
         throw e;
       }
       dbEgressRuleId = a.SecurityGroupRules?.[0]?.SecurityGroupRuleId;
@@ -629,6 +681,10 @@ export async function provisionRelay(d: RelayAwsDeps, plan: RelayPlan): Promise<
             UserIdGroupPairs: [{ GroupId: sgId, Description: "Postgres from svc relay (platform worker entry and on-prem tunnel)" }] }]),
           "--tag-specifications", j([tagSpec("security-group-rule", plan.dbIngress.tags)])], "RDS 들어오기 규칙 열기", P);
       } catch (e) {
+        if (e instanceof RelayError && /^(UnauthorizedOperation|AccessDenied)/.test(e.awsCode ?? "") && gcpSource)
+          throw new RelayError("RELAY_DB_INGRESS_DENIED", `도착 RDS 보안 그룹 ${plan.dbIngress.groupId} 이 중계기(보안 그룹 ${sgId})에서 들어오는 TCP ${plan.dbIngress.port} 를 받지 않고, 열 권한도 없다. `
+            + "워커의 도착 DB 접속과 롤백 창 역방향 구독(출발 Cloud SQL → 중계기 → 도착 RDS)에 필요하다. 도착 AWS 연결 스택을 새 템플릿으로 업데이트해 "
+            + "svc-operate 의 relay 정책에 TargetDbRulesForRelay 를 붙인 뒤 다시 승인한다", e.awsCode);
         if (e instanceof RelayError && /^(UnauthorizedOperation|AccessDenied)/.test(e.awsCode ?? ""))
           throw new RelayError("RELAY_DB_INGRESS_DENIED", `출발 RDS 보안 그룹 ${plan.dbIngress.groupId} 이 중계기(보안 그룹 ${sgId})에서 들어오는 TCP ${plan.dbIngress.port} 를 받지 않고, 열 권한도 없다. `
             + `워커의 출발 DB 접속과 온프레 정방향 터널에 필요하다. 연결 스택을 새 템플릿으로 업데이트하고(SourceDbSecurityGroupId=${plan.dbIngress.groupId}) 다시 승인하거나, `
