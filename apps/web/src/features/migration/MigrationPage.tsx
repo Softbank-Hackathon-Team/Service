@@ -19,7 +19,7 @@ import { useAgentReview } from '../agent/AgentResult';
 import { failureAnalysisOf } from '../agent/model';
 import { costCaveats, costNote, costSummary, planCostCaveats, planCostSummary } from '../cost/model';
 import {
-  ackPlaces, ackState, approveLabel, autoStart, canReplan, failureChoices, pollMs, screenOf, signalCovers, specRows, stepGate, stepName, usd, type MigrationScreen, type RetryStage,
+  ackPlaces, ackState, ackSubject, approveLabel, autoStart, canReplan, failureChoices, pollMs, screenOf, signalCovers, specRows, stepGate, stepName, usd, type MigrationScreen, type RetryStage,
 } from './model';
 import { scopeLabel } from './source';
 import { SecurityFold } from './SecurityCard';
@@ -410,7 +410,9 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
                   <label className={`${s.ack} t-body-sm`}>
                     <input type="checkbox" checked={ticks.has(ack.id)} disabled={busy || expired} onChange={(event) => tick(ack.id, event.target.checked)} />
                     <span className={s.ackText}>
-                      <span className="t-caption c-tertiary">{secAckLabel(ack) ?? ACK_KIND[ack.kind] ?? ack.kind}</span>
+                      <span className="t-caption c-tertiary">
+                        {[secAckLabel(ack) ?? ACK_KIND[ack.kind] ?? ack.kind, ackSubject(ack)].filter(Boolean).join(' · ')}
+                      </span>
                       <span>{ack.text}</span>
                     </span>
                   </label>

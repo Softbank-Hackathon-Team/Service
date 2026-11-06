@@ -598,7 +598,6 @@ export const EN: Table = {
   "명세 v{0}": "Spec v{0}",
   "명세 모양 오류": "Spec shape error",
   "명세 점검": "Spec check",
-  "명세 점검 {0}": "Spec check {0}",
   "명세 초안": "Spec draft",
   "명세 초안 다시 만들기": "Regenerate spec draft",
   "명세 확정": "Confirm spec",

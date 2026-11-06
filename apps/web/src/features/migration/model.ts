@@ -4,6 +4,7 @@ import { HUMAN_STEP, isTerminal, LABEL } from '../../lib/status';
 import type { Judgement } from '../../lib/timelineDetail';
 import {
   VALID,
+  type ApprovalRowV2,
   type EnvApp,
   type EnvironmentView,
   type FootprintResource,
@@ -144,6 +145,16 @@ export function ackState(acks: readonly { id: string }[] | undefined, checked: R
 export function ackPlaces(acks: readonly PlanAcknowledgement[] | undefined) {
   const all = acks ?? [];
   return { substitutes: substituteRows(all), list: all.filter((ack) => ack.kind !== 'substitute') };
+}
+
+// 자원 하나를 가리키는 승인 줄 (명세 승인 줄 ApprovalRowV2 그대로: id `${kind}:${자원}`, ref = 자원). 글에는 자원 이름이 없다.
+//   상품 대체는 큰 카드가 자원 이름을 따로 쓴다
+const SUBJECT_ACK: Record<Exclude<ApprovalRowV2['kind'], 'substitute'>, true> = {
+  runtime_change: true, build: true, tls_relaxed: true, host_access: true, public_bucket: true,
+};
+/** "승인 전에 확인" 줄이 가리키는 자원 이름. 같은 종류 줄이 여럿이면 이 이름으로만 구별된다. 자원 줄이 아니면 null */
+export function ackSubject(ack: Pick<PlanAcknowledgement, 'kind' | 'ref'>): string | null {
+  return ack.ref && ack.kind in SUBJECT_ACK ? ack.ref : null;
 }
 
 /** 승인 버튼 글자. 모자라면 무엇이 모자란지 말한다. */
