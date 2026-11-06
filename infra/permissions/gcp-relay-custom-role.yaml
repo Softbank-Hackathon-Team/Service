@@ -3,6 +3,7 @@ description: DB 복제 중계기 GCE VM·방화벽·복제 계정 (자동 생성
 stage: GA
 includedPermissions:
 - cloudsql.instances.get
+- cloudsql.instances.update
 - cloudsql.users.create
 - cloudsql.users.delete
 - cloudsql.users.list

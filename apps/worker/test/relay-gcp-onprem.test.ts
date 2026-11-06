@@ -12,7 +12,7 @@ import { relayApplies, relayHome, relayKindOf, relayRoleStep, teardownRelayStep,
 import {
   buildGcpRelayPlan, cloudSqlPrivateOf, cloudSqlPrivateProblems, cloudSqlRefOfConnectionName, gceRelayStartupScript, gcpOnpremEndpointRows, gcpOnpremGate,
   gcpOnpremRelayPrecheck, gcpRelayFirewalls, gcpRelayName, onpremGcpEndpointRows, prepareOnpremGcpRelayStep, provisionGcpOnpremRelayStep,
-  provisionOnpremGcpRelayStep, type CloudSqlPrivate,
+  provisionOnpremGcpRelayStep, enableCloudSqlLogicalDecoding, type CloudSqlPrivate,
 } from "../src/relay/gcp-relay.js";
 import { forwardTarget } from "../src/gitops/replication-delivery.js";
 import { deriveSshHostKey, deriveSshKeypair } from "../src/gitops/migration-secrets.js";
@@ -51,6 +51,7 @@ class FakeGcloud {
   startup: string[] = [];
   users = new Map<string, string>();
   sql: Record<string, unknown> = rawSql();
+  patched: string[] = [];
   exec: Exec = async (_cmd, args) => {
     this.calls.push(args);
     const ok = (v: unknown) => ({ code: 0, stdout: JSON.stringify(v), stderr: "", ms: 1 });
@@ -58,6 +59,13 @@ class FakeGcloud {
     const flag = (k: string) => args.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? "";
     const a = args.join(" ");
     if (a.startsWith("sql instances describe")) return ok(this.sql);
+    if (a.startsWith("sql instances patch")) {
+      // 진짜처럼: 플래그 목록을 통째 바꾸고 잠깐 재시작 중
+      const flags = flag("database-flags").split(",").map((kv) => { const [name, value] = kv.split("="); return { name, value }; });
+      const st = this.sql.settings as Record<string, unknown>;
+      this.sql = { ...this.sql, state: "MAINTENANCE", settings: { ...st, databaseFlags: flags } };
+      this.patched.push(flag("database-flags"));
+      return ok({ name: "op-1" }); }
     if (a.startsWith("sql users create")) {
       if (this.users.has(args[3]!)) return { code: 1, stdout: "", stderr: "ERROR: (gcloud.sql.users.create) HTTPError 409: user already exists", ms: 1 };
       this.users.set(args[3]!, flag("password")); return ok({}); }
@@ -296,7 +304,10 @@ test("사전 점검 (gcp-onprem): 출발 Cloud SQL 이 사설 IP·논리 디코�
   const f = new FakeGcloud();
   f.sql = rawSql({ ipAddresses: [], settings: { ipConfiguration: {}, databaseFlags: [] } });
   const items = await gcpOnpremRelayPrecheck(job, mig, { gcpToken: { source: "ya29.fake-token-for-tests" } }, ENV_OK, { facts: facts(), exec: f.exec });
-  assert.deepEqual(items.map((i) => `${i.id}:${i.level}`), ["PC-RELAY-SQL-PRIVATE:block", "PC-RELAY-SQL-DECODING:block"]);
+  // 논리 디코딩은 apply 가 자동으로 켠다 → 알림(warn). 자동을 끈 배포만 막는다
+  assert.deepEqual(items.map((i) => `${i.id}:${i.level}`), ["PC-RELAY-SQL-PRIVATE:block", "PC-RELAY-SQL-DECODING:warn"]);
+  const off = await gcpOnpremRelayPrecheck(job, mig, { gcpToken: { source: "ya29.fake-token-for-tests" } }, { ...ENV_OK, RELAY_AUTO_DB_FLAGS: "0" }, { facts: facts(), exec: f.exec });
+  assert.deepEqual(off.map((i) => `${i.id}:${i.level}`), ["PC-RELAY-SQL-PRIVATE:block", "PC-RELAY-SQL-DECODING:block"]);
   f.sql = rawSql();
   assert.deepEqual(await gcpOnpremRelayPrecheck(job, mig, { gcpToken: { source: "ya29.fake-token-for-tests" } }, ENV_OK, { facts: facts(), exec: f.exec }), []);
   assert.deepEqual(await gcpOnpremRelayPrecheck(job, mig, undefined, ENV_OK, { facts: facts({ targetProvider: "aws" }) }), []);
@@ -320,8 +331,45 @@ test("연결 스크립트: 두 프로젝트 모두 svc-operate 에 중계기 역
   assert.equal(sh.match(/ensure_project_binding "\$\{OPERATE_SA\}" "projects\/\$\{P\}\/roles\/platform_relay"/g)?.length, 2);
   const perms = readFileSync(new URL("../../../infra/permissions/gcp-relay-custom-role.yaml", import.meta.url), "utf8").split("\n").filter((l) => l.startsWith("- ")).map((l) => l.slice(2));
   for (const p of ["compute.instances.create", "compute.instances.delete", "compute.firewalls.create", "compute.firewalls.delete", "compute.subnetworks.use",
-    "compute.subnetworks.useExternalIp", "compute.networks.updatePolicy", "compute.globalAddresses.list", "cloudsql.users.create", "cloudsql.users.delete", "cloudsql.instances.get"])
+    "compute.subnetworks.useExternalIp", "compute.networks.updatePolicy", "compute.globalAddresses.list", "cloudsql.users.create", "cloudsql.users.delete", "cloudsql.instances.get",
+    "cloudsql.instances.update"])
     assert.ok(perms.includes(p), p);
-  // 거부: IAM 정책 바꾸기·Cloud SQL 인스턴스 지우기·고치기는 없다
-  assert.ok(!perms.some((p) => p.endsWith(".setIamPolicy") || /^cloudsql\.instances\.(delete|update)$/.test(p)));
+  // 거부: IAM 정책 바꾸기·Cloud SQL 인스턴스 지우기는 없다 (update 는 논리 디코딩 플래그 켜기용)
+  assert.ok(!perms.some((p) => p.endsWith(".setIamPolicy") || p === "cloudsql.instances.delete"));
+});
+
+test("출발 논리 디코딩 꺼짐: 만들기가 지금 플래그를 지키며 켜고 재시작을 기다린다. 끈 배포는 막고, 쉼표 값은 덮어쓰지 않는다", async () => {
+  const off = () => rawSql({ settings: { ipConfiguration: { privateNetwork: "projects/src-proj-1/global/networks/app-vpc", sslMode: "ENCRYPTED_ONLY" },
+    databaseFlags: [{ name: "max_connections", value: "200" }, { name: "cloudsql.logical_decoding", value: "off" }] } });
+  const f = new FakeGcloud();
+  f.sql = off();
+  let waits = 0;
+  // 두 번째 읽기에서 재시작이 끝난다
+  const sleep = async () => { waits++; f.sql = { ...f.sql, state: "RUNNABLE" }; };
+  const ref = { project: "src-proj-1", instance: "shop-db" };
+  const base = { facts: facts(), exec: f.exec, borrow: borrowWith("source"), existing: [], save: async () => {}, flagWait: { sleep },
+    readSource: async () => cloudSqlPrivateOf(ref, f.sql) };
+  const ok = await provisionGcpOnpremRelayStep(job, mig, { ...base, env: ENV_OK });
+  assert.equal(ok.kind, "ok", JSON.stringify(ok));
+  assert.equal(ok.kind === "ok" && ok.detail.logicalDecoding, "enabled");
+  assert.deepEqual(f.patched, ["max_connections=200,cloudsql.logical_decoding=on"], "다른 플래그는 그대로 같이 준다");
+  assert.ok(f.calls.some((c) => c[2] === "patch" && c.includes("--async")));
+  assert.equal(waits, 1);
+  // 이미 켜져 있으면 patch 하지 않는다
+  const again = await provisionGcpOnpremRelayStep(job, mig, { ...base, env: ENV_OK });
+  assert.equal(again.kind === "ok" && again.detail.logicalDecoding, undefined);
+  assert.equal(f.patched.length, 1);
+  // 거부: 자동을 끈 배포는 patch 없이 막는다
+  const g2 = new FakeGcloud(); g2.sql = off();
+  const no = await provisionGcpOnpremRelayStep(job, mig, { ...base, exec: g2.exec, readSource: async () => cloudSqlPrivateOf(ref, g2.sql), env: { ...ENV_OK, RELAY_AUTO_DB_FLAGS: "0" } });
+  assert.equal(no.kind === "failed" && no.failureCode, "RELAY_SOURCE_DB_UNKNOWN");
+  assert.equal(g2.patched.length + g2.vms.size, 0);
+  // 거부: 다른 플래그 값에 쉼표가 있으면 목록을 깨뜨리므로 안 건드린다
+  const g3 = new FakeGcloud();
+  const comma: CloudSqlPrivate = { ...cloudSqlPrivateOf(ref, off()), flags: [{ name: "search_path", value: "a,b" }] };
+  await assert.rejects(enableCloudSqlLogicalDecoding({ env: {}, exec: g3.exec }, comma, { sleep }), /쉼표/);
+  assert.equal(g3.patched.length, 0);
+  // 거부: 시간 안에 안 켜지면 멈춘다
+  const g4 = new FakeGcloud(); g4.sql = off();
+  await assert.rejects(enableCloudSqlLogicalDecoding({ env: {}, exec: g4.exec }, cloudSqlPrivateOf(ref, g4.sql), { sleep: async () => {}, maxWaitMs: 0 }), /시간 안에/);
 });

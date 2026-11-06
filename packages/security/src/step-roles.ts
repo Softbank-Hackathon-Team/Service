@@ -79,8 +79,8 @@ export const STEP_ROLES = {
   //   GCP 토큰은 범위를 못 좁힌다 → svc-operate 토큰 그대로 (gcpTargetFor: plan·env_layer 가 아니면 svc-operate). stage apply 는 장부 칸(0009 CHECK)용
   //   relay_gcp = 출발 쪽(gcp-onprem, 중계기 = 출발 Cloud SQL VPC), relay_gcp_target = 도착 쪽(onprem-gcp, 중계기 = 도착 이전 전용 프로젝트)
   // DRAFT(ai): AWS relay 와 같이 만들기·지우기를 한 줄로. 지우는 대상은 코드가 라벨·이름·설명으로 한 번 더 거른다
-  // TODO(human): 출발 프로젝트에는 연결 스크립트가 실행 권한을 안 준다 (gcp-connect.sh: 원래 프로젝트는 svc-observe 만). gcp-onprem 은 지금 손으로 준 권한에 기댄다.
-  //   감사 로그로 필요한 Compute 동작을 뽑은 뒤 중계기 전용 역할(platform_relay)을 연결 스크립트·권한 묶음에 둘지 정한다
+  //   권한: 연결 스크립트(gcp-connect.sh)가 두 프로젝트의 svc-operate 에 중계기 역할 platform_relay(infra/permissions/gcp-relay-custom-role.yaml)를 붙인다
+  // DRAFT(ai): 원래 프로젝트에 실행 쪽 역할을 주는 것은 A안(원래 프로젝트는 관찰만)의 예외. 감사 로그로 실제 쓴 동작을 뽑은 뒤 좁힌다
   relay_gcp: [{ side: "source", purpose: "operate", stage: "apply" }],
   relay_gcp_target: [{ side: "target", purpose: "operate", stage: "apply" }],
   // B-2: 도착 GCP 환경 층(VPC·GKE·AR·ESO 설치) 만들기 (worker env-layer.ts). apply 단계 안에서 만들 때만 따로 빌린다.

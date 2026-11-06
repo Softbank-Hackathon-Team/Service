@@ -153,7 +153,7 @@ writeFileSync(join(out, "gcp-env-custom-role.yaml"),
 //   연결 스크립트가 svc-operate 에 원래 프로젝트(gcp-onprem)와 전용 프로젝트(onprem-gcp) 둘 다 붙인다.
 // DRAFT(ai): 목록 = gcp-relay.ts 가 부르는 gcloud 명령의 권한 (만들기·읽기·고치기·지우기). 감사 로그 실측으로 줄인다
 const GCP_RELAY_PERMS = [
-  "cloudsql.instances.get", "cloudsql.users.create", "cloudsql.users.delete", "cloudsql.users.list", "cloudsql.users.update",
+  "cloudsql.instances.get", "cloudsql.instances.update", "cloudsql.users.create", "cloudsql.users.delete", "cloudsql.users.list", "cloudsql.users.update",
   "compute.disks.create", "compute.firewalls.create", "compute.firewalls.delete", "compute.firewalls.get", "compute.firewalls.list", "compute.firewalls.update",
   "compute.globalAddresses.list", "compute.globalOperations.get", "compute.images.get", "compute.images.getFromFamily", "compute.images.useReadOnly",
   "compute.instances.create", "compute.instances.delete", "compute.instances.get", "compute.instances.list", "compute.instances.setLabels",

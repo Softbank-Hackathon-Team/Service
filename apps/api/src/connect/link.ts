@@ -81,7 +81,8 @@ export function connectSettings(env: NodeJS.ProcessEnv = process.env): { templat
 // ── GCP Cloud Shell 연결 (L7) ──
 // 【사실: Google "Open in Cloud Shell" 문서】 https://shell.cloud.google.com/cloudshell/editor?cloudshell_git_repo=…&cloudshell_workspace=…&shellonly=true
 //   는 레포를 고객 Cloud Shell 에 복제하고 그 폴더에서 터미널을 연다. 환경변수는 링크로 못 넘긴다 → 화면이 명령 한 줄을 같이 보여 주고 고객이 붙여 넣는다
-// DRAFT(ai): 레포 주소(GCP_CONNECT_REPO_URL)가 없으면 빈 Cloud Shell 만 연다(고객이 스크립트를 따로 받아야 함). 키 파일은 어디에도 없다
+// DRAFT(ai): 레포 주소(GCP_CONNECT_REPO_URL)가 없으면 이 공개 레포를 쓴다 (예전엔 빈 Cloud Shell 이 열려 "onboarding/gcp-connect.sh: No such file" 로 멈췄다).
+//   빈 Cloud Shell 을 원하면 GCP_CONNECT_REPO_URL=none. 키 파일은 어디에도 없다
 // 결정 3번 A안: targetProjectId = 이전 전용 프로젝트 (도착 자원·실행 역할은 여기만). 모르면 빈 값으로 넣고 고객이 채운다 (스크립트가 비면 아무것도 안 바꾸고 멈춤)
 export interface GcpLinkInput { platformSa: string; projectId?: string | null; targetProjectId?: string | null; repoUrl?: string | null; repoBranch?: string | null }
 const shq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
@@ -97,8 +98,10 @@ export function gcpCloudShellLink(i: GcpLinkInput): { url: string; command: stri
     `TARGET_PROJECT_ID=${shq(i.targetProjectId ?? "")}`, "ROLE_DIR=./permissions"];
   return { url, command: `${env.join(" ")} bash onboarding/gcp-connect.sh` };
 }
+export const DEFAULT_GCP_CONNECT_REPO_URL = "https://github.com/Softbank-Hackathon-Team/Service.git";
 export function gcpConnectSettings(env: NodeJS.ProcessEnv = process.env): { platformProject: string; repoUrl: string | null; repoBranch: string | null } | null {
   const platformProject = env.GCP_PLATFORM_PROJECT?.trim();
   if (!platformProject || !/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(platformProject)) return null;
-  return { platformProject, repoUrl: env.GCP_CONNECT_REPO_URL?.trim() || null, repoBranch: env.GCP_CONNECT_REPO_BRANCH?.trim() || null };
+  const repo = env.GCP_CONNECT_REPO_URL?.trim() || DEFAULT_GCP_CONNECT_REPO_URL;
+  return { platformProject, repoUrl: repo.toLowerCase() === "none" ? null : repo, repoBranch: env.GCP_CONNECT_REPO_BRANCH?.trim() || null };
 }
