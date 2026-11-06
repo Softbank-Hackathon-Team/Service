@@ -73,6 +73,10 @@ run "hub_deploy_in_app_namespace_only" {
     condition     = !contains(module.namespace["app-shop"].hub_role_resources, "secrets") && !contains(module.namespace["app-shop"].hub_role_resources, "rolebindings")
     error_message = "허브 Role 에 Secret·RBAC 쓰기가 없어야 함"
   }
+  assert {
+    condition     = toset(module.namespace["app-shop"].hub_role_wildcard_verbs) == toset(["get", "list", "watch"])
+    error_message = "허브 Role 의 모든 종류(*) 규칙은 읽기(get·list·watch)만 (Argo CD 캐시용)"
+  }
 }
 
 run "hub_deploy_off_by_default" {
