@@ -94,6 +94,10 @@ kubectl -n app-<앱> rollout status deploy/db-tunnel   # 준비 = 정방향 입�
 고객 실행 역할이 중계기를 이전마다 세우고 지우는 데 필요한 권한은 `infra/permissions/aws-relay-statements.json` 이다.
 - 만드는 동작은 `aws:RequestTag/managed-by=platform`, 지우기·고치기는 `aws:ResourceTag/managed-by=platform` 으로 묶었다. 모듈의 `default_tags` 가 이 태그를 단다.
 - `SourceDbEgressToRelay` 는 출발 RDS 보안 그룹 하나에만 쓴다. `${AccountId}`·`${SourceDbSecurityGroupId}` 는 고객 값으로 바꾼다.
+- `SourceDbMasterSecretRead` 는 출발 RDS 가 관리하는 마스터 비밀(`rds!db-…`) 하나만 읽는다. 비밀 이름 끝이 무작위라 ARN 대신 RDS 태그 `aws:rds:primaryDBInstanceArn` = 그 DB 로 묶는다. 연결 스택 입력값 `SourceDbInstanceId` 를 비우면 이 문장이 빠진다.
+  - 고객이 할 일: 출발 RDS 에서 "Manage master credentials in AWS Secrets Manager" 를 켜고, 연결 스택을 갱신할 때 `SourceDbInstanceId` 에 DB 식별자를 넣는다. 비밀번호를 플랫폼에 넘기지 않는다.
+  - 워커: 중계기 단계가 출발 줄 `password_ref` 를 `aws-sm:<ARN>` 으로 쓰고, 복제 객체를 만들 때마다 같은 relay 세션으로 그 비밀을 읽어 메모리에만 둔다 (`apps/worker/src/relay/source-secret.ts`). 관리 비밀이 없는 RDS 는 예전처럼 `env:REPL_SECRET_SRC_<출발 환경 앞 8자>` (운영자가 워커 env 에 넣음).
+  - 이 끝점은 구독 접속 문자열에 마스터 비밀번호 대신 이 길 전용 복제 계정을 넣는다 (`REPL_EPHEMERAL_USER` 와 같은 동작, 끝점 단위). 그래서 온프레 CNPG 의 `pg_subscription` 에 고객 마스터 비밀번호가 남지 않는다.
 - 이 파일은 CloudFormation 연결 템플릿 생성기에 아직 안 붙였다 (그 생성기는 다른 영역 작업이다). DRAFT(ai): 실제 AWS 에서 이 권한만으로 apply·destroy 해 보지 않았다.
 
 ## 아직 안 된 것

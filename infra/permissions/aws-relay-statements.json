@@ -195,6 +195,19 @@
         "ec2:RevokeSecurityGroupIngress"
       ],
       "Resource": "arn:aws:ec2:ap-northeast-2:${AccountId}:security-group/${SourceDbSecurityGroupId}"
+    },
+    {
+      "Sid": "SourceDbMasterSecretRead",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:GetSecretValue"
+      ],
+      "Resource": "arn:aws:secretsmanager:ap-northeast-2:${AccountId}:secret:rds!db-*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/aws:rds:primaryDBInstanceArn": "arn:aws:rds:ap-northeast-2:${AccountId}:db:${SourceDbInstanceId}"
+        }
+      }
     }
   ]
 }

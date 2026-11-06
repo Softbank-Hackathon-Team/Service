@@ -16,7 +16,8 @@ import {
   buildRelayPlan, existingDbEgressCover, existingDbIngressCover, ownedBy, RELAY_FORWARDER_PY, pickPublicSubnet, platformEgressCidrs, provisionRelay, RelayError, relayTags, teardownRelay, type RelayPlanInput,
 } from "../src/relay/aws-relay.js";
 import { forwardTarget } from "../src/gitops/replication-delivery.js";
-import { provisionRelayStep, rdsIdentifierFromIds, relayEndpointRows, relayGate, teardownRelayStep, type RelayFacts } from "../src/relay/relay-step.js";
+import { provisionRelayStep, rdsIdentifierFromIds, relayEndpointRows, relayGate, sourcePasswordRef, teardownRelayStep, type RelayFacts } from "../src/relay/relay-step.js";
+import { PASSWORD_REF_RE } from "@svc/contracts";
 
 const MK = "test-master-key-0123456789abcdef-xyz";   // 시험용 가짜 키
 const T = "11111111-1111-4111-8111-111111111111", M = "22222222-2222-4222-8222-222222222222";
@@ -327,7 +328,7 @@ test("단계 정상: 빌린 출발 자격으로 만들고 끝점 두 줄 (도착
   const [s, t] = saved as ReturnType<typeof relayEndpointRows>;
   // 출발 = 중계기 출발 입구 (공개 IP:15432), 진짜 RDS 이름은 tls_servername
   assert.deepEqual([s.side, s.provider, s.host, s.port, s.tlsServername, s.dbname, s.username, s.passwordRef, s.appRole],
-    ["source", "rds", "203.0.113.50", 15432, RDS, "shop", "postgres", "env:REPL_SECRET_SRC_S", "shop_app"]);
+    ["source", "rds", "203.0.113.50", 15432, RDS, "shop", "postgres", "aws-sm:arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:rds!db-x", "shop_app"]);
   assert.deepEqual([t.side, t.provider, t.host, t.peerHost, t.peerPort, t.username, t.passwordRef, t.relayHost, t.relayPort],
     ["target", "cnpg", "203.0.113.50", "10.0.1.20", 5432, "svc_migrate", "derive:migrate", "203.0.113.50", 22]);
   assert.equal(t.relayKnownHosts, knownHostsLine("203.0.113.50", deriveSshHostKey(MK, T, M).publicKeyLine));
@@ -349,6 +350,21 @@ test("출발 비밀번호 참조: 이전이 아니라 출발 환경 기준 이�
   assert.equal(b.passwordRef, a.passwordRef);
   const [c] = relayEndpointRows({ ...base, migrationId: M, sourceEnvId: "783df2ef-8dbf-4a20-904d-bb02aeb96332", existing: [{ ...a, passwordRef: "env:REPL_SECRET_OPS" }] });
   assert.equal(c.passwordRef, "env:REPL_SECRET_OPS");
+});
+
+test("출발 비밀번호 참조: RDS 관리 비밀이 있으면 aws-sm:<ARN> (사람이 비밀번호를 안 넣음), 없거나 모양이 틀리면 예전 env:", () => {
+  const ARN = "arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:rds!db-0a1b2c3d-4e5f-AbCdEf";
+  assert.equal(sourcePasswordRef(ARN, "783df2ef-8dbf", "22222222"), `aws-sm:${ARN}`);
+  assert.equal(sourcePasswordRef(null, "783df2ef-8dbf", "22222222"), "env:REPL_SECRET_SRC_783DF2EF");
+  // 거부: RDS 관리 비밀이 아닌 ARN(고객의 다른 비밀)·Aurora 클러스터 비밀은 aws-sm 으로 안 받는다
+  for (const bad of ["arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:prod/app-AbCdEf",
+    "arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:rds!cluster-x", "arn:aws:secretsmanager:ap-northeast-2:123:secret:rds!db-x"])
+    assert.equal(sourcePasswordRef(bad, "783df2ef-8dbf", "22222222"), "env:REPL_SECRET_SRC_783DF2EF", bad);
+  const base = { tenantId: T, migrationId: M, sourceEnvId: "783df2ef-8dbf-4a20-904d-bb02aeb96332", db: "shop", appUser: "shop_app",
+    publicIp: "203.0.113.50", privateIp: "10.0.1.20", knownHosts: "203.0.113.50 ssh-ed25519 AAAA", existing: [] };
+  const [s] = relayEndpointRows({ ...base, rds: { ...planInput().rds, masterSecretArn: ARN } });
+  assert.equal(s.passwordRef, `aws-sm:${ARN}`);
+  assert.ok(PASSWORD_REF_RE.test(s.passwordRef));
 });
 
 test("끝점 줄 다시 쓰기: 같은 중계기면 배달이 채운 칸(CA·verify-full·출발 peer)을 그대로 둔다, 중계기가 바뀌면 CA 를 비운다", () => {

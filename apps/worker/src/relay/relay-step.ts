@@ -4,7 +4,7 @@
 // 자격: 출발 환경 실행 역할(svc-operate)을 빌리고, 세션 정책은 중계기 동작만 (security STEP_ROLES.relay, policy relay)
 // 건너뜀(아무것도 안 함): 도착이 온프레 pull 이 아님 / 출발이 AWS 아님 / 명세에 postgres 없음 / 출발 자격이 흉내(시드 환경·REAL_STS=0) / RELAY_AUTO=0
 //   → 로컬 데모·시드 환경은 예전 그대로 (끝점 줄은 사람이 tools/onprem-relay.sh 로 넣는다)
-import type { AppSpecV2, ReplicationEndpoint } from "@svc/contracts";
+import { PASSWORD_REF_RE, type AppSpecV2, type ReplicationEndpoint } from "@svc/contracts";
 import { envFor, dbIdentityFor, specV2ForPlan } from "@svc/adapters";
 import { latestAcceptedSpecV2, replicationEndpointsFor, upsertReplicationEndpoint, withTenant, type Tx } from "@svc/core";
 import { deriveSshHostKey, deriveSshKeypair, knownHostsLine, MIN_MASTER_KEY_LENGTH } from "../gitops/migration-secrets.js";
@@ -115,6 +115,13 @@ export function relayGate(f: RelayFacts, env: NodeJS.ProcessEnv): RelayGate {
            region: f.sourceRegion || DEFAULT_REGION, db: pg.db, user: pg.user };
 }
 
+/** 출발 줄의 비밀번호 참조 (순수). RDS 관리 비밀 ARN 이 계약 모양이면 aws-sm:, 아니면 출발 환경 기준 env: */
+export function sourcePasswordRef(masterSecretArn: string | null, sourceEnvId: string, id8: string): string {
+  const sm = masterSecretArn ? `aws-sm:${masterSecretArn}` : null;
+  if (sm && PASSWORD_REF_RE.test(sm)) return sm;
+  return `env:REPL_SECRET_SRC_${(sourceEnvId.replace(/[^A-Za-z0-9]/g, "").slice(0, 8) || id8).toUpperCase()}`;
+}
+
 /** 끝점 두 줄 (순수). 배달(deploy)이 채우는 칸(도착 ca_pem·tls_servername·sslmode, 출발 peer)은 같은 중계기면 그대로 둔다 */
 export function relayEndpointRows(i: {
   tenantId: string; migrationId: string; sourceEnvId: string; rds: RelaySource; db: string; appUser: string;
@@ -131,12 +138,12 @@ export function relayEndpointRows(i: {
     host: i.publicIp, port: RELAY_SOURCE_PORT, dbname: i.db,
     // 마스터 사용자 (RDS 에서 복제 슬롯·발행을 만들 권한). 못 읽었으면 앱 계정
     username: i.rds.masterUsername ?? i.appUser,
-    // TODO(human): 운영에서는 RDS 가 관리하는 마스터 비밀(rds!…, RelaySource.masterSecretArn)을 빌린 역할로 풀어야 한다
-    //   (새 password_ref 문법·secretsmanager:GetSecretValue 권한·워커 메모리에만 두기를 사람이 정한다). 지금은 예전과 같은 env: 참조이고,
-    //   값은 운영자가 워커 env REPL_SECRET_SRC_<출발 환경 id8> 에 넣는다 (아래 DRAFT(ai)). 운영자가 바꾼 참조는 그대로 둔다
-    // DRAFT(ai): 이름은 이전이 아니라 출발 환경 기준 (REPL_SECRET_SRC_<출발 환경 앞 8자>). 같은 출발 RDS 로 이전을 다시 만들 때마다
+    // DECISION(team): 출발 관리자 비밀번호는 RDS 가 관리하는 마스터 비밀(rds!db-…)을 빌린 역할로 읽는다 (2026-11-06, 보안·온프레 영역 제안 +
+    //   연결 템플릿 영역 동의). RDS 에 관리 비밀이 있으면 aws-sm:<ARN> (워커가 단계마다 읽어 메모리에만, relay/source-secret.ts).
+    //   없으면(고객이 비밀 관리를 안 켬) 예전 env: 참조로 남는다 = 운영자가 워커 env REPL_SECRET_SRC_<출발 환경 id8> 에 넣어야 한다. 운영자가 바꾼 참조는 그대로 둔다
+    // DRAFT(ai): env 이름은 이전이 아니라 출발 환경 기준 (REPL_SECRET_SRC_<출발 환경 앞 8자>). 같은 출발 RDS 로 이전을 다시 만들 때마다
     //   워커 env 키를 새로 넣고 다시 배포하던 일을 없앤다 (2026-11-06 실측: 이전마다 platform/app 키 + secretKeys + helm). 값은 같은 DB 의 같은 비밀번호다
-    passwordRef: oldS?.passwordRef ?? `env:REPL_SECRET_SRC_${(i.sourceEnvId.replace(/[^A-Za-z0-9]/g, "").slice(0, 8) || id8).toUpperCase()}`,
+    passwordRef: oldS?.passwordRef ?? sourcePasswordRef(i.rds.masterSecretArn, i.sourceEnvId, id8),
     peerHost: oldS?.peerHost ?? null, peerPort: oldS?.peerPort ?? null,
     appRole: i.appUser, fenceRoles: oldS?.fenceRoles ?? [], schemaName: oldS?.schemaName ?? null,
     sslmode: oldS?.sslmode ?? "require", tlsServername: i.rds.endpoint, caPem: oldS?.caPem ?? null,

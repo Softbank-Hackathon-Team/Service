@@ -7,18 +7,20 @@ const read = (p: string) => JSON.parse(readFileSync(new URL(p, import.meta.url),
 const tpl = read("../../../infra/onboarding/aws-connect.json");
 const src = read("../../../infra/permissions/aws-relay-statements.json");
 const SID = "SourceDbEgressToRelay";
+const SECRET_SID = "SourceDbMasterSecretRead";
+const GATED = [SID, SECRET_SID];
 const inline = (name: string) => tpl.Resources.OperateRole.Properties.Policies.find((p: { PolicyName: string }) => p.PolicyName === name)?.PolicyDocument;
 
 test("실행 역할 인라인 relay 에 원본 문장이 그대로 들어가고, 인라인 합계가 IAM 한도 안이다", () => {
   const plain = inline("relay").Statement.filter((s: { Sid?: string }) => s.Sid);
-  assert.deepEqual(plain, src.Statement.filter((s: { Sid: string }) => s.Sid !== SID));
+  assert.deepEqual(plain, src.Statement.filter((s: { Sid: string }) => !GATED.includes(s.Sid)));
   assert.equal(plain.length, 12);
   const size = tpl.Resources.OperateRole.Properties.Policies.reduce((n: number, p: { PolicyDocument: unknown }) => n + JSON.stringify(p.PolicyDocument).length, 0);
   assert.ok(size < 10240, `인라인 합계 ${size}`);
 });
 
 test("RDS 보안 그룹 문장: 매개변수로 하나만 열고, 비우면 빠진다", () => {
-  const [gated] = inline("relay").Statement.filter((s: Record<string, unknown>) => s["Fn::If"]);
+  const gated = inline("relay").Statement.find((s: Record<string, { 1: { Sid: string } }>) => s["Fn::If"]?.[1].Sid === SID);
   const [cond, stmt, off] = gated["Fn::If"];
   assert.equal(cond, "HasSourceDbSecurityGroup");
   assert.deepEqual(off, { Ref: "AWS::NoValue" });
@@ -33,5 +35,25 @@ test("거부: 보안 그룹 ID 모양이 아니면 매개변수가 받지 않고
   assert.ok(re.test("") && re.test("sg-0123456789abcdef0"));
   for (const bad of ["*", "sg-*", "sg-XYZ", "sg-12345678/x"]) assert.ok(!re.test(bad), bad);
   assert.ok(!JSON.stringify(tpl.Resources.ObserveRole).includes("ec2:RunInstances"));
-  assert.equal(Object.keys(tpl.Parameters).length, 6);
+  assert.equal(Object.keys(tpl.Parameters).length, 7);
+});
+
+test("출발 관리 비밀 읽기: 매개변수로 DB 하나의 RDS 관리 비밀만 (ARN 이 아니라 RDS 태그), 비우면 빠진다", () => {
+  const gated = inline("relay").Statement.find((s: Record<string, { 1: { Sid: string } }>) => s["Fn::If"]?.[1].Sid === SECRET_SID);
+  const [cond, stmt, off] = gated["Fn::If"];
+  assert.equal(cond, "HasSourceDbInstance");
+  assert.deepEqual(off, { Ref: "AWS::NoValue" });
+  assert.deepEqual(stmt.Action, ["secretsmanager:GetSecretValue"]);
+  assert.deepEqual(stmt.Resource, { "Fn::Join": ["", ["arn:aws:secretsmanager:ap-northeast-2:", { Ref: "AWS::AccountId" }, ":secret:rds!db-*"]] });
+  assert.deepEqual(stmt.Condition.StringEquals["aws:ResourceTag/aws:rds:primaryDBInstanceArn"],
+    { "Fn::Join": ["", ["arn:aws:rds:ap-northeast-2:", { Ref: "AWS::AccountId" }, ":db:", { Ref: "SourceDbInstanceId" }, ""]] });
+  assert.deepEqual(tpl.Conditions.HasSourceDbInstance, { "Fn::Not": [{ "Fn::Equals": [{ Ref: "SourceDbInstanceId" }, ""] }] });
+  assert.equal(tpl.Parameters.SourceDbInstanceId.Default, "");
+});
+
+test("거부: DB 식별자 모양이 아니면(와일드카드·ARN·경로) 매개변수가 받지 않고, 관찰 역할에는 비밀 읽기가 없다", () => {
+  const re = new RegExp(tpl.Parameters.SourceDbInstanceId.AllowedPattern);
+  assert.ok(re.test("") && re.test("sample-shop-db"));
+  for (const bad of ["*", "db-*", "1abc", "arn:aws:rds:ap-northeast-2:123456789012:db:x", "a/b", "a".repeat(64)]) assert.ok(!re.test(bad), bad);
+  assert.ok(!JSON.stringify(tpl.Resources.ObserveRole).includes("secretsmanager:GetSecretValue"));
 });

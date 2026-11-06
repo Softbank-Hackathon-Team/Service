@@ -1,6 +1,6 @@
 import { connect as netConnect } from "node:net";
 import type { Endpoint, EndpointTls, Provider, SslMode } from "./endpoint.js";
-import { resolvePasswordRef } from "./secret-ref.js";
+import { parsePasswordRef, resolvePasswordRef, type ManagedSecrets } from "./secret-ref.js";
 
 // DECISION(team): 끝점은 이전마다 DB 행으로 (2026-11-05, 보안·온프레 영역)
 // replication_endpoints 한 줄 → Endpoint. 순수 함수 (비밀번호 참조 풀기만 env 를 읽는다)
@@ -20,8 +20,11 @@ const pgUrl = (user: string, pass: string, host: string, port: number, db: strin
   `postgres://${encodeURIComponent(user)}:${encodeURIComponent(pass)}@${hostPart(host)}:${port}/${encodeURIComponent(db)}${query}`;
 
 /** 줄 → Endpoint. 비밀번호는 여기서만 풀어 접속 문자열 안에만 둔다 (반환값을 로그에 남기지 않는다) */
-export function endpointFromRecord(r: EndpointRecord, env: NodeJS.ProcessEnv = process.env): Endpoint {
-  const pass = resolvePasswordRef(r.passwordRef, { tenantId: r.tenantId, migrationId: r.migrationId, side: r.side }, env);
+export function endpointFromRecord(r: EndpointRecord, env: NodeJS.ProcessEnv = process.env, managed?: ManagedSecrets): Endpoint {
+  const pass = resolvePasswordRef(r.passwordRef, { tenantId: r.tenantId, migrationId: r.migrationId, side: r.side }, env, managed);
+  // 관리 비밀(aws-sm)은 고객 DB 의 마스터 비밀번호다. 구독 접속 문자열(pg_subscription.subconninfo, 상대 서버에 평문 저장)에 넣지 않고
+  //   이 길 전용 계정을 만들어 그 계정만 넣는다 (Z52 repluser). REPL_EPHEMERAL_USER 전역 설정과 상관없이 이 끝점은 늘 켠다
+  const managedAdmin = parsePasswordRef(r.passwordRef).kind === "aws-sm";
   const tls: EndpointTls | undefined = r.sslmode ? {
     mode: r.sslmode,
     ...(r.caPem ? { caPem: r.caPem } : {}),
@@ -45,6 +48,7 @@ export function endpointFromRecord(r: EndpointRecord, env: NodeJS.ProcessEnv = p
     ...(r.fenceRoles.length ? { fenceRoles: [...r.fenceRoles] } : {}),
     ...(r.schemaName ? { schema: r.schemaName } : {}),
     ...(tls ? { tls } : {}),
+    ...(managedAdmin ? { ephemeralPeerUser: true } : {}),
     origin: "db",
   };
 }

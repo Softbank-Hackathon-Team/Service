@@ -55,7 +55,7 @@ export interface RelaySource {
   /** RDS 에 붙은 보안 그룹 (활성만, 이름순). 첫 번째에 "중계 사설 IP 로 나가기" 규칙을 단다 */
   securityGroupIds: string[];
   masterUsername: string | null; dbName: string | null;
-  /** RDS 가 관리하는 마스터 비밀(rds!…)의 ARN. 지금은 기록만 (TODO(human): 출발 비밀번호를 이걸로 풀지) */
+  /** RDS 가 관리하는 마스터 비밀(rds!…)의 ARN. 있으면 출발 줄 password_ref = aws-sm:<ARN> (relay-step sourcePasswordRef, relay/source-secret.ts) */
   masterSecretArn: string | null;
 }
 export interface RelayNetwork { vpcCidrs: string[]; subnetId: string }

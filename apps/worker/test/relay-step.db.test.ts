@@ -81,8 +81,12 @@ test("단계 정상: 명세에서 출발 RDS 를 찾아 중계기를 만들고 �
   assert.equal(r1.kind, "ok", JSON.stringify(r1));
   const [src, dst] = await core.withTenant(T, (tx) => core.replicationEndpointsFor(tx, m.id));
   // 출발 = 중계기 출발 입구 (공개 IP:15432, DB 줄 검사 통과), 진짜 RDS 이름은 tls_servername
-  assert.deepEqual([src!.side, src!.host, src!.port, src!.tlsServername, src!.username, src!.dbname, src!.passwordRef.startsWith("env:REPL_SECRET_SRC_")],
-    ["source", "203.0.113.50", 15432, RDS, "postgres", "shop_api", true]);
+  // 비밀번호 참조 = RDS 관리 비밀 aws-sm:<ARN> (가짜 RDS 에 MasterUserSecret 이 있다). db 0053 CHECK 가 이 모양을 받는다
+  assert.deepEqual([src!.side, src!.host, src!.port, src!.tlsServername, src!.username, src!.dbname, src!.passwordRef],
+    ["source", "203.0.113.50", 15432, RDS, "postgres", "shop_api", "aws-sm:arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:rds!db-x"]);
+  // 거부: 0053 CHECK 는 RDS 관리 비밀이 아닌 ARN 을 막는다
+  await assert.rejects(owner.query(`UPDATE replication_endpoints SET password_ref = 'aws-sm:arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:prod/app-x' WHERE migration_id = $1 AND side = 'source'`, [m.id]),
+    /replication_endpoints_password_ref_check/);
   assert.deepEqual([dst!.side, dst!.host, dst!.peerHost, dst!.relayHost, dst!.username, dst!.passwordRef], ["target", "203.0.113.50", "10.0.1.20", "203.0.113.50", "svc_migrate", "derive:migrate"]);
   assert.match(dst!.relayKnownHosts!, /^203\.0\.113\.50 ssh-ed25519 [A-Za-z0-9+/=]+$/);
   // 배달(deploy)이 채운 칸

@@ -11,7 +11,7 @@ export { Migration, type MigrationConfig, type Phase, type SyncReport, type Fenc
 export { type TableRef, rowCounts, checksum, listTables } from "./tables.js";
 export { replicationFromEnv, replicationFromRecords, toMeasurements, ReplConfigError, type ReplConfigCode, sourceLinkRoleOf } from "./worker.js";
 export { endpointFromRecord, endpointAddress, tcpReachProblem, type EndpointRecord } from "./record.js";
-export { parsePasswordRef, deriveReplPassword, resolvePasswordRef, REPL_MASTER_KEY_MIN, type PasswordRef, type SecretScope } from "./secret-ref.js";
+export { parsePasswordRef, deriveReplPassword, resolvePasswordRef, REPL_MASTER_KEY_MIN, type PasswordRef, type SecretScope, type ManagedSecrets } from "./secret-ref.js";
 export { ensureReplUser, dropReplUser, replUserOf, subscriptionConninfo, ephemeralEnabled } from "./repluser.js";
 export { readTfFacts, resolveTfRefs, hasTfRef } from "./tf-facts.js";
 export { copySchema, SchemaCopyError, isTransient, type SchemaCopyResult } from "./schema.js";
