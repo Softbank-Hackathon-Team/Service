@@ -89,7 +89,8 @@ export const PERMS: PermTable = {
     remove: ["iam:DeleteRolePolicy"] },
   aws_eks_pod_identity_association: {
     read: ["eks:DescribePodIdentityAssociation"],
-    write: ["eks:CreatePodIdentityAssociation", "iam:PassRole"],
+    // 2026-11-07 온프레 → AWS 실측: app 루트 모듈 provider default_tags 가 연결에 태그를 붙여 eks:TagResource 가 없으면 AccessDenied
+    write: ["eks:CreatePodIdentityAssociation", "eks:TagResource", "iam:PassRole"],
     remove: ["eks:DeletePodIdentityAssociation"] },
   // TA13 DRAFT(ai): 관리형 컨테이너(ECS Fargate) 도착 — root(service_json) + kinds/service-ecs 가 만드는 종류.
   //   TODO(human): 실행 역할 천장(infra/permissions/aws-operate-role-policy.json)·세션 정책엔 아직 안 넣음 (PassRole 대상 ecs-tasks, 보안 승인 몫)

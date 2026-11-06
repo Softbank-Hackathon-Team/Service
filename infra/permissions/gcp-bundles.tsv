@@ -1,4 +1,4 @@
-#version	2
+#version	3
 #id	side	principal	role	role_file	binding	apis
 gcp.observe.source	source	svc-observe	platform_observe	-	plain	cloudbilling.googleapis.com,cloudresourcemanager.googleapis.com,iamcredentials.googleapis.com
 gcp.observe.target	target	svc-observe	platform_observe	-	plain	cloudbilling.googleapis.com,cloudresourcemanager.googleapis.com,compute.googleapis.com,container.googleapis.com,iam.googleapis.com,iamcredentials.googleapis.com,secretmanager.googleapis.com,serviceusage.googleapis.com,sqladmin.googleapis.com,sts.googleapis.com

@@ -17,9 +17,9 @@ import { GRANT_TYPES_GCP } from "../target/grants.js";
 
 /** 권한 판. 묶음 내용이 바뀌면 올린다 (시험 permission-bundles 가 PERMISSIONS_DIGEST 와 대조해 안 올리면 실패).
  *  같은 번호가 연결 스크립트 역할 설명·연결 템플릿 역할 태그에 박힌다 → 고객 쪽에 붙은 판을 관찰 역할로 읽는다 */
-export const PERMISSIONS_VERSION = 2;
-/** 판 2 의 묶음 지문 (bundleDigest). 판 2 = 온프레 → AWS 중계기(aws.relay.target 필요 조건 relay_onprem_aws) + 템플릿에 RelayReadOwnConsole(선택, 필요 조건 밖). 묶음을 바꿨으면 PERMISSIONS_VERSION 을 올리고 이 값을 새 지문으로 바꾼다 */
-export const PERMISSIONS_DIGEST = "1ef6705476dcbe10";
+export const PERMISSIONS_VERSION = 3;
+/** 판 3 의 묶음 지문 (bundleDigest). 판 3 = AWS 도착 파드 신원 연결의 만들 때 태그(eks:TagResource). 판 2 = 온프레 → AWS 중계기(aws.relay.target 필요 조건 relay_onprem_aws) + 템플릿에 RelayReadOwnConsole(선택, 필요 조건 밖). 묶음을 바꿨으면 PERMISSIONS_VERSION 을 올리고 이 값을 새 지문으로 바꾼다 */
+export const PERMISSIONS_DIGEST = "e14c167bc8dd5627";
 
 /** AWS 관찰 역할이 실행 역할 정책을 흉내 평가하는 권한 (같은 계정 svc-* 역할에만, 연결 템플릿 observe-permcheck 문) */
 export const AWS_PERMCHECK_ACTIONS = ["iam:SimulatePrincipalPolicy"] as const;

@@ -217,6 +217,7 @@
               "Effect": "Allow",
               "Action": [
                 "ec2:CreateTags",
+                "eks:TagResource",
                 "rds:AddTagsToResource",
                 "secretsmanager:TagResource"
               ],
@@ -644,7 +645,7 @@
         "Tags": [
           {
             "Key": "platform-perms-version",
-            "Value": "2"
+            "Value": "3"
           }
         ]
       }
@@ -702,7 +703,7 @@
         "Tags": [
           {
             "Key": "platform-perms-version",
-            "Value": "2"
+            "Value": "3"
           }
         ],
         "ManagedPolicyArns": [

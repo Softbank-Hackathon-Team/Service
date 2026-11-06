@@ -244,3 +244,14 @@ test("DM-8 거부: WAL 볼륨 크기를 못 읽으면 칸 없이 0.6 검토", ()
   assert.equal(m.props.walStorageGb, undefined);
   assert.equal(m.meta.walStorageGb?.[1], 0.6);
 });
+
+// 2026-11-07 온프레 → AWS 실측: CNPG 운영자가 정한 파라미터(logging_collector 등)를 RDS 파라미터 그룹에 넣다가 ModifyDBParameterGroup 거부
+test("CNPG 운영자 고정·기본 파라미터는 빼고, 고객이 바꾼 값만 옮긴다", async () => {
+  const { cnpgUserParams } = await import("../src/import/mappers/pg-settings.js");
+  const live = { archive_mode: "on", archive_timeout: "5min", dynamic_shared_memory_type: "posix", full_page_writes: "on", log_destination: "csvlog",
+    logging_collector: "on", max_parallel_workers: "32", max_replication_slots: "10", max_wal_senders: "10", wal_keep_size: "1GB", work_mem: "8MB" };
+  assert.deepEqual(cnpgUserParams(live), { max_replication_slots: "10", max_wal_senders: "10", wal_keep_size: "1GB", work_mem: "8MB" },
+    "고정 목록은 값과 상관없이, 기본값은 기본값과 같을 때만 뺀다 (wal_keep_size 1GB 는 고객이 바꾼 값)");
+  assert.equal(cnpgUserParams({ logging_collector: "on" }), null);
+  assert.equal(cnpgUserParams(null), null);
+});

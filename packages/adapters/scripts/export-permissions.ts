@@ -57,7 +57,7 @@ const OWNED_TAG = { "aws:ResourceTag/managed-by": "platform" };
 const REGION = { "aws:RequestedRegion": "ap-northeast-2" };
 const isReadAct = (a: string) => /:(Describe|Get|List)/.test(a);
 const isCreateAct = (a: string) => /:Create(?!Tags)/.test(a);
-const TAG_ACTS = ["rds:AddTagsToResource", "secretsmanager:TagResource", "ec2:CreateTags"];
+const TAG_ACTS = ["rds:AddTagsToResource", "secretsmanager:TagResource", "ec2:CreateTags", "eks:TagResource"];   // eks: 만들 때 태그(파드 신원 연결, default_tags) 2026-11-07 실측
 const awsTag = awsRest.filter((a) => TAG_ACTS.includes(a));
 const awsRead = awsRest.filter(isReadAct);
 const awsCreate = awsRest.filter((a) => !isReadAct(a) && isCreateAct(a));

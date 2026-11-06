@@ -47,6 +47,7 @@
       "Effect": "Allow",
       "Action": [
         "ec2:CreateTags",
+        "eks:TagResource",
         "rds:AddTagsToResource",
         "secretsmanager:TagResource"
       ],

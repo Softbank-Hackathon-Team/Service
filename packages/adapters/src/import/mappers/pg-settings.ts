@@ -48,6 +48,30 @@ export const strParams = (x: unknown): Record<string, string> | null => {
   return Object.fromEntries(Object.entries(out).sort(([a], [b]) => a.localeCompare(b)));
 };
 
+// CNPG 운영자가 정하는 파라미터는 고객 설정이 아니다 (cloudnative-pg "Fixed parameters" + 운영자가 spec 에 채우는 기본값).
+//   그대로 옮기면 RDS·Cloud SQL 이 거부한다 (2026-11-07 온프레 → AWS 실측: ModifyDBParameterGroup "The parameter logging_collector cannot be modified")
+//   고정 목록은 값과 상관없이 뺀다. 운영자 기본값 목록은 값이 그 기본값일 때만 뺀다 (고객이 바꾼 값이면 남긴다)
+const CNPG_FIXED = new Set(["allow_system_table_mods", "archive_cleanup_command", "archive_command", "archive_mode", "bonjour", "bonjour_name",
+  "cluster_name", "config_file", "data_directory", "data_sync_retry", "event_source", "external_pid_file", "full_page_writes", "hba_file",
+  "hot_standby", "ident_file", "jit_provider", "listen_addresses", "log_destination", "log_directory", "log_file_mode", "log_filename",
+  "log_rotation_age", "log_rotation_size", "log_truncate_on_rotation", "logging_collector", "port", "primary_conninfo", "primary_slot_name",
+  "promote_trigger_file", "recovery_end_command", "recovery_min_apply_delay", "recovery_target", "recovery_target_action",
+  "recovery_target_inclusive", "recovery_target_lsn", "recovery_target_name", "recovery_target_time", "recovery_target_timeline",
+  "recovery_target_xid", "restart_after_crash", "restore_command", "shared_preload_libraries", "ssl", "ssl_ca_file", "ssl_cert_file",
+  "ssl_crl_file", "ssl_dh_params_file", "ssl_ecdh_curve", "ssl_key_file", "ssl_passphrase_command", "ssl_passphrase_command_supports_reload",
+  "ssl_prefer_server_ciphers", "stats_temp_directory", "synchronous_standby_names", "syslog_facility", "syslog_ident",
+  "syslog_sequence_numbers", "syslog_split_messages", "unix_socket_directories", "unix_socket_group", "unix_socket_permissions",
+  "wal_level", "wal_log_hints"]);
+const CNPG_DEFAULTS: Record<string, string> = { archive_timeout: "5min", dynamic_shared_memory_type: "posix", max_parallel_workers: "32",
+  max_worker_processes: "32", shared_memory_type: "mmap", ssl_max_protocol_version: "TLSv1.3", ssl_min_protocol_version: "TLSv1.3",
+  wal_keep_size: "512MB", wal_receiver_timeout: "5s", wal_sender_timeout: "5s" };
+/** CNPG spec.postgresql.parameters 에서 고객이 정한 것만 */
+export const cnpgUserParams = (p: Record<string, string> | null): Record<string, string> | null => {
+  if (!p) return null;
+  const kept = Object.entries(p).filter(([k, v]) => !CNPG_FIXED.has(k) && CNPG_DEFAULTS[k] !== v);
+  return kept.length ? Object.fromEntries(kept) : null;
+};
+
 // N8 DRAFT(ai): IR 의 다른 칸이나 플랫폼 요구로 이미 옮겨지는 벤더 파라미터는 parameters 에서 뺀다.
 //   rds.force_ssl·ssl 계열 → tlsRequired(SSL-1), 논리 복제 켜기 → 도착 모듈이 항상 켬(CDC 이전).
 //   남은 rds.*·cloudsql.* 는 그 클라우드 도착만 받음(pg.param.<vendor>) → 다른 클라우드면 계획에서 막힘
