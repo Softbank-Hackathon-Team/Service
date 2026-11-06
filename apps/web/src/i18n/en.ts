@@ -1099,7 +1099,7 @@ export const EN: Table = {
   "이 마이그레이션을\n찾을 수 없습니다": "Can't find\nthis migration",
   "이 마이그레이션을 끝내고 새로 시작해 주세요.": "End this migration and start a new one.",
   "이 마이그레이션의 복제 끝점 기록에 출발·도착 중 한쪽만 있어 DB 복제를 멈췄습니다.": "DB replication stopped because this migration's replication endpoint record has only the source or only the target.",
-  "이 마이그레이션이 도착에 만든 자원은 자동으로 지웁니다": "Resources this migration created on the target are deleted automatically",
+  "이 마이그레이션이 도착에 만든 자원은 자동으로 지웁니다. 온프레 도착은 앱과 DB를 지우고 빈 앱 네임스페이스만 남깁니다": "Resources this migration created on the target are deleted automatically. On an on-prem target the app and its database are deleted; only the empty app namespace remains",
   "이 명령을 붙여 넣어 실행합니다. 빠진 묶음만 맞추고, 다시 실행해도 결과가 같습니다.": "Paste and run this command. It only fixes the missing bundles, and running it again gives the same result.",
   "이 명령을 붙여 넣어 실행합니다. 플랫폼이 빌려 쓸 역할이 생깁니다.": "Paste and run this command. It creates the role the platform will borrow.",
   "이 명세 판과 맞지 않는 칸을 보냈습니다. 화면을 새로 고친 뒤 다시 확정해 주세요.": "A field was sent that doesn't match this spec version. Refresh the page and confirm again.",
