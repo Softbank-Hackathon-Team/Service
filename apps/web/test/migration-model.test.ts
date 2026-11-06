@@ -4,7 +4,7 @@ import {
   ackPlaces, ackState, approveLabel, canPick, canReplan, canRollback, failureChoices, formatClock, judgementRows, leftoversOf, leftoverValue, migrationSteps, needsStepAnchor, stepsPhase,
   pollMs, screenOf, shiftNote, signalCovers, specRows, stepAnchorFrom, stepGate, trafficPercent, trafficReportRows,
 } from "../src/features/migration/model";
-import { planResourceRows, runtimeChangeNote, substituteRows, type ResourceRow } from "../src/lib/resourceMap";
+import { planResourceRows, runtimeChangeNote, specSubstituteRows, substituteRows, type ResourceRow } from "../src/lib/resourceMap";
 import { MIGRATION_STATUSES, type EnvApp, type EnvironmentView, type FootprintResource, type PlanAcknowledgement } from "../src/lib/types";
 
 test("상태 22개가 모두 화면 하나로 묶인다", () => {
@@ -264,7 +264,7 @@ test("자원 대응 v2: 같은 칸 여러 줄도 열쇠가 겹치지 않고, 건
   assert.equal(planResourceRows(null).listed.length, 0);
 });
 
-test("상품 대체 줄: substitute 확인 항목만 서버 순서대로 한 줄씩, 빠진 칸은 없음·코드 그대로, 체크는 그 확인 항목 id 로 승인에 셈", () => {
+test("상품 대체 줄: substitute 확인 항목만 서버 순서대로 한 줄씩, 서버가 비운 칸은 비운 채로(화면도 그리지 않음), 체크는 그 확인 항목 id 로 승인에 셈", () => {
   const acks: PlanAcknowledgement[] = [
     { id: "cost", kind: "cost", text: "월 비용" },
     { id: "substitute:jobs", kind: "substitute", ref: "jobs", text: "SQS → Pub/Sub 토픽 + 구독 · 앱 코드 변경 필요",
@@ -275,7 +275,7 @@ test("상품 대체 줄: substitute 확인 항목만 서버 순서대로 한 줄
   const rows = substituteRows(acks);
   assert.deepEqual(rows, [
     { ackId: "substitute:jobs", resource: "jobs", from: "SQS", to: "Pub/Sub 토픽 + 구독", lost: ["남은 메시지 (출발 큐에서 옮기지 않음)"], appChange: true },
-    { ackId: "substitute:db", resource: "db", from: "RDS for PostgreSQL", to: "Cloud SQL for PostgreSQL", lost: [], appChange: false },
+    { ackId: "substitute:db", resource: "db", from: "RDS for PostgreSQL", to: "Cloud SQL for PostgreSQL", lost: undefined, appChange: undefined },
   ]);
   const ticked = new Set(rows.map((row) => row.ackId));
   assert.deepEqual(ackState(acks, ticked).missing, ["cost", "runtime_change:web"]);
@@ -310,4 +310,18 @@ test("계획 승인 확인 자리: 항목마다 한 자리(상품 대체는 큰 
   const alone = ackPlaces(onlySubstitutes);
   assert.equal(alone.list.length, 0, "상품 대체만 있으면 목록 카드가 없다");
   assert.equal(ackState(onlySubstitutes, new Set(alone.substitutes.map((row) => row.ackId))).ready, true, "큰 카드 확인만으로 승인한다");
+});
+
+test("명세 검토의 상품 대체 미리보기: substitutions 의 substitute 줄을 승인 화면과 같은 줄로, id 는 계획 때 확인 항목 id. 빈 칸은 비운 채로, 키가 없으면(옛 서버) 0줄", () => {
+  assert.deepEqual(specSubstituteRows([
+    { kind: "substitute", subject: "cache", from: "ElastiCache (redis)", to: "Memorystore (redis)", lost: ["캐시 데이터 (빈 캐시로 시작)"], appChange: false },
+    { kind: "runtime_change", subject: "web" },
+    { kind: "substitute", subject: "jobs", from: "SQS", to: "Pub/Sub 토픽 + 구독", detail: "SQS SDK 대신 Pub/Sub SDK", appChange: true },
+    { kind: "substitute", subject: "uploads" },
+  ]), [
+    { ackId: "substitute:cache", resource: "cache", from: "ElastiCache (redis)", to: "Memorystore (redis)", detail: undefined, lost: ["캐시 데이터 (빈 캐시로 시작)"], appChange: false },
+    { ackId: "substitute:jobs", resource: "jobs", from: "SQS", to: "Pub/Sub 토픽 + 구독", detail: "SQS SDK 대신 Pub/Sub SDK", lost: undefined, appChange: true },
+    { ackId: "substitute:uploads", resource: "uploads", from: undefined, to: undefined, detail: undefined, lost: undefined, appChange: undefined },
+  ]);
+  assert.deepEqual(specSubstituteRows(undefined), []);
 });

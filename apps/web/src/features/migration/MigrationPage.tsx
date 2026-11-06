@@ -10,7 +10,7 @@ import { aboutMigration } from '../../lib/events';
 import { errorCode, errorText } from '../../lib/errors';
 import { stopReasonOf } from '../../lib/failure';
 import { is404, or404 } from '../../lib/http';
-import { planResourceRows, runtimeChangeNote } from '../../lib/resourceMap';
+import { planResourceRows, runtimeChangeNote, specSubstituteRows } from '../../lib/resourceMap';
 import { LABEL } from '../../lib/status';
 import { failureDetail, lastPrecheckBounce } from '../../lib/timelineDetail';
 import type { MigrationView, PlanAckKind, PrecheckItem } from '../../lib/types';
@@ -87,6 +87,9 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
   // 보안 판정 막힘으로 돌아왔으면 보안 요구사항 카드를 열어 둔다 (요구사항을 고쳐 풀리는 막힘이 있다: 허용 국가·키 소유)
   const secBlocked = blocks.some(isSecItem);
   const requirements = v2?.spec.security?.requirements ?? null;
+  // 상품 대체 미리보기. 카드의 출발·도착 이름표(AWS·GCP)는 승인 화면과 같은 대응표 GET 에서 읽는다 (대체가 있을 때만)
+  const substitutes = specSubstituteRows(view?.substitutions);
+  const ends = usePoll(substitutes.length > 0 ? () => or404(api.planResources(migration.id)) : null, null, [migration.id, substitutes.length > 0]);
 
   // v2 판: 검토 칸을 PATCH confirm 으로 확인한 뒤(20개씩), 남은 칸이 없을 때만 POST /plan (T04 가 v2 검토 칸도 센다).
   // v1 판: 지금처럼 POST /plan 만 보낸다
@@ -221,6 +224,11 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
               ))}
             </ul>
             <p className={`${s.note} t-caption c-tertiary`}>{t('이 앱의 서비스가 쓰는 연결은 따로 엽니다. 도착으로 옮길 수 없는 허용 원본은 빼고, 허용 주소가 없는 공개 자원은 비공개로 둡니다.')}</p>
+          </FoldTile>
+        )}
+        {substitutes.length > 0 && (
+          <FoldTile title={t('상품 대체')} summary={t('{0}개', { 0: substitutes.length })}>
+            <SubstituteMap rows={substitutes} source={ends.data?.source.provider ?? null} target={ends.data?.target.provider ?? null} />
           </FoldTile>
         )}
         {view && v2 && (

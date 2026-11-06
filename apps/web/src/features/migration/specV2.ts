@@ -1,3 +1,4 @@
+import type { ApprovalRowV2 } from '../../lib/types';
 import type { MigrationSpecView } from './model';
 import type { SecuritySpecV2, SourceDbFacts } from './securityV2';
 import { t } from '../../lib/i18n';
@@ -39,6 +40,8 @@ export type MigrationSpecViewV2 = MigrationSpecView & {
   fieldMetaV2?: Record<string, FieldMetaEntryV2>;
   accuracy?: ImportAccuracy;
   outOfBoundary?: OutOfBoundaryV2[];
+  /** 도착에서 다른 상품이 되는 자원 (계획 확인 항목과 같은 계산의 미리보기). 옛 서버는 키가 없고 그때는 그리지 않는다 */
+  substitutions?: ApprovalRowV2[];
   /**
    * 가져오기가 출발 DB 에서 읽은 보안 사실 (postgres 구성요소 id → 사실, 판의 spec_v2.securityFacts). 사람이 고칠 수 없다.
    * 서버 GET spec 은 아직 이 칸을 싣지 않는다 (contracts MigrationSpecViewV2 에 키 없음). 칸이 올 때만 화면에 그린다

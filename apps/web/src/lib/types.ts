@@ -126,6 +126,11 @@ export interface PlanAcknowledgement {
   id: string; kind: PlanAckKind; text: string; ref?: string;
   from?: string; to?: string; lost?: string[]; appChange?: boolean;
 }
+// contracts spec-v2.ts ApprovalRowV2: 명세 GET 의 substitutions 줄 (substitute 만 온다). 계획 때 확인 항목 id 는 `${kind}:${subject}`
+export interface ApprovalRowV2 {
+  kind: "runtime_change" | "build" | "tls_relaxed" | "host_access" | "public_bucket" | "substitute";
+  subject: string; from?: string; to?: string; detail?: string; lost?: string[]; appChange?: boolean;
+}
 export interface PlanDoc {
   planId: string;
   migrationId: string;

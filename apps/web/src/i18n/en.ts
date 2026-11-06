@@ -260,6 +260,7 @@ export const EN: Table = {
   "계획 다시 만들기": "Recreate plan",
   "계획 만들기": "Create plan",
   "계획 승인": "Approve plan",
+  "계획 승인 때 하나씩 확인합니다": "You confirm each one when approving the plan",
   "계획 유효 시간이 지나 다시 시작할 수 없습니다": "The plan has expired and can't be started again",
   "계획 전 확인 실패": "Pre-plan check failed",
   "계획서": "Plan",
