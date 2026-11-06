@@ -75,7 +75,7 @@ bash tools/team-env.sh slot-2 source   # 자기 칸 환경마다 출발 샘플 �
 
 ## 3. 출발 샘플 앱 (GCP·AWS)
 
-이전해 볼 "이미 운영 중인 서비스" 자리다. 모양은 하나: `shop-web`·`shop-api` + Postgres `orders` 100행, 네임스페이스 `real-app`.
+이전해 볼 "이미 운영 중인 서비스" 자리다. 모양은 하나: `shop-web`·`shop-api` + Postgres DB `shop` 의 `orders` 100행, 네임스페이스 `real-app`.
 명령은 등록부 자기 칸에서 값까지 채워 찍는다. 찍힌 줄을 위에서부터 차례로 친다.
 
 ```bash
@@ -85,7 +85,7 @@ bash tools/team-env.sh slot-2 source   # 칸의 환경마다: gcp → tools/gcp-
 - 환경마다 "이미 있는지" 읽기 줄이 있다. 이미 올라가 있으면 건너뛴다
 - 공유 환경(slot-1)은 이미 올라가 있을 수 있다 (확인 줄로 본다). 팀 채널에 알리고 쓰고, `down` 은 치지 않는다
 - `down` 은 주석으로만 찍힌다 (붙여 넣어도 지우지 않게)
-- `app`·`seed` 는 `docker buildx` 로 이미지 digest 를 구한다. 없으면 `WEB_IMAGE`·`API_IMAGE`·`SEED_IMAGE` 를 `repo@sha256:…` 로 준다
+- `app`·`seed` 의 기본 이미지는 태그라 `docker buildx` 로 digest 에 고정한다. Docker 가 없으면 `WEB_IMAGE`·`API_IMAGE`·`SEED_IMAGE` 를 `repo@sha256:<digest>` 로 export 한다 (그러면 Docker 없이 그대로 쓴다. 두 스크립트 같음)
 
 ### GCP
 
@@ -96,24 +96,33 @@ bash tools/team-env.sh slot-2 source   # 칸의 환경마다: gcp → tools/gcp-
 
 ### AWS
 
-`tools/aws-source-app.sh` 는 **이미 있는** EKS(등록부 `cluster`)와 RDS PostgreSQL 에 앱만 올린다. EKS·RDS 는 만들지 않는다.
+`tools/aws-source-app.sh` 는 **이미 있는** EKS(등록부 `cluster`)와 RDS PostgreSQL(등록부 `db_instance`)에 앱만 올린다. EKS·RDS 는 만들지 않는다.
 
-1. 먼저 만든다: 콘솔(EKS 클러스터 생성, RDS → PostgreSQL) 또는 aws CLI. RDS 마스터 비밀번호는 "Secrets Manager 에서 관리" 가 편하다 (찍힌 줄이 그 비밀 id 를 찾는다)
+1. 먼저 만든다: 콘솔(EKS 클러스터 생성, RDS → PostgreSQL, **초기 데이터베이스 이름 `shop`**) 또는 aws CLI(`aws rds create-db-instance --engine postgres --db-name shop --manage-master-user-password …`). 마스터 비밀번호는 "Secrets Manager 에서 관리" 가 편하다 (찍힌 줄이 그 비밀 id 를 찾는다)
 2. RDS 보안 그룹이 EKS 클러스터 보안 그룹에서 5432 를 받게 한다 (안 받으면 `seed` 가 300초 뒤 실패)
-3. `team-env.sh <slot> source` 가 찍은 줄: kubeconfig(컨텍스트 이름 = 환경 이름) → 확인 → DB 값 → `app` → `seed`
+3. 등록부 자기 aws 환경 줄에 `db_instance: <그 RDS 식별자>` 를 적는다. 찍힌 줄은 **이 이름으로만** RDS 를 찾는다 (`--db-instance-identifier`). 같은 AWS 계정에 플랫폼 자기 DB(`platform-db`)가 있어서 "리전의 첫 PostgreSQL" 은 고르지 않는다. `db_instance` 가 없으면 DB·`app`·`seed` 줄 대신 채우라는 주석만 찍힌다
+4. `team-env.sh <slot> source` 가 찍은 줄: kubeconfig(컨텍스트 이름 = 환경 이름) → 확인 → DB 값 → `app` → `seed`
+
+앱 계정은 RDS 마스터와 따로다 (정본 샘플과 같음). 앱이 마스터로 붙으면 복제 점검 DB-08 이 이전을 멈춘다.
+
+- `app`: `shop-api` 는 `DB_NAME=shop`·`DB_USER=shop_app` 으로 붙는다. `shop-db-app`(키 `password`)에는 `shop_app` 의 랜덤 비밀번호만 둔다 (이미 있으면 그대로). 마스터 비밀은 읽지 않는다
+- `seed`: 일회용 Job 이 마스터로 붙어 `shop_app` 역할을 만들거나 비밀번호를 `shop-db-app` 값으로 맞추고, `CONNECT`(DB)·`SELECT/INSERT/UPDATE/DELETE`(`orders`)·`USAGE/SELECT`(`orders_id_seq`)를 준 뒤 `orders` + 100행 (표·채우기 SQL 은 `gcp-source.sh` 와 같음). 마스터 사용자·비밀번호는 임시 Secret `shop-seed-db` 에만 두고 Job 뒤(실패해도) 지운다. `shop-db-app` 값이 마스터 비밀번호와 같으면 멈춘다
 
 | 입력 | 값 |
 |---|---|
 | `KUBE_CONTEXT` | 필수. 현재 컨텍스트는 쓰지 않는다 |
-| `DB_HOST` | RDS 엔드포인트. 찍힌 줄은 그 리전의 첫 PostgreSQL RDS 를 찾는다 (여럿이면 직접) |
-| `DB_NAME`·`DB_USER` | 기본 `postgres`. `DB_USER` 를 비우면 RDS 관리 비밀의 `username` |
-| `DB_PASSWORD_SECRET_ID` 또는 `DB_PASSWORD_FILE` | Secrets Manager id, 또는 비밀번호 한 줄 파일(600). 화면·명령줄에 안 쓴다 |
+| `DB_HOST`·`DB_INSTANCE` | RDS 엔드포인트와 식별자 (찍힌 줄이 등록부 `db_instance` 로 채운다). `DB_INSTANCE` 를 주면 `DB_HOST` 가 그 RDS 엔드포인트인지 본다 |
+| `DB_NAME` | 기본 `shop`. `postgres`·`template0`·`template1`·`rdsadmin` 은 거부 |
+| `DB_PASSWORD_SECRET_ID` 또는 `DB_PASSWORD_FILE` | `seed` 만. 마스터 비밀번호: Secrets Manager id(RDS 관리 비밀 JSON 이면 `username`·`password`), 또는 한 줄 파일(600). 화면·명령줄에 안 쓴다 |
+| `DB_MASTER_USER` | `seed` 만. 비우면 비밀 JSON 의 `username`, 없으면 `postgres`. `shop_app` 은 거부 |
+
+`DB_HOST`·`DB_INSTANCE` 에 `platform-db` 가 들어 있으면 아무것도 하지 않고 끝 코드 2 로 멈춘다 (등록부 `db_instance` 에 적어도 `team-env.sh` 가 거부).
 
 ```bash
 bash tools/aws-source-app.sh app  --dry-run   # 명령 순서만
-bash tools/aws-source-app.sh app              # 네임스페이스 → Secret(shop-db-app = DB 비밀번호) → shop-web·shop-api
-bash tools/aws-source-app.sh seed             # orders 표 + 100행 (다시 돌려도 100행)
-bash tools/aws-source-app.sh down             # 네임스페이스만 (라벨 m-import=1 인 것만). EKS·RDS·orders 는 그대로
+bash tools/aws-source-app.sh app              # 네임스페이스 → Secret(api-secrets·shop-db-app 랜덤) → shop-web·shop-api (DB_USER=shop_app)
+bash tools/aws-source-app.sh seed             # 마스터로 shop_app + orders 표 + 100행 (다시 돌려도 100행), 임시 마스터 Secret 지움
+bash tools/aws-source-app.sh down             # 네임스페이스만 (라벨 m-import=1 인 것만). EKS·RDS·orders·shop_app 은 그대로
 ```
 
 로그는 `~/.svc-tf/aws-source/<명령>-<시각>.log`, 화면에는 단계만 나온다.

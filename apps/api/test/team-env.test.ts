@@ -46,7 +46,7 @@ slots:
           original_project: team-b-orig
           dedicated_project: team-b-target   # 전용
         notes: "블록 모양"
-      - { name: s2-src-aws, provider: aws, region: ap-northeast-2, cluster: b-eks }
+      - { name: s2-src-aws, provider: aws, region: ap-northeast-2, cluster: b-eks, db_instance: b-shop-db }
   - id: slot-3
     login: <id>@iron
     signup_code_sha256: ""
@@ -186,7 +186,8 @@ test("--check: 빠진 API·없는 프로젝트를 줄마다 알리고 끝 코드
 
 // source: 출발 샘플(3티어 shop, real-app, orders 100행)을 올리는 명령. 찍기만 한다 (gcloud·aws·kubectl 호출 0)
 const GCP_SRC = "GCP_PROJECT=iron-source-gcp TF_STATE_BUCKET=iron-source-gcp-tfstate REGION=asia-northeast3";
-const RDS_Q = "DBInstances[?Engine==`postgres`]|[0]";
+const rdsQ = (region: string, id: string, field: string) =>
+  `aws rds describe-db-instances --region ${region} --db-instance-identifier ${id} --query 'DBInstances[0].${field}' --output text`;
 
 test("source: 레포 등록부 slot-1 은 AWS·GCP 출발 샘플 명령을 등록부 순서로, 값까지 채워 찍는다", () => {
   const r = run(["slot-1", "source"]);
@@ -195,9 +196,9 @@ test("source: 레포 등록부 slot-1 은 AWS·GCP 출발 샘플 명령을 등�
   assert.deepEqual(cmds, [
     "aws eks update-kubeconfig --name platform-target --region ap-northeast-2 --alias src-aws-sample",
     "kubectl --context src-aws-sample -n real-app get deployment shop-web shop-api",
-    "export KUBE_CONTEXT=src-aws-sample NS=real-app AWS_REGION=ap-northeast-2 DB_NAME=postgres",
-    `export DB_HOST="$(aws rds describe-db-instances --region ap-northeast-2 --query '${RDS_Q}.Endpoint.Address' --output text)"`,
-    `export DB_PASSWORD_SECRET_ID="$(aws rds describe-db-instances --region ap-northeast-2 --query '${RDS_Q}.MasterUserSecret.SecretArn' --output text)"`,
+    "export KUBE_CONTEXT=src-aws-sample NS=real-app AWS_REGION=ap-northeast-2 DB_INSTANCE=sample-shop-db DB_NAME=shop",
+    `export DB_HOST="$(${rdsQ("ap-northeast-2", "sample-shop-db", "Endpoint.Address")})"`,
+    `export DB_PASSWORD_SECRET_ID="$(${rdsQ("ap-northeast-2", "sample-shop-db", "MasterUserSecret.SecretArn")})"`,
     "bash tools/aws-source-app.sh app",
     "bash tools/aws-source-app.sh seed",
     "gcloud container clusters list --project=iron-source-gcp --format='value(name)'",
@@ -212,14 +213,19 @@ test("source: 레포 등록부 slot-1 은 AWS·GCP 출발 샘플 명령을 등�
   assert.ok(!cmds.some((c) => / down$/.test(c)));
   assert.equal((r.stdout.match(/^# 공유 환경: .*down 은 치지 않는다/gm) ?? []).length, 2);
   // EKS·RDS 는 만들지 않는다: 먼저 있어야 한다는 것과 만드는 길(콘솔·aws CLI)
-  assert.match(r.stdout, /^# 먼저 있어야 하는 것 \(이 도구는 만들지 않는다\): EKS 클러스터 platform-target, 같은 VPC 의 RDS PostgreSQL 하나/m);
-  assert.match(r.stdout, /콘솔\(EKS → 클러스터 생성 .* 또는 aws CLI\(aws eks create-cluster …, aws rds create-db-instance --engine postgres/);
+  assert.match(r.stdout, /^# 먼저 있어야 하는 것 \(이 도구는 만들지 않는다\): EKS 클러스터 platform-target, 같은 VPC 의 RDS PostgreSQL\(초기 DB 이름 shop\)/m);
+  assert.match(r.stdout, /콘솔\(EKS → 클러스터 생성 .*초기 데이터베이스 이름 shop.* 또는 aws CLI\(aws eks create-cluster …, aws rds create-db-instance --engine postgres --db-name shop/);
+  // RDS 는 등록부 db_instance 이름으로만 찾는다 (리전의 "첫 PostgreSQL" 을 고르지 않는다: 같은 계정에 platform-db 가 있다)
+  assert.ok(cmds.filter((c) => c.includes("describe-db-instances")).every((c) => c.includes("--db-instance-identifier sample-shop-db")));
+  assert.doesNotMatch(r.stdout, /Engine==|\|\[0\]/);
+  // 이미지: 기본은 태그(buildx 로 digest), @sha256 로 주면 Docker 없이 쓴다는 줄
+  assert.equal((r.stdout.match(/^# {4}app·seed 의 기본 이미지는 태그라 docker buildx 로 digest 에 고정한다.*WEB_IMAGE·API_IMAGE·SEED_IMAGE 를 repo@sha256:<digest> 로 export 하면 Docker 없이 그대로 쓴다$/gm) ?? []).length, 2);
   // 연결 명령(gcp-connect·roles update)은 source 에 안 섞인다. 도착(전용) 프로젝트에 샘플을 올리지 않는다
   assert.ok(!r.stdout.includes("gcp-connect.sh") && !r.stdout.includes("roles update"));
   assert.ok(cmds.every((c) => !c.includes("iron-target-gcp")));
 });
 
-test("source: 찍힌 DB 조회 줄은 셸에서 그대로 돈다 (작은따옴표 안 백틱이 JMESPath 로 aws 에 간다)", () => {
+test("source: 찍힌 DB 조회 줄은 셸에서 그대로 돈다 (식별자·JMESPath 가 인자 그대로 aws 에 간다)", () => {
   const lines = commands(run(["slot-1", "source"]).stdout).filter((c) => c.startsWith("export DB_"));
   assert.equal(lines.length, 2);
   // aws 를 셸 함수로 가로챈다 (PATH 의 진짜 aws 는 안 불림): 받은 인자를 그대로 돌려준다
@@ -227,8 +233,8 @@ test("source: 찍힌 DB 조회 줄은 셸에서 그대로 돈다 (작은따옴�
   const r = spawnSync("bash", ["-c", script], { encoding: "utf8" });
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(r.stdout.trim().split("\n"), [
-    `rds|describe-db-instances|--region|ap-northeast-2|--query|${RDS_Q}.Endpoint.Address|--output|text|`,
-    `rds|describe-db-instances|--region|ap-northeast-2|--query|${RDS_Q}.MasterUserSecret.SecretArn|--output|text|`,
+    "rds|describe-db-instances|--region|ap-northeast-2|--db-instance-identifier|sample-shop-db|--query|DBInstances[0].Endpoint.Address|--output|text|",
+    "rds|describe-db-instances|--region|ap-northeast-2|--db-instance-identifier|sample-shop-db|--query|DBInstances[0].MasterUserSecret.SecretArn|--output|text|",
   ]);
 });
 
@@ -239,23 +245,56 @@ test("source: 고정본 slot-2 는 블록 모양 GCP 환경 → AWS 환경 순�
   const gi = cmds.indexOf("GCP_PROJECT=team-b-orig TF_STATE_BUCKET=team-b-orig-tfstate REGION=asia-northeast3 bash tools/gcp-source.sh up");
   const ai = cmds.indexOf("aws eks update-kubeconfig --name b-eks --region ap-northeast-2 --alias s2-src-aws");
   assert.ok(gi >= 0 && ai > gi, cmds.join("\n"));
-  assert.ok(cmds.includes("export KUBE_CONTEXT=s2-src-aws NS=real-app AWS_REGION=ap-northeast-2 DB_NAME=postgres"));
+  assert.ok(cmds.includes("export KUBE_CONTEXT=s2-src-aws NS=real-app AWS_REGION=ap-northeast-2 DB_INSTANCE=b-shop-db DB_NAME=shop"));
+  assert.ok(cmds.includes(`export DB_HOST="$(${rdsQ("ap-northeast-2", "b-shop-db", "Endpoint.Address")})"`));
   assert.ok(cmds.every((c) => !/iron-(source|target)-gcp|platform-target|src-aws-sample/.test(c)), "다른 칸 값이 섞이면 안 된다");
   assert.doesNotMatch(r.stdout, /공유 환경/);
   assert.doesNotMatch(r.stdout, /asia-northeast3 고정/);
 });
 
 test("source: AWS 만 있는 칸도 찍는다 (연결 명령 모드는 gcp 가 없어 거부 그대로)", () => {
-  const reg = `version: 1\ntenant: 11111111-1111-4111-8111-111111111111\nslots:\n  - id: slot-4\n    login: d@iron\n    signup_code_sha256: ""\n    environments:\n      - { name: s4-src-aws, provider: aws, region: us-west-2, cluster: d-eks, notes: "AWS 계정 별칭 d" }\n`;
+  const reg = `version: 1\ntenant: 11111111-1111-4111-8111-111111111111\nslots:\n  - id: slot-4\n    login: d@iron\n    signup_code_sha256: ""\n    environments:\n      - { name: s4-src-aws, provider: aws, region: us-west-2, cluster: d-eks, db_instance: d-shop-db, notes: "AWS 계정 별칭 d" }\n`;
   const r = run(["slot-4", "source"], reg);
   assert.equal(r.status, 0, r.stderr);
   const cmds = commands(r.stdout);
   assert.equal(cmds[0], "aws eks update-kubeconfig --name d-eks --region us-west-2 --alias s4-src-aws");
-  assert.ok(cmds.includes("export KUBE_CONTEXT=s4-src-aws NS=real-app AWS_REGION=us-west-2 DB_NAME=postgres"));
+  assert.ok(cmds.includes("export KUBE_CONTEXT=s4-src-aws NS=real-app AWS_REGION=us-west-2 DB_INSTANCE=d-shop-db DB_NAME=shop"));
+  assert.ok(cmds.includes(`export DB_PASSWORD_SECRET_ID="$(${rdsQ("us-west-2", "d-shop-db", "MasterUserSecret.SecretArn")})"`));
   assert.ok(!r.stdout.includes("gcp-source.sh"));
   const p = run(["slot-4"], reg);
   assert.equal(p.status, 2);
   assert.match(p.stderr, /slot-4 에 provider: gcp 환경이 없음/);
+});
+
+test("source: aws 환경에 db_instance 가 없으면 RDS 를 고르지 않고 채우라는 주석만 (DB·app·seed 줄 없음)", () => {
+  // 고정본 slot-1 의 src-aws-sample 은 db_instance 가 없다
+  const r = run(["slot-1", "source"], FIXTURE);
+  assert.equal(r.status, 0, r.stderr);
+  const cmds = commands(r.stdout);
+  const aws = cmds.slice(0, cmds.findIndex((c) => c.startsWith("gcloud ")));
+  assert.deepEqual(aws, [
+    "aws eks update-kubeconfig --name platform-target --region ap-northeast-2 --alias src-aws-sample",
+    "kubectl --context src-aws-sample -n real-app get deployment shop-web shop-api",
+  ]);
+  assert.ok(!cmds.some((c) => /describe-db-instances|aws-source-app\.sh|^export /.test(c)), cmds.join("\n"));
+  assert.match(r.stdout, /^# 3\) DB: 등록부의 src-aws-sample 에 db_instance\(RDS 식별자\)가 없어 DB·app·seed 줄을 찍지 않는다 \(리전의 아무 PostgreSQL 이나 고르지 않는다\. 같은 계정에 플랫폼 DB platform-db 가 있다\)$/m);
+  assert.match(r.stdout, /^# {4}docs\/team-env\/registry\.yaml 의 src-aws-sample 줄에 db_instance: <자기 샘플 RDS 식별자> 를 더하고 다시: bash tools\/team-env\.sh slot-1 source$/m);
+  // 같은 칸의 GCP 환경 명령은 그대로 찍힌다
+  assert.ok(cmds.includes(`${GCP_SRC} bash tools/gcp-source.sh up`));
+});
+
+test("source: 찍힌 slot-1 AWS 줄을 그대로 돌리면 aws-source-app.sh app·seed --dry-run 이 통과한다 (DB_INSTANCE·DB_HOST 가 맞물림)", () => {
+  const lines = commands(run(["slot-1", "source"]).stdout).filter((c) => c.startsWith("export ") || c.startsWith("bash tools/aws-source-app.sh"));
+  assert.equal(lines.length, 5);
+  // aws 는 셸 함수로 가로챈다 (진짜 aws 안 불림). 엔드포인트·비밀 ARN 모양만 돌려준다
+  const fake = `aws() { case "$*" in *Endpoint.Address*) echo sample-shop-db.abc123xyz.ap-northeast-2.rds.amazonaws.com ;; *) echo 'arn:aws:secretsmanager:ap-northeast-2:000000000000:secret:rds!db-x' ;; esac; }`;
+  const script = [fake, ...lines.map((l) => l.startsWith("bash ") ? `${l} --dry-run || exit $?` : l)].join("\n");
+  const home = mkdtempSync(join(tmpdir(), "team-env-src-"));
+  const r = spawnSync("bash", ["-c", script], { cwd: ROOT, encoding: "utf8", env: { PATH: "/usr/bin:/bin", HOME: home } });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /app 시작 dry=1 ctx=src-aws-sample ns=real-app db=sample-shop-db\/shop/);
+  assert.match(r.stdout, /seed 시작 dry=1 ctx=src-aws-sample ns=real-app db=sample-shop-db\/shop/);
+  assert.match(r.stdout, /delete job\/shop-seed secret\/shop-seed-db configmap\/shop-seed-sql/);
 });
 
 test("source: GCP 리전이 서울이 아니면 샘플 모듈이 서울 고정이라는 줄을 더한다", () => {
@@ -265,17 +304,22 @@ test("source: GCP 리전이 서울이 아니면 샘플 모듈이 서울 고정�
   assert.match(r.stdout, /^# 샘플 모듈\(infra\/samples\/gcp-source\)은 asia-northeast3 고정이다/m);
 });
 
-test("source 거부: 환경 없는 칸·cluster 없음·자리 값 cluster·리전 모양·컨텍스트로 못 쓰는 이름 (명령을 하나도 안 찍는다)", () => {
+test("source 거부: 환경 없는 칸·cluster 없음·자리 값 cluster·리전 모양·컨텍스트로 못 쓰는 이름·db_instance(platform-db·모양·gcp) (명령을 하나도 안 찍는다)", () => {
   const empty = run(["slot-2", "source"]);
   assert.equal(empty.status, 2);
   assert.equal(empty.stdout, "");
   assert.match(empty.stderr, /slot-2 에 provider: aws·gcp 환경이 없음/);
   const cases: Array<[string, string, RegExp]> = [
-    ["cluster 없음", FIXTURE.replace(", cluster: b-eks }", " }"), /s2-src-aws: aws 환경에 cluster\(EKS 이름\)를 채운다/],
+    ["cluster 없음", FIXTURE.replace(", cluster: b-eks,", ","), /s2-src-aws: aws 환경에 cluster\(EKS 이름\)를 채운다/],
     ["자리 값 cluster", FIXTURE.replace("cluster: b-eks", "cluster: <EKS 이름>"), /cluster 가 EKS 이름 모양이 아님/],
     ["AWS 리전", FIXTURE.replace("provider: aws, region: ap-northeast-2, cluster: b-eks", "provider: aws, region: seoul, cluster: b-eks"), /region 이 AWS 리전 모양이 아님: seoul/],
     ["GCP 리전 없음", FIXTURE.replace("        region: asia-northeast3\n", ""), /s2-gcp: region 이 GCP 리전 모양이 아님/],
     ["이름", FIXTURE.replace("name: s2-src-aws", 'name: "s2 src;aws"'), /kubectl 컨텍스트 이름으로 못 씀/],
+    ["db_instance = platform-db", FIXTURE.replace("db_instance: b-shop-db", "db_instance: platform-db"), /s2-src-aws: db_instance 에 platform-db 가 들어 있음/],
+    ["db_instance 에 platform-db", FIXTURE.replace("db_instance: b-shop-db", "db_instance: platform-db-replica"), /db_instance 에 platform-db 가 들어 있음/],
+    ["db_instance 모양", FIXTURE.replace("db_instance: b-shop-db", "db_instance: B_Shop;db"), /db_instance 가 RDS 식별자 모양이 아님/],
+    ["db_instance 자리 값", FIXTURE.replace("db_instance: b-shop-db", "db_instance: <샘플 RDS 식별자>"), /db_instance 가 RDS 식별자 모양이 아님/],
+    ["gcp 에 db_instance", FIXTURE.replace("        notes: \"블록 모양\"", "        db_instance: b-shop-db\n        notes: \"블록 모양\""), /s2-gcp: db_instance 는 provider: aws 환경에만 쓴다/],
   ];
   for (const [name, reg, err] of cases) {
     const r = run(["slot-2", "source"], reg);
@@ -283,4 +327,14 @@ test("source 거부: 환경 없는 칸·cluster 없음·자리 값 cluster·리�
     assert.equal(r.stdout, "", name);
     assert.match(r.stderr, err, name);
   }
+});
+
+test("db_instance 규칙은 연결 명령 모드에도 같다 (gcp 환경에 쓰면 거부, aws 환경 값은 연결 명령에 안 섞임)", () => {
+  const ok = run(["slot-2"], FIXTURE);
+  assert.equal(ok.status, 0, ok.stderr);
+  assert.ok(!ok.stdout.includes("b-shop-db"));
+  const bad = run(["slot-2"], FIXTURE.replace("        notes: \"블록 모양\"", "        db_instance: b-shop-db\n        notes: \"블록 모양\""));
+  assert.equal(bad.status, 2);
+  assert.equal(bad.stdout, "");
+  assert.match(bad.stderr, /db_instance 는 provider: aws 환경에만 쓴다/);
 });
