@@ -6,7 +6,8 @@ import { envRef, regionOf, type Target } from "../common/target.js";
 // DRAFT(ai): 권한 목록은 문서 기준 추정. 실계정 PERMISSION_DENIED 로그로 확인 필요
 export const PERMS: PermTable = {
   "data.google_client_config": { read: [], write: [], remove: [] },   // 현재 자격 증명의 토큰만 읽음
-  "data.google_container_cluster": { read: ["container.clusters.get"], write: [], remove: [] },
+  // 클러스터 읽기는 노드 풀 instance_group_urls 를 위해 관리형 인스턴스 그룹도 읽는다 (11/06 실측 403, 앱 층 plan)
+  "data.google_container_cluster": { read: ["container.clusters.get", "compute.instanceGroupManagers.get"], write: [], remove: [] },
   // GKE는 k8s API 호출도 IAM 권한으로 확인한다 (container.namespaces.*)
   kubernetes_namespace_v1: {
     read: ["container.namespaces.get"],
@@ -111,7 +112,7 @@ export const PERMS: PermTable = {
     read: ["compute.routers.get"], write: ["compute.routers.update", "compute.addresses.use", "compute.regionOperations.get"], remove: [] },
   // 노드 풀 만들기·기본 풀 걷기 = container.clusters.update (GKE API 권한표). 노드 SA 를 붙이는 actAs 는 역할이 아니라 svc-gke-node 한 SA 에만 (gcp-connect.sh)
   google_container_cluster: {
-    read: ["container.clusters.get", "container.operations.get"], write: ["container.clusters.create", "container.clusters.update"], remove: [] },
+    read: ["container.clusters.get", "container.operations.get", "compute.instanceGroupManagers.get"], write: ["container.clusters.create", "container.clusters.update"], remove: [] },
   // 노드 풀 읽기는 instance_group_urls 를 위해 관리형 인스턴스 그룹을 읽는다 (11/06 실측 403)
   google_container_node_pool: { read: ["container.clusters.get", "container.operations.get", "compute.instanceGroupManagers.get"], write: ["container.clusters.update"], remove: [] },
   google_artifact_registry_repository: { read: ["artifactregistry.repositories.get"], write: ["artifactregistry.repositories.create"], remove: [] },
