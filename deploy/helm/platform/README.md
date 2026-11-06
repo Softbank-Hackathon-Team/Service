@@ -44,9 +44,11 @@ aws secretsmanager put-secret-value --secret-id platform/cloudflared --secret-st
 helm upgrade --install platform deploy/helm/platform -n platform --create-namespace
 
 # 3-1. 리허설 샌드박스를 켤 때. imageRegistry 는 Terraform 출력 sandbox_image_registry 그대로 (없거나 모양이 틀리면 렌더가 멈춘다)
+#      sandbox.enabled 는 호스트 권한·가드만 만든다. 리허설 자체는 sandbox.rehearsal.enabled (아래 "샌드박스 > 앱에 넣는 값")
 helm upgrade --install platform deploy/helm/platform -n platform --create-namespace \
   --set sandbox.enabled=true \
-  --set sandbox.imageRegistry=<계정>.dkr.ecr.<리전>.amazonaws.com/sandbox
+  --set sandbox.imageRegistry=<계정>.dkr.ecr.<리전>.amazonaws.com/sandbox \
+  --set sandbox.rehearsal.enabled=true
 
 # 3-2. 앱 4개를 올릴 때 (registry·tag 둘 다 있어야 만든다). 이미 설치한 뒤에는 --reset-then-reuse-values 를 꼭 붙인다 (--reuse-values 는 새 차트 기본값을 버린다)
 #      빠지면 그동안 준 값이 사라져 워커가 GCP 로그인을 잃는다
@@ -290,6 +292,19 @@ agent-worker 결정 코드만 호스트 샌드박스 권한을 쥔다. worker �
 2. 그 안에 RoleBinding `sbx-operator` (ClusterRole `sbx-operator` → `platform/agent-worker`) 를 만든다.
 3. vCluster 차트를 같은 네임스페이스에 helm 으로 올린다. 차트 Role 은 `vc-<릴리스>`, SA 도 `vc-<릴리스>` 다.
 4. 끝나면 helm uninstall, 네임스페이스를 지운다. 만료 청소는 `platform.svc/expires-at` 이 지난 `platform.svc/sandbox=true` 네임스페이스를 지운다.
+
+### 앱에 넣는 값 (차트가 values 에서 넣는다)
+
+| values | 앱 | 들어가는 것 |
+|---|---|---|
+| `sandbox.rehearsal.enabled` (`sandbox.enabled` 필요, 없으면 렌더가 멈춘다) | worker | env `SANDBOX_REHEARSAL=on`, `SANDBOX_IMAGE_REGISTRY=<sandbox.imageRegistry>` |
+| `sandbox.gvisor.enabled` | agent-worker | env `SANDBOX_RUNTIME_CLASS=<sandbox.gvisor.runtimeClass>` |
+| `agentRemediation.gitopsRead` | agent-worker | `platform/app` 의 `GITOPS_REPO_URL`·`GITOPS_READ_TOKEN` (JSON 에 `GITOPS_READ_TOKEN` 을 먼저 넣는다) |
+| `agentRemediation.sandboxMode` (`memory`·`vcluster`, 비우면 넣지 않음) | agent-worker | env `SANDBOX_MODE`. `vcluster` 는 `sandbox.enabled`·`sandbox.gvisor.enabled` 가 같이 켜져 있어야 렌더된다 (수정 실행 파드는 gVisor 만 받는다) |
+
+- 복사 자리와 런타임 이름을 호스트 가드와 같은 값 하나에서 꺼낸다. 비밀 JSON 에 따로 넣어 두면 가드와 어긋날 수 있다. 같은 키가 JSON 에도 있으면 차트 env 가 이긴다.
+- AI 점검에는 읽기 토큰만 준다. agent-worker 는 고객 로그를 LLM 에 넣는 곳이고, gitops 레포 `main` 에는 보호 규칙이 없어 쓰기 토큰이 새면 고객 클러스터 배포로 이어진다. 수정안은 원격에 push 하지 않고 패치로 남는다(`GITOPS_PUSH` 없음).
+- 한 번 준 `--set` 은 이후 `helm upgrade --reset-then-reuse-values` 가 그대로 이어 쓴다. 이 칸이 없는 예전 릴리스 값으로 올려도 렌더는 돈다(꺼진 것으로 본다).
 
 ### 라벨 계약 (네임스페이스)
 

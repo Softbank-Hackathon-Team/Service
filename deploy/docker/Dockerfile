@@ -132,8 +132,8 @@ EXPOSE 3000
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
   CMD ["node", "healthcheck.mjs", "http://127.0.0.1:3000/healthz"]
 
-FROM runtime AS worker
-# gitops 배포(N2)는 git 명령을 부른다. 묶음 렌더(gitops 레포 tools/render.mjs)는 helm template 을 부른다 → helm 은 아래 crane 다음에 넣는다
+FROM runtime AS runtime-git
+# git 을 쓰는 두 앱의 바탕: worker = gitops 배포(N2), agent-worker = AI 점검이 gitops 레포를 읽기 토큰으로 clone
 # Z75: apk add 대신 git 단계에서 복사(패키지 서버가 막힌 곳에서도 빌드됨). 바탕에 이미 있는 라이브러리(libz·libssl 등)는 덮어쓰지 않는다.
 #      층에 임시 파일이 안 남게 bind 로 붙인다. WITH_GIT=0 은 git 없이 만드는 검증용(4차 apps/worker/Dockerfile 과 같은 뜻, 기본 1)
 ARG WITH_GIT=1
@@ -145,6 +145,9 @@ RUN --mount=type=bind,from=git,source=/out,target=/g set -e; [ "$WITH_GIT" = "1"
     done; git --version; \
     # R7-3: https(push·clone)는 git-remote-https 가 libcurl 사슬을 따로 읽는다. 빠진 라이브러리가 있으면 빌드에서 멈춘다
     ! ldd /usr/libexec/git-core/git-remote-https 2>&1 | grep -q "not found"
+
+FROM runtime-git AS worker
+# gitops 배포(N2)는 git 명령을 부른다. 묶음 렌더(gitops 레포 tools/render.mjs)는 helm template 을 부른다 → helm 은 아래 crane 다음에 넣는다
 # 리허설 이미지 복사 도구. 정적 Go 바이너리라 라이브러리가 필요 없다 (TLS 루트는 바탕의 /etc/ssl/certs)
 COPY --from=crane /ko-app/crane /usr/local/bin/crane
 # 묶음 렌더 도구. gitops 레포 tools/lib.mjs 가 helm template 을 부른다 (apps/worker/src/gitops/repo.ts tool("render.mjs")).
@@ -182,7 +185,8 @@ USER node
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
   CMD ["node", "healthcheck.mjs", "db"]
 
-FROM runtime AS agent-worker
+FROM runtime-git AS agent-worker
+# git: AI 점검(remediate)이 gitops 레포를 clone 해 작업 복사본을 만든다 (values agentRemediation.gitopsRead)
 # vCluster 리허설: helm·kubectl(정적 바이너리) + 차트 묶음·CRD (apps/agent-worker/vendor). 체크섬이 다르면 빌드가 멈춘다
 COPY --from=helm /usr/bin/helm /usr/local/bin/helm
 COPY --from=kubectl /bin/kubectl /usr/local/bin/kubectl

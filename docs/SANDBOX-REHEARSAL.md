@@ -393,13 +393,16 @@ REG=$($TF output -raw sandbox_image_registry); echo "$REG"
 
 ### 7-2. 플랫폼 차트 켜기 (사람, 실클라우드, 쓰기)
 
-이미 깔린 릴리스에 다른 `--set` 을 줬었다면 같이 준다. `helm --kube-context $CTX get values platform -n platform` 으로 본다. 안 주면 차트 기본값으로 돌아간다.
+이미 깔린 플랫폼 릴리스에는 `--reset-then-reuse-values` 를 꼭 붙인다. 그래야 앞서 준 `--set`(이미지 태그, `gcpPlatform.*` 등)이 남는다. 빠지면 그 값이 차트 기본값으로 돌아가 워커가 GCP 로그인을 잃는다. 지금 값은 `helm --kube-context $CTX get values platform -n platform` 으로 본다.
+
+플랫폼 안에서 돌 때는 차트가 앱에 값을 넣는다(#256). worker 에는 `SANDBOX_REHEARSAL=on`·`SANDBOX_IMAGE_REGISTRY`, agent-worker 에는 gVisor 를 켰을 때 `SANDBOX_RUNTIME_CLASS` 가 들어간다. agent-worker 는 자기 서비스 계정 토큰(`automountServiceAccountToken: true`)으로 클러스터 안에서 붙으므로 7-4·7-5 는 건너뛴다. 7-4·7-5 는 worker·agent-worker 를 맥에서 띄울 때만 쓴다.
 
 먼저 서버 dry-run 으로 렌더와 입장 검사만 본다.
 
 ```bash
-helm --kube-context $CTX upgrade --install platform "$REPO/deploy/helm/platform" -n platform --create-namespace \
-  --set sandbox.enabled=true --set sandbox.imageRegistry="$REG" --dry-run=server > "$WORK/platform-dryrun.txt"
+helm --kube-context $CTX upgrade platform "$REPO/deploy/helm/platform" -n platform --reset-then-reuse-values \
+  --set sandbox.enabled=true --set sandbox.imageRegistry="$REG" --set sandbox.rehearsal.enabled=true \
+  --dry-run=server > "$WORK/platform-dryrun.txt"
 grep -c '^kind: ValidatingAdmissionPolicy$' "$WORK/platform-dryrun.txt"
 ```
 
@@ -409,11 +412,12 @@ grep -c '^kind: ValidatingAdmissionPolicy$' "$WORK/platform-dryrun.txt"
 진짜로 올린다.
 
 ```bash
-helm --kube-context $CTX upgrade --install platform "$REPO/deploy/helm/platform" -n platform --create-namespace \
-  --set sandbox.enabled=true --set sandbox.imageRegistry="$REG"
+helm --kube-context $CTX upgrade platform "$REPO/deploy/helm/platform" -n platform --reset-then-reuse-values \
+  --set sandbox.enabled=true --set sandbox.imageRegistry="$REG" --set sandbox.rehearsal.enabled=true
 ```
 
-- 기대: `STATUS: deployed`
+- 기대: `STATUS: deployed`. 이어서 `$K -n platform logs deploy/agent-worker | grep 'agent-worker rehearsal'` 에 `backend` 가 `vcluster (/app/vendor/vcluster-0.37.6.tgz, CRD 2개)` 로 나온다.
+- gVisor 는 Terraform `sandbox_gvisor_enabled=true` 로 sandbox 노드에 runsc 를 깐 뒤(노드가 새로 뜬다) `--set sandbox.gvisor.enabled=true` 를 더한다. 노드에 runsc 가 없는데 값만 켜면 리허설 파드가 `ContainerCreating` 에 멈춘다.
 - 안 되면:
   - `sandbox.imageRegistry=… 는 … 모양이어야 한다`: 7-1 값을 그대로 넣는다 (스킴·끝 `/` 없음).
   - `no matches for kind "SecretStore"`: ESO 가 없다 (7-0 표).
