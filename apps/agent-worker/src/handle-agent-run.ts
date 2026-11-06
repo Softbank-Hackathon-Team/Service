@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { WorkcopyError, type OpenWorkcopy, type Proposal, type WorkcopyFactory } from "./gitops-workcopy.js";
-import { AgentRunJob, type AgentFinish } from "@svc/contracts";
+import { AgentRunJob, type AgentFinish, type AgentRunSandbox } from "@svc/contracts";
 import { createLogger, type Logger } from "@svc/core";
 import {
   gateChanges, llmErrorCode, runAgent, scriptedLlm, stubSandbox, KubeError,
@@ -23,6 +23,8 @@ export interface RemediateFinish {
   finish: AgentFinish | null; gate: { ok: boolean; violations: string[] }; usage: RunResult["usage"];
   // Z90b: 게이트 통과 수정안을 올린 브랜치·커밋. 없으면 null, 올리다 실패하면 { error }
   proposal?: Proposal | { error: string } | null;
+  // 이 실행이 받은 샌드박스. 화면은 k3d·vcluster 일 때만 샌드박스 확인으로 본다. 샌드박스를 만들기 전에 끝났으면 null
+  sandbox: AgentRunSandbox | null;
 }
 // sandbox: 실행 한 건마다 새로 만든다 (memory 는 바로, k3d 는 네임스페이스 생성 + 씨앗 적용). 끝나면 dispose
 // workcopy (Z90b): 있으면 작업 복사본을 진짜 GitOps 레포 deploy/ 에서 읽고, 게이트 통과 수정안을 브랜치에 커밋한다.
@@ -45,7 +47,7 @@ export async function handleAgentRun(raw: unknown, d: Deps) {
     catch (e) {
       const code = e instanceof WorkcopyError ? e.code : "GITOPS_READ_FAILED";
       await d.store.finish(job.tenantId, job.agentRunId, { state: "failed", reason: code, model: d.llm.model, finish: null,
-        gate: { ok: true, violations: [] }, usage: { input: 0, output: 0 }, proposal: null });
+        gate: { ok: true, violations: [] }, usage: { input: 0, output: 0 }, proposal: null, sandbox: null });
       return { skipped: false as const, state: "failed" as const, outcome: null, gateOk: true };
     }
   }
@@ -79,7 +81,7 @@ export async function handleAgentRun(raw: unknown, d: Deps) {
     }
   } finally { await wc?.dispose().catch(() => {}); }
   await d.store.finish(job.tenantId, job.agentRunId, {
-    state: r.state, reason: r.reason, model: d.llm.model, finish: r.finish, gate, usage: r.usage, proposal });
+    state: r.state, reason: r.reason, model: d.llm.model, finish: r.finish, gate, usage: r.usage, proposal, sandbox: sandbox?.mode ?? null });
   // GitHub PR 생성 API 는 아직 없음: proposal.pr = null, 사람이 브랜치로 PR 을 연다
   // TODO(human): DB 역할(app_agent) 분리는 db/migrations 0006 TODO 그대로 (지금은 app_user)
   return { skipped: false as const, state: r.state, outcome: r.finish?.outcome ?? null, gateOk: gate.ok };

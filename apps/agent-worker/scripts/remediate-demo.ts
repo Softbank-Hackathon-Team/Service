@@ -1,6 +1,6 @@
 // 점검·수정(remediate) 데모·실측: DB·큐 없이 에이전트 한 건을 끝까지 돌린다.
 //   LLM:    AGENT_LLM=scripted(기본, 토큰 0) | real (ANTHROPIC_API_KEY 필요, AGENT_MODEL 기본 claude-sonnet-5-5)
-//   샌드박스: SANDBOX_MODE=memory(기본) | k3d (kubectl proxy → SANDBOX_KUBE_URL, 기본 http://127.0.0.1:8001)
+//   샌드박스: SANDBOX_MODE=memory(기본, 대본 LLM 만. 진짜 LLM 이면 샌드박스 없음) | k3d (kubectl proxy → SANDBOX_KUBE_URL, 기본 http://127.0.0.1:8001)
 // 작업 복사본 = scripts/fixtures/oom-web.yaml (상한 128Mi 인데 200Mi 를 잡는 앱 → OOMKilled 재시작)
 // 키 값은 읽지도 출력하지도 않는다. 결과는 한 줄 요약 JSON (+ scripts/remediate-out/*.json, 본문·키 없음)
 // 사용: npx tsx --env-file=../../.env scripts/remediate-demo.ts [--runs N] [--keep] [--warmup 초]
