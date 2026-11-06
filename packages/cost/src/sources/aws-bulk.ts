@@ -9,7 +9,7 @@ import { type DetailedPriceSource, type FetchResult, type SourceRef, toPriceSour
 // GetProducts(Query API)를 안 쓰는 이유: 서명(SigV4)과 자격 증명이 필요하고, 엔드포인트가 us-east-1 등 3곳뿐이다.
 export const AWS_BULK_BASE = "https://pricing.us-east-1.amazonaws.com/offers/v1.0/aws";
 
-export type AwsService = "AmazonEC2" | "AmazonRDS" | "AmazonEKS" | "AWSELB";
+export type AwsService = "AmazonEC2" | "AmazonRDS" | "AmazonEKS" | "AWSELB" | "AmazonVPC";
 export const awsBulkUrl = (service: AwsService, region: string) =>
   `${AWS_BULK_BASE}/${service}/current/${region}/index.csv`;
 
@@ -20,6 +20,8 @@ export type AwsBulkRule = {
   item: PriceItem;
   sku: string;
   match: (r: Row) => boolean;
+  /** 한 규칙이 여러 줄을 낼 때 줄마다 SKU 이름 (없으면 sku 하나). 이런 규칙은 "못 찾음" 목록에서 뺀다 */
+  skuOf?: (r: Row) => string;
 };
 
 const UNIT: Record<string, PriceRowInput["unit"]> = {
@@ -43,8 +45,41 @@ const ec2Node = (type: string): AwsBulkRule => ({
     && r["MarketOption"] === "OnDemand" && usage(r).startsWith("BoxUsage:"),
 });
 
+// 실자원 단가 찾기용 (item "instance"·"db_class"). 고객 계정에서 읽은 종류가 무엇이든 단가를 찾도록 계열·크기를 넓게 받는다.
+// DRAFT(ai): 범용·컴퓨트·메모리·버스터블 계열의 흔한 크기만. 표에 없으면 비용 화면이 "단가 없음"으로 합계에서 뺀다 (지어내지 않음)
+export const AWS_INSTANCE_FAMILIES = ["t3", "t3a", "t4g", "m5", "m5a", "m6i", "m6a", "m6g", "m7i", "m7g", "c5", "c6i", "c6a", "c6g", "c7i", "c7g", "r5", "r6i", "r6g", "r7i"];
+export const AWS_INSTANCE_SIZES = ["nano", "micro", "small", "medium", "large", "xlarge", "2xlarge", "4xlarge"];
+const familyOf = (type: string) => type.split(".")[0] ?? "";
+const sizeOf = (type: string) => type.split(".")[1] ?? "";
+const anyInstance: AwsBulkRule = {
+  service: "AmazonEC2", item: "instance", sku: "ec2-*",
+  match: (r) => {
+    const type = r["Instance Type"] ?? "";
+    return AWS_INSTANCE_FAMILIES.includes(familyOf(type)) && AWS_INSTANCE_SIZES.includes(sizeOf(type))
+      && ec2Node(type).match(r);
+  },
+  skuOf: (r) => r["Instance Type"] ?? "",
+};
+// RDS PostgreSQL 등급. 단일 AZ 와 다중 AZ(대기 1대) 두 가지. "readable standbys"(다중 AZ 클러스터)는 뺀다
+const RDS_DEPLOY: Record<string, string> = { "Single-AZ": "rds-pg-", "Multi-AZ": "rds-pg-maz-" };
+const anyRdsClass: AwsBulkRule = {
+  service: "AmazonRDS", item: "db_class", sku: "rds-pg-*",
+  match: (r) => r["Database Engine"] === "PostgreSQL" && (r["Deployment Option"] ?? "") in RDS_DEPLOY
+    && /^db\.(t3|t4g|m5|m6g|m6i|m7g|r5|r6g|r6i)\./.test(r["Instance Type"] ?? "")
+    && /^(InstanceUsage|Multi-AZUsage):db\./.test(usage(r)),
+  skuOf: (r) => `${RDS_DEPLOY[r["Deployment Option"] ?? ""]}${r["Instance Type"]}`,
+};
+
 export const AWS_BULK_RULES: AwsBulkRule[] = [
   ...AWS_NODE_TYPES.map(ec2Node),
+  anyInstance,
+  anyRdsClass,
+  // NAT 게이트웨이 시간 요금. 처리 GB 요금은 사용량을 몰라 비용 화면 합계에 넣지 않는다
+  { service: "AmazonEC2", item: "nat", sku: "nat-gateway",
+    match: (r) => inRegion(r) && usage(r) === "NatGateway-Hours" },
+  // 쓰는 공인 IPv4 (2024-02 부터 과금). 노드·NAT·로드 밸런서의 공인 주소 모두
+  { service: "AmazonVPC", item: "public_ip", sku: "public-ipv4-in-use",
+    match: (r) => inRegion(r) && usage(r) === "PublicIPv4:InUseAddress" },
   { service: "AmazonEC2", item: "volume", sku: "ebs-gp3",
     match: (r) => r["Product Family"] === "Storage" && r["Volume API Name"] === "gp3"
       && usage(r) === "EBS:VolumeUsage.gp3" },
@@ -100,21 +135,25 @@ export async function parseAwsBulkCsv(
       if (!unit || !Number.isFinite(usd)) continue;
       const tierFrom = Number(r["StartingRange"] || 0);
       const attrs: PriceRowInput["attrs"] = {};
-      if (rule.item === "node") {
+      if (rule.item === "node" || rule.item === "instance" || rule.item === "db_class") {
         attrs.vcpu = Number(r["vCPU"]);
         attrs.memGiB = gib(r["Memory"]);
       }
-      const key = `${rule.item}/${rule.sku}/${tierFrom}`;
+      if (rule.item === "db_class") attrs.multiAz = r["Deployment Option"] === "Multi-AZ";
+      const sku = rule.skuOf ? rule.skuOf(r) : rule.sku;
+      const key = `${rule.item}/${sku}/${tierFrom}`;
       const prev = found.get(key);
       if (prev && prev.usd !== usd) {
         throw new AmbiguousPrice(`${key}: ${prev.usd} vs ${usd} (${r["SKU"]})`);
       }
       found.set(key, {
-        vendor: "aws", region, item: rule.item, sku: rule.sku, unit, usd, tierFrom, attrs,
+        vendor: "aws", region, item: rule.item, sku, unit, usd, tierFrom, attrs,
         evidence: "fact",
         source: `AWS Price List Bulk ${rule.service} ${region} SKU ${r["SKU"]}`
           + (publishedAt ? ` (발행 ${publishedAt})` : ""),
         fetchedAt,
+        sourceUrl: awsBulkUrl(rule.service, region),
+        sourceKind: "official_api",
       });
     }
   }
@@ -141,7 +180,7 @@ export function createAwsBulkSource(
         sources.push({ url, publishedAt: res.publishedAt });
       }
       const got = new Set(rows.map((r) => `${r.item}/${r.sku}`));
-      const missing = rules.map((r) => `${r.item}/${r.sku}`).filter((k) => !got.has(k));
+      const missing = rules.filter((r) => !r.skuOf).map((r) => `${r.item}/${r.sku}`).filter((k) => !got.has(k));
       return { rows, sources, missing };
     },
   });

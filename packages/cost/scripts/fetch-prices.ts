@@ -3,9 +3,9 @@
 // GCP는 환경 변수 GCP_BILLING_API_KEY가 있을 때만 부른다. 없으면 캐시, 캐시도 없으면 샘플값으로 seed 캐시를 만든다.
 import type { Provider } from "@svc/contracts";
 import {
-  createAwsBulkSource, createGcpCatalogSource, createOnpremSource, estimateCost, fetchWithCache,
+  createAwsBulkSource, createGcpCatalogSource, createOnpremSource, estimateCost, fetchWithCache, fileLines,
   loadCatalog, loadSampleCatalog, readCache, vendorRegion, writeCache,
-  type DetailedPriceSource, type PriceCatalog,
+  type DetailedPriceSource, type LineSource, type PriceCatalog,
 } from "../src/index.js";
 import { spec as demoShop } from "../test/helpers.js";
 
@@ -13,7 +13,13 @@ const REGION = "ap-northeast-2";
 const now = new Date();
 const sample = loadSampleCatalog();
 
-const sources: DetailedPriceSource[] = [createAwsBulkSource(), createGcpCatalogSource(), createOnpremSource()];
+// AWS_BULK_DIR=<폴더> 면 그 폴더의 {서비스}.csv 를 읽는다 (같은 공개 파일을 curl -C - 로 이어 받아 둔 것).
+//   11/06 이 맥에서 Node fetch 가 EC2 서울 CSV(약 200MB)를 6초쯤에서 끊었다(terminated). 출처 주소는 원래 공개 주소 그대로 남는다
+const bulkDir = process.env["AWS_BULK_DIR"];
+const awsLines: LineSource | undefined = bulkDir
+  ? (url) => fileLines(`${bulkDir}/${url.split("/").at(-4)}.csv`)()
+  : undefined;
+const sources: DetailedPriceSource[] = [createAwsBulkSource(awsLines ? { lines: awsLines } : {}), createGcpCatalogSource(), createOnpremSource()];
 
 for (const src of sources) {
   const t0 = performance.now();

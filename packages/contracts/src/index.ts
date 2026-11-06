@@ -11,6 +11,7 @@ export * from "./events.js";
 export * from "./results.js";
 export * from "./adapter.js";
 export * from "./cost.js";
+export * from "./cost-evidence.js";
 export * from "./gitops.js";
 export * from "./env.js";
 export * from "./config.js";

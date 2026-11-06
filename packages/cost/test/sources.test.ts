@@ -38,9 +38,19 @@ test("AWS Bulk: 서울 CSV에서 Linux 온디맨드만, vCPU·메모리는 CSV �
   assert.equal(got("ebs-gp3")?.usd, 0.0912);
   assert.equal(got("alb")?.usd, 0.0225);
   assert.equal(got("alb-lcu")?.usd, 0.008);
-  // 고정 CSV에 없는 노드 종류는 missing으로 알려 준다
+  // 실자원 단가 찾기용 줄: 인스턴스 종류·RDS 등급(단일·다중 AZ)·공인 IPv4. 출처 주소와 종류가 붙는다
+  const item = (i: string, sku: string) => r.rows.find((x) => x.item === i && x.sku === sku);
+  assert.equal(item("instance", "t3.medium")?.usd, 0.052);
+  assert.deepEqual(item("instance", "t3.medium")?.attrs, { vcpu: 2, memGiB: 4 });
+  assert.equal(item("db_class", "rds-pg-db.t3.medium")?.usd, 0.112);
+  assert.equal(item("db_class", "rds-pg-db.t3.medium")?.attrs?.multiAz, false);
+  assert.equal(item("public_ip", "public-ipv4-in-use")?.usd, 0.005);   // 노는 주소(IdleAddress) 줄은 빠진다
+  assert.equal(item("cluster", "eks-standard")?.sourceKind, "official_api");
+  assert.ok(item("cluster", "eks-standard")?.sourceUrl?.endsWith("/AmazonEKS/current/ap-northeast-2/index.csv"));
+  // 고정 CSV에 없는 노드 종류는 missing으로 알려 준다. 여러 줄을 내는 규칙(인스턴스·RDS 등급)은 missing 에 안 들어간다
   assert.ok(r.missing.includes("node/m6i.xlarge"));
-  assert.equal(r.sources.length, 4);
+  assert.ok(!r.missing.some((m) => m.includes("*")));
+  assert.equal(r.sources.length, 5);
   assert.ok(r.sources.every((s) => s.publishedAt && !s.url.includes("key=")));
   r.rows.forEach((x) => PriceRow.parse(x));
 });
@@ -126,12 +136,13 @@ test("loadCatalog: 캐시 줄이 샘플을 덮고, 캐시에 없는 줄(GKE 크�
   }
 });
 
-test("저장된 캐시(packages/cost/prices) 그대로: 10 rps AWS $233.3 / GCP $146.9 / 온프레 $250", () => {
+test("저장된 캐시(packages/cost/prices) 그대로: 10 rps AWS $233.3 / GCP $172.1 / 온프레 $250", () => {
+  // GCP 는 11/06 에 Cloud SQL 을 아이오와 단가(월 $80.7) → 서울 공식 단가(vCPU $0.0537·메모리 $0.0091 = 월 $105.0)로, SSD 를 $0.17 → $0.221 로 바꿈
   const cat = loadCatalog();
   const e = estimateCost({ spec: spec(), from: "aws", traffic: { peakRps: 10 }, nodeSkus: POC_NODES },
     cat, { breakpoints: false });
   const m = Object.fromEntries(e.envs.map((x) => [x.provider, x.monthlyUsd]));
-  assert.deepEqual(m, { aws: 233.3, gcp: 146.9, onprem: 250 });
+  assert.deepEqual(m, { aws: 233.3, gcp: 172.1, onprem: 250 });
   assert.equal(readCache("aws")?.origin, "live");
   assert.equal(readCache("gcp")?.origin, "seed");
 });
