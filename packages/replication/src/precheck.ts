@@ -1,7 +1,7 @@
 import { MARKER_SCHEMA } from "./names.js";
 import type pg from "pg";
 import { type Endpoint, type Provider, peerPathProblem, schemaOf, withClient, workerTlsProblem } from "./endpoint.js";
-import { qualified } from "./sql.js";
+import { ident, qualified } from "./sql.js";
 import { listTables, type TableRef } from "./tables.js";
 
 // 옮기기 전 점검: "이 DB를 논리 복제로 옮길 수 있나". 실패 항목은 고칠 방법(hint)을 같이 준다.
@@ -94,6 +94,15 @@ async function sourceChecks(c: pg.Client, source: Endpoint, opts: { tables?: str
       WHERE c.relkind IN ('r','p') AND n.nspname <> $1 AND n.nspname NOT IN ('pg_catalog','information_schema',$2) AND n.nspname NOT LIKE 'pg\_%'
         AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e')
       GROUP BY 1 ORDER BY 1`, [schemaOf(source), MARKER_SCHEMA]);
+  // DB-T8: 관리자 계정이 복제할 표를 읽을 수 있나 (초기 복사·행 수·발행). 못 읽으면 sync 가 "permission denied for table" 로 늦게 깨진다
+  const unreadable = (await c.query<{ t: string; owner: string }>(
+    `SELECT cl.relname t, pg_get_userbyid(cl.relowner) owner FROM pg_class cl JOIN pg_namespace n ON n.oid = cl.relnamespace
+      WHERE n.nspname = $1 AND cl.relkind IN ('r','p') AND cl.relname = ANY($2::text[])
+        AND NOT has_table_privilege(cl.oid, 'SELECT') ORDER BY 1`,
+    [schemaOf(source), tables.map((t) => t.name)])).rows;
+  add({ id: "DB-T8", side: "source", ok: unreadable.length === 0,
+    detail: unreadable.length ? `관리자 계정이 표를 못 읽음 (주인 역할의 멤버가 아님): ${unreadable.slice(0, 5).map((r) => `${r.t}(${r.owner})`).join(", ")}` : "admin can read all tables",
+    ...(unreadable.length ? { hint: `출발 DB 에서 그 주인 역할에 ADMIN 권한이 있는 계정으로 GRANT ${[...new Set(unreadable.map((r) => r.owner))].join(", ")} TO <복제 관리자 계정> 을 한 번 실행한 뒤 이어 간다` } : {}) });
   add({ id: "DB-T7", side: "source", ok: others.rowCount === 0,
     detail: others.rowCount ? `복제 스키마(${schemaOf(source)}) 밖에도 앱 표가 있다 — 옮기지 않음: ${others.rows.map((r) => `${r.s}(${r.n})`).join(", ")}` : `tables only in ${schemaOf(source)}`,
     hint: "한 이전은 스키마 하나만 옮긴다. 앱 표가 그 스키마에 있으면 REPL_SOURCE_SCHEMA·REPL_TARGET_SCHEMA 로 고른다 (여러 스키마는 아직 안 됨)" });
@@ -227,16 +236,35 @@ async function serverChecks(c: pg.Client, e: Endpoint, side: "source" | "target"
 /** Z77: Cloud SQL 관리자(cloudsqlsuperuser)는 자기에게 REPLICATION 을 줄 수 있다 (Cloud SQL 논리 복제 안내의 ALTER USER … WITH REPLICATION).
  *  terraform google_sql_user 에는 이 속성 칸이 없어서, 복제를 처음 걸기 전에 워커가 한 번 준다. cloudsql 이 아니면 아무것도 안 한다.
  *  결과: already(이미 있음) | granted(이번에 줌) | skipped(cloudsql 아님) | failed(못 줌 → precheck DB-04 가 이유와 함께 멈춘다) */
-export async function ensureReplicationAttr(e: Endpoint): Promise<{ side: string; result: "already" | "granted" | "skipped" | "failed"; error?: string }> {
+export async function ensureReplicationAttr(e: Endpoint): Promise<{ side: string; result: "already" | "granted" | "skipped" | "failed"; error?: string;
+  owners?: { granted: string[]; failed: { owner: string; error: string }[] } }> {
   if (e.provider !== "cloudsql") return { side: e.label, result: "skipped" };
   return withClient(e, async (c) => {
+    const owners = await ensureTableOwnerMembership(c, schemaOf(e));
     const r = (await c.query<{ su: boolean; repl: boolean }>(`SELECT rolsuper su, rolreplication repl FROM pg_roles WHERE rolname = current_user`)).rows[0]!;
-    if (r.su || r.repl) return { side: e.label, result: "already" as const };
+    if (r.su || r.repl) return { side: e.label, result: "already" as const, owners };
     try {
       await c.query(`ALTER ROLE CURRENT_USER WITH REPLICATION`);
-      return { side: e.label, result: "granted" as const };
+      return { side: e.label, result: "granted" as const, owners };
     } catch (x) {
-      return { side: e.label, result: "failed" as const, error: (x as Error).message.slice(0, 200) };
+      return { side: e.label, result: "failed" as const, error: (x as Error).message.slice(0, 200), owners };
     }
   });
+}
+
+/** 2026-11-07 GCP → 온프레 실측 SYNC_FAILED "permission denied for table orders": 워커가 Cloud SQL API 로 만든 이전 전용 계정(svc_repl_*)은
+ *  cloudsqlsuperuser 멤버지만 앱 표 주인이 아니라 표를 못 읽고(초기 복사·행 수), 발행(FOR TABLE)·울타리도 못 건다.
+ *  표 주인 역할의 멤버가 되면 셋 다 된다 (AWS 출발은 RDS 마스터가 보통 표 주인이라 안 걸렸다).
+ *  DRAFT(ai): Cloud SQL PG16 은 API 로 만든 사용자에 대해 cloudsqlsuperuser 에 ADMIN 을 준다고 보고 스스로 GRANT 를 해 본다 (실측으로 확인할 것).
+ *  못 하면 실패를 모아 돌려주고, 아래 precheck DB-T8 이 이유·고칠 방법과 함께 멈춘다. 정리 때 계정째 지우므로 멤버십도 같이 사라진다 */
+export async function ensureTableOwnerMembership(c: pg.Client, schema: string): Promise<{ granted: string[]; failed: { owner: string; error: string }[] }> {
+  const rows = (await c.query<{ owner: string }>(
+    `SELECT DISTINCT pg_get_userbyid(cl.relowner) AS owner FROM pg_class cl JOIN pg_namespace n ON n.oid = cl.relnamespace
+      WHERE n.nspname = $1 AND cl.relkind IN ('r','p') AND NOT pg_has_role(current_user, cl.relowner, 'USAGE') ORDER BY 1`, [schema])).rows;
+  const granted: string[] = [], failed: { owner: string; error: string }[] = [];
+  for (const { owner } of rows) {
+    try { await c.query(`GRANT ${ident(owner)} TO CURRENT_USER`); granted.push(owner); }
+    catch (x) { failed.push({ owner, error: (x as Error).message.slice(0, 200) }); }
+  }
+  return { granted, failed };
 }
