@@ -1,0 +1,13 @@
+# 팀 가입 명부 (POST /api/v1/auth/signup). 상태: AI 초안
+# 자리(slot) 하나 = 로그인 하나 + 미리 만들어 둘 환경 목록. 모양은 packages/contracts/src/team-registry.ts (TeamRegistry)
+# signup_code_sha256 = 초대 코드 원문의 sha256 hex. 빈 값 = 그 자리 닫힘. 원문은 레포·로그 어디에도 두지 않는다
+# 자리를 열려면: 무작위 코드를 만들어 sha256 을 여기에 적고 → 머지 → api 이미지 다시 빌드. 코드 원문은 그 사람에게만 따로 전한다
+version: 1
+tenant: 11111111-1111-4111-8111-111111111111
+slots:
+  - id: slot-1
+    login: slot-1@iron
+    signup_code_sha256: ""
+    environments:
+      - { name: src-aws-sample, provider: aws, region: ap-northeast-2, cluster: platform-target }
+      - { name: GCP-sample, provider: gcp, region: asia-northeast3, gcp: { original_project: iron-source-gcp, dedicated_project: iron-target-gcp } }

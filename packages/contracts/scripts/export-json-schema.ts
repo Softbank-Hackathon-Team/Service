@@ -24,6 +24,8 @@ const pick = {
   CacheTfVars: C.CacheTfVars, ObjectStoreTfVars: C.ObjectStoreTfVars, QueueTfVars: C.QueueTfVars, JobTfVars: C.JobTfVars,
   StartInput: C.StartInput,
   RehearsalView: C.RehearsalView,
+  // 팀 가입: 명부(docs/team-env/registry.yaml) 모양과 POST /auth/signup 본문·GET /auth/signup/config 응답
+  TeamRegistry: C.TeamRegistry, SignupBody: C.SignupBody, SignupConfig: C.SignupConfig,
 };
 for (const [name, schema] of Object.entries(pick)) {
   writeFileSync(new URL(`${name}.json`, out),

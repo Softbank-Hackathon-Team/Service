@@ -124,6 +124,9 @@ COPY tools/onprem-bootstrap.sh tools/onprem-install.sh tools/argocd-core-install
 COPY deploy/helm/onprem-agent /app/onprem-bundle/deploy/helm/onprem-agent
 ENV PERMISSIONS_DIR=/app/infra/permissions
 ENV CHART_DIR=/app/gitops/charts/app
+# 팀 가입 명부 (routes/signup.ts, apps/api/src/auth/team-registry.ts). 없거나 틀리면 가입만 꺼진다. 자리를 열면 이미지를 다시 빌드한다
+COPY docs/team-env/registry.yaml /app/team-env/registry.yaml
+ENV TEAM_REGISTRY_PATH=/app/team-env/registry.yaml
 # 파일 주인은 root(읽기만 가능) → 앱이 자기 코드를 못 바꾼다
 COPY --from=build-api /src/dist/api/ ./
 # 이미지에 들어 있는 node 사용자(uid 1000). 루트로 돌지 않는다

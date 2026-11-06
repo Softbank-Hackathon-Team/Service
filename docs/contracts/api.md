@@ -216,6 +216,8 @@ contracts의 화면용 모양 `MigrationView`는 열 칸이다. 지금 응답에
 | POST | `/auth/login` | 입력층 | 이메일+비밀번호 로그인 → Bearer 접근 토큰(15분) + HttpOnly 쿠키 svc_refresh | 있음 |
 | POST | `/auth/refresh` | 입력층 | 쿠키로 접근 토큰 갱신 (리프레시 토큰은 쓰면 바로 무효) | 있음 |
 | GET | `/auth/me` | 입력층 | 내 정보 (사람 로그인 전용, 개인 토큰으로는 불가) | 있음 |
+| GET | `/auth/signup/config` | 입력층 | 팀 가입을 받는지 (명부 `docs/team-env/registry.yaml` 을 읽었고 열린 자리가 있을 때만 true). 인증 불필요 | 있음 |
+| POST | `/auth/signup` | 입력층 | 팀 가입: 명부 자리 로그인 + 초대 코드 + 비밀번호 → 사용자·이름 없는 환경(draft) + 로그인과 같은 토큰·쿠키. 틀리면 모두 403 SIGNUP_NOT_ALLOWED | 있음 |
 | DELETE | `/environments/:id` | 입력층 | 환경 연결 해제. 진행 중 이전이 있으면 409, Agent 키 끊고 임시 자격 회수 요청 | 있음 |
 | GET | `/environments/:id/status` | 입력층 | 환경 자체의 자원 상태 (aws·gcp·onprem은 실자원 읽기, 못 읽으면 unknown) | 있음 |
 | GET | `/environments/:id/inventory` | 입력층 | 환경에 지금 돌고 있는 것과 이전 때문에 생기고 걷히는 것 | 있음 |
