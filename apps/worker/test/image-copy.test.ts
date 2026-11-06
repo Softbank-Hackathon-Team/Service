@@ -250,3 +250,43 @@ test("공개 이미지만 있으면 자격을 빌리지 않는다", async () => 
   assert.deepEqual(await imageCopyStep(j, m, inputFor("gcp", ONE), deps(f)), { detail: { copied: [], present: [] } });
   assert.equal(f.steps.length + f.calls.length, 0);
 });
+
+test("멈춤 detail: 자격·권한·도구가 모자란 이유면 deploy 칸에 missing(정확한 이름)·hint(고칠 자리), 그 밖의 실패엔 없다", async () => {
+  const stop = async (f: ReturnType<typeof fakes>, d = deps(f), input = inputFor("gcp", ecrSpec)) => {
+    const out = await imageCopyStep(j, m, input, d);
+    assert.ok("outcome" in out);
+    return (out.outcome.detail as { deploy: { step: string; reason: string; missing?: string[]; hint?: string } }).deploy;
+  };
+  // 실환경에서 출발 AWS 자격을 못 빌림 → 출발 관찰 역할 + 연결 링크 안내
+  const noCred = await stop(fakes({ roles: { gcpToken: { target: "t" } } }));
+  assert.equal(noCred.step, "no_credentials");
+  assert.deepEqual(noCred.missing, ["aws: svc-observe"]);
+  assert.match(noCred.hint!, /CloudFormation 연결 스택/);
+  // 발급기가 거부를 던짐 (어느 쪽인지 모름) → 이 복사에 필요한 두 쪽 권한을 모두
+  const { TempRoleDenied } = await import("@svc/security");
+  const f = fakes();
+  const denied = await stop(f, { exec: f.exec, env: REAL, withRoles: (async () => { throw new TempRoleDenied("ROLE_OUTSIDE_CEILING", "x"); }) as typeof withStepRoles });
+  assert.equal(denied.step, "role_denied");
+  assert.deepEqual(denied.missing, ["aws: ecr:BatchGetImage", "aws: ecr:GetAuthorizationToken", "aws: ecr:GetDownloadUrlForLayer",
+    "gcp: artifactregistry.repositories.uploadArtifacts"]);
+  assert.match(denied.hint!, /PERMISSIONS_DIR/);
+  assert.match(denied.hint!, /svc-connect/);
+  assert.match(denied.hint!, /infra\/onboarding\/gcp-connect\.sh/);
+  // 워커 이미지에 crane 이 없음
+  const g = fakes({ roles: { awsEnv: { source: BORROWED_SRC }, gcpToken: { target: "t" } } });
+  const noCrane: Exec = async (cmd, args, x) => (cmd === "crane" ? { code: 127, stdout: "", stderr: "crane: not found", ms: 1 } : g.exec(cmd, args, x));
+  const tool = await stop(g, { ...deps(g), exec: noCrane });
+  assert.equal(tool.step, "tool_missing");
+  assert.deepEqual(tool.missing, ["crane"]);
+  assert.match(tool.hint!, /Dockerfile/);
+  // 같은 레지스트리 호스트: 운영자가 할 일만 (빠진 설정은 없음)
+  const same = await stop(fakes({ roles: { gcpToken: { source: "s", target: "t" } } }), undefined, inputFor("gcp", arSpec));
+  assert.equal(same.step, "same_registry_host");
+  assert.equal(same.missing, undefined);
+  assert.match(same.hint!, /crane copy/);
+  // 복사 실패는 설정 문제로 단정하지 않는다 (reason 그대로)
+  const copy = await stop(fakes({ roles: { awsEnv: { source: BORROWED_SRC }, gcpToken: { target: "t" } }, copyFails: true }));
+  assert.equal(copy.step, "copy_failed");
+  assert.equal(copy.missing, undefined);
+  assert.equal(copy.hint, undefined);
+});

@@ -3,12 +3,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ImageV2 } from "@svc/contracts";
 import { scrubString } from "@svc/core";
-import { TempRoleDenied } from "@svc/security";
+import { AR_PULL_PERMISSIONS, ECR_PULL_ACTIONS, TempRoleDenied } from "@svc/security";
 import { adapterFor, envFor, flattenTfOutputsV2, iacMockEnabled, isPublicImage, registryOf, spawnExec, type Exec } from "@svc/adapters";
 import { envFacts, fillPlaceholders, GitopsError, type DeployInput } from "../gitops/index.js";
 import { realStsEnabled } from "../platform.js";
 import { withStepRoles, type StepRoles } from "./_roles.js";
-import type { MigrationRow, StepOutcome } from "./_step.js";
+import type { MigrationRow, StepOutcome, StopHint } from "./_step.js";
 
 // 배포 이미지 복사 (FM-APP-01 "그대로 이식"의 나머지 반). 도착 렌더 값은 사설 이미지를 도착 플랫폼 저장소 주소로 가리킨다
 //   (adapters common/base.ts platformImageRef: <계정>.dkr.ecr.<리전>.amazonaws.com/platform/<회사>/<이름>, <리전>-docker.pkg.dev/<프로젝트>/platform/<회사>/<이름>).
@@ -20,7 +20,9 @@ import type { MigrationRow, StepOutcome } from "./_step.js";
 export interface ImageCopy { ref: string; source: string; digest: string }
 export type ImageCopyFailReason = "not_by_digest" | "unsupported_registry" | "role_denied" | "no_credentials" | "same_registry_host"
   | "tool_missing" | "auth_failed" | "repo_failed" | "copy_failed" | "digest_mismatch" | "budget_exceeded";
-type Fail = { ok: false; reason: ImageCopyFailReason; image: string | null; message: string };
+// at = 고칠 자리를 고르는 사실 (어느 쪽·어느 레지스트리 자격인가, 어느 도구가 없나). 감사 detail 에는 IMAGE_COPY_FIX 가 만든 missing·hint 만 간다
+type FixAt = { pairs?: ReadonlyArray<{ side: Side; kind: RegistryKind }>; tool?: string };
+type Fail = { ok: false; reason: ImageCopyFailReason; image: string | null; message: string; at?: FixAt };
 export type ImageCopyOutcome = { ok: true; copied: string[]; present: string[] } | Fail;
 export interface ImageCopyDeps { exec?: Exec; env?: NodeJS.ProcessEnv; withRoles?: typeof withStepRoles; now?: () => number }
 
@@ -48,8 +50,44 @@ const PLAIN_ENV = /^(PATH|HOME|TMPDIR|LANG|SSL_CERT_FILE|SSL_CERT_DIR|HTTPS?_PRO
 const OWN_IDENTITY = /^AWS_(CONTAINER_[A-Z_]+|WEB_IDENTITY_TOKEN_FILE|ROLE_ARN|ROLE_SESSION_NAME)$/;
 const b64 = (s: string) => Buffer.from(s).toString("base64");
 
-const fail = (reason: ImageCopyFailReason, image: string | null, message: string): Fail =>
-  ({ ok: false, reason, image, message: scrubString(message).trim().slice(-300) });
+const fail = (reason: ImageCopyFailReason, image: string | null, message: string, at?: FixAt): Fail =>
+  ({ ok: false, reason, image, message: scrubString(message).trim().slice(-300), ...(at ? { at } : {}) });
+
+// ── 고칠 자리 (실패 이유마다 하나). 설정·권한·도구가 모자란 이유만. 복사·다이제스트·예산 실패는 원인을 고치고 재개 ──
+const CLOUD: Record<RegistryKind, "aws" | "gcp"> = { ecr: "aws", gar: "gcp" };
+const SIDE_KO: Record<Side, string> = { source: "출발", target: "도착" };
+// 그 쪽 역할(STEP_ROLES.image_copy: 출발 관찰 svc-observe = 받기만, 도착 실행 svc-operate apply = 올리기)에 있어야 하는 레지스트리 권한
+const ROLE: Record<Side, string> = { source: "svc-observe", target: "svc-operate" };
+const NEED: Record<Side, Record<RegistryKind, readonly string[]>> = {
+  source: { ecr: ECR_PULL_ACTIONS, gar: AR_PULL_PERMISSIONS },
+  target: { ecr: ["ecr:GetAuthorizationToken", "ecr:CreateRepository", "ecr:PutImage"], gar: ["artifactregistry.repositories.uploadArtifacts"] },
+};
+const GRANT: Record<Side, Record<RegistryKind, string>> = {
+  source: { ecr: "출발 AWS 연결 스택(CloudFormation svc-connect-*)을 새 템플릿으로 업데이트해 svc-observe 에 ECR 받기 권한을 더한 뒤 재개한다",
+            gar: "고객이 출발 프로젝트에서 infra/onboarding/gcp-connect.sh 를 다시 실행해 svc-observe 에 Artifact Registry 받기 권한을 더한 뒤 재개한다" },
+  target: { ecr: "도착 AWS 연결 스택(CloudFormation svc-connect-*)을 새 템플릿으로 업데이트해 svc-operate 에 ECR platform/* 저장소 만들기·올리기 권한을 더한 뒤 재개한다",
+            gar: "고객이 infra/onboarding/gcp-connect.sh 를 다시 실행해 도착 프로젝트 svc-operate 에 Artifact Registry 올리기 권한을 더한 뒤 재개한다" },
+};
+const CONNECT: Record<RegistryKind, string> = { ecr: "CloudFormation 연결 스택", gar: "infra/onboarding/gcp-connect.sh" };
+const uniq = (xs: string[]) => [...new Set(xs)];
+const permissionFix = (at: FixAt): StopHint => {
+  const pairs = at.pairs ?? [];
+  return { missing: uniq(pairs.flatMap((p) => NEED[p.side][p.kind].map((a) => `${CLOUD[p.kind]}: ${a}`))), hint: uniq(pairs.map((p) => GRANT[p.side][p.kind])).join(" / ") };
+};
+const IMAGE_COPY_FIX: Partial<Record<ImageCopyFailReason, (at: FixAt) => StopHint | Pick<StopHint, "hint">>> = {
+  no_credentials: (at) => ({ missing: uniq((at.pairs ?? []).map((p) => `${CLOUD[p.kind]}: ${ROLE[p.side]}`)),
+    hint: uniq((at.pairs ?? []).map((p) => `${SIDE_KO[p.side]} 환경을 연결 링크(${CONNECT[p.kind]})로 연결했는지, 이미지 레지스트리가 그 환경과 같은 클라우드(${CLOUD[p.kind]})인지 확인한 뒤 재개한다`)).join(" / ") }),
+  // 발급 거부(TempRoleDenied) = 플랫폼 쪽 권한 파일(천장)이 이 동작을 안 줌. 고객 역할도 같은 파일로 만든 판이어야 한다
+  role_denied: (at) => {
+    const f = permissionFix(at);
+    return { missing: f.missing, hint: `worker 이미지의 권한 파일(infra/permissions, PERMISSIONS_DIR)이 이 동작을 허락하는 판인지 확인하고, ${f.hint}` };
+  },
+  auth_failed: permissionFix,
+  tool_missing: (at) => ({ missing: [at.tool ?? "crane"],
+    hint: `워커 이미지에 ${at.tool ?? "crane"} 이 없다: deploy/docker/Dockerfile 로 빌드한 worker 이미지(차트 apps.image.tag)로 올린 뒤 재개한다` }),
+  unsupported_registry: () => ({ hint: "ECR·Artifact Registry 밖 사설 레지스트리 이미지는 빌린 자격으로 복사하지 못한다: 출발 이미지를 ECR·Artifact Registry 로 옮겨 다시 가져온 뒤 다시 계획한다" }),
+  same_registry_host: () => ({ hint: "출발과 도착이 같은 레지스트리 호스트라 자격 하나로 옮길 수 없다: 운영자가 crane copy 로 같은 다이제스트를 도착 주소에 넣으면 재개 때 이미 있음으로 지나간다" }),
+};
 
 /** 명세의 사설 이미지 → 도착 렌더 주소 짝. 주소는 Helm 값과 같은 함수(어댑터 imageRef + 자리표시 채움)로 만든다. 공개 레지스트리 이미지는 원본 그대로라 복사 대상이 아니다 */
 export function imageCopiesOf(i: DeployInput): ImageCopy[] {
@@ -87,7 +125,8 @@ export async function imageCopyStep(j: { tenantId: string; migrationId: string }
   const r = await copyImages(j, m, imageCopiesOf(i), deps ?? {});
   if (r.ok) return { detail: { copied: r.copied, present: r.present } };
   return { outcome: { to: "paused", failureCode: "IMAGE_COPY_FAILED", detail: { deploy: { error: "IMAGE_COPY_FAILED", step: r.reason, image: r.image,
-    reason: `사설 이미지를 도착 레지스트리로 복사하지 못함 (${r.reason}): ${r.message} → 원인을 고치고 재개하면 남은 이미지만 다시 복사` } } } };
+    reason: `사설 이미지를 도착 레지스트리로 복사하지 못함 (${r.reason}): ${r.message} → 원인을 고치고 재개하면 남은 이미지만 다시 복사`,
+    ...IMAGE_COPY_FIX[r.reason]?.(r.at ?? {}) } } } };
 }
 
 function plan(c: ImageCopy): Planned | Fail {
@@ -118,7 +157,9 @@ export async function copyImages(j: { tenantId: string; migrationId: string }, m
     return await (deps.withRoles ?? withStepRoles)("image_copy", j, m,
       (r) => copyAll(planned, r, deps.exec ?? spawnExec, deps.env ?? process.env, () => deadline - now()));
   } catch (e) {
-    if (e instanceof TempRoleDenied) return fail("role_denied", null, e.code);
+    // 진짜 발급기는 거부를 던진다 (어느 쪽인지 모름) → 이 복사에 필요한 두 쪽 권한을 모두 적는다
+    if (e instanceof TempRoleDenied) return fail("role_denied", null, e.code,
+      { pairs: planned.flatMap((p) => [{ side: "source" as const, kind: p.source.kind }, { side: "target" as const, kind: p.target.kind }]) });
     throw e;
   }
 }
@@ -140,13 +181,14 @@ async function copyAll(planned: Planned[], r: StepRoles, exec: Exec, env: NodeJS
     type Cred = { who: Side | "process" } & ({ token: string } | { env: NodeJS.ProcessEnv });
     const credOf = (side: Side, kind: RegistryKind): Cred | Fail => {
       const denied = r.denied.filter((d) => d.side === side);
-      if (denied.length) return fail("role_denied", null, `${side}: ${denied.map((d) => d.code).join(",")}`);
+      if (denied.length) return fail("role_denied", null, `${side}: ${denied.map((d) => d.code).join(",")}`, { pairs: [{ side, kind }] });
       const token = kind === "gar" ? r.gcpToken?.[side] : undefined;
       if (token) return { who: side, token };
       const aws = kind === "ecr" ? r.awsEnv?.[side] : undefined;
       if (aws) return { who: side, env: Object.fromEntries(Object.entries(envFor(aws, env)).filter(([k]) => !OWN_IDENTITY.test(k))) };
       // 실환경(REAL_STS)에서 그 쪽 자격을 못 빌렸으면 워커 자기 자격으로 고객 레지스트리를 만지지 않는다
-      if (realStsEnabled(env)) return fail("no_credentials", null, `${side} 쪽 ${kind === "ecr" ? "AWS" : "GCP"} 자격을 빌리지 못함 (연결 링크로 연결한 환경인지, 이미지 레지스트리가 그 환경의 클라우드인지 확인)`);
+      if (realStsEnabled(env)) return fail("no_credentials", null, `${side} 쪽 ${kind === "ecr" ? "AWS" : "GCP"} 자격을 빌리지 못함 (연결 링크로 연결한 환경인지, 이미지 레지스트리가 그 환경의 클라우드인지 확인)`,
+        { pairs: [{ side, kind }] });
       return { who: "process", env };   // 로컬·시험(REAL_STS=0): 흉내 발급기라 빌린 자격이 없다 → 프로세스 자격 (가져오기와 같음)
     };
     const login = async (side: Side, host: string, kind: RegistryKind): Promise<{ auth: string; who: Cred["who"]; env?: NodeJS.ProcessEnv } | Fail> => {
@@ -156,7 +198,8 @@ async function copyAll(planned: Planned[], r: StepRoles, exec: Exec, env: NodeJS
       const t = kind === "ecr"
         ? await run("aws", ["ecr", "get-login-password", "--region", ecrRegion(host)], c.env, TOKEN_MS)
         : await run("gcloud", ["auth", "print-access-token"], c.env, TOKEN_MS);
-      if (t.code !== 0) return fail(t.code === 127 ? "tool_missing" : "auth_failed", null, `${side} ${host} 토큰: ${t.stderr}`);
+      if (t.code !== 0) return fail(t.code === 127 ? "tool_missing" : "auth_failed", null, `${side} ${host} 토큰: ${t.stderr}`,
+        { pairs: [{ side, kind }], tool: kind === "ecr" ? "aws" : "gcloud" });
       return { auth: b64(`${kind === "ecr" ? "AWS" : "oauth2accesstoken"}:${t.stdout.trim()}`), who: c.who, env: c.env };
     };
     const auths = new Map<string, { auth: string; who: Cred["who"] }>();
@@ -178,7 +221,7 @@ async function copyAll(planned: Planned[], r: StepRoles, exec: Exec, env: NodeJS
     const pending: Planned[] = [], present: string[] = [];
     for (const p of planned) {
       const have = await crane(["digest", p.ref], DIGEST_MS, p.ref);
-      if (have.code === 127) return fail("tool_missing", p.ref, have.stderr);
+      if (have.code === 127) return fail("tool_missing", p.ref, have.stderr, { tool: "crane" });
       if (have.code === 0 && have.stdout.trim() === p.digest) present.push(p.ref);
       else pending.push(p);
     }
@@ -206,7 +249,7 @@ async function copyAll(planned: Planned[], r: StepRoles, exec: Exec, env: NodeJS
           "--image-tag-mutability", "IMMUTABLE", "--image-scanning-configuration", "scanOnPush=true", "--tags", "Key=managed-by,Value=platform"],
           targetEnv.get(p.target.host)!, TOKEN_MS, p.ref);
         if (c.code !== 0 && !c.stderr.includes("RepositoryAlreadyExistsException"))
-          return fail(c.code === 127 ? "tool_missing" : "repo_failed", p.ref, `ecr create-repository: ${c.stderr}`);
+          return fail(c.code === 127 ? "tool_missing" : "repo_failed", p.ref, `ecr create-repository: ${c.stderr}`, { tool: "aws" });
       }
       const c = await crane(["copy", `${p.from}@${p.digest}`, p.ref], COPY_MS, p.ref);
       if (c.code !== 0) return fail("copy_failed", p.ref, `crane copy: ${c.stderr}`);
