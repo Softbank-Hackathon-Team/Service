@@ -1,6 +1,7 @@
 import type { AgentReview } from './agent-review-types';
 import { createAuth } from './auth';
 import { createClient, unwrap } from './http';
+import { locale } from './i18n';
 import type { LiveTrafficView, TrafficShiftProgress } from './liveTraffic';
 import type { RehearsalView } from './rehearsal-types';
 import type { PlanResourcesView } from './resourceMap';
@@ -11,6 +12,7 @@ import type {
   ConnectionLink,
   CreateEnvironmentBody,
   EnvApp,
+  EnvCostView,
   EnvironmentView,
   EnvStatus,
   EvidenceReport,
@@ -18,6 +20,8 @@ import type {
   FullEstimate,
   MigrationCostView,
   MigrationView,
+  MoveCostRequest,
+  MoveCostView,
   PlanDoc,
   Provider,
   ResumeResult,
@@ -45,6 +49,10 @@ export const api = {
   envStatus: (id: string) => get<EnvStatus>(`/environments/${id}/status`),
   envInventory: (id: string) => get<{ cloud: CloudInventory; apps: EnvApp[] }>(`/environments/${id}/inventory`),
   agentReports: (id: string, limit = 20) => get<AgentReportList>(`/environments/${id}/agent-reports?limit=${limit}`),
+  // 근거 있는 비용 (contracts cost-evidence.ts). 근거 문장(항 이름·식·뺀 것·프로모션)은 서버가 화면 언어로 만든다
+  envCost: (id: string) => get<EnvCostView>(`/environments/${id}/cost?lang=${locale()}`),
+  /** 이 환경(고른 범위)을 도착 후보로 옮기면 한 달·1년에 얼마인가. 도착은 1~10개, 범위가 없으면 환경 전체 */
+  moveCost: (id: string, body: MoveCostRequest) => post<MoveCostView>(`/environments/${id}/cost/move?lang=${locale()}`, body),
   security: (id: string) => get<SecurityView>(`/migrations/${id}/security`),
   securityRegression: (id: string) => get<SecurityRegression>(`/migrations/${id}/security/regression`),
   securityCheck: (id: string) => post<LiveCheckResult>(`/migrations/${id}/security/check`),
