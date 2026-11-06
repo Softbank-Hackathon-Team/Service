@@ -68,7 +68,8 @@ export async function bundleNeedsFor(tenantId: string, m: MigrationSides, envs: 
   };
 }
 
-async function platformSaOf(tenantId: string, env: NodeJS.ProcessEnv): Promise<string | null> {
+/** 이 회사 플랫폼 SA 이메일 (허브 묶음의 주체). GCP_PLATFORM_PROJECT 가 없으면 허브를 안 쓰므로 null */
+export async function platformSaOf(tenantId: string, env: NodeJS.ProcessEnv): Promise<string | null> {
   const project = env.GCP_PLATFORM_PROJECT?.trim();
   if (!project) return null;
   const sa = await withTenant(tenantId, async (tx) => (await tx.query(`SELECT gcp_platform_sa FROM tenants WHERE id = $1`, [tenantId])).rows[0]?.gcp_platform_sa as string | undefined);
@@ -103,11 +104,22 @@ export async function permissionPrecheck(tenantId: string, m: MigrationSides, ro
       platformSa, ...(roles?.gcpToken?.[side] ? { gcpToken: roles.gcpToken[side] } : {}), ...(awsEnv ? { awsEnv: envFor(awsEnv, env) } : {}) }, bs, file.version, d));
   }
   const level = (g: PermissionGap) => (mode === "warn" ? "warn" : g.level);
-  const items = gaps.map((g) => PrecheckItem.parse({ id: `PC-PERM-${g.bundleId}`, level: level(g),
-    message: (`${level(g) === "block" ? "FAIL" : "WARN"} 고객 권한 ${g.bundleId} (${g.cloud} ${g.side === "source" ? "출발" : "도착"} ${g.principal} · ${g.role}) — `
-      + (g.missing.length || g.missingApis.length
-        ? `빠진 것 ${g.missing.length + g.missingApis.length}개: ${[...g.missing, ...g.missingApis.map((a) => `API ${a}`)].slice(0, 8).join(", ")}${g.missing.length + g.missingApis.length > 8 ? " 외" : ""}`
-        : `확인 못 함: ${g.unverified ?? ""}`)).slice(0, 1000),
+  const what = (g: PermissionGap) => g.missing.length || g.missingApis.length
+    ? `빠진 것 ${g.missing.length + g.missingApis.length}개: ${[...g.missing, ...g.missingApis.map((a) => `API ${a}`)].slice(0, 8).join(", ")}${g.missing.length + g.missingApis.length > 8 ? " 외" : ""}`
+    : `확인 못 함: ${g.unverified ?? ""}`;
+  // 막는 묶음은 하나씩 (명세 검토 화면이 묶음마다 보여 준다)
+  const blocks = gaps.filter((g) => level(g) === "block").map((g) => PrecheckItem.parse({ id: `PC-PERM-${g.bundleId}`, level: "block",
+    message: `FAIL 고객 권한 ${g.bundleId} (${g.cloud} ${g.side === "source" ? "출발" : "도착"} ${g.principal} · ${g.role}) — ${what(g)}`.slice(0, 1000),
     fix: gapHint(g) }));
+  // 주의는 한 줄로 합친다: warn 은 하나하나 계획서 승인 확인 항목(precheck_warn:<id>)이 되는데, 확인 권한(iam.roles.get)이 없는 예전 연결은
+  //   묶음마다 "확인 못 함"이 생겨 승인 화면 체크가 묶음 수만큼 늘었다 (리뷰 11/06). 묶음별 내용은 detail.permissions.permissionGaps 에 그대로 남는다
+  const warns = gaps.filter((g) => level(g) === "warn");
+  const unverifiedOnly = warns.every((g) => !g.missing.length && !g.missingApis.length);
+  const warn = warns.length ? [PrecheckItem.parse({ id: "PC-PERM-WARN", level: "warn",
+    message: (`WARN 고객 권한 ${warns.length}묶음 ${unverifiedOnly ? "확인 못 함" : "주의"} — `
+      + warns.map((g) => `${g.bundleId}(${g.missing.length || g.missingApis.length ? `빠진 것 ${g.missing.length + g.missingApis.length}` : "확인 못 함"})`).join(", ")
+      + `. 첫 묶음: ${what(warns[0]!)}`).slice(0, 1000),
+    fix: gapHint(warns.find((g) => g.missing.length || g.missingApis.length) ?? warns[0]!) })] : [];
+  const items = [...blocks, ...warn];
   return { items, detail: permissionDetail(gaps.map((g) => ({ ...g, level: level(g) }))) };
 }

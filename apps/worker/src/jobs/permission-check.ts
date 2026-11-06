@@ -3,7 +3,7 @@ import { withTenant, scrubString } from "@svc/core";
 import { envFor } from "@svc/adapters";
 import { StsCliError, TempRoleDenied, type TempRoleBroker } from "@svc/security";
 import { realStsEnabled, tempRoles } from "../platform.js";
-import { checkEnvBundles, type GateDeps } from "../permission-gate.js";
+import { checkEnvBundles, platformSaOf, type GateDeps } from "../permission-gate.js";
 import { permissionBundles } from "../permission-hints.js";
 
 // PERM-GATE: 환경 화면의 [다시 확인] (api POST /environments/:id/permission-check 가 냄). 상태를 안 옮긴다.
@@ -14,9 +14,11 @@ import { permissionBundles } from "../permission-hints.js";
 export const PERMISSION_CHECK_TTL_SEC = 900;
 interface EnvRow { provider: Provider; connection_status: string; account_id: string | null; gcp_target_project: string | null; region: string | null }
 
-/** 환경 하나의 확인 대상 묶음: 그 클라우드 묶음 전부 (도착 묶음은 GCP 전용 프로젝트가 있을 때만). 이전이 쓰는 것만 막는 일은 사전 점검이 한다 */
-export function envBundles(all: PermissionBundle[], e: Pick<EnvRow, "provider" | "gcp_target_project">): (PermissionBundle & { onSide: "source" | "target" })[] {
-  return all.filter((b) => b.cloud === e.provider && (e.provider !== "gcp" || b.side === "source" || !!e.gcp_target_project))
+/** 환경 하나의 확인 대상 묶음: 그 클라우드 묶음 전부 (도착 묶음은 GCP 전용 프로젝트가 있을 때만). 이전이 쓰는 것만 막는 일은 사전 점검이 한다.
+ *  허브 묶음(gcp.hub)은 플랫폼이 허브를 쓸 때(GCP_PLATFORM_PROJECT 있음)만 — 사전 점검의 argo_hub 조건과 같은 기준 */
+export function envBundles(all: PermissionBundle[], e: Pick<EnvRow, "provider" | "gcp_target_project">, o: { hub: boolean } = { hub: true }): (PermissionBundle & { onSide: "source" | "target" })[] {
+  return all.filter((b) => b.cloud === e.provider && (e.provider !== "gcp" || b.side === "source" || !!e.gcp_target_project)
+    && (b.principal !== "platform" || o.hub))
     .map((b) => ({ ...b, onSide: b.side === "source" ? "source" as const : "target" as const }));
 }
 
@@ -42,7 +44,8 @@ async function checkFor(job: PermissionCheckJob, env: EnvRow, deps: PermissionCh
   if (!file) return empty("권한 묶음 파일(permission-bundles.json)이 없어 확인 못 함");
   if (env.connection_status !== "connected" && env.connection_status !== "unstable")
     return empty(`환경이 연결 상태가 아님 (${env.connection_status}) — 연결 확인을 먼저 한다`, file.version);
-  const bundles = envBundles(file.bundles, env);
+  const hub = env.provider === "gcp" && !!penv.GCP_PLATFORM_PROJECT?.trim();
+  const bundles = envBundles(file.bundles, env, { hub });
   const roles = deps.roles ?? tempRoles();
   let ref: string | null = null;
   try {
@@ -63,8 +66,10 @@ async function checkFor(job: PermissionCheckJob, env: EnvRow, deps: PermissionCh
       : (k.kind === "aws" ? { awsEnv: envFor({ AWS_ACCESS_KEY_ID: k.accessKeyId, AWS_SECRET_ACCESS_KEY: k.secretAccessKey, AWS_SESSION_TOKEN: k.sessionToken,
         AWS_REGION: env.region || "ap-northeast-2" }, penv) } : null);
     if (!side) throw new Error(`${env.provider} 발급기가 맞지 않는 자격을 돌려줬다`);
+    // 허브 묶음의 주체 = 이 회사 플랫폼 SA (사전 점검과 같은 값). 없으면 허브 묶음만 "확인 못 함" (리뷰 11/06: 예전엔 안 넘겨 늘 확인 못 함)
+    const platformSa = hub ? await platformSaOf(job.tenantId, penv).catch(() => null) : null;
     const gaps = await checkEnvBundles({ envId: job.envId, provider: env.provider, accountId: env.account_id, targetProject: env.gcp_target_project,
-      region: env.region, ...side }, bundles, file.version, deps);
+      region: env.region, platformSa, ...side }, bundles, file.version, deps);
     // 빠진 묶음이 없으면 고객 쪽 실제 상태 = 지금 판 (역할 설명·태그가 옛 판이어도 권한은 다 있음)
     return { requiredVersion: file.version, grantedVersion: gaps.length ? minVersion(gaps) : file.version, gaps };
   } catch (e) {

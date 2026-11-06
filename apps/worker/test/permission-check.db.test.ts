@@ -15,6 +15,7 @@ let gate: typeof import("../src/permission-gate.js");
 let owner: pg.Client;
 const T = randomUUID();
 const SP = "cust-prj", TP = "cust-mig";
+const PLATFORM_SA_ID = "t-0123456789abcdef0123456789ab", PLATFORM_PRJ = "plat-prj";
 const MEASURED = ["compute.globalAddresses.setLabels", "compute.addresses.setLabels", "compute.instanceGroupManagers.get"];
 const yaml = (f: string) => readFileSync(new URL(`../../../infra/permissions/${f}`, import.meta.url), "utf8").split("\n").filter((l) => l.startsWith("- ")).map((l) => l.slice(2));
 const bundles = JSON.parse(readFileSync(new URL("../../../infra/permissions/permission-bundles.json", import.meta.url), "utf8")).bundles as { id: string; permissions: string[]; apis: string[] }[];
@@ -25,7 +26,7 @@ before(async () => {
   job = await import("../src/jobs/permission-check.js");
   gate = await import("../src/permission-gate.js");
   owner = new pg.Client({ connectionString: OWNER }); await owner.connect();
-  await owner.query("INSERT INTO tenants (id, name) VALUES ($1, 'test-permission-check')", [T]);
+  await owner.query("INSERT INTO tenants (id, name, gcp_platform_sa) VALUES ($1, 'test-permission-check', $2)", [T, PLATFORM_SA_ID]);
 });
 after(async () => { if (skip) return; await core.pool.end(); await owner.end(); });
 
@@ -51,7 +52,7 @@ function gcpWorld(envPerms = yaml("gcp-env-custom-role.yaml").filter((p) => !MEA
       { role: role("platform_env"), members: [sa("svc-env")] }, { role: role("platform_operate"), members: [sa("svc-operate")] },
       { role: role("platform_plan"), members: [sa("svc-plan")] }, { role: role("platform_operate_iam"), members: [sa("svc-operate")], condition: { title: "c" } },
       { role: role("platform_operate_db_secret"), members: [sa("svc-operate")], condition: { title: "c" } },
-      { role: role("platform_hub_access"), members: ["serviceAccount:t-x@plat.iam.gserviceaccount.com"] }] });
+      { role: role("platform_hub_access"), members: [`serviceAccount:${PLATFORM_SA_ID}@${PLATFORM_PRJ}.iam.gserviceaccount.com`] }] });
     if (args[1] === "roles") return ok({ includedPermissions: defs[args[3]!] ?? [], description: "x" });
     throw new Error(args.join(" "));
   }) as never;
@@ -81,6 +82,30 @@ test("permission-check: 빌린 관찰 토큰으로만 읽고 GCP 차이를 저�
   assert.deepEqual(r.revoked, ["permission_check_done"]);
   assert.equal(r.issued[0]!.purpose, "observe");
   assert.ok(!JSON.stringify(row.result).includes("borrowed-token"));
+  // GCP_PLATFORM_PROJECT 가 없으면 허브를 안 쓰므로 허브 묶음은 보지 않는다
+  assert.ok(!row.result.gaps.some((g: { bundleId: string }) => g.bundleId === "gcp.hub"));
+});
+
+test("permission-check 허브 묶음: 플랫폼 SA 를 넘겨 바인딩으로 확인한다 (예전엔 늘 '플랫폼 SA 를 몰라 확인 못 함')", { skip }, async () => {
+  const id = await seed("gcp");
+  const w = gcpWorld(yaml("gcp-env-custom-role.yaml")), r = roles();
+  await job.handlePermissionCheck({ tenantId: T, requestId: "r4", envId: id }, { roles: r.broker, realSts: true, gcp: w.gcp, env: { GCP_PLATFORM_PROJECT: PLATFORM_PRJ } });
+  const row = await stored(id);
+  assert.deepEqual(row.result.gaps, [], JSON.stringify(row.result.gaps));
+  assert.equal(row.result.grantedVersion, row.result.requiredVersion, "빠진 것이 없으면 지금 판");
+  // 플랫폼 SA 의 허브 역할 바인딩이 없으면 허브만 빠짐
+  const id2 = await seed("gcp");
+  const w2 = gcpWorld(yaml("gcp-env-custom-role.yaml"));
+  const exec = w2.gcp.exec as unknown as (b: string, a: string[], o: { env: NodeJS.ProcessEnv }) => Promise<{ code: number; stdout: string; stderr: string; ms: number }>;
+  const noHub = (async (b: string, a: string[], o: { env: NodeJS.ProcessEnv }) => {
+    const res = await exec(b, a, o);
+    if (a[1] !== "get-iam-policy") return res;
+    const p = JSON.parse(res.stdout);
+    return { ...res, stdout: JSON.stringify({ bindings: p.bindings.filter((x: { role: string }) => !x.role.endsWith("platform_hub_access")) }) };
+  }) as never;
+  await job.handlePermissionCheck({ tenantId: T, requestId: "r5", envId: id2 }, { roles: roles().broker, realSts: true, gcp: { ...w2.gcp, exec: noHub }, env: { GCP_PLATFORM_PROJECT: PLATFORM_PRJ } });
+  const g = (await stored(id2)).result.gaps;
+  assert.deepEqual(g.map((x: { bundleId: string; level: string; missing: string[] }) => [x.bundleId, x.level, x.missing]), [["gcp.hub", "block", ["container.clusters.get"]]]);
 });
 
 test("permission-check 거부: 연결 안 된 환경은 빌리지 않고 이유만 저장, 흉내 자격이면 고객 권한을 봤다고 하지 않는다", { skip }, async () => {
@@ -107,11 +132,15 @@ test("사전 점검 칸: 환경 층을 만드는 이전이면 gcp.env block + de
   for (const p of MEASURED) assert.ok(env.message.includes(p) || on.detail!.missing.some((x) => x.endsWith(p)), p);
   assert.ok(on.detail!.permissionGaps.some((g) => g.bundleId === "gcp.env"));
   assert.match(on.detail!.hint, /Cloud Shell/);
-  // 출발 AWS 는 빌린 자격이 없으니(흉내) 확인 못 함 한 줄 (막지 않음)
-  assert.ok(on.items.some((i) => i.id.startsWith("PC-PERM-aws.") && i.level === "warn"));
+  // 주의·확인 못 함은 한 줄로 합친다 (승인 확인 항목 하나). 출발 AWS 는 빌린 자격이 없으니(흉내) 확인 못 함
+  const warns = on.items.filter((i) => i.level === "warn");
+  assert.deepEqual(warns.map((i) => i.id), ["PC-PERM-WARN"]);
+  assert.match(warns[0]!.message, /aws\.observe\(확인 못 함\)/);
+  assert.ok(on.detail!.permissionGaps.some((g) => g.bundleId.startsWith("aws.")), "묶음별 내용은 detail 에 그대로");
   const off = await run({ ENV_LAYER_AUTO: "0" });
   assert.ok(!off.items.some((i) => i.id === "PC-PERM-gcp.env"), "환경 층을 안 만들면 env 묶음은 안 본다");
   const warn = await run({ ENV_LAYER_AUTO: "1", PERMISSION_GATE: "warn" });
-  assert.ok(warn.items.every((i) => i.level !== "block"));
+  assert.deepEqual(warn.items.map((i) => [i.id, i.level]), [["PC-PERM-WARN", "warn"]], "막지 않는 판은 막힘까지 한 줄로");
+  assert.match(warn.items[0]!.message, /gcp\.env\(빠진 것 3\)/);
   assert.deepEqual((await run({ ENV_LAYER_AUTO: "1", PERMISSION_GATE: "off" })).items, []);
 });
