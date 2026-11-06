@@ -192,7 +192,14 @@ test("가리기 함수: 이름·모양 규칙", () => {
 
 test("env 로 고르기: LLM 기본 실제(키 없으면 key_missing) + 샌드박스 memory, 틀린 값은 오류, 모델 바꾸기", async () => {
   assert.equal(sandboxFromEnv({}).mode, "memory");
-  assert.equal((await sandboxFromEnv({}).create({ tenantId: T, runId: R })).mode, "memory");
+  // memory 가짜 클러스터는 대본 LLM(FAKE_LLM=1)만 받는다. 진짜 LLM 설정(키 있음·없음)이면 샌드박스 없음
+  assert.equal((await sandboxFromEnv({ FAKE_LLM: "1" }).create({ tenantId: T, runId: R })).mode, "memory");
+  for (const env of [{}, { ANTHROPIC_API_KEY: "k" }]) {
+    const none = await sandboxFromEnv(env).create({ tenantId: T, runId: R });
+    assert.equal(none.mode, "none");
+    await assert.rejects(async () => none.get("Pod", null), (e: KubeError) => e.code === "SANDBOX_NOT_CONFIGURED");
+    await assert.rejects(async () => none.check("stability", 60), (e: KubeError) => e.code === "SANDBOX_NOT_CONFIGURED");
+  }
   assert.equal(sandboxFromEnv({ SANDBOX_MODE: "k3d" }).mode, "k3d");
   assert.throws(() => sandboxFromEnv({ SANDBOX_MODE: "eks" }), /SANDBOX_MODE/);
   // Z90: 기본 = 실제 API. 키 없으면 key_missing (가짜 아님), FAKE_LLM=1 만 대본
