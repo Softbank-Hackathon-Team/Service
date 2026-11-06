@@ -22,6 +22,7 @@
         "eks:CreatePodIdentityAssociation",
         "eks:DescribeCluster",
         "eks:DescribePodIdentityAssociation",
+        "eks:TagResource",
         "elasticache:AddTagsToResource",
         "elasticache:CreateCacheSubnetGroup",
         "elasticache:CreateReplicationGroup",

@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "bundles": [
     {
       "conditional": false,
@@ -709,6 +709,7 @@
         "eks:DeletePodIdentityAssociation",
         "eks:DescribeCluster",
         "eks:DescribePodIdentityAssociation",
+        "eks:TagResource",
         "iam:CreateRole",
         "iam:DeleteRole",
         "iam:DeleteRolePolicy",
