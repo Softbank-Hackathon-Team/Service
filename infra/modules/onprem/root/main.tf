@@ -4,9 +4,6 @@
 # DRAFT(ai): 폴더·변수 이름은 계획 27 3.2 기준 초안
 terraform {
   required_version = ">= 1.11"
-  backend "local" {
-    path = "../terraform.tfstate"
-  }
   required_providers {
     kubernetes = { source = "hashicorp/kubernetes", version = "~> 2.38" }
     time       = { source = "hashicorp/time", version = "~> 0.13" }

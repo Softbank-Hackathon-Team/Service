@@ -27,6 +27,8 @@ export { registryOf, isPublicImage } from "./common/base.js";
 export { dbIdentityFor } from "./target/data-fit.js";
 export { realTerraformEnabled, iacMockEnabled, findWorkDir, readImported, type ImportedInfra, TENANT_DIR_RE, createRealTerraformRunner, fillTfVars, factsFromEnv, factEnvName, parseOutputs, childEnv,
   workRootOf, workDirOf, PLAN_ONLY_ID, planOnlyId, spawnExec, REAL_MODULE_BASE, ROOT_DIR, layoutOf, type TfLayout, DEFAULT_MODULE_ROOT, type Exec, type ExecResult, type RealApplyResult, type RealTerraformRunner } from "./terraform/real-runner.js";
+// 고객 배포 Terraform state 위치 (TF_STATE_BACKEND=s3 → 고객 state 전용 버킷, 없으면 작업 폴더 로컬)
+export { stateBackend, stateBackendKind, appStateKey, envStateKey, TF_STATE_PROFILE, TF_STATE_CONFIG_FILE, TF_STATE_CREDENTIALS_FILE, type StateBackend, type StateBackendInput } from "./terraform/state-backend.js";
 // 환경 층 (도착 GCP 프로젝트의 VPC·GKE·AR·ESO). worker env-layer.ts 가 apply 맨 앞에서 부른다
 export { createEnvLayerRunner, envLayerVars, envLayerVarsHash, envLayerFactsOf, factsOfLayer, mergeFacts, envLayerBackend, envLayerDirOf, envLayerBudgetSec,
   ENV_LAYER_KEYS, ENV_LAYER_MODULE, ENV_LAYER_MODULE_DIGEST, ENV_LAYER_NAME, type EnvLayerFacts, type EnvLayerVars, type EnvLayerResult, type EnvLayerRunner, type EnvLayerRunnerOpts } from "./terraform/env-layer.js";

@@ -86,7 +86,7 @@ async function main() {
   if (cmd === "list") {
     const rows = r.list();
     if (!rows.length) console.log(`작업 폴더 없음 (${r.workRoot})`);
-    for (const x of rows) console.log(`${x.migrationId}  ${x.tenant ?? "-"}  ${x.provider}  state 자원 ${x.resources}개  ${x.workDir}`);
+    for (const x of rows) console.log(`${x.migrationId}  ${x.tenant ?? "-"}  ${x.provider}  ${x.stateBackend === "s3" ? "state 원격(s3), 자원 수 모름" : `state 자원 ${x.resources}개`}  ${x.workDir}`);
     return;
   }
   if (cmd === "destroy") {

@@ -4,10 +4,6 @@
 # DRAFT(ai): 폴더·변수 이름은 계획 27 3.1·3.2 기준 초안
 terraform {
   required_version = ">= 1.11"
-  # state 는 작업 폴더 바로 아래. 상대 경로는 -chdir=root 기준
-  backend "local" {
-    path = "../terraform.tfstate"
-  }
   required_providers {
     google     = { source = "hashicorp/google", version = "~> 6.0" }
     random     = { source = "hashicorp/random", version = "~> 3.6" }

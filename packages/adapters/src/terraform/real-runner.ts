@@ -4,6 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Provider, TfOutputs, TfVars } from "@svc/contracts";
 import { envNumber, tfBudget } from "@svc/contracts";
+import { appStateKey, stateBackend } from "./state-backend.js";
 
 // Z70 DRAFT(ai): aws/gcp/onprem 의 "진짜 terraform 실행기".
 // Z89: 기본이 진짜다. 흉내(예전 STUB)는 시험 전용 스위치 MOCK_IAC=1 하나로만 켠다 (test:db·e2e·prod-e2e 가 붙인다).
@@ -15,7 +16,8 @@ import { envNumber, tfBudget } from "@svc/contracts";
 //   3) terraform init → plan -out=tfplan → apply tfplan → output -json
 //   4) 출력 중 sensitive 아닌 문자열만 TfOutputs 로 돌려준다 + outputs.json 저장 (복제 끝점 {tf:키} 가 읽는다)
 //   5) (선택) DB 비밀번호를 비밀 저장소에서 꺼내 db-secret.json(0600) 에 둔다. DB·감사 기록·로그에는 절대 안 남긴다
-// state 는 로컬 파일(작업 폴더 안). 결선 전 TF backend 로컬 유지 결정(Z67)과 같다. 파기는 같은 폴더에서 destroy
+// state 는 기본 로컬 파일(작업 폴더 안, Z67). TF_STATE_BACKEND=s3 이고 회사가 있으면 고객 state 전용 버킷(state-backend.ts)으로,
+//   작업 폴더의 root/backend.tf 를 s3 블록으로 덮어쓴다. 파기는 같은 폴더에서 destroy (그 backend.tf 대로 init → 원격 state)
 // 클라우드 VM 스레드에서는 이 길을 켜지 않는다 (시험은 가짜 exec 로만)
 
 export interface ExecResult { code: number; stdout: string; stderr: string; ms: number }
@@ -221,6 +223,11 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
     const src = join(moduleRoot, base);
     if (!existsSync(join(src, ROOT_DIR, "main.tf"))) throw new Error(`no root module for ${provider}: ${join(base, ROOT_DIR)}`);
     copyTf(join(src, ROOT_DIR), join(dir, ROOT_DIR));
+    // 고객 state 원격 저장: 회사가 있을 때만 (plan 전용·옛 폴더는 로컬 그대로). local 이면 모듈의 backend.tf 를 그대로 둔다
+    if (tenant) {
+      const b = stateBackend(env, { key: appStateKey(tenant, migrationId), localPath: "../terraform.tfstate", dir });
+      if (b.kind === "s3") writeFileSync(join(dir, ROOT_DIR, "backend.tf"), b.hcl);
+    }
     const kindsSrc = join(src, "kinds");
     if (existsSync(kindsSrc)) for (const k of readdirSync(kindsSrc, { withFileTypes: true }).filter((e) => e.isDirectory()).sort((a, b) => a.name.localeCompare(b.name)))
       copyTf(join(kindsSrc, k.name), join(dir, "kinds", k.name));
@@ -345,6 +352,7 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
       const steps: RealStep[] = []; const log: string[] = [];
       // Z89: 회사 폴더 아래(<뿌리>/t-xxxxxxxx/<이전>) 먼저, 없으면 예전 폴더
       const found = findWorkDir(workRoot, migrationId);
+      // TODO(human): s3 state 인데 작업 폴더를 잃은 경우(워커 디스크 유실) 승인된 계획서로 tfvars·backend.tf 를 다시 만들어 destroy (다음 PR). 지금은 건너뜀
       if (!found) return { ok: true, skipped: "no_work_dir", workDir: workDirOf(workRoot, migrationId), steps, log, elapsedMs: 0 };
       const dir = found;
       const layout = layoutOf(dir);   // 작업 폴더 모양대로 (예전 통짜 모듈로 만든 폴더가 남아 있어도 그 모양으로 지움)
@@ -366,11 +374,18 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
       }
       return dirs.map(({ d, tenant }) => {
         const dir = join(workRoot, d);
-        const st = existsSync(join(dir, "terraform.tfstate")) ? readFileSync(join(dir, "terraform.tfstate"), "utf8") : "";
+        // 원격 state 폴더는 로컬 terraform.tfstate 가 없다 → 0 개로 세지 않고 -1(모름)
+        // TODO(human): s3 state 의 자원 수 세기 (terraform state list 를 부르면 init·자격이 필요해서 list 가 느려진다)
+        const bf = join(dir, ROOT_DIR, "backend.tf");
+        const stateBackendKind: "local" | "s3" = existsSync(bf) && /backend\s+"s3"/.test(readFileSync(bf, "utf8")) ? "s3" : "local";
         let resources = 0;
-        try { resources = (JSON.parse(st || "{}").resources ?? []).length; } catch { resources = -1; }
+        if (stateBackendKind === "s3") resources = -1;
+        else {
+          const st = existsSync(join(dir, "terraform.tfstate")) ? readFileSync(join(dir, "terraform.tfstate"), "utf8") : "";
+          try { resources = (JSON.parse(st || "{}").resources ?? []).length; } catch { resources = -1; }
+        }
         const provider = existsSync(join(dir, "provider.txt")) ? readFileSync(join(dir, "provider.txt"), "utf8").trim() : "?";
-        return { migrationId: tenant ? d.slice(tenant.length + 1) : d, tenant, provider, resources, workDir: dir };
+        return { migrationId: tenant ? d.slice(tenant.length + 1) : d, tenant, provider, resources, stateBackend: stateBackendKind, workDir: dir };
       });
     },
   };

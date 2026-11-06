@@ -49,7 +49,9 @@ test("1차(create_eso=false)·2차(create_eso=true) 순서로 init·plan·apply,
   assert.ok(existsSync(join(dir, "modules/gcp/env/main.tf")));
   assert.ok(existsSync(join(dir, "charts/cluster-secret-store/Chart.yaml")));
   assert.match(readFileSync(join(dir, "modules/gcp/env/zz_backend.tf"), "utf8"), /path = "\.\.\/\.\.\/\.\.\/terraform\.tfstate"/);
-  assert.equal(envLayerBackend(dir).file, join(dir, "terraform.tfstate"));
+  const backend = envLayerBackend(dir, TENANT, ENV_ID, {});
+  assert.equal(backend.kind, "local");
+  assert.equal(backend.kind === "local" ? backend.file : "", join(dir, "terraform.tfstate"));
   assert.ok(!existsSync(join(dir, "modules/gcp/env/tests")), "시험 폴더는 복사하지 않는다");
 });
 

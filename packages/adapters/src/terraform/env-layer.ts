@@ -5,6 +5,7 @@ import type { TfOutputs } from "@svc/contracts";
 import { envNumber, tfBudget } from "@svc/contracts";
 import { MODULE_DIGEST } from "../module-digests.js";
 import { childEnv, DEFAULT_MODULE_ROOT, parseOutputs, spawnExec, TENANT_DIR_RE, workRootOf, type Exec, type RealStep } from "./real-runner.js";
+import { envStateKey, stateBackend } from "./state-backend.js";
 
 // 아키텍처 이전 9단계의 "4 기반 생성(VPC·클러스터·DB)" 중 환경 층 (도착 GCP 프로젝트에 VPC·GKE·Artifact Registry + ESO).
 // 앱 층(gcp/root, 이전마다)과 달리 환경 하나에 한 번 만들고, 이전이 끝나도 지우지 않는다 (환경 소유).
@@ -68,12 +69,14 @@ export function envLayerVarsHash(v: EnvLayerVars): string {
   return createHash("sha256").update(JSON.stringify(keys.map((k) => [k, v[k]]))).digest("hex");
 }
 
-/** state 를 어디에 둘지 한 곳. 지금은 작업 폴더 로컬 파일 (앱 층 Z67 결정과 같음) */
-// TODO(human): env 층 state 원격 저장 (s3 tfstate/<tenant>/<env>, tf-state 역할 assume_role). 환경 층은 이전보다 오래 살아서
-//   worker 디스크(#265 EBS)를 잃으면 state 를 다시 import 해야 한다. 원격으로 옮길 때 이 함수만 바꾼다
-export function envLayerBackend(dir: string): { kind: "local"; file: string; hcl: string } {
-  const file = join(dir, "terraform.tfstate");
-  return { kind: "local", file, hcl: `terraform {\n  backend "local" {\n    path = "../../../terraform.tfstate"\n  }\n}\n` };
+/** state 를 어디에 둘지 한 곳. 앱 층과 같은 state-backend.ts 를 쓴다.
+ *  TF_STATE_BACKEND 없음 → 작업 폴더 로컬 파일 (file = 그 경로). s3 → 고객 state 전용 버킷 tenants/<회사>/envs/<환경 id>/terraform.tfstate
+ *  (워커 자기 자격으로 tf-state 역할을 빌림. 환경 층은 이전보다 오래 살아서 worker 디스크(#265 EBS)를 잃어도 state 가 남아야 한다)
+ *  file 은 local 일 때만 있다 (s3 는 로컬 state 파일이 없다) */
+export function envLayerBackend(dir: string, tenant: string, envId: string, env: NodeJS.ProcessEnv = process.env):
+  { kind: "local"; file: string; hcl: string } | { kind: "s3"; key: string; hcl: string } {
+  const b = stateBackend(env, { key: envStateKey(tenant, envId), localPath: "../../../terraform.tfstate", dir });
+  return b.kind === "local" ? { ...b, file: join(dir, "terraform.tfstate") } : b;
 }
 
 export const envLayerDirOf = (root: string, tenant: string, envId: string) => {
@@ -123,7 +126,7 @@ export function createEnvLayerRunner(o: EnvLayerRunnerOpts) {
     const chart = join(moduleRoot, "..", "charts", "cluster-secret-store");
     if (!existsSync(chart)) throw new Error("no chart infra/charts/cluster-secret-store (worker image must copy infra/charts)");
     cpSync(chart, join(dir, "charts", "cluster-secret-store"), { recursive: true });
-    writeFileSync(join(mod, "zz_backend.tf"), envLayerBackend(dir).hcl);
+    writeFileSync(join(mod, "zz_backend.tf"), envLayerBackend(dir, tenant, envId, base).hcl);
     writeFileSync(join(dir, "provider.txt"), "gcp");
     writeFileSync(join(dir, "tenant.txt"), tenant);
     return dir;

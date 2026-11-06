@@ -5,10 +5,6 @@
 # DRAFT(ai): 폴더·변수 이름은 계획 27 3.1·3.2 기준 초안
 terraform {
   required_version = ">= 1.11"
-  # state 는 작업 폴더 바로 아래 (findWorkDir·destroy·list 가 지금 위치 그대로 찾게). 상대 경로는 -chdir=root 기준
-  backend "local" {
-    path = "../terraform.tfstate"
-  }
   required_providers {
     aws        = { source = "hashicorp/aws", version = "~> 6.0" }
     kubernetes = { source = "hashicorp/kubernetes", version = "~> 2.38" }

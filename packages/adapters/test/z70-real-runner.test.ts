@@ -261,3 +261,40 @@ test("Z89: imported.json 이 있으면 그 출력·자원 목록을 읽는다 (�
   const r = readImported(root, MID, TEN)!;
   assert.deepEqual([r.source, r.tfOutputs, r.resources], ["z88-import", { db_address: "x.rds" }, ["aws_db_instance.db"]]);
 });
+
+test("TF_STATE_BACKEND=s3: 회사가 있으면 작업 폴더 root/backend.tf 가 s3 블록으로 덮어써지고, list 는 자원 수를 모름(-1)으로", async () => {
+  const root = tmp(); const { exec, calls } = fakeExec();
+  const S3 = { TF_STATE_BACKEND: "s3", TF_STATE_BUCKET: "svc-customer-tfstate", TF_STATE_ROLE_ARN: "arn:aws:iam::111122223333:role/platform-tf-state", TF_STATE_REGION: "ap-northeast-2" };
+  const r = createRealTerraformRunner({ exec, workRoot: root, env: { TF_FETCH_DB_SECRET: "0", ...S3 } });
+  const res = await r.apply("aws", MID, { app_name: "shop" }, undefined, TEN);
+  assert.equal(res.ok, true, res.log.join("\n"));
+  const dir = join(root, TEN, MID);
+  const hcl = readFileSync(join(dir, "root", "backend.tf"), "utf8");
+  assert.match(hcl, /backend "s3"/);
+  assert.ok(!hcl.includes('backend "local"'), "backend 블록은 하나만");
+  assert.ok(hcl.includes(`key                      = "tenants/${TEN}/migrations/${MID}/terraform.tfstate"`));
+  assert.ok(hcl.includes(`shared_config_files      = ["${join(dir, "tfstate-aws-config")}"]`));
+  assert.equal(statSync(join(dir, "tfstate-aws-config")).mode & 0o777, 0o600);
+  // main.tf 에는 backend 가 없다 (모듈 backend.tf 로 분리됨)
+  assert.ok(!/backend\s+"/.test(readFileSync(join(dir, "root", "main.tf"), "utf8")));
+  // TF_STATE_* 는 terraform 자식 env 로 안 넘긴다
+  assert.ok(calls.every((c) => !Object.keys(c.env).some((k) => k.startsWith("TF_STATE_"))));
+  assert.deepEqual(r.list().map((x) => [x.migrationId, x.resources, x.stateBackend]), [[MID, -1, "s3"]]);
+  // 회사 없는 plan 전용은 local 그대로 (모듈 backend.tf)
+  await r.planOnly("aws", { app_name: "shop" });
+  assert.match(readFileSync(join(root, planOnlyId("aws"), "root", "backend.tf"), "utf8"), /backend "local"/);
+  // s3 인데 버킷이 없으면 terraform 을 부르기 전에 멈춘다
+  calls.length = 0;
+  const bad = createRealTerraformRunner({ exec, workRoot: tmp(), env: { ...S3, TF_STATE_BUCKET: "" } });
+  await assert.rejects(bad.apply("aws", MID, {}, undefined, TEN), /TF_STATE_BUCKET/);
+  assert.equal(calls.length, 0);
+});
+
+test("환경변수 없음: 회사가 있어도 root/backend.tf 는 모듈의 local 그대로, list 는 stateBackend=local", async () => {
+  const root = tmp(); const { exec } = fakeExec();
+  const r = createRealTerraformRunner({ exec, workRoot: root, env: { TF_FETCH_DB_SECRET: "0" } });
+  await r.apply("gcp", MID, { app_name: "shop" }, undefined, TEN);
+  assert.match(readFileSync(join(root, TEN, MID, "root", "backend.tf"), "utf8"), /backend "local" \{\n    path = "\.\.\/terraform\.tfstate"/);
+  assert.equal(existsSync(join(root, TEN, MID, "tfstate-aws-config")), false);
+  assert.deepEqual(r.list().map((x) => [x.resources, x.stateBackend]), [[0, "local"]]);
+});
