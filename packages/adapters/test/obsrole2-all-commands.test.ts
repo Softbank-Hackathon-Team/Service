@@ -90,6 +90,17 @@ test("GCP 연결 스크립트의 관찰 역할 권한 = 표의 모든 권한을 
   for (const p of perms) assert.match(p, /\.(get|list|getIamPolicy)$/, p);
 });
 
+// NS-1: 가져오기(discover/k8s.ts)가 앱 네임스페이스 객체를 이름으로 읽는다 (kubectl get namespace <ns>). GKE 는 이 조회에 get 권한을 따로 본다.
+//   빠지면 GKE 출발마다 namespaces.<ns> 검토 칸이 생기고 라벨(파드 보안 수준·메시 주입)이 안 옮겨진다
+test("NS-1: GCP 관찰 역할(DRY_RUN 출력)에 container.namespaces.get 이 있음 (원래·전용 프로젝트 둘 다)", () => {
+  const SA = "t-" + "0123456789abcdef0123456789ab" + "@platform-prj.iam.gserviceaccount.com";
+  const out = spawnSync("bash", [new URL("infra/onboarding/gcp-connect.sh", root).pathname], {
+    env: { PATH: process.env.PATH, PLATFORM_SA: SA, PROJECT_ID: "cust-prj", TARGET_PROJECT_ID: "cust-mig", DRY_RUN: "1" }, encoding: "utf8" }).stdout;
+  const lines = out.split("\n").filter((l) => l.includes("roles create platform_observe "));
+  assert.deepEqual(lines.map((l) => /--project=(\S+)/.exec(l)![1]), ["cust-prj", "cust-mig"]);
+  for (const l of lines) assert.ok(/--permissions=(\S+)/.exec(l)![1]!.split(",").includes("container.namespaces.get"), l.slice(0, 120));
+});
+
 test("거부: 표 전체에 쓰기·비밀값·내용 읽기 권한이 하나도 없음 (표에 넣으면 이 시험이 깨짐)", () => {
   const FORBIDDEN = [/^secretsmanager:(GetSecretValue|BatchGetSecretValue|Put|Create|Delete|Update|Rotate)/, /^ssm:/, /^kms:/, /^s3:(GetObject|PutObject|DeleteObject|ListBucket$|GetBucketPolicy$)/,
     /^sqs:(Receive|Send|Purge|Delete|Set|Create)/, /^iam:(Create|Put|Delete|Attach|Detach|Update|PassRole|AssumeRole)/, /^eks:(Create|Delete|Update|Associate)/, /^rds:(Create|Modify|Delete)/,
