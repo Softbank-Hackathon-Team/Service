@@ -10,7 +10,7 @@ import { aboutMigration } from '../../lib/events';
 import { errorCode, errorText } from '../../lib/errors';
 import { stopReasonOf } from '../../lib/failure';
 import { is404, or404 } from '../../lib/http';
-import { planResourceRows, runtimeChangeNote, substituteRows } from '../../lib/resourceMap';
+import { planResourceRows, runtimeChangeNote } from '../../lib/resourceMap';
 import { LABEL } from '../../lib/status';
 import { failureDetail, lastPrecheckBounce } from '../../lib/timelineDetail';
 import type { MigrationView, PlanAckKind, PrecheckItem } from '../../lib/types';
@@ -19,7 +19,7 @@ import { useAgentReview } from '../agent/AgentResult';
 import { failureAnalysisOf } from '../agent/model';
 import { costCaveats, costNote, costSummary, planCostCaveats, planCostSummary } from '../cost/model';
 import {
-  ackState, approveLabel, autoStart, canReplan, failureChoices, pollMs, screenOf, signalCovers, specRows, stepGate, stepName, usd, type MigrationScreen, type RetryStage,
+  ackPlaces, ackState, approveLabel, autoStart, canReplan, failureChoices, pollMs, screenOf, signalCovers, specRows, stepGate, stepName, usd, type MigrationScreen, type RetryStage,
 } from './model';
 import { scopeLabel } from './source';
 import { SecurityFold } from './SecurityCard';
@@ -33,7 +33,6 @@ import { RequirementsFold, SourceFactsFold, VerdictFold } from './SecurityFolds'
 import { SubstituteMap } from './SubstituteMap';
 import { isSecItem, precheckLine, secAckLabel, type SecuritySpecV2 } from './securityV2';
 import { ConfirmPill, Frame, useAction, useCostConsent, type ScreenProps } from './shared';
-import { Section } from '../common/Section';
 import s from '../common/page.module.css';
 import { localeTag, t } from '../../lib/i18n';
 
@@ -363,7 +362,12 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
   const warns = checks.filter((item) => item.level !== 'info').length;
   const expired = doc ? Date.parse(doc.expiresAt) <= Date.now() : false;
   const mapped = planResourceRows(resources.data);
-  const substitutes = substituteRows(doc?.acknowledgements);
+  // 확인 항목마다 확인하는 자리는 하나다: 상품 대체는 큰 카드의 대응 줄, 나머지는 "승인 전에 확인" 목록. 승인 버튼은 둘을 합쳐 센다(acks)
+  const places = ackPlaces(doc?.acknowledgements);
+  const listLeft = places.list.filter((ack) => !ticks.has(ack.id)).length;
+  // 상품 대체가 있으면 큰 카드 본문은 대응 줄이 차지하고, 계획 지문은 머리줄 오른쪽 끝으로 올린다
+  const substituting = places.substitutes.length > 0;
+  const hash = doc && <CodeValue value={doc.planHash} chip max={substituting ? 24 : 32} />;
 
   return (
     <Frame migration={migration} route={route}>
@@ -372,8 +376,17 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
         meta={t('계획서')}
         title={expired ? t('승인 시간이\n지났습니다') : acks.missing.length > 0 ? t('확인할 것 {0}개를 보고\n승인해 주세요', { 0: acks.missing.length }) : t('승인하면 이대로\n바로 실행합니다')}
         foot={doc ? t('유효 시각 {0}', { 0: new Date(doc.expiresAt).toLocaleString(localeTag(), { hour12: false }) }) : undefined}
+        action={substituting && hash}
       >
-        {doc && <CodeValue value={doc.planHash} chip max={32} />}
+        {substituting && (
+          <SubstituteMap
+            rows={places.substitutes}
+            source={resources.data?.source.provider ?? null}
+            target={resources.data?.target.provider ?? null}
+            confirm={{ checked: ticks, disabled: busy || expired, onToggle: (id) => tick(id, !ticks.has(id)) }}
+          />
+        )}
+        {!substituting && hash}
         {doc && (
           <p className="t-body-md c-secondary">
             {t('오류율이 {0}%를 넘거나 응답 시간이 {1}배를 넘으면 자동으로 되돌립니다', { 0: doc.rollbackCriteria.errorRatePct, 1: doc.rollbackCriteria.p95Multiplier })}
@@ -381,10 +394,10 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
         )}
       </Hero>
       <Stack area="side">
-        {doc && acks.total > 0 && (
-          <FoldTile title={t('승인 전에 확인')} summary={acks.missing.length > 0 ? t('{0}개 남음', { 0: acks.missing.length }) : t('모두 확인함')}>
+        {doc && places.list.length > 0 && (
+          <FoldTile title={t('승인 전에 확인')} summary={listLeft > 0 ? t('{0}개 남음', { 0: listLeft }) : t('모두 확인함')}>
             <ul className={s.rows}>
-              {(doc.acknowledgements ?? []).map((ack) => (
+              {places.list.map((ack) => (
                 <li key={ack.id}>
                   <label className={`${s.ack} t-body-sm`}>
                     <input type="checkbox" checked={ticks.has(ack.id)} disabled={busy || expired} onChange={(event) => tick(ack.id, event.target.checked)} />
@@ -434,38 +447,32 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
         </FoldTile>
         {doc && <VerdictFold items={doc.precheck} />}
         <FoldTile
-          key={`map-${substitutes.length > 0}`}
           title={t('자원 대응')}
           summary={resources.data ? t('{0}개{1}', { 0: mapped.listed.length, 1: [
-            substitutes.length > 0 ? t(' · 상품 대체 {0}', { 0: substitutes.length }) : '',
+            substituting ? t(' · 상품 대체 {0}', { 0: places.substitutes.length }) : '',
             mapped.runtimeChanges > 0 ? t(' · 실행 방식 바뀜 {0}', { 0: mapped.runtimeChanges }) : '',
           ].join('') }) : ''}
-          defaultOpen={substitutes.length > 0}
+          defaultOpen={false}
         >
-          {doc && (
-            <SubstituteMap rows={substitutes} source={resources.data?.source.provider ?? null} target={resources.data?.target.provider ?? null} checked={ticks} />
+          <ul className={s.rows}>
+            {mapped.listed.map(({ key, row }) => (
+              <li key={key}>
+                <div className={s.row}>
+                  <span className="t-label-md">{row.label}</span>
+                  <span className={`${s.rowValue} t-caption c-tertiary`}>
+                    {row.source?.service ?? t('없음')} → {row.target?.service ?? t('없음')}
+                  </span>
+                </div>
+                {runtimeChangeNote(row) && <p className={`${s.rowCaption} t-caption c-warning`}>{runtimeChangeNote(row)}</p>}
+              </li>
+            ))}
+          </ul>
+          {/* 경계 밖 자원은 옮기는 자원이 아니라 "건드리지 않는 것" 안내라 표 밖에 한 줄로 둔다 */}
+          {mapped.boundary && (
+            <p className={`${s.note} t-caption c-tertiary`}>
+              {mapped.boundary.label} · {mapped.boundary.afterSource ?? t('옮기지 않음')}
+            </p>
           )}
-          <Section title={t('전체 자원')} summary={t('{0}개', { 0: mapped.listed.length })} defaultOpen={substitutes.length === 0}>
-            <ul className={s.rows}>
-              {mapped.listed.map(({ key, row }) => (
-                <li key={key}>
-                  <div className={s.row}>
-                    <span className="t-label-md">{row.label}</span>
-                    <span className={`${s.rowValue} t-caption c-tertiary`}>
-                      {row.source?.service ?? t('없음')} → {row.target?.service ?? t('없음')}
-                    </span>
-                  </div>
-                  {runtimeChangeNote(row) && <p className={`${s.rowCaption} t-caption c-warning`}>{runtimeChangeNote(row)}</p>}
-                </li>
-              ))}
-            </ul>
-            {/* 경계 밖 자원은 옮기는 자원이 아니라 "건드리지 않는 것" 안내라 표 밖에 한 줄로 둔다 */}
-            {mapped.boundary && (
-              <p className={`${s.note} t-caption c-tertiary`}>
-                {mapped.boundary.label} · {mapped.boundary.afterSource ?? t('옮기지 않음')}
-              </p>
-            )}
-          </Section>
         </FoldTile>
         <SecurityFold migration={migration} />
         <ActionRow notice={error ?? (plan.error != null && !doc ? errorText(plan.error) : null)}>

@@ -100,14 +100,18 @@ type OptionPillProps = {
   label: string;
   icon?: IconName;
   selected: boolean;
+  /** 여럿 중 고르기가 아니라 항목 하나를 확인하는 칸이면 체크 상자로 읽힌다 (계획 승인 확인 항목) */
+  checkbox?: boolean;
+  disabled?: boolean;
   onClick: () => void;
 };
 
-export function OptionPill({ label, icon, selected, onClick }: OptionPillProps) {
+export function OptionPill({ label, icon, selected, checkbox, disabled, onClick }: OptionPillProps) {
   return (
     <button
       type="button"
-      aria-pressed={selected}
+      {...(checkbox ? { role: 'checkbox', 'aria-checked': selected } : { 'aria-pressed': selected })}
+      disabled={disabled}
       className={`${s.option} ${selected ? s.optionSelected : ''} t-label-md`}
       onClick={onClick}
     >

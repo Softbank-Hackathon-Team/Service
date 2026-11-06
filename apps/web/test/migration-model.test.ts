@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  ackState, approveLabel, canPick, canReplan, canRollback, failureChoices, formatClock, judgementRows, leftoversOf, leftoverValue, migrationSteps, needsStepAnchor, stepsPhase,
+  ackPlaces, ackState, approveLabel, canPick, canReplan, canRollback, failureChoices, formatClock, judgementRows, leftoversOf, leftoverValue, migrationSteps, needsStepAnchor, stepsPhase,
   pollMs, screenOf, shiftNote, signalCovers, specRows, stepAnchorFrom, stepGate, trafficPercent, trafficReportRows,
 } from "../src/features/migration/model";
 import { planResourceRows, runtimeChangeNote, substituteRows, type ResourceRow } from "../src/lib/resourceMap";
@@ -280,4 +280,34 @@ test("상품 대체 줄: substitute 확인 항목만 서버 순서대로 한 줄
   const ticked = new Set(rows.map((row) => row.ackId));
   assert.deepEqual(ackState(acks, ticked).missing, ["cost", "runtime_change:web"]);
   assert.deepEqual(substituteRows(undefined), []);
+});
+
+test("계획 승인 확인 자리: 항목마다 한 자리(상품 대체는 큰 카드 줄 끝 버튼, 나머지는 목록 체크), 승인은 두 자리를 다 확인해야 켜진다", () => {
+  const acks: PlanAcknowledgement[] = [
+    { id: "cost", kind: "cost", text: "월 비용" },
+    { id: "substitute:cache", kind: "substitute", ref: "cache", text: "ElastiCache (redis) → Memorystore (redis)", from: "ElastiCache (redis)", to: "Memorystore (redis)" },
+    { id: "ack-pc-pg-02", kind: "precheck_warn", ref: "PC-PG-02", text: "기본 키 없는 표 1개" },
+    { id: "substitute:jobs", kind: "substitute", ref: "jobs", text: "SQS → Pub/Sub", from: "SQS", to: "Pub/Sub", appChange: true },
+  ];
+  const places = ackPlaces(acks);
+  const heroIds = places.substitutes.map((row) => row.ackId);
+  const listIds = places.list.map((ack) => ack.id);
+  assert.deepEqual(heroIds, ["substitute:cache", "substitute:jobs"]);
+  assert.deepEqual(listIds, ["cost", "ack-pc-pg-02"]);
+
+  const gate = (ids: string[]) => {
+    const state = ackState(acks, new Set(ids));
+    return { ready: state.ready, label: approveLabel({ busy: false, expired: false, missing: state.missing.length }) };
+  };
+  assert.deepEqual(gate([]), { ready: false, label: "확인 4개 남음" });
+  assert.deepEqual(gate(heroIds), { ready: false, label: "확인 2개 남음" }, "큰 카드 줄만 확인하면 목록이 남는다");
+  assert.deepEqual(gate(listIds), { ready: false, label: "확인 2개 남음" }, "목록만 체크하면 상품 대체가 남는다");
+  assert.deepEqual(gate([...heroIds, ...listIds]), { ready: true, label: "승인하고 실행 시작" });
+  assert.deepEqual(gate([heroIds[1]!, ...listIds]), { ready: false, label: "확인 1개 남음" }, "줄 하나를 다시 누르면(확인 취소) 다시 꺼진다");
+  assert.deepEqual(ackState(acks, new Set([...heroIds, ...listIds])).ids, ["cost", "substitute:cache", "ack-pc-pg-02", "substitute:jobs"], "승인 본문 acks 는 계획서 항목 전부");
+
+  const onlySubstitutes = acks.filter((ack) => ack.kind === "substitute");
+  const alone = ackPlaces(onlySubstitutes);
+  assert.equal(alone.list.length, 0, "상품 대체만 있으면 목록 카드가 없다");
+  assert.equal(ackState(onlySubstitutes, new Set(alone.substitutes.map((row) => row.ackId))).ready, true, "큰 카드 확인만으로 승인한다");
 });

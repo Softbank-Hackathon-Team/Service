@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Badge } from '../../components/ui/controls';
+import { useRef, useState } from 'react';
+import { Badge, OptionPill } from '../../components/ui/controls';
 import { Icon } from '../../components/ui/Icon';
 import { t } from '../../lib/i18n';
 import type { SubstituteRow } from '../../lib/resourceMap';
@@ -10,39 +10,65 @@ import s from './SubstituteMap.module.css';
 // 옮기지 못하는 것이 이보다 많으면 나머지는 접어 둔다 (줄 높이가 고르게)
 const LOST_SHOWN = 3;
 
+type Confirm = { checked: ReadonlySet<string>; disabled: boolean; onToggle: (ackId: string) => void };
+
+// 칸 위쪽 흐림(scroll-fade 32px)의 절반. 다음 줄로 넘길 때 구분선이 흐림 안에, 머리줄은 흐림 밖에 온다
+const ADVANCE_GAP = 16;
+
 /**
- * "자원 대응" 카드의 상품 대체 그래프. 한 줄 = 출발 상품 카드 → 도착 상품 카드.
- * 줄마다 계획서 확인 항목이라 체크 상태만 보여 준다. 체크는 "승인 전에 확인" 카드 한 곳에서만 한다
+ * 계획 승인 큰 카드의 상품 대체 그래프. 한 줄 = 출발 상품 카드 → 도착 상품 카드, 그 밑에 옮기지 못하는 것.
+ * 줄마다 오른쪽 끝의 확인 버튼이 그 계획서 확인 항목(ackId)을 확인하는 유일한 자리다. 남은 높이보다 길면 이 칸만 스크롤한다
  */
-export function SubstituteMap({ rows, source, target, checked }: {
-  rows: SubstituteRow[]; source: Provider | null; target: Provider | null; checked: ReadonlySet<string>;
+export function SubstituteMap({ rows, source, target, confirm }: {
+  rows: SubstituteRow[]; source: Provider | null; target: Provider | null; confirm: Confirm;
 }) {
-  if (rows.length === 0) return <p className={`${s.empty} t-body-sm c-tertiary`}>{t('승인할 상품 대체가 없습니다')}</p>;
+  const box = useRef<HTMLDivElement>(null);
+  // 한 줄을 확인하면 다음 줄을 칸 맨 위로 올린다. 작은 화면에서 줄마다 손으로 스크롤하지 않게
+  const advance = (item: HTMLElement) => {
+    const next = item.nextElementSibling;
+    if (!box.current || !next) return;
+    const top = box.current.scrollTop + next.getBoundingClientRect().top - box.current.getBoundingClientRect().top - ADVANCE_GAP;
+    box.current.scrollTo({ top, behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  };
   return (
-    <div className={s.map}>
+    <div ref={box} className={`${s.map} scroll-fade`}>
       <p className="t-caption c-tertiary">{t('도착에서 다른 상품이 되는 자원')}</p>
       <ul className={s.rows}>
         {rows.map((row) => (
-          <SubstituteItem key={row.ackId} row={row} source={source} target={target} checked={checked.has(row.ackId)} />
+          <SubstituteItem key={row.ackId} row={row} source={source} target={target} confirm={confirm} onConfirmed={advance} />
         ))}
       </ul>
     </div>
   );
 }
 
-function SubstituteItem({ row, source, target, checked }: { row: SubstituteRow; source: Provider | null; target: Provider | null; checked: boolean }) {
+function SubstituteItem({ row, source, target, confirm, onConfirmed }: {
+  row: SubstituteRow; source: Provider | null; target: Provider | null; confirm: Confirm; onConfirmed: (item: HTMLElement) => void;
+}) {
+  const item = useRef<HTMLLIElement>(null);
   const [all, setAll] = useState(false);
   const lost = all ? row.lost : row.lost.slice(0, LOST_SHOWN);
   const hidden = row.lost.length - lost.length;
+  const checked = confirm.checked.has(row.ackId);
   return (
-    <li className={s.item}>
+    <li ref={item} className={s.item}>
       <div className={s.head}>
-        <span className="t-label-md">{row.resource}</span>
-        <Badge tone={checked ? 'success' : 'warning'}>{checked ? t('확인함') : t('승인 전에 확인')}</Badge>
+        <span className="t-h3">{row.resource}</span>
+        <OptionPill
+          checkbox
+          label={checked ? t('확인함') : t('확인')}
+          icon="check"
+          selected={checked}
+          disabled={confirm.disabled}
+          onClick={() => {
+            confirm.onToggle(row.ackId);
+            if (!checked && item.current) onConfirmed(item.current);
+          }}
+        />
       </div>
       <div className={s.card}>
         <span className={`${s.side} t-caption c-tertiary`}>{source ? PROVIDER_SHORT[source] : t('출발')}</span>
-        <span className="t-label-md">{row.from}</span>
+        <span className="t-h3">{row.from}</span>
       </div>
       <div className={s.link}>
         <Icon name="arrow-right" />
@@ -50,7 +76,7 @@ function SubstituteItem({ row, source, target, checked }: { row: SubstituteRow; 
       </div>
       <div className={s.card}>
         <span className={`${s.side} ${s.sideTarget} t-caption c-tertiary`}>{target ? PROVIDER_SHORT[target] : t('도착')}</span>
-        <span className="t-label-md">{row.to}</span>
+        <span className="t-h3">{row.to}</span>
       </div>
       {row.lost.length === 0 ? (
         <span className={`${s.lost} t-caption c-tertiary`}>{t('옮기지 못하는 것 없음')}</span>
@@ -58,7 +84,7 @@ function SubstituteItem({ row, source, target, checked }: { row: SubstituteRow; 
         <div className={s.lost}>
           <span className="t-caption c-tertiary">{t('옮기지 못하는 것')}</span>
           <ul>
-            {lost.map((item) => <li key={item} className="t-caption c-secondary">{item}</li>)}
+            {lost.map((item) => <li key={item} className="t-body-sm c-secondary">{item}</li>)}
           </ul>
           {hidden > 0 && (
             <button type="button" className={`${s.more} t-caption`} onClick={() => setAll(true)}>

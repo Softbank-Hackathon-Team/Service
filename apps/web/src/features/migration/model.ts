@@ -1,4 +1,5 @@
 import type { TrafficShiftProgress } from '../../lib/liveTraffic';
+import { substituteRows } from '../../lib/resourceMap';
 import { HUMAN_STEP, isTerminal, LABEL } from '../../lib/status';
 import type { Judgement } from '../../lib/timelineDetail';
 import {
@@ -9,6 +10,7 @@ import {
   type FootprintState,
   type MigrationStatus,
   type MigrationView,
+  type PlanAcknowledgement,
   type PlanDoc,
   type PlanStep,
   type TimelineItem,
@@ -133,6 +135,15 @@ export function ackState(acks: readonly { id: string }[] | undefined, checked: R
   const all = acks ?? [];
   const missing = all.filter((ack) => !checked.has(ack.id)).map((ack) => ack.id);
   return { total: all.length, missing, ready: missing.length === 0, ids: all.map((ack) => ack.id).filter((id) => checked.has(id)) };
+}
+
+/**
+ * 승인 확인 항목을 확인하는 자리로 나눈다. 항목마다 자리는 하나다.
+ * 상품 대체는 큰 카드의 대응 줄 끝 버튼, 나머지는 "승인 전에 확인" 목록의 체크. 둘 다 같은 체크 상태(ackState)를 바꾼다
+ */
+export function ackPlaces(acks: readonly PlanAcknowledgement[] | undefined) {
+  const all = acks ?? [];
+  return { substitutes: substituteRows(all), list: all.filter((ack) => ack.kind !== 'substitute') };
 }
 
 /** 승인 버튼 글자. 모자라면 무엇이 모자란지 말한다. */
