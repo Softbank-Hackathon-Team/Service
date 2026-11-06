@@ -331,6 +331,8 @@ export async function discoverGcp(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
   if (wantSql && !pickedSql.length) unreadDb.push(unreadItem("cloudsql.wanted", `지정한 Cloud SQL ${wantSql} 가 프로젝트 Postgres 목록에 없음 → DB 없이 명세를 만듦. 이름을 사람이 확인`));
   if (!wantSql && primaries.length > 1) notes.push(`Cloud SQL Postgres ${primaries.length}개를 모두 읽음 → 앱 경계가 근거로 고름`);
   const sqlItems: Obj[] = [];
+  // GCP-SQL-NET: Cloud SQL 방화벽(posture.network)은 RDS 처럼 따로 부르지 않는다 — 목록 응답의 settings.ipConfiguration(공개 IP·승인된 네트워크)이
+  //   그 자리라 그대로 넘기고 매퍼(mappers/cloudsql.ts cloudSqlIngress)가 FM-IR-02 와 같은 모양으로 바꾼다. 새 권한 없음 (cloudsql.instances.list)
   for (const db of pickedSql) {
     // N8: 데이터베이스 목록 (이름만). 못 읽으면 note
     const sqlDbs = await sideCore(`Cloud SQL ${String(db.name)} 데이터베이스`, async () => arr(await runJson(d, "gcloud", ["sql", "databases", "list", "--instance", String(db.name), ...p])).map((x) => ({ name: x.name })), notes);
