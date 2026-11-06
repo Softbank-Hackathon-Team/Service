@@ -74,6 +74,9 @@ locals {
   ipv4_enabled = var.cfg.public || var.cfg.repl_public
   authorized   = distinct(concat(var.cfg.public ? local.peer_cidrs : [], var.cfg.repl_public ? jsondecode(var.cfg.repl_peer_cidrs_json) : []))
   db_name      = coalesce(var.cfg.db_name, replace(var.app_name, "-", "_"))
+  # DRAFT(ai): PITR 트랜잭션 로그 기본 보관이 7일이라 백업 보관이 7 미만이면 Cloud SQL 생성이 실패한다
+  #   ("backup retention should be >= transaction log retention"). 출발 백업이 1~6일이면 도착은 7로 올린다 (BK-1 과 다름)
+  retained_backups = contains([1, 2, 3, 4, 5, 6], coalesce(var.cfg.backup_retention_days, 0)) ? 7 : var.cfg.backup_retention_days
   # IR 파라미터 그대로 + 플랫폼 요구(논리 디코딩)가 이긴다
   flags = merge(
     { for k, v in jsondecode(var.cfg.parameters_json) : k => tostring(v) },
@@ -119,7 +122,7 @@ resource "google_sql_database_instance" "db" {
       enabled                        = var.cfg.backup_retention_days != 0
       point_in_time_recovery_enabled = var.cfg.backup_retention_days != 0 && coalesce(var.cfg.pitr, true)
       dynamic "backup_retention_settings" {
-        for_each = coalesce(var.cfg.backup_retention_days, 0) > 0 ? [var.cfg.backup_retention_days] : []
+        for_each = coalesce(var.cfg.backup_retention_days, 0) > 0 ? [local.retained_backups] : []
         content {
           retained_backups = backup_retention_settings.value
           retention_unit   = "COUNT"
