@@ -27,6 +27,8 @@ const RULES: Rule[] = [
   // 워커 _fail-traffic.ts: 컷오버가 실패해 출발을 DB 주인으로 두고 트래픽을 출발 100% 로 되돌리려 했는데 재시도 뒤에도 못 함 → failed.
   //   트래픽 판정 문제가 아니다. 원래 실패 코드는 감사 detail.originalFailureCode. 롤백을 고르면 롤백 작업이 트래픽 되돌리기를 다시 한다
   { match: /^TRAFFIC_RESTORE_FAILED$/, kind: "step", label: t('트래픽 되돌리기 실패'), title: t('트래픽을 출발로\n되돌리지 못했습니다'), hint: t('DB 전환이 실패해 트래픽을 출발로 모두 되돌리려 했지만 다시 시도해도 못 했습니다. 요청 일부가 아직 도착으로 갈 수 있습니다.') },
+  // 워커 shift: 진짜 판에 판정 지표·LB 전환기 설정이 없음 → 가짜 지표로 판정하지 않고 가중치를 건드리기 전에 paused. 고객이 고칠 것이 아니다
+  { match: /^TRAFFIC_NOT_CONFIGURED$/, kind: "system", label: t('트래픽 설정 없음'), title: t('트래픽 전환 설정이\n없습니다'), hint: t('서버에 판정 지표(PROM_URL)나 로드 밸런서 전환기(TRAFFIC_PROVIDER) 설정이 없어 트래픽을 옮기지 않았습니다. 가짜 지표로 판정하지 않으려고 멈췄습니다. 플랫폼 운영자에게 알려 주세요.') },
   { match: /^TRAFFIC_/, kind: "guardrail", label: t('트래픽 이동 멈춤'), title: t('트래픽 이동이\n멈췄습니다'), hint: t('트래픽 판정이 다음 단계로 넘어가지 않았습니다.') },
   // vCluster 리허설 (워커 deploy 리허설 문). 실패하면 GitOps 에 커밋하지 않고 deploying → paused. 고객 클러스터에는 아무것도 반영하지 않았다.
   // 문장은 contracts REHEARSAL_FAILURE_CLASS 로 갈린다: 실제도 실패(would_fail) / 샌드박스가 보증 못 함(cannot_vouch) / 플랫폼 문제(platform)

@@ -4,7 +4,7 @@ import { runShift, shiftTransition, MigrationMoved, MAX_REOBSERVE, SHARE_TOL_PCT
 import { jobData, nextJob, readMigration, RetryLater, runStep, stubFailIfAsked } from "./_step.js";
 import { loadLatestPlan } from "./plan-store.js";
 import { configFromEnv, commitTrafficWeight, GitopsRepo, ENV_DIR, tenantSlug, type BundleRef } from "../gitops/index.js";
-import { trafficFor, trafficMetrics, trafficTickMs } from "../platform.js";
+import { missingTrafficConfig, TRAFFIC_CONFIG_HINT, trafficFor, trafficMetrics, trafficTickMs } from "../platform.js";
 import { restoredFromPct } from "../traffic-restore.js";
 import { sourceBaselineFor } from "../traffic-baseline.js";
 
@@ -50,6 +50,11 @@ export async function handleShift(raw: unknown) {
         reason: `관찰 ${obs.sec}초 × 단계 ${steps.length} × (1 + 재관찰 ${MAX_REOBSERVE}) = 최악 ${budget.worstSec}초 가 shift 작업 제한 ${budget.limitSec}초(만료 ${budget.expireSec}초의 90%)를 넘음 → 계획 holdSec·TRAFFIC_OBSERVE_SEC 를 줄이고 재개`,
         ...budget, observeSource: obs.source } } };
       const { lbId, switcher: sw, from: lbFrom } = await trafficFor(j.tenantId, j.migrationId);   // PF TRF-21: 이전별 LB 자리(DB) 먼저
+      // 진짜 판에서 지표·LB 전환기가 없으면 예전엔 가짜 정상 지표와 mock LB 로 cutover 까지 갔다. LB 주인 자리를 잡기 전에 멈춘다
+      const missing = missingTrafficConfig(sw.provider);
+      if (missing.length) return { to: "paused", failureCode: "TRAFFIC_NOT_CONFIGURED", detail: { shift: { error: "TRAFFIC_NOT_CONFIGURED", missing, trafficLbFrom: lbFrom,
+        reason: `진짜 판(MOCK_IAC·MOCK_TRAFFIC 꺼짐)인데 ${missing.join("·")} 없음. 가짜 지표·mock 전환기로 판정하지 않으려고 가중치를 안 건드리고 멈춤`,
+        hint: [...missing.map((k) => `${k}: ${TRAFFIC_CONFIG_HINT[k]}`), "시험·로컬 흉내면 MOCK_TRAFFIC=1 (DEMO_MODE=1 에서는 못 켬)"].join(" / ") } } };
       // PF FM-ORC-10: LB 는 워커 전역 하나 → 가중치를 바꾸기 전에 LB 주인이 된다. 다른 이전(다른 회사 포함)이 쥐고 있으면 기다렸다 다시
       //   DRAFT(ai): 30초 뒤 다시 (TRAFFIC_LEASE_WAIT_SEC). 주인이 끝 상태가 되면 advance 가 놓는다
       const lease = await withTenant(j.tenantId, (tx) => takeTrafficLease(tx, lbId, j.migrationId));
@@ -93,8 +98,10 @@ export async function handleShift(raw: unknown) {
       // #245: 진짜 지표로 몫을 볼 때만 전환 직전 출발 요청 수를 읽는다. 가중치를 바꾸기 전이라 출발이 전부 받고 있다
       const baseline = process.env.PROM_URL && process.env.TRAFFIC_SHARE_CHECK?.trim() !== "0"
         ? await sourceBaselineFor(j.tenantId, j.migrationId, m.sourceEnvId, sw, !reentered) : null;
+      // 위 missingTrafficConfig 가 "PROM_URL 없음 + 흉내 아님" 을 이미 멈췄으니 지표는 늘 있다
+      const metrics = trafficMetrics(j.tenantId, { sourceBaselineRps: baseline && "rps" in baseline ? baseline.rps : undefined })!;
       const r = await runShift({
-        migrationId: j.migrationId, lbId, switcher: sw, metrics: trafficMetrics(j.tenantId, baseline && "rps" in baseline ? baseline.rps : undefined), steps: runSteps.length ? runSteps : steps, onWeight, resumeFromPct,
+        migrationId: j.migrationId, lbId, switcher: sw, metrics, steps: runSteps.length ? runSteps : steps, onWeight, resumeFromPct,
         sleep: () => new Promise((res) => setTimeout(res, trafficTickMs())),
         observeSec: obs.sec,   // M7: 시계로 관찰. pf-d FM-TRF-15: 승인 계획 holdSec (T22 최소보다 짧지 않게)
         // z75-38: 단계마다 "최소 관찰(TRAFFIC_OBSERVE_SEC) 지남 + 실측 도착 몫이 목표 ±10%p" 라야 다음 단계. 못 미치면 2번 더 본 뒤 paused
@@ -124,6 +131,7 @@ export async function handleShift(raw: unknown) {
         if (now !== "shifting") throw new MigrationMoved(now);
       }
       // STUB: 도착 로그 수신(MG-3-04)은 관측 영역이 붙으면. 지금은 판정에 도착 표본이 있었으면 true
+      //   표본은 진짜 판이면 Prometheus 도착 요청 수, 가짜 표본은 흉내를 허락한 판(trafficStubAllowed)에서만 나온다
       const targetLogsSeen = r.judgements.some((x) => x.stepPct === 100 && x.samples > 0);
       const t = shiftTransition(r, { targetLogsSeen });
       return {

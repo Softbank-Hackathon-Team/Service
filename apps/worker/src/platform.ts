@@ -1,4 +1,5 @@
-import { prometheusMetrics, stubMetrics, switcherFromEnv, type MetricsSource, type TrafficSwitcher } from "@svc/traffic";
+import { prometheusMetrics, stubMetrics, switcherFromEnv, type MetricsSource, type TrafficProvider, type TrafficSwitcher } from "@svc/traffic";
+import { iacMockEnabled } from "@svc/adapters";
 import { awsCliSts, awsStsIssuer, createTempRoleBroker, gcpCliIssuer, GcpIssueError, perEnvGcpIssuer, loadPermissionSet, mockIssuer, perEnvAwsIssuer, type PermissionSet, type ProviderIssuer, type TempRoleBroker } from "@svc/security";
 import { fileURLToPath } from "node:url";
 import { pgLedger } from "./temp-cred-ledger.js";
@@ -6,7 +7,7 @@ import { withTenant, writeAudit, scrubString, trafficTargetFor } from "@svc/core
 import { envNumber, type TrafficTarget } from "@svc/contracts";
 
 // 워커 프로세스 하나에 하나씩 두는 외부 연결 (트래픽 전환기, 지표, 임시 역할 중개자)
-// DRAFT(ai): 기본은 전부 가짜(mock/stub). 환경변수가 있으면 진짜로 바뀐다. 비밀값은 환경변수 이름만 읽는다
+// 트래픽은 환경변수가 있으면 진짜, 없으면 흉내를 허락한 판(trafficStubAllowed)에서만 가짜. 비밀값은 환경변수 이름만 읽는다
 
 let sw: TrafficSwitcher | null = null;
 export function trafficSwitcher(): TrafficSwitcher {
@@ -43,11 +44,29 @@ export function trafficEnvFor(t: TrafficTarget, env: Record<string, string | und
     ...(t.zoneId ? { CLOUDFLARE_ZONE_ID: t.zoneId } : {}) };
 }
 
-export function trafficMetrics(tenantId: string, sourceBaselineRps?: number): MetricsSource {
-  // DRAFT(ai): PROM_URL 이 없으면 가짜 정상 지표. TRAFFIC_STUB_SCENARIO=err|slow|down 으로 롤백 데모
-  if (process.env.PROM_URL) return prometheusMetrics({ baseUrl: process.env.PROM_URL, tenantId, baselineP95Ms: envNumber(process.env.TRAFFIC_BASELINE_P95_MS, 200), ...(sourceBaselineRps ? { sourceBaselineRps } : {}) });
-  const sc = (process.env.TRAFFIC_STUB_SCENARIO ?? "clean") as "clean" | "err" | "slow" | "down";
-  return stubMetrics(sc, { failAt: envNumber(process.env.TRAFFIC_STUB_FAIL_AT, 50) });
+// DRAFT(ai): 가짜 지표·mock 전환기를 써도 되는 판. 도착을 흉내로 만든 판(MOCK_IAC=1)은 옮길 진짜 트래픽이 없고, MOCK_TRAFFIC=1 은 진짜 도착에 흉내 트래픽.
+//   둘 다 시험 전용 스위치라 DEMO_MODE=1 이면 서비스가 안 뜬다. 진짜 판에서 설정이 빠지면 shift 가 TRAFFIC_NOT_CONFIGURED 로 멈춘다
+export const trafficStubAllowed = (env: NodeJS.ProcessEnv = process.env) => iacMockEnabled(env) || env.MOCK_TRAFFIC?.trim() === "1";
+
+export type TrafficConfigName = "PROM_URL" | "TRAFFIC_PROVIDER";
+export const TRAFFIC_CONFIG_HINT: Record<TrafficConfigName, string> = {
+  PROM_URL: "판정용 Prometheus 주소 (차트 trafficMetrics.promUrl)",
+  TRAFFIC_PROVIDER: "npm run cf:check -- --register=<이전> --tenant=<회사> 로 이 이전의 LB 를 등록하거나 워커 TRAFFIC_PROVIDER·TRAFFIC_LB_ID·CLOUDFLARE_*_POOL_ID",
+};
+/** 진짜 판에서 이 shift 에 비어 있는 설정. 빈 배열이면 진행 */
+export function missingTrafficConfig(provider: TrafficProvider | undefined, env: NodeJS.ProcessEnv = process.env): TrafficConfigName[] {
+  if (trafficStubAllowed(env)) return [];
+  return [...(env.PROM_URL ? [] : ["PROM_URL" as const]), ...(provider === "mock" ? ["TRAFFIC_PROVIDER" as const] : [])];
+}
+
+/** 판정 지표. PROM_URL 이면 Prometheus, 흉내를 허락한 판이면 TRAFFIC_STUB_SCENARIO(clean|err|slow|down) 가짜, 아니면 없음 */
+export function trafficMetrics(tenantId: string, o: { sourceBaselineRps?: number } = {},
+  env: NodeJS.ProcessEnv = process.env): MetricsSource | undefined {
+  if (env.PROM_URL) return prometheusMetrics({ baseUrl: env.PROM_URL, tenantId, baselineP95Ms: envNumber(env.TRAFFIC_BASELINE_P95_MS, 200),
+    ...(o.sourceBaselineRps ? { sourceBaselineRps: o.sourceBaselineRps } : {}) });
+  if (!trafficStubAllowed(env)) return undefined;
+  const sc = (env.TRAFFIC_STUB_SCENARIO ?? "clean") as "clean" | "err" | "slow" | "down";
+  return stubMetrics(sc, { failAt: envNumber(env.TRAFFIC_STUB_FAIL_AT, 50) });
 }
 
 // DRAFT(ai): 판정 간격. 진짜 지표(PROM_URL)면 1000ms(창 하나 = 1초), 가짜 지표면 20ms (smoke·통합 시험이 36초씩 걸리지 않게)

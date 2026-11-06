@@ -147,7 +147,7 @@ kubectl port-forward svc/monitoring-grafana -n monitoring 3001:80
 
 - api·worker 컨테이너에 이름이 `metrics` 인 포트 (api 9464, worker 9465). Prometheus 는 `platform` 네임스페이스에서 이 이름의 포트만 긁고, 라벨 `app.kubernetes.io/name` 을 job 으로 쓴다.
 - 게이트웨이 이미지: `helm upgrade` 에 `--set otelGateway.image=<레지스트리>/api:<태그>`. api 이미지의 다른 진입점(`metrics-gateway.mjs`)이라 따로 빌드하지 않는다.
-- 워커의 `PROM_URL=http://monitoring-kube-prometheus-prometheus.monitoring:9090` 은 고객 지표(`svc_ingress_*`)가 들어온 뒤에 켠다. 없으면 트래픽 전환이 가짜 정상 지표로 판정하고, 켰는데 고객 지표가 없으면 표본 부족으로 기다리다가 판정 횟수 한도(기본 600번)를 넘겨 롤백한다.
+- 워커의 `PROM_URL=http://monitoring-kube-prometheus-prometheus.monitoring:9090` 은 고객 지표(`svc_ingress_*`)가 들어온 뒤에 켠다. 없으면 트래픽 전환(shift)이 가중치를 건드리기 전에 `TRAFFIC_NOT_CONFIGURED` 로 멈추고(가짜 지표로 판정하지 않는다. 시험 판 `MOCK_IAC=1`·`MOCK_TRAFFIC=1` 만 흉내), 켰는데 고객 지표가 없으면 표본 부족으로 기다리다가 판정 횟수 한도(기본 600번)를 넘겨 롤백한다.
 
 ## 고객 지표 받기 (OTel 게이트웨이)
 
