@@ -7,7 +7,8 @@ import { AR_PULL_PERMISSIONS, ECR_PULL_ACTIONS, TempRoleDenied } from "@svc/secu
 import { envFor, isPublicImage, registryOf, spawnExec, type Exec } from "@svc/adapters";
 import { withStepRoles, type StepRoles } from "../jobs/_roles.js";
 import { MOCK_CREDENTIALS, realStsEnabled } from "../platform.js";
-import type { MigrationRow, StopHint } from "../jobs/_step.js";
+import type { MigrationRow } from "../jobs/_step.js";
+import type { StopHint } from "../jobs/_stop-hint.js";
 
 // 리허설 이미지 복사 (설계 결정 38: 이미지는 해시로 회사별 플랫폼 저장소에 복사, 샌드박스에 고객 자격 없음).
 // 고객 이미지를 다이제스트 그대로 플랫폼 ECR 샌드박스 자리(SANDBOX_IMAGE_REGISTRY = <호스트>/<접두어>)로 복사하고

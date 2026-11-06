@@ -12,7 +12,8 @@ import { endpointFromRecord, ensureLoginRole, readTfFacts, withClient } from "@s
 import { latestAcceptedSpecV2, replicationEndpointsFor, upsertReplicationEndpoint, withTenant, type Tx } from "@svc/core";
 import { deriveSshHostKey, deriveSshKeypair, knownHostsLine, MIN_MASTER_KEY_LENGTH } from "../gitops/migration-secrets.js";
 import { withStepRoles, type StepRoles } from "../jobs/_roles.js";
-import type { MigrationRow, StopHint } from "../jobs/_step.js";
+import type { MigrationRow } from "../jobs/_step.js";
+import type { StopHint } from "../jobs/_stop-hint.js";
 import { realStsEnabled } from "../platform.js";
 import { latestOnpremEgressIp } from "./onprem-egress.js";
 import {

@@ -8,7 +8,8 @@ import { adapterFor, envFor, flattenTfOutputsV2, iacMockEnabled, isPublicImage, 
 import { envFacts, fillPlaceholders, GitopsError, type DeployInput } from "../gitops/index.js";
 import { realStsEnabled } from "../platform.js";
 import { withStepRoles, type StepRoles } from "./_roles.js";
-import type { MigrationRow, StepOutcome, StopHint } from "./_step.js";
+import type { MigrationRow, StepOutcome } from "./_step.js";
+import type { StopHint } from "./_stop-hint.js";
 
 // 배포 이미지 복사 (FM-APP-01 "그대로 이식"의 나머지 반). 도착 렌더 값은 사설 이미지를 도착 플랫폼 저장소 주소로 가리킨다
 //   (adapters common/base.ts platformImageRef: <계정>.dkr.ecr.<리전>.amazonaws.com/platform/<회사>/<이름>, <리전>-docker.pkg.dev/<프로젝트>/platform/<회사>/<이름>).

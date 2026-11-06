@@ -8,7 +8,8 @@ import { GcpIssueError } from "@svc/security";
 import { tenantSlug } from "./gitops/bundle.js";
 import { withGcpCred } from "./gcp-token-server.js";
 import { withStepRoles } from "./jobs/_roles.js";
-import type { MigrationRow, StopHint } from "./jobs/_step.js";
+import type { MigrationRow } from "./jobs/_step.js";
+import type { StopHint } from "./jobs/_stop-hint.js";
 
 // 환경 층 (도착 GCP 프로젝트의 VPC·GKE·AR·ESO) 확보. 아키텍처 이전 9단계 "4 기반 생성".
 // 부르는 곳: apply 작업 맨 앞 (승인 뒤 provisioning). apply-real prepare() 안에서는 만들지 않는다 —

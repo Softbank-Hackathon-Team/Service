@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { QUEUES, RehearsalTarget, rehearsalSettings, type RehearsalEvidence, type RehearsalFailureCode } from "@svc/contracts";
 import { withTenant } from "@svc/core";
-import { RetryLater, jobData, type MigrationRow, type StepJob, type StepOutcome, type StopHint } from "../jobs/_step.js";
+import { RetryLater, jobData, type MigrationRow, type StepJob, type StepOutcome } from "../jobs/_step.js";
+import type { StopHint } from "../jobs/_stop-hint.js";
 import { ENV_DIR, renderForRehearsal, type DeployInput, type GitopsRepo } from "../gitops/index.js";
 import { mirrorFix, mirrorImages } from "./image-mirror.js";
 import { podImages, unsupportedOf } from "./substitute.js";

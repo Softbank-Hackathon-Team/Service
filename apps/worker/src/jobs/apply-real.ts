@@ -14,7 +14,8 @@ import { TARGET_ACCOUNT_SQL } from "./target-account.js";
 import { gcpPlatformSa } from "../platform.js";
 import { appLinkFromEnv } from "@svc/dbproxy";
 import { awsHubEnabled, tenantSlug } from "../gitops/bundle.js";
-import { stableHash, type StopHint } from "./_step.js";
+import { stableHash } from "./_step.js";
+import type { StopHint } from "./_stop-hint.js";
 import { envNumber, redactText } from "@svc/contracts";
 
 // Z70 DRAFT(ai): apply 작업의 "진짜 terraform" 길. Z89: 기본이 이 길이다 (MOCK_IAC=1 인 시험만 흉내 길).
