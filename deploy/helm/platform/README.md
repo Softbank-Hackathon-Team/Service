@@ -427,6 +427,8 @@ helm upgrade platform deploy/helm/platform -n platform --reset-then-reuse-values
 | `GCP_PLATFORM_PROJECT`·`CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE` | `gcpPlatform.project` |
 | `SANDBOX_REHEARSAL`·`SANDBOX_IMAGE_REGISTRY`, `SANDBOX_RUNTIME_CLASS`, `SANDBOX_MODE` | `sandbox.rehearsal.enabled`·`sandbox.imageRegistry`, `sandbox.gvisor`, `agentRemediation.sandboxMode` |
 | `TRAFFIC_METRICS_ENDPOINT`·`PROM_URL`, `MOCK_TRAFFIC`, `ENV_LAYER_AUTO` | `trafficMetrics.endpoint`·`promUrl`, `traffic.mock`, `envLayer.auto` |
+| `TARGET_TUNNEL_SECRET_ID` (worker 만, 기본 끔) | `targetTunnel.secretId` (`secretKey` 와 둘 다 채울 때만 넣는다) |
+| `TARGET_TUNNEL_SECRET_KEY` (worker 만, 기본 끔) | `targetTunnel.secretKey` (`secretId` 와 둘 다 채울 때만 넣는다) |
 
 템플릿 env 블록에 이름을 더하면 `templates/app.yaml` 의 `$chartEnv` 에도 더한다. `deploy/ci/check-platform.sh` 가 템플릿의 env 이름을 뽑아 하나씩 넣어 보고, 막히지 않으면 실패한다.
 
