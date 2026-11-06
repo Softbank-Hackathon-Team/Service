@@ -128,9 +128,14 @@ sandbox:
   enabled: false
   # 노드 그룹 라벨 pool 과 taint dedicated=<pool>:NoSchedule (infra/modules/aws/platform/main.tf aws_eks_node_group.this)
   pool: sandbox
-  # 리허설 이미지 복사 자리 <계정>.dkr.ecr.<리전>.amazonaws.com/<접두어> (worker SANDBOX_IMAGE_REGISTRY 와 같은 값). sandbox.enabled 면 꼭 넣는다.
+  # 리허설 이미지 복사 자리 <계정>.dkr.ecr.<리전>.amazonaws.com/<접두어>. sandbox.enabled 면 꼭 넣는다. rehearsal 을 켜면 차트가 worker SANDBOX_IMAGE_REGISTRY 로 넘긴다.
   # sbx-pod-guard 가 이 계정의 ECR 이미지는 <이 값>/<네임스페이스 platform.svc/tenant>/ 아래만 받는다 (sandbox 노드 역할은 계정 ECR 전체를 읽는다)
   imageRegistry: ""
+  # 리허설(배포 커밋 직전 vCluster 시험). 켜면 차트가 worker 에 SANDBOX_REHEARSAL=on 과 SANDBOX_IMAGE_REGISTRY=<imageRegistry> 를 넣는다 (templates/app.yaml).
+  #   sandbox.enabled 가 꺼져 있으면 렌더가 멈춘다 (리허설은 sandbox 노드·호스트 가드·agent-worker 권한이 있어야 돈다)
+  rehearsal:
+    # DRAFT(ai): 기본 끔. 끄면 리허설은 건너뜀(disabled)으로 지나간다
+    enabled: false
   # 리허설 치환이 PVC storageClassName 을 이 이름으로 바꾼다
   storageClass:
     name: sbx-standard
@@ -139,9 +144,21 @@ sandbox:
     parameters:
       type: gp3
   # gVisor. 켜면 리허설과 수정 고리 샌드박스 파드가 모두 이 RuntimeClass 로만 뜬다 (sbx-runtimeclass-guard). 리허설은 전용 노드 + 한 번에 한 테넌트
-  #   켤 때 세 곳을 같이: Terraform sandbox_gvisor_enabled(노드에 runsc), 이 값, agent-worker SANDBOX_RUNTIME_CLASS=gvisor
+  #   켤 때 두 곳을 같이: Terraform sandbox_gvisor_enabled(노드에 runsc), 이 값. agent-worker SANDBOX_RUNTIME_CLASS 는 차트가 runtimeClass 로 넣는다
   gvisor:
     # DRAFT(ai): 기본 끔. 끄면 리허설은 노드 기본 런타임(runc)으로 돌고, 수정 고리 샌드박스 워크로드는 뜨지 못한다 (닫힌 쪽)
     enabled: false
     runtimeClass: gvisor
     handler: runsc
+
+# AI 점검(agent-worker 수정 고리, agent-run)이 GitOps 레포 deploy/ 를 읽는 길. 끄면 진짜 LLM 점검이 GITOPS_NOT_CONFIGURED 로 끝난다
+agentRemediation:
+  # DRAFT(ai): 기본 끔. 켜면 agent-worker 가 platform/app 의 GITOPS_REPO_URL·GITOPS_READ_TOKEN 을 받는다 (JSON 에 GITOPS_READ_TOKEN 을 먼저 넣는다)
+  #   GITOPS_WRITE_TOKEN 은 주지 않는다: agent-worker 는 고객 로그를 LLM 에 넣는 곳이고, gitops 레포 main 에는 보호 규칙이 없다
+  #   (쓰기 토큰이 새면 main push = 고객 클러스터 배포). 수정안은 원격에 push 하지 않고 패치로 남는다 (GITOPS_PUSH 없음)
+  gitopsRead: false
+  # DRAFT(ai): AI 점검이 쓸 샌드박스 (agent-worker env SANDBOX_MODE). 비우면 agent-worker 기본 = memory(가짜 클러스터)
+  #   memory | vcluster 만 받는다 (k3d 는 맥 로컬용). vcluster 는 sandbox.enabled·sandbox.gvisor.enabled 와 같이 켜야 렌더된다:
+  #   수정 실행 파드는 sbx-runtimeclass-guard 가 gVisor 만 받아서, gVisor 가 꺼져 있으면 파드가 전부 거부된다
+  #   TODO(human): vcluster 로 켜기 전에, LLM 도구가 vCluster 안에서 관리자 클라이언트로 도는 것(조회 전용 kubeconfig 로 바꾸는 일)을 정한다
+  sandboxMode: ""
