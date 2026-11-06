@@ -229,3 +229,57 @@ export async function writableTables(c: pg.Client, e: Endpoint, tables: { schema
   const r = await c.query<{ t: string }>(`SELECT t FROM unnest($1::text[]) t WHERE ${anyRoleCanWrite(e, "t")}`, [names]);
   return r.rows.map((x) => x.t);
 }
+
+// ADR-031 R2 (2026-11-06 역방향 로컬 실험장 실측): 옛 출발의 앱 계정이 "표 주인"이고 관리자가 superuser 가 아니면(CNPG svc_migrate),
+//   컷오버 뒤 역방향 구독 적용이 "permission denied for table" 로 멈췄다. 롤백 창에 도착에 쓴 행이 옛 출발로 오지 않는다 = 롤백하면 그 쓰기를 잃는다.
+//   이유: 역방향 구독은 run_as_owner = true (Z63) 라 구독 주인(관리자) 권한으로 적용한다. svc_migrate 의 표 쓰기 권한은 주인 역할(shop_app) 멤버십으로만
+//   오는데, 울타리가 그 주인 역할의 쓰기를 REVOKE 했다. 정방향(RDS 출발)은 관리자(마스터)가 표 주인이라 안 드러났다.
+// 고침: 역방향 구독을 걸기 직전, 관리자 세션 계정이 복제 표에 쓰기 권한이 "없을 때만" 그 계정에 직접 준다 (앱 계정 울타리는 그대로).
+//   준 것은 _repl.apply_grants 에 적고 정리(teardown) 때 그것만 되돌린다. 원래 가진 권한(RDS 마스터 = 주인)은 건드리지 않는다.
+//   대안 "앱이 주인이 아닌 전용 계정으로 붙게 하기(ADR-024 를 온프레에도)": 온프레 앱 차트가 바뀌어야 해서 뒤로. 둘은 배타가 아니다
+const APPLY = qualified(MARKER_SCHEMA, "apply_grants");
+
+/** 역방향 적용·전환에 필요한 쓰기 권한을 관리자 세션 계정에 직접 준다 (없는 것만). 준 개수를 돌려준다
+ *  표: INSERT·UPDATE·DELETE·TRUNCATE (구독 적용). 시퀀스: USAGE·UPDATE (롤백 전환 C4 의 setval 이 이 DB 를 도착으로 맞출 때) */
+export async function ensureApplyGrants(c: pg.Client, tables: readonly { schema: string; name: string }[]): Promise<number> {
+  const names = tables.map((t) => `${ident(t.schema)}.${ident(t.name)}`);
+  if (!names.length) return 0;
+  const schemas = [...new Set(tables.map((t) => t.schema))];
+  const missing = await c.query<{ kind: "table" | "sequence"; obj: string; p: string }>(`
+    SELECT 'table' AS kind, t AS obj, p FROM unnest($1::text[]) t CROSS JOIN unnest($2::text[]) p
+     WHERE NOT has_table_privilege(current_user, t, p)
+    UNION ALL
+    SELECT 'sequence', format('%I.%I', n.nspname, cl.relname), p
+      FROM pg_class cl JOIN pg_namespace n ON n.oid = cl.relnamespace CROSS JOIN unnest($4::text[]) p
+     WHERE cl.relkind = 'S' AND n.nspname = ANY($3::text[])
+       AND NOT has_sequence_privilege(current_user, format('%I.%I', n.nspname, cl.relname), p)
+    ORDER BY 1, 2, 3`, [names, REVOKED.table, schemas, REVOKED.sequence]);
+  if (!missing.rowCount) return 0;
+  await c.query(`${MARKER_DDL_LOCK};
+    ${createIdem(`CREATE SCHEMA IF NOT EXISTS ${ident(MARKER_SCHEMA)}`)};
+    ${createIdem(`CREATE TABLE IF NOT EXISTS ${APPLY} (kind text NOT NULL, obj text NOT NULL, privilege text NOT NULL, grantee text NOT NULL,
+      granted_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (kind, obj, privilege, grantee))`)}`);
+  for (const r of missing.rows) {
+    await c.query(`GRANT ${r.p} ON ${r.kind === "sequence" ? "SEQUENCE" : "TABLE"} ${r.obj} TO CURRENT_USER`);
+    await c.query(`INSERT INTO ${APPLY} (kind, obj, privilege, grantee) VALUES ($1, $2, $3, current_user) ON CONFLICT DO NOTHING`, [r.kind, r.obj, r.p]);
+  }
+  return missing.rowCount;
+}
+
+/** ensureApplyGrants 가 준 것만 되돌린다 (정리 때, _repl 을 지우기 전). 되돌린 개수 */
+export async function revokeApplyGrants(c: pg.Client): Promise<number> {
+  const t = await c.query<{ t: string | null }>(`SELECT to_regclass($1) t`, [`${MARKER_SCHEMA}.apply_grants`]);
+  if (!t.rows[0]?.t) return 0;
+  const rows = (await c.query<{ kind: string; obj: string; privilege: string; grantee: string }>(`SELECT kind, obj, privilege, grantee FROM ${APPLY}`)).rows;
+  let n = 0;
+  for (const r of rows) {
+    // 적힌 글자를 SQL 에 넣기 전에 허용 목록으로 거른다 (종류·권한), 대상은 실제 있는 객체만
+    const allowed = r.kind === "sequence" ? REVOKED.sequence : r.kind === "table" ? REVOKED.table : [];
+    if (!allowed.includes(r.privilege)) continue;
+    if (!(await c.query(`SELECT to_regclass($1) t`, [r.obj]).then((x) => x.rows[0]?.t))) continue;
+    await c.query(`REVOKE ${r.privilege} ON ${r.kind === "sequence" ? "SEQUENCE" : "TABLE"} ${r.obj} FROM ${ident(r.grantee)}`);
+    n++;
+  }
+  await c.query(`DROP TABLE ${APPLY}`);
+  return n;
+}
