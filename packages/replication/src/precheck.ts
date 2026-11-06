@@ -194,6 +194,20 @@ async function serverChecks(c: pg.Client, e: Endpoint, side: "source" | "target"
   const app = await c.query(`SELECT 1 FROM pg_roles WHERE rolname = $1`, [e.appRole]);
   add({ id: "DB-05", side, ok: app.rowCount === 1, detail: `app role ${e.appRole} ${app.rowCount ? "exists" : "missing"}`,
     hint: `워커 env REPL_${side === "source" ? "SOURCE" : "TARGET"}_APP_ROLE=<앱이 접속하는 계정> (기본 app_user). 컷오버 펜스도 이 계정에 건다` });
+  // DB-08: 컷오버 울타리는 앱 계정에 "직접" 준 쓰기 권한을 REVOKE 한다. 앱 계정이 superuser 이거나, 쓰기를 통째로 주는 역할
+  //   (pg_write_all_data, RDS rds_superuser, Cloud SQL cloudsqlsuperuser, Azure azure_pg_admin)을 물려받으면 REVOKE 뒤에도 쓸 수 있어
+  //   컷오버가 FENCE_INEFFECTIVE 로 매번 되돌려진다. 2026-11-06 실제 RDS: 앱 계정 = 마스터(rds_superuser → pg_write_all_data) → 컷오버 2회 실패.
+  //   DRAFT(ai): block. 복제를 걸기 전(sync 첫 점검)에 멈춰 고객이 앱 전용 계정으로 바꾸게 한다 (복제·컷오버까지 갔다가 되돌리는 것보다 싸다)
+  if (app.rowCount === 1) {
+    const f = (await c.query<{ su: boolean; via: string[] }>(
+      `SELECT r.rolsuper su,
+              ARRAY(SELECT g FROM unnest(ARRAY['pg_write_all_data','rds_superuser','cloudsqlsuperuser','azure_pg_admin']) g
+                     WHERE to_regrole(g) IS NOT NULL AND pg_has_role(r.oid, g::regrole, 'USAGE') ORDER BY 1) via
+         FROM pg_roles r WHERE r.rolname = $1`, [e.appRole])).rows[0]!;
+    add({ id: "DB-08", side, ok: !f.su && f.via.length === 0,
+      detail: f.su ? `app role ${e.appRole} is superuser` : f.via.length ? `app role ${e.appRole} inherits ${f.via.join(", ")}` : `app role ${e.appRole} has direct grants only`,
+      hint: `앱이 관리자 계정(마스터 등)으로 붙으면 컷오버 때 쓰기를 막을 수 없다. 앱 전용 계정(LOGIN, 표·시퀀스 권한만 직접 GRANT)을 만들어 앱이 그 계정으로 붙게 하고, 명세 appUser 를 그 계정으로 바꾼다` });
+  }
 }
 
 /** Z77: Cloud SQL 관리자(cloudsqlsuperuser)는 자기에게 REPLICATION 을 줄 수 있다 (Cloud SQL 논리 복제 안내의 ALTER USER … WITH REPLICATION).
