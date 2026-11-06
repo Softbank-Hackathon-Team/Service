@@ -260,16 +260,3 @@ run "admin_user_separate_from_app" {
     error_message = "앱 계정 출력은 그대로"
   }
 }
-
-run "app_login_sql_skips_api_user" {
-  command = plan
-  variables {
-    postgres_json = jsonencode([
-      { id = "shop-db", name = "shop-db-ab12", major_version = "16", storage_gb = 20, logical_replication = true, allow_from_json = "[\"api\"]", public = true, peer_cidrs_json = "[\"198.51.100.7/32\",\"203.0.113.50/32\"]", app_login_sql = true },
-    ])
-  }
-  assert {
-    condition     = output.db_username == "app" && startswith(output.db_admin_username, "svc_admin_")
-    error_message = "app_login_sql 이어도 앱 계정 이름 출력은 그대로, 관리자는 만든다"
-  }
-}

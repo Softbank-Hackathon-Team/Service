@@ -125,6 +125,12 @@
     },
     "app_login_sql": {
       "type": "boolean"
+    },
+    "repl_public": {
+      "type": "boolean"
+    },
+    "repl_peer_cidrs_json": {
+      "type": "string"
     }
   },
   "required": [

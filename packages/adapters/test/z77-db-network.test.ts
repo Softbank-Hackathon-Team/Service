@@ -48,13 +48,13 @@ test("넓은 범위·빈 허용 목록·잘못된 조합은 DB_NETWORK_INVALID",
   assert.match(cidrProblem("256.1.1.1/32")!, /255/);
 });
 
-test("중계기 이전 덧씌우기: 공개 + 허용 주소 합집합(출발 posture 값 유지) + app_login_sql, 길 없으면 같은 객체, 넓은 범위는 거부", () => {
+test("중계기 이전 덧씌우기: repl_public + 복제 허용 주소 + app_login_sql. 앱 공개(public·peer_cidrs_json)는 그대로, 길 없으면 같은 객체, 넓은 범위는 거부", () => {
   const tf = { vars: { postgres_json: JSON.stringify([{ id: "db", public: false, peer_cidrs_json: JSON.stringify(["10.9.0.0/24"]) }]), app_name: "shop" } };
   assert.equal(withReplicationNetworkV2(tf, null), tf);
   assert.equal(withReplicationNetworkV2(tf, { peerCidrs: [], appLoginSql: true }), tf);
   const out = withReplicationNetworkV2(tf, { peerCidrs: ["203.0.113.50/32", "198.51.100.7/32"], appLoginSql: true });
-  assert.deepEqual(JSON.parse(String(out.vars.postgres_json)), [{ id: "db", public: true, app_login_sql: true,
-    peer_cidrs_json: JSON.stringify(["10.9.0.0/24", "198.51.100.7/32", "203.0.113.50/32"]) }]);
+  assert.deepEqual(JSON.parse(String(out.vars.postgres_json)), [{ id: "db", public: false, peer_cidrs_json: JSON.stringify(["10.9.0.0/24"]),
+    repl_public: true, repl_peer_cidrs_json: JSON.stringify(["198.51.100.7/32", "203.0.113.50/32"]), app_login_sql: true }]);
   assert.equal(out.vars.app_name, "shop");
   assert.throws(() => withReplicationNetworkV2(tf, { peerCidrs: ["0.0.0.0/0"], appLoginSql: true }), DbNetworkError);
 });

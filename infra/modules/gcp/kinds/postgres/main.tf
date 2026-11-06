@@ -35,6 +35,9 @@ variable "cfg" {
     # 앱 계정을 Cloud SQL API 사용자로 만들지 않는다 (API 사용자는 늘 cloudsqlsuperuser 라 컷오버 울타리 DB-08 이 막는다).
     # true 면 워커가 관리자 계정으로 같은 비밀번호의 일반 LOGIN 역할을 만든다 (apps/worker relay-step ensureTargetAppLogin)
     app_login_sql = optional(bool, false)
+    # 복제 길 전용 공개 주소 (중계기 이전 apply 가 덧씌운다). 앱이 붙는 주소(link.host)는 바꾸지 않는다: 앱은 사설 IP 그대로
+    repl_public          = optional(bool, false)
+    repl_peer_cidrs_json = optional(string, "[]")
   })
   validation {
     condition     = contains(["15", "16", "17"], var.cfg.major_version)
@@ -67,7 +70,10 @@ locals {
   tier       = coalesce(var.cfg.instance_class, "db-f1-micro")
   replicas   = coalesce(var.cfg.read_replicas, 0)
   peer_cidrs = jsondecode(var.cfg.peer_cidrs_json)
-  db_name    = coalesce(var.cfg.db_name, replace(var.app_name, "-", "_"))
+  # 공개 주소 = 앱 공개(posture·DB_PUBLIC) 또는 복제 길. 허용 주소는 둘을 합친다
+  ipv4_enabled = var.cfg.public || var.cfg.repl_public
+  authorized   = distinct(concat(var.cfg.public ? local.peer_cidrs : [], var.cfg.repl_public ? jsondecode(var.cfg.repl_peer_cidrs_json) : []))
+  db_name      = coalesce(var.cfg.db_name, replace(var.app_name, "-", "_"))
   # IR 파라미터 그대로 + 플랫폼 요구(논리 디코딩)가 이긴다
   flags = merge(
     { for k, v in jsondecode(var.cfg.parameters_json) : k => tostring(v) },
@@ -83,8 +89,8 @@ resource "google_sql_database_instance" "db" {
 
   lifecycle {
     precondition {
-      condition     = !var.cfg.public || length(local.peer_cidrs) >= 1
-      error_message = "public=true 면 허용 CIDR 1개 이상(peer_cidrs_json)이 필요하다."
+      condition     = (!var.cfg.public || length(local.peer_cidrs) >= 1) && (!var.cfg.repl_public || length(jsondecode(var.cfg.repl_peer_cidrs_json)) >= 1)
+      error_message = "public=true 면 허용 CIDR 1개 이상(peer_cidrs_json), repl_public=true 면 repl_peer_cidrs_json 1개 이상이 필요하다."
     }
   }
 
@@ -97,11 +103,11 @@ resource "google_sql_database_instance" "db" {
     availability_type     = var.cfg.ha == true ? "REGIONAL" : "ZONAL"
     user_labels           = var.labels
     ip_configuration {
-      ipv4_enabled    = var.cfg.public
+      ipv4_enabled    = local.ipv4_enabled
       private_network = var.network_id
       ssl_mode        = var.cfg.require_tls ? "ENCRYPTED_ONLY" : "ALLOW_UNENCRYPTED_AND_ENCRYPTED" # SSL-1
       dynamic "authorized_networks" {
-        for_each = var.cfg.public ? local.peer_cidrs : []
+        for_each = local.authorized
         content {
           name  = "peer-${replace(replace(authorized_networks.value, ".", "-"), "/", "-")}"
           value = authorized_networks.value
@@ -233,9 +239,9 @@ locals {
 
 output "address" { value = local.host }
 output "private_ip" { value = local.private_ip }
-output "public_ip" { value = var.cfg.public ? google_sql_database_instance.db.public_ip_address : "" }
+output "public_ip" { value = local.ipv4_enabled ? google_sql_database_instance.db.public_ip_address : "" }
 output "outgoing_ip" {
-  value = var.cfg.public ? try([for a in google_sql_database_instance.db.ip_address : a.ip_address if a.type == "OUTGOING"][0], "") : ""
+  value = local.ipv4_enabled ? try([for a in google_sql_database_instance.db.ip_address : a.ip_address if a.type == "OUTGOING"][0], "") : ""
 }
 output "server_ca_cert" { value = nonsensitive(google_sql_database_instance.db.server_ca_cert[0].cert) } # 공개 정보 (verify-ca 에 씀)
 output "connection_name" { value = google_sql_database_instance.db.connection_name }

@@ -170,7 +170,7 @@ test("Z77: gcp 는 클러스터 없이 안 된다 (TF_FACT_CLUSTER_NAME=\"\" →
   assert.equal(f.seen.length, 0);
 });
 
-test("AWS→GCP 중계기: 작업 폴더 repl-network.json 이 있으면 postgres_json 에 공개·허용 주소·앱 로그인 SQL 을 덧씌운다 (지문 밖, 감사 detail 에 남김)", async () => {
+test("AWS→GCP 중계기: 작업 폴더 repl-network.json 이 있으면 postgres_json 에 복제 길(repl_public·허용 주소)·앱 로그인 SQL 을 덧씌운다 (지문 밖, 감사 detail 에 남김)", async () => {
   const { mkdtempSync, mkdirSync, writeFileSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
@@ -189,11 +189,12 @@ test("AWS→GCP 중계기: 작업 폴더 repl-network.json 이 있으면 postgre
   const r = await realApply(gin, { env, runner: f.runner });
   assert.equal(r.ok, true);
   for (const p of pg(f.seen[0]!.vars)) {
-    assert.equal(p.public, true);
+    assert.equal(p.repl_public, true);
     assert.equal(p.app_login_sql, true);
-    assert.ok((JSON.parse(String(p.peer_cidrs_json)) as string[]).includes("203.0.113.50/32"));
+    assert.deepEqual(JSON.parse(String(p.repl_peer_cidrs_json)), ["198.51.100.7/32", "203.0.113.50/32"]);
+    assert.equal(p.public, pg(before.seen[0]!.vars)[0]!.public, "앱 공개 값은 그대로 (앱 주소 link.host 가 안 바뀜)");
   }
-  assert.deepEqual(r.detail.replicationNetwork, { public: true, peerCidrs: ["198.51.100.7/32", "203.0.113.50/32"], appLoginSql: true });
+  assert.deepEqual(r.detail.replicationNetwork, { replPublic: true, peerCidrs: ["198.51.100.7/32", "203.0.113.50/32"], appLoginSql: true });
   writeFileSync(join(root, "t-11111111", MID, "repl-network.json"), JSON.stringify({ peerCidrs: ["0.0.0.0/0"], appLoginSql: true }));
   const bad = await realApply(gin, { env, runner: fakeRunner().runner });
   assert.equal((bad as { failureCode: string }).failureCode, "DB_NETWORK_INVALID", "세상 전체는 허용 주소로 안 받는다");
