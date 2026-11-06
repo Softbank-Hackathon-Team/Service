@@ -34,7 +34,19 @@ bad --set tenant=acme
 bad --set gitops.repoURL=
 bad --set metrics.endpoint=http://metrics.example.test/v1/metrics
 bad --set metrics.endpoint=https://metrics.example.test --set metrics.image=otel/opentelemetry-collector-contrib:0.164.0
+bad --set-string site=1A2B3C4D
+bad --set-string site=1a2b3c
 [ $fail -eq 0 ] && echo "ok   필수 값 없음·틀린 모양은 렌더 실패"
+
+# 환경별 gitops 폴더: site 가 있으면 onprem-k3s-<site> 만, legacyPath 면 예전 공용 폴더도, site 가 없으면 예전 폴더만 (워커 bundleRefFor·argoAppName 과 같은 이름)
+paths() { helm template oa "$CHART" -n svc-agent "${OK[@]}" "$@" | grep -o 'path: "tenants/[^"]*"' | sort | tr '\n' ' '; }
+want() { local got; got=$(paths "${@:2}"); [ "$got" = "$1" ] || { echo "FAIL gitops 폴더 $* → $got"; fail=1; }; }
+want 'path: "tenants/t-0a1b2c3d/apps/*/onprem-k3s-1a2b3c4d" ' --set-string site=1a2b3c4d
+want 'path: "tenants/t-0a1b2c3d/apps/*/onprem-k3s" path: "tenants/t-0a1b2c3d/apps/*/onprem-k3s-1a2b3c4d" ' --set-string site=1a2b3c4d --set gitops.legacyPath=true
+want 'path: "tenants/t-0a1b2c3d/apps/*/onprem-k3s" '
+helm template oa "$CHART" -n svc-agent "${OK[@]}" --set-string site=1a2b3c4d | grep -qF "name: 't-0a1b2c3d-{{ index .path.segments 3 }}-{{ index .path.segments 4 }}'" \
+  || { echo "FAIL Application 이름이 <회사>-<앱>-<폴더 이름> 이 아니다 (워커 argoAppName)"; fail=1; }
+[ $fail -eq 0 ] && echo "ok   환경별 gitops 폴더·Application 이름"
 
 if command -v kubeconform >/dev/null; then
   kubeconform -strict -summary -kubernetes-version "$K8S_VERSION" \

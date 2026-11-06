@@ -9,6 +9,8 @@
 #   4) tools/onprem-install.sh 로 Argo CD core·봉인 컨트롤러·CNPG·External Secrets(없을 때만)·Agent 를 깐다
 # 다시 돌려도 된다: 이미 등록된 서버(상태 폴더에 키가 있음)면 등록을 건너뛰고 설치만 다시 맞춘다.
 #   다른 환경으로 다시 등록하려면 SVC_REENROLL=1 + 새 토큰
+#   환경별 gitops 폴더(onprem-k3s-<환경 앞 8자>) 전에 등록한 서버는 상태 폴더에 환경 id 가 없다:
+#   SVC_ENV_ID=<콘솔 환경 id> 를 붙여 다시 돌리거나 SVC_REENROLL=1 + 새 토큰으로 다시 등록한다
 # 전제: 이 서버에서 kubectl 이 클러스터 관리자로 붙는다 (k3s 면 sudo 또는 KUBECONFIG=/etc/rancher/k3s/k3s.yaml).
 #   필요한 명령: kubectl curl ssh-keygen sha256sum tar. helm 이 없으면 판 고정 + sha256 확인해서 상태 폴더에 받는다
 # 나가는 연결만 쓴다: 플랫폼(443), GitHub ssh.github.com:443(Argo CD 가 gitops 읽기), ghcr.io·quay.io·docker.io(이미지)
@@ -75,14 +77,15 @@ else
   fi
   # 응답은 우리 API 가 만든 한 줄 JSON 이고 값 모양이 정해져 있다 → 뽑은 뒤 모양을 다시 검사한다 (jq 없이)
   j() { sed -n "s/.*\"$1\":\"\([^\"]*\)\".*/\1/p" "$STATE/register.json"; }
-  key_id=$(j keyId); secret=$(j secret); tenant=$(j tenant); repo=$(j repoURL); murl=$(j url); mtok=$(j token)
+  key_id=$(j keyId); secret=$(j secret); tenant=$(j tenant); repo=$(j repoURL); murl=$(j url); mtok=$(j token); env_id=$(j envId)
   rm -f "$STATE/register.json"
   [[ "$key_id" =~ ^ak_[0-9a-f]{24}$ ]] || die "등록 응답에 Agent 키 번호가 없다"
   [[ "$secret" =~ ^[0-9a-f]{64}$ ]] || die "등록 응답에 Agent 비밀이 없다"
   [[ "$tenant" =~ ^t-[0-9a-f]{8}$ ]] || die "등록 응답에 회사가 없다"
+  [[ "$env_id" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || die "등록 응답에 환경 id 가 없다"
   [[ "$repo" =~ ^ssh://git@ssh\.github\.com:443/[A-Za-z0-9-]+/[A-Za-z0-9._-]+\.git$ ]] || die "등록 응답에 회사 gitops 레포가 없다 (플랫폼에 회사 레포 설정이 없음)"
   printf 'AGENT_KEY_ID=%s\nAGENT_KEY_SECRET=%s\n' "$key_id" "$secret" > "$STATE/agent-key.env"
-  { printf 'TENANT=%s\nGITOPS_REPO_URL=%s\n' "$tenant" "$repo"
+  { printf 'TENANT=%s\nGITOPS_REPO_URL=%s\nENV_ID=%s\n' "$tenant" "$repo" "$env_id"
     if [ -n "$murl" ] && [ -n "$mtok" ]; then
       [[ "$murl" =~ ^https://[^/]+/ ]] && [[ "$mtok" =~ ^svc_mt_[A-Za-z0-9_-]{43}$ ]] || die "등록 응답의 지표 주소·토큰 모양이 이상하다"
       printf '%s' "$mtok" > "$STATE/metric-token"
@@ -94,9 +97,18 @@ fi
 echo "3/4 설치 (Argo CD core · 봉인 컨트롤러 · CNPG · Agent)"
 # shellcheck disable=SC1091
 . "$STATE/install.env"
+# 환경별 gitops 폴더: 예전에 등록한 서버는 install.env 에 ENV_ID 가 없다 → SVC_ENV_ID 로 받아 적어 둔다 (한 번만)
+if [ -z "${ENV_ID:-}" ]; then
+  [ -n "${SVC_ENV_ID:-}" ] || die "이 서버는 환경 id 없이 등록됐다 (환경별 gitops 폴더 전). 콘솔 환경 화면의 환경 id 로 SVC_ENV_ID=<id> 를 붙여 다시 돌린다 (또는 SVC_REENROLL=1 + 새 토큰)"
+  ENV_ID=$(printf '%s' "$SVC_ENV_ID" | tr 'A-F' 'a-f')
+  [[ "$ENV_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || die "SVC_ENV_ID 가 uuid 모양이 아니다"
+  printf 'ENV_ID=%s\n' "$ENV_ID" >> "$STATE/install.env"
+fi
+SITE=$(printf '%s' "$ENV_ID" | tr -d '-' | cut -c1-8)
+echo "  환경 $ENV_ID → gitops 폴더 onprem-k3s-$SITE"
 metrics=()
 [ -n "${METRICS_URL:-}" ] && [ -f "$STATE/metric-token" ] && metrics=(METRICS_URL="$METRICS_URL" METRIC_TOKEN_FILE="$STATE/metric-token")
-(cd "$B" && env TENANT="$TENANT" GITOPS_REPO_URL="$GITOPS_REPO_URL" AGENT_REPORT_URL="$API" AGENT_IMAGE="$AGENT_IMAGE" \
+(cd "$B" && env TENANT="$TENANT" SITE="$SITE" GITOPS_REPO_URL="$GITOPS_REPO_URL" AGENT_REPORT_URL="$API" AGENT_IMAGE="$AGENT_IMAGE" \
   AGENT_KEY_FILE="$STATE/agent-key.env" GITOPS_SSH_KEY_FILE="$STATE/gitops_ro" ${metrics[@]+"${metrics[@]}"} bash tools/onprem-install.sh)
 
 echo "4/4 확인"

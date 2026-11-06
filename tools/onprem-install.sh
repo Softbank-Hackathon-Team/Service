@@ -15,6 +15,7 @@
 #   TENANT=t-0a1b2c3d GITOPS_REPO_URL=git@github.com:org/gitops.git AGENT_REPORT_URL=https://api.example \
 #   AGENT_IMAGE=ghcr.io/org/svc-onprem-agent@sha256:... AGENT_KEY_FILE=.agent-key.env \
 #   [GITOPS_SSH_KEY_FILE=~/.ssh/gitops_ro | GITOPS_TOKEN_FILE=~/gitops-read-token] [GRANTS_CLUSTER=1] [KUBE_CONTEXT=...] bash tools/onprem-install.sh
+#   [SITE=1a2b3c4d]  이 환경 uuid 앞 16진수 8자. gitops 폴더 tenants/<회사>/apps/<앱>/onprem-k3s-<SITE> 만 당긴다 (없으면 예전 공용 폴더)
 #   [INVENTORY=0]  온프레 출발 가져오기 권한·스냅숏 끄기 (기본 켬: Agent 가 ConfigMap·노드 등 읽기 전용 목록을 보낸다. Secret 은 안 읽음)
 #   [METRICS_URL=https://metrics.<도메인>/v1/metrics METRIC_TOKEN_FILE=~/svc-metric-token]  트래픽 판정 지표 수집기 (#245, 둘 다 주거나 둘 다 빼기)
 #   METRIC_TOKEN_FILE: 이 환경의 지표 토큰 (콘솔·API POST /api/v1/environments/:id/metric-token 응답의 token, 한 번만 보인다).
@@ -46,6 +47,8 @@ need() { [ -n "${!1:-}" ] || die "$1 필요"; }
 K() { kubectl ${KUBE_CONTEXT:+--context "$KUBE_CONTEXT"} "$@"; }
 
 for v in TENANT GITOPS_REPO_URL AGENT_REPORT_URL AGENT_IMAGE AGENT_KEY_FILE; do need "$v"; done
+# SITE: 이 환경 uuid 앞 16진수 8글자 (gitops 폴더 onprem-k3s-<SITE>). 없으면 예전 공용 폴더를 본다 (설치 한 줄이 등록 응답 envId 로 채운다)
+[ -z "${SITE:-}" ] || [[ "$SITE" =~ ^[0-9a-f]{8}$ ]] || die "SITE 는 환경 uuid 앞 16진수 8자"
 command -v kubectl >/dev/null || die "kubectl 없음"
 command -v helm >/dev/null || die "helm 없음"
 [ -f "$AGENT_KEY_FILE" ] || die "AGENT_KEY_FILE 없음: $AGENT_KEY_FILE"
@@ -162,8 +165,14 @@ echo "4/5 설치 차트"
 # helm 4 는 server-side apply 다. Argo ApplicationSet 컨트롤러가 .spec.generators 를 다시 쓰므로 두 번째 실행부터 충돌로 실패한다
 #   (2026-11-05 VM 실측, helm v4.3.1). 이 차트가 그 칸의 주인이라 충돌은 차트 쪽으로 덮는다. helm 3 에는 이 플래그가 없다
 ssa=(); helm upgrade --help 2>/dev/null | grep -q -- '--force-conflicts' && ssa=(--force-conflicts)
+# 예전 공용 폴더로 만든 Application(<회사>-<앱>-onprem-k3s)이 있으면 그 폴더도 계속 본다: 안 그러면 ApplicationSet 이 지우고 앱·DB 도 같이 사라진다
+#   (진행 중 이전 보호). 예전 폴더가 git 에서 지워져 그 Application 이 없어지면, 다음에 다시 돌릴 때 끈다
+legacy=false
+if [ -n "${SITE:-}" ] && K -n "$ARGO_NS" get applications.argoproj.io -l svc.tenant="$TENANT" -o name 2>/dev/null | grep -q -- '-onprem-k3s$'; then
+  legacy=true; echo "  예전 공용 폴더로 만든 앱이 있어 그 폴더도 계속 본다 (gitops.legacyPath=true)"
+fi
 helm ${KUBE_CONTEXT:+--kube-context "$KUBE_CONTEXT"} upgrade --install onprem-agent deploy/helm/onprem-agent -n "$NS" "${ssa[@]}" \
-  --set tenant="$TENANT" --set gitops.repoURL="$GITOPS_REPO_URL" \
+  --set tenant="$TENANT" --set-string site="${SITE:-}" --set gitops.legacyPath="$legacy" --set gitops.repoURL="$GITOPS_REPO_URL" \
   --set agent.reportURL="$AGENT_REPORT_URL" --set agent.image="$AGENT_IMAGE" \
   --set grants.cluster="$([ "${GRANTS_CLUSTER:-0}" = 1 ] && echo true || echo false)" \
   --set grants.inventory="$([ "${INVENTORY:-1}" = 0 ] && echo false || echo true)" \
