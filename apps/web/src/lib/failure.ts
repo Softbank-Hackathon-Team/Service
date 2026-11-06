@@ -77,11 +77,20 @@ const RULES: Rule[] = [
   { match: /^RELAY_ROLE_DENIED$/, kind: "step", label: t('중계 권한 거부'), title: t('출발 계정이\n중계 권한을 거부했습니다'), hint: t('출발 실행 역할을 중계기 권한으로 빌리지 못했습니다. 고객 연결 스택에 중계기 권한이 있는지 확인해 주세요.') },
   { match: /^RELAY_PROVISION_FAILED$/, kind: "step", label: t('중계기 만들기 실패'), title: t('DB 중계기를\n만들지 못했습니다'), hint: t('출발 계정에 DB 중계기를 만들다 실패했습니다. 이미 만든 부분은 태그를 단 채 남아 있을 수 있습니다.') },
   { match: /^RELAY_TEARDOWN_FAILED$/, kind: "step", label: t('중계기 지우기 실패'), title: t('DB 중계기를\n지우지 못했습니다'), hint: t('출발 계정의 DB 중계기를 지우다 실패해 정리를 멈췄습니다.') },
+  // 워커 relay/aws-relay.ts: 출발 RDS 보안 그룹 규칙을 열 권한이 연결 스택에 없음
+  { match: /^RELAY_DB_EGRESS_DENIED$/, kind: "step", label: t('출발 DB 나가기 막힘'), title: t('출발 DB 보안 그룹을\n열 수 없습니다'), hint: t('출발 RDS 보안 그룹에 중계기로 나가는 5432 규칙이 없고, 연결 스택에 그 규칙을 열 권한도 없습니다. 연결 스택에 출발 DB 보안 그룹을 지정한 뒤 다시 시도해 주세요.') },
+  { match: /^RELAY_DB_INGRESS_DENIED$/, kind: "step", label: t('출발 DB 들어오기 막힘'), title: t('출발 DB 보안 그룹을\n열 수 없습니다'), hint: t('출발 RDS 보안 그룹이 중계기에서 들어오는 5432 를 받지 않고, 연결 스택에 그 규칙을 열 권한도 없습니다. 연결 스택을 새 템플릿으로 업데이트한 뒤 다시 시도해 주세요.') },
+  // 워커 env-layer.ts: 도착 환경 층(gcp/env: VPC·GKE·ESO)
+  { match: /^ENV_LAYER_APPLY_FAILED$/, kind: "step", label: t('환경 층 만들기 실패'), title: t('도착 환경 층을\n만들지 못했습니다'), hint: t('도착 VPC·클러스터·비밀 연동(환경 층)을 만들다 실패했습니다. 만들다 만 자원은 지우지 않고 남겨 둡니다.') },
+  { match: /^ENV_LAYER_BUSY$/, kind: "step", label: t('환경 층 만드는 중'), title: t('다른 마이그레이션이\n환경 층을 만들고 있습니다'), hint: t('같은 도착 환경의 환경 층을 다른 마이그레이션이 만드는 중입니다. 끝난 뒤 다시 시도해 주세요.') },
+  { match: /^ENV_LAYER_CRED_MISSING$/, kind: "step", label: t('환경 층 권한 없음'), title: t('환경 층을 만들\n권한이 없습니다'), hint: t('도착 GCP 실행 역할을 빌리지 못해 환경 층을 만들지 않았습니다. 플랫폼은 자기 자격으로 고객 자원을 만들지 않습니다.') },
   { match: /^(TF|APPLY|AZURE_MOCK)_/, kind: "step", label: t('자원 생성 실패'), title: t('도착 자원을\n만들지 못했습니다'), hint: t('도착 클러스터와 DB를 만드는 중에 멈췄습니다. 일부만 생겼을 수 있습니다.') },
   { match: /^CRED_RENEW_FAILED$/, kind: "step", label: t('임시 권한 재발급 실패'), title: t('임시 권한을\n다시 받지 못했습니다'), hint: t('이 단계에 필요한 임시 역할을 다시 빌리지 못해 멈췄습니다.') },
   // DRAFT(ai) #253: 복제 끝점 기록 (db 0050) → sync paused
   { match: /^REPL_ENDPOINT_INCOMPLETE$/, kind: "system", label: t('복제 끝점 빠짐'), title: t('DB 복제 끝점이\n한쪽만 있습니다'), hint: t('이 마이그레이션의 복제 끝점 기록에 출발·도착 중 한쪽만 있어 DB 복제를 멈췄습니다.') },
   { match: /^REPL_SECRET_UNRESOLVED$/, kind: "system", label: t('복제 비밀번호 못 찾음'), title: t('DB 복제 비밀번호를\n찾지 못했습니다'), hint: t('플랫폼 설정에서 복제 비밀번호를 풀지 못해 DB 복제를 멈췄습니다. 고객 쪽은 고칠 것이 없습니다. 플랫폼 운영자에게 알려 주세요.') },
+  // 워커 sync.ts: 출발 끝점(중계기 출발 입구 포함) TCP 실패, 재시도 소진 → sync paused
+  { match: /^REPL_SOURCE_UNREACHABLE$/, kind: "step", label: t('출발 DB에 못 닿음'), title: t('출발 DB에\n닿지 못했습니다'), hint: t('출발 DB 주소와 포트(중계기 입구 포함)로 다시 시도해도 연결되지 않아 DB 복제를 멈췄습니다.') },
   { match: /^REPL_TARGET_UNREACHABLE$/, kind: "step", label: t('도착 DB에 못 닿음'), title: t('도착 DB에\n닿지 못했습니다'), hint: t('도착 DB 주소와 포트로 다시 시도해도 연결되지 않아 DB 복제를 멈췄습니다.') },
   { match: /^SYNC_FAILED$/, kind: "step", label: t('DB 복제 실패'), title: t('DB 복제가\n이어지지 않습니다'), hint: t('출발 DB에서 도착 DB로 가는 논리 복제가 다시 시도해도 실패했습니다.') },
   { match: /^APP_LINK_UNAVAILABLE$/, kind: "system", label: t('앱 DB 주소 못 바꿈'), title: t('도착 앱의 DB 주소를\n바꿀 길이 없습니다'), hint: t('도착 앱이 쓸 DB 주소를 도착으로 바꿀 길(GitOps 설정·연결 프록시)이 없어 출발 DB 쓰기를 막기 전에 멈췄습니다. 출발 DB 가 그대로 주인이라 서비스는 그대로 돕니다.') },
