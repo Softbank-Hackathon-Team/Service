@@ -319,8 +319,8 @@ ensure_project_binding "${ENV_SA}" "projects/${P}/roles/platform_env"
 ensure_sa_binding "${NODE_SA}" "${ENV_SA}" roles/iam.serviceAccountUser
 # B-2: 노드 최소 권한 = 로그 쓰기·지표 쓰기·이미지 받기
 for role in roles/logging.logWriter roles/monitoring.metricWriter roles/artifactregistry.reader; do ensure_project_binding "${NODE_SA}" "${role}"; done
-# TODO(human) B-2: ESO 가 app- 비밀을 읽을 SA(svc-eso)와 그 Workload Identity 바인딩. 여기서 미리 묶는 안은 첫 GKE(WI) 클러스터 전에는
-#   GKE 풀(<전용>.svc.id.goog)이 없어 "Identity Pool does not exist"(400)로 막힌다. 갈래(클러스터 뒤 다시 실행 / 직접 자원 접근 / …)는 PR 설명
+# B-2 (나): ESO 신원은 여기서 만들지 않는다 (svc-eso 없음). ESO 는 자기 KSA 를 IAM 주체로 쓰고 앱 층(gcp/root)이 비밀마다 읽기를 준다.
+#   여기서 묶으면 첫 GKE 클러스터 전에는 GKE 풀(<전용>.svc.id.goog)이 없어 "Identity Pool does not exist"(400)로 막힌다
 # 플랫폼의 회사 전용 SA가 SA를 빌려 쓰게 함. 대상은 SA 단위(프로젝트 전체 아님), 주체는 이 회사 SA 하나. svc-gke-node 는 빌리지 않는다
 ensure_token_creator "${PLAN_SA}"
 ensure_token_creator "${OPERATE_SA}"

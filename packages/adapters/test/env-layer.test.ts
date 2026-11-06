@@ -13,7 +13,7 @@ const ENV_ID = "33333333-3333-4333-8333-333333333333";
 const VARS = envLayerVars({ projectId: "mig-target-proj", region: "asia-northeast3" });
 const OUT = { network_id: { value: "projects/p/global/networks/platform-target" }, cluster_name: { value: "platform-target" },
   cluster_location: { value: "asia-northeast3-a" }, nat_egress_ips: { value: ["34.64.1.2"] }, cluster_endpoint: { value: "1.2.3.4" },
-  registry_host: { value: "asia-northeast3-docker.pkg.dev/p/platform" }, secret_store_name: { value: "gcp-secret-manager" }, eso_service_account_email: { value: "x" } };
+  registry_host: { value: "asia-northeast3-docker.pkg.dev/p/platform" }, secret_store_name: { value: "gcp-secret-manager" } };
 
 function fake(o: { failAt?: string } = {}) {
   const calls: { args: string[]; tfvars: Record<string, unknown>; token?: string; cwd: string }[] = [];

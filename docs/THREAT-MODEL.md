@@ -200,6 +200,8 @@ J 산출물은 제어판 API 경로와 온프레 Agent 보고(1.1, 1.7)를 바�
 
 A-1~A-3에 해당하는 쓰기 동작 19개, G-1·G-2, K-1은 시험 안의 "알려진 목록"에 고정했다. 고치면 목록에서 지운다. 새로 늘면 시험이 깨진다.
 
+B-2 (나) 남은 위험: ESO 주체(`principal://…/workloadIdentityPools/<전용>.svc.id.goog/subject/ns/external-secrets/sa/external-secrets`)에는 클러스터 이름이 없다. 같은 프로젝트의 다른 클러스터에 같은 ns/KSA 가 있으면 앱 층이 이 주체에 준 그릇을 그 KSA 도 읽는다. 도착은 이전 전용 프로젝트이고 그 안 클러스터는 환경 층 하나라 지금은 영향이 없다. 전용 프로젝트에 클러스터를 더 두게 되면 다시 본다.
+
 B-2: `iam.serviceAccounts.actAs` 는 커스텀 역할 파일 어디에도 없다. 단 한 곳, `svc-gke-node` 한 SA 의 정책에서 `svc-env` 에게 `roles/iam.serviceAccountUser` 로만 준다. 시험이 `gcp-connect.sh` DRY_RUN 출력(실제로 나갈 명령)으로 확인한다. 프로젝트 전체 actAs, 다른 SA·다른 주체의 actAs, 검토 안 된 기본 역할이 나오면 실패한다.
 
 ## 3. 비밀값 다루는 규칙
@@ -218,7 +220,7 @@ B-2: `iam.serviceAccounts.actAs` 는 커스텀 역할 파일 어디에도 없다
 | 파일 | 개수 | 무엇을 보나 |
 |---|---|---|
 | `packages/core/test/rls.db.test.ts` | 14 | 다른 회사 줄 읽기 0줄, 넣기·옮기기 42501, 고치기·지우기 0줄, 남의 환경 외래 키 23503, `row_security=off` 42501, 감사·승인 고치기 42501, 벽 끄기·역할 바꾸기 42501, 알려진 한계 2개 |
-| `packages/adapters/test/permissions-lint.test.ts` | 18 | 2장 규칙 전부 + 알려진 과다 권한 목록 + B-2 env 역할·actAs 한 곳 규칙 |
+| `packages/adapters/test/permissions-lint.test.ts` | 19 | 2장 규칙 전부 + 알려진 과다 권한 목록 + B-2 env 역할·actAs 한 곳 규칙·ESO 주체 |
 | `packages/agent/test/gate-bypass.test.ts` | 9 (할 일 5) | 게이트가 막는 것 3개, 못 막는 것 4개, Agent 보고 위조·늦은 보고·재전송 |
 | `packages/security/test/broker-threat.test.ts` | 5 (할 일 3) | plan 단계 지우기 거부, 거부 감사에 값 없음, 천장 파일 없는 중개자·다른 이전의 참조 사용·워커 두 대 회수 증거. J 산출물이 있어야 돈다 |
 

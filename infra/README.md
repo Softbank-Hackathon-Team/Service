@@ -14,7 +14,7 @@ packages/adapters  toTerraform(spec, target) ──► infra/modules/<환경>/ap
 | `modules/aws/env` | VPC(공개2·사설2) + NAT 1 + EKS + Pod Identity 애드온 + ECR `platform` + ESO·ClusterSecretStore | 사람, 로컬 세션, 한 번 |
 | `modules/aws/platform` | VPC·EKS(노드 그룹 3개: general·cred·sandbox. sandbox 노드 gVisor(runsc) 설치는 `sandbox_gvisor_enabled`, 기본 끔)·ECR·RDS·증거 S3 + Pod Identity(worker·api·ESO, `pod-identity.tf`. 고객 이전 state 위치가 정해지지 않아 워커 state 권한은 넣지 않음)·비밀 그릇 `platform/app`·`platform/cloudflared`. 비밀 연동·입구 차트는 `deploy/helm/platform` | 사람, 한 번 |
 | `modules/aws/app` | RDS Postgres(논리 복제 켬, 비밀번호는 RDS가 Secrets Manager에 관리) + 보안 그룹 + 시크릿 그릇 + 앱 IAM 역할(Pod Identity) | worker, 승인된 plan만 |
-| `modules/gcp/env` | VPC + Cloud SQL 사설 연결(PSA) + Cloud NAT + GKE(Workload Identity) + Artifact Registry + ESO·ClusterSecretStore | 사람, 한 번 |
+| `modules/gcp/env` | VPC + Cloud SQL 사설 연결(PSA) + Cloud NAT + GKE(Workload Identity) + Artifact Registry + ESO·ClusterSecretStore (ESO 신원은 자기 KSA, GSA 없음. 아래 "ESO 읽기 권한 (GCP)") | 사람, 한 번 |
 | `modules/gcp/app` | Cloud SQL Postgres(사설 IP, logical_decoding) + DB 사용자·비밀번호 시크릿 + 시크릿 그릇 + 앱 SA(Workload Identity) | worker |
 | `modules/onprem/app` | k3s 네임스페이스 + 할당량 + 기본 차단 네트워크 정책 (DB는 차트의 CNPG Cluster) | worker |
 | `modules/azure/app` | Mock: Postgres Flexible + Key Vault + 관리 ID. validate·mock plan까지만, apply 안 함 | 없음 |
@@ -65,7 +65,27 @@ terraform apply -var expected_account_id=$(aws sts get-caller-identity --query A
   `cd modules/gcp/env && terraform destroy -var-file=../../../terraform.tfvars.json` 뒤 DB 줄을 지운다. 먼저 그 환경을 쓰는 이전이 없는지 확인한다.
   `google_service_networking_connection` 은 ABANDON 이라 피어링은 `gcloud services vpc-peerings delete` 로 따로 지운다 (위 UPREV 주석).
 - worker 디스크(#265 EBS)를 잃으면 state 도 잃는다. 그때는 `terraform import` 로 다시 잡거나 줄을 ready 로 두고 사실만 쓴다.
-- TODO(human) B-2: ESO 신원(GSA·`app-` secretAccessor·Workload Identity 바인딩)은 `svc-env` 권한 밖이다 (svc-eso setIamPolicy·프로젝트 setIamPolicy 금지). 정할 때까지 2차(`create_eso=true`)가 403 으로 `ENV_LAYER_APPLY_FAILED`(failedPhase=eso) 가 된다. 1차 클러스터는 남고, 결정 뒤 다시 계획·apply 하면 같은 state 로 이어 만든다.
+- B-2 (나): 환경 층은 IAM 을 바꾸지 않는다. ESO 신원은 아래 "ESO 읽기 권한 (GCP)" 을 본다.
+
+## ESO 읽기 권한 (GCP)
+
+상태: AI 초안 (보안 검토 전). B-2 (나) 안.
+
+- ESO 는 GSA 없이 자기 KSA `external-secrets/external-secrets` 를 그대로 IAM 주체로 쓴다 (GKE Workload Identity 직접 접근). 주체 이름은 `principal://iam.googleapis.com/projects/<번호>/locations/global/workloadIdentityPools/<전용>.svc.id.goog/subject/ns/external-secrets/sa/external-secrets` 다. `svc-eso` 는 없다. KSA 에 `iam.gke.io/gcp-service-account` annotation 이 없고, ClusterSecretStore 에 `auth` 칸이 없다.
+- 프로젝트 단위 읽기는 없다. 앱 층(`gcp/root`)이 ESO 가 읽는 그릇마다 `roles/secretmanager.secretAccessor` 를 준다. 대상은 DB 비밀번호, 앱 신원이 만든 비밀, 입구 비밀이다. `svc-operate` 의 `app-` 비밀 setIamPolicy(조건 `only-app-prefixed`) 안이라 새 권한은 없다.
+- 프로젝트 번호는 Secret Manager 가 돌려준 그릇 이름(`projects/<번호>/secrets/…`)에서 읽는다. 그래서 `resourcemanager.projects.get` 이 필요 없다.
+- 입구 비밀(`app-<앱>-cloudflared-token`, `app-<앱>-svc-metric-token`): k8s 도착에 입구(entry)가 있으면 앱 층 apply 가 그릇을 값 없이 만든다. 손으로 만든 그릇은 ESO 가 못 읽는다. 사람은 값만 넣는다. 지표 토큰 그릇은 지표를 켰는지와 상관없이 만든다. 지표 켜기(`TRAFFIC_METRICS_ENDPOINT`)는 승인 지문 밖이라 계획 때 모르고, 값 없는 그릇은 아무도 안 읽는다.
+  ```
+  printf '{"token":"%s"}' "<토큰>" | gcloud secrets versions add app-<앱>-cloudflared-token --project=<전용> --data-file=-
+  ```
+- 이 변경 전에 같은 이름 그릇을 손으로 만들어 둔 전용 프로젝트에서는 apply 가 `Error 409 … already exists` 로 멈춘다. 둘 중 하나를 고른다. 자동 가져오기는 없다.
+  - 가져오기 (값을 지킨다). 그 이전의 작업 폴더(`TF_WORK_DIR/<회사>/<이전 id>/`)에서
+    `terraform -chdir=root import -var-file=../terraform.tfvars.json 'google_secret_manager_secret.ingress["cloudflared-token"]' projects/<전용>/secrets/app-<앱>-cloudflared-token`
+    뒤에 다시 apply 한다. 지표 토큰은 키가 `"svc-metric-token"` 이다.
+  - 지우기 (값도 지워진다). `gcloud secrets delete app-<앱>-cloudflared-token --project=<전용>` 뒤에 다시 apply 하고 값을 다시 넣는다.
+- 앱 층 destroy(롤백·정리)는 입구 그릇을 값과 같이 지운다.
+- 예전 env 모듈(ESO GSA·프로젝트 읽기·WI 바인딩)로 만든 환경을 올릴 때는 앱 층을 먼저 다시 apply 해서 그릇마다 읽기를 받고, 그 뒤에 env 를 apply 한다. 순서를 바꾸면 그 사이 ESO 동기가 403 으로 실패한다.
+- 남은 위험: 주체 이름에 클러스터가 없다. 같은 전용 프로젝트의 다른 클러스터에 같은 ns/KSA 가 있으면 같은 권한을 쓴다. 전용 프로젝트에 플랫폼 클러스터 하나라 지금은 영향이 없다 (`docs/THREAT-MODEL.md`).
 
 ## 검증 명령
 ```
@@ -91,7 +111,7 @@ terraform init -backend=false
 terraform validate
 terraform test
 ```
-기대 출력: `Success! The configuration is valid.` 그리고 `Success! 5 passed, 0 failed.` (mock 2: GKE 켬/끔, eso 3: create_eso=true / create_gke=false 면 켜도 0개 / 기본은 0개)
+기대 출력: `Success! The configuration is valid.` 그리고 `Success! 7 passed, 0 failed.` (mock 4: GKE 켬/끔·노드 SA 줌/기본, eso 3: create_eso=true(IAM 자원 0, KSA annotation 없음) / create_gke=false 면 켜도 0개 / 기본은 0개)
 
 ```
 cd infra/modules/aws/bootstrap

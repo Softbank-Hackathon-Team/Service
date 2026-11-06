@@ -77,16 +77,10 @@ provider "google" {
 
 data "google_client_config" "me" {}
 
-# 프로젝트 번호: Secret Manager 자원 이름은 번호(projects/<번호>/secrets/...)로 온다
-data "google_project" "this" {
-  count      = local.eso ? 1 : 0
-  project_id = var.project_id
-}
-
 locals {
   eso       = var.create_gke && var.create_eso
   eso_ns    = "external-secrets" # 공식 차트 기본값. aws/platform 의 ESO Pod Identity 와 같은 이름
-  eso_ksa   = "external-secrets" # 릴리스 이름 external-secrets → 차트 기본 SA 이름
+  eso_ksa   = "external-secrets" # 릴리스 이름 external-secrets → 차트 기본 SA 이름. 앱 층(gcp/root)의 ESO 주체와 같아야 한다
   eso_store = "gcp-secret-manager"
   # GKE 없으면 빈 값: provider 설정만 읽히고 쓰는 자원이 0개라 plan 이 안 깨진다
   gke_host = try("https://${google_container_cluster.this[0].endpoint}", "")
@@ -264,40 +258,9 @@ resource "google_container_node_pool" "default" {
 # --- External Secrets (고객 클러스터): ESO + ClusterSecretStore "gcp-secret-manager".
 #   gitops/charts/app 의 ExternalSecret 이 이 이름으로 Secret Manager 의 "app-" 비밀을 읽는다 (deploy/ci/values/gcp.json).
 #   비밀 그릇·값은 여기서 만들지 않는다 (앱 층 kinds/identity·kinds/postgres 몫).
-#   신원: ESO 컨트롤러 KSA external-secrets/external-secrets → Workload Identity → 아래 GSA. store 에 auth 칸 없음(ADC)
-# TODO(human) B-2: 아래 신원 세 자원(GSA·프로젝트 secretAccessor·WI 바인딩)은 worker 가 빌리는 svc-env 권한 밖이다 (프로젝트 setIamPolicy·
-#   svc-eso setIamPolicy 금지, 보안 조건 2). gcp-connect.sh 가 고객 svc-eso 에 WI 를 미리 묶는 안은 첫 WI 클러스터 전에는 GKE 풀이 없어
-#   "Identity Pool does not exist"(400)로 막힌다 (serviceAccount:…svc.id.goog[…]·principal://… 둘 다). 어느 길로 갈지 정할 때까지
-#   create_eso=true 단계는 svc-env 로 돌면 이 자원에서 403 → ENV_LAYER_APPLY_FAILED(failedPhase=eso). 사람 권한 up 스크립트는 예전 그대로
-resource "google_service_account" "eso" {
-  count        = local.eso ? 1 : 0
-  account_id   = "${substr(var.name, 0, 24)}-eso" # account_id 30자 제한
-  display_name = "External Secrets Operator (${var.name})"
-  depends_on   = [google_project_service.apis]
-}
-
-# 읽기 범위: "app-" 접두어 비밀만 (버전 이름 .../secrets/app-x/versions/N 도 같은 접두어)
-resource "google_project_iam_member" "eso_secret_access" {
-  count   = local.eso ? 1 : 0
-  project = var.project_id
-  role    = "roles/secretmanager.secretAccessor"
-  member  = "serviceAccount:${google_service_account.eso[0].email}"
-  condition {
-    title       = "eso-app-secrets-only"
-    description = "ESO 는 app- 접두어 비밀만 읽는다"
-    expression  = "resource.name.startsWith(\"projects/${data.google_project.this[0].number}/secrets/app-\")"
-  }
-}
-
-# KSA external-secrets/external-secrets 가 이 GSA 를 빌린다
-resource "google_service_account_iam_member" "eso_wi" {
-  count              = local.eso ? 1 : 0
-  service_account_id = google_service_account.eso[0].name
-  role               = "roles/iam.workloadIdentityUser"
-  member             = "serviceAccount:${var.project_id}.svc.id.goog[${local.eso_ns}/${local.eso_ksa}]"
-  depends_on         = [google_container_cluster.this] # WI 풀은 클러스터가 생겨야 있다
-}
-
+#   신원 B-2 (나) DRAFT(ai, 보안 검토 전): GSA 없음. ESO 컨트롤러는 자기 KSA external-secrets/external-secrets 로 Secret Manager 에 간다
+#   (GKE Workload Identity 직접 접근, KSA 에 iam.gke.io/gcp-service-account annotation 없음, store 에 auth 칸 없음).
+#   비밀마다 읽기 권한은 앱 층(gcp/root)이 그 주체에 준다. 그래서 이 층은 IAM 을 하나도 안 바꾼다 (svc-env 역할에 IAM 쓰기 없음)
 resource "helm_release" "eso" {
   count            = local.eso ? 1 : 0
   name             = "external-secrets"
@@ -308,13 +271,10 @@ resource "helm_release" "eso" {
   create_namespace = true
   # webhook.port 는 기본 10250 그대로: private GKE 제어부 → 노드 기본 허용 포트(443·10250). 바꾸면 방화벽 규칙이 필요하다
   values = [yamlencode({
-    installCRDs = true
-    serviceAccount = {
-      name        = local.eso_ksa
-      annotations = { "iam.gke.io/gcp-service-account" = google_service_account.eso[0].email }
-    }
+    installCRDs    = true
+    serviceAccount = { name = local.eso_ksa }
   })]
-  depends_on = [google_container_node_pool.default, google_service_account_iam_member.eso_wi]
+  depends_on = [google_container_node_pool.default]
 }
 
 # ClusterSecretStore 는 ESO CRD·webhook 이 뜬 뒤에 (helm_release 기본 wait=true)
@@ -328,7 +288,7 @@ resource "helm_release" "secret_store" {
     provider = "gcpsm"
     gcpsm    = { projectID = var.project_id }
   })]
-  depends_on = [helm_release.eso, google_project_iam_member.eso_secret_access]
+  depends_on = [helm_release.eso]
 }
 
 resource "google_artifact_registry_repository" "platform" {
@@ -348,5 +308,4 @@ output "cluster_name" { value = var.create_gke ? google_container_cluster.this[0
 output "cluster_location" { value = var.create_gke ? google_container_cluster.this[0].location : var.zone }
 output "cluster_endpoint" { value = var.create_gke ? google_container_cluster.this[0].endpoint : "" }
 output "registry_host" { value = "${var.region}-docker.pkg.dev/${var.project_id}/platform" }
-output "eso_service_account_email" { value = local.eso ? google_service_account.eso[0].email : "" }
 output "secret_store_name" { value = local.eso ? local.eso_store : "" }

@@ -175,12 +175,12 @@ test("GCP env 역할: 와일드카드·지우기·setIamPolicy·actAs·비밀값
   assert.deepEqual(env.filter((p) => GCP_FORBIDDEN.some((r) => r.test(p))), ENV_ALLOWED_FORBIDDEN);
   assert.deepEqual(env.filter((p) => p.includes("*") || /\.(delete|destroy|undelete|setIamPolicy)$/.test(p)), []);
 });
-test("GCP env 역할은 gcp/env 모듈의 자원 종류를 전부 덮는다 (보류 = ESO 신원 3종, TODO(human))", () => {
+test("GCP env 역할은 gcp/env 모듈의 자원 종류를 전부 덮고, 모듈엔 IAM 자원이 없다 (B-2 나: ESO 읽기 권한은 앱 층)", () => {
   const tf = readFileSync(new URL("../../../infra/modules/gcp/env/main.tf", import.meta.url), "utf8");
   const used = new Set([...tf.matchAll(/^(resource|data) "([a-z0-9_]+)"/gm)].map((m) => (m[1] === "data" ? `data.${m[2]}` : m[2]!)));
-  const covered = new Set<string>([...gcpSrc.ENV_LAYER_TYPES, ...gcpSrc.ENV_LAYER_PENDING]);
+  const covered = new Set<string>(gcpSrc.ENV_LAYER_TYPES);
   assert.deepEqual([...used].filter((t) => !covered.has(t)), []);
-  assert.deepEqual([...gcpSrc.ENV_LAYER_PENDING].filter((t) => !used.has(t)), [], "보류 목록에 모듈에 없는 종류");
+  assert.deepEqual([...used].filter((t) => /_iam_|^google_service_account$/.test(t)), [], "env 층이 IAM 을 바꾸면 svc-env 에 IAM 쓰기가 필요해진다");
 });
 
 // B-2 보안 조건 3: actAs 는 한 곳뿐 = svc-env 가 svc-gke-node 하나의 정책에서 받는 serviceAccountUser. 통째 예외는 없다.
@@ -238,6 +238,16 @@ test("GCP actAs 거부: 프로젝트 전체 actAs, 다른 SA 의 actAs, 다른 �
     editor: [...ok, "+ gcloud projects add-iam-policy-binding cust-mig --member=serviceAccount:svc-env@cust-mig.iam.gserviceaccount.com --role=roles/editor --condition=None"],
   };
   for (const [name, lines] of Object.entries(mutants)) assert.notDeepEqual(actAsViolations(lines), [], name);
+});
+
+// B-2 (나): ESO 는 자기 KSA 가 IAM 주체다. 연결 스크립트는 ESO 신원을 안 만들고, 앱 층이 읽기를 주는 주체는 env 층이 설치하는 KSA 와 같아야 한다
+test("GCP ESO: 연결 스크립트에 ESO SA·WI 바인딩 없음, 앱 층 ESO 주체의 ns/KSA = env 층이 설치하는 ESO KSA", () => {
+  assert.deepEqual(connectDryRun().filter((l) => /svc-eso|workloadIdentityUser/.test(l)), []);
+  const env = readFileSync(new URL("../../../infra/modules/gcp/env/main.tf", import.meta.url), "utf8");
+  const root = readFileSync(new URL("../../../infra/modules/gcp/root/main.tf", import.meta.url), "utf8");
+  const ns = /^\s*eso_ns\s*=\s*"([^"]+)"/m.exec(env)?.[1], ksa = /^\s*eso_ksa\s*=\s*"([^"]+)"/m.exec(env)?.[1];
+  assert.ok(ns && ksa, "env 층 eso_ns·eso_ksa");
+  assert.ok(root.includes(`.svc.id.goog/subject/ns/${ns}/sa/${ksa}"`), `gcp/root ESO 주체가 ${ns}/${ksa} 가 아님`);
 });
 
 // 온프레 k8s ClusterRole

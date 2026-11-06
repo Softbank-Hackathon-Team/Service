@@ -133,14 +133,12 @@ export const PERMS: PermTable = {
   env_layer_cluster_check: { read: ["container.clusters.list"], write: [], remove: [] },
 };
 
-// B-2: svc-env 커스텀 역할(gcp-env-custom-role.yaml) = 이 종류들의 읽기 + 만들기. 모듈의 자원 종류는 전부 여기나 ENV_LAYER_PENDING 에 있어야 한다 (시험이 대조)
-export const ENV_LAYER_TYPES = ["data.google_client_config", "data.google_project", "env_layer_cluster_check", "google_artifact_registry_repository",
+// B-2: svc-env 커스텀 역할(gcp-env-custom-role.yaml) = 이 종류들의 읽기 + 만들기. 모듈의 자원 종류는 전부 여기 있어야 한다 (시험이 대조).
+//   IAM 자원은 없다: ESO 는 GSA 없이 자기 KSA 로 읽고, 비밀마다 읽기 권한은 앱 층(gcp/root)이 준다 (B-2 나)
+export const ENV_LAYER_TYPES = ["data.google_client_config", "env_layer_cluster_check", "google_artifact_registry_repository",
   "google_compute_address", "google_compute_global_address", "google_compute_network", "google_compute_router", "google_compute_router_nat",
   "google_compute_subnetwork", "google_container_cluster", "google_container_node_pool", "google_project_service", "google_service_networking_connection",
   "helm_release"] as const;
-// TODO(human): ESO 신원(GSA 만들기·프로젝트 secretAccessor·Workload Identity 바인딩)은 svc-env 에 주지 않는다 (보안 조건 2: svc-eso setIamPolicy 금지,
-//   프로젝트 setIamPolicy 금지). GKE 풀(<프로젝트>.svc.id.goog)은 첫 WI 클러스터가 생겨야 있어서 gcp-connect.sh 가 미리 묶을 수 없다. 갈래는 PR 설명
-export const ENV_LAYER_PENDING = ["google_project_iam_member", "google_service_account", "google_service_account_iam_member"] as const;
 
 // FM-CLD-hunt-cloud-23: 앱 모듈 밖에서 실행 역할이 늘 하는 일 (gcp/root API 켜기, 이전 중 GKE 업그레이드 멈춤). 권한 파일·plan 역할에는 들어가야 함
 export const ROOT_TYPES = ["google_project_service", "gke_upgrade_freeze", "kubernetes_role_v1", "kubernetes_role_binding_v1"] as const;

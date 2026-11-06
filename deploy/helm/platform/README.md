@@ -255,6 +255,7 @@ helm upgrade platform deploy/helm/platform -n platform --reset-then-reuse-values
 ```
 # 1. 도착 환경의 지표 토큰 받기 (POST /api/v1/environments/:id/metric-token). 원문은 응답에 한 번만 나온다
 # 2. 도착 비밀 저장소의 svc-metric-token 에 {"token": "<값>"} 넣기. 정확한 이름은 이전 계획의 경고 줄에 나온다
+#    GCP 도착은 앱 층 apply 가 그릇(app-<앱>-svc-metric-token)을 값 없이 만들어 둔다. 손으로 만든 그릇은 ESO 가 못 읽으니 값(버전)만 넣는다 (infra/README.md "ESO 읽기 권한 (GCP)")
 # 3. 차트 값 주기
 helm upgrade platform deploy/helm/platform -n platform --reset-then-reuse-values --set trafficMetrics.endpoint=https://metrics.<도메인>/v1/metrics
 # 4. 도착 지표가 Prometheus 에 들어오는 것을 본 뒤에 판정을 켠다. 먼저 켜면 표본 부족으로 롤백된다

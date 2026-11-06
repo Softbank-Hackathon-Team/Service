@@ -75,7 +75,7 @@
 
 이미 연결한 고객의 환경 층(B-2): 스크립트를 같은 값으로 **다시 실행**하면 `svc-env`·`svc-gke-node`·`platform_env` 와 위 바인딩만 새로 생긴다 (있는 것은 건너뜀). 다시 실행하지 않으면 환경 층 만들기가 `ENV_LAYER_CRED_MISSING` 으로 멈춘다.
 `platform_env` 는 이미 있으면 바꾸지 않는다 (실행 역할과 같은 규칙). 첫 실측에서 권한이 모자라면 `gcloud iam roles update platform_env --project=<전용> --file=infra/permissions/gcp-env-custom-role.yaml` 로 고객이 직접 바꾼다.
-- TODO(human): ESO 가 `app-` 비밀을 읽을 신원(`svc-eso` + Workload Identity). 첫 GKE 클러스터 전에는 GKE 풀(`<전용>.svc.id.goog`)이 없어 이 스크립트가 미리 묶을 수 없다 (`Identity Pool does not exist`). 정할 때까지 환경 층의 ESO 단계는 `svc-env` 권한 밖이라 실패한다
+ESO 신원은 이 스크립트가 만들지 않는다 (`svc-eso` 없음, B-2 (나)). ESO 는 클러스터 안 자기 KSA `external-secrets/external-secrets` 를 IAM 주체로 쓰고, 앱 층이 비밀마다 읽기를 준다 (`infra/README.md` "ESO 읽기 권한 (GCP)"). 그래서 첫 GKE 클러스터 전에 없는 GKE 풀에 미리 묶을 일이 없다.
 
 이미 연결한 고객의 Argo CD 허브 권한: `gcp-connect.sh` 를 다시 돌리면 `platform_hub_access` 는 생기지만, 실행 역할은 권한이 늘면 할 수 있는 일이 늘어서 자동으로 바꾸지 않는다. 고객이 아래 명령으로 직접 더한다.
 
