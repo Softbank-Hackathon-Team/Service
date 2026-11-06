@@ -77,8 +77,7 @@ export function figureRows(f: Figures): { name: string; value: string }[] {
 export type Caption = { text: string; warn: boolean };
 
 /**
- * 비용 경로가 없는 서버(404, 501)이거나 닿지 못함(네트워크). 오류가 아니라 "아직 볼 수 없음"으로 짧게 말한다.
- * main 에는 비용 경로가 아직 없다 (feat/cost-evidence 에만 있음)
+ * 비용 경로가 없는 옛 서버(404, 501)이거나 닿지 못함(네트워크). 오류가 아니라 "아직 볼 수 없음"으로 짧게 말한다.
  */
 export const costAbsent = (error: unknown) =>
   error instanceof TypeError || (error instanceof HttpError && (error.status === 404 || error.status === 501));
