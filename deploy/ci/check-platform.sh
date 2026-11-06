@@ -144,7 +144,14 @@ DOC=$(helm template platform "$CHART" -n platform "${IMG[@]}" --set traffic.mock
 has app.yaml Deployment worker '{ name: MOCK_TRAFFIC, value: "1" }' "traffic.mock 켬"
 for a in api agent-worker web; do hasnt app.yaml Deployment "$a" MOCK_TRAFFIC "traffic.mock 켬"; done
 if ! helm template platform "$CHART" -n platform "${IMG[@]}" --set traffic=null >/dev/null 2>&1; then echo "FAIL traffic 칸이 없는 릴리스 값으로 렌더가 안 된다"; fail=1; fi
-[ $fail -eq 0 ] && echo "ok   흉내 트래픽 (값 없음·켬·예전 릴리스 값)"
+# 환경 층 자동 (values envLayer.auto): 같은 규칙
+DOC=$(helm template platform "$CHART" -n platform "${IMG[@]}")
+for a in api worker agent-worker web; do hasnt app.yaml Deployment "$a" ENV_LAYER_AUTO "envLayer.auto 기본"; done
+DOC=$(helm template platform "$CHART" -n platform "${IMG[@]}" --set envLayer.auto=true)
+has app.yaml Deployment worker '{ name: ENV_LAYER_AUTO, value: "1" }' "envLayer.auto 켬"
+for a in api agent-worker web; do hasnt app.yaml Deployment "$a" ENV_LAYER_AUTO "envLayer.auto 켬"; done
+if ! helm template platform "$CHART" -n platform "${IMG[@]}" --set envLayer=null >/dev/null 2>&1; then echo "FAIL envLayer 칸이 없는 릴리스 값으로 렌더가 안 된다"; fail=1; fi
+[ $fail -eq 0 ] && echo "ok   흉내 트래픽·환경 층 자동 (값 없음·켬·예전 릴리스 값)"
 # worker Terraform 디스크: 값이 없으면 아무것도 안 그린다, 켜면 worker 에만 붙는다, worker 가 2개면 렌더 실패
 if grep -qE 'worker-tf-work|TF_WORK_DIR|type: Recreate' <<<"$(helm template platform "$CHART" -n platform "${IMG[@]}")"; then
   echo "FAIL tfWorkDir 값 없이 디스크가 그려졌다"; fail=1

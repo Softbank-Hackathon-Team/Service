@@ -290,6 +290,8 @@ helm upgrade platform deploy/helm/platform -n platform --reset-then-reuse-values
 
 지표·전환기 없이 실측할 때만 `--set traffic.mock=true` 로 worker 에 `MOCK_TRAFFIC=1` 을 넣는다 (shifting 이 가짜 지표·mock 전환기로 넘어간다, `DEMO_MODE=1` 과 같이 못 씀). 기본은 끔이라 설정이 없으면 `TRAFFIC_NOT_CONFIGURED` 로 멈춘다.
 
+GCP 도착에 GKE 가 없을 때 worker 가 환경 층을 만들게 하려면 `--set envLayer.auto=true` (worker `ENV_LAYER_AUTO=1`). 켠 뒤에 만든 계획부터 들어가므로 이전을 만들기 전에 켠다. 예전처럼 비밀 JSON·`secretKeys` 로 넣지 않는다.
+
 - 값을 켜면 토큰은 필수다. 저장소에 없으면 배포가 커밋 전에 `SECRET_VALUES_MISSING` 으로 멈추고 어느 이름이 없는지 알려 준다. 넣고 재개하면 된다. 이때 트래픽은 아직 출발에 있다.
 - 값을 켠 시점 이후 배포부터 수집기가 붙는다. 지문에는 안 들어가서 이미 승인한 계획도 그대로 간다.
 - 응답 시간은 잴 수 없어 판정은 오류율로만 하고 "지연 미측정"으로 남는다.

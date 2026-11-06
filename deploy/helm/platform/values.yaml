@@ -121,6 +121,11 @@ trafficMetrics:
 traffic:
   mock: false
 
+# GCP 도착에 GKE 가 없으면 worker 가 환경 층(VPC·GKE·AR·ESO)을 고객 svc-env 로 만든다: worker 에 ENV_LAYER_AUTO=1.
+#   기본 끔. 켠 뒤에 만든 계획부터 환경 층이 들어간다 (켜기 전에 승인한 계획은 apply 가 TF_PLAN_DRIFT 로 멈춘다)
+envLayer:
+  auto: false
+
 # 워커가 Application 을 읽고 새로고침 표시를 다는 Argo CD 네임스페이스 (Role·RoleBinding 이 여기 생긴다)
 argocd:
   namespace: argocd
