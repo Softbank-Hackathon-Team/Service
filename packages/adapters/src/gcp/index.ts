@@ -99,19 +99,21 @@ export const PERMS: PermTable = {
   google_compute_subnetwork: {
     read: ["compute.subnetworks.get"], write: ["compute.subnetworks.create", "compute.networks.updatePolicy", "compute.regionOperations.get"], remove: [] },
   google_compute_global_address: {
-    read: ["compute.globalAddresses.get"], write: ["compute.globalAddresses.createInternal", "compute.networks.use", "compute.globalOperations.get"], remove: [] },
+    read: ["compute.globalAddresses.get"], write: ["compute.globalAddresses.createInternal", "compute.globalAddresses.setLabels", "compute.networks.use", "compute.globalOperations.get"], remove: [] },
   // provider 가 연결을 읽을 때 프로젝트 번호를 찾는다 (resourcemanager.projects.get)
   google_service_networking_connection: {
     read: ["servicenetworking.services.get", "resourcemanager.projects.get"], write: ["servicenetworking.services.addPeering", "servicenetworking.operations.get"], remove: [] },
   google_compute_router: {
     read: ["compute.routers.get"], write: ["compute.routers.create", "compute.networks.updatePolicy", "compute.regionOperations.get"], remove: [] },
-  google_compute_address: { read: ["compute.addresses.get"], write: ["compute.addresses.create", "compute.regionOperations.get"], remove: [] },
+  // provider 는 라벨을 만들기 뒤 setLabels 로 따로 붙인다 (전역·지역 주소 둘 다, 11/06 실측 403)
+  google_compute_address: { read: ["compute.addresses.get"], write: ["compute.addresses.create", "compute.addresses.setLabels", "compute.regionOperations.get"], remove: [] },
   google_compute_router_nat: {
     read: ["compute.routers.get"], write: ["compute.routers.update", "compute.addresses.use", "compute.regionOperations.get"], remove: [] },
   // 노드 풀 만들기·기본 풀 걷기 = container.clusters.update (GKE API 권한표). 노드 SA 를 붙이는 actAs 는 역할이 아니라 svc-gke-node 한 SA 에만 (gcp-connect.sh)
   google_container_cluster: {
     read: ["container.clusters.get", "container.operations.get"], write: ["container.clusters.create", "container.clusters.update"], remove: [] },
-  google_container_node_pool: { read: ["container.clusters.get", "container.operations.get"], write: ["container.clusters.update"], remove: [] },
+  // 노드 풀 읽기는 instance_group_urls 를 위해 관리형 인스턴스 그룹을 읽는다 (11/06 실측 403)
+  google_container_node_pool: { read: ["container.clusters.get", "container.operations.get", "compute.instanceGroupManagers.get"], write: ["container.clusters.update"], remove: [] },
   google_artifact_registry_repository: { read: ["artifactregistry.repositories.get"], write: ["artifactregistry.repositories.create"], remove: [] },
   // ESO 차트 + cluster-secret-store 차트가 클러스터 안에 만드는 것 (CRD·ClusterRole·ClusterRoleBinding·웹훅·배포·CR). GKE 는 k8s 호출을 IAM 권한으로도 본다.
   //   helm 은 릴리스 기록을 Secret 에 둔다 (secrets get·list·create·update). 자기보다 큰 ClusterRole 을 만들고 묶으려면 escalate·bind

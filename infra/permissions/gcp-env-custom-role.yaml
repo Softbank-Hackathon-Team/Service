@@ -6,10 +6,13 @@ includedPermissions:
 - artifactregistry.repositories.get
 - compute.addresses.create
 - compute.addresses.get
+- compute.addresses.setLabels
 - compute.addresses.use
 - compute.globalAddresses.createInternal
 - compute.globalAddresses.get
+- compute.globalAddresses.setLabels
 - compute.globalOperations.get
+- compute.instanceGroupManagers.get
 - compute.networks.create
 - compute.networks.get
 - compute.networks.updatePolicy
