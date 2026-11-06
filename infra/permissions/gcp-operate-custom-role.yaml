@@ -16,6 +16,7 @@ includedPermissions:
 - cloudsql.users.delete
 - cloudsql.users.list
 - cloudsql.users.update
+- compute.instanceGroupManagers.get
 - container.clusters.get
 - container.clusters.update
 - container.namespaces.create
@@ -52,6 +53,7 @@ includedPermissions:
 - redis.instances.delete
 - redis.instances.get
 - redis.instances.update
+- resourcemanager.projects.get
 - secretmanager.secrets.create
 - secretmanager.secrets.delete
 - secretmanager.secrets.get
@@ -59,7 +61,9 @@ includedPermissions:
 - secretmanager.secrets.update
 - secretmanager.versions.add
 - secretmanager.versions.destroy
+- secretmanager.versions.enable
 - secretmanager.versions.get
+- serviceusage.operations.get
 - serviceusage.services.enable
 - serviceusage.services.get
 - serviceusage.services.list

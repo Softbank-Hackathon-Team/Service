@@ -51,8 +51,15 @@ const CAPS = [...K8S_RENDER_CAPS, "volume.pvc", "kind.postgres.15", "kind.postgr
 const ingressSecretsOf = (spec: AppSpecV2): string[] =>
   managedServicesOf(spec).length || vmServicesOf(spec).length || !spec.entry?.hosts.length ? [] : [...INGRESS_SECRETS];
 
+// kinds/namespace 입력(namespace_json). 관리형·VM 도착엔 앱 구역이 없다. GCP 는 구역 한도를 안 건다(null → 모듈이 ResourceQuota 를 안 만듦).
+//   toTerraformV2 와 resourceTypesV2 가 같은 값을 봐서, 한도를 켜면 권한(kubernetes_resource_quota_v1)도 같이 따라온다
+type NamespaceCfg = { name: string; quota_cpu_m: number | null; quota_memory_mi: number | null };
+const namespaceCfgOf = (spec: AppSpecV2): NamespaceCfg[] =>
+  managedServicesOf(spec).length || vmServicesOf(spec).length ? [] : [{ name: appNamespace(asV1Name(spec)), quota_cpu_m: null, quota_memory_mi: null }];
+
 export function resourceTypesV2(spec: AppSpecV2): string[] {
   const t = new Set(["data.google_client_config", "data.google_container_cluster", "kubernetes_namespace_v1"]);
+  if (namespaceCfgOf(spec).some((n) => n.quota_cpu_m != null || n.quota_memory_mi != null)) t.add("kubernetes_resource_quota_v1");
   const managed = managedServicesOf(spec).length > 0;
   if (managed) {
     ["data.google_project", "google_service_account", "google_cloud_run_v2_service", "google_cloud_run_v2_service_iam_member"].forEach((x) => t.add(x));
@@ -158,7 +165,7 @@ export const gcpTarget: TargetBuilder = {
         cluster_name: t.clusterName ?? envRef("clusterName"),
         cluster_location: t.clusterLocation ?? envRef("clusterLocation"),
         postgres_json: kindJson("postgres", postgres),
-        namespace_json: kindJson("namespace", managed || vm ? [] : [{ name: ns, quota_cpu_m: null, quota_memory_mi: null }]),
+        namespace_json: kindJson("namespace", namespaceCfgOf(spec)),
         identity_json: kindJson("identity", identity),
         cache_json: cacheVars(spec, t, "gcp"),
         object_store_json: objectStoreVars(spec, t),
