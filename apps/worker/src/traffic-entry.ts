@@ -5,6 +5,7 @@
 // 전제(고객 쪽): 출발 앱이 이미 우리 Cloudflare 존의 호스트 뒤에 있다 (명세 입구 호스트의 DNS 줄 = 출발 오리진). 없으면 멈추고 알려 준다
 // 토큰 전달: 온프레 도착만 봉인 비밀(SealedSecret cloudflared-token)로 gitops 에 싣는다.
 //   TODO(human): 클라우드(aws·gcp) 도착은 도착 비밀 저장소에 쓰는 길이 아직 없다 → 그 판은 건너뛰고 경고 (예전처럼 사람이 토큰을 넣는다)
+import { createHash } from "node:crypto";
 import type { ChartSealedSecret, HelmValues, TrafficTarget } from "@svc/contracts";
 import { upsertTrafficTarget, withTenant } from "@svc/core";
 import { cfRequest, ensureMigrationCf, teardownMigrationCf, type CfProvisionCtx, type CfTeardownResult, type FetchLike } from "@svc/traffic";
@@ -77,8 +78,8 @@ export async function prepareTrafficEntry(i: { tenantId: string; migrationId: st
     const r = await ensureMigrationCf(ctx, { migrationId: i.migrationId, hostname: entry.hostname, sourceOrigin, targetService: entry.targetService });
     const t: TrafficTarget = { provider: "cloudflare", lbId: r.lbId, sourcePoolId: r.sourcePoolId, targetPoolId: r.targetPoolId, zoneId: ctx.zoneId };
     await (deps.register ?? ((tenantId, migrationId, tt) => withTenant(tenantId, (tx) => upsertTrafficTarget(tx, tenantId, migrationId, tt, "worker:traffic-entry"))))(i.tenantId, i.migrationId, t);
-    const sealed = sealedSecretValues(i.sealingCertPem, String(i.values.namespace), TUNNEL_TOKEN_SECRET, { token: r.tunnelToken });
-    return { kind: "ok", sealedSecret: { name: sealed.name, encryptedData: sealed.encryptedData },
+    const sealed = sealOnce(i.migrationId, i.sealingCertPem, String(i.values.namespace), r.tunnelToken);
+    return { kind: "ok", sealedSecret: sealed,
       detail: { hostname: entry.hostname, lbId: r.lbId, sourcePoolId: r.sourcePoolId, targetPoolId: r.targetPoolId, tunnelId: r.tunnelId, sourceOrigin: maskOrigin(sourceOrigin) } };
   } catch (e) {
     const msg = (e as Error).message;
@@ -90,6 +91,20 @@ export function entryFailHint(msg: string): string {
   if (/surpass the limit/i.test(msg))
     return "Cloudflare Load Balancing 요금제의 오리진 수 한도에 걸림 (이전 하나에 출발·도착 2개 필요). 안 쓰는 LB·pool 을 지우거나 오리진 한도를 올린 뒤 재개. 한도 2면 한 번에 이전 하나만 된다";
   return "Cloudflare 토큰 권한(Tunnel Edit, LB Monitors and Pools Edit, Zone LB Edit, DNS Read)·존을 확인한 뒤 재개 (여러 번 해도 같은 자원을 다시 쓴다)";
+}
+// 봉인은 무작위 세션 키라 같은 토큰도 매번 다른 암호문이 된다. 리허설 렌더와 커밋 렌더는 다른 작업 실행이라, 매번 봉인하면
+//   커밋 직전 지문이 리허설 지문과 달라 REHEARSAL_BUNDLE_MISMATCH 로 멈춘다 (2026-11-07 실측). 입력(토큰·인증서·네임스페이스)이 같으면 처음 암호문을 다시 쓴다.
+// DRAFT(ai): 워커 메모리에만 둔다 (worker 1개, 리허설 → 커밋은 같은 프로세스). 그 사이 워커가 다시 뜨면 한 번 어긋나 paused, 재개하면 새 차례로 다시 리허설해서 맞는다.
+//   TODO(human): 워커를 여럿 띄우면 DB(복제 배달의 sealed_material 처럼)에 남겨야 한다
+const sealedCache = new Map<string, { digest: string; sealed: ChartSealedSecret }>();
+function sealOnce(migrationId: string, certPem: string, namespace: string, token: string): ChartSealedSecret {
+  const digest = createHash("sha256").update(`${certPem}\0${namespace}\0${TUNNEL_TOKEN_SECRET}\0${token}`).digest("hex");
+  const hit = sealedCache.get(migrationId);
+  if (hit?.digest === digest) return hit.sealed;
+  const s = sealedSecretValues(certPem, namespace, TUNNEL_TOKEN_SECRET, { token });
+  const sealed: ChartSealedSecret = { name: s.name, encryptedData: s.encryptedData };
+  sealedCache.set(migrationId, { digest, sealed });
+  return sealed;
 }
 const maskOrigin = (o: string) => o.replace(/^([0-9a-f]{4})[0-9a-f-]{28,}/i, "$1…");
 
