@@ -24,7 +24,7 @@ const PRODUCT: { [C in Cloud]: { [K in DataKind]: (c: Of<K>) => string } } = {
   gcp: {
     postgres: () => "Cloud SQL for PostgreSQL",
     cache: () => "Memorystore (redis)",   // valkey 도 Redis 로 만든다 (data-fit cacheVersionFor)
-    queue: (c) => (c.props.model === "topic" ? "Pub/Sub 토픽" : "Pub/Sub 토픽 + 구독"),
+    queue: (c) => (c.props.model === "topic" ? "Pub/Sub topic" : "Pub/Sub topic + subscription"),
     objectStore: () => "Cloud Storage",
   },
 };
@@ -34,45 +34,45 @@ const hasCold = (c: Of<"objectStore">) => (c.props.lifecycle ?? []).some((r) => 
 const MOVES: { [K in DataKind]: Record<Direction, Move<K>> } = {
   postgres: {
     "aws>gcp": { lost: [
-      { what: "포트 (Cloud SQL 은 5432 고정)", when: (c) => c.props.port !== undefined && c.props.port !== 5432 },
-      { what: "유지보수 창의 분 (Cloud SQL 은 요일·시만 받음)", when: (c) => !!c.props.maintenanceWindow && !/:00-/.test(c.props.maintenanceWindow) },
+      { what: "Port (Cloud SQL is fixed at 5432)", when: (c) => c.props.port !== undefined && c.props.port !== 5432 },
+      { what: "Maintenance window minutes (Cloud SQL takes day and hour only)", when: (c) => !!c.props.maintenanceWindow && !/:00-/.test(c.props.maintenanceWindow) },
     ] },
     "gcp>aws": { lost: [] },
   },
   cache: {
     "aws>gcp": { lost: [
-      { what: "Valkey 엔진 (Memorystore 는 Redis 로 만듦)", when: (c) => c.props.engine === "valkey" },
-      { what: "포트 (Memorystore 가 6379, TLS 면 6378 로 정함)", when: (c) => c.props.port !== undefined && c.props.port !== 6379 },
-      { what: "AUTH 비밀번호 (도착이 새 비밀 app-<앱>-<id>-cache-auth 에 만들지만 앱에 넘기지 않음)", when: (c) => c.props.auth === true },
+      { what: "Valkey engine (Memorystore is created as Redis)", when: (c) => c.props.engine === "valkey" },
+      { what: "Port (Memorystore uses 6379, or 6378 with TLS)", when: (c) => c.props.port !== undefined && c.props.port !== 6379 },
+      { what: "AUTH password (a new one is created in app-<app>-<id>-cache-auth but not passed to the app)", when: (c) => c.props.auth === true },
       // DRAFT(ai): Memorystore 서버 인증서는 공개 CA 가 서명하지 않아 인증서를 검증하는 앱은 CA 가 있어야 붙는다 (상품 문서 기억, 실계정 미확인)
-      { what: "TLS 서버 CA 인증서 (모듈 출력에만 있고 앱에 넘기지 않음)", when: (c) => c.props.tls !== false },
-      { what: "캐시 데이터 (빈 캐시로 시작)" },
+      { what: "TLS server CA certificate (module output only, not passed to the app)", when: (c) => c.props.tls !== false },
+      { what: "Cached data (starts empty)" },
     ] },
-    "gcp>aws": { lost: [{ what: "캐시 데이터 (빈 캐시로 시작)" }] },
+    "gcp>aws": { lost: [{ what: "Cached data (starts empty)" }] },
   },
   queue: {
-    "aws>gcp": { appChange: "SQS·SNS SDK 대신 Pub/Sub SDK (큐 주소 env 가 SQS URL·SNS ARN 대신 Pub/Sub 구독·토픽 이름을 받음)", lost: [
+    "aws>gcp": { appChange: "Pub/Sub SDK instead of SQS/SNS SDK (the queue env gets a Pub/Sub subscription/topic name instead of an SQS URL or SNS ARN)", lost: [
       // DRAFT(ai): Pub/Sub 순서 키는 순서만 지키고 SQS FIFO 의 중복 제거(중복 제거 ID·5분 창)는 없다 (상품 문서 기억)
-      { what: "FIFO 중복 제거 (Pub/Sub 은 순서 키만)", when: (c) => c.props.ordered === true },
-      { what: "남은 메시지 (출발 큐에서 옮기지 않음)" },
+      { what: "FIFO deduplication (Pub/Sub has ordering keys only)", when: (c) => c.props.ordered === true },
+      { what: "Pending messages (not moved from the source queue)" },
     ] },
-    "gcp>aws": { appChange: "Pub/Sub SDK 대신 SQS·SNS SDK (큐 주소 env 가 Pub/Sub 이름 대신 SQS URL·SNS ARN 을 받음)", lost: [
+    "gcp>aws": { appChange: "SQS/SNS SDK instead of Pub/Sub SDK (the queue env gets an SQS URL or SNS ARN instead of a Pub/Sub name)", lost: [
       // DRAFT(ai): 내용 기반 중복 제거를 끈 SQS FIFO 는 보낼 때마다 중복 제거 ID 가 있어야 받는다 (상품 문서 기억)
-      { what: "순서 키만 쓰던 보내기 (FIFO 내용 기반 중복 제거가 꺼져 보낼 때 중복 제거 ID 필요)", when: (c) => c.props.ordered === true },
-      { what: "안 쓰는 구독 자동 삭제 (SQS 는 안 지움)", when: (c) => c.props.idleExpirySec !== undefined },
-      { what: "남은 메시지 (출발 구독에서 옮기지 않음)" },
+      { what: "Sends that relied on ordering keys only (FIFO content-based dedup is off, so a dedup ID is required)", when: (c) => c.props.ordered === true },
+      { what: "Auto-delete of idle subscriptions (SQS does not delete)", when: (c) => c.props.idleExpirySec !== undefined },
+      { what: "Pending messages (not moved from the source subscription)" },
     ] },
   },
   objectStore: {
-    "aws>gcp": { appChange: "S3 SDK 대신 Cloud Storage SDK (또는 S3 호환 XML API 와 HMAC 키)", lost: [
-      { what: "버킷 정책 본문 (공개 여부만 옮김)" },
-      { what: "차가운 저장 등급 (도착은 COLDLINE)", when: hasCold },
-      { what: "객체 (복사하지 않음, 빈 버킷)" },
+    "aws>gcp": { appChange: "Cloud Storage SDK instead of S3 SDK (or the S3-compatible XML API with HMAC keys)", lost: [
+      { what: "Bucket policy body (only public/private is carried)" },
+      { what: "Cold storage class (target uses COLDLINE)", when: hasCold },
+      { what: "Objects (not copied, bucket starts empty)" },
     ] },
-    "gcp>aws": { appChange: "Cloud Storage SDK 대신 S3 SDK", lost: [
-      { what: "버킷 IAM 정책 (공개 여부만 옮김)" },
-      { what: "차가운 저장 등급 (도착은 GLACIER_IR)", when: hasCold },
-      { what: "객체 (복사하지 않음, 빈 버킷)" },
+    "gcp>aws": { appChange: "S3 SDK instead of Cloud Storage SDK", lost: [
+      { what: "Bucket IAM policy (only public/private is carried)" },
+      { what: "Cold storage class (target uses GLACIER_IR)", when: hasCold },
+      { what: "Objects (not copied, bucket starts empty)" },
     ] },
   },
 };

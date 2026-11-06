@@ -19,10 +19,10 @@ test("AWS→GCP 계획서: 캐시·큐·버킷·DB 마다 substitute:<id> 항목
     ["substitute:shop-assets", "S3", "Cloud Storage", true],
     ["substitute:shop-cache", "ElastiCache (redis)", "Memorystore (redis)", false],
     ["substitute:shop-db", "RDS for PostgreSQL", "Cloud SQL for PostgreSQL", false],
-    ["substitute:shop-orders", "SQS FIFO", "Pub/Sub 토픽 + 구독", true],
+    ["substitute:shop-orders", "SQS FIFO", "Pub/Sub topic + subscription", true],
   ]);
   const cache = acks.find((a) => a.id === "substitute:shop-cache")!;
-  assert.deepEqual(cache.lost?.map((x) => x.replace(/ \(.*$/, "")), ["AUTH 비밀번호", "TLS 서버 CA 인증서", "캐시 데이터"]);
+  assert.deepEqual(cache.lost?.map((x) => x.replace(/ \(.*$/, "")), ["AUTH password", "TLS server CA certificate", "Cached data"]);
   assert.match(cache.text, /^ElastiCache \(redis\) → Memorystore \(redis\) · 옮기지 못하는 것: AUTH/);
 });
 
@@ -31,7 +31,7 @@ test("GCP→AWS 계획서: 같은 자원이 반대 방향 상품으로", () => {
     ["substitute:shop-assets", "Cloud Storage", "S3", true],
     ["substitute:shop-cache", "Memorystore (redis)", "ElastiCache (redis)", false],
     ["substitute:shop-db", "Cloud SQL for PostgreSQL", "RDS for PostgreSQL", false],
-    ["substitute:shop-orders", "Pub/Sub 토픽 + 구독", "SQS FIFO", true],
+    ["substitute:shop-orders", "Pub/Sub topic + subscription", "SQS FIFO", true],
   ]);
 });
 
