@@ -15,6 +15,7 @@ import { loadReapplyInput, type RealApplyInput } from "./apply-real.js";
 import { commitReplicationCleanup, commitTrafficWeight, configFromEnv, GitopsRepo, type BundleRef } from "../gitops/index.js";
 import { envNumber } from "@svc/contracts";
 import { teardownRelayStep } from "../relay/relay-step.js";
+import { teardownTrafficEntry } from "../traffic-entry.js";
 
 // DRAFT(ai): 롤백 자체가 이 횟수만큼 실패하면 rolling_back → failed(ROLLBACK_FAILED).
 // 잠금은 남는다(반쯤 되돌린 상태일 수 있음). 사람이 확인하고 POST .../cancel {manualCleanupConfirmed:true}로 끝낸다.
@@ -103,13 +104,15 @@ export async function handleRollback(raw: unknown) {
         const warning = replErr.message.slice(0, 500);
         await withTenant(j.tenantId, (tx) => writeAudit(tx, j.tenantId, { actor: "worker", action: "rollback.traffic_restored", target: j.migrationId,
           result: "ok", detail: { requestId: j.requestId, weights, replicationError: replErr.message.slice(0, 300) } }));   // orch RV-19 기록 (FM-INT-12)
-        return { to: "rolled_back", detail: { weights, traffic: traffic.detail, gitopsWeight, replication: { kind: "before_cutover", cleanup: "incomplete", code: replErr.code, warning } },
+        const cfEntry = await teardownTrafficEntry(j.migrationId, { keepTarget: false });
+        return { to: "rolled_back", detail: { weights, traffic: traffic.detail, gitopsWeight, cfEntry, replication: { kind: "before_cutover", cleanup: "incomplete", code: replErr.code, warning } },
                  evidence: traffic.evidence,
                  inTx: async (tx) => { await writeAudit(tx, j.tenantId, { actor: "worker", action: "rollback.cleanup_incomplete", target: j.migrationId, result: "error",
                    detail: { requestId: j.requestId, kind: "before_cutover", code: replErr.code, warning, hint: "복제 주소(끝점 줄·TF_WORK_DIR outputs·REPL_FACTS_FILES)를 고친 뒤 repl-cleanup 으로 출발 슬롯을 걷는다" } }); } };
       }
       if (!repl) {
-        return { to: "rolled_back", detail: { weights, traffic: traffic.detail, stub: true, gitopsWeight },
+        const cfEntry = await teardownTrafficEntry(j.migrationId, { keepTarget: false });
+        return { to: "rolled_back", detail: { weights, traffic: traffic.detail, stub: true, gitopsWeight, cfEntry },
                  evidence: traffic.evidence };
       }
       // 컷오버 전이면 정방향 복제만 걷고, 컷오버 뒤면 역방향으로 다시 전환(도착에 쓴 데이터도 출발로)
@@ -143,9 +146,11 @@ export async function handleRollback(raw: unknown) {
       const relay = cleanup.ok ? await teardownRelayStep(j, m) : { kind: "skipped" as const, reason: "replication_leftovers" };
       if (relay.kind === "failed") log.warn({ migration_id: j.migrationId, code: relay.failureCode, reason: relay.reason }, "rollback: relay teardown incomplete");
       if (!cleanup.ok) log.warn({ migration_id: j.migrationId, kind: r.kind, warning: cleanup.warning, leftovers }, "rollback: replication cleanup incomplete");
+      // 이전마다 만든 Cloudflare LB·pool·도착 터널: 트래픽이 출발로 돌아온 뒤 지운다 (앱 호스트는 원래 DNS 줄이 다시 받는다). 실패는 detail 에만
+      const cfEntry = await teardownTrafficEntry(j.migrationId, { keepTarget: false });
       return {
         to: "rolled_back",
-        detail: { weights, traffic: traffic.detail, gitopsWeight, gitopsReplication,
+        detail: { weights, traffic: traffic.detail, gitopsWeight, gitopsReplication, cfEntry,
                   relay: relay.kind === "ok" ? relay.detail : relay.kind === "skipped" ? { skipped: relay.reason } : { failed: relay.failureCode, error: relay.reason },
                   replication: { kind: r.kind, order: dbFirst ? "db_then_traffic" : "traffic_then_db", removed, leftovers, cleanup: cleanup.ok ? "ok" : "incomplete",
                                  ...(cleanup.warning ? { warning: cleanup.warning } : {}) },

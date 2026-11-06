@@ -4,6 +4,8 @@
 #   bash tools/gcp-source.sh up   [--dry-run]   API 켜기 → state 버킷 → terraform apply(VPC·GKE·Cloud SQL) → kubeconfig 연결
 #   bash tools/gcp-source.sh app  [--dry-run]   tools/real/flow/sample-3tier-eks.yaml.tpl 를 real-app 에 적용 (이미지 digest 고정)
 #   bash tools/gcp-source.sh seed [--dry-run]   GKE 안 일회용 Job 으로 orders 표 + 100행 (다시 돌려도 100행 그대로)
+#   bash tools/gcp-source.sh entry [--dry-run]  출발 앱을 Cloudflare 존 호스트 뒤에 둔다: 원격 관리 터널 + DNS CNAME + GKE 안 cloudflared + 명세용 Ingress
+#     (이전마다 트래픽 입구 자동 생성 TRAFFIC_AUTO_LB 의 전제). ENTRY_HOST·CLOUDFLARE_ACCOUNT_ID·CLOUDFLARE_ZONE_ID·CLOUDFLARE_API_TOKEN 필요
 #   bash tools/gcp-source.sh down [--dry-run]   real-app 삭제 → terraform destroy → GKE·Cloud SQL 0 확인 (state 버킷은 남김)
 # 환경 변수: GCP_PROJECT(iron-source-gcp) REGION(asia-northeast3) TF_STATE_BUCKET(<프로젝트>-tfstate) NS(real-app)
 #   WEB_IMAGE·API_IMAGE·SEED_IMAGE(태그면 digest 로 바꿈, @sha256 로 주면 그대로) GCP_SOURCE_STATE(~/.svc-tf/gcp-source: 로그·.terraform)
@@ -13,7 +15,7 @@ cd "$(dirname "$0")/.." || exit 1
 CMD=${1:-}; shift || true
 DRY=0
 for a in "$@"; do case "$a" in --dry-run) DRY=1 ;; *) echo "모르는 옵션: $a" >&2; exit 2 ;; esac; done
-case "$CMD" in up|app|seed|down) ;; -h|--help|"") sed -n '2,11p' "$0"; [ -n "$CMD" ]; exit $? ;; *) echo "up·app·seed·down 중 하나" >&2; exit 2 ;; esac
+case "$CMD" in up|app|seed|entry|down) ;; -h|--help|"") sed -n '2,13p' "$0"; [ -n "$CMD" ]; exit $? ;; *) echo "up·app·seed·entry·down 중 하나" >&2; exit 2 ;; esac
 
 GCP_PROJECT=${GCP_PROJECT:-iron-source-gcp}
 REGION=${REGION:-asia-northeast3}
@@ -26,6 +28,9 @@ NS=${NS:-real-app}
 WEB_IMAGE=${WEB_IMAGE:-docker.io/library/nginx:1.27-alpine}   # real-session.sh 기본값과 같음
 API_IMAGE=${API_IMAGE:-docker.io/hashicorp/http-echo:1.0}
 SEED_IMAGE=${SEED_IMAGE:-docker.io/library/postgres:16-alpine}
+# DRAFT(ai): 플랫폼 차트(deploy/helm/platform values cloudflared.image)와 같은 판
+CLOUDFLARED_IMAGE=${CLOUDFLARED_IMAGE:-docker.io/cloudflare/cloudflared:2026.10.7}
+CF_API=${CLOUDFLARE_API_BASE:-https://api.cloudflare.com/client/v4}
 STATE=${GCP_SOURCE_STATE:-$HOME/.svc-tf/gcp-source}
 MOD=infra/samples/gcp-source
 TPL=tools/real/flow/sample-3tier-eks.yaml.tpl
@@ -80,8 +85,8 @@ zero_check() { # GKE 클러스터·Cloud SQL 인스턴스가 0 인지 (조회만
 }
 
 # Cloud Shell 의 terraform 은 "설치하세요" 안내만 찍고 0 으로 끝나는 가짜다 (2026-11-07 실측: apply 가 2초 만에 "성공" → get-credentials 404).
-#   진짜인지 버전 줄로 본다. dry-run 은 부르지 않으니 안 본다
-if [ "$DRY" != 1 ]; then
+#   진짜인지 버전 줄로 본다. dry-run 은 부르지 않으니 안 본다 (entry 는 terraform 을 안 쓴다)
+if [ "$DRY" != 1 ] && [ "$CMD" != entry ]; then
   terraform version 2>/dev/null | head -1 | grep -q '^Terraform v' || {
     say "terraform 이 없다 (Cloud Shell 기본은 안내만 찍는 가짜). 홈에 설치: curl -sLo tf.zip https://releases.hashicorp.com/terraform/1.16.4/terraform_1.16.4_linux_amd64.zip && unzip -o tf.zip terraform -d ~/bin && export PATH=~/bin:\$PATH"
     exit 1; }
@@ -192,6 +197,70 @@ EOF
   fi
   cleanup_seed
   exit $rc
+  ;;
+entry)
+  say "entry 시작 dry=$DRY ns=$NS host=${ENTRY_HOST:-}"
+  miss=""; for v in ENTRY_HOST CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_ZONE_ID CLOUDFLARE_API_TOKEN; do [ -n "${!v:-}" ] || miss="$miss $v"; done
+  [ -z "$miss" ] || { say "환경 변수 없음:$miss (토큰 권한: Account Cloudflare Tunnel Edit, Zone DNS Edit)"; exit 1; }
+  need_ctx || exit 1
+  TUN_NAME="gcp-source-$NS"   # 이전마다 만드는 svc-<8자> 터널과 이름이 겹치지 않는다
+  if [ "$DRY" = 1 ]; then
+    say "DRY: Cloudflare 터널 $TUN_NAME 찾기·만들기 → ingress $ENTRY_HOST → http://shop-web.$NS:80 → DNS CNAME $ENTRY_HOST → <터널>.cfargotunnel.com (proxied)"
+    say "DRY: Secret source-cloudflared(token) + Deployment source-cloudflared(라벨 svc.platform/metrics=cloudflared) + Ingress shop-web(host $ENTRY_HOST)"
+    say "entry 끝"; exit 0
+  fi
+  # 토큰은 파일 헤더로만 (명령줄·로그에 안 남음)
+  ( umask 077; printf 'Authorization: Bearer %s\n' "$CLOUDFLARE_API_TOKEN" > "$TMPD/h" ) || exit 1
+  cf() { # 방법 경로 [본문]. 결과 JSON 의 .result 를 찍고, success 가 아니면 1
+    local out; out=$(curl -sS -X "$1" -H @"$TMPD/h" -H 'Content-Type: application/json' ${3:+--data "$3"} "$CF_API$2" 2>> "$LOGF") || return 1
+    jq -e '.success' >/dev/null <<<"$out" || { jq -c '.errors' <<<"$out" >> "$LOGF" 2>&1; return 1; }
+    jq -c '.result' <<<"$out"
+  }
+  A="/accounts/$CLOUDFLARE_ACCOUNT_ID" Z="/zones/$CLOUDFLARE_ZONE_ID"
+  TID=$(cf GET "$A/cfd_tunnel?name=$TUN_NAME&is_deleted=false" | jq -r '.[0].id // empty') || { say "터널 조회 실패 (로그 $LOGF)"; exit 1; }
+  if [ -z "$TID" ]; then
+    TID=$(cf POST "$A/cfd_tunnel" "$(jq -nc --arg n "$TUN_NAME" '{name:$n, config_src:"cloudflare"}')" | jq -r '.id') || { say "터널 만들기 실패"; exit 1; }
+    say "터널 $TUN_NAME 만듦"
+  else say "터널 $TUN_NAME 다시 씀"; fi
+  cf PUT "$A/cfd_tunnel/$TID/configurations" "$(jq -nc --arg h "$ENTRY_HOST" --arg s "http://shop-web.$NS:80" \
+    '{config:{ingress:[{hostname:$h, service:$s}, {service:"http_status:404"}]}}')" > /dev/null || { say "터널 규칙 실패"; exit 1; }
+  REC=$(jq -nc --arg h "$ENTRY_HOST" --arg c "$TID.cfargotunnel.com" '{type:"CNAME", name:$h, content:$c, proxied:true, comment:"gcp-source entry"}')
+  RID=$(cf GET "$Z/dns_records?name=$ENTRY_HOST" | jq -r '.[0].id // empty') || { say "DNS 조회 실패"; exit 1; }
+  if [ -z "$RID" ]; then cf POST "$Z/dns_records" "$REC" > /dev/null || { say "DNS 줄 만들기 실패"; exit 1; }
+  else cf PUT "$Z/dns_records/$RID" "$REC" > /dev/null || { say "DNS 줄 고치기 실패 (이전 LB 가 같은 호스트를 쓰는 중이면 그대로 둔다)"; exit 1; }; fi
+  ( umask 077; cf GET "$A/cfd_tunnel/$TID/token" | jq -j '.' > "$TMPD/tok" ) && [ -s "$TMPD/tok" ] || { say "터널 토큰 실패"; exit 1; }
+  put_secret source-cloudflared token "$TMPD/tok" || exit 1
+  # 파드 라벨 svc.platform/metrics=cloudflared: 가져오기가 이 연결기를 고객 앱 부품으로 읽지 않게 (packages/adapters discover/k8s.ts isPlatformEntry)
+  # DRAFT(ai): Ingress 는 명세 입구 호스트를 남기는 표시용. 클래스 public 은 GKE 컨트롤러가 안 집어 외부 LB 가 생기지 않는다 (실제 입구는 터널)
+  cat > "$TMPD/entry.yaml" <<YAML || exit 1
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: source-cloudflared, namespace: $NS }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app.kubernetes.io/name: source-cloudflared } }
+  template:
+    metadata: { labels: { app.kubernetes.io/name: source-cloudflared, svc.platform/metrics: cloudflared } }
+    spec:
+      containers:
+        - name: cloudflared
+          image: $CLOUDFLARED_IMAGE
+          args: [tunnel, --no-autoupdate, run]
+          env: [{ name: TUNNEL_TOKEN, valueFrom: { secretKeyRef: { name: source-cloudflared, key: token } } }]
+          resources: { requests: { cpu: 20m, memory: 64Mi }, limits: { memory: 128Mi } }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: { name: shop-web, namespace: $NS }
+spec:
+  ingressClassName: public
+  rules:
+    - host: $ENTRY_HOST
+      http: { paths: [{ path: /, pathType: Prefix, backend: { service: { name: shop-web, port: { number: 80 } } } }] }
+YAML
+  K apply -f "$TMPD/entry.yaml" >> "$LOGF" 2>&1 || { say "연결기·Ingress 적용 실패 (로그 $LOGF)"; exit 1; }
+  K -n "$NS" rollout status deployment/source-cloudflared --timeout=120s >> "$LOGF" 2>&1 || { say "cloudflared 가 120초 안에 안 뜸"; exit 1; }
+  say "entry 끝: https://$ENTRY_HOST → 터널 → shop-web (콘솔에서 출발 다시 가져오기 하면 명세 입구에 이 호스트가 잡힌다)"
   ;;
 down)
   say "down 시작 dry=$DRY project=$GCP_PROJECT"
