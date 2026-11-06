@@ -146,7 +146,7 @@ esac
   chmodSync(join(dir, "gcloud"), 0o755);
   return { env: { PATH: `${dir}:${process.env.PATH}` }, calls: () => readFileSync(join(dir, "calls"), "utf8").trim().split("\n") };
 }
-const TARGET_APIS = readFileSync(join(ROOT, "infra/onboarding/gcp-connect.sh"), "utf8").match(/^TARGET_APIS="(.*)"$/m)![1].split(" ");
+const TARGET_APIS = readFileSync(join(ROOT, "infra/onboarding/gcp-connect.sh"), "utf8").match(/^TARGET_APIS="(.*)"$/m)![1]!.split(" ");
 
 test("--check: 다 켜져 있으면 끝 코드 0, 읽기 전용 두 명령만 부른다", () => {
   const g = fakeGcloud({ "team-b-orig": ["iamcredentials", "cloudresourcemanager", "cloudbilling"], "team-b-target": TARGET_APIS });
