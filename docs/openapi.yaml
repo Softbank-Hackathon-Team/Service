@@ -1729,6 +1729,10 @@ paths:
                                   - "violations"
                                 additionalProperties: false
                               - type: "null"
+                          sandbox:
+                            anyOf:
+                              - $ref: "#/components/schemas/AgentRunSandbox"
+                              - type: "null"
                         required:
                           - "source"
                           - "runId"
@@ -1745,6 +1749,7 @@ paths:
                           - "checked"
                           - "notDone"
                           - "gate"
+                          - "sandbox"
                         additionalProperties: false
                       - type: "null"
                   specDraft:
@@ -4496,6 +4501,13 @@ components:
         - "migrationId"
         - "report"
       additionalProperties: false
+    AgentRunSandbox:
+      type: "string"
+      enum:
+        - "memory"
+        - "k3d"
+        - "vcluster"
+        - "none"
     ApiError:
       type: "object"
       properties:

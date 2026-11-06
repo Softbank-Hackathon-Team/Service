@@ -67,9 +67,34 @@ test("main.ts 모양 deps(remediateLlmFromEnv + sandboxFromEnv) 를 재사용해
   const { DEMO_SCRIPT } = await import("../src/handle-agent-run.js");
   const ids = ["d", "e", "f"].map((c) => `55555555-5555-4555-8555-55555555555${c}`);
   const store = memoryStore(Object.fromEntries(ids.map((id) => [id, { status: "queued", task: "x", repo: repo() }])));
-  const deps = { store, llm: remediateLlmFromEnv(DEMO_SCRIPT, { FAKE_LLM: "1" }).llm, sandbox: sandboxFromEnv({}).create };
+  const deps = { store, llm: remediateLlmFromEnv(DEMO_SCRIPT, { FAKE_LLM: "1" }).llm, sandbox: sandboxFromEnv({ FAKE_LLM: "1" }).create };
   for (const id of ids) {
     const r = await handleAgentRun({ tenantId: T, requestId: id, agentRunId: id }, deps);
     assert.deepEqual(r, { skipped: false, state: "finished", outcome: "proposed", gateOk: true });
   }
+});
+
+test("진짜 LLM 설정 + SANDBOX_MODE=memory: 가짜 클러스터 값을 주지 않고 샌드박스 도구는 SANDBOX_NOT_CONFIGURED, 결과 sandbox=none", async () => {
+  const { sandboxFromEnv } = await import("@svc/agent");
+  const { demoLlm } = await import("../src/handle-agent-run.js");
+  const store = memoryStore({ [R]: { status: "queued", task: "x", repo: repo() } });
+  // 대본은 샌드박스 도구를 부르고 "샌드박스 60초 재시작 0" 을 확인했다고 적는다. 샌드박스는 운영처럼 키가 있는 env 로 고른다
+  await handleAgentRun({ tenantId: T, requestId: "real", agentRunId: R },
+    { store, llm: demoLlm(), sandbox: sandboxFromEnv({ ANTHROPIC_API_KEY: "k" }).create });
+  const sandboxSteps = store.steps.filter((s) => s.tool.startsWith("sandbox_") || s.tool === "run_check");
+  assert.equal(sandboxSteps.length, 5);
+  assert.deepEqual(new Set(sandboxSteps.map((s) => `${s.ok}:${s.note}`)), new Set(["false:SANDBOX_NOT_CONFIGURED"]));
+  assert.equal((store.results[0] as { sandbox: unknown }).sandbox, "none");
+});
+
+test("결과에 샌드박스 종류가 남는다: 대본 + memory 는 memory, 샌드박스를 만들기 전에 끝나면 null", async () => {
+  const store = memoryStore({ [R]: { status: "queued", task: "x", repo: repo() } });
+  await handleAgentRun({ tenantId: T, requestId: "a", agentRunId: R }, stubDeps(store));
+  assert.equal((store.results[0] as { sandbox: unknown }).sandbox, "memory");
+  const { WorkcopyError } = await import("../src/gitops-workcopy.js");
+  const noGitops = memoryStore({ [R]: { status: "queued", task: "x", repo: repo() } });
+  await handleAgentRun({ tenantId: T, requestId: "b", agentRunId: R },
+    { ...stubDeps(noGitops), workcopy: async () => { throw new WorkcopyError("GITOPS_NOT_CONFIGURED", "없음"); } });
+  const res = noGitops.results[0] as { reason: string; sandbox: unknown };
+  assert.deepEqual([res.reason, res.sandbox], ["GITOPS_NOT_CONFIGURED", null]);
 });
