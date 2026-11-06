@@ -184,3 +184,16 @@ export async function originCheck(addr: string, path: string, header: string,
     return { ok: true, detail: `${header}: ${r.header}`, ms };
   } catch (e) { return { ok: false, detail: (e as NodeJS.ErrnoException).code ?? (e as Error).message, ms: Math.round(performance.now() - t0) }; }
 }
+
+// DRAFT(ai): cf-check 자원 이름 앞머리 (모니터 <앞머리>-monitor, pool <앞머리>-src·-tgt, LB <앞머리>.<zone>).
+//   CF_CHECK_PREFIX 가 비면 예전 그대로 "cf-check". 둘째 터널·pool 짝을 첫 짝을 안 건드리고 만들 때만 준다 (예: cf-check2).
+//   "cf-check" 로 시작해야 한다 (이 스크립트는 cf-check* 자원만 바꾸고 지운다). 바로 뒤에 "-" 는 안 된다:
+//   기본 앞머리의 --list·정리 확인이 pool 을 "cf-check-" 로 시작하는 이름으로 찾아, cf-check-b-src 를 첫 짝의 남은 것으로 센다
+//   소문자·숫자만 (LB 이름이 <앞머리>.<zone> 호스트 이름이 된다), 뒤에 붙는 칸은 16자까지
+export const CF_CHECK_DEFAULT_PREFIX = "cf-check";
+export function cfCheckPrefix(env: NodeJS.ProcessEnv = process.env): { prefix: string } | { error: string } {
+  const v = env.CF_CHECK_PREFIX?.trim();
+  if (!v) return { prefix: CF_CHECK_DEFAULT_PREFIX };
+  if (v === CF_CHECK_DEFAULT_PREFIX || /^cf-check[a-z0-9]{1,16}$/.test(v)) return { prefix: v };
+  return { error: `CF_CHECK_PREFIX=${v.slice(0, 40)} 는 쓸 수 없다: cf-check 바로 뒤에 소문자·숫자 1~16자 (예: cf-check2). "-" 로 이으면 기본 앞머리 정리가 그 pool 을 자기 것으로 센다` };
+}
