@@ -168,9 +168,8 @@ export function resolveKey(spec: AppSpecV2, key: string, meta?: FieldMetaEntryV2
       : undefined;
     return { name: t('진입 {0} · 경로 {1}', { 0: host, 1: Number(index) + 1 }), value: text };
   }
-  const check = /^check\.reviews\[(\d+)\]$/.exec(key);
-  // 명세 점검 줄은 내용이 rationale 에 있다 (워커 import.ts: check.reviews[i] = { rationale: 점검 문장 })
-  if (check) return { name: t('명세 점검 {0}', { 0: Number(check[1]) + 1 }), value: meta?.rationale };
+  // 명세 점검 줄은 내용이 rationale 에 있다. 키는 내용 키 check.<자원>.<자리>.<종류>.<지문> (contracts syncCheckReviews, 예전 판은 check.reviews[i])
+  if (key.startsWith('check.')) return { name: t('명세 점검'), value: meta?.rationale };
   return { name: key, value: undefined };
 }
 

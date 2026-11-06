@@ -59,11 +59,11 @@ const spec: AppSpecV2 = {
 const view = (over: Partial<MigrationSpecViewV2> = {}): MigrationSpecViewV2 => ({
   migrationId: "m", version: 3, createdAt: "t", source: "accepted", complete: true, spec: {}, needsReview: [],
   specV2: spec,
-  needsReviewV2: ["components.db.majorVersion", "components.web.env.DB_PASSWORD", "check.reviews[0]"],
+  needsReviewV2: ["components.db.majorVersion", "components.web.env.DB_PASSWORD", "check.web.env.DB_HOST.vendor.73eb5616"],
   fieldMetaV2: {
     "components.db.majorVersion": { source: "rds:db", confidence: 0.6, needs_review: true, rationale: "엔진 버전을 읽지 못함" },
     "components.web.env.DB_PASSWORD": { source: "source.env", confidence: 0.6, needs_review: true, rationale: "평문 비밀로 보임" },
-    "check.reviews[0]": { source: "checkV2", confidence: 0.6, needs_review: true, rationale: "실행 방식이 출발과 다릅니다" },
+    "check.web.env.DB_HOST.vendor.73eb5616": { source: "checkV2", confidence: 0.6, needs_review: true, rationale: "web.env.DB_HOST 에 벤더 주소가 값으로 남음" },
     "components.web.image": { source: "ecs:task-def/web", confidence: 1, needs_review: false },
     "components.web.replicas": { source: "ecs:service/web", confidence: 0.9, needs_review: false, rationale: "단계로 올림" },
   },
@@ -78,7 +78,7 @@ test("v1 판(specV2 없음)은 v2 줄을 만들지 않는다 → 지금 화면 �
 test("v2 줄: 검토 칸이 서버 순서대로 먼저, 나머지는 키 순서. null 은 비우고 읽지 못함으로 표시, 기본값을 지어내지 않는다", () => {
   const rows = specRowsV2(view());
   assert.deepEqual(rows.map((row) => row.key), [
-    "components.db.majorVersion", "components.web.env.DB_PASSWORD", "check.reviews[0]", "components.web.image", "components.web.replicas",
+    "components.db.majorVersion", "components.web.env.DB_PASSWORD", "check.web.env.DB_HOST.vendor.73eb5616", "components.web.image", "components.web.replicas",
   ]);
   const db = rows[0]!;
   assert.equal(db.name, "db · 버전");
@@ -95,8 +95,9 @@ test("v2 줄: 환경변수 값은 보이지 않고 출처만, 점검 줄은 이�
   assert.doesNotMatch(env.value, /hunter2/);
   assert.equal(env.prose, true);
   assert.equal(env.provenance, "출발 환경변수 · 신뢰도 60% · 평문 비밀로 보임");
-  const check = rows.find((row) => row.key === "check.reviews[0]")!;
-  assert.equal(check.value, "실행 방식이 출발과 다릅니다");
+  const check = rows.find((row) => row.key === "check.web.env.DB_HOST.vendor.73eb5616")!;
+  assert.equal(check.name, "명세 점검");
+  assert.equal(check.value, "web.env.DB_HOST 에 벤더 주소가 값으로 남음");
   assert.equal(check.provenance, "명세 점검 · 신뢰도 60%");     // 이유를 두 번 쓰지 않는다
 });
 
