@@ -12,7 +12,7 @@ import { factsOfLayer, regionOf } from "@svc/adapters";
 import { TARGET_ACCOUNT_SQL } from "./target-account.js";
 import { gcpPlatformSa } from "../platform.js";
 import { appLinkFromEnv } from "@svc/dbproxy";
-import { tenantSlug } from "../gitops/bundle.js";
+import { awsHubEnabled, tenantSlug } from "../gitops/bundle.js";
 import { stableHash } from "./_step.js";
 import { envNumber, redactText } from "@svc/contracts";
 
@@ -51,9 +51,11 @@ export interface RealApplyDeps {
   gcpPlatformSa?: (tenantId: string) => Promise<string | undefined>;
 }
 
-// Argo CD 허브가 고객 GKE 에 들어오는 신원. 회사 사실이라 계획 지문 밖에 두고 apply 때 더한다 (db_writer_json 과 같은 자리).
+// Argo CD 허브가 고객 클러스터에 들어오는 신원. 플랫폼 사실이라 계획 지문 밖에 두고 apply 때 더한다 (db_writer_json 과 같은 자리).
 // 비면 앱 구역에 허브 권한을 안 만든다. 그러면 허브 배포가 거절되어 Argo 상태로 드러난다
-async function hubPrincipalVar(i: RealApplyInput, env: NodeJS.ProcessEnv, d: RealApplyDeps): Promise<Record<string, string>> {
+//   GKE = 회사 전용 플랫폼 SA, EKS = 고정 그룹 platform:deploy (고객 svc-deploy 접근 항목) → 허브를 켰는지만 넘긴다
+async function hubPrincipalVar(i: RealApplyInput, env: NodeJS.ProcessEnv, d: RealApplyDeps): Promise<Record<string, string | boolean>> {
+  if (i.provider === "aws") return awsHubEnabled(env) ? { hub_deploy: true } : {};
   const project = env.GCP_PLATFORM_PROJECT?.trim();
   if (i.provider !== "gcp" || !project) return {};
   const sa = await (d.gcpPlatformSa ?? gcpPlatformSa)(i.tenantId);

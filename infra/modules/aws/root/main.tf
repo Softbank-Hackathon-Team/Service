@@ -27,6 +27,11 @@ variable "vpc_id" { type = string }
 variable "db_subnet_ids_json" { type = string }
 variable "k8s_namespace" { type = string }
 variable "app_role_boundary_arn" { type = string }
+# Argo CD 허브 배포 묶음(앱 구역 RoleBinding → 그룹 platform:deploy)을 만들지. 허브를 켠 플랫폼에서 워커가 apply 때 넣는다 (계획 지문 밖)
+variable "hub_deploy" {
+  type    = bool
+  default = false
+}
 
 # 종류별 목록: JSON 배열 문자열. 항목 모양 = packages/contracts/src/tf-kinds.ts
 variable "postgres_json" {
@@ -299,6 +304,7 @@ module "namespace" {
   cfg          = each.value
   app_name     = var.app_name
   tenant_label = local.tenant_label
+  hub_deploy   = var.hub_deploy
 }
 
 module "postgres" {
@@ -480,6 +486,9 @@ output "db_name" { value = local.repl_key != "" ? module.postgres[local.repl_key
 output "db_master_secret_arn" { value = local.repl_key != "" ? module.postgres[local.repl_key].password_secret : "" }
 output "app_role_arn" { value = local.first_identity != "" ? module.identity[local.first_identity].role_arn : "" }
 output "namespace" { value = length(module.namespace) > 0 ? try(module.namespace[var.k8s_namespace].name, values(module.namespace)[0].name) : "" }
+# 허브 cluster Secret 재료 (apps/worker/src/gitops/bundle.ts clusterSecret). 클러스터 없으면 빈 값. 주소는 https:// 가 붙어 있다
+output "cluster_endpoint" { value = try(data.aws_eks_cluster.this[0].endpoint, "") }
+output "cluster_ca_certificate" { value = try(data.aws_eks_cluster.this[0].certificate_authority[0].data, "") }
 
 # 신원별 역할 (서비스가 여러 개일 때 배포 값에 쓰라고 — 평평한 app_role_arn 은 대표 하나)
 output "identity_role_arns" {

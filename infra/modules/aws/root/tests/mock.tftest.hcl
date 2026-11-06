@@ -59,6 +59,38 @@ run "plan_cluster_less_rds_only" {
     condition     = length(module.namespace) == 0 && length(module.identity) == 0 && length(module.postgres) == 1
     error_message = "클러스터 없으면 RDS 만"
   }
+  assert {
+    condition     = output.cluster_endpoint == "" && output.cluster_ca_certificate == ""
+    error_message = "클러스터 없으면 허브 cluster Secret 재료도 빈 값"
+  }
+}
+
+# Argo CD 허브: 앱 구역 하나에 그룹 platform:deploy → ClusterRole platform-deploy-app 묶음 하나 (실행 그룹 VAP 가 받는 모양 그대로)
+run "hub_deploy_binding_in_app_namespace_only" {
+  command = plan
+  variables {
+    hub_deploy = true
+  }
+  assert {
+    condition     = module.namespace["app-shop"].hub_subject == "platform:deploy"
+    error_message = "허브 묶음 주체는 그룹 platform:deploy 하나 (고객 svc-deploy 접근 항목 그룹)"
+  }
+  assert {
+    condition     = module.namespace["app-shop"].hub_role_ref.kind == "ClusterRole" && module.namespace["app-shop"].hub_role_ref.name == "platform-deploy-app"
+    error_message = "허브 묶음은 ClusterRole platform-deploy-app 만 (실행 그룹이 bind 할 수 있는 유일한 역할)"
+  }
+  assert {
+    condition     = output.cluster_endpoint == "https://ABC.gr7.ap-northeast-2.eks.amazonaws.com" && output.cluster_ca_certificate == "bW9jaw=="
+    error_message = "허브 cluster Secret 재료는 도착 EKS 의 주소·CA 그대로"
+  }
+}
+
+run "hub_deploy_off_by_default" {
+  command = plan
+  assert {
+    condition     = module.namespace["app-shop"].hub_subject == null
+    error_message = "hub_deploy 가 꺼져 있으면 허브 묶음을 만들지 않음 (사람이 등록한 목적지만 쓰는 플랫폼)"
+  }
 }
 
 run "plan_without_postgres" {
