@@ -11,6 +11,10 @@ test("A안 정상: 전용 프로젝트가 있으면 실행 = svc-operate@전용,
   assert.equal(roleRefFor(e, E, "operate").roleRef, "svc-operate@cust-mig.iam.gserviceaccount.com");
   assert.equal(roleRefFor(e, E, "observe").roleRef, "svc-observe@cust-prj.iam.gserviceaccount.com");
   assert.equal(gcpTargetFor(roleRefFor(e, E, "operate").roleRef, { purpose: "operate", stage: "plan" }), "svc-plan@cust-mig.iam.gserviceaccount.com");
+  // B-2: 환경 층 단계 = svc-env@전용 (apply 단계 장부 칸이어도 svc-operate 가 아님). 관찰에 정책이 붙어도 바꾸지 않는다
+  assert.equal(gcpTargetFor(roleRefFor(e, E, "operate").roleRef, { purpose: "operate", stage: "apply", policy: "env_layer" }), "svc-env@cust-mig.iam.gserviceaccount.com");
+  assert.equal(gcpTargetFor(roleRefFor(e, E, "operate").roleRef, { purpose: "operate", stage: "apply" }), "svc-operate@cust-mig.iam.gserviceaccount.com");
+  assert.equal(gcpTargetFor(roleRefFor(e, E, "observe").roleRef, { purpose: "observe", policy: "env_layer" }), "svc-observe@cust-prj.iam.gserviceaccount.com");
 });
 
 test("A안 경계: 전용 프로젝트가 비면 예전처럼 원래 프로젝트, aws 는 전용 프로젝트 칸을 무시", () => {

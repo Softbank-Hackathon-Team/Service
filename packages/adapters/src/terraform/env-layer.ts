@@ -56,11 +56,13 @@ export function envLayerFactsOf(out: TfOutputs): EnvLayerFacts | null {
     ...(out.secret_store_name ? { secret_store_name: out.secret_store_name } : {}) };
 }
 
-export interface EnvLayerVars { project_id: string; region: string; zone: string; name: string; create_gke: true }
+export interface EnvLayerVars { project_id: string; region: string; zone: string; name: string; create_gke: true; node_service_account: string }
 // DRAFT(ai): 이름은 모듈 기본값(platform-target)과 같게, zone 은 "<region>-a". 도착 프로젝트 하나 = 환경 층 하나라 이름이 겹칠 일이 없다
 export const ENV_LAYER_NAME = "platform-target";
+// B-2: 노드 SA = 고객 gcp-connect.sh 가 도착 프로젝트에 만든 svc-gke-node (만드는 svc-env 는 이 SA 에만 actAs)
 export function envLayerVars(i: { projectId: string; region: string }): EnvLayerVars {
-  return { project_id: i.projectId, region: i.region, zone: `${i.region}-a`, name: ENV_LAYER_NAME, create_gke: true };
+  return { project_id: i.projectId, region: i.region, zone: `${i.region}-a`, name: ENV_LAYER_NAME, create_gke: true,
+    node_service_account: `svc-gke-node@${i.projectId}.iam.gserviceaccount.com` };
 }
 /** 계획서·DB 에 남기는 입력 지문. create_eso(1차·2차에서만 다름)는 빼고 본다 */
 export function envLayerVarsHash(v: EnvLayerVars): string {

@@ -1,7 +1,7 @@
 import type { Provider } from "@svc/contracts";
 import { withTenant, scrubString } from "@svc/core";
 import {
-  STEP_ROLES, stepActions, TempRoleDenied, CredRenewFailed, startRenewal, renewIntervalSec, CRED_RENEW_DEFAULT_SEC,
+  STEP_ROLES, stepActions, TempRoleDenied, CredRenewFailed, startRenewal, renewIntervalSec, CRED_RENEW_DEFAULT_SEC, POLICY_PROVIDER,
   type RoleStep, type TempCredential,
 } from "@svc/security";
 import { borrowedAwsCreds, type BorrowedAwsCreds } from "@svc/adapters";
@@ -60,8 +60,8 @@ export async function borrowStepRoles(step: RoleStep, j: { tenantId: string; mig
     if (provider === "azure_mock" && r.purpose === "operate") { out.skipped.push({ side: r.side, reason: "azure_mock_no_operate" }); continue; }
     const stage = "stage" in r ? r.stage : undefined;
     const policy = "policy" in r ? r.policy : undefined;
-    // 중계기 세션 정책은 AWS 실행 역할에만 있다. 다른 클라우드면 묻지 않는다 (부르는 쪽이 먼저 거르지만 한 번 더)
-    if (policy && provider !== "aws") { out.skipped.push({ side: r.side, reason: "relay_policy_aws_only" }); continue; }
+    // 이름 붙은 정책은 클라우드가 하나다 (중계기 = AWS, 환경 층 = GCP). 다른 클라우드면 묻지 않는다 (부르는 쪽이 먼저 거르지만 한 번 더)
+    if (policy && POLICY_PROVIDER[policy] !== provider) { out.skipped.push({ side: r.side, reason: `${policy}_policy_${POLICY_PROVIDER[policy]}_only` }); continue; }
     try {
       out.creds.push(await broker.issue({
         // 관찰 역할도 이전 번호를 붙인다 (필수는 아님) → 이 이전의 장부·감사·보안 표에 같이 보인다

@@ -105,6 +105,16 @@ variable "hub_principal" {
     error_message = "hub_principal: 회사 전용 플랫폼 SA(t-<16진 28자>@<프로젝트>.iam.gserviceaccount.com)만 된다."
   }
 }
+# 입구 파드(cloudflared·지표 수집기)가 ESO 로 읽는 k8s 비밀 이름 (Builder target/cloud.ts INGRESS_SECRETS). 앱 신원 몫이 아니라 kinds/identity 가 안 만든다.
+#   루트가 값 없는 그릇만 만들고 ESO 에 읽기를 준다. 값(버전)은 사람이 넣는다. 비면(기본) 아무것도 안 만듦
+variable "ingress_secret_names_json" {
+  type    = string
+  default = "[]"
+  validation {
+    condition     = can(jsondecode(var.ingress_secret_names_json))
+    error_message = "ingress_secret_names_json: JSON 배열이어야 함."
+  }
+}
 variable "identity_json" {
   type    = string
   default = "[]"
@@ -212,6 +222,11 @@ locals {
       if contains(jsondecode(coalesce(try(p.allow_from_json, null), "[]")), id)
     ]
   }
+  # 앱 신원이 같은 이름을 이미 만들면(secret_owner) 그쪽 그릇을 쓴다. 이름 규칙은 kinds/identity 와 같다
+  ingress_secrets = length(local.namespace) == 0 ? {} : {
+    for n in jsondecode(var.ingress_secret_names_json) : n => "app-${var.app_name}-${lower(replace(n, "/[^A-Za-z0-9-]/", "-"))}"
+    if !contains(flatten(values(local.secret_owner)), n)
+  }
   repl_key       = length(local.postgres) == 1 ? keys(local.postgres)[0] : ""
   first_identity = length(local.identity_ids) > 0 ? local.identity_ids[0] : ""
 
@@ -269,6 +284,7 @@ locals {
   required_apis = sort(distinct(concat(
     length(local.postgres) > 0 ? ["sqladmin.googleapis.com", "secretmanager.googleapis.com"] : [],
     length(local.identity) > 0 ? ["iam.googleapis.com", "secretmanager.googleapis.com"] : [],
+    length(local.ingress_secrets) > 0 ? ["secretmanager.googleapis.com"] : [],
     length(local.cache) > 0 ? ["redis.googleapis.com", "secretmanager.googleapis.com"] : [],
     length(local.object_store) > 0 ? ["storage.googleapis.com"] : [],
     length(local.queue_all) > 0 ? ["pubsub.googleapis.com"] : [],
@@ -341,6 +357,38 @@ module "identity" {
   # DB 비밀번호 secret 이 만들어진 뒤에 바인딩하도록 postgres 모듈 전체에 의존
   namespace  = try(module.namespace[var.k8s_namespace].name, var.k8s_namespace)
   depends_on = [google_project_service.required, module.postgres]
+}
+
+# B-2 (나) DRAFT(ai, 보안 검토 전): env 층 ESO 는 GSA 없이 자기 KSA(external-secrets/external-secrets, gcp/env eso_ns·eso_ksa)로 Secret Manager 에 간다.
+#   그래서 ESO 가 읽는 그릇마다 그 주체에 읽기를 준다 = 차트 ExternalSecret 의 remoteRef: 앱 비밀(identity 가 만든 그릇)·DB 비밀번호(postgres)·입구 비밀(아래 ingress).
+#   실행 SA 의 app- 비밀 setIamPolicy(조건 only-app-prefixed) 안이라 새 권한이 없다. 프로젝트 단위 읽기는 없다.
+#   k8s 도착(앱 구역 있음)만: 관리형·VM·클러스터 없는 길엔 ESO 가 없다
+
+# 입구 비밀 그릇: 값 없이 만든다. 프로젝트 단위 읽기가 없어서 사람이 손으로 만든 그릇은 ESO 가 못 읽는다 → 그릇은 여기서, 값만 사람이
+resource "google_secret_manager_secret" "ingress" {
+  for_each  = local.ingress_secrets
+  secret_id = each.value
+  labels    = local.labels
+  replication {
+    auto {}
+  }
+  depends_on = [google_project_service.required]
+}
+
+locals {
+  eso_secrets = length(local.namespace) == 0 ? {} : merge(concat(
+    [{ for id, m in module.postgres : "postgres/${id}" => m.password_secret_name }],
+    [for id, m in module.identity : { for n, s in m.secret_resource_names : "identity/${id}/${n}" => s }],
+    [{ for n, s in google_secret_manager_secret.ingress : "ingress/${n}" => s.name }],
+  )...)
+}
+
+resource "google_secret_manager_secret_iam_member" "eso" {
+  for_each  = local.eso_secrets
+  secret_id = each.value
+  role      = "roles/secretmanager.secretAccessor"
+  # 프로젝트 번호는 Secret Manager 가 돌려준 그릇 이름(projects/<번호>/secrets/…)에서 읽는다 (data.google_project 의 resourcemanager.projects.get 없이)
+  member = "principal://iam.googleapis.com/projects/${regex("^projects/([0-9]+)/secrets/", each.value)[0]}/locations/global/workloadIdentityPools/${var.project_id}.svc.id.goog/subject/ns/external-secrets/sa/external-secrets"
 }
 
 module "cache" {

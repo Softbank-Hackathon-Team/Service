@@ -56,9 +56,11 @@ export function gcloudFailure(stderr: string): "ROLE_ASSUME_DENIED" | "ROLE_NOT_
 }
 
 // ID-7: GCP 토큰은 범위를 못 좁힌다 → 단계별로 다른 SA 를 빌린다. 실행 역할(operate)의 plan 단계 = svc-plan (읽기 동사만, gcp-connect.sh platform_plan)
-//   apply·destroy 는 svc-operate 그대로. 관찰(observe)은 손대지 않는다
-export function gcpTargetFor(roleRef: string, req: { purpose: string; stage?: string }): string {
-  return req.purpose === "operate" && req.stage === "plan" ? roleRef.replace(/^svc-operate@/, "svc-plan@") : roleRef;
+//   B-2: 환경 층(policy env_layer) = svc-env (환경 층 만들기만, platform_env). apply·destroy 는 svc-operate 그대로. 관찰(observe)은 손대지 않는다
+export function gcpTargetFor(roleRef: string, req: { purpose: string; stage?: string; policy?: string }): string {
+  if (req.purpose !== "operate") return roleRef;
+  if (req.policy === "env_layer") return roleRef.replace(/^svc-operate@/, "svc-env@");
+  return req.stage === "plan" ? roleRef.replace(/^svc-operate@/, "svc-plan@") : roleRef;
 }
 
 export interface GcpCliIssuerOptions {
@@ -85,9 +87,10 @@ export function gcpCliIssuer(o: GcpCliIssuerOptions): ProviderIssuer {
       const target = gcpTargetFor(ctx.roleRef, ctx.req);
       let r = await run(gcloudImpersonateArgs({ target, delegate, lifetimeSec: ttl }), env);
       // DRAFT(ai) ID-7: 예전 연결 스크립트로 붙은 고객에겐 svc-plan 이 없다 → 그때만 svc-operate 로 한 번 더 (장부 detail.planFallback 으로 보임).
-      //   고객이 gcp-connect.sh 를 다시 실행하면 plan SA 가 생겨 이 길을 안 탄다
+      //   고객이 gcp-connect.sh 를 다시 실행하면 plan SA 가 생겨 이 길을 안 탄다.
+      //   B-2: svc-env 가 없으면 svc-operate 로 넘어가지 않는다 (환경 층 만들기 권한을 svc-operate 에 주지 않으려고 나눴다). ROLE_NOT_FOUND 그대로
       let planFallback = false;
-      if (r.code !== 0 && target !== ctx.roleRef && gcloudFailure(r.stderr) === "ROLE_NOT_FOUND") {
+      if (r.code !== 0 && target.startsWith("svc-plan@") && gcloudFailure(r.stderr) === "ROLE_NOT_FOUND") {
         planFallback = true;
         r = await run(gcloudImpersonateArgs({ target: ctx.roleRef, delegate, lifetimeSec: ttl }), env);
       }

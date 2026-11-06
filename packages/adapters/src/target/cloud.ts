@@ -20,6 +20,7 @@ export interface WorkloadCtx {
   postgres: ChartPostgres[];                        // 클라우드: 접속·비밀 위치 / 온프레: CNPG 정의
   ingressClass?: string;
   link?: LinkCtx["local"];
+  ingressSecretsByApply?: true;                     // 앱 층 apply 가 INGRESS_SECRETS 그릇을 값 없이 만든다 (gcp) → 경고는 값만 넣으라고
 }
 
 const srcOf = (img: { repository: string; digest: string | null }) => `${img.repository}@${img.digest}`;
@@ -164,6 +165,8 @@ function ingressValues(spec: AppSpecV2, ns: string, warnings: string[]) {
 const TUNNEL_SECRET = "cloudflared-token";
 // 트래픽 판정 지표 수집기 (#245). 차트가 cloudflared 파드 안에 같이 띄운다. 키 token = 도착 환경의 지표 토큰
 const METRIC_SECRET = "svc-metric-token";
+// 입구 파드가 읽는 비밀 전부. 지표 토큰은 지표를 켰을 때만 읽지만, 켜기(TRAFFIC_METRICS_ENDPOINT)는 승인 지문 밖이라 계획 때 모른다
+export const INGRESS_SECRETS = [TUNNEL_SECRET, METRIC_SECRET] as const;
 // DRAFT(ai): 플랫폼 otel-gateway·온프레 수집기와 같은 판 (deploy/helm/onprem-agent/values.yaml metrics.image)
 const METRIC_COLLECTOR_IMAGE = "otel/opentelemetry-collector-contrib:0.164.0@sha256:340c9ca6a36617084c6661bdc4f0fe92b7cda5a805d61673ec8db375fddc522b";
 
@@ -182,13 +185,16 @@ export function buildWorkloadValues(spec: AppSpecV2, out: TfOutputs, t: Target, 
     for (const s of secretNamesOf(x)) if (!keys.has(s)) keys.set(s, new Set());
   }
   const ingress = ingressValues(spec, ns, warnings);
+  const putToken = (s: string) => w.ingressSecretsByApply
+    ? `apply 가 값 없이 만든 비밀 그릇 ${w.remoteKey(s)} 에 키 token 으로 넣어야`
+    : `비밀 저장소 ${w.remoteKey(s)} (키 token) 에 넣어야`;
   // pf-d FM-TRF-23: 입구가 cloudflared 면 차트 cloudflared 파드가 Secret <TUNNEL_SECRET> 의 키 token 을 읽는다.
   //   예전엔 앱 네임스페이스에 그 Secret 을 만드는 곳이 없어 파드가 CreateContainerConfigError → Argo Degraded → deploy paused.
   //   이제 다른 비밀과 같은 길(ExternalSecret)로 만든다. 값은 플랫폼이 복사하지 않는다(ADR-072) → 저장소에 넣으라고 경고
   //   TODO(human): 도착 터널(토큰)을 누가 만들어 저장소에 넣나 (Cloudflare 계정 세팅). 지금은 사람이 넣는다
   if (ingress?.length && !keys.has(TUNNEL_SECRET)) {
     keys.set(TUNNEL_SECRET, new Set(["token"]));
-    warnings.push(`입구: cloudflared 터널 토큰을 비밀 저장소 ${w.remoteKey(TUNNEL_SECRET)} (키 token) 에 넣어야 도착 입구 파드가 뜸`);
+    warnings.push(`입구: cloudflared 터널 토큰을 ${putToken(TUNNEL_SECRET)} 도착 입구 파드가 뜸`);
   }
   // 온프레는 Agent 차트 수집기가 따로 있다 (onprem.ts). 시험·상태 조회(이전 번호 없음)는 안 켠다
   const metrics = ingress?.length && t.metricsEndpoint && t.migrationId && (t.provider === "aws" || t.provider === "gcp")
@@ -196,7 +202,7 @@ export function buildWorkloadValues(spec: AppSpecV2, out: TfOutputs, t: Target, 
     : undefined;
   if (metrics) {
     keys.set(METRIC_SECRET, new Set(["token"]));
-    warnings.push(`트래픽 판정: 도착 환경의 지표 토큰을 비밀 저장소 ${w.remoteKey(METRIC_SECRET)} (키 token) 에 넣어야 도착 지표가 들어옴`);
+    warnings.push(`트래픽 판정: 도착 환경의 지표 토큰을 ${putToken(METRIC_SECRET)} 도착 지표가 들어옴`);
   }
   const secrets = [...keys.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([name, ks]) => ({
     name, remoteKey: w.remoteKey(name),

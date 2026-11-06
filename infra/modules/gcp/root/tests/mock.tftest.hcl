@@ -48,6 +48,18 @@ run "plan_all_kinds" {
   }
 }
 
+# B-2 (나): 그릇 이름(프로젝트 번호)은 apply 뒤에야 안다. 그래도 ESO 바인딩 키는 plan 에서 정해져야 for_each 가 된다
+run "eso_binding_keys_known_before_apply" {
+  command = plan
+  variables {
+    ingress_secret_names_json = jsonencode(["cloudflared-token"])
+  }
+  assert {
+    condition     = toset(keys(google_secret_manager_secret_iam_member.eso)) == toset(["postgres/shop-db", "identity/api/JWT_SECRET", "identity/api/SHARED", "ingress/cloudflared-token"])
+    error_message = "ESO 바인딩 키 = 그릇마다 하나, 값(그릇 이름)이 아직 없어도 plan 됨"
+  }
+}
+
 run "hub_deploy_in_app_namespace_only" {
   command = plan
   variables {
