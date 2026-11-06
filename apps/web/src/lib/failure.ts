@@ -41,7 +41,9 @@ const RULES: Rule[] = [
   { match: /^REHEARSAL_POLICY_DENIED$/, kind: "step", label: t('리허설 · 보증 못 함'), title: t('샌드박스가 이 앱을\n보증하지 못했습니다'), hint: t('샌드박스 보안 규칙(root 실행 금지 등)이 파드를 막았습니다. 앱이 고장 났다는 뜻은 아닙니다.') },
   { match: /^REHEARSAL_UNSUPPORTED_KIND$/, kind: "step", label: t('리허설 · 모르는 종류'), title: t('리허설이 모르는 자원이\n있어 멈췄습니다'), hint: t('리허설이 지원하지 않는 쿠버네티스 종류가 배포 묶음에 있어 보증하지 못했습니다. 앱이 고장 났다는 뜻은 아닙니다.') },
   { match: /^REHEARSAL_IMAGE_MIRROR_FAILED$/, kind: "system", label: t('리허설 · 이미지 복사 실패'), title: t('이미지를 샌드박스로\n복사하지 못했습니다'), hint: t('출발 레지스트리에서 샌드박스 자리로 이미지를 복사하지 못했습니다. 고객 클러스터에는 아무것도 반영하지 않았습니다.') },
-  { match: /^REHEARSAL_SANDBOX_UNAVAILABLE$/, kind: "system", label: t('리허설 · 샌드박스 없음'), title: t('샌드박스를\n띄우지 못했습니다'), hint: t('플랫폼 샌드박스가 바쁘거나 없습니다. 재개하면 새 샌드박스에서 처음부터 돕니다.') },
+  // 바쁨만이 아니다: 리허설 입력이 계약에 안 맞거나 처리기가 설정 부족 등으로 실패해도 이 코드다 (agent-worker handle-rehearsal).
+  //   그때는 재개만으로 풀리지 않으므로 "새 샌드박스에서 다시 돈다"고 약속하지 않는다. 이유·빠진 것은 멈춘 이유 카드가 감사 detail 에서 읽는다
+  { match: /^REHEARSAL_SANDBOX_UNAVAILABLE$/, kind: "system", label: t('리허설 · 샌드박스 없음'), title: t('샌드박스를\n띄우지 못했습니다'), hint: t('플랫폼이 리허설 샌드박스를 준비하지 못했습니다. 고객 클러스터에는 아무것도 반영하지 않았습니다. 아래 이유와 빠진 것을 고친 뒤 재개해 주세요.') },
   { match: /^REHEARSAL_TIMEOUT$/, kind: "system", label: t('리허설 · 시간 초과'), title: t('리허설이 정해진 시간 안에\n끝나지 않았습니다'), hint: t('샌드박스가 바쁘거나 멈췄습니다. 다시 재개하면 새 샌드박스에서 처음부터 돕니다.') },
   { match: /^REHEARSAL_BUNDLE_MISMATCH$/, kind: "system", label: t('리허설 · 묶음 다름'), title: t('리허설한 내용과\n올릴 내용이 달랐습니다'), hint: t('커밋 직전에 다시 만든 배포 묶음이 리허설한 것과 달라 올리지 않았습니다.') },
   // 배포 커밋 전 비밀 값 확인 (워커 deploy.ts secretValuesGate) → paused. 플랫폼은 비밀 값을 복사하지 않는다
@@ -68,6 +70,9 @@ const RULES: Rule[] = [
   { match: /^APPLY_RECHECK_FAILED$/, kind: "step", label: t('실행 직전 확인 실패'), title: t('실행 직전에\n계획이 맞지 않았습니다'), hint: t('승인한 계획의 지문·유효 시간·도착 환경을 다시 보니 맞지 않아 만들지 않았습니다.') },
   // 승인 뒤 바뀜 (워커 apply): Terraform 을 돌리기 전에 멈춘다. 아래 TF_ 줄("일부만 생겼을 수 있음")보다 먼저 와야 한다
   { match: /^TF_PLAN_DRIFT$/, kind: "step", label: t('승인 뒤 계획 바뀜'), title: t('승인한 뒤 계획이 바뀌어\n만들기 전에 멈췄습니다'), hint: t('승인한 계획과 지금 만든 계획이 달라 자원을 만들기 전에 멈췄습니다. 이번 실행으로 생긴 자원은 없습니다.') },
+  // 워커 apply-real·env-layer: Terraform 에 넣을 도착 사실(TF_FACT_*·도착 프로젝트)을 못 채움 → Terraform 을 돌리기 전에 failed.
+  //   아래 TF_ 줄("일부만 생겼을 수 있음")로 떨어지면 틀린 말이라 먼저 둔다. 빠진 이름은 감사 detail.missing
+  { match: /^TF_FACTS_MISSING$/, kind: "system", label: t('도착 정보 빠짐'), title: t('자원을 만들\n도착 정보가 없습니다'), hint: t('Terraform 에 넣을 도착 클러스터 정보가 비어 있어 자원을 만들기 전에 멈췄습니다. 이번 실행으로 생긴 자원은 없습니다. 아래 빠진 것을 채운 뒤 다시 시도해 주세요.') },
   { match: /^TF_BIN_MISSING$/, kind: "system", label: t('Terraform 없음'), title: t('도착 자원을 만들\n도구가 없습니다'), hint: t('서버에 Terraform 실행 파일이 없습니다.') },
   // 도착 앱이 컷오버 전까지 쓸 출발 DB 경로 (워커 db-writer.ts, apply 안 Terraform 전)
   { match: /^APP_LINK_SOURCE_MISSING$/, kind: "system", label: t('출발 DB 경로 없음'), title: t('도착 앱이 쓸\n출발 DB 경로가 없습니다'), hint: t('컷오버 전까지 도착 앱이 붙을 출발 DB 경로 설정이 플랫폼에 없어 도착 자원을 만들기 전에 멈췄습니다.') },
