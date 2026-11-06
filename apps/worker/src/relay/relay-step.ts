@@ -74,10 +74,20 @@ export async function readRelayFacts(tx: Tx, tenantId: string, m: Pick<Migration
 }
 const pick = (x: { db: string; user: string }) => ({ db: x.db, user: x.user });
 
+/** 중계기 종류 = 출발 계정의 중계기가 무엇을 나르나.
+ *  aws-onprem: 출발 AWS 에 SSH 터널(온프레 Agent) + 워커 출발 입구. aws-gcp: 출발 AWS 에 워커·Cloud SQL 출발 입구 + Cloud SQL 로 가는 역방향 입구 */
+export type RelayKind = "aws-onprem" | "aws-gcp";
+// (출발, 도착) → 중계기 종류. 표에 없는 짝은 중계기 없음 (사람이 tools/onprem-relay.sh·DB_PUBLIC 으로 길을 낸다)
+export const RELAY_ROUTES: Readonly<Record<string, RelayKind>> = {
+  "aws->onprem": "aws-onprem",
+  "aws->gcp": "aws-gcp",
+};
+export const relayKindOf = (sourceProvider: string | null, targetProvider: string | null): RelayKind | null =>
+  RELAY_ROUTES[`${sourceProvider}->${targetProvider}`] ?? null;
+
 /** 중계기를 다룰 이전인가 (만들기·지우기 공통). 아니면 건너뛸 이유 */
 export function relayApplies(f: Pick<RelayFacts, "sourceProvider" | "sourceExternalId" | "targetProvider">, env: NodeJS.ProcessEnv): string | null {
-  if (f.targetProvider !== "onprem") return "target_not_onprem";
-  if (f.sourceProvider !== "aws") return "source_not_aws";
+  if (!relayKindOf(f.sourceProvider, f.targetProvider)) return "no_relay_route";
   // DRAFT(ai): RELAY_AUTO=0 = 운영자가 중계기를 직접 다룬다 (tools/onprem-relay.sh). 기본 켬
   if (env.RELAY_AUTO === "0") return "relay_auto_off";
   // 흉내 자격(시드 환경 = external_id 없음, 또는 REAL_STS=0)으로는 고객 계정을 못 부른다 (platform.ts awsIssuer·perEnvAwsIssuer 와 같은 기준)
@@ -95,6 +105,7 @@ export function relayGate(f: RelayFacts, env: NodeJS.ProcessEnv): RelayGate {
   if (env.ONPREM_FLOOR_VIA_GIT === "0") return { kind: "skip", reason: "not_pull_mode" };
   const no = relayApplies(f, env);
   if (no) return { kind: "skip", reason: no };
+  if (relayKindOf(f.sourceProvider, f.targetProvider) !== "aws-onprem") return { kind: "skip", reason: "not_onprem_relay" };
   if (!f.postgres.length) return { kind: "skip", reason: "no_postgres" };
   // 22 를 세상에 열지 않는다: 온프레 나가는 IP 를 모르면 만들지 않는다
   if (!f.onpremEgressIp || !isIpv4(f.onpremEgressIp))

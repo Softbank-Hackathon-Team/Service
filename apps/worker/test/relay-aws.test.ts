@@ -16,7 +16,7 @@ import {
   buildRelayPlan, existingDbEgressCover, existingDbIngressCover, ownedBy, RELAY_FORWARDER_PY, pickPublicSubnet, platformEgressCidrs, provisionRelay, RelayError, relayTags, teardownRelay, type RelayPlanInput,
 } from "../src/relay/aws-relay.js";
 import { forwardTarget } from "../src/gitops/replication-delivery.js";
-import { provisionRelayStep, rdsIdentifierFromIds, relayEndpointRows, relayGate, sourcePasswordRef, teardownRelayStep, type RelayFacts } from "../src/relay/relay-step.js";
+import { provisionRelayStep, rdsIdentifierFromIds, relayEndpointRows, relayGate, relayKindOf, sourcePasswordRef, teardownRelayStep, type RelayFacts } from "../src/relay/relay-step.js";
 import { PASSWORD_REF_RE } from "@svc/contracts";
 
 const MK = "test-master-key-0123456789abcdef-xyz";   // 시험용 가짜 키
@@ -289,7 +289,7 @@ const GOOD = { REPL_SECRET_MASTER_KEY: MK, PLATFORM_EGRESS_CIDRS: "198.51.100.7/
 test("단계 문: 시드 환경·출발 AWS 아님·명세 postgres 없음·push 모드는 건너뜀 (아무것도 안 부름)", async () => {
   assert.deepEqual(relayGate(facts({ sourceExternalId: null }), GOOD), { kind: "skip", reason: "source_creds_mock" });
   assert.deepEqual(relayGate(facts(), { ...GOOD, REAL_STS: "0" }), { kind: "skip", reason: "source_creds_mock" });
-  assert.deepEqual(relayGate(facts({ sourceProvider: "gcp" }), GOOD), { kind: "skip", reason: "source_not_aws" });
+  assert.deepEqual(relayGate(facts({ sourceProvider: "gcp" }), GOOD), { kind: "skip", reason: "no_relay_route" });
   assert.deepEqual(relayGate(facts({ postgres: [] }), GOOD), { kind: "skip", reason: "no_postgres" });
   assert.deepEqual(relayGate(facts(), { ...GOOD, ONPREM_FLOOR_VIA_GIT: "0" }), { kind: "skip", reason: "not_pull_mode" });
   assert.deepEqual(relayGate(facts(), { ...GOOD, RELAY_AUTO: "0" }), { kind: "skip", reason: "relay_auto_off" });
@@ -299,7 +299,13 @@ test("단계 문: 시드 환경·출발 AWS 아님·명세 postgres 없음·push
   assert.deepEqual(out, { kind: "skipped", reason: "source_creds_mock" });
   assert.equal(borrowed, 0, "역할도 안 빌림");
   assert.deepEqual(await teardownRelayStep({ tenantId: T, migrationId: M }, { id: M, sourceEnvId: "x", targetEnvId: "y" },
-    { env: GOOD, facts: facts({ sourceProvider: "gcp" }) }), { kind: "skipped", reason: "source_not_aws" });
+    { env: GOOD, facts: facts({ sourceProvider: "gcp" }) }), { kind: "skipped", reason: "no_relay_route" });
+});
+
+test("중계기 종류 표: (출발, 도착) 짝만 본다. 표에 없는 짝은 중계기 없음", () => {
+  assert.equal(relayKindOf("aws", "onprem"), "aws-onprem");
+  assert.equal(relayKindOf("aws", "gcp"), "aws-gcp");
+  for (const [s, t] of [["gcp", "onprem"], ["aws", "aws"], ["onprem", "gcp"], [null, "gcp"], ["aws", null]] as const) assert.equal(relayKindOf(s, t), null, `${s}->${t}`);
 });
 
 test("단계 거부: 온프레 나가는 IP 모름 → ONPREM_EGRESS_UNKNOWN (22 를 세상에 안 엶), 플랫폼 대역 없음 → RELAY_CONFIG_MISSING", async () => {

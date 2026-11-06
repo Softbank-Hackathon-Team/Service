@@ -12,7 +12,7 @@ import { withStepRoles, type StepRoles } from "./_roles.js";
 import type { MigrationRow } from "./_step.js";
 import { TARGET_ACCOUNT_SQL } from "./target-account.js";
 import { agentStaleSec } from "./verify-connection.js";
-import { relayApplies } from "../relay/relay-step.js";
+import { relayApplies, relayKindOf } from "../relay/relay-step.js";
 
 // 사전 점검: 이전해도 되는지 본다. block(FAIL)이 하나라도 있으면 명세 검토로 되돌린다
 // Z97: STUB(고정 "확인됨")을 실조회로 바꿨다 — 자격(STS·tokeninfo·kubectl)·도착 API·결제·할당량·DB 버전·TCP·디스크.
@@ -91,9 +91,10 @@ export async function realPrecheck(tenantId: string, m: MigrationRow, deps: Part
   // PF RV-28: 진짜 판(MOCK_IAC≠1)이고 명세에 postgres 가 있으면 출발 복제 점검을 못 본 채(주소 없음·접속 실패) 통과시키지 않는다 (RV-23 sync 와 같은 기준)
   const required = !iacMockEnabled(env) && (await specHasPostgres(tenantId, m.id).catch(() => null)) === true;
   const envs = await envInfo(tenantId, m, env);
-  // 중계기가 끝점을 만들 이전인가 (apply 의 relayGate 와 같은 앞 조건: pull 모드 + relayApplies)
-  const relayDeferred = env.ONPREM_FLOOR_VIA_GIT !== "0" && relayApplies({ sourceProvider: envs.source.provider,
-    sourceExternalId: envs.source.externalId ?? null, targetProvider: envs.target.provider }, env) === null;
+  // 중계기가 끝점을 만들 이전인가 (apply 의 중계기 문과 같은 앞 조건: relayApplies + 온프레면 pull 모드)
+  const relayFacts = { sourceProvider: envs.source.provider, sourceExternalId: envs.source.externalId ?? null, targetProvider: envs.target.provider };
+  const relayDeferred = relayApplies(relayFacts, env) === null
+    && (relayKindOf(relayFacts.sourceProvider, relayFacts.targetProvider) !== "aws-onprem" || env.ONPREM_FLOOR_VIA_GIT !== "0");
   const [db, repl, runtime] = await Promise.all([sourceDbFacts(env), replSourcePrecheck(env, { required, relayDeferred }), specRuntime(tenantId, m.id)]);
   const gp = (e: PrecheckEnvInfo) => (e.provider === "gcp" ? e.accountId : null);   // 8nr2 RV-27: GCP 점검은 빌린 관찰 토큰·도착 프로젝트로
   const sideEnv = deps.sideEnv ?? precheckSideEnv(roles, env, { source: gp(envs.source), target: gp(envs.target) });
