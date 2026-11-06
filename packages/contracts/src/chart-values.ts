@@ -176,6 +176,16 @@ export const ChartPostgres = z.discriminatedUnion("mode", [
 ]);
 export type ChartPostgres = z.infer<typeof ChartPostgres>;
 
+// 온프레: 관리형 데이터 상품을 대체하는 오픈소스 서버 (차트 valkey.yaml). 이미지는 다이제스트 고정
+export const ChartDataService = z.object({
+  id: z.string(), kind: z.literal("valkey"), name: Name,
+  image: z.string().regex(/^[^@\s]+@sha256:[0-9a-f]{64}$/),
+  port: z.number().int().min(1).max(65535),
+  maxmemoryMi: z.number().int().positive(),
+  resources: K8sObj,
+}).strict();
+export type ChartDataService = z.infer<typeof ChartDataService>;
+
 export const ChartIngressPath = z.object({
   path: z.string(), pathType: z.enum(["Prefix", "Exact"]), service: Name, port: z.number().int(), workload: z.string(),
 }).strict();
@@ -214,6 +224,7 @@ export const ChartValues = z.object({
     secrets: z.array(ChartSecret),
   }).strict(),
   postgres: z.array(ChartPostgres).optional(),
+  dataServices: z.array(ChartDataService).optional(),       // 온프레 대체 오픈소스 서버 (Builder 가 냄)
   dbTunnel: ChartDbTunnel.optional(),                       // 온프레 DB 이전 터널 (워커가 이전마다, 차트 db-tunnel.yaml)
   sealedSecrets: z.array(ChartSealedSecret).optional(),     // 봉인 비밀 (워커가 이전마다, 차트 sealedsecret.yaml)
   ingress: ChartIngress.optional(),

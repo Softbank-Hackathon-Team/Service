@@ -19,7 +19,8 @@ export const SpecFieldPath = z.string().regex(/^(components\.[a-z][a-z0-9-]{0,39
 // 확인 경로 = fieldMeta 키 그대로 (components.<id>.<칸>[.env.<이름>], links.<a>-><b>, entry.<host>.routes[i]…, check.<id>.<자리>…)
 // G3c-4: posture·security 도 (다시 가져오기 합치기가 "posture"·"security" 키에 검토 표시를 붙인다)
 //   T1·F-1: secrets.<이름>.keys.<키>.pairedWith(짝 확인) · unread.<종류>(못 읽은 종류를 봤음) 도 확인 대상
-export const SpecConfirmPath = z.string().regex(/^(components|app|links|entry|posture|security|check|secrets|unread)(\.|$)\S{0,300}$/);
+//   NS-1: namespaces.<ns> (가져오기가 네임스페이스 객체를 못 읽으면 검토 표시를 붙인다. 확인 길이 없으면 spec_review 에서 못 나감)
+export const SpecConfirmPath = z.string().regex(/^(components|app|links|entry|posture|security|check|secrets|unread|namespaces)(\.|$)\S{0,300}$/);
 export const SpecPatchInput = z.object({
   baseVersion: z.number().int().min(1),
   // DRAFT(ai) VPA2b: 값 바꾸기 항목은 value 키가 꼭 있어야 한다. 빠지면 400 (예전엔 칸이 조용히 지워졌다).
