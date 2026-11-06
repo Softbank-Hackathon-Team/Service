@@ -79,6 +79,14 @@ zero_check() { # GKE 클러스터·Cloud SQL 인스턴스가 0 인지 (조회만
   say "남은 것: GKE $g, Cloud SQL $s"; [ "$g" -eq 0 ] && [ "$s" -eq 0 ]
 }
 
+# Cloud Shell 의 terraform 은 "설치하세요" 안내만 찍고 0 으로 끝나는 가짜다 (2026-11-07 실측: apply 가 2초 만에 "성공" → get-credentials 404).
+#   진짜인지 버전 줄로 본다. dry-run 은 부르지 않으니 안 본다
+if [ "$DRY" != 1 ]; then
+  terraform version 2>/dev/null | head -1 | grep -q '^Terraform v' || {
+    say "terraform 이 없다 (Cloud Shell 기본은 안내만 찍는 가짜). 홈에 설치: curl -sLo tf.zip https://releases.hashicorp.com/terraform/1.16.4/terraform_1.16.4_linux_amd64.zip && unzip -o tf.zip terraform -d ~/bin && export PATH=~/bin:\$PATH"
+    exit 1; }
+fi
+
 case "$CMD" in
 up)
   say "up 시작 dry=$DRY project=$GCP_PROJECT region=$REGION"
