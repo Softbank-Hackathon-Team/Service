@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gcpEnvFor, spawnExec, type Exec } from "@svc/adapters";
 import type { ReplicationEndpoint, TfOutputs } from "@svc/contracts";
-import { readTfFacts } from "@svc/replication";
+import { deriveReplPassword, readTfFacts } from "@svc/replication";
 import { replicationEndpointsFor, withTenant } from "@svc/core";
 import { withStepRoles, type StepRoles } from "../jobs/_roles.js";
 import type { MigrationRow } from "../jobs/_step.js";
@@ -29,7 +29,7 @@ import {
   ensureTargetAppLogin, readRelayFacts, relayApplies, relayKindOf, saveEndpointRows, GCP_TARGET_PASSWORD_REF, RELAY_TARGET_PASSWORD_REF, RELAY_TARGET_USER,
   type CloudSqlInstanceRef, type RelayFacts, type RelayStepOutcome,
 } from "./relay-step.js";
-import { gcpSourcePasswordRef, targetAdminOf, GCP_SOURCE_ADMIN_USER } from "./gcp-aws.js";
+import { gcpSourcePasswordRef, targetAdminOf } from "./gcp-aws.js";
 
 export type GcpRelayKind = "gcp-onprem" | "onprem-gcp";
 export const isGcpRelayKind = (k: string | null | undefined): k is GcpRelayKind => k === "gcp-onprem" || k === "onprem-gcp";
@@ -48,6 +48,12 @@ type Job = { tenantId: string; migrationId: string };
 type Failed = Extract<RelayStepOutcome, { kind: "failed" }>;
 
 export const gcpRelayName = (migrationId: string) => `svc-relay-${migrationId}`;
+
+// 출발 Cloud SQL 이전 전용 복제 계정 (gcp-onprem). 사람이 postgres 비밀번호를 워커 env 에 넣지 않게 워커가 직접 만든다.
+//   비밀번호 = derive:cloudsql_repl (REPL_SECRET_MASTER_KEY 로 회사·이전·쪽마다 파생, 줄에는 참조만). 정리 때 지운다
+// DRAFT(ai): Cloud SQL API 로 만든 계정은 cloudsqlsuperuser (기본 postgres 계정과 같은 권한). REPLICATION 은 복제 단계가 준다 (replication ensureReplicationAttr)
+export const GCP_REPL_PURPOSE = "cloudsql_repl";
+export const gcpReplUser = (migrationId: string) => `svc_repl_${migrationId.replace(/-/g, "").slice(0, 8)}`;
 
 // ── 1. Cloud SQL 사설 사실 (순수) ───────────────────────────────────────────────────────
 
@@ -222,6 +228,26 @@ export async function describeCloudSqlPrivate(d: RelayGcpDeps, ref: CloudSqlInst
   return cloudSqlPrivateOf(ref, raw);
 }
 
+/** 출발 Cloud SQL 에 이전 전용 복제 계정을 만든다 (있으면 비밀번호만 맞춘다). 비밀번호는 0600 임시 파일 없이 gcloud 인자로 넘긴다:
+ *  DRAFT(ai): 인자는 워커 컨테이너 안 프로세스 목록에만 잠깐 보인다 (로그·감사에는 안 남김). REST 직접 호출로 바꾸면 이 노출도 없어진다 */
+export async function ensureCloudSqlReplUser(d: RelayGcpDeps, sql: Pick<CloudSqlPrivate, "project" | "instance">, user: string, password: string): Promise<"created" | "updated"> {
+  if (!/^svc_repl_[0-9a-f]{8}$/.test(user)) throw new RelayError("RELAY_PROVISION_FAILED", "복제 계정 이름 모양이 틀렸다");
+  const base = [`--instance=${sql.instance}`, `--project=${sql.project}`, `--password=${password}`];
+  const c = await gcloud(d, ["sql", "users", "create", user, ...base]);
+  if (c.ok) return "created";
+  if (!/already exists|ALREADY_EXISTS|409/i.test(c.why)) throw new RelayError("RELAY_SOURCE_DB_UNKNOWN", `출발 Cloud SQL ${sql.instance} 에 복제 계정 만들기 실패: ${c.why.replace(password, "***")}`);
+  must(await gcloud(d, ["sql", "users", "set-password", user, ...base]), "RELAY_SOURCE_DB_UNKNOWN", `출발 Cloud SQL ${sql.instance} 복제 계정 비밀번호 맞추기`);
+  return "updated";
+}
+
+/** 복제 계정 지우기. 없으면 그대로 */
+export async function dropCloudSqlReplUser(d: RelayGcpDeps, sql: Pick<CloudSqlPrivate, "project" | "instance">, user: string): Promise<boolean> {
+  const r = await gcloud(d, ["sql", "users", "delete", user, `--instance=${sql.instance}`, `--project=${sql.project}`]);
+  if (r.ok) return true;
+  if (r.notFound) return false;
+  throw new RelayError("RELAY_TEARDOWN_FAILED", `출발 Cloud SQL ${sql.instance} 복제 계정 지우기 실패: ${r.why}`);
+}
+
 /** Cloud SQL 의 VPC 에서 그 지역 서브넷 하나 (이름순 첫 번째) + PSA 할당 대역 */
 export async function discoverGcpRelayNetwork(d: RelayGcpDeps, sql: CloudSqlPrivate): Promise<{ subnetUrl: string; psaRanges: string[] }> {
   if (!sql.network || !sql.region) throw new RelayError("RELAY_PROVISION_FAILED", `Cloud SQL ${sql.instance} 의 VPC·지역을 모른다`);
@@ -377,8 +403,8 @@ export function gcpOnpremEndpointRows(i: { tenantId: string; migrationId: string
   publicIp: string; privateIp: string; knownHosts: string; existing: readonly ReplicationEndpoint[] }): [ReplicationEndpoint, ReplicationEndpoint] {
   if (!i.sql.privateIp) throw new RelayError("RELAY_SOURCE_DB_UNKNOWN", `출발 Cloud SQL ${i.sql.instance} 에 사설 IP 가 없다`);
   const source = cloudSqlRow({ tenantId: i.tenantId, migrationId: i.migrationId, side: "source", label: `cloudsql-src-${id8Of(i.migrationId)}`, db: i.db,
-    // 출발 관리자 = Cloud SQL 기본 사용자 postgres (gcp-aws 와 같음). 비밀번호 = 워커 env REPL_SECRET_SRC_<출발 환경 앞 8자>
-    username: GCP_SOURCE_ADMIN_USER, passwordRef: gcpSourcePasswordRef(i.existing, i.sourceEnvId, i.migrationId).ref, appRole: i.appUser,
+    // 출발 계정 = 워커가 만든 이전 전용 복제 계정, 비밀번호 = 파생 (사람 입력 없음). 운영자가 넣은 줄이 있으면 그 계정·참조 그대로 (cloudSqlRow)
+    username: gcpReplUser(i.migrationId), passwordRef: `derive:${GCP_REPL_PURPOSE}`, appRole: i.appUser,
     privateIp: i.sql.privateIp, serverCaPem: i.sql.serverCaPem, publicIp: i.publicIp, existing: i.existing });
   const target = cnpgRow({ ...i, side: "target" });
   return [source, target];
@@ -432,7 +458,9 @@ export function gcpOnpremGate(f: RelayFacts, env: NodeJS.ProcessEnv): GcpOnpremG
 }
 
 /** 출발 Cloud SQL 관리자 비밀번호 env 가 워커에 있나 (gcp-onprem). 없으면 이름 */
+//   기본은 워커가 만든 복제 계정(derive:)이라 env 가 필요 없다. 운영자가 env: 참조로 출발 줄을 넣어 둔 경우만 본다
 export function missingSourceSecret(f: Pick<RelayFacts, "existing">, m: Pick<MigrationRow, "sourceEnvId">, migrationId: string, env: NodeJS.ProcessEnv): string | null {
+  if (!f.existing.some((e) => e.side === "source" && e.provider === "cloudsql")) return null;
   const pw = gcpSourcePasswordRef(f.existing, m.sourceEnvId, migrationId);
   return pw.envName && !env[pw.envName] ? pw.envName : null;
 }
@@ -476,7 +504,7 @@ async function readSourceBorrowed(j: Job, m: MigrationRow, ref: CloudSqlInstance
 
 /** 중계기 쪽 토큰 빌려 VM·방화벽 만들기 → 호스트 키 줄. 두 방향 공통 */
 async function provisionWithToken(j: Job, m: MigrationRow, side: "source" | "target", g: Extract<GcpOnpremGate, { kind: "go" }>, deps: GcpOnpremDeps,
-  sqlOf: (d: RelayGcpDeps) => Promise<CloudSqlPrivate>): Promise<Failed | { kind: "ok"; res: GcpRelayResources; sql: CloudSqlPrivate; knownHosts: string; psaRanges: string[] }> {
+  sqlOf: (d: RelayGcpDeps) => Promise<CloudSqlPrivate>): Promise<Failed | { kind: "ok"; res: GcpRelayResources; sql: CloudSqlPrivate; knownHosts: string; psaRanges: string[]; replUser?: string }> {
   const env = deps.env ?? process.env;
   const step = side === "source" ? "relay_gcp" as const : "relay_gcp_target" as const;
   const borrow = deps.borrow ?? (<T>(fn: (r: StepRoles) => Promise<T>) => withStepRoles(step, j, m, fn));
@@ -495,20 +523,26 @@ async function provisionWithToken(j: Job, m: MigrationRow, side: "source" | "tar
       if (bad.length) return { kind: "failed", failureCode: side === "source" ? "RELAY_SOURCE_DB_UNKNOWN" : "RELAY_TARGET_DB_UNKNOWN",
         reason: bad.map((p) => p.message).join(" / "), detail: { missing: bad.flatMap((p) => p.missing), hint: bad.map((p) => p.hint).join(" / ") } } satisfies Failed;
       const d: RelayGcpDeps = { ...base, env: { ...base.env, CLOUDSDK_CORE_PROJECT: sql.project } };
+      // gcp-onprem: 출발 Cloud SQL 에 이전 전용 복제 계정 (운영자가 출발 줄을 넣어 둔 경우는 그 계정을 쓰고 안 만든다)
+      let replUser: string | undefined;
+      if (side === "source" && !(deps.existing ?? []).some((e) => e.side === "source" && e.provider === "cloudsql")) {
+        const name = gcpReplUser(j.migrationId);
+        replUser = `${name}:${await ensureCloudSqlReplUser(d, sql, name, deriveReplPassword(g.masterKey, { tenantId: j.tenantId, migrationId: j.migrationId, side: "source" }, GCP_REPL_PURPOSE))}`;
+      }
       const net = await discoverGcpRelayNetwork(d, sql);
       const hostKey = deriveSshHostKey(g.masterKey, j.tenantId, j.migrationId);
       const plan = buildGcpRelayPlan({ kind: g.relayKind, migrationId: j.migrationId, sql, subnetUrl: net.subnetUrl, psaRanges: net.psaRanges,
         onpremEgressIp: g.egressIp, platformEgressCidrs: g.platformCidrs, tunnelPublicKey: deriveSshKeypair(g.masterKey, j.tenantId, j.migrationId).publicKeyLine, hostKey });
       const res = await provisionGcpRelay(d, plan);
-      return { kind: "ok" as const, res, sql, knownHosts: knownHostsLine(res.publicIp, plan.hostPublicKey), psaRanges: net.psaRanges };
+      return { kind: "ok" as const, res, sql, knownHosts: knownHostsLine(res.publicIp, plan.hostPublicKey), psaRanges: net.psaRanges, ...(replUser ? { replUser } : {}) };
     } catch (e) { return failure(e); }
   });
 }
 
-const okDetail = (kind: GcpRelayKind, x: { res: GcpRelayResources; sql: CloudSqlPrivate; psaRanges: string[] }, extra: Record<string, unknown> = {}) => ({
+const okDetail = (kind: GcpRelayKind, x: { res: GcpRelayResources; sql: CloudSqlPrivate; psaRanges: string[]; replUser?: string }, extra: Record<string, unknown> = {}) => ({
   kind, project: x.res.project, zone: x.res.zone, instanceName: x.res.instanceName, firewalls: x.res.firewalls,
   publicIp: x.res.publicIp, privateIp: x.res.privateIp, created: x.res.created, reused: x.res.reused, entryPort: RELAY_SOURCE_PORT,
-  cloudSql: { instance: x.sql.instance, privateIp: x.sql.privateIp, network: x.sql.network }, psaRanges: x.psaRanges, endpointRows: ["source", "target"], ...extra });
+  cloudSql: { instance: x.sql.instance, privateIp: x.sql.privateIp, network: x.sql.network }, psaRanges: x.psaRanges, ...(x.replUser ? { replUser: x.replUser } : {}), endpointRows: ["source", "target"], ...extra });
 
 /** GCP 출발 → 온프레 도착 (apply 의 온프레 분기, pull 모드). 출발 Cloud SQL VPC 에 중계 VM + 끝점 두 줄. 다시 불러도 된다 */
 export async function provisionGcpOnpremRelayStep(j: Job, m: MigrationRow, deps: GcpOnpremDeps = {}): Promise<RelayStepOutcome> {
@@ -520,15 +554,15 @@ export async function provisionGcpOnpremRelayStep(j: Job, m: MigrationRow, deps:
   if (g.relayKind !== "gcp-onprem" || !g.ref) return { kind: "skipped", reason: "not_gcp_onprem_relay" };
   const secret = missingSourceSecret(facts, m, j.migrationId, env);
   if (secret) return { kind: "failed", failureCode: "REPL_SECRET_UNRESOLVED", reason: `출발 Cloud SQL 관리자 비밀번호 env ${secret} 가 워커에 없다`,
-    detail: { missing: [secret], hint: `worker-env 비밀에 출발 Cloud SQL 관리자(${GCP_SOURCE_ADMIN_USER}) 비밀번호를 ${secret} 로 넣고 차트 components.worker.secretKeys 에 더해 워커를 다시 띄운 뒤 다시 계획한다` } };
+    detail: { missing: [secret], hint: `운영자가 넣은 출발 줄이 env 참조다: worker-env 비밀에 ${secret} 를 넣거나, 그 줄을 지우고(npm run repl:endpoint) 다시 계획하면 워커가 복제 계정을 만든다` } };
   const ref = g.ref;
   // 출발 Cloud SQL 은 출발 관찰 역할로 읽는다 (실행 역할 SA 는 출발 프로젝트에 Cloud SQL 읽기가 없을 수 있다)
   let sql: CloudSqlPrivate;
   try { sql = await (deps.readSource ?? ((r) => readSourceBorrowed(j, m, r, env, deps.exec)))(ref); }
   catch (e) { return failure(e, { cloudSql: ref.instance }); }
-  const p = await provisionWithToken(j, m, "source", g, deps, async () => sql);
+  const existing = deps.existing ?? facts.existing;
+  const p = await provisionWithToken(j, m, "source", g, { ...deps, existing }, async () => sql);
   if (p.kind === "failed") return p;
-  const existing = deps.existing ?? await withTenant(j.tenantId, (tx) => replicationEndpointsFor(tx, j.migrationId));
   let rows: [ReplicationEndpoint, ReplicationEndpoint];
   try {
     rows = gcpOnpremEndpointRows({ tenantId: j.tenantId, migrationId: j.migrationId, sourceEnvId: m.sourceEnvId, sql: p.sql, db: g.db, appUser: g.user,
@@ -599,8 +633,15 @@ export async function teardownGcpRelayStep(j: Job, m: Pick<MigrationRow, "id" | 
       ? { kind: "failed", failureCode: "RELAY_TEARDOWN_FAILED", reason: `GCP 실행 역할을 못 빌려 중계기를 못 지웠다: ${roles.denied.map((x) => x.code).join(",")}` }
       : { kind: "skipped", reason: `${side}_creds_mock` };
     try {
-      const r = await teardownGcpRelay({ env: gcpEnvFor(token, project, env), ...(deps.exec ? { exec: deps.exec } : {}), ...(roles.signal ? { signal: roles.signal } : {}) }, project, j.migrationId);
-      return { kind: "ok", detail: { kind, project, removed: r.removed } };
+      const d: RelayGcpDeps = { env: gcpEnvFor(token, project, env), ...(deps.exec ? { exec: deps.exec } : {}), ...(roles.signal ? { signal: roles.signal } : {}) };
+      const r = await teardownGcpRelay(d, project, j.migrationId);
+      // gcp-onprem: 워커가 만든 복제 계정도 지운다 (복제 걷기 뒤라 슬롯·발행은 이미 없다). 못 지우면 정리를 멈추지 않고 detail 에 남긴다
+      let replUser: string | undefined;
+      if (side === "source" && facts.cloudSql) {
+        try { replUser = (await dropCloudSqlReplUser(d, facts.cloudSql, gcpReplUser(j.migrationId))) ? "removed" : "absent"; }
+        catch (e) { replUser = `failed: ${((e as Error).message ?? "").slice(0, 200)}`; }
+      }
+      return { kind: "ok", detail: { kind, project, removed: r.removed, ...(replUser ? { replUser } : {}) } };
     } catch (e) { return failure(e); }
   });
 }

@@ -16,6 +16,8 @@ import {
 } from "../src/relay/gcp-relay.js";
 import { forwardTarget } from "../src/gitops/replication-delivery.js";
 import { deriveSshHostKey, deriveSshKeypair } from "../src/gitops/migration-secrets.js";
+import { deriveReplPassword } from "@svc/replication";
+import { ensurePlatformEgress } from "../src/relay/platform-egress.js";
 
 // 시험용 가짜 값 (문서용 IP 대역·가짜 프로젝트). 마스터 키는 비밀이 아닌 시험 값
 const T = "11111111-1111-4111-8111-111111111111", M = "44444444-4444-4444-8444-444444444444";
@@ -23,7 +25,8 @@ const SRC_ENV = "783df2ef-8dbf-4a20-904d-bb02aeb96332";
 const PLAT = "198.51.100.7/32", EGRESS = "192.0.2.44", SQL_PRIV = "10.20.0.3", VM_PUB = "203.0.113.60", VM_PRIV = "10.0.0.9";
 const MK = "test-master-key-not-a-secret-0123456789";
 const PEM = "-----BEGIN CERTIFICATE-----\nMIIBx\n-----END CERTIFICATE-----";
-const ENV_OK = { PLATFORM_EGRESS_CIDRS: PLAT, REPL_SECRET_MASTER_KEY: MK, REAL_STS: "1", REPL_SECRET_SRC_783DF2EF: "fake-src-password" } as NodeJS.ProcessEnv;
+// 사람 입력 없음: 출발 DB 비밀번호 env 가 없다 (워커가 복제 계정을 만든다)
+const ENV_OK = { PLATFORM_EGRESS_CIDRS: PLAT, REPL_SECRET_MASTER_KEY: MK, REAL_STS: "1" } as NodeJS.ProcessEnv;
 const job = { tenantId: T, migrationId: M };
 const mig = { id: M, status: "provisioning" as const, sourceEnvId: SRC_ENV, targetEnvId: randomUUID() };
 const facts = (o: Partial<RelayFacts> = {}): RelayFacts => ({
@@ -46,6 +49,7 @@ class FakeGcloud {
   fws = new Map<string, { sourceRanges: string[]; description: string; targetTags: string[] }>();
   vms = new Map<string, { labels: Record<string, string>; status: string; target: string; zone: string }>();
   startup: string[] = [];
+  users = new Map<string, string>();
   sql: Record<string, unknown> = rawSql();
   exec: Exec = async (_cmd, args) => {
     this.calls.push(args);
@@ -54,6 +58,11 @@ class FakeGcloud {
     const flag = (k: string) => args.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? "";
     const a = args.join(" ");
     if (a.startsWith("sql instances describe")) return ok(this.sql);
+    if (a.startsWith("sql users create")) {
+      if (this.users.has(args[3]!)) return { code: 1, stdout: "", stderr: "ERROR: (gcloud.sql.users.create) HTTPError 409: user already exists", ms: 1 };
+      this.users.set(args[3]!, flag("password")); return ok({}); }
+    if (a.startsWith("sql users set-password")) { this.users.set(args[3]!, flag("password")); return ok({}); }
+    if (a.startsWith("sql users delete")) { if (!this.users.delete(args[3]!)) return nf(args[3]!); return ok({}); }
     if (a.startsWith("compute networks subnets list")) return ok([{ selfLink: SUBNET }]);
     if (a.startsWith("compute addresses list")) return ok([{ address: "10.20.0.0", prefixLength: 16, network: "https://www.googleapis.com/compute/v1/projects/src-proj-1/global/networks/app-vpc" },
       { address: "10.99.0.0", prefixLength: 16, network: "https://www.googleapis.com/compute/v1/projects/src-proj-1/global/networks/other" }]);
@@ -169,7 +178,7 @@ test("끝점 두 줄 (gcp-onprem): 출발 = 중계 입구 :15432 + 사설 IP 는
     publicIp: VM_PUB, privateIp: VM_PRIV, knownHosts: `${VM_PUB} ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake`, existing: [] });
   for (const r of [s, t]) ReplicationEndpoint.parse(r);
   assert.deepEqual([s.side, s.provider, s.host, s.port, s.username, s.passwordRef, s.sslmode, s.tlsServername, s.caPem, s.peerHost],
-    ["source", "cloudsql", VM_PUB, 15432, "postgres", "env:REPL_SECRET_SRC_783DF2EF", "verify-ca", SQL_PRIV, PEM, null]);
+    ["source", "cloudsql", VM_PUB, 15432, "svc_repl_44444444", "derive:cloudsql_repl", "verify-ca", SQL_PRIV, PEM, null]);
   assert.deepEqual([t.side, t.provider, t.host, t.port, t.username, t.passwordRef, t.peerHost, t.relayHost], ["target", "cnpg", VM_PUB, 5432, "svc_migrate", "derive:migrate", VM_PRIV, VM_PUB]);
   // 온프레 터널 정방향 목적지 = 중계 sshd PermitOpen 과 같은 값
   assert.equal(forwardTarget(s), `${SQL_PRIV}:5432`);
@@ -201,29 +210,45 @@ test("만들기 (gcp-onprem): 방화벽 셋 → VM, 끝점 두 줄. 다시 부�
   const d = ok.kind === "ok" ? ok.detail : {};
   assert.deepEqual([d.kind, d.project, d.zone, d.publicIp, d.privateIp, d.sourceTls], ["gcp-onprem", "src-proj-1", "asia-northeast3-a", VM_PUB, VM_PRIV, "verify-ca"]);
   assert.deepEqual(d.created, [`svc-relay-${M}-ssh`, `svc-relay-${M}-entry`, `svc-relay-${M}-pg`, `svc-relay-${M}`]);
+  // 출발 복제 계정: 워커가 만들고, 비밀번호 = 줄의 derive 참조를 푼 값 (사람 입력 없음)
+  assert.equal(d.replUser, "svc_repl_44444444:created");
+  assert.equal(f.users.get("svc_repl_44444444"), deriveReplPassword(MK, { tenantId: T, migrationId: M, side: "source" }, "cloudsql_repl"));
+  assert.ok(!JSON.stringify(d).includes(f.users.get("svc_repl_44444444")!), "감사 detail 에 비밀번호 없음");
   assert.deepEqual(f.fws.get(`svc-relay-${M}-pg`)!.sourceRanges, ["10.20.0.0/16", PLAT], "다른 VPC 의 PSA 대역은 안 넣는다");
   assert.deepEqual(saved[0]!.map((r) => `${r.side}:${r.provider}:${r.port}`), ["source:cloudsql:15432", "target:cnpg:5432"]);
   assert.ok(f.startup[0]!.includes("BEGIN OPENSSH PRIVATE KEY"), "파생 호스트 키는 시작 스크립트 파일로만");
   assert.ok(f.calls.every((c) => !c.join(" ").includes("OPENSSH PRIVATE")), "gcloud 인자에는 개인 키가 없다");
-  assert.ok(!JSON.stringify(d).includes("fake-src-password") && !JSON.stringify(saved).includes(MK), "감사 detail·줄에 비밀 없음");
-  // 다시 부르면 만들지 않는다
+  assert.ok(!JSON.stringify(saved).includes(MK), "줄에 비밀 없음");
+  // 다시 부르면 만들지 않는다 (복제 계정은 비밀번호만 맞춤)
   const again = await provisionGcpOnpremRelayStep(job, mig, deps);
   assert.equal(again.kind === "ok" && (again.detail.created as string[]).length, 0);
+  assert.equal(again.kind === "ok" && again.detail.replUser, "svc_repl_44444444:updated");
   // 남의 방화벽 규칙(같은 이름, 다른 설명)은 정리가 건드리지 않는다
   f.fws.set(`svc-relay-${M}-ssh`, { sourceRanges: ["0.0.0.0/0"], description: "someone else", targetTags: [] });
   const down = await teardownRelayStep(job, mig, { env: ENV_OK, facts: facts(), borrowGcp: borrowWith("source"), gcpExec: f.exec });
   assert.equal(down.kind, "ok", JSON.stringify(down));
   assert.deepEqual(down.kind === "ok" && down.detail.removed, [`svc-relay-${M}`, `svc-relay-${M}-entry`, `svc-relay-${M}-pg`]);
+  assert.equal(down.kind === "ok" && down.detail.replUser, "removed");
+  assert.equal(f.users.size, 0);
   assert.deepEqual([...f.fws.keys()], [`svc-relay-${M}-ssh`]);
   assert.equal(f.vms.size, 0);
 });
 
-test("만들기 거부: 출발 비밀번호 env 없음 → 아무것도 안 부름, 실행 토큰 없음 → RELAY_ROLE_DENIED, 출발 Cloud SQL 이 공개 IP 만 → 막음", async () => {
+test("만들기 거부: 운영자 env 참조 줄인데 env 없음 → 아무것도 안 부름, 실행 토큰 없음 → RELAY_ROLE_DENIED, 출발 Cloud SQL 이 공개 IP 만 → 막음", async () => {
   const f = new FakeGcloud();
   const base = { facts: facts(), exec: f.exec, readSource: async () => sqlFacts(), existing: [], save: async () => {} };
-  const noSecret = await provisionGcpOnpremRelayStep(job, mig, { ...base, env: { ...ENV_OK, REPL_SECRET_SRC_783DF2EF: undefined }, borrow: borrowWith("source") });
+  const [opRow] = gcpOnpremEndpointRows({ tenantId: T, migrationId: M, sourceEnvId: SRC_ENV, sql: sqlFacts(), db: "shop", appUser: "shop_app",
+    publicIp: VM_PUB, privateIp: VM_PRIV, knownHosts: `${VM_PUB} ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFake`, existing: [] });
+  const envRow = { ...opRow, username: "postgres", passwordRef: "env:REPL_SECRET_SRC_783DF2EF" };
+  const noSecret = await provisionGcpOnpremRelayStep(job, mig, { ...base, facts: facts({ existing: [envRow] }), env: ENV_OK, borrow: borrowWith("source") });
   assert.equal(noSecret.kind === "failed" && noSecret.failureCode, "REPL_SECRET_UNRESOLVED");
   assert.equal(f.calls.length, 0);
+  // 운영자 줄이 있고 env 도 있으면 복제 계정을 만들지 않고 그 계정을 쓴다
+  const opOk = await provisionGcpOnpremRelayStep(job, mig, { ...base, facts: facts({ existing: [envRow] }), existing: [envRow],
+    env: { ...ENV_OK, REPL_SECRET_SRC_783DF2EF: "fake-src-password" }, borrow: borrowWith("source") });
+  assert.equal(opOk.kind, "ok", JSON.stringify(opOk));
+  assert.equal(f.users.size, 0);
+  f.vms.clear(); f.fws.clear(); f.calls = [];
   const noToken = await provisionGcpOnpremRelayStep(job, mig, { ...base, env: ENV_OK, borrow: borrowWith("target") });
   assert.equal(noToken.kind === "failed" && noToken.failureCode, "RELAY_ROLE_DENIED");
   const publicOnly = await provisionGcpOnpremRelayStep(job, mig, { ...base, env: ENV_OK, borrow: borrowWith("source"),
@@ -277,4 +302,26 @@ test("사전 점검 (gcp-onprem): 출발 Cloud SQL 이 사설 IP·논리 디코�
   assert.deepEqual(await gcpOnpremRelayPrecheck(job, mig, undefined, ENV_OK, { facts: facts({ targetProvider: "aws" }) }), []);
   const noEgress = await gcpOnpremRelayPrecheck(job, mig, undefined, ENV_OK, { facts: facts({ onpremEgressIp: null }) });
   assert.deepEqual(noEgress.map((i) => i.id), ["PC-RELAY-GCP-ONPREM"]);
+});
+
+test("플랫폼 나가는 IP: 비어 있으면 알아내 /32 로, 운영자 값·끔은 그대로, 이상한 응답은 실패", async () => {
+  const env: NodeJS.ProcessEnv = {};
+  assert.deepEqual(await ensurePlatformEgress(env, async () => "198.51.100.23\n"), { kind: "set", cidr: "198.51.100.23/32" });
+  assert.equal(env.PLATFORM_EGRESS_CIDRS, "198.51.100.23/32");
+  assert.deepEqual(await ensurePlatformEgress({ PLATFORM_EGRESS_CIDRS: PLAT }, async () => { throw new Error("부르면 안 됨"); }), { kind: "kept" });
+  assert.deepEqual(await ensurePlatformEgress({ PLATFORM_EGRESS_AUTO: "0" }, async () => { throw new Error("부르면 안 됨"); }), { kind: "off" });
+  const bad: NodeJS.ProcessEnv = {};
+  assert.equal((await ensurePlatformEgress(bad, async () => "<html>")).kind, "failed");
+  assert.equal(bad.PLATFORM_EGRESS_CIDRS, undefined);
+});
+
+test("연결 스크립트: 두 프로젝트 모두 svc-operate 에 중계기 역할, 역할 파일에 gcp-relay.ts 가 부르는 권한이 있다", () => {
+  const sh = readFileSync(new URL("../../../infra/onboarding/gcp-connect.sh", import.meta.url), "utf8");
+  assert.equal(sh.match(/ensure_project_binding "\$\{OPERATE_SA\}" "projects\/\$\{P\}\/roles\/platform_relay"/g)?.length, 2);
+  const perms = readFileSync(new URL("../../../infra/permissions/gcp-relay-custom-role.yaml", import.meta.url), "utf8").split("\n").filter((l) => l.startsWith("- ")).map((l) => l.slice(2));
+  for (const p of ["compute.instances.create", "compute.instances.delete", "compute.firewalls.create", "compute.firewalls.delete", "compute.subnetworks.use",
+    "compute.subnetworks.useExternalIp", "compute.networks.updatePolicy", "compute.globalAddresses.list", "cloudsql.users.create", "cloudsql.users.delete", "cloudsql.instances.get"])
+    assert.ok(perms.includes(p), p);
+  // 거부: IAM 정책 바꾸기·Cloud SQL 인스턴스 지우기·고치기는 없다
+  assert.ok(!perms.some((p) => p.endsWith(".setIamPolicy") || /^cloudsql\.instances\.(delete|update)$/.test(p)));
 });

@@ -149,6 +149,20 @@ writeFileSync(join(out, "gcp-operate-iam-custom-role.yaml"),
 // B-2: 환경 층(gcp/env)을 만드는 svc-env 역할 = 읽기 + 만들기 (지우기 없음: 환경 층은 사람이 지운다). worker 가 env 층 단계에서만 빌린다
 writeFileSync(join(out, "gcp-env-custom-role.yaml"),
   role("platform-env", "infra/modules/gcp/env 만들기 (지우기·IAM 정책 바꾸기 없음, 자동 생성)", actionsFor(gcp.PERMS, [...gcp.ENV_LAYER_TYPES], "apply")));
+// GCP ↔ 온프레 DB 복제 중계기 (worker relay/gcp-relay.ts): Cloud SQL 이 있는 VPC 에 GCE VM·방화벽 규칙, 출발 Cloud SQL 에 이전 전용 복제 계정.
+//   연결 스크립트가 svc-operate 에 원래 프로젝트(gcp-onprem)와 전용 프로젝트(onprem-gcp) 둘 다 붙인다.
+// DRAFT(ai): 목록 = gcp-relay.ts 가 부르는 gcloud 명령의 권한 (만들기·읽기·고치기·지우기). 감사 로그 실측으로 줄인다
+const GCP_RELAY_PERMS = [
+  "cloudsql.instances.get", "cloudsql.users.create", "cloudsql.users.delete", "cloudsql.users.list", "cloudsql.users.update",
+  "compute.disks.create", "compute.firewalls.create", "compute.firewalls.delete", "compute.firewalls.get", "compute.firewalls.list", "compute.firewalls.update",
+  "compute.globalAddresses.list", "compute.globalOperations.get", "compute.images.get", "compute.images.getFromFamily", "compute.images.useReadOnly",
+  "compute.instances.create", "compute.instances.delete", "compute.instances.get", "compute.instances.list", "compute.instances.setLabels",
+  "compute.instances.setMetadata", "compute.instances.setTags", "compute.machineTypes.get", "compute.networks.get", "compute.networks.updatePolicy",
+  "compute.projects.get", "compute.subnetworks.get", "compute.subnetworks.list", "compute.subnetworks.use", "compute.subnetworks.useExternalIp",
+  "compute.zoneOperations.get", "compute.zones.get",
+].sort();
+writeFileSync(join(out, "gcp-relay-custom-role.yaml"),
+  role("platform-relay", "DB 복제 중계기 GCE VM·방화벽·복제 계정 (자동 생성)", GCP_RELAY_PERMS));
 writeFileSync(join(out, "gcp-operate-iam-binding-condition.json"), JSON.stringify({
   title: "only-app-prefixed",
   description: "플랫폼이 만든 app- 접두어 서비스 계정·시크릿·버킷·토픽·구독에만",

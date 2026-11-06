@@ -154,8 +154,11 @@ GCP (Cloud Shell, 원래·전용 프로젝트 각각). `<플랫폼 SA>`는 연�
 1. 빌리기 허용 걷기 (이것만 해도 플랫폼은 더 못 빌린다)
    - `gcloud iam service-accounts remove-iam-policy-binding svc-observe@<원래>.iam.gserviceaccount.com --project <원래> --member=serviceAccount:<플랫폼 SA> --role=roles/iam.serviceAccountTokenCreator`
    - 같은 명령을 `svc-plan@<전용>…`·`svc-operate@<전용>…`·`svc-env@<전용>…` 에 `--project <전용>` 으로
+   - DB 복제 중계기 역할(`platform_relay`) 바인딩 걷기. 실행 SA(`svc-operate@<전용>`)에 원래·전용 두 프로젝트 모두 묶여 있다(원래 프로젝트는 연결 때 `RELAY_SOURCE_ROLE=0` 이었으면 없음). SA 를 지우기 전에 걷는다 — 원래 프로젝트 바인딩은 SA 가 다른 프로젝트에 있어 2번에서 같이 정리되지 않는다
+     - `gcloud projects remove-iam-policy-binding <원래> --member=serviceAccount:svc-operate@<전용>.iam.gserviceaccount.com --role=projects/<원래>/roles/platform_relay --all`
+     - `gcloud projects remove-iam-policy-binding <전용> --member=serviceAccount:svc-operate@<전용>.iam.gserviceaccount.com --role=projects/<전용>/roles/platform_relay --all`
 2. SA 지우기: `gcloud iam service-accounts delete svc-observe@<원래>.iam.gserviceaccount.com --project <원래> --quiet`, `svc-plan`·`svc-operate`·`svc-env`·`svc-gke-node` 는 `--project <전용>` (환경 층 GKE 를 먼저 지운다. 노드가 `svc-gke-node` 로 돈다)
-3. 커스텀 역할 지우기: 원래 `platform_observe`·`platform_observe_verify`, 전용 그 둘 + `platform_observe_permcheck`·`platform_plan`·`platform_operate`·`platform_operate_iam`·`platform_operate_db_secret`·`platform_env`·`platform_hub_access`
+3. 커스텀 역할 지우기: 원래 `platform_observe`·`platform_observe_verify`·`platform_relay`(있으면), 전용 `platform_observe`·`platform_observe_verify` + `platform_observe_permcheck`·`platform_plan`·`platform_operate`·`platform_operate_iam`·`platform_operate_db_secret`·`platform_env`·`platform_hub_access`·`platform_relay`
    - `gcloud iam roles delete <역할> --project <프로젝트> --quiet` (지운 역할은 7일 안에 되살릴 수 있고 그동안 같은 이름으로 못 만든다)
    - SA 를 지우면 프로젝트 바인딩은 `deleted:` 로 남는다. 깨끗이 하려면 `gcloud projects remove-iam-policy-binding <프로젝트> --member=deleted:serviceAccount:… --role=projects/<프로젝트>/roles/<역할> --all`
 4. 전용 프로젝트를 이전 전용으로만 썼다면 프로젝트째 끄기: `gcloud projects delete <전용>` (30일 안에 되살릴 수 있음)

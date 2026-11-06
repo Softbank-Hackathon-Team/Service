@@ -10,6 +10,7 @@ import { onShutdown } from "@svc/core";
 import { assertConfig, logEffectiveConfig } from "@svc/core";
 import { envNumber } from "@svc/contracts";
 import { createRealTerraformRunner, iacMockEnabled } from "@svc/adapters";
+import { ensurePlatformEgress } from "./relay/platform-egress.js";
 
 // Z81-09: 설정을 먼저 본다. 틀리면 목록을 내고 끝 코드 2 (지표 포트·큐를 열기 전)
 assertConfig("worker");
@@ -42,6 +43,13 @@ if (!iacMockEnabled()) {
   if (v.ok) log.info({ terraform: v.version }, "iac: real terraform (MOCK_IAC=1 이 아님)");
   else log.error({ reason: v.error }, "iac: real terraform 인데 실행 불가 → aws/gcp/onprem apply 는 TF_BIN_MISSING 으로 실패한다. 시험이면 MOCK_IAC=1");
 } else log.warn("iac: MOCK_IAC=1 → 도착 자원 흉내 (시험 전용)");
+
+// 중계기 입구를 열 플랫폼 나가는 IP: 배포 값이 없으면 스스로 알아낸다 (relay/platform-egress.ts)
+{
+  const e = await ensurePlatformEgress();
+  if (e.kind === "set") log.info({ platformEgress: e.cidr }, "relay: PLATFORM_EGRESS_CIDRS 자동 (워커 나가는 IP)");
+  else if (e.kind === "failed") log.warn({ reason: e.reason }, "relay: 워커 나가는 IP 를 못 알아냄 → 자동 중계기는 RELAY_CONFIG_MISSING 으로 멈춘다 (PLATFORM_EGRESS_CIDRS 를 넣는다)");
+}
 
 await assertMigrations("worker", pool);   // PF FM-ORC-26: db:migrate 를 잊었으면 큐를 열기 전에 멈춘다
 await startBoss();
