@@ -1,0 +1,126 @@
+/*
+ * 근거 있는 비용 카드 (환경 "월 비용", 새 마이그레이션 "예상 요금").
+ * 줄마다: 이름 · 금액 / 식(고정폭) / 수량 근거와 센 자원 / 단가 출처. 묶음 머리에는 소계.
+ * 색은 의미 토큰만 쓴다. 성공·주의 색은 꼬리표(Badge)의 옅은 바탕 위 글자로만 나온다
+ */
+.figure {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
+}
+.headline {
+  padding: 0 var(--space-12) var(--space-4);
+}
+/* 지금 → 옮긴 뒤. 두 금액을 같은 줄에 두고 이름은 위에 */
+.compare {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: end;
+  gap: var(--space-12);
+  padding: 0 var(--space-12) var(--space-8);
+}
+.compareCell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.compareCell > :first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.compareArrow {
+  display: inline-flex;
+  padding-bottom: var(--space-8);
+  color: var(--color-fg-tertiary);
+}
+.amount {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.groupHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-12);
+  padding: var(--space-12) var(--space-12) var(--space-4);
+}
+.lines {
+  display: flex;
+  flex-direction: column;
+}
+.line {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-8) var(--space-12);
+  border-top: 1px solid var(--color-border-default);
+  overflow-wrap: anywhere;
+}
+.lines > .line:first-child {
+  border-top: 0;
+}
+.lineHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-12);
+}
+.lineHead > :first-child {
+  min-width: 0;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+/* 근거 한 줄: 꼬리표 + 글. 꼬리표가 글 첫 줄과 나란히 서고 글은 그 뒤에서 접힌다 */
+.evidence {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-8);
+}
+.evidence > :first-child:not(:only-child) {
+  flex: none;
+}
+.evidenceText {
+  min-width: 0;
+  padding-top: var(--space-2);
+}
+.refs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-left: var(--space-4);
+  vertical-align: baseline;
+}
+.ref {
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-inner);
+  background: var(--color-bg-subtle);
+  color: var(--color-fg-primary);
+}
+.link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: inherit;
+  white-space: nowrap;
+}
+.link:hover {
+  color: var(--color-fg-primary);
+}
+.empty {
+  padding: var(--space-4) var(--space-12) var(--space-8);
+}
+.foot {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-12) var(--space-12) var(--space-8);
+}
+/* base.css 의 keep-all 은 띄어쓰기가 없는 일본어 문장을 한 덩어리로 넘긴다. 근거 문장이 긴 이 카드 안만 일본어 줄바꿈 규칙을 쓴다 */
+.line:lang(ja),
+.foot:lang(ja),
+.line:lang(ja) .lineHead > :first-child {
+  word-break: normal;
+  line-break: strict;
+}

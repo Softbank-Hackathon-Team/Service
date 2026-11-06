@@ -29,8 +29,9 @@ const BY_CODE: Record<string, string> = {
   // 승인·시작 (apps/api plans.ts, core tenant-limit.ts)
   ACKS_MISSING: t('확인하지 않은 항목이 있습니다. 계획서를 다시 읽었으니 확인 항목을 모두 체크해 주세요.'),
   TENANT_BUSY: t('회사에서 동시에 진행할 수 있는 마이그레이션 수를 넘었습니다. 승인은 그대로이니 다른 마이그레이션이 끝난 뒤 다시 시작해 주세요.'),
-  // 다시 시도 (apps/api plans.ts replan, control.ts resume, core retry-budget.ts)
+  // 다시 시도 (apps/api plans.ts replan, control.ts resume·failure-decision, core retry-budget.ts)
   RETRY_BUDGET_EXHAUSTED: t('플랫폼이 부담하는 재시도 횟수를 다 썼습니다. 다시 시도하려면 비용을 고객이 부담하는 데 동의해 주세요.'),
+  TEARDOWN_PENDING: t('도착 자원을 아직 지우는 중입니다. 다 지운 뒤 다시 시도해 주세요.'),
   REPLAN_NOT_ALLOWED: t('이 단계에서 실패한 마이그레이션은 계획을 다시 만들 수 없습니다. 이 마이그레이션을 끝내고 새로 시작해 주세요.'),
   // 명세 고치기 (apps/api spec.ts PATCH)
   SPEC_VERSION_CONFLICT: t('그 사이 명세가 바뀌었습니다. 새 명세를 다시 읽었으니 확인한 뒤 다시 확정해 주세요.'),

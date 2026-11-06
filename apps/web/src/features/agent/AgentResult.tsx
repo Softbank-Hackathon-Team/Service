@@ -5,15 +5,9 @@ import { api } from '../../lib/api';
 import { or404 } from '../../lib/http';
 import { usePoll } from '../../lib/usePoll';
 import { useAction } from '../migration/shared';
-import { agentBlock } from './model';
+import { agentBlock, OUTCOME } from './model';
 import s from '../common/page.module.css';
 import { t } from '../../lib/i18n';
-
-export const OUTCOME: Record<NonNullable<RemediateReview['outcome']>, { label: string; tone: 'success' | 'neutral' | 'warning' }> = {
-  proposed: { label: t('수정안 있음'), tone: 'success' },
-  no_change: { label: t('고칠 것 없음'), tone: 'neutral' },
-  gave_up: { label: t('원인 못 찾음'), tone: 'warning' },
-};
 
 export function llmNote(llm: AgentLlm | undefined) {
   const block = agentBlock(llm);

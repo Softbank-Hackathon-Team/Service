@@ -119,8 +119,18 @@ export interface PlanCostSummary {
   stub?: boolean;
 }
 // contracts plan.ts PlanAcknowledgement: 승인 때 사람이 하나씩 확인하는 항목. 승인 본문 acks 가 이 id 를 덮는다
-export type PlanAckKind = "cost" | "failure_cost_policy" | "runtime_change" | "build" | "precheck_warn" | "low_confidence";
-export interface PlanAcknowledgement { id: string; kind: PlanAckKind; text: string; ref?: string }
+export type PlanAckKind = "cost" | "failure_cost_policy" | "runtime_change" | "build" | "precheck_warn" | "low_confidence"
+  | "tls_relaxed" | "host_access" | "public_bucket" | "provision_reuse" | "env_layer_create" | "substitute";
+// substitute 항목만 from·to·lost·appChange 를 싣는다 (출발 상품 → 도착 상품, 옮기지 못하는 것, 앱 코드를 고쳐야 붙는지)
+export interface PlanAcknowledgement {
+  id: string; kind: PlanAckKind; text: string; ref?: string;
+  from?: string; to?: string; lost?: string[]; appChange?: boolean;
+}
+// contracts spec-v2.ts ApprovalRowV2: 명세 GET 의 substitutions 줄 (substitute 만 온다). 계획 때 확인 항목 id 는 `${kind}:${subject}`
+export interface ApprovalRowV2 {
+  kind: "runtime_change" | "build" | "tls_relaxed" | "host_access" | "public_bucket" | "substitute";
+  subject: string; from?: string; to?: string; detail?: string; lost?: string[]; appChange?: boolean;
+}
 export interface PlanDoc {
   planId: string;
   migrationId: string;
@@ -219,6 +229,8 @@ export interface TimelineView {
 }
 // POST /migrations/:id/resume 응답 (apps/api/src/routes/control.ts, 응답 스키마 없음)
 export interface ResumeResult { id: string; from: "paused"; status: MigrationStatus; queue: string; jobQueued: boolean }
+// POST /migrations/:id/failure-decision 응답 (contracts migration.ts FailureDecisionResult). queue 는 cancelled 면 null
+export interface FailureDecisionResult { id: string; from: "failed"; choice: "retry" | "rollback"; status: MigrationStatus; queue: string | null; jobQueued: boolean }
 
 // ---- GET /migrations/:id/report 중 화면이 쓰는 칸 ----
 export interface EvidenceReport {
@@ -271,3 +283,63 @@ export interface AgentReportList {
 
 // ---- POST /cost/estimate ----
 export type FullEstimate = CostEstimate & { breakpoints: { fromRps: number; cheapest: Provider; nodes: number }[] };
+
+// ---- 근거 있는 비용 (contracts cost-evidence.ts, PriceItem·PriceUnit·Evidence 는 cost.ts) ----
+// GET /environments/:id/cost?lang=, POST /environments/:id/cost/move?lang=. 숫자마다 "어느 자원을 몇 개 셌나(basis)"와
+// "그 단가는 어디서 왔나(price)"가 붙는다. 근거 문장은 서버가 lang 언어로 만든다. 청구서가 아니라 공개 가격표로 낸 추정이다
+export type CostGroup = "cluster" | "compute" | "database" | "storage" | "network" | "fixed";
+export type PriceItem =
+  | "cluster" | "cluster_credit" | "node" | "db" | "storage" | "fixed" | "lb" | "lb_capacity" | "volume"
+  | "instance" | "db_class" | "public_ip" | "nat" | "db_vcpu" | "db_mem";
+export type PriceUnit = "hour" | "month" | "gb_month";
+/** contracts cost.ts Evidence */
+export type PriceEvidence = "fact" | "unverified" | "assumed" | "mock";
+/** 수량의 근거. inventory = 실자원 조회로 셈, mapped = 출발 자원을 도착 상품으로 바꿈, assumption = 재지 않고 정한 값 */
+export interface CostBasis { kind: "inventory" | "mapped" | "assumption"; text: string; refs: string[] }
+/** 단가의 근거 (가격표 한 줄) */
+export interface CostPriceRef {
+  item: PriceItem; sku: string; unitUsd: number; unit: PriceUnit; evidence: PriceEvidence;
+  sourceKind: "official_api" | "official_page" | "secondary" | "assumption";
+  source: string; sourceUrl: string | null; fetchedAt: string;
+}
+/** 합계의 한 항 = 수량 x 단가 x 시간 */
+export interface CostLine {
+  id: string; group: CostGroup; label: string; quantity: number; quantityUnit: string;
+  hours: number | null; monthlyUsd: number; formula: string; basis: CostBasis; price: CostPriceRef;
+}
+/** 합계에 넣지 못한 것과 그 이유. estimateUsd 는 참고값이고 합계에 안 들어간다 */
+export interface CostGap { id: string; label: string; reason: string; estimateUsd: number | null }
+export interface CostBreakdown { provider: Provider; region: string; monthlyUsd: number; lines: CostLine[]; gaps: CostGap[]; priceAsOf: string }
+/** applied = 이 견적에 늘 들어감, conditional = 조건을 채우면 들어감 (금액 0 이면 신청·심사 프로그램), not_applicable = 상관없음 (이유는 note) */
+export interface CostPromotion {
+  id: string; provider: Provider; title: string;
+  kind: "recurring_credit" | "trial_credit" | "signup_credit" | "program_credit" | "data_transfer_waiver";
+  status: "applied" | "conditional" | "not_applicable";
+  condition: string; appliesTo: string; firstYearUsd: number; monthlyUsd: number[];
+  validUntil: string | null; sourceUrl: string; checkedAt: string; note: string | null;
+}
+export interface CostProjection {
+  monthlyUsd: number; yearlyUsd: number; appliedYearlyUsd: number; conditionalYearlyUsd: number; appliedMonthlyUsd: number;
+  promotions: CostPromotion[];
+}
+/** GET /environments/:id/cost. partial = 일부 자원을 못 읽어 합계가 낮을 수 있음 (reason 에 못 읽은 명령) */
+export interface EnvCostView {
+  envId: string; name: string; provider: Provider;
+  status: "ok" | "partial" | "unavailable";
+  reason: string | null;
+  inventoryCheckedAt: string | null;
+  breakdown: CostBreakdown | null;
+  projection: CostProjection | null;
+}
+/** 출발 자원 하나가 도착에서 무엇으로 바뀌었나. 대응 상품이 없으면 to = null */
+export interface CostMapping { group: CostGroup; from: string; to: string | null; why: string }
+export interface MoveCostRequest { targetEnvIds: string[]; sourceScope?: SourceScope }
+/** deltaMonthlyUsd = 출발 정가 - 도착 정가 (양수 = 아낌) */
+export interface MoveCostTarget {
+  envId: string; name: string; provider: Provider;
+  feasible: boolean; reason: string | null;
+  breakdown: CostBreakdown | null; projection: CostProjection | null;
+  mappings: CostMapping[]; deltaMonthlyUsd: number | null;
+}
+/** source 는 고른 범위만 다시 센 출발 */
+export interface MoveCostView { source: EnvCostView; scopeNote: string | null; targets: MoveCostTarget[] }

@@ -10,7 +10,6 @@ body {
   background: var(--color-bg-canvas);
   color: var(--color-fg-primary);
   font-family: var(--font-sans);
-  word-break: keep-all;
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
 }
@@ -18,6 +17,14 @@ body {
 /* Pretendard JP의 한자는 기본이 일본어 모양이다. 한국어 화면에서는 한국 모양을 쓴다. */
 :lang(ko) {
   font-feature-settings: 'ss05';
+}
+/* 한국어는 어절 단위로 줄을 바꾼다. 일본어는 띄어 쓰지 않아 keep-all 이면 줄을 못 바꾸고 칸을 넘는다 */
+html:lang(ko) {
+  word-break: keep-all;
+}
+/* 일본어는 구(文節) 경계에서 바꾼다 (Chrome). 지원하지 않는 브라우저는 글자 단위 */
+html:lang(ja) {
+  word-break: auto-phrase;
 }
 
 h1,

@@ -1,4 +1,4 @@
-import type { Provider } from "./types";
+import type { ApprovalRowV2, PlanAcknowledgement, Provider } from "./types";
 import { t } from './i18n';
 // Z83-08: "출발 → 도착 자원 대응표" 화면 타입. 값은 서버 GET /migrations/:id/plan/resources (Z86,
 // apps/api env-inventory.ts PlanResources, packages/adapters service-map.ts · service-map-v2.ts) 가 준다.
@@ -59,3 +59,21 @@ export function planResourceRows(view: Pick<PlanResourcesView, "rows"> | null | 
   const boundary = rows.find((row) => row.category === "boundary") ?? null;
   return { listed, boundary, runtimeChanges: listed.filter(({ row }) => row.runtimeChange).length };
 }
+
+/**
+ * 출발 상품이 도착에서 다른 상품이 되는 자원 한 줄. 계획 승인에서는 계획서 substitute 확인 항목, 명세 검토에서는 명세 GET 의 substitutions 줄에서 온다.
+ * ackId 는 그 확인 항목 id 다 (명세 줄은 계획 때 같은 계산으로 생길 id). 서버가 비운 칸은 비운 채로 두고 화면도 그리지 않는다
+ */
+export interface SubstituteRow { ackId: string; resource: string; from?: string; to?: string; detail?: string; lost?: string[]; appChange?: boolean }
+
+/** 계획 승인 큰 카드의 상품 대체 줄. 서버 순서(자원 id 순) 그대로, 글은 파싱하지 않고 구조 칸만 쓴다 */
+export const substituteRows = (acks: readonly PlanAcknowledgement[] | undefined): SubstituteRow[] =>
+  (acks ?? []).flatMap((ack) => ack.kind !== "substitute" ? [] : [{
+    ackId: ack.id, resource: ack.ref ?? ack.id, from: ack.from, to: ack.to, lost: ack.lost, appChange: ack.appChange,
+  }]);
+
+/** 명세 검토의 상품 대체 미리보기 줄 (GET spec substitutions). 계획 때 확인 항목 id 는 `substitute:<자원 id>` */
+export const specSubstituteRows = (rows: readonly ApprovalRowV2[] | undefined): SubstituteRow[] =>
+  (rows ?? []).flatMap((row) => row.kind !== "substitute" ? [] : [{
+    ackId: `substitute:${row.subject}`, resource: row.subject, from: row.from, to: row.to, detail: row.detail, lost: row.lost, appChange: row.appChange,
+  }]);

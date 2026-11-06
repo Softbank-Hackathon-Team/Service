@@ -114,7 +114,7 @@ test("로그인 모드: 8개 페이지 모두 Bearer 로만 부르고 x-dev-tena
     const h = req.headers();
     if (h["x-dev-tenant"] || h.authorization !== `Bearer ${live}`) { bad.push(`${req.method()} ${path} dev=${!!h["x-dev-tenant"]} auth=${h.authorization ? "다름" : "없음"}`); return json(route, 401, { code: "UNAUTHENTICATED", message: "login" }); }
     bearer++;
-    const headers = { ...h, "x-dev-tenant": TENANT };
+    const headers: Record<string, string> = { ...h, "x-dev-tenant": TENANT };
     delete headers.authorization;
     return route.continue({ headers });
   });

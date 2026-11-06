@@ -2,9 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { errorText } from "../src/lib/errors";
 import { connectionReasonText, stopReasonOf } from "../src/lib/failure";
+import { FAILURE_CODES } from "../../../packages/core/src/failure-codes";
 import { errorCode } from "../src/lib/errors";
 import { HttpError } from "../src/lib/http";
-import { stopEvidence } from "../src/lib/timelineDetail";
+import { failureDetail, failureDetailOf, stopEvidence } from "../src/lib/timelineDetail";
 import type { TimelineItem } from "../src/lib/types";
 
 test("멈춘 이유: 트래픽 지표로 멈추면 가드레일, 단계 실패는 단계, 워커 문제는 시스템", () => {
@@ -54,6 +55,20 @@ test("멈춘 근거: 그 상태로 들어온 마지막 전이의 판정과 규�
   assert.equal(stopEvidence(items, "rolling_back"), null);
 });
 
+test("실패 이유: failed 로 들어온 마지막 전이에 서버가 남긴 글(detail.error, 계획 재확인은 recheck)을 그대로 읽는다", () => {
+  const failed = (detail: Record<string, unknown>, seq = 2) =>
+    item({ seq, action: "migration.failed", result: "error", from: "importing", to: "failed", failureCode: "IMPORT_SOURCE_UNAVAILABLE", detail });
+  const items = [
+    item({ seq: 1, kind: "event", from: null, to: null, action: "import.attempt_failed", result: "error", detail: { error: "앞 시도" } }),
+    failed({ error: "  aws: AccessDenied <script>  ", attempts: 3 }),
+  ];
+  assert.equal(failureDetail(items), "aws: AccessDenied <script>");   // 글자 그대로 (화면이 HTML 로 해석하지 않는다)
+  assert.equal(failureDetail([failed({ recheck: "target unstable" })]), "target unstable");
+  assert.equal(failureDetail([failed({ attempts: 3 })]), null);
+  assert.equal(failureDetail([failed({ error: "x" })], "paused"), null);
+  assert.equal(failureDetailOf(items[0]!), "앞 시도");
+});
+
 test("오류 문장: 서버가 새로 내는 코드도 사람 말로 바꾼다", () => {
   const err = (status: number, code: string) => new HttpError(status, { status, code, message: "", requestId: "r" });
   assert.match(errorText(err(409, "ENV_LOCK_MISSING")), /되돌리거나/);
@@ -79,6 +94,28 @@ test("멈춘 이유 v2: 새 코드도 사람 말로, 승인 뒤 바뀜은 '일�
   assert.equal(stopReasonOf("RUNTIME_CHECK_FAILED", "paused")?.kind, "system");
   for (const code of ["UNSUPPORTED_V2", "NEEDS_HUMAN", "RUNTIME_OUTPUT_MISSING", "RUNTIME_UNHEALTHY", "RUNTIME_CHECK_FAILED", "TF_PLAN_DRIFT", "GITOPS_VALUES_DRIFT"])
     assert.notEqual(stopReasonOf(code, "failed")?.label, "알 수 없는 사유", code);
+});
+
+test("멈춘 이유: 서버 실패 코드 목록(core failure-codes.ts)의 코드는 모두 사람 말이 있다", () => {
+  // #253 이 더하는 코드도 미리 (아직 main 목록에 없다)
+  const next = ["REPL_ENDPOINT_INCOMPLETE", "REPL_SECRET_UNRESOLVED", "REPL_TARGET_UNREACHABLE", "SEALING_CERT_MISSING", "ONPREM_EGRESS_UNKNOWN",
+    "RELAY_CONFIG_MISSING", "RELAY_SOURCE_DB_UNKNOWN", "RELAY_ROLE_DENIED", "RELAY_PROVISION_FAILED", "RELAY_TEARDOWN_FAILED", "REPL_DELIVERY_FAILED"];
+  for (const code of [...FAILURE_CODES, ...next])
+    assert.notEqual(stopReasonOf(code, "failed")?.label, "알 수 없는 사유", code);
+});
+
+test("멈춘 이유: 트래픽 되돌리기 실패는 판정이 아니라 단계 실패, 한도 걸림은 칸이 빈 컨테이너도 말한다", () => {
+  const restore = stopReasonOf("TRAFFIC_RESTORE_FAILED", "failed")!;
+  assert.equal(restore.kind, "step");
+  assert.match(restore.hint, /아직 도착으로/);
+  assert.equal(stopReasonOf("TRAFFIC_PAUSED", "paused")?.kind, "guardrail");     // 넓은 TRAFFIC_ 줄은 그대로
+  const quota = stopReasonOf("REHEARSAL_QUOTA_EXCEEDED", "paused")!;
+  assert.match(quota.hint, /비어 있는 컨테이너/);
+  assert.match(quota.hint, /requests.*limits/);
+  assert.equal(stopReasonOf("IMPORT_SPEC_INVALID", "failed")?.label, "명세 모양 오류");
+  assert.equal(stopReasonOf("IMPORT_FAILED", "failed")?.label, "구성 읽기 실패");
+  assert.equal(stopReasonOf("APP_LINK_UNAVAILABLE", "failed")?.kind, "system");
+  assert.equal(stopReasonOf("SECRET_VALUES_MISSING", "paused")?.label, "비밀 값 비어 있음");
 });
 
 test("오류 문장 v2: 승인·시작·재시도·명세 고치기·계정 코드", () => {

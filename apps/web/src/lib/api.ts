@@ -1,6 +1,7 @@
 import type { AgentReview } from './agent-review-types';
 import { createAuth } from './auth';
 import { createClient, unwrap } from './http';
+import { locale } from './i18n';
 import type { LiveTrafficView, TrafficShiftProgress } from './liveTraffic';
 import type { RehearsalView } from './rehearsal-types';
 import type { PlanResourcesView } from './resourceMap';
@@ -11,12 +12,16 @@ import type {
   ConnectionLink,
   CreateEnvironmentBody,
   EnvApp,
+  EnvCostView,
   EnvironmentView,
   EnvStatus,
   EvidenceReport,
+  FailureDecisionResult,
   FullEstimate,
   MigrationCostView,
   MigrationView,
+  MoveCostRequest,
+  MoveCostView,
   PlanDoc,
   Provider,
   ResumeResult,
@@ -44,6 +49,10 @@ export const api = {
   envStatus: (id: string) => get<EnvStatus>(`/environments/${id}/status`),
   envInventory: (id: string) => get<{ cloud: CloudInventory; apps: EnvApp[] }>(`/environments/${id}/inventory`),
   agentReports: (id: string, limit = 20) => get<AgentReportList>(`/environments/${id}/agent-reports?limit=${limit}`),
+  // 근거 있는 비용 (contracts cost-evidence.ts). 근거 문장(항 이름·식·뺀 것·프로모션)은 서버가 화면 언어로 만든다
+  envCost: (id: string) => get<EnvCostView>(`/environments/${id}/cost?lang=${locale()}`),
+  /** 이 환경(고른 범위)을 도착 후보로 옮기면 한 달·1년에 얼마인가. 도착은 1~10개, 범위가 없으면 환경 전체 */
+  moveCost: (id: string, body: MoveCostRequest) => post<MoveCostView>(`/environments/${id}/cost/move?lang=${locale()}`, body),
   security: (id: string) => get<SecurityView>(`/migrations/${id}/security`),
   securityRegression: (id: string) => get<SecurityRegression>(`/migrations/${id}/security/regression`),
   securityCheck: (id: string) => post<LiveCheckResult>(`/migrations/${id}/security/check`),
@@ -67,9 +76,15 @@ export const api = {
   patchSpec: (id: string, body: SpecPatch) => patch<MigrationSpecViewV2>(`/migrations/${id}/spec`, body),
   /** 명세 확정 → 사전 점검 시작 (T04: 검토 칸이 남아 있으면 409) */
   confirmSpec: (id: string) => post<{ id: string }>(`/migrations/${id}/plan`),
-  /** 계획 다시 만들기: failed(planning·provisioning)·stale·rejected → planning. 재시도 한도를 넘었으면 acceptCustomerCost 필요 */
+  /** 계획 다시 만들기: stale·rejected → prechecking. failed 는 서버가 409 로 막는다 (failureDecision 을 쓴다) */
   replan: (id: string, acceptCustomerCost?: boolean) =>
     post<{ id: string }>(`/migrations/${id}/replan`, acceptCustomerCost ? { acceptCustomerCost } : {}),
+  /**
+   * 실패 질문의 답 (apps/api control.ts). retry = 실패 지점 단계부터 다시 (재시도 한도를 넘었으면 acceptCustomerCost 필요),
+   * rollback = 자원을 만든 뒤 실패면 롤백, 만들기 전 실패(가져오기·점검·계획)면 정리 확인 없이 끝냄(cancelled)
+   */
+  failureDecision: (id: string, choice: 'retry' | 'rollback', acceptCustomerCost?: boolean) =>
+    post<FailureDecisionResult>(`/migrations/${id}/failure-decision`, { choice, ...(choice === 'retry' && acceptCustomerCost ? { acceptCustomerCost } : {}) }),
   /** 거절 뒤 명세부터 다시 고치기: rejected → spec_review */
   reopenSpec: (id: string) => post<{ id: string }>(`/migrations/${id}/spec/reopen`),
   latestPlan: (id: string) => get<PlanDoc>(`/migrations/${id}/plan`),

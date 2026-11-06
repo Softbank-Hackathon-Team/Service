@@ -38,7 +38,7 @@ async function fakeAuthServer(page: Page) {
     if (!live || h.authorization !== `Bearer ${live}`) { seen.unauth++; return json(route, 401, { code: "UNAUTHENTICATED", message: "login" }); }
     seen.bearer++;
     // 진짜 서버(DEV_AUTH=1)는 x-dev-tenant 로 답한다 → 토큰의 회사로 바꿔 넘긴다
-    const headers = { ...h, "x-dev-tenant": TENANT };
+    const headers: Record<string, string> = { ...h, "x-dev-tenant": TENANT };
     delete headers.authorization;
     return route.continue({ headers });
   });

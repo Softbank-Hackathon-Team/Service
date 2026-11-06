@@ -1,4 +1,5 @@
 import type { TrafficShiftProgress } from '../../lib/liveTraffic';
+import { substituteRows } from '../../lib/resourceMap';
 import { HUMAN_STEP, isTerminal, LABEL } from '../../lib/status';
 import type { Judgement } from '../../lib/timelineDetail';
 import {
@@ -9,6 +10,7 @@ import {
   type FootprintState,
   type MigrationStatus,
   type MigrationView,
+  type PlanAcknowledgement,
   type PlanDoc,
   type PlanStep,
   type TimelineItem,
@@ -101,13 +103,31 @@ export function pollMs(status: MigrationStatus | undefined): number | null {
 export const signalCovers = (status: MigrationStatus | undefined): boolean => pollMs(status) !== POLL.worker;
 
 /**
- * "계획 다시 만들기"(POST /migrations/:id/replan)를 보여 줄지. 서버 규칙 그대로:
- * stale·rejected 는 늘, failed 는 실패 지점이 planning·provisioning 일 때만
- * (core REPLANNABLE_FAILURES 중 importing·prechecking 은 라우트가 409 REPLAN_NOT_ALLOWED 로 막는다).
+ * "계획 다시 만들기"(POST /migrations/:id/replan)를 보여 줄지. 서버 규칙 그대로: stale·rejected 만.
+ * failed 에서 다시 계획하는 길은 서버가 없앴다(409 INVALID_TRANSITION). 실패는 failureChoices 의 failure-decision 으로 고른다
  */
 export function canReplan(migration: Pick<MigrationView, 'status' | 'failedAtStatus'>): boolean {
-  if (migration.status === 'stale' || migration.status === 'rejected') return true;
-  return migration.status === 'failed' && (migration.failedAtStatus === 'planning' || migration.failedAtStatus === 'provisioning');
+  return migration.status === 'stale' || migration.status === 'rejected';
+}
+
+/** failed 화면이 "다시 시도"를 보이는 실패 지점 */
+export type RetryStage = 'importing' | 'prechecking' | 'planning' | 'provisioning';
+const RETRY_STAGES: readonly MigrationStatus[] = ['importing', 'prechecking', 'planning', 'provisioning'];
+// 서버 contracts ROLLBACK_ON_REJECT 의 반대: 이 지점 실패는 만든 자원이 없어 "거절"이 롤백이 아니라 끝내기(cancelled)다
+const NOTHING_MADE: readonly MigrationStatus[] = ['importing', 'prechecking', 'planning'];
+
+/**
+ * failed 화면에서 고를 길 (POST /migrations/:id/failure-decision, apps/api control.ts).
+ * retry: 실패 지점부터 다시 할 단계. 서버는 cutover·rolling_back 재시도도 받지만
+ *   DRAFT(ai): 데이터·트래픽이 움직인 뒤라 화면은 그 둘에 다시 시도를 두지 않고 지금처럼 정리 확인 뒤 끝내기만 둔다.
+ * nothingMade: 만든 자원이 없는 실패. 끝내기는 정리 확인 없이 failure-decision rollback(→ cancelled)으로 보낸다
+ */
+export function failureChoices(migration: Pick<MigrationView, 'status' | 'failedAtStatus'>): { retry: RetryStage | null; nothingMade: boolean } {
+  const at = migration.status === 'failed' ? migration.failedAtStatus : null;
+  return {
+    retry: at && RETRY_STAGES.includes(at) ? (at as RetryStage) : null,
+    nothingMade: !!at && NOTHING_MADE.includes(at),
+  };
 }
 
 /** 승인 확인 항목(계획서 acknowledgements) 중 아직 체크하지 않은 것. 옛 계획서처럼 항목이 없으면 바로 승인할 수 있다. */
@@ -117,10 +137,19 @@ export function ackState(acks: readonly { id: string }[] | undefined, checked: R
   return { total: all.length, missing, ready: missing.length === 0, ids: all.map((ack) => ack.id).filter((id) => checked.has(id)) };
 }
 
+/**
+ * 승인 확인 항목을 확인하는 자리로 나눈다. 항목마다 자리는 하나다.
+ * 상품 대체는 큰 카드의 대응 줄 끝 버튼, 나머지는 "승인 전에 확인" 목록의 체크. 둘 다 같은 체크 상태(ackState)를 바꾼다
+ */
+export function ackPlaces(acks: readonly PlanAcknowledgement[] | undefined) {
+  const all = acks ?? [];
+  return { substitutes: substituteRows(all), list: all.filter((ack) => ack.kind !== 'substitute') };
+}
+
 /** 승인 버튼 글자. 모자라면 무엇이 모자란지 말한다. */
 export function approveLabel(o: { busy: boolean; expired: boolean; missing: number }): string {
   if (o.busy) return t('보내는 중');
-  if (o.expired) return t('승인 시간이 지났습니다');
+  if (o.expired) return t('승인 시간 지남');
   if (o.missing > 0) return t('확인 {0}개 남음', { 0: o.missing });
   return t('승인하고 실행 시작');
 }

@@ -10,25 +10,27 @@ import { aboutMigration } from '../../lib/events';
 import { errorCode, errorText } from '../../lib/errors';
 import { stopReasonOf } from '../../lib/failure';
 import { is404, or404 } from '../../lib/http';
-import { planResourceRows, runtimeChangeNote } from '../../lib/resourceMap';
+import { planResourceRows, runtimeChangeNote, specSubstituteRows } from '../../lib/resourceMap';
 import { LABEL } from '../../lib/status';
-import { lastPrecheckBounce } from '../../lib/timelineDetail';
+import { failureDetail, lastPrecheckBounce } from '../../lib/timelineDetail';
 import type { MigrationView, PlanAckKind, PrecheckItem } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
 import { useAgentReview } from '../agent/AgentResult';
 import { failureAnalysisOf } from '../agent/model';
 import { costCaveats, costNote, costSummary, planCostCaveats, planCostSummary } from '../cost/model';
 import {
-  ackState, approveLabel, autoStart, canReplan, pollMs, screenOf, signalCovers, specRows, stepGate, stepName, usd, type MigrationScreen,
+  ackPlaces, ackState, approveLabel, autoStart, canReplan, failureChoices, pollMs, screenOf, signalCovers, specRows, stepGate, stepName, usd, type MigrationScreen, type RetryStage,
 } from './model';
 import { scopeLabel } from './source';
 import { SecurityFold } from './SecurityCard';
 import {
-  accuracyView, boundaryRows, confirmChunks, confirmLabel, firewallDecision, firewallRows, isFirewallBlock, specRowsV2, specV2Of, type FirewallRow, type MigrationSpecViewV2, type SpecRowV2,
+  accuracyView, boundaryRows, canConfirmSpec, confirmChunks, confirmLabel, firewallDecision, firewallRows, isFirewallBlock, specPatchBody, specRowsV2, specV2Of,
+  type FirewallRow, type MigrationSpecViewV2, type SpecRowV2,
 } from './specV2';
 import { LeftoverFold, StopFold } from './EvidenceFolds';
 import { DoneScreen, CleanupScreen, PausedScreen, RolledBackScreen, RollingBackScreen, RunningScreen, WindowScreen } from './RunScreens';
 import { RequirementsFold, SourceFactsFold, VerdictFold } from './SecurityFolds';
+import { SubstituteMap } from './SubstituteMap';
 import { isSecItem, precheckLine, secAckLabel, type SecuritySpecV2 } from './securityV2';
 import { ConfirmPill, Frame, useAction, useCostConsent, type ScreenProps } from './shared';
 import s from '../common/page.module.css';
@@ -85,6 +87,9 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
   // 보안 판정 막힘으로 돌아왔으면 보안 요구사항 카드를 열어 둔다 (요구사항을 고쳐 풀리는 막힘이 있다: 허용 국가·키 소유)
   const secBlocked = blocks.some(isSecItem);
   const requirements = v2?.spec.security?.requirements ?? null;
+  // 상품 대체 미리보기. 카드의 출발·도착 이름표(AWS·GCP)는 승인 화면과 같은 대응표 GET 에서 읽는다 (대체가 있을 때만)
+  const substitutes = specSubstituteRows(view?.substitutions);
+  const ends = usePoll(substitutes.length > 0 ? () => or404(api.planResources(migration.id)) : null, null, [migration.id, substitutes.length > 0]);
 
   // v2 판: 검토 칸을 PATCH confirm 으로 확인한 뒤(20개씩), 남은 칸이 없을 때만 POST /plan (T04 가 v2 검토 칸도 센다).
   // v1 판: 지금처럼 POST /plan 만 보낸다
@@ -96,12 +101,10 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
     }
     let current: MigrationSpecViewV2 = view;
     for (const keys of confirmChunks(v2.review)) {
-      current = await api.patchSpec(migration.id, {
-        baseVersion: current.version,
-        confirm: keys,
-        ...(current.source === 'ai_draft' ? { acceptDraft: current.version } : {}),
-      });
+      current = await api.patchSpec(migration.id, specPatchBody(current, { confirm: keys }));
     }
+    // 확인할 칸이 없는 AI 초안도 먼저 받아들인다. 서버 T04 는 받아들인 판만 세서, 초안 그대로 확정하면 "명세 없음"으로 막힌다
+    if (current.source === 'ai_draft') current = await api.patchSpec(migration.id, specPatchBody(current, {}));
     // 확인한 뒤에도 검토 칸이 남았으면(그 사이 생긴 칸) 확정하지 않고 새 판을 보여 준다
     if ((current.needsReviewV2 ?? []).length > 0) {
       await spec.reload();
@@ -110,24 +113,25 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
     await api.confirmSpec(migration.id);
   };
   // 경계 밖 데이터 자원을 이 앱으로 끌어온다. 끌어온 자원은 새 검토 칸이 되어 확정 전에 한 번 더 본다
+  // 아래 PATCH 셋도 확인처럼 specPatchBody 로 본문을 만든다 (AI 초안 판이면 acceptDraft 를 같이 실어야 서버가 받는다)
   const pull = (resource: string) =>
     run(async () => {
       if (!view) return;
-      await api.patchSpec(migration.id, { baseVersion: view.version, include: [resource] });
+      await api.patchSpec(migration.id, specPatchBody(view, { include: [resource] }));
       await spec.reload();
     });
   // 보안 요구사항 저장·지우기 (PATCH changes "security" 통째, null = 지움). 결과는 새 판 하나
   const saveSecurity = (value: SecuritySpecV2 | null) =>
     run(async () => {
       if (!view) return;
-      await api.patchSpec(migration.id, { baseVersion: view.version, changes: [{ path: 'security', value }] });
+      await api.patchSpec(migration.id, specPatchBody(view, { changes: [{ path: 'security', value }] }));
       await spec.reload();
     });
 
   const decideFirewall = (subject: string) =>
     run(async () => {
       if (!view || !v2) return;
-      await api.patchSpec(migration.id, { baseVersion: view.version, changes: [{ path: 'posture', value: firewallDecision(v2.spec.posture, subject) }] });
+      await api.patchSpec(migration.id, specPatchBody(view, { changes: [{ path: 'posture', value: firewallDecision(v2.spec.posture, subject) }] }));
       await spec.reload();
     });
 
@@ -222,6 +226,11 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
             <p className={`${s.note} t-caption c-tertiary`}>{t('이 앱의 서비스가 쓰는 연결은 따로 엽니다. 도착으로 옮길 수 없는 허용 원본은 빼고, 허용 주소가 없는 공개 자원은 비공개로 둡니다.')}</p>
           </FoldTile>
         )}
+        {substitutes.length > 0 && (
+          <FoldTile title={t('상품 대체')} summary={t('{0}개', { 0: substitutes.length })}>
+            <SubstituteMap rows={substitutes} source={ends.data?.source.provider ?? null} target={ends.data?.target.provider ?? null} />
+          </FoldTile>
+        )}
         {view && v2 && (
           <RequirementsFold
             key={`security-${secBlocked}`}
@@ -281,7 +290,12 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
         )}
         <ActionRow notice={error}>
           <ConfirmPill label={t('취소')} confirmLabel={t('마이그레이션 취소')} icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
-          <ActionPill label={v2 ? confirmLabel(busy, reviewCount) : busy ? t('보내는 중') : t('명세 확정')} icon="check" disabled={busy || !view} onClick={() => void run(confirm)} />
+          <ActionPill
+            label={v2 ? confirmLabel(busy, reviewCount, firewall.length) : busy ? t('보내는 중') : t('명세 확정')}
+            icon="check"
+            disabled={busy || !view || !canConfirmSpec(firewall.length)}
+            onClick={() => void run(confirm)}
+          />
         </ActionRow>
       </Stack>
     </Frame>
@@ -310,6 +324,12 @@ const ACK_KIND: Record<PlanAckKind, string> = {
   build: t('도착에서 이미지 빌드'),
   precheck_warn: t('사전 점검 주의'),
   low_confidence: t('낮은 신뢰도'),
+  tls_relaxed: t('평문 DB 연결'),
+  host_access: t('노드 직접 사용'),
+  public_bucket: t('공개 버킷'),
+  provision_reuse: t('있는 자원 다시 씀'),
+  env_layer_create: t('도착 클러스터 새로 만듦'),
+  substitute: t('상품 대체'),
 };
 
 // 승인·시작이 이 코드로 막히면 계획서가 바뀌었거나 시간이 지난 것이다 → 계획서를 다시 읽고 체크는 새 지문에서 처음부터
@@ -350,6 +370,12 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
   const warns = checks.filter((item) => item.level !== 'info').length;
   const expired = doc ? Date.parse(doc.expiresAt) <= Date.now() : false;
   const mapped = planResourceRows(resources.data);
+  // 확인 항목마다 확인하는 자리는 하나다: 상품 대체는 큰 카드의 대응 줄, 나머지는 "승인 전에 확인" 목록. 승인 버튼은 둘을 합쳐 센다(acks)
+  const places = ackPlaces(doc?.acknowledgements);
+  const listLeft = places.list.filter((ack) => !ticks.has(ack.id)).length;
+  // 상품 대체가 있으면 큰 카드 본문은 대응 줄이 차지하고, 계획 지문은 머리줄 오른쪽 끝으로 올린다
+  const substituting = places.substitutes.length > 0;
+  const hash = doc && <CodeValue value={doc.planHash} chip max={substituting ? 24 : 32} />;
 
   return (
     <Frame migration={migration} route={route}>
@@ -358,8 +384,17 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
         meta={t('계획서')}
         title={expired ? t('승인 시간이\n지났습니다') : acks.missing.length > 0 ? t('확인할 것 {0}개를 보고\n승인해 주세요', { 0: acks.missing.length }) : t('승인하면 이대로\n바로 실행합니다')}
         foot={doc ? t('유효 시각 {0}', { 0: new Date(doc.expiresAt).toLocaleString(localeTag(), { hour12: false }) }) : undefined}
+        action={substituting && hash}
       >
-        {doc && <CodeValue value={doc.planHash} chip max={32} />}
+        {substituting && (
+          <SubstituteMap
+            rows={places.substitutes}
+            source={resources.data?.source.provider ?? null}
+            target={resources.data?.target.provider ?? null}
+            confirm={{ checked: ticks, disabled: busy || expired, onToggle: (id) => tick(id, !ticks.has(id)) }}
+          />
+        )}
+        {!substituting && hash}
         {doc && (
           <p className="t-body-md c-secondary">
             {t('오류율이 {0}%를 넘거나 응답 시간이 {1}배를 넘으면 자동으로 되돌립니다', { 0: doc.rollbackCriteria.errorRatePct, 1: doc.rollbackCriteria.p95Multiplier })}
@@ -367,10 +402,10 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
         )}
       </Hero>
       <Stack area="side">
-        {doc && acks.total > 0 && (
-          <FoldTile title={t('승인 전에 확인')} summary={acks.missing.length > 0 ? t('{0}개 남음', { 0: acks.missing.length }) : t('모두 확인함')}>
+        {doc && places.list.length > 0 && (
+          <FoldTile title={t('승인 전에 확인')} summary={listLeft > 0 ? t('{0}개 남음', { 0: listLeft }) : t('모두 확인함')}>
             <ul className={s.rows}>
-              {(doc.acknowledgements ?? []).map((ack) => (
+              {places.list.map((ack) => (
                 <li key={ack.id}>
                   <label className={`${s.ack} t-body-sm`}>
                     <input type="checkbox" checked={ticks.has(ack.id)} disabled={busy || expired} onChange={(event) => tick(ack.id, event.target.checked)} />
@@ -421,7 +456,10 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
         {doc && <VerdictFold items={doc.precheck} />}
         <FoldTile
           title={t('자원 대응')}
-          summary={resources.data ? t('{0}개{1}', { 0: mapped.listed.length, 1: mapped.runtimeChanges > 0 ? t(' · 실행 방식 바뀜 {0}', { 0: mapped.runtimeChanges }) : '' }) : ''}
+          summary={resources.data ? t('{0}개{1}', { 0: mapped.listed.length, 1: [
+            substituting ? t(' · 상품 대체 {0}', { 0: places.substitutes.length }) : '',
+            mapped.runtimeChanges > 0 ? t(' · 실행 방식 바뀜 {0}', { 0: mapped.runtimeChanges }) : '',
+          ].join('') }) : ''}
           defaultOpen={false}
         >
           <ul className={s.rows}>
@@ -578,15 +616,32 @@ function StoppedScreen({ migration, route, onChanged, kind }: ScreenProps & { ki
   );
 }
 
+// 실패 지점별 "다시 시도" 글자와 큰 카드 아래 한 줄. failure-decision retry 가 그 단계 작업을 다시 넣는다 (apps/api control.ts RETRY_QUEUE)
+const RETRY: Record<RetryStage, { label: string; foot: string }> = {
+  importing: { label: t('다시 가져오기'), foot: t('출발 환경을 고친 뒤 다시 가져오거나, 끝내고 범위를 바꿔 새로 만듭니다') },
+  prechecking: { label: t('다시 점검'), foot: t('고친 뒤 사전 점검부터 다시 합니다') },
+  planning: { label: t('계획 다시 만들기'), foot: t('계획을 다시 만들면 승인부터 다시 합니다') },
+  provisioning: { label: t('자원 만들기 다시 시도'), foot: t('승인한 계획 그대로 도착 자원 만들기를 다시 합니다') },
+};
+
 function FailedScreen({ migration, route, onChanged }: ScreenProps) {
   const { busy, error, code, run } = useAction(onChanged);
   const consent = useCostConsent(code);
   const review = useAgentReview(migration.id);
   const analysis = failureAnalysisOf(review.data);
+  // 서버가 실패 전이에 남긴 이유 (감사 detail.error). 사유 코드 문장만으로는 무엇을 고칠지 모를 때가 많다
+  const timeline = usePoll(() => or404(api.timeline(migration.id)), null, [migration.id, migration.version]);
+  const why = timeline.data ? failureDetail(timeline.data.items) : null;
   const [cleaned, setCleaned] = useState(false);
   const reason = stopReasonOf(migration.failureCode, migration.status);
-  // 실패 지점이 planning·provisioning 이면 계획을 다시 만들 수 있다. 아니면 지금처럼 정리 확인 뒤 끝내는 길만
-  const replan = canReplan(migration);
+  // 가져오기·점검·계획·자원 만들기에서 실패했으면 그 단계부터 다시 할 수 있다. 아니면 지금처럼 정리 확인 뒤 끝내는 길만
+  const { retry, nothingMade } = failureChoices(migration);
+  // DRAFT(ai): 만든 자원이 없는 실패(가져오기·점검·계획)는 끝내고 새 마이그레이션 화면으로 보낸다. 출발 범위를 바꿔 다시 만드는 것이 다음 할 일이다
+  const endAndStartOver = () =>
+    run(async () => {
+      await api.failureDecision(migration.id, 'rollback');
+      go('migrations/new');
+    });
   const stop = reason && (
     <StopFold
       key={analysis ? 'analysis' : 'plain'}
@@ -598,7 +653,8 @@ function FailedScreen({ migration, route, onChanged }: ScreenProps) {
       analysis={analysis}
     />
   );
-  const leftover = (
+  // 만든 자원이 없는 실패는 정리할 것이 없어 "정리했습니다" 확인을 두지 않는다
+  const leftover = nothingMade ? null : (
     <LeftoverFold migration={migration} title={t('끝내기 전에')}>
       <label className={`${s.check} t-body-md`}>
         <input type="checkbox" checked={cleaned} onChange={(event) => setCleaned(event.target.checked)} />
@@ -612,29 +668,35 @@ function FailedScreen({ migration, route, onChanged }: ScreenProps) {
         tone="stop"
         meta={migration.failedAtStatus ? t('{0}에서 실패', { 0: LABEL[migration.failedAtStatus] }) : t('실패')}
         title={reason?.title ?? t('작업이\n끝나지 못했습니다')}
-        foot={replan ? t('계획을 다시 만들면 승인부터 다시 합니다') : t('남은 자원을 직접 정리한 뒤 이 마이그레이션을 끝냅니다')}
+        foot={retry ? RETRY[retry].foot : t('남은 자원을 직접 정리한 뒤 이 마이그레이션을 끝냅니다')}
       >
-        {reason && (
+        {(reason || why) && (
           <div className={s.heroPanel}>
-            <span className="t-body-md">{reason.hint}</span>
+            {reason && <span className="t-body-md">{reason.hint}</span>}
+            {/* 서버 글은 데이터로만 그린다 (React 가 글자로 넣는다) */}
+            {why && <span className="t-body-sm c-secondary">{t('서버가 남긴 이유: {0}', { 0: why })}</span>}
           </div>
         )}
       </Hero>
       <Stack area="side">
-        {replan ? stop : leftover}
-        {replan ? leftover : stop}
+        {retry ? stop : leftover}
+        {retry ? leftover : stop}
         <SecurityFold migration={migration} />
-        <ActionRow notice={replan ? consent.notice(error) : error} before={replan ? consent.check : null}>
-          {replan ? (
+        <ActionRow notice={retry ? consent.notice(error) : error} before={retry ? consent.check : null}>
+          {retry ? (
             <>
-              {cleaned && (
-                <ConfirmPill label={t('이 마이그레이션 끝내기')} confirmLabel={t('정리했고 끝내기')} icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id, true))} />
+              {nothingMade ? (
+                <ConfirmPill label={t('끝내고 새로 만들기')} confirmLabel={t('이 마이그레이션 끝내기')} icon="x" disabled={busy} onConfirm={() => void endAndStartOver()} />
+              ) : (
+                cleaned && (
+                  <ConfirmPill label={t('이 마이그레이션 끝내기')} confirmLabel={t('정리했고 끝내기')} icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id, true))} />
+                )
               )}
               <ActionPill
-                label={busy ? t('보내는 중') : consent.accept ? t('고객 부담으로 다시 계획') : t('계획 다시 만들기')}
+                label={busy ? t('보내는 중') : consent.accept ? t('고객 부담으로 다시 시도') : RETRY[retry].label}
                 icon="refresh"
                 disabled={busy || consent.waiting}
-                onClick={() => void run(() => api.replan(migration.id, consent.accept))}
+                onClick={() => void run(() => api.failureDecision(migration.id, 'retry', consent.accept))}
               />
             </>
           ) : (

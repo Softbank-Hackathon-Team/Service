@@ -57,6 +57,20 @@
 .pickSelected .pickText :global(.c-secondary) {
   color: inherit;
 }
+/* 고르는 줄 오른쪽 값 (도착 후보의 예상 요금): 위는 크게, 아래는 작게. 이유 글은 접어서 */
+.pickAside {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+  max-width: 45%;
+  text-align: right;
+}
+.pickSelected .pickAside :global(.c-secondary),
+.pickSelected .pickAside :global(.c-tertiary) {
+  color: inherit;
+}
 /* 새로 등록하기 줄: 고를 것이 아니라 새로 만드는 줄이라 점선으로 구분한다 */
 .pickAdd {
   border-style: dashed;
@@ -223,9 +237,11 @@ button.linkPill {
   gap: var(--space-8);
   padding: 0 var(--space-12) var(--space-8);
 }
+/* 요청 수는 자릿수가 늘어난다 (210,734). 같은 너비 세 칸이면 첫 숫자가 옆 칸에 붙어서 칸 너비를 내용에 맞추고 사이를 고르게 벌린다 */
 .stats {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, auto);
+  justify-content: space-between;
   gap: var(--space-8);
   padding: 0 var(--space-12) var(--space-8);
 }

@@ -101,7 +101,7 @@ export function useAction(onChanged: () => void, onFailed?: (reason: unknown) =>
 /**
  * TODO(human): 고객 비용 동의 문구와 방식(체크 한 번이면 되는지, 누가 동의할 수 있는지)은 사람이 정한다. 지금은 체크 한 줄
  * 재시도 비용 동의 (서버 core retry-budget.ts). 플랫폼이 부담하는 재시도 횟수를 넘으면 서버가 409 RETRY_BUDGET_EXHAUSTED 를 준다.
- * 그때만 동의 체크를 보이고, 체크하면 같은 요청을 acceptCustomerCost:true 로 다시 보낸다. 다시 계획하기·재개가 같이 쓴다.
+ * 그때만 동의 체크를 보이고, 체크하면 같은 요청을 acceptCustomerCost:true 로 다시 보낸다. 다시 계획하기·실패 재시도·재개가 같이 쓴다.
  */
 export function useCostConsent(code: string | null) {
   const [asked, setAsked] = useState(false);
@@ -126,6 +126,7 @@ export function useCostConsent(code: string | null) {
 
 /**
  * 되돌리기 어려운 보조 행동. 한 번 더 눌러야 실행한다.
+ * 묻는 동안(data-asking)은 행동 줄의 다른 작은 버튼이 비켜서 줄이 한 줄로 남는다 (tiles.module.css .actionRow)
  * TODO(human): 서버는 거절(POST /plans/:id/approvals)·롤백·취소·재개에 선택 칸 reason(500자)을 받아 감사 기록에 남긴다.
  *   화면은 아직 보내지 않는다. 이유 입력을 둘지, 둔다면 어느 행동에서 필수로 할지는 사람이 정한다.
  */
@@ -133,7 +134,7 @@ export function ConfirmPill({ label, confirmLabel, icon, tone, disabled, onConfi
   const [asking, setAsking] = useState(false);
   if (!asking) return <BarPill label={label} icon={icon} tone={tone} onClick={disabled ? undefined : () => setAsking(true)} />;
   return (
-    <span className={s.confirm}>
+    <span className={s.confirm} data-asking>
       <BarPill label={confirmLabel} icon={icon} tone="danger" onClick={onConfirm} />
       <BarPill label={t('그만두기')} onClick={() => setAsking(false)} />
     </span>

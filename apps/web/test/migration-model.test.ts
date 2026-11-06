@@ -1,11 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  ackState, approveLabel, canPick, canReplan, canRollback, formatClock, judgementRows, leftoversOf, leftoverValue, migrationSteps, needsStepAnchor, stepsPhase,
+  ackPlaces, ackState, approveLabel, canPick, canReplan, canRollback, failureChoices, formatClock, judgementRows, leftoversOf, leftoverValue, migrationSteps, needsStepAnchor, stepsPhase,
   pollMs, screenOf, shiftNote, signalCovers, specRows, stepAnchorFrom, stepGate, trafficPercent, trafficReportRows,
 } from "../src/features/migration/model";
-import { planResourceRows, runtimeChangeNote, type ResourceRow } from "../src/lib/resourceMap";
-import { MIGRATION_STATUSES, type EnvApp, type EnvironmentView, type FootprintResource } from "../src/lib/types";
+import { planResourceRows, runtimeChangeNote, specSubstituteRows, substituteRows, type ResourceRow } from "../src/lib/resourceMap";
+import { MIGRATION_STATUSES, type EnvApp, type EnvironmentView, type FootprintResource, type PlanAcknowledgement } from "../src/lib/types";
 
 test("상태 22개가 모두 화면 하나로 묶인다", () => {
   assert.equal(MIGRATION_STATUSES.length, 22);
@@ -191,16 +191,28 @@ test("신호가 화면을 다 맞춰 주는 상태: 사람 차례·멈춤은 맞
     assert.equal(signalCovers(status), true, status);
 });
 
-test("계획 다시 만들기: stale·rejected 는 늘, failed 는 planning·provisioning 에서 멈춘 것만", () => {
+test("계획 다시 만들기: stale·rejected 만. failed 는 서버가 다시 계획을 막는다(409) → 실패 질문으로", () => {
   assert.equal(canReplan({ status: "stale", failedAtStatus: null }), true);
   assert.equal(canReplan({ status: "rejected", failedAtStatus: null }), true);
-  assert.equal(canReplan({ status: "failed", failedAtStatus: "planning" }), true);
-  assert.equal(canReplan({ status: "failed", failedAtStatus: "provisioning" }), true);
-  assert.equal(canReplan({ status: "failed", failedAtStatus: "importing" }), false);     // 서버 409 REPLAN_NOT_ALLOWED
-  assert.equal(canReplan({ status: "failed", failedAtStatus: "prechecking" }), false);
-  assert.equal(canReplan({ status: "failed", failedAtStatus: "cutover" }), false);       // 서버 가드 T37
-  assert.equal(canReplan({ status: "failed", failedAtStatus: null }), false);
+  assert.equal(canReplan({ status: "failed", failedAtStatus: "planning" }), false);
+  assert.equal(canReplan({ status: "failed", failedAtStatus: "provisioning" }), false);
+  assert.equal(canReplan({ status: "failed", failedAtStatus: "importing" }), false);
   assert.equal(canReplan({ status: "paused", failedAtStatus: null }), false);
+});
+
+test("실패 질문: 가져오기·점검·계획·자원 만들기는 그 단계부터 다시, 만든 것이 없는 실패는 정리 확인 없이 끝낸다", () => {
+  const at = (failedAtStatus: Parameters<typeof failureChoices>[0]["failedAtStatus"]) => failureChoices({ status: "failed", failedAtStatus });
+  // 가져오기 실패: 서버 failure-decision 이 재시도(→ importing)를 받는다. 거절은 cancelled (만든 자원 없음)
+  assert.deepEqual(at("importing"), { retry: "importing", nothingMade: true });
+  assert.deepEqual(at("prechecking"), { retry: "prechecking", nothingMade: true });
+  assert.deepEqual(at("planning"), { retry: "planning", nothingMade: true });
+  // 자원 만들기 실패: 재시도는 승인한 계획 그대로 다시 만들기. 만든 자원이 있을 수 있어 끝내기는 정리 확인 뒤
+  assert.deepEqual(at("provisioning"), { retry: "provisioning", nothingMade: false });
+  // 데이터·트래픽이 움직인 뒤 실패는 화면이 다시 시도를 두지 않는다
+  assert.deepEqual(at("cutover"), { retry: null, nothingMade: false });
+  assert.deepEqual(at("rolling_back"), { retry: null, nothingMade: false });
+  assert.deepEqual(at(null), { retry: null, nothingMade: false });
+  assert.deepEqual(failureChoices({ status: "paused", failedAtStatus: "importing" }), { retry: null, nothingMade: false });
 });
 
 test("승인 확인 항목: 다 체크해야 승인, 버튼은 남은 수를 말한다, 옛 계획서는 항목 없이 바로 승인", () => {
@@ -217,7 +229,7 @@ test("승인 확인 항목: 다 체크해야 승인, 버튼은 남은 수를 말
   assert.deepEqual(all.ids, ["cost", "failure_cost_policy", "runtime_change:web"]);
   assert.equal(approveLabel({ busy: false, expired: false, missing: 0 }), "승인하고 실행 시작");
   assert.equal(approveLabel({ busy: true, expired: false, missing: 2 }), "보내는 중");
-  assert.equal(approveLabel({ busy: false, expired: true, missing: 2 }), "승인 시간이 지났습니다");
+  assert.equal(approveLabel({ busy: false, expired: true, missing: 2 }), "승인 시간 지남");
   const old = ackState(undefined, new Set());
   assert.equal(old.ready, true);
   assert.deepEqual(old.ids, []);
@@ -250,4 +262,66 @@ test("자원 대응 v2: 같은 칸 여러 줄도 열쇠가 겹치지 않고, 건
   assert.equal(v1.listed.length, 1);
   assert.equal(v1.boundary, null);
   assert.equal(planResourceRows(null).listed.length, 0);
+});
+
+test("상품 대체 줄: substitute 확인 항목만 서버 순서대로 한 줄씩, 서버가 비운 칸은 비운 채로(화면도 그리지 않음), 체크는 그 확인 항목 id 로 승인에 셈", () => {
+  const acks: PlanAcknowledgement[] = [
+    { id: "cost", kind: "cost", text: "월 비용" },
+    { id: "substitute:jobs", kind: "substitute", ref: "jobs", text: "SQS → Pub/Sub 토픽 + 구독 · 앱 코드 변경 필요",
+      from: "SQS", to: "Pub/Sub 토픽 + 구독", lost: ["남은 메시지 (출발 큐에서 옮기지 않음)"], appChange: true },
+    { id: "runtime_change:web", kind: "runtime_change", ref: "web", text: "ECS → k8s" },
+    { id: "substitute:db", kind: "substitute", ref: "db", text: "RDS for PostgreSQL → Cloud SQL for PostgreSQL", from: "RDS for PostgreSQL", to: "Cloud SQL for PostgreSQL" },
+  ];
+  const rows = substituteRows(acks);
+  assert.deepEqual(rows, [
+    { ackId: "substitute:jobs", resource: "jobs", from: "SQS", to: "Pub/Sub 토픽 + 구독", lost: ["남은 메시지 (출발 큐에서 옮기지 않음)"], appChange: true },
+    { ackId: "substitute:db", resource: "db", from: "RDS for PostgreSQL", to: "Cloud SQL for PostgreSQL", lost: undefined, appChange: undefined },
+  ]);
+  const ticked = new Set(rows.map((row) => row.ackId));
+  assert.deepEqual(ackState(acks, ticked).missing, ["cost", "runtime_change:web"]);
+  assert.deepEqual(substituteRows(undefined), []);
+});
+
+test("계획 승인 확인 자리: 항목마다 한 자리(상품 대체는 큰 카드 줄 끝 버튼, 나머지는 목록 체크), 승인은 두 자리를 다 확인해야 켜진다", () => {
+  const acks: PlanAcknowledgement[] = [
+    { id: "cost", kind: "cost", text: "월 비용" },
+    { id: "substitute:cache", kind: "substitute", ref: "cache", text: "ElastiCache (redis) → Memorystore (redis)", from: "ElastiCache (redis)", to: "Memorystore (redis)" },
+    { id: "ack-pc-pg-02", kind: "precheck_warn", ref: "PC-PG-02", text: "기본 키 없는 표 1개" },
+    { id: "substitute:jobs", kind: "substitute", ref: "jobs", text: "SQS → Pub/Sub", from: "SQS", to: "Pub/Sub", appChange: true },
+  ];
+  const places = ackPlaces(acks);
+  const heroIds = places.substitutes.map((row) => row.ackId);
+  const listIds = places.list.map((ack) => ack.id);
+  assert.deepEqual(heroIds, ["substitute:cache", "substitute:jobs"]);
+  assert.deepEqual(listIds, ["cost", "ack-pc-pg-02"]);
+
+  const gate = (ids: string[]) => {
+    const state = ackState(acks, new Set(ids));
+    return { ready: state.ready, label: approveLabel({ busy: false, expired: false, missing: state.missing.length }) };
+  };
+  assert.deepEqual(gate([]), { ready: false, label: "확인 4개 남음" });
+  assert.deepEqual(gate(heroIds), { ready: false, label: "확인 2개 남음" }, "큰 카드 줄만 확인하면 목록이 남는다");
+  assert.deepEqual(gate(listIds), { ready: false, label: "확인 2개 남음" }, "목록만 체크하면 상품 대체가 남는다");
+  assert.deepEqual(gate([...heroIds, ...listIds]), { ready: true, label: "승인하고 실행 시작" });
+  assert.deepEqual(gate([heroIds[1]!, ...listIds]), { ready: false, label: "확인 1개 남음" }, "줄 하나를 다시 누르면(확인 취소) 다시 꺼진다");
+  assert.deepEqual(ackState(acks, new Set([...heroIds, ...listIds])).ids, ["cost", "substitute:cache", "ack-pc-pg-02", "substitute:jobs"], "승인 본문 acks 는 계획서 항목 전부");
+
+  const onlySubstitutes = acks.filter((ack) => ack.kind === "substitute");
+  const alone = ackPlaces(onlySubstitutes);
+  assert.equal(alone.list.length, 0, "상품 대체만 있으면 목록 카드가 없다");
+  assert.equal(ackState(onlySubstitutes, new Set(alone.substitutes.map((row) => row.ackId))).ready, true, "큰 카드 확인만으로 승인한다");
+});
+
+test("명세 검토의 상품 대체 미리보기: substitutions 의 substitute 줄을 승인 화면과 같은 줄로, id 는 계획 때 확인 항목 id. 빈 칸은 비운 채로, 키가 없으면(옛 서버) 0줄", () => {
+  assert.deepEqual(specSubstituteRows([
+    { kind: "substitute", subject: "cache", from: "ElastiCache (redis)", to: "Memorystore (redis)", lost: ["캐시 데이터 (빈 캐시로 시작)"], appChange: false },
+    { kind: "runtime_change", subject: "web" },
+    { kind: "substitute", subject: "jobs", from: "SQS", to: "Pub/Sub 토픽 + 구독", detail: "SQS SDK 대신 Pub/Sub SDK", appChange: true },
+    { kind: "substitute", subject: "uploads" },
+  ]), [
+    { ackId: "substitute:cache", resource: "cache", from: "ElastiCache (redis)", to: "Memorystore (redis)", detail: undefined, lost: ["캐시 데이터 (빈 캐시로 시작)"], appChange: false },
+    { ackId: "substitute:jobs", resource: "jobs", from: "SQS", to: "Pub/Sub 토픽 + 구독", detail: "SQS SDK 대신 Pub/Sub SDK", lost: undefined, appChange: true },
+    { ackId: "substitute:uploads", resource: "uploads", from: undefined, to: undefined, detail: undefined, lost: undefined, appChange: undefined },
+  ]);
+  assert.deepEqual(specSubstituteRows(undefined), []);
 });

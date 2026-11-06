@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { agentBlock, analysisCaption, failureAnalysisOf, spendRows, spendText } from "../src/features/agent/model";
+import { agentBlock, agentStepEntry, analysisCaption, failureAnalysisOf, spendRows, spendText } from "../src/features/agent/model";
 import { costCaveats, costNote, costSummary, envCaption, planCostCaveats, planCostSummary } from "../src/features/cost/model";
 
 const estimate = (priceStale: boolean) => ({
@@ -67,4 +67,15 @@ test("실패 원인 분석: 끝난 분석만 쓰고, 없거나 진행 중이면 
   assert.equal(failureAnalysisOf(null), null);
   assert.equal(analysisCaption(analysis), "AI 추정 · 확신 72% · 고치지 않고 다시 해도 될 것으로 봄");
   assert.equal(analysisCaption({ confidence: 0.5, retryable: false }), "AI 추정 · 확신 50%");
+});
+
+test("에이전트 단계: 안정성 확인은 통과·실패가 다르게 보이고, 거부된 호출은 그대로 거부로 보인다 (#179)", () => {
+  const bad = agentStepEntry({ seq: 3, tool: "run_check", ok: true, note: "check_bad" });
+  const good = agentStepEntry({ seq: 7, tool: "run_check", ok: true, note: "check_ok" });
+  assert.deepEqual([bad.kind, bad.detail], ["fail", "점검 실패"]);
+  assert.deepEqual([good.kind, good.detail], ["pass", "점검 통과"]);
+  assert.equal(bad.title, good.title);
+  assert.equal(agentStepEntry({ seq: 1, tool: "repo_edit", ok: false, note: "TOOL-05" }).kind, "denied");
+  assert.deepEqual(agentStepEntry({ seq: 2, tool: "repo_read", ok: true, note: "deploy/app.yaml" }), { kind: "tool", title: "배포 파일 읽기", detail: "deploy/app.yaml", time: "2" });
+  assert.equal(agentStepEntry({ seq: 8, tool: "finish", ok: true, note: "proposed" }).detail, "수정안 있음");
 });

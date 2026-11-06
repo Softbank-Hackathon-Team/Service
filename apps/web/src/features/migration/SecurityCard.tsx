@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { FoldTile } from '../../components/layout/tiles';
 import { Badge } from '../../components/ui/controls';
 import { Icon } from '../../components/ui/Icon';
@@ -10,6 +10,7 @@ import type { LedgerRow, LiveCheckState, RegressionChange, SecArea, SecState, Se
 import { isTerminal } from '../../lib/status';
 import type { MigrationView } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
+import { Section } from '../common/Section';
 import { controlRows, ledgerOrder, ledgerSummary, securityCardSummary, securityHeadline, threatsFrom, type Threat } from '../security/model';
 import s from '../common/page.module.css';
 import { t } from '../../lib/i18n';
@@ -34,25 +35,6 @@ const PURPOSE: Record<LedgerRow['purpose'], string> = { observe: t('관찰'), op
 const LEDGER_STATUS: Record<LedgerRow['status'], string> = { active: t('쓰는 중'), revoke_requested: t('회수 요청'), revoked: t('회수됨'), expired: t('만료됨') };
 
 const minutes = (sec: number) => (sec % 60 === 0 ? t('{0}분', { 0: sec / 60 }) : t('{0}초', { 0: sec }));
-
-/** 보안 카드 안의 작은 묶음. 카드 하나에 다 담되, 긴 묶음은 접어 둔다. */
-function Section({ title, summary, defaultOpen = false, children }: { title: string; summary?: ReactNode; defaultOpen?: boolean; children: ReactNode }) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div className={s.sub}>
-      <button type="button" className={s.subHead} aria-expanded={open} onClick={() => setOpen(!open)}>
-        <span className={s.formRow}>
-          <span className="t-label-md">{title}</span>
-          <span className={`${s.subChevron} ${open ? s.subOpen : ''}`}>
-            <Icon name="chevron" size={12} />
-          </span>
-        </span>
-        {summary !== undefined && <span className="t-caption c-tertiary">{summary}</span>}
-      </button>
-      {open && <div className={s.subBody}>{children}</div>}
-    </div>
-  );
-}
 
 type DetailProps = {
   migration: MigrationView;
