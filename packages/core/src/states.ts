@@ -6,7 +6,8 @@ import { VALID, TERMINAL, type MigrationStatus } from "@svc/contracts";
 // 갈 수 있나 (VALID 그대로)
 export const canMove = (from: MigrationStatus, to: MigrationStatus): boolean => VALID[from].includes(to);
 
-// 실패 지점이 이 상태들이면 다시 계획(failed → planning)할 수 있다 (T37: provisioning 이하)
+// 실패 지점이 이 상태들(데이터가 움직이기 전)이면 failed 로 갈 때 잠금을 푼다 (advance RELEASES_LOCK).
+// 이름은 예전 T37(failed → planning 다시 계획) 때 것이다. 그 길은 없앴다 (guards.ts 01:53Z)
 export const REPLANNABLE_FAILURES: readonly MigrationStatus[] =
   ["importing", "prechecking", "planning", "provisioning"];
 

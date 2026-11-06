@@ -44,12 +44,18 @@ test("만드는 중 → 배포 → 전환: 단계마다 상태가 바뀐다", ()
   assert.equal(footprintOf(SRC, row({ status: "shifting", reachedPct: 50 })).trafficPct, 50);
 });
 
-test("완료: 출발 앱은 0 으로 줄임, 출발 DB 는 남김(쓰기 막힘), 복제 객체는 걷음(감사 근거)", () => {
-  const r = row({ status: "completed", applyEvidence: "stub", cleanupRemoved: ["slot x", "STUB: source app scaled to 0"] });
+test("정리 중: 정리는 출발 앱을 걷지 않는다 → 출발 앱은 트래픽 0 대기(standby), 복제 슬롯만 걷는 중", () => {
+  const s = footprintOf(SRC, row({ status: "cleanup" }));
+  assert.equal(state(s.resources, "k8s.deployment"), "standby");
+  assert.equal(state(s.resources, "pg.replication_slot"), "stopping");
+});
+
+test("완료: 출발 앱은 정리가 건드리지 않아 남음(사람이 내림), 출발 DB 는 남김(쓰기 막힘), 복제 객체는 걷음(감사 근거)", () => {
+  const r = row({ status: "completed", applyEvidence: "stub", cleanupRemoved: ["slot x"] });
   const s = footprintOf(SRC, r);
   assert.equal(s.stage, "after"); assert.equal(s.trafficPct, 0);
-  assert.equal(state(s.resources, "k8s.deployment"), "stopped");
-  assert.equal(s.resources.find((x) => x.type === "k8s.deployment")?.evidence, "audit");
+  assert.equal(state(s.resources, "k8s.deployment"), "left");
+  assert.equal(s.resources.find((x) => x.type === "k8s.deployment")?.evidence, "discovered");
   assert.equal(state(s.resources, "cnpg.cluster"), "standby");
   assert.equal(state(s.resources, "pg.replication_slot"), "removed");
   const t = footprintOf(DST, r);

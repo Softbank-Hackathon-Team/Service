@@ -41,7 +41,7 @@ export function rollbackWindowSecFor(plan: { rollbackWindowSec?: number } | null
 }
 
 // 잠금을 푸는 상태: 끝 상태 셋 + 낡음(승인 후 시작 못 함) + 이른 실패.
-// DRAFT(ai): provisioning 이하에서 실패(apply 실패 등)하면 잠금을 푼다. 다시 계획(T37)하면 승인 때 다시 예약한다.
+// DRAFT(ai): provisioning 이하에서 실패(apply 실패 등)하면 잠금을 푼다. 다시 잡는 길은 아래 01:53Z 줄 (예전 T37 다시 계획은 없앴다).
 //   예전엔 실패가 잠금을 계속 쥐어 같은 환경 다음 이전이 409 ENV_BUSY (W·X에서 재현).
 //   데이터가 움직이기 시작한 뒤(cutover·rolling_back 등)의 실패는 잠금을 남긴다: 복제·트래픽이 반쯤 바뀐 상태일 수 있어
 //   사람이 보고 POST .../cancel {manualCleanupConfirmed:true}(T38)로 끝낸다. TODO(human): provisioning 실패 때

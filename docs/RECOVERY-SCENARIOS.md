@@ -92,7 +92,7 @@ Z1이 이미 시험하는 길(apply 실패 → failed·해제, sync 2번 실패 
 
 - 장치는 맞다: 처리기가 `{ to: "paused", failureCode }`를 돌려주면 paused로 가고 `paused_from`·`failure_code`·감사가 남는다. 실패 코드가 없으면 T30 조건이 막는다. 재개는 멈추기 전 단계로만, `ruleCleared` 증거가 있어야 한다.
 - 하지만 지금 STUB 실패 스위치는 모두 다른 곳으로 간다: `APPLY_STUB_FAIL=1` → failed, `SYNC_STUB_FAIL=1` → 자동 롤백, `TRAFFIC_STUB_SCENARIO=err` → rolling_back. paused로 가는 길은 청소 작업뿐이다 (Z12-5).
-- paused에서 다시 시작하는 API가 없다. 화면에 "멈춤"은 뜨지만 누를 버튼은 롤백·취소뿐이다 (Z12-3).
+- paused에서 다시 시작하는 API가 없다. 화면에 "멈춤"은 뜨지만 누를 버튼은 롤백·취소뿐이다 (Z12-3). → 그 뒤 생겼다: `POST /migrations/:id/resume` 이 멈추기 전 단계로 되돌리고 그 단계 작업을 다시 넣는다.
 
 ## 4. 재현 절차 (사람이 맥에서 직접)
 

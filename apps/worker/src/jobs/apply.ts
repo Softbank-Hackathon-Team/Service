@@ -3,7 +3,7 @@ import { azureMockOutputsV2, chooseRunner, iacMockEnabled, onpremGitFloorOutputs
 import { asFailureCode, latestAcceptedSpecV2, planExpired, replicationEndpointsFor, withTenant, type Tx } from "@svc/core";
 import { errorMessage, nextJob, runStep, stubWait } from "./_step.js";
 import { loadLatestApproval, loadLatestPlan, saveInfraReady } from "./plan-store.js";
-import { failedOnRenewFailure, withStepRoles } from "./_roles.js";
+import { failedOnRenewFailure, failedOnRoleDenied, withStepRoles } from "./_roles.js";
 import { realApplyWithEnvLayer, type RealApplyOutcome } from "./apply-real.js";
 import { borrowEnvCred } from "../env-layer.js";
 import { withGcpCred } from "../gcp-token-server.js";
@@ -145,9 +145,10 @@ export async function handleApply(raw: unknown) {
       };
     }),
     // apply 큐는 retryLimit 0. 예전엔 예외 한 번에 provisioning에 멈추고 잠금이 계획 만료까지 남았다.
-    // 이제 provisioning → failed(APPLY_FAILED). failed는 다시 계획(T37)하거나 취소한다. 잠금은 advance 규칙대로 해제
+    // 이제 provisioning → failed(APPLY_FAILED). failed는 사람에게 재시도·거절(롤백)을 묻는다 (POST .../failure-decision). 잠금은 advance 규칙대로 해제
     // 임시 자격 재발급 실패(Z61)도 failed 로, 실패 코드만 CRED_RENEW_FAILED (Z38 REVIEW-4 Z43-1: paused → 롤백은 만들다 만 자원을 안 지운 채 끝남)
-    onError: async (e) => failedOnRenewFailure(e) ?? ({ to: "failed", failureCode: "APPLY_FAILED",
+    // 실환경에서 고객 임시 역할을 못 빌림(_roles.ts) → TEMP_ROLE_DENIED. terraform 을 시작하기 전이다
+    onError: async (e) => failedOnRenewFailure(e) ?? failedOnRoleDenied(e) ?? ({ to: "failed", failureCode: "APPLY_FAILED",
       detail: { error: redactText((e as Error)?.message ?? String(e)).slice(0, 500) } }),   // RV-16
   });
 }

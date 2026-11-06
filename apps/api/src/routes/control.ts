@@ -76,6 +76,8 @@ export async function controlRoutes(app: FastifyInstance) {
     return req.idempotent(reply, async (tx) => {
       const from = await statusOf(tx, id);
       mustAllow(from, "rolling_back");
+      // 롤백 작업은 잠금을 쥐고 일한다. provisioning 실패에서 오면 잠금이 풀려 있다 → failure-decision 거절 길과 같이 다시 예약
+      await relock(tx, req.tenantId, id);
       await advance(tx, { id, tenantId: req.tenantId }, from, "rolling_back", {
         evidence: { reason: req.body?.reason },
         next: nextJob(req, QUEUES.rollback, id),

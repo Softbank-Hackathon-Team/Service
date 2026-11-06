@@ -88,7 +88,7 @@ flowchart LR
 | rejected | 거절 | awaiting_approval | spec_review, planning, cancelled | 승인 API(거절) |
 | stale | 계획 낡음 | awaiting_approval, approved | planning, cancelled | 청소 작업(승인 후 시작 못 함) |
 | paused | 멈춤 | deploying, syncing, shifting, cleanup | 멈추기 전 상태, rolling_back | 청소 작업(`WORKER_LOST` 등) |
-| failed | 실패 | importing, prechecking, planning, provisioning, cutover, rolling_back | planning, rolling_back, cancelled | 청소 작업 |
+| failed | 실패 | importing, prechecking, planning, provisioning, cutover, rolling_back | 실패 지점(재시도), rolling_back, cancelled | 청소 작업, 워커 단계 실패 |
 | rolling_back | 되돌리는 중 | deploying, syncing, shifting, rollback_window, paused | rolled_back, failed | **없음** |
 | rolled_back | 되돌리기 끝 | rolling_back | 끝 | 워커 `rollback` |
 | cancelled | 취소 | 대부분의 준비 단계 상태, failed | 끝 | **없음** |
@@ -121,8 +121,9 @@ flowchart LR
 | T26 | rollback_window → cleanup | 창이 끝났고 정리 승인 | DB + 증거 |
 | T27 | cleanup → completed | 임시 자원 0 + 실행 역할 회수 | 워커 증거 |
 | T35 | rolling_back → rolled_back | 출발 가중치 100% + 출발 헬스 정상 | 워커 증거 |
-| T37 | failed → planning | 실패 지점이 provisioning 이하 | DB |
-| F8-1 | failed → rolling_back | 실패 지점이 cutover·rolling_back (다시 롤백, DRAFT(ai)) | DB |
+| (T37) | failed → planning | 없앴다 (11/4 01:53Z). 다시 계획은 stale·rejected 에서만 | - |
+| 재시도 | failed → 실패 지점 | 실패 지점과 같은 상태 + 사람이 고른 재시도 (`POST /migrations/:id/failure-decision`) | DB + 증거 |
+| F8-1 | failed → rolling_back | 실패 지점이 자원을 만든 뒤(`ROLLBACK_ON_REJECT`: provisioning~rolling_back) | DB |
 | T38 | failed → cancelled | 수동 정리 확인 | 증거 |
 | T30 | 어디서든 → paused | 가드레일 규칙 번호 또는 실패 코드 | 증거 |
 | T31·T32 | paused → (rolling_back 아닌 곳) | 멈추기 전 상태로만, 규칙이 풀렸을 때 | DB + 증거 |
