@@ -138,8 +138,8 @@ export async function handleDeploy(raw: unknown) {
       return {
         to: "syncing", detail: { deploy: result, ...(gitops ? { gitops } : {}), rehearsal: gate.detail, ...extra(warnings, delivery) },
         // Z94: argoHealthy = 반영 확인 결과 (argocd-push 는 Synced+Healthy, 온프레는 Agent applied). 여기 오면 failed 는 위에서 걸렀다
-        // STUB: 보안 동등성(MG-2-07)은 보안 영역 가드레일이 붙으면 그 결과를 넣는다
-        evidence: { argoHealthy: result.status === "synced_healthy" || result.status === "applied", securityParity: true, rehearsal: gate.evidence },
+        // 보안 동등성(MG-2-07): 이 단계엔 출발·도착 보안을 맞대어 잰 근거가 아직 없다 → true 라고 하지 않고 not_measured (예전: 늘 true 고정)
+        evidence: { argoHealthy: result.status === "synced_healthy" || result.status === "applied", securityParity: "not_measured", rehearsal: gate.evidence },
         next: nextJob(QUEUES.sync, j),
       };
     },
@@ -269,7 +269,7 @@ async function deployTerraformRuntime(j: MigrationJob, l: Loaded & { runtime: Te
   return {
     to: "syncing", detail: { deploy: result, gitops: { ...gitops, checked: h.checked, attempts: h.attempts }, rehearsal: { skipped: rehearsal } },
     // DRAFT(ai): argoHealthy 칸 = "배포 반영 확인됨". 이 도착은 Argo 대신 Terraform 출력·건강 확인이 그 근거 (감사 detail.gitops.skipped 로 구별)
-    evidence: { argoHealthy: true, securityParity: true, rehearsal },
+    evidence: { argoHealthy: true, securityParity: "not_measured", rehearsal },   // 보안 동등성: 위 k8s 길과 같음 (잰 근거 없음)
     next: nextJob(QUEUES.sync, j),
   };
 }

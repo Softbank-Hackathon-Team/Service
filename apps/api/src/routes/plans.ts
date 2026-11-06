@@ -12,7 +12,7 @@ import { loadLatestApproval, loadLatestPlan, loadPlanById, saveApproval } from "
 //   GET  /plans/:id                 계획서 내용·지문
 //   POST /plans/:id/approvals       awaiting_approval → approved | rejected  (planHash 바인딩)
 //   POST /migrations/:id/start      approved → provisioning     (+ apply 작업)
-//   POST /migrations/:id/replan     failed(provisioning 이하)·stale·rejected → prechecking  (+ precheck 작업 → plan 작업). G7-2
+//   POST /migrations/:id/replan     stale·rejected → prechecking  (+ precheck 작업 → plan 작업). G7-2. failed 는 POST .../failure-decision
 //   POST /migrations/:id/spec/reopen  rejected → spec_review    (거절 뒤 명세부터 고칠 때)
 // 상태를 바꾸는 POST 하나 = advance() 한 번.
 // TODO(human): Idempotency-Key 필수 처리는 공용 플러그인이 붙으면 이 경로들에도 걸린다

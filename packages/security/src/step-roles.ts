@@ -64,8 +64,8 @@ export const STEP_ROLES = {
   gke_freeze: [{ side: "target", purpose: "operate", stage: "apply" }],
   // APP-22 (가): Terraform 이 앱을 띄우는 도착의 앱 DB 주소 바꾸기(컷오버·롤백 때 같은 입력으로 다시 apply). apply 와 같은 천장
   db_writer: [{ side: "target", purpose: "operate", stage: "apply" }],
-  // 리허설 이미지 복사 (worker rehearsal/image-mirror.ts). 출발 ECR 에서 다이제스트로 받기만 한다. 관찰 천장 전체가 아니라 이 세 동작만 요청
-  image_mirror: [{ side: "source", purpose: "observe", actions: ECR_PULL_ACTIONS }],
+  // 리허설 이미지 복사 (worker rehearsal/image-mirror.ts). 출발 ECR·Artifact Registry 에서 다이제스트로 받기만 한다. 관찰 천장 전체가 아니라 출발 클라우드의 받기 동작만 요청
+  image_mirror: [{ side: "source", purpose: "observe", actions: IMAGE_PULL_ACTIONS }],
   // 온프레 이전 중계기 (worker relay/relay-step.ts): 출발 AWS 계정에 중계 EC2·보안 그룹을 만들고(apply) 정리 때 지운다.
   //   출발 실행 역할을 빌리되 세션 정책은 중계기 동작만 (policy relay). stage apply 는 장부 칸(0009 CHECK)용
   // DRAFT(ai): 만들기·지우기를 한 세션 정책으로 (지우기 전용으로 더 좁히지 않음). 지우는 대상은 코드가 두 태그로 한 번 더 거른다

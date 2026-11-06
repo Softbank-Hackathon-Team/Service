@@ -21,6 +21,7 @@ export const FAILURE_CODES = [
   "ENV_LAYER_CRED_MISSING",      //   환경 층을 만들 빌린 GCP 실행 토큰이 없음 (워커 자기 자격으로는 만들지 않는다)
   "TF_BIN_MISSING",              // Z89: 진짜 Terraform 이 기본인데 실행 파일이 없음 (MOCK_IAC=1 이 아닌데 terraform 미설치)
   "CRED_RENEW_FAILED",           // 임시 자격 재발급 실패 (Z61)
+  "TEMP_ROLE_DENIED",            // 실환경(진짜 발급기)에서 고객 임시 역할 발급 거부 (최소 권한 파일 없음 등) → apply failed. 워커 자기 자격으로 넘어가지 않는다
   "APP_LINK_UPSTREAM_FAILED",    // 앱 연결 상류 실패 (int5-3)
   "PLAN_RECHECK_FAILED",         // E10-4: 계획 작업 재확인 실패 (받아들인 명세 없음·도착 환경 없음·연결 안 됨이 계속됨)
   "APPLY_RECHECK_FAILED",        // apply 실행 직전 재확인 실패 (Z38-3: 지문 다름·만료·도착 환경 없음)
@@ -55,6 +56,10 @@ export const FAILURE_CODES = [
   "RELAY_DB_EGRESS_DENIED",      //   출발 RDS 보안 그룹에 중계기로 나가는 5432 가 없고 열 권한도 없음 (연결 스택 SourceDbSecurityGroupId 비움) → apply failed
   "RELAY_DB_INGRESS_DENIED",     //   출발 RDS 보안 그룹이 중계기에서 들어오는 5432 를 안 받고 열 권한도 없음 (연결 스택이 옛 템플릿) → apply failed
   "RELAY_TEARDOWN_FAILED",       //   중계기 지우기 실패 → cleanup paused (롤백은 rolled_back + 경고)
+  "RELAY_TARGET_DB_UNKNOWN",     //   AWS→GCP 중계기: terraform 출력에 Cloud SQL 공개·나가는 IP·관리자 계정이 없음 → apply failed
+  "TARGET_APP_LOGIN_FAILED",     //   AWS→GCP: 워커가 Cloud SQL 에 관리자로 붙어 앱 로그인 역할(일반 역할)을 못 만듦 → apply failed
+  "REPL_ENDPOINT_MISSING",       // 진짜 판(MOCK_IAC≠1)·명세에 postgres 가 있는데 복제 끝점(줄·REPL_* env)이 없음 → sync·cleanup paused, cutover failed (예전엔 가짜 성공으로 통과)
+  "REPL_TF_FACTS_MISSING",       // 복제 끝점 주소의 {tf:키} 를 못 채움·빈 값 (PF-E22) → sync·cleanup paused, cutover failed
   "REPL_DELIVERY_FAILED",        // 온프레 CNPG 이전: 서버 인증서·봉인 비밀·터널 값을 못 만듦 (중계기 칸 없음, 출발 포트 5432 아님, openssl 실패 등) → paused
   "SECRET_VALUES_MISSING", "SECRET_VALUES_UNKNOWN",   // APP-20: deploy 커밋 전 도착 비밀 그릇에 값(버전)이 없음 / 못 읽음 → paused
   "IMAGE_COPY_FAILED",           // deploy 커밋 전 사설 이미지를 도착 레지스트리로 복사·다이제스트 확인 못 함 (worker jobs/image-copy.ts, detail.deploy.step = 이유) → paused

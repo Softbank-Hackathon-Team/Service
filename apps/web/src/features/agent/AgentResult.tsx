@@ -5,7 +5,7 @@ import { api } from '../../lib/api';
 import { or404 } from '../../lib/http';
 import { usePoll } from '../../lib/usePoll';
 import { useAction } from '../migration/shared';
-import { agentBlock, OUTCOME } from './model';
+import { agentBlock, agentReasonText, OUTCOME, sandboxNote } from './model';
 import s from '../common/page.module.css';
 import { t } from '../../lib/i18n';
 
@@ -25,13 +25,15 @@ export function useAgentReview(migrationId: string) {
 export function RemediateBody({ view }: { view: AgentReview | null }) {
   const result = view?.remediate ?? null;
   const note = llmNote(view?.llm);
+  const unverified = sandboxNote(result);
   return (
     <>
       {note && <p className="t-body-sm c-secondary">{note}</p>}
       {result?.source === 'stub' && <Badge tone="warning">{t('시험용 결과')}</Badge>}
       {result?.title && <p className="t-label-md">{result.title}</p>}
       {result?.rationale && <p className="t-body-sm c-secondary">{result.rationale}</p>}
-      {result?.status === 'failed' && result.reason && <p className="t-body-sm c-danger">{result.reason}</p>}
+      {result?.status === 'failed' && result.reason && <p className="t-body-sm c-danger">{agentReasonText(result.reason)}</p>}
+      {unverified && <p className="t-body-sm c-warning">{unverified}</p>}
       {result?.gate && !result.gate.ok && <p className="t-body-sm c-danger">{t('안전 검사를 통과하지 못했습니다: {0}', { 0: result.gate.violations.join(', ') })}</p>}
       {result && result.checked.length > 0 && (
         <div>
