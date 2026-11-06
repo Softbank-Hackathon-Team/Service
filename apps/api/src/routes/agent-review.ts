@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { FailureAnalysis, LLM_KEY_MISSING, LLM_BUDGET_EXCEEDED, agentLlmStatusFromEnv, llmBudgetFromEnv, llmSpendView, type AgentLlmStatus, type LlmSpendView } from "@svc/contracts";
+import { AgentRunSandbox, FailureAnalysis, LLM_KEY_MISSING, LLM_BUDGET_EXCEEDED, agentLlmStatusFromEnv, llmBudgetFromEnv, llmSpendView, type AgentLlmStatus, type LlmSpendView } from "@svc/contracts";
 import { queueAgentRun, type SendAgentJob as CoreSendAgentJob, writeAudit, DomainError, NotFound, withTenant, type Tx } from "@svc/core";
 import { errors } from "./responses.js";
 
@@ -33,6 +33,8 @@ export const RemediateReview = z.object({
   checked: z.array(z.string()),
   notDone: z.array(z.string()),
   gate: z.object({ ok: z.boolean(), violations: z.array(z.string()) }).strict().nullable(),
+  // 이 실행이 받은 샌드박스. k3d·vcluster 만 진짜 클러스터다 (memory = 가짜, none = 없음, null = 칸이 없는 예전 기록)
+  sandbox: AgentRunSandbox.nullable(),
 }).strict();
 
 // 명세 초안(spec_draft): 가져오기 결과로 만든 위험 목록·계획 설명. 초안 판은 사람 검토 전
@@ -78,7 +80,7 @@ export type RemediateReview = z.infer<typeof RemediateReview>;
 export type SpecDraftReview = z.infer<typeof SpecDraftReview>;
 
 // agent_runs.result 칸 모양. 모르는 칸이 있어도 깨지지 않게 느슨하게 읽는다
-// remediate: agent-worker pg-agent-run-store.ts finish 가 { finish, gate } 를 넣는다 (작업 Z65)
+// remediate: agent-worker pg-agent-run-store.ts finish 가 { finish, gate, proposal, sandbox } 를 넣는다 (작업 Z65)
 const RemediateResult = z.object({
   finish: z.object({
     outcome: z.enum(["proposed", "no_change", "gave_up"]),
@@ -86,6 +88,7 @@ const RemediateResult = z.object({
     checked: z.array(z.string()), notDone: z.array(z.string()),
   }).nullable().optional(),
   gate: z.object({ ok: z.boolean(), violations: z.array(z.string()) }).optional(),
+  sandbox: AgentRunSandbox.optional(),
 });
 // spec_draft: pg-spec-draft-store.ts saveDraft 가 넣는 { version, risks, planExplanation, rejectedChanges }
 const SpecDraftResult = z.object({
@@ -121,6 +124,7 @@ export const STUB_REMEDIATE: RemediateReview = {
   checked: ["샌드박스 60초 재시작 0"],
   notDone: ["운영 부하에서의 메모리 사용량"],
   gate: { ok: true, violations: [] },
+  sandbox: "memory",
 };
 
 // DB 에서 읽은 줄 (시험에서 바꿔 끼울 수 있게 모양을 따로 둔다)
@@ -162,6 +166,7 @@ export function buildAgentReview(migrationId: string, runs: RunRow[],
       outcome: f?.outcome ?? null, title: f?.title ?? "", rationale: f?.reason ?? "",
       checked: f?.checked ?? [], notDone: f?.notDone ?? [],
       gate: res.success ? res.data.gate ?? null : null,
+      sandbox: res.success ? res.data.sandbox ?? null : null,
     };
   }
 
