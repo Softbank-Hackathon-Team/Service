@@ -580,10 +580,133 @@
         "overrides": []
       },
       "options": {}
+    },
+    {
+      "id": 15,
+      "type": "timeseries",
+      "title": "트래픽 교차 (LB 가중치, 출발 A · 도착 B)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 36,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "100 - max by (migration) (svc_traffic_weight_pct{migration=~\"$migration\"} and (svc_traffic_weight_updated_seconds{migration=~\"$migration\"} == on (migration) group_left () max by (migration) (svc_traffic_weight_updated_seconds{migration=~\"$migration\"})))",
+          "legendFormat": "출발 A {{migration}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (migration) (svc_traffic_weight_pct{migration=~\"$migration\"} and (svc_traffic_weight_updated_seconds{migration=~\"$migration\"} == on (migration) group_left () max by (migration) (svc_traffic_weight_updated_seconds{migration=~\"$migration\"})))",
+          "legendFormat": "도착 B {{migration}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": {
+            "lineInterpolation": "stepAfter"
+          }
+        },
+        "overrides": []
+      },
+      "options": {},
+      "description": "LB 에서 확인한 설정값이다. 실제로 받은 요청은 옆 패널에서 본다"
+    },
+    {
+      "id": 16,
+      "type": "timeseries",
+      "title": "실제 요청 수 (초당)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 36,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (migration) (rate(svc_ingress_requests_total{env=\"target\",migration=~\"$migration\"}[1m]))",
+          "legendFormat": "도착 {{migration}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (migration) (rate(svc_ingress_requests_total{env=\"target\",code=~\"5..\",migration=~\"$migration\"}[1m]))",
+          "legendFormat": "도착 5xx {{migration}}"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (migration) (rate(svc_ingress_requests_total{env=\"source\",migration=~\"$migration\"}[1m]))",
+          "legendFormat": "출발 {{migration}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {},
+      "description": "도착 cloudflared 지표. 출발 수집기가 없는 환경은 출발 줄이 안 나온다"
     }
   ],
   "templating": {
-    "list": []
+    "list": [
+      {
+        "name": "migration",
+        "label": "이전",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(svc_traffic_weight_pct, migration)",
+          "refId": "migration"
+        },
+        "refresh": 2,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false,
+        "sort": 0,
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      }
+    ]
   },
   "annotations": {
     "list": []

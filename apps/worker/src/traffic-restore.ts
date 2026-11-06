@@ -4,6 +4,7 @@
 //   되돌리기 직전 도착 몫(fromPct)을 감사 traffic.restored 에 남긴다 → 재시도를 승인하면 shift 가 그 단계부터 다시 오른다 (shift.ts restoredFromPct)
 import { restoreSource } from "@svc/traffic";
 import { withTenant, writeAudit, scrubString } from "@svc/core";
+import { setTrafficWeightMetric } from "./instrument.js";
 import { trafficFor } from "./platform.js";
 
 export const TRAFFIC_RESTORE_FAILED = "TRAFFIC_RESTORE_FAILED";
@@ -31,6 +32,7 @@ export async function restoreTrafficToSource(tenantId: string, migrationId: stri
     try {
       const r = await restoreSource({ switcher: t.switcher, lbId: t.lbId, migrationId, sleep });
       if (!r.evidence.sourceWeight100) throw new Error(`되돌린 뒤 읽은 값이 출발 100% 가 아님: ${JSON.stringify(r.detail.after)}`);
+      setTrafficWeightMetric(migrationId, 0);
       const fallback = r.detail.fallback as TrafficRestoreResult["fallback"];
       const out: TrafficRestoreResult = { ok: true, lbId: t.lbId, lbFrom: t.from, provider: t.switcher.provider ?? "unknown", fromPct,
         alreadyRestored: r.detail.alreadyRestored === true, attempts: i, ...(fallback ? { fallback } : {}) };

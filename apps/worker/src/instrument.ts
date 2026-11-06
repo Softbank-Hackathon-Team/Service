@@ -7,6 +7,15 @@ export const workerRegistry = new Registry();
 const runs = workerRegistry.counter("svc_job_runs_total", "Jobs handled by this worker, by queue and result");
 const took = workerRegistry.histogram("svc_job_duration_seconds", "Job handler duration by queue", JOB_BUCKETS_SEC);
 const inflight = workerRegistry.gauge("svc_jobs_in_flight", "Jobs currently running in this worker");
+// 이전 측정의 A-B 교차 그래프 (출발 = 100 - 값). LB 에 확인된 가중치만 넣는다.
+// shift 와 rollback 이 다른 워커에서 돌 수 있어 바꾼 시각도 낸다. 대시보드는 가장 최근에 바꾼 워커의 값을 쓴다
+// ponytail: 워커 메모리 값이라 값을 쥔 워커가 재시작하면 그 선이 끊긴다. 끊김까지 없애려면 DB 에서 읽는다
+const trafficWeight = workerRegistry.gauge("svc_traffic_weight_pct", "Target traffic weight confirmed on the load balancer, percent");
+const trafficWeightAt = workerRegistry.gauge("svc_traffic_weight_updated_seconds", "Unix time this worker last set svc_traffic_weight_pct");
+export const setTrafficWeightMetric = (migrationId: string, pct: number) => {
+  trafficWeight.set({ migration: migrationId }, pct);
+  trafficWeightAt.set({ migration: migrationId }, Date.now() / 1000);
+};
 
 export const log = createLogger(process.env.SERVICE_NAME ?? "worker");
 

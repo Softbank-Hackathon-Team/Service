@@ -264,6 +264,8 @@ P="${PROJECT_ID}"
 ensure_api iamcredentials.googleapis.com
 # 연결 확인(projects describe)이 부르는 API. 보통 켜져 있지만 새 프로젝트면 꺼져 있다 (켜져 있으면 건너뜀)
 ensure_api cloudresourcemanager.googleapis.com
+# 결제 연결 확인(precheck PC-BILL, gcloud billing projects describe)은 빌린 SA 의 프로젝트로 할당량을 잡는다 → 그 API 가 꺼져 있으면 막힘
+ensure_api cloudbilling.googleapis.com
 ensure_sa svc-observe
 ensure_role platform_observe --title="platform-observe" --description="platform read-only inventory" --permissions="${OBSERVE_PERMS}" --stage=GA
 sync_role_permissions platform_observe "${OBSERVE_PERMS}"
@@ -286,7 +288,7 @@ P="${TARGET_PROJECT_ID}"
 # 새 전용 프로젝트는 API 가 거의 꺼져 있다. 연결 확인(verify: projects describe = cloudresourcemanager, svc-operate 확인 = iam)·
 #   빌리기(iamcredentials·sts)와 첫 up(gcp/env: container·sqladmin·compute·secretmanager) 전에 켠다. 실측에서 cloudresourcemanager 를 손으로 켰던 것을 없앤다
 # DRAFT(ai): 목록 = 연결·확인·도착 env 층이 부르는 API. 앱 층 API(redis·run·pubsub…)는 gcp/env·앱 apply 가 켬
-TARGET_APIS="cloudresourcemanager serviceusage iam iamcredentials sts container sqladmin compute secretmanager"
+TARGET_APIS="cloudresourcemanager serviceusage iam iamcredentials sts container sqladmin compute secretmanager cloudbilling"
 for a in ${TARGET_APIS}; do ensure_api "${a}.googleapis.com"; done
 ensure_sa svc-plan
 ensure_sa svc-operate
