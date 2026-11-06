@@ -16,7 +16,7 @@ import {
   buildRelayPlan, existingDbEgressCover, existingDbIngressCover, ownedBy, RELAY_FORWARDER_PY, pickPublicSubnet, platformEgressCidrs, provisionRelay, RelayError, relayTags, teardownRelay, type GcpRelayPlanInput, type OnpremRelayPlanInput,
 } from "../src/relay/aws-relay.js";
 import { forwardTarget } from "../src/gitops/replication-delivery.js";
-import { addRelayPeer, cloudSqlPeerOf, gcpEndpointRows, gcpRelayGate, prepareGcpRelayStep, provisionRelayStep, rdsIdentifierFromIds, relayEndpointRows, relayGate, relayKindOf, sourcePasswordRef, teardownRelayStep, type RelayFacts } from "../src/relay/relay-step.js";
+import { addRelayPeer, cloudSqlPeerOf, gcpEndpointRows, gcpRelayGate, prepareGcpRelayStep, provisionGcpRelayStep, provisionRelayStep, rdsIdentifierFromIds, relayEndpointRows, relayGate, relayKindOf, sourcePasswordRef, teardownRelayStep, type RelayFacts } from "../src/relay/relay-step.js";
 import { PASSWORD_REF_RE, ReplicationEndpoint } from "@svc/contracts";
 
 const MK = "test-master-key-0123456789abcdef-xyz";   // 시험용 가짜 키
@@ -363,6 +363,52 @@ test("GCP 단계 문: 표의 aws->gcp 만 go, 시드·명세 postgres 없음·�
   assert.deepEqual(gcpRelayGate(gf({ postgres: [] }), env), { kind: "skip", reason: "no_postgres" });
   assert.equal((gcpRelayGate(gf(), {}) as { failureCode?: string }).failureCode, "RELAY_CONFIG_MISSING");
   assert.equal((gcpRelayGate(gf({ rdsIdentifier: null }), env) as { failureCode?: string }).failureCode, "RELAY_SOURCE_DB_UNKNOWN");
+  // 플랫폼 대역 없음: apply.ts 는 reason 만 남기므로 reason 글에 env 이름과 고칠 자리가 있고, missing·hint 칸도 같이 둔다
+  const cfg = gcpRelayGate(gf(), {}) as { reason: string; missing?: string[]; hint?: string };
+  assert.match(cfg.reason, /PLATFORM_EGRESS_CIDRS 가 없다/, "원래 글 그대로");
+  assert.match(cfg.reason, /worker-env.*PLATFORM_EGRESS_CIDRS/);
+  assert.deepEqual(cfg.missing, ["PLATFORM_EGRESS_CIDRS"]);
+  assert.match(cfg.hint!, /components\.worker\.secretKeys/);
+});
+
+test("GCP 중계기 만들기: db-secret.json 에 도착 DB 비밀번호가 없으면 중계기를 만들기 전에 RELAY_TARGET_DB_UNKNOWN + 빠진 키·Secret Manager 권한 안내", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gcp-secret-"));
+  const env = { TF_WORK_DIR: root } as NodeJS.ProcessEnv;
+  const j = { tenantId: T, migrationId: M };
+  const m = { id: M, status: "provisioning" as const, sourceEnvId: "s", targetEnvId: "t" };
+  const g = { kind: "go" as const, identifier: "shop-db", platformCidrs: ["198.51.100.7/32"], region: "ap-northeast-2", db: "shop", user: "shop_app" };
+  let borrowed = 0;
+  const f = newFake();
+  const none = await provisionGcpRelayStep(j, m, g, SQL, { env, aws: { exec: f.exec }, borrow: async (fn) => { borrowed++; return fn({ denied: [] }); } });
+  assert.equal(none.kind === "failed" && none.failureCode, "RELAY_TARGET_DB_UNKNOWN");
+  type Fix = { missing: string[]; hint: string; awsCode?: string };
+  const fixOf = (o: Awaited<ReturnType<typeof provisionGcpRelayStep>>) => (o.kind === "failed" ? o.detail : undefined) as Fix;
+  const d = fixOf(none);
+  assert.deepEqual(d.missing, ["db-secret.json: db_password", "db-secret.json: db_admin_password"]);
+  assert.match(d.hint, /secretmanager\.versions\.access/);
+  assert.equal(borrowed + f.calls.length, 0, "역할도 안 빌리고 aws 도 안 부른다");
+
+  // 비밀번호가 있으면 다음으로: 출발 역할 거부 → RELAY_ROLE_DENIED + 연결 스택 relay 정책 안내
+  const { mkdirSync } = await import("node:fs");
+  mkdirSync(join(root, M), { recursive: true });
+  writeFileSync(join(root, M, "db-secret.json"), JSON.stringify({ db_password: "x", db_admin_password: "y" }), { mode: 0o600 });
+  const denied = await provisionGcpRelayStep(j, m, g, SQL, { env, aws: { exec: f.exec },
+    borrow: async (fn) => fn({ denied: [{ side: "source", purpose: "operate", code: "ROLE_NO_CEILING" }] }) });
+  assert.equal(denied.kind === "failed" && denied.failureCode, "RELAY_ROLE_DENIED");
+  assert.deepEqual(fixOf(denied).missing, ["aws: svc-operate 인라인 정책 relay"]);
+  assert.match(fixOf(denied).hint, /aws-relay-statements\.json/);
+
+  // 빌렸지만 AWS 가 권한 거부 → 고칠 자리 + 원래 태그 안내를 뒤에 남긴다
+  const awsDenied = await provisionGcpRelayStep(j, m, g, SQL, { env,
+    aws: { exec: async () => ({ code: 254, stdout: "", stderr: "An error occurred (UnauthorizedOperation) when calling the DescribeDBInstances operation: no", ms: 1 }) },
+    borrow: async (fn) => fn({ awsEnv: { source: { AWS_CONFIG_FILE: "/dev/null" } }, denied: [] }) });
+  assert.equal(awsDenied.kind, "failed");
+  const ad = fixOf(awsDenied);
+  assert.equal(ad.awsCode, "UnauthorizedOperation");
+  assert.deepEqual(ad.missing, ["aws: svc-operate 인라인 정책 relay"]);
+  assert.match(ad.hint, /연결 스택.*relay/);
+  assert.match(ad.hint, /태그/, "원래 안내(만든 자원은 태그로 이어 감)도 남긴다");
+  rmSync(root, { recursive: true, force: true });
 });
 
 test("GCP 순서: terraform 앞에 플랫폼 대역을 작업 폴더에, 중계 IP 가 바뀔 때만 '다시 terraform', 재시도는 앞 실행 IP 를 품고 옛 IP 는 뺀다", async () => {

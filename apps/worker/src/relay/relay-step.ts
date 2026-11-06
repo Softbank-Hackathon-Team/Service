@@ -12,7 +12,7 @@ import { endpointFromRecord, ensureLoginRole, readTfFacts, withClient } from "@s
 import { latestAcceptedSpecV2, replicationEndpointsFor, upsertReplicationEndpoint, withTenant, type Tx } from "@svc/core";
 import { deriveSshHostKey, deriveSshKeypair, knownHostsLine, MIN_MASTER_KEY_LENGTH } from "../gitops/migration-secrets.js";
 import { withStepRoles, type StepRoles } from "../jobs/_roles.js";
-import type { MigrationRow } from "../jobs/_step.js";
+import type { MigrationRow, StopHint } from "../jobs/_step.js";
 import { realStsEnabled } from "../platform.js";
 import { latestOnpremEgressIp } from "./onprem-egress.js";
 import {
@@ -274,10 +274,40 @@ export async function teardownRelayStep(j: Job, m: Pick<MigrationRow, "id" | "so
 // 도착 관리자 비밀번호 = 실행기가 Secret Manager 에서 꺼내 이전 작업 폴더 db-secret.json 에 둔 값 (real-runner fetchSecret)
 export const GCP_TARGET_PASSWORD_REF = "tf:db_admin_password";
 
+// fail 의 missing·hint: 설정이 모자라 멈춘 경우의 고칠 자리 (apply 가 detail 에 펼친다. 지금 apply.ts 는 reason 만 쓰므로 reason 글에도 같은 안내를 넣는다)
 export type GcpRelayGate =
   | { kind: "skip"; reason: string }
-  | { kind: "fail"; failureCode: string; reason: string }
+  | ({ kind: "fail"; failureCode: string; reason: string } & Partial<StopHint>)
   | { kind: "go"; identifier: string; platformCidrs: string[]; region: string; db: string; user: string };
+
+// ── GCP 도착 중계기의 고칠 자리 (실패 코드마다 하나). 설정·권한이 모자란 경우만 ──
+const GCP_RELAY_FIX: Record<"egress" | "role_denied" | "no_cred" | "aws_denied" | "db_egress" | "db_ingress", StopHint> = {
+  egress: { missing: ["PLATFORM_EGRESS_CIDRS"],
+    hint: "worker-env 비밀(Secrets Manager platform/app JSON 의 PLATFORM_EGRESS_CIDRS, 차트 components.worker.secretKeys)에 워커 NAT 공인 IP 대역(/24 이상 좁게, 쉼표 목록)을 넣고 워커를 다시 띄운 뒤 다시 계획한다" },
+  role_denied: { missing: ["aws: svc-operate 인라인 정책 relay"],
+    hint: "출발 AWS 연결 스택(CloudFormation svc-connect-*)을 새 템플릿으로 업데이트해 svc-operate 에 중계기 정책(relay = infra/permissions/aws-relay-statements.json)을 붙이고, worker 이미지의 권한 파일에 같은 파일이 있는지 확인한 뒤 다시 계획·승인한다" },
+  no_cred: { missing: ["aws: svc-operate"],
+    hint: "출발 AWS 환경을 연결 링크(CloudFormation 연결 스택, ExternalId)로 연결했는지 확인한 뒤 다시 계획·승인한다" },
+  aws_denied: { missing: ["aws: svc-operate 인라인 정책 relay"],
+    hint: "출발 AWS 연결 스택을 새 템플릿으로 업데이트해 svc-operate 의 중계기 정책(relay)을 지금 판으로 맞춘 뒤 다시 계획·승인한다" },
+  db_egress: { missing: ["aws: 연결 스택 입력값 SourceDbSecurityGroupId"],
+    hint: "출발 AWS 연결 스택을 업데이트해 SourceDbSecurityGroupId 에 출발 RDS 보안 그룹을 넣거나, 고객이 그 보안 그룹에 중계기로 나가는 TCP 5432 를 직접 연 뒤 다시 계획·승인한다" },
+  db_ingress: { missing: ["aws: 연결 스택 입력값 SourceDbSecurityGroupId"],
+    hint: "출발 AWS 연결 스택을 새 템플릿으로 업데이트해 SourceDbSecurityGroupId 에 출발 RDS 보안 그룹을 넣거나, 고객이 그 보안 그룹에 중계기 VPC 대역에서 들어오는 TCP 5432 를 직접 연 뒤 다시 계획·승인한다" },
+};
+// db-secret.json 이 비었을 때 (missing 은 빠진 키에 따라 provisionGcpRelayStep 이 채운다)
+const DB_SECRET_HINT = "terraform apply 뒤 Secret Manager 에서 도착 DB 비밀번호를 못 꺼냈다(감사 terraform.secretFetched): 도착 svc-operate 에 DB 비밀 읽기 권한(gcp: secretmanager.versions.access, 고객이 infra/onboarding/gcp-connect.sh 재실행)이 있는지, 워커 TF_FETCH_DB_SECRET 을 끄지 않았는지 확인한 뒤 다시 계획·승인한다";
+const AWS_DENIED = /^(UnauthorizedOperation|AccessDenied)/;
+/** provisionGcpRelayStep 의 실패에 고칠 자리를 더한다 (apply 가 detail.relay 로 펼친다). 원래 detail.hint(태그 안내)는 뒤에 붙여 남긴다 */
+function withGcpRelayFix(f: Extract<RelayStepOutcome, { kind: "failed" }>, fix: StopHint | undefined): Extract<RelayStepOutcome, { kind: "failed" }> {
+  if (!fix) return f;
+  const before = typeof f.detail?.hint === "string" ? f.detail.hint : null;
+  return { ...f, detail: { ...f.detail, missing: fix.missing, hint: before ? `${fix.hint} / ${before}` : fix.hint } };
+}
+const relayErrorFix = (code: string, awsCode: unknown): StopHint | undefined =>
+  code === "RELAY_DB_EGRESS_DENIED" ? GCP_RELAY_FIX.db_egress
+    : code === "RELAY_DB_INGRESS_DENIED" ? GCP_RELAY_FIX.db_ingress
+    : AWS_DENIED.test(typeof awsCode === "string" ? awsCode : "") ? GCP_RELAY_FIX.aws_denied : undefined;
 
 /** GCP 도착 중계기를 만들 이전인가 (순수). 온프레 문(relayGate)과 같은 앞 조건, SSH·온프레 IP·마스터 키는 안 본다 */
 export function gcpRelayGate(f: RelayFacts, env: NodeJS.ProcessEnv): GcpRelayGate {
@@ -289,7 +319,11 @@ export function gcpRelayGate(f: RelayFacts, env: NodeJS.ProcessEnv): GcpRelayGat
   if (!f.rdsIdentifier) return { kind: "fail", failureCode: "RELAY_SOURCE_DB_UNKNOWN", reason: "명세의 postgres 에 출발 RDS 인스턴스 이름이 없다 (spec_v2.ids). 가져오기를 다시 하거나 RELAY_AUTO=0 으로 사람이 길을 낸다" };
   let platformCidrs: string[];
   try { platformCidrs = platformEgressCidrs(env.PLATFORM_EGRESS_CIDRS); }
-  catch (e) { return { kind: "fail", failureCode: (e as RelayError).code ?? "RELAY_CONFIG_MISSING", reason: (e as Error).message }; }
+  catch (e) {
+    // apply.ts 는 이 문의 reason 만 detail.error 로 남긴다 → 고칠 자리를 reason 글에도 붙인다 (missing·hint 칸은 apply 가 펼치면 보인다)
+    const fix = GCP_RELAY_FIX.egress;
+    return { kind: "fail", failureCode: (e as RelayError).code ?? "RELAY_CONFIG_MISSING", reason: `${(e as Error).message} → ${fix.hint}`, ...fix };
+  }
   const pg = f.postgres[0]!;
   return { kind: "go", identifier: f.rdsIdentifier, platformCidrs, region: f.sourceRegion || DEFAULT_REGION, db: pg.db, user: pg.user };
 }
@@ -319,19 +353,32 @@ export type GcpRelayProvisioned = { kind: "ok"; res: RelayResources; rds: RelayS
 export async function provisionGcpRelayStep(j: Job, m: MigrationRow, g: Extract<GcpRelayGate, { kind: "go" }>, cloudSql: CloudSqlPeer,
   deps: Omit<RelayStepDeps, "facts" | "save"> = {}): Promise<GcpRelayProvisioned> {
   const env = deps.env ?? process.env;
+  // 도착 DB 비밀번호 둘(앱 로그인 역할 = db_password, 워커가 붙는 관리자 = db_admin_password)은 terraform apply 가 db-secret.json 에 꺼내 둔다.
+  //   예전엔 끝점 줄을 쓰고 ensureTargetAppLogin 에서야 없음을 알았고, apply.ts 가 그걸 TARGET_APP_LOGIN_FAILED(네트워크 안내)로 남겼다.
+  //   중계기를 만들기 전에 RELAY_TARGET_DB_UNKNOWN 으로 멈춘다 (apply.ts 는 relay.failureCode 를 그대로 쓴다)
+  const facts = readTfFacts(j.migrationId, env);
+  const noSecret = (["db_password", "db_admin_password"] as const).filter((k) => !facts[k]);
+  if (noSecret.length)
+    return { kind: "failed", failureCode: "RELAY_TARGET_DB_UNKNOWN",
+      reason: `이전 작업 폴더 db-secret.json 에 도착 DB 비밀번호(${noSecret.join("·")})가 없다 (apply 의 비밀 꺼내기 실패)`,
+      detail: { missing: noSecret.map((k) => `db-secret.json: ${k}`), hint: DB_SECRET_HINT } satisfies StopHint };
   const borrow = deps.borrow ?? (<T>(fn: (r: StepRoles) => Promise<T>) => withStepRoles("relay", j, m, fn));
   return borrow(async (roles): Promise<GcpRelayProvisioned> => {
     const cred = roles.awsEnv?.source;
     if (!cred) return { kind: "failed", failureCode: "RELAY_ROLE_DENIED", reason: roles.denied.length
       ? `출발 실행 역할(중계기 세션 정책)을 못 빌렸다: ${roles.denied.map((x) => x.code).join(",")} (infra/permissions/aws-relay-statements.json 을 svc-operate 에 붙였는지)`
-      : "출발 실행 역할 자격이 없다 (출발 환경이 AWS 인지, 연결이 끝났는지)" };
+      : "출발 실행 역할 자격이 없다 (출발 환경이 AWS 인지, 연결이 끝났는지)",
+      detail: { ...(roles.denied.length ? GCP_RELAY_FIX.role_denied : GCP_RELAY_FIX.no_cred) } };
     const d: RelayAwsDeps = { env: envFor(cred, env), region: g.region, ...(roles.signal ? { signal: roles.signal } : {}), ...deps.aws };
     try {
       const rds = await discoverRelaySource(d, g.identifier);
       const [net, ami] = await Promise.all([discoverRelayNetwork(d, rds.vpcId), resolveRelayAmi(d)]);
       const res = await provisionRelay(d, buildRelayPlan({ kind: "aws-gcp", migrationId: j.migrationId, rds, network: net, ami, platformEgressCidrs: g.platformCidrs, cloudSql }));
       return { kind: "ok", res, rds, subnetId: net.subnetId };
-    } catch (e) { return relayFailure(e, { rdsIdentifier: g.identifier }) as Extract<RelayStepOutcome, { kind: "failed" }>; }
+    } catch (e) {
+      const f = relayFailure(e, { rdsIdentifier: g.identifier }) as Extract<RelayStepOutcome, { kind: "failed" }>;
+      return withGcpRelayFix(f, relayErrorFix(f.failureCode, f.detail?.awsCode));
+    }
   });
 }
 
