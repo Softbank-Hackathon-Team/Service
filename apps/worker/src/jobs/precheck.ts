@@ -14,6 +14,7 @@ import { TARGET_ACCOUNT_SQL } from "./target-account.js";
 import { agentStaleSec } from "./verify-connection.js";
 import { relayApplies, relayKindOf } from "../relay/relay-step.js";
 import { gcpAwsRelayPrecheck } from "../relay/gcp-aws.js";
+import { gcpOnpremRelayPrecheck } from "../relay/gcp-relay.js";
 import { chooseEnvLayerSource, readInventoryFacts, type InventoryFacts } from "../env-layer.js";
 import { permissionPrecheck } from "../permission-gate.js";
 
@@ -99,9 +100,9 @@ export async function realPrecheck(tenantId: string, m: MigrationRow, deps: Part
   const envs = await envInfo(tenantId, m, env);
   // 중계기가 끝점을 만들 이전인가 (apply 의 중계기 문과 같은 앞 조건: relayApplies + 온프레면 pull 모드)
   const relayFacts = { sourceProvider: envs.source.provider, sourceExternalId: envs.source.externalId ?? null, targetProvider: envs.target.provider,
-                       targetExternalId: envs.target.externalId ?? null };
+                       targetExternalId: envs.target.externalId ?? null, sourceAccountId: envs.source.accountId ?? null, targetAccountId: envs.target.accountId ?? null };
   const relayDeferred = relayApplies(relayFacts, env) === null
-    && (!["aws-onprem", "onprem-aws"].includes(relayKindOf(relayFacts.sourceProvider, relayFacts.targetProvider) ?? "") || env.ONPREM_FLOOR_VIA_GIT !== "0");
+    && (!["aws-onprem", "onprem-aws", "gcp-onprem", "onprem-gcp"].includes(relayKindOf(relayFacts.sourceProvider, relayFacts.targetProvider) ?? "") || env.ONPREM_FLOOR_VIA_GIT !== "0");
   // 이 이전의 끝점 줄이 있으면 sync 는 env 가 아니라 그 줄로 붙는다 (_repl.ts) → env 주소로 출발 DB 를 보지 않는다
   const endpointRows = (await withTenant(tenantId, (tx) => replicationEndpointsFor(tx, m.id))).some((r) => r.tenantId === tenantId);
   const [db, repl, runtime] = await Promise.all([sourceDbFacts(endpointRows ? {} : env), replSourcePrecheck(env, { required, relayDeferred, endpointRows }), specRuntime(tenantId, m.id)]);
@@ -111,8 +112,11 @@ export async function realPrecheck(tenantId: string, m: MigrationRow, deps: Part
   const link = appLinkPrecheck(env, { terraformRuntime: runtime, targetProvider: envs.target.provider });
   // AWS 도착 사실(VPC·서브넷)과 GCP → AWS 중계기 길을 승인 전에 본다 (apply 의 TARGET_FACTS_UNAVAILABLE·중계기 멈춤을 앞당김)
   const tf = envs.target.provider === "aws" && !iacMockEnabled(env) ? await awsTargetFactsPrecheck(tenantId, m.targetEnvId, env) : { items: [], vpcId: null };
-  const relay = relayKindOf(envs.source.provider, envs.target.provider) === "gcp-aws"
-    ? (await gcpAwsRelayPrecheck({ tenantId, migrationId: m.id }, m, roles, env, { targetVpcId: tf.vpcId })).map((i) => PrecheckItem.parse(i)) : [];
+  const kind = relayKindOf(envs.source.provider, envs.target.provider);
+  const relay = kind === "gcp-aws"
+    ? (await gcpAwsRelayPrecheck({ tenantId, migrationId: m.id }, m, roles, env, { targetVpcId: tf.vpcId })).map((i) => PrecheckItem.parse(i))
+    : kind === "gcp-onprem" || kind === "onprem-gcp"
+      ? (await gcpOnpremRelayPrecheck({ tenantId, migrationId: m.id }, m, roles, env)).map((i) => PrecheckItem.parse(i)) : [];
   return [...toPrecheckItems(checks).map((i) => PrecheckItem.parse(i)), ...repl, ...link, ...tf.items, ...relay];
 }
 

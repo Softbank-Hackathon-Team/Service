@@ -290,7 +290,9 @@ const GOOD = { REPL_SECRET_MASTER_KEY: MK, PLATFORM_EGRESS_CIDRS: "198.51.100.7/
 test("단계 문: 시드 환경·출발 AWS 아님·명세 postgres 없음·push 모드는 건너뜀 (아무것도 안 부름)", async () => {
   assert.deepEqual(relayGate(facts({ sourceExternalId: null }), GOOD), { kind: "skip", reason: "source_creds_mock" });
   assert.deepEqual(relayGate(facts(), { ...GOOD, REAL_STS: "0" }), { kind: "skip", reason: "source_creds_mock" });
-  assert.deepEqual(relayGate(facts({ sourceProvider: "gcp" }), GOOD), { kind: "skip", reason: "no_relay_route" });
+  assert.deepEqual(relayGate(facts({ sourceProvider: "azure_mock" }), GOOD), { kind: "skip", reason: "no_relay_route" });
+  // GCP 출발은 이 AWS 중계기 문을 지나 GCE 중계기로 간다 (apply 가 not_onprem_relay 를 보고 relay/gcp-relay.ts 를 부른다)
+  assert.deepEqual(relayGate(facts({ sourceProvider: "gcp", sourceAccountId: "src-proj-1" }), GOOD), { kind: "skip", reason: "not_onprem_relay" });
   assert.deepEqual(relayGate(facts({ postgres: [] }), GOOD), { kind: "skip", reason: "no_postgres" });
   assert.deepEqual(relayGate(facts(), { ...GOOD, ONPREM_FLOOR_VIA_GIT: "0" }), { kind: "skip", reason: "not_pull_mode" });
   assert.deepEqual(relayGate(facts(), { ...GOOD, RELAY_AUTO: "0" }), { kind: "skip", reason: "relay_auto_off" });
@@ -300,13 +302,16 @@ test("단계 문: 시드 환경·출발 AWS 아님·명세 postgres 없음·push
   assert.deepEqual(out, { kind: "skipped", reason: "source_creds_mock" });
   assert.equal(borrowed, 0, "역할도 안 빌림");
   assert.deepEqual(await teardownRelayStep({ tenantId: T, migrationId: M }, { id: M, sourceEnvId: "x", targetEnvId: "y" },
-    { env: GOOD, facts: facts({ sourceProvider: "gcp" }) }), { kind: "skipped", reason: "no_relay_route" });
+    { env: GOOD, facts: facts({ sourceProvider: "gcp", targetProvider: "gcp" }) }), { kind: "skipped", reason: "no_relay_route" });
 });
 
 test("중계기 종류 표: (출발, 도착) 짝만 본다. 표에 없는 짝은 중계기 없음", () => {
   assert.equal(relayKindOf("aws", "onprem"), "aws-onprem");
   assert.equal(relayKindOf("aws", "gcp"), "aws-gcp");
-  for (const [s, t] of [["gcp", "onprem"], ["aws", "aws"], ["onprem", "gcp"], [null, "gcp"], ["aws", null]] as const) assert.equal(relayKindOf(s, t), null, `${s}->${t}`);
+  // GCP ↔ 온프레는 GCE 중계기 (relay/gcp-relay.ts, relay-gcp-onprem.test.ts)
+  assert.equal(relayKindOf("gcp", "onprem"), "gcp-onprem");
+  assert.equal(relayKindOf("onprem", "gcp"), "onprem-gcp");
+  for (const [s, t] of [["aws", "aws"], ["gcp", "gcp"], [null, "gcp"], ["aws", null]] as const) assert.equal(relayKindOf(s, t), null, `${s}->${t}`);
 });
 
 // ── GCP 도착 (aws-gcp) ──────────────────────────────────────────────────────────────
