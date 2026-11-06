@@ -46,11 +46,13 @@ class SyncPermanentError extends Error {
 // Z77 (Z62 주제 60): 도착 DB 의 복제 권한·설정(wal_level DB-01, 슬롯·walsender DB-02, REPLICATION DB-04) 실패는 DEST_REPL_PRIVILEGE.
 //   맥 실측(00:01Z): Cloud SQL app 에 REPLICATION 이 없어 전환 C5 뒤에 깨졌다 → 복제를 걸기 전 sync 첫 점검에서 paused 로 멈춘다
 // 앱 계정이 관리자 역할을 물려받음(DB-08)은 REPL_APP_ROLE_UNFENCEABLE → 컷오버 울타리가 안 먹을 것이 복제 전에 보인다
+// 관리자가 DB 주인 역할이 아님(DB-09, ADR-029)은 REPL_DB_OWNER_MISMATCH → 컷오버 C5 의 "must be owner of database" 가 복제 전에 보인다
 export const precheckFailureCode = (failed: { id: string; side?: string }[]) =>
   failed.some((c) => c.id.startsWith("NET-TLS")) ? "REPL_TLS_REQUIRED"
   : failed.some((c) => c.side === "target" && ["DB-01", "DB-02", "DB-04"].includes(c.id)) ? "DEST_REPL_PRIVILEGE"
   : failed.some((c) => c.id === "DB-T4") ? "REPL_TARGET_SCHEMA_MISSING"
-  : failed.some((c) => c.id === "DB-08") ? "REPL_APP_ROLE_UNFENCEABLE" : "SYNC_FAILED";
+  : failed.some((c) => c.id === "DB-08") ? "REPL_APP_ROLE_UNFENCEABLE"
+  : failed.some((c) => c.id === "DB-09") ? "REPL_DB_OWNER_MISMATCH" : "SYNC_FAILED";
 
 // DB 논리 복제(CDC) 따라잡기. syncing → shifting
 // 복제 지연이 기준 아래로 내려와야 트래픽을 옮긴다 (컷오버 전 관문 T21)

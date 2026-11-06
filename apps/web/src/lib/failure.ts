@@ -106,6 +106,7 @@ const RULES: Rule[] = [
   { match: /^REPL_SOURCE_UNREACHABLE$/, kind: "step", label: t('출발 DB에 못 닿음'), title: t('출발 DB에\n닿지 못했습니다'), hint: t('출발 DB 주소와 포트(중계기 입구 포함)로 다시 시도해도 연결되지 않아 DB 복제를 멈췄습니다.') },
   { match: /^REPL_TARGET_UNREACHABLE$/, kind: "step", label: t('도착 DB에 못 닿음'), title: t('도착 DB에\n닿지 못했습니다'), hint: t('도착 DB 주소와 포트로 다시 시도해도 연결되지 않아 DB 복제를 멈췄습니다.') },
   // replication precheck DB-08: 앱 계정이 superuser·pg_write_all_data·rds_superuser 등을 물려받아 컷오버 울타리(REVOKE)가 쓰기를 못 막음 → sync paused
+  { match: /^REPL_DB_OWNER_MISMATCH$/, kind: "step", label: t('DB 주인 불일치'), title: t('이전 계정이 DB 주인\n권한을 갖지 못했습니다'), hint: t('도착(또는 출발) DB의 실제 주인과 이전 계정이 물려받는 주인 역할이 달라 컷오버 때 DB 설정을 바꿀 수 없습니다. 복제를 걸기 전에 멈췄습니다. 처음 이전하는 도착이면 DB를 비우고 주인을 명세의 앱 계정으로 맞춘 뒤 다시 시작합니다.') },
   { match: /^REPL_APP_ROLE_UNFENCEABLE$/, kind: "step", label: t('앱 계정이 관리자 권한'), title: t('앱 계정의 쓰기를\n막을 수 없습니다'), hint: t('앱이 관리자 권한을 물려받은 계정으로 DB에 붙어 있어 컷오버 때 출발 DB 쓰기를 막을 수 없습니다. 복제를 걸기 전에 멈췄습니다. 앱 전용 계정(표·시퀀스 권한만 직접 받은 계정)으로 바꿔야 합니다.') },
   { match: /^RELAY_TARGET_DB_UNKNOWN$/, kind: "step", label: t('도착 DB 주소 모름'), title: t('도착 DB의 공개 주소를\n찾지 못했습니다'), hint: t('도착 Cloud SQL 의 공개·나가는 주소나 관리자 계정이 자원 생성 결과에 없어 DB 중계기를 잇지 않았습니다.') },
   { match: /^TARGET_APP_LOGIN_FAILED$/, kind: "step", label: t('도착 앱 계정 못 만듦'), title: t('도착 DB에 앱 계정을\n만들지 못했습니다'), hint: t('플랫폼이 도착 DB에 관리자로 붙어 앱 계정을 만들다 실패했습니다. 도착 DB 접속 허용 주소와 관리자 비밀을 확인해야 합니다.') },
