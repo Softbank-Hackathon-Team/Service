@@ -1,12 +1,13 @@
 import { DeployResult, MigrationJob, QUEUES, type AppSpecV2, type InfraReady, type PlanDoc, type Provider, type RehearsalEvidence, type ReplicationEndpoint, type ReplicationSealedMaterial } from "@svc/contracts";
 import { asFailureCode, latestAcceptedSpecV2, recordReplicationDelivery, replicationEndpointsFor, replicationSealedMaterialFor, scrubString, withTenant } from "@svc/core";
-import { checkTerraformRuntime, envFor, factsFromEnv, iacMockEnabled, specV2ForPlan, terraformRuntimeOf, type RuntimeHealthDeps, type TerraformRuntime } from "@svc/adapters";
-import { nextJob, runStep, stubWait, stubFailIfAsked, type StepOutcome } from "./_step.js";
+import { checkTerraformRuntime, envFor, factsFromEnv, gcpEnvFor, iacMockEnabled, specV2ForPlan, terraformRuntimeOf, type RuntimeHealthDeps, type TerraformRuntime } from "@svc/adapters";
+import { nextJob, runStep, stubWait, stubFailIfAsked, type MigrationRow, type StepOutcome } from "./_step.js";
 import { withStepRoles, type StepRoles } from "./_roles.js";
 import { loadInfraReady, loadPlanById } from "./plan-store.js";
 import { approvedValues, configFromEnv, decideDelivery, deployToGitops, envFacts, filledValues, fillPlaceholders, GitopsError, GitopsRepo, type DeployInput } from "../gitops/index.js";
 import { latestSealingCert } from "../gitops/sealing-cert.js";
 import { checkSecretValues } from "../gitops/secret-values.js";
+import { realStsEnabled } from "../platform.js";
 import { syncWatcherFor } from "../gitops/agent-watch.js";
 import { TARGET_ACCOUNT_SQL } from "./target-account.js";
 import { recordSkip, rehearsalGate, type Gate } from "../rehearsal/gate.js";
@@ -102,7 +103,7 @@ export async function handleDeploy(raw: unknown) {
         }
         try {
           // APP-20: 커밋 전에 도착 비밀 그릇에 값이 들었나 (흉내 IaC 면 그릇이 없으니 안 본다)
-          const sv = await secretValuesGate(input);
+          const sv = await borrowedSecretGate(j, m, input);
           if (sv) return sv;
         } catch (e) { return gitopsPaused(e); }
         // 리허설 문: 커밋할 바이트를 vCluster 에 먼저 올린다. 기다리는 동안은 RetryLater, 실패면 paused(REHEARSAL_*).
@@ -173,16 +174,33 @@ export async function replicationDeliveryStep(j: MigrationJob, input: DeployInpu
 //   시험이 CLI 를 가짜로 바꾼다
 let secretExec: Parameters<typeof checkSecretValues>[1] | undefined;
 export const setSecretValueExec = (e: typeof secretExec) => { secretExec = e; };
-export async function secretValuesGate(i: DeployInput): Promise<StepOutcome | null> {
+const checksSecrets = (p: string) => (p === "aws" || p === "gcp") && (!iacMockEnabled() || !!secretExec);
+/** 도착 비밀 저장소는 고객 계정에 있다. 빌린 자격이 있으면 worker 자기 자격을 지우고 그것만 쓴다. 없으면(흉내) 그대로 */
+export function targetCliEnv(roles: Pick<StepRoles, "awsEnv" | "gcpToken">, projectId: string | null | undefined, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv | undefined {
+  if (roles.awsEnv?.target) return envFor(roles.awsEnv.target, base);
+  if (roles.gcpToken?.target) return gcpEnvFor(roles.gcpToken.target, projectId ?? "", base);
+  return undefined;
+}
+async function borrowedSecretGate(j: MigrationJob, m: MigrationRow, i: DeployInput): Promise<StepOutcome | null> {
+  if (!checksSecrets(i.target.provider)) return null;
+  return withStepRoles("secret_check", j, m, (roles) => {
+    const env = targetCliEnv(roles, i.target.accountId);
+    // 실환경에서 고객 자격을 못 빌렸으면 worker 자기 자격으로 보지 않는다 (엉뚱한 계정을 보고 틀린 답을 낸다). 로컬·시험(REAL_STS=0)은 프로세스 자격
+    if (!env && realStsEnabled() && !secretExec) return Promise.resolve<StepOutcome>({ to: "paused", failureCode: "SECRET_VALUES_UNKNOWN",
+      detail: { deploy: { error: "SECRET_VALUES_UNKNOWN", reason: "도착 실행 역할을 못 빌려 비밀 그릇을 확인하지 못함 → 연결을 확인하고 재개", denied: roles.denied } } });
+    return secretValuesGate(i, env);
+  });
+}
+export async function secretValuesGate(i: DeployInput, env?: NodeJS.ProcessEnv): Promise<StepOutcome | null> {
   const p = i.target.provider;
-  if ((p !== "aws" && p !== "gcp") || (iacMockEnabled() && !secretExec)) return null;
+  if ((p !== "aws" && p !== "gcp") || !checksSecrets(p)) return null;
   // 원격 키는 회사 번호(<env:tenantId>)만 채우면 정해진다. tf 출력 자리표시가 빠진 건 deployToGitops 가 따로 막는다
   const named = fillPlaceholders(approvedValues(i), { tf: {}, env: envFacts(i) }).values;
   const secrets = ((named.externalSecrets as { secrets?: Array<{ name: string; remoteKey: string }> } | undefined)?.secrets ?? []);
   if (!secrets.length) return null;
   const r = await checkSecretValues({ provider: p, keys: secrets.map((s) => s.remoteKey), projectId: i.target.accountId,
     // 도착 리전: "default" 면 adapters regionOf 와 같은 서울 리전 (DECISION(team) 10/31)
-    region: i.target.region && i.target.region !== "default" ? i.target.region : "ap-northeast-2" }, secretExec);
+    region: i.target.region && i.target.region !== "default" ? i.target.region : "ap-northeast-2", ...(env ? { env } : {}) }, secretExec);
   if (r.ok) return null;
   const code = r.missing.length ? "SECRET_VALUES_MISSING" : "SECRET_VALUES_UNKNOWN";
   return { to: "paused", failureCode: code, detail: { deploy: { error: code,
@@ -229,7 +247,7 @@ async function terraformRuntimeLoad(tx: Tx, infra: InfraReady, m: { id: string; 
  *  흉내 길(MOCK_IAC=1)은 출력만 본다. 진짜 길은 읽기 CLI (프로세스·실행 역할 env 의 자격, 코드엔 없음).
  *  못 뜨면 paused (paused → deploying 재개 가능, 트래픽 0%·컷오버 전이라 출발이 그대로 주인) */
 async function deployTerraformRuntime(j: MigrationJob, l: Loaded & { runtime: TerraformRuntime; spec: AppSpecV2; env: NonNullable<Loaded["env"]> },
-  rehearsal: RehearsalEvidence, roles?: Pick<StepRoles, "awsEnv">): Promise<StepOutcome> {
+  rehearsal: RehearsalEvidence, roles?: Pick<StepRoles, "awsEnv" | "gcpToken">): Promise<StepOutcome> {
   await stubFailIfAsked(j, "deploy");
   const gitops = { skipped: "terraform_runtime", runtime: l.runtime };
   const facts = factsFromEnv(process.env);
@@ -237,7 +255,7 @@ async function deployTerraformRuntime(j: MigrationJob, l: Loaded & { runtime: Te
     provider: l.env.provider, runtime: l.runtime, spec: l.spec, tfOutputs: l.infra.tfOutputs ?? {},
     // 도착 프로젝트 = 환경 표(A안 gcp_target_project). 워커 TF_FACT_PROJECT_ID 는 그게 없을 때만 (apply·plan 의 사실 규칙과 같음)
     live: !iacMockEnabled(), projectId: l.env.accountId ?? facts.projectId ?? null,   // region = 계획과 같은 "default" 규칙 (checkTerraformRuntime)
-  }, { ...runtimeHealthDeps, ...(roles?.awsEnv?.target && !runtimeHealthDeps.env ? { env: envFor(roles.awsEnv.target) } : {}) });
+  }, { ...runtimeHealthDeps, ...(roles && !runtimeHealthDeps.env && targetCliEnv(roles, l.env.accountId) ? { env: targetCliEnv(roles, l.env.accountId)! } : {}) });
   if (!h.ok)
     return { to: "paused", failureCode: h.code, detail: { deploy: { error: h.code, reason: scrubString(h.reason), resources: h.resources, attempts: h.attempts }, gitops, rehearsal: { skipped: rehearsal } } };
   const result = DeployResult.parse({ bundleHash: `tf-${l.infra.planId.slice(0, 8)}`, status: "synced_healthy", resources: h.resources });

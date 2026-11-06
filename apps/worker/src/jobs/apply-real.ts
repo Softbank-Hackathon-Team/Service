@@ -118,7 +118,7 @@ export async function realApply(i: RealApplyInput, d: RealApplyDeps = {}): Promi
   let vars = p.vars;
   if (!imp && dbWriterApplies(env, i.provider, i.spec, !!terraformRuntimeOf(i.spec))) {
     try {
-      const w = await prepareSourceWriter({ env: d.gcpCred ? gcpTerraformEnv(d.gcpCred, env) : env, provider: i.provider as ManagedProvider, spec: i.spec, tenantId: i.tenantId, tenant: tenantSlug(i.tenantId),
+      const w = await prepareSourceWriter({ env: runnerOpts(d, env).env, provider: i.provider as ManagedProvider, spec: i.spec, tenantId: i.tenantId, tenant: tenantSlug(i.tenantId),
         migrationId: i.migrationId, target: p.target, projectId: i.provider === "gcp" ? i.accountId ?? facts.projectId : undefined,
         region: typeof vars.region === "string" ? vars.region : undefined, put: d.putSecret });
       vars = { ...vars, db_writer_json: w.var };
