@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  ackPlaces, ackState, approveLabel, canPick, canReplan, canRollback, failureChoices, formatClock, judgementRows, leftoversOf, leftoverValue, migrationSteps, needsStepAnchor, stepsPhase,
+  ackPlaces, ackState, ackSubject, approveLabel, canPick, canReplan, canRollback, failureChoices, formatClock, judgementRows, leftoversOf, leftoverValue, migrationSteps, needsStepAnchor, stepsPhase,
   pollMs, screenOf, shiftNote, signalCovers, specRows, stepAnchorFrom, stepGate, trafficPercent, trafficReportRows,
 } from "../src/features/migration/model";
 import { planResourceRows, runtimeChangeNote, specSubstituteRows, substituteRows, type ResourceRow } from "../src/lib/resourceMap";
@@ -233,6 +233,19 @@ test("승인 확인 항목: 다 체크해야 승인, 버튼은 남은 수를 말
   const old = ackState(undefined, new Set());
   assert.equal(old.ready, true);
   assert.deepEqual(old.ids, []);
+});
+
+test("승인 확인 항목: 같은 종류 자원 줄이 여럿이어도 자원 이름으로 구별된다 (점검 id·비용 줄엔 이름 없음)", () => {
+  // 진짜 API 의 AWS → 온프레 계획서: 실행 방식 바뀜 세 줄의 글이 모두 "managedContainer → k8s"
+  const acks: PlanAcknowledgement[] = [
+    { id: "cost", kind: "cost", text: "예상 월 비용" },
+    { id: "precheck_warn:PC-V2-DATA-1", kind: "precheck_warn", text: "WARN 데이터 자원", ref: "PC-V2-DATA-1" },
+    { id: "runtime_change:shop-api", kind: "runtime_change", text: "managedContainer → k8s", ref: "shop-api" },
+    { id: "runtime_change:shop-web", kind: "runtime_change", text: "managedContainer → k8s", ref: "shop-web" },
+    { id: "public_bucket:uploads", kind: "public_bucket", text: "공개 버킷", ref: "uploads" },
+    { id: "env_layer_create", kind: "env_layer_create", text: "도착 GKE 를 새로 만듭니다", ref: "gcp/env" },
+  ];
+  assert.deepEqual(acks.map(ackSubject), [null, null, "shop-api", "shop-web", "uploads", null]);
 });
 
 const resRow = (over: Partial<ResourceRow>): ResourceRow => ({
