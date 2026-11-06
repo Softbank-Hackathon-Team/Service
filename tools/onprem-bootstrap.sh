@@ -6,7 +6,7 @@
 #   1) 설치 파일(차트·고정 yaml·설치 스크립트)을 플랫폼에서 받아 sha256 대조
 #   2) gitops 읽기 전용 배포 키를 이 서버에서 만든다 (비밀 반쪽은 이 서버·클러스터 밖으로 안 나간다)
 #   3) 일회용 등록 토큰으로 등록: Agent 키 + 회사 전용 gitops 레포 주소 + 지표 주소·토큰을 받는다 (공개 키만 보낸다)
-#   4) tools/onprem-install.sh 로 Argo CD core·봉인 컨트롤러·CNPG(없을 때만)·Agent 를 깐다
+#   4) tools/onprem-install.sh 로 Argo CD core·봉인 컨트롤러·CNPG·External Secrets(없을 때만)·Agent 를 깐다
 # 다시 돌려도 된다: 이미 등록된 서버(상태 폴더에 키가 있음)면 등록을 건너뛰고 설치만 다시 맞춘다.
 #   다른 환경으로 다시 등록하려면 SVC_REENROLL=1 + 새 토큰
 # 전제: 이 서버에서 kubectl 이 클러스터 관리자로 붙는다 (k3s 면 sudo 또는 KUBECONFIG=/etc/rancher/k3s/k3s.yaml).

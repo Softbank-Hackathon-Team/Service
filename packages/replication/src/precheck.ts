@@ -207,14 +207,19 @@ async function serverChecks(c: pg.Client, e: Endpoint, side: "source" | "target"
   //   (pg_write_all_data, RDS rds_superuser, Cloud SQL cloudsqlsuperuser, Azure azure_pg_admin)을 물려받으면 REVOKE 뒤에도 쓸 수 있어
   //   컷오버가 FENCE_INEFFECTIVE 로 매번 되돌려진다. 2026-11-06 실제 RDS: 앱 계정 = 마스터(rds_superuser → pg_write_all_data) → 컷오버 2회 실패.
   //   DRAFT(ai): block. 복제를 걸기 전(sync 첫 점검)에 멈춰 고객이 앱 전용 계정으로 바꾸게 한다 (복제·컷오버까지 갔다가 되돌리는 것보다 싸다)
+  //   DRAFT(ai): Cloud SQL cloudsqlsuperuser 는 이름만으로 막지 않는다. 그 역할 자체는 남의 표 쓰기를 주지 않는다 (진짜 superuser 아님).
+  //     2026-11-07 GCP → 온프레 실측: API 로 만든 앱 계정 app 은 cloudsqlsuperuser 만 물려받고 pg_write_all_data 는 없었는데 여기서 멈췄다.
+  //     그 역할이 pg_write_all_data 를 거쳐 쓰기를 주면 위 목록의 pg_write_all_data 로 여전히 막고, 남은 길은 컷오버 C2 의 실제 쓰기 점검(FENCE_INEFFECTIVE)이 잡는다
   if (app.rowCount === 1) {
-    const f = (await c.query<{ su: boolean; via: string[] }>(
+    const f = (await c.query<{ su: boolean; via: string[]; csql: boolean }>(
       `SELECT r.rolsuper su,
-              ARRAY(SELECT g FROM unnest(ARRAY['pg_write_all_data','rds_superuser','cloudsqlsuperuser','azure_pg_admin']) g
-                     WHERE to_regrole(g) IS NOT NULL AND pg_has_role(r.oid, g::regrole, 'USAGE') ORDER BY 1) via
+              ARRAY(SELECT g FROM unnest(ARRAY['pg_write_all_data','rds_superuser','azure_pg_admin']) g
+                     WHERE to_regrole(g) IS NOT NULL AND pg_has_role(r.oid, g::regrole, 'USAGE') ORDER BY 1) via,
+              COALESCE(pg_has_role(r.oid, to_regrole('cloudsqlsuperuser'), 'USAGE'), false) csql
          FROM pg_roles r WHERE r.rolname = $1`, [e.appRole])).rows[0]!;
     add({ id: "DB-08", side, ok: !f.su && f.via.length === 0,
-      detail: f.su ? `app role ${e.appRole} is superuser` : f.via.length ? `app role ${e.appRole} inherits ${f.via.join(", ")}` : `app role ${e.appRole} has direct grants only`,
+      detail: f.su ? `app role ${e.appRole} is superuser` : f.via.length ? `app role ${e.appRole} inherits ${f.via.join(", ")}`
+        : f.csql ? `app role ${e.appRole} inherits cloudsqlsuperuser only (no write-all; cutover fence checks writes)` : `app role ${e.appRole} has direct grants only`,
       hint: `앱이 관리자 계정(마스터 등)으로 붙으면 컷오버 때 쓰기를 막을 수 없다. 앱 전용 계정(LOGIN, 표·시퀀스 권한만 직접 GRANT)을 만들어 앱이 그 계정으로 붙게 하고, 명세 appUser 를 그 계정으로 바꾼다` });
   }
   // DB-09 (ADR-029): 전환은 DB 단위 설정(ALTER DATABASE … default_transaction_read_only)을 바꾼다 → 관리자가 DB 주인이거나 주인 역할을 물려받아야 한다.

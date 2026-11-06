@@ -2,6 +2,9 @@
 # 고객 온프레 k3s 에 설치 묶음(W2)을 까는 스크립트. 고객 서버에서 사람이 돌린다 (플랫폼이 원격으로 돌리지 않는다)
 #   1) Argo CD core v2.13.3 (레포에 고정한 파일, sha256 확인 뒤 server-side apply. 인터넷에서 직접 apply 하지 않는다)
 #   1c) CNPG 운영자 1.30.1 (레포에 고정한 파일, sha256 확인). 이미 있으면(CRD clusters.postgresql.cnpg.io) 건너뛴다. INSTALL_CNPG=0 이면 안 깐다
+#   1d) External Secrets 운영자 2.14.0 (레포에 고정한 helm 차트 tgz, sha256 확인). 이미 있으면(CRD externalsecrets.external-secrets.io) 건너뛴다.
+#       INSTALL_ESO=0 이면 안 깐다. 앱 비밀(ExternalSecret)이 이 운영자를 쓴다. 없으면 Argo 동기화가 "synchronization tasks are not valid" 로 멈춘다 (2026-11-07 실측)
+#       비밀 저장소(ClusterSecretStore, 이름은 플랫폼 기본 vault 또는 env 출력 secret_store_name)는 고객이 고른다 (TODO(human): 온프레 기본 저장소)
 #   1b) 봉인 컨트롤러 sealed-secrets v0.40.0 (레포에 고정한 파일, sha256 확인). DB 이전 비밀(전용 계정·터널 키·인증서)을
 #       플랫폼이 이 컨트롤러의 공개 인증서로 봉인해 git 으로 보낸다 (ADR-019). 없으면 배포가 SEALING_CERT_MISSING 으로 멈춘다
 #   2) Agent 키 Secret (onprem-agent --enroll 이 만든 키 파일에서. 값을 화면·helm 기록에 남기지 않는다)
@@ -35,6 +38,8 @@ SEALED_YAML=tools/sealed-secrets-controller-v0.40.0.yaml
 SEALED_SHA=ac8aabccdd9110430d117501705818115b2ab0993700a9c118d4d42cf4015a17   # github.com/bitnami-labs/sealed-secrets 릴리스 v0.40.0 controller.yaml
 CNPG_YAML=tools/cnpg-1.30.1.yaml
 CNPG_SHA=37237f145d8138256ea25ae830f87759255665ff08f8d552fdd8224a5ec032fb   # github.com/cloudnative-pg/cloudnative-pg 릴리스 v1.30.1 cnpg-1.30.1.yaml (2026-11-06 받음)
+ESO_TGZ=tools/external-secrets-2.14.0.tgz
+ESO_SHA=0a6d9e91b1ff50adfdbf24b50b582babfa7c5b7df42b21974ca4b3fb88ee5e34   # github.com/external-secrets/external-secrets 릴리스 helm-chart-2.14.0 (2026-11-07 받음, 플랫폼 EKS 와 같은 판)
 NS=svc-agent
 die() { echo "onprem-install: $*" >&2; exit 1; }
 need() { [ -n "${!1:-}" ] || die "$1 필요"; }
@@ -59,6 +64,11 @@ got=$(sha256sum "$SEALED_YAML" 2>/dev/null | cut -d' ' -f1 || shasum -a 256 "$SE
 if [ "${INSTALL_CNPG:-1}" != "0" ]; then
   got=$(sha256sum "$CNPG_YAML" 2>/dev/null | cut -d' ' -f1 || shasum -a 256 "$CNPG_YAML" | cut -d' ' -f1)
   [ "$got" = "$CNPG_SHA" ] || die "CNPG 설치 파일 sha 불일치: $got"
+fi
+
+if [ "${INSTALL_ESO:-1}" != "0" ]; then
+  got=$(sha256sum "$ESO_TGZ" 2>/dev/null | cut -d' ' -f1 || shasum -a 256 "$ESO_TGZ" | cut -d' ' -f1)
+  [ "$got" = "$ESO_SHA" ] || die "External Secrets 차트 sha 불일치: $got"
 fi
 
 echo "1/5 Argo CD core"
@@ -103,6 +113,19 @@ else
   K apply --server-side --force-conflicts -f "$CNPG_YAML" >/dev/null
   K -n cnpg-system rollout status deploy/cnpg-controller-manager --timeout=300s >/dev/null
 fi
+
+echo "1d/5 External Secrets 운영자 (앱 비밀)"
+# CNPG 와 같은 규칙: 이미 있으면(고객이 다른 판을 깔았을 수 있다) 그대로 둔다. 다시 실행해도 결과가 같다
+if K get crd externalsecrets.external-secrets.io >/dev/null 2>&1; then
+  echo "  이미 있음 (건너뜀)"
+elif [ "${INSTALL_ESO:-1}" = "0" ]; then
+  echo "  INSTALL_ESO=0: 깔지 않음. 앱 비밀(ExternalSecret)이 있는 이전은 Argo 동기화에서 멈춘다" >&2
+else
+  helm ${KUBE_CONTEXT:+--kube-context "$KUBE_CONTEXT"} upgrade --install external-secrets "$ESO_TGZ" -n external-secrets --create-namespace \
+    --set installCRDs=true --wait --timeout 300s >/dev/null
+fi
+K get clustersecretstore >/dev/null 2>&1 && [ -n "$(K get clustersecretstore -o name 2>/dev/null)" ] \
+  || echo "  주의: 비밀 저장소(ClusterSecretStore)가 없다. 앱 비밀이 있는 이전은 배포 때 비밀 값을 못 가져온다 (저장소를 하나 만든다)" >&2
 
 echo "2/5 Agent 키 Secret"
 K create ns "$NS" --dry-run=client -o yaml | K apply -f - >/dev/null
