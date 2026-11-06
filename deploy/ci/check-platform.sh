@@ -178,4 +178,21 @@ if ! helm template platform "$CHART" -n platform "${IMG[@]}" --set argocd.hubRol
   echo "FAIL argocd.hubRoleArn 칸이 없는 릴리스 값으로 렌더가 안 된다"; fail=1
 fi
 [ $fail -eq 0 ] && echo "ok   Argo CD 허브 역할 (값 없음·api·worker 만·틀린 모양 거부·예전 릴리스 값)"
+# 워커 Argo 동기화 읽기 (values argocd.namespace): worker 에만 ARGO_SOURCE=k8s + ARGOCD_NAMESPACE, 워커 Role 과 같은 네임스페이스, 칸 없는 릴리스 값이면 argocd
+DOC=$(helm template platform "$CHART" -n platform "${IMG[@]}")
+has app.yaml Deployment worker '{ name: ARGO_SOURCE, value: k8s }' "Argo 읽기 기본"
+has app.yaml Deployment worker '{ name: ARGOCD_NAMESPACE, value: "argocd" }' "Argo 읽기 기본"
+for a in api agent-worker web; do for e in ARGO_SOURCE ARGOCD_NAMESPACE; do hasnt app.yaml Deployment "$a" "$e" "Argo 읽기 기본"; done; done
+has worker-argocd-rbac.yaml Role platform-worker-applications "namespace: argocd" "Argo 읽기 기본"
+DOC=$(helm template platform "$CHART" -n platform "${IMG[@]}" --set argocd.namespace=gitops-hub)
+has app.yaml Deployment worker '{ name: ARGOCD_NAMESPACE, value: "gitops-hub" }' "Argo 네임스페이스 바꿈"
+has worker-argocd-rbac.yaml Role platform-worker-applications "namespace: gitops-hub" "Argo 네임스페이스 바꿈"
+has worker-argocd-rbac.yaml RoleBinding platform-worker-applications "namespace: gitops-hub" "Argo 네임스페이스 바꿈"
+for old in "--set argocd=null" "--set argocd.namespace=null"; do
+  # shellcheck disable=SC2086
+  DOC=$(helm template platform "$CHART" -n platform "${IMG[@]}" $old 2>/dev/null) || { echo "FAIL '$old' 릴리스 값으로 렌더가 안 된다"; fail=1; continue; }
+  has app.yaml Deployment worker '{ name: ARGOCD_NAMESPACE, value: "argocd" }' "Argo 읽기 '$old'"
+  has worker-argocd-rbac.yaml Role platform-worker-applications "namespace: argocd" "Argo 읽기 '$old'"
+done
+[ $fail -eq 0 ] && echo "ok   워커 Argo 동기화 읽기 (worker 만·Role 과 같은 네임스페이스·예전 릴리스 값)"
 exit $fail
