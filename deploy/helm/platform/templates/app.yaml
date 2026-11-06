@@ -18,6 +18,7 @@
 {{- end }}
 {{- $traffic := default dict .Values.trafficMetrics }}
 {{- $hubRoleArn := (default dict .Values.argocd).hubRoleArn | default "" }}
+{{- $argoNs := (default dict .Values.argocd).namespace | default "argocd" }}
 {{- if and $hubRoleArn (not (regexMatch "^arn:aws:iam::[0-9]{12}:role/.+$" $hubRoleArn)) }}
 {{- fail (printf "argocd.hubRoleArn 은 Terraform 출력 argocd_hub_role_arn 그대로 (IAM 역할 ARN, 받은 값 %q)" $hubRoleArn) }}
 {{- end }}
@@ -105,6 +106,12 @@ spec:
             # nginx 템플릿(deploy/docker/web-nginx.conf.template)이 /api/* 를 여기로 보낸다
             - { name: API_UPSTREAM, value: {{ printf "http://api:%v" $apps.api.port | quote }} }
             - { name: API_PREFIX, value: /api/v1 }
+            {{- end }}
+            {{- if eq $name "worker" }}
+            # 배포 동기화 지켜보기 = 이 클러스터의 Argo CD Application 을 kubectl 로 읽는다 (apps/worker/src/gitops/argo-watch.ts argoReaderFromEnv).
+            #   context 없이 파드 서비스 계정 토큰(in-cluster)으로 부르고, 권한은 worker-argocd-rbac.yaml 의 Role 과 같은 네임스페이스다
+            - { name: ARGO_SOURCE, value: k8s }
+            - { name: ARGOCD_NAMESPACE, value: {{ $argoNs | quote }} }
             {{- end }}
             {{- if and $hubRoleArn (has $name (list "api" "worker")) }}
             # Argo CD 허브 역할 (values argocd.hubRoleArn). api = 연결 링크 ArgoHubRoleArn, worker = EKS 허브 RoleBinding·cluster Secret
