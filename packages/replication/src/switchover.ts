@@ -1,5 +1,5 @@
 import { connect, type Endpoint } from "./endpoint.js";
-import { fence, parseUnfence, unfence, unfenceSql } from "./fence.js";
+import { ensureApplyGrants, fence, parseUnfence, unfence, unfenceSql } from "./fence.js";
 import { detachSubscriptionSql, disableSubscription, dropSlotIfIdle, ensurePublication, ensureSubscription, slotExists } from "./replicate.js";
 import { ident, lit, now, sleep } from "./sql.js";
 import { fq, markerRef, rowCountCols, rowCounts, rowCountsFrom, type TableRef } from "./tables.js";
@@ -211,6 +211,9 @@ export async function switchover(i: SwitchoverInput): Promise<SwitchoverResult> 
     for (let k = 0; ; k++) {
       try {
         await unfence(S2, i.from, { writable: false });
+        // ADR-031 R2: 앱 계정이 표 주인이면 울타리가 관리자(구독 주인)의 물려받은 쓰기까지 걷었다 → 역방향 적용에 필요한 것만 관리자에게 직접 (fence.ts)
+        const applyGrants = await ensureApplyGrants(S2, i.tables);
+        if (applyGrants) measures.push({ name: "reverse_apply_grants", value: applyGrants, unit: "count" });
         await ensureSubscription(S2, i.to, i.reverse, { copyData: false, createSlot: false });
         break;
       } catch (x) {

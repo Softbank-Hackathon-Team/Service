@@ -554,6 +554,8 @@ export interface LinkCtx {
   out: TfOutputs;
   // 클라우드 Builder 는 비움 → <tf-output:link.<id>.<출력>>. 온프레는 CNPG 주소를 직접 계산
   local?: (c: ComponentV2, output: string) => string | undefined;
+  // 자리표시를 풀기 전에 템플릿 글자를 손본다 (온프레: 평문 Valkey 로 가는 rediss:// → redis://)
+  prepareTemplate?: (tpl: string) => string;
 }
 // G3-5: endpoint(부른 Service 이름)가 있으면 그 Service 의 이름·첫 포트. 없으면 예전처럼 이름순 첫 endpoint
 export function serviceAddress(c: Service, ns: string, endpoint?: string): { host: string; port: number | null } {
@@ -587,7 +589,7 @@ export function linkValue(spec: AppSpecV2, to: string, output: string, ctx: Link
 // G3-5: 그룹 1 = id, 2 = 출력, 3 = 부른 Service 이름(선택). 계약 쪽 정의를 그대로 쓴다
 export const TEMPLATE = LINK_TEMPLATE;
 export const renderTemplate = (spec: AppSpecV2, tpl: string, ctx: LinkCtx) =>
-  tpl.replace(TEMPLATE, (_m, id: string, o: string, ep: string | undefined) => linkValue(spec, id, o, ctx, ep));
+  (ctx.prepareTemplate?.(tpl) ?? tpl).replace(TEMPLATE, (_m, id: string, o: string, ep: string | undefined) => linkValue(spec, id, o, ctx, ep));
 
 // IR env 한 줄 → k8s env 한 줄. 순서는 IR 그대로($(VAR) 참조 순서가 뜻을 가짐)
 export function k8sEnv(spec: AppSpecV2, e: EnvVarV2, ctx: LinkCtx): Record<string, unknown> {

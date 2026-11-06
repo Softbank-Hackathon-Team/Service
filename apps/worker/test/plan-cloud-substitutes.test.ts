@@ -1,7 +1,7 @@
 // 클라우드 → 클라우드 계획서: 관리형 캐시·큐·버킷·DB 가 다른 상품이 되면 자원마다 substitute 확인 항목 (계획 작업이 부르는 buildPlanDoc 그대로)
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import type { PlanCostSummary, Provider } from "@svc/contracts";
+import { AppSpecV2, type PlanCostSummary, type Provider } from "@svc/contracts";
 import { buildPlanDoc } from "../src/jobs/plan.js";
 import { SUBSTITUTE_SPEC } from "./substitute-fixture.js";
 
@@ -33,6 +33,19 @@ test("GCP→AWS 계획서: 같은 자원이 반대 방향 상품으로", () => {
     ["substitute:shop-db", "Cloud SQL for PostgreSQL", "RDS for PostgreSQL", false],
     ["substitute:shop-orders", "Pub/Sub topic + subscription", "SQS FIFO", true],
   ]);
+});
+
+test("AWS→온프레 계획서: DB·캐시는 오픈소스 대체 항목, 버킷·큐가 있으면 계획이 막힌다", () => {
+  const gone = new Set(["shop-orders", "shop-assets"]);
+  const spec = AppSpecV2.parse({ ...SUBSTITUTE_SPEC, components: SUBSTITUTE_SPEC.components.filter((c) => !gone.has(c.id)), links: SUBSTITUTE_SPEC.links.filter((l) => !gone.has(l.to as string)) });
+  const onprem = (s: AppSpecV2) => buildPlanDoc({ planId: "7f000000-0000-4000-8000-0000000000c4", migrationId: "4a8c0000-0000-4000-8000-0000000000c4", spec: s,
+    target: { envId: "33333333-3333-4333-8333-333333333333", provider: "onprem", region: "default" },
+    precheck: [], now: new Date("2026-11-07T00:00:00Z"), source: { provider: "aws" }, costSummary: cost }, {});
+  assert.deepEqual((onprem(spec).acknowledgements ?? []).filter((a) => a.kind === "substitute").map((a) => [a.id, a.from, a.to, a.appChange]), [
+    ["substitute:shop-cache", "ElastiCache (redis)", "Valkey 7.2", false],
+    ["substitute:shop-db", "RDS for PostgreSQL", "CloudNativePG", false],
+  ]);
+  assert.throws(() => onprem(SUBSTITUTE_SPEC), /도착 렌더 미지원: kind\.objectStore/);
 });
 
 test("같은 클라우드 계획서에는 substitute 항목이 없다", () => {

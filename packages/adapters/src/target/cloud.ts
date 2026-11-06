@@ -20,6 +20,7 @@ export interface WorkloadCtx {
   postgres: ChartPostgres[];                        // 클라우드: 접속·비밀 위치 / 온프레: CNPG 정의
   ingressClass?: string;
   link?: LinkCtx["local"];
+  prepareTemplate?: LinkCtx["prepareTemplate"];
   ingressSecretsByApply?: true;                     // 앱 층 apply 가 INGRESS_SECRETS 그릇을 값 없이 만든다 (gcp) → 경고는 값만 넣으라고
 }
 
@@ -172,7 +173,7 @@ const METRIC_COLLECTOR_IMAGE = "otel/opentelemetry-collector-contrib:0.164.0@sha
 
 export function buildWorkloadValues(spec: AppSpecV2, out: TfOutputs, t: Target, w: WorkloadCtx): HelmValues {
   const ns = appNamespace({ app: spec.app } as never);
-  const lc: LinkCtx = { namespace: ns, out, local: w.link };
+  const lc: LinkCtx = { namespace: ns, out, local: w.link, prepareTemplate: w.prepareTemplate };
   const warnings: string[] = [];
   const workloads = workloadsOf(spec).map((x) => workloadValues(spec, x, w, lc, warnings));
   // 시크릿: 출발 비밀 이름 그대로 k8s Secret 을 만든다 (앱이 보는 이름 수정 0). 키별로 원격 이름·속성
