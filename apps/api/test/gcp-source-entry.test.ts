@@ -12,13 +12,14 @@ const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const TOKEN = "cf-api-token-should-not-leak";
 const TUNNEL_TOKEN = "tunnel-token-should-not-leak";
 
-function run(extraEnv: Record<string, string>) {
+function run(extraEnv: Record<string, string>, authFails = false) {
   const bin = mkdtempSync(join(tmpdir(), "gcp-entry-bin-"));
   const calls = join(bin, "calls");
   // 가짜 curl: -X 방법과 마지막 인자(URL)로 Cloudflare 응답 흉내
   writeFileSync(join(bin, "curl"), `#!/bin/bash
 m=GET; for ((i=1;i<=$#;i++)); do [ "\${!i}" = -X ] && { j=$((i+1)); m=\${!j}; }; done
 u=\${@: -1}; echo "curl $m \${u#*client/v4}" >> "${calls}"
+${authFails ? `echo '{"success":false,"errors":[{"code":9106,"message":"Authentication failed"}],"result":null}'; exit 0` : ""}
 case "$m $u" in
   "GET "*cfd_tunnel\\?name=*) echo '{"success":true,"result":[]}' ;;
   "POST "*/cfd_tunnel) echo '{"success":true,"result":{"id":"tid-1"}}' ;;
@@ -55,4 +56,12 @@ test("거부: Cloudflare 설정이 빠지면 아무것도 부르지 않고 빠�
   assert.equal(r.status, 1);
   assert.match(r.stdout, /CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_ZONE_ID CLOUDFLARE_API_TOKEN/);
   assert.equal(r.calls, "");
+});
+
+test("거부: 토큰이 틀리면 맨 처음 확인에서 멈추고 터널을 만들었다고 하지 않는다", () => {
+  const r = run({ ENTRY_HOST: "shop-gcp.example.test", CLOUDFLARE_ACCOUNT_ID: "acc", CLOUDFLARE_ZONE_ID: "zone", CLOUDFLARE_API_TOKEN: TOKEN }, true);
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /토큰 인증 실패/);
+  assert.doesNotMatch(r.stdout, /만듦/);
+  assert.doesNotMatch(r.calls, /cfd_tunnel/);
 });
