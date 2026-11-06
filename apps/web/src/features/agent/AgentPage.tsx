@@ -2,13 +2,13 @@ import { useState } from 'react';
 import type { BentoLayout } from '../../components/layout/ConsoleLayout';
 import { ActionRow, FoldTile, Hero, SkeletonTile, Stack, Tile, TileHeader } from '../../components/layout/tiles';
 import { ActionPill, Badge, BarPill } from '../../components/ui/controls';
-import { Timeline, type TimelineEntry } from '../../components/ui/Timeline';
+import { Timeline } from '../../components/ui/Timeline';
 import { api } from '../../lib/api';
 import { useAction } from '../migration/shared';
 import { ShellLayout } from '../shell/ShellLayout';
 import { useChosenMigration } from '../shell/useChosenMigration';
 import { agentSummary, isRunning, RemediateBody, useAgentReview } from './AgentResult';
-import { agentBlock, spendRows, spendText } from './model';
+import { agentBlock, agentStepEntry, spendRows, spendText } from './model';
 import s from '../common/page.module.css';
 import { t } from '../../lib/i18n';
 
@@ -16,15 +16,6 @@ import { t } from '../../lib/i18n';
 const EMPTY: BentoLayout = { columns: ['fill'], areas: 'hero' };
 const LAYOUT: BentoLayout = { columns: ['fill', 'side', 'side'], areas: 'hero steps side' };
 
-const TOOL_LABEL: Record<string, string> = {
-  sandbox_get: t('샌드박스 상태 보기'),
-  sandbox_logs: t('로그 읽기'),
-  repo_read: t('배포 파일 읽기'),
-  repo_edit: t('배포 파일 고치기'),
-  sandbox_apply: t('샌드박스에 적용'),
-  run_check: t('안정성 확인'),
-  finish: t('결론'),
-};
 const RISK = { high: { label: t('높음'), tone: 'danger' }, medium: { label: t('중간'), tone: 'warning' }, low: { label: t('낮음'), tone: 'neutral' } } as const;
 
 function AgentBody({ migrationId }: { migrationId: string }) {
@@ -38,12 +29,7 @@ function AgentBody({ migrationId }: { migrationId: string }) {
   const block = agentBlock(view?.llm);
   const blocked = block !== null;
   const spend = view?.llm?.spend;
-  const steps: TimelineEntry[] = (result?.steps ?? []).map((step) => ({
-    kind: step.ok ? 'tool' : 'denied',
-    title: TOOL_LABEL[step.tool] ?? step.tool,
-    detail: step.note,
-    time: `${step.seq}`,
-  }));
+  const steps = (result?.steps ?? []).map(agentStepEntry);
   const title = block
     ? block.title
     : running

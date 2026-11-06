@@ -1,7 +1,7 @@
 import { Icon, type IconName } from './Icon';
 import s from './Timeline.module.css';
 
-export type TimelineKind = 'tool' | 'denied' | 'guardrail' | 'human' | 'system';
+export type TimelineKind = 'tool' | 'denied' | 'pass' | 'fail' | 'guardrail' | 'human' | 'system';
 
 export type TimelineEntry = {
   kind: TimelineKind;
@@ -15,6 +15,8 @@ export type TimelineEntry = {
 const KIND_ICON: Record<TimelineKind, IconName> = {
   tool: 'bot',
   denied: 'ban',
+  pass: 'check',
+  fail: 'x',
   guardrail: 'shield',
   human: 'user-check',
   system: 'git-pr',

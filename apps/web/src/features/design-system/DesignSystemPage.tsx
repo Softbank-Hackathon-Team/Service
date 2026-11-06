@@ -379,6 +379,8 @@ export function DesignSystemPage({ onExit }: { onExit?: () => void }) {
                   { kind: 'guardrail', title: 'guardrail', detail: '가드레일 발동', time: '12:21:04' },
                   { kind: 'tool', title: 'tool', detail: '에이전트 도구 호출', time: '12:21:40' },
                   { kind: 'denied', title: 'denied', detail: '거부된 호출', time: '12:22:13' },
+                  { kind: 'fail', title: 'fail', detail: '점검 실패', time: '12:22:40' },
+                  { kind: 'pass', title: 'pass', detail: '점검 통과', time: '12:23:15' },
                   { kind: 'human', title: 'human', detail: '사람의 결정', time: '12:25:02' },
                   { kind: 'system', title: 'system', detail: '플랫폼 동작', time: '12:27:44' },
                 ]}

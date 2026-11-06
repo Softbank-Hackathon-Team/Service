@@ -36,6 +36,14 @@
   background: var(--color-bg-tone-danger);
   color: var(--color-fg-tone-danger);
 }
+.pass {
+  background: var(--color-bg-tone-success);
+  color: var(--color-fg-tone-success);
+}
+.fail {
+  background: var(--color-bg-tone-danger);
+  color: var(--color-fg-tone-danger);
+}
 .guardrail {
   background: var(--color-bg-tone-warning);
   color: var(--color-fg-tone-warning);

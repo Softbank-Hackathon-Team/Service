@@ -1144,6 +1144,7 @@ export const EN: Table = {
   "점검 실패": "Check failed",
   "점검 중": "Checking",
   "점검 지시": "Check instructions",
+  "점검 통과": "Check passed",
   "점검할 마이그레이션이\n없습니다": "No migration\nto check",
   "접속 정보 저장 실패": "Couldn't store connection info",
   "정가 {0}/월": "List {0}/mo",
