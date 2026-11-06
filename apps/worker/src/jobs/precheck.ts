@@ -13,6 +13,8 @@ import type { MigrationRow } from "./_step.js";
 import { TARGET_ACCOUNT_SQL } from "./target-account.js";
 import { agentStaleSec } from "./verify-connection.js";
 import { relayApplies, relayKindOf } from "../relay/relay-step.js";
+import { gcpAwsRelayPrecheck } from "../relay/gcp-aws.js";
+import { chooseEnvLayerSource, readInventoryFacts, type InventoryFacts } from "../env-layer.js";
 
 // 사전 점검: 이전해도 되는지 본다. block(FAIL)이 하나라도 있으면 명세 검토로 되돌린다
 // Z97: STUB(고정 "확인됨")을 실조회로 바꿨다 — 자격(STS·tokeninfo·kubectl)·도착 API·결제·할당량·DB 버전·TCP·디스크.
@@ -92,7 +94,8 @@ export async function realPrecheck(tenantId: string, m: MigrationRow, deps: Part
   const required = !iacMockEnabled(env) && (await specHasPostgres(tenantId, m.id).catch(() => null)) === true;
   const envs = await envInfo(tenantId, m, env);
   // 중계기가 끝점을 만들 이전인가 (apply 의 중계기 문과 같은 앞 조건: relayApplies + 온프레면 pull 모드)
-  const relayFacts = { sourceProvider: envs.source.provider, sourceExternalId: envs.source.externalId ?? null, targetProvider: envs.target.provider };
+  const relayFacts = { sourceProvider: envs.source.provider, sourceExternalId: envs.source.externalId ?? null, targetProvider: envs.target.provider,
+                       targetExternalId: envs.target.externalId ?? null };
   const relayDeferred = relayApplies(relayFacts, env) === null
     && (relayKindOf(relayFacts.sourceProvider, relayFacts.targetProvider) !== "aws-onprem" || env.ONPREM_FLOOR_VIA_GIT !== "0");
   // 이 이전의 끝점 줄이 있으면 sync 는 env 가 아니라 그 줄로 붙는다 (_repl.ts) → env 주소로 출발 DB 를 보지 않는다
@@ -102,7 +105,23 @@ export async function realPrecheck(tenantId: string, m: MigrationRow, deps: Part
   const sideEnv = deps.sideEnv ?? precheckSideEnv(roles, env, { source: gp(envs.source), target: gp(envs.target) });
   const checks = await runCloudPrecheck({ ...envs, ...db }, { exec: spawnExec, ...deps, env, ...(sideEnv ? { sideEnv } : {}) });
   const link = appLinkPrecheck(env, { terraformRuntime: runtime, targetProvider: envs.target.provider });
-  return [...toPrecheckItems(checks).map((i) => PrecheckItem.parse(i)), ...repl, ...link];
+  // AWS 도착 사실(VPC·서브넷)과 GCP → AWS 중계기 길을 승인 전에 본다 (apply 의 TARGET_FACTS_UNAVAILABLE·중계기 멈춤을 앞당김)
+  const tf = envs.target.provider === "aws" && !iacMockEnabled(env) ? await awsTargetFactsPrecheck(tenantId, m.targetEnvId, env) : { items: [], vpcId: null };
+  const relay = relayKindOf(envs.source.provider, envs.target.provider) === "gcp-aws"
+    ? (await gcpAwsRelayPrecheck({ tenantId, migrationId: m.id }, m, roles, env, { targetVpcId: tf.vpcId })).map((i) => PrecheckItem.parse(i)) : [];
+  return [...toPrecheckItems(checks).map((i) => PrecheckItem.parse(i)), ...repl, ...link, ...tf.items, ...relay];
+}
+
+/** AWS 도착: worker env TF_FACT_* 가 없으면 apply 는 실자원 읽기가 둔 도착 EKS 사실(VPC·서브넷)을 쓴다 (env-layer.ts). 아직 안 읽었거나 못 쓰면
+ *  apply 가 TARGET_FACTS_UNAVAILABLE 로 멈추므로 승인 전에 막는다. vpcId = 중계기 NAT 점검에 넘길 도착 VPC (모르면 null) */
+export async function awsTargetFactsPrecheck(tenantId: string, targetEnvId: string, env: NodeJS.ProcessEnv,
+  inventory?: (tenantId: string, envId: string) => Promise<InventoryFacts>): Promise<{ items: PrecheckItem[]; vpcId: string | null }> {
+  if (chooseEnvLayerSource("aws", null, env) !== "inventory") return { items: [], vpcId: env.TF_FACT_VPC_ID || null };
+  const f = await (inventory ?? ((t, e) => withTenant(t, (tx) => readInventoryFacts(tx, e))))(tenantId, targetEnvId);
+  if (f.ok) return { items: [], vpcId: f.facts.vpcId ?? null };
+  return { vpcId: null, items: [PrecheckItem.parse({ id: "PC-AWS-TARGET-FACTS", level: "block",
+    message: `FAIL 도착 EKS 의 VPC·서브넷을 아직 못 쓴다: ${f.reason} — 빠진 것: inventory.targetFacts`.slice(0, 1000),
+    fix: "도착 환경 화면을 한 번 열어 관찰 역할로 도착 EKS 를 읽게 한 뒤(연결 스택이 옛 판이면 새 템플릿으로 업데이트해 ec2:DescribeSubnets 를 더함) 다시 점검한다. 또는 worker-env 에 TF_FACT_VPC_ID·TF_FACT_DB_SUBNET_IDS_JSON" })] };
 }
 
 async function specRuntime(tenantId: string, migrationId: string): Promise<boolean> {
@@ -162,11 +181,13 @@ export async function replSourcePrecheck(env: NodeJS.ProcessEnv = process.env,
   //   사전 점검 때는 출발 주소가 아직 없는 것이 정상이라 막지 않고 warn 으로 남긴다. 같은 규칙(precheckSource)은 sync 첫 점검이 그 줄로 다시 본다.
   //   대가: 출발 DB 설정이 틀리면 중계기를 만든 뒤 sync 에서 SYNC_FAILED 로 멈춘다 (트래픽은 아직 출발에 있다)
   if (!env.REPL_SOURCE_URL && o.required && o.relayDeferred) return [PrecheckItem.parse({ id: "PC-REPL-RELAY", level: "warn",
-    message: "출발 DB 논리 복제 점검을 미룸: AWS 출발 중계기 이전(→온프레·→GCP)은 자원 생성(apply)이 출발 계정에 중계기를 만들고 복제 끝점을 그때 채운다",
-    fix: "sync 첫 점검이 같은 규칙(rds.logical_replication·슬롯·권한·기본키)을 중계기 경로로 본다. 미리 보려면 출발 RDS 파라미터 그룹의 rds.logical_replication=1 을 확인" })];
+    message: "출발 DB 논리 복제 점검을 미룸: 중계기 이전(AWS→온프레·AWS→GCP·GCP→AWS)은 자원 생성(apply)이 중계기를 만들고 복제 끝점을 그때 채운다",
+    fix: "sync 첫 점검이 같은 규칙(rds.logical_replication·cloudsql.logical_decoding·슬롯·권한·기본키)을 중계기 경로로 본다. GCP→AWS 는 출발 Cloud SQL 길을 PC-RELAY-SQL-* 가 따로 본다" })];
+  // 중계기 짝이 아니고 끝점 줄도 REPL_* env 도 없으면 sync 가 REPL_ENDPOINT_MISSING 으로 멈춘다 → 승인 전에 막고 빠진 것을 이름으로 알린다
   if (!env.REPL_SOURCE_URL) return o.required ? [PrecheckItem.parse({ id: "PC-REPL-CONN", level: "block",
-    message: "FAIL 명세에 postgres 가 있는데 출발 DB 주소(REPL_SOURCE_URL)가 없어 논리 복제 준비를 못 봄 — 이대로면 sync 에서 멈춘다",
-    fix: "워커 env 에 REPL_SOURCE_URL·REPL_TARGET_URL ({tf:} 가능)을 준다" })] : [];
+    message: "FAIL 명세에 postgres 가 있는데 복제 끝점을 만들 중계기가 없고(이 짝에 중계기 없음·흉내 자격·RELAY_AUTO=0) 끝점도 없어 논리 복제 준비를 못 봄 — 이대로면 sync 에서 멈춘다. "
+      + "빠진 것: replication_endpoints(source), replication_endpoints(target) (또는 워커 env REPL_SOURCE_URL·REPL_TARGET_URL)",
+    fix: "운영자가 npm run repl:endpoint -- set 으로 이 이전의 출발·도착 끝점 두 줄을 넣거나, 도착 DB 를 공개 길로 만드는 DB_PUBLIC=1 + DB_PEER_CIDRS 와 함께 워커 env 에 REPL_SOURCE_URL·REPL_TARGET_URL ({tf:} 가능)을 준다" })] : [];
   const tables = env.REPL_TABLES?.split(",").map((s) => s.trim()).filter(Boolean);
   try {
     const r = await precheckSource(endpointFromEnv("REPL_SOURCE", env), tables?.length ? { tables } : {});

@@ -186,6 +186,25 @@
       "Resource": "arn:aws:ec2:ap-northeast-2:*:security-group-rule/*"
     },
     {
+      "Sid": "TargetDbRulesForRelay",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:AuthorizeSecurityGroupEgress",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupEgress",
+        "ec2:RevokeSecurityGroupIngress"
+      ],
+      "Resource": "arn:aws:ec2:ap-northeast-2:*:security-group/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/managed-by": "platform"
+        },
+        "Null": {
+          "aws:ResourceTag/tenant": "false"
+        }
+      }
+    },
+    {
       "Sid": "SourceDbEgressToRelay",
       "Effect": "Allow",
       "Action": [

@@ -12,6 +12,7 @@ import { TARGET_ACCOUNT_SQL } from "./target-account.js";
 import { addRelayPeer, cloudSqlPeerOf, ensureTargetAppLogin, gcpEndpointRows, prepareGcpRelayStep, provisionGcpRelayStep, provisionRelayStep, saveEndpointRows,
   type GcpRelayGate } from "../relay/relay-step.js";
 import { RelayError } from "../relay/aws-relay.js";
+import { prepareGcpAwsRelayStep, provisionGcpAwsRelayStep } from "../relay/gcp-aws.js";
 import type { MigrationRow } from "./_step.js";
 
 // TA3: spec = 받아들인 최신 판의 명세. 없거나 모양이 틀리면 null (→ TF_PLAN_DRIFT)
@@ -112,6 +113,12 @@ export async function handleApply(raw: unknown) {
         const gate = provider === "gcp" ? await prepareGcpRelayStep(j, m) : null;
         if (gate?.kind === "fail")
           return { to: "failed", failureCode: asFailureCode(gate.failureCode), detail: { planId: j.planId, provider, error: gate.reason } };
+        // GCP → AWS 중계기 (relay/gcp-aws.ts): ① 문 + 출발 Cloud SQL 읽기 (도착 RDS 를 만들기 전에 멈춤) ② terraform ③ 도착 계정에 중계기·RDS 규칙·끝점 두 줄.
+        //   짝이 gcp->aws 가 아니면 null (예전 그대로)
+        const gaGate = provider === "aws" ? await prepareGcpAwsRelayStep(j, m) : null;
+        if (gaGate?.kind === "fail")
+          return { to: "failed", failureCode: asFailureCode(gaGate.failureCode), detail: { planId: j.planId, provider, error: gaGate.reason,
+            relay: { ...(gaGate.missing ? { missing: gaGate.missing } : {}), ...(gaGate.hint ? { hint: gaGate.hint } : {}) } } };
         let r = await tfApply();
         if (!r.ok) return { to: "failed", failureCode: asFailureCode(r.failureCode), detail: r.detail };
         if (gate?.kind === "go") {
@@ -120,6 +127,12 @@ export async function handleApply(raw: unknown) {
           if (g.rerun) r = g.rerun;
           relayDetail = g.detail;
         } else if (gate) relayDetail = { skipped: gate.reason };
+        if (gaGate?.kind === "go") {
+          const ga = await provisionGcpAwsRelayStep(j, m, gaGate, r.tfOutputs);
+          if (ga.kind === "failed")
+            return { to: "failed", failureCode: asFailureCode(ga.failureCode), detail: { planId: j.planId, provider, error: ga.reason, ...(ga.detail ? { relay: ga.detail } : {}) } };
+          relayDetail = ga.kind === "ok" ? ga.detail : { skipped: ga.reason };
+        } else if (gaGate) relayDetail = { skipped: gaGate.reason };
         tfOutputs = r.tfOutputs;
         realDetail = r.detail;
       } else {

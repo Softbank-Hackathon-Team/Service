@@ -14,7 +14,7 @@ const inline = (name: string) => tpl.Resources.OperateRole.Properties.Policies.f
 test("실행 역할 인라인 relay 에 원본 문장이 그대로 들어가고, 인라인 합계가 IAM 한도 안이다", () => {
   const plain = inline("relay").Statement.filter((s: { Sid?: string }) => s.Sid);
   assert.deepEqual(plain, src.Statement.filter((s: { Sid: string }) => !GATED.includes(s.Sid)));
-  assert.equal(plain.length, 12);
+  assert.equal(plain.length, 13);   // + TargetDbRulesForRelay (GCP→AWS 도착 RDS 보안 그룹)
   const size = tpl.Resources.OperateRole.Properties.Policies.reduce((n: number, p: { PolicyDocument: unknown }) => n + JSON.stringify(p.PolicyDocument).length, 0);
   assert.ok(size < 10240, `인라인 합계 ${size}`);
 });
@@ -56,4 +56,14 @@ test("거부: DB 식별자 모양이 아니면(와일드카드·ARN·경로) 매
   assert.ok(re.test("") && re.test("sample-shop-db"));
   for (const bad of ["*", "db-*", "1abc", "arn:aws:rds:ap-northeast-2:123456789012:db:x", "a/b", "a".repeat(64)]) assert.ok(!re.test(bad), bad);
   assert.ok(!JSON.stringify(tpl.Resources.ObserveRole).includes("secretsmanager:GetSecretValue"));
+});
+
+test("권한: TargetDbRulesForRelay = 보안 그룹 규칙 더하기·빼기만, 플랫폼이 만든(managed-by=platform·tenant 태그) 보안 그룹에만, 연결 템플릿 relay 정책에도 있다", () => {
+  const doc = src as { Statement: { Sid: string; Action: string[]; Resource: string; Condition?: Record<string, Record<string, string>> }[] };
+  const s = doc.Statement.find((x) => x.Sid === "TargetDbRulesForRelay")!;
+  assert.deepEqual(s.Action, ["ec2:AuthorizeSecurityGroupEgress", "ec2:AuthorizeSecurityGroupIngress", "ec2:RevokeSecurityGroupEgress", "ec2:RevokeSecurityGroupIngress"]);
+  assert.equal(s.Resource, "arn:aws:ec2:ap-northeast-2:*:security-group/*");
+  assert.equal(s.Condition?.StringEquals?.["aws:ResourceTag/managed-by"], "platform");
+  assert.equal(s.Condition?.Null?.["aws:ResourceTag/tenant"], "false");
+  assert.deepEqual(inline("relay").Statement.find((x: { Sid?: string }) => x.Sid === "TargetDbRulesForRelay"), s, "연결 템플릿(export-permissions 생성) relay 정책에 같은 문장 (매개변수 없이 늘 켜짐)");
 });
