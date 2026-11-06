@@ -1,7 +1,9 @@
-import { replicationFromEnv, replicationFromRecords, type Migration } from "@svc/replication";
+import { replicationFromEnv, replicationFromRecords, ReplConfigError, type ManagedSecrets, type Migration } from "@svc/replication";
 import { specV2ForPlan } from "@svc/adapters";
 import type { ReplicationEndpoint } from "@svc/contracts";
 import { latestAcceptedSpecV2, replicationEndpointsFor, withTenant, type Tx } from "@svc/core";
+import { fetchManagedSecrets, managedSecretArns } from "../relay/source-secret.js";
+import { readMigration } from "./_step.js";
 
 // PF FM-ORC-09 ①: 복제 끝점은 워커 전역 REPL_* 하나라, 명세에 postgres 가 없는 앱(DB 없는 2티어)도 진짜 복제를 시도했다
 //   → {tf:db_address} 를 못 채운 채 접속 실패 → paused(SYNC_FAILED). 받아들인 명세에 postgres 부품이 하나도 없으면 복제 없음(null = STUB 길).
@@ -20,19 +22,29 @@ async function specHasPostgresTx(tx: Tx, migrationId: string): Promise<boolean |
 
 /** 읽은 값으로 고르기 (순수, 시험용). 명세에 postgres 없음 → null / 줄 두 개 → 줄 / 줄 없음 → env / 한 줄 → ReplConfigError */
 export function pickReplication(migrationId: string, hasPostgres: boolean | null, records: readonly ReplicationEndpoint[],
-  env: NodeJS.ProcessEnv = process.env): Migration | null {
+  env: NodeJS.ProcessEnv = process.env, managed?: ManagedSecrets): Migration | null {
   if (hasPostgres === false) return null;
-  return replicationFromRecords(migrationId, records, env) ?? replicationFromEnv(migrationId, env);
+  return replicationFromRecords(migrationId, records, env, managed) ?? replicationFromEnv(migrationId, env);
 }
 
 /** 이전 하나의 복제 객체. 회사 벽(withTenant) 안에서 명세·끝점 줄을 읽는다.
  *  tx 를 주면 그 트랜잭션 안에서 읽는다 (리퍼: 이전 행 잠금을 쥔 채 연결을 하나 더 빌리지 않게). 읽기 실패가 그 트랜잭션을 깨지 않게 SAVEPOINT 로 감싼다 */
+// 출발 줄이 RDS 관리 비밀(aws-sm:)을 가리키면 여기서 출발 실행 역할을 빌려 읽는다 (relay/source-secret.ts). 값은 이 호출의 메모리에만 있다.
+//   부를 때마다 새로 읽는다 (관리 비밀은 기본 7일마다 바뀐다). 못 읽으면 REPL_SECRET_UNRESOLVED (env 참조를 못 풀 때와 같은 길)
 export async function replicationFor(tenantId: string, migrationId: string, tx?: Tx): Promise<Migration | null> {
-  const read = async (t: Tx) => ({ hasPg: await specHasPostgresTx(t, migrationId), records: await replicationEndpointsFor(t, migrationId) });
+  const read = async (t: Tx) => ({ hasPg: await specHasPostgresTx(t, migrationId), records: await replicationEndpointsFor(t, migrationId),
+    mig: await readMigration(t, migrationId) });
   const got = tx ? await inSavepoint(tx, read) : await withTenant(tenantId, read);
   // 회사 벽이 이미 막지만 한 번 더: 다른 회사 줄은 쓰지 않는다
   const records = got.records.filter((r) => r.tenantId === tenantId);
-  return pickReplication(migrationId, got.hasPg, records);
+  const arns = got.hasPg === false ? [] : managedSecretArns(records);
+  let managed: ManagedSecrets | undefined;
+  if (arns.length) {
+    if (!got.mig) throw new ReplConfigError(`이전 ${migrationId} 을 못 읽어 출발 관리 비밀을 읽을 수 없다`, "REPL_SECRET_UNRESOLVED");
+    try { managed = await fetchManagedSecrets({ tenantId, migrationId }, got.mig, arns); }
+    catch (e) { throw new ReplConfigError(`source 끝점: ${(e as Error).message}`, "REPL_SECRET_UNRESOLVED"); }
+  }
+  return pickReplication(migrationId, got.hasPg, records, process.env, managed);
 }
 
 async function inSavepoint<T>(tx: Tx, fn: (tx: Tx) => Promise<T>): Promise<T> {

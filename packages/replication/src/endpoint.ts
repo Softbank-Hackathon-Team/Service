@@ -24,6 +24,9 @@ export interface Endpoint {
   tls?: EndpointTls;
   /** 이 끝점을 어디서 만들었나. "db" = replication_endpoints 줄 (이전마다). 없으면 워커 .env (REPL_*) */
   origin?: "db";
+  /** 상대 DB 가 이 DB 를 구독할 때 관리자 대신 그 길 전용 계정을 쓴다 (REPL_EPHEMERAL_USER 와 같은 동작, 끝점 단위).
+   *  관리자 비밀번호가 RDS 관리 비밀(aws-sm)이면 켠다: 상대 서버의 구독 정보에 마스터 비밀번호가 평문으로 남지 않게 */
+  ephemeralPeerUser?: boolean;
 }
 
 // Z77 DRAFT(ai): 클라우드 DB 는 TLS + CA 파일로 상대를 확인한다. 규칙은 Z64 PgBouncer server_tls_ca_file 과 같다:

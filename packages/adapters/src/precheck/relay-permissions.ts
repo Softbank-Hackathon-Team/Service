@@ -24,6 +24,9 @@ export const RELAY_ACTIONS = [
   "ec2:RunInstances",
   "ec2:TerminateInstances",
   "rds:DescribeDBInstances",            // 출발 RDS 주소·VPC·SG
+  // 출발 RDS 가 관리하는 마스터 비밀(rds!db-…) 읽기. 고객 역할 문장은 태그 aws:rds:primaryDBInstanceArn = 그 DB 하나로 묶는다 (매개변수 SourceDbInstanceId).
+  //   흉내 평가에는 그 태그 값을 안 넣어서 매개변수를 채웠어도 "빠짐"으로 보일 수 있다 (판정이 WARN 이라 막지는 않음)
+  "secretsmanager:GetSecretValue",
   "ssm:GetParameter",                   // AL2023 arm64 AMI (AWS 공개 SSM 값)
 ] as const;
 
@@ -36,6 +39,7 @@ export function relaySimContext(region: string): object[] {
 
 export const RELAY_PERM_FIX = "연결 스택을 지금 템플릿(infra/onboarding/aws-connect.json, 중계기 문 묶음 포함)으로 업데이트한다. "
   + "출발 RDS 보안 그룹이 중계기와 5432 를 주고받지 못하면(나가기·들어오기) 스택 입력값 SourceDbSecurityGroupId 에 그 보안 그룹을 넣는다 (이미 열려 있으면 비워도 된다). "
+  + "출발 DB 관리자 비밀번호를 사람이 넣지 않으려면 RDS 에서 마스터 비밀 관리(Secrets Manager)를 켜고 스택 입력값 SourceDbInstanceId 에 그 DB 식별자를 넣는다. "
   + "자동 점검을 하려면 관찰 역할에 iam:SimulatePrincipalPolicy 가 있어야 한다";
 
 /** simulate-principal-policy 결과 → 점검 한 줄.

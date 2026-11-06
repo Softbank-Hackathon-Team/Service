@@ -111,3 +111,26 @@ test("tcpReachProblem: 열린 포트는 null, 닫힌 포트는 이유 글자", a
   await new Promise<void>((r) => srv.close(() => r()));
   assert.ok(await tcpReachProblem("127.0.0.1", port, 2000));
 });
+
+// 출발 RDS 관리 비밀 (aws-sm:). 이 패키지는 클라우드를 안 부른다: 워커가 미리 읽은 Map 에서 꺼내기만
+const SM_ARN = "arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:rds!db-0a1b2c3d-AbCdEf";
+test("aws-sm: RDS 관리 비밀 ARN 만 받고, 워커가 읽어 둔 값(Map)으로 풀린다", () => {
+  assert.deepEqual(parsePasswordRef(`aws-sm:${SM_ARN}`), { kind: "aws-sm", arn: SM_ARN });
+  assert.equal(resolvePasswordRef(`aws-sm:${SM_ARN}`, scope, {}, new Map([[SM_ARN, "pw-sm"]])), "pw-sm");
+  const e = endpointFromRecord(rec({ provider: "rds", passwordRef: `aws-sm:${SM_ARN}`, peerHost: "10.0.0.5" }), {}, new Map([[SM_ARN, "pw-sm"]]));
+  assert.match(e.adminUrl, /:pw-sm@/);
+  // 관리 비밀(마스터 비밀번호)은 구독 접속 문자열에 넣지 않는다 → 이 끝점은 늘 전용 복제 계정
+  assert.equal(e.ephemeralPeerUser, true);
+  assert.equal(endpointFromRecord(rec(), { REPL_SECRET_MASTER_KEY: MASTER }).ephemeralPeerUser, undefined);
+});
+
+test("거부: 다른 비밀·Aurora 클러스터 비밀은 문법 오류, 워커가 못 읽어 온 값이면 REPL_SECRET_UNRESOLVED (값 없음)", () => {
+  for (const bad of ["aws-sm:arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:prod/app-AbCdEf",
+    "aws-sm:arn:aws:secretsmanager:ap-northeast-2:123456789012:secret:rds!cluster-x", "aws-sm:*"])
+    assert.throws(() => parsePasswordRef(bad), /RDS 관리 비밀 ARN/, bad);
+  assert.throws(() => resolvePasswordRef(`aws-sm:${SM_ARN}`, scope, {}), /읽어 오지 못했다/);
+  const recs = [rec({ provider: "rds", passwordRef: `aws-sm:${SM_ARN}` }), rec({ side: "target", label: "dst" })];
+  assert.throws(() => replicationFromRecords(M, recs, { REPL_SECRET_MASTER_KEY: MASTER }),
+    (e: unknown) => e instanceof ReplConfigError && e.code === "REPL_SECRET_UNRESOLVED" && !e.message.includes("pw-sm"));
+  assert.ok(replicationFromRecords(M, recs, { REPL_SECRET_MASTER_KEY: MASTER }, new Map([[SM_ARN, "pw-sm"]])));
+});

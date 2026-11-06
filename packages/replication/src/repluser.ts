@@ -66,10 +66,10 @@ export function withUser(peerUrl: string, user: string, password: string): strin
   return u.toString();
 }
 
-/** 구독에 넣을 접속 문자열. 켜져 있으면 전용 계정을 만들어 그 계정으로, 꺼져 있으면 예전처럼 상대 peerUrl 그대로 */
+/** 구독에 넣을 접속 문자열. 켜져 있으면(REPL_EPHEMERAL_USER=1 또는 끝점 ephemeralPeerUser) 전용 계정을 만들어 그 계정으로, 꺼져 있으면 예전처럼 상대 peerUrl 그대로 */
 export async function subscriptionConninfo(from: Endpoint, name: string, env: NodeJS.ProcessEnv = process.env): Promise<string> {
   const base = withConnectTimeout(peerUrlOf(from), env);
-  if (!ephemeralEnabled(env)) return base;
+  if (!from.ephemeralPeerUser && !ephemeralEnabled(env)) return base;
   const { user, password } = await withClient(from, (c) => ensureReplUser(c, from, name));
   return withUser(base, user, password);
 }
