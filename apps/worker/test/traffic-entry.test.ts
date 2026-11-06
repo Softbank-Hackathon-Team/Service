@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HelmValues, TrafficTarget } from "@svc/contracts";
 import type { CfProvisionCtx, FetchLike } from "@svc/traffic";
-import { entryOf, prepareTrafficEntry, teardownTrafficEntry, withTrafficEntry, TUNNEL_TOKEN_SECRET } from "../src/traffic-entry.js";
+import { entryFailHint, entryOf, prepareTrafficEntry, teardownTrafficEntry, withTrafficEntry, TUNNEL_TOKEN_SECRET } from "../src/traffic-entry.js";
 
 const MIG = "cdaece4c-b6f2-4679-b4bf-dab6871d28ce";
 const TENANT = "00000000-0000-4000-8000-000000000001";
@@ -119,4 +119,9 @@ test("성공: 자원을 만들고 이 이전에 등록, 터널 토큰은 봉인 
 
 test("정리: 꺼져 있으면 아무것도 안 한다", async () => {
   assert.deepEqual(await teardownTrafficEntry(MIG, { keepTarget: true }, {}), { skipped: "traffic_auto_lb_off" });
+});
+
+test("실패 안내: 요금제 오리진 한도면 토큰이 아니라 한도를 말한다, 그 밖은 토큰 권한", () => {
+  assert.match(entryFailHint("Cloudflare POST /accounts/x/load_balancers/pools 실패: 1002 adding 1 origins to current total (2) would surpass the limit (2): validation failed"), /오리진 수 한도/);
+  assert.match(entryFailHint("Cloudflare GET ... 9106 Authentication failed"), /토큰 권한/);
 });

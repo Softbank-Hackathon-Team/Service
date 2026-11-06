@@ -81,9 +81,15 @@ export async function prepareTrafficEntry(i: { tenantId: string; migrationId: st
     return { kind: "ok", sealedSecret: { name: sealed.name, encryptedData: sealed.encryptedData },
       detail: { hostname: entry.hostname, lbId: r.lbId, sourcePoolId: r.sourcePoolId, targetPoolId: r.targetPoolId, tunnelId: r.tunnelId, sourceOrigin: maskOrigin(sourceOrigin) } };
   } catch (e) {
-    return { kind: "stop", code: "TRAFFIC_ENTRY_FAILED", reason: (e as Error).message.slice(0, 300),
-      hint: "Cloudflare 토큰 권한(Tunnel Edit, LB Monitors and Pools Edit, Zone LB Edit, DNS Read)·존을 확인한 뒤 재개 (여러 번 해도 같은 자원을 다시 쓴다)" };
+    const msg = (e as Error).message;
+    return { kind: "stop", code: "TRAFFIC_ENTRY_FAILED", reason: msg.slice(0, 300), hint: entryFailHint(msg) };
   }
+}
+/** 실패 문구로 고치는 법을 고른다. 요금제 오리진 한도(1002 "surpass the limit")는 토큰 문제가 아니다 (2026-11-07 실측) */
+export function entryFailHint(msg: string): string {
+  if (/surpass the limit/i.test(msg))
+    return "Cloudflare Load Balancing 요금제의 오리진 수 한도에 걸림 (이전 하나에 출발·도착 2개 필요). 안 쓰는 LB·pool 을 지우거나 오리진 한도를 올린 뒤 재개. 한도 2면 한 번에 이전 하나만 된다";
+  return "Cloudflare 토큰 권한(Tunnel Edit, LB Monitors and Pools Edit, Zone LB Edit, DNS Read)·존을 확인한 뒤 재개 (여러 번 해도 같은 자원을 다시 쓴다)";
 }
 const maskOrigin = (o: string) => o.replace(/^([0-9a-f]{4})[0-9a-f-]{28,}/i, "$1…");
 
