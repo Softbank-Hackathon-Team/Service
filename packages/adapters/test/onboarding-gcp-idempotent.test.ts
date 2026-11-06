@@ -75,15 +75,17 @@ const MUTATING = /^(services enable|iam service-accounts create|iam roles create
 const mutations = (calls: string[]) => calls.filter((c) => MUTATING.test(c));
 
 // B-2: + SA 2(svc-env·svc-gke-node) + 역할 1(platform_env) + 프로젝트 바인딩 4(env 역할 1·노드 3) + SA 단위 2(svc-env tokenCreator·svc-gke-node actAs)
-test("처음 실행 (A안 두 프로젝트): API 11(원래 2·전용 9) + SA 5 + 역할 10(원래 2·전용 8) + 프로젝트 바인딩 13(원래 2·전용 11) + SA 단위 5(tokenCreator 4·actAs 1) = 변경 44번", () => {
+test("처음 실행 (A안 두 프로젝트): API 13(원래 3·전용 10) + SA 5 + 역할 10(원래 2·전용 8) + 프로젝트 바인딩 13(원래 2·전용 11) + SA 단위 5(tokenCreator 4·actAs 1) = 변경 46번", () => {
   const e = env();
   const r = e.run();
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(mutations(e.calls()).length, 44);
+  assert.equal(mutations(e.calls()).length, 46);
   // 새 전용 프로젝트: 연결 확인·빌리기·첫 up 이 부르는 API 9개를 켬 (실측에서 cloudresourcemanager 손으로 켠 것 없앰)
-  for (const a of ["cloudresourcemanager", "serviceusage", "iam", "iamcredentials", "sts", "container", "sqladmin", "compute", "secretmanager"])
+  for (const a of ["cloudresourcemanager", "serviceusage", "iam", "iamcredentials", "sts", "container", "sqladmin", "compute", "cloudbilling", "secretmanager"])
     assert.ok(e.calls().some((x) => x.startsWith(`services enable ${a}.googleapis.com`) && x.includes(`--project=${TPRJ}`)), a);
   assert.ok(e.calls().some((x) => x.startsWith("services enable cloudresourcemanager.googleapis.com") && x.includes(`--project=${PRJ}`)));
+  // 결제 연결 확인(PC-BILL)은 빌린 관찰 SA 의 프로젝트(원래)로 할당량을 잡는다
+  assert.ok(e.calls().some((x) => x.startsWith("services enable cloudbilling.googleapis.com") && x.includes(`--project=${PRJ}`)));
   assert.match(r.stdout, /123456/);
   assert.deepEqual(r.stdout.split("\n").filter((l) => l.includes("건너뜀")), ["= 이미 있음, 건너뜀: 전용 프로젝트 cust-mig"]);   // A안: 전용 프로젝트는 고객이 먼저 고름
 });
@@ -96,7 +98,7 @@ test("재실행: 변경 명령 0번, 전부 '건너뜀', 종료 0 (확인 명령
   assert.equal(r.status, 0, r.stderr);
   const second = e.calls().slice(before);
   assert.equal(mutations(second).length, 0, "재실행에서 변경 명령: " + mutations(second).join(" | "));
-  assert.equal((r.stdout.match(/이미 있음, 건너뜀/g) ?? []).length, 45);   // + 전용 프로젝트 있음
+  assert.equal((r.stdout.match(/이미 있음, 건너뜀/g) ?? []).length, 47);   // + 전용 프로젝트 있음
   assert.ok(second.length >= 10, "각 항목을 먼저 확인");
 });
 
@@ -107,7 +109,7 @@ test("부분 상태: 관찰 SA·관찰 역할만 있으면 나머지만 만든�
   assert.equal(r.status, 0, r.stderr);
   const m = mutations(e.calls());
   // OBSROLE3: 있는 관찰 역할에 권한이 비어 있으면 create 가 아니라 update(add-permissions) 1번이 더해진다 (8 → 9)
-  assert.equal(m.length, 43);   // + API 9 (원래 cloudresourcemanager 1·전용 8)
+  assert.equal(m.length, 45);   // + API 11 (원래 cloudresourcemanager·cloudbilling 2·전용 9)
   assert.equal(m.filter((c) => c.startsWith("iam roles update platform_observe ")).length, 1);
   assert.ok(!m.some((c) => c.includes("service-accounts create svc-observe")) && !m.some((c) => c.includes("roles create platform_observe ") && c.includes("--project=cust-prj")));
   assert.ok(m.some((c) => c.includes("service-accounts create svc-operate")));
@@ -255,7 +257,7 @@ test("DRY_RUN 은 확인 명령도 안 부르고, 이미 있어도 전부 출력
   const r = e.run({ DRY_RUN: "1" });
   assert.equal(r.status, 0);
   assert.equal(e.calls().length, before, "DRY_RUN 중 gcloud 호출 없음");
-  assert.equal((r.stdout.match(/^\+ gcloud/gm) ?? []).length, 44);
+  assert.equal((r.stdout.match(/^\+ gcloud/gm) ?? []).length, 46);
 });
 
 // ── OBSROLE3: 이미 만든 관찰 역할 권한 갱신 ──
