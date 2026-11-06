@@ -56,7 +56,7 @@ if ! [[ "${PLATFORM_SA}" =~ ^t-[0-9a-f]{28}@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.g
 fi
 
 # FM-CON-03: 역할 파일이 없으면 아무것도 만들기 전에 멈춘다 (예전: 관찰 권한만 넣고 중간에 멈춰 반쯤 연결된 상태가 남음)
-for f in gcp-operate-custom-role.yaml gcp-operate-iam-custom-role.yaml gcp-operate-db-secret-role.yaml gcp-operate-iam-binding-condition.json gcp-operate-db-secret-condition.json gcp-env-custom-role.yaml; do
+for f in gcp-operate-custom-role.yaml gcp-operate-iam-custom-role.yaml gcp-operate-db-secret-role.yaml gcp-operate-iam-binding-condition.json gcp-operate-db-secret-condition.json gcp-env-custom-role.yaml gcp-relay-custom-role.yaml; do
   if [ ! -f "${ROLE_DIR}/${f}" ]; then echo "역할 파일 없음: ${ROLE_DIR}/${f} (infra 폴더에서 치거나 ROLE_DIR=<레포>/infra/permissions)" >&2; exit 2; fi
 done
 
@@ -386,6 +386,18 @@ fi
 for role in platform_operate platform_operate_iam platform_operate_db_secret; do drop_all_bindings "${OLD_OPERATE_SA}" "projects/${P}/roles/${role}"; done
 drop_all_bindings "${OLD_PLAN_SA}" "projects/${P}/roles/platform_plan"
 ensure_token_creator "${OBSERVE_SA}"
+# GCP 출발 → 온프레 DB 복제 중계기 (worker relay/gcp-relay.ts): 출발 Cloud SQL 의 VPC 에 GCE VM·방화벽을 만들고, 출발 Cloud SQL 에 이전 전용 복제 계정을 만든다.
+#   그래서 이 프로젝트에도 실행 SA(svc-operate@전용 프로젝트)에 중계기 역할 하나만 준다 (Compute VM·방화벽 + Cloud SQL 사용자, 자동 생성 파일).
+#   만드는 자원은 이름 svc-relay-<이전>·라벨 managed-by=platform 이고 정리 때 지운다. 끄려면 RELAY_SOURCE_ROLE=0
+# DRAFT(ai): 원래 프로젝트 "읽기만" 원칙의 예외 하나 (2026-11-07 리더 지시: 실환경 구성 후 온프레 전환이 사용자 입력 없이 돌아야 함)
+if [ "${RELAY_SOURCE_ROLE:-1}" != "0" ]; then
+  ensure_api compute.googleapis.com
+  ensure_api sqladmin.googleapis.com
+  ensure_role platform_relay --file="${ROLE_DIR}/gcp-relay-custom-role.yaml"
+  ensure_project_binding "${OPERATE_SA}" "projects/${P}/roles/platform_relay"
+else
+  drop_all_bindings "${OPERATE_SA}" "projects/${P}/roles/platform_relay"
+fi
 
 # ── 전용 프로젝트: 도착 자원·실행 역할 ──
 P="${TARGET_PROJECT_ID}"
@@ -433,6 +445,9 @@ for role in roles/logging.logWriter roles/monitoring.metricWriter roles/artifact
 # B-2 (나): ESO 신원은 여기서 만들지 않는다 (svc-eso 없음). ESO 는 자기 KSA 를 IAM 주체로 쓰고 앱 층(gcp/root)이 비밀마다 읽기를 준다.
 #   여기서 묶으면 첫 GKE 클러스터 전에는 GKE 풀(<전용>.svc.id.goog)이 없어 "Identity Pool does not exist"(400)로 막힌다
 # 플랫폼의 회사 전용 SA가 SA를 빌려 쓰게 함. 대상은 SA 단위(프로젝트 전체 아님), 주체는 이 회사 SA 하나. svc-gke-node 는 빌리지 않는다
+# 온프레 출발 → GCP 도착 DB 복제 중계기 (worker relay/gcp-relay.ts): 도착 Cloud SQL 의 VPC 에 GCE VM·방화벽. 실행 역할(platform_operate)엔 VM·방화벽 권한이 없어 따로
+ensure_role platform_relay --file="${ROLE_DIR}/gcp-relay-custom-role.yaml"
+ensure_project_binding "${OPERATE_SA}" "projects/${P}/roles/platform_relay"
 ensure_token_creator "${PLAN_SA}"
 ensure_token_creator "${OPERATE_SA}"
 ensure_token_creator "${ENV_SA}"
