@@ -6,6 +6,8 @@ import { DATA_TYPES } from "../src/target/data.js";
 import { GRANT_TYPES_GCP } from "../src/target/grants.js";
 import { buildAwsConnectTemplate } from "./aws-connect-template.js";
 import { sourceDbLinkOperatePolicy } from "../src/aws/source-db-link.js";
+import { buildPermissionBundles, gcpBundlesTsv, GCP_BUNDLES_TSV, PERMISSION_BUNDLES_FILE, PERMISSIONS_VERSION } from "../src/permissions/bundles.js";
+import { collectBundleInputs } from "./permission-bundles.js";
 
 // 앱 모듈(infra/modules/*/app)을 plan/apply/destroy 하는 데 필요한 최소 권한을 파일로 뽑는다.
 // 계정 세팅 때 "실행 역할" 정책·GCP 커스텀 역할의 출발점. 값은 권한표 추정 → 실계정 거부 로그로 보정
@@ -137,8 +139,9 @@ const GCP_IMAGE_PUSH = ["artifactregistry.repositories.downloadArtifacts", "arti
 const gcpAll = [...new Set([...purposes.flatMap((p) => gcp.operateActions(spec("gcp"), p)), ...purposes.flatMap((p) => actionsFor(gcp.PERMS, GCP_DATA, p)), ...GCP_IMAGE_PUSH])].sort();
 const gcpIam = gcpAll.filter((x) => x.endsWith(".setIamPolicy"));
 const gcpRest = gcpAll.filter((x) => !x.endsWith(".setIamPolicy"));
+// PERM-GATE: 설명 끝에 권한 판 번호 [perms vN] (관찰 SA 가 iam.roles.get 으로 고객 역할에 붙은 판을 읽는다). 새로 만드는 역할만 이 설명을 받는다
 const role = (title: string, desc: string, perms: string[]) =>
-  `title: ${title}\ndescription: ${desc}\nstage: GA\nincludedPermissions:\n` + perms.map((x) => `- ${x}`).join("\n") + "\n";
+  `title: ${title}\ndescription: ${desc} [perms v${PERMISSIONS_VERSION}]\nstage: GA\nincludedPermissions:\n` + perms.map((x) => `- ${x}`).join("\n") + "\n";
 writeFileSync(join(out, "gcp-operate-custom-role.yaml"),
   role("platform-operate", "infra/modules/gcp/app plan/apply/destroy, IAM 정책 바꾸기 제외 (자동 생성)", gcpRest));
 writeFileSync(join(out, "gcp-operate-iam-custom-role.yaml"),
@@ -175,4 +178,9 @@ writeFileSync(join(out, "onprem-operate-clusterrole.yaml"),
   `---\napiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRoleBinding\nmetadata:\n  name: platform-operate-namespaces\n` +
   `roleRef:\n  apiGroup: rbac.authorization.k8s.io\n  kind: ClusterRole\n  name: platform-operate-namespaces\n` +
   `subjects:\n  - apiGroup: rbac.authorization.k8s.io\n    kind: Group\n    name: platform:operate\n`);
+// PERM-GATE: 권한 묶음 (단계·클라우드·기능별 고객 주체·권한·API) = 위에서 쓴 파일 + 연결 스크립트 목록에서 뽑는다 (손으로 적은 두 번째 목록 없음).
+//   worker 사전 점검·환경 권한 확인이 읽고(permission-bundles.json), 연결 스크립트 묶음 모드(ONLY_BUNDLES)가 읽는다(gcp-bundles.tsv)
+const bundles = buildPermissionBundles(collectBundleInputs(out));
+writeFileSync(join(out, PERMISSION_BUNDLES_FILE), JSON.stringify({ version: PERMISSIONS_VERSION, bundles }, null, 2) + "\n");
+writeFileSync(join(out, GCP_BUNDLES_TSV), gcpBundlesTsv(PERMISSIONS_VERSION, bundles));
 console.log(`AWS ${awsAll.length}개, GCP ${gcpRest.length}+${gcpIam.length}개(조건부), k8s 클러스터 ${clusterWide.length}·네임스페이스 ${perNs.length}규칙 → ${out}`);
