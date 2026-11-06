@@ -25,6 +25,8 @@ export const EnvironmentView = z.object({
   needsHuman: z.array(z.string().max(300)).max(100).optional(),           // 고객이 할 일 한 줄씩 (예: 연결 스크립트 다시 실행)
   // RV-24: 마지막 확인이 흉내 자격(클라우드 안 읽음)으로 닫혔으면 true. 진짜 확인이면 칸 자체가 없음
   mock: z.literal(true).optional(),
+  // PERM-GATE: 마지막 권한 확인에서 빠진 묶음 수 (확인한 적 없으면 칸이 없음). 자세한 것은 GET /environments/:id/permissions
+  permissionGaps: z.number().int().nonnegative().optional(),
 }).strict();
 export type EnvironmentView = z.infer<typeof EnvironmentView>;
 
