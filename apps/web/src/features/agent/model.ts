@@ -1,5 +1,5 @@
 import type { TimelineEntry } from '../../components/ui/Timeline';
-import type { AgentLlm, AgentLlmSpend, AgentReview, AgentStep, FailureAnalysis } from '../../lib/agent-review-types';
+import type { AgentLlm, AgentLlmSpend, AgentReview, AgentStep, FailureAnalysis, RemediateReview } from '../../lib/agent-review-types';
 import { t } from '../../lib/i18n';
 
 // AI 점검을 지금 돌릴 수 없는 이유 (서버 apps/api/src/routes/agent-review.ts 와 같은 규칙).
@@ -21,18 +21,27 @@ const TOOL_LABEL: Record<string, string> = {
   run_check: t('안정성 확인'),
   finish: t('결론'),
 };
+export const OUTCOME: Record<NonNullable<RemediateReview['outcome']>, { label: string; tone: 'success' | 'neutral' | 'warning' }> = {
+  proposed: { label: t('수정안 있음'), tone: 'success' },
+  no_change: { label: t('고칠 것 없음'), tone: 'neutral' },
+  gave_up: { label: t('원인 못 찾음'), tone: 'warning' },
+};
 const CHECK: Record<string, Pick<TimelineEntry, 'kind' | 'detail'> | undefined> = {
   check_ok: { kind: 'pass', detail: t('점검 통과') },
   check_bad: { kind: 'fail', detail: t('점검 실패') },
 };
 
-/** 에이전트 단계 한 줄. step.ok 는 "도구 호출이 허용됐나"라서, run_check 의 통과·실패는 note(check_ok·check_bad)로 가른다 (packages/agent loop.ts) */
+/**
+ * 에이전트 단계 한 줄. step.ok 는 "도구 호출이 허용됐나"라서, run_check 의 통과·실패는 note(check_ok·check_bad)로 가른다.
+ * finish 의 note 는 결론 코드(proposed …)라 사람 말로 (packages/agent loop.ts)
+ */
 export function agentStepEntry(step: AgentStep): TimelineEntry {
   const check = step.tool === 'run_check' ? CHECK[step.note] : undefined;
+  const outcome = step.tool === 'finish' ? OUTCOME[step.note as keyof typeof OUTCOME]?.label : undefined;
   return {
     kind: check?.kind ?? (step.ok ? 'tool' : 'denied'),
     title: TOOL_LABEL[step.tool] ?? step.tool,
-    detail: check?.detail ?? step.note,
+    detail: check?.detail ?? outcome ?? step.note,
     time: `${step.seq}`,
   };
 }

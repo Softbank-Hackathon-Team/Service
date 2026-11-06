@@ -77,4 +77,5 @@ test("에이전트 단계: 안정성 확인은 통과·실패가 다르게 보�
   assert.equal(bad.title, good.title);
   assert.equal(agentStepEntry({ seq: 1, tool: "repo_edit", ok: false, note: "TOOL-05" }).kind, "denied");
   assert.deepEqual(agentStepEntry({ seq: 2, tool: "repo_read", ok: true, note: "deploy/app.yaml" }), { kind: "tool", title: "배포 파일 읽기", detail: "deploy/app.yaml", time: "2" });
+  assert.equal(agentStepEntry({ seq: 8, tool: "finish", ok: true, note: "proposed" }).detail, "수정안 있음");
 });
