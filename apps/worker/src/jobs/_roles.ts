@@ -5,7 +5,7 @@ import {
   type RoleStep, type TempCredential,
 } from "@svc/security";
 import { borrowedAwsCreds, type BorrowedAwsCreds } from "@svc/adapters";
-import { permissionSet, tempRoles } from "../platform.js";
+import { permissionSet, realStsEnabled, tempRoles } from "../platform.js";
 import type { MigrationRow } from "./_step.js";
 import { envNumber } from "@svc/contracts";
 
@@ -16,11 +16,12 @@ import { envNumber } from "@svc/contracts";
 // L5b·L5c: 진짜 발급기(REAL_STS=1 + external_id)로 빌린 AWS 자격은 apply terraform·precheck CLI 가 쓴다 (awsEnv).
 // 진짜 발급기로 빌린 GCP 자격은 gcpToken 으로 precheck gcloud·apply·destroy terraform 이 쓴다 (gcp-token-server.ts).
 // STUB: 가짜 발급기·온프레 자격은 아직 안 쓴다 (프로세스 자격). 그래도 발급 검사(최소 권한·세션 정책·TTL)는 진짜로 돈다.
-// 거부되면(권한 파일 없음 등) 감사에 temp_role.denied 가 남고 단계는 계속 간다.
-// DRAFT(ai): TEMP_ROLE_REQUIRED=1 이면 거부 = 단계 실패(예외). 기본 0 (자격을 아직 안 쓰는 STUB 단계를 거부로 멈추지 않게)
+// 거부되면(권한 파일 없음 등) 감사에 temp_role.denied 가 남는다. 실환경(진짜 발급기, REAL_STS 0 아님)은 거부 = 단계 실패(TempRoleDenied):
+//   빌린 자격 없이 이어 가면 terraform·CLI 가 워커 자기 자격으로 고객 계정 일을 한다 (apply-real runnerOpts 등이 빌린 자격이 없으면 워커 환경으로 돈다).
+//   진짜 발급기의 발급 실패(STS·impersonate 오류)가 이미 단계를 멈추는 것과 같은 규칙이다.
+//   로컬·시험(REAL_STS=0, 흉내 발급기)은 원래 프로세스 자격으로 돌므로 거부를 적기만 하고 이어 간다
 // DRAFT(ai): 요청 수명 = 900초 (실행 역할 상한, AWS STS 최소값과 같음)
 export const STEP_ROLE_TTL_SEC = envNumber(process.env.STEP_ROLE_TTL_SEC, 900);
-const required = () => process.env.TEMP_ROLE_REQUIRED === "1";
 // 재발급 주기 (작업 Z61, Jeong 17:03Z 승인값 "10분 재발급"). 기본 600초. STUB·시험에서는 줄여서 시간을 당긴다 (예 CRED_RENEW_SEC=0.05)
 // 수명의 2/3 를 넘지 못한다 (renewIntervalSec). 부를 때마다 읽는다 → 시험이 env 를 바꿔도 먹는다
 export const credRenewSec = () => renewIntervalSec(envNumber(process.env.CRED_RENEW_SEC, CRED_RENEW_DEFAULT_SEC), STEP_ROLE_TTL_SEC);
@@ -73,7 +74,7 @@ export async function borrowStepRoles(step: RoleStep, j: { tenantId: string; mig
     } catch (e) {
       if (!(e instanceof TempRoleDenied)) throw e;
       out.denied.push({ side: r.side, purpose: r.purpose, code: e.code });
-      if (required()) { await returnStepRoles(out, j.tenantId, `${step}_denied`); throw e; }
+      if (realStsEnabled()) { await returnStepRoles(out, j.tenantId, `${step}_denied`); throw e; }
     }
   }
   return out;
@@ -166,12 +167,19 @@ async function awsCredFiles(r: StepRoles, j: { tenantId: string; migrationId: st
 
 // apply 의 onError 가 쓴다 (Z38 REVIEW-4 Z43-1): 재발급 실패면 failed(CRED_RENEW_FAILED), 아니면 null.
 //   paused 로 보내면 나가는 길이 롤백뿐인데, 롤백은 Terraform 으로 만들다 만 자원을 지우지 않고 rolled_back(끝 상태)에서 잠금을 푼다
-//   → 클라우드에 자원이 남은 채 "끝남"이 된다. failed 는 잠금을 쥔 채 남고, 취소하려면 사람이 "자원 정리했음"(T38)을 확인해야 하며,
-//   provisioning 실패라 다시 계획(T37)도 된다 = APPLY_FAILED 와 같은 길
+//   → 클라우드에 자원이 남은 채 "끝남"이 된다. failed 는 사람에게 재시도·거절(롤백)을 묻는다 (POST .../failure-decision) = APPLY_FAILED 와 같은 길
 export function failedOnRenewFailure(e: unknown) {
   if (!(e instanceof CredRenewFailed)) return null;
   return { to: "failed" as const, failureCode: "CRED_RENEW_FAILED",
     detail: { credRenew: { reason: e.reason, error: e.message.slice(0, 300) } } };
+}
+
+// apply 의 onError 가 쓴다: 실환경에서 고객 임시 역할을 못 빌림 → failed(TEMP_ROLE_DENIED), 아니면 null.
+//   설정 문제(최소 권한 파일 없음 등)라 다시 해도 같다. terraform 은 시작하지 않았다
+export function failedOnRoleDenied(e: unknown) {
+  if (!(e instanceof TempRoleDenied)) return null;
+  return { to: "failed" as const, failureCode: "TEMP_ROLE_DENIED",
+    detail: { tempRole: { code: e.code, error: e.message.slice(0, 300) } } };
 }
 
 // cleanup 의 onError 가 쓴다: 재발급 실패면 paused, 아니면 null (원래 처리로)

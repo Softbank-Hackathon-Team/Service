@@ -21,6 +21,7 @@ export const FAILURE_CODES = [
   "ENV_LAYER_CRED_MISSING",      //   환경 층을 만들 빌린 GCP 실행 토큰이 없음 (워커 자기 자격으로는 만들지 않는다)
   "TF_BIN_MISSING",              // Z89: 진짜 Terraform 이 기본인데 실행 파일이 없음 (MOCK_IAC=1 이 아닌데 terraform 미설치)
   "CRED_RENEW_FAILED",           // 임시 자격 재발급 실패 (Z61)
+  "TEMP_ROLE_DENIED",            // 실환경(진짜 발급기)에서 고객 임시 역할 발급 거부 (최소 권한 파일 없음 등) → apply failed. 워커 자기 자격으로 넘어가지 않는다
   "APP_LINK_UPSTREAM_FAILED",    // 앱 연결 상류 실패 (int5-3)
   "PLAN_RECHECK_FAILED",         // E10-4: 계획 작업 재확인 실패 (받아들인 명세 없음·도착 환경 없음·연결 안 됨이 계속됨)
   "APPLY_RECHECK_FAILED",        // apply 실행 직전 재확인 실패 (Z38-3: 지문 다름·만료·도착 환경 없음)
