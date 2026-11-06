@@ -6,12 +6,13 @@ import { scrubString } from "@svc/core";
 import { TempRoleDenied } from "@svc/security";
 import { envFor, isPublicImage, registryOf, spawnExec, type Exec } from "@svc/adapters";
 import { withStepRoles, type StepRoles } from "../jobs/_roles.js";
+import { MOCK_CREDENTIALS, realStsEnabled } from "../platform.js";
 import type { MigrationRow } from "../jobs/_step.js";
 
 // 리허설 이미지 복사 (설계 결정 38: 이미지는 해시로 회사별 플랫폼 저장소에 복사, 샌드박스에 고객 자격 없음).
 // 고객 이미지를 다이제스트 그대로 플랫폼 ECR 샌드박스 자리(SANDBOX_IMAGE_REGISTRY = <호스트>/<접두어>)로 복사하고
 // 렌더 결과의 주소 → 샌드박스 주소 짝(RehearsalInput.images, vCluster translateImage 표)을 돌려준다.
-// 출발 ECR 읽기 = 출발 관찰 역할 15분 대여(STEP_ROLES.image_mirror, ECR 받기 세 동작). 플랫폼 쪽 쓰기 = 워커 자기 Pod Identity(sandbox/* 만).
+// 출발 ECR·Artifact Registry 읽기 = 출발 관찰 역할 15분 대여(STEP_ROLES.image_mirror, 그 클라우드의 받기 동작만). 플랫폼 쪽 쓰기 = 워커 자기 Pod Identity(sandbox/* 만).
 // 태그로는 절대 복사하지 않는다: 렌더 주소·원본 둘 다 @sha256 이어야 하고 같은 다이제스트여야 한다
 
 /** ref = 렌더 결과(파드)가 받는 주소, source = 바이트가 있는 고객 원본 (명세 image.repository@digest) */
@@ -24,13 +25,14 @@ export type MirrorOutcome =
 export interface MirrorDeps { exec?: Exec; env?: NodeJS.ProcessEnv; withRoles?: typeof withStepRoles; now?: () => number }
 
 // 원본 레지스트리 종류. platform = 이미 이 회사 샌드박스 자리에 있음(샌드박스 노드가 바로 읽음, 복사 없음)
-// DRAFT(ai): 출발 사설 레지스트리는 ECR 만. GCP Artifact Registry·온프레 레지스트리는 unsupported_registry (설계 7장 질문 4)
-type SourceKind = "public" | "ecr" | "platform";
+// DRAFT(ai): 출발 사설 레지스트리는 ECR·Artifact Registry(gcr.io 포함)만. 온프레 레지스트리는 unsupported_registry (설계 7장 질문 4)
+type SourceKind = "public" | "ecr" | "ar" | "platform";
 interface Planned { ref: string; sandboxRef: string; kind: SourceKind; host: string; from: string; digest: string; repository: string }
 
 const DIGEST = /@(sha256:[a-f0-9]{64})$/;
 const ECR_HOST = /^\d{12}\.dkr\.ecr\.([a-z0-9-]+)\.amazonaws\.com$/;
 const ecrRegion = (host: string) => host.match(ECR_HOST)?.[1] ?? null;
+const AR_HOST = /^([a-z0-9-]+-docker\.pkg\.dev|((us|eu|asia)\.)?gcr\.io)$/;
 // DRAFT(ai): 단계 시간 상한. 토큰 20초(STS_CLI_TIMEOUT_MS 와 같음), 다이제스트 확인 30초, 복사 300초
 const TOKEN_MS = 20_000, DIGEST_MS = 30_000, COPY_MS = 300_000;
 // DRAFT(ai): 복사 한 번(역할 대여 + 모든 단계) 전체 예산 600초. deploy 작업 만료는 pg-boss 기본 900초다 (core boss.ts POLICY 의 deploy 에
@@ -53,7 +55,8 @@ function plan(i: MirrorImage, reg: { host: string; prefix: string }, tenantId: s
   const slash = named.lastIndexOf("/"), colon = named.lastIndexOf(":");
   const from = colon > slash ? named.slice(0, colon) : named;   // 태그는 버리고 다이제스트로만 받는다
   const host = registryOf(i.source);
-  const kind: SourceKind | null = host === reg.host ? "platform" : isPublicImage(i.source) ? "public" : ecrRegion(host) ? "ecr" : null;
+  const kind: SourceKind | null = host === reg.host ? "platform" : isPublicImage(i.source) ? "public" : ecrRegion(host) ? "ecr"
+    : AR_HOST.test(host) ? "ar" : null;
   if (!kind) return fail("unsupported_registry", i.ref, `출발 레지스트리 종류 미지원: ${host}`);
   // 플랫폼 레지스트리의 다른 자리(platform/<회사>, 다른 회사 자리)는 sbx-pod-guard 가 <SANDBOX_IMAGE_REGISTRY>/<회사>/ 밖이라 거부하고,
   //   워커는 sandbox/* 밖을 읽을 권한이 없어 복사도 못 한다. 샌드박스에서 뜰 수 없는 주소를 넘기지 않고 여기서 멈춘다
@@ -84,7 +87,7 @@ export async function mirrorImages(j: { tenantId: string; migrationId: string },
   }
   const copy = (r: StepRoles | null) => copyAll(planned, reg, r, deps.exec ?? spawnExec, env, () => deadline - now());
   try {
-    return planned.some((p) => p.kind === "ecr") ? await (deps.withRoles ?? withStepRoles)("image_mirror", j, m, copy) : await copy(null);
+    return planned.some((p) => p.kind === "ecr" || p.kind === "ar") ? await (deps.withRoles ?? withStepRoles)("image_mirror", j, m, copy) : await copy(null);
   } catch (e) {
     if (e instanceof TempRoleDenied) return fail("role_denied", null, e.code);
     throw e;
@@ -120,6 +123,20 @@ async function copyAll(planned: Planned[], reg: { host: string; prefix: string }
       const a = await token(ecrRegion(h)!, sourceEnv);
       if ("ok" in a) return a;
       auths[h] = a;
+    }
+    // AR 레지스트리 암호 = 빌린 출발 관찰 SA 토큰 (사용자 이름 oauth2accesstoken). 메모리에서 아래 config.json(0600)으로만 간다
+    //   빌린 토큰이 없을 때 워커 자기 gcloud 로그인으로 읽는 것은 REAL_STS=0(로컬·시험)뿐이다 (ECR 의 프로세스 자격과 같은 자리).
+    //   진짜 발급기 모드에서 없으면(흉내 자격·출발이 GCP 아님) 워커 자기 계정으로 고객 레지스트리를 읽게 되니 멈춘다 (platform.ts refuseMockCredentials)
+    const arHosts = new Set(planned.filter((p) => p.kind === "ar").map((p) => p.host));
+    if (arHosts.size) {
+      let t = r?.gcpToken?.source;
+      if (!t && realStsEnabled(env)) return fail("role_denied", null, `Artifact Registry 를 읽을 출발 관찰 SA 토큰 없음 (${MOCK_CREDENTIALS} 이거나 출발이 GCP 아님)`);
+      if (!t) {
+        const own = await run("gcloud", ["auth", "print-access-token"], env, TOKEN_MS);
+        if (own.code !== 0) return fail(own.code === 127 ? "tool_missing" : "auth_failed", null, `gcloud auth print-access-token: ${own.stderr}`);
+        t = own.stdout.trim();
+      }
+      for (const h of arHosts) auths[h] = { auth: Buffer.from(`oauth2accesstoken:${t}`).toString("base64") };
     }
     // DRAFT(ai): 샌드박스 자리가 ECR 이 아니면(로컬 kind 시험용 레지스트리) 토큰·저장소 만들기 없이 익명으로 올린다
     const platformRegion = ecrRegion(reg.host);

@@ -52,21 +52,23 @@ function fakeRegistry() {
     return r(0);
   };
   const withRoles = (async (_s: string, _j: unknown, _m: unknown, fn: (r: StepRoles) => Promise<unknown>) =>
-    fn({ creds: [], denied: [], skipped: [], awsEnv: { source: { AWS_REGION: "us-west-2" } } })) as typeof withStepRoles;
+    fn({ creds: [], denied: [], skipped: [], awsEnv: { source: { AWS_REGION: "us-west-2" } }, gcpToken: { source: "ya29.vap-test-token" } })) as typeof withStepRoles;
   return { exec, withRoles };
 }
 const mirror = (images: MirrorImage[]) => mirrorImages({ tenantId: T, migrationId: "22222222-2222-4222-8222-222222222222" },
   { id: "22222222-2222-4222-8222-222222222222", status: "deploying", sourceEnvId: "s", targetEnvId: "t" }, images,
   { ...fakeRegistry(), env: { SANDBOX_IMAGE_REGISTRY: REG, PATH: process.env.PATH } });
 
-test("복사 결과 주소는 모두 sbx-pod-guard 를 통과한다 (ECR·공개·이미 이 회사 자리)", { skip }, async () => {
+test("복사 결과 주소는 모두 sbx-pod-guard 를 통과한다 (ECR·Artifact Registry·gcr.io·공개·이미 이 회사 자리)", { skip }, async () => {
   const out = await mirror([
     { ref: `x/api@${D}`, source: `111122223333.dkr.ecr.us-west-2.amazonaws.com/shop/api@${D}` },
+    { ref: `x/web@${D}`, source: `asia-northeast3-docker.pkg.dev/cust-prj/shop/web@${D}` },
+    { ref: `x/worker@${D}`, source: `gcr.io/cust-prj/worker@${D}` },
     { ref: `x/pause@${D}`, source: `registry.k8s.io/pause@${D}` },
     { ref: `x/cached@${D}`, source: `${REG}/${T}/cached@${D}` },
   ]);
   assert.ok(out.ok, JSON.stringify(out));
-  assert.equal(out.images.length, 3);
+  assert.equal(out.images.length, 5);
   for (const { sandboxRef } of out.images) {
     const r = podAdmission(sandboxRef);
     assert.equal(r.status, 0, `${sandboxRef}: ${r.stderr}`);
