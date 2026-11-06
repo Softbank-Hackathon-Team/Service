@@ -49,6 +49,7 @@ test("스크립트: 로그인 없이 받고, 자리표시가 다 채워지고, b
     const manifest = /^MANIFEST='([^']*)'$/m.exec(r.body)![1]!.split("\n").map((l) => l.split("  ") as [string, string]);
     assert.ok(manifest.some(([, p]) => p === "tools/onprem-install.sh"));
     assert.ok(manifest.some(([, p]) => p === "tools/cnpg-1.30.1.yaml"));
+    assert.ok(manifest.some(([, p]) => p === "tools/external-secrets-2.14.0.tgz"));
     assert.ok(manifest.some(([, p]) => p === "deploy/helm/onprem-agent/Chart.yaml"));
     for (const [sum, p] of manifest) {
       const f = await a.inject({ method: "GET", url: `/api/v1/install/onprem/${p}` });

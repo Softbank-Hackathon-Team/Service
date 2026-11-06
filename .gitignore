@@ -61,6 +61,8 @@ outputs.json
 *.tgz
 # agent-worker 이미지에 넣는 vCluster 차트 (SHA256SUMS 로 확인). .dockerignore 와 같은 예외
 !apps/agent-worker/vendor/*.tgz
+# 온프레 설치 묶음의 External Secrets 차트 (sha 는 tools/onprem-install.sh 가 확인)
+!tools/external-secrets-*.tgz
 *.tar.gz
 *.b64
 *.zip
