@@ -57,7 +57,8 @@ export const FAILURE_CODES = [
   "RELAY_TEARDOWN_FAILED",       //   중계기 지우기 실패 → cleanup paused (롤백은 rolled_back + 경고)
   "RELAY_TARGET_DB_UNKNOWN",     //   AWS→GCP 중계기: terraform 출력에 Cloud SQL 공개·나가는 IP·관리자 계정이 없음 → apply failed
   "TARGET_APP_LOGIN_FAILED",     //   AWS→GCP: 워커가 Cloud SQL 에 관리자로 붙어 앱 로그인 역할(일반 역할)을 못 만듦 → apply failed
-  "REPL_ENDPOINT_MISSING",       // 진짜 판(MOCK_IAC≠1)·명세에 postgres 가 있는데 복제 끝점(줄·REPL_* env)이 없음 → sync paused (예전엔 가짜 지연으로 통과)
+  "REPL_ENDPOINT_MISSING",       // 진짜 판(MOCK_IAC≠1)·명세에 postgres 가 있는데 복제 끝점(줄·REPL_* env)이 없음 → sync·cleanup paused, cutover failed (예전엔 가짜 성공으로 통과)
+  "REPL_TF_FACTS_MISSING",       // 복제 끝점 주소의 {tf:키} 를 못 채움·빈 값 (PF-E22) → sync·cleanup paused, cutover failed
   "REPL_DELIVERY_FAILED",        // 온프레 CNPG 이전: 서버 인증서·봉인 비밀·터널 값을 못 만듦 (중계기 칸 없음, 출발 포트 5432 아님, openssl 실패 등) → paused
   "SECRET_VALUES_MISSING", "SECRET_VALUES_UNKNOWN",   // APP-20: deploy 커밋 전 도착 비밀 그릇에 값(버전)이 없음 / 못 읽음 → paused
   "GITOPS_NOT_CONFIGURED",       // Z89: GitOps 레포 설정 없음인데 MOCK_ARGO=1 도 아님 (예전엔 조용히 STUB 성공)

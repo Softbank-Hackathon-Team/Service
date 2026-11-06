@@ -61,10 +61,3 @@ test("흉내 판(MOCK_IAC=1): 예전 STUB 길 그대로 shifting", { skip }, asy
   assert.equal(await sync.handleSync(job(id)), "advanced");
   assert.equal((await st(id)).status, "shifting");
 });
-
-test("끝점 없음 문 (순수): 진짜 판 + postgres 일 때만 막는다", { skip }, () => {
-  assert.equal(sync.endpointMissingBlocks(true, {}), true);
-  assert.equal(sync.endpointMissingBlocks(true, { MOCK_IAC: "1" }), false);
-  assert.equal(sync.endpointMissingBlocks(false, {}), false);
-  assert.equal(sync.endpointMissingBlocks(null, {}), false);
-});

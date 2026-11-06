@@ -1,7 +1,7 @@
 import { restoreTrafficBeforeAsking } from "./_fail-traffic.js";
 import { Measurement, MigrationJob, QUEUES } from "@svc/contracts";
 import { replicationFor } from "./_repl.js";
-import { toMeasurements, SwitchoverError } from "@svc/replication";
+import { toMeasurements, ReplConfigError, SwitchoverError } from "@svc/replication";
 import { errorMessage, nextJob, runStep, stubWait, stubFailIfAsked, type StepOutcome } from "./_step.js";
 import { appLinkHooks, appLinkMeans, cutoverAppLinkBlock, switchRuntimeWriter, appLinkMeasurements, recordActiveWriter, targetBundle } from "../app-link.js";
 import { DEFAULT_ROLLBACK_WINDOW_SEC, loadLatestApproval, loadPlanById, rollbackWindowSecFor } from "@svc/core";
@@ -132,7 +132,9 @@ export async function handleCutover(raw: unknown) {
     onError: async (e) => {
       const msg = errorMessage(e);
       const se = e instanceof SwitchoverError ? e : null;
-      const failureCode = !se ? "CUTOVER_ERROR"
+      // 복제 끝점을 못 만듦(REPL_ENDPOINT_MISSING 등): 울타리를 치기 전이라 그 코드 그대로 (예전: 끝점 없음은 가짜 850ms 컷오버로 통과)
+      const failureCode = e instanceof ReplConfigError ? e.code
+        : !se ? "CUTOVER_ERROR"
         : se.pastNoReturn ? "CUTOVER_HALFWAY"              // C5 뒤: 정방향 구독 없음. 출발·도착 어느 쪽이 주인인지 사람이 확인
         : se.unfenced ? "CUTOVER_ERROR_UNFENCED"           // C5 전: 출발이 그대로 주인, 쓰기 돌려줌
         : "CUTOVER_UNFENCE_FAILED";                        // C5 전인데 울타리 걷기도 실패: 출발이 읽기 전용일 수 있다 (긴급)
