@@ -94,33 +94,53 @@ export function resourceId(yamlText: string): string | null {
   return ns ? `${kind}/${ns}/${name}` : `${kind}/${name}`;
 }
 
-// 허브가 고객 GKE 에 들어가는 접속 정보 (tenants/<t>/argocd/cluster-gcp-gke.yaml). 비밀값은 없다:
-// argocd-k8s-auth 가 회사별 설정 파일(ConfigMap argocd-gcp-creds, deploy/helm/platform/README.md)로 그때그때 구글 토큰을 받는다.
+// 허브가 고객 도착 클러스터에 들어가는 접속 정보 (tenants/<t>/argocd/cluster-<env>.yaml). 비밀값은 없다:
+//   GKE = argocd-k8s-auth 가 회사별 설정 파일(ConfigMap argocd-gcp-creds, deploy/helm/platform/README.md)로 그때그때 구글 토큰을 받는다
+//   EKS = 허브 역할(Pod Identity)이 고객 svc-deploy 를 빌려 EKS 토큰을 만든다 (awsAuthConfig). svc-deploy 는 연결 템플릿이 ArgoHubRoleArn 으로 만든다
 // namespaces 가 필수다: 허브 권한은 앱 구역 안뿐이라, 없으면 Argo 가 클러스터 전체를 읽으려다 실패한다
-export interface GkeAccess { endpoint: string; caData: string }
-export const GKE_SECRET_FILE = "cluster-gcp-gke.yaml";
+export type ClusterAccess =
+  | { env: "gcp-gke"; endpoint: string; caData: string }
+  | { env: "aws-eks"; endpoint: string; caData: string; clusterName: string; roleArn: string };
 
-export function gkeAccess(env: GitopsEnv, tf: Record<string, string>): GkeAccess | undefined {
+export const clusterSecretFile = (env: ClusterAccess["env"]) => `cluster-${env}.yaml`;
+
+// 고객 계정 안 배포 역할 이름. 연결 템플릿(infra/onboarding/aws-connect.json DeployRole)과 같아야 한다 (시험이 대조)
+export const AWS_DEPLOY_ROLE_NAME = "svc-deploy";
+// 플랫폼 Argo CD 허브의 AWS 역할 (infra/modules/aws/platform 출력 argocd_hub_role_arn → 차트 argocd.hubRoleArn). 모양은 시작 때 config 가 본다
+export const awsHubEnabled = (env: NodeJS.ProcessEnv = process.env) => !!env.ARGO_HUB_ROLE_ARN?.trim();
+
+// tf = 앱 층 apply 출력 (gcp/root·aws/root 의 cluster_endpoint·cluster_ca_certificate, apply-real 이 채운 cluster_name).
+// EKS 는 허브를 켠 플랫폼(awsHub = ARGO_HUB_ROLE_ARN)에서만: 끈 플랫폼은 사람이 등록한 목적지를 덮지 않는다
+export function clusterAccess(env: GitopsEnv, tf: Record<string, string>, o: { accountId: string | null; awsHub: boolean }): ClusterAccess | undefined {
   const endpoint = tf.cluster_endpoint, caData = tf.cluster_ca_certificate;
-  return env === "gcp-gke" && endpoint && caData ? { endpoint, caData } : undefined;
+  if (!endpoint || !caData) return undefined;
+  if (env === "gcp-gke") return { env, endpoint, caData };
+  if (env === "aws-eks" && o.awsHub && tf.cluster_name && o.accountId)
+    return { env, endpoint, caData, clusterName: tf.cluster_name, roleArn: `arn:aws:iam::${o.accountId}:role/${AWS_DEPLOY_ROLE_NAME}` };
+  return undefined;
 }
 
-export function gkeClusterSecret(tenant: string, a: GkeAccess, namespaces: string[]) {
-  const name = `${tenant}-gcp-gke`;
+function authConfig(tenant: string, a: ClusterAccess) {
+  switch (a.env) {
+    case "gcp-gke": return { execProviderConfig: {
+      command: "argocd-k8s-auth", args: ["gcp"], apiVersion: "client.authentication.k8s.io/v1beta1",
+      env: { GOOGLE_APPLICATION_CREDENTIALS: `/var/run/gcp-cred/${tenant}.json` },
+    } };
+    case "aws-eks": return { awsAuthConfig: { clusterName: a.clusterName, roleARN: a.roleArn } };
+  }
+}
+
+export function clusterSecret(tenant: string, a: ClusterAccess, namespaces: string[]) {
+  const name = `${tenant}-${a.env}`;
   return {
     apiVersion: "v1", kind: "Secret",
     metadata: { name, namespace: "argocd", labels: { "argocd.argoproj.io/secret-type": "cluster", tenant } },
     stringData: {
       name,
-      server: `https://${a.endpoint}`,
+      // GKE 출력은 IP 만, EKS 출력은 https:// 가 붙은 주소
+      server: a.endpoint.startsWith("https://") ? a.endpoint : `https://${a.endpoint}`,
       namespaces: [...new Set(namespaces)].sort().join(","),
-      config: JSON.stringify({
-        execProviderConfig: {
-          command: "argocd-k8s-auth", args: ["gcp"], apiVersion: "client.authentication.k8s.io/v1beta1",
-          env: { GOOGLE_APPLICATION_CREDENTIALS: `/var/run/gcp-cred/${tenant}.json` },
-        },
-        tlsClientConfig: { insecure: false, caData: a.caData },
-      }),
+      config: JSON.stringify({ ...authConfig(tenant, a), tlsClientConfig: { insecure: false, caData: a.caData } }),
     },
   };
 }

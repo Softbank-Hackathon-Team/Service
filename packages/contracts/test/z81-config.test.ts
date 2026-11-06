@@ -77,6 +77,17 @@ test("PRINCIPALUSER: PLATFORM_PRINCIPAL_ARN 은 IAM 역할·사용자만 (:root�
   assert.equal(p("arn:aws:iam::1234:user/x").length, 1);
 });
 
+test("ARGO_HUB_ROLE_ARN 은 api·worker 둘 다 IAM 역할만 (사용자·:root·모양 틀림이면 뜨지 않는다)", () => {
+  for (const s of ["api", "worker"] as const) {
+    const p = (v: string) => configProblems(s, { DATABASE_URL: "postgres://u@localhost:5432/d", ARGO_HUB_ROLE_ARN: v })
+      .filter((x) => x.startsWith("ARGO_HUB_ROLE_ARN"));
+    assert.deepEqual(p("arn:aws:iam::725072160743:role/platform-argocd-hub"), [], s);
+    assert.equal(p("arn:aws:iam::725072160743:user/x").length, 1, s);
+    assert.equal(p("arn:aws:iam::725072160743:root").length, 1, s);
+    assert.equal(p("platform-argocd-hub").length, 1, s);
+  }
+});
+
 test("리허설 설정 (worker): 정상 값 통과 / 틀린 값은 이름: 이유, 켰는데 복사 자리 없으면 거부 (흉내면 통과)", () => {
   const base = { DATABASE_URL: "postgres://u@h/d" };
   const ecr = "123456789012.dkr.ecr.ap-northeast-2.amazonaws.com/sandbox";
