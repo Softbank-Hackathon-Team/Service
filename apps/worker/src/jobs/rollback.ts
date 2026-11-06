@@ -78,11 +78,12 @@ export async function handleRollback(raw: unknown) {
       // 트래픽: 출발 100% 확인(shift 가 이미 긴급 되돌림을 했으면 PATCH 없이 확인만) + 출발 5xx ≤ 1%
       // PF FM-ORC-10: LB 를 다른 이전이 쥐고 있으면(그 이전이 shift 중) 건드리지 않는다. 이 이전은 LB 를 옮긴 적이 없어 출발이 그대로다.
       //   DRAFT(ai): 이때 증거는 "이 이전 몫은 출발 100%"로 본다 (출발 5xx 확인은 LB 주인의 일). 주인 없음·내 것이면 예전처럼 출발 100% 로
-      const { lbId, switcher } = await trafficFor(j.tenantId, j.migrationId);   // PF TRF-21: 이전별 LB 자리(DB) 먼저
+      const { lbId, switcher, from } = await trafficFor(j.tenantId, j.migrationId);   // PF TRF-21: 이전별 LB 자리(DB) 먼저
       const lease = await withTenant(j.tenantId, (tx) => trafficLeaseState(tx, lbId, j.migrationId));
+      // 출발 5xx 확인 지표도 shift 와 같은 규칙 (platform.ts trafficMetricsKind). 등록한 진짜 LB 인데 PROM_URL 이 없으면 지표 없이 (가짜 0% 를 안 남김)
       const traffic = lease === "other"
         ? { evidence: { sourceWeight100: true, sourceHealthy: true }, detail: { skipped: "lb_owned_by_other_migration", after: null } }
-        : await restoreSource({ switcher, lbId, metrics: trafficMetrics(j.tenantId), migrationId: j.migrationId });
+        : await restoreSource({ switcher, lbId, metrics: trafficMetrics(j.tenantId, { target: { from, provider: switcher.provider } }), migrationId: j.migrationId });
       const weights = traffic.detail.after;
       if (lease !== "other" && traffic.evidence.sourceWeight100) setTrafficWeightMetric(j.migrationId, 0);
       // 화면 막대·GET traffic-shift 가 읽는 진행 줄도 출발로 맞춘다 (옮긴 적 없으면 줄이 없어 그대로). 표시용이라 쓰기 실패로 롤백을 멈추지 않는다

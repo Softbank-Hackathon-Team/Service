@@ -45,33 +45,55 @@ export function trafficEnvFor(t: TrafficTarget, env: Record<string, string | und
 }
 
 // DRAFT(ai): 가짜 지표·mock 전환기를 써도 되는 판. 도착을 흉내로 만든 판(MOCK_IAC=1)은 옮길 진짜 트래픽이 없고, MOCK_TRAFFIC=1 은 진짜 도착에 흉내 트래픽.
-//   둘 다 시험 전용 스위치라 DEMO_MODE=1 이면 서비스가 안 뜬다. 진짜 판에서 설정이 빠지면 shift 가 TRAFFIC_NOT_CONFIGURED 로 멈춘다
+//   MOCK_IAC 는 시험 전용 스위치(contracts TEST_ONLY_SWITCHES)라 DEMO_MODE=1 이면 서비스가 안 뜬다. MOCK_TRAFFIC 은 그 목록에 없어 DEMO_MODE=1 에서도 켜진다.
+//   진짜 판에서 설정이 빠지면 shift 가 TRAFFIC_NOT_CONFIGURED 로 멈춘다
 export const trafficStubAllowed = (env: NodeJS.ProcessEnv = process.env) => iacMockEnabled(env) || env.MOCK_TRAFFIC?.trim() === "1";
+
+// 이 이전의 LB 자리가 어디서 왔고(DB 등록·워커 env) 어떤 전환기인가. 판정 지표를 이전마다 고르는 데 쓴다
+export interface TrafficTargetKind { from: TrafficFor["from"]; provider: TrafficProvider | undefined }
+const ENV_MOCK: TrafficTargetKind = { from: "env", provider: "mock" };
+const realLb = (t: TrafficTargetKind) => !!t.provider && t.provider !== "mock";
+/** cf-check --register 로 이 이전에만 진짜 LB 를 등록했다 (DB 줄 + mock 아닌 전환기) */
+export const registeredRealLb = (t: TrafficTargetKind) => t.from === "db" && realLb(t);
+
+export type TrafficMetricsKind = "prometheus" | "stub" | "none";
+/** 이 이전을 무엇으로 판정하나 (none = 지표 없음).
+ *  진짜 판(흉내 불허): 예전 그대로 PROM_URL 이면 Prometheus, 없으면 none.
+ *  흉내 판(MOCK_TRAFFIC·MOCK_IAC): 진짜 LB 를 옮기는 이전만 PROM_URL 이 있을 때 Prometheus. mock 전환기 이전은 PROM_URL 이 있어도 가짜 지표
+ *    (mock LB 는 트래픽을 안 옮겨 실측 몫이 안 맞는다). 등록한 진짜 LB 이전인데 PROM_URL 이 없으면 none (가짜 숫자로 진짜 LB 를 판정하지 않는다).
+ *  DRAFT(ai): 공유 흉내 판에 PROM_URL 을 넣어도 등록한 이전 하나만 진짜 지표로 돌고 나머지는 예전처럼 흉내. 워커 env 의 진짜 전환기(TRAFFIC_PROVIDER)는 예전 규칙 그대로 */
+export function trafficMetricsKind(t: TrafficTargetKind = ENV_MOCK, env: NodeJS.ProcessEnv = process.env): TrafficMetricsKind {
+  if (!trafficStubAllowed(env)) return env.PROM_URL ? "prometheus" : "none";
+  if (realLb(t) && env.PROM_URL) return "prometheus";
+  return registeredRealLb(t) ? "none" : "stub";
+}
 
 export type TrafficConfigName = "PROM_URL" | "TRAFFIC_PROVIDER";
 export const TRAFFIC_CONFIG_HINT: Record<TrafficConfigName, string> = {
   PROM_URL: "판정용 Prometheus 주소 (차트 trafficMetrics.promUrl)",
   TRAFFIC_PROVIDER: "npm run cf:check -- --register=<이전> --tenant=<회사> 로 이 이전의 LB 를 등록하거나 워커 TRAFFIC_PROVIDER·TRAFFIC_LB_ID·CLOUDFLARE_*_POOL_ID",
 };
-/** 진짜 판에서 이 shift 에 비어 있는 설정. 빈 배열이면 진행 */
-export function missingTrafficConfig(provider: TrafficProvider | undefined, env: NodeJS.ProcessEnv = process.env): TrafficConfigName[] {
-  if (trafficStubAllowed(env)) return [];
+/** 이 shift 에 비어 있는 설정. 빈 배열이면 진행. 진짜 판은 PROM_URL·LB 전환기, 흉내 판은 등록한 진짜 LB 이전의 PROM_URL 만 */
+export function missingTrafficConfig(provider: TrafficProvider | undefined, env: NodeJS.ProcessEnv = process.env, from: TrafficFor["from"] = "env"): TrafficConfigName[] {
+  if (trafficStubAllowed(env)) return trafficMetricsKind({ from, provider }, env) === "none" ? ["PROM_URL"] : [];
   return [...(env.PROM_URL ? [] : ["PROM_URL" as const]), ...(provider === "mock" ? ["TRAFFIC_PROVIDER" as const] : [])];
 }
 
-/** 판정 지표. PROM_URL 이면 Prometheus, 흉내를 허락한 판이면 TRAFFIC_STUB_SCENARIO(clean|err|slow|down) 가짜, 아니면 없음 */
-export function trafficMetrics(tenantId: string, o: { sourceBaselineRps?: number; windowSec?: number } = {},
+/** 판정 지표 (trafficMetricsKind). Prometheus, 가짜(TRAFFIC_STUB_SCENARIO clean|err|slow|down), 아니면 없음. target 이 없으면 워커 env 의 mock 전환기로 본다 */
+export function trafficMetrics(tenantId: string, o: { sourceBaselineRps?: number; windowSec?: number; target?: TrafficTargetKind } = {},
   env: NodeJS.ProcessEnv = process.env): MetricsSource | undefined {
-  if (env.PROM_URL) return prometheusMetrics({ baseUrl: env.PROM_URL, tenantId, baselineP95Ms: envNumber(env.TRAFFIC_BASELINE_P95_MS, 200),
+  const kind = trafficMetricsKind(o.target, env);
+  if (kind === "prometheus") return prometheusMetrics({ baseUrl: env.PROM_URL!, tenantId, baselineP95Ms: envNumber(env.TRAFFIC_BASELINE_P95_MS, 200),
     ...(o.sourceBaselineRps ? { sourceBaselineRps: o.sourceBaselineRps } : {}), ...(o.windowSec ? { windowSec: o.windowSec } : {}) });
-  if (!trafficStubAllowed(env)) return undefined;
+  if (kind === "none") return undefined;
   const sc = (env.TRAFFIC_STUB_SCENARIO ?? "clean") as "clean" | "err" | "slow" | "down";
   return stubMetrics(sc, { failAt: envNumber(env.TRAFFIC_STUB_FAIL_AT, 50) });
 }
 
-// DRAFT(ai): 판정 간격. 진짜 지표(PROM_URL)면 1000ms(창 하나 = 1초), 가짜 지표면 20ms (smoke·통합 시험이 36초씩 걸리지 않게)
-// 부를 때마다 읽는다 (시험이 before()에서 환경변수를 바꿔도 먹게)
-export const trafficTickMs = () => envNumber(process.env.TRAFFIC_TICK_MS, process.env.PROM_URL ? 1000 : 20);
+// DRAFT(ai): 판정 간격. 진짜 지표면 1000ms(창 하나 = 1초), 가짜 지표면 20ms (smoke·통합 시험이 36초씩 걸리지 않게).
+//   이전마다 고른 지표(kind)를 따른다. kind 가 없으면 예전처럼 PROM_URL 유무로. 부를 때마다 읽는다 (시험이 before()에서 환경변수를 바꿔도 먹게)
+export const trafficTickMs = (kind?: TrafficMetricsKind, env: NodeJS.ProcessEnv = process.env) =>
+  envNumber(env.TRAFFIC_TICK_MS, (kind ? kind === "prometheus" : !!env.PROM_URL) ? 1000 : 20);
 // TODO(human) FM-TRF-14: LB·풀 ID 가 워커 하나에 하나(환경 변수) → 다른 회사·환경 이전 둘이 동시에 shift 하면 같은 LB 가중치를 바꾼다.
 //   이전마다 LB 를 따로 만들지(계획 승인 때 G6-7 입구 선택과 같이), 한 LB 를 잠금으로 나눌지는 사람이 정한다. 데모는 이전 1개
 export const TRAFFIC_LB_ID = process.env.TRAFFIC_LB_ID;   // 없으면 이전 번호를 LB 이름으로 (mock 전용)

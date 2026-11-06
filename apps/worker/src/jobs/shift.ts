@@ -4,7 +4,7 @@ import { runShift, ruleFromCriteria, shiftTransition, MigrationMoved, MAX_REOBSE
 import { jobData, nextJob, readMigration, RetryLater, runStep, stubFailIfAsked } from "./_step.js";
 import { loadLatestPlan } from "./plan-store.js";
 import { configFromEnv, commitTrafficWeight, GitopsRepo, ENV_DIR, tenantSlug, type BundleRef } from "../gitops/index.js";
-import { missingTrafficConfig, TRAFFIC_CONFIG_HINT, trafficFor, trafficMetrics, trafficTickMs } from "../platform.js";
+import { missingTrafficConfig, registeredRealLb, TRAFFIC_CONFIG_HINT, trafficFor, trafficMetrics, trafficMetricsKind, trafficTickMs } from "../platform.js";
 import { setTrafficWeightMetric } from "../instrument.js";
 import { restoredFromPct } from "../traffic-restore.js";
 import { sourceBaselineFor } from "../traffic-baseline.js";
@@ -45,6 +45,9 @@ export async function handleShift(raw: unknown) {
       };
       await stubFailIfAsked(j, "shift");             // Z36 데모: 가중치를 바꾸기 전에 실패
       const steps = plan?.steps.find((s) => s.id === "shift")?.weights ?? [10, 50, 100];
+      // TODO(human): 관찰 최소(guards observeMinSec·T22 OBSERVE_MIN_SEC)와 TRAFFIC_SHARE_CHECK 는 아직 워커 전역이다. 공유 흉내 판에 PROM_URL 을 넣으면
+      //   흉내 이전도 단계마다 30초 이상 본다 (지표는 가짜 그대로, 느려질 뿐). 이전마다 나누려면 T22 증거에 지표 출처를 넣거나,
+      //   몫 확인은 migration_traffic_targets 에 칸(예: share_check, NULL = 워커 값 · db 0057 + 계약 TrafficTarget + cf-check --register 옵션)을 더한다
       const obs = shiftObserveSec(plan?.steps.find((s) => s.id === "shift")?.holdSec, process.env);
       // pf-d hunt-traffic-ops-02: 관찰 초가 크면 최악(단계 수 × (1 + 재관찰) × 관찰 초)이 shift 큐 만료(expireInSeconds)를 넘어
       //   도는 중에 만료·재시도된다(가중치 반쯤인 채 두 번째 shift). 가중치를 건드리기 전에 paused + 숫자
@@ -53,11 +56,20 @@ export async function handleShift(raw: unknown) {
         reason: `관찰 ${obs.sec}초 × 단계 ${steps.length} × (1 + 재관찰 ${MAX_REOBSERVE}) = 최악 ${budget.worstSec}초 가 shift 작업 제한 ${budget.limitSec}초(만료 ${budget.expireSec}초의 90%)를 넘음 → 계획 holdSec·TRAFFIC_OBSERVE_SEC 를 줄이고 재개`,
         ...budget, observeSource: obs.source } } };
       const { lbId, switcher: sw, from: lbFrom } = await trafficFor(j.tenantId, j.migrationId);   // PF TRF-21: 이전별 LB 자리(DB) 먼저
+      // 이 이전의 판정 지표. 등록한 진짜 LB 이전은 흉내 판(MOCK_TRAFFIC=1)에서도 Prometheus, 나머지는 예전 규칙 (platform.ts trafficMetricsKind)
+      const target = { from: lbFrom, provider: sw.provider };
+      const metricsKind = trafficMetricsKind(target);
       // 진짜 판에서 지표·LB 전환기가 없으면 예전엔 가짜 정상 지표와 mock LB 로 cutover 까지 갔다. LB 주인 자리를 잡기 전에 멈춘다
-      const missing = missingTrafficConfig(sw.provider);
+      //   흉내 판이어도 등록한 진짜 LB 이전에 PROM_URL 이 없으면 같은 자리에서 멈춘다 (진짜 LB 를 가짜 숫자로 판정하지 않는다)
+      // TODO(human) TRF-10: 예전엔 "등록한 LB + PROM_URL 없음" 이면 진짜 LB 를 가짜 지표로 돌리고 cf-check --probe 실측(latestProbe)을 결과에 붙였다.
+      //   이제 그 경우는 멈춘다. 그 길(실 LB + 가짜 판정 + probe 증거)을 명시 스위치로 남길지는 트래픽 영역이 정한다
+      const missing = missingTrafficConfig(sw.provider, process.env, lbFrom);
       if (missing.length) return { to: "paused", failureCode: "TRAFFIC_NOT_CONFIGURED", detail: { shift: { error: "TRAFFIC_NOT_CONFIGURED", missing, trafficLbFrom: lbFrom,
-        reason: `진짜 판(MOCK_IAC·MOCK_TRAFFIC 꺼짐)인데 ${missing.join("·")} 없음. 가짜 지표·mock 전환기로 판정하지 않으려고 가중치를 안 건드리고 멈춤`,
-        hint: [...missing.map((k) => `${k}: ${TRAFFIC_CONFIG_HINT[k]}`), "시험·로컬 흉내면 MOCK_TRAFFIC=1 (DEMO_MODE=1 에서는 못 켬)"].join(" / ") } } };
+        reason: registeredRealLb(target)
+          ? `이 이전은 등록한 진짜 LB(${sw.provider})를 옮기는데 ${missing.join("·")} 없음. 흉내 판(MOCK_IAC·MOCK_TRAFFIC)이어도 가짜 지표로 진짜 LB 를 판정하지 않으려고 가중치를 안 건드리고 멈춤`
+          : `진짜 판(MOCK_IAC·MOCK_TRAFFIC 꺼짐)인데 ${missing.join("·")} 없음. 가짜 지표·mock 전환기로 판정하지 않으려고 가중치를 안 건드리고 멈춤`,
+        hint: [...missing.map((k) => `${k}: ${TRAFFIC_CONFIG_HINT[k]}`),
+          registeredRealLb(target) ? "워커에 PROM_URL 을 넣고 다시 띄운 뒤 재개 (다른 이전은 계속 흉내)" : "시험·로컬 흉내면 MOCK_TRAFFIC=1"].join(" / ") } } };
       // PF FM-ORC-10: LB 는 워커 전역 하나 → 가중치를 바꾸기 전에 LB 주인이 된다. 다른 이전(다른 회사 포함)이 쥐고 있으면 기다렸다 다시
       //   DRAFT(ai): 30초 뒤 다시 (TRAFFIC_LEASE_WAIT_SEC). 주인이 끝 상태가 되면 advance 가 놓는다
       const lease = await withTenant(j.tenantId, (tx) => takeTrafficLease(tx, lbId, j.migrationId));
@@ -99,15 +111,15 @@ export async function handleShift(raw: unknown) {
           .catch(() => { /* 표시용. 쓰기 실패로 전환을 멈추지 않는다 */ });
       };
       // #245: 진짜 지표로 몫을 볼 때만 전환 직전 출발 요청 수를 읽는다. 가중치를 바꾸기 전이라 출발이 전부 받고 있다
-      const baseline = process.env.PROM_URL && process.env.TRAFFIC_SHARE_CHECK?.trim() !== "0"
+      const baseline = metricsKind === "prometheus" && process.env.TRAFFIC_SHARE_CHECK?.trim() !== "0"
         ? await sourceBaselineFor(j.tenantId, j.migrationId, m.sourceEnvId, sw, !reentered) : null;
       // 판정 기준·창은 사람이 승인한 계획 값 (계획이 없으면 기본값). 예전엔 계획 값은 화면에만 쓰였다
       const criteria = plan?.rollbackCriteria;
-      // 위 missingTrafficConfig 가 "PROM_URL 없음 + 흉내 아님" 을 이미 멈췄으니 지표는 늘 있다
-      const metrics = trafficMetrics(j.tenantId, { sourceBaselineRps: baseline && "rps" in baseline ? baseline.rps : undefined, windowSec: criteria?.windowSec })!;
+      // 위 missingTrafficConfig 가 지표 없음(metricsKind none)을 이미 멈췄으니 지표는 늘 있다
+      const metrics = trafficMetrics(j.tenantId, { sourceBaselineRps: baseline && "rps" in baseline ? baseline.rps : undefined, windowSec: criteria?.windowSec, target })!;
       const r = await runShift({
         migrationId: j.migrationId, lbId, switcher: sw, metrics, rule: ruleFromCriteria(criteria), steps: runSteps.length ? runSteps : steps, onWeight, resumeFromPct,
-        sleep: () => new Promise((res) => setTimeout(res, trafficTickMs())),
+        sleep: () => new Promise((res) => setTimeout(res, trafficTickMs(metricsKind))),
         observeSec: obs.sec,   // M7: 시계로 관찰. pf-d FM-TRF-15: 승인 계획 holdSec (T22 최소보다 짧지 않게)
         // z75-38: 단계마다 "최소 관찰(TRAFFIC_OBSERVE_SEC) 지남 + 실측 도착 몫이 목표 ±10%p" 라야 다음 단계. 못 미치면 2번 더 본 뒤 paused
         //   Z38 R8-43: TRAFFIC_SHARE_CHECK=0 이면 끈다 (예전 동작: 10%·50% 는 판정 3번만, 몫 확인·진행 기록 없음). 부를 때마다 읽는다
@@ -147,13 +159,13 @@ export async function handleShift(raw: unknown) {
         // M7: 30초보다 짧게 관찰했으면 화면·감사에 "압축"을 같이 남긴다 (심사에서 "30초 봤다"고 잘못 말하지 않게)
         detail: { ...t.detail, failureCode: t.failureCode, lbId, ...(resumeFromPct !== undefined ? { resumeFromPct } : {}), ...(restored ? { restartFromPct: restored } : {}), ...(repo ? { gitopsWeightLag } : {}),
                   observeRequiredSec: r.observeRequiredSec, ...(r.stepShares ? { stepShares: r.stepShares } : {}),
-                  // pf-d FM-TRF-10: 가짜 지표(PROM_URL 없음)면 몫은 실측이 아니다 → 화면·감사에서 "실측"으로 읽지 않게 표시
+                  // pf-d FM-TRF-10: 가짜 지표(PROM_URL 없음, 또는 흉내 판의 mock 전환기 이전)면 몫은 실측이 아니다 → 화면·감사에서 "실측"으로 읽지 않게 표시
                   metricsSource: r.metricsSource, ...(baseline ? { sourceBaseline: baseline } : {}),
                   ...(r.latencyUnmeasured ? { latencyUnmeasured: "지연 미측정: 도착 응답 시간 지표가 없어 오류율로만 판정" } : {}),
                   // pf-d FM-TRF-21: 전환기가 mock 이면 진짜 LB 는 안 바뀌었다 (TRAFFIC_PROVIDER 비었음). 실회차에서 조용히 성공처럼 안 보이게
                   trafficProvider: sw.provider, trafficLbFrom: lbFrom,
                   ...(sw.provider === "mock" ? { trafficStub: "STUB: mock 전환기 (TRAFFIC_PROVIDER 없음) — Cloudflare LB 가중치는 안 바뀜" } : {}),
-                  ...(r.metricsSource === "stub" ? { sharesStub: "STUB: 가짜 지표 (PROM_URL 없음) — stepShares 는 가중치로 계산한 값, 실측 아님. 실제 분배는 cf-check --probe",
+                  ...(r.metricsSource === "stub" ? { sharesStub: "STUB: 가짜 지표 (PROM_URL 없음 또는 흉내 판의 mock 전환기 이전) — stepShares 는 가중치로 계산한 값, 실측 아님. 실제 분배는 cf-check --probe",
                     probe: probe ?? null } : {}),
                   observeSource: obs.source, ...(obs.planHoldSec !== undefined ? { planHoldSec: obs.planHoldSec } : {}),
                   ...(r.observeRequiredSec < (obs.planHoldSec ?? 30) ? { observeCompressed: true, stub: "관찰 시간 압축 (TRAFFIC_OBSERVE_SEC)" } : {}) },
