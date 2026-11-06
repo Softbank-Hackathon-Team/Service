@@ -3,7 +3,7 @@ import { replicationFor } from "./_repl.js";
 import { ReplConfigError, toMeasurements, withClient, appCanWrite } from "@svc/replication";
 import { restoreSource } from "@svc/traffic";
 import { trafficLeaseState, withTenant, writeAudit } from "@svc/core";
-import { log } from "../instrument.js";
+import { log, setTrafficWeightMetric } from "../instrument.js";
 import { cleanupAfterRollback } from "./rollback-cleanup.js";
 import { errorMessage, runStep, failedAttempts, recordAttemptFailure, RetryLater, jobData } from "./_step.js";
 import { withStepRoles } from "./_roles.js";
@@ -84,6 +84,7 @@ export async function handleRollback(raw: unknown) {
         ? { evidence: { sourceWeight100: true, sourceHealthy: true }, detail: { skipped: "lb_owned_by_other_migration", after: null } }
         : await restoreSource({ switcher, lbId, metrics: trafficMetrics(j.tenantId), migrationId: j.migrationId });
       const weights = traffic.detail.after;
+      if (lease !== "other" && traffic.evidence.sourceWeight100) setTrafficWeightMetric(j.migrationId, 0);
       // 화면 막대·GET traffic-shift 가 읽는 진행 줄도 출발로 맞춘다 (옮긴 적 없으면 줄이 없어 그대로). 표시용이라 쓰기 실패로 롤백을 멈추지 않는다
       if (lease !== "other") await withTenant(j.tenantId, (tx) => tx.query(
         `UPDATE traffic_progress SET target_pct = 0, observed_pct = 0, reached = true, reobserve = 0, observed_at = now() WHERE migration_id = $1`, [j.migrationId]))

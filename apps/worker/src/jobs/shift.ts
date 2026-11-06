@@ -5,6 +5,7 @@ import { jobData, nextJob, readMigration, RetryLater, runStep, stubFailIfAsked }
 import { loadLatestPlan } from "./plan-store.js";
 import { configFromEnv, commitTrafficWeight, GitopsRepo, ENV_DIR, tenantSlug, type BundleRef } from "../gitops/index.js";
 import { missingTrafficConfig, TRAFFIC_CONFIG_HINT, trafficFor, trafficMetrics, trafficTickMs } from "../platform.js";
+import { setTrafficWeightMetric } from "../instrument.js";
 import { restoredFromPct } from "../traffic-restore.js";
 import { sourceBaselineFor } from "../traffic-baseline.js";
 
@@ -36,10 +37,12 @@ export async function handleShift(raw: unknown) {
       const cfg = configFromEnv();
       const repo = cfg && bundle ? new GitopsRepo(cfg) : null;
       const gitopsWeightLag: { pct: number; error: string }[] = [];
-      const onWeight = repo && bundle ? async (pct: number) => {
+      const onWeight = async (pct: number) => {
+        setTrafficWeightMetric(j.migrationId, pct);
+        if (!repo || !bundle) return;
         try { await commitTrafficWeight(repo, bundle, pct); }
         catch (e) { gitopsWeightLag.push({ pct, error: (e as Error).message.slice(0, 200) }); }
-      } : undefined;
+      };
       await stubFailIfAsked(j, "shift");             // Z36 데모: 가중치를 바꾸기 전에 실패
       const steps = plan?.steps.find((s) => s.id === "shift")?.weights ?? [10, 50, 100];
       const obs = shiftObserveSec(plan?.steps.find((s) => s.id === "shift")?.holdSec, process.env);
