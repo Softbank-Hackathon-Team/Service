@@ -125,14 +125,15 @@ test("aws: RDS 주소·비밀·터널·Ingress·이미지·복제 수·요청량
   assert.equal(ns, "app-shop-api");
   const sbxHost = `sbx-db-shop-db.${ns}.svc.cluster.local`;
   // 관리형 DB → 같은 메이저 Postgres. env 의 RDS 주소(URL 안 포함)가 샌드박스 주소로
-  assert.deepEqual(x.databases, [{ service: "sbx-db-shop-db", majorVersion: "16", database: "shop_api", owner: "app", secretName: "shop-api-shop-db-app", secretKeys: ["password"] }]);
+  // 2026-11-07: 데모 명세의 짝인 DB 비밀(shop-db)이 차트 DB 비밀 이름이 된다 (도착 DB 비밀번호 그릇에서)
+  assert.deepEqual(x.databases, [{ service: "sbx-db-shop-db", majorVersion: "16", database: "shop_api", owner: "app", secretName: "shop-db", secretKeys: ["password"] }]);
   const env = (id: string) => ((applyDoc(x, id)!.spec as any).template.spec.containers[0].env as Array<{ name: string; value?: string }>);
   assert.equal(env(`Deployment/${ns}/shop-api`).find((e) => e.name === "DB_HOST")!.value, sbxHost);
   assert.equal(env(`Deployment/${ns}/uploader`)[0]!.value, `postgres://app:x@${sbxHost}:5432/shop_api`);
   assert.ok(!x.apply.some((m) => m.yaml.includes(RDS)), "적용 사본에 실제 DB 주소가 없다");
   // ExternalSecret → 같은 이름 Secret, 키는 data[].secretKey ∪ 파드가 찾는 키, 값은 가짜 (dockerconfigjson 은 빈 JSON)
   assert.ok(!x.apply.some((m) => (parse(m.yaml) as K8sDoc).kind === "ExternalSecret"));
-  const db = applyDoc(x, `Secret/${ns}/shop-api-shop-db-app`)!;
+  const db = applyDoc(x, `Secret/${ns}/shop-db`)!;
   assert.deepEqual(Object.keys(db.stringData as object), ["password"]);
   assert.match((db.stringData as any).password, /^[0-9a-f]{48}$/);
   assert.deepEqual((applyDoc(x, `Secret/${ns}/regcred`) as any).stringData, { ".dockerconfigjson": '{"auths":{}}' });

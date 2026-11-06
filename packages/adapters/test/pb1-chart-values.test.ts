@@ -120,7 +120,8 @@ for (const p of K8S) {
     assert.match(cj, /timeZone: "Asia\/Seoul"/); assert.match(cj, /activeDeadlineSeconds: 600/);
     assert.match(out, /kind: ExternalSecret/);
     if (p === "onprem") assert.match(out, /kind: Cluster\n/);
-    else assert.match(out, new RegExp(`name: ${DEMO_SPEC.app.name}-shop-db-app`));
+    // 2026-11-07: 데모 명세의 DB 비밀 shop-db(password ~ shop-db 짝)는 도착 DB 비밀번호 그릇에서 같은 이름으로 생긴다 (사람이 채우는 그릇 아님)
+    else { assert.match(out, /kind: ExternalSecret\nmetadata:\n  name: shop-db\n/); assert.doesNotMatch(out, new RegExp(`name: ${DEMO_SPEC.app.name}-shop-db-app`)); }
     assert.doesNotMatch(out, /<nil>|%!/);
   });
 }

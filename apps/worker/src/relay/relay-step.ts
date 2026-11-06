@@ -7,7 +7,7 @@
 // GCP 도착(aws-gcp): apply 가 terraform 앞에서 도착 DB 공개 길(repl-network.json)을 정하고, terraform 뒤에 Cloud SQL 주소로 중계기를 만든다.
 //   중계 공개 IP 가 새로 생겼으면 apply 가 terraform 을 한 번 더 돌려 Cloud SQL 허용 주소에 넣는다. 그다음 끝점 두 줄·도착 앱 로그인 역할 (apply.ts)
 // GCP 출발(gcp-aws, relay/gcp-aws.ts): 중계기는 도착 AWS 계정에 산다 → 도착 실행 역할을 빌린다 (security STEP_ROLES.relay_target). 지우기도 이 파일 teardownRelayStep 이 같은 표로 고른다
-import { PASSWORD_REF_RE, type AppSpecV2, type ReplicationEndpoint, type TfOutputs } from "@svc/contracts";
+import { envNumber, PASSWORD_REF_RE, type AppSpecV2, type ReplicationEndpoint, type TfOutputs } from "@svc/contracts";
 import { rdsCaFor } from "./rds-ca.js";
 import { envFor, dbIdentityFor, specV2ForPlan } from "@svc/adapters";
 import { endpointFromRecord, ensureLoginRole, readTfFacts, withClient } from "@svc/replication";
@@ -490,10 +490,30 @@ export function gcpEndpointRows(i: {
 }
 
 /** 도착 앱 로그인 역할을 관리자로 맞춘다 (Cloud SQL API 사용자는 cloudsqlsuperuser 라 울타리가 안 먹음 → app_login_sql). 비밀번호 = 앱 비밀 그릇 값 */
-export async function ensureTargetAppLogin(target: ReplicationEndpoint, env: NodeJS.ProcessEnv = process.env): Promise<"created" | "updated" | "privileged"> {
+// 중계기 EC2 가 running 이 된 직후엔 :15432 를 여는 user-data 유닛(svc-relay-fwd)이 아직 안 떴을 수 있다 (provisionRelay 는 IP 만 붙으면 돌아온다).
+//   그 사이 첫 접속은 ECONNREFUSED·ETIMEDOUT 이라, 연결 단계 오류만 잠깐 다시 해 본다. SQL·인증 오류는 바로 올린다.
+//   DRAFT(ai): 기본 180초·5초 간격. RELAY_LOGIN_WAIT_SEC 로 바꾼다 (0 이면 한 번만)
+const CONNECT_RETRY_RE = /ECONNREFUSED|ETIMEDOUT|ECONNRESET|EHOSTUNREACH|ENETUNREACH|timeout|Connection terminated unexpectedly/i;
+export async function retryConnect<T>(fn: () => Promise<T>, o: { waitSec: number; stepMs?: number; sleep?: (ms: number) => Promise<void>; now?: () => number }): Promise<T> {
+  const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const now = o.now ?? Date.now;
+  const until = now() + o.waitSec * 1000;
+  for (;;) {
+    try { return await fn(); } catch (e) {
+      const msg = `${(e as { code?: string })?.code ?? ""} ${(e as Error)?.message ?? String(e)}`;
+      if (!CONNECT_RETRY_RE.test(msg) || now() >= until) throw e;
+      await sleep(o.stepMs ?? 5000);
+    }
+  }
+}
+
+export async function ensureTargetAppLogin(target: ReplicationEndpoint, env: NodeJS.ProcessEnv = process.env,
+  o: { sleep?: (ms: number) => Promise<void>; now?: () => number; connect?: () => Promise<"created" | "updated" | "privileged"> } = {}): Promise<"created" | "updated" | "privileged"> {
   const appPassword = readTfFacts(target.migrationId, env).db_password;
   if (!appPassword) throw new RelayError("RELAY_TARGET_DB_UNKNOWN", "이전 작업 폴더 db-secret.json 에 앱 비밀번호(db_password)가 없다 (apply 의 비밀 꺼내기 실패)");
-  return withClient(endpointFromRecord(target, env), (c) => ensureLoginRole(c, target.appRole, appPassword));
+  const waitSec = envNumber(env.RELAY_LOGIN_WAIT_SEC, 180);
+  const connect = o.connect ?? (() => withClient(endpointFromRecord(target, env), (c) => ensureLoginRole(c, target.appRole, appPassword)));
+  return retryConnect(connect, { waitSec: waitSec >= 0 ? waitSec : 180, ...(o.sleep ? { sleep: o.sleep } : {}), ...(o.now ? { now: o.now } : {}) });
 }
 
 export async function saveEndpointRows(tenantId: string, rows: ReplicationEndpoint[]): Promise<void> {

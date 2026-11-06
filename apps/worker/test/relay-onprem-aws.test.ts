@@ -93,3 +93,21 @@ test("apply 뒤(provision): 도착 비밀번호 없으면 안 빌림, 도착 자
   assert.ok(ssh.length > 0 && ssh.every((r) => r.cidr === `${EGRESS}/32`), JSON.stringify(ssh));
   rmSync(root, { recursive: true, force: true });
 });
+
+// 중계기가 막 떴을 때 :15432 가 아직 안 열린 동안(ECONNREFUSED) 앱 로그인 맞추기를 다시 해 본다. SQL 오류는 바로 올린다
+test("중계기 부팅 경합: 연결 거절은 기다렸다 다시, 인증·SQL 오류와 시간 초과는 바로 올린다", async () => {
+  const { retryConnect } = await import("../src/relay/relay-step.js");
+  let t = 0; const now = () => t; const sleep = async (ms: number) => { t += ms; };
+  let calls = 0;
+  const ok = await retryConnect(async () => { calls++; if (calls < 4) throw Object.assign(new Error("connect ECONNREFUSED 3.3.3.3:15432"), { code: "ECONNREFUSED" }); return "created" as const; },
+    { waitSec: 180, now, sleep });
+  assert.equal(ok, "created"); assert.equal(calls, 4); assert.equal(t, 15000);
+  // 거부: 인증 오류는 다시 안 함
+  let auth = 0;
+  await assert.rejects(retryConnect(async () => { auth++; throw new Error('password authentication failed for user "svc_admin"'); }, { waitSec: 180, now, sleep }), /password authentication/);
+  assert.equal(auth, 1);
+  // 거부: 시간이 다 되면 마지막 연결 오류를 올린다
+  t = 0;
+  await assert.rejects(retryConnect(async () => { throw Object.assign(new Error("connect ETIMEDOUT"), { code: "ETIMEDOUT" }); }, { waitSec: 20, now, sleep }), /ETIMEDOUT/);
+  assert.ok(t >= 20000 && t <= 25000);
+});
