@@ -26,6 +26,7 @@ function fakeRepo(values: HelmValues | null) {
   const commits: HelmValues[] = [];
   return { commits, repo: {
     chartVersion: async () => "0.1.0",
+    resolve: async <B>(b: B) => b,
     readValues: async () => { if (!values) throw new Error("ENOENT"); return values; },
     readPlan: async () => ({}) as never,
     commitBundle: async (_k: string, _b: unknown, v: HelmValues) => { commits.push(v); return { commit: "c1", bundleSha256: "x", resources: [], changed: true }; },

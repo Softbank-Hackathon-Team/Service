@@ -15,15 +15,30 @@ export const DELIVERY: Record<GitopsEnv, Delivery> = {
 
 // 회사 폴더 이름 규칙은 계약(@svc/contracts gitops.ts)에 있다 (API 의 회사 레포 이름과 같아야 한다)
 export { tenantSlug } from "@svc/contracts";
+import { tenantSlug } from "@svc/contracts";
 
-export interface BundleRef { tenant: string; app: string; env: GitopsEnv }
-export const bundlePath = (b: BundleRef) => `tenants/${b.tenant}/apps/${b.app}/${b.env}`;
+// site: 온프레(agent-pull) 도착 환경 구분 = 환경 uuid 앞 8글자 (siteOf). 있으면 폴더가 <env>-<site> 가 된다 (예: onprem-k3s-1a2b3c4d).
+//   왜: 예전 폴더 tenants/<t>/apps/<앱>/onprem-k3s 는 환경 구분이 없어, 한 회사에 온프레 환경이 둘 이상이면 모든 온프레 클러스터가 같은 앱을 받았다
+//   (2026-11-07 GCP→온프레 실검증, onprem-vm·jeong-onprem). 클라우드(argocd-push)는 회사 전용 클러스터(<회사>-<env>)가 구분해서 site 가 없다.
+//   site 가 없는 BundleRef = 예전 폴더. 예전 폴더로 배포된 진행 중 이전은 GitopsRepo.resolve 가 그 폴더를 계속 쓴다
+export interface BundleRef { tenant: string; app: string; env: GitopsEnv; site?: string }
+// DRAFT(ai): 환경 uuid 앞 8글자 (회사 slug 와 같은 규칙). 한 회사 안 온프레 환경끼리만 겹치지 않으면 된다
+export const siteOf = (envId: string) => envId.replace(/-/g, "").slice(0, 8).toLowerCase();
+export const envDir = (b: BundleRef) => (b.site ? `${b.env}-${b.site}` : b.env);
+export const legacyRef = (b: BundleRef): BundleRef => ({ tenant: b.tenant, app: b.app, env: b.env });
+// 묶음 위치 만들기는 여기 하나로 (배포·트래픽·롤백·복제 배달이 같은 폴더를 보게). 온프레만 환경별 폴더
+export function bundleRefFor(tenantId: string, app: string, provider: Provider, envId: string): BundleRef {
+  const env = ENV_DIR[provider];
+  return { tenant: tenantSlug(tenantId), app, env, ...(DELIVERY[env] === "agent-pull" ? { site: siteOf(envId) } : {}) };
+}
+export const bundlePath = (b: BundleRef) => `tenants/${b.tenant}/apps/${b.app}/${envDir(b)}`;
 // Z66: 앱 구역 = app-<앱>. Terraform 어댑터 4개(k8s_namespace)·EKS Pod Identity·GKE WIF·GCP IAM 조건(app- 접두어)과 같은 이름.
 // 회사 구분은 회사 전용 클러스터(<회사>-<env>)와 울타리 목적지 이름이 한다
 export const APP_NS_PREFIX = "app-";
 export const appNamespace = (b: BundleRef) => `${APP_NS_PREFIX}${b.app}`;
 export const clusterName = (b: BundleRef) => (DELIVERY[b.env] === "agent-pull" ? null : `${b.tenant}-${b.env}`);
-export const argoAppName = (b: BundleRef) => `${b.tenant}-${b.app}-${b.env}`;
+// 온프레는 설치 차트 ApplicationSet 이 같은 이름을 만든다 (<회사>-<앱>-<폴더 이름>, deploy/helm/onprem-agent/templates/argocd.yaml)
+export const argoAppName = (b: BundleRef) => `${b.tenant}-${b.app}-${envDir(b)}`;
 
 // 자리표시 채우기. 승인 때 만든 값의 "<tf-output:키>", "<env:키>"만 바꾼다. 어댑터는 다시 부르지 않는다
 // TA3: 키에 . 과 - 도 받는다 (v2 link.<IR id>.<출력>, 예: link.shop-db.host). 예전 키([A-Za-z0-9_]+)는 그대로 맞는다
@@ -80,7 +95,7 @@ export function planFile(b: BundleRef, plan: PlanDoc, chartVersion: string): Pla
 }
 
 export function commitMessage(kind: "deploy" | "traffic" | "cleanup", b: BundleRef, p: PlanFile, title: string): string {
-  return `${kind}(${b.tenant}/${b.app}/${b.env}): ${title}\n\n` +
+  return `${kind}(${b.tenant}/${b.app}/${envDir(b)}): ${title}\n\n` +
     `Plan-Id: ${p.planId}\nMigration-Id: ${p.migrationId}\nBundle-Sha256: ${p.bundleSha256}\n`;
 }
 

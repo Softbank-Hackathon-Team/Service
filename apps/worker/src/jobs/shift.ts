@@ -3,7 +3,7 @@ import { latestAcceptedAppName, withTenant, observeMinSec, takeTrafficLease, POL
 import { runShift, ruleFromCriteria, shiftTransition, MigrationMoved, MAX_REOBSERVE, SHARE_TOL_PCT, type ShiftProgress } from "@svc/traffic";
 import { jobData, nextJob, readMigration, RetryLater, runStep, stubFailIfAsked } from "./_step.js";
 import { loadLatestPlan } from "./plan-store.js";
-import { configFromEnv, commitTrafficWeight, GitopsRepo, ENV_DIR, tenantSlug, type BundleRef } from "../gitops/index.js";
+import { configFromEnv, commitTrafficWeight, GitopsRepo, bundleRefFor, type BundleRef } from "../gitops/index.js";
 import { missingTrafficConfig, TRAFFIC_CONFIG_HINT, trafficFor, trafficMetrics, trafficTickMs } from "../platform.js";
 import { setTrafficWeightMetric } from "../instrument.js";
 import { restoredFromPct } from "../traffic-restore.js";
@@ -22,8 +22,7 @@ export async function handleShift(raw: unknown) {
       if (configFromEnv()) {
         const app = await latestAcceptedAppName(tx, m.id);
         const e = await tx.query("SELECT provider FROM environments WHERE id=$1", [m.targetEnvId]);
-        if (app && e.rows[0]) bundle = { tenant: tenantSlug(j.tenantId), app,
-                                               env: ENV_DIR[e.rows[0].provider as Provider] };
+        if (app && e.rows[0]) bundle = bundleRefFor(j.tenantId, app, e.rows[0].provider as Provider, m.targetEnvId);
       }
       // R3-3: 이 이전이 전에 shifting 을 떠난 적이 있나 (재개 paused → shifting, 컷오버 되돌림 cutover → shifting).
       //   advance() 가 감사 detail 에 from/to 를 남긴다. 처음 shift 면 false

@@ -1,10 +1,10 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, readFile, readdir, rmdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rm, rmdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import type { HelmValues } from "@svc/contracts";
-import { APP_NS_PREFIX, DELIVERY, bundlePath, clusterSecret, clusterSecretFile, commitMessage, fenceDoc, resourceId, type BundleRef, type ClusterAccess, type PlanFile } from "./bundle.js";
+import { APP_NS_PREFIX, DELIVERY, bundlePath, legacyRef, clusterSecret, clusterSecretFile, commitMessage, fenceDoc, resourceId, type BundleRef, type ClusterAccess, type PlanFile } from "./bundle.js";
 import { TenantMirror, TenantMirrorError, tenantMirrorFromEnv, type TenantMirrorConfig } from "./tenant-mirror.js";
 
 const run = promisify(execFile);
@@ -157,16 +157,63 @@ export class GitopsRepo {
     return y.match(/^version: (\S+)$/m)?.[1] ?? "0.0.0";
   }
 
+  // 온프레 환경별 폴더(site)로 바꾸기 전에 예전 폴더(<앱>/onprem-k3s)로 배포된 이전은 그 폴더를 계속 쓴다 (진행 중 이전을 끊지 않게).
+  //   새 폴더에 plan.json 이 있으면 새 폴더, 없고 예전 폴더에 있으면 예전 폴더, 둘 다 없으면 새 폴더 (첫 배포)
+  async resolve(b: BundleRef): Promise<BundleRef> {
+    if (!b.site) return b;
+    const has = (r: BundleRef) => access(join(this.cfg.dir, bundlePath(r), "plan.json")).then(() => true, () => false);
+    if (await has(b)) return b;
+    const legacy = legacyRef(b);
+    return (await has(legacy)) ? legacy : b;
+  }
+
   async readValues(b: BundleRef): Promise<HelmValues> {
-    return JSON.parse(await readFile(join(this.cfg.dir, bundlePath(b), "values.yaml"), "utf8")) as HelmValues;
+    return JSON.parse(await readFile(join(this.cfg.dir, bundlePath(await this.resolve(b)), "values.yaml"), "utf8")) as HelmValues;
   }
   async readPlan(b: BundleRef): Promise<PlanFile> {
-    return JSON.parse(await readFile(join(this.cfg.dir, bundlePath(b), "plan.json"), "utf8")) as PlanFile;
+    return JSON.parse(await readFile(join(this.cfg.dir, bundlePath(await this.resolve(b)), "plan.json"), "utf8")) as PlanFile;
+  }
+
+  /** 이 이전이 그린 묶음 폴더를 지우고 커밋한다 (롤백 뒤 온프레 도착 정리). 고객 Argo CD 는 폴더가 사라지면 Application 을 지우고
+   *  그 안 자원(앱·CNPG DB)도 같이 지운다 (ApplicationSet 기본 finalizer). 앱 구역(app-<앱>) 네임스페이스는 Argo 가 만든 것이라 남는다.
+   *  plan.json 의 migrationId 가 다르면 다른 이전(다시 이전 등)이 쓰는 폴더라 손대지 않는다. 폴더가 없으면 아무것도 안 한다 (여러 번 불러도 같다) */
+  removeBundle(b: BundleRef, migrationId: string, title: string): Promise<{ commit?: string; skipped?: string; path: string }> {
+    return serial(async () => {
+      await this.ensureCheckout();
+      const remote = await this.hasRemote();
+      if (remote) await this.git("pull", "--ff-only", "origin", this.cfg.branch);
+      const r = await this.resolve(b);
+      const rel = bundlePath(r);
+      const plan = await readFile(join(this.cfg.dir, rel, "plan.json"), "utf8").then((t) => JSON.parse(t) as PlanFile, () => null);
+      if (!plan) return { skipped: "no_bundle", path: rel };
+      if (plan.migrationId !== migrationId) return { skipped: "other_migration", path: rel };
+      await this.git("rm", "-r", "-q", "--ignore-unmatch", "--", rel);
+      await rm(join(this.cfg.dir, rel), { recursive: true, force: true });
+      for (let d = dirname(rel); d.startsWith(`tenants/${r.tenant}/`); d = dirname(d)) await rmdir(join(this.cfg.dir, d)).catch(() => undefined);
+      let changed = true;
+      try { await this.git("diff", "--cached", "--quiet"); changed = false; } catch { /* 바뀐 게 있다 */ }
+      if (!changed) return { skipped: "unchanged", path: rel };
+      const message = commitMessage("cleanup", r, plan, title);
+      await this.git("commit", "-q", "-m", message);
+      if (remote) await this.pushWithRetry().catch(async (e: unknown) => {
+        await this.git("reset", "-q", "--hard", `origin/${this.cfg.branch}`).catch(() => undefined);
+        throw e;
+      });
+      let commit = await this.git("rev-parse", "HEAD");
+      if (this.mirror && DELIVERY[r.env] === "agent-pull") {
+        commit = await this.mirror.sync(this.cfg.dir, r.tenant, `${message}\n\nsource: ${commit}`).catch((e: unknown) => {
+          throw new GitopsError(e instanceof TenantMirrorError ? e.code : "GITOPS_TENANT_REPO_FAILED", (e as Error).message);
+        });
+      }
+      return { commit, path: rel };
+    });
   }
 
   // 계약 3절 1~7번. values.yaml은 JSON으로 쓴다 (JSON은 그대로 YAML이라 helm·검증 도구가 읽는다)
-  commitBundle(kind: "deploy" | "traffic" | "cleanup", b: BundleRef, values: HelmValues, plan: PlanFile, title: string, opts: CommitOpts = {}): Promise<CommitResult> {
+  commitBundle(kind: "deploy" | "traffic" | "cleanup", b0: BundleRef, values: HelmValues, plan: PlanFile, title: string, opts: CommitOpts = {}): Promise<CommitResult> {
     return serial(async () => {
+      // 배포는 늘 새 폴더에 그린다. 트래픽·정리 커밋은 그 이전이 배포된 폴더(예전 폴더일 수 있다)를 고친다
+      const b = kind === "deploy" ? b0 : await this.resolve(b0);
       // 렌더·검사가 실패하면 쓴 파일을 되돌린다. 안 그러면 커밋 안 된 묶음이 작업 복사본에 남고,
       //   validate 는 디스크의 모든 회사를 보므로 같은 워커의 다음 배포(다른 회사 포함)가 전부 같은 이유로 실패한다 (2026-11-04 재현)
       const { remote, rel, written } = await this.writeAndRender(b, values, plan, opts.cluster).catch(async (e: unknown) => {
