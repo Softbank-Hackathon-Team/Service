@@ -46,6 +46,7 @@ interface EnvRow {
   provider: string; account_id: string | null; external_id: string | null; region: string | null; cluster_name: string | null;
   connection_status: ConnectionStatus; verify_failures: number; gcp_project_number: string | null;
   gcp_target_project: string | null; gcp_target_project_number: string | null;
+  aws_role_suffix?: string | null;   // 한 계정에 환경 여럿 (0056). 실행 역할 이름 꼬리, 없으면 옛 이름
 }
 
 /** FM-CON-07: 빌리기 거부 때 무엇이 막혔나 (감사 detail 에 남김. 계정 번호 없음) */
@@ -72,7 +73,7 @@ export async function handleVerifyConnection(data: unknown, deps: VerifyDeps = {
   const { tenantId, envId, reason } = job;
   const env = await withTenant(tenantId, async (tx) => (await tx.query<EnvRow>(
     `SELECT provider, account_id, external_id, region, cluster_name, connection_status, verify_failures, gcp_project_number,
-            gcp_target_project, gcp_target_project_number
+            gcp_target_project, gcp_target_project_number, aws_role_suffix
        FROM environments WHERE id = $1`, [envId])).rows[0]);
   // 남의 회사·지워진 환경: RLS 로 0줄 → 아무것도 안 바꾸고 끝 (다시 해도 같다)
   if (!env) return { status: "disconnected", skipped: "env_not_found" };
@@ -153,7 +154,7 @@ export async function handleVerifyConnection(data: unknown, deps: VerifyDeps = {
         } else {
           if (m.kind !== "aws") throw new Error("AWS 발급기가 aws 자격이 아닌 것을 돌려줬다");
           if (!env.cluster_name) result = { ok: false, reason: "K8S_ACCESS_MISSING" };   // DRAFT(ai): 클러스터 이름이 없으면 쿠버네티스를 못 봄
-          else result = await verifyAwsObserve(deps.cli ?? {}, { region, clusterName: env.cluster_name,
+          else result = await verifyAwsObserve(deps.cli ?? {}, { region, clusterName: env.cluster_name, roleSuffix: env.aws_role_suffix ?? null,
             cliEnv: { AWS_ACCESS_KEY_ID: m.accessKeyId, AWS_SECRET_ACCESS_KEY: m.secretAccessKey, AWS_SESSION_TOKEN: m.sessionToken, AWS_REGION: region } });
         }
       }

@@ -8,8 +8,9 @@
 #
 # 규칙
 #   1. 환경 하나에 진행 중인 이전은 하나다 (플랫폼 잠금). 남이 쓰는 환경으로 이전을 만들면 409 로 거부된다
-#   2. AWS 계정 하나에 연결은 하나다. 역할 이름이 고정(svc-observe·svc-operate)이라 두 번째 연결 스택은 충돌한다
-#      (infra/onboarding/README.md "한 계정에 하나"). 같은 계정을 쓰는 사람은 이미 연결된 환경 줄을 같이 쓴다
+#   2. AWS 계정 하나에 환경을 여럿 연결해도 된다. 새로 연결하는 환경은 역할 이름에 환경 꼬리가 붙어(svc-observe-<환경 8자>)
+#      연결 스택이 안 부딪힌다 (infra/onboarding/README.md "한 계정에 여럿"). 계정의 두 번째 스택부터는 권한 경계를 만들지 않는다
+#      (CreateBoundaryPolicy=false, env:connect 가 알아서). 이미 연결된 옛 환경(꼬리 없음)은 그대로 같이 써도 된다
 #   3. GCP 전용 프로젝트(dedicated_project)는 한 칸에만 적는다. 환경 층 이름(VPC·GKE platform-target 등)이 프로젝트 안에서
 #      고정이라 둘이 같은 프로젝트를 쓰면 서로의 자원과 부딪힌다. 다른 칸의 원래 프로젝트(original_project)로도 쓰지 않는다
 #      (GCP 출발 샘플도 platform-target 이름을 쓴다)

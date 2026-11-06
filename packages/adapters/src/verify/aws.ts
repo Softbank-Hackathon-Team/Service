@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { awsRoleName } from "@svc/contracts";
 import { arr, classifyCliError, CliError, get, runJson, runText, str, type CliDeps } from "../common/cli.js";
 
 // L4: 연결 확인(verify-connection) — 빌린 관찰 역할 자격으로 고객 AWS 를 실제로 읽어 본다 (설계 IA 6.1 4단계).
@@ -8,7 +9,8 @@ import { arr, classifyCliError, CliError, get, runJson, runText, str, type CliDe
 //   예외: kubeconfig 를 임시 파일에 만드는 명령 (discover 와 같음. 클라우드 쪽은 안 바뀌고 끝나면 지움)
 // 순서대로 하나라도 실패하면 거기서 끝. 사유는 ConnectionFailure 또는 "PERMISSION_MISSING:<서비스:동작>"
 
-export interface VerifyAwsInput { region: string; clusterName: string; cliEnv: Record<string, string> }
+// roleSuffix = environments.aws_role_suffix (한 계정에 환경 여럿, 0056). 없으면 옛 이름 svc-operate
+export interface VerifyAwsInput { region: string; clusterName: string; cliEnv: Record<string, string>; roleSuffix?: string | null }
 export type VerifyAwsResult = { ok: true; clusters: string[]; missingPermissions?: string[] } | { ok: false; reason: string };
 
 // PF02: EKS 클러스터 이름 모양 (AWS 규칙). 사용자 입력이 CLI 인자로 들어가므로 "--" 로 시작하는 값 등을 막는다
@@ -24,7 +26,7 @@ export function envFor(cliEnv: Record<string, string>, base: NodeJS.ProcessEnv =
   return { ...env, ...cliEnv };
 }
 
-// DRAFT(ai): 고객 쪽 실행 역할 이름. platform.ts resolveEnv 의 svc-<purpose> 규칙·L3 온보딩 템플릿 역할 이름과 같음
+// DRAFT(ai): 고객 쪽 실행 역할 이름 바탕. platform.ts resolveEnv 의 svc-<purpose> 규칙·L3 온보딩 템플릿 역할 이름과 같음 (+ 환경 꼬리, awsRoleName)
 export const OPERATE_ROLE_NAME = "svc-operate";
 
 // kubectl 이 인증 실패(401)일 때 찍는 글. EKS 는 접근 항목이 없거나 옛 IAM 역할(같은 이름으로 다시 만들기 전)에 묶이면 이렇게 된다
@@ -76,7 +78,7 @@ export async function verifyAwsObserve(d: CliDeps, i: VerifyAwsInput): Promise<V
     await step("eks:DescribeCluster", () => runJson(dd, "aws", ["eks", "describe-cluster", "--name", i.clusterName, ...r]));
     await step("rds:DescribeDBInstances", () => runJson(dd, "aws", ["rds", "describe-db-instances", "--max-items", "5", ...r]));
     // 실행 역할은 빌리지 않는다 (broker 가 실행 역할에 이전 번호·단계를 요구). 있는지 + ExternalId 조건만 본다 (설계 IA 6.1 4단계와 다름)
-    const role = await step("iam:GetRole", () => runJson(dd, "aws", ["iam", "get-role", "--role-name", OPERATE_ROLE_NAME, "--output", "json"]));
+    const role = await step("iam:GetRole", () => runJson(dd, "aws", ["iam", "get-role", "--role-name", awsRoleName(OPERATE_ROLE_NAME, i.roleSuffix), "--output", "json"]));
     // DRAFT(ai): 실행 역할 신뢰 정책에 ExternalId 조건이 없으면 권한 부족으로 본다 (혼동된 대리인 방어 빠짐)
     if (!trustHasExternalId(get(role, "Role", "AssumeRolePolicyDocument"))) return { ok: false, reason: "PERMISSION_MISSING:sts:ExternalId" };
     // PF02 FM-CLD-02: GuardDuty 읽기는 보안 현황용 선택 권한. 조직 SCP 가 막거나 빠져도 연결 자체는 막지 않고 사람이 할 일로 남긴다

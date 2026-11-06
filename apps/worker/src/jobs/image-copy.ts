@@ -58,6 +58,7 @@ const fail = (reason: ImageCopyFailReason, image: string | null, message: string
 const CLOUD: Record<RegistryKind, "aws" | "gcp"> = { ecr: "aws", gar: "gcp" };
 const SIDE_KO: Record<Side, string> = { source: "출발", target: "도착" };
 // 그 쪽 역할(STEP_ROLES.image_copy: 출발 관찰 svc-observe = 받기만, 도착 실행 svc-operate apply = 올리기)에 있어야 하는 레지스트리 권한
+//   글자만 (사람이 볼 역할 종류). 실제로 빌리는 역할 ARN 은 broker → platform.ts roleRefFor 가 환경 꼬리(aws_role_suffix)까지 붙여 만든다
 const ROLE: Record<Side, string> = { source: "svc-observe", target: "svc-operate" };
 const NEED: Record<Side, Record<RegistryKind, readonly string[]>> = {
   source: { ecr: ECR_PULL_ACTIONS, gar: AR_PULL_PERMISSIONS },

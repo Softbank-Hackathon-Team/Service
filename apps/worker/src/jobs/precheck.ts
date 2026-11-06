@@ -44,11 +44,12 @@ export async function onpremAgentInfo(tx: Tx, envId: string, env: NodeJS.Process
 
 async function envInfo(tenantId: string, m: MigrationRow, env: NodeJS.ProcessEnv = process.env): Promise<{ source: PrecheckEnvInfo; target: PrecheckEnvInfo }> {
   return withTenant(tenantId, async (tx) => {
-    const q = await tx.query(`SELECT id, provider, name, account_id, ${TARGET_ACCOUNT_SQL} AS target_account_id, external_id FROM environments WHERE id = ANY($1::uuid[])`, [[m.sourceEnvId, m.targetEnvId]]);
+    const q = await tx.query(`SELECT id, provider, name, account_id, ${TARGET_ACCOUNT_SQL} AS target_account_id, external_id, aws_role_suffix FROM environments WHERE id = ANY($1::uuid[])`, [[m.sourceEnvId, m.targetEnvId]]);
     const by = new Map(q.rows.map((r) => [r.id as string, r]));
     const one = (id: string, side: "source" | "target"): PrecheckEnvInfo => {
       const r = by.get(id);
-      return { side, provider: (r?.provider ?? "onprem") as CloudProvider, name: r?.name, accountId: (side === "target" ? r?.target_account_id : r?.account_id) ?? null, externalId: r?.external_id ?? null };
+      return { side, provider: (r?.provider ?? "onprem") as CloudProvider, name: r?.name, accountId: (side === "target" ? r?.target_account_id : r?.account_id) ?? null, externalId: r?.external_id ?? null,
+        awsRoleSuffix: r?.aws_role_suffix ?? null };
     };
     const target = one(m.targetEnvId, "target");
     // pull 모드(ONPREM_FLOOR_VIA_GIT≠0, apply.ts 와 같은 기준)면 워커가 고객 클러스터에 kubectl 로 못 붙는다 → Agent 하트비트로 점검

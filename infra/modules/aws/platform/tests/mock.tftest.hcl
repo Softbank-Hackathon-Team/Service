@@ -311,10 +311,10 @@ run "pod_identity" {
   }
   assert {
     condition = (
-      toset(flatten([for st in jsondecode(aws_iam_role_policy.worker.policy).Statement : st.Resource if contains(st.Action, "sts:AssumeRole")])) == toset(["arn:aws:iam::*:role/svc-observe", "arn:aws:iam::*:role/svc-operate"]) &&
+      toset(flatten([for st in jsondecode(aws_iam_role_policy.worker.policy).Statement : st.Resource if contains(st.Action, "sts:AssumeRole")])) == toset(["arn:aws:iam::*:role/svc-observe", "arn:aws:iam::*:role/svc-operate", "arn:aws:iam::*:role/svc-observe-*", "arn:aws:iam::*:role/svc-operate-*"]) &&
       !anytrue([for st in jsondecode(aws_iam_role_policy.worker.policy).Statement : anytrue([for r in st.Resource : (r == "*" && st.Action != ["ecr:GetAuthorizationToken"]) || endswith(r, ":role/*")])])
     )
-    error_message = "worker AssumeRole 대상은 svc-observe·svc-operate 만, role/* 는 없고 * 는 ECR 로그인 토큰에만"
+    error_message = "worker AssumeRole 대상은 svc-observe·svc-operate (+ 환경 꼬리 -*) 만, role/* 는 없고 * 는 ECR 로그인 토큰에만"
   }
   assert {
     condition = (

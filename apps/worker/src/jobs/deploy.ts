@@ -20,7 +20,7 @@ interface Loaded {
   infra: InfraReady;
   plan: PlanDoc | null;
   spec: AppSpecV2 | null;      // TA3: 받아들인 최신 판 (없거나 모양이 틀리면 null → approvedValues 가 drift)
-  env: { provider: Provider; accountId: string | null } | null;
+  env: { provider: Provider; accountId: string | null; awsRoleSuffix?: string | null } | null;
   runtime?: TerraformRuntime | null;   // DEPLOYNONK8S: 도착이 ECS·Cloud Run·VM 이면 그 실행 방식 (k8s 면 null·없음)
   epoch: number;               // 리허설 차례 = deploying 에 들어올 때의 migrations.version (재개하면 새 차례)
   repl?: ReplFacts;            // 온프레 도착만: CNPG 이전 배달물을 만들 사실 (끝점 줄·저장된 봉인 값·봉인 인증서)
@@ -49,7 +49,7 @@ export async function handleDeploy(raw: unknown) {
       const plan = await loadPlanById(tx, infra.planId);
       const row = await latestAcceptedSpecV2(tx, m.id);
       const e = await tx.query(
-        `SELECT provider, ${TARGET_ACCOUNT_SQL} AS "accountId" FROM environments WHERE id=$1`, [m.targetEnvId]);   // A안: GCP = 전용 프로젝트
+        `SELECT provider, ${TARGET_ACCOUNT_SQL} AS "accountId", aws_role_suffix AS "awsRoleSuffix" FROM environments WHERE id=$1`, [m.targetEnvId]);   // A안: GCP = 전용 프로젝트
       if (!plan || !row || !e.rows[0]) return null;
       const repl = e.rows[0].provider === "onprem" ? await loadReplFacts(tx, j.tenantId, m) : undefined;
       return { infra, plan, spec: specV2ForPlan(row), env: e.rows[0], epoch, ...(repl ? { repl } : {}) };
@@ -92,7 +92,7 @@ export async function handleDeploy(raw: unknown) {
         const input: DeployInput = {
           tenantId: j.tenantId, spec: l.spec, plan: l.plan!, tfOutputs: l.infra.tfOutputs,
           // 계획 처리기와 같은 target이어야 Helm 값 지문이 같다 (region "default")
-          target: { envId: m.targetEnvId, provider: l.env!.provider, region: "default", accountId: l.env!.accountId },
+          target: { envId: m.targetEnvId, provider: l.env!.provider, region: "default", accountId: l.env!.accountId, awsRoleSuffix: l.env!.awsRoleSuffix ?? null },
         };
         const repo = new GitopsRepo(cfg);
         // 온프레 CNPG 이전: 서버 인증서·봉인 비밀·터널을 값에 넣고 끝점 줄에 되쓴다. 리허설 렌더와 커밋 렌더가 같은 값을 보게 리허설 문 앞에서

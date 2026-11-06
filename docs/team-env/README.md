@@ -8,7 +8,7 @@
 ## 0. 규칙 (등록부 맨 위와 같음)
 
 - 환경 하나에 진행 중인 이전은 하나다 (플랫폼 잠금). 회사가 칸마다 달라 남의 환경은 콘솔에 안 보인다
-- AWS 계정 하나에 연결은 하나다 (역할 이름 `svc-observe`·`svc-operate` 고정). 같은 계정이면 이미 연결된 환경을 같이 쓴다
+- AWS 계정 하나에 환경을 여럿 연결해도 된다. 새로 연결하는 환경은 역할 이름에 환경 꼬리가 붙는다(`svc-observe-<환경 앞 8자>` 등, 마이그레이션 0056 이후). 그래서 같은 계정이어도 자기 환경을 따로 만들어 연결하면 이전 잠금을 남과 나누지 않는다. 계정의 두 번째 스택부터는 권한 경계 `platform-app-boundary` 를 만들지 않는다(`CreateBoundaryPolicy=false`, `npm run env:connect` 가 `aws iam get-policy` 로 보고 알아서 넣음). 경계를 만든 첫 스택은 마지막에 지운다. 이미 연결된 옛 환경(꼬리 없음, 예: `src-aws-sample`)은 그대로 같이 써도 된다 (자세히: [`infra/onboarding/README.md`](../../infra/onboarding/README.md) "한 계정에 여럿")
 - GCP 전용 프로젝트는 한 사람만 쓴다. 환경 층 이름(`platform-target` 등)이 고정이라 같이 쓰면 부딪힌다
 - 공유 환경(slot-1: `src-aws-sample`, `GCP-sample`)은 팀 채널에 "쓴다/다 썼다"를 알리고 쓴다
 

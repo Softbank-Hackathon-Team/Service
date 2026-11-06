@@ -114,6 +114,7 @@ marker_sql() {
     0050) echo "to_regclass('public.replication_endpoints') IS NOT NULL" ;;
     0051) echo "to_regclass('public.environment_inventory') IS NOT NULL" ;;
     0052) echo "to_regclass('public.environment_layers') IS NOT NULL" ;;
+    0056) echo "EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'environments' AND column_name = 'aws_role_suffix')" ;;
     *) echo "" ;;
   esac
 }

@@ -119,3 +119,16 @@ test("FM-CON-09 (실측): can-i yes 여도 실제 목록 읽기가 401 → K8S_A
   f = fakeExec(table([[/get namespaces/, { code: 1, err: 'Error from server (Forbidden): namespaces is forbidden: User "x" cannot list resource "namespaces"' }]]));
   assert.deepEqual(await verifyAwsObserve({ exec: f.exec, env: BASE }, input), { ok: false, reason: "K8S_ACCESS_MISSING" });
 });
+
+// 한 계정에 환경 여럿 (0056): 새 환경은 실행 역할 svc-operate-<환경 8자>, 옛 환경(꼬리 없음)은 svc-operate 그대로
+test("RoleSuffix: 꼬리가 있으면 실행 역할 svc-operate-<8자> 를 보고, 없거나 모양이 틀리면 옛 이름 svc-operate", async () => {
+  const roleOf = (calls: Array<{ args: string[] }>) => calls.find((c) => c.args[0] === "iam")?.args[3];
+  let f = fakeExec(table([[/^aws iam get-role --role-name svc-operate-783df2ef /, { out: { Role: { AssumeRolePolicyDocument: TRUST } } }]]));
+  assert.deepEqual(await verifyAwsObserve({ exec: f.exec, env: BASE }, { ...input, roleSuffix: "-783df2ef" }), { ok: true, clusters: ["other", "shop"] });
+  assert.equal(roleOf(f.calls), "svc-operate-783df2ef");
+  for (const old of [undefined, null, "", "783df2ef", "-*"]) {
+    f = fakeExec(table());
+    assert.equal((await verifyAwsObserve({ exec: f.exec, env: BASE }, { ...input, roleSuffix: old })).ok, true, String(old));
+    assert.equal(roleOf(f.calls), "svc-operate", String(old));
+  }
+});

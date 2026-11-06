@@ -1,6 +1,6 @@
 {
   "AWSTemplateFormatVersion": "2010-09-09",
-  "Description": "플랫폼 연결: 관찰 역할(svc-observe)·실행 역할(svc-operate)과 EKS 접근 항목을 만든다 (자동 생성, 직접 고치지 않음)",
+  "Description": "플랫폼 연결: 관찰 역할(svc-observe<RoleSuffix>)·실행 역할(svc-operate<RoleSuffix>)과 EKS 접근 항목을 만든다 (자동 생성, 직접 고치지 않음)",
   "Parameters": {
     "ExternalId": {
       "Type": "String",
@@ -34,6 +34,13 @@
         "false"
       ],
       "Description": "같은 계정에 platform-app-boundary 정책이 이미 있으면 false (이름 충돌 방지)"
+    },
+    "RoleSuffix": {
+      "Type": "String",
+      "Default": "",
+      "AllowedPattern": "^$|^-[0-9a-f]{8}$",
+      "ConstraintDescription": "비우거나 \"-\" + 16진 8자 (플랫폼 연결 링크가 채운다)",
+      "Description": "플랫폼이 알려 준 값 그대로 (환경마다 다름). 역할·실행 정책 이름 끝에 붙는다. 비우면 예전 이름"
     },
     "SourceDbSecurityGroupId": {
       "Type": "String",
@@ -150,7 +157,17 @@
     "OperatePolicy": {
       "Type": "AWS::IAM::ManagedPolicy",
       "Properties": {
-        "ManagedPolicyName": "svc-operate-policy",
+        "ManagedPolicyName": {
+          "Fn::Join": [
+            "",
+            [
+              "svc-operate-policy",
+              {
+                "Ref": "RoleSuffix"
+              }
+            ]
+          ]
+        },
         "PolicyDocument": {
           "Version": "2012-10-17",
           "Statement": [
@@ -468,7 +485,17 @@
     "ObserveRole": {
       "Type": "AWS::IAM::Role",
       "Properties": {
-        "RoleName": "svc-observe",
+        "RoleName": {
+          "Fn::Join": [
+            "",
+            [
+              "svc-observe",
+              {
+                "Ref": "RoleSuffix"
+              }
+            ]
+          ]
+        },
         "MaxSessionDuration": 3600,
         "AssumeRolePolicyDocument": {
           "Version": "2012-10-17",
@@ -625,7 +652,17 @@
     "OperateRole": {
       "Type": "AWS::IAM::Role",
       "Properties": {
-        "RoleName": "svc-operate",
+        "RoleName": {
+          "Fn::Join": [
+            "",
+            [
+              "svc-operate",
+              {
+                "Ref": "RoleSuffix"
+              }
+            ]
+          ]
+        },
         "MaxSessionDuration": 3600,
         "AssumeRolePolicyDocument": {
           "Version": "2012-10-17",
@@ -1082,7 +1119,17 @@
       "Type": "AWS::IAM::Role",
       "Condition": "HasArgoHub",
       "Properties": {
-        "RoleName": "svc-deploy",
+        "RoleName": {
+          "Fn::Join": [
+            "",
+            [
+              "svc-deploy",
+              {
+                "Ref": "RoleSuffix"
+              }
+            ]
+          ]
+        },
         "MaxSessionDuration": 3600,
         "AssumeRolePolicyDocument": {
           "Version": "2012-10-17",

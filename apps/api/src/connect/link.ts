@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { AWS_DEFAULT_REGION } from "@svc/security";
+import { AWS_ROLE_SUFFIX_RE } from "@svc/contracts";
 
 // 연결 링크 문자열 만들기 (순수 함수). 경로(routes/environments.ts)는 값만 모아 여기로 넘긴다
 // 【사실: AWS 문서 "Use quick-create links for stacks"】 templateURL 은 S3 주소만, 파라미터는 param_<이름>(대소문자 그대로),
@@ -32,6 +33,8 @@ export interface AwsLinkInput {
   createBoundaryPolicy?: boolean;
   // ID-1: 플랫폼 Argo CD 허브 역할 ARN. 있으면 템플릿이 배포 역할(svc-deploy)·접근 항목을 만든다. 없으면 안 만든다(예전과 같음)
   argoHubRoleArn?: string;
+  // 한 계정에 환경 여럿: 역할·실행 정책 이름 꼬리 (environments.aws_role_suffix). 있으면 param_RoleSuffix, 없으면(옛 환경) 템플릿 기본 "" = 예전 이름
+  roleSuffix?: string | null;
 }
 
 // F17: 플랫폼 주체 ARN(arn:aws:iam::<12자리>:role/...)의 계정 칸. 모양이 아니면 null
@@ -59,6 +62,7 @@ export function awsQuickCreateUrl(i: AwsLinkInput): string {
     `param_EksClusterName=${encodeURIComponent(i.clusterName)}`,
     ...(i.createBoundaryPolicy === false ? ["param_CreateBoundaryPolicy=false"] : []),
     ...(i.argoHubRoleArn ? [`param_ArgoHubRoleArn=${encodeURIComponent(i.argoHubRoleArn)}`] : []),
+    ...(i.roleSuffix && AWS_ROLE_SUFFIX_RE.test(i.roleSuffix) ? [`param_RoleSuffix=${encodeURIComponent(i.roleSuffix)}`] : []),
   ].join("&");
   const r = encodeURIComponent(region);
   return `https://${r}.console.aws.amazon.com/cloudformation/home?region=${r}#/stacks/create/review?${q}`;

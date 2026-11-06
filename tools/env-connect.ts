@@ -4,7 +4,8 @@
 //   npm run env:connect -- link --env <환경 번호>                       → 링크 다시 받기 (24시간 안이면 같은 확인 문구)
 //   npm run env:connect -- verify --env <환경 번호> --account <12자리>   → 확인 요청 후 상태를 2초마다 VERIFY_WAIT_SEC(기본 120초)까지 찍는다
 //     끝 줄 "연결 확인 결과  <상태>", rc 0 = connected · 1 = failed 등 · 5 = 아직 verifying. GCP 결정 3번 A안: --target-project <이전 전용 프로젝트> (원래 프로젝트 = --account)
-//   npm run env:connect -- access-check --cluster <EKS> [--region r] [--fix]   → 접근 항목이 옛 역할에 묶였는지 (FM-CON-09)
+//   npm run env:connect -- access-check --cluster <EKS> [--region r] [--fix] [--role-suffix -<8자>]   → 접근 항목이 옛 역할에 묶였는지 (FM-CON-09)
+//     --role-suffix: 한 계정에 환경 여럿일 때 그 환경 역할 이름 꼬리 (연결 링크의 param_RoleSuffix). 없으면 옛 이름 svc-observe 등
 //   npm run env:connect -- whoami                                       → "회사  <회사 번호>" (CON-01 GCP 회사 SA 만들 때)
 //     끝 줄 "연결 확인 결과  <상태>", rc 0 = connected · 1 = failed 등 · 5 = 아직 verifying
 // 로그인: .env 의 DEMO_USER_EMAIL·DEMO_USER_PASSWORD (npm run auth:seed 계정). 비밀번호가 없고 DEV_AUTH=1 이면 개발용 회사 헤더
@@ -13,7 +14,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
-import type { ConnectionFailure } from "@svc/contracts";
+import { awsRoleName, type ConnectionFailure } from "@svc/contracts";
 
 const API = (process.env.API_URL?.trim() || `http://localhost:${process.env.API_PORT ?? 3000}`) + "/api/v1";
 
@@ -92,8 +93,10 @@ const linkPath = (envId: string, provider: string) =>
 
 // FM-CON-03: infra 기준 명령 → 레포 루트 기준 (ROLE_DIR 을 빼면 스크립트가 옆 폴더 permissions 를 잡는다)
 const gcpRootCommand = (c: string) => c.replace(/ ROLE_DIR=\.\/permissions/, "").replace("bash onboarding/gcp-connect.sh", "bash infra/onboarding/gcp-connect.sh");
-// PF01 FM-CON-05: 연결 스택은 환경마다 이름이 다르지만(svc-connect-<환경 8자>) 역할 이름은 고정(svc-observe·svc-operate)이라,
+// PF01 FM-CON-05: 연결 스택은 환경마다 이름이 다르지만(svc-connect-<환경 8자>) 옛 링크는 역할 이름이 고정(svc-observe·svc-operate)이라,
 //   지난 회차 스택이 남아 있으면 새 스택이 AlreadyExists 로 되돌아간다. 읽기 명령 하나로 svc-observe 를 가진 스택을 찾아 알린다.
+//   한 계정에 환경 여럿 (0056): 새 링크는 param_RoleSuffix(-<환경 8자>)가 있어 역할이 svc-observe-<8자> → 그 이름을 가진 스택만 본다
+//   (다른 환경 스택의 svc-observe 는 부딪히지 않으니 충돌이 아니다)
 //   지우지는 않는다 (고객 계정 변경 = 사람 확인). 출력 줄은 real-session 이 읽을 수 있게 고정 모양
 //   "연결 스택 이미 있음  <이름> <상태> 이 환경 것"  → 새로 만들지 말고 verify 로
 //   "연결 스택 충돌  <이름> <상태>"                 → 지난 스택. 지운 뒤 다시 (종료 코드 3)
@@ -101,11 +104,13 @@ const gcpRootCommand = (c: string) => c.replace(/ ROLE_DIR=\.\/permissions/, "")
 function stackCheck(url: string, run: (args: string[]) => string = (a) =>
   execFileSync("aws", a, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 15_000 })) {
   if (process.env.CONNECT_STACK_CHECK === "0") return;
-  const want = new URLSearchParams(new URL(url).hash.split("?")[1] ?? "").get("stackName") ?? "";
+  const hq = new URLSearchParams(new URL(url).hash.split("?")[1] ?? "");
+  const want = hq.get("stackName") ?? "";
+  const observeRole = awsRoleName("svc-observe", hq.get("param_RoleSuffix"));
   const region = new URL(url).searchParams.get("region") ?? undefined;
   let owner = "";
   try {
-    owner = run(["cloudformation", "describe-stack-resources", "--physical-resource-id", "svc-observe",
+    owner = run(["cloudformation", "describe-stack-resources", "--physical-resource-id", observeRole,
       "--query", "StackResources[0].StackName", "--output", "text", ...(region ? ["--region", region] : [])]).trim();
   } catch { return; }   // 없음(ValidationError)·권한 없음
   if (!owner || owner === "None") return;
@@ -113,7 +118,7 @@ function stackCheck(url: string, run: (args: string[]) => string = (a) =>
   try { status = run(["cloudformation", "describe-stacks", "--stack-name", owner, "--query", "Stacks[0].StackStatus", "--output", "text", ...(region ? ["--region", region] : [])]).trim(); } catch { /* 상태 모름 */ }
   if (owner === want) { console.log(`연결 스택 이미 있음  ${owner} ${status} 이 환경 것 → 새로 만들지 말고 verify`); return; }
   console.error(`연결 스택 충돌  ${owner} ${status}`);
-  console.error(`  지난 연결 스택이 고정 역할 이름(svc-observe·svc-operate)을 쥐고 있어 새 스택(${want})은 AlreadyExists 로 실패한다.`);
+  console.error(`  지난 연결 스택이 같은 역할 이름(${observeRole})을 쥐고 있어 새 스택(${want})은 AlreadyExists 로 실패한다.`);
   console.error(`  사람이 확인한 뒤: aws cloudformation delete-stack --stack-name ${owner}${region ? ` --region ${region}` : ""} → 지워지면 다시 실행`);
   process.exit(3);
 }
@@ -145,13 +150,14 @@ function reuseCheck(url: string) {
 const ACCESS_ENTRY_SHAPE: Record<string, { group?: string; viewPolicy?: boolean }> = {
   "svc-observe": { viewPolicy: true }, "svc-operate": { group: "platform:operate" }, "svc-deploy": { group: "platform:deploy" },
 };
-function accessEntryCheck(cluster: string, region: string, fix: boolean, run: (args: string[]) => string = (a) =>
+function accessEntryCheck(cluster: string, region: string, fix: boolean, suffix: string | undefined = arg("role-suffix"), run: (args: string[]) => string = (a) =>
   execFileSync("aws", a, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 })): number {
   const r = ["--region", region, "--output", "text"];
   let acct: string;
   try { acct = run(["sts", "get-caller-identity", "--query", "Account", "--output", "text"]).trim(); } catch { console.log("접근 항목 확인 못 함 (aws 자격 없음)"); return 0; }
   let fixed = 0;
-  for (const [role, shape] of Object.entries(ACCESS_ENTRY_SHAPE)) {
+  for (const [base, shape] of Object.entries(ACCESS_ENTRY_SHAPE)) {
+    const role = awsRoleName(base, suffix);
     const arn = `arn:aws:iam::${acct}:role/${role}`;
     let roleAt: number, entryAt: number;
     try { roleAt = Date.parse(run(["iam", "get-role", "--role-name", role, "--query", "Role.CreateDate", "--output", "text"]).trim()); } catch { continue; }   // 역할 없음(배포 역할은 선택)
