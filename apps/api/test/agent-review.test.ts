@@ -46,6 +46,7 @@ test("STUB 값은 agent-worker 대본(DEMO_SCRIPT + stubSandbox) 실제 실행 �
   assert.deepEqual(STUB_REMEDIATE.gate, res.gate);
   assert.deepEqual(STUB_REMEDIATE.usage, res.usage);
   assert.equal(STUB_REMEDIATE.reason, res.reason);
+  assert.equal(STUB_REMEDIATE.sandbox, (res as { sandbox?: unknown }).sandbox);
   // 웹 가짜 API(apps/web/mock)도 같은 값
   const mock = JSON.parse(readFileSync(new URL("../../web/mock/agent-review-fixture.json", import.meta.url), "utf8"));
   assert.deepEqual(mock, STUB_REMEDIATE);
@@ -89,6 +90,10 @@ test("DB 기록: 종류별 최신 1건, result 칸을 화면 모양으로, 망�
   assert.equal(v.specDraft?.createdAt, "2026-11-07T03:00:00.000Z");
   assert.equal(v.remediate?.source, "db");
   assert.equal(v.remediate?.outcome, "gave_up");
+  // 샌드박스 종류: 결과 칸 그대로, 칸이 없는 예전 기록은 null (화면은 샌드박스 확인으로 보지 않는다)
+  assert.equal(v.remediate?.sandbox, null);
+  const none = AgentReview.parse(buildAgentReview(M, [{ ...remediateRow, result: { ...(remediateRow.result as object), sandbox: "none" } }]));
+  assert.equal(none.remediate?.sandbox, "none");
 
   const broken = AgentReview.parse(buildAgentReview(M, [specRow({ result: "garbage", usage: null, status: "failed", reason: "LLM_AUTH" })]));
   assert.equal(broken.specDraft?.risks.length, 0);

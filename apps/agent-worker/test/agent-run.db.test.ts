@@ -45,14 +45,14 @@ test("Postgres: remediate 결과가 agent_runs·agent_steps·감사에 남고, A
 
   const ar = (await owner.query(
     `SELECT status, model, reason, usage, result->'finish'->>'outcome' AS outcome, (result->'gate'->>'ok')::bool AS gate_ok,
-            finished_at IS NOT NULL AS done FROM agent_runs WHERE id=$1`, [run])).rows[0];
+            result->>'sandbox' AS sandbox, finished_at IS NOT NULL AS done FROM agent_runs WHERE id=$1`, [run])).rows[0];
   assert.deepEqual(ar, { status: "finished", model: "stub-scripted", reason: "finish 호출",
-    usage: { input: 9600, output: 640 }, outcome: "proposed", gate_ok: true, done: true });
+    usage: { input: 9600, output: 640 }, outcome: "proposed", gate_ok: true, sandbox: "memory", done: true });
   const steps = (await owner.query(`SELECT seq, tool FROM agent_steps WHERE run_id=$1 ORDER BY seq`, [run])).rows;
   assert.deepEqual(steps.map((s) => s.seq), [1, 2, 3, 4, 5, 6, 7, 8]);
   const au = (await owner.query(
-    `SELECT actor, result, detail->>'outcome' AS outcome FROM audit_events WHERE tenant_id=$1 AND action='agent.remediate' AND target=$2`, [T, m])).rows;
-  assert.deepEqual(au, [{ actor: "ai_agent", result: "ok", outcome: "proposed" }]);
+    `SELECT actor, result, detail->>'outcome' AS outcome, detail->>'sandbox' AS sandbox FROM audit_events WHERE tenant_id=$1 AND action='agent.remediate' AND target=$2`, [T, m])).rows;
+  assert.deepEqual(au, [{ actor: "ai_agent", result: "ok", outcome: "proposed", sandbox: "memory" }]);
 
   // API 읽기 경로: 같은 회사 벽 안에서 읽으면 STUB 이 아니라 DB 기록. 본문은 STUB 대본과 같아야 한다 (같은 대본이므로)
   const input = await core.withTenant(T, (tx) => rv.loadAgentReviewDb(tx, m));
@@ -90,7 +90,7 @@ test("Postgres: 동시에 두 번 와도 claim 은 하나만, LLM 오류는 fail
     `SELECT result FROM audit_events WHERE tenant_id=$1 AND action='agent.remediate' AND detail->>'agentRunId'=$2`, [T, run2])).rows;
   assert.deepEqual(au, [{ result: "error" }]);
   // 이미 닫힌 실행에 finish 가 또 와도 바뀌지 않는다
-  await store.finish(T, run2, { state: "finished", reason: "late", model: "z", finish: null, gate: { ok: true, violations: [] }, usage: { input: 1, output: 1 } });
+  await store.finish(T, run2, { state: "finished", reason: "late", model: "z", finish: null, gate: { ok: true, violations: [] }, usage: { input: 1, output: 1 }, sandbox: null });
   assert.equal((await owner.query(`SELECT status FROM agent_runs WHERE id=$1`, [run2])).rows[0].status, "failed");
   // spec_draft 실행 번호로는 remediate 저장소가 아무것도 못 한다 (kind 조건)
   const sd = randomUUID();
