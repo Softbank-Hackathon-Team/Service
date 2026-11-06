@@ -161,3 +161,28 @@ test("계약 거부: Secret 자원 이름·items 와 error 를 같이·모르는
   assert.ok(bad({ ...snap, lists: Array.from({ length: 301 }, () => ({ resource: "pods", items: [] })) }));
   assert.ok(bad({ ...snap, lists: [{ resource: "Pods; rm", items: [] }] }));
 });
+
+// 왕복 이전 (2026-11-07 온프레 → AWS 실측): 이 플랫폼 차트가 그린 Cloudflare 입구(<앱>-cloudflared + 지표 ConfigMap·NetworkPolicy)는 고객 앱이 아니다.
+//   앱 부품·posture.networkPolicy 로 읽으면 NetworkPolicy 를 못 그리는 도착(AWS·GCP)이 PC-V2-UNSUP 로 막힌다
+test("왕복: 플랫폼이 그린 Cloudflare 입구는 부품·NetworkPolicy·ConfigMap 에서 빠지고, 고객 NetworkPolicy·ConfigMap 은 그대로", async () => {
+  const c = cluster();
+  const entry = { ...dep("shop-cloudflared", "shop"), spec: { ...dep("shop-cloudflared", "shop").spec,
+    template: { metadata: { labels: { "app.kubernetes.io/name": "shop-cloudflared", "svc.platform/metrics": "cloudflared" } },
+      spec: { containers: [{ name: "cloudflared", image: "cloudflare/cloudflared:2025.9.1" }] } } } };
+  c.res.deployments = [...c.res.deployments!, entry];
+  c.res.networkpolicies = [
+    { metadata: meta("shop-cloudflared-metrics", "shop"), spec: { podSelector: { matchLabels: { "app.kubernetes.io/name": "shop-cloudflared" } }, policyTypes: ["Ingress"], ingress: [{}] } },
+    { metadata: meta("deny-other", "shop"), spec: { podSelector: { matchLabels: { app: "api" } }, policyTypes: ["Ingress"], ingress: [] } },
+  ];
+  c.res.configmaps = [...c.res.configmaps!, { metadata: meta("shop-cloudflared-metrics", "shop"), data: { "config.yaml": "x" } }];
+  const { snap } = await snapOf(c);
+  const inv = await discoverSource("onprem", { exec: snapshotExec(snap), env: {} }, { scope: { namespaces: ["shop"] } });
+  const names = (kind: string) => (inv.items as Array<{ kind: string; metadata?: { name?: string } }>).filter((i) => i.kind === kind).map((i) => i.metadata?.name).sort();
+  assert.ok(!names("k8s.deployment").includes("shop-cloudflared"), names("k8s.deployment").join(","));
+  assert.ok(names("k8s.deployment").includes("web") && names("k8s.deployment").includes("api"));
+  assert.deepEqual(names("k8s.networkPolicy"), ["deny-other"], "고객 정책은 남는다");
+  assert.ok(!names("k8s.configMapKeys").includes("shop-cloudflared-metrics") && names("k8s.configMapKeys").includes("shop-cfg"));
+  // 입구가 없으면 예전과 같다 (음성 대조)
+  const plain = await discoverSource("onprem", { exec: snapshotExec((await snapOf()).snap), env: {} }, { scope: { namespaces: ["shop"] } });
+  assert.deepEqual(plain.items.length, (await discoverSource("onprem", { exec: fakeKubectl(cluster()).exec, env: {} }, { scope: { namespaces: ["shop"] } })).items.length);
+});
