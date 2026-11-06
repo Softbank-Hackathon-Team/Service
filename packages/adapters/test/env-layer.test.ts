@@ -39,6 +39,8 @@ test("1차(create_eso=false)·2차(create_eso=true) 순서로 init·plan·apply,
     ["cluster:init", "cluster:plan", "cluster:apply", "eso:init", "eso:plan", "eso:apply", "eso:output"]);
   assert.ok(f.calls.every((c) => c.args[0] === "-chdir=modules/gcp/env"));
   assert.ok(f.calls.every((c) => c.tfvars.project_id === "mig-target-proj" && c.tfvars.create_gke === true));
+  // B-2: 노드는 고객 svc-gke-node 로 돈다 (기본 Compute SA 아님)
+  assert.ok(f.calls.every((c) => c.tfvars.node_service_account === "svc-gke-node@mig-target-proj.iam.gserviceaccount.com"));
   // 단계마다 env() 를 다시 불러 그 순간의 토큰 (1차 tok-2, 2차 tok-3: tok-1 은 실행기 만들 때 설정 읽기)
   assert.deepEqual([...new Set(f.calls.map((c) => c.token))], ["tok-2", "tok-3"]);
   assert.deepEqual(r.facts, { network_id: "projects/p/global/networks/platform-target", cluster_name: "platform-target", cluster_location: "asia-northeast3-a",

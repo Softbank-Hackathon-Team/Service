@@ -66,9 +66,16 @@
 |---|---|---|
 | `svc-observe` SA | 원래 프로젝트 | 관찰(읽기만). 원래·전용 두 프로젝트에 `platform_observe`·`platform_observe_verify` 역할 |
 | `svc-plan`·`svc-operate` SA | 전용 프로젝트 | 계획(읽기)·실행. 권한은 전용 프로젝트 안에서만 |
-| 커스텀 역할 | 원래: `platform_observe`·`platform_observe_verify` / 전용: 그 둘 + `platform_plan`·`platform_operate`·`platform_operate_iam`·`platform_operate_db_secret`·`platform_hub_access`(회사 SA 에 `container.clusters.get` 만. Argo CD 허브의 GKE 접속용) | 권한 목록은 `infra/permissions`의 자동 생성 파일. `platform_observe`는 객체 내용·메시지·비밀값 권한 없음 |
+| `svc-env` SA (B-2) | 전용 프로젝트 | 환경 층(`infra/modules/gcp/env`: VPC·NAT·GKE·Artifact Registry·클러스터 안 ESO 설치) 만들기만. 플랫폼은 환경 층 단계에서만 빌린다. 지우기·IAM 정책 바꾸기 권한 없음 |
+| `svc-gke-node` SA (B-2) | 전용 프로젝트 | GKE 노드 SA (기본 Compute SA 대신). `roles/logging.logWriter`·`roles/monitoring.metricWriter`·`roles/artifactregistry.reader` 만. 플랫폼은 빌리지 않는다 |
+| 커스텀 역할 | 원래: `platform_observe`·`platform_observe_verify` / 전용: 그 둘 + `platform_plan`·`platform_operate`·`platform_operate_iam`·`platform_operate_db_secret`·`platform_env`(B-2)·`platform_hub_access`(회사 SA 에 `container.clusters.get` 만. Argo CD 허브의 GKE 접속용) | 권한 목록은 `infra/permissions`의 자동 생성 파일. `platform_observe`는 객체 내용·메시지·비밀값 권한 없음 |
 | 조건부 바인딩 | 전용 프로젝트 | 실행 SA의 IAM 정책 변경(`_iam`)·DB 비밀(`_db_secret`)은 `app-` 접두어 SA·시크릿에만 닿는 조건 (DRAFT(ai)) |
-| 빌리기 허용 | SA 단위 | 플랫폼의 **이 회사 전용 SA**(`t-<16진 28자>@...`) 하나에게, 세 고객 SA 각각에 `roles/iam.serviceAccountTokenCreator` (프로젝트 전체가 아님) |
+| 노드 SA 붙이기 (B-2) | SA 단위 | `svc-gke-node` 자신의 정책에만 `svc-env` → `roles/iam.serviceAccountUser`(actAs). 프로젝트 전체 actAs 없음 (`permissions-lint` 가 DRY_RUN 출력으로 확인) |
+| 빌리기 허용 | SA 단위 | 플랫폼의 **이 회사 전용 SA**(`t-<16진 28자>@...`) 하나에게, 네 고객 SA(`svc-observe`·`svc-plan`·`svc-operate`·`svc-env`) 각각에 `roles/iam.serviceAccountTokenCreator` (프로젝트 전체가 아님) |
+
+이미 연결한 고객의 환경 층(B-2): 스크립트를 같은 값으로 **다시 실행**하면 `svc-env`·`svc-gke-node`·`platform_env` 와 위 바인딩만 새로 생긴다 (있는 것은 건너뜀). 다시 실행하지 않으면 환경 층 만들기가 `ENV_LAYER_CRED_MISSING` 으로 멈춘다.
+`platform_env` 는 이미 있으면 바꾸지 않는다 (실행 역할과 같은 규칙). 첫 실측에서 권한이 모자라면 `gcloud iam roles update platform_env --project=<전용> --file=infra/permissions/gcp-env-custom-role.yaml` 로 고객이 직접 바꾼다.
+- TODO(human): ESO 가 `app-` 비밀을 읽을 신원(`svc-eso` + Workload Identity). 첫 GKE 클러스터 전에는 GKE 풀(`<전용>.svc.id.goog`)이 없어 이 스크립트가 미리 묶을 수 없다 (`Identity Pool does not exist`). 정할 때까지 환경 층의 ESO 단계는 `svc-env` 권한 밖이라 실패한다
 
 이미 연결한 고객의 Argo CD 허브 권한: `gcp-connect.sh` 를 다시 돌리면 `platform_hub_access` 는 생기지만, 실행 역할은 권한이 늘면 할 수 있는 일이 늘어서 자동으로 바꾸지 않는다. 고객이 아래 명령으로 직접 더한다.
 
@@ -100,9 +107,9 @@ gcloud iam roles update platform_operate --project=<전용> --add-permissions=co
 GCP (Cloud Shell, 원래·전용 프로젝트 각각). `<플랫폼 SA>`는 연결 때 쓴 `PLATFORM_SA` 값
 1. 빌리기 허용 걷기 (이것만 해도 플랫폼은 더 못 빌린다)
    - `gcloud iam service-accounts remove-iam-policy-binding svc-observe@<원래>.iam.gserviceaccount.com --project <원래> --member=serviceAccount:<플랫폼 SA> --role=roles/iam.serviceAccountTokenCreator`
-   - 같은 명령을 `svc-plan@<전용>…`·`svc-operate@<전용>…` 에 `--project <전용>` 으로
-2. SA 지우기: `gcloud iam service-accounts delete svc-observe@<원래>.iam.gserviceaccount.com --project <원래> --quiet`, `svc-plan`·`svc-operate` 는 `--project <전용>`
-3. 커스텀 역할 지우기: 원래 `platform_observe`·`platform_observe_verify`, 전용 그 둘 + `platform_plan`·`platform_operate`·`platform_operate_iam`·`platform_operate_db_secret`·`platform_hub_access`
+   - 같은 명령을 `svc-plan@<전용>…`·`svc-operate@<전용>…`·`svc-env@<전용>…` 에 `--project <전용>` 으로
+2. SA 지우기: `gcloud iam service-accounts delete svc-observe@<원래>.iam.gserviceaccount.com --project <원래> --quiet`, `svc-plan`·`svc-operate`·`svc-env`·`svc-gke-node` 는 `--project <전용>` (환경 층 GKE 를 먼저 지운다. 노드가 `svc-gke-node` 로 돈다)
+3. 커스텀 역할 지우기: 원래 `platform_observe`·`platform_observe_verify`, 전용 그 둘 + `platform_plan`·`platform_operate`·`platform_operate_iam`·`platform_operate_db_secret`·`platform_env`·`platform_hub_access`
    - `gcloud iam roles delete <역할> --project <프로젝트> --quiet` (지운 역할은 7일 안에 되살릴 수 있고 그동안 같은 이름으로 못 만든다)
    - SA 를 지우면 프로젝트 바인딩은 `deleted:` 로 남는다. 깨끗이 하려면 `gcloud projects remove-iam-policy-binding <프로젝트> --member=deleted:serviceAccount:… --role=projects/<프로젝트>/roles/<역할> --all`
 4. 전용 프로젝트를 이전 전용으로만 썼다면 프로젝트째 끄기: `gcloud projects delete <전용>` (30일 안에 되살릴 수 있음)

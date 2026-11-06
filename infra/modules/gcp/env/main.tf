@@ -32,6 +32,14 @@ variable "node_machine_type" {
   type    = string
   default = "e2-standard-2"
 }
+# B-2: GKE 노드 SA. 고객 gcp-connect.sh 가 만든 svc-gke-node(로그·지표 쓰기, Artifact Registry 읽기만). 기본 Compute SA(편집자) 대신 (CIS GKE)
+#   만드는 쪽(worker 가 빌린 svc-env)은 이 SA 하나에만 actAs 가 있다
+#   DRAFT(ai): 기본 null = 예전처럼 기본 Compute SA (사람 권한으로 이 모듈을 직접 올리는 up 스크립트). worker 는 늘 채운다 (envLayerVars)
+variable "node_service_account" {
+  type     = string
+  default  = null
+  nullable = true
+}
 # FM-CLD-21 DRAFT(ai): 시연 중 GKE 자동 업그레이드(제어부 몇 분 API 끊김·노드 재시작)를 막는다. 만든 때부터 이 시간 동안 NO_UPGRADES 제외 기간.
 #   날짜는 레포에 안 적는다: 만들 때 시각(plantimestamp) 기준으로 정하고, 뒤 plan 에서 안 바뀌게 ignore_changes. 0 이면 끔. 최대 720시간(30일, GKE 한도)
 #   기본 0(끔): 시작 시각이 apply 때 이미 지난 값이 되는데 GKE 가 받는지 실클라우드로 확인 못 함 【미확인】. 확인 뒤 -var upgrade_freeze_hours=48
@@ -199,6 +207,14 @@ resource "google_container_cluster" "this" {
     cluster_secondary_range_name  = "pods"
     services_secondary_range_name = "services"
   }
+  # 만들 때 잠깐 생겼다 지워지는 기본 풀도 노드 SA 를 쓴다 (안 주면 기본 Compute SA 의 actAs 가 필요). 만든 뒤에는 보지 않는다 (아래 ignore_changes)
+  dynamic "node_config" {
+    for_each = var.node_service_account == null ? [] : [1]
+    content {
+      service_account = var.node_service_account
+      oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
+    }
+  }
   workload_identity_config {
     workload_pool = "${var.project_id}.svc.id.goog"
   }
@@ -225,8 +241,8 @@ resource "google_container_cluster" "this" {
     }
   }
   lifecycle {
-    # 만들 때 정한 제외 기간을 뒤 plan 이 매번 바꾸지 않게
-    ignore_changes = [maintenance_policy]
+    # 만들 때 정한 제외 기간을 뒤 plan 이 매번 바꾸지 않게. node_config 는 기본 풀(만든 뒤 지움)용이라 이미 있는 클러스터를 다시 만들지 않게
+    ignore_changes = [maintenance_policy, node_config]
   }
 }
 
@@ -236,8 +252,9 @@ resource "google_container_node_pool" "default" {
   cluster    = google_container_cluster.this[0].id
   node_count = 2
   node_config {
-    machine_type = var.node_machine_type
-    oauth_scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+    machine_type    = var.node_machine_type
+    service_account = var.node_service_account
+    oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
     workload_metadata_config {
       mode = "GKE_METADATA"
     }
@@ -248,6 +265,10 @@ resource "google_container_node_pool" "default" {
 #   gitops/charts/app 의 ExternalSecret 이 이 이름으로 Secret Manager 의 "app-" 비밀을 읽는다 (deploy/ci/values/gcp.json).
 #   비밀 그릇·값은 여기서 만들지 않는다 (앱 층 kinds/identity·kinds/postgres 몫).
 #   신원: ESO 컨트롤러 KSA external-secrets/external-secrets → Workload Identity → 아래 GSA. store 에 auth 칸 없음(ADC)
+# TODO(human) B-2: 아래 신원 세 자원(GSA·프로젝트 secretAccessor·WI 바인딩)은 worker 가 빌리는 svc-env 권한 밖이다 (프로젝트 setIamPolicy·
+#   svc-eso setIamPolicy 금지, 보안 조건 2). gcp-connect.sh 가 고객 svc-eso 에 WI 를 미리 묶는 안은 첫 WI 클러스터 전에는 GKE 풀이 없어
+#   "Identity Pool does not exist"(400)로 막힌다 (serviceAccount:…svc.id.goog[…]·principal://… 둘 다). 어느 길로 갈지 정할 때까지
+#   create_eso=true 단계는 svc-env 로 돌면 이 자원에서 403 → ENV_LAYER_APPLY_FAILED(failedPhase=eso). 사람 권한 up 스크립트는 예전 그대로
 resource "google_service_account" "eso" {
   count        = local.eso ? 1 : 0
   account_id   = "${substr(var.name, 0, 24)}-eso" # account_id 30자 제한

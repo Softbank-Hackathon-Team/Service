@@ -36,3 +36,25 @@ run "plan_no_gke_z77" {
     error_message = "GKE 없으면 cluster_name 빈 값, cluster_location 은 영역"
   }
 }
+# B-2: 노드 SA 를 주면 노드 풀과 (만들 때만 쓰는) 기본 풀이 그 SA 를 쓴다. 안 주면 예전처럼 기본 Compute SA (node_config 블록 없음)
+run "node_sa_given" {
+  command = plan
+  variables {
+    node_service_account = "svc-gke-node@demo-proj.iam.gserviceaccount.com"
+  }
+  assert {
+    condition     = google_container_node_pool.default[0].node_config[0].service_account == "svc-gke-node@demo-proj.iam.gserviceaccount.com"
+    error_message = "노드 풀은 svc-gke-node 로 돈다"
+  }
+  assert {
+    condition     = length(google_container_cluster.this[0].node_config) == 1 && google_container_cluster.this[0].node_config[0].service_account == "svc-gke-node@demo-proj.iam.gserviceaccount.com"
+    error_message = "기본 풀도 svc-gke-node (안 주면 기본 Compute SA 의 actAs 가 필요)"
+  }
+}
+run "node_sa_default" {
+  command = plan
+  assert {
+    condition     = length(google_container_cluster.this[0].node_config) == 0
+    error_message = "노드 SA 를 안 주면 클러스터 node_config 블록이 없다 (이미 있는 up 스크립트 클러스터가 다시 만들어지지 않게)"
+  }
+}

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# 고객 GCP 프로젝트 연결 (Cloud Shell에서 고객이 실행). 키 파일은 만들지 않는다: 서비스 계정(SA) 3개를 만들고,
+# 고객 GCP 프로젝트 연결 (Cloud Shell에서 고객이 실행). 키 파일은 만들지 않는다: 서비스 계정(SA) 5개를 만들고,
 # 플랫폼 쪽 회사 전용 SA가 그 SA를 "빌려 쓸"(impersonate) 수 있게만 한다.
 # 결정 3번 A안 (이전 전용 프로젝트): 프로젝트 둘을 쓴다
 #   PROJECT_ID        고객 원래 프로젝트 → svc-observe(읽기만)만 둔다. 플랫폼 실행 권한은 0
-#   TARGET_PROJECT_ID 이전 전용 프로젝트 → 도착 자원은 여기에만 만든다. svc-plan·svc-operate 와 실행 역할은 여기에만 (이름 조건 없음 — 방이 따로라서)
+#   TARGET_PROJECT_ID 이전 전용 프로젝트 → 도착 자원은 여기에만 만든다. svc-plan·svc-operate·svc-env(B-2 환경 층)·svc-gke-node(노드)와 실행 역할은 여기에만 (이름 조건 없음 — 방이 따로라서)
 #   원래 프로젝트에 예전 판이 붙인 실행·plan 바인딩이 남아 있으면 걷어낸다
 # 상태: AI 초안. 이 레포의 세션에서는 실행하지 않는다 (DRY_RUN=1이면 명령만 출력)
 #
@@ -52,7 +52,7 @@ if ! [[ "${PLATFORM_SA}" =~ ^t-[0-9a-f]{28}@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.g
 fi
 
 # FM-CON-03: 역할 파일이 없으면 아무것도 만들기 전에 멈춘다 (예전: 관찰 권한만 넣고 중간에 멈춰 반쯤 연결된 상태가 남음)
-for f in gcp-operate-custom-role.yaml gcp-operate-iam-custom-role.yaml gcp-operate-db-secret-role.yaml gcp-operate-iam-binding-condition.json gcp-operate-db-secret-condition.json; do
+for f in gcp-operate-custom-role.yaml gcp-operate-iam-custom-role.yaml gcp-operate-db-secret-role.yaml gcp-operate-iam-binding-condition.json gcp-operate-db-secret-condition.json gcp-env-custom-role.yaml; do
   if [ ! -f "${ROLE_DIR}/${f}" ]; then echo "역할 파일 없음: ${ROLE_DIR}/${f} (infra 폴더에서 치거나 ROLE_DIR=<레포>/infra/permissions)" >&2; exit 2; fi
 done
 
@@ -60,6 +60,12 @@ OBSERVE_SA="svc-observe@${PROJECT_ID}.iam.gserviceaccount.com"
 OPERATE_SA="svc-operate@${TARGET_PROJECT_ID}.iam.gserviceaccount.com"
 # ID-7: plan 단계(terraform plan·precheck) 전용 SA. 실행 역할의 읽기(get·list·getIamPolicy)만 가진다 → plan 이 지우기 권한 토큰을 안 받는다
 PLAN_SA="svc-plan@${TARGET_PROJECT_ID}.iam.gserviceaccount.com"
+# B-2: 환경 층(VPC·NAT·GKE·Artifact Registry·클러스터 안 ESO 설치) 만들기 전용 SA. worker 가 환경 층 단계에서만 빌린다 (svc-plan 처럼).
+#   지우기 권한은 없다 (환경 층은 사람이 지운다). svc-operate 는 그대로
+ENV_SA="svc-env@${TARGET_PROJECT_ID}.iam.gserviceaccount.com"
+# B-2: GKE 노드 SA. 기본 Compute SA(편집자) 대신 (CIS GKE). 로그·지표 쓰기와 Artifact Registry 읽기만. 플랫폼은 빌리지 않는다 (tokenCreator 없음)
+#   svc-env 는 이 SA 하나에만 actAs (SA 단위 serviceAccountUser). 프로젝트 전체 actAs 는 주지 않는다 (permissions-lint 가 DRY_RUN 출력으로 확인)
+NODE_SA="svc-gke-node@${TARGET_PROJECT_ID}.iam.gserviceaccount.com"
 # 예전 판(한 프로젝트)이 원래 프로젝트에 만든 실행·plan SA. 바인딩만 걷어낸다 (SA 자체는 고객이 지워도 됨)
 OLD_OPERATE_SA="svc-operate@${PROJECT_ID}.iam.gserviceaccount.com"
 OLD_PLAN_SA="svc-plan@${PROJECT_ID}.iam.gserviceaccount.com"
@@ -166,16 +172,18 @@ drop_unconditioned_binding() { # 주체SA 역할
     run gcloud projects remove-iam-policy-binding "${P}" --member="serviceAccount:${sa}" --role="${role}" --condition=None
   fi
 }
-ensure_token_creator() { # 대상 SA
-  local target="$1"
+# SA 단위 바인딩: 대상 SA 자신의 정책에만 넣는다 (프로젝트 전체 아님). 같은 주체·역할이 있으면 건너뜀
+ensure_sa_binding() { # 대상SA 주체SA 역할
+  local target="$1" member="$2" role="$3"
   if listed gcloud iam service-accounts get-iam-policy "${target}" --project="${P}" --flatten="bindings[].members" \
-      --filter="bindings.role=roles/iam.serviceAccountTokenCreator AND bindings.members=serviceAccount:${PLATFORM_SA}" --format="value(bindings.role)"; then
-    skip "tokenCreator ${PLATFORM_SA} → ${target}"
+      --filter="bindings.role=${role} AND bindings.members=serviceAccount:${member}" --format="value(bindings.role)"; then
+    skip "${role#roles/iam.serviceAccount} ${member} → ${target}"
   else
     run gcloud iam service-accounts add-iam-policy-binding "${target}" --project="${P}" \
-      --member="serviceAccount:${PLATFORM_SA}" --role="roles/iam.serviceAccountTokenCreator"
+      --member="serviceAccount:${member}" --role="${role}"
   fi
 }
+ensure_token_creator() { ensure_sa_binding "$1" "${PLATFORM_SA}" roles/iam.serviceAccountTokenCreator; }
 
 # 결정 3번 A안: 주체·역할 바인딩이 조건 있든 없든 하나라도 있으면 전부 걷어낸다 (원래 프로젝트에 남은 예전 실행 권한 정리)
 drop_all_bindings() { # 주체SA 역할
@@ -278,6 +286,8 @@ TARGET_APIS="cloudresourcemanager serviceusage iam iamcredentials sts container 
 for a in ${TARGET_APIS}; do ensure_api "${a}.googleapis.com"; done
 ensure_sa svc-plan
 ensure_sa svc-operate
+ensure_sa svc-env
+ensure_sa svc-gke-node
 # 관찰 SA 도 전용 프로젝트를 읽는다 (연결 확인이 전용 프로젝트 번호·svc-operate 를 보고, 배포 확인·도착 GKE 읽기). 읽기 전용
 ensure_role platform_observe --title="platform-observe" --description="platform read-only inventory" --permissions="${OBSERVE_PERMS}" --stage=GA
 sync_role_permissions platform_observe "${OBSERVE_PERMS}"
@@ -294,6 +304,8 @@ ensure_role platform_operate_iam --file="${ROLE_DIR}/gcp-operate-iam-custom-role
 # ID-2 DRAFT(ai): apply 끝에 새 도착 DB 비밀번호를 빌린 실행 SA 로 꺼낸다 (real-runner gcloud secrets versions access).
 #   비밀값 읽기는 주 역할 금지 목록이라 따로 역할 + 이름 조건(app-…-db-password 버전만)으로만. plan SA(ID-7)는 이 역할을 안 받는다
 ensure_role platform_operate_db_secret --file="${ROLE_DIR}/gcp-operate-db-secret-role.yaml"
+# B-2: 환경 층 만들기 역할 (자동 생성 파일: 읽기 + 만들기만, 지우기·IAM 정책 바꾸기·actAs 없음). 이미 있으면 실행 역할처럼 자동으로 바꾸지 않는다
+ensure_role platform_env --file="${ROLE_DIR}/gcp-env-custom-role.yaml"
 ensure_project_binding "${OBSERVE_SA}" "projects/${P}/roles/platform_observe"
 ensure_project_binding "${OBSERVE_SA}" "projects/${P}/roles/platform_observe_verify"
 ensure_project_binding "${PLAN_SA}" "projects/${P}/roles/platform_plan"
@@ -302,9 +314,17 @@ ensure_plain_binding_only "${OPERATE_SA}" "projects/${P}/roles/platform_operate"
 # DRAFT(ai): 보조 역할 두 개(IAM 정책 바꾸기·DB 비밀번호 꺼내기)는 같은 프로젝트 안 플랫폼 자기 SA(svc-*)·다른 비밀을 못 건드리게 조건을 그대로 둔다
 ensure_cond_bindings "${OPERATE_SA}" "projects/${P}/roles/platform_operate_iam" "${ROLE_DIR}/gcp-operate-iam-binding-condition.json"
 ensure_cond_bindings "${OPERATE_SA}" "projects/${P}/roles/platform_operate_db_secret" "${ROLE_DIR}/gcp-operate-db-secret-condition.json"
-# 플랫폼의 회사 전용 SA가 SA를 빌려 쓰게 함. 대상은 SA 단위(프로젝트 전체 아님), 주체는 이 회사 SA 하나
+# B-2: svc-env 는 전용 프로젝트 전체에 환경 층 역할 (조건 없음, 방이 따로라서). 노드 SA 를 클러스터에 붙이는 actAs 는 svc-gke-node 하나의 정책에만
+ensure_project_binding "${ENV_SA}" "projects/${P}/roles/platform_env"
+ensure_sa_binding "${NODE_SA}" "${ENV_SA}" roles/iam.serviceAccountUser
+# B-2: 노드 최소 권한 = 로그 쓰기·지표 쓰기·이미지 받기
+for role in roles/logging.logWriter roles/monitoring.metricWriter roles/artifactregistry.reader; do ensure_project_binding "${NODE_SA}" "${role}"; done
+# TODO(human) B-2: ESO 가 app- 비밀을 읽을 SA(svc-eso)와 그 Workload Identity 바인딩. 여기서 미리 묶는 안은 첫 GKE(WI) 클러스터 전에는
+#   GKE 풀(<전용>.svc.id.goog)이 없어 "Identity Pool does not exist"(400)로 막힌다. 갈래(클러스터 뒤 다시 실행 / 직접 자원 접근 / …)는 PR 설명
+# 플랫폼의 회사 전용 SA가 SA를 빌려 쓰게 함. 대상은 SA 단위(프로젝트 전체 아님), 주체는 이 회사 SA 하나. svc-gke-node 는 빌리지 않는다
 ensure_token_creator "${PLAN_SA}"
 ensure_token_creator "${OPERATE_SA}"
+ensure_token_creator "${ENV_SA}"
 # Argo CD 허브가 이 회사 SA 로 도착 GKE 에 들어온다. GKE 는 API 접속 때 clusters.get 을 본다.
 # 프로젝트 권한은 이것뿐이고, 배포 권한은 앱 구역 RoleBinding 으로만 받는다 (kinds/namespace)
 ensure_role platform_hub_access --title="platform-hub-access" --description="platform argocd hub cluster access" --permissions="container.clusters.get" --stage=GA

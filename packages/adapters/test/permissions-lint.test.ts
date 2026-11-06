@@ -3,6 +3,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { gcp as gcpSrc } from "../src/index.js";
 
 const dir = new URL("../../../infra/permissions/", import.meta.url);
 const read = (f: string) => readFileSync(new URL(f, dir), "utf8");
@@ -162,6 +164,80 @@ test("GCP: DB 비밀번호 역할은 versions.access 하나뿐 + app-…-db-pass
     const m = tf.match(/resource "google_secret_manager_secret" "db_password" \{[^}]*?secret_id\s*=\s*"([^"]+)"/);
     assert.ok(m, f); assert.ok(m![1]!.startsWith("app-") && m![1]!.endsWith("-db-password"), m![1]);
   }
+});
+
+// B-2: svc-env 역할(환경 층 만들기). 금지 목록 중 허용은 클러스터 안 ESO 설치용 ClusterRoleBinding 3개뿐 (합의된 B-2 범위). 늘어나면 실패
+const listOf = (f: string) => read(f).split("\n").filter((l) => l.startsWith("- ")).map((l) => l.slice(2).trim());
+const ENV_ALLOWED_FORBIDDEN = ["container.clusterRoleBindings.create", "container.clusterRoleBindings.get", "container.clusterRoleBindings.update"];
+test("GCP env 역할: 와일드카드·지우기·setIamPolicy·actAs·비밀값 읽기 없음, 금지 목록에 걸리는 건 ClusterRoleBinding 3개뿐", () => {
+  const env = listOf("gcp-env-custom-role.yaml");
+  assert.ok(env.length > 0);
+  assert.deepEqual(env.filter((p) => GCP_FORBIDDEN.some((r) => r.test(p))), ENV_ALLOWED_FORBIDDEN);
+  assert.deepEqual(env.filter((p) => p.includes("*") || /\.(delete|destroy|undelete|setIamPolicy)$/.test(p)), []);
+});
+test("GCP env 역할은 gcp/env 모듈의 자원 종류를 전부 덮는다 (보류 = ESO 신원 3종, TODO(human))", () => {
+  const tf = readFileSync(new URL("../../../infra/modules/gcp/env/main.tf", import.meta.url), "utf8");
+  const used = new Set([...tf.matchAll(/^(resource|data) "([a-z0-9_]+)"/gm)].map((m) => (m[1] === "data" ? `data.${m[2]}` : m[2]!)));
+  const covered = new Set<string>([...gcpSrc.ENV_LAYER_TYPES, ...gcpSrc.ENV_LAYER_PENDING]);
+  assert.deepEqual([...used].filter((t) => !covered.has(t)), []);
+  assert.deepEqual([...gcpSrc.ENV_LAYER_PENDING].filter((t) => !used.has(t)), [], "보류 목록에 모듈에 없는 종류");
+});
+
+// B-2 보안 조건 3: actAs 는 한 곳뿐 = svc-env 가 svc-gke-node 하나의 정책에서 받는 serviceAccountUser. 통째 예외는 없다.
+//   글자 대신 gcp-connect.sh DRY_RUN 출력(실제로 나갈 gcloud 명령)으로 본다. 기본 역할은 아래 표에 있는 것만 (새 기본 역할 = 검토 대상)
+const PREDEFINED_ROLES: Record<string, "sa" | "project"> = {
+  "roles/iam.serviceAccountTokenCreator": "sa", "roles/iam.serviceAccountUser": "sa",
+  "roles/logging.logWriter": "project", "roles/monitoring.metricWriter": "project", "roles/artifactregistry.reader": "project",
+};
+const ACTAS = "iam.serviceAccounts.actAs";
+const ACTAS_BINDING = { on: "svc-gke-node@cust-mig.iam.gserviceaccount.com", member: "serviceAccount:svc-env@cust-mig.iam.gserviceaccount.com", role: "roles/iam.serviceAccountUser" };
+interface Grant { on: string; member: string; role: string }
+function actAsViolations(lines: string[]): string[] {
+  const bad: string[] = [];
+  for (const l of lines.filter((x) => / iam roles (create|update) /.test(x))) {
+    const file = /--file=(\S+)/.exec(l)?.[1];
+    const perms = file ? readFileSync(file, "utf8").split("\n").filter((x) => x.startsWith("- ")).map((x) => x.slice(2).trim())
+      : (/--(?:add-)?permissions=(\S+)/.exec(l)?.[1] ?? "").split(",");
+    if (perms.includes(ACTAS)) bad.push(`커스텀 역할에 actAs: ${l}`);
+  }
+  const grants: (Grant & { level: "sa" | "project" })[] = lines.filter((x) => /add-iam-policy-binding /.test(x)).map((x) => {
+    const sa = /service-accounts add-iam-policy-binding (\S+)/.exec(x)?.[1];
+    return { level: sa ? "sa" : "project", on: sa ?? /projects add-iam-policy-binding (\S+)/.exec(x)![1]!,
+      member: /--member=(\S+)/.exec(x)![1]!, role: /--role=(\S+)/.exec(x)![1]! };
+  });
+  for (const g of grants) {
+    if (g.role.startsWith("projects/")) continue;   // 커스텀 역할: 정의를 위에서 봤다
+    if (PREDEFINED_ROLES[g.role] !== g.level) bad.push(`검토 안 된 기본 역할 또는 단위: ${g.level} ${g.role}`);
+  }
+  const actAs = grants.filter((g) => g.role === "roles/iam.serviceAccountUser").map(({ on, member, role }) => ({ on, member, role }));
+  if (JSON.stringify(actAs) !== JSON.stringify([ACTAS_BINDING])) bad.push(`actAs 바인딩이 svc-gke-node·svc-env 하나가 아님: ${JSON.stringify(actAs)}`);
+  return bad;
+}
+const connectDryRun = () => {
+  const r = spawnSync("bash", [new URL("../../../infra/onboarding/gcp-connect.sh", import.meta.url).pathname], { encoding: "utf8",
+    env: { PATH: process.env.PATH, DRY_RUN: "1", PLATFORM_SA: "t-0123456789abcdef0123456789ab@platform-prj.iam.gserviceaccount.com",
+      PROJECT_ID: "cust-prj", TARGET_PROJECT_ID: "cust-mig", ROLE_DIR: new URL(dir).pathname } });
+  assert.equal(r.status, 0, r.stderr);
+  return r.stdout.split("\n").filter((l) => l.startsWith("+ gcloud"));
+};
+test("GCP actAs: 커스텀 역할 정의엔 0, 바인딩은 svc-gke-node 정책의 svc-env serviceAccountUser 하나뿐 (gcp-connect.sh DRY_RUN)", () => {
+  assert.deepEqual(actAsViolations(connectDryRun()), []);
+  for (const f of ["gcp-operate-custom-role.yaml", "gcp-operate-iam-custom-role.yaml", "gcp-operate-db-secret-role.yaml", "gcp-env-custom-role.yaml"])
+    assert.ok(!listOf(f).includes(ACTAS), f);
+});
+test("GCP actAs 거부: 프로젝트 전체 actAs, 다른 SA 의 actAs, 다른 주체, 역할 정의 속 actAs, 검토 안 된 기본 역할이면 잡는다", () => {
+  const ok = connectDryRun();
+  const line = ok.find((l) => l.includes("--role=roles/iam.serviceAccountUser"))!;
+  const swap = (to: string) => ok.map((l) => (l === line ? to : l));
+  const mutants = {
+    project: swap("+ gcloud projects add-iam-policy-binding cust-mig --member=serviceAccount:svc-env@cust-mig.iam.gserviceaccount.com --role=roles/iam.serviceAccountUser --condition=None"),
+    otherSa: swap(line.replace("svc-gke-node@", "svc-operate@")),
+    otherMember: swap(line.replace("--member=serviceAccount:svc-env@", "--member=serviceAccount:svc-operate@")),
+    twice: [...ok, line.replace("svc-gke-node@", "svc-plan@")],
+    inRole: [...ok, "+ gcloud iam roles create platform_x --project=cust-mig --permissions=compute.networks.get,iam.serviceAccounts.actAs --stage=GA"],
+    editor: [...ok, "+ gcloud projects add-iam-policy-binding cust-mig --member=serviceAccount:svc-env@cust-mig.iam.gserviceaccount.com --role=roles/editor --condition=None"],
+  };
+  for (const [name, lines] of Object.entries(mutants)) assert.notDeepEqual(actAsViolations(lines), [], name);
 });
 
 // 온프레 k8s ClusterRole
