@@ -18,7 +18,7 @@ export const MODULE_DIGEST = {
   "gcp/kinds/cache": "content-867835b51042",
   "gcp/kinds/identity": "content-99695152c780",
   "gcp/kinds/job": "content-1795757beabf",
-  "gcp/kinds/namespace": "content-9918baace1ff",
+  "gcp/kinds/namespace": "content-32baf809f8d2",
   "gcp/kinds/object-store": "content-4ed569c978a4",
   "gcp/kinds/postgres": "content-6c67df74a030",
   "gcp/kinds/queue": "content-057156432ba1",
