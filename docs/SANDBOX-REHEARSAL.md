@@ -67,6 +67,7 @@ flowchart LR
 - 복사 자리: `<SANDBOX_IMAGE_REGISTRY>/<회사 id>/<원본 마지막 경로 조각>@sha256:<다이제스트>`. 예: `<계정>.dkr.ecr.ap-northeast-2.amazonaws.com/sandbox/<회사 id>/web@sha256:…`
 - 태그로는 복사하지 않는다. 렌더 주소와 명세 원본이 둘 다 같은 `@sha256` 이어야 한다. 아니면 `not_by_digest`.
 - 출발 레지스트리는 공개 이미지와 ECR 만 받는다. GCP Artifact Registry·온프레 레지스트리는 `unsupported_registry` 다.
+- 플랫폼 ECR(복사 자리와 같은 호스트)에 있는 원본은 이미 이 회사 자리(`<SANDBOX_IMAGE_REGISTRY>/<회사 id>/`)에 있을 때만 복사 없이 그대로 쓴다. 다른 자리(`platform/<회사>`, 다른 회사 자리)는 `unsupported_registry` 다. 그 주소는 `sbx-pod-guard` 가 거부하고, 워커는 `sandbox/*` 밖을 읽을 권한이 없다.
 - 출발 ECR 을 읽을 때는 출발 관찰 역할을 15분 빌린다 (단계 역할 `image_mirror`). 플랫폼 ECR 에 쓸 때는 워커 자기 신원을 쓴다. 클러스터 안이면 Pod Identity `platform-worker`, 맥이면 그 셸의 AWS 프로필이다.
 - 쓰는 도구는 `crane` 과 `aws` CLI 다. 저장소는 처음 쓸 때 워커가 만든다 (태그 못 바꿈, 올릴 때 스캔).
 - 복사 한 번의 시간 예산은 600초다. 넘으면 `budget_exceeded`.
@@ -585,7 +586,7 @@ docker compose exec db psql -U platform_owner -d platform -c \
 |---|---|---|
 | `REHEARSAL_IMAGE_MIRROR_FAILED`, 이유 `tool_missing` | 워커 셸에 `crane`·`aws` 없음 | 설치 뒤 재개 |
 | 같은 코드, `auth_failed`·`copy_failed` | 플랫폼 ECR 로그인·쓰기 실패 | 워커 셸 프로필 권한 (7-5) |
-| 같은 코드, `not_by_digest`·`unsupported_registry` | 출발 이미지가 다이제스트 고정이 아니거나 ECR·공개가 아님 | 다른 이전을 고른다 |
+| 같은 코드, `not_by_digest`·`unsupported_registry` | 출발 이미지가 다이제스트 고정이 아니거나, ECR·공개가 아니거나, 플랫폼 ECR 의 회사 자리 밖 | 다른 이전을 고른다 |
 | 같은 코드, 검사 줄 `sandbox_ready` 에 `복사하지 않은 입력` | 워커에 `MOCK_SANDBOX=1` 이 남았다 | 워커 `.env`·명령줄에서 지우고 재개 |
 | `REHEARSAL_SANDBOX_UNAVAILABLE`, 검사 줄 `SANDBOX_HELM` 과 403 | `sbx-operator` 규칙이 차트에 모자람 | helm 출력의 자원 이름을 이슈로 남긴다 |
 | 같은 코드, `SANDBOX_NOT_READY` | 제어판이 180초 안에 안 뜸. 첫 이미지 받기(ghcr.io)가 느렸을 수 있다 | `$K -n $SBX_NS get events` 를 남기고 재개한다 |

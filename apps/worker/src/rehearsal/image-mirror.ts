@@ -23,7 +23,7 @@ export type MirrorOutcome =
   | { ok: false; code: "REHEARSAL_IMAGE_MIRROR_FAILED"; reason: MirrorFailReason; image: string | null; message: string };
 export interface MirrorDeps { exec?: Exec; env?: NodeJS.ProcessEnv; withRoles?: typeof withStepRoles; now?: () => number }
 
-// 원본 레지스트리 종류. platform = 이미 플랫폼 레지스트리에 있음(샌드박스 노드가 바로 읽음, 복사 없음)
+// 원본 레지스트리 종류. platform = 이미 이 회사 샌드박스 자리에 있음(샌드박스 노드가 바로 읽음, 복사 없음)
 // DRAFT(ai): 출발 사설 레지스트리는 ECR 만. GCP Artifact Registry·온프레 레지스트리는 unsupported_registry (설계 7장 질문 4)
 type SourceKind = "public" | "ecr" | "platform";
 interface Planned { ref: string; sandboxRef: string; kind: SourceKind; host: string; from: string; digest: string; repository: string }
@@ -55,6 +55,10 @@ function plan(i: MirrorImage, reg: { host: string; prefix: string }, tenantId: s
   const host = registryOf(i.source);
   const kind: SourceKind | null = host === reg.host ? "platform" : isPublicImage(i.source) ? "public" : ecrRegion(host) ? "ecr" : null;
   if (!kind) return fail("unsupported_registry", i.ref, `출발 레지스트리 종류 미지원: ${host}`);
+  // 플랫폼 레지스트리의 다른 자리(platform/<회사>, 다른 회사 자리)는 sbx-pod-guard 가 <SANDBOX_IMAGE_REGISTRY>/<회사>/ 밖이라 거부하고,
+  //   워커는 sandbox/* 밖을 읽을 권한이 없어 복사도 못 한다. 샌드박스에서 뜰 수 없는 주소를 넘기지 않고 여기서 멈춘다
+  const own = `${reg.host}/${reg.prefix}/${tenantId}/`;
+  if (kind === "platform" && !from.startsWith(own)) return fail("unsupported_registry", i.ref, `플랫폼 레지스트리 이미지는 ${own} 아래만 샌드박스에서 받는다: ${from}`);
   // platformImageRef(adapters common/base.ts)와 같은 모양: <접두어>/<회사>/<원본 마지막 경로 조각>
   const repository = `${reg.prefix}/${tenantId}/${from.split("/").pop()!}`;
   const sandboxRef = kind === "platform" ? `${from}@${d}` : `${reg.host}/${repository}@${d}`;

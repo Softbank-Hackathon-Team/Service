@@ -17,6 +17,7 @@ const m = { id: j.migrationId, status: "deploying" as const, sourceEnvId: "src",
 const D1 = `sha256:${"a".repeat(64)}`, D2 = `sha256:${"b".repeat(64)}`, D3 = `sha256:${"c".repeat(64)}`;
 const PLATFORM = "999999999999.dkr.ecr.ap-northeast-2.amazonaws.com";
 const CUSTOMER = "111122223333.dkr.ecr.us-west-2.amazonaws.com";
+const OTHER_T = "77777777-8888-4999-8aaa-bbbbbbbbbbbb";
 const ENV = { SANDBOX_IMAGE_REGISTRY: `${PLATFORM}/sandbox`, PATH: "/bin", HOME: "/home/node",
   AWS_ACCESS_KEY_ID: "AKIAWORKER", AWS_CONTAINER_CREDENTIALS_FULL_URI: "http://169.254.170.23/v1/credentials" };
 const BORROWED = { AWS_CONFIG_FILE: "/tmp/svc-aws-x/config", AWS_SHARED_CREDENTIALS_FILE: "/tmp/svc-aws-x/credentials", AWS_REGION: "us-west-2" };
@@ -55,18 +56,18 @@ function fakes(o: { present?: Record<string, string>; fail?: Partial<Record<"tok
 const run = (images: MirrorImage[], f: ReturnType<typeof fakes>, env: NodeJS.ProcessEnv = ENV) =>
   mirrorImages(j, m, images, { exec: f.exec, withRoles: f.withRoles, env });
 
-test("정상: 공개·고객 ECR 이미지를 다이제스트 그대로 회사 자리로 복사, 플랫폼에 이미 있는 이미지는 그 주소 그대로", async () => {
+test("정상: 공개·고객 ECR 이미지를 다이제스트 그대로 회사 자리로 복사, 이 회사 샌드박스 자리에 이미 있는 이미지는 그 주소 그대로", async () => {
   const f = fakes();
   const images = [
     { ref: `docker.io/library/nginx@${D1}`, source: `docker.io/library/nginx:1.27@${D1}` },
     { ref: `<env:registryHost>/platform/${T}/api@${D2}`, source: `${CUSTOMER}/shop/api@${D2}` },
-    { ref: `${PLATFORM}/platform/${T}/web@${D3}`, source: `${PLATFORM}/platform/${T}/web@${D3}` },
+    { ref: `${PLATFORM}/sandbox/${T}/web@${D3}`, source: `${PLATFORM}/sandbox/${T}/web@${D3}` },
   ];
   const out = await run(images, f);
   assert.deepEqual(out, { ok: true, images: [
     { ref: images[0]!.ref, sandboxRef: `${PLATFORM}/sandbox/${T}/nginx@${D1}` },
     { ref: images[1]!.ref, sandboxRef: `${PLATFORM}/sandbox/${T}/api@${D2}` },
-    { ref: images[2]!.ref, sandboxRef: `${PLATFORM}/platform/${T}/web@${D3}` },
+    { ref: images[2]!.ref, sandboxRef: `${PLATFORM}/sandbox/${T}/web@${D3}` },
   ] });
   const copies = f.calls.filter((c) => c.args[0] === "copy").map((c) => c.args.slice(1));
   assert.deepEqual(copies, [[`docker.io/library/nginx@${D1}`, `${PLATFORM}/sandbox/${T}/nginx@${D1}`], [`${CUSTOMER}/shop/api@${D2}`, `${PLATFORM}/sandbox/${T}/api@${D2}`]],
@@ -132,11 +133,13 @@ test("자격 범위: 출발 ECR 이 있을 때만 image_mirror 역할을 빌리�
   assert.deepEqual(pub.scope.steps, [], "공개 이미지만이면 고객 역할을 안 빌림");
 });
 
-test("실패 사유: 레지스트리 없음·미지원·역할 거부·도구 없음·토큰 실패·복사 실패·다이제스트 다름", async () => {
+test("실패 사유: 레지스트리 없음·미지원·플랫폼 회사 자리 밖·역할 거부·도구 없음·토큰 실패·복사 실패·다이제스트 다름", async () => {
   const ecr = [{ ref: `x/api@${D2}`, source: `${CUSTOMER}/api@${D2}` }];
   const cases: Array<[string, () => Promise<unknown>]> = [
     ["registry_unset", () => run(ecr, fakes(), { PATH: "/bin" })],
     ["unsupported_registry", () => run([{ ref: `x/api@${D1}`, source: `asia-northeast3-docker.pkg.dev/p/r/api@${D1}` }], fakes())],
+    ["unsupported_registry", () => run([{ ref: `x/web@${D1}`, source: `${PLATFORM}/platform/${T}/web@${D1}` }], fakes())],
+    ["unsupported_registry", () => run([{ ref: `x/web@${D1}`, source: `${PLATFORM}/sandbox/${OTHER_T}/web@${D1}` }], fakes())],
     ["role_denied", () => run(ecr, fakes({ denied: true }))],
     ["role_denied", () => mirrorImages(j, m, ecr, { exec: fakes().exec, env: ENV,
       withRoles: (async () => { throw new TempRoleDenied("ROLE_OBSERVE_WRITE", "x"); }) as typeof withStepRoles })],
