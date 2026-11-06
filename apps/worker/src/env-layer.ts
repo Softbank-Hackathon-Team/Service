@@ -10,6 +10,7 @@ import { withGcpCred } from "./gcp-token-server.js";
 import { withStepRoles } from "./jobs/_roles.js";
 import type { MigrationRow } from "./jobs/_step.js";
 import type { StopHint } from "./jobs/_stop-hint.js";
+import { deniedPermissionDetail } from "./permission-hints.js";
 
 // 환경 층 (도착 GCP 프로젝트의 VPC·GKE·AR·ESO) 확보. 아키텍처 이전 9단계 "4 기반 생성".
 // 부르는 곳: apply 작업 맨 앞 (승인 뒤 provisioning). apply-real prepare() 안에서는 만들지 않는다 —
@@ -259,7 +260,9 @@ export async function ensureEnvLayer(i: EnsureEnvLayerInput, d: EnsureEnvLayerDe
     if (!r.ok || !r.facts) {
       await store.failed(i.tenantId, i.envId);
       // 만들다 만 자원은 지우지 않는다 (환경 소유). 다시 계획·apply 하면 같은 작업 폴더 state 로 이어 만든다
-      return fail("ENV_LAYER_APPLY_FAILED", { ...run, failedPhase: r.failedPhase, failedStep: r.failedStep, autoDestroy: false,
+      // PERM-GATE 사후 안전망: 로그의 "Required 'X' permission" → 사전 점검과 같은 PermissionGap (missing·hint·permissionGaps). 고치는 링크는 화면이 묶음 id 로 받는다
+      const perm = deniedPermissionDetail(r.log, { cloud: "gcp", principal: "svc-env", envId: i.envId }, env);
+      return fail("ENV_LAYER_APPLY_FAILED", { ...run, ...(perm ?? {}), failedPhase: r.failedPhase, failedStep: r.failedStep, autoDestroy: false,
         cleanup: `사람이 확인 뒤: cd ${r.workDir}/modules/gcp/env && terraform destroy -var-file=../../../terraform.tfvars.json` });
     }
     await store.ready(i.tenantId, i.envId, r.facts, varsHash, ENV_LAYER_MODULE_DIGEST);

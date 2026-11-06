@@ -16,6 +16,7 @@ import { appLinkFromEnv } from "@svc/dbproxy";
 import { awsHubEnabled, tenantSlug } from "../gitops/bundle.js";
 import { stableHash } from "./_step.js";
 import type { StopHint } from "./_stop-hint.js";
+import { deniedPermissionDetail } from "../permission-hints.js";
 import { envNumber, redactText } from "@svc/contracts";
 
 // Z70 DRAFT(ai): apply 작업의 "진짜 terraform" 길. Z89: 기본이 이 길이다 (MOCK_IAC=1 인 시험만 흉내 길).
@@ -195,8 +196,11 @@ export async function realApply(i: RealApplyInput, d: RealApplyDeps = {}): Promi
     const binMissing = r.failedStep === "init" && r.steps.at(-1)?.code === 127;
     // apply 실패 뒤 자동 destroy 가 성공했으면 남은 자원 없음 → 정리 명령 대신 그 사실을 남긴다
     const cleaned = r.destroyedAfterFail?.ok === true;
+    // PERM-GATE 사후 안전망: 앱 층 apply·plan 이 403 으로 죽었으면 로그의 빠진 권한을 svc-operate 묶음 차이로 남긴다 (missing·hint·permissionGaps)
+    const perm = !binMissing && (i.provider === "gcp" || i.provider === "aws")
+      ? deniedPermissionDetail(r.log, { cloud: i.provider, principal: "svc-operate", envId: i.envId }, env) : null;
     return { ok: false, failureCode: binMissing ? "TF_BIN_MISSING" : "TF_APPLY_FAILED", detail: { ...base, ...runDetail, failedStep: r.failedStep,
-      ...(binMissing ? TF_BIN_MISSING_HINT : {}),
+      ...(binMissing ? TF_BIN_MISSING_HINT : {}), ...(perm ?? {}),
       ...(r.destroyedAfterFail ? { destroyedAfterFail: r.destroyedAfterFail } : {}),
       ...(cleaned || binMissing || r.failedStep === "init" || r.failedStep === "plan" ? {} : { cleanup: `npm run tf:real -- destroy ${i.migrationId}` }) } };
   }
