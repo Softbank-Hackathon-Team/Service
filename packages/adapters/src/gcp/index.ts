@@ -57,7 +57,8 @@ export const PERMS: PermTable = {
     remove: ["secretmanager.secrets.delete"] },
   google_secret_manager_secret_version: {
     read: ["secretmanager.versions.get"],
-    write: ["secretmanager.versions.add"],
+    // provider 는 버전을 넣은 뒤 enabled=true 를 맞추려 enable 을 부른다 (11/06 실측 403, 도착 DB 비밀번호 버전)
+    write: ["secretmanager.versions.add", "secretmanager.versions.enable"],
     remove: ["secretmanager.versions.destroy"] },
   random_password: { read: [], write: [], remove: [] },   // 로컬 자원 (클라우드 권한 불필요)
   // FM-CLD-hunt-cloud-23: gcp/root 가 IR 종류에 맞춰 API 를 켠다(FM-CLD-14 google_project_service). provider 는 켜진 목록을 읽고(get·list) 없으면 enable.

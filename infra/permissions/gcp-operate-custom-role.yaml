@@ -60,6 +60,7 @@ includedPermissions:
 - secretmanager.secrets.update
 - secretmanager.versions.add
 - secretmanager.versions.destroy
+- secretmanager.versions.enable
 - secretmanager.versions.get
 - serviceusage.services.enable
 - serviceusage.services.get
