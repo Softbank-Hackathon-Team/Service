@@ -160,10 +160,13 @@ writeFileSync(join(out, "gcp-env-custom-role.yaml"),
 // GCP ↔ 온프레 DB 복제 중계기 (worker relay/gcp-relay.ts): Cloud SQL 이 있는 VPC 에 GCE VM·방화벽 규칙, 출발 Cloud SQL 에 이전 전용 복제 계정.
 //   연결 스크립트가 svc-operate 에 원래 프로젝트(gcp-onprem)와 전용 프로젝트(onprem-gcp) 둘 다 붙인다.
 // DRAFT(ai): 목록 = gcp-relay.ts 가 부르는 gcloud 명령의 권한 (만들기·읽기·고치기·지우기). 감사 로그 실측으로 줄인다
+//   11/07 감사 로그(GCP→온프레 2회)와 코드 대조로 확실히 안 쓰는 5개를 뺐다: cloudsql.users.list·compute.firewalls.list
+//   (gcp-relay.ts 가 목록 명령을 안 부른다. 방화벽은 describe=get), compute.images.* 3개 (이미지는 공개 debian-cloud 라 그 프로젝트 권한으로 읽는다).
+//   machineTypes·networks·projects·subnetworks.get 은 로그엔 안 보였지만 gcloud 가 안쪽에서 부를 수 있어 남긴다 (재검증 뒤 판단)
 const GCP_RELAY_PERMS = [
-  "cloudsql.instances.get", "cloudsql.instances.update", "cloudsql.users.create", "cloudsql.users.delete", "cloudsql.users.list", "cloudsql.users.update",
-  "compute.disks.create", "compute.firewalls.create", "compute.firewalls.delete", "compute.firewalls.get", "compute.firewalls.list", "compute.firewalls.update",
-  "compute.globalAddresses.list", "compute.globalOperations.get", "compute.images.get", "compute.images.getFromFamily", "compute.images.useReadOnly",
+  "cloudsql.instances.get", "cloudsql.instances.update", "cloudsql.users.create", "cloudsql.users.delete", "cloudsql.users.update",
+  "compute.disks.create", "compute.firewalls.create", "compute.firewalls.delete", "compute.firewalls.get", "compute.firewalls.update",
+  "compute.globalAddresses.list", "compute.globalOperations.get",
   "compute.instances.create", "compute.instances.delete", "compute.instances.get", "compute.instances.list", "compute.instances.setLabels",
   "compute.instances.setMetadata", "compute.instances.setTags", "compute.machineTypes.get", "compute.networks.get", "compute.networks.updatePolicy",
   "compute.projects.get", "compute.subnetworks.get", "compute.subnetworks.list", "compute.subnetworks.use", "compute.subnetworks.useExternalIp",

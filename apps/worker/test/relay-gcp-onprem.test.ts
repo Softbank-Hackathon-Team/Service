@@ -341,6 +341,17 @@ test("연결 스크립트: 두 프로젝트 모두 svc-operate 에 중계기 역
     assert.ok(perms.includes(p), p);
   // 거부: IAM 정책 바꾸기·Cloud SQL 인스턴스 지우기는 없다 (update 는 논리 디코딩 플래그 켜기용)
   assert.ok(!perms.some((p) => p.endsWith(".setIamPolicy") || p === "cloudsql.instances.delete"));
+  // 거부: 11/07 감사 로그·코드 대조로 안 쓰는 것이 확실한 권한은 다시 들어오지 않는다
+  for (const p of ["cloudsql.users.list", "compute.firewalls.list", "compute.images.get", "compute.images.getFromFamily", "compute.images.useReadOnly"])
+    assert.ok(!perms.includes(p), `빼기로 한 권한이 다시 들어옴: ${p}`);
+});
+
+test("중계기 코드는 빼낸 권한이 필요한 명령(Cloud SQL 계정 목록, 방화벽 목록, 프로젝트 안 이미지)을 부르지 않는다", () => {
+  const src = readFileSync(new URL("../src/relay/gcp-relay.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(src, /"sql", "users", "list"/);
+  assert.doesNotMatch(src, /"firewall-rules", "list"/);
+  assert.doesNotMatch(src, /"images", /);
+  assert.match(src, /project: "debian-cloud"/);   // 이미지는 공개 프로젝트에서 받는다 (우리 프로젝트 images.* 불필요)
 });
 
 test("출발 논리 디코딩 꺼짐: 만들기가 지금 플래그를 지키며 켜고 재시작을 기다린다. 끈 배포는 막고, 쉼표 값은 덮어쓰지 않는다", async () => {
