@@ -64,6 +64,13 @@ const HANDLED: { why: string; match: (failure: ApiFailure, ev: Evidence) => bool
     why: "접근 토큰 만료 401 → refresh 성공 → 같은 요청 다시 (lib/http.ts onUnauthorized)",
     match: (f, ev) => f.status === 401 && f.path !== "/api/auth/refresh" && ev.refreshOkAt.some((at) => at >= f.at),
   },
+  {
+    // 경로 자체가 없는 404 만. 비용 API 가 생긴 뒤의 404(환경 없음 등)는 여전히 실패로 센다
+    why: "비용 경로가 없는 서버의 404 → 비용 칸이 \"아직 볼 수 없음\" (features/cost/evidence.ts costAbsent)",
+    match: (f) =>
+      f.status === 404 && f.code === "NOT_FOUND" && /^route (GET|POST) \S+ not found$/.test(f.message ?? "") &&
+      /^\/api\/environments\/[^/?]+\/cost(\/move)?(\?|$)/.test(f.path),
+  },
 ];
 const handledWhy = (failure: ApiFailure, ev: Evidence) => HANDLED.find((rule) => rule.match(failure, ev))?.why ?? null;
 // Chrome 은 실패한 요청마다 console.error 를 한 줄 더 낸다. 그 요청은 이미 4xx·5xx 목록에 있다
