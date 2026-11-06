@@ -81,7 +81,7 @@ export const Timeline = z.object({
 // ApiError는 strict가 아니라 직렬화 때 모르는 칸만 지운다 (지금 오류 본문엔 4칸뿐이라 바뀌는 것 없음)
 // Z38 REVIEW-4 W-3: 403 TUNNEL_READ_ONLY(Z47, 터널로 온 쓰기)·429 RATE_LIMITED(Z52)도 실제로 나가므로 문서에 싣는다.
 //   429 는 속도 제한이 모든 경로에 걸려(global, plugins/rate-limit.ts) 여기서 늘 붙인다. 403 은 쓰기 경로가 직접 적는다
-type ErrCode = 400 | 401 | 403 | 404 | 409 | 429 | 500;
+type ErrCode = 400 | 401 | 403 | 404 | 409 | 429 | 500 | 503;
 export function errors<const C extends readonly ErrCode[]>(...codes: C) {
   return Object.fromEntries([...codes, 429].map((c) => [c, ApiError])) as { [K in C[number] | 429]: typeof ApiError };
 }

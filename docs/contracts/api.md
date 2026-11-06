@@ -237,6 +237,7 @@ contracts의 화면용 모양 `MigrationView`는 열 칸이다. 지금 응답에
 | GET | `/migrations/:id/agent-review` | 에이전트 | 장애 점검 결과 읽기 | 있음 |
 | POST | `/migrations/:id/agent-review/run` | 에이전트 | 장애 점검 시작 (Idempotency-Key 지원) | 있음 |
 | GET | `/migrations/:id/rehearsal` | 배포 | vCluster 리허설의 가장 최근 줄 하나 (진행·결과·충실도 표·샌드박스 이름, 줄이 없으면 `run: null`). 지난 배포 시도의 줄이면 `run.stale: true` | 있음 |
+| GET | `/migrations/:id/tfstate` | 이전 | 끝난 이전(completed·rolled_back·cancelled)의 고객 Terraform state 내려받기 (`layer=app` 기본, `env` 는 도착 환경 층). worker 창구에서 그대로 흘려보내고 감사 `migration.tfstate_download` | 있음 |
 | GET | `/docs` | 운영 | API 문서 HTML (외부 스크립트 없음) | 있음 |
 | GET | `/docs/openapi.yaml` | 운영 | OpenAPI 3.1 YAML | 있음 |
 | GET | `/docs/openapi.json` | 운영 | 같은 내용 JSON | 있음 |

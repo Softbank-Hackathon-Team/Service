@@ -36,7 +36,7 @@ helm install external-secrets external-secrets/external-secrets -n external-secr
 
 # 2. 비밀값 넣기 (값은 채팅·레포에 남기지 않는다)
 aws secretsmanager put-secret-value --secret-id platform/app --secret-string file://<레포 밖 app.json>
-#    app.json 키: DATABASE_URL, JWT_SECRET, PLATFORM_PRINCIPAL_ARN, AGENT_REPORT_MASTER_KEY, PUBLIC_API_URL, CONNECT_TEMPLATE_URL, GITOPS_REPO_URL, GITOPS_WRITE_TOKEN, GITOPS_PUSH, REPL_SECRET_MASTER_KEY, PLATFORM_EGRESS_CIDRS, ANTHROPIC_API_KEY
+#    app.json 키: DATABASE_URL, JWT_SECRET, PLATFORM_PRINCIPAL_ARN, AGENT_REPORT_MASTER_KEY, PUBLIC_API_URL, CONNECT_TEMPLATE_URL, GITOPS_REPO_URL, GITOPS_WRITE_TOKEN, GITOPS_PUSH, REPL_SECRET_MASTER_KEY, PLATFORM_EGRESS_CIDRS, INTERNAL_STATE_TOKEN, ANTHROPIC_API_KEY
 #    values.yaml secretKeys 에 적힌 키가 JSON 에 하나라도 없으면 그 컴포넌트의 비밀 동기화가 멈춘다 → 키를 더할 때는 값부터 넣고 helm upgrade
 aws secretsmanager put-secret-value --secret-id platform/cloudflared --secret-string file://<레포 밖 cf.json>
 
@@ -274,6 +274,47 @@ helm upgrade platform deploy/helm/platform -n platform --reset-then-reuse-values
 - 디스크는 첫 파드가 뜬 가용 영역에 묶인다. cred 노드가 다른 영역으로 바뀌면 파드가 `Pending` 이 된다. 그 영역에 노드를 늘리면 다시 뜬다.
 - `helm uninstall` 이나 PVC 삭제로도 디스크는 남는다 (`resource-policy: keep`, `reclaimPolicy: Retain`). 지우는 것은 사람이 한다.
 
+## 고객 Terraform state 내려받기 (worker 창구)
+
+끝난 이전(completed·rolled_back·cancelled)의 고객 state 를 콘솔이 `GET /api/v1/migrations/:id/tfstate?layer=app|env` 로 받는다. state 는 worker 작업 폴더(위 디스크)에만 있으므로 api 가 클러스터 안에서 worker 창구를 불러 그대로 흘려보낸다. S3·DB·api 디스크에 복사하지 않고, 원본은 지우지 않는다.
+
+```
+api 파드 ──x-internal-token──▶ Service worker-state-export:8081 ──▶ worker 파드 GET /internal/state/<회사>/<app|env>/<id> ──▶ TF_WORK_DIR 파일 읽기
+```
+
+| 값 | 기본 | 하는 일 |
+|---|---|---|
+| `apps.worker.stateExportPort` | 8081 | worker 에 `WORKER_STATE_EXPORT_PORT`·컨테이너 포트 `state-export`, api 에 `WORKER_STATE_EXPORT_URL=http://worker-state-export.<네임스페이스>.svc.cluster.local:8081`, Service `worker-state-export`(ClusterIP). 0 이면 전부 안 그린다 |
+| `apps.worker.stateExport.networkPolicy` | true | NetworkPolicy `worker-ingress`: 8081 은 api 파드에서만, 지표 포트(9465)는 예전처럼 어디서나. Ingress 만, Egress 는 그대로 |
+| `INTERNAL_STATE_TOKEN` (platform/app JSON) | 없음 | api·worker 공유 토큰. api·worker `secretKeys` 둘 다에 있다. 없으면 worker 가 창구를 안 열고 api 는 503 `STATE_EXPORT_NOT_CONFIGURED` |
+
+배포 순서 (키가 JSON 에 없는데 upgrade 하면 api·worker 비밀 동기화가 멈춘다):
+
+```bash
+# 1. platform/app JSON 에 INTERNAL_STATE_TOKEN 을 먼저 넣는다 (32자 이상 무작위. 이미 있으면 그대로 둔다). 값은 화면·셸 기록에 안 남는다
+umask 077; f=$(mktemp)
+aws secretsmanager get-secret-value --secret-id platform/app --query SecretString --output text \
+  | python3 -c 'import json,sys,secrets; d=json.load(sys.stdin); d.setdefault("INTERNAL_STATE_TOKEN", secrets.token_hex(32)); json.dump(d, open(sys.argv[1],"w")); print(sorted(d))' "$f"
+aws secretsmanager put-secret-value --secret-id platform/app --secret-string "file://$f" >/dev/null; rm -f "$f"
+# 2. 이미지: main 에 들어간 뒤 build-ecr (태그 sha-<커밋 7자>)
+gh workflow run build-ecr.yml --ref main
+# 3. 차트 (--reset-then-reuse-values: 새 기본값 stateExportPort·secretKeys 가 들어가게)
+helm upgrade platform deploy/helm/platform -n platform --reset-then-reuse-values --set apps.image.tag=<새 태그>
+kubectl -n platform get externalsecret api-env worker-env      # 둘 다 SecretSynced 가 아니면 1번 키가 빠진 것
+kubectl -n platform logs deploy/worker | grep 'state export'   # "state export: on" 이면 창구가 열렸다
+```
+
+- 창구는 worker 파드 하나의 디스크를 읽는다. worker 가 2개이고 디스크가 `/tmp`(위 디스크를 안 켬)면 Service 가 다른 파드로 보내 404 `STATE_NOT_FOUND` 가 날 수 있다. 실제 자원을 만드는 판은 위 디스크를 켜 worker 1개로 둔다.
+- NetworkPolicy 확인: 이 정책이 worker 를 고르는 첫 정책이다. 정책에 없는 들어오는 트래픽은 막힌다. 지금 worker 로 들어오는 것은 지표 포트뿐이라(Prometheus `monitoring` 네임스페이스·kubelet 살아 있음 검사) 그 포트는 출처 제한 없이 열었다. upgrade 뒤 아래가 그대로인지 본다. 이상하면 `--set apps.worker.stateExport.networkPolicy=false` 로 정책만 끈다.
+  ```bash
+  kubectl -n platform get pods -l app.kubernetes.io/name=worker            # RESTARTS 가 늘지 않는다 (살아 있음 검사 통과)
+  kubectl -n monitoring port-forward svc/monitoring-kube-prometheus-prometheus 9090 &
+  curl -s 'localhost:9090/api/v1/query?query=up{job="worker"}'            # value 1
+  kubectl -n platform run np-check --rm -it --restart=Never --image=curlimages/curl:8.11.1 -- \
+    curl -s -m 3 -o /dev/null -w '%{http_code}\n' http://worker-state-export:8081/   # api 가 아닌 파드 → 시간 초과(000)면 정책이 먹는다
+  ```
+- 끄려면 `--set apps.worker.stateExportPort=0` (Service·NetworkPolicy·두 env 가 빠진다). 토큰 키는 secretKeys 에 남으므로 JSON 에서 지우지 않는다.
+
 ## 클라우드 도착 트래픽 지표 (AWS·GCP)
 
 `trafficMetrics.endpoint` 를 주면 도착 cloudflared 파드 안에 수집기가 같이 뜬다. 배포 권한에 RBAC·NetworkPolicy 가 없어 온프레처럼 따로 띄우지 않는다. 비우면 아무것도 안 그린다.
@@ -391,7 +432,7 @@ vCluster 차트 NetworkPolicy `vc-cp-<릴리스>`(`release=<릴리스>` 파드)�
 | 앱 | 노드 | 포트 | 검사 | 서비스 계정 |
 |---|---|---|---|---|
 | api ×2 | general | http 3000, metrics 9464 | 준비 `/readyz`(DB), 살아 있음 `/healthz` | `api` (Pod Identity), 토큰 안 붙임 |
-| worker ×2 | cred (toleration `dedicated=cred`) | metrics 9465 | 살아 있음 `/metrics` | `worker` (Pod Identity + Argo CD Role) |
+| worker ×2 | cred (toleration `dedicated=cred`) | metrics 9465, state-export 8081 (api 만) | 살아 있음 `/metrics` | `worker` (Pod Identity + Argo CD Role) |
 | agent-worker ×1 | general | 없음 | 살아 있음 `node healthcheck.mjs db` | `agent-worker` (클라우드 권한 없음, 샌드박스 권한) |
 | web ×2 | general | http 8080 | `/nginx-health` | 없음 (default, 토큰 안 붙임) |
 
@@ -404,7 +445,7 @@ vCluster 차트 NetworkPolicy `vc-cp-<릴리스>`(`release=<릴리스>` 파드)�
 helm lint deploy/helm/platform
 helm template platform deploy/helm/platform -n platform
 ```
-기대: lint 0 failed, SecretStore 1·ExternalSecret 5·Deployment 1(cloudflared)·ServiceAccount 3·Role 1·RoleBinding 1, 그리고 샌드박스 켬(`sandbox.enabled=true`)이면 ClusterRole 2·ClusterRoleBinding 1·ValidatingAdmissionPolicy 6·ValidatingAdmissionPolicyBinding 6·StorageClass 1. `sandbox.gvisor.enabled=true` 면 RuntimeClass 1 이 더 생긴다. 샌드박스 켬이면 두 명령 모두 `--set sandbox.enabled=true --set sandbox.imageRegistry=000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/sandbox` 같은 값이 있어야 한다. `--set otelGateway.image=x` 를 주면 Deployment 2·Service 1·ConfigMap 1 이 된다. `--set apps.image.registry=x --set apps.image.tag=y` 를 주면 Deployment 4(api·worker·agent-worker·web)·Service 2(api·web) 가 더 생긴다. `gcpPlatform.project`·`gcpPlatform.wifAudience` 를 주면 ConfigMap `worker-gcp-cred` 가 더 생기고 worker 에 토큰·설정 파일이 붙는다.
+기대: lint 0 failed, SecretStore 1·ExternalSecret 5·Deployment 1(cloudflared)·ServiceAccount 3·Role 1·RoleBinding 1, 그리고 샌드박스 켬(`sandbox.enabled=true`)이면 ClusterRole 2·ClusterRoleBinding 1·ValidatingAdmissionPolicy 6·ValidatingAdmissionPolicyBinding 6·StorageClass 1. `sandbox.gvisor.enabled=true` 면 RuntimeClass 1 이 더 생긴다. 샌드박스 켬이면 두 명령 모두 `--set sandbox.enabled=true --set sandbox.imageRegistry=000000000000.dkr.ecr.ap-northeast-2.amazonaws.com/sandbox` 같은 값이 있어야 한다. `--set otelGateway.image=x` 를 주면 Deployment 2·Service 1·ConfigMap 1 이 된다. `--set apps.image.registry=x --set apps.image.tag=y` 를 주면 Deployment 4(api·worker·agent-worker·web)·Service 3(api·web·worker-state-export)·NetworkPolicy 1(worker-ingress) 이 더 생긴다 (`apps.worker.stateExportPort=0` 이면 Service 2·NetworkPolicy 0). `gcpPlatform.project`·`gcpPlatform.wifAudience` 를 주면 ConfigMap `worker-gcp-cred` 가 더 생기고 worker 에 토큰·설정 파일이 붙는다.
 
 세 벌 렌더 + kubeconform + 개수 확인 + `sandbox.imageRegistry` 없음·틀린 모양 거부는 `bash deploy/ci/check-platform.sh` 한 번이다 (CI `gitops` 작업).
 

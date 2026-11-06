@@ -1,0 +1,52 @@
+{{- /* 고객 Terraform state 내려받기 창구 (apps/worker/src/state-export-server.ts). api → 이 Service → worker 파드 → PVC 파일 읽기.
+       worker Deployment 의 기존 Service 칸(service: false)은 건드리지 않고 이 포트만 따로 연다.
+       앱을 그리는 조건(registry·tag)과 같고, apps.worker.stateExportPort 가 0·없으면(--reuse-values 옛 릴리스) 아무것도 안 그린다 */}}
+{{- $apps := .Values.apps }}
+{{- $w := $apps.worker }}
+{{- $se := default dict $w.stateExport }}
+{{- if and $apps.image.registry $apps.image.tag $w.enabled $w.stateExportPort }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: worker-state-export
+  labels:
+    app.kubernetes.io/name: worker
+    app.kubernetes.io/part-of: platform
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: worker
+  ports:
+    - { name: state-export, port: {{ $w.stateExportPort }}, targetPort: state-export }
+{{- if $se.networkPolicy }}
+---
+# worker 파드를 고르는 첫 정책. 고르는 순간 아래에 없는 들어오는 트래픽은 모두 막힌다.
+#   지금 worker 로 들어오는 것은 지표 포트 하나다: Prometheus(monitoring 네임스페이스, 포트 이름 metrics 를 긁음)와 kubelet 살아 있음 검사(/metrics).
+#   지표 포트는 출처를 좁히지 않고 예전처럼 연다 (Prometheus 위치·kubelet 출처 IP 를 차트가 가정하지 않게). 창구 포트만 api 파드로 좁힌다.
+#   gcp 토큰 창구(gcp-token-server.ts)는 127.0.0.1 이라 정책과 상관없다. 나가는 쪽(Egress)은 건드리지 않는다
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: worker-ingress
+  labels:
+    app.kubernetes.io/name: worker
+    app.kubernetes.io/part-of: platform
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: worker
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: api
+      ports:
+        - { protocol: TCP, port: {{ $w.stateExportPort }} }
+    {{- with $w.metricsPort }}
+    - ports:
+        - { protocol: TCP, port: {{ . }} }
+    {{- end }}
+{{- end }}
+{{- end }}

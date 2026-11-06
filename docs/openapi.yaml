@@ -3890,6 +3890,62 @@ paths:
         "500":
           $ref: "#/components/responses/E500"
           description: "INTERNAL"
+  "/api/v1/migrations/{id}/tfstate":
+    get:
+      operationId: "getMigrationsByIdTfstate"
+      tags:
+        - "migrations"
+      summary: "끝난 이전의 고객 Terraform state 파일 그대로 (Content-Disposition: attachment, layer=app 앱 층 | env 도착 환경 층). worker 창구에서 흘려보낸다. 감사 migration.tfstate_download"
+      description: "코드: apps/api/src/routes/tfstate.ts"
+      security:
+        - bearerAuth: []
+        - devTenant: []
+      parameters:
+        - name: "id"
+          in: "path"
+          required: true
+          schema:
+            type: "string"
+            format: "uuid"
+            pattern: "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+        - name: "layer"
+          in: "query"
+          required: false
+          schema:
+            default: "app"
+            type: "string"
+            enum:
+              - "app"
+              - "env"
+        - $ref: "#/components/parameters/DevTenant"
+      responses:
+        "200":
+          description: "끝난 이전의 고객 Terraform state 파일 그대로 (Content-Disposition: attachment, layer=app 앱 층 | env 도착 환경 층). worker 창구에서 흘려보낸다. 감사 migration.tfstate_download"
+          content:
+            "application/json":
+              schema:
+                $ref: "#/components/schemas/TfStateFile"
+        "400":
+          $ref: "#/components/responses/E400"
+          description: "BAD_REQUEST (Zod 검증 실패)"
+        "401":
+          $ref: "#/components/responses/E401"
+          description: "UNAUTHENTICATED (Bearer 토큰 없음·만료, DEV_AUTH=1 이면 x-dev-tenant 없음)"
+        "404":
+          $ref: "#/components/responses/E404"
+          description: "NOT_FOUND (없는/남의 이전) · STATE_NOT_FOUND (worker 에 state 파일 없음)"
+        "409":
+          $ref: "#/components/responses/E409"
+          description: "INVALID_TRANSITION (끝난 이전이 아님)"
+        "429":
+          $ref: "#/components/responses/E429"
+          description: "RATE_LIMITED (회사·읽기/쓰기별 분당 한도, retry-after 헤더, Z52)"
+        "500":
+          $ref: "#/components/responses/E500"
+          description: "INTERNAL"
+        "503":
+          $ref: "#/components/responses/E503"
+          description: "STATE_EXPORT_NOT_CONFIGURED (WORKER_STATE_EXPORT_URL·INTERNAL_STATE_TOKEN 없음) · STATE_EXPORT_UNAVAILABLE (worker 창구 연결 실패·시간 초과·5xx)"
   "/api/v1/migrations/{id}/timeline":
     get:
       operationId: "getMigrationsByIdTimeline"
@@ -12687,6 +12743,24 @@ components:
         - "ms"
         - "entries"
       additionalProperties: false
+    TfStateFile:
+      type: "object"
+      properties:
+        version:
+          type: "integer"
+          minimum: -9007199254740991
+          maximum: 9007199254740991
+        terraform_version:
+          type: "string"
+        serial:
+          type: "integer"
+          minimum: -9007199254740991
+          maximum: 9007199254740991
+        lineage:
+          type: "string"
+      required:
+        - "version"
+      additionalProperties: {}
     Timeline:
       type: "object"
       properties:

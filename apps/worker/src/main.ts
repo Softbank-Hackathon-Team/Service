@@ -10,6 +10,7 @@ import { onShutdown } from "@svc/core";
 import { assertConfig, logEffectiveConfig } from "@svc/core";
 import { envNumber } from "@svc/contracts";
 import { createRealTerraformRunner, iacMockEnabled } from "@svc/adapters";
+import { startStateExportServer, stateExportFromEnv } from "./state-export-server.js";
 
 // Z81-09: 설정을 먼저 본다. 틀리면 목록을 내고 끝 코드 2 (지표 포트·큐를 열기 전)
 assertConfig("worker");
@@ -60,8 +61,23 @@ await registerLeaseJobs(); // 생존 신호·청소 작업
 await registerVerifySweep(); // L4b: 연결 주기 재확인 (VERIFY_CRON, 기본 1시간)
 startTempRoleSweeper();    // 임시 자격 만료·회수 요청 처리 (보안)
 
+// 고객 Terraform state 내려받기 창구 (api 만 부른다, 차트 worker-state-export Service·NetworkPolicy). 토큰이 없으면 열지 않는다
+// 포트가 차 있으면 창구만 끄고 계속 돈다 (내려받기가 503 이 될 뿐, 이전 작업은 영향 없음)
+let stateExport: Awaited<ReturnType<typeof startStateExportServer>> | null = null;
+{
+  const o = stateExportFromEnv();
+  if (!o) log.info("state export: off (INTERNAL_STATE_TOKEN 없음 또는 WORKER_STATE_EXPORT_PORT=0)");
+  else {
+    try { stateExport = await startStateExportServer({ ...o, log }); log.info({ port: stateExport.port }, "state export: on"); }
+    catch (err) { log.error({ port: o.port, code: (err as NodeJS.ErrnoException).code }, "state export: not started"); }
+  }
+}
+
 log.info({ queues: Object.keys(HANDLERS), metrics_port: METRICS_PORT, poll_sec: workOptions().pollingIntervalSeconds, listen_notify: LISTEN_NOTIFY }, "worker ready");
 
 // 종료 신호: 쥔 작업을 끝까지 기다린 뒤 큐를 닫는다 (pg-boss stop graceful, 기본 대기 30초).
 // Z81: SIGINT(Ctrl+C)도 같은 길. 두 번째 신호는 바로 끝낸다. 처리는 core shutdown.ts 한 곳
-onShutdown([["boss", () => boss.stop({ graceful: true })]], { log });
+onShutdown([
+  ["state-export", async () => { await stateExport?.close(); }],
+  ["boss", () => boss.stop({ graceful: true })],
+], { log });

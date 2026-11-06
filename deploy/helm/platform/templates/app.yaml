@@ -96,8 +96,15 @@ spec:
             {{- if eq $name "api" }}
             - { name: API_PORT, value: {{ $a.port | quote }} }
             - { name: METRICS_PORT, value: {{ $a.metricsPort | quote }} }
+            {{- if and $apps.worker.enabled $apps.worker.stateExportPort }}
+            # 고객 Terraform state 내려받기: worker 창구 (templates/worker-state-export.yaml). 토큰은 envFrom INTERNAL_STATE_TOKEN
+            - { name: WORKER_STATE_EXPORT_URL, value: {{ printf "http://worker-state-export.%s.svc.cluster.local:%v" $.Release.Namespace $apps.worker.stateExportPort | quote }} }
+            {{- end }}
             {{- else if eq $name "worker" }}
             - { name: WORKER_METRICS_PORT, value: {{ $a.metricsPort | quote }} }
+            {{- with $a.stateExportPort }}
+            - { name: WORKER_STATE_EXPORT_PORT, value: {{ . | quote }} }
+            {{- end }}
             {{- if $tfDisk }}
             - { name: TF_WORK_DIR, value: /var/lib/svc-tf }
             {{- end }}
@@ -148,13 +155,17 @@ spec:
             - { name: ENV_LAYER_AUTO, value: "1" }
             {{- end }}
             {{- end }}
-          {{- if or $a.port $a.metricsPort }}
+          {{- $stateExportPort := and (eq $name "worker") $a.stateExportPort }}
+          {{- if or $a.port $a.metricsPort $stateExportPort }}
           ports:
             {{- with $a.port }}
             - { name: http, containerPort: {{ . }} }
             {{- end }}
             {{- with $a.metricsPort }}
             - { name: metrics, containerPort: {{ . }} }
+            {{- end }}
+            {{- with $stateExportPort }}
+            - { name: state-export, containerPort: {{ . }} }
             {{- end }}
           {{- end }}
           {{- if eq $name "api" }}

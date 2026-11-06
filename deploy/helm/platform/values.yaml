@@ -15,14 +15,18 @@ components:
     # AGENT_REPORT_MASTER_KEY: 온프레 Agent 등록·보고 서명 (32자 이상 무작위, 없으면 /agent/* 가 503 AGENT_REPORTS_DISABLED)
     # PUBLIC_API_URL: Agent 등록 응답에 담는 보고 주소 = 플랫폼 공개 주소 (비우면 요청 주소)
     # CONNECT_TEMPLATE_URL: 콘솔 "AWS 연결" 링크의 CloudFormation 템플릿 주소 (Terraform 출력 connect_template_url, 없으면 연결 링크가 503 CONNECT_NOT_CONFIGURED)
-    secretKeys: [DATABASE_URL, JWT_SECRET, PLATFORM_PRINCIPAL_ARN, AGENT_REPORT_MASTER_KEY, PUBLIC_API_URL, CONNECT_TEMPLATE_URL]
+    # INTERNAL_STATE_TOKEN: api → worker state 내려받기 창구(worker-state-export) 공유 토큰. worker 와 같은 값 (아래 worker 주석)
+    secretKeys: [DATABASE_URL, JWT_SECRET, PLATFORM_PRINCIPAL_ARN, AGENT_REPORT_MASTER_KEY, PUBLIC_API_URL, CONNECT_TEMPLATE_URL, INTERNAL_STATE_TOKEN]
   worker:
     # GITOPS_*: 배포 단계가 gitops 레포에 커밋·push (없으면 모든 배포가 GITOPS_NOT_CONFIGURED 로 멈춘다, 클라우드·온프레 공통)
     #   GITOPS_REPO_URL·GITOPS_PUSH 는 비밀이 아니지만 차트에 비밀 아닌 값을 넘기는 길이 아직 없어 같은 JSON 으로 받는다 (아래 README TODO)
     # REPL_SECRET_MASTER_KEY: 이전별 비밀(온프레 이전 전용 계정 비밀번호·터널/중계 SSH 키·CA 씨앗)을 파생하는 마스터 키 (ADR-019, 32자 이상).
     #   바꾸면 진행 중인 이전의 파생 값이 모두 달라진다 → 이전이 없을 때만 교체
     # PLATFORM_EGRESS_CIDRS: worker 가 밖으로 나가는 IP(NAT) 대역. 자동 중계의 5432 를 이 대역에만 연다 (비밀은 아니지만 비밀 아닌 값을 넘기는 길이 없어 같은 JSON)
-    secretKeys: [DATABASE_URL, GITOPS_REPO_URL, GITOPS_WRITE_TOKEN, GITOPS_PUSH, REPL_SECRET_MASTER_KEY, PLATFORM_EGRESS_CIDRS]
+    # INTERNAL_STATE_TOKEN: 고객 Terraform state 내려받기 창구(GET /internal/state/..., apps.worker.stateExportPort)의 공유 토큰. api 와 같은 값.
+    #   helm upgrade 전에 platform/app JSON 에 이 키를 먼저 넣는다 (32자 이상 무작위, 예: openssl rand -hex 32).
+    #   없으면 api·worker 의 ESO 동기화가 멈춘다. 값이 32자보다 짧으면 api·worker 가 시작 설정 검사에서 멈춘다
+    secretKeys: [DATABASE_URL, GITOPS_REPO_URL, GITOPS_WRITE_TOKEN, GITOPS_PUSH, REPL_SECRET_MASTER_KEY, PLATFORM_EGRESS_CIDRS, INTERNAL_STATE_TOKEN]
   agent-worker:
     secretKeys: [DATABASE_URL, ANTHROPIC_API_KEY]
   otel-gateway:
@@ -68,6 +72,13 @@ apps:
     # DRAFT(ai): 2개. main.tf cred_nodes 주석 "워커 ×2". 작업은 pg-boss 가 나눠 준다
     replicas: 2
     metricsPort: 9465   # WORKER_METRICS_PORT 기본. 살아 있음 검사도 이 포트 /metrics
+    # 고객 Terraform state 내려받기 창구 (apps/worker/src/state-export-server.ts). api 만 부른다 (templates/worker-state-export.yaml).
+    #   차트가 worker 에 WORKER_STATE_EXPORT_PORT, api 에 WORKER_STATE_EXPORT_URL 을 넣는다. 0 이면 Service·NetworkPolicy·두 env 를 안 그린다
+    stateExportPort: 8081
+    stateExport:
+      # worker 파드 들어오는 트래픽 제한: 창구 포트는 api 파드에서만, 지표 포트(metricsPort)는 예전처럼 어디서나 (Prometheus·살아 있음 검사).
+      #   클러스터 CNI 가 NetworkPolicy 를 집행해야 효과가 있다 (플랫폼 Terraform vpc-cni enableNetworkPolicy). 확인 방법은 README
+      networkPolicy: true
     # 고객 자격을 쥔 파드만 cred 노드에 (main.tf cred_nodes 주석). taint dedicated=cred:NoSchedule 를 견딘다
     pool: cred
     serviceAccount: worker         # Pod Identity platform/worker + argocd Role

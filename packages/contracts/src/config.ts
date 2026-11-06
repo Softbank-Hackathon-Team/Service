@@ -43,6 +43,12 @@ const runtimeClassName: Check = (v) => (/^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$/
 // 플랫폼 Argo CD 허브 역할 (infra/modules/aws/platform 출력 argocd_hub_role_arn). 연결 템플릿 ArgoHubRoleArn 패턴과 같게 역할만
 const hubRoleArn: Check = (v) => (/^arn:aws:iam::\d{12}:role\/.+$/.test(v.trim()) ? null : "IAM 역할 ARN 모양이 아님");
 const switchOn = (v: string | undefined) => v?.trim() === "1";
+// api ↔ worker state 내려받기 창구 공유 토큰. 비면 창구가 꺼진다(통과). 있으면 32자 이상 (values.yaml 주석 "32자 이상 무작위")
+const internalToken: Check = (v) => (v.trim().length >= 32 ? null : "32자 이상이어야 함");
+const httpUrl: Check = (v) => {
+  try { const u = new URL(v.trim()); return u.protocol === "http:" || u.protocol === "https:" ? null : "http(s):// 주소가 아님"; }
+  catch { return "주소 모양이 아님"; }
+};
 
 // 이름 → 검사. required 가 아니면 비어 있어도 된다 (비면 코드 기본값)
 interface Rule { check?: Check; required?: true }
@@ -74,11 +80,18 @@ export const CONFIG_RULES = {
     // DRAFT(ai) PRINCIPALUSER: 플랫폼 주체는 IAM 역할 또는 IAM 사용자 (데모 계정 finals 는 사용자 키). :root·sts assumed-role 은 거부
     PLATFORM_PRINCIPAL_ARN: { check: (v) => (/^arn:aws:iam::\d{12}:(role|user)\/[\w+=,.@\/-]+$/.test(v.trim()) ? null : "IAM 역할·사용자 ARN 모양이 아님") },
     ARGO_HUB_ROLE_ARN: { check: hubRoleArn },   // 있으면 연결 링크가 템플릿에 svc-deploy 를 만들게 한다
+    // 고객 Terraform state 내려받기: worker 창구 주소(차트가 http://worker-state-export.<ns>.svc.cluster.local:8081 을 넣는다)와 공유 토큰.
+    //   둘 중 하나라도 비면 GET /migrations/:id/tfstate 가 503 STATE_EXPORT_NOT_CONFIGURED (서버는 뜬다)
+    WORKER_STATE_EXPORT_URL: { check: httpUrl },
+    INTERNAL_STATE_TOKEN: { check: internalToken },
   },
   worker: {
     ...COMMON,
     ARGO_HUB_ROLE_ARN: { check: hubRoleArn },   // 있으면 EKS 도착에 허브 RoleBinding·Argo cluster Secret 을 만든다
     WORKER_METRICS_PORT: { check: port },
+    // state 내려받기 창구 (apps/worker/src/state-export-server.ts). 토큰이 비면 창구를 안 연다. 포트 0 = 안 연다
+    WORKER_STATE_EXPORT_PORT: { check: port },
+    INTERNAL_STATE_TOKEN: { check: internalToken },
     STEP_ROLE_TTL_SEC: { check: num({ min: 1 }) },
     CRED_RENEW_SEC: { check: num({ min: 0 }) },
     STUB_DELAY_MS: { check: num({ min: 0 }) },

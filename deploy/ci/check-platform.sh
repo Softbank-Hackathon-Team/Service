@@ -178,4 +178,26 @@ if ! helm template platform "$CHART" -n platform "${IMG[@]}" --set argocd.hubRol
   echo "FAIL argocd.hubRoleArn 칸이 없는 릴리스 값으로 렌더가 안 된다"; fail=1
 fi
 [ $fail -eq 0 ] && echo "ok   Argo CD 허브 역할 (값 없음·api·worker 만·틀린 모양 거부·예전 릴리스 값)"
+# state 내려받기 창구 (values apps.worker.stateExportPort·stateExport.networkPolicy): 기본 켬 = worker 에 포트·env, api 에 URL, Service·NetworkPolicy 하나씩.
+#   0 이면 아무것도 안 그린다, networkPolicy 끔이면 정책만 빠진다, 칸 없는 릴리스 값으로도 렌더
+DOC=$(helm template platform "$CHART" -n platform "${IMG[@]}")
+has app.yaml Deployment worker '{ name: WORKER_STATE_EXPORT_PORT, value: "8081" }' "state export 기본"
+has app.yaml Deployment worker '{ name: state-export, containerPort: 8081 }' "state export 기본"
+has app.yaml Deployment api '{ name: WORKER_STATE_EXPORT_URL, value: "http://worker-state-export.platform.svc.cluster.local:8081" }' "state export 기본"
+for a in agent-worker web; do hasnt app.yaml Deployment "$a" STATE_EXPORT "state export 기본"; done
+has worker-state-export.yaml Service worker-state-export 'targetPort: state-export' "state export 기본"
+has worker-state-export.yaml NetworkPolicy worker-ingress 'port: 8081' "state export 기본"
+has worker-state-export.yaml NetworkPolicy worker-ingress 'port: 9465' "state export 기본 (지표 포트 유지)"
+[ "$(grep -c '^kind: NetworkPolicy$' <<<"$DOC")" = 1 ] || { echo "FAIL state export: NetworkPolicy 는 하나"; fail=1; }
+if grep -qE 'STATE_EXPORT|worker-state-export|kind: NetworkPolicy' <<<"$(helm template platform "$CHART" -n platform "${IMG[@]}" --set apps.worker.stateExportPort=0)"; then
+  echo "FAIL stateExportPort=0 인데 창구가 그려졌다"; fail=1
+fi
+if grep -q 'kind: NetworkPolicy' <<<"$(helm template platform "$CHART" -n platform "${IMG[@]}" --set apps.worker.stateExport.networkPolicy=false)"; then
+  echo "FAIL stateExport.networkPolicy=false 인데 정책이 그려졌다"; fail=1
+fi
+if ! helm template platform "$CHART" -n platform "${IMG[@]}" --set apps.worker.stateExportPort=null --set apps.worker.stateExport=null >/dev/null 2>&1; then
+  echo "FAIL stateExport 칸이 없는 릴리스 값으로 렌더가 안 된다"; fail=1
+fi
+kubeconform -strict -summary -kubernetes-version "$K8S_VERSION" -schema-location default - <<<"$DOC"
+[ $fail -eq 0 ] && echo "ok   state 내려받기 창구 (기본 켬·0 이면 없음·정책 끔·예전 릴리스 값)"
 exit $fail
