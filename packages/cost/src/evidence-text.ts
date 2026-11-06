@@ -67,7 +67,16 @@ const T = {
   mCluster: { ko: "도착에 관리형 클러스터 1개 (플랫폼 환경 층: {where})", en: "One managed cluster at the target (platform environment layer: {where})", ja: "到着側にマネージドクラスター 1 個 (プラットフォーム環境レイヤー: {where})" },
   mLb: { ko: "도착은 Cloudflare 터널(cloudflared)로 들어와 클라우드 로드 밸런서를 만들지 않음", en: "Traffic enters the target via Cloudflare Tunnel (cloudflared); no cloud load balancer is created", ja: "到着側は Cloudflare Tunnel (cloudflared) 経由で受けるため、クラウドのロードバランサーは作らない" },
   mNat: { ko: "플랫폼 환경 층({where})이 사설 노드용 NAT 1개와 고정 공인 주소 1개를 만듦", en: "The platform environment layer ({where}) creates one NAT and one static public address for private nodes", ja: "プラットフォーム環境レイヤー ({where}) がプライベートノード用に NAT 1 個と静的パブリックアドレス 1 個を作る" },
-  mOnprem: { ko: "출발 노드 vCPU 합 {vcpu}·메모리 합 {mem} GiB 를 서버 {n}대에 올림", en: "Source nodes total {vcpu} vCPU and {mem} GiB, placed on {n} server(s)", ja: "出発ノードの vCPU 合計 {vcpu}・メモリ合計 {mem} GiB をサーバー {n} 台に配置" },
+  mOnprem: { ko: "출발 노드와 DB 의 vCPU 합 {vcpu}·메모리 합 {mem} GiB 를 서버 {n}대에 올림", en: "Source nodes and DB total {vcpu} vCPU and {mem} GiB, placed on {n} server(s)", ja: "出発ノードと DB の vCPU 合計 {vcpu}・メモリ合計 {mem} GiB をサーバー {n} 台に配置" },
+  // ---- 단가 출처 (가격표 파일의 한국어 출처 글을 화면 언어로 다시 쓴다, evidence.ts sourceText) ----
+  srcAws: { ko: "AWS Price List Bulk {svc} {region} SKU {sku}", en: "AWS Price List Bulk {svc} {region} SKU {sku}", ja: "AWS Price List Bulk {svc} {region} SKU {sku}" },
+  srcPublished: { ko: " (발행 {pub})", en: " (published {pub})", ja: " (公開 {pub})" },
+  srcOfficialPage: { ko: "{vendor} 공식 가격 페이지 · {sku} · {region} ({date} 확인)", en: "{vendor} official pricing page · {sku} · {region} (checked {date})", ja: "{vendor} 公式料金ページ · {sku} · {region} ({date} 確認)" },
+  srcCyclenerd: { ko: "Cyclenerd pricing.yml {key} (공식 Cloud Billing Catalog 에서 생성, {gen})", en: "Cyclenerd pricing.yml {key} (generated from the official Cloud Billing Catalog, {gen})", ja: "Cyclenerd pricing.yml {key} (公式 Cloud Billing Catalog から生成、{gen})" },
+  srcGeneric: { ko: "가격표 {sku} ({date})", en: "Price list {sku} ({date})", ja: "価格表 {sku} ({date})" },
+  srcOnpremServer: { ko: "${price} / {months}개월 감가 (서버 {vcpu} 스레드·{mem} GiB, 구성가 상한 참고)", en: "${price} / {months}-month depreciation (server with {vcpu} threads and {mem} GiB; list configuration price as an upper reference)", ja: "${price} / {months} か月で減価償却 (サーバー {vcpu} スレッド・{mem} GiB、構成価格の上限を参考)" },
+  srcOnpremPower: { ko: "{w}W x PUE {pue} x 730시간 x {kwh}원/kWh ÷ {fx}원/$ (전기요금 보도, PUE: Uptime 2025 평균)", en: "{w} W x PUE {pue} x 730 h x KRW {kwh}/kWh ÷ KRW {fx}/$ (industrial power rate report; PUE: Uptime 2025 average)", ja: "{w}W x PUE {pue} x 730時間 x {kwh}ウォン/kWh ÷ {fx}ウォン/$ (産業用電気料金の報道、PUE: Uptime 2025 平均)" },
+  srcOnpremSpace: { ko: "{u}U x {krw}원/월 ÷ {fx}원/$ (국내 IDC 상면 공개 글)", en: "{u}U x KRW {krw}/mo ÷ KRW {fx}/$ (public post on Korean colocation prices)", ja: "{u}U x {krw}ウォン/月 ÷ {fx}ウォン/$ (国内 IDC ラック料金の公開記事)" },
   // ---- 합계에서 뺀 것 ----
   gEgress: { ko: "인터넷 전송량", en: "Internet data transfer", ja: "インターネット転送量" },
   gEgressWhy: { ko: "실제 전송량(GB)을 읽지 않아 뺐습니다. 서울 단가: AWS $0.126/GB(월 100GB 무료), GCP Premium $0.19/GiB", en: "Actual transfer (GB) is not read. Seoul rates: AWS $0.126/GB (first 100 GB/mo free), GCP Premium $0.19/GiB", ja: "実際の転送量 (GB) を読んでいないため除外。ソウル単価: AWS $0.126/GB (月 100GB 無料)、GCP Premium $0.19/GiB" },

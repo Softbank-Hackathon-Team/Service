@@ -94,7 +94,7 @@ export const CostGap = z.object({
   id: z.string(),
   label: z.string(),
   reason: z.string(),
-  estimateUsd: z.number().nullable(),   // 참고로 보일 수 있는 크기 (가정). 합계에는 안 들어감
+  estimateUsd: z.number().nullable(),   // 참고로 보일 수 있는 크기, 한 달 금액(USD/월, 가정). 합계에는 안 들어감
 }).strict();
 export type CostGap = z.infer<typeof CostGap>;
 

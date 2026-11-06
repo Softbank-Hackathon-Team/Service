@@ -45,13 +45,14 @@ export function onpremLines(lang: Lang, servers: number, basis: CostLine["basis"
     price: { item: "fixed", sku: `onprem-${id}`, unitUsd: r2(unitUsd), unit: "month", evidence: "assumed", sourceKind: "assumption",
       source, sourceUrl, fetchedAt: asOf },
   });
+  const fx = KRW_PER_USD.toLocaleString("en-US");
   const lines = [
     mk("server", fill(lang, "onpremServer"), onpremMonthly.server(),
-      `$${s.priceUsd.toLocaleString("en-US")} / ${s.months}개월 감가 (서버 ${s.vcpu} 스레드·${s.memGiB} GiB, 구성가 상한 참고)`, SRC.server),
+      fill(lang, "srcOnpremServer", { price: s.priceUsd.toLocaleString("en-US"), months: s.months, vcpu: s.vcpu, mem: s.memGiB }), SRC.server),
     mk("power", fill(lang, "onpremPower"), onpremMonthly.power(),
-      `${s.watts}W x PUE ${s.pue} x 730시간 x ${s.krwPerKwh}원/kWh ÷ ${KRW_PER_USD}원/$ (전기요금 보도, PUE: Uptime 2025 평균)`, SRC.power),
+      fill(lang, "srcOnpremPower", { w: s.watts, pue: s.pue, kwh: s.krwPerKwh, fx }), SRC.power),
     mk("space", fill(lang, "onpremSpace"), onpremMonthly.space(),
-      `${s.rackUnits}U x ${s.krwPerUnitMonth.toLocaleString("en-US")}원/월 ÷ ${KRW_PER_USD}원/$ (국내 IDC 상면 공개 글)`, SRC.space),
+      fill(lang, "srcOnpremSpace", { u: s.rackUnits, krw: s.krwPerUnitMonth.toLocaleString("en-US"), fx }), SRC.space),
   ];
   const gaps: CostGap[] = [
     { id: "onprem:line", label: fill(lang, "gOnpremLine"), reason: fill(lang, "gOnpremWhy"), estimateUsd: r2(usdOfKrw(s.lineKrwMonth)) },

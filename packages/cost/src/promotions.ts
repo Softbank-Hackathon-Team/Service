@@ -19,7 +19,8 @@ const DEFS: Record<string, Def> = {
   gkeFree: {
     id: "gcp-gke-free-tier", provider: "gcp", kind: "recurring_credit", validUntil: null,
     sourceUrl: "https://cloud.google.com/kubernetes-engine/pricing",
-    title: { ko: "GKE 무료 등급 월 $74.40", en: "GKE free tier $74.40/mo", ja: "GKE 無料枠 月 $74.40" },
+    // 제목은 크레딧 한도, 깎는 금액(monthlyUsd)은 관리비만큼(월 $73). 둘을 헷갈리지 않게 "크레딧"을 붙인다
+    title: { ko: "GKE 무료 등급 (월 $74.40 크레딧)", en: "GKE free tier ($74.40/mo credit)", ja: "GKE 無料枠 (月 $74.40 クレジット)" },
     condition: { ko: "결제 계정당 하나, 존 클러스터·Autopilot 클러스터만. 남은 크레딧은 다음 달로 넘어가지 않음", en: "One per billing account, zonal or Autopilot clusters only; unused credit does not roll over", ja: "請求先アカウントごとに 1 つ、ゾーンクラスターと Autopilot のみ。未使用分は繰り越さない" },
     appliesTo: { ko: "GKE 클러스터 관리비", en: "GKE cluster fee", ja: "GKE クラスター管理料金" },
     note: { ko: "같은 결제 계정의 다른 존 클러스터가 이미 쓰고 있으면 빠집니다", en: "Not available if another zonal cluster on the same billing account already uses it", ja: "同じ請求先アカウントの別ゾーンクラスターが使っていれば対象外" },

@@ -36,9 +36,26 @@ function pricesFor(catalog: PriceCatalog, provider: Provider, region: string | n
 const sourceKindOf = (r: PriceRow): CostPriceRef["sourceKind"] =>
   r.sourceKind ?? (r.evidence === "assumed" || r.evidence === "mock" ? "assumption" : r.source.startsWith("AWS Price List") ? "official_api" : "secondary");
 
-export const priceRef = (r: PriceRow): CostPriceRef => ({
+const VENDOR_NAME: Record<Provider, string> = { aws: "AWS", gcp: "Google Cloud", onprem: "On-prem", azure_mock: "Azure (mock)" };
+
+/**
+ * 단가 출처 한 줄을 화면 언어로. 가격표 파일(prices/*.json)의 출처 글은 한국어라, 영어·일본어 화면에는
+ * 같은 정보(서비스·SKU·발행 시각·확인한 날)를 그 언어 문장으로 다시 만든다. 모르는 모양이면 SKU 와 날짜만
+ */
+export function sourceText(r: PriceRow, lang: Lang): string {
+  if (lang === "ko") return r.source;
+  const aws = /^AWS Price List Bulk (\S+) (\S+) SKU (\S+)(?: \(발행 ([^)]+)\))?$/.exec(r.source);
+  if (aws) return fill(lang, "srcAws", { svc: aws[1]!, region: aws[2]!, sku: aws[3]! }) + (aws[4] ? fill(lang, "srcPublished", { pub: aws[4] }) : "");
+  const cy = /^Cyclenerd pricing\.yml (\S+) \(공식 Cloud Billing Catalog 에서 생성, (.+)\)$/.exec(r.source);
+  if (cy) return fill(lang, "srcCyclenerd", { key: cy[1]!, gen: cy[2]! });
+  const date = /(\d{4}-\d{2}-\d{2}) 확인/.exec(r.source)?.[1] ?? r.fetchedAt.slice(0, 10);
+  if (sourceKindOf(r) === "official_page") return fill(lang, "srcOfficialPage", { vendor: VENDOR_NAME[r.vendor], sku: r.sku, region: r.region, date });
+  return fill(lang, "srcGeneric", { sku: r.sku, date });
+}
+
+export const priceRef = (r: PriceRow, lang: Lang = "ko"): CostPriceRef => ({
   item: r.item, sku: r.sku, unitUsd: r.usd, unit: r.unit, evidence: r.evidence, sourceKind: sourceKindOf(r),
-  source: r.source, sourceUrl: r.sourceUrl ?? null, fetchedAt: r.fetchedAt,
+  source: sourceText(r, lang), sourceUrl: r.sourceUrl ?? null, fetchedAt: r.fetchedAt,
 });
 
 type LineIn = { id: string; group: CostGroup; label: string; qty: number; unit: TextKey; row: PriceRow; basis: CostBasis; factor?: number };
@@ -52,7 +69,7 @@ function lineOf(lang: Lang, o: LineIn): CostLine {
       id: o.id, group: o.group, label: o.label, quantity: o.qty, quantityUnit: u.trim(), hours: HOURS_PER_MONTH,
       monthlyUsd: r2(o.qty * o.row.usd * HOURS_PER_MONTH * f),
       formula: `${o.qty}${u} x ${usdText(o.row.usd)}${fill(lang, "perHour")} x ${fill(lang, "hours", { h: HOURS_PER_MONTH })}${extra}`,
-      basis: o.basis, price: priceRef(o.row),
+      basis: o.basis, price: priceRef(o.row, lang),
     };
   }
   const per = o.row.unit === "gb_month" ? fill(lang, "perGbMonth") : fill(lang, "perMonth");
@@ -60,7 +77,7 @@ function lineOf(lang: Lang, o: LineIn): CostLine {
     id: o.id, group: o.group, label: o.label, quantity: o.qty, quantityUnit: o.row.unit === "gb_month" ? "GB" : u.trim(), hours: null,
     monthlyUsd: r2(o.qty * o.row.usd * f),
     formula: `${o.qty}${o.row.unit === "gb_month" ? " GB" : u} x ${usdText(o.row.usd)}${per}${extra}`,
-    basis: o.basis, price: priceRef(o.row),
+    basis: o.basis, price: priceRef(o.row, lang),
   };
 }
 

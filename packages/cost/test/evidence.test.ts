@@ -158,6 +158,16 @@ test("언어: 같은 계산을 한국어·영어·일본어 문장으로", () =>
   assert.equal(ja.monthlyUsd, ko.monthlyUsd);
   assert.match(ja.lines[0]!.label, /EKS クラスター管理料金/);
   assert.match(en.lines[0]!.formula, /1 x \$0\.10\/h x 730 h/);
+  // 단가 출처 줄도 화면 언어로 (가격표 파일의 한국어 출처 글이 일본어·영어 화면에 그대로 나오지 않게) — AWS·GCP·온프레 모두
+  const hangul = /[가-힣]/;
+  const mv = moveCost(AWS, inv(awsFacts), undefined, [GCP, ONPREM], cat, "ja");
+  const all = [ja, en, ...mv.targets.map((t) => t.breakdown!)].flatMap((b) => b.lines);
+  for (const l of all) assert.ok(!hangul.test(l.price.source), `${l.id}: ${l.price.source}`);
+  assert.match(ja.lines[0]!.price.source, /AWS Price List Bulk AmazonEKS ap-northeast-2 SKU \S+ \(公開 /);
+  assert.match(mv.targets[0]!.breakdown!.lines[0]!.price.source, /^Google Cloud 公式料金ページ · gke-management · asia-northeast3 \(2026-11-06 確認\)$/);
+  assert.equal(ko.lines[0]!.price.source.includes("발행"), true);   // 한국어는 가격표 원문 그대로
+  // 온프레 대응 근거는 노드와 DB 를 합친 값이라고 말한다 (t3.medium 2대 4 vCPU + db.t3.medium 2 vCPU = 6)
+  assert.match(mv.targets[1]!.mappings[0]!.why, /出発ノードと DB の vCPU 合計 6/);
 });
 
 test("자원 모양 도우미: Cloud SQL 등급 이름, 금액 표기", () => {
