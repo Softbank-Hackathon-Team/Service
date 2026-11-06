@@ -20,7 +20,7 @@ export const MODULE_DIGEST = {
   "gcp/kinds/job": "content-1795757beabf",
   "gcp/kinds/namespace": "content-9918baace1ff",
   "gcp/kinds/object-store": "content-4ed569c978a4",
-  "gcp/kinds/postgres": "content-2b35aaf75b1c",
+  "gcp/kinds/postgres": "content-bf29afffff4a",
   "gcp/kinds/queue": "content-057156432ba1",
   "gcp/kinds/service-cloudrun": "content-e2284ab55732",
   "gcp/kinds/vm": "content-5edc95e4f298",
