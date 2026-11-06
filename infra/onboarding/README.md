@@ -68,6 +68,7 @@ aws cloudformation wait stack-update-complete --stack-name svc-connect-<환경 �
 
 ## 한 계정에 하나
 역할 이름이 고정(`svc-observe`·`svc-operate`)이라 한 AWS 계정에 연결은 하나다. 같은 계정에 환경을 더 연결하려면 이름 규칙을 바꿔야 한다 (25번 H-L14).
+GCP→AWS 이전의 도착은 그래서 이미 연결한 그 AWS 환경 줄을 그대로 쓴다 (앞 이전의 출발이었어도 된다. 한 환경에 진행 중인 이전은 하나라는 잠금은 그대로). DB 중계기는 그 계정의 `svc-operate` 인라인 `relay` 정책(`TargetDbRulesForRelay` 포함)으로 만들고 지운다.
 
 ## 확인 방법
 - 이 레포 시험: `npm test` (`packages/adapters/test/onboarding-template.test.ts`가 모양·권한 범위를 고정, 클라우드 호출 없음)
