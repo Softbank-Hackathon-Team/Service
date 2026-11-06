@@ -125,6 +125,7 @@ kubectl exec -n argocd argocd-application-controller-0 -- sh -c 'argocd-k8s-auth
 
 - 고객 쪽: 연결 템플릿을 `ArgoHubRoleArn` 과 함께 다시 적용하고 RBAC 두 파일을 한 번 적용한다 (`infra/onboarding/README.md` "이미 연결한 고객: 배포 역할 더하기"). 안 하면 그 고객의 EKS 배포는 Argo CD 로그인 실패로 멈춘다.
 - 3번을 하지 않으면(값 없음) 예전과 같다: 워커는 EKS cluster Secret·RoleBinding 을 만들지 않고, 목적지는 사람이 등록한다.
+- 연결 템플릿이 바뀌었으면(`svc-deploy` 신뢰의 TagSession, 관찰 `ec2:DescribeSubnets`) S3 객체도 바꾼다: `CTS_DRY=1 bash tools/connect-template-sync.sh` 로 보고 `bash tools/connect-template-sync.sh`.
 - DRAFT(ai) 【추정】 4번의 `argocd-k8s-auth aws` 가 Pod Identity 자격을 읽는지는 실측 전이다. 못 읽으면 허브 파드에 IRSA 를 쓰는 길로 바꾼다.
 
 ## 워커의 GCP 로그인 (GCP 연결·가져오기·이전에 필요)
