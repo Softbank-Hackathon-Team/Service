@@ -68,8 +68,13 @@ export interface CloudSqlPrivate {
   logicalDecoding: boolean;
   /** 클라이언트 인증서를 요구하면 true (터널 구독·워커는 서버 인증서 TLS 만 쓴다) */
   clientCertRequired: boolean;
+  /** 지금 DB 플래그 전부 (patch --database-flags 는 목록을 통째 덮어써서 켤 때 같이 준다). 없으면 빈 목록 */
+  flags?: { name: string; value: string }[];
+  /** RUNNABLE 등. 플래그를 켠 뒤 재시작이 끝났나 볼 때 쓴다 */
+  state?: string | null;
 }
 type RawSql = {
+  state?: string;
   region?: string; gceZone?: string;
   ipAddresses?: { type?: string; ipAddress?: string }[];
   settings?: { ipConfiguration?: { privateNetwork?: string; sslMode?: string; requireSsl?: boolean }; databaseFlags?: { name?: string; value?: string }[] };
@@ -90,6 +95,8 @@ export function cloudSqlPrivateOf(ref: CloudSqlInstanceRef, raw: unknown): Cloud
     serverCaPem: /-----BEGIN CERTIFICATE-----/.test(cert) && !/PRIVATE KEY/.test(cert) ? cert.trim() : null,
     logicalDecoding: (it.settings?.databaseFlags ?? []).some((f) => f.name === "cloudsql.logical_decoding" && String(f.value ?? "").toLowerCase() === "on"),
     clientCertRequired: ipc?.sslMode === "TRUSTED_CLIENT_CERTIFICATE_REQUIRED" || (ipc?.sslMode === undefined && ipc?.requireSsl === true),
+    flags: (it.settings?.databaseFlags ?? []).filter((f) => typeof f.name === "string").map((f) => ({ name: f.name!, value: String(f.value ?? "") })),
+    state: typeof it.state === "string" ? it.state : null,
   };
 }
 
@@ -238,6 +245,36 @@ export async function ensureCloudSqlReplUser(d: RelayGcpDeps, sql: Pick<CloudSql
   if (!/already exists|ALREADY_EXISTS|409/i.test(c.why)) throw new RelayError("RELAY_SOURCE_DB_UNKNOWN", `출발 Cloud SQL ${sql.instance} 에 복제 계정 만들기 실패: ${c.why.replace(password, "***")}`);
   must(await gcloud(d, ["sql", "users", "set-password", user, ...base]), "RELAY_SOURCE_DB_UNKNOWN", `출발 Cloud SQL ${sql.instance} 복제 계정 비밀번호 맞추기`);
   return "updated";
+}
+
+/** 출발 Cloud SQL 논리 디코딩 자동 켜기 (env RELAY_AUTO_DB_FLAGS=0 이면 끔 → 사전 점검이 막고 사람이 켠다)
+ *  DRAFT(ai): 기본 켬 (2026-11-06 "일단 다 주고 되면 뺀다" 결정). 플래그 바꾸기는 Cloud SQL 을 한 번 재시작한다 → 출발 앱이 잠깐(보통 1~3분) DB 를 못 쓴다.
+ *  TODO(human): 고객 운영 DB 재시작을 고객 동의(승인 화면 문구) 없이 해도 되는지 정한다 */
+export const autoDbFlags = (env: NodeJS.ProcessEnv) => env.RELAY_AUTO_DB_FLAGS !== "0";
+const DECODING = "cloudsql.logical_decoding";
+// DRAFT(ai): 재시작 기다림 15분, 15초마다 describe (gcloud 한 번 부르기 시간 제한 180초를 넘을 수 있어 --async + 다시 읽기로 기다린다)
+const FLAG_WAIT_MS = 15 * 60_000, FLAG_POLL_MS = 15_000;
+export interface FlagWait { sleep?: (ms: number) => Promise<void>; maxWaitMs?: number; pollMs?: number }
+
+/** 지금 플래그 + cloudsql.logical_decoding=on 으로 patch (재시작) → 켜지고 RUNNABLE 이 될 때까지 다시 읽는다. 이미 켜져 있으면 그대로 */
+export async function enableCloudSqlLogicalDecoding(d: RelayGcpDeps, sql: CloudSqlPrivate, w: FlagWait = {}): Promise<CloudSqlPrivate> {
+  if (sql.logicalDecoding) return sql;
+  const keep = (sql.flags ?? []).filter((f) => f.name !== DECODING);
+  // 쉼표가 든 값은 --database-flags 목록을 깨뜨린다 → 덮어써서 다른 플래그를 잃느니 멈춘다
+  if (keep.some((f) => /[,=]/.test(f.value) || /[,=]/.test(f.name)))
+    throw new RelayError("RELAY_SOURCE_DB_UNKNOWN", `출발 Cloud SQL ${sql.instance} 의 다른 플래그 값에 쉼표·= 가 있어 자동으로 못 켠다 (손으로 ${DECODING}=on)`);
+  const flags = [...keep.map((f) => `${f.name}=${f.value}`), `${DECODING}=on`].join(",");
+  must(await gcloud(d, ["sql", "instances", "patch", sql.instance, `--project=${sql.project}`, `--database-flags=${flags}`, "--async"]),
+    "RELAY_SOURCE_DB_UNKNOWN", `출발 Cloud SQL ${sql.instance} 에 ${DECODING}=on 켜기`);
+  const sleep = w.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const until = Date.now() + (w.maxWaitMs ?? FLAG_WAIT_MS);
+  for (;;) {
+    const now = await describeCloudSqlPrivate(d, sql, "RELAY_SOURCE_DB_UNKNOWN");
+    if (now.logicalDecoding && (now.state ?? "RUNNABLE") === "RUNNABLE") return now;
+    if (Date.now() >= until) throw new RelayError("RELAY_SOURCE_DB_UNKNOWN", `출발 Cloud SQL ${sql.instance} 이 ${DECODING}=on 재시작을 시간 안에 끝내지 못했다 (상태 ${now.state ?? "?"})`);
+    if (d.signal?.aborted) throw new RelayError("RELAY_SOURCE_DB_UNKNOWN", "플래그 켜기 기다리다 작업이 멈췄다");
+    await sleep(w.pollMs ?? FLAG_POLL_MS);
+  }
 }
 
 /** 복제 계정 지우기. 없으면 그대로 */
@@ -478,12 +515,13 @@ export interface GcpOnpremDeps {
   existing?: readonly ReplicationEndpoint[];
   save?: (rows: ReplicationEndpoint[]) => Promise<void>;
   appLogin?: (target: ReplicationEndpoint) => Promise<"created" | "updated" | "privileged">;
+  /** 논리 디코딩 켠 뒤 재시작 기다리기 (시험이 sleep 을 바꾼다) */
+  flagWait?: FlagWait;
 }
 
 const TAG_HINT = "만든 자원(VM·방화벽 규칙)은 라벨 managed-by=platform, svc-migration=<이전> 과 이름 svc-relay-<이전> 으로 남는다. 원인을 고친 뒤 다시 계획·승인하면 이어 간다. 취소하면 repl-cleanup 이 지운다";
-const ROLE_FIX: StopHint = { missing: ["gcp: svc-operate (compute.instances.*, compute.firewalls.*, compute.subnetworks.use·useExternalIp, compute.addresses.list)"],
-  // TODO(human): 지금은 감사 로그로 최소 권한을 뽑기 전이라 실행 역할에 넓게 준다는 결정(2026-11-06)에 기댄다. 뽑은 뒤 gcp-connect.sh·권한 묶음에 중계기 묶음을 따로 둔다
-  hint: "중계기 쪽 GCP 프로젝트에서 플랫폼 실행 SA(svc-operate)에 Compute 권한(VM·방화벽 만들기·지우기)이 있는지 확인한 뒤 다시 계획·승인한다. 출발 프로젝트(gcp-onprem)는 연결 스크립트가 실행 권한을 안 주므로 손으로 준다" };
+const ROLE_FIX: StopHint = { missing: ["gcp: svc-operate 에 중계기 역할 platform_relay (infra/permissions/gcp-relay-custom-role.yaml)"],
+  hint: "중계기 쪽 GCP 프로젝트에서 플랫폼 실행 SA(svc-operate)에 platform_relay 역할이 붙어 있는지 확인한다. 예전 연결 스크립트로 붙은 고객은 콘솔의 GCP 연결 스크립트(gcp-connect.sh)를 다시 실행하면 붙는다. 그 뒤 다시 계획·승인한다" };
 function failure(e: unknown, extra: Record<string, unknown> = {}): Failed {
   if (!(e instanceof RelayError)) throw e;
   const denied = /PERMISSION_DENIED|does not have|forbidden|403/i.test(e.message);
@@ -504,7 +542,7 @@ async function readSourceBorrowed(j: Job, m: MigrationRow, ref: CloudSqlInstance
 
 /** 중계기 쪽 토큰 빌려 VM·방화벽 만들기 → 호스트 키 줄. 두 방향 공통 */
 async function provisionWithToken(j: Job, m: MigrationRow, side: "source" | "target", g: Extract<GcpOnpremGate, { kind: "go" }>, deps: GcpOnpremDeps,
-  sqlOf: (d: RelayGcpDeps) => Promise<CloudSqlPrivate>): Promise<Failed | { kind: "ok"; res: GcpRelayResources; sql: CloudSqlPrivate; knownHosts: string; psaRanges: string[]; replUser?: string }> {
+  sqlOf: (d: RelayGcpDeps) => Promise<CloudSqlPrivate>): Promise<Failed | { kind: "ok"; res: GcpRelayResources; sql: CloudSqlPrivate; knownHosts: string; psaRanges: string[]; replUser?: string; logicalDecoding?: string }> {
   const env = deps.env ?? process.env;
   const step = side === "source" ? "relay_gcp" as const : "relay_gcp_target" as const;
   const borrow = deps.borrow ?? (<T>(fn: (r: StepRoles) => Promise<T>) => withStepRoles(step, j, m, fn));
@@ -518,11 +556,14 @@ async function provisionWithToken(j: Job, m: MigrationRow, side: "source" | "tar
       // 프로젝트는 아래에서 Cloud SQL 의 것으로 다시 넣는다 (gcloud 는 --project 를 따로 받는다)
       const base: RelayGcpDeps = { env: gcpEnvFor(token, "", env), ...(deps.exec ? { exec: deps.exec } : {}), ...(roles.signal ? { signal: roles.signal } : {}) };
       delete base.env.CLOUDSDK_CORE_PROJECT;
-      const sql = await sqlOf(base);
+      let sql = await sqlOf(base);
+      const d: RelayGcpDeps = { ...base, env: { ...base.env, CLOUDSDK_CORE_PROJECT: sql.project } };
+      // gcp-onprem: 출발 논리 디코딩이 꺼져 있으면 워커가 켠다 (재시작). 다른 문제는 아래가 막는다
+      let decoding: string | undefined;
+      if (side === "source" && !sql.logicalDecoding && autoDbFlags(env)) { sql = await enableCloudSqlLogicalDecoding(d, sql, deps.flagWait); decoding = "enabled"; }
       const bad = cloudSqlPrivateProblems(sql, side);
       if (bad.length) return { kind: "failed", failureCode: side === "source" ? "RELAY_SOURCE_DB_UNKNOWN" : "RELAY_TARGET_DB_UNKNOWN",
         reason: bad.map((p) => p.message).join(" / "), detail: { missing: bad.flatMap((p) => p.missing), hint: bad.map((p) => p.hint).join(" / ") } } satisfies Failed;
-      const d: RelayGcpDeps = { ...base, env: { ...base.env, CLOUDSDK_CORE_PROJECT: sql.project } };
       // gcp-onprem: 출발 Cloud SQL 에 이전 전용 복제 계정 (운영자가 출발 줄을 넣어 둔 경우는 그 계정을 쓰고 안 만든다)
       let replUser: string | undefined;
       if (side === "source" && !(deps.existing ?? []).some((e) => e.side === "source" && e.provider === "cloudsql")) {
@@ -534,15 +575,15 @@ async function provisionWithToken(j: Job, m: MigrationRow, side: "source" | "tar
       const plan = buildGcpRelayPlan({ kind: g.relayKind, migrationId: j.migrationId, sql, subnetUrl: net.subnetUrl, psaRanges: net.psaRanges,
         onpremEgressIp: g.egressIp, platformEgressCidrs: g.platformCidrs, tunnelPublicKey: deriveSshKeypair(g.masterKey, j.tenantId, j.migrationId).publicKeyLine, hostKey });
       const res = await provisionGcpRelay(d, plan);
-      return { kind: "ok" as const, res, sql, knownHosts: knownHostsLine(res.publicIp, plan.hostPublicKey), psaRanges: net.psaRanges, ...(replUser ? { replUser } : {}) };
+      return { kind: "ok" as const, res, sql, knownHosts: knownHostsLine(res.publicIp, plan.hostPublicKey), psaRanges: net.psaRanges, ...(replUser ? { replUser } : {}), ...(decoding ? { logicalDecoding: decoding } : {}) };
     } catch (e) { return failure(e); }
   });
 }
 
-const okDetail = (kind: GcpRelayKind, x: { res: GcpRelayResources; sql: CloudSqlPrivate; psaRanges: string[]; replUser?: string }, extra: Record<string, unknown> = {}) => ({
+const okDetail = (kind: GcpRelayKind, x: { res: GcpRelayResources; sql: CloudSqlPrivate; psaRanges: string[]; replUser?: string; logicalDecoding?: string }, extra: Record<string, unknown> = {}) => ({
   kind, project: x.res.project, zone: x.res.zone, instanceName: x.res.instanceName, firewalls: x.res.firewalls,
   publicIp: x.res.publicIp, privateIp: x.res.privateIp, created: x.res.created, reused: x.res.reused, entryPort: RELAY_SOURCE_PORT,
-  cloudSql: { instance: x.sql.instance, privateIp: x.sql.privateIp, network: x.sql.network }, psaRanges: x.psaRanges, ...(x.replUser ? { replUser: x.replUser } : {}), endpointRows: ["source", "target"], ...extra });
+  cloudSql: { instance: x.sql.instance, privateIp: x.sql.privateIp, network: x.sql.network }, psaRanges: x.psaRanges, ...(x.replUser ? { replUser: x.replUser } : {}), ...(x.logicalDecoding ? { logicalDecoding: x.logicalDecoding } : {}), endpointRows: ["source", "target"], ...extra });
 
 /** GCP 출발 → 온프레 도착 (apply 의 온프레 분기, pull 모드). 출발 Cloud SQL VPC 에 중계 VM + 끝점 두 줄. 다시 불러도 된다 */
 export async function provisionGcpOnpremRelayStep(j: Job, m: MigrationRow, deps: GcpOnpremDeps = {}): Promise<RelayStepOutcome> {
@@ -667,7 +708,11 @@ export async function gcpOnpremRelayPrecheck(j: Job, m: Pick<MigrationRow, "id" 
   if (!token) return [...out, { id: "PC-RELAY-SQL-READ", level: "warn", message: `출발 GCP 관찰 토큰이 없어 Cloud SQL ${g.ref.instance} 을 못 읽었다 (apply 가 다시 본다)` }];
   try {
     const sql = await describeCloudSqlPrivate({ env: gcpEnvFor(token, g.ref.project, env), ...(deps.exec ? { exec: deps.exec } : {}) }, g.ref, "RELAY_SOURCE_DB_UNKNOWN");
-    return [...out, ...cloudSqlPrivateProblems(sql, "source").map((p) => ({ id: p.id, level: "block" as const, message: fmt(p.message, p.missing), fix: p.hint }))];
+    // 논리 디코딩은 apply 가 켠다(재시작) → 막지 않고 알린다. 자동을 끈 배포만 막는다
+    const auto = autoDbFlags(env);
+    return [...out, ...cloudSqlPrivateProblems(sql, "source").map((p) => p.id === "PC-RELAY-SQL-DECODING" && auto
+      ? { id: p.id, level: "warn" as const, message: `${p.message} → apply 가 자동으로 켠다 (Cloud SQL 이 한 번 재시작된다)`, fix: p.hint }
+      : { id: p.id, level: "block" as const, message: fmt(p.message, p.missing), fix: p.hint })];
   } catch (e) {
     if (!(e instanceof RelayError)) throw e;
     return [...out, { id: "PC-RELAY-SQL-READ", level: "block", message: fmt(e.message, [`gcp: Cloud SQL ${g.ref.instance} (cloudsql.instances.get)`]),
