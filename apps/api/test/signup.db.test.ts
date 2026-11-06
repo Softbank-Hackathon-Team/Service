@@ -193,6 +193,25 @@ test("명부의 회사가 DB 에 없으면 503 SIGNUP_NOT_CONFIGURED, 사용자�
   } finally { await other.close(); }
 });
 
+test("칸 회사: 칸에 tenant 가 있으면 같은 초대 코드로 그 칸 회사에 가입하고 환경도 그 회사에 생긴다 (명부 맨 위 회사엔 안 생김)", { skip }, async () => {
+  const T2 = randomUUID(), login2 = `sc-${run}@iron`, env2 = `c-${run}`;
+  await owner.query("INSERT INTO tenants (id, name) VALUES ($1, 'signup-slot-tenant')", [T2]);
+  const p = join(dir, "registry-slot-tenant.yaml");
+  writeFileSync(p, `version: 1\ntenant: ${TS}\nslots:\n  - id: slot-c\n    tenant: ${T2}\n    login: ${login2}\n    signup_code_sha256: "${sha(CODE)}"\n    environments:\n      - { name: ${env2}, provider: aws, region: ap-northeast-2 }\n`);
+  process.env.TEAM_REGISTRY_PATH = p;
+  const other = (await buildApp({ logStream: { write: (l) => { lines.push(l); } } })).app;
+  try {
+    const r = await other.inject({ method: "POST", url: `${P}/signup`, payload: { login: login2, code: CODE, password: PW }, remoteAddress: "192.0.2.32" });
+    assert.equal(r.statusCode, 201, r.body);
+    assert.equal(r.json().user.tenantId, T2);
+    assert.equal(r.json().user.tenantName, "signup-slot-tenant");
+    await owner.query("SELECT set_config('app.tenant_id', $1, false)", [T2]);
+    const envs = (await owner.query("SELECT name, connection_status FROM environments WHERE tenant_id = $1", [T2])).rows;
+    assert.deepEqual(envs, [{ name: env2, connection_status: "draft" }]);
+    assert.equal((await envRows()).some((e) => e.name === env2), false, "명부 맨 위 회사엔 안 생김");
+  } finally { await other.close(); }
+});
+
 test("비밀값: 비밀번호·초대 코드·코드 해시·저장된 비밀번호 해시가 로그와 감사 기록에 없다", { skip }, async () => {
   const hash = await asTenant(async () => (await owner.query("SELECT password_hash FROM users WHERE email = $1", [LOGIN])).rows[0].password_hash as string);
   const audit = await asTenant(async () => (await owner.query(

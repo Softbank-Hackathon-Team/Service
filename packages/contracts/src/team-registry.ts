@@ -37,6 +37,9 @@ export const TeamSlot = z.object({
   id: z.string().trim().min(1).max(64).regex(/^[a-z0-9][a-z0-9-]*$/, "slot id: lowercase letters, digits, dash"),
   login: TeamLogin,
   signup_code_sha256: SignupCodeHash,
+  // 칸마다 회사(테넌트). 다섯 명이 서로 막지 않고 동시에 이전하도록 칸마다 회사를 나눈다 (회사 단위 큐 몫·화면·환경 이름이 따로).
+  //   비우면 명부 맨 위 tenant (예전 판 명부와 같음). 회사 행(tenants)은 운영자가 먼저 만든다 (없으면 가입이 503 SIGNUP_NOT_CONFIGURED)
+  tenant: z.uuid().optional(),
   environments: z.array(TeamEnvironment).max(20).default([]),
 }).strict().superRefine((s, ctx) => {
   const seen = new Set<string>();
