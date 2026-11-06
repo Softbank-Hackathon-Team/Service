@@ -90,13 +90,14 @@ export function vclusterValues(s: VclusterSpec, name: string): Record<string, un
       podSecurityStandard: s.isolation.podSecurity,
       resourceQuota: {
         enabled: true,
-        // null 은 차트 기본 칸을 지운다. CPU 한도와 임시 저장소 합은 셈하지 않는다 (컨테이너마다 LimitRange 기본이 남는다)
+        // null 은 차트 기본 칸을 지운다. CPU 한도와 임시 저장소 합은 셈하지 않는다 (컨테이너마다 LimitRange 기본이 붙고 노드 축출이 지킨다)
         quota: {
           "requests.cpu": `${q.requests.cpuM}m`, "requests.memory": `${q.requests.memoryMi}Mi`, "limits.memory": `${q.limitsMemoryMi}Mi`,
           "limits.cpu": null, "requests.ephemeral-storage": null, "limits.ephemeral-storage": null,
           "count/pods": q.pods, "services.loadbalancers": 0, "services.nodeports": 0, "requests.storage": `${q.storageMi}Mi`,
         },
       },
+      // 칸마다 적는다: helm 이 맵을 합쳐 빠진 칸은 차트 기본(임시 저장소 요청 3Gi)이 남는다 (manifests.ts LIMIT_RANGE)
       limitRange: { enabled: true, default: LIMIT_RANGE.default, defaultRequest: LIMIT_RANGE.defaultRequest },
       networkPolicy: { enabled: true, workload: { publicEgress: { enabled: false } } },
     },
