@@ -219,6 +219,13 @@ async function borrowedSecretFill(j: MigrationJob, m: MigrationRow, i: DeployInp
       secretFill: { filled: r.filled, skipped: r.skipped.map((s) => s.name), failed: r.failed.map((f) => f.name) } } } };
   });
 }
+/** 지표 토큰 자동 발급은 worker env METRIC_TOKEN_AUTOFILL=1 (차트 ingressSecretFill.metricToken) 일 때만.
+ *  꺼져 있으면 null → 지표 그릇은 no_source 로 건너뛰고 뒤 검사가 SECRET_VALUES_MISSING 으로 멈춘다 (사람이 값을 넣고 재개).
+ *  DRAFT(ai): 기본 끔. 환경당 살아 있는 지표 토큰은 하나라, 같은 도착 환경에 앱이 둘이면 발급이 첫 앱 지표 토큰을 끊는다 */
+export function metricIssuerFor(j: MigrationJob, m: MigrationRow, env: NodeJS.ProcessEnv = process.env,
+  make: typeof dbMetricIssuer = dbMetricIssuer): MetricIssuer | null {
+  return env.METRIC_TOKEN_AUTOFILL?.trim() === "1" ? make(j.tenantId, m.targetEnvId, j.migrationId) : null;
+}
 /** GCP 도착: 입구 비밀(터널·지표 토큰) 중 빈 그릇 채우기. 지표 토큰은 차트 값에 지표가 켜졌을 때만 externalSecrets 에 있다.
  *  AWS 는 쓰기 권한이 없어 기존 검사에 맡기고(SECRET_VALUES_MISSING → 사람이 넣고 재개), 온프레는 범위 밖 */
 export async function ingressSecretFill(j: MigrationJob, m: MigrationRow, i: DeployInput, env?: NodeJS.ProcessEnv): Promise<SecretFillResult | null> {
@@ -228,7 +235,7 @@ export async function ingressSecretFill(j: MigrationJob, m: MigrationRow, i: Dep
   const src = tunnelSourceFromEnv();
   // 터널 토큰은 worker 자기 자격(process.env, 플랫폼 계정)으로 읽는다. 빌린 고객 env 를 쓰지 않는다
   const tunnel = fillSources.tunnel !== undefined ? fillSources.tunnel : src ? () => readTunnelToken(src, secretExec) : null;
-  const metric = fillSources.metric !== undefined ? fillSources.metric : dbMetricIssuer(j.tenantId, m.targetEnvId, j.migrationId);
+  const metric = fillSources.metric !== undefined ? fillSources.metric : metricIssuerFor(j, m);
   return fillIngressSecrets({ secrets, projectId: i.target.accountId, ...(env ? { env } : {}), tunnel, metric }, secretExec);
 }
 

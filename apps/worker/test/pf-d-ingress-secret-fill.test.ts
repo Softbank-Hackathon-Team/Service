@@ -4,7 +4,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import assert from "node:assert/strict";
 import { fillIngressSecrets, hashMetricToken, newMetricToken, readTunnelToken, tunnelSourceFromEnv, writeIngressSecret, type MetricIssuer } from "../src/gitops/ingress-secrets.js";
 import { METRIC_TOKEN_PREFIX } from "@svc/contracts";
-import { ingressSecretFill, secretValuesGate, setIngressSecretSources, setSecretValueExec } from "../src/jobs/deploy.js";
+import { ingressSecretFill, metricIssuerFor, secretValuesGate, setIngressSecretSources, setSecretValueExec } from "../src/jobs/deploy.js";
 import { approvedValues, type DeployInput } from "../src/gitops/index.js";
 import { ONE } from "./demo-one.js";
 import { buildPlanDoc } from "../src/jobs/plan.js";
@@ -128,6 +128,45 @@ test("지표가 꺼진 배포(TRAFFIC_METRICS_ENDPOINT 없음)는 svc-metric-tok
     setSecretValueExec(undefined); setIngressSecretSources(undefined);
     if (saved === undefined) delete process.env.TRAFFIC_METRICS_ENDPOINT; else process.env.TRAFFIC_METRICS_ENDPOINT = saved;
   }
+});
+
+test("지표 토큰 자동 발급 스위치: 꺼져 있으면(기본) 지표 그릇은 no_source 로 건너뛰고 발급 0건, 뒤 검사가 SECRET_VALUES_MISSING", async () => {
+  const saved = { ep: process.env.TRAFFIC_METRICS_ENDPOINT, on: process.env.METRIC_TOKEN_AUTOFILL };
+  process.env.TRAFFIC_METRICS_ENDPOINT = "https://metrics.example/v1/metrics";
+  delete process.env.METRIC_TOKEN_AUTOFILL;
+  const i = input("gcp");
+  const cli = fakeCli({ filled: keysOf(i).filter((k) => !k.endsWith("svc-metric-token")) });
+  setSecretValueExec(cli.exec);
+  setIngressSecretSources({ tunnel: async () => TUNNEL });   // 지표는 진짜 길(스위치) 그대로
+  try {
+    const r = await ingressSecretFill(job, mig, i);
+    assert.deepEqual(r?.filled, []);
+    assert.ok(r?.skipped.some((s) => s.name === "svc-metric-token" && s.why === "no_source"), JSON.stringify(r?.skipped));
+    assert.ok(!cli.calls.some((c) => c.args.includes("add")), "지표 그릇에 쓰지 않는다");
+    const out = await secretValuesGate(i);
+    assert.equal(out?.failureCode, "SECRET_VALUES_MISSING");
+    assert.ok(((out?.detail as any).deploy.missing as string[]).every((k) => k.endsWith("svc-metric-token")));
+  } finally {
+    setSecretValueExec(undefined); setIngressSecretSources(undefined);
+    for (const [k, v] of [["TRAFFIC_METRICS_ENDPOINT", saved.ep], ["METRIC_TOKEN_AUTOFILL", saved.on]] as const)
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+  }
+});
+
+test("지표 토큰 자동 발급 스위치: METRIC_TOKEN_AUTOFILL=1 일 때만 발급기를 만들고, 켜면 지금처럼 채운다", async () => {
+  const made: string[][] = [];
+  const log: string[] = [];
+  const make = (t: string, e: string, mg: string) => { made.push([t, e, mg]); return fakeMetric(log); };
+  for (const off of [{}, { METRIC_TOKEN_AUTOFILL: "0" }, { METRIC_TOKEN_AUTOFILL: "true" }, { METRIC_TOKEN_AUTOFILL: "" }])
+    assert.equal(metricIssuerFor(job, mig, off, make), null, JSON.stringify(off));
+  assert.equal(made.length, 0, "꺼져 있으면 발급기를 만들지도 않는다");
+  const issuer = metricIssuerFor(job, mig, { METRIC_TOKEN_AUTOFILL: " 1 " }, make);
+  assert.deepEqual(made, [[job.tenantId, mig.targetEnvId, job.migrationId]]);
+  const cli = fakeCli({ filled: ["app-shop-cloudflared-token"] });
+  const r = await fillIngressSecrets({ secrets: gcpSecrets, projectId: "p", tunnel: null, metric: issuer }, cli.exec);
+  assert.deepEqual(r.filled, ["svc-metric-token"]);
+  assert.deepEqual(log, ["issue", "committed"]);
+  noToken(r);
 });
 
 test("상태를 못 읽은 그릇은 건너뛰고(뒤 검사가 판정), 쓰기 실패면 failed + 원문 없는 오류. 지표 발급도 되돌린다", async () => {
