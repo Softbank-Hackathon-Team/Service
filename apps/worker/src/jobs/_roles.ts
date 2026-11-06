@@ -63,12 +63,15 @@ export async function borrowStepRoles(step: RoleStep, j: { tenantId: string; mig
     const policy = "policy" in r ? r.policy : undefined;
     // 이름 붙은 정책은 클라우드가 하나다 (중계기 = AWS, 환경 층 = GCP). 다른 클라우드면 묻지 않는다 (부르는 쪽이 먼저 거르지만 한 번 더)
     if (policy && POLICY_PROVIDER[policy] !== provider) { out.skipped.push({ side: r.side, reason: `${policy}_policy_${POLICY_PROVIDER[policy]}_only` }); continue; }
+    // 단계가 정한 동작은 클라우드마다 다르다 (이미지 받기 = ECR·Artifact Registry). 그 클라우드 몫이 없으면 묻지 않는다
+    const fixed = "actions" in r ? (r.actions as Partial<Record<Provider, readonly string[]>>)[provider] : undefined;
+    if ("actions" in r && !fixed) { out.skipped.push({ side: r.side, reason: `${step}_no_${provider}_actions` }); continue; }
     try {
       out.creds.push(await broker.issue({
         // 관찰 역할도 이전 번호를 붙인다 (필수는 아님) → 이 이전의 장부·감사·보안 표에 같이 보인다
         tenantId: j.tenantId, envId, provider, purpose: r.purpose, migrationId: j.migrationId,
         ...(stage ? { stage } : {}), ...(policy ? { policy } : {}),
-        actions: "actions" in r ? [...r.actions] : stepActions(perms, provider, r.purpose, stage, policy), ttlSec: STEP_ROLE_TTL_SEC,
+        actions: fixed ? [...fixed] : stepActions(perms, provider, r.purpose, stage, policy), ttlSec: STEP_ROLE_TTL_SEC,
       }, { step }));
       out.sides!.push(r.side);
     } catch (e) {

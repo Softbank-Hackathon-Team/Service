@@ -30,7 +30,7 @@ flowchart LR
 | `AGENT_MODEL` | 모델 이름 | `claude-sonnet-5-5` | 진짜 LLM 일 때. `claude-opus-5-5` 로 바꿀 수 있다 |
 | `AGENT_LLM_EFFORT` | low~max | `medium` | 진짜 LLM 일 때 생각 깊이 |
 | `ANTHROPIC_API_KEY` | 키 | 없음 | `.env` 에만. 코드는 "있는지"만 본다 |
-| `SANDBOX_MODE` | `memory` / `k3d` / `vcluster` | `memory` | k3d = 맥 로컬 클러스터 `agent-sbx`. vcluster = 플랫폼 EKS (2-1절) |
+| `SANDBOX_MODE` | `memory` / `k3d` / `vcluster` | `memory` | k3d = 맥 로컬 클러스터 `agent-sbx`. vcluster = 플랫폼 EKS (2-1절). memory 가짜 클러스터는 `FAKE_LLM=1` 대본만 받는다. 진짜 LLM 이면 샌드박스 없음: 샌드박스 도구가 모두 `SANDBOX_NOT_CONFIGURED` 로 거부되고, 결과의 `sandbox` 가 `none` 이라 화면이 "실제 샌드박스에서 돌려 보지 않음"을 붙인다 |
 | `SANDBOX_KUBE_URL` | 주소 | k3d 는 `http://127.0.0.1:8001` | k3d: `kubectl proxy` 주소. 인증서는 kubectl 이 들고 있고 앱은 비밀을 안 받는다. vcluster: 플랫폼 클러스터 API. 비면 클러스터 안 서비스 계정 |
 | `SANDBOX_KUBE_TOKEN_FILE`, `SANDBOX_KUBE_CA_FILE` | 파일 경로 | 없음 | (선택) proxy 대신 토큰으로 붙을 때. 토큰 파일은 요청마다 다시 읽는다 |
 | `SANDBOX_RUNTIME_CLASS` | RuntimeClass 이름 | 없음 | vcluster 일 때 리허설·수정 고리 파드의 RuntimeClass (gVisor 스위치) |

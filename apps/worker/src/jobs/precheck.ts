@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { AgentReport, envNumber, MigrationJob, PrecheckItem, QUEUES, SourceDbFacts, type AppSpecV2, type Provider } from "@svc/contracts";
-import { latestAcceptedSpecV2, withTenant, type Tx } from "@svc/core";
+import { latestAcceptedSpecV2, replicationEndpointsFor, withTenant, type Tx } from "@svc/core";
 import { iacMockEnabled, terraformRuntimeOf, specV2ForPlan, envFor, gcpEnvFor, v2PrecheckItems, runCloudPrecheck, toPrecheckItems, spawnExec, resolveSpecV2, targetFactsV2, sourceFactsV2, sourceDbsV2, appEnvV2, workloadSecurityV2,
   type AgentFacts, type EnvSide, type PrecheckEnvInfo, type PrecheckInput, type PrecheckDeps, type CloudProvider } from "@svc/adapters";
 import { evaluatePortabilityV2, PORTABILITY_RULES, toSecurityPrecheckItems } from "@svc/security";
@@ -12,7 +12,7 @@ import { withStepRoles, type StepRoles } from "./_roles.js";
 import type { MigrationRow } from "./_step.js";
 import { TARGET_ACCOUNT_SQL } from "./target-account.js";
 import { agentStaleSec } from "./verify-connection.js";
-import { relayApplies } from "../relay/relay-step.js";
+import { relayApplies, relayKindOf } from "../relay/relay-step.js";
 
 // 사전 점검: 이전해도 되는지 본다. block(FAIL)이 하나라도 있으면 명세 검토로 되돌린다
 // Z97: STUB(고정 "확인됨")을 실조회로 바꿨다 — 자격(STS·tokeninfo·kubectl)·도착 API·결제·할당량·DB 버전·TCP·디스크.
@@ -91,10 +91,13 @@ export async function realPrecheck(tenantId: string, m: MigrationRow, deps: Part
   // PF RV-28: 진짜 판(MOCK_IAC≠1)이고 명세에 postgres 가 있으면 출발 복제 점검을 못 본 채(주소 없음·접속 실패) 통과시키지 않는다 (RV-23 sync 와 같은 기준)
   const required = !iacMockEnabled(env) && (await specHasPostgres(tenantId, m.id).catch(() => null)) === true;
   const envs = await envInfo(tenantId, m, env);
-  // 중계기가 끝점을 만들 이전인가 (apply 의 relayGate 와 같은 앞 조건: pull 모드 + relayApplies)
-  const relayDeferred = env.ONPREM_FLOOR_VIA_GIT !== "0" && relayApplies({ sourceProvider: envs.source.provider,
-    sourceExternalId: envs.source.externalId ?? null, targetProvider: envs.target.provider }, env) === null;
-  const [db, repl, runtime] = await Promise.all([sourceDbFacts(env), replSourcePrecheck(env, { required, relayDeferred }), specRuntime(tenantId, m.id)]);
+  // 중계기가 끝점을 만들 이전인가 (apply 의 중계기 문과 같은 앞 조건: relayApplies + 온프레면 pull 모드)
+  const relayFacts = { sourceProvider: envs.source.provider, sourceExternalId: envs.source.externalId ?? null, targetProvider: envs.target.provider };
+  const relayDeferred = relayApplies(relayFacts, env) === null
+    && (relayKindOf(relayFacts.sourceProvider, relayFacts.targetProvider) !== "aws-onprem" || env.ONPREM_FLOOR_VIA_GIT !== "0");
+  // 이 이전의 끝점 줄이 있으면 sync 는 env 가 아니라 그 줄로 붙는다 (_repl.ts) → env 주소로 출발 DB 를 보지 않는다
+  const endpointRows = (await withTenant(tenantId, (tx) => replicationEndpointsFor(tx, m.id))).some((r) => r.tenantId === tenantId);
+  const [db, repl, runtime] = await Promise.all([sourceDbFacts(endpointRows ? {} : env), replSourcePrecheck(env, { required, relayDeferred, endpointRows }), specRuntime(tenantId, m.id)]);
   const gp = (e: PrecheckEnvInfo) => (e.provider === "gcp" ? e.accountId : null);   // 8nr2 RV-27: GCP 점검은 빌린 관찰 토큰·도착 프로젝트로
   const sideEnv = deps.sideEnv ?? precheckSideEnv(roles, env, { source: gp(envs.source), target: gp(envs.target) });
   const checks = await runCloudPrecheck({ ...envs, ...db }, { exec: spawnExec, ...deps, env, ...(sideEnv ? { sideEnv } : {}) });
@@ -148,12 +151,18 @@ export function appLinkPrecheck(env: NodeJS.ProcessEnv, o: { terraformRuntime: b
  *  sync 첫 점검과 같은 규칙(@svc/replication precheckSource). 실패면 block → 명세 검토로 (apply·배포 30분 뒤 SYNC_FAILED 대신).
  *  REPL_SOURCE_URL 이 없으면 아무것도 안 낸다(복제 없는 STUB 길). 못 붙으면 warn (TCP 점검이 이유를 따로 낸다) */
 export async function replSourcePrecheck(env: NodeJS.ProcessEnv = process.env,
-  o: { required?: boolean; relayDeferred?: boolean } = {}): Promise<PrecheckItem[]> {
-  // DRAFT(ai): AWS→온프레 중계기 이전은 출발 끝점 줄을 apply 의 중계기 단계가 만든다 (relay/relay-step.ts).
+  o: { required?: boolean; relayDeferred?: boolean; endpointRows?: boolean } = {}): Promise<PrecheckItem[]> {
+  // DECISION(team) 끝점은 이전마다 DB 행으로 (2026-11-05): 줄이 있으면 sync 는 env 가 아니라 그 줄로 붙는다. 여기서 env 로 보면
+  //   다른 DB 를 보거나(env 있음) "REPL_SOURCE_URL 없음" 으로 거짓 block 이다(env 없음) → 같은 규칙(precheckSource)은 sync 첫 점검이 그 줄로 본다.
+  //   TODO(human): 줄의 출발 주소로 여기서 바로 볼지 (aws-sm 관리 비밀은 출발 실행 역할을 빌려야 풀린다)
+  if (o.endpointRows) return o.required ? [PrecheckItem.parse({ id: "PC-REPL-ROWS", level: "warn",
+    message: "출발 DB 논리 복제 점검을 미룸: 이 이전은 복제 끝점 줄(replication_endpoints)로 붙는데, 사전 점검은 워커 env 주소만 읽는다",
+    fix: "sync 첫 점검이 같은 규칙(rds.logical_replication·슬롯·권한·기본키)을 끝점 줄의 주소로 본다. 줄 확인은 npm run repl:endpoint -- show" })] : [];
+  // DRAFT(ai): AWS 출발 중계기 이전(→온프레·→GCP, relay-step RELAY_ROUTES)은 출발 끝점 줄을 apply 의 중계기 단계가 만든다 (relay/relay-step.ts).
   //   사전 점검 때는 출발 주소가 아직 없는 것이 정상이라 막지 않고 warn 으로 남긴다. 같은 규칙(precheckSource)은 sync 첫 점검이 그 줄로 다시 본다.
   //   대가: 출발 DB 설정이 틀리면 중계기를 만든 뒤 sync 에서 SYNC_FAILED 로 멈춘다 (트래픽은 아직 출발에 있다)
   if (!env.REPL_SOURCE_URL && o.required && o.relayDeferred) return [PrecheckItem.parse({ id: "PC-REPL-RELAY", level: "warn",
-    message: "출발 DB 논리 복제 점검을 미룸: AWS→온프레 이전은 자원 생성(apply)이 출발 계정에 중계기를 만들고 복제 끝점을 그때 채운다",
+    message: "출발 DB 논리 복제 점검을 미룸: AWS 출발 중계기 이전(→온프레·→GCP)은 자원 생성(apply)이 출발 계정에 중계기를 만들고 복제 끝점을 그때 채운다",
     fix: "sync 첫 점검이 같은 규칙(rds.logical_replication·슬롯·권한·기본키)을 중계기 경로로 본다. 미리 보려면 출발 RDS 파라미터 그룹의 rds.logical_replication=1 을 확인" })];
   if (!env.REPL_SOURCE_URL) return o.required ? [PrecheckItem.parse({ id: "PC-REPL-CONN", level: "block",
     message: "FAIL 명세에 postgres 가 있는데 출발 DB 주소(REPL_SOURCE_URL)가 없어 논리 복제 준비를 못 봄 — 이대로면 sync 에서 멈춘다",

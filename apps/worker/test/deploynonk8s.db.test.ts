@@ -80,6 +80,7 @@ test("ECS 도착(aws)·Cloud Run 도착(gcp): GitOps 설정 없어도 gitops 안
     assert.deepEqual(await mig(id), { status: "syncing", failure_code: null }, dst);
     const d = await lastDetail(id);
     assert.equal(d.deploy.status, "synced_healthy");
+    assert.equal(d.evidence.securityParity, "not_measured", "보안 동등성은 잰 근거가 없어 true 라고 하지 않는다");
     assert.deepEqual(d.gitops, { skipped: "terraform_runtime", runtime: "managedContainer", checked: "outputs", attempts: 0 });
     const kind = dst === "aws" ? "EcsService" : "CloudRunService";
     assert.deepEqual(d.deploy.resources, ["shop-api", "shop-web", "shop-worker"].map((x) => `${kind}/${x}/stub-${x}`));

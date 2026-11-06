@@ -244,11 +244,15 @@ OBSERVE_PERMS="${OBSERVE_PERMS},run.services.get"
 OBSERVE_PERMS="${OBSERVE_PERMS},cloudsql.databases.list"
 # DRAFT(ai) GKE-READ: 가져오기(discover/k8s.ts)·연결 확인(can-i)이 GKE 안 앱을 kubectl 로 읽는다. GKE 는 IAM 권한으로도 쿠버네티스 읽기를 준다
 #   (RBAC 를 고객이 따로 안 만들어도 됨). 목록·조회만. container.secrets.* 는 넣지 않는다 (목록에 값이 실려 옴)
-OBSERVE_PERMS="${OBSERVE_PERMS},container.namespaces.list,container.deployments.list,container.deployments.get,container.statefulSets.list,container.daemonSets.list,container.replicaSets.list,container.pods.list,container.services.list,container.ingresses.list,container.horizontalPodAutoscalers.list,container.cronJobs.list,container.jobs.list,container.networkPolicies.list,container.serviceAccounts.list,container.configMaps.list,container.persistentVolumeClaims.list,container.podDisruptionBudgets.list,container.roles.list,container.roleBindings.list,container.clusterRoleBindings.list,container.thirdPartyObjects.list"
+#   NS-1: 가져오기가 앱 네임스페이스 객체를 이름으로 읽는다(kubectl get namespace <ns>) → namespaces.get. list 만으로는 거부돼 라벨이 안 옮겨지고 검토 칸이 생겼다
+OBSERVE_PERMS="${OBSERVE_PERMS},container.namespaces.list,container.namespaces.get,container.deployments.list,container.deployments.get,container.statefulSets.list,container.daemonSets.list,container.replicaSets.list,container.pods.list,container.services.list,container.ingresses.list,container.horizontalPodAutoscalers.list,container.cronJobs.list,container.jobs.list,container.networkPolicies.list,container.serviceAccounts.list,container.configMaps.list,container.persistentVolumeClaims.list,container.podDisruptionBudgets.list,container.roles.list,container.roleBindings.list,container.clusterRoleBindings.list,container.thirdPartyObjects.list"
 # DRAFT(ai): 가져오기 갈래 요청 — 공개 DNS 영역·레코드 읽기(입구 → IR, 트래픽 갈래), 버킷 설정 하나 읽기(storage.buckets.get, 객체 내용 아님). 읽기 전용이지만 범위가 넓어짐
 OBSERVE_PERMS="${OBSERVE_PERMS},dns.managedZones.list,dns.resourceRecordSets.list,storage.buckets.get"
 # E-1: 출발 나가는 IP(Cloud NAT) 읽기 (사설 DNS 영역 읽기는 위 dns 두 개)
 OBSERVE_PERMS="${OBSERVE_PERMS},compute.routers.list,compute.addresses.list"
+# 리허설 이미지 복사(worker rehearsal/image-mirror.ts): 출발 Artifact Registry(gcr.io 포함)에서 다이제스트로 받기만. 올리기·지우기 없음.
+#   요청 원본 = security AR_PULL_PERMISSIONS (시험이 대조). 이 줄이 없는 예전 연결은 스크립트를 다시 실행해야 리허설이 AR 이미지를 받는다
+OBSERVE_PERMS="${OBSERVE_PERMS},artifactregistry.repositories.downloadArtifacts"
 # FM-GCP-14 (실측 11/4): 연결 확인(verify)이 첫 단계 projects describe 에서 PERMISSION_MISSING:resourcemanager.projects.get 으로 막혔다.
 #   큰 관찰 역할은 예전 판으로 만든 뒤 권한 추가(iam roles update)가 거절되면 빠진 채로 남는다(연결은 계속함). 맥은 roles/browser 를 손으로 붙여 넘김(우회).
 #   → 확인이 부르는 권한만 담은 작은 역할을 따로 두고 svc-observe 에 붙인다. 목록 원본 = packages/adapters/src/verify/gcp.ts step("…") (시험이 대조)

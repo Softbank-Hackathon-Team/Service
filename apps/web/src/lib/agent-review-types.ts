@@ -20,6 +20,8 @@ export interface RemediateReview extends RunMeta {
   checked: string[];
   notDone: string[];
   gate: { ok: boolean; violations: string[] } | null;
+  // 이 실행이 받은 샌드박스. k3d·vcluster 만 진짜 클러스터 (memory = 가짜, none = 없음, null = 칸이 없는 예전 기록)
+  sandbox: "memory" | "k3d" | "vcluster" | "none" | null;
 }
 export interface SpecDraftReview extends RunMeta {
   version: number | null;

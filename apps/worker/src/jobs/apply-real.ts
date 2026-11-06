@@ -1,7 +1,8 @@
 import type { AppSpecV2, PlanDoc, Provider, TfOutputs } from "@svc/contracts";
 import { existsSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { createRealTerraformRunner, envFor, dbNetworkFromEnv, DbNetworkError, factEnvName, fillTfVars, flattenTfOutputsV2, gcpTerraformEnv, type GcpTerraformCred, type RealTerraformRunner } from "@svc/adapters";
+import { createRealTerraformRunner, envFor, dbNetworkFromEnv, DbNetworkError, factEnvName, fillTfVars, flattenTfOutputsV2, gcpTerraformEnv, withReplicationNetworkV2, type GcpTerraformCred, type RealTerraformRunner } from "@svc/adapters";
+import { loadReplNetwork, peerCidrsOf } from "../repl-network.js";
 import { tfCallV2 } from "./plan-v2.js";
 import { specV2ForPlan, terraformRuntimeOf } from "@svc/adapters";
 import { latestAcceptedSpecV2, loadLatestApproval, loadPlanById } from "@svc/core";
@@ -106,8 +107,18 @@ async function prepare(i: RealApplyInput, d: RealApplyDeps): Promise<Prepared | 
   const filled = fillTfVars(tf.vars, facts);
   if (filled.missing.length)
     return { ok: false, failureCode: "TF_FACTS_MISSING", detail: { ...base, missing: filled.missing.map(factEnvName) } };
+  // 중계기 이전(aws-gcp)의 도착 DB 복제 길 (relay-step 이 작업 폴더 repl-network.json 에 둠): 복제 전용 공개 주소 + 허용 주소(플랫폼 나가는 대역·
+  //   중계 공개 IP) + 앱 로그인은 SQL. 앱이 붙는 주소(link.host)는 사설 IP 그대로. 중계 IP 는 apply 때 생겨서 계획 지문 밖 (hub_principal·db_writer_json 과 같은 자리). 컷오버·롤백의 다시 apply 도 같은 파일을 읽는다
+  let vars = filled.vars;
+  const rn = i.provider === "gcp" ? loadReplNetwork(env, tenantSlug(i.tenantId), i.migrationId) : null;
+  if (rn) {
+    const peerCidrs = peerCidrsOf(rn);
+    try { vars = withReplicationNetworkV2({ vars }, { peerCidrs, appLoginSql: rn.appLoginSql }).vars; }
+    catch (e) { if (e instanceof DbNetworkError) return { ok: false, failureCode: e.code, detail: { ...base, error: e.message } }; throw e; }
+    base.replicationNetwork = { replPublic: true, peerCidrs, relayIp: rn.relayIp, appLoginSql: rn.appLoginSql };
+  }
 
-  return { env, base, target, imp, facts, noCluster, vars: { ...(filled.vars as Record<string, unknown>), ...(await hubPrincipalVar(i, env, d)) } };
+  return { env, base, target, imp, facts, noCluster, vars: { ...(vars as Record<string, unknown>), ...(await hubPrincipalVar(i, env, d)) } };
 }
 
 export async function realApply(i: RealApplyInput, d: RealApplyDeps = {}): Promise<RealApplyOutcome> {

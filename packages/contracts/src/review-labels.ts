@@ -35,6 +35,7 @@ export function reviewLabel(key: string): string {
   const link = /^links\.(.+)->(.+)$/.exec(base);
   if (link) return `연결 ${link[1]} → ${link[2]}${nth}`;
   if (base.startsWith("entry.")) return `입구 ${base.slice("entry.".length)}${nth}`;
+  if (base.startsWith("namespaces.")) return `네임스페이스 ${base.slice("namespaces.".length)}${nth}`;
   // PF-A10 DRAFT(ai): 처음 보는 고객 화면에 키 원문(점·해시)이 그대로 나가던 것들. 자세한 이유는 fieldMeta rationale 에 그대로 있다
   if (base.startsWith("unread.")) return `못 읽음: k8s ${base.slice("unread.".length)} — 출발에 있는지 확인${nth}`;
   const pair = /^secrets\.([^.]+)\.keys\.(.+)\.pairedWith$/.exec(base);

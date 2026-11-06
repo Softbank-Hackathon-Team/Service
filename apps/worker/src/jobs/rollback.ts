@@ -44,7 +44,7 @@ export async function handleRollback(raw: unknown) {
       //   컷오버 전이면 출발이 DB 주인이라 트래픽은 먼저 되돌리고, 복제 걷기는 못 한 채(감사 cleanup_incomplete) rolled_back.
       //   컷오버 뒤면 DB 주인이 도착일 수 있어 트래픽을 옮기지 않고 던진다 (TRF-19 와 같은 규칙). 단 지난 시도가 DB 를 이미 되돌렸으면(orch) 트래픽은 되돌린다
       let repl: Awaited<ReturnType<typeof replicationFor>>;
-      let replErr: Error | undefined;
+      let replErr: ReplConfigError | undefined;
       try { repl = await replicationFor(j.tenantId, j.migrationId); }   // FM-ORC-09: 명세에 postgres 없으면 null
       catch (e) { if (!(e instanceof ReplConfigError)) throw e; replErr = e; repl = null; }
       const replDbDone = replErr ? await dbRevertedEarlier(j) : false;
@@ -102,10 +102,10 @@ export async function handleRollback(raw: unknown) {
         const warning = replErr.message.slice(0, 500);
         await withTenant(j.tenantId, (tx) => writeAudit(tx, j.tenantId, { actor: "worker", action: "rollback.traffic_restored", target: j.migrationId,
           result: "ok", detail: { requestId: j.requestId, weights, replicationError: replErr.message.slice(0, 300) } }));   // orch RV-19 기록 (FM-INT-12)
-        return { to: "rolled_back", detail: { weights, traffic: traffic.detail, gitopsWeight, replication: { kind: "before_cutover", cleanup: "incomplete", warning } },
+        return { to: "rolled_back", detail: { weights, traffic: traffic.detail, gitopsWeight, replication: { kind: "before_cutover", cleanup: "incomplete", code: replErr.code, warning } },
                  evidence: traffic.evidence,
                  inTx: async (tx) => { await writeAudit(tx, j.tenantId, { actor: "worker", action: "rollback.cleanup_incomplete", target: j.migrationId, result: "error",
-                   detail: { requestId: j.requestId, kind: "before_cutover", warning, hint: "복제 주소(TF_WORK_DIR outputs·REPL_FACTS_FILES)를 고친 뒤 repl-cleanup 으로 출발 슬롯을 걷는다" } }); } };
+                   detail: { requestId: j.requestId, kind: "before_cutover", code: replErr.code, warning, hint: "복제 주소(끝점 줄·TF_WORK_DIR outputs·REPL_FACTS_FILES)를 고친 뒤 repl-cleanup 으로 출발 슬롯을 걷는다" } }); } };
       }
       if (!repl) {
         return { to: "rolled_back", detail: { weights, traffic: traffic.detail, stub: true, gitopsWeight },

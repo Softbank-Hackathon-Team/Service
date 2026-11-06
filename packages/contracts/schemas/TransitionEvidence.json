@@ -34,7 +34,15 @@
       ]
     },
     "securityParity": {
-      "type": "boolean"
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "string",
+          "const": "not_measured"
+        }
+      ]
     },
     "replicationLagBytes": {
       "type": "number"

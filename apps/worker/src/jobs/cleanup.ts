@@ -2,6 +2,7 @@ import { dropRuntimeLinkSecret, targetBundle } from "../app-link.js";
 import { commitReplicationCleanup } from "../gitops/index.js";
 import { MigrationJob, QUEUES } from "@svc/contracts";
 import { replicationFor } from "./_repl.js";
+import { ReplConfigError } from "@svc/replication";
 import { asBossDb, boss, withTenant, writeAudit } from "@svc/core";
 import { jobData, readMigration, RetryLater, runStep, stubWait, stubFailIfAsked } from "./_step.js";
 import { tempRoles } from "../platform.js";
@@ -89,8 +90,11 @@ export async function handleCleanup(raw: unknown) {
       return { to: "completed", detail: { removed, sourceApp: SOURCE_APP, leftovers: left, roles, gitopsReplication: gitopsRepl, relay: relayView(relay), ...(linkSecret.skipped ? {} : { linkSecret }) },
                evidence: { tempResources: left.length, ...(await evidenceAfterRelay(j, relay, roles.evidence)) } };
     }),
-    // 재발급 실패(Z61) → cleanup → paused(CRED_RENEW_FAILED). 그 밖의 예외는 지금처럼 pg-boss 재시도
-    onError: async (e) => pausedOnRenewFailure(e),
+    // 재발급 실패(Z61) → cleanup → paused(CRED_RENEW_FAILED). 복제 끝점을 못 만듦(REPL_ENDPOINT_MISSING 등) → 재시도로 안 바뀌니 바로 paused(그 코드).
+    //   그 밖의 예외는 지금처럼 pg-boss 재시도
+    onError: async (e) => e instanceof ReplConfigError
+      ? { to: "paused", failureCode: e.code, detail: { error: e.message.slice(0, 500) } }
+      : pausedOnRenewFailure(e),
   });
 }
 
