@@ -646,12 +646,12 @@ function FailedScreen({ migration, route, onChanged }: ScreenProps) {
     });
   const stop = reason && (
     <StopFold
-      key={analysis ? 'analysis' : 'plain'}
+      key={analysis?.kind ?? 'plain'}
       migration={migration}
       reason={reason}
       into="failed"
       hint={false}
-      defaultOpen={analysis !== null}
+      defaultOpen={analysis?.kind === 'analysis'}
       analysis={analysis}
     />
   );
