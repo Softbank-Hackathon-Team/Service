@@ -200,15 +200,17 @@ http.createServer(async (req, res) => {
     return send(res, 200, { ...base, available: true, total: n, ok: n, fail: 0, p50Ms: 6.2, p95Ms: 11.8, byState: [{ state: m.status, n, fail: 0, p95Ms: 11.8 }] });
   }
   // Z83: GET /migrations/:id/traffic-shift (Z75 z75-38 TrafficShiftProgress). shifting 동안 목표 50% 로 실측이 10%p 씩 다가가는 가짜 값
+  //   MOCK_TRAFFIC_STUB=1 이면 흉내 표시 칸(가짜 지표·등록 안 된 가짜 LB)을 켠다 — 화면의 "흉내 지표 · 가짜 LB" 알약 확인용
   if ((r = p.match(/^\/migrations\/([^/]+)\/traffic-shift$/)) && req.method === "GET") {
     const m = migrations.get(r[1]);
     if (!m) return err(res, 404, "NOT_FOUND", "migration " + r[1]);
+    const marks = process.env.MOCK_TRAFFIC_STUB === "1" ? { metricsSource: "stub", lbStub: true, lbRegistered: false } : { metricsSource: null, lbStub: null, lbRegistered: false };
     const seen = m.shiftStart !== undefined;
-    if (m.status !== "shifting" && !seen) return send(res, 200, { migrationId: m.id, available: false, targetWeightPct: null, observedWeightPct: null, reached: null, tolerancePct: 10, reobserve: 0, stepStartedAt: null, observedAt: null });
+    if (m.status !== "shifting" && !seen) return send(res, 200, { migrationId: m.id, available: false, targetWeightPct: null, observedWeightPct: null, reached: null, tolerancePct: 10, reobserve: 0, stepStartedAt: null, observedAt: null, ...marks });
     m.shiftStart ??= Date.now();
     const observed = Math.min(50, Math.round((Date.now() - m.shiftStart) / 400) * 10);
     return send(res, 200, { migrationId: m.id, available: true, targetWeightPct: 50, observedWeightPct: observed, reached: Math.abs(observed - 50) <= 10, tolerancePct: 10, reobserve: 0,
-      stepStartedAt: new Date(m.shiftStart).toISOString(), observedAt: new Date().toISOString() });
+      stepStartedAt: new Date(m.shiftStart).toISOString(), observedAt: new Date().toISOString(), ...marks });
   }
   if ((r = p.match(/^\/environments\/([^/]+)\/status$/)) && req.method === "GET") {
     const e = envs.find((x) => x.id === r[1]);

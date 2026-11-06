@@ -55,7 +55,20 @@ test("워커가 쓴 한 줄 → 목표·실측·도달 여부 (% 정수)", { ski
      VALUES ($1,$2,50,47,true,10,1,$3,$4)`, [M, T, st, at]));
   const b = (await get(T)).json();
   assert.deepEqual(b, { migrationId: M, available: true, targetWeightPct: 50, observedWeightPct: 47, reached: true,
-    tolerancePct: 10, reobserve: 1, stepStartedAt: st, observedAt: at });
+    tolerancePct: 10, reobserve: 1, stepStartedAt: st, observedAt: at, metricsSource: null, lbStub: null, lbRegistered: false });
+});
+
+test("흉내 표시: 대신 이름 LB 를 쥐면 가짜 LB, 워커가 남긴 shift 결과의 지표 출처를 그대로", { skip }, async () => {
+  // 워커 shift 처럼 LB 이름 = 이전 번호로 주인 자리를 잡는다 (worker platform.ts trafficFor 의 대신 이름)
+  assert.equal(await core.withTenant(T, (tx) => core.takeTrafficLease(tx, M, M)), "mine");
+  let b = (await get(T)).json();
+  assert.equal(b.lbStub, true); assert.equal(b.metricsSource, null); assert.equal(b.lbRegistered, false);
+  // 워커 shift 결과 detail (jobs/shift.ts): 가짜 지표·mock 전환기
+  await core.withTenant(T, (tx) => core.writeAudit(tx, T, { actor: "worker", action: "migration.advance", target: M, result: "ok",
+    detail: { from: "shifting", to: "cutover", metricsSource: "stub", trafficProvider: "mock", trafficLbFrom: "env" } }));
+  b = (await get(T)).json();
+  assert.equal(b.metricsSource, "stub"); assert.equal(b.lbStub, true);
+  assert.equal(TrafficShiftProgress.safeParse(b).success, true);
 });
 
 test("다른 회사 → 404, 다른 회사로는 그 줄을 못 쓴다 (RLS)", { skip }, async () => {

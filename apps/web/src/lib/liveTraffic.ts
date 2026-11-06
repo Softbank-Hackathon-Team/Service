@@ -36,4 +36,10 @@ export interface TrafficShiftProgress {
   reobserve: number;
   stepStartedAt: string | null;
   observedAt: string | null;
+  // 흉내 표시 (contracts results.ts). 옛 서버 응답에는 없다
+  //   metricsSource: 마지막 shift 결과의 판정 지표 출처 (stub = 가짜 지표, null = 아직 기록 없음)
+  //   lbStub: true = mock 전환기라 진짜 LB 가중치는 안 바뀜 (null = 모름) / lbRegistered: 이 이전에 등록된 LB 자리가 있나
+  metricsSource?: 'prometheus' | 'stub' | null;
+  lbStub?: boolean | null;
+  lbRegistered?: boolean;
 }

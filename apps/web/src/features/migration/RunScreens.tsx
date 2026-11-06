@@ -13,8 +13,8 @@ import { useNow } from '../../lib/useNow';
 import { usePoll } from '../../lib/usePoll';
 import { AgentFold, useAgentReview } from '../agent/AgentResult';
 import { failureAnalysisOf } from '../agent/model';
-import { LeftoverFold, StopFold, TrafficReportFold } from './EvidenceFolds';
-import { canRollback, formatClock, runTitle, shiftNote, trafficPercent } from './model';
+import { LeftoverFold, StopFold, TrafficReportFold, TrafficStubMarks } from './EvidenceFolds';
+import { canRollback, formatClock, runTitle, shiftNote, shiftStub, trafficPercent } from './model';
 import { isRehearsalCode, rehearsalHeroLine } from './rehearsal';
 import { RehearsalFolds, useRehearsal } from './RehearsalFold';
 import { SecurityFold } from './SecurityCard';
@@ -27,10 +27,11 @@ const routeEnds = (route: string) => {
   return { source, target };
 };
 
+// stub: 막대의 비율·판정이 가짜 지표·가짜 LB 에서 나왔으면 그 표시 (서버가 DB 에 남은 사실로 낸 값)
 function useTraffic({ id, status }: ScreenProps['migration']) {
   const active = status === 'shifting';
   const shift = usePoll(() => or404(api.trafficShift(id)), isTerminal(status) ? null : active ? 1000 : 5000, [id, active]);
-  return { percent: trafficPercent(status, shift.data ?? null), note: shiftNote(status, shift.data ?? null) };
+  return { percent: trafficPercent(status, shift.data ?? null), note: shiftNote(status, shift.data ?? null), stub: shiftStub(shift.data ?? null) };
 }
 
 /** 앱 앞 프록시가 직접 센 값. 없으면 없다고만 적는다. 컷오버 동안 붙잡았다 보낸 요청은 끊김 없이 넘겼다는 근거라 따로 적는다. */
@@ -141,6 +142,7 @@ export function RunningScreen({ migration, route, onChanged }: ScreenProps) {
     <Frame migration={migration} route={route}>
       <Hero tone="run" meta={LABEL[migration.status]} title={runTitle(migration.status)}>
         <TrafficBar source={source} target={target} targetPercent={traffic.percent} />
+        <TrafficStubMarks stub={traffic.stub} />
         {traffic.note && <p className="t-body-md c-secondary">{traffic.note}</p>}
         {rehearsalLine && <p className="t-body-md c-secondary">{rehearsalLine}</p>}
       </Hero>
@@ -165,6 +167,7 @@ function useCountdown(endsAt: string | null | undefined) {
 
 export function WindowScreen({ migration, route, onChanged }: ScreenProps) {
   const { source, target } = routeEnds(route);
+  const { stub } = useTraffic(migration);
   const left = useCountdown(migration.rollbackWindowEndsAt);
   const { busy, error, run } = useAction(onChanged);
   const [asking, setAsking] = useState(false);
@@ -179,6 +182,7 @@ export function WindowScreen({ migration, route, onChanged }: ScreenProps) {
       >
         {!over && <span className={`${s.clock} t-metric-2xl`}>{formatClock(left)}</span>}
         <TrafficBar source={source} target={target} targetPercent={100} />
+        <TrafficStubMarks stub={stub} />
       </Hero>
       <Stack area="side">
         <LiveFold migration={migration} />
@@ -212,7 +216,7 @@ export function WindowScreen({ migration, route, onChanged }: ScreenProps) {
 
 export function PausedScreen({ migration, route, onChanged }: ScreenProps) {
   const { source, target } = routeEnds(route);
-  const { percent } = useTraffic(migration);
+  const { percent, stub } = useTraffic(migration);
   const { busy, error, code, run } = useAction(onChanged);
   const consent = useCostConsent(code);
   const review = useAgentReview(migration.id);
@@ -232,6 +236,7 @@ export function PausedScreen({ migration, route, onChanged }: ScreenProps) {
       >
         <div className={s.heroPanel}>
           <TrafficBar source={source} target={target} targetPercent={percent} />
+          <TrafficStubMarks stub={stub} />
         </div>
       </Hero>
       <Stack area="side">
@@ -269,7 +274,7 @@ export function PausedScreen({ migration, route, onChanged }: ScreenProps) {
 
 export function RollingBackScreen({ migration, route }: ScreenProps) {
   const { source, target } = routeEnds(route);
-  const { percent } = useTraffic(migration);
+  const { percent, stub } = useTraffic(migration);
   const reason = stopReasonOf(migration.failureCode, migration.status);
   return (
     <Frame migration={migration} route={route}>
@@ -281,6 +286,7 @@ export function RollingBackScreen({ migration, route }: ScreenProps) {
       >
         <div className={s.heroPanel}>
           <TrafficBar source={source} target={target} targetPercent={percent} />
+          <TrafficStubMarks stub={stub} />
         </div>
       </Hero>
       <Stack area="side">
