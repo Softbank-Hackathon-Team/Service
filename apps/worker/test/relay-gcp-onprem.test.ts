@@ -329,6 +329,10 @@ test("플랫폼 나가는 IP: 비어 있으면 알아내 /32 로, 운영자 값�
 test("연결 스크립트: 두 프로젝트 모두 svc-operate 에 중계기 역할, 역할 파일에 gcp-relay.ts 가 부르는 권한이 있다", () => {
   const sh = readFileSync(new URL("../../../infra/onboarding/gcp-connect.sh", import.meta.url), "utf8");
   assert.equal(sh.match(/ensure_project_binding "\$\{OPERATE_SA\}" "projects\/\$\{P\}\/roles\/platform_relay"/g)?.length, 2);
+  // 거부: 새 전용 프로젝트면 svc-operate 가 아직 없다 → 두 바인딩 모두 SA 를 만든 뒤에 (실측: "Service account svc-operate@… does not exist")
+  const made = sh.indexOf("ensure_sa svc-operate");
+  const binds = [...sh.matchAll(/ensure_project_binding "\$\{OPERATE_SA\}" "projects\/\$\{P\}\/roles\/platform_relay"/g)].map((m) => m.index!);
+  assert.ok(made > 0 && binds.every((i) => i > made), "platform_relay 바인딩은 ensure_sa svc-operate 뒤");
   const perms = readFileSync(new URL("../../../infra/permissions/gcp-relay-custom-role.yaml", import.meta.url), "utf8").split("\n").filter((l) => l.startsWith("- ")).map((l) => l.slice(2));
   for (const p of ["compute.instances.create", "compute.instances.delete", "compute.firewalls.create", "compute.firewalls.delete", "compute.subnetworks.use",
     "compute.subnetworks.useExternalIp", "compute.networks.updatePolicy", "compute.globalAddresses.list", "cloudsql.users.create", "cloudsql.users.delete", "cloudsql.instances.get",

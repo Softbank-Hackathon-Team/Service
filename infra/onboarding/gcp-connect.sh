@@ -394,10 +394,11 @@ if [ "${RELAY_SOURCE_ROLE:-1}" != "0" ]; then
   ensure_api compute.googleapis.com
   ensure_api sqladmin.googleapis.com
   ensure_role platform_relay --file="${ROLE_DIR}/gcp-relay-custom-role.yaml"
-  ensure_project_binding "${OPERATE_SA}" "projects/${P}/roles/platform_relay"
+  # 바인딩은 아래 전용 프로젝트에서 svc-operate 를 만든 뒤에 붙인다 (새 전용 프로젝트면 아직 SA 가 없어 "does not exist" 로 멈췄다, 2026-11-07 실측)
 else
   drop_all_bindings "${OPERATE_SA}" "projects/${P}/roles/platform_relay"
 fi
+SOURCE_P="${P}"
 
 # ── 전용 프로젝트: 도착 자원·실행 역할 ──
 P="${TARGET_PROJECT_ID}"
@@ -448,6 +449,12 @@ for role in roles/logging.logWriter roles/monitoring.metricWriter roles/artifact
 # 온프레 출발 → GCP 도착 DB 복제 중계기 (worker relay/gcp-relay.ts): 도착 Cloud SQL 의 VPC 에 GCE VM·방화벽. 실행 역할(platform_operate)엔 VM·방화벽 권한이 없어 따로
 ensure_role platform_relay --file="${ROLE_DIR}/gcp-relay-custom-role.yaml"
 ensure_project_binding "${OPERATE_SA}" "projects/${P}/roles/platform_relay"
+# 원래 프로젝트의 중계기 역할 바인딩 (위에서 역할만 만들어 두었다. svc-operate 가 이제 있다)
+if [ "${RELAY_SOURCE_ROLE:-1}" != "0" ]; then
+  P="${SOURCE_P}"
+  ensure_project_binding "${OPERATE_SA}" "projects/${P}/roles/platform_relay"
+  P="${TARGET_PROJECT_ID}"
+fi
 ensure_token_creator "${PLAN_SA}"
 ensure_token_creator "${OPERATE_SA}"
 ensure_token_creator "${ENV_SA}"
