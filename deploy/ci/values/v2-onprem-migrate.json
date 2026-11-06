@@ -13,6 +13,10 @@
       "certificates": { "serverCASecret": "shop-db-server-ca", "serverTLSSecret": "shop-db-server-tls" }
     }
   ],
+  "dataServices": [
+    { "id": "sess", "kind": "valkey", "name": "shop-sess", "image": "docker.io/valkey/valkey:7.2-alpine@sha256:f8c1a646f4b31ae4dc3980ff06723a20b533ea1123b9796d450d78ed53ad6d3e", "port": 6379, "maxmemoryMi": 1024,
+      "resources": { "requests": { "cpu": "100m", "memory": "1280Mi" }, "limits": { "memory": "1280Mi" } } }
+  ],
   "dbTunnel": {
     "relay": { "host": "203.0.113.7", "port": 22, "knownHosts": "203.0.113.7 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeHostKeyForRenderOnly" },
     "keySecret": "db-tunnel-key",

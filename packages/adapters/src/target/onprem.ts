@@ -7,7 +7,9 @@ import { onpremAdapter, PERMS as V1_PERMS } from "../onprem/index.js";
 import { asV1Name, assertRenderable, compact, k8sResources, instancesOf, K8S_RENDER_CAPS, kindJson, postgresOf, refV2, secretNamesOf, workloadsOf } from "./shared.js";
 import { secretStoreName } from "./capability-checks.js";
 import { buildWorkloadValues } from "./cloud.js";
+import { cachesOf } from "./data.js";
 import { dbIdentityFor } from "./data-fit.js";
+import { onpremSubstitutes, valkeyLine, VALKEY_IMAGES } from "./onprem-substitutes.js";
 
 // DRAFT(ai): 온프레(k3s) 도착 Builder v2 (설계 27번 A1·A2b). 클라우드 IAM 없음, DB = 차트 CNPG (Terraform 아님).
 //   루트 = infra/modules/onprem/root, 종류 = kinds/{namespace,netpol}. netpol 은 posture allow-all 이면 안 만듦(= mirror)
@@ -17,15 +19,17 @@ const PERMS: PermTable = {
   ...V1_PERMS,
   "batch/cronjobs": { read: ["batch/cronjobs:get"], write: ["batch/cronjobs:create", "batch/cronjobs:patch"], remove: ["batch/cronjobs:delete"] },
 };
-// TODO(human): 온프레(k3s)의 데이터 자원 대체물 선택 — cache(클러스터 안 Redis? Valkey?)·objectStore(MinIO?)·queue(NATS? RabbitMQ?)는 아직 안 정함.
-//   정하기 전까지 capability 를 안 줘서 v2Blockers 가 "도착 렌더 미지원: kind.cache.redis" 등으로 막는다 (조용히 빼먹지 않음). kinds/ 에도 해당 모듈 없음
+// DRAFT(ai): 온프레 어댑터 설계 H-1: redis·valkey 캐시 = 차트 Valkey (Terraform 아님, onprem-substitutes.ts). 클러스터 모드는 단일 서버로 그리고 승인 항목에 적는다.
+//   kind.cache.auth 는 안 준다: 값을 넣을 비밀 저장소 길이 정해지기 전까지 AUTH 출발은 v2Blockers 가 사람에게 묻는다.
+// TODO(human): objectStore·queue 대체물을 실제로 그릴지 (설계 H-2·H-3). 정하기 전까지 capability 를 안 줘서
+//   v2Blockers 가 "도착 렌더 미지원: kind.objectStore" 등으로 막는다 (조용히 빼먹지 않음). memcached 도 같다
 // A8 STUB: 온프레엔 클라우드 IAM 이 없다 → 권한은 안 그리고(k8s ServiceAccount 만) precheck warn 으로 검토 표시
-const CAPS = [...K8S_RENDER_CAPS, "volume.pvc", "kind.postgres.15", "kind.postgres.16", "kind.postgres.17", "db.cnpg", "render.grants", "posture.permissions"];
+const CAPS = [...K8S_RENDER_CAPS, "volume.pvc", "kind.postgres.15", "kind.postgres.16", "kind.postgres.17", "kind.cache.redis", "kind.cache.valkey", "kind.cache.cluster", "db.cnpg", "render.grants", "posture.permissions"];
 
 export function resourceTypesV2(spec: AppSpecV2): string[] {
   const r = new Set(["core/namespaces", "core/resourcequotas", "networking.k8s.io/networkpolicies", "core/serviceaccounts"]);
   const ws = workloadsOf(spec);
-  if (ws.some((w) => w.kind === "service")) ["apps/deployments", "core/services"].forEach((x) => r.add(x));
+  if (ws.some((w) => w.kind === "service") || cachesOf(spec).length) ["apps/deployments", "core/services"].forEach((x) => r.add(x));
   if (ws.some((w) => w.kind === "job")) r.add("batch/cronjobs");
   if (ws.some((w) => secretNamesOf(w).length)) r.add("external-secrets.io/externalsecrets");
   if (postgresOf(spec).length) r.add("postgresql.cnpg.io/clusters");
@@ -38,7 +42,19 @@ export const cnpgName = (spec: AppSpecV2, id: string) => {
   const base = `${spec.app.name}-${id}`;
   return base.length <= 50 ? base : `${base.slice(0, 43).replace(/-+$/, "")}-${hash6(spec.app.name, id)}`;
 };
-const cnpgLink = (spec: AppSpecV2) => (c: ComponentV2, output: string): string | undefined => {
+// Valkey 이름 규칙은 CNPG 와 같다. CNPG 가 만드는 Service(<cluster>-rw·-ro·-r)와 겹치면 해시를 붙인다 (예: postgres db + 캐시 db-rw)
+// 포트 = 출발 포트 그대로 (Valkey 는 고를 수 있음). 서버가 평문이라 언제나 redis://
+const valkeyName = (spec: AppSpecV2, id: string) => {
+  const name = cnpgName(spec, id);
+  const taken = postgresOf(spec).some((p) => ["rw", "ro", "r"].some((s) => `${cnpgName(spec, p.id)}-${s}` === name));
+  return taken ? `${name}-${hash6(spec.app.name, id)}` : name;
+};
+const cachePort = (c: Extract<ComponentV2, { kind: "cache" }>) => c.props.port ?? 6379;
+const dataLink = (spec: AppSpecV2) => (c: ComponentV2, output: string): string | undefined => {
+  if (c.kind === "cache") {
+    const host = valkeyName(spec, c.id), port = cachePort(c);
+    return ({ host, port: String(port), url: `redis://${host}:${port}` } as Record<string, string>)[output];
+  }
   if (c.kind !== "postgres") return undefined;
   const host = `${cnpgName(spec, c.id)}-rw`;
   // DBN-1·E10-2: initdb 소유자·DB = IR 앱 계정·DB 이름 (클라우드 도착과 같은 규칙 dbIdentityFor). 못 읽으면 app·<앱>_ + 사전 점검 경고
@@ -53,6 +69,9 @@ const cnpgLink = (spec: AppSpecV2) => (c: ComponentV2, output: string): string |
 //   출발 DB 크기를 가져오면(예: 2000m) initdb 파드가 "exceeded quota" 로 못 떴다 (2026-11-04 VM 실측)
 const CNPG_DEFAULT_CPU_MILLI = 500, CNPG_DEFAULT_MEM_MIB = 1024;   // gitops/charts/app/templates/cnpg.yaml 기본값과 같게
 const cnpgInstances = (c: ReturnType<typeof postgresOf>[number]) => 1 + (c.props.ha ? 1 : 0) + (c.props.readReplicas ?? 0);
+// DRAFT(ai): Valkey 파드 크기. maxmemory = 출발 메모리, 파드 한도는 25% 여유 (넘치면 OOM). 출발 메모리를 못 읽으면 256Mi 에 maxmemory 없음
+const VALKEY_CPU_MILLI = 100;
+const valkeyMemMi = (c: ReturnType<typeof cachesOf>[number]) => (c.props.memoryMiB === null ? 256 : Math.ceil(c.props.memoryMiB * 1.25));
 function quota(spec: AppSpecV2): { cpu: number | null; mem: number | null } {
   let cpu: number | null = 0, mem: number | null = 0;
   for (const w of workloadsOf(spec)) {
@@ -66,6 +85,10 @@ function quota(spec: AppSpecV2): { cpu: number | null; mem: number | null } {
     const n = cnpgInstances(c) * 2;
     dbCpu += (c.props.compute?.cpuMilli ?? CNPG_DEFAULT_CPU_MILLI) * n;
     dbMem += (c.props.compute?.memMiB ?? CNPG_DEFAULT_MEM_MIB) * n;
+  }
+  for (const c of cachesOf(spec)) {
+    dbCpu += VALKEY_CPU_MILLI * 2;
+    dbMem += valkeyMemMi(c) * 2;
   }
   return { cpu: cpu === null ? null : cpu + dbCpu, mem: mem === null ? null : mem + dbMem };
 }
@@ -89,6 +112,7 @@ export const onpremTarget: TargetBuilder = {
   capabilities: () => [...CAPS].sort(),
   imageRef: (src, t) => onpremAdapter.imageRef(src, t),
   operateActionsV2: (spec, purpose) => actionsFor(PERMS, resourceTypesV2(spec), purpose),
+  substitutionsV2: onpremSubstitutes,
   toTerraformV2(spec: AppSpecV2, t: Target): TfRootCall {
     assertRenderable(spec, CAPS);
     const ns = appNamespace(asV1Name(spec));
@@ -173,8 +197,14 @@ function workloadValues(spec0: AppSpecV2, out: TfOutputs, t: Target) {
         //   이전마다 다른 값이라 워커가 배포 값에 더한다 (계약 ChartPgReplication·ChartDbTunnel·ChartSealedSecret)
         replication: { enabled: true, role: "svc_migrate", passwordSecret: `${cnpgName(spec, c.id)}-migrate` },
       })),
-      link: cnpgLink(spec),
+      link: dataLink(spec),
     });
+    const caches = cachesOf(spec);
+    const dataServices = caches.map((c) => compact({
+      id: c.id, kind: "valkey" as const, name: valkeyName(spec, c.id), image: VALKEY_IMAGES[valkeyLine(c)], port: cachePort(c),
+      maxmemoryMi: c.props.memoryMiB ?? undefined,
+      resources: { requests: { cpu: `${VALKEY_CPU_MILLI}m`, memory: `${valkeyMemMi(c)}Mi` }, limits: { memory: `${valkeyMemMi(c)}Mi` } },
+    }));
     // CNPG 가 만드는 비밀은 저장소에서 가져오지 않는다 (ExternalSecret 이 같은 이름을 덮어쓰면 CNPG 와 다툰다)
     const vv = v as typeof v & { externalSecrets?: { secrets: Array<{ name: string }> }; warnings?: string[]; ingress?: { mode: string } };
     const es = vv.externalSecrets;
@@ -184,7 +214,7 @@ function workloadValues(spec0: AppSpecV2, out: TfOutputs, t: Target) {
     const ingress = vv.ingress?.mode === "cloudflared" && t.migrationId
       ? { ...vv.ingress, metrics: { migration: t.migrationId, env: "target" as const } } : vv.ingress;
     return { ...vv, ...(es ? { externalSecrets: { ...es, secrets: es.secrets.filter((x) => !cnpgSecrets.includes(x.name)) } } : {}),
-      ...(ingress ? { ingress } : {}),
+      ...(ingress ? { ingress } : {}), ...(dataServices.length ? { dataServices } : {}),
       warnings: [...new Set([...(vv.warnings ?? []), ...notes])].sort() };
 }
 

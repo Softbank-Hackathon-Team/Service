@@ -14,7 +14,7 @@ interface Loss<K extends DataKind> { what: string; when?: (c: Of<K>) => boolean 
 // appChange = 앱 코드를 고쳐야 하는 까닭 (없으면 코드 그대로 붙음)
 interface Move<K extends DataKind> { lost: Loss<K>[]; appChange?: string }
 
-const PRODUCT: { [C in Cloud]: { [K in DataKind]: (c: Of<K>) => string } } = {
+export const CLOUD_PRODUCT: { [C in Cloud]: { [K in DataKind]: (c: Of<K>) => string } } = {
   aws: {
     postgres: () => "RDS for PostgreSQL",
     cache: (c) => `ElastiCache (${c.props.engine})`,
@@ -79,7 +79,7 @@ const MOVES: { [K in DataKind]: Record<Direction, Move<K>> } = {
 
 function moveOf<K extends DataKind>(kind: K, c: Of<K>, source: Cloud, target: Cloud): Omit<ApprovalRowV2, "kind" | "subject"> {
   const move = MOVES[kind][`${source}>${target}` as Direction];
-  return { from: PRODUCT[source][kind](c), to: PRODUCT[target][kind](c),
+  return { from: CLOUD_PRODUCT[source][kind](c), to: CLOUD_PRODUCT[target][kind](c),
     lost: move.lost.filter((l) => !l.when || l.when(c)).map((l) => l.what),
     appChange: move.appChange !== undefined, ...(move.appChange ? { detail: move.appChange } : {}) };
 }

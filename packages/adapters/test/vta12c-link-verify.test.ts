@@ -43,11 +43,12 @@ for (const kind of Object.keys(TARGETS)) for (const intent of INTENTS) {
   });
 }
 
-test("거부: 온프레 도착은 데이터 자원(캐시·버킷·큐)을 모르므로 막음 — 몰래 그리지 않음", () => {
+test("거부: 온프레 도착은 버킷·큐를 아직 안 그리므로 막음 — 몰래 그리지 않음. 캐시는 Valkey 로 그림", () => {
   for (const kind of Object.keys(TARGETS)) {
     const intent = ALLOWED[kind]![0]!;
     const b = v2Blockers(AppSpecV2.parse(build(kind, intent)), targetBuilderFor("onprem").capabilities());
-    assert.ok(b.unsupported.length > 0, `${kind}: 온프레가 막지 않음`);
+    if (kind === "cache") assert.deepEqual(b.unsupported, [], "캐시는 막지 않음");
+    else assert.ok(b.unsupported.length > 0, `${kind}: 온프레가 막지 않음`);
   }
 });
 
