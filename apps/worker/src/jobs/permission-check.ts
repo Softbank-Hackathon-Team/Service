@@ -1,10 +1,11 @@
-import { PermissionCheckJob, StoredPermissionCheck, type PermissionBundle, type PermissionGap, type Provider } from "@svc/contracts";
+import { PermissionCheckJob, type PermissionBundle, type Provider, type StoredPermissionCheck } from "@svc/contracts";
 import { withTenant, scrubString } from "@svc/core";
 import { envFor } from "@svc/adapters";
 import { StsCliError, TempRoleDenied, type TempRoleBroker } from "@svc/security";
 import { realStsEnabled, tempRoles } from "../platform.js";
-import { checkEnvBundles, platformSaOf, type GateDeps } from "../permission-gate.js";
+import { checkEnvBundles, checksEach, platformSaOf, type EnvSideCheck, type GateDeps } from "../permission-gate.js";
 import { permissionBundles } from "../permission-hints.js";
+import { checkedEntries, savePermissionCheck, storedResult } from "../permission-cache.js";
 
 // PERM-GATE: 환경 화면의 [다시 확인] (api POST /environments/:id/permission-check 가 냄). 상태를 안 옮긴다.
 //   ① 환경 다시 읽기 ② 트랜잭션 밖에서 관찰 역할 빌려 묶음 확인(읽기만) + 회수 ③ environment_permissions 에 저장
@@ -30,10 +31,8 @@ export async function handlePermissionCheck(raw: unknown, deps: PermissionCheckD
     `SELECT provider, connection_status, account_id, gcp_target_project, region, aws_role_suffix FROM environments WHERE id=$1`, [job.envId])).rows[0]);
   if (!env || (env.provider !== "aws" && env.provider !== "gcp")) return "skipped";
   const result = await checkFor(job, env, deps);
-  await withTenant(job.tenantId, (tx) => tx.query(
-    `INSERT INTO environment_permissions (environment_id, tenant_id, result, checked_at) VALUES ($1, $2, $3, now())
-     ON CONFLICT (environment_id) DO UPDATE SET result = EXCLUDED.result, checked_at = EXCLUDED.checked_at`,
-    [job.envId, job.tenantId, JSON.stringify(StoredPermissionCheck.parse(result))]));
+  // 사전 점검이 같은 줄을 되쓴다 (permission-cache.ts). 여기는 환경 묶음 전부라 통째로 덮는다
+  await savePermissionCheck(job.tenantId, job.envId, result);
   return "saved";
 }
 
@@ -68,10 +67,11 @@ async function checkFor(job: PermissionCheckJob, env: EnvRow, deps: PermissionCh
     if (!side) throw new Error(`${env.provider} 발급기가 맞지 않는 자격을 돌려줬다`);
     // 허브 묶음의 주체 = 이 회사 플랫폼 SA (사전 점검과 같은 값). 없으면 허브 묶음만 "확인 못 함" (리뷰 11/06: 예전엔 안 넘겨 늘 확인 못 함)
     const platformSa = hub ? await platformSaOf(job.tenantId, penv).catch(() => null) : null;
-    const gaps = await checkEnvBundles({ envId: job.envId, provider: env.provider, accountId: env.account_id, targetProject: env.gcp_target_project,
-      region: env.region, awsRoleSuffix: env.aws_role_suffix ?? null, platformSa, ...side }, bundles, file.version, deps);
-    // 빠진 묶음이 없으면 고객 쪽 실제 상태 = 지금 판 (역할 설명·태그가 옛 판이어도 권한은 다 있음)
-    return { requiredVersion: file.version, grantedVersion: gaps.length ? minVersion(gaps) : file.version, gaps };
+    const s: EnvSideCheck = { envId: job.envId, provider: env.provider, accountId: env.account_id, targetProject: env.gcp_target_project,
+      region: env.region, awsRoleSuffix: env.aws_role_suffix ?? null, platformSa, ...side };
+    const gaps = await checkEnvBundles(s, bundles, file.version, deps);
+    // 빠진 묶음이 없으면 고객 쪽 실제 상태 = 지금 판. checked = 묶음마다 따로 견줬을 때만 (사전 점검 재사용 기록)
+    return storedResult(file.version, gaps, checksEach(s) ? checkedEntries(bundles) : undefined);
   } catch (e) {
     if (e instanceof TempRoleDenied) return empty(`확인 불가: 관찰 역할을 못 빌림 (${e.code})`, file.version);
     if (e instanceof StsCliError && e.awsCode) return empty(`확인 불가: 관찰 역할을 못 빌림 (${e.awsCode})`, file.version);
@@ -81,9 +81,3 @@ async function checkFor(job: PermissionCheckJob, env: EnvRow, deps: PermissionCh
       (e) => console.error("permission check revoke", scrubString((e as Error).message)));
   }
 }
-
-/** 고객 쪽에 붙은 판 = 읽은 판 중 가장 낮은 것 (읽은 게 없으면 모름) */
-const minVersion = (gaps: PermissionGap[]) => {
-  const v = gaps.map((g) => g.grantedVersion).filter((x): x is number => x !== null);
-  return v.length ? Math.min(...v) : null;
-};

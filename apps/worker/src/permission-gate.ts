@@ -1,10 +1,11 @@
 import { PrecheckItem, type PermissionBundle, type PermissionGap, type Provider } from "@svc/contracts";
-import { latestAcceptedSpecV2, withTenant } from "@svc/core";
+import { latestAcceptedSpecV2, scrubString, withTenant } from "@svc/core";
 import { checkAwsPermissions, checkGcpPermissions, envFor, mockPrecheckEnabled, requiredBundles, specV2ForPlan,
   type BundleNeeds, type GcpCheckDeps } from "@svc/adapters";
 import { awsPolicies, gapHint, permissionBundles, permissionDetail, permissionGateMode } from "./permission-hints.js";
 import { relayKindOf } from "./relay/relay-step.js";
 import { chooseEnvLayerSource, dbEnvLayerStore } from "./env-layer.js";
+import { cachedGaps, mergePermissionCheck, permissionCacheSec } from "./permission-cache.js";
 
 // PERM-GATE: 고객 권한을 단계 전에 본다. 두 군데서 쓴다
 //   ① 사전 점검(precheck.ts): 이 이전이 쓰는 묶음만(명세·계획·경로에서 계산) → 빠졌으면 block 항목(PC-PERM-<묶음>) + detail.permissionGaps
@@ -22,6 +23,13 @@ export interface EnvSideCheck {
 }
 export interface GateDeps { gcp?: GcpCheckDeps; aws?: { exec?: GcpCheckDeps["exec"] }; env?: NodeJS.ProcessEnv }
 
+/** 묶음마다 따로 견주나 (빌린 관찰 자격·환경 계정이 다 있음). 아니면 checkEnvBundles 가 "확인 못 함" 한 줄로 접는다 → 재사용 기록에 안 넣고, 재사용도 안 한다 */
+export function checksEach(s: EnvSideCheck): boolean {
+  if (s.provider === "gcp") return !!s.gcpToken && !!s.accountId;
+  if (s.provider === "aws") return !!s.awsEnv && !!s.accountId && /^\d{12}$/.test(s.accountId);
+  return false;
+}
+
 /** 묶음들을 그 환경의 실제 상태와 견준다. 빌린 관찰 자격이 없으면(흉내 발급기) 클라우드를 부르지 않고 "확인 못 함" 한 줄 */
 export async function checkEnvBundles(s: EnvSideCheck, bundles: (PermissionBundle & { onSide?: "source" | "target" })[], version: number, d: GateDeps = {}): Promise<PermissionGap[]> {
   const env = d.env ?? process.env;
@@ -29,15 +37,15 @@ export async function checkEnvBundles(s: EnvSideCheck, bundles: (PermissionBundl
   if (!mine.length) return [];
   const base = { envId: s.envId, version };
   if (s.provider === "gcp") {
-    if (!s.gcpToken || !s.accountId) return [unverifiedAll(mine, base, !s.accountId ? "환경에 GCP 프로젝트가 없음" : "빌린 관찰 자격이 없어(흉내 발급기) 고객 권한을 확인 못 함")];
-    return checkGcpPermissions({ ...d.gcp, env: d.gcp?.env ?? env }, { ...base, token: s.gcpToken, sourceProject: s.accountId, targetProject: s.targetProject,
+    if (!checksEach(s)) return [unverifiedAll(mine, base, !s.accountId ? "환경에 GCP 프로젝트가 없음" : "빌린 관찰 자격이 없어(흉내 발급기) 고객 권한을 확인 못 함")];
+    return checkGcpPermissions({ ...d.gcp, env: d.gcp?.env ?? env }, { ...base, token: s.gcpToken!, sourceProject: s.accountId!, targetProject: s.targetProject,
       platformSa: s.platformSa ?? null, bundles: mine });
   }
   if (s.provider === "aws") {
-    if (!s.awsEnv || !s.accountId || !/^\d{12}$/.test(s.accountId))
+    if (!checksEach(s))
       return [unverifiedAll(mine, base, !s.awsEnv ? "빌린 관찰 자격이 없어(흉내 발급기) 고객 권한을 확인 못 함" : "환경 계정 번호가 없음")];
-    return checkAwsPermissions({ ...(d.aws?.exec ? { exec: d.aws.exec } : {}), env: s.awsEnv },
-      { ...base, accountId: s.accountId, region: s.region || "ap-northeast-2", bundles: mine, policies: awsPolicies(env), roleSuffix: s.awsRoleSuffix ?? null });
+    return checkAwsPermissions({ ...(d.aws?.exec ? { exec: d.aws.exec } : {}), env: s.awsEnv! },
+      { ...base, accountId: s.accountId!, region: s.region || "ap-northeast-2", bundles: mine, policies: awsPolicies(env), roleSuffix: s.awsRoleSuffix ?? null });
   }
   return [];
 }
@@ -53,6 +61,12 @@ function unverifiedAll(bs: PermissionBundle[], base: { envId: string; version: n
 interface MigrationSides { id: string; sourceEnvId: string; targetEnvId: string }
 interface EnvRow { id: string; provider: Provider; account_id: string | null; gcp_target_project: string | null; region: string | null; aws_role_suffix?: string | null }
 export interface PrecheckRoles { gcpToken?: Partial<Record<"source" | "target", string>>; awsEnv?: Partial<Record<"source" | "target", Record<string, string>>> }
+/** 쪽마다 묶음 결과를 어디서 얻었나 (#373 B2, precheck detail.permissionSource). cache = environment_permissions 재사용, live = 지금 관찰 역할로 읽음 */
+export interface PermissionSource {
+  side: "source" | "target"; source: "cache" | "live"; ageSec: number;
+  // 실조회 뒤 되쓰기: merged = 같은 판의 환경 줄에 병합, skipped_no_row = 그런 줄이 없어 안 씀(새 줄은 [다시 확인]만), failed = DB 쓰기 실패. 재사용 끔·접힌 결과면 없음
+  writeBack?: "merged" | "skipped_no_row" | "failed";
+}
 
 /** 이 이전이 쓰는 묶음의 필요 조건 (명세 + 환경 층 + 중계기 + 허브) */
 export async function bundleNeedsFor(tenantId: string, m: MigrationSides, envs: { source: EnvRow; target: EnvRow }, env: NodeJS.ProcessEnv): Promise<BundleNeeds> {
@@ -81,29 +95,44 @@ export async function platformSaOf(tenantId: string, env: NodeJS.ProcessEnv): Pr
 /** 사전 점검 칸: 이 이전이 쓰는 묶음 중 빠진 것. block 이면 명세 검토로 되돌아간다 (precheck 의 기존 규칙).
  *  흉내 사전 점검(MOCK_PRECHECK=1)·PERMISSION_GATE=off 는 아무것도 안 낸다 (시험·비상) */
 export async function permissionPrecheck(tenantId: string, m: MigrationSides, roles: PrecheckRoles | undefined, d: GateDeps = {}):
-  Promise<{ items: PrecheckItem[]; detail: ReturnType<typeof permissionDetail> }> {
+  Promise<{ items: PrecheckItem[]; detail: ReturnType<typeof permissionDetail>; sources: PermissionSource[] }> {
   const env = d.env ?? process.env;
   const mode = permissionGateMode(env);
-  if (mode === "off" || (mockPrecheckEnabled(env) && !d.gcp && !d.aws)) return { items: [], detail: null };
+  if (mode === "off" || (mockPrecheckEnabled(env) && !d.gcp && !d.aws)) return { items: [], detail: null, sources: [] };
   const file = permissionBundles(env);
   if (!file) return { items: [PrecheckItem.parse({ id: "PC-PERM", level: "warn",
     message: "고객 권한 묶음 파일(infra/permissions/permission-bundles.json)이 없어 단계 전 권한 확인을 못 함",
-    fix: "npx tsx packages/adapters/scripts/export-permissions.ts infra/permissions infra/onboarding 로 다시 내고 worker 이미지에 넣는다" })], detail: null };
+    fix: "npx tsx packages/adapters/scripts/export-permissions.ts infra/permissions infra/onboarding 로 다시 내고 worker 이미지에 넣는다" })], detail: null, sources: [] };
   const rows = await withTenant(tenantId, async (tx) => (await tx.query<EnvRow>(
     `SELECT id, provider, account_id, gcp_target_project, region, aws_role_suffix FROM environments WHERE id = ANY($1::uuid[])`, [[m.sourceEnvId, m.targetEnvId]])).rows);
   const source = rows.find((r) => r.id === m.sourceEnvId), target = rows.find((r) => r.id === m.targetEnvId);
-  if (!source || !target) return { items: [], detail: null };
+  if (!source || !target) return { items: [], detail: null, sources: [] };
   const need = await bundleNeedsFor(tenantId, m, { source, target }, env);
   const req = requiredBundles(file.bundles, need);
   const platformSa = need.argoHub ? await platformSaOf(tenantId, env).catch(() => null) : null;
   const gaps: PermissionGap[] = [];
+  const sources: PermissionSource[] = [];
+  const cacheOn = permissionCacheSec(env) > 0;
   for (const side of ["source", "target"] as const) {
     const r = side === "source" ? source : target;
     const bs = req.filter((b) => b.onSide === side);
     if (!bs.length) continue;
     const awsEnv = roles?.awsEnv?.[side];
-    gaps.push(...await checkEnvBundles({ envId: r.id, provider: r.provider, accountId: r.account_id, targetProject: r.gcp_target_project, region: r.region,
-      awsRoleSuffix: r.aws_role_suffix ?? null, platformSa, ...(roles?.gcpToken?.[side] ? { gcpToken: roles.gcpToken[side] } : {}), ...(awsEnv ? { awsEnv: envFor(awsEnv, env) } : {}) }, bs, file.version, d));
+    const s: EnvSideCheck = { envId: r.id, provider: r.provider, accountId: r.account_id, targetProject: r.gcp_target_project, region: r.region,
+      awsRoleSuffix: r.aws_role_suffix ?? null, platformSa, ...(roles?.gcpToken?.[side] ? { gcpToken: roles.gcpToken[side] } : {}), ...(awsEnv ? { awsEnv: envFor(awsEnv, env) } : {}) };
+    // #373 B2: 묶음마다 따로 견줄 수 있는 쪽만 저장 결과를 본다 (접힌 "확인 못 함" 한 줄은 예전처럼 바로 낸다). 못 읽으면 실조회
+    const hit = cacheOn && checksEach(s) ? await cachedGaps(tenantId, r.id, bs, file.version, env).catch(() => null) : null;
+    if (hit) { gaps.push(...hit.gaps); sources.push({ side, source: "cache", ageSec: hit.ageSec }); continue; }
+    const live = await checkEnvBundles(s, bs, file.version, d);
+    gaps.push(...live);
+    // 다음 사전 점검이 다시 쓰게 이 묶음만 되쓴다 (같은 판의 환경 줄이 있을 때만, 환경 화면도 같은 줄을 본다). 못 써도 사전 점검은 그대로 간다
+    const writeBack = cacheOn && checksEach(s)
+      ? await mergePermissionCheck(tenantId, r.id, { version: file.version, bundles: bs, gaps: live, all: file.bundles }).catch((e) => {
+        console.error("permission cache write", scrubString((e as Error)?.message ?? String(e)));
+        return "failed" as const;
+      })
+      : undefined;
+    sources.push({ side, source: "live", ageSec: 0, ...(writeBack ? { writeBack } : {}) });
   }
   const level = (g: PermissionGap) => (mode === "warn" ? "warn" : g.level);
   const what = (g: PermissionGap) => g.missing.length || g.missingApis.length
@@ -123,5 +152,5 @@ export async function permissionPrecheck(tenantId: string, m: MigrationSides, ro
       + `. 첫 묶음: ${what(warns[0]!)}`).slice(0, 1000),
     fix: gapHint(warns.find((g) => g.missing.length || g.missingApis.length) ?? warns[0]!) })] : [];
   const items = [...blocks, ...warn];
-  return { items, detail: permissionDetail(gaps.map((g) => ({ ...g, level: level(g) }))) };
+  return { items, detail: permissionDetail(gaps.map((g) => ({ ...g, level: level(g) }))), sources };
 }
