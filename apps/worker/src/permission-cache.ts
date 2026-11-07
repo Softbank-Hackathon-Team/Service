@@ -5,7 +5,7 @@ import { withTenant, type Tx } from "@svc/core";
 // PERM-GATE 재사용 (#373 B2): 사전 점검이 environment_permissions 의 묶음별 결과를 다시 쓴다
 //   왜: 11/07 잰 값 — 사전 점검 벽시계 10·38·65초 중 실조회(PC-TIME)는 2.45초(8개)·19.7초(12개). 나머지 대부분이 묶음 확인
 //       (AWS 는 묶음마다 iam get-role + simulate-principal-policy 를 하나씩 차례로)
-//   쓰는 쪽: permission-check 작업(환경 묶음 전부, 통째로 덮음)·사전 점검(이 이전이 쓰는 묶음만 보고 그 묶음만 갈아 끼움)
+//   쓰는 쪽: permission-check 작업(환경 묶음 전부, 통째로 덮음·새 줄)·사전 점검(이 이전이 쓰는 묶음만, 같은 판의 정상 줄이 있을 때만 그 묶음을 갈아 끼움)
 //   다시 쓰는 조건 (묶음마다): ① PERMISSION_CACHE_SEC 안에 따로 견줬음 ② 같은 권한 판(requiredVersion) ③ 같은 묶음 정의(def 지문)
 //     + 확인 자체를 못 한 줄(error)은 안 쓴다. 판정(block·warn)은 저장된 그대로 → 사전 점검이 같은 규칙으로 막거나 알린다
 //   막힘(block) 묶음이 하나라도 있으면 다시 읽는다: 고객이 고친 뒤 [다시 확인] 없이 바로 다시 돌린 사전 점검이 옛 막힘에 걸리지 않게
@@ -45,21 +45,26 @@ export async function savePermissionCheck(tenantId: string, envId: string, r: St
   await withTenant(tenantId, (tx) => upsert(tx, tenantId, envId, r));
 }
 
-/** 사전 점검이 실조회한 묶음만 갈아 끼운다. 그 밖 묶음의 예전 결과·확인 때는 같은 판의 정상 줄일 때만 그대로 둔다
- *  (확인 때를 묶음마다 두므로 예전 결과가 새것처럼 보이지 않는다). 저장 gaps 의 side 는 permission-check 와 같게(both → target), 순서는 묶음 파일 순서 */
+/** 사전 점검이 실조회한 묶음만 갈아 끼운다. 같은 판의 정상 줄(permission-check 가 만든 환경 묶음 전부)이 있을 때만 그 안에 병합하고,
+ *  그 밖 묶음의 예전 결과·확인 때는 그대로 둔다 (확인 때를 묶음마다 두므로 예전 결과가 새것처럼 보이지 않는다).
+ *  줄이 없거나·모양이 틀리거나·error 줄·옛 판이면 쓰지 않는다 (skipped_no_row): 이 이전이 쓴 몇 묶음만으로 줄을 만들면
+ *  환경 화면이 아무도 안 본 묶음까지 "권한 최신"(grantedVersion = 지금 판)으로 보여서 (리뷰 #376). 새 줄은 permission-check 작업만 만든다.
+ *  저장 gaps 의 side 는 permission-check 와 같게(both → target), 순서는 묶음 파일 순서 */
 export async function mergePermissionCheck(tenantId: string, envId: string,
-  o: { version: number; bundles: PermissionBundle[]; gaps: PermissionGap[]; all: PermissionBundle[] }, now: Date = new Date()): Promise<void> {
+  o: { version: number; bundles: PermissionBundle[]; gaps: PermissionGap[]; all: PermissionBundle[] }, now: Date = new Date()): Promise<"merged" | "skipped_no_row"> {
   const ids = new Set(o.bundles.map((b) => b.id));
   const order = new Map(o.all.map((b, i) => [b.id, i]));
   const sideOf = new Map(o.all.map((b) => [b.id, b.side === "source" ? "source" as const : "target" as const]));
-  await withTenant(tenantId, async (tx) => {
+  return withTenant(tenantId, async (tx) => {
     const row = (await tx.query(`SELECT result FROM environment_permissions WHERE environment_id = $1 FOR UPDATE`, [envId])).rows[0];
     const p = row?.result ? StoredPermissionCheck.safeParse(row.result) : null;
     const old = p?.success && !p.data.error && p.data.requiredVersion === o.version ? p.data : null;
-    const gaps = [...(old?.gaps ?? []).filter((g) => !ids.has(g.bundleId)), ...o.gaps.map((g) => ({ ...g, side: sideOf.get(g.bundleId) ?? g.side }))]
+    if (!old) return "skipped_no_row";
+    const gaps = [...old.gaps.filter((g) => !ids.has(g.bundleId)), ...o.gaps.map((g) => ({ ...g, side: sideOf.get(g.bundleId) ?? g.side }))]
       .sort((a, b) => (order.get(a.bundleId) ?? o.all.length) - (order.get(b.bundleId) ?? o.all.length));
-    const checked = [...(old?.checked ?? []).filter((c) => !ids.has(c.bundleId)), ...checkedEntries(o.bundles, now)];
+    const checked = [...(old.checked ?? []).filter((c) => !ids.has(c.bundleId)), ...checkedEntries(o.bundles, now)];
     await upsert(tx, tenantId, envId, storedResult(o.version, gaps, checked));
+    return "merged";
   });
 }
 

@@ -62,7 +62,11 @@ interface MigrationSides { id: string; sourceEnvId: string; targetEnvId: string 
 interface EnvRow { id: string; provider: Provider; account_id: string | null; gcp_target_project: string | null; region: string | null; aws_role_suffix?: string | null }
 export interface PrecheckRoles { gcpToken?: Partial<Record<"source" | "target", string>>; awsEnv?: Partial<Record<"source" | "target", Record<string, string>>> }
 /** 쪽마다 묶음 결과를 어디서 얻었나 (#373 B2, precheck detail.permissionSource). cache = environment_permissions 재사용, live = 지금 관찰 역할로 읽음 */
-export interface PermissionSource { side: "source" | "target"; source: "cache" | "live"; ageSec: number }
+export interface PermissionSource {
+  side: "source" | "target"; source: "cache" | "live"; ageSec: number;
+  // 실조회 뒤 되쓰기: merged = 같은 판의 환경 줄에 병합, skipped_no_row = 그런 줄이 없어 안 씀(새 줄은 [다시 확인]만), failed = DB 쓰기 실패. 재사용 끔·접힌 결과면 없음
+  writeBack?: "merged" | "skipped_no_row" | "failed";
+}
 
 /** 이 이전이 쓰는 묶음의 필요 조건 (명세 + 환경 층 + 중계기 + 허브) */
 export async function bundleNeedsFor(tenantId: string, m: MigrationSides, envs: { source: EnvRow; target: EnvRow }, env: NodeJS.ProcessEnv): Promise<BundleNeeds> {
@@ -121,10 +125,14 @@ export async function permissionPrecheck(tenantId: string, m: MigrationSides, ro
     if (hit) { gaps.push(...hit.gaps); sources.push({ side, source: "cache", ageSec: hit.ageSec }); continue; }
     const live = await checkEnvBundles(s, bs, file.version, d);
     gaps.push(...live);
-    sources.push({ side, source: "live", ageSec: 0 });
-    // 다음 사전 점검이 다시 쓰게 이 묶음만 되쓴다 (환경 화면도 같은 줄을 본다). 못 써도 사전 점검은 그대로 간다
-    if (cacheOn && checksEach(s)) await mergePermissionCheck(tenantId, r.id, { version: file.version, bundles: bs, gaps: live, all: file.bundles })
-      .catch((e) => console.error("permission cache write", scrubString((e as Error)?.message ?? String(e))));
+    // 다음 사전 점검이 다시 쓰게 이 묶음만 되쓴다 (같은 판의 환경 줄이 있을 때만, 환경 화면도 같은 줄을 본다). 못 써도 사전 점검은 그대로 간다
+    const writeBack = cacheOn && checksEach(s)
+      ? await mergePermissionCheck(tenantId, r.id, { version: file.version, bundles: bs, gaps: live, all: file.bundles }).catch((e) => {
+        console.error("permission cache write", scrubString((e as Error)?.message ?? String(e)));
+        return "failed" as const;
+      })
+      : undefined;
+    sources.push({ side, source: "live", ageSec: 0, ...(writeBack ? { writeBack } : {}) });
   }
   const level = (g: PermissionGap) => (mode === "warn" ? "warn" : g.level);
   const what = (g: PermissionGap) => g.missing.length || g.missingApis.length
