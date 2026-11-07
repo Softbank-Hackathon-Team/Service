@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Provider, TfOutputs, TfVars } from "@svc/contracts";
@@ -11,7 +11,7 @@ import { envNumber, tfBudget } from "@svc/contracts";
 //   예전(Z70)은 USE_TERRAFORM=1 + TF_REAL_APPLY=1 둘 다 있어야 진짜였다 → 아무것도 안 붙이면 조용히 흉내로 끝나 "다 된 것처럼" 보였다.
 //   대안 "스위치 둘 유지 + 기본만 1": 버림. 이름 둘이 남으면 어느 셸에서 하나만 0 이 되어 다시 흉내로 빠진다. 지금은 두 이름 다 무시한다
 // 하는 일 (이전 하나 = 작업 폴더 하나 = state 하나, Z89: 회사(tenant)마다 폴더를 나눈다):
-//   1) infra/modules/<환경>/app 의 *.tf 를 TF_WORK_DIR/<회사 slug>/<이전 id>/ 로 복사 (tests/·.terraform 제외)
+//   1) infra/modules/<환경>/app 의 *.tf 를 TF_WORK_DIR/<회사 slug>/<이전 id>/ 로 복사 (tests/·.terraform 제외, 루트 잠금 파일은 처음 한 번만 #373 B1)
 //   2) 어댑터 toTerraform 결과(자리표시를 채운 것)를 terraform.tfvars.json 으로 쓴다
 //   3) terraform init → plan -out=tfplan → apply tfplan → output -json
 //   4) 출력 중 sensitive 아닌 문자열만 TfOutputs 로 돌려준다 + outputs.json 저장 (복제 끝점 {tf:키} 가 읽는다)
@@ -50,6 +50,37 @@ export const layoutOf = (dir: string): TfLayout => (existsSync(join(dir, ROOT_DI
 // terraform 전역 옵션 (root 만 -chdir). 경로 인자는 root/ 기준이라 한 칸 위(../)로 쓴다
 const chdirArgs = (layout: TfLayout) => (layout === "root" ? [`-chdir=${ROOT_DIR}`] : []);
 const up = (layout: TfLayout, f: string) => (layout === "root" ? `../${f}` : f);
+
+// ---- #373 B1: 이미지에 구운 provider 미러 ----
+// worker 이미지는 provider 를 /opt/terraform/providers 에 미리 받아 두고 TF_CLI_CONFIG_FILE 로 그 미러를 먼저 보게 한다 (deploy/docker/terraform/).
+// 루트 모듈 잠금 파일(.terraform.lock.hcl)을 같이 복사해야 terraform 이 미러에 있는 판을 고른다 (없으면 레지스트리 최신 판을 골라 다시 받는다)
+export const LOCK_FILE = ".terraform.lock.hcl";
+/** 잠금 파일을 작업 폴더로. DRAFT(ai): 이미 있으면 덮지 않는다 — 진행 중인 이전(재시도·컷오버 다시 apply·destroy)은 처음 고른 판 그대로 간다
+ *  (덮으면 state 를 쓴 provider 판이 바뀐다). 그 판이 미러에 없으면 terraform 이 레지스트리에서 받는다 (예전과 같음) */
+export function seedLockFile(srcDir: string, dstDir: string): void {
+  const src = join(srcDir, LOCK_FILE);
+  const dst = join(dstDir, LOCK_FILE);
+  if (existsSync(src) && !existsSync(dst)) cpSync(src, dst);
+}
+/** 미러에서 깐 provider 는 작업 폴더 .terraform/providers 에 미러로 가는 심볼릭 링크로 남는다 (복사 0).
+ *  이미지가 바뀌어 미러에서 그 판이 빠지면 링크가 끊기고, terraform 은 끊긴 링크 자리에 새로 받지 못해 init 이 멈춘다
+ *  ("cannot install package into target directory ... because it is a symlink", 로컬 실측). init 전에 끊긴 링크만 지운다.
+ *  이어진 링크·실제 폴더는 그대로. 지운 개수를 돌려준다 */
+export function pruneStaleProviderLinks(tfDir: string): number {
+  let n = 0;
+  // providers/<호스트>/<이름공간>/<종류>/<판>/<os_arch> → 깊이 4 까지만
+  const walk = (d: string, depth: number) => {
+    let ents;
+    try { ents = readdirSync(d, { withFileTypes: true }); } catch { return; }
+    for (const e of ents) {
+      const p = join(d, e.name);
+      if (e.isSymbolicLink()) { if (!existsSync(p)) { unlinkSync(p); n++; } }
+      else if (e.isDirectory() && depth < 4) walk(p, depth + 1);
+    }
+  };
+  walk(join(tfDir, ".terraform", "providers"), 0);
+  return n;
+}
 
 // ---- 자리표시 채우기 ----
 // "<env:vpcId>" → TF_FACT_VPC_ID. 환경 표(environments)에 칸이 없는 env 모듈 출력·계정 사실을 환경변수로 받는다.
@@ -238,6 +269,7 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
     const src = join(moduleRoot, base);
     if (!existsSync(join(src, ROOT_DIR, "main.tf"))) throw new Error(`no root module for ${provider}: ${join(base, ROOT_DIR)}`);
     copyTf(join(src, ROOT_DIR), join(dir, ROOT_DIR));
+    seedLockFile(join(src, ROOT_DIR), join(dir, ROOT_DIR));   // #373 B1: 종류 모듈(kinds)은 잠금 파일이 없다 (루트 것 하나로 고른다)
     const kindsSrc = join(src, "kinds");
     if (existsSync(kindsSrc)) for (const k of readdirSync(kindsSrc, { withFileTypes: true }).filter((e) => e.isDirectory()).sort((a, b) => a.name.localeCompare(b.name)))
       copyTf(join(kindsSrc, k.name), join(dir, "kinds", k.name));
@@ -260,6 +292,12 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
     if (r.code !== 0) log.push(...tail(`${r.stdout}\n${r.stderr}`, 15));
     else if (!quiet) log.push(...tail(r.stdout, 3));
     return r;
+  }
+  // init 앞에 끊긴 provider 링크 정리 (#373 B1). terraform 폴더 = root 모양이면 <작업 폴더>/root, 예전 통짜면 작업 폴더
+  function init(layout: TfLayout, dir: string, steps: RealStep[], log: string[], signal?: AbortSignal) {
+    const pruned = pruneStaleProviderLinks(layout === "root" ? join(dir, ROOT_DIR) : dir);
+    if (pruned) log.push(`끊긴 provider 링크 ${pruned}개 정리 (이미지 미러에서 빠진 판, 이번 init 이 다시 받는다)`);
+    return run("init", [...chdirArgs(layout), "init", "-input=false", "-no-color"], dir, steps, log, signal);
   }
 
   // AWS 도착 앱 DB 비밀번호 (관리자 ≠ 앱일 때: aws/root 출력 db_admin_username·db_password_secret_name).
@@ -382,7 +420,7 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
       writeFileSync(join(dir, "terraform.tfvars.json"), JSON.stringify(vars, null, 2));
       const fail = (s: RealStep["step"]): RealApplyResult =>
         ({ ok: false, tfOutputs: {}, workDir: dir, steps, elapsedMs: round(performance.now() - t0), log, failedStep: s });
-      if ((await run("init", [...G, "init", "-input=false", "-no-color"], dir, steps, log, signal)).code !== 0) return fail("init");
+      if ((await init(layout, dir, steps, log, signal)).code !== 0) return fail("init");
       if ((await run("plan", [...G, "plan", "-input=false", "-no-color", lockTimeout, vf, `-out=${planFile}`], dir, steps, log, signal)).code !== 0) return fail("plan");
       if ((await run("apply", [...G, "apply", "-input=false", "-no-color", lockTimeout, "-auto-approve", planFile], dir, steps, log, signal)).code !== 0) {
         // Z89: apply 가 중간에 실패하면 일부 자원(VPC 보안 그룹·시크릿 그릇 등)이 이미 생겼을 수 있다 → 같은 state 로 바로 destroy.
@@ -419,7 +457,7 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
       const layout: TfLayout = "root";
       const G = chdirArgs(layout);
       writeFileSync(join(dir, "terraform.tfvars.json"), JSON.stringify(vars, null, 2));
-      if ((await run("init", [...G, "init", "-input=false", "-no-color"], dir, steps, log, signal)).code !== 0) return { ok: false, steps, log, workDir: dir };
+      if ((await init(layout, dir, steps, log, signal)).code !== 0) return { ok: false, steps, log, workDir: dir };
       const r = await run("plan", [...G, "plan", "-input=false", "-no-color", `-var-file=${up(layout, "terraform.tfvars.json")}`], dir, steps, log, signal);
       const summary = r.stdout.match(/Plan: .*$/m)?.[0];
       return { ok: r.code === 0, steps, log, workDir: dir, summary };
@@ -434,7 +472,7 @@ export function createRealTerraformRunner(o: RealRunnerOpts = {}) {
       const dir = found;
       const layout = layoutOf(dir);   // 작업 폴더 모양대로 (예전 통짜 모듈로 만든 폴더가 남아 있어도 그 모양으로 지움)
       const G = chdirArgs(layout);
-      if ((await run("init", [...G, "init", "-input=false", "-no-color"], dir, steps, log, signal)).code !== 0)
+      if ((await init(layout, dir, steps, log, signal)).code !== 0)
         return { ok: false, workDir: dir, steps, log, elapsedMs: round(performance.now() - t0) };
       const r = await run("destroy", [...G, "destroy", "-input=false", "-no-color", lockTimeout, "-auto-approve", `-var-file=${up(layout, "terraform.tfvars.json")}`], dir, steps, log, signal);
       // aws: 실행기가 만든 앱 DB 비밀번호 그릇도 지운다 (state 밖). 못 지우면 실패로 돌려 다시 지우게 한다 (다시 불러도 안전: 없으면 성공)

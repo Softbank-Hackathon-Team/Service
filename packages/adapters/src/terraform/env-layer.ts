@@ -4,12 +4,13 @@ import { join } from "node:path";
 import type { TfOutputs } from "@svc/contracts";
 import { envNumber, tfBudget } from "@svc/contracts";
 import { MODULE_DIGEST } from "../module-digests.js";
-import { childEnv, DEFAULT_MODULE_ROOT, parseOutputs, spawnExec, TENANT_DIR_RE, workRootOf, type Exec, type RealStep } from "./real-runner.js";
+import { childEnv, DEFAULT_MODULE_ROOT, parseOutputs, pruneStaleProviderLinks, seedLockFile, spawnExec, TENANT_DIR_RE, workRootOf, type Exec, type RealStep } from "./real-runner.js";
 
 // 아키텍처 이전 9단계의 "4 기반 생성(VPC·클러스터·DB)" 중 환경 층 (도착 GCP 프로젝트에 VPC·GKE·Artifact Registry + ESO).
 // 앱 층(gcp/root, 이전마다)과 달리 환경 하나에 한 번 만들고, 이전이 끝나도 지우지 않는다 (환경 소유).
 //   작업 폴더: TF_WORK_DIR/<회사 slug>/env-<환경 id>/ (#265 의 디스크 위, 이전 폴더와 같은 회사 폴더 아래)
 //     modules/gcp/env/*.tf  ← infra/modules/gcp/env (모듈이 ${path.module}/../../../charts 를 보므로 같은 깊이를 지킨다)
+//     modules/gcp/env/.terraform.lock.hcl ← 같은 폴더 잠금 파일 (#373 B1, 처음 한 번만)
 //     charts/cluster-secret-store/** ← infra/charts/cluster-secret-store
 //     terraform.tfvars.json, terraform.tfstate, outputs.json
 //   1차 apply: create_eso=false → 클러스터만. 2차 apply: create_eso=true → ESO·ClusterSecretStore.
@@ -122,6 +123,7 @@ export function createEnvLayerRunner(o: EnvLayerRunnerOpts) {
     const src = join(moduleRoot, ENV_LAYER_MODULE);
     if (!existsSync(join(src, "main.tf"))) throw new Error(`no env layer module: ${ENV_LAYER_MODULE}`);
     for (const f of readdirSync(src)) if (f.endsWith(".tf")) cpSync(join(src, f), join(mod, f));
+    seedLockFile(src, mod);   // #373 B1: 이미지 provider 미러와 같은 판 (이미 있는 환경 층 폴더의 잠금 파일은 안 덮는다)
     const chart = join(moduleRoot, "..", "charts", "cluster-secret-store");
     if (!existsSync(chart)) throw new Error("no chart infra/charts/cluster-secret-store (worker image must copy infra/charts)");
     cpSync(chart, join(dir, "charts", "cluster-secret-store"), { recursive: true });
@@ -160,6 +162,8 @@ export function createEnvLayerRunner(o: EnvLayerRunnerOpts) {
         // 단계 시작마다 새 env (빌린 토큰 최신값). 워커 자기 자격은 부르는 쪽(gcpTerraformEnv)이 이미 지웠다
         const cenv = childEnv(o.env());
         writeFileSync(join(dir, "terraform.tfvars.json"), JSON.stringify({ ...vars, create_eso: phase === "eso" }, null, 2));
+        const pruned = pruneStaleProviderLinks(join(dir, "modules", ENV_LAYER_MODULE));   // #373 B1: 미러에서 빠진 판의 끊긴 링크
+        if (pruned) log.push(`[${phase}] 끊긴 provider 링크 ${pruned}개 정리 (이번 init 이 다시 받는다)`);
         if ((await run(phase, "init", [...G, "init", "-input=false", "-no-color"], cenv)).code !== 0) return done({ failedPhase: phase, failedStep: "init" });
         if ((await run(phase, "plan", [...G, "plan", "-input=false", "-no-color", lockTimeout, vf, "-out=../../../tfplan"], cenv)).code !== 0) return done({ failedPhase: phase, failedStep: "plan" });
         // 실패해도 지우지 않는다 (환경 소유, 사람이 보고 다시 apply 하거나 정리)

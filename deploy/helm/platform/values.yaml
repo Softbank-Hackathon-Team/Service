@@ -81,7 +81,7 @@ apps:
     # Terraform 작업 폴더 디스크. 파드가 지워져도 state·입력값·출력값이 남게 한다. 비우면 예전처럼 /tmp
     # 켜려면 플랫폼 Terraform 의 aws-ebs-csi-driver 애드온이 먼저 있어야 하고 replicas 는 1 이어야 한다 (README)
     tfWorkDir:
-      size: ""   # DRAFT(ai): 예 20Gi. 이전마다 프로바이더 파일을 받아 수백 MB~1GB 를 쓴다
+      size: ""   # DRAFT(ai): 예 20Gi. 이전마다 state·계획 파일. provider 는 이미지 미러로 가는 링크만 (#373 B1, init 뒤 수백 KB). 미러에 없는 판만 받아 수백 MB 를 쓴다
     env: {}
     # DRAFT(ai): 이전 여러 건이 동시에 돌아도 노드가 worker 몫을 비워 두게 requests 를 올렸다 (pg-boss 단계 큐가 워커당 4건, STEP_CONCURRENCY).
     #   cred 노드 t3.medium 1대(CPU 할당 가능 약 1930m)에 Argo CD 허브와 같이 뜬다. 롤링 업데이트 때 파드가 하나 더 뜨는 것까지 README "앱 배포" 계산 참고
