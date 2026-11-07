@@ -1,0 +1,69 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+#canvas{width:1800px}
+.bands{display:grid;grid-template-columns:1fr 34px 1fr 34px 1.35fr;align-items:stretch}
+.band{border-radius:20px;padding:18px 18px 20px;border:2px dashed}
+.band>.bt{display:flex;align-items:baseline;gap:12px;margin-bottom:14px}
+.band>.bt b{font-size:24px}.band>.bt span{font-size:14px;color:var(--sub);font-weight:600}
+.b1{border-color:var(--blue-line);background:rgba(238,243,253,.6)}.b1 .bt b{color:var(--blue)}.b1 .n{background:var(--blue)}
+.b2{border-color:var(--purple-line);background:rgba(243,240,252,.6)}.b2 .bt b{color:var(--purple)}.b2 .n{background:var(--purple)}
+.b3{border-color:var(--green-line);background:rgba(238,246,241,.6)}.b3 .bt b{color:var(--green)}.b3 .n{background:var(--green)}
+.col{display:flex;flex-direction:column;gap:0}
+.col .arrow{height:26px;font-size:18px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.big{font-size:56px}
+.envs{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:26px}
+.env{border-radius:14px;padding:14px 16px;border:1.5px solid}
+.env h4{margin:0 0 4px;font-size:17px;display:flex;align-items:center;gap:8px}
+.env p{margin:0;font-size:13.5px;color:var(--sub);line-height:1.6}
+.bd{font-size:11.5px;font-weight:700;color:#fff;border-radius:6px;padding:3px 8px}
+.proof{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:18px}
+.pf{background:#fff;border:1.5px solid var(--line);border-radius:14px;padding:14px 18px}
+.pf b{display:block;font-size:24px;color:var(--green);margin-bottom:2px}
+.pf span{font-size:14px;color:var(--sub);line-height:1.55}
+.rb{margin-top:12px;border:1.5px dashed var(--red);border-radius:12px;padding:10px 14px;font-size:14px;color:var(--red);font-weight:600;background:#fdf0ef}
+</style>
+<div id="canvas">
+<h1>읽고 → 번역하고 → 옮긴다</h1>
+<div class="subt">돌고 있는 서비스를 공통 명세(IR) 하나로 읽고, 도착 환경의 Terraform·Helm으로 번역한 뒤, 서비스를 멈추지 않고 옮긴다. 사람이 승인한 계획대로만 움직인다.</div>
+<div class="bands">
+ <div class="band b1"><div class="bt"><b>읽기</b><span>관찰 역할 (읽기 전용)</span></div>
+  <div class="col">
+   <div class="card"><h3><span class="n">1</span>환경 연결</h3><p>고객 키 0개. 링크·스크립트로 역할만 만든다<br>AWS STS 15분 · GCP WIF + 회사별 SA<br>온프레는 Agent 설치 한 줄, 들어오는 포트 0</p></div>
+   <div class="arrow">↓</div>
+   <div class="card"><h3><span class="n">2</span>가져오기</h3><p>돌고 있는 앱·DB·캐시·권한·네트워크 정책을 읽는다<br>EKS · ECS · Cloud Run · GKE · k3s</p></div>
+   <div class="arrow">↓</div>
+   <div class="card"><h3><span class="n">3</span>공통 명세 (IR)</h3><p>구성요소 그래프 하나로 정리. 칸마다 출처·신뢰도<br>AI 초안은 따로, <b>사람이 확인</b>해야 다음으로</p></div>
+  </div></div>
+ <div class="arrow big">›</div>
+ <div class="band b2"><div class="bt"><b>번역</b><span>순수 함수 · 사람 승인</span></div>
+  <div class="col">
+   <div class="card"><h3><span class="n">4</span>사전 점검 · 계획</h3><p>precheck → plan → 비용 고지<br>계획 지문(planHash)에 <b>사람이 승인</b></p></div>
+   <div class="arrow">↓</div>
+   <div class="card"><h3><span class="n">5</span>환경 어댑터</h3><p>IR → Terraform 입력 + Helm 값<br>같은 서비스가 없으면 같은 역할로 바꿔 끼움<br><span class="mono">RDS → CloudNativePG</span> · 새 환경 = 어댑터 하나</p></div>
+   <div class="arrow">↓</div>
+   <div class="card"><h3><span class="n">6</span>배포 전 리허설</h3><p>커밋할 매니페스트를 일회용 vCluster에 먼저 올림<br>실패하면 멈추고, 통과한 지문만 커밋</p></div>
+  </div></div>
+ <div class="arrow big">›</div>
+ <div class="band b3"><div class="bt"><b>옮기기</b><span>실행 역할 · 상태 머신 22개 상태</span></div>
+  <div class="grid2">
+   <div class="card"><h3><span class="n">7</span>자원 생성 · 배포</h3><p>Terraform으로 VPC·클러스터·DB<br>렌더 결과를 GitOps 레포에 커밋<br>클라우드는 Argo CD 허브, 온프레는 pull</p></div>
+   <div class="card"><h3><span class="n">8</span>DB 논리 복제</h3><p>출발 DB → 도착 DB 변경 따라잡기<br>일회용 중계기 VM, 이전 끝나면 삭제<br>복제 지연 &lt; 1초 확인</p></div>
+   <div class="card"><h3><span class="n">9</span>트래픽 전환</h3><p>Cloudflare LB 가중치 <b>10 → 50 → 100%</b><br>단계마다 5xx·p95 판정<br>나쁘면 자동으로 출발 100%</p></div>
+   <div class="card"><h3><span class="n">10</span>컷오버 · 정리</h3><p>쓰기 멈춤 → 마커 확인 → 도착으로 전환<br>롤백 가능 창 동안 역방향 복제<br>끝나면 중계기·임시 권한 정리</p></div>
+  </div>
+  <div class="rb">↺ 어느 단계에서 실패해도 트래픽과 쓰기를 출발로 되돌린다</div>
+ </div>
+</div>
+<div class="envs">
+ <div class="env" style="border-color:var(--orange-line);background:var(--orange-bg)"><h4><span class="bd" style="background:#e07a1f">AWS</span>출발 · 도착</h4><p>EKS · ECS · RDS PostgreSQL<br>CloudFormation 원클릭 → AssumeRole</p></div>
+ <div class="env" style="border-color:var(--blue-line);background:var(--blue-bg)"><h4><span class="bd" style="background:#2563eb">GCP</span>출발 · 도착</h4><p>GKE · Cloud Run · Cloud SQL<br>회사별 SA + WIF, 환경 층 자동 생성</p></div>
+ <div class="env" style="border-color:var(--amber-line);background:var(--amber-bg)"><h4><span class="bd" style="background:#b7791f">ON-PREM</span>도착</h4><p>k3s · CloudNativePG · Sealed Secrets<br>Agent가 안에서 당겨 감 (포트 0)</p></div>
+ <div class="env" style="border-color:var(--gray-line);background:var(--gray-bg);border-style:dashed"><h4><span class="bd" style="background:#6b7280">AZURE</span>어댑터 모양만</h4><p>Container Apps · Flexible Server<br>Mock 응답, 데모 경로 아님</p></div>
+</div>
+<div class="proof">
+ <div class="pf"><b>20분</b><span>AWS → 온프레 실이전 완료<br>컷오버 쓰기 멈춤 약 120ms (1회 측정)</span></div>
+ <div class="pf"><b>0회</b><span>GCP → 온프레 실이전 감사 로그에서<br>플랫폼이 받은 역할 밖 권한을 쓴 횟수</span></div>
+ <div class="pf"><b>10 → 50 → 100%</b><span>공개 입구의 실요청이 온프레로 단계 전환<br>롤백 시 Cloudflare·온프레 자원 자동 정리</span></div>
+</div>
+</div>

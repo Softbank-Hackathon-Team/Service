@@ -1,0 +1,22 @@
+@font-face{font-family:"Pretendard";src:url("fonts/Pretendard-Regular.otf");font-weight:400}
+@font-face{font-family:"Pretendard";src:url("fonts/Pretendard-Medium.otf");font-weight:500}
+@font-face{font-family:"Pretendard";src:url("fonts/Pretendard-SemiBold.otf");font-weight:600}
+@font-face{font-family:"Pretendard";src:url("fonts/Pretendard-Bold.otf");font-weight:700}
+:root{--ink:#1f2937;--sub:#5b6472;--line:#d5dbe3;
+--blue:#2563eb;--blue-bg:#eef3fd;--blue-line:#a9c1f5;
+--purple:#6b46c1;--purple-bg:#f3f0fc;--purple-line:#c3b4ec;
+--green:#2f855a;--green-bg:#eef6f1;--green-line:#7fb796;
+--orange:#dd6b20;--orange-bg:#fff4ec;--orange-line:#f3be98;
+--amber:#b7791f;--amber-bg:#fdf6e7;--amber-line:#ecd29a;
+--gray:#6b7280;--gray-bg:#f1f3f6;--gray-line:#c9cfd8;--red:#c2413b}
+*{box-sizing:border-box}html,body{margin:0;background:#fff}
+body{font-family:"Pretendard",sans-serif;color:var(--ink);-webkit-font-smoothing:antialiased}
+#canvas{background:#fff;padding:44px 52px 48px}
+h1{font-size:38px;margin:0 0 6px;letter-spacing:-.01em}
+.subt{font-size:16.5px;color:var(--sub);margin-bottom:28px}
+.card{background:#fff;border:1.5px solid var(--line);border-radius:14px;padding:14px 16px}
+.card h3{margin:0 0 6px;font-size:18px;display:flex;align-items:center;gap:8px}
+.card p{margin:0;font-size:14px;line-height:1.65;color:var(--sub)}
+.n{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%;color:#fff;font-size:13px;font-weight:700;flex:none}
+.arrow{display:flex;align-items:center;justify-content:center;color:#8a95a3;font-size:22px;font-weight:700}
+.mono{font-family:"DejaVu Sans Mono",monospace;font-size:12.5px}
