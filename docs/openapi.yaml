@@ -4483,6 +4483,40 @@ components:
         - "match"
         - "mismatch"
         - "unverifiable"
+    AgentDeployProgress:
+      type: "object"
+      properties:
+        sync:
+          type: "string"
+          maxLength: 40
+        health:
+          type: "string"
+          maxLength: 40
+        message:
+          type: "string"
+          maxLength: 500
+        waitingOn:
+          type: "object"
+          properties:
+            resource:
+              type: "string"
+              maxLength: 300
+            health:
+              type: "string"
+              maxLength: 40
+            sync:
+              type: "string"
+              maxLength: 40
+            message:
+              type: "string"
+              maxLength: 500
+          required:
+            - "resource"
+          additionalProperties: false
+      required:
+        - "sync"
+        - "health"
+      additionalProperties: false
     AgentInventoryList:
       anyOf:
         - type: "object"
@@ -4643,6 +4677,7 @@ components:
               enum:
                 - "applied"
                 - "failed"
+                - "progressing"
             resources:
               maxItems: 200
               type: "array"
@@ -4652,6 +4687,8 @@ components:
             reason:
               type: "string"
               maxLength: 2000
+            progress:
+              $ref: "#/components/schemas/AgentDeployProgress"
           required:
             - "kind"
             - "agentVersion"

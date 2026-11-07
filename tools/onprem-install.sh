@@ -84,9 +84,10 @@ done
 K -n "$ARGO_NS" rollout status statefulset/argocd-application-controller --timeout=300s >/dev/null
 # git 확인 주기. 기본(180s + 흔들림)이면 커밋 뒤 적용까지 대부분이 이 대기다 (실제 동기화는 2초, 2026-11-04 VM 실측)
 #   확인 한 번 = 저장소 ref 조회 1회. 커밋이 그대로면 렌더 결과를 캐시에서 쓴다. 비용은 앱 수 × (1/주기)
-# DRAFT(ai): 30s / 흔들림 5s. 앱 몇 개짜리 온프레에서 GitHub 조회가 시간당 앱당 120회. 팀이 정할 값
-ARGO_POLL=${ARGO_POLL:-30s}
-ARGO_POLL_JITTER=${ARGO_POLL_JITTER:-5s}
+# DRAFT(ai) #373 A3: 10s / 흔들림 2s (예전 30s / 5s). 11/07 실측 미러 커밋 → Agent applied 보고 13~101초의 대부분이 이 주기·
+#   ApplicationSet discoverSeconds·Agent 주기를 기다린 시간이다. 비용: GitHub 조회가 시간당 앱당 약 360회 (예전 120회). 팀이 정할 값
+ARGO_POLL=${ARGO_POLL:-10s}
+ARGO_POLL_JITTER=${ARGO_POLL_JITTER:-2s}
 cur=$(K -n "$ARGO_NS" get cm argocd-cm -o jsonpath='{.data.timeout\.reconciliation}/{.data.timeout\.reconciliation\.jitter}')
 if [ "$cur" != "$ARGO_POLL/$ARGO_POLL_JITTER" ]; then
   K -n "$ARGO_NS" patch cm argocd-cm --type merge \
