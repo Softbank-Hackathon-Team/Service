@@ -205,6 +205,27 @@ export function buildWorkloadValues(spec: AppSpecV2, out: TfOutputs, t: Target, 
     keys.set(METRIC_SECRET, new Set(["token"]));
     warnings.push(`트래픽 판정: 도착 환경의 지표 토큰을 ${putToken(METRIC_SECRET)} 도착 지표가 들어옴`);
   }
+  // 2026-11-07 온프레 → AWS: 출발 DB 비밀번호 비밀(CNPG <cluster>-app 의 password, 명세 pairedWith)은 도착 DB 가 만든 비밀번호로 바꿔 끼운다.
+  //   예전엔 같은 이름 원격 그릇을 사람이 채워야 했고(APP-20 SECRET_VALUES_MISSING), 거기에 출발 값을 넣으면 도착 DB 로그인이 실패했다.
+  //   이제 그 비밀은 사용자 비밀 목록에서 빼고, 차트 DB 비밀(postgres[].secretName, 도착 DB 비밀번호 그릇 → 키 password)의 이름을 출발 이름으로 바꾼다.
+  //   키가 password 하나일 때만 (차트 DB ExternalSecret 은 키 password 하나를 만든다). 다른 모양은 그대로 두고 경고
+  const pgByName = new Map((w.postgres ?? []).filter((p) => p.mode === "external").map((p) => [p.id, p]));
+  const repointed = new Map<string, string>();   // 비밀 이름 → postgres id
+  for (const s of spec.secrets ?? []) {
+    const paired = s.keys.filter((k) => k.pairedWith && pgByName.has(k.pairedWith.component));
+    if (!paired.length || !keys.has(s.name)) continue;
+    const ids = new Set(paired.map((k) => k.pairedWith!.component));
+    const used = keys.get(s.name)!;
+    const pgId = [...ids][0]!;
+    // 차트 DB 비밀은 postgres 하나에 이름 하나 → 같은 DB 와 짝인 비밀이 둘이면 첫째만 바꿔 끼우고 나머지는 경고
+    if (ids.size === 1 && [...used].every((k) => k === "password") && paired.some((k) => k.key === "password") && ![...repointed.values()].includes(pgId)) repointed.set(s.name, pgId);
+    else warnings.push(`비밀 ${s.name}: 도착 DB 비밀번호와 짝인 키가 있지만 모양(키 ${[...used].join(",") || "전체"})이 달라 자동으로 바꿔 끼우지 않음 → 도착 비밀 그릇에 도착 DB 비밀번호를 넣어야`);
+  }
+  for (const [name] of repointed) keys.delete(name);
+  const postgres = w.postgres?.map((p) => {
+    const name = [...repointed].find(([, id]) => id === p.id)?.[0];
+    return name ? { ...p, secretName: name } : p;
+  });
   const secrets = [...keys.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([name, ks]) => ({
     name, remoteKey: w.remoteKey(name),
     // DRAFT(ai): 원격 값은 {키: 값} JSON 한 덩어리. 키 목록이 비면(envFrom·마운트) 전체를 그대로
@@ -217,7 +238,7 @@ export function buildWorkloadValues(spec: AppSpecV2, out: TfOutputs, t: Target, 
     workloads,
     identities: identitiesOf(spec).map((i) => ({ id: i.id, serviceAccount: i.serviceAccount, workloads: i.workloads })),
     externalSecrets: { store: w.secretStore, secrets },
-    postgres: w.postgres,
+    postgres,
     ingress: ingress ? {
       // DRAFT(ai): v1 과 같이 기본 cloudflared. Cloudflare 전환은 호스트 단위 → hosts 목록이 전환 단위
       mode: "cloudflared", className: w.ingressClass ?? "", tunnelTokenSecret: TUNNEL_SECRET, hosts: ingress,

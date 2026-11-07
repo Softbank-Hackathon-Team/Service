@@ -148,3 +148,26 @@ test("W4·W5: Agent 자동 deploy 보고(이전 번호 없이 app + 커밋)와 f
   const j = await l.json() as { items: Array<{ kind: string }> };
   assert.ok(j.items.length >= 1 && j.items.every((i) => i.kind === "facts"));
 });
+
+test("inventory(온프레 출발 가져오기 스냅숏): 1MB 넘는 본문도 계약 상한(4 MiB) 안이면 201, 넘으면 413 · Secret 목록은 400", async () => {
+  const { AGENT_INVENTORY_MAX_BYTES } = await import("@svc/contracts");
+  const inv = (items: Array<Record<string, unknown>>, resource = "configmaps") => ({ kind: "inventory", agentVersion: "t", sentAt: new Date().toISOString(),
+    collectedAt: new Date().toISOString(), apiResources: { names: [] }, lists: [{ resource, items }] }) as AgentReport;
+  const cm = (i: number, n: number) => ({ metadata: { name: `c${i}`, namespace: "app" }, data: { A: "x".repeat(n) } });
+  const ok = await sendAgentReport(inv(Array.from({ length: 20 }, (_, i) => cm(i, 100 * 1024))), { baseUrl: base, keyId: KEY, secret: SECRET });
+  assert.equal(ok.status, 201, JSON.stringify(ok.body));
+  assert.equal(saved.at(-1)!.report.kind, "inventory");
+  // 상한 초과: 서버가 본문을 다 받기 전에 연결을 끊을 수 있어(진짜 HTTP 면 ECONNRESET) inject 로 상태 코드만 본다
+  const { signReport } = await import("@svc/contracts/agent-sig");
+  const bigBody = JSON.stringify(inv(Array.from({ length: Math.ceil(AGENT_INVENTORY_MAX_BYTES / (256 * 1024)) + 1 }, (_, i) => cm(i, 256 * 1024))));
+  const bts = Math.floor(Date.now() / 1000);
+  const big = await app.inject({ method: "POST", url: "/api/v1/agent/reports", headers: { "content-type": "application/json",
+    "x-agent-key-id": KEY, "x-agent-timestamp": String(bts), "x-agent-signature": signReport(SECRET, bts, bigBody) }, payload: bigBody });
+  assert.equal(big.statusCode, 413);
+  // 보내는 쪽 검사를 건너뛴 Secret 목록 (서명은 맞음) → 받는 쪽 계약이 막는다
+  const body = JSON.stringify(inv([], "secrets"));
+  const ts = Math.floor(Date.now() / 1000);
+  const r = await fetch(base + "/api/v1/agent/reports", { method: "POST", headers: { "content-type": "application/json",
+    "x-agent-key-id": KEY, "x-agent-timestamp": String(ts), "x-agent-signature": signReport(SECRET, ts, body) }, body });
+  assert.equal(r.status, 400);
+});

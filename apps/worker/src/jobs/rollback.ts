@@ -4,17 +4,19 @@ import { ReplConfigError, toMeasurements, withClient, appCanWrite } from "@svc/r
 import { restoreSource } from "@svc/traffic";
 import { trafficLeaseState, withTenant, writeAudit } from "@svc/core";
 import { log, setTrafficWeightMetric } from "../instrument.js";
-import { cleanupAfterRollback } from "./rollback-cleanup.js";
+import { cleanupAfterRollback, notStartedCleanup } from "./rollback-cleanup.js";
 import { errorMessage, runStep, failedAttempts, recordAttemptFailure, RetryLater, jobData } from "./_step.js";
 import { withStepRoles } from "./_roles.js";
 import { transientTrafficError, rollbackTransientDelaysSec } from "./_transient.js";
 import { tempRoles, trafficFor, trafficMetrics } from "../platform.js";
-import { appLinkHooks, appLinkMeasurements, appLinkOn, recordActiveWriter, switchRuntimeWriter, targetBundle } from "../app-link.js";
+import { appLinkHooks, appLinkMeasurements, appLinkOn, recordActiveWriter, replicationBundle, switchRuntimeWriter, targetBundle } from "../app-link.js";
 import { appDbSwitchKind } from "./deploy.js";
 import { loadReapplyInput, type RealApplyInput } from "./apply-real.js";
 import { commitReplicationCleanup, commitTrafficWeight, configFromEnv, GitopsRepo, type BundleRef } from "../gitops/index.js";
 import { envNumber } from "@svc/contracts";
 import { teardownRelayStep } from "../relay/relay-step.js";
+import { teardownTrafficEntry } from "../traffic-entry.js";
+import { sourceDbHealth } from "./rollback-health.js";
 
 // DRAFT(ai): 롤백 자체가 이 횟수만큼 실패하면 rolling_back → failed(ROLLBACK_FAILED).
 // 잠금은 남는다(반쯤 되돌린 상태일 수 있음). 사람이 확인하고 POST .../cancel {manualCleanupConfirmed:true}로 끝낸다.
@@ -33,13 +35,13 @@ export async function handleRollback(raw: unknown) {
     // APP-22 (가): Terraform 실행 방식 도착은 컷오버 뒤 롤백 때 db_writer_json=source 로 다시 apply → 승인 계획서·명세를 미리 읽는다
     load: async (tx, job, m) => {
       const appKind = await appDbSwitchKind(tx, m);
-      return { bundle: await targetBundle(tx, job.tenantId, m), appKind,
+      return { bundle: await targetBundle(tx, job.tenantId, m), replBundle: await replicationBundle(tx, job.tenantId, m), appKind,
                runtimeInput: appKind === "terraform_runtime" ? await loadReapplyInput(tx, { id: m.id, tenantId: job.tenantId, targetEnvId: m.targetEnvId }) : null };
     },
     // PF FM-ORC-20: 이 이전의 실행 역할 회수는 withStepRoles 가 끝난 뒤(재발급 고리가 멈춘 뒤)에 한다.
     //   예전엔 단계 안에서 회수해, 뒤의 DB 되돌림·복제 걷기가 재발급 주기를 넘기면 ROLE_RENEW_UNKNOWN → 롤백 실패·재시도로 일이 겹쳤다 (cleanup 과 같은 모양)
     work: async (j, m, loaded, ctx) => withRevokeAfter(j, await withStepRoles("rollback", j, m, async () => {
-      const { bundle, appKind, runtimeInput } = loaded as { bundle: Awaited<ReturnType<typeof targetBundle>>; appKind: Awaited<ReturnType<typeof appDbSwitchKind>>; runtimeInput: RealApplyInput | null };
+      const { bundle, replBundle, appKind, runtimeInput } = loaded as { bundle: Awaited<ReturnType<typeof targetBundle>>; replBundle: Awaited<ReturnType<typeof targetBundle>>; appKind: Awaited<ReturnType<typeof appDbSwitchKind>>; runtimeInput: RealApplyInput | null };
       // PF-E32 (RV-19) + orch RV-19 (FM-INT-12 합침): 복제 주소를 못 만들면(ReplConfigError: outputs.json 없음·빈 {tf:}) 예전엔 트래픽을 되돌리기 전에 던져 롤백이 영영 실패했다.
       //   컷오버 전이면 출발이 DB 주인이라 트래픽은 먼저 되돌리고, 복제 걷기는 못 한 채(감사 cleanup_incomplete) rolled_back.
       //   컷오버 뒤면 DB 주인이 도착일 수 있어 트래픽을 옮기지 않고 던진다 (TRF-19 와 같은 규칙). 단 지난 시도가 DB 를 이미 되돌렸으면(orch) 트래픽은 되돌린다
@@ -103,13 +105,15 @@ export async function handleRollback(raw: unknown) {
         const warning = replErr.message.slice(0, 500);
         await withTenant(j.tenantId, (tx) => writeAudit(tx, j.tenantId, { actor: "worker", action: "rollback.traffic_restored", target: j.migrationId,
           result: "ok", detail: { requestId: j.requestId, weights, replicationError: replErr.message.slice(0, 300) } }));   // orch RV-19 기록 (FM-INT-12)
-        return { to: "rolled_back", detail: { weights, traffic: traffic.detail, gitopsWeight, replication: { kind: "before_cutover", cleanup: "incomplete", code: replErr.code, warning } },
+        const cfEntry = await teardownTrafficEntry(j.migrationId, { keepTarget: false });
+        return { to: "rolled_back", detail: { weights, traffic: traffic.detail, gitopsWeight, cfEntry, replication: { kind: "before_cutover", cleanup: "incomplete", code: replErr.code, warning } },
                  evidence: traffic.evidence,
                  inTx: async (tx) => { await writeAudit(tx, j.tenantId, { actor: "worker", action: "rollback.cleanup_incomplete", target: j.migrationId, result: "error",
                    detail: { requestId: j.requestId, kind: "before_cutover", code: replErr.code, warning, hint: "복제 주소(끝점 줄·TF_WORK_DIR outputs·REPL_FACTS_FILES)를 고친 뒤 repl-cleanup 으로 출발 슬롯을 걷는다" } }); } };
       }
       if (!repl) {
-        return { to: "rolled_back", detail: { weights, traffic: traffic.detail, stub: true, gitopsWeight },
+        const cfEntry = await teardownTrafficEntry(j.migrationId, { keepTarget: false });
+        return { to: "rolled_back", detail: { weights, traffic: traffic.detail, stub: true, gitopsWeight, cfEntry },
                  evidence: traffic.evidence };
       }
       // 컷오버 전이면 정방향 복제만 걷고, 컷오버 뒤면 역방향으로 다시 전환(도착에 쓴 데이터도 출발로)
@@ -130,24 +134,33 @@ export async function handleRollback(raw: unknown) {
       // rolled_back은 끝 상태라 cleanup이 안 돈다 → 여기서 걷는다. 안 걷으면 출발 DB 슬롯이 WAL을 계속 쌓고(디스크),
       // 다음 시연에서 phase()가 forward로 보여 sync가 이상하게 돈다. 출발이 다시 주인이라 되돌릴 대상은 없다
       // Z69: 컷오버 전·뒤·noop 모두 걷고, 실패하면 경고만 (rollback-cleanup.ts 결정 참고)
-      const cleanup = await cleanupAfterRollback(repl);
+      const cleanup0 = await cleanupAfterRollback(repl);
+      // 동기화에 들어간 적 없으면 DB 에 걷을 것이 없다 → 걷기 접속 실패로 중계기·배달 정리를 건너뛰지 않는다 (rollback-cleanup.ts notStartedCleanup)
+      const cleanup = notStartedCleanup(cleanup0, cleanup0.ok || await enteredSync(j.tenantId, j.migrationId));
       const { removed, leftovers } = cleanup;
       // 출발 헬스 = 출발 DB에서 앱 계정이 다시 쓸 수 있나. 중계기를 지우기 전에 본다:
       //   AWS→온프레 이전은 워커가 출발 DB 에 중계기(공인 IP:15432)로만 닿는다. 예전엔 중계기를 지운 뒤 같은 주소로 붙어
       //   timeout expired → 재시도 때는 중계기가 없어 복제 걷기·헬스 모두 실패 → ROLLBACK_FAILED (2026-11-06 실제 플랫폼에서 확인)
-      const sourceHealthy = await withClient(repl.cfg.source, (c) => appCanWrite(c, repl.cfg.source, (repl.cfg.tables?.[0]) ?? "orders"));
+      const appWritable = await withClient(repl.cfg.source, (c) => appCanWrite(c, repl.cfg.source, (repl.cfg.tables?.[0]) ?? "orders"));
+      // 출발이 이 이전 전부터 쓰기 막혀 있었으면(앞선 이전 완료의 울타리) 롤백을 막지 않는다 (rollback-health.ts)
+      const sourceDb = sourceDbHealth({ appWritable, kind: r.kind, enteredCutover: appWritable ? false : await enteredCutover(j.tenantId, j.migrationId) });
+      if (sourceDb.appWrite === "blocked_before_migration")
+        log.warn({ migration_id: j.migrationId }, "rollback: source app role could not write before this migration (earlier completed migration left the fence); not caused by this migration");
+      const sourceHealthy = sourceDb.healthy;
       // 온프레 CNPG 이전: 걷기가 다 끝났을 때만 gitops 에서 이전 역할(ensure absent)·터널을 걷는다. 실패해도 롤백은 이어 간다 (detail 에만)
       //   덜 걷었으면 터널을 남긴다: repl-cleanup 이 같은 터널로 다시 걷고 그때 이 커밋을 한다
-      const gitopsReplication = cleanup.ok ? await commitReplicationCleanup(bundle) : { skipped: "replication_leftovers" };
+      const gitopsReplication = cleanup.ok ? await commitReplicationCleanup(replBundle) : { skipped: "replication_leftovers" };
       // 출발 계정 중계기: 걷기와 터널 정리 커밋이 끝났을 때만 지운다. 실패해도 롤백은 rolled_back (걷기 실패와 같은 규칙, Z69) → 경고 감사 + repl-cleanup 으로 다시
       const relay = cleanup.ok ? await teardownRelayStep(j, m) : { kind: "skipped" as const, reason: "replication_leftovers" };
       if (relay.kind === "failed") log.warn({ migration_id: j.migrationId, code: relay.failureCode, reason: relay.reason }, "rollback: relay teardown incomplete");
       if (!cleanup.ok) log.warn({ migration_id: j.migrationId, kind: r.kind, warning: cleanup.warning, leftovers }, "rollback: replication cleanup incomplete");
+      // 이전마다 만든 Cloudflare LB·pool·도착 터널: 트래픽이 출발로 돌아온 뒤 지운다 (앱 호스트는 원래 DNS 줄이 다시 받는다). 실패는 detail 에만
+      const cfEntry = await teardownTrafficEntry(j.migrationId, { keepTarget: false });
       return {
         to: "rolled_back",
-        detail: { weights, traffic: traffic.detail, gitopsWeight, gitopsReplication,
+        detail: { weights, traffic: traffic.detail, gitopsWeight, gitopsReplication, cfEntry, sourceDb: { appWrite: sourceDb.appWrite },
                   relay: relay.kind === "ok" ? relay.detail : relay.kind === "skipped" ? { skipped: relay.reason } : { failed: relay.failureCode, error: relay.reason },
-                  replication: { kind: r.kind, order: dbFirst ? "db_then_traffic" : "traffic_then_db", removed, leftovers, cleanup: cleanup.ok ? "ok" : "incomplete",
+                  replication: { kind: r.kind, order: dbFirst ? "db_then_traffic" : "traffic_then_db", removed, leftovers, cleanup: cleanup.notStarted ? "not_started" : cleanup.ok ? "ok" : "incomplete",
                                  ...(cleanup.warning ? { warning: cleanup.warning } : {}) },
                   measurements: [...(r.result ? toMeasurements(r.result.measures, j.migrationId, "source") : []), ...appLinkMeasurements(appLink, j.migrationId, "source")],
                   ...(appLink ? { appLink } : {}), ...(gitopsWriter ? { gitopsWriter } : {}), ...(runtimeWriter ? { runtimeWriter } : {}) },
@@ -209,6 +222,18 @@ async function withRevokeAfter<T extends { detail?: Record<string, unknown> }>(j
 async function passedCutover(tenantId: string, migrationId: string): Promise<boolean> {
   return withTenant(tenantId, async (tx) => ((await tx.query(
     `SELECT 1 FROM audit_events WHERE target = $1 AND detail->>'from' = 'cutover' AND detail->>'to' = 'rollback_window' LIMIT 1`, [migrationId])).rowCount ?? 0) > 0);
+}
+
+// 동기화 단계에 들어간 적이 있나 (감사 전이 줄). 복제 객체·전용 계정은 이 단계에서야 만든다
+async function enteredSync(tenantId: string, migrationId: string): Promise<boolean> {
+  return withTenant(tenantId, async (tx) => ((await tx.query(
+    `SELECT 1 FROM audit_events WHERE target = $1 AND detail->>'to' = 'syncing' LIMIT 1`, [migrationId])).rowCount ?? 0) > 0);
+}
+
+// 컷오버 단계에 들어간 적이 있나 (감사 전이 줄). 울타리(C2)는 이 단계 안에서만 친다
+async function enteredCutover(tenantId: string, migrationId: string): Promise<boolean> {
+  return withTenant(tenantId, async (tx) => ((await tx.query(
+    `SELECT 1 FROM audit_events WHERE target = $1 AND detail->>'to' = 'cutover' LIMIT 1`, [migrationId])).rowCount ?? 0) > 0);
 }
 
 // weightPct 0 을 gitops 에 남긴다. 이미 0 이면 커밋이 안 생긴다 (commitBundle 멱등)

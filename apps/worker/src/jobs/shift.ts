@@ -3,7 +3,7 @@ import { latestAcceptedAppName, withTenant, observeMinSec, takeTrafficLease, POL
 import { runShift, ruleFromCriteria, shiftTransition, MigrationMoved, MAX_REOBSERVE, SHARE_TOL_PCT, type ShiftProgress } from "@svc/traffic";
 import { jobData, nextJob, readMigration, RetryLater, runStep, stubFailIfAsked } from "./_step.js";
 import { loadLatestPlan } from "./plan-store.js";
-import { configFromEnv, commitTrafficWeight, GitopsRepo, ENV_DIR, tenantSlug, type BundleRef } from "../gitops/index.js";
+import { configFromEnv, commitTrafficWeight, GitopsRepo, bundleRefFor, type BundleRef } from "../gitops/index.js";
 import { missingTrafficConfig, TRAFFIC_CONFIG_HINT, trafficFor, trafficMetrics, trafficTickMs } from "../platform.js";
 import { setTrafficWeightMetric } from "../instrument.js";
 import { restoredFromPct } from "../traffic-restore.js";
@@ -22,8 +22,7 @@ export async function handleShift(raw: unknown) {
       if (configFromEnv()) {
         const app = await latestAcceptedAppName(tx, m.id);
         const e = await tx.query("SELECT provider FROM environments WHERE id=$1", [m.targetEnvId]);
-        if (app && e.rows[0]) bundle = { tenant: tenantSlug(j.tenantId), app,
-                                               env: ENV_DIR[e.rows[0].provider as Provider] };
+        if (app && e.rows[0]) bundle = bundleRefFor(j.tenantId, app, e.rows[0].provider as Provider, m.targetEnvId);
       }
       // R3-3: 이 이전이 전에 shifting 을 떠난 적이 있나 (재개 paused → shifting, 컷오버 되돌림 cutover → shifting).
       //   advance() 가 감사 detail 에 from/to 를 남긴다. 처음 shift 면 false
@@ -39,6 +38,11 @@ export async function handleShift(raw: unknown) {
       const gitopsWeightLag: { pct: number; error: string }[] = [];
       const onWeight = async (pct: number) => {
         setTrafficWeightMetric(j.migrationId, pct);
+        // 몫 확인을 끄면 onProgress 가 안 불려 화면 막대가 트래픽 단계 내내 0% 다. 바꾼 가중치를 목표로만 남긴다 (실측은 비움)
+        if (process.env.TRAFFIC_SHARE_CHECK?.trim() === "0") {
+          const at = new Date().toISOString();
+          await saveProgress({ stepPct: pct, observedPct: null, reached: null, reobserve: 0, stepStartedAt: at, at });
+        }
         if (!repo || !bundle) return;
         try { await commitTrafficWeight(repo, bundle, pct); }
         catch (e) { gitopsWeightLag.push({ pct, error: (e as Error).message.slice(0, 200) }); }
@@ -89,7 +93,10 @@ export async function handleShift(raw: unknown) {
         const key = `${p.stepPct}:${p.reached}:${p.reobserve}`;
         if (key === lastKey && Date.now() - lastWrite < 1000) return;
         lastKey = key; lastWrite = Date.now();
-        await withTenant(j.tenantId, (tx) => tx.query(
+        await saveProgress(p);
+      };
+      // 위 onWeight 도 쓴다 (몫 확인을 껐을 때 목표만)
+      const saveProgress = (p: ShiftProgress) => withTenant(j.tenantId, (tx) => tx.query(
           `INSERT INTO traffic_progress (migration_id, tenant_id, target_pct, observed_pct, reached, tolerance_pct, reobserve, step_started_at, observed_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
            ON CONFLICT (migration_id) DO UPDATE SET target_pct = EXCLUDED.target_pct, observed_pct = EXCLUDED.observed_pct,
@@ -97,7 +104,6 @@ export async function handleShift(raw: unknown) {
              step_started_at = EXCLUDED.step_started_at, observed_at = EXCLUDED.observed_at`,
           [j.migrationId, j.tenantId, p.stepPct, p.observedPct, p.reached, SHARE_TOL_PCT, p.reobserve, p.stepStartedAt, p.at]))
           .catch(() => { /* 표시용. 쓰기 실패로 전환을 멈추지 않는다 */ });
-      };
       // #245: 진짜 지표로 몫을 볼 때만 전환 직전 출발 요청 수를 읽는다. 가중치를 바꾸기 전이라 출발이 전부 받고 있다
       const baseline = process.env.PROM_URL && process.env.TRAFFIC_SHARE_CHECK?.trim() !== "0"
         ? await sourceBaselineFor(j.tenantId, j.migrationId, m.sourceEnvId, sw, !reentered) : null;
@@ -110,7 +116,7 @@ export async function handleShift(raw: unknown) {
         sleep: () => new Promise((res) => setTimeout(res, trafficTickMs())),
         observeSec: obs.sec,   // M7: 시계로 관찰. pf-d FM-TRF-15: 승인 계획 holdSec (T22 최소보다 짧지 않게)
         // z75-38: 단계마다 "최소 관찰(TRAFFIC_OBSERVE_SEC) 지남 + 실측 도착 몫이 목표 ±10%p" 라야 다음 단계. 못 미치면 2번 더 본 뒤 paused
-        //   Z38 R8-43: TRAFFIC_SHARE_CHECK=0 이면 끈다 (예전 동작: 10%·50% 는 판정 3번만, 몫 확인·진행 기록 없음). 부를 때마다 읽는다
+        //   Z38 R8-43: TRAFFIC_SHARE_CHECK=0 이면 끈다 (예전 동작: 10%·50% 는 판정 3번만, 몫 확인 없음. 진행 기록은 onWeight 가 목표만). 부를 때마다 읽는다
         ...(process.env.TRAFFIC_SHARE_CHECK?.trim() === "0" ? {} : { shareTolPct: SHARE_TOL_PCT, stepObserveSec: obs.sec, onProgress }),
         // 다른 쪽(가드레일·사람)이 상태를 바꿨으면 그 자리에서 멈춘다. 가중치는 그대로
         // Z19 H3: 잠금을 잃었으면(롤백 시작이 잠금을 되찾음, Z1) 바로 멈춘다

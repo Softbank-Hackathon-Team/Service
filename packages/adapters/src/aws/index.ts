@@ -20,7 +20,10 @@ export const PERMS: PermTable = {
   kubernetes_namespace_v1: { read: [], write: [], remove: [] },
   aws_db_instance: {
     read: ["rds:DescribeDBInstances", "rds:ListTagsForResource"],
-    write: ["rds:CreateDBInstance", "rds:ModifyDBInstance", "rds:AddTagsToResource"],
+    // 2026-11-07 온프레 → AWS 실측 KMSKeyNotAccessibleFault: storage_encrypted(기본 aws/rds 키) + manage_master_user_password(aws/secretsmanager 키)는
+    //   만드는 쪽 자격에 kms:DescribeKey 가 있어야 한다 (AWS RDS 문서 "Permissions required for Secrets Manager integration"). 암호화 저장소 grant 는 kms:CreateGrant.
+    //   두 동작은 export-permissions 의 AppDbKms 문장으로만 나간다 (kms:ViaService = rds·secretsmanager 리전 끝점일 때만)
+    write: ["rds:CreateDBInstance", "rds:ModifyDBInstance", "rds:AddTagsToResource", "kms:DescribeKey", "kms:CreateGrant"],
     remove: ["rds:DeleteDBInstance"] },
   aws_db_parameter_group: {
     read: ["rds:DescribeDBParameterGroups", "rds:DescribeDBParameters"],
@@ -70,7 +73,8 @@ export const PERMS: PermTable = {
     write: ["sns:CreateTopic", "sns:SetTopicAttributes", "sns:TagResource"],
     remove: ["sns:DeleteTopic"] },
   aws_security_group: {
-    read: ["ec2:DescribeSecurityGroups", "ec2:DescribeSecurityGroupRules"],
+    // 2026-11-07 실측: 지우기 전에 provider 가 이 SG 를 쓰는 ENI 를 찾는다 (DescribeNetworkInterfaces 403 으로 target-destroy 실패)
+    read: ["ec2:DescribeSecurityGroups", "ec2:DescribeSecurityGroupRules", "ec2:DescribeNetworkInterfaces"],
     write: ["ec2:CreateSecurityGroup", "ec2:AuthorizeSecurityGroupIngress",
       "ec2:RevokeSecurityGroupEgress", "ec2:CreateTags"],
     remove: ["ec2:DeleteSecurityGroup"] },
@@ -89,7 +93,8 @@ export const PERMS: PermTable = {
     remove: ["iam:DeleteRolePolicy"] },
   aws_eks_pod_identity_association: {
     read: ["eks:DescribePodIdentityAssociation"],
-    write: ["eks:CreatePodIdentityAssociation", "iam:PassRole"],
+    // 2026-11-07 온프레 → AWS 실측: app 루트 모듈 provider default_tags 가 연결에 태그를 붙여 eks:TagResource 가 없으면 AccessDenied
+    write: ["eks:CreatePodIdentityAssociation", "eks:TagResource", "iam:PassRole"],
     remove: ["eks:DeletePodIdentityAssociation"] },
   // TA13 DRAFT(ai): 관리형 컨테이너(ECS Fargate) 도착 — root(service_json) + kinds/service-ecs 가 만드는 종류.
   //   TODO(human): 실행 역할 천장(infra/permissions/aws-operate-role-policy.json)·세션 정책엔 아직 안 넣음 (PassRole 대상 ecs-tasks, 보안 승인 몫)

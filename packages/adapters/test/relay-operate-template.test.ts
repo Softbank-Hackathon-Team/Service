@@ -14,7 +14,7 @@ const inline = (name: string) => tpl.Resources.OperateRole.Properties.Policies.f
 test("실행 역할 인라인 relay 에 원본 문장이 그대로 들어가고, 인라인 합계가 IAM 한도 안이다", () => {
   const plain = inline("relay").Statement.filter((s: { Sid?: string }) => s.Sid);
   assert.deepEqual(plain, src.Statement.filter((s: { Sid: string }) => !GATED.includes(s.Sid)));
-  assert.equal(plain.length, 13);   // + TargetDbRulesForRelay (GCP→AWS 도착 RDS 보안 그룹)
+  assert.equal(plain.length, 14);   // + TargetDbRulesForRelay (GCP→AWS 도착 RDS 보안 그룹) + RelayReadOwnConsole (중계기 호스트 공개 키, 보안 12번)
   const size = tpl.Resources.OperateRole.Properties.Policies.reduce((n: number, p: { PolicyDocument: unknown }) => n + JSON.stringify(p.PolicyDocument).length, 0);
   assert.ok(size < 10240, `인라인 합계 ${size}`);
 });
@@ -35,7 +35,7 @@ test("거부: 보안 그룹 ID 모양이 아니면 매개변수가 받지 않고
   assert.ok(re.test("") && re.test("sg-0123456789abcdef0"));
   for (const bad of ["*", "sg-*", "sg-XYZ", "sg-12345678/x"]) assert.ok(!re.test(bad), bad);
   assert.ok(!JSON.stringify(tpl.Resources.ObserveRole).includes("ec2:RunInstances"));
-  assert.equal(Object.keys(tpl.Parameters).length, 7);
+  assert.equal(Object.keys(tpl.Parameters).length, 8);   // + RoleSuffix (한 계정에 환경 여럿, 0056)
 });
 
 test("출발 관리 비밀 읽기: 매개변수로 DB 하나의 RDS 관리 비밀만 (ARN 이 아니라 RDS 태그), 비우면 빠진다", () => {

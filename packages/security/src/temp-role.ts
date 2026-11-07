@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { Provider } from "@svc/contracts";
+import { Provider, awsRoleName } from "@svc/contracts";
 
 // 임시 역할 발급. 고객 권한은 비밀 키가 아니라 짧게 빌리는 역할로만 쓴다 (관찰 역할, 실행 역할 분리).
 // DRAFT(ai): 아래 두 스키마는 워커 ↔ 보안 패키지 경계를 넘으므로 packages/contracts 로 옮길 후보다 (통합 스레드에 요청)
@@ -79,7 +79,9 @@ export interface RoleIssuer {
 // STUB: 진짜는 AWS STS AssumeRole(ExternalId), GCP 서비스 계정 가장(Workload Identity Federation),
 // 온프레는 Agent 키로 범위 제한 토큰. 지금은 어떤 클라우드도 부르지 않고 가짜 참조만 돌려준다.
 // TODO(human): 환경별 역할 이름(svc-observe / svc-operate) 규칙은 입력층 연결 템플릿과 맞춰 정한다
-export function stubRoleIssuer(accountOf: (envId: string) => string = () => "000000000000"): RoleIssuer {
+// 한 AWS 계정에 환경 여럿 (0056): AWS 는 이름 끝에 환경 꼬리 (suffixOf → environments.aws_role_suffix). 없으면 옛 이름 (worker roleRefFor 와 같은 규칙)
+export function stubRoleIssuer(accountOf: (envId: string) => string = () => "000000000000",
+  suffixOf: (envId: string) => string | null | undefined = () => null): RoleIssuer {
   return {
     async issue(raw, now) {
       const req = TempRoleRequest.parse(raw);
@@ -87,7 +89,7 @@ export function stubRoleIssuer(accountOf: (envId: string) => string = () => "000
       const acct = accountOf(req.envId);
       const roleName = `svc-${req.purpose}`;
       const roleRef = {
-        aws: `arn:aws:iam::${acct}:role/${roleName}`,
+        aws: `arn:aws:iam::${acct}:role/${awsRoleName(roleName, suffixOf(req.envId))}`,
         gcp: `${roleName}@${acct}.iam.gserviceaccount.com`,
         onprem: `agent://${req.envId}/${roleName}`,
         azure_mock: `azure-mock://${acct}/${roleName}`,

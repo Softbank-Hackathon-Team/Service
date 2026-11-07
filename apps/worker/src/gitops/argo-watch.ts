@@ -194,7 +194,8 @@ export function argoWatcherFromEnv(env: NodeJS.ProcessEnv = process.env, d: Argo
   const reader = argoReaderFromEnv(env, deps);
   if (!reader) return notConfigured;
   const demo = env.DEMO_MODE === "1";
-  const waitMs = envNumber(env.ARGO_WAIT_SEC, 180) * 1000;
+  // 2026-11-07 감사: 새 클러스터 목적지는 ApplicationSet 생성기 주기(약 3분) 뒤에야 Application 이 생겨 180초를 자주 넘긴다 → 기본 600초
+  const waitMs = envNumber(env.ARGO_WAIT_SEC, 600) * 1000;
   // DRAFT(ai): 틱 기본 2초, 데모 모드 1초 (Synced+Healthy 를 빨리 잡아 화면 단계가 덜 멈춰 보이게)
   const tickMs = envNumber(env.ARGO_TICK_MS, demo ? 1000 : 2000);
   const maxErrors = envNumber(env.ARGO_MAX_ERRORS, 10);

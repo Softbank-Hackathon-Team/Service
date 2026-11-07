@@ -120,7 +120,7 @@ ENV API_HOST=0.0.0.0
 COPY infra/permissions /app/infra/permissions
 COPY gitops/charts /app/gitops/charts
 # 온프레 설치 한 줄이 받는 파일 (routes/onprem-install.ts, GET /api/v1/install/onprem*). 레포와 같은 상대 경로로 둔다
-COPY tools/onprem-bootstrap.sh tools/onprem-install.sh tools/argocd-core-install-v2.13.3.yaml tools/sealed-secrets-controller-v0.40.0.yaml tools/onprem-argocd-health.yaml tools/cnpg-1.30.1.yaml /app/onprem-bundle/tools/
+COPY tools/onprem-bootstrap.sh tools/onprem-install.sh tools/argocd-core-install-v2.13.3.yaml tools/sealed-secrets-controller-v0.40.0.yaml tools/onprem-argocd-health.yaml tools/cnpg-1.30.1.yaml tools/external-secrets-2.14.0.tgz /app/onprem-bundle/tools/
 COPY deploy/helm/onprem-agent /app/onprem-bundle/deploy/helm/onprem-agent
 ENV PERMISSIONS_DIR=/app/infra/permissions
 ENV CHART_DIR=/app/gitops/charts/app

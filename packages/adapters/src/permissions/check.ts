@@ -1,4 +1,4 @@
-import type { PermissionBundle, PermissionGap } from "@svc/contracts";
+import { awsRoleName, type PermissionBundle, type PermissionGap } from "@svc/contracts";
 import { arr, CliError, get, runJson, str, type CliDeps } from "../common/cli.js";
 import { gcpEnvFor } from "../verify/gcp.js";
 import type { PolicyDoc, PolicyStatement } from "./bundles.js";
@@ -154,6 +154,8 @@ export interface AwsCheckInput extends CheckBase {
   bundles: Bundle[];
   /** 정책 문서 (infra/permissions). 문장의 자원·조건으로 흉내 평가 견본을 만든다 */
   policies: { "svc-operate-policy"?: PolicyDoc; relay?: PolicyDoc };
+  /** 환경 역할 이름 꼬리 (environments.aws_role_suffix, 0056). 묶음 주체(svc-observe·svc-operate) + 꼬리 = 고객 계정 안 실제 역할. 없으면 옛 이름 */
+  roleSuffix?: string | null;
 }
 const actionsOf = (s: PolicyStatement) => (Array.isArray(s.Action) ? s.Action : [s.Action]);
 /** 문장의 자원 모양 → 견본 ARN (리전·계정 자리를 채우고 나머지 * 는 permcheck). "*" 면 null (흉내 평가 기본값 *) */
@@ -207,8 +209,9 @@ export async function checkAwsPermissions(d: CliDeps, i: AwsCheckInput): Promise
     return versions.get(role)!;
   };
   for (const b of i.bundles.filter((x) => x.cloud === "aws")) {
-    const arn = `arn:aws:iam::${i.accountId}:role/${b.principal}`;
-    const grantedVersion = await versionOf(b.principal);
+    const roleName = awsRoleName(b.principal, i.roleSuffix);
+    const arn = `arn:aws:iam::${i.accountId}:role/${roleName}`;
+    const grantedVersion = await versionOf(roleName);
     const doc = i.policies[b.role as keyof AwsCheckInput["policies"]];
     const allowed = new Set<string>();
     let unverified: string | undefined;

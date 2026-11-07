@@ -76,11 +76,12 @@ const mutations = (calls: string[]) => calls.filter((c) => MUTATING.test(c));
 
 // B-2: + SA 2(svc-env·svc-gke-node) + 역할 1(platform_env) + 프로젝트 바인딩 4(env 역할 1·노드 3) + SA 단위 2(svc-env tokenCreator·svc-gke-node actAs)
 // PERM-GATE: + 역할 1(platform_observe_permcheck, 전용) + 프로젝트 바인딩 1(관찰 SA → 그 역할, 전용)
-test("처음 실행 (A안 두 프로젝트): API 13(원래 3·전용 10) + SA 5 + 역할 11(원래 2·전용 9) + 프로젝트 바인딩 14(원래 2·전용 12) + SA 단위 5(tokenCreator 4·actAs 1) = 변경 48번", () => {
+// 중계기(platform_relay): + API 2(원래 compute·sqladmin) + 역할 2(원래·전용) + 프로젝트 바인딩 2(svc-operate → 그 역할, 원래·전용)
+test("처음 실행 (A안 두 프로젝트): API 15(원래 5·전용 10) + SA 5 + 역할 13(원래 3·전용 10) + 프로젝트 바인딩 16(원래 3·전용 13) + SA 단위 5(tokenCreator 4·actAs 1) = 변경 54번", () => {
   const e = env();
   const r = e.run();
   assert.equal(r.status, 0, r.stderr);
-  assert.equal(mutations(e.calls()).length, 48);
+  assert.equal(mutations(e.calls()).length, 54);
   // 새 전용 프로젝트: 연결 확인·빌리기·첫 up 이 부르는 API 9개를 켬 (실측에서 cloudresourcemanager 손으로 켠 것 없앰)
   for (const a of ["cloudresourcemanager", "serviceusage", "iam", "iamcredentials", "sts", "container", "sqladmin", "compute", "cloudbilling", "secretmanager"])
     assert.ok(e.calls().some((x) => x.startsWith(`services enable ${a}.googleapis.com`) && x.includes(`--project=${TPRJ}`)), a);
@@ -99,7 +100,7 @@ test("재실행: 변경 명령 0번, 전부 '건너뜀', 종료 0 (확인 명령
   assert.equal(r.status, 0, r.stderr);
   const second = e.calls().slice(before);
   assert.equal(mutations(second).length, 0, "재실행에서 변경 명령: " + mutations(second).join(" | "));
-  assert.equal((r.stdout.match(/이미 있음, 건너뜀/g) ?? []).length, 49);   // + 전용 프로젝트 있음 (PERM-GATE: + 확인 역할·바인딩 2)
+  assert.equal((r.stdout.match(/이미 있음, 건너뜀/g) ?? []).length, 55);   // 중계기 + 6. + 전용 프로젝트 있음 (PERM-GATE: + 확인 역할·바인딩 2)
   assert.ok(second.length >= 10, "각 항목을 먼저 확인");
 });
 
@@ -110,7 +111,7 @@ test("부분 상태: 관찰 SA·관찰 역할만 있으면 나머지만 만든�
   assert.equal(r.status, 0, r.stderr);
   const m = mutations(e.calls());
   // OBSROLE3: 있는 관찰 역할에 권한이 비어 있으면 create 가 아니라 update(add-permissions) 1번이 더해진다 (8 → 9)
-  assert.equal(m.length, 47);   // + API 11 (원래 cloudresourcemanager·cloudbilling 2·전용 9). PERM-GATE: + 확인 역할·바인딩 2
+  assert.equal(m.length, 53);   // 중계기 + 6. + API 11 (원래 cloudresourcemanager·cloudbilling 2·전용 9). PERM-GATE: + 확인 역할·바인딩 2
   assert.equal(m.filter((c) => c.startsWith("iam roles update platform_observe ")).length, 1);
   assert.ok(!m.some((c) => c.includes("service-accounts create svc-observe")) && !m.some((c) => c.includes("roles create platform_observe ") && c.includes("--project=cust-prj")));
   assert.ok(m.some((c) => c.includes("service-accounts create svc-operate")));
@@ -141,7 +142,10 @@ test("A안: 실행·plan SA·역할·바인딩은 전용 프로젝트에만, 원
   assert.equal(e.run().status, 0);
   const m = mutations(e.calls());
   const inOrig = m.filter((c) => c.includes(`--project=${PRJ}`) || c.startsWith(`projects add-iam-policy-binding ${PRJ} `));
-  assert.ok(inOrig.every((c) => !/svc-(operate|plan)|platform_(operate|plan)/.test(c)), inOrig.join(" | "));
+  // 예외 하나: GCP 출발 → 온프레 중계기 역할(platform_relay)만 원래 프로젝트에서 svc-operate 에 붙는다 (RELAY_SOURCE_ROLE=0 이면 없음)
+  const relay = inOrig.filter((c) => c.includes("platform_relay"));
+  assert.equal(relay.filter((c) => c.startsWith("projects add-iam-policy-binding")).length, 1);
+  assert.ok(inOrig.filter((c) => !c.includes("platform_relay")).every((c) => !/svc-(operate|plan)|platform_(operate|plan)/.test(c)), inOrig.join(" | "));
   assert.ok(m.some((c) => c.startsWith("iam service-accounts create svc-operate") && c.includes(`--project=${TPRJ}`)));
   const op = m.filter((c) => c.startsWith(`projects add-iam-policy-binding ${TPRJ} `) && c.includes("roles/platform_operate "));
   assert.equal(op.length, 1); assert.ok(op[0]!.includes("--condition=None"));
@@ -258,7 +262,7 @@ test("DRY_RUN 은 확인 명령도 안 부르고, 이미 있어도 전부 출력
   const r = e.run({ DRY_RUN: "1" });
   assert.equal(r.status, 0);
   assert.equal(e.calls().length, before, "DRY_RUN 중 gcloud 호출 없음");
-  assert.equal((r.stdout.match(/^\+ gcloud/gm) ?? []).length, 48);   // PERM-GATE: + 확인 역할·바인딩 2
+  assert.equal((r.stdout.match(/^\+ gcloud/gm) ?? []).length, 54);   // 중계기 + 6.   // PERM-GATE: + 확인 역할·바인딩 2
 });
 
 // ── OBSROLE3: 이미 만든 관찰 역할 권한 갱신 ──
@@ -380,8 +384,8 @@ test("VOBSROLE3 거부: 권한 추가(update)가 거절돼도 나머지 연결 �
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stderr, /권한 추가 실패/);
   const calls = e.calls();
-  // A안: 원래 2(관찰) + 전용 12(관찰 2·확인(PERM-GATE)·plan·실행·_iam·_db_secret·허브·B-2 env 역할·노드 3)
-  assert.equal(calls.filter((c) => c.startsWith("projects add-iam-policy-binding")).length, 14);
+  // A안: 원래 3(관찰 2·중계기) + 전용 13(관찰 2·확인(PERM-GATE)·plan·실행·_iam·_db_secret·허브·B-2 env 역할·노드 3·중계기)
+  assert.equal(calls.filter((c) => c.startsWith("projects add-iam-policy-binding")).length, 16);
   assert.equal(calls.filter((c) => c.startsWith("iam service-accounts add-iam-policy-binding")).length, 5);   // tokenCreator 4 + svc-gke-node actAs 1
   assert.deepEqual(permsOf(e).sort(), OLD7.split(",").sort(), "실패했으니 권한은 그대로");
 });
@@ -414,4 +418,12 @@ test("FM-GCP-14: svc-observe 에 확인 역할(platform_observe_verify)을 붙�
   assert.ok(!readFileSync(join(e.state, "pbind"), "utf8").includes("roles/browser"));
   const b = e.calls().length; e.run();
   assert.equal(mutations(e.calls().slice(b)).length, 0);
+});
+
+test("중계기 역할 끔(RELAY_SOURCE_ROLE=0): 원래 프로젝트엔 platform_relay 를 만들지도 붙이지도 않는다 (전용 프로젝트엔 그대로)", () => {
+  const e = env();
+  assert.equal(e.run({ RELAY_SOURCE_ROLE: "0" }).status, 0);
+  const m = mutations(e.calls());
+  assert.ok(!m.some((c) => c.includes("platform_relay") && (c.includes(`--project=${PRJ}`) || c.startsWith(`projects add-iam-policy-binding ${PRJ} `))));
+  assert.ok(m.some((c) => c.startsWith(`projects add-iam-policy-binding ${TPRJ} `) && c.includes("roles/platform_relay")));
 });

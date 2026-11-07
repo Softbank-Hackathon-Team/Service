@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { ConnectionLink } from "@svc/contracts";
-import { gcpCloudShellLink, gcpConnectSettings } from "../src/connect/link.js";
+import { DEFAULT_GCP_CONNECT_REPO_URL, gcpCloudShellLink, gcpConnectSettings } from "../src/connect/link.js";
 
 const SA = "t-0123456789abcdef0123456789ab@platform-prj.iam.gserviceaccount.com";
 
@@ -31,6 +31,9 @@ test("A안: 전용 프로젝트를 알면 명령에 TARGET_PROJECT_ID 가 들어
 test("거부: GCP_PLATFORM_PROJECT 가 없거나 모양이 틀리면 설정 없음(null → 503), 따옴표가 든 값은 셸에서 안 깨짐", () => {
   assert.equal(gcpConnectSettings({}), null);
   assert.equal(gcpConnectSettings({ GCP_PLATFORM_PROJECT: "Bad_Project" }), null);
-  assert.deepEqual(gcpConnectSettings({ GCP_PLATFORM_PROJECT: "platform-prj" }), { platformProject: "platform-prj", repoUrl: null, repoBranch: null });
+  // 레포 주소를 안 주면 기본 공개 레포 (빈 Cloud Shell 로 열려 스크립트가 없던 문제), none 이면 빈 Cloud Shell
+  assert.deepEqual(gcpConnectSettings({ GCP_PLATFORM_PROJECT: "platform-prj" }), { platformProject: "platform-prj", repoUrl: DEFAULT_GCP_CONNECT_REPO_URL, repoBranch: null });
+  assert.equal(gcpConnectSettings({ GCP_PLATFORM_PROJECT: "platform-prj", GCP_CONNECT_REPO_URL: "none" })!.repoUrl, null);
+  assert.match(gcpCloudShellLink({ platformSa: SA, repoUrl: DEFAULT_GCP_CONNECT_REPO_URL }).url, /cloudshell_git_repo=https%3A%2F%2Fgithub\.com%2FSoftbank-Hackathon-Team%2FService\.git&cloudshell_workspace=infra/);
   assert.match(gcpCloudShellLink({ platformSa: SA, projectId: "a'b" }).command, /PROJECT_ID='a'\\''b'/);
 });

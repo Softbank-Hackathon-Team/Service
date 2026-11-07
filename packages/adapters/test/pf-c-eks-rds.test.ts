@@ -3,7 +3,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { AppSpecV2, checkV2, ImportResultV2, type TargetEnv } from "@svc/contracts";
-import { discoverAws } from "../src/discover/index.js";
+import { discoverAws, discoverGcp } from "../src/discover/index.js";
 import { normalizeV2 } from "../src/import/pipeline.js";
 import { carryHumanEdits } from "../src/import/carry.js";
 import { targetBuilderFor, v2Blockers, v2PrecheckItems, withDbNetworkV2 } from "../src/index.js";
@@ -129,6 +129,80 @@ test("FM-IR-02 거부: 보안 그룹을 못 읽으면 예전처럼 unknown → �
   const notes = (inv.items as Array<{ kind: string; text?: string }>).filter((i) => i.kind === "import.note").map((i) => i.text ?? "");
   assert.ok(notes.some((n) => n.startsWith("RDS 보안 그룹 못 읽음")), notes.join("\n"));
   assert.ok(v2Blockers(spec, targetBuilderFor("gcp").capabilities()).needsHuman.some((m) => m.startsWith("shop-db: 출발 방화벽을 못 읽음")));
+});
+
+// GCP-SQL-NET (FM-IR-02 의 GCP 짝, #317): GKE + Cloud SQL 출발. Cloud SQL 은 보안 그룹 대신 인스턴스의 ipConfiguration 이 방화벽이다.
+//   예전: 사설 IP 만(API 가 빈 authorizedNetworks 를 안 보냄)이면 unknown → GCP→AWS 사전 점검이 PC-V2-HUMAN "출발 방화벽을 못 읽음" 으로 막아
+//   명세 검토 ↔ 사전 점검을 계속 돌았다. 모양 = infra/samples/gcp-source 의 sample-shop-db (사설 IP 만, TLS 필수)
+const SQL_IP = "10.40.0.3";
+const CLOUDSQL = { name: "shop-db", databaseVersion: "POSTGRES_16", region: "asia-northeast3", connectionName: "finals-demo:asia-northeast3:shop-db",
+  selfLink: "https://sqladmin.googleapis.com/sql/v1beta4/projects/finals-demo/instances/shop-db", ipAddresses: [{ type: "PRIVATE", ipAddress: SQL_IP }],
+  settings: { tier: "db-f1-micro", dataDiskSizeGb: "20", availabilityType: "ZONAL",
+    ipConfiguration: { ipv4Enabled: false, privateNetwork: "projects/finals-demo/global/networks/platform-target", sslMode: "ENCRYPTED_ONLY" } } };
+const AWS: TargetEnv = { envId: "55555555-5555-4555-8555-555555555555", provider: "aws", region: "ap-northeast-2", migrationId: "44444444-4444-4444-8444-444444444444" } as TargetEnv;
+async function runGcpImport(sql: object) {
+  const api = structuredClone(API);
+  api.spec.template.spec.containers[0]!.env[0] = { name: "DB_HOST", value: SQL_IP };
+  const { exec, calls } = fakeExec([
+    [/^gcloud projects describe finals-demo/, { out: { projectId: "finals-demo" } }],
+    [/^gcloud container clusters list/, { out: [{ name: "platform-target", location: "asia-northeast3", currentMasterVersion: "1.31.4-gke.1" }] }],
+    [/^gcloud container clusters get-credentials/, { out: "kubeconfig entry generated" }],
+    [/^gcloud sql instances list/, { out: [sql] }],
+    [/^gcloud sql databases list/, { out: [{ name: "postgres" }, { name: "shop" }] }],
+    [/^gcloud /, { out: [] }],   // 둘레(VPC·LB·레지스트리·시크릿)·데이터·Cloud Run·NAT 없음
+    [/^kubectl get deployments/, { out: { items: [api, WEB] } }],
+  ]);
+  const { result } = normalizeV2(await discoverGcp({ exec, env: { GCP_PROJECT: "finals-demo", IMPORT_NAMESPACE: NS } }, {}));
+  return { spec: AppSpecV2.parse(result.spec), meta: result.fieldMeta["components.shop-db.network"], calls };
+}
+const sqlFw = (spec: AppSpecV2) => spec.posture.network.find((n) => n.scope === "component" && n.subject === "shop-db");
+const sqlHuman = (spec: AppSpecV2) => v2Blockers(spec, targetBuilderFor("aws").capabilities()).needsHuman.filter((m) => m.startsWith("shop-db"));
+const rdsVars = (spec: AppSpecV2) => { const pg = JSON.parse(String(targetBuilderFor("aws").toTerraformV2(spec, AWS).vars.postgres_json))[0]; return { pub: pg.public, peers: JSON.parse(pg.peer_cidrs_json) }; };
+
+test("GCP-SQL-NET: 사설 IP 만 Cloud SQL → 방화벽 [] · 비공개 (RDS '출발 클러스터 SG 만' 과 같은 모양), 목록 응답만 씀, 사람 확인 0", async () => {
+  const { spec, meta, calls } = await runGcpImport(CLOUDSQL);
+  assert.ok(!calls.some((c) => c.startsWith("gcloud sql instances describe")), "sql instances list 응답의 ipConfiguration 만 씀 (새 권한 없음)");
+  assert.deepEqual(sqlFw(spec), { scope: "component", subject: "shop-db", mode: "mirror", ingress: [], public: false });
+  assert.equal(meta?.source, "cloudsql:shop-db.settings.ipConfiguration");
+  assert.equal(meta?.confidence, 0.9);   // RDS 보안 그룹 줄과 같은 확신 (앱 자신을 뺀 추론)
+  assert.deepEqual(sqlHuman(spec), []);
+  assert.deepEqual(rdsVars(spec), { pub: false, peers: [] });   // 도착 RDS 비공개 · 앱은 연결 의존성으로
+  assert.ok(spec.links.some((l) => l.from === "shop-api" && l.to === "shop-db" && l.intent === "connect"), JSON.stringify(spec.links));
+});
+
+test("GCP-SQL-NET: 공개 IP + 승인된 네트워크 → CIDR 그대로(IP 하나는 /32) · 공개, 도착 RDS peer 로", async () => {
+  const pub = structuredClone(CLOUDSQL) as typeof CLOUDSQL & { settings: { ipConfiguration: Record<string, unknown> } };
+  pub.ipAddresses.push({ type: "PRIMARY", ipAddress: "34.64.10.20" });
+  Object.assign(pub.settings.ipConfiguration, { ipv4Enabled: true, authorizedNetworks: [{ name: "relay", value: "203.0.113.0/28" }, { name: "nat", value: "198.51.100.7" }, { value: "203.0.113.0/28" }] });
+  const { spec } = await runGcpImport(pub);
+  assert.deepEqual(sqlFw(spec), { scope: "component", subject: "shop-db", mode: "mirror", ingress: [{ from: "198.51.100.7/32" }, { from: "203.0.113.0/28" }], public: true });
+  assert.deepEqual(sqlHuman(spec), []);
+  assert.deepEqual(rdsVars(spec), { pub: true, peers: ["198.51.100.7/32", "203.0.113.0/28"] });
+  // 공개인데 승인된 네트워크가 없으면 RDS 와 같은 규칙: 도착은 비공개로 두고 사람이 정함
+  Object.assign(pub.settings.ipConfiguration, { authorizedNetworks: undefined });
+  const none = (await runGcpImport(pub)).spec;
+  assert.deepEqual(sqlFw(none), { scope: "component", subject: "shop-db", mode: "mirror", ingress: [], public: true });
+  assert.deepEqual(sqlHuman(none), ["shop-db: 출발은 공개였는데 허용 주소(CIDR)가 없음 → 도착은 비공개로 두고 사람이 정함"]);
+});
+
+test("GCP-SQL-NET 거부: ipConfiguration 을 못 읽으면(없음·ipv4Enabled 없음) 예전처럼 unknown → 사람 확인 (조용히 열지 않음)", async () => {
+  for (const ipConfiguration of [undefined, { sslMode: "ENCRYPTED_ONLY" }]) {
+    const { spec, meta } = await runGcpImport({ ...CLOUDSQL, settings: { ...CLOUDSQL.settings, ipConfiguration } });
+    assert.equal(meta, undefined, "못 읽음은 근거 줄 없이 (예전과 같음)");
+    assert.deepEqual(sqlFw(spec), { scope: "component", subject: "shop-db", mode: "mirror", ingress: "unknown", public: null }, JSON.stringify(ipConfiguration));
+    assert.deepEqual(sqlHuman(spec), ["shop-db: 출발 방화벽을 못 읽음 → 의존성만 열지 사람이 정함"]);
+  }
+});
+
+test("GCP-SQL-NET: GCP→AWS 사전 점검 — 사설 IP 만 Cloud SQL 은 PC-V2-HUMAN 이 없음 (예전: '출발 방화벽을 못 읽음' 으로 막혀 명세 검토와 돌았다)", async () => {
+  const { spec } = await runGcpImport(CLOUDSQL);
+  const items = v2PrecheckItems("aws", { specV2: spec });
+  assert.deepEqual(items.filter((i) => i.id.startsWith("PC-V2-HUMAN")), [], JSON.stringify(items));
+  // 같은 명세에서 방화벽만 unknown 으로 되돌리면 예전 막힘이 그대로 나온다 (점검 규칙은 안 바꿈)
+  const old = structuredClone(spec);
+  for (const n of old.posture.network) if (n.scope === "component" && n.subject === "shop-db") n.ingress = "unknown";
+  assert.deepEqual(v2PrecheckItems("aws", { specV2: old }).filter((i) => i.id.startsWith("PC-V2-HUMAN")).map((i) => i.message),
+    ["FAIL 사람 확인 필요 — shop-db: 출발 방화벽을 못 읽음 → 의존성만 열지 사람이 정함"]);
 });
 
 // FM-ORC-06 (회차마다 다시 돌림): 종류 하나를 못 읽을 때 — 핵심은 멈추고(일시면 재시도 코드), 곁가지는 검토 줄을 남기고 계속

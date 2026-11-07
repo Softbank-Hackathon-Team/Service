@@ -42,7 +42,10 @@ const DATA_ARNS = [
   "arn:aws:elasticache:*:*:parametergroup:*",   // 【미확인】 기본 파라미터 그룹(default.*)을 읽어야 만들어짐 — 첫 실측으로 확인
   "arn:aws:s3:::app-*", "arn:aws:s3:::app-*/*", "arn:aws:sqs:*:*:app-*", "arn:aws:sns:*:*:app-*",
 ];
-const awsRest = awsAll.filter((a) => !a.startsWith("iam:"));
+// KMS 는 관리형 정책 밖 인라인 db-kms 로만 (아래 aws-operate-db-kms-policy.json)
+const awsKms = awsAll.filter((a) => a.startsWith("kms:"));
+const KMS_VIA = ["rds.ap-northeast-2.amazonaws.com", "secretsmanager.ap-northeast-2.amazonaws.com"];
+const awsRest = awsAll.filter((a) => !a.startsWith("iam:") && !a.startsWith("kms:"));
 // ID-4 DRAFT(ai): "우리가 만든 것만" 고치고 지운다. 예전엔 Resource "*" + 리전 조건만이라, 같은 계정·리전의 고객 기존 RDS(출발 DB 포함)·
 //   보안 그룹·시크릿도 Modify·Delete 할 수 있었다. 이제 기존 자원을 바꾸는 동작은 우리 표시(태그 managed-by=platform,
 //   Terraform root 의 default_tags 가 모든 자원에 붙임)가 있는 자원에만 허용한다.
@@ -57,7 +60,7 @@ const OWNED_TAG = { "aws:ResourceTag/managed-by": "platform" };
 const REGION = { "aws:RequestedRegion": "ap-northeast-2" };
 const isReadAct = (a: string) => /:(Describe|Get|List)/.test(a);
 const isCreateAct = (a: string) => /:Create(?!Tags)/.test(a);
-const TAG_ACTS = ["rds:AddTagsToResource", "secretsmanager:TagResource", "ec2:CreateTags"];
+const TAG_ACTS = ["rds:AddTagsToResource", "secretsmanager:TagResource", "ec2:CreateTags", "eks:TagResource"];   // eks: 만들 때 태그(파드 신원 연결, default_tags) 2026-11-07 실측
 const awsTag = awsRest.filter((a) => TAG_ACTS.includes(a));
 const awsRead = awsRest.filter(isReadAct);
 const awsCreate = awsRest.filter((a) => !isReadAct(a) && isCreateAct(a));
@@ -115,6 +118,11 @@ const awsBoundary = aws.appRoleBoundary("ap-northeast-2");
 writeFileSync(join(out, "aws-app-role-boundary.json"), JSON.stringify(awsBoundary, null, 2) + "\n");
 // APP-22 (가): 실행 역할 인라인 정책 source-db-link (기록용 파일. 템플릿이 같은 함수로 넣는다)
 writeFileSync(join(out, "aws-operate-source-db-link-policy.json"), JSON.stringify(sourceDbLinkOperatePolicy(), null, 2) + "\n");
+// 2026-11-07: 새 도착 RDS 의 기본 키 KMS 동작. 관리형 정책(svc-operate-policy)이 6,144자 한도라 source-db-link·relay 처럼 실행 역할 인라인 정책 db-kms 로.
+//   RDS·Secrets Manager 가 우리 대신 부를 때(kms:ViaService)만 허용 → 고객 키를 직접 쓰거나 아무 키에 grant 를 만들지 못한다
+writeFileSync(join(out, "aws-operate-db-kms-policy.json"), JSON.stringify({ Version: "2012-10-17", Statement: [
+  { Sid: "AppDbKms", Effect: "Allow", Action: awsKms, Resource: "*", Condition: { StringEquals: { "kms:ViaService": KMS_VIA } } },
+] }, null, 2) + "\n");
 // 고객 연결 템플릿(CloudFormation): 위 두 정책을 그대로 넣는다 → 실행 정책과 어긋나지 않음
 writeFileSync(join(onboardingOut, "aws-connect.json"), JSON.stringify(buildAwsConnectTemplate(awsOperatePolicy, awsBoundary), null, 2) + "\n");
 for (const p of purposes) {
@@ -149,6 +157,23 @@ writeFileSync(join(out, "gcp-operate-iam-custom-role.yaml"),
 // B-2: 환경 층(gcp/env)을 만드는 svc-env 역할 = 읽기 + 만들기 (지우기 없음: 환경 층은 사람이 지운다). worker 가 env 층 단계에서만 빌린다
 writeFileSync(join(out, "gcp-env-custom-role.yaml"),
   role("platform-env", "infra/modules/gcp/env 만들기 (지우기·IAM 정책 바꾸기 없음, 자동 생성)", actionsFor(gcp.PERMS, [...gcp.ENV_LAYER_TYPES], "apply")));
+// GCP ↔ 온프레 DB 복제 중계기 (worker relay/gcp-relay.ts): Cloud SQL 이 있는 VPC 에 GCE VM·방화벽 규칙, 출발 Cloud SQL 에 이전 전용 복제 계정.
+//   연결 스크립트가 svc-operate 에 원래 프로젝트(gcp-onprem)와 전용 프로젝트(onprem-gcp) 둘 다 붙인다.
+// DRAFT(ai): 목록 = gcp-relay.ts 가 부르는 gcloud 명령의 권한 (만들기·읽기·고치기·지우기). 감사 로그 실측으로 줄인다
+//   11/07 감사 로그(GCP→온프레 2회)와 코드 대조로 확실히 안 쓰는 4개를 뺐다: compute.firewalls.list (gcp-relay.ts 는 방화벽을
+//   describe=get 으로만 읽는다), compute.images.* 3개 (이미지는 공개 debian-cloud 것이라 권한 검사가 그 프로젝트에서 일어난다).
+//   cloudsql.users.list·machineTypes·networks·projects·subnetworks.get 은 로그엔 안 보였지만 gcloud 가 안쪽에서 부를 수 있어 남긴다 (재검증 뒤 판단)
+const GCP_RELAY_PERMS = [
+  "cloudsql.instances.get", "cloudsql.instances.update", "cloudsql.users.create", "cloudsql.users.delete", "cloudsql.users.list", "cloudsql.users.update",
+  "compute.disks.create", "compute.firewalls.create", "compute.firewalls.delete", "compute.firewalls.get", "compute.firewalls.update",
+  "compute.globalAddresses.list", "compute.globalOperations.get",
+  "compute.instances.create", "compute.instances.delete", "compute.instances.get", "compute.instances.list", "compute.instances.setLabels",
+  "compute.instances.setMetadata", "compute.instances.setTags", "compute.machineTypes.get", "compute.networks.get", "compute.networks.updatePolicy",
+  "compute.projects.get", "compute.subnetworks.get", "compute.subnetworks.list", "compute.subnetworks.use", "compute.subnetworks.useExternalIp",
+  "compute.zoneOperations.get", "compute.zones.get",
+].sort();
+writeFileSync(join(out, "gcp-relay-custom-role.yaml"),
+  role("platform-relay", "DB 복제 중계기 GCE VM·방화벽·복제 계정 (자동 생성)", GCP_RELAY_PERMS));
 writeFileSync(join(out, "gcp-operate-iam-binding-condition.json"), JSON.stringify({
   title: "only-app-prefixed",
   description: "플랫폼이 만든 app- 접두어 서비스 계정·시크릿·버킷·토픽·구독에만",

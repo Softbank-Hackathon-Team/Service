@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # 온프레 설치 묶음(deploy/helm/onprem-agent, W2)을 렌더해서 스키마 검사 + 권한 단언.
-#   - L0 만 / L1 켬 두 벌 렌더, kubeconform (Argo CRD 는 datreeio CRDs-catalog 스키마)
+#   - L0 만 / L1 켬 두 벌 렌더(인벤토리 역할 끔 = ADR-005 D3 최소 권한 그대로), kubeconform (Argo CRD 는 datreeio CRDs-catalog 스키마)
 #   - 필수 값이 없거나 모양이 틀리면 렌더가 실패하는지 (태그 이미지, http 보고 주소, 회사 이름)
 #   - Agent 권한에 쓰기 동사·Secret·ConfigMap 이 없는지 (ADR-005 D3)
 #   - AppProject 가 클러스터 범위 자원과 RBAC 를 git 에서 못 만들게 막는지
+#   - 인벤토리 역할(grants.inventory, 기본 켬): 온프레 출발 가져오기용 읽기 역할 하나만 더하고, Secret·쓰기 동사는 없는지
 #   - 지표 수집기(metrics, #245): 끄면 없음, 켜면 파드 읽기만·들어오는 포트 없음·2000 은 cloudflared 표시 파드로만·토큰은 파일로만
 # 필요: helm, kubeconform(없으면 스키마 검사만 건너뜀). 사용: bash deploy/ci/check-onprem-agent.sh
 set -euo pipefail
@@ -20,8 +21,9 @@ OK=(--set tenant=t-0a1b2c3d --set gitops.repoURL=https://github.com/example/gito
     --set agent.reportURL=https://api.example.test --set "agent.image=ghcr.io/example/svc-onprem-agent@sha256:$DIGEST")
 
 helm lint "$CHART" "${OK[@]}"
-helm template oa "$CHART" -n svc-agent "${OK[@]}" > "$OUT/l0.yaml"
-helm template oa "$CHART" -n svc-agent "${OK[@]}" --set grants.cluster=true > "$OUT/l1.yaml"
+helm template oa "$CHART" -n svc-agent "${OK[@]}" --set grants.inventory=false > "$OUT/l0.yaml"
+helm template oa "$CHART" -n svc-agent "${OK[@]}" --set grants.inventory=false --set grants.cluster=true > "$OUT/l1.yaml"
+helm template oa "$CHART" -n svc-agent "${OK[@]}" > "$OUT/i0.yaml"   # 기본값 = 인벤토리 켬
 helm template oa "$CHART" -n svc-agent "${OK[@]}" --set metrics.endpoint=https://metrics.example.test/v1/metrics > "$OUT/m1.yaml"
 
 # 틀린 값은 렌더 실패여야 한다
@@ -32,7 +34,19 @@ bad --set tenant=acme
 bad --set gitops.repoURL=
 bad --set metrics.endpoint=http://metrics.example.test/v1/metrics
 bad --set metrics.endpoint=https://metrics.example.test --set metrics.image=otel/opentelemetry-collector-contrib:0.164.0
+bad --set-string site=1A2B3C4D
+bad --set-string site=1a2b3c
 [ $fail -eq 0 ] && echo "ok   필수 값 없음·틀린 모양은 렌더 실패"
+
+# 환경별 gitops 폴더: site 가 있으면 onprem-k3s-<site> 만, legacyPath 면 예전 공용 폴더도, site 가 없으면 예전 폴더만 (워커 bundleRefFor·argoAppName 과 같은 이름)
+paths() { helm template oa "$CHART" -n svc-agent "${OK[@]}" "$@" | grep -o 'path: "tenants/[^"]*"' | sort | tr '\n' ' '; }
+want() { local got; got=$(paths "${@:2}"); [ "$got" = "$1" ] || { echo "FAIL gitops 폴더 $* → $got"; fail=1; }; }
+want 'path: "tenants/t-0a1b2c3d/apps/*/onprem-k3s-1a2b3c4d" ' --set-string site=1a2b3c4d
+want 'path: "tenants/t-0a1b2c3d/apps/*/onprem-k3s" path: "tenants/t-0a1b2c3d/apps/*/onprem-k3s-1a2b3c4d" ' --set-string site=1a2b3c4d --set gitops.legacyPath=true
+want 'path: "tenants/t-0a1b2c3d/apps/*/onprem-k3s" '
+helm template oa "$CHART" -n svc-agent "${OK[@]}" --set-string site=1a2b3c4d | grep -qF "name: 't-0a1b2c3d-{{ index .path.segments 3 }}-{{ index .path.segments 4 }}'" \
+  || { echo "FAIL Application 이름이 <회사>-<앱>-<폴더 이름> 이 아니다 (워커 argoAppName)"; fail=1; }
+[ $fail -eq 0 ] && echo "ok   환경별 gitops 폴더·Application 이름"
 
 if command -v kubeconform >/dev/null; then
   kubeconform -strict -summary -kubernetes-version "$K8S_VERSION" \
@@ -83,6 +97,40 @@ for path, want_roles in ((sys.argv[1], 1), (sys.argv[2], 2)):
         print(f"FAIL {path}: metrics.endpoint 를 안 줬는데 지표 수집기가 그려졌다"); bad = 1
 if not bad:
     print("ok   Agent 권한은 읽기만(Secret·ConfigMap 없음), AppProject 는 클러스터 자원·RBAC 막음, Agent 는 비루트·읽기 전용")
+sys.exit(bad)
+PY
+
+# 인벤토리 역할 (기본값 렌더). L0 역할 + 이 역할 하나만 더해지고, 정해진 읽기 자원 밖은 없어야 한다
+python3 - "$OUT/i0.yaml" <<'PY' || fail=1
+import re, sys
+bad = 0
+docs = open(sys.argv[1], encoding="utf-8").read().split("\n---")
+roles = [d for d in docs if re.search(r"^kind: ClusterRole$", d, re.M)]
+names = sorted(re.search(r"^  name: (\S+)$", d, re.M).group(1) for d in roles)
+inv = [d for d in roles if re.search(r"^  name: svc-onprem-agent-inventory$", d, re.M)]
+if len(roles) != 2 or len(inv) != 1:
+    print(f"FAIL 기본값 ClusterRole 은 L0 + 인벤토리 2개여야 한다: {names}"); bad = 1
+allowed = {"configmaps", "serviceaccounts", "nodes", "ingresses", "cronjobs", "jobs", "horizontalpodautoscalers", "poddisruptionbudgets"}
+for d in inv:
+    got = set()
+    for res in re.findall(r"resources: \[([^\]]*)\]", d):
+        got |= set(re.findall(r'"([^"]+)"', res))
+    if got - allowed or "secrets" in got or "*" in got:
+        print(f"FAIL 인벤토리 역할에 정해진 밖의 자원: {sorted(got - allowed)}"); bad = 1
+    for verbs in re.findall(r"verbs: \[([^\]]*)\]", d):
+        for v in re.findall(r'"([a-z]+)"', verbs):
+            if v not in ("get", "list"):
+                print(f"FAIL 인벤토리 역할에 get·list 밖의 동사 {v}"); bad = 1
+for d in roles:
+    if not inv or d is not inv[0]:
+        for res in re.findall(r"resources: \[([^\]]*)\]", d):
+            if re.search(r'"(secrets|configmaps|\*)"', res):
+                print(f"FAIL 인벤토리 밖 역할이 읽으면 안 되는 자원 {res}"); bad = 1
+bind = [d for d in docs if re.search(r"^kind: ClusterRoleBinding$", d, re.M) and re.search(r"^  name: svc-onprem-agent-inventory$", d, re.M)]
+if len(bind) != 1 or "name: onprem-agent, namespace: svc-agent" not in bind[0]:
+    print("FAIL 인벤토리 역할은 Agent 서비스 계정 하나에만 묶여야 한다"); bad = 1
+if not bad:
+    print("ok   인벤토리 역할: 정해진 읽기 자원·get/list 만, Secret 없음, Agent 서비스 계정에만 묶임")
 sys.exit(bad)
 PY
 

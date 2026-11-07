@@ -1,10 +1,11 @@
-import type { AppSpecV2, DeployResult, HelmValues, PlanDoc, Provider, TfOutputs } from "@svc/contracts";
+import type { AppSpecV2, ChartSealedSecret, DeployResult, HelmValues, PlanDoc, Provider, TfOutputs } from "@svc/contracts";
 import { flattenTfOutputsV2 } from "@svc/adapters";
 import { helmValuesV2 } from "../jobs/plan-v2.js";
 import { stableHash } from "../jobs/_step.js";
-import { ENV_DIR, DELIVERY, appNamespace, awsHubEnabled, clusterAccess, fillPlaceholders, planFile, tenantSlug, withTraffic, argoAppName, type BundleRef, type PlanFile } from "./bundle.js";
+import { bundleRefFor, DELIVERY, appNamespace, awsHubEnabled, clusterAccess, fillPlaceholders, planFile, tenantSlug, withTraffic, argoAppName, type BundleRef, type PlanFile } from "./bundle.js";
 import { GitopsError, GitopsRepo, type CommitOpts, type CommitResult, type RenderedBundle } from "./repo.js";
 import { withDelivery, type ReplicationDelivery } from "./replication-delivery.js";
+import { withTrafficEntry } from "../traffic-entry.js";
 
 export { configFromEnv, GitopsRepo, GitopsError, gitopsPreflight, type CommitOpts, type RenderedBundle } from "./repo.js";
 export * from "./bundle.js";
@@ -15,11 +16,14 @@ export interface DeployInput {
   // TA3: 받아들인 최신 판의 명세. 없거나 모양이 틀리면 null → GITOPS_VALUES_DRIFT
   spec: AppSpecV2 | null;
   plan: PlanDoc;
-  target: { envId: string; provider: Provider; region: string; accountId: string | null };
+  // awsRoleSuffix: 도착 AWS 환경 역할 이름 꼬리 (0056, 배포 역할 svc-deploy<꼬리>). 승인 지문 밖 (approvedValues 는 envId·provider·region 만 본다)
+  target: { envId: string; provider: Provider; region: string; accountId: string | null; awsRoleSuffix?: string | null };
   tfOutputs: TfOutputs;
   // 온프레 CNPG 이전 배달물 (서버 인증서·봉인 비밀·터널). 배포 단계가 끝점 줄이 있을 때만 넣는다 (replication-delivery.ts).
   //   승인 지문(helmValuesHash)은 채우기 전 값으로 비교하므로 이 칸은 승인 검사에 안 걸린다 (withServedBy 와 같은 자리)
   replication?: ReplicationDelivery;
+  // 이전마다 Cloudflare 도착 터널 토큰 (봉인 비밀). 배포 단계가 TRAFFIC_AUTO_LB 로 만들었을 때만 (traffic-entry.ts). 승인 지문 밖 (replication 과 같은 자리)
+  trafficEntry?: ChartSealedSecret;
 }
 
 // 승인 때 값과 같은지: 계획 처리기와 똑같이 helmValuesV2(spec, target)를 다시 만들어 지문을 비교한다.
@@ -54,7 +58,7 @@ export function envFacts(i: DeployInput): Record<string, string | undefined> {
 
 export function bundleRefOf(i: DeployInput): BundleRef {
   if (!i.spec) throw new GitopsError("GITOPS_VALUES_DRIFT", "승인한 명세가 지금 판에 없다");
-  return { tenant: tenantSlug(i.tenantId), app: i.spec.app.name, env: ENV_DIR[i.target.provider] };
+  return bundleRefFor(i.tenantId, i.spec.app.name, i.target.provider, i.target.envId);
 }
 
 // Z94: 커밋 뒤 반영 확인. 진짜 구현은 ./argo-watch.ts (Argo REST 또는 Application CR 실폴링)
@@ -70,7 +74,8 @@ export interface SyncWatcher { wait(b: BundleRef, c: CommitResult): Promise<Sync
 export async function bundleValues(i: DeployInput, repo: GitopsRepo): Promise<{ b: BundleRef; plan: PlanFile; values: HelmValues }> {
   const b = bundleRefOf(i);
   const filled0 = filledValues(i);   // 자리표시가 남으면 레포를 만지기 전에 막는다
-  const filled = i.replication ? withDelivery(filled0, i.replication) : filled0;
+  const filled1 = i.replication ? withDelivery(filled0, i.replication) : filled0;
+  const filled = i.trafficEntry ? withTrafficEntry(filled1, i.trafficEntry) : filled1;
   const plan = planFile(b, i.plan, await repo.chartVersion());
   return { b, plan, values: withServedBy(withTraffic(filled, plan.approvedWeights, 0), b) };
 }
@@ -86,7 +91,7 @@ export async function renderForRehearsal(repo: GitopsRepo, i: DeployInput): Prom
 export async function deployToGitops(repo: GitopsRepo, i: DeployInput, watcher: SyncWatcher, opts: CommitOpts = {}):
   Promise<{ result: DeployResult; commit: string; app: string; argo?: SyncWatchResult["observed"] }> {
   const { b, plan, values } = await bundleValues(i, repo);
-  const cluster = clusterAccess(b.env, i.tfOutputs, { accountId: i.target.accountId, awsHub: awsHubEnabled() });
+  const cluster = clusterAccess(b.env, i.tfOutputs, { accountId: i.target.accountId, awsHub: awsHubEnabled(), roleSuffix: i.target.awsRoleSuffix ?? null });
   const c = await repo.commitBundle("deploy", b, values, plan, `plan ${i.plan.planId.slice(0, 8)}`, { ...opts, cluster });
   const w = await watcher.wait(b, c);
   const status = !w.ok ? "failed" : DELIVERY[b.env] === "argocd-push" ? "synced_healthy" : "applied";

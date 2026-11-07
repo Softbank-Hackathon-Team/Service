@@ -14,8 +14,10 @@ import { TARGET_ACCOUNT_SQL } from "./target-account.js";
 import { agentStaleSec } from "./verify-connection.js";
 import { relayApplies, relayKindOf } from "../relay/relay-step.js";
 import { gcpAwsRelayPrecheck } from "../relay/gcp-aws.js";
+import { gcpOnpremRelayPrecheck } from "../relay/gcp-relay.js";
 import { chooseEnvLayerSource, readInventoryFacts, type InventoryFacts } from "../env-layer.js";
 import { permissionPrecheck } from "../permission-gate.js";
+import { completedMovesFor, targetOccupancyItems } from "./target-occupancy.js";
 
 // 사전 점검: 이전해도 되는지 본다. block(FAIL)이 하나라도 있으면 명세 검토로 되돌린다
 // Z97: STUB(고정 "확인됨")을 실조회로 바꿨다 — 자격(STS·tokeninfo·kubectl)·도착 API·결제·할당량·DB 버전·TCP·디스크.
@@ -44,17 +46,20 @@ export async function onpremAgentInfo(tx: Tx, envId: string, env: NodeJS.Process
 
 async function envInfo(tenantId: string, m: MigrationRow, env: NodeJS.ProcessEnv = process.env): Promise<{ source: PrecheckEnvInfo; target: PrecheckEnvInfo }> {
   return withTenant(tenantId, async (tx) => {
-    const q = await tx.query(`SELECT id, provider, name, account_id, ${TARGET_ACCOUNT_SQL} AS target_account_id, external_id FROM environments WHERE id = ANY($1::uuid[])`, [[m.sourceEnvId, m.targetEnvId]]);
+    const q = await tx.query(`SELECT id, provider, name, account_id, ${TARGET_ACCOUNT_SQL} AS target_account_id, external_id, aws_role_suffix FROM environments WHERE id = ANY($1::uuid[])`, [[m.sourceEnvId, m.targetEnvId]]);
     const by = new Map(q.rows.map((r) => [r.id as string, r]));
     const one = (id: string, side: "source" | "target"): PrecheckEnvInfo => {
       const r = by.get(id);
-      return { side, provider: (r?.provider ?? "onprem") as CloudProvider, name: r?.name, accountId: (side === "target" ? r?.target_account_id : r?.account_id) ?? null, externalId: r?.external_id ?? null };
+      return { side, provider: (r?.provider ?? "onprem") as CloudProvider, name: r?.name, accountId: (side === "target" ? r?.target_account_id : r?.account_id) ?? null, externalId: r?.external_id ?? null,
+        awsRoleSuffix: r?.aws_role_suffix ?? null };
     };
     const target = one(m.targetEnvId, "target");
     // pull 모드(ONPREM_FLOOR_VIA_GIT≠0, apply.ts 와 같은 기준)면 워커가 고객 클러스터에 kubectl 로 못 붙는다 → Agent 하트비트로 점검
-    //   출발 온프레는 그대로 (가져오기가 kubectl 로 읽는 경로라 점검도 같은 길을 본다)
+    //   출발 온프레도 pull 이면 같다 (가져오기는 Agent 재고 보고, 배달은 출발 묶음 + Agent 반영 보고 — 워커가 출발 클러스터에 안 붙는다, ADR-031)
     if (target.provider === "onprem" && env.ONPREM_FLOOR_VIA_GIT !== "0") target.agent = await onpremAgentInfo(tx, m.targetEnvId, env);
-    return { source: one(m.sourceEnvId, "source"), target };
+    const source = one(m.sourceEnvId, "source");
+    if (source.provider === "onprem" && env.ONPREM_FLOOR_VIA_GIT !== "0") source.agent = await onpremAgentInfo(tx, m.sourceEnvId, env);
+    return { source, target };
   });
 }
 
@@ -96,9 +101,9 @@ export async function realPrecheck(tenantId: string, m: MigrationRow, deps: Part
   const envs = await envInfo(tenantId, m, env);
   // 중계기가 끝점을 만들 이전인가 (apply 의 중계기 문과 같은 앞 조건: relayApplies + 온프레면 pull 모드)
   const relayFacts = { sourceProvider: envs.source.provider, sourceExternalId: envs.source.externalId ?? null, targetProvider: envs.target.provider,
-                       targetExternalId: envs.target.externalId ?? null };
+                       targetExternalId: envs.target.externalId ?? null, sourceAccountId: envs.source.accountId ?? null, targetAccountId: envs.target.accountId ?? null };
   const relayDeferred = relayApplies(relayFacts, env) === null
-    && (relayKindOf(relayFacts.sourceProvider, relayFacts.targetProvider) !== "aws-onprem" || env.ONPREM_FLOOR_VIA_GIT !== "0");
+    && (!["aws-onprem", "onprem-aws", "gcp-onprem", "onprem-gcp"].includes(relayKindOf(relayFacts.sourceProvider, relayFacts.targetProvider) ?? "") || env.ONPREM_FLOOR_VIA_GIT !== "0");
   // 이 이전의 끝점 줄이 있으면 sync 는 env 가 아니라 그 줄로 붙는다 (_repl.ts) → env 주소로 출발 DB 를 보지 않는다
   const endpointRows = (await withTenant(tenantId, (tx) => replicationEndpointsFor(tx, m.id))).some((r) => r.tenantId === tenantId);
   const [db, repl, runtime] = await Promise.all([sourceDbFacts(endpointRows ? {} : env), replSourcePrecheck(env, { required, relayDeferred, endpointRows }), specRuntime(tenantId, m.id)]);
@@ -108,8 +113,11 @@ export async function realPrecheck(tenantId: string, m: MigrationRow, deps: Part
   const link = appLinkPrecheck(env, { terraformRuntime: runtime, targetProvider: envs.target.provider });
   // AWS 도착 사실(VPC·서브넷)과 GCP → AWS 중계기 길을 승인 전에 본다 (apply 의 TARGET_FACTS_UNAVAILABLE·중계기 멈춤을 앞당김)
   const tf = envs.target.provider === "aws" && !iacMockEnabled(env) ? await awsTargetFactsPrecheck(tenantId, m.targetEnvId, env) : { items: [], vpcId: null };
-  const relay = relayKindOf(envs.source.provider, envs.target.provider) === "gcp-aws"
-    ? (await gcpAwsRelayPrecheck({ tenantId, migrationId: m.id }, m, roles, env, { targetVpcId: tf.vpcId })).map((i) => PrecheckItem.parse(i)) : [];
+  const kind = relayKindOf(envs.source.provider, envs.target.provider);
+  const relay = kind === "gcp-aws"
+    ? (await gcpAwsRelayPrecheck({ tenantId, migrationId: m.id }, m, roles, env, { targetVpcId: tf.vpcId })).map((i) => PrecheckItem.parse(i))
+    : kind === "gcp-onprem" || kind === "onprem-gcp"
+      ? (await gcpOnpremRelayPrecheck({ tenantId, migrationId: m.id }, m, roles, env)).map((i) => PrecheckItem.parse(i)) : [];
   return [...toPrecheckItems(checks).map((i) => PrecheckItem.parse(i)), ...repl, ...link, ...tf.items, ...relay];
 }
 
@@ -205,14 +213,17 @@ export async function replSourcePrecheck(env: NodeJS.ProcessEnv = process.env,
 export async function v2PrecheckFor(tenantId: string, m: MigrationRow, _env: NodeJS.ProcessEnv = process.env): Promise<PrecheckItem[]> {
   return withTenant(tenantId, async (tx) => {
     const row = await latestAcceptedSpecV2(tx, m.id);
-    const e = await tx.query(`SELECT provider FROM environments WHERE id=$1`, [m.targetEnvId]);
+    const e = await tx.query(`SELECT provider, name FROM environments WHERE id=$1`, [m.targetEnvId]);
     if (!row || !e.rows[0]) return [];   // 명세·도착이 없으면 계획 단계 재확인이 막는다
     // SG-1: IR 워크로드 보안(privileged·root·호스트 공유가 출발 그대로 도착에 감)은 SEC_PRECHECK 와 상관없이 승인 줄로.
     //   위험한 설정이 있을 때만 줄이 생긴다. 이 규칙들은 환경 사실을 안 읽어 출발 쪽은 도착과 같은 제공자로 채운다
     const spec = resolveSpecV2(row);
     const t: EnvSide = { envId: m.targetEnvId, provider: e.rows[0].provider as Provider, region: null };
     const wl = spec.ok ? securityPrecheckItems({ spec: spec.spec, source: { ...t, envId: m.sourceEnvId }, target: t, rules: "workload" }) : [];
-    return [...v2PrecheckItems(e.rows[0].provider, row), ...wl];
+    // 도착에 같은 앱을 옮겨 놓은 끝난 이전이 있으면 덮어쓰기·롤백 때 지우기를 승인 줄로 (target-occupancy.ts)
+    const occupied = spec.ok ? targetOccupancyItems({ appName: spec.spec.app.name, targetEnvId: m.targetEnvId, targetName: String(e.rows[0].name ?? m.targetEnvId),
+      moves: await completedMovesFor(tx, m.id, spec.spec.app.name, m.targetEnvId) }) : [];
+    return [...v2PrecheckItems(e.rows[0].provider, row), ...wl, ...occupied];
   });
 }
 

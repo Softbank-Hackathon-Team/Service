@@ -1,0 +1,34 @@
+title: platform-relay
+description: DB 복제 중계기 GCE VM·방화벽·복제 계정 (자동 생성) [perms v4]
+stage: GA
+includedPermissions:
+- cloudsql.instances.get
+- cloudsql.instances.update
+- cloudsql.users.create
+- cloudsql.users.delete
+- cloudsql.users.list
+- cloudsql.users.update
+- compute.disks.create
+- compute.firewalls.create
+- compute.firewalls.delete
+- compute.firewalls.get
+- compute.firewalls.update
+- compute.globalAddresses.list
+- compute.globalOperations.get
+- compute.instances.create
+- compute.instances.delete
+- compute.instances.get
+- compute.instances.list
+- compute.instances.setLabels
+- compute.instances.setMetadata
+- compute.instances.setTags
+- compute.machineTypes.get
+- compute.networks.get
+- compute.networks.updatePolicy
+- compute.projects.get
+- compute.subnetworks.get
+- compute.subnetworks.list
+- compute.subnetworks.use
+- compute.subnetworks.useExternalIp
+- compute.zoneOperations.get
+- compute.zones.get

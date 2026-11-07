@@ -59,6 +59,8 @@ export interface DeliveryInput {
   cnpg: CnpgTarget;
   source: ReplicationEndpoint;
   target: ReplicationEndpoint;
+  /** 온프레 CNPG 줄이 어느 쪽인가 (기본 target = AWS→온프레, source = 온프레→AWS, ADR-031 R4). 그 줄에 중계기 칸·인증서·봉인 값이 붙는다 */
+  onpremSide?: "source" | "target";
   sealingCertPem: string;
   masterKey: string;
   stored: ReplicationSealedMaterial | null;
@@ -97,12 +99,16 @@ const canonical = (s: ChartSealedSecret): ChartSealedSecret => ({ name: s.name, 
 
 const expectedNames = (c: CnpgTarget) => [c.passwordSecret, serverCaSecret(c.name), serverTlsSecret(c.name), DB_TUNNEL_KEY_SECRET];
 
-/** 저장된 암호문을 다시 써도 되나: 지문이 같고, 도착 줄 ca_pem 이 그때 발급한 CA 이고, CA 가 곧 만료되지 않고, 네 비밀이 다 있다 */
+/** 온프레 줄 / 상대 줄 (onpremSide 기준) */
+const rowsOf = (i: Pick<DeliveryInput, "source" | "target" | "onpremSide">) =>
+  (i.onpremSide ?? "target") === "target" ? { op: i.target, other: i.source } : { op: i.source, other: i.target };
+
+/** 저장된 암호문을 다시 써도 되나: 지문이 같고, 온프레 줄 ca_pem 이 그때 발급한 CA 이고, CA 가 곧 만료되지 않고, 네 비밀이 다 있다 */
 function reusable(i: DeliveryInput, digest: string): boolean {
-  const s = i.stored;
-  if (!s || s.digest !== digest || !i.target.caPem || sha256(i.target.caPem) !== s.caSha256) return false;
+  const s = i.stored, { op } = rowsOf(i);
+  if (!s || s.digest !== digest || !op.caPem || sha256(op.caPem) !== s.caSha256) return false;
   let notAfter: number;
-  try { notAfter = new Date(new X509Certificate(i.target.caPem).validTo).getTime(); } catch { return false; }
+  try { notAfter = new Date(new X509Certificate(op.caPem).validTo).getTime(); } catch { return false; }
   if (notAfter - (i.now ?? new Date()).getTime() < SERVER_CERT_RENEW_DAYS * 86_400_000) return false;
   const have = new Set(s.sealedSecrets.map((x) => x.name));
   return expectedNames(i.cnpg).every((n) => have.has(n));
@@ -118,13 +124,14 @@ export function forwardTarget(source: ReplicationEndpoint): string {
 }
 
 function tunnelValues(i: DeliveryInput): ChartDbTunnel {
-  const t = i.target;
+  const { op: t, other } = rowsOf(i);
   if (!t.relayHost || !t.relayKnownHosts)
-    throw new DeliveryError("REPL_DELIVERY_FAILED", "도착 줄에 중계기 주소·호스트 키(relay_host·relay_known_hosts)가 없다 → tools/repl-endpoint.ts set --relay-host … --relay-known-hosts-file … 로 넣고 재개");
+    throw new DeliveryError("REPL_DELIVERY_FAILED", "온프레 줄에 중계기 주소·호스트 키(relay_host·relay_known_hosts)가 없다 → tools/repl-endpoint.ts set --relay-host … --relay-known-hosts-file … 로 넣고 재개");
   return {
     relay: { host: t.relayHost, port: t.relayPort, knownHosts: t.relayKnownHosts.trim() },
     keySecret: DB_TUNNEL_KEY_SECRET,
-    forward: { target: forwardTarget(i.source) },
+    // 정방향(-L) 목적지 = 상대 클라우드 DB (AWS→온프레: 출발 RDS, 온프레→AWS: 도착 RDS. 롤백 창 역구독 길)
+    forward: { target: forwardTarget(other) },
     reverse: { enabled: true, cnpgName: i.cnpg.name },
     image: DB_TUNNEL_IMAGE,
   };
@@ -141,22 +148,27 @@ export async function prepareDelivery(i: DeliveryInput, deps: DeliveryDeps = {})
   const certificates = { serverCASecret: serverCaSecret(c.name), serverTLSSecret: serverTlsSecret(c.name) };
   const servername = cnpgServername(c.name, i.namespace);
   const peerHost = tunnelServiceHost(i.namespace);
-  const sourcePeer = i.source.peerHost === null ? { host: peerHost, port: 5432 } : undefined;
+  const onpremSide = i.onpremSide ?? "target";
+  const { op, other } = rowsOf(i);
+  // 상대 클라우드 DB 줄의 peer = 터널 Service (온프레 CNPG 가 -L 로 상대를 구독). 이름은 예전 그대로 sourcePeer (core ReplicationDeliveryWrite)
+  const sourcePeer = other.peerHost === null ? { host: peerHost, port: 5432 } : undefined;
   const digest = deliveryDigest(i);
+  const side = onpremSide === "target" ? {} : { onpremSide };
 
   if (reusable(i, digest)) {
     const byName = new Map(i.stored!.sealedSecrets.map((s) => [s.name, s]));
     const sealedSecrets = expectedNames(c).map((n) => canonical(byName.get(n)!));
-    const rowOk = !sourcePeer && i.target.tlsServername === servername && i.target.sslmode === "verify-full";
+    const rowOk = !sourcePeer && op.tlsServername === servername && op.sslmode === "verify-full";
     return { cnpg: c, certificates, sealedSecrets, dbTunnel, reused: true,
-      write: rowOk ? null : { migrationId: i.migrationId, target: { caPem: i.target.caPem!, tlsServername: servername, sealed: i.stored! }, ...(sourcePeer ? { sourcePeer } : {}) } };
+      write: rowOk ? null : { migrationId: i.migrationId, ...side, target: { caPem: op.caPem!, tlsServername: servername, sealed: i.stored! }, ...(sourcePeer ? { sourcePeer } : {}) } };
   }
 
   const cert = await (deps.issue ?? issueServerCert)({
     caSeed: deriveCaSeed(i.masterKey, i.tenantId, i.migrationId), cnName: `${c.name}-rw`,
     dnsNames: cnpgServerDnsNames(c.name, i.namespace), days: SERVER_CERT_DAYS,
   });
-  const password = derivePassword(i.masterKey, i.tenantId, i.migrationId, "target", MIGRATE_PURPOSE);
+  // 워커는 온프레 줄의 쪽(side)으로 derive:migrate 를 푼다 (replication secret-ref: tenant:migration:side:purpose) → 같은 쪽으로 파생
+  const password = derivePassword(i.masterKey, i.tenantId, i.migrationId, onpremSide, MIGRATE_PURPOSE);
   const ssh = deriveSshKeypair(i.masterKey, i.tenantId, i.migrationId);
   const seal = (name: string, type: string | undefined, data: Record<string, string>): ChartSealedSecret =>
     canonical({ ...sealedSecretValues(i.sealingCertPem, i.namespace, name, data), ...(type ? { type } : {}) });
@@ -168,7 +180,7 @@ export async function prepareDelivery(i: DeliveryInput, deps: DeliveryDeps = {})
   ];
   const sealed: ReplicationSealedMaterial = { version: 1, digest, caSha256: sha256(cert.caCertPem), sealedSecrets };
   return { cnpg: c, certificates, sealedSecrets, dbTunnel, reused: false,
-    write: { migrationId: i.migrationId, target: { caPem: cert.caCertPem, tlsServername: servername, sealed }, ...(sourcePeer ? { sourcePeer } : {}) } };
+    write: { migrationId: i.migrationId, ...side, target: { caPem: cert.caCertPem, tlsServername: servername, sealed }, ...(sourcePeer ? { sourcePeer } : {}) } };
 }
 
 /** 값에 배달물을 넣는다 (순수). 같은 이름의 봉인 비밀은 바꾼다 */
@@ -200,6 +212,8 @@ export function withoutDelivery(values: HelmValues): HelmValues | null {
 // ── 배포 단계가 부르는 판정 (DB·env 읽기는 부르는 쪽이 한다. 여기는 순수 + prepareDelivery) ──
 export interface DeliveryFacts {
   provider: string;
+  /** 온프레 CNPG 가 어느 쪽인가 (기본 target). source = 온프레 → 클라우드 (출발 묶음에 배달) */
+  onpremSide?: "source" | "target";
   /** 온프레 끌어오기(ONPREM_FLOOR_VIA_GIT != "0") */
   pullMode: boolean;
   values: HelmValues;          // 자리표시를 채운 승인 값
@@ -226,6 +240,7 @@ export async function decideDelivery(f: DeliveryFacts, deps: DeliveryDeps = {}):
     return { kind: "none", warnings };
   }
   const source = f.records.find((r) => r.side === "source"), target = f.records.find((r) => r.side === "target");
+  const onpremSide = f.onpremSide ?? "target";
   if (!source || !target) {
     warnings.push(f.records.length === 0
       ? "복제 끝점 줄(replication_endpoints)이 없다: 서버 인증서·봉인 비밀·터널을 넣지 않았다 (로컬 데모 길). 진짜 이전이면 tools/onprem-relay.sh 로 줄을 넣고 재개"
@@ -239,12 +254,13 @@ export async function decideDelivery(f: DeliveryFacts, deps: DeliveryDeps = {}):
   if (!f.masterKey) return stop("REPL_SECRET_UNRESOLVED", "REPL_SECRET_MASTER_KEY 가 없다: 이전 역할 비밀번호·터널 키를 파생할 수 없다");
   if (!f.sealingCertPem)
     return stop("SEALING_CERT_MISSING", "도착 환경 Agent 보고에 sealed-secrets 봉인 인증서가 없다 (또는 만료·폐기된 키의 보고뿐): 비밀을 봉인할 수 없다 → 클러스터에 sealed-secrets 컨트롤러를 두고 Agent 가 facts 를 다시 보고한 뒤 재개");
-  if (target.username !== cnpg.role || target.passwordRef !== `derive:${MIGRATE_PURPOSE}`)
-    warnings.push(`도착 줄 계정이 ${target.username} / ${target.passwordRef} 다: 차트 이전 역할(${cnpg.role}, derive:${MIGRATE_PURPOSE})과 다르면 워커가 봉인한 비밀번호로 못 붙는다`);
-  if (source.peerHost !== null && source.peerHost !== tunnelServiceHost(namespace))
-    warnings.push(`출발 줄 peer_host 가 이미 ${source.peerHost} 다 (터널 ${tunnelServiceHost(namespace)} 아님): 그대로 둔다`);
+  const op = onpremSide === "target" ? target : source, other = onpremSide === "target" ? source : target;
+  if (op.username !== cnpg.role || op.passwordRef !== `derive:${MIGRATE_PURPOSE}`)
+    warnings.push(`온프레 줄 계정이 ${op.username} / ${op.passwordRef} 다: 차트 이전 역할(${cnpg.role}, derive:${MIGRATE_PURPOSE})과 다르면 워커가 봉인한 비밀번호로 못 붙는다`);
+  if (other.peerHost !== null && other.peerHost !== tunnelServiceHost(namespace))
+    warnings.push(`상대 줄 peer_host 가 이미 ${other.peerHost} 다 (터널 ${tunnelServiceHost(namespace)} 아님): 그대로 둔다`);
   try {
-    const delivery = await prepareDelivery({ tenantId: f.tenantId, migrationId: f.migrationId, namespace, cnpg, source, target,
+    const delivery = await prepareDelivery({ tenantId: f.tenantId, migrationId: f.migrationId, namespace, cnpg, source, target, onpremSide,
       sealingCertPem: f.sealingCertPem, masterKey: f.masterKey, stored: f.stored, ...(f.now ? { now: f.now } : {}) }, deps);
     return { kind: "ok", delivery, warnings };
   } catch (e) {

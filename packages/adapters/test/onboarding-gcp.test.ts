@@ -42,7 +42,8 @@ test("A안: 이름 조건(A/B·-pg-) 파일이 없고, 원래 프로젝트(cust-
   const out = dryOut().split("\n").filter((l) => l.startsWith("+ gcloud"));
   const orig = out.filter((l) => / cust-prj | --project=cust-prj|\/cust-prj\//.test(l));
   assert.ok(orig.length > 0);
-  assert.deepEqual(orig.filter((l) => /svc-(operate|plan)|platform_(operate|plan)/.test(l)), []);
+  // 예외: 중계기 역할(platform_relay)만 원래 프로젝트에서 svc-operate 에 (GCP 출발 → 온프레 중계기, RELAY_SOURCE_ROLE=0 이면 없음)
+  assert.deepEqual(orig.filter((l) => !l.includes("platform_relay") && /svc-(operate|plan)|platform_(operate|plan)/.test(l)), []);
 });
 
 test("tokenCreator는 회사 전용 SA에게, SA 단위로만", () => {

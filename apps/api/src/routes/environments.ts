@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import {
-  ApiError, ConnectionLink, ConnectionLinkQuery, ConnectionStatus, CreateEnvironmentBody, EnvironmentView, MetricTokenCreated, VerifyBody, checkAccountId, normalizeAccountId,
+  ApiError, ConnectionLink, ConnectionLinkQuery, ConnectionStatus, CreateEnvironmentBody, EnvironmentView, MetricTokenCreated, VerifyBody, awsRoleSuffixFor, checkAccountId, normalizeAccountId,
   type Provider,
 } from "@svc/contracts";
 import {
@@ -67,10 +67,11 @@ const err = (status: number, code: string, message: string) => new DomainError(s
 interface EnvRow {
   provider: Provider; connection_status: ConnectionStatus; external_id: string | null;
   cluster_name: string | null; region: string | null; link_expired: boolean; account_id: string | null;
+  aws_role_suffix: string | null;
 }
 async function lockEnv(tx: Tx, id: string): Promise<EnvRow> {
   const q = await tx.query<EnvRow>(
-    `SELECT provider, connection_status, external_id, cluster_name, region, account_id, ${LINK_EXPIRED_SQL} AS link_expired
+    `SELECT provider, connection_status, external_id, cluster_name, region, account_id, aws_role_suffix, ${LINK_EXPIRED_SQL} AS link_expired
        FROM environments WHERE id = $1 FOR UPDATE`, [id]);
   return found(q.rows[0], "environment", id);
 }
@@ -196,11 +197,15 @@ export async function environmentRoutes(app: FastifyInstance) {
       //   새로 만드는 때 = 아직 없을 때(draft)·해제(disconnected) 뒤 다시 연결
       const keep = env.external_id !== null && ["awaiting_customer", "failed", "expired"].includes(env.connection_status);
       const externalId = keep ? env.external_id! : await writeExternalId(tx, id);
+      // 한 계정에 환경 여럿 (0056): 확인 문구를 새로 만들 때 = 새 스택을 만들 때만 역할 이름 꼬리를 정한다 ("-" + 환경 번호 앞 8자).
+      //   같은 문구를 다시 주는 링크(keep)는 칸 그대로: 이 배포 전에 받은 링크로 이미 옛 이름 스택을 만들었을 수 있다 (NULL = 예전 이름)
+      const roleSuffix = keep ? env.aws_role_suffix : awsRoleSuffixFor(id);
+      if (!keep) await tx.query("UPDATE environments SET aws_role_suffix = $2 WHERE id = $1", [id, roleSuffix]);
       await advanceConnection(tx, req.tenantId, id, "awaiting_customer", {
         from: ["draft", "awaiting_customer", "expired", "failed"],
         linkIssued: true, failureReason: null,
         audit: { actor: req.actor, action: "env.link_issued",
-          detail: { externalIdHint: externalIdHint(externalId), rotated: !keep } },
+          detail: { externalIdHint: externalIdHint(externalId), rotated: !keep, ...(roleSuffix ? { roleSuffix } : {}) } },
       });
       const exp = await tx.query<{ expires_at: string }>(
         `SELECT ${isoUtc("(link_issued_at + interval '24 hours')")} AS expires_at FROM environments WHERE id = $1`, [id]);
@@ -209,7 +214,7 @@ export async function environmentRoutes(app: FastifyInstance) {
         envAccountId: env.account_id, principalArn: s.principalArn });
       const url = awsQuickCreateUrl({ envId: id, region: env.region, templateUrl: s.templateUrl,
         principalArn: s.principalArn, externalId, clusterName: env.cluster_name, createBoundaryPolicy,
-        ...(s.argoHubRoleArn ? { argoHubRoleArn: s.argoHubRoleArn } : {}) });
+        ...(s.argoHubRoleArn ? { argoHubRoleArn: s.argoHubRoleArn } : {}), roleSuffix });
       return { status: 200, body: { kind: "aws_quick_create" as const, url, externalId, createBoundaryPolicy,
         expiresAt: exp.rows[0]!.expires_at } as ConnectionLink };
     });

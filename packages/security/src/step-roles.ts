@@ -75,6 +75,14 @@ export const STEP_ROLES = {
   // 같은 중계기의 출발 Cloud SQL 읽기 (공개·나가는 IP·서버 CA, gcloud sql instances describe). 출발 관찰 역할 (가져오기·사전 점검과 같은 읽기만).
   //   지우기는 이 역할을 안 빌린다 (출발 연결이 끊겨도 도착 중계기는 지울 수 있게)
   relay_source_read: [{ side: "source", purpose: "observe" }],
+  // GCP ↔ 온프레 중계기 (worker relay/gcp-relay.ts): Cloud SQL 이 있는 쪽 VPC 에 GCE VM·방화벽 규칙을 만들고(apply) 정리 때 지운다.
+  //   GCP 토큰은 범위를 못 좁힌다 → svc-operate 토큰 그대로 (gcpTargetFor: plan·env_layer 가 아니면 svc-operate). stage apply 는 장부 칸(0009 CHECK)용
+  //   relay_gcp = 출발 쪽(gcp-onprem, 중계기 = 출발 Cloud SQL VPC), relay_gcp_target = 도착 쪽(onprem-gcp, 중계기 = 도착 이전 전용 프로젝트)
+  // DRAFT(ai): AWS relay 와 같이 만들기·지우기를 한 줄로. 지우는 대상은 코드가 라벨·이름·설명으로 한 번 더 거른다
+  //   권한: 연결 스크립트(gcp-connect.sh)가 두 프로젝트의 svc-operate 에 중계기 역할 platform_relay(infra/permissions/gcp-relay-custom-role.yaml)를 붙인다
+  // DRAFT(ai): 원래 프로젝트에 실행 쪽 역할을 주는 것은 A안(원래 프로젝트는 관찰만)의 예외. 감사 로그로 실제 쓴 동작을 뽑은 뒤 좁힌다
+  relay_gcp: [{ side: "source", purpose: "operate", stage: "apply" }],
+  relay_gcp_target: [{ side: "target", purpose: "operate", stage: "apply" }],
   // B-2: 도착 GCP 환경 층(VPC·GKE·AR·ESO 설치) 만들기 (worker env-layer.ts). apply 단계 안에서 만들 때만 따로 빌린다.
   //   발급기는 svc-operate 대신 고객 svc-env 를 빌린다 (gcp-cli.ts gcpTargetFor). stage apply 는 장부 칸(0009 CHECK)용
   env_layer: [{ side: "target", purpose: "operate", stage: "apply", policy: "env_layer" }],

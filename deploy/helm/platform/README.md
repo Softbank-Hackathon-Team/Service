@@ -292,6 +292,20 @@ helm upgrade platform deploy/helm/platform -n platform --reset-then-reuse-values
 
 지표·전환기 없이 실측할 때만 `--set traffic.mock=true` 로 worker 에 `MOCK_TRAFFIC=1` 을 넣는다 (shifting 이 가짜 지표·mock 전환기로 넘어간다, `DEMO_MODE=1` 과 같이 못 씀). 기본은 끔이라 설정이 없으면 `TRAFFIC_NOT_CONFIGURED` 로 멈춘다.
 
+### 이전마다 Cloudflare 트래픽 입구 자동 생성 (worker `TRAFFIC_AUTO_LB=1`)
+
+켜면 배포 단계가 이전마다 도착 터널·모니터·pool 2개·LB 를 만들어 그 이전에 등록하고(shift 가 진짜 Cloudflare 가중치를 바꾼다), 롤백되면 모두 지우고, 완료되면 출발 pool 만 뺀다. 지금은 **온프레 도착만** 이다(터널 토큰을 봉인 비밀로 gitops 에 싣는다). 클라우드 도착은 건너뛰고 예전 길로 간다.
+
+- 전제: 출발 앱 호스트(명세 입구 호스트)의 DNS 줄이 이미 이 존에 있다. 없으면 배포가 `TRAFFIC_SOURCE_ENTRY_MISSING` 으로 멈춘다.
+- 토큰 권한: Account Cloudflare Tunnel Edit, Account Load Balancing Monitors and Pools Edit, Zone Load Balancers Edit, Zone DNS Read.
+- 토큰은 비밀 JSON(`secrets.app`)에 `CLOUDFLARE_PROVISION_API_TOKEN` 으로 넣고 `secretKeys` 에 더한다. JSON 에 넣기 전에 `secretKeys` 에 더하면 ESO 가 worker-env 를 못 만든다.
+
+```bash
+helm upgrade platform deploy/helm/platform -n platform --reset-then-reuse-values \
+  --set 'components.worker.secretKeys={DATABASE_URL,GITOPS_REPO_URL,GITOPS_WRITE_TOKEN,GITOPS_PUSH,REPL_SECRET_MASTER_KEY,PLATFORM_EGRESS_CIDRS,CLOUDFLARE_PROVISION_API_TOKEN}' \
+  --set apps.worker.env.TRAFFIC_AUTO_LB=1 --set apps.worker.env.CLOUDFLARE_ACCOUNT_ID=<계정> --set apps.worker.env.CLOUDFLARE_ZONE_ID=<존>
+```
+
 GCP 도착에 GKE 가 없을 때 worker 가 환경 층을 만들게 하려면 `--set envLayer.auto=true` (worker `ENV_LAYER_AUTO=1`). 켠 뒤에 만든 계획부터 들어가므로 이전을 만들기 전에 켠다. 예전처럼 비밀 JSON·`secretKeys` 로 넣지 않는다.
 
 - 값을 켜면 토큰은 필수다. 저장소에 없으면 배포가 커밋 전에 `SECRET_VALUES_MISSING` 으로 멈추고 어느 이름이 없는지 알려 준다. 넣고 재개하면 된다. 이때 트래픽은 아직 출발에 있다.

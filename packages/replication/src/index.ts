@@ -2,7 +2,7 @@
 // 워커는 Migration 클래스만 쓰면 된다: precheck → sync(반복) → cutover → (rollback) → teardown
 export { type Endpoint, type Provider, type SslMode, type EndpointTls, endpointFromEnv, connect, withClient, clientConfig, peerTlsProblem, workerTlsProblem, peerPathProblem, isPrivateHost, isManaged } from "./endpoint.js";
 export { namesFor, type Names } from "./names.js";
-export { precheck, precheckSource, ensureReplicationAttr, type Check, type PrecheckResult } from "./precheck.js";
+export { precheck, precheckSource, ensureReplicationAttr, ensureTableOwnerMembership, type Check, type PrecheckResult } from "./precheck.js";
 export { copyStatus, waitInitialCopy, sampleLag, markerLagMs, slotLag, type CopyStatus, type LagSample, type SlotLag } from "./lag.js";
 export { judgeCutoverReady, DEFAULT_GATE, type GateOpts, type GateResult } from "./judge.js";
 export { fence, unfence, appCanWrite, writableTables } from "./fence.js";
@@ -14,4 +14,4 @@ export { endpointFromRecord, endpointAddress, tcpReachProblem, type EndpointReco
 export { parsePasswordRef, deriveReplPassword, resolvePasswordRef, REPL_MASTER_KEY_MIN, type PasswordRef, type SecretScope, type ManagedSecrets } from "./secret-ref.js";
 export { ensureReplUser, dropReplUser, replUserOf, subscriptionConninfo, ephemeralEnabled, ensureLoginRole } from "./repluser.js";
 export { readTfFacts, resolveTfRefs, hasTfRef } from "./tf-facts.js";
-export { copySchema, SchemaCopyError, isTransient, handOwnershipToApp, type SchemaCopyResult } from "./schema.js";
+export { copySchema, SchemaCopyError, isTransient, handOwnershipToApp, resetCopiedTables, COPY_MARK, type SchemaCopyResult } from "./schema.js";

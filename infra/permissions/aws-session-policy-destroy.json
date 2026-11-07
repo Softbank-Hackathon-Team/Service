@@ -5,6 +5,7 @@
       "Effect": "Allow",
       "Action": [
         "ec2:DeleteSecurityGroup",
+        "ec2:DescribeNetworkInterfaces",
         "ec2:DescribeSecurityGroupRules",
         "ec2:DescribeSecurityGroups",
         "eks:DeletePodIdentityAssociation",

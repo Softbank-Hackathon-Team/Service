@@ -14,6 +14,7 @@ import { actionsOfPolicy, createTempRoleBroker, loadPermissionSet, memoryLedger,
 import { deriveSshHostKey, deriveSshKeypair, knownHostsLine } from "../src/gitops/migration-secrets.js";
 import {
   buildRelayPlan, existingDbEgressCover, existingDbIngressCover, ownedBy, RELAY_FORWARDER_PY, pickPublicSubnet, platformEgressCidrs, provisionRelay, RelayError, relayTags, teardownRelay, type GcpRelayPlanInput, type OnpremRelayPlanInput,
+  hostKeyFromConsole,
 } from "../src/relay/aws-relay.js";
 import { forwardTarget } from "../src/gitops/replication-delivery.js";
 import { addRelayPeer, cloudSqlPeerOf, gcpEndpointRows, gcpRelayGate, prepareGcpRelayStep, provisionGcpRelayStep, provisionRelayStep, rdsIdentifierFromIds, relayEndpointRows, relayGate, relayKindOf, sourcePasswordRef, teardownRelayStep, type RelayFacts } from "../src/relay/relay-step.js";
@@ -289,7 +290,9 @@ const GOOD = { REPL_SECRET_MASTER_KEY: MK, PLATFORM_EGRESS_CIDRS: "198.51.100.7/
 test("단계 문: 시드 환경·출발 AWS 아님·명세 postgres 없음·push 모드는 건너뜀 (아무것도 안 부름)", async () => {
   assert.deepEqual(relayGate(facts({ sourceExternalId: null }), GOOD), { kind: "skip", reason: "source_creds_mock" });
   assert.deepEqual(relayGate(facts(), { ...GOOD, REAL_STS: "0" }), { kind: "skip", reason: "source_creds_mock" });
-  assert.deepEqual(relayGate(facts({ sourceProvider: "gcp" }), GOOD), { kind: "skip", reason: "no_relay_route" });
+  assert.deepEqual(relayGate(facts({ sourceProvider: "azure_mock" }), GOOD), { kind: "skip", reason: "no_relay_route" });
+  // GCP 출발은 이 AWS 중계기 문을 지나 GCE 중계기로 간다 (apply 가 not_onprem_relay 를 보고 relay/gcp-relay.ts 를 부른다)
+  assert.deepEqual(relayGate(facts({ sourceProvider: "gcp", sourceAccountId: "src-proj-1" }), GOOD), { kind: "skip", reason: "not_onprem_relay" });
   assert.deepEqual(relayGate(facts({ postgres: [] }), GOOD), { kind: "skip", reason: "no_postgres" });
   assert.deepEqual(relayGate(facts(), { ...GOOD, ONPREM_FLOOR_VIA_GIT: "0" }), { kind: "skip", reason: "not_pull_mode" });
   assert.deepEqual(relayGate(facts(), { ...GOOD, RELAY_AUTO: "0" }), { kind: "skip", reason: "relay_auto_off" });
@@ -299,13 +302,16 @@ test("단계 문: 시드 환경·출발 AWS 아님·명세 postgres 없음·push
   assert.deepEqual(out, { kind: "skipped", reason: "source_creds_mock" });
   assert.equal(borrowed, 0, "역할도 안 빌림");
   assert.deepEqual(await teardownRelayStep({ tenantId: T, migrationId: M }, { id: M, sourceEnvId: "x", targetEnvId: "y" },
-    { env: GOOD, facts: facts({ sourceProvider: "gcp" }) }), { kind: "skipped", reason: "no_relay_route" });
+    { env: GOOD, facts: facts({ sourceProvider: "gcp", targetProvider: "gcp" }) }), { kind: "skipped", reason: "no_relay_route" });
 });
 
 test("중계기 종류 표: (출발, 도착) 짝만 본다. 표에 없는 짝은 중계기 없음", () => {
   assert.equal(relayKindOf("aws", "onprem"), "aws-onprem");
   assert.equal(relayKindOf("aws", "gcp"), "aws-gcp");
-  for (const [s, t] of [["gcp", "onprem"], ["aws", "aws"], ["onprem", "gcp"], [null, "gcp"], ["aws", null]] as const) assert.equal(relayKindOf(s, t), null, `${s}->${t}`);
+  // GCP ↔ 온프레는 GCE 중계기 (relay/gcp-relay.ts, relay-gcp-onprem.test.ts)
+  assert.equal(relayKindOf("gcp", "onprem"), "gcp-onprem");
+  assert.equal(relayKindOf("onprem", "gcp"), "onprem-gcp");
+  for (const [s, t] of [["aws", "aws"], ["gcp", "gcp"], [null, "gcp"], ["aws", null]] as const) assert.equal(relayKindOf(s, t), null, `${s}->${t}`);
 });
 
 // ── GCP 도착 (aws-gcp) ──────────────────────────────────────────────────────────────
@@ -585,4 +591,37 @@ test("보안 12번: aws-onprem 출발 줄은 워커 → RDS 를 verify-full (RDS
   assert.equal(again.sslmode, "require");
   const [other] = relayEndpointRows({ ...base, rds: { ...base.rds, endpoint: "db.x.us-east-1.rds.amazonaws.com" }, existing: [] });
   assert.deepEqual([other.sslmode, other.caPem], ["require", null]);
+});
+
+test("보안 12번: 호스트 키 콘솔 방식 = user-data 에 개인 키 없음, 중계기가 만든 공개 키를 콘솔 출력에서 읽는다 (아직 안 찍혔으면 기다린다)", async () => {
+  const f = newFake();
+  const pub = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGnHostKeyMadeOnTheRelayItselfxxxxxxxxxxxxxx";
+  f.consoleOutput = `[   12.3] cloud-init ...\r\nSVC_RELAY_HOSTKEY ${pub}\r\n`; f.consoleDelay = 2;
+  const plan = buildRelayPlan(planInput({ hostKey: null }));
+  assert.equal(plan.hostKeyFromConsole, true);
+  assert.equal(plan.hostPublicKey, null);
+  assert.doesNotMatch(plan.userData, /PRIVATE KEY/);
+  assert.match(plan.userData, /ssh-keygen -q -t ed25519 -N '' -f \/etc\/ssh\/ssh_host_ed25519_key/);
+  assert.match(plan.userData, /svc-relay-hostkey\.service/);
+  const r = await provisionRelay(deps(f), plan);
+  assert.equal(r.hostPublicKey, pub);
+  assert.equal(f.consoleCalls, 3);
+  // 끝내 안 찍히면 이유와 함께 멈춘다
+  const g = newFake(); g.consoleOutput = "boot only"; 
+  await assert.rejects(provisionRelay(deps(g), buildRelayPlan(planInput({ hostKey: null }))), /SVC_RELAY_HOSTKEY/);
+  // 예전 방식(기본)은 그대로: 개인 키를 user-data 로, 콘솔을 안 부른다
+  const h = newFake();
+  const old = buildRelayPlan(planInput());
+  assert.equal(old.hostKeyFromConsole, false);
+  await provisionRelay(deps(h), old);
+  assert.equal(h.consoleCalls, 0);
+});
+
+test("콘솔 출력 해석: 마지막 표시 줄, base64 그대로여도 읽는다, 모양이 틀리면 null", () => {
+  const a = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const b = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  assert.equal(hostKeyFromConsole(`SVC_RELAY_HOSTKEY ${a}\nnoise\nSVC_RELAY_HOSTKEY ${b}\n`), b);
+  assert.equal(hostKeyFromConsole(Buffer.from(`x\nSVC_RELAY_HOSTKEY ${a}\n`).toString("base64")), a);
+  assert.equal(hostKeyFromConsole("SVC_RELAY_HOSTKEY ssh-rsa AAAA"), null);
+  assert.equal(hostKeyFromConsole(""), null);
 });

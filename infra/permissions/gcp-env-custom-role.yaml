@@ -1,5 +1,5 @@
 title: platform-env
-description: infra/modules/gcp/env 만들기 (지우기·IAM 정책 바꾸기 없음, 자동 생성) [perms v1]
+description: infra/modules/gcp/env 만들기 (지우기·IAM 정책 바꾸기 없음, 자동 생성) [perms v4]
 stage: GA
 includedPermissions:
 - artifactregistry.repositories.create

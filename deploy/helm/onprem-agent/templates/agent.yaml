@@ -45,6 +45,8 @@ spec:
             - { name: AGENT_NAMESPACE, value: {{ . | quote }} }
             {{- end }}
             - { name: AGENT_CNPG_CLUSTER, value: {{ .Values.agent.cnpgCluster | quote }} }
+            # 온프레 출발 가져오기 스냅숏 보내기 (권한은 rbac.yaml grants.inventory 와 같이 켜고 끈다)
+            - { name: AGENT_INVENTORY, value: {{ ternary "1" "0" (.Values.grants.inventory | default false) | quote }} }
             - name: AGENT_KEY_ID
               valueFrom: { secretKeyRef: { name: {{ .Values.agent.keySecret | quote }}, key: AGENT_KEY_ID } }
             - name: AGENT_KEY_SECRET

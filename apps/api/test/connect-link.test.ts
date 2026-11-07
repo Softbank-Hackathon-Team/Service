@@ -98,3 +98,15 @@ test("거부: 템플릿 패턴은 빈칸·따옴표 같은 문자를 막고, _ �
   assert.ok(re.test("abc_DEF-123"));
   for (const bad of ["a b", "a\"b", "a;b", ""]) assert.ok(!re.test(bad), bad);
 });
+
+// 한 계정에 환경 여럿 (0056): 새 환경은 param_RoleSuffix=-<환경 8자> (= 스택 이름 꼬리), 옛 환경(NULL)은 매개변수 없음 → 템플릿 기본 "" = 예전 이름
+test("RoleSuffix: 꼬리가 있으면 param_RoleSuffix 로 넘기고 스택 이름과 같은 8자, 없거나 모양이 틀리면 안 넘김", async () => {
+  const { awsRoleSuffixFor } = await import("@svc/contracts");
+  const suffix = awsRoleSuffixFor(base.envId);
+  assert.equal(suffix, "-0f1e2d3c");
+  const u = awsQuickCreateUrl({ ...base, roleSuffix: suffix });
+  assert.ok(u.includes("param_RoleSuffix=-0f1e2d3c"));
+  assert.equal(stackNameFor(base.envId).replace("svc-connect", ""), suffix, "스택 이름 꼬리 = 역할 이름 꼬리");
+  for (const old of [undefined, null, "", "0f1e2d3c", "-0F1E2D3C", "-x&param_ExternalId=evil"])
+    assert.ok(!awsQuickCreateUrl({ ...base, roleSuffix: old }).includes("param_RoleSuffix"), String(old));
+});

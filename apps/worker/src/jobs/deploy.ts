@@ -1,10 +1,10 @@
-import { DeployResult, MigrationJob, QUEUES, type AppSpecV2, type InfraReady, type PlanDoc, type Provider, type RehearsalEvidence, type ReplicationEndpoint, type ReplicationSealedMaterial } from "@svc/contracts";
+import { DeployResult, MigrationJob, QUEUES, type AppSpecV2, type HelmValues, type InfraReady, type PlanDoc, type Provider, type RehearsalEvidence, type ReplicationEndpoint, type ReplicationSealedMaterial } from "@svc/contracts";
 import { asFailureCode, latestAcceptedSpecV2, recordReplicationDelivery, replicationEndpointsFor, replicationSealedMaterialFor, scrubString, withTenant, writeAudit, type AuditInput } from "@svc/core";
 import { checkTerraformRuntime, envFor, factsFromEnv, gcpEnvFor, iacMockEnabled, specV2ForPlan, terraformRuntimeOf, type RuntimeHealthDeps, type TerraformRuntime } from "@svc/adapters";
 import { nextJob, runStep, stubWait, stubFailIfAsked, type MigrationRow, type StepOutcome } from "./_step.js";
 import { withStepRoles, type StepRoles } from "./_roles.js";
 import { loadInfraReady, loadPlanById } from "./plan-store.js";
-import { approvedValues, configFromEnv, decideDelivery, deployToGitops, envFacts, filledValues, fillPlaceholders, GitopsError, GitopsRepo, type DeployInput } from "../gitops/index.js";
+import { approvedValues, configFromEnv, decideDelivery, deployToGitops, envFacts, filledValues, fillPlaceholders, GitopsError, GitopsRepo, bundlePath, bundleRefFor, tenantSlug, withDelivery, type BundleRef, type DeployInput, type PlanFile, type SyncWatcher } from "../gitops/index.js";
 import { latestSealingCert } from "../gitops/sealing-cert.js";
 import { checkSecretValues } from "../gitops/secret-values.js";
 import { dbMetricIssuer, fillIngressSecrets, readTunnelToken, TUNNEL_SECRET, tunnelSourceFromEnv, type MetricIssuer, type SecretFillResult, type TokenSource } from "../gitops/ingress-secrets.js";
@@ -13,6 +13,7 @@ import { syncWatcherFor } from "../gitops/agent-watch.js";
 import { TARGET_ACCOUNT_SQL } from "./target-account.js";
 import { recordSkip, rehearsalGate, type Gate } from "../rehearsal/gate.js";
 import { imageCopyStep } from "./image-copy.js";
+import { prepareTrafficEntry } from "../traffic-entry.js";
 
 // GitOps 배포. deploying → syncing
 // GITOPS_REPO_DIR가 있으면 gitops 레포에 묶음을 커밋한다 (계약: parallel/N/gitops/WORKER-CONTRACT.md).
@@ -21,10 +22,11 @@ interface Loaded {
   infra: InfraReady;
   plan: PlanDoc | null;
   spec: AppSpecV2 | null;      // TA3: 받아들인 최신 판 (없거나 모양이 틀리면 null → approvedValues 가 drift)
-  env: { provider: Provider; accountId: string | null } | null;
+  env: { provider: Provider; accountId: string | null; awsRoleSuffix?: string | null } | null;
   runtime?: TerraformRuntime | null;   // DEPLOYNONK8S: 도착이 ECS·Cloud Run·VM 이면 그 실행 방식 (k8s 면 null·없음)
   epoch: number;               // 리허설 차례 = deploying 에 들어올 때의 migrations.version (재개하면 새 차례)
   repl?: ReplFacts;            // 온프레 도착만: CNPG 이전 배달물을 만들 사실 (끝점 줄·저장된 봉인 값·봉인 인증서)
+  sourceRepl?: ReplFacts;      // 온프레 출발 → AWS 도착만 (ADR-031 R4): 출발 온프레 묶음에 넣을 배달물 사실 (봉인 인증서는 출발 환경 Agent 보고)
 }
 interface ReplFacts { records: ReplicationEndpoint[]; stored: ReplicationSealedMaterial | null; sealingCertPem: string | null }
 
@@ -50,10 +52,12 @@ export async function handleDeploy(raw: unknown) {
       const plan = await loadPlanById(tx, infra.planId);
       const row = await latestAcceptedSpecV2(tx, m.id);
       const e = await tx.query(
-        `SELECT provider, ${TARGET_ACCOUNT_SQL} AS "accountId" FROM environments WHERE id=$1`, [m.targetEnvId]);   // A안: GCP = 전용 프로젝트
+        `SELECT provider, ${TARGET_ACCOUNT_SQL} AS "accountId", aws_role_suffix AS "awsRoleSuffix" FROM environments WHERE id=$1`, [m.targetEnvId]);   // A안: GCP = 전용 프로젝트
       if (!plan || !row || !e.rows[0]) return null;
-      const repl = e.rows[0].provider === "onprem" ? await loadReplFacts(tx, j.tenantId, m) : undefined;
-      return { infra, plan, spec: specV2ForPlan(row), env: e.rows[0], epoch, ...(repl ? { repl } : {}) };
+      const repl = e.rows[0].provider === "onprem" ? await loadReplFacts(tx, j.tenantId, m.id, m.targetEnvId) : undefined;
+      const src = e.rows[0].provider === "aws" ? (await tx.query(`SELECT provider FROM environments WHERE id=$1`, [m.sourceEnvId])).rows[0] : undefined;
+      const sourceRepl = src?.provider === "onprem" ? await loadReplFacts(tx, j.tenantId, m.id, m.sourceEnvId, "source") : undefined;
+      return { infra, plan, spec: specV2ForPlan(row), env: e.rows[0], epoch, ...(repl ? { repl } : {}), ...(sourceRepl ? { sourceRepl } : {}) };
     },
     work: async (j, m, l): Promise<StepOutcome> => {
       if (l.runtime && l.spec && l.env) {
@@ -69,6 +73,7 @@ export async function handleDeploy(raw: unknown) {
       // 온프레 CNPG 이전 배달물 판정의 경고 (끝점 줄 없음 등). 감사 detail.warnings 로 남긴다
       let warnings: string[] = [];
       let delivery: Record<string, unknown> | undefined;
+      let trafficEntry: Record<string, unknown> | undefined;
       // Z77: 클러스터 없이 RDS 만 만든 이전(env 모듈 create_eks=false, 맥 B 회차)은 올릴 곳이 없다 → GitOps 가 켜져 있어도 STUB
       const noCluster = isNoCluster(l.infra.tfOutputs);
       // Z89: GitOps 설정이 없으면 예전엔 조용히 STUB 성공 → 이제 MOCK_ARGO=1(시험 전용)일 때만 흉내. 아니면 paused(GITOPS_NOT_CONFIGURED)
@@ -93,7 +98,7 @@ export async function handleDeploy(raw: unknown) {
         const input: DeployInput = {
           tenantId: j.tenantId, spec: l.spec, plan: l.plan!, tfOutputs: l.infra.tfOutputs,
           // 계획 처리기와 같은 target이어야 Helm 값 지문이 같다 (region "default")
-          target: { envId: m.targetEnvId, provider: l.env!.provider, region: "default", accountId: l.env!.accountId },
+          target: { envId: m.targetEnvId, provider: l.env!.provider, region: "default", accountId: l.env!.accountId, awsRoleSuffix: l.env!.awsRoleSuffix ?? null },
         };
         const repo = new GitopsRepo(cfg);
         // 온프레 CNPG 이전: 서버 인증서·봉인 비밀·터널을 값에 넣고 끝점 줄에 되쓴다. 리허설 렌더와 커밋 렌더가 같은 값을 보게 리허설 문 앞에서
@@ -103,6 +108,15 @@ export async function handleDeploy(raw: unknown) {
           warnings = d.warnings;
           delivery = d.detail;
         }
+        // 이전마다 실제 트래픽 입구 (TRAFFIC_AUTO_LB=1): Cloudflare 도착 터널·LB 를 만들고 등록, 터널 토큰은 봉인 비밀로 같은 커밋에. 리허설 앞이라 같은 값을 렌더한다
+        let filledForEntry: HelmValues | null = null;
+        try { filledForEntry = filledValues(input); } catch { /* 자리표시 문제는 아래 리허설·커밋 길이 같은 이유로 멈춘다 */ }
+        const te = filledForEntry ? await prepareTrafficEntry({ tenantId: j.tenantId, migrationId: j.migrationId, provider: input.target.provider,
+          values: filledForEntry, sealingCertPem: l.repl?.sealingCertPem ?? null }) : { kind: "off" as const };
+        if (te.kind === "stop")
+          return { to: "paused", failureCode: te.code, detail: { deploy: { error: te.code, reason: te.reason, ...(te.hint ? { hint: te.hint } : {}) }, ...extra(warnings, delivery) } };
+        if (te.kind === "ok") { input.trafficEntry = te.sealedSecret; trafficEntry = te.detail; }
+        else if (te.kind === "skipped") trafficEntry = { skipped: te.reason };
         try {
           // 검사 바로 앞: GCP 도착의 빈 입구 비밀(터널·지표 토큰)을 플랫폼이 채운다. 실패면 paused, 성공이면 null
           const sf = await borrowedSecretFill(j, m, input);
@@ -131,6 +145,14 @@ export async function handleDeploy(raw: unknown) {
           result = DeployResult.parse(out.result);
           gitops = { commit: out.commit, argoApp: out.app, ...(out.argo ? { argo: out.argo } : {}), imageCopy: ic.detail };
         } catch (e) { return gitopsPaused(e); }
+        // 온프레 → AWS (ADR-031 R4): 도착 앱이 뜬 뒤 출발 온프레 묶음에 이전 역할·서버 인증서·봉인 비밀·터널을 넣고 Agent 반영을 기다린다.
+        //   실패면 paused (재개하면 도착 커밋은 바뀐 것 없음, 출발 배달만 다시)
+        if (l.sourceRepl && result.status !== "failed") {
+          const sd = await sourceReplicationStep(j, m, input, l.sourceRepl, repo);
+          if ("outcome" in sd) return sd.outcome;
+          warnings = sd.warnings;
+          delivery = sd.detail;
+        }
       }
       if (result.status === "failed") {
         // DRAFT(ai) Z59 (TODO(human) "Degraded·SyncFailed → paused 냐 rolling_back 이냐" 기본값): paused.
@@ -140,7 +162,7 @@ export async function handleDeploy(raw: unknown) {
         return { to: "paused", failureCode: code, detail: { deploy: result, ...(gitops ? { gitops } : {}), rehearsal: gate.detail, ...extra(warnings, delivery) } };
       }
       return {
-        to: "syncing", detail: { deploy: result, ...(gitops ? { gitops } : {}), rehearsal: gate.detail, ...extra(warnings, delivery) },
+        to: "syncing", detail: { deploy: result, ...(gitops ? { gitops } : {}), rehearsal: gate.detail, ...extra(warnings, delivery), ...(trafficEntry ? { trafficEntry } : {}) },
         // Z94: argoHealthy = 반영 확인 결과 (argocd-push 는 Synced+Healthy, 온프레는 Agent applied). 여기 오면 failed 는 위에서 걸렀다
         // 보안 동등성(MG-2-07): 이 단계엔 출발·도착 보안을 맞대어 잰 근거가 아직 없다 → true 라고 하지 않고 not_measured (예전: 늘 true 고정)
         evidence: { argoHealthy: result.status === "synced_healthy" || result.status === "applied", securityParity: "not_measured", rehearsal: gate.evidence },
@@ -153,12 +175,63 @@ export async function handleDeploy(raw: unknown) {
 const extra = (warnings: string[], delivery?: Record<string, unknown>) =>
   ({ ...(warnings.length ? { warnings } : {}), ...(delivery ? { replicationDelivery: delivery } : {}) });
 
-/** 온프레 도착이면 배달물을 만들 사실을 읽는다 (회사 벽 안 tx). 봉인 인증서는 도착 환경 Agent 보고에서만 (sealing-cert.ts) */
-async function loadReplFacts(tx: Tx, tenantId: string, m: { id: string; targetEnvId: string }): Promise<ReplFacts> {
-  const records = (await replicationEndpointsFor(tx, m.id)).filter((r) => r.tenantId === tenantId);
-  const stored = records.length ? await replicationSealedMaterialFor(tx, m.id) : null;
-  const sealing = records.length ? await latestSealingCert(tx, tenantId, m.targetEnvId) : undefined;
+/** 온프레 쪽(도착 또는 출발)의 배달물을 만들 사실을 읽는다 (회사 벽 안 tx). 봉인 인증서는 그 온프레 환경 Agent 보고에서만 (sealing-cert.ts) */
+async function loadReplFacts(tx: Tx, tenantId: string, migrationId: string, onpremEnvId: string, side: "source" | "target" = "target"): Promise<ReplFacts> {
+  const records = (await replicationEndpointsFor(tx, migrationId)).filter((r) => r.tenantId === tenantId);
+  const stored = records.length ? await replicationSealedMaterialFor(tx, migrationId, side) : null;
+  const sealing = records.length ? await latestSealingCert(tx, tenantId, onpremEnvId) : undefined;
   return { records, stored, sealingCertPem: sealing?.certPem ?? null };
+}
+
+/** 출발 온프레 묶음 값: CNPG 하나의 이전 역할을 켠다 (예전 정리가 ensure=absent 로 둔 것도 present 로). CNPG 가 하나가 아니면 null */
+export function withSourceReplication(values: HelmValues): HelmValues | null {
+  const pgs = (values.postgres as Array<Record<string, unknown>> | undefined) ?? [];
+  const idx = pgs.flatMap((p, i) => (p.mode === "cnpg" && p.name ? [i] : []));
+  if (idx.length !== 1) return null;
+  return { ...values, postgres: pgs.map((p, i) => (i === idx[0]
+    ? { ...p, replication: { ...((p.replication as Record<string, unknown> | undefined) ?? {}), enabled: true, ensure: "present" } } : p)) };
+}
+
+type SourceRepo = Pick<GitopsRepo, "chartVersion" | "readValues" | "readPlan" | "commitBundle" | "resolve">;
+/** 온프레 → AWS: 출발 온프레 묶음(이 플랫폼이 그린 묶음)에 배달물을 넣어 커밋하고, 출발 환경 Agent 보고를 기다린다.
+ *  묶음이 없으면(고객이 직접 올린 앱) 손대지 않고 paused — 출발 클러스터에 우리가 모르는 것을 쓰지 않는다 */
+export async function sourceReplicationStep(j: MigrationJob, m: MigrationRow, input: DeployInput, f: ReplFacts, repo: SourceRepo,
+    env: NodeJS.ProcessEnv = process.env, watcher?: SyncWatcher): Promise<{ outcome: StepOutcome } | { warnings: string[]; detail?: Record<string, unknown> }> {
+  const stop = (code: string, reason: string, warnings: string[] = []): { outcome: StepOutcome } =>
+    ({ outcome: { to: "paused", failureCode: code, detail: { deploy: { error: code, reason }, ...extra(warnings) } } });
+  if (!input.spec) return stop("GITOPS_VALUES_DRIFT", "승인한 명세가 지금 판에 없다");
+  // 출발 온프레 묶음 = 앞선 이전이 이 온프레 환경에 그린 폴더 (환경별 폴더, 그 전 배포면 예전 폴더). Agent 보고 짝짓기도 고른 폴더 이름으로 한다
+  let b: BundleRef = bundleRefFor(j.tenantId, input.spec.app.name, "onprem", m.sourceEnvId);
+  let values: HelmValues, plan: PlanFile;
+  try {
+    await repo.chartVersion();   // 작업 복사본 준비
+    b = await repo.resolve(b);
+    [values, plan] = [await repo.readValues(b), await repo.readPlan(b)];
+  } catch {
+    return stop("REPL_DELIVERY_FAILED", `출발 온프레 묶음 ${bundlePath(b)} 이 gitops 레포에 없다: 플랫폼이 그린 출발 앱만 이전 역할·터널을 넣을 수 있다`);
+  }
+  const enabled = withSourceReplication(values);
+  if (!enabled) return stop("REPL_DELIVERY_FAILED", "출발 온프레 묶음의 CNPG 가 하나가 아니다 (이전마다 출발 DB 하나)");
+  const dec = await decideDelivery({
+    provider: "onprem", onpremSide: "source", pullMode: env.ONPREM_FLOOR_VIA_GIT !== "0", values: enabled,
+    tenantId: j.tenantId, migrationId: j.migrationId, records: f.records, stored: f.stored, sealingCertPem: f.sealingCertPem,
+    masterKey: env.REPL_SECRET_MASTER_KEY,
+  });
+  if (dec.kind === "stop") return stop(dec.code, dec.reason, dec.warnings);
+  if (dec.kind === "none") return { warnings: dec.warnings };
+  const d = dec.delivery;
+  const wrote = d.write ? await withTenant(j.tenantId, (tx) => recordReplicationDelivery(tx, d.write!)) : null;
+  try {
+    const c = await repo.commitBundle("deploy", b, withDelivery(enabled, d), plan, `replication delivery (source) ${j.migrationId.slice(0, 8)}`);
+    const w = await (watcher ?? syncWatcherFor({ tenantId: j.tenantId, targetEnvId: m.sourceEnvId }, env)).wait(b, c);
+    const detail = { side: "source", cnpg: d.cnpg.name, reused: d.reused, rowsUpdated: !!wrote, sourcePeerSet: wrote?.sourcePeerSet ?? false,
+      sealedSecrets: d.sealedSecrets.map((s) => s.name), commit: c.commit, ...(w.observed ? { agent: w.observed } : {}) };
+    if (!w.ok) {
+      const code = /^((?:ARGO|AGENT)_[A-Z_]+)/.exec(w.reason ?? "")?.[1] ?? "AGENT_DEPLOY_FAILED";
+      return { outcome: { to: "paused", failureCode: code, detail: { deploy: { error: code, reason: w.reason }, ...extra(dec.warnings, detail) } } };
+    }
+    return { warnings: dec.warnings, detail };
+  } catch (e) { return { outcome: gitopsPaused(e) }; }
 }
 
 /** 배달물 판정 → 값에 넣고(input.replication) 끝점 줄에 되쓴다. 설정 문제면 paused (paused → deploying 재개 가능, 고객 클러스터엔 아무것도 안 들어감) */

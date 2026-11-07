@@ -7,6 +7,7 @@ import { ownedBy, type Tag } from "../src/relay/aws-relay.js";
 
 export interface Rule { id: string; group: string; egress: boolean; proto: string; from: number; to: number; cidr: string; tags: Tag[] }
 export class FakeAws {
+  consoleOutput = ""; consoleDelay = 0; consoleCalls = 0;
   constructor(readonly rds: string, readonly migrationId: string) {}
   calls: string[][] = [];
   sgs = new Map<string, { vpc: string; tags: Tag[] }>([["sg-0rds", { vpc: "vpc-0a1", tags: [] }]]);
@@ -91,6 +92,11 @@ export class FakeAws {
         const id = `i-new${++this.n}`;
         this.insts.set(id, { state: "pending", tags: tagsOf("instance"), describes: 0 });
         return ok({ Instances: [{ InstanceId: id }] });
+      }
+      // 보안 12번 콘솔 방식: 중계기가 찍은 호스트 공개 키 줄 (consoleOutput 을 시험이 정한다. 처음 몇 번은 아직 안 찍힌 것처럼 빈 값)
+      case "ec2 get-console-output": {
+        this.consoleCalls++;
+        return ok({ InstanceId: val("--instance-id"), Output: this.consoleCalls > this.consoleDelay ? this.consoleOutput : "" });
       }
       case "ec2 terminate-instances": for (const id of vals("--instance-ids")) this.insts.get(id)!.state = "shutting-down"; return ok({});
       case "ec2 delete-security-group": {

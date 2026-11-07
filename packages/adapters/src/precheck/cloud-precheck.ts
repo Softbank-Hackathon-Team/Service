@@ -3,7 +3,7 @@ import { statfs } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import type { Exec } from "../terraform/real-runner.js";
 import { awsRegion, gcpRegion, maskAccount, onpremContext, scrubAccountIds } from "../common/cli.js";
-import { envNumber } from "@svc/contracts";
+import { awsRoleName, envNumber } from "@svc/contracts";
 import { relayPermVerdict, relaySimArgs } from "./relay-permissions.js";
 
 // Z97: 사전 점검(precheck) 실조회. 예전 STUB(PC-01·02 "확인됨" 고정 글자)을 실제 읽기 호출로 바꾼다.
@@ -18,6 +18,7 @@ export interface PrecheckEnvInfo {
   side: "source" | "target"; provider: CloudProvider; name?: string;
   accountId?: string | null;   // environments.account_id (AWS 계정 번호 / GCP 프로젝트)
   externalId?: string | null;
+  awsRoleSuffix?: string | null;   // environments.aws_role_suffix (한 계정에 환경 여럿, 0056). 실행 역할 svc-operate<꼬리>, 없으면 옛 이름
   // pull 모드(ONPREM_FLOOR_VIA_GIT≠0) 온프레 도착: 워커는 고객 클러스터에 들어가지 않는다 (들어오는 포트 0, 고객 Argo CD 가 당긴다).
   //   그래서 자격·API 를 kubectl 대신 Agent 하트비트로 본다. 워커가 채운다 (agent_keys·agent_reports). 없으면 예전처럼 kubectl (push 시연: 로컬 k3d)
   agent?: { keys: number; lastHeartbeatAgeSec: number | null; staleSec: number; k3sVersion?: string | null } | null;
@@ -131,17 +132,24 @@ function agentCredCheck(id: string, side: CloudCheck["side"], item: string, a: N
   return { id, side, item, verdict: "PASS", reason: `Agent 하트비트 ${a.lastHeartbeatAgeSec}초 전 (살아 있는 키 ${a.keys}개, pull 모드라 워커는 클러스터에 직접 안 붙음)` };
 }
 
-// ── 1b. 출발 실행 역할의 중계기 권한 (출발 AWS → 온프레 pull 도착) ──────────────
-//   apply 가 출발 계정에 중계기를 만든다 (worker relay/). 그 동작이 실행 역할 svc-operate 에 있는지 관찰 역할로 흉내 평가한다 (읽기만)
-async function relayPermCheck(c: Ctx, e: PrecheckEnvInfo): Promise<CloudCheck> {
+// ── 1b. 중계기가 사는 AWS 계정 실행 역할의 중계기 권한 ──────────────
+//   AWS → 온프레 pull: 출발 계정에, 온프레(Agent) → AWS: 도착 계정에 apply 가 중계기를 만든다 (worker relay/, ADR-031).
+//   그 동작이 실행 역할 svc-operate 에 있는지 관찰 역할로 흉내 평가한다 (읽기만)
+async function relayPermCheck(c: Ctx, e: PrecheckEnvInfo, side: "source" | "target" = "source", consoleRequired = false): Promise<CloudCheck> {
+  const who = side === "source" ? "출발" : "도착";
   if (!e.accountId || !/^\d{12}$/.test(e.accountId))
-    return { id: "PC-RELAY-PERM", side: "source", item: "출발 실행 역할 중계기 권한", verdict: "WARN", reason: "출발 환경 계정 번호가 없어 실행 역할을 못 정함 — 확인 못 함" };
-  const arn = `arn:aws:iam::${e.accountId}:role/svc-operate`;
-  return relayPermVerdict(await aws(c, relaySimArgs(arn, c.region)), arn);
+    return { id: "PC-RELAY-PERM", side, item: `${who} 실행 역할 중계기 권한`, verdict: "WARN", reason: `${who} 환경 계정 번호가 없어 실행 역할을 못 정함 — 확인 못 함` };
+  const arn = `arn:aws:iam::${e.accountId}:role/${awsRoleName("svc-operate", e.awsRoleSuffix)}`;
+  const v = relayPermVerdict(await aws(c, relaySimArgs(arn, c.region)), arn, { consoleRequired });
+  return side === "source" ? v : { ...v, side, item: `${who} 실행 역할 중계기 권한` };
 }
-/** 중계기를 워커가 만드는 길인가: 출발 AWS + 온프레 pull 도착(Agent 하트비트로 점검하는 길) + RELAY_AUTO≠0 */
-export const relayPathApplies = (i: Pick<PrecheckInput, "source" | "target">, env: NodeJS.ProcessEnv) =>
-  i.source.provider === "aws" && i.target.provider === "onprem" && !!i.target.agent && env.RELAY_AUTO !== "0";
+/** 중계기를 워커가 만드는 길이면 중계기가 사는 쪽 (RELAY_AUTO≠0, 온프레는 pull = Agent 하트비트로 점검하는 길):
+ *  출발 AWS + 온프레 도착 → source, 온프레 출발 + AWS 도착 → target (ADR-031). 아니면 null */
+export const relayPermSide = (i: Pick<PrecheckInput, "source" | "target">, env: NodeJS.ProcessEnv): "source" | "target" | null =>
+  env.RELAY_AUTO === "0" ? null
+  : i.source.provider === "aws" && i.target.provider === "onprem" && !!i.target.agent ? "source"
+  : i.source.provider === "onprem" && i.target.provider === "aws" && !!i.source.agent ? "target" : null;
+export const relayPathApplies = (i: Pick<PrecheckInput, "source" | "target">, env: NodeJS.ProcessEnv) => relayPermSide(i, env) !== null;
 
 // ── 2. 도착 리전·API 활성 ─────────────────────────────────────
 async function apiCheck(c: Ctx, e: PrecheckEnvInfo): Promise<CloudCheck | null> {
@@ -350,7 +358,10 @@ export async function runCloudPrecheck(i: PrecheckInput, deps: PrecheckDeps): Pr
   if (ct.verdict !== "FAIL") tasks.push(apiCheck(cT, i.target), billingCheck(cT, i.target, ct), quotaChecks(cT, i.target));
   else out.push({ id: "PC-SKIP", side: "target", item: "도착 클라우드 조회", verdict: "FAIL", reason: "도착 자격이 없어 API·결제·할당량 조회를 건너뜀" });
   tasks.push(dbVersionCheck(cT, i));   // 도착이 받는 버전 조회 (출발 버전은 REPL_SOURCE_URL 로 이미 앎)
-  if (cs.verdict !== "FAIL" && relayPathApplies(i, env)) tasks.push(relayPermCheck(cS, i.source));
+  const rs = relayPermSide(i, env);
+  const consoleRequired = env.RELAY_HOSTKEY_FROM_CONSOLE === "1";   // worker relay-step hostKeyFromConsoleOn 과 같은 기준
+  if (rs === "source" && cs.verdict !== "FAIL") tasks.push(relayPermCheck(cS, i.source, "source", consoleRequired));
+  if (rs === "target" && ct.verdict !== "FAIL") tasks.push(relayPermCheck(cT, i.target, "target", consoleRequired));
   for (const r of await Promise.all(tasks)) { if (Array.isArray(r)) out.push(...r); else if (r) out.push(r); }
   out.push({ id: "PC-TIME", side: "both", item: "점검 시간", verdict: "PASS", reason: `실조회 ${out.length}항목 ${Date.now() - t0}ms` });
   return out;

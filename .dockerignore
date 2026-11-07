@@ -37,6 +37,8 @@ gitops
 *.tgz
 # agent-worker 이미지가 vCluster 차트 묶음을 넣는다 (deploy/docker/Dockerfile agent-worker 단계)
 !apps/agent-worker/vendor/*.tgz
+# 온프레 설치 묶음의 External Secrets 차트 (sha 는 tools/onprem-install.sh 가 확인)
+!tools/external-secrets-*.tgz
 .secrets
 # UPREV: 맥 실측 빌드 문맥 1.1GB — 맥 작업 폴더(m-import·real-session 결과, terraform 데이터)와 시험·측정 산출물은 이미지에 필요 없다
 .m-import-out

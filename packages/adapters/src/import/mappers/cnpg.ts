@@ -1,6 +1,6 @@
 import { DB_RAW_KINDS } from "../raw-k8s.js";
 import type { KindMapper, MappedComponent, MetaTuple, RawItem } from "../types.js";
-import { cnpgComputeOf, cnpgTls, strParams } from "./pg-settings.js";
+import { cnpgComputeOf, cnpgTls, cnpgUserParams, strParams } from "./pg-settings.js";
 import { mibOf } from "./k8s-deployment.js";
 import { majorOf } from "./rds.js";
 
@@ -50,7 +50,7 @@ export const cnpgMapper: KindMapper = {
     const extra: Record<string, MetaTuple> = {};
     const compute = cnpgComputeOf(sp.resources);
     if (compute) { props.compute = compute; extra.compute = [`cnpg:${name}.spec.resources`, 1]; }
-    const params = strParams(sp.postgresql?.parameters);
+    const params = cnpgUserParams(strParams(sp.postgresql?.parameters));   // 운영자가 정한 값은 빼고 고객 설정만 옮긴다
     if (params && Object.keys(params).length) { props.parameters = params; extra.parameters = [`cnpg:${name}.spec.postgresql.parameters`, 1]; }
     if (sp.bootstrap?.initdb?.database) { props.databases = [sp.bootstrap.initdb.database]; extra.databases = [`cnpg:${name}.spec.bootstrap.initdb.database`, 1]; }
     // DBN-1: CNPG initdb 의 앱 DB·소유 역할. 둘 중 하나만 적으면 CNPG 는 owner = database 이름 【사실: CNPG initdb 규칙. 둘 다 없으면 app/app】

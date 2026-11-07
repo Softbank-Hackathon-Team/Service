@@ -55,7 +55,18 @@ test("GKE: 예전 Secret 모양 그대로 (IP 에 https://, argocd-k8s-auth gcp,
 
 test("배포 역할 이름 = 연결 템플릿 DeployRole 이름 (다르면 허브가 없는 역할을 빌린다)", () => {
   const t = JSON.parse(readFileSync(new URL("../../../infra/onboarding/aws-connect.json", import.meta.url), "utf8"));
-  assert.equal(t.Resources.DeployRole.Properties.RoleName, AWS_DEPLOY_ROLE_NAME);
+  // 한 계정에 환경 여럿 (0056): 템플릿 이름 = 바탕 + RoleSuffix
+  assert.deepEqual(t.Resources.DeployRole.Properties.RoleName, { "Fn::Join": ["", [AWS_DEPLOY_ROLE_NAME, { Ref: "RoleSuffix" }]] });
+});
+
+test("RoleSuffix: 도착 환경 꼬리가 있으면 svc-deploy-<8자> 를 빌리는 Secret, 없으면(옛 환경) svc-deploy", () => {
+  const tf = { cluster_endpoint: "https://eks.example", cluster_ca_certificate: "Q0E=", cluster_name: "customer-eks" };
+  const arnOf = (roleSuffix?: string | null) => {
+    const a = clusterAccess("aws-eks", tf, { accountId: "111122223333", awsHub: true, roleSuffix });
+    return a?.env === "aws-eks" ? a.roleArn : undefined;
+  };
+  assert.equal(arnOf("-783df2ef"), "arn:aws:iam::111122223333:role/svc-deploy-783df2ef");
+  for (const old of [undefined, null, "", "bad"]) assert.equal(arnOf(old), "arn:aws:iam::111122223333:role/svc-deploy", String(old));
 });
 
 test("허브 스위치: ARGO_HUB_ROLE_ARN 이 있을 때만 켜짐", () => {

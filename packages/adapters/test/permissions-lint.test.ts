@@ -53,7 +53,7 @@ test("AWS: GetSecretValue 는 RDS 관리형 시크릿 조건 문장과 apply 단
 });
 
 test("AWS: 세션 정책(plan·apply·destroy)은 실행 역할 정책의 부분집합", () => {
-  const role = actionsOf("aws-operate-role-policy.json");
+  const role = new Set([...actionsOf("aws-operate-role-policy.json"), ...actionsOf("aws-operate-db-kms-policy.json")]);   // 실행 역할 = 관리형 정책 + 인라인 db-kms (KMS 는 관리형 정책 한도 때문에 인라인, export-permissions)
   for (const p of ["plan", "apply", "destroy"]) {
     const extra = [...actionsOf(`aws-session-policy-${p}.json`)].filter((a) => !role.has(a));
     assert.deepEqual(extra, [], `${p}: 역할에 없는 동작`);
@@ -88,7 +88,7 @@ test("AWS: IAM 동작은 app-* 역할에만, PassRole은 EKS Pod Identity로만,
 // 알려진 과다 권한 (THREAT-MODEL.md 권한 점검 표 A-1~A-4). 고칠 때 이 목록에서 지운다. 늘어나면 실패
 // ID-4: 바꾸기·지우기는 managed-by=platform 태그 조건 문장으로 옮겼다. 남은 것 = 만들기 + 태그 붙이기(만들 때 태그에도 필요, 이름으로 못 좁힘)
 const AWS_KNOWN_BROAD_WRITES = [
-  "ec2:CreateSecurityGroup", "ec2:CreateTags", "eks:CreatePodIdentityAssociation",
+  "ec2:CreateSecurityGroup", "ec2:CreateTags", "eks:CreatePodIdentityAssociation", "eks:TagResource",
   "rds:AddTagsToResource", "rds:CreateDBInstance", "rds:CreateDBParameterGroup", "rds:CreateDBSubnetGroup", "secretsmanager:CreateSecret",
   "secretsmanager:TagResource",
 ].sort();

@@ -7,12 +7,12 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 // 온프레 설치 한 줄이 받는 파일 (인증 없음: 회사 데이터·비밀이 없다. 비밀은 등록 응답으로만 간다)
 //   GET /api/v1/install/onprem.sh          설치 스크립트 (tools/onprem-bootstrap.sh 의 __SVC_*__ 자리를 채움)
 //   GET /api/v1/install/onprem/<경로>       설치 묶음 파일 하나 (스크립트에 박힌 sha256 목록에 있는 것만)
-// 묶음 = 레포의 tools/onprem-install.sh + 고정 yaml 4개 + deploy/helm/onprem-agent 차트. 이미지에는 /app/onprem-bundle 로 복사한다
+// 묶음 = 레포의 tools/onprem-install.sh + 고정 yaml 4개 + External Secrets 차트 tgz + deploy/helm/onprem-agent 차트. 이미지에는 /app/onprem-bundle 로 복사한다
 // 필요한 설정: ONPREM_AGENT_IMAGE (고객이 받을 수 있는 공개 레지스트리 이름 @sha256:..., CI publish-onprem-agent 가 찍는 값)
 //   없으면 설치 스크립트 대신 "설정 없음" 을 알리고 끝나는 스크립트를 준다 (503)
 
 export const BUNDLE_FILES = ["tools/onprem-install.sh", "tools/argocd-core-install-v2.13.3.yaml",
-  "tools/sealed-secrets-controller-v0.40.0.yaml", "tools/onprem-argocd-health.yaml", "tools/cnpg-1.30.1.yaml"];
+  "tools/sealed-secrets-controller-v0.40.0.yaml", "tools/onprem-argocd-health.yaml", "tools/cnpg-1.30.1.yaml", "tools/external-secrets-2.14.0.tgz"];
 export const BUNDLE_DIRS = ["deploy/helm/onprem-agent"];
 const BOOTSTRAP = "tools/onprem-bootstrap.sh";
 const IMAGE_RE = /^[a-z0-9.-]+(?::[0-9]+)?\/[a-z0-9._/-]+@sha256:[0-9a-f]{64}$/;

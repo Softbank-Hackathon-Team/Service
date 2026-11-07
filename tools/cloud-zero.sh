@@ -191,8 +191,9 @@ aws_checks() {
   count "IAM 정책(platform-app-boundary)" aws --output text iam list-policies --scope Local --query "Policies[?PolicyName=='platform-app-boundary'].PolicyName"
   # GATE-v1: 실세션 connect 가 만든 연결 스택(svc-connect-*; 역할 svc-observe·svc-operate). 남으면 다음 회차 connect 가 실패 → down 의 connect-stack 단계가 지움
   count "연결 스택(svc-connect-*)" aws --output text cloudformation describe-stacks --query "Stacks[?starts_with(StackName,'svc-connect-')].StackName"
-  count "IAM 역할(svc-observe·svc-operate·svc-deploy)" aws --output text iam list-roles --query "Roles[?RoleName=='svc-observe' || RoleName=='svc-operate' || RoleName=='svc-deploy'].RoleName"
-  count "IAM 정책(svc-operate-policy)" aws --output text iam list-policies --scope Local --query "Policies[?PolicyName=='svc-operate-policy'].PolicyName"
+  #   한 계정에 환경 여럿 (0056): 새 연결은 이름 끝에 환경 꼬리(-<8자>) → 꼬리 붙은 것도 센다
+  count "IAM 역할(svc-observe·svc-operate·svc-deploy[-*])" aws --output text iam list-roles --query "Roles[?RoleName=='svc-observe' || RoleName=='svc-operate' || RoleName=='svc-deploy' || starts_with(RoleName,'svc-observe-') || starts_with(RoleName,'svc-operate-') || starts_with(RoleName,'svc-deploy-')].RoleName"
+  count "IAM 정책(svc-operate-policy[-*])" aws --output text iam list-policies --scope Local --query "Policies[?starts_with(PolicyName,'svc-operate-policy')].PolicyName"
   # PF02 FM-CLD-16: 이전 apply·smoke 가 만드는 앱 IAM 역할은 이름이 전부 app-* (실행 역할 정책이 role/app-* 만 허용).
   #   IAM 은 전역이라 서울 태그 조회(get-resources)에 안 나올 수 있다 【추정】 → 이름으로도 센다 (destroy 실패로 남으면 다음 apply EntityAlreadyExists)
   count "IAM 역할(app-*, 앱 apply 가 만든 것)" aws --output text iam list-roles --query "Roles[?starts_with(RoleName,'app-')].RoleName"

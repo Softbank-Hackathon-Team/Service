@@ -69,7 +69,7 @@ flowchart LR
 | 앱 네임스페이스 | `app-<앱>` | `app-shop` | `bundle.ts` `APP_NS_PREFIX`, Terraform `k8s_namespace` |
 | 대상 클러스터 | `<슬러그>-<env 폴더>` (온프레는 없음) | `t-11111111-aws-eks` | `bundle.ts` `clusterName` |
 | Argo 앱 이름 | `<슬러그>-<앱>-<env 폴더>` | `t-11111111-shop-gcp-gke` | `bundle.ts` `argoAppName` |
-| env 폴더 | aws→`aws-eks`, gcp→`gcp-gke`, onprem→`onprem-k3s`, azure_mock→`azure-mock` | | `bundle.ts` `ENV_DIR` |
+| env 폴더 | aws→`aws-eks`, gcp→`gcp-gke`, onprem→`onprem-k3s-<환경 uuid 앞 8자>`(환경마다 따로, 예전 공용 `onprem-k3s` 로 배포된 이전은 그 폴더 유지), azure_mock→`azure-mock` | | `bundle.ts` `ENV_DIR`·`bundleRefFor` |
 | Terraform 작업 폴더 | `TF_WORK_DIR`(기본 `~/.svc-tf`) `/<슬러그>/<이전 id>/` | | `packages/adapters/src/terraform/real-runner.ts` |
 | GCP SA·시크릿 | `app-` 로 시작 (IAM 조건이 이 접두어로 막음) | | `packages/adapters/src/gcp/index.ts` |
 

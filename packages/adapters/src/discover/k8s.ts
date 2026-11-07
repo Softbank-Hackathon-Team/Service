@@ -6,7 +6,7 @@ import { pickItem, type RawPick } from "../common/unread.js";
 // Z88: 쿠버네티스(EKS·GKE·k3s 공통) 앱 네임스페이스 읽기 (전부 get -o json).
 // 비밀값은 안 읽는다(secretKeyRef 이름만, Secret 객체는 안 봄)
 
-const SYSTEM_NS = /^(kube-|cnpg-system$|cert-manager$|argocd$|external-secrets$|ingress-nginx$|monitoring$|gmp-|gke-)/;
+export const SYSTEM_NS = /^(kube-|cnpg-system$|cert-manager$|argocd$|external-secrets$|ingress-nginx$|monitoring$|gmp-|gke-)/;
 type Obj = Record<string, unknown>;
 
 const meta = (o: Obj, k: "name" | "namespace") => str(get(o, "metadata", k)) ?? "";
@@ -135,6 +135,12 @@ const ESO = { es: "externalsecrets.external-secrets.io", store: "secretstores.ex
 //   HTTPRoute parentRefs.name 은 CRD 검사가 길이만 보고, api-resources 는 집계 API 서버가 아무 이름이나 낼 수 있다 → "--…" 이면 kubectl 옵션으로 읽힘
 export const K8S_NAME = /^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$/;
 export const CRD_READ_ELSEWHERE = new Set(["clusters.postgresql.cnpg.io", ...Object.values(GATEWAY_API), ...Object.values(ESO)]);
+/** N12·PF-A16: api-resources 이름 목록 → 이름만 읽는 앱 CRD 종류 (이름순). 온프레 Agent 인벤토리 스냅숏도 같은 규칙으로 고른다 (inventory-snapshot.ts) */
+export const appCrdResources = (all: readonly string[]): string[] =>
+  all.filter((x) => K8S_NAME.test(x) && x.includes(".") && !BUILTIN_GROUP.test(x.slice(x.indexOf(".") + 1)) && !CRD_READ_ELSEWHERE.has(x)).sort();
+/** 스냅숏이 Gateway API·ExternalSecret 종류를 discover 와 같은 이름으로 모으도록 내보낸다 */
+export const GATEWAY_API_RESOURCES: readonly string[] = Object.values(GATEWAY_API);
+export const ESO_RESOURCES: readonly string[] = Object.values(ESO);
 
 /** 실행 중 Pod 에서 컨테이너 이름이 같은 imageID 의 sha256.
  *  G3-4: 고른 파드들의 digest 가 여럿이면(롤링 중·바뀌는 태그) 가장 많은 것(같으면 글자순 앞)을 쓰고 review 에 이유를 남긴다.
@@ -327,7 +333,16 @@ export async function readK8sNamespace(d: CliDeps, kube: string[], opts: K8sName
   //   예전: 자동 고르기에서만 뺐고(PF-A1), IMPORT_NAMESPACE·sourceScope 로 app-demo 를 잘못 주면 경고 없이 served-by 를 고객 앱으로 옮겼다
   for (const [ns, r] of per) if (r.nsObjs.some((o) => (get(o, "metadata", "labels") as Record<string, unknown> | undefined)?.["managed-by"] === "platform"))
     picked.push(pickItem("platform-namespace", `네임스페이스 ${ns} 는 이 플랫폼이 만든 것(라벨 managed-by=platform) → 옮길 고객 앱이 맞는지 확인 (출발 범위 namespaces 를 다시 볼 것)`));
-  const deps = depList.filter((o) => nsSet.has(meta(o, "namespace")));
+  // 왕복 이전: 이 플랫폼 앱 차트가 그린 Cloudflare 입구(templates/ingress.yaml: <앱>-cloudflared Deployment, 파드 라벨 svc.platform/metrics=cloudflared,
+  //   지표 ConfigMap·NetworkPolicy <앱>-cloudflared-metrics)는 고객 앱이 아니다. 앱 부품으로 읽으면 도착에 터널 연결기를 다시 만들고,
+  //   그 NetworkPolicy 가 posture.networkPolicy 로 잡혀 NetworkPolicy 를 못 그리는 도착(AWS·GCP)이 막힌다 (2026-11-07 온프레 → AWS 실측 PC-V2-UNSUP)
+  const isPlatformEntry = (o: Obj) => str(get(o, "spec", "template", "metadata", "labels", "svc.platform/metrics")) === "cloudflared";
+  const entryApps = new Set(depList.filter((o) => nsSet.has(meta(o, "namespace")) && isPlatformEntry(o))
+    .map((o) => `${meta(o, "namespace")}/${str(get(o, "spec", "template", "metadata", "labels", "app.kubernetes.io/name")) ?? meta(o, "name")}`));
+  const entryNetpol = (o: Obj) => entryApps.has(`${meta(o, "namespace")}/${str(get(o, "spec", "podSelector", "matchLabels", "app.kubernetes.io/name")) ?? ""}`);
+  const entryConfig = (o: Obj) => entryApps.has(`${meta(o, "namespace")}/${meta(o, "name").replace(/-metrics$/, "")}`) && meta(o, "name").endsWith("-metrics");
+  if (entryApps.size) notes.push(`플랫폼이 그린 Cloudflare 입구 ${[...entryApps].sort().join(",")} (Deployment·지표 ConfigMap·NetworkPolicy)는 고객 앱이 아니라 뺐다 (도착 입구는 도착 차트가 다시 그린다)`);
+  const deps = depList.filter((o) => nsSet.has(meta(o, "namespace")) && !isPlatformEntry(o));
   const crons = cat("crons");
   const stss = cat("stss"), dss = cat("dss");
   // F-1 DRAFT(ai): 핵심 종류(Service·Ingress·ConfigMap)를 못 읽으면 라우팅·설정이 빈 채로 "다 읽은 것처럼" 나온다 → 가져오기를 멈춘다.
@@ -468,7 +483,7 @@ export async function readK8sNamespace(d: CliDeps, kube: string[], opts: K8sName
       maxReplicas: get(o, "spec", "maxReplicas") as number, metrics: Array.isArray(get(o, "spec", "metrics")) ? get(o, "spec", "metrics") as Obj[] : undefined,
       behavior: get(o, "spec", "behavior") && typeof get(o, "spec", "behavior") === "object" ? get(o, "spec", "behavior") as Obj : undefined }),   // N7
   } as RawK8sItem);
-  for (const o of cat("nps")) items.push({
+  for (const o of cat("nps").filter((x) => !entryNetpol(x))) items.push({
     kind: "k8s.networkPolicy", metadata: metaOf(o),
     spec: defined({ podSelector: get(o, "spec", "podSelector") as Obj | undefined, policyTypes: get(o, "spec", "policyTypes") as string[] | undefined,
       ingress: get(o, "spec", "ingress") as unknown[] | undefined, egress: get(o, "spec", "egress") as unknown[] | undefined }),
@@ -481,7 +496,7 @@ export async function readK8sNamespace(d: CliDeps, kube: string[], opts: K8sName
     items.push({ kind: "k8s.serviceAccount", metadata: metaOf(o), ...(irsa ? { irsaRoleArn: irsa } : {}), ...(gsa ? { gcpServiceAccount: gsa } : {}) } as RawK8sItem);
   }
   // N3: ConfigMap 은 data 값까지 (평문 비밀 검사·가리기는 파이프라인). binaryData 는 키 이름만
-  for (const o of cat("cms")) {
+  for (const o of cat("cms").filter((x) => !entryConfig(x))) {
     const data = strMap(get(o, "data"));
     const bin = Object.keys((get(o, "binaryData") as Obj | undefined) ?? {}).sort();
     items.push({
@@ -529,7 +544,7 @@ export async function readK8sNamespace(d: CliDeps, kube: string[], opts: K8sName
   try {
     const all = String(await runText(d, "kubectl", ["api-resources", "--namespaced=true", "--verbs=list", "-o", "name", ...kube, "--request-timeout=15s"], extra)).split(/\s+/);
     gatewayKinds = new Set(all.filter((x) => (Object.values(GATEWAY_API) as string[]).includes(x)));
-    const names = all.filter((x) => K8S_NAME.test(x) && x.includes(".") && !BUILTIN_GROUP.test(x.slice(x.indexOf(".") + 1)) && !CRD_READ_ELSEWHERE.has(x)).sort();   // PF-A16
+    const names = appCrdResources(all);   // PF-A16
     for (const r of names) for (const ns of namespaces) {
       for (const o of await listIn(ns, `CRD ${r}`, r)) items.push({ kind: "k8s.crdObject", metadata: metaOf(o), resource: r } as RawK8sItem);
     }
