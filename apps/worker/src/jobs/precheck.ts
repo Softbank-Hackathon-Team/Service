@@ -294,12 +294,14 @@ export async function handlePrecheck(raw: unknown) {
       const precheckBlockers = items.filter((i) => i.level === "block").length;
       const precheckWarnings = items.filter((i) => i.level === "warn").length;
       const mock = process.env.MOCK_PRECHECK === "1";
+      // #373 B2: 권한 묶음을 쪽마다 어디서 읽었나 (cache = environment_permissions 재사용, ageSec = 그 결과의 나이)
+      const permSource = perm.sources.length ? { permissionSource: perm.sources } : {};
       if (precheckBlockers > 0)
-        return { to: "spec_review", detail: { precheck: items, precheckWarnings, ...(perm.detail ? { permissions: perm.detail } : {}), ...(mock ? { stub: true } : {}) }, evidence: { precheckBlockers } };
+        return { to: "spec_review", detail: { precheck: items, precheckWarnings, ...(perm.detail ? { permissions: perm.detail } : {}), ...permSource, ...(mock ? { stub: true } : {}) }, evidence: { precheckBlockers } };
       const planId = randomUUID();
       return {
         to: "planning",
-        detail: { precheck: items, precheckWarnings, planId, ...(perm.detail ? { permissions: perm.detail } : {}), ...(mock ? { stub: true } : {}) },
+        detail: { precheck: items, precheckWarnings, planId, ...(perm.detail ? { permissions: perm.detail } : {}), ...permSource, ...(mock ? { stub: true } : {}) },
         evidence: { precheckBlockers },
         next: { queue: QUEUES.plan,
                 // 작업 키는 core jobKey 한 곳(plan:<이전 번호>). 환경 겹침은 env_locks 예약이 막는다 (Z43 F3)

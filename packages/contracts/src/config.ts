@@ -85,6 +85,7 @@ export const CONFIG_RULES = {
     IMPORT_MAX_ATTEMPTS: { check: num({ int: true, min: 1 }) },
     SEC_PRECHECK: { check: oneOf("0", "1") },                   // 보안 판정 연결: 사전 점검에 보안 판정(SEC:*)을 붙임. 기본 꺼짐, 1 = 켬
     AGENT_FACTS_MAX_AGE_SEC: { check: num({ min: 1 }) },
+    PERMISSION_CACHE_SEC: { check: num({ min: 0 }) },           // #373 B2: 사전 점검이 묶음별 권한 확인 결과를 다시 쓰는 최대 나이(초). DRAFT(ai) 기본 600, 0 = 끔
     AGENT_DEPLOY_CONFIRM: { check: oneOf("0", "1") },           // W4: 온프레(agent-pull) 배포를 Agent 보고로 확인. DRAFT(ai) 기본 켬, 0 = 끔
     AGENT_DEPLOY_WAIT_SEC: { check: num({ min: 1 }) },            // W4: Agent 배포 보고를 기다리는 최대 시간(초). DRAFT(ai) 기본 600
     AGENT_DEPLOY_TICK_MS: { check: num({ min: 1 }) },
