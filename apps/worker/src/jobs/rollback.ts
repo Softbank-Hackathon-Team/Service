@@ -4,7 +4,7 @@ import { ReplConfigError, toMeasurements, withClient, appCanWrite } from "@svc/r
 import { restoreSource } from "@svc/traffic";
 import { trafficLeaseState, withTenant, writeAudit } from "@svc/core";
 import { log, setTrafficWeightMetric } from "../instrument.js";
-import { cleanupAfterRollback } from "./rollback-cleanup.js";
+import { cleanupAfterRollback, notStartedCleanup } from "./rollback-cleanup.js";
 import { errorMessage, runStep, failedAttempts, recordAttemptFailure, RetryLater, jobData } from "./_step.js";
 import { withStepRoles } from "./_roles.js";
 import { transientTrafficError, rollbackTransientDelaysSec } from "./_transient.js";
@@ -134,7 +134,9 @@ export async function handleRollback(raw: unknown) {
       // rolled_back은 끝 상태라 cleanup이 안 돈다 → 여기서 걷는다. 안 걷으면 출발 DB 슬롯이 WAL을 계속 쌓고(디스크),
       // 다음 시연에서 phase()가 forward로 보여 sync가 이상하게 돈다. 출발이 다시 주인이라 되돌릴 대상은 없다
       // Z69: 컷오버 전·뒤·noop 모두 걷고, 실패하면 경고만 (rollback-cleanup.ts 결정 참고)
-      const cleanup = await cleanupAfterRollback(repl);
+      const cleanup0 = await cleanupAfterRollback(repl);
+      // 동기화에 들어간 적 없으면 DB 에 걷을 것이 없다 → 걷기 접속 실패로 중계기·배달 정리를 건너뛰지 않는다 (rollback-cleanup.ts notStartedCleanup)
+      const cleanup = notStartedCleanup(cleanup0, cleanup0.ok || await enteredSync(j.tenantId, j.migrationId));
       const { removed, leftovers } = cleanup;
       // 출발 헬스 = 출발 DB에서 앱 계정이 다시 쓸 수 있나. 중계기를 지우기 전에 본다:
       //   AWS→온프레 이전은 워커가 출발 DB 에 중계기(공인 IP:15432)로만 닿는다. 예전엔 중계기를 지운 뒤 같은 주소로 붙어
@@ -158,7 +160,7 @@ export async function handleRollback(raw: unknown) {
         to: "rolled_back",
         detail: { weights, traffic: traffic.detail, gitopsWeight, gitopsReplication, cfEntry, sourceDb: { appWrite: sourceDb.appWrite },
                   relay: relay.kind === "ok" ? relay.detail : relay.kind === "skipped" ? { skipped: relay.reason } : { failed: relay.failureCode, error: relay.reason },
-                  replication: { kind: r.kind, order: dbFirst ? "db_then_traffic" : "traffic_then_db", removed, leftovers, cleanup: cleanup.ok ? "ok" : "incomplete",
+                  replication: { kind: r.kind, order: dbFirst ? "db_then_traffic" : "traffic_then_db", removed, leftovers, cleanup: cleanup.notStarted ? "not_started" : cleanup.ok ? "ok" : "incomplete",
                                  ...(cleanup.warning ? { warning: cleanup.warning } : {}) },
                   measurements: [...(r.result ? toMeasurements(r.result.measures, j.migrationId, "source") : []), ...appLinkMeasurements(appLink, j.migrationId, "source")],
                   ...(appLink ? { appLink } : {}), ...(gitopsWriter ? { gitopsWriter } : {}), ...(runtimeWriter ? { runtimeWriter } : {}) },
@@ -220,6 +222,12 @@ async function withRevokeAfter<T extends { detail?: Record<string, unknown> }>(j
 async function passedCutover(tenantId: string, migrationId: string): Promise<boolean> {
   return withTenant(tenantId, async (tx) => ((await tx.query(
     `SELECT 1 FROM audit_events WHERE target = $1 AND detail->>'from' = 'cutover' AND detail->>'to' = 'rollback_window' LIMIT 1`, [migrationId])).rowCount ?? 0) > 0);
+}
+
+// 동기화 단계에 들어간 적이 있나 (감사 전이 줄). 복제 객체·전용 계정은 이 단계에서야 만든다
+async function enteredSync(tenantId: string, migrationId: string): Promise<boolean> {
+  return withTenant(tenantId, async (tx) => ((await tx.query(
+    `SELECT 1 FROM audit_events WHERE target = $1 AND detail->>'to' = 'syncing' LIMIT 1`, [migrationId])).rowCount ?? 0) > 0);
 }
 
 // 컷오버 단계에 들어간 적이 있나 (감사 전이 줄). 울타리(C2)는 이 단계 안에서만 친다
