@@ -80,3 +80,30 @@ test("W4: dbAgentDeployLookup 는 같은 app + 커밋의 가장 최근 deploy �
   assert.equal(await look("t-0a1b2c3d-blog-onprem-k3s", "a".repeat(40)), null);
   assert.equal(await dbAgentDeployLookup(T2, e.id)("t-0a1b2c3d-shop-onprem-k3s", "a".repeat(40)), null);
 });
+
+test("#373 D2: progressing 은 끝이 아니다 (짝짓기 lookup 은 null), 진행 보고·하트비트 나이는 따로 읽는다 (폐기 키·다른 회사 제외)", { skip }, async () => {
+  const { dbAgentDeployLookup, dbAgentProgressLookup, dbAgentHeartbeatLookup } = await import("../src/gitops/agent-watch.js");
+  const e = await env();
+  const app = "t-0a1b2c3d-shop-onprem-k3s", rev = "d".repeat(40);
+  const prog = (msg: string) => ({ kind: "deploy", agentVersion: "t", sentAt: "2026-11-07T03:00:00Z", app, bundleHash: rev, status: "progressing", resources: [],
+    progress: { sync: "Synced", health: "Progressing", waitingOn: { resource: "Cluster/app-shop/shop-db", health: "Progressing", message: msg } } });
+  await report(e, prog("Setting up primary"), 60, "deploy");
+  await report(e, prog("Creating replica"), 20, "deploy");
+  assert.equal(await dbAgentDeployLookup(T, e.id)(app, rev), null, "progressing 만 있으면 아직 안 끝남");
+  const p = await dbAgentProgressLookup(T, e.id)(app, rev);
+  assert.equal(p?.waitingOn?.message, "Creating replica");
+  assert.equal(p?.health, "Progressing");
+  assert.equal(await dbAgentProgressLookup(T, e.id)(app, "e".repeat(40)), null);
+  assert.equal(await dbAgentProgressLookup(T2, e.id)(app, rev), null, "다른 회사");
+  // 하트비트: 한 번도 없으면 null, 있으면 가장 최근 나이(초). 폐기된 키로 온 것은 세지 않는다
+  assert.equal(await dbAgentHeartbeatLookup(T, e.id)(), null);
+  await report(e, { kind: "heartbeat" }, 300, "heartbeat");
+  const age = await dbAgentHeartbeatLookup(T, e.id)();
+  assert.ok(age !== null && age >= 299 && age <= 302, `age=${age}`);
+  const revoked = `ak_${randomBytes(12).toString("hex")}`;
+  await owner.query(`INSERT INTO agent_keys (id, tenant_id, env_id, revoked_at) VALUES ($1,$2,$3, now())`, [revoked, T, e.id]);
+  await report({ ...e, k: revoked }, { kind: "heartbeat" }, 1, "heartbeat");
+  const age2 = await dbAgentHeartbeatLookup(T, e.id)();
+  assert.ok(age2 !== null && age2 >= 299, `폐기 키 하트비트를 셌다: age=${age2}`);
+  assert.equal(await dbAgentHeartbeatLookup(T2, e.id)(), null, "다른 회사");
+});

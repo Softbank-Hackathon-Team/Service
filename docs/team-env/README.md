@@ -196,6 +196,7 @@ bash tools/aws-source-app.sh down             # 네임스페이스만 (라벨 m-
 | `ARGO_NOT_CONFIGURED` | 플랫폼 차트 문제(#322). 운영자에게 알린다 |
 | `there are no clusters with this name` (ApplicationSet) | 울타리 앱 → ApplicationSet 순서로 수동 새로고침 (#317 20). 운영자에게 |
 | `replicationcontrollers is forbidden` (Argo ComparisonError) | 2-5 `argo-cache-read` Role (#317 21, #323) |
+| `ARGO_CLUSTER_UNREACHABLE` | Argo 허브가 도착 클러스터를 2분 넘게 못 읽음. EKS 는 배포 역할 접근 항목·허브 역할 신뢰, GKE 는 RoleBinding 확인. 허브 cluster Secret `namespaces` 에 지운 네임스페이스가 남았으면 빼고 재개 (#373) |
 | `secret-copy.py` 가 출발 Secret 을 못 읽음 | 4-4 접근 항목·`AmazonEKSAdminViewPolicy` (#317 9) |
 | `PERM_TABLE_MISSING` (GCP VM 도착) | 아직 지원 안 함. k8s 도착으로 (#317 18) |
 | 캐시 있는 앱의 `-cache-auth` 비밀 403 | 아직 안 고침. 캐시 없는 앱으로 시험 (#317 17) |

@@ -21,8 +21,10 @@ gitops:
 
 argocd:
   namespace: argocd
-  # DRAFT(ai): 새 앱 폴더 찾는 주기(초). Argo 기본 180. git 확인 주기(설치 스크립트 ARGO_POLL)와 같은 30 으로 둔다
-  discoverSeconds: 30
+  # DRAFT(ai) #373 A3: 새 앱 폴더 찾는 주기(초). Argo 기본 180. git 확인 주기(설치 스크립트 ARGO_POLL)와 같은 10 으로 둔다 (예전 30)
+  #   11/07 실측: 미러 커밋 → Agent applied 보고 13~101초, 그 대부분이 이 주기·ARGO_POLL·Agent 주기를 기다린 시간이다.
+  #   비용: ApplicationSet 이 git 을 10초마다 본다 (앱 몇 개짜리 온프레 기준)
+  discoverSeconds: 10
 
 agent:
   # 이미지. digest 고정 필수 (repo@sha256:...). 태그만 주면 렌더가 실패한다
@@ -31,8 +33,10 @@ agent:
   reportURL: ""
   # AGENT_KEY_ID · AGENT_KEY_SECRET 이 든 Secret 이름 (onprem-agent --enroll 결과로 설치 스크립트가 만든다)
   keySecret: agent-key
-  # heartbeat 주기(초). security 는 10번에 1번
-  every: 30
+  # DRAFT(ai) #373 A3: heartbeat·deploy 보고 주기(초). 예전 30 → 10 (위 discoverSeconds 와 같은 실측 근거).
+  #   security·facts·inventory 는 이 값과 상관없이 약 300초마다 (tools/onprem-agent.ts, packages/agent onprem/loop.ts)
+  #   워커는 하트비트가 AGENT_OFFLINE_SEC(기본 120초) 넘게 끊기면 배포 확인을 AGENT_OFFLINE 으로 멈춘다 → 이 값은 그보다 한참 작게
+  every: 10
   # DRAFT(ai): Agent 한 개가 보는 앱 네임스페이스. 지금 실행기는 하나만 읽는다(AGENT_NAMESPACE)
   appNamespace: ""
   cnpgCluster: app-db

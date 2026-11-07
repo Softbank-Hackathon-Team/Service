@@ -82,12 +82,22 @@ export const EnvPermissions = z.object({
 }).strict();
 export type EnvPermissions = z.infer<typeof EnvPermissions>;
 
+/** 묶음 하나를 따로 견준 기록 (사전 점검 재사용용, #373 B2). def = 그때 묶음 정의 지문 (판 번호를 안 올리고 묶음만 바뀐 경우를 가린다) */
+export const PermissionCheckedBundle = z.object({
+  bundleId: z.string().max(80),
+  at: z.string().max(40),              // ISO 시각 (worker 시계)
+  def: z.string().max(64),
+}).strict();
+export type PermissionCheckedBundle = z.infer<typeof PermissionCheckedBundle>;
+
 /** 저장 모양 (environment_permissions.result). worker 가 쓰고 api 가 읽는다 */
 export const StoredPermissionCheck = z.object({
   requiredVersion: z.number().int().positive(),
   grantedVersion: z.number().int().nonnegative().nullable(),
   gaps: z.array(PermissionGap).max(60),
   error: z.string().max(300).optional(),
+  // 묶음마다 따로 견준 것만 (빌린 자격·계정이 없어 "확인 못 함" 한 줄로 접힌 결과는 안 넣는다). 없으면 옛 줄 → 사전 점검이 다시 쓰지 않는다
+  checked: z.array(PermissionCheckedBundle).max(60).optional(),
 }).strict();
 export type StoredPermissionCheck = z.infer<typeof StoredPermissionCheck>;
 

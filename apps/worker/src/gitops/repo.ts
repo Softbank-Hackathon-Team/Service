@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import type { HelmValues } from "@svc/contracts";
 import { APP_NS_PREFIX, DELIVERY, bundlePath, legacyRef, clusterSecret, clusterSecretFile, commitMessage, fenceDoc, resourceId, type BundleRef, type ClusterAccess, type PlanFile } from "./bundle.js";
 import { TenantMirror, TenantMirrorError, tenantMirrorFromEnv, type TenantMirrorConfig } from "./tenant-mirror.js";
+import { descendantUnchanged } from "./revision-check.js";
 
 const run = promisify(execFile);
 
@@ -172,6 +173,17 @@ export class GitopsRepo {
   }
   async readPlan(b: BundleRef): Promise<PlanFile> {
     return JSON.parse(await readFile(join(this.cfg.dir, bundlePath(await this.resolve(b)), "plan.json"), "utf8")) as PlanFile;
+  }
+
+  /** D3 (#373): 반영 확인이 본 리비전(rev)을 우리 커밋(commit)과 같다고 봐도 되나 = rev 가 commit 의 후손이고 그 사이 이 묶음 폴더가 그대로.
+   *  커밋을 만든 작업 복사본으로 본다: 온프레(agent-pull)+회사 레포면 회사 레포, 그 밖은 공용 레포. 로컬에 없으면 origin 에서 받아 본다.
+   *  레포 작업과 같은 줄에 세운다 (fetch 가 커밋·push 의 git 과 겹치면 ref 잠금으로 남의 배포가 깨진다). 오류면 false (던지지 않는다) */
+  revisionCovers(b: BundleRef, commit: string, rev: string): Promise<boolean> {
+    return serial(async () => {
+      const path = bundlePath(b);
+      if (this.mirror && DELIVERY[b.env] === "agent-pull") return this.mirror.covers(b.tenant, commit, rev, path);
+      return descendantUnchanged({ dir: this.cfg.dir, env: this.gitEnv() }, commit, rev, path);
+    }).catch(() => false);
   }
 
   /** 이 이전이 그린 묶음 폴더를 지우고 커밋한다 (롤백 뒤 온프레 도착 정리). 고객 Argo CD 는 폴더가 사라지면 Application 을 지우고

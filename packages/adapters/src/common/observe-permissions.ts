@@ -11,6 +11,7 @@ export const AWS_COMMAND_ACTIONS: Record<string, string | null> = {
   "eks list-clusters": "eks:ListClusters",
   "eks describe-cluster": "eks:DescribeCluster",
   "eks update-kubeconfig": "eks:DescribeCluster",
+  "eks get-token": null,   // #373 B4: 가져오기 정적 토큰 kubeconfig. 로컬에서 STS GetCallerIdentity URL 에 서명만 함 (별도 권한 없음, exec kubeconfig 도 kubectl 마다 같은 명령을 부름)
   "eks list-pod-identity-associations": "eks:ListPodIdentityAssociations",
   "eks describe-pod-identity-association": "eks:DescribePodIdentityAssociation",
   "rds describe-db-instances": "rds:DescribeDBInstances",
