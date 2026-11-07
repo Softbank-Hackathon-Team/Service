@@ -189,8 +189,10 @@ const RUN_STEPS: Step[] = [
 ];
 const RUN_STATES: readonly MigrationStatus[] = RUN_STEPS.flatMap((step) => step.through);
 
+export type StepsPhase = 'prepare' | 'run';
+
 /** 진행 단계 카드가 보여 줄 묶음. 멈춘·끝난 마이그레이션은 멈춘 칸이 어느 묶음인지로 정한다. */
-export function stepsPhase(migration: Pick<MigrationView, 'status' | 'pausedFrom' | 'failedAtStatus'>, anchor: MigrationStatus | null = null): 'prepare' | 'run' {
+export function stepsPhase(migration: Pick<MigrationView, 'status' | 'pausedFrom' | 'failedAtStatus'>, anchor: MigrationStatus | null = null): StepsPhase {
   const { status } = migration;
   if (status === 'completed' || status === 'paused' || status === 'rolling_back' || status === 'rolled_back') return 'run';
   if (status === 'failed') {
@@ -218,14 +220,30 @@ export function stepAnchorFrom(items: Pick<TimelineItem, 'kind' | 'from' | 'to'>
   return null;
 }
 
-/** 진행 단계 카드. 실행 전 5칸 또는 실행 7칸 중 지금 묶음을 쓰고, 멈춘 마이그레이션은 멈춘 칸을 표시한다. */
+/** 진행 단계 한 칸. at: 그 칸을 눌러 다시 볼 화면의 상태 (칸이 묶는 상태 중 마지막. 자원 생성 칸은 approved 가 아니라 provisioning) */
+export type StepEntry = ChecklistEntry & { at: MigrationStatus };
+const stepAt = (step: Step) => step.through[step.through.length - 1]!;
+
+/**
+ * 진행 단계 카드. 실행 전 5칸 또는 실행 7칸 중 지금 묶음을 쓰고, 멈춘 마이그레이션은 멈춘 칸을 표시한다.
+ * phase 로 다른 묶음을 고르면(카드의 꺾쇠) 그 묶음을 그린다. 실행 묶음에 있으면 실행 전 칸은 모두 끝났고, 실행 전이면 실행 칸은 모두 아직이다
+ */
 export function migrationSteps(
   migration: Pick<MigrationView, 'status' | 'pausedFrom' | 'failedAtStatus'>,
   anchor: MigrationStatus | null = null,
   /** 칸 오른쪽에 붙일 한 마디 (예: 앱 배포 칸의 "리허설 통과") */
   notes: Partial<Record<MigrationStatus, string>> = {},
-): ChecklistEntry[] {
+  phase: StepsPhase = stepsPhase(migration, anchor),
+): StepEntry[] {
   const { status } = migration;
+  if (phase !== stepsPhase(migration, anchor)) {
+    return (phase === 'prepare' ? PREPARE_STEPS : RUN_STEPS).map((step) => ({
+      label: step.label,
+      detail: step.human ? t('사람') : undefined,
+      status: phase === 'prepare' ? 'done' : 'pending',
+      at: stepAt(step),
+    }));
+  }
   const stoppedAt: { at: MigrationStatus | null | undefined; mark: ChecklistEntry['status'] } | null =
     status === 'paused' ? { at: migration.pausedFrom, mark: 'paused' }
     : status === 'failed' ? { at: migration.failedAtStatus ?? anchor, mark: 'failed' }
@@ -233,7 +251,7 @@ export function migrationSteps(
     : status === 'stale' ? { at: 'awaiting_approval', mark: 'paused' }
     : status === 'rolling_back' || status === 'rolled_back' || status === 'cancelled' ? { at: anchor, mark: 'paused' }
     : null;
-  const steps = stepsPhase(migration, anchor) === 'prepare' ? PREPARE_STEPS : RUN_STEPS;
+  const steps = phase === 'prepare' ? PREPARE_STEPS : RUN_STEPS;
   const current = stoppedAt ? stoppedAt.at : status;
   const at = status === 'completed' ? steps.length : current ? steps.findIndex((step) => step.through.includes(current)) : -1;
   // 승인했는데 시작이 막혀 approved 에 남았으면 자원 생성 칸은 사람이 다시 시작하기를 기다린다
@@ -242,7 +260,18 @@ export function migrationSteps(
     label: step.label,
     detail: step.through.map((through) => notes[through]).find(Boolean) ?? (step.human ? t('사람') : undefined),
     status: index < at ? 'done' : index === at ? (stoppedAt?.mark ?? (waits(step) ? 'waiting' : 'active')) : 'pending',
+    at: stepAt(step),
   }));
+}
+
+/**
+ * 지난 단계로 다시 볼 수 있는지: 그 칸이 아직 끝난 칸(파란 체크)인가.
+ * 사전 점검에서 명세로 돌아오는 것처럼 보던 칸이 다시 지금 칸이 되면 지난 단계 보기를 닫는다.
+ * 위치를 타임라인으로 찾는 이전(needsStepAnchor)은 카드가 끝난 칸만 누르게 하므로 그대로 믿는다
+ */
+export function isPastStep(migration: Pick<MigrationView, 'status' | 'pausedFrom' | 'failedAtStatus'>, at: MigrationStatus): boolean {
+  if (needsStepAnchor(migration)) return true;
+  return migrationSteps(migration, null, {}, stepsPhase({ status: at })).find((step) => step.at === at)?.status === 'done';
 }
 
 /**
@@ -339,6 +368,20 @@ const RUN_TITLE: Partial<Record<MigrationStatus, string>> = {
 };
 
 export const runTitle = (status: MigrationStatus) => RUN_TITLE[status] ?? t('{0}\n단계입니다', { 0: LABEL[status] });
+
+// 지난 단계로 다시 볼 때의 큰 글자. 끝난 칸만 열리므로 끝낸 말로 쓴다
+const PAST_RUN_TITLE: Partial<Record<MigrationStatus, string>> = {
+  provisioning: t('도착 환경을\n만들었습니다'),
+  deploying: t('같은 앱을\n도착지에 띄웠습니다'),
+  syncing: t('DB를\n따라잡았습니다'),
+  shifting: t('트래픽을\n옮겼습니다'),
+  cutover: t('DB 쓰기 담당을\n넘겼습니다'),
+};
+
+export const pastRunTitle = (status: MigrationStatus) => PAST_RUN_TITLE[status] ?? runTitle(status);
+
+/** 지난 실행 단계 화면의 트래픽 막대: 그 단계가 끝났을 때의 비율. 트래픽 이동이 끝났으면 모두 도착이다 */
+export const pastTrafficPercent = (status: MigrationStatus) => (status === 'shifting' || status === 'cutover' ? 100 : 0);
 
 /** 서버 상태 표 기준으로 지금 롤백할 수 있는지. 창이 끝났으면 서버도 막는다. */
 export function canRollback(migration: Pick<MigrationView, 'status' | 'rollbackWindowEndsAt'>, now = Date.now()): boolean {

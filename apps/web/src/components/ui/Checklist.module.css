@@ -11,6 +11,29 @@
 .muted {
   color: var(--color-fg-tertiary);
 }
+/* 누를 수 있는 칸. 글자 자리는 누를 수 없는 칸과 같고, 바탕만 칸 밖으로 조금 넓힌다 */
+.select {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: inherit;
+  min-width: 0;
+  margin: calc(-1 * var(--space-4)) calc(-1 * var(--space-8));
+  padding: var(--space-4) var(--space-8);
+  border: 0;
+  border-radius: var(--radius-inner);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.select:hover {
+  background: var(--color-bg-subtle);
+}
+.item[data-selected] .select {
+  background: var(--color-bg-selected);
+}
 .marker {
   display: grid;
   place-items: center;
@@ -93,6 +116,17 @@
   .item[data-status='pending'] .label,
   .detail {
     display: none;
+  }
+  /* 띠에서는 칸 사이가 좁아 바탕을 칸 밖으로 넓히지 않는다. 다시 보고 있는 지난 칸만 이름을 남기고 바탕을 둔다 */
+  .select {
+    margin: 0;
+    padding: 0;
+  }
+  .item[data-selected] .select {
+    padding: var(--space-4) var(--space-12) var(--space-4) var(--space-4);
+  }
+  .item[data-selected] .label {
+    display: inline;
   }
   .item:not([data-status='done']):not([data-status='pending']) {
     padding-right: var(--space-8);

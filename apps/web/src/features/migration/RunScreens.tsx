@@ -14,11 +14,11 @@ import { usePoll } from '../../lib/usePoll';
 import { AgentFold, useAgentReview } from '../agent/AgentResult';
 import { failureAnalysisOf } from '../agent/model';
 import { LeftoverFold, StopFold, TrafficReportFold, TrafficStubMarks } from './EvidenceFolds';
-import { canRollback, formatClock, runTitle, shiftNote, shiftStub, trafficPercent } from './model';
+import { canRollback, formatClock, pastRunTitle, pastTrafficPercent, runTitle, shiftNote, shiftStub, trafficPercent } from './model';
 import { isRehearsalCode, rehearsalHeroLine } from './rehearsal';
 import { RehearsalFolds, useRehearsal } from './RehearsalFold';
 import { SecurityFold } from './SecurityCard';
-import { ConfirmPill, Frame, useAction, useCostConsent, type ScreenProps } from './shared';
+import { ConfirmPill, Frame, pastHero, useAction, useCostConsent, type ScreenProps } from './shared';
 import s from '../common/page.module.css';
 import { t } from '../../lib/i18n';
 
@@ -130,20 +130,23 @@ function RollbackPill({ migration, busy, onConfirm }: Pick<ScreenProps, 'migrati
   return <ConfirmPill label={t('롤백')} confirmLabel={t('출발로 되돌리기')} icon="rollback" tone="danger" disabled={busy} onConfirm={onConfirm} />;
 }
 
-export function RunningScreen({ migration, route, onChanged }: ScreenProps) {
+export function RunningScreen({ migration, route, onChanged, past }: ScreenProps) {
   const { source, target } = routeEnds(route);
   const traffic = useTraffic(migration);
   const { busy, error, run } = useAction(onChanged);
   const rehearsal = useRehearsal(migration);
-  const deploying = migration.status === 'deploying';
-  // 처음 읽는 동안은 줄이 없는 것과 구별이 안 돼서 아무것도 쓰지 않는다
-  const rehearsalLine = deploying && !rehearsal.loading ? rehearsalHeroLine(rehearsal.run, rehearsal.stale) : null;
+  // 지난 단계로 다시 보면 그 칸의 화면을 그린다. 근거 카드는 지금 값 그대로다
+  const at = past?.at ?? migration.status;
+  const deploying = at === 'deploying';
+  // 처음 읽는 동안은 줄이 없는 것과 구별이 안 돼서 아무것도 쓰지 않는다. 리허설 한 줄은 지금 하는 일이라 지난 단계에서는 쓰지 않는다
+  const rehearsalLine = deploying && !past && !rehearsal.loading ? rehearsalHeroLine(rehearsal.run, rehearsal.stale) : null;
+  const note = past ? null : traffic.note;
   return (
     <Frame migration={migration} route={route}>
-      <Hero tone="run" meta={LABEL[migration.status]} title={runTitle(migration.status)}>
-        <TrafficBar source={source} target={target} targetPercent={traffic.percent} />
-        <TrafficStubMarks stub={traffic.stub} />
-        {traffic.note && <p className="t-body-md c-secondary">{traffic.note}</p>}
+      <Hero tone="run" {...pastHero(past, LABEL[at])} title={past ? pastRunTitle(at) : runTitle(at)}>
+        <TrafficBar source={source} target={target} targetPercent={past ? pastTrafficPercent(at) : traffic.percent} />
+        {!past && <TrafficStubMarks stub={traffic.stub} />}
+        {note && <p className="t-body-md c-secondary">{note}</p>}
         {rehearsalLine && <p className="t-body-md c-secondary">{rehearsalLine}</p>}
       </Hero>
       <Stack area="side">
@@ -152,9 +155,11 @@ export function RunningScreen({ migration, route, onChanged }: ScreenProps) {
         <MeasureFold migration={migration} />
         <TimelineFold migration={migration} />
         <SecurityFold migration={migration} />
-        <ActionRow notice={error}>
-          <RollbackPill migration={migration} busy={busy} onConfirm={() => void run(() => api.rollback(migration.id))} />
-        </ActionRow>
+        {!past && (
+          <ActionRow notice={error}>
+            <RollbackPill migration={migration} busy={busy} onConfirm={() => void run(() => api.rollback(migration.id))} />
+          </ActionRow>
+        )}
       </Stack>
     </Frame>
   );
@@ -165,19 +170,20 @@ function useCountdown(endsAt: string | null | undefined) {
   return endsAt ? Math.max(0, (Date.parse(endsAt) - now) / 1000) : 0;
 }
 
-export function WindowScreen({ migration, route, onChanged }: ScreenProps) {
+export function WindowScreen({ migration, route, onChanged, past }: ScreenProps) {
   const { source, target } = routeEnds(route);
   const { stub } = useTraffic(migration);
   const left = useCountdown(migration.rollbackWindowEndsAt);
   const { busy, error, run } = useAction(onChanged);
   const [asking, setAsking] = useState(false);
-  const over = left <= 0;
+  // 지난 단계로 다시 보면 창은 이미 닫혔다 (리소스 회수로 일찍 닫았어도). 시계와 버튼을 두지 않는다
+  const over = left <= 0 || !!past;
   return (
     <Frame migration={migration} route={route}>
       <Hero
         tone="done"
-        meta={t('롤백 대기')}
-        title={over ? t('자원을\n정리하고 있습니다') : t('{0}로\n되돌릴 수 있는 시간입니다', { 0: source })}
+        {...pastHero(past, t('롤백 대기'))}
+        title={past ? t('{0}로 되돌릴 수 있던\n시간이 끝났습니다', { 0: source }) : over ? t('자원을\n정리하고 있습니다') : t('{0}로\n되돌릴 수 있는 시간입니다', { 0: source })}
         foot={over ? t('이제 되돌릴 수 없습니다') : t('시간이 끝나면 임시 자원을 지우고 되돌릴 수 없습니다')}
       >
         {!over && <span className={`${s.clock} t-metric-2xl`}>{formatClock(left)}</span>}
@@ -337,11 +343,16 @@ export function RolledBackScreen({ migration, route }: ScreenProps) {
   );
 }
 
-export function CleanupScreen({ migration, route }: ScreenProps) {
+export function CleanupScreen({ migration, route, past }: ScreenProps) {
   const { source } = routeEnds(route);
   return (
     <Frame migration={migration} route={route}>
-      <Hero tone="done" meta={t('정리')} title={t('{0}의 임시 자원을\n지우고 있습니다', { 0: source })} foot={t('이제 되돌릴 수 없습니다')} />
+      <Hero
+        tone="done"
+        {...pastHero(past, t('정리'))}
+        title={past ? t('{0}의 임시 자원을\n지웠습니다', { 0: source }) : t('{0}의 임시 자원을\n지우고 있습니다', { 0: source })}
+        foot={t('이제 되돌릴 수 없습니다')}
+      />
       <Stack area="side">
         <MeasureFold migration={migration} />
         <SecurityFold migration={migration} />

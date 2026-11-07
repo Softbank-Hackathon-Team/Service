@@ -9,6 +9,10 @@ export type ChecklistEntry = {
   status: ChecklistStatus;
   label: string;
   detail?: string;
+  /** 지금 이 칸의 화면을 보고 있다 (진행 단계 카드의 지난 단계 보기) */
+  selected?: boolean;
+  /** 주면 칸 전체가 버튼이 된다 */
+  onSelect?: () => void;
 };
 
 const STATUS_LABEL: Record<ChecklistStatus, string> = {
@@ -43,15 +47,33 @@ function Marker({ status }: { status: ChecklistStatus }) {
 export function Checklist({ items }: { items: ChecklistEntry[] }) {
   return (
     <ol className={s.list}>
-      {items.map((item) => (
-        <li key={item.label} className={`${s.item} ${item.status === 'pending' ? s.muted : ''}`} data-status={item.status}>
-          <span className={s.marker} role="img" aria-label={STATUS_LABEL[item.status]}>
-            <Marker status={item.status} />
-          </span>
-          <span className={`${s.label} t-body-md`}>{item.label}</span>
-          {item.detail && <span className={`${s.detail} t-caption`}>{item.detail}</span>}
-        </li>
-      ))}
+      {items.map((item) => {
+        const body = (
+          <>
+            <span className={s.marker} role="img" aria-label={STATUS_LABEL[item.status]}>
+              <Marker status={item.status} />
+            </span>
+            <span className={`${s.label} t-body-md`}>{item.label}</span>
+            {item.detail && <span className={`${s.detail} t-caption`}>{item.detail}</span>}
+          </>
+        );
+        return (
+          <li
+            key={item.label}
+            className={`${s.item} ${item.status === 'pending' ? s.muted : ''}`}
+            data-status={item.status}
+            data-selected={item.selected || undefined}
+          >
+            {item.onSelect ? (
+              <button type="button" className={s.select} aria-current={item.selected ? 'step' : undefined} onClick={item.onSelect}>
+                {body}
+              </button>
+            ) : (
+              body
+            )}
+          </li>
+        );
+      })}
     </ol>
   );
 }
