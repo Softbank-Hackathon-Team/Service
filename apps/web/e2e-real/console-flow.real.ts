@@ -344,7 +344,7 @@ const flow = (ending: "회수" | "롤백") => async ({ page }: { page: Page }, i
         await expect(heroTitle(page)).toHaveText(SCREEN.rolledBack, { timeout: WORKER_MS });
         await expect(rollback, "되돌린 뒤에는 롤백 버튼이 없음").toHaveCount(0);
         await expect(page.getByRole("button", { name: "리소스 회수", exact: true })).toHaveCount(0);
-        await expect(page.getByText("이 마이그레이션이 도착에 만든 자원은 자동으로 지웁니다", { exact: true })).toBeVisible();
+        await expect(page.getByText("이 마이그레이션이 도착에 만든 자원은 자동으로 지웁니다. 온프레 도착은 앱과 DB를 지우고 빈 앱 네임스페이스만 남깁니다", { exact: true })).toBeVisible();
         // 화면 문구만 믿지 않고 워커가 남긴 전이 기록과 트래픽 진행 줄을 읽는다
         const read = async <T>(what: string) => (await (await page.request.get(`/api/migrations/${ev.migrationId}/${what}`, { headers: { authorization } })).json()) as T;
         const { items } = await read<{ items: { to: string | null; detail: { weights?: unknown } }[] }>("timeline");
