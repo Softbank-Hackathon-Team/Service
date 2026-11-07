@@ -7,6 +7,7 @@ import { t } from './i18n';
 //   measurements, windowSec, revert: { reason }, attempts     (cutover.ts)
 //   recheck, error, step                      (apply.ts·cutover.ts 실패)
 //   error|reason, missing, hint — 맨 위 또는 단계 칸 하나 안 (멈춘·실패한 전이. stopHelpOf)
+//   metricsSource, trafficProvider, trafficLbFrom, trafficStub, sharesStub (shift.ts — 가짜 지표·mock 전환기 표시. trafficStubOf)
 // 모르는 키는 안 보여 준다(원문은 서버 report 에 있음)
 
 export interface DetailChip { label: string; tone?: "ok" | "wait" | "bad" | "run" }
@@ -45,7 +46,68 @@ export function summarizeDetail(detail: Record<string, unknown>): DetailChip[] {
   if (detail.recheck) out.push({ label: t('실행 직전 재검사 실패 (계획 지문 다름)'), tone: "bad" });
   const err = str(detail.error); if (err) out.push({ label: err, tone: "bad" });
   if (detail.stub === true) out.push({ label: t('흉내(stub)'), tone: "wait" });
+  // shift 는 stub 에 글(관찰 시간 압축 …)을 남긴다
+  else if (typeof detail.stub === "string" && detail.stub.trim()) out.push({ label: t('흉내(stub): {0}', { 0: detail.stub.trim() }), tone: "wait" });
+  const traffic = trafficStubOf(detail);
+  if (traffic) {
+    for (const label of trafficStubLabels(traffic)) out.push({ label, tone: "wait" });
+    if (detail.metricsSource === "prometheus") out.push({ label: t('판정 지표 Prometheus (실측)') });
+  }
   return out;
+}
+
+/**
+ * 트래픽 전환 결과에 워커가 남긴 흉내 표시 (worker jobs/shift.ts). 가짜 지표·가짜 LB 로 낸 숫자를 실측처럼 보이지 않게 한다.
+ *   metrics: 판정 지표가 흉내 (metricsSource "stub" 또는 sharesStub 글 = PROM_URL 없이 흉내 판의 고정 숫자)
+ *   lb: LB 전환기가 mock (trafficProvider "mock" 또는 trafficStub 글 = 진짜 LB 가중치는 안 바뀜)
+ *   lbRegistered: 이 이전에 등록된 LB 자리가 있었나 (trafficLbFrom "db" | "env"). 모르면 null
+ */
+export interface TrafficStub { metrics: boolean; lb: boolean; lbRegistered: boolean | null }
+
+const TRAFFIC_KEYS = ["metricsSource", "trafficProvider", "trafficStub", "sharesStub"] as const;
+
+/** detail 하나의 흉내 표시. 트래픽 전환 결과가 아니면 null */
+export function trafficStubOf(detail: Record<string, unknown>): TrafficStub | null {
+  if (!TRAFFIC_KEYS.some((k) => k in detail)) return null;
+  const from = detail.trafficLbFrom;
+  return {
+    metrics: detail.metricsSource === "stub" || text(detail.sharesStub) !== null,
+    lb: detail.trafficProvider === "mock" || text(detail.trafficStub) !== null,
+    lbRegistered: from === "db" ? true : from === "env" ? false : null,
+  };
+}
+
+/** 이 이전의 트래픽 전환 결과 전부를 합친 흉내 표시. 한 번이라도 흉내였으면 흉내 (합친 판정 요약에 그 숫자가 섞인다). 전환 결과가 없으면 null */
+export function trafficStubIn(items: TimelineItem[]): TrafficStub | null {
+  const all = items.filter((it) => it.kind === "transition").map((it) => trafficStubOf(it.detail)).filter((s): s is TrafficStub => s !== null);
+  if (all.length === 0) return null;
+  const lastFakeLb = all.filter((s) => s.lb).at(-1);
+  return { metrics: all.some((s) => s.metrics), lb: lastFakeLb !== undefined, lbRegistered: lastFakeLb?.lbRegistered ?? null };
+}
+
+/** 흉내 표시 글. 흉내가 아니면 빈 목록 */
+export function trafficStubLabels(stub: TrafficStub | null | undefined): string[] {
+  if (!stub) return [];
+  return [
+    ...(stub.metrics ? [t('흉내 지표 · 실제 측정 아님')] : []),
+    ...(stub.lb ? [stub.lbRegistered === false ? t('가짜 LB · 등록 안 됨') : t('가짜 LB · mock 전환기')] : []),
+  ];
+}
+
+/** 접은 카드 머리줄에 붙일 짧은 흉내 표시. 흉내가 아니면 null */
+export function trafficStubFlag(stub: TrafficStub | null | undefined): string | null {
+  if (!stub) return null;
+  const parts = [...(stub.metrics ? [t('흉내 지표')] : []), ...(stub.lb ? [t('가짜 LB')] : [])];
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
+
+/** 흉내 표시를 한 줄씩 풀어 쓴 글 (접는 카드 안에서 표시 밑에 둔다). 흉내가 아니면 빈 목록 */
+export function trafficStubNotes(stub: TrafficStub | null | undefined): string[] {
+  if (!stub) return [];
+  return [
+    ...(stub.metrics ? [t('판정 지표 주소(PROM_URL)가 없어 시험용 고정 숫자(MOCK_TRAFFIC·MOCK_IAC)로 판정했습니다. 오류율·응답 시간·요청 수는 실제로 잰 값이 아닙니다.')] : []),
+    ...(stub.lb ? [t('LB 전환기가 mock 이라 실제 LB 가중치는 바뀌지 않습니다.')] : []),
+  ];
 }
 
 /**
@@ -96,14 +158,15 @@ function judgementOf(x: unknown): Judgement | null {
 
 /** 이 상태로 들어온 마지막 전이에 남은 근거: 트래픽 판정, 가드레일 규칙 번호 (packages/core advance: detail.evidence). 전이가 없으면 null */
 //   리허설로 멈춘 전이는 detail.rehearsal 에 stage(queue = 줄 서기 / run = 실행)를 남긴다 (REHEARSAL_TIMEOUT 을 둘로 가른다)
-export function stopEvidence(items: TimelineItem[], into: string): { at: string; judgement: Judgement | null; rule: string | null; rehearsalStage: "queue" | "run" | null } | null {
+//   traffic: 같은 전이에 shift 가 남긴 흉내 표시 (판정 숫자가 가짜 지표였나). 트래픽 전환 결과가 아니면 null
+export function stopEvidence(items: TimelineItem[], into: string): { at: string; judgement: Judgement | null; rule: string | null; rehearsalStage: "queue" | "run" | null; traffic: TrafficStub | null } | null {
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i]!;
     if (it.kind !== "transition" || it.to !== into) continue;
     const evidence = isObj(it.detail.evidence) ? it.detail.evidence : {};
     const stage = isObj(it.detail.rehearsal) ? str(it.detail.rehearsal.stage) : null;
     return { at: it.at, judgement: judgementOf(it.detail.lastJudgement), rule: str(evidence.guardrailRule),
-      rehearsalStage: stage === "queue" || stage === "run" ? stage : null };
+      rehearsalStage: stage === "queue" || stage === "run" ? stage : null, traffic: trafficStubOf(it.detail) };
   }
   return null;
 }
