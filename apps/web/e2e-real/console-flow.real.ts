@@ -306,7 +306,8 @@ const flow = (ending: "회수" | "롤백") => async ({ page }: { page: Page }, i
 
     await step("사전 점검 · 계획 만들기", async () => {
       await waitForScreen(page, ev, SCREEN.approve, WORKER_MS, SCREEN.specBlocked);
-      await expect(page.getByRole("button", { name: /^실행 단계/ }), "계획서를 읽음").toContainText(/\d+단계/);
+      // 진행 단계 카드의 꺾쇠 "실행 단계 보기" 와 구별한다 (계획서 접이 카드 "실행 단계 N단계" 만)
+      await expect(page.getByRole("button", { name: /^실행 단계(?! 보기)/ }), "계획서를 읽음").toContainText(/\d+단계/);
       await expect(page.getByRole("button", { name: /^사전 점검/ })).toContainText(/\d+건/);
       ev.notes["사전 점검"] = flat(await page.getByRole("button", { name: /^사전 점검/ }).textContent());
     });
