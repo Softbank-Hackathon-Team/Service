@@ -7,7 +7,8 @@ import { DeployResult, type AgentReport } from "@svc/contracts";
 export { AgentReport } from "@svc/contracts";
 export * from "@svc/contracts/agent-sig";
 
-// "넣었음" 보고 → GitOps 배포 결과 계약
+// "넣었음" 보고 → GitOps 배포 결과 계약. #373 D2: progressing 은 끝난 결과가 아니라 바꾸지 않는다
 export function toDeployResult(r: Extract<AgentReport, { kind: "deploy" }>): DeployResult {
+  if (r.status === "progressing") throw new Error("progressing 보고는 배포 결과가 아니다 (applied·failed 만)");
   return DeployResult.parse({ bundleHash: r.bundleHash, status: r.status, resources: r.resources, reason: r.reason });
 }

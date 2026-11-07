@@ -119,6 +119,8 @@ flowchart LR
 | `ARGO_KUBE_CONTEXT` | 허브 클러스터 Application CR을 kubectl로 읽기 | |
 | `ARGO_SOURCE` | `auto`·`rest`·`k8s` | `auto` |
 | `ARGO_WAIT_SEC`, `ARGO_TICK_MS` | 기다리는 시간·간격 | 기본값 |
+| `ARGO_HARD_REFRESH_SEC` | 앱이 보이는데 이만큼 안 끝나면 hard 새로고침 한 번 (`0` = 끔) | `60` |
+| `ARGO_UNREACHABLE_SEC` | 허브가 도착 클러스터를 못 읽는 상태(`failed to get cluster info` 등)가 이만큼 이어지면 `ARGO_CLUSTER_UNREACHABLE` 로 멈춤 (`0` = 끔) | `120` |
 
 - 옛 이름 `ARGOCD_SERVER`, `ARGOCD_AUTH_TOKEN`도 받는다.
 
