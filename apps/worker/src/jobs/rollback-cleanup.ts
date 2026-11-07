@@ -13,8 +13,10 @@ export interface ReplCleaner {
 }
 
 export interface RollbackCleanup {
-  /** 걷기가 끝났고 찌꺼기 0 */
+  /** 걷기가 끝났고 찌꺼기 0 (또는 복제를 시작한 적이 없어 DB 에 걷을 것이 없음 = notStarted) */
   ok: boolean;
+  /** 동기화(syncing)에 들어간 적이 없어 DB 걷기 실패를 무시했다 (아래 notStartedCleanup) */
+  notStarted?: true;
   removed: string[];
   /** 걷은 뒤 남은 복제 객체. 확인조차 못 했으면 null */
   leftovers: string[] | null;
@@ -36,4 +38,13 @@ export async function cleanupAfterRollback(repl: ReplCleaner): Promise<RollbackC
   return warnings.length
     ? { ok: false, removed, leftovers, warning: warnings.join("; ").slice(0, 500) }
     : { ok: true, removed, leftovers };
+}
+
+// 복제를 시작하기 전(syncing 에 들어간 적 없음)에 멈춘 이전의 롤백 (DRAFT(ai), 2026-11-07 실플랫폼 59b17ae8).
+//   복제 객체(발행·슬롯·구독·전용 계정 repl_*_u)는 동기화 단계에서야 만든다 (repluser.ts subscriptionConninfo 가 구독을 걸 때 계정을 만든다).
+//   그 전이면 DB 에 걷을 것이 없는데, 걷기는 중계기 통로(온프레 터널·중계 입구)로 DB 에 붙으려다 ECONNREFUSED 로 실패했고,
+//   ok=false 라 gitops 복제 배달 정리와 중계기 지우기가 "replication_leftovers" 로 건너뛰어져 중계 EC2·보안 그룹이 남았다.
+//   → 동기화에 들어간 적이 없으면 걷기 실패를 ok 로 보고 notStarted 를 남긴다 (경고 문구는 그대로 둔다). 들어갔으면 예전 그대로
+export function notStartedCleanup(c: RollbackCleanup, enteredSync: boolean): RollbackCleanup {
+  return c.ok || enteredSync ? c : { ...c, ok: true, notStarted: true };
 }
