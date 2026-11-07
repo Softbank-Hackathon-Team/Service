@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  ackPlaces, ackState, ackSubject, approveLabel, canPick, canReplan, canRollback, failureChoices, formatClock, judgementRows, leftoversOf, leftoverValue, migrationSteps, needsStepAnchor, stepsPhase,
-  pollMs, screenOf, shiftNote, signalCovers, specRows, stepAnchorFrom, stepGate, trafficPercent, trafficReportRows,
+  ackPlaces, ackState, ackSubject, approveLabel, canPick, canReplan, canRollback, failureChoices, formatClock, isPastStep, judgementRows, leftoversOf, leftoverValue, migrationSteps, needsStepAnchor, stepsPhase,
+  pastTrafficPercent, pollMs, screenOf, shiftNote, signalCovers, specRows, stepAnchorFrom, stepGate, trafficPercent, trafficReportRows,
 } from "../src/features/migration/model";
 import { planResourceRows, runtimeChangeNote, specSubstituteRows, substituteRows, type ResourceRow } from "../src/lib/resourceMap";
 import { MIGRATION_STATUSES, type EnvApp, type EnvironmentView, type FootprintResource, type PlanAcknowledgement } from "../src/lib/types";
@@ -86,6 +86,46 @@ test("진행 단계: 사람이 눌러야 하는 칸은 도는 표시 대신 입�
   assert.equal(migrationSteps({ status: "stale" })[4]!.status, "paused");
   assert.equal(migrationSteps({ status: "rejected" })[4]!.status, "failed");
   assert.ok(marks(migrationSteps({ status: "shifting" })).every((m) => m !== "waiting"));
+});
+
+test("진행 단계: 꺾쇠로 다른 묶음을 보면 실행 중엔 실행 전 칸이 모두 끝남, 실행 전엔 실행 칸이 모두 대기", () => {
+  assert.deepEqual(labels(migrationSteps({ status: "shifting" }, null, {}, "prepare")), PREPARE);
+  assert.ok(marks(migrationSteps({ status: "shifting" }, null, {}, "prepare")).every((m) => m === "done"));
+  assert.ok(marks(migrationSteps({ status: "completed" }, null, {}, "prepare")).every((m) => m === "done"));
+  assert.ok(marks(migrationSteps({ status: "paused", pausedFrom: "syncing" }, null, {}, "prepare")).every((m) => m === "done"));
+  assert.deepEqual(labels(migrationSteps({ status: "spec_review" }, null, {}, "run")), RUN);
+  assert.ok(marks(migrationSteps({ status: "spec_review" }, null, {}, "run")).every((m) => m === "pending"));
+  // 지금 묶음을 고르면 고르지 않은 것과 같다
+  assert.deepEqual(migrationSteps({ status: "syncing" }, null, {}, "run"), migrationSteps({ status: "syncing" }));
+});
+
+test("진행 단계: 칸마다 눌러 다시 볼 화면의 상태(at)를 갖는다", () => {
+  const prepare = migrationSteps({ status: "spec_review" }).map((step) => step.at);
+  assert.deepEqual(prepare, ["importing", "spec_review", "prechecking", "planning", "awaiting_approval"]);
+  const run = migrationSteps({ status: "completed" }).map((step) => step.at);
+  // 자원 생성 칸은 시작이 막혀 남는 approved 가 아니라 자원을 만드는 화면을 다시 본다
+  assert.deepEqual(run, ["provisioning", "deploying", "syncing", "shifting", "cutover", "rollback_window", "cleanup"]);
+  for (const at of [...prepare, ...run]) assert.ok(!["rejected", "stale"].includes(screenOf(at)), `${at} 은 다시 그릴 화면이 있다`);
+});
+
+test("지난 단계 보기: 끝난 칸만 다시 볼 수 있고, 다시 지금 칸이 되면 닫는다", () => {
+  assert.ok(isPastStep({ status: "planning" }, "spec_review"));
+  assert.ok(isPastStep({ status: "deploying" }, "awaiting_approval"), "실행 중이면 실행 전 칸은 모두 지났다");
+  assert.ok(isPastStep({ status: "completed" }, "cleanup"));
+  assert.ok(!isPastStep({ status: "spec_review" }, "spec_review"), "사전 점검에서 명세로 돌아오면 지난 칸이 아니다");
+  assert.ok(!isPastStep({ status: "prechecking" }, "planning"));
+  assert.ok(!isPastStep({ status: "spec_review" }, "provisioning"));
+  assert.ok(!isPastStep({ status: "failed", failedAtStatus: "deploying" }, "deploying"), "실패한 칸은 지난 칸이 아니다");
+  assert.ok(isPastStep({ status: "failed", failedAtStatus: "deploying" }, "provisioning"));
+  // 위치를 타임라인으로 찾는 이전은 카드가 끝난 칸만 누르게 한다
+  assert.ok(isPastStep({ status: "rolled_back" }, "provisioning"));
+});
+
+test("지난 실행 단계의 트래픽 막대는 그 단계가 끝났을 때의 비율", () => {
+  assert.equal(pastTrafficPercent("deploying"), 0);
+  assert.equal(pastTrafficPercent("syncing"), 0);
+  assert.equal(pastTrafficPercent("shifting"), 100);
+  assert.equal(pastTrafficPercent("cutover"), 100);
 });
 
 test("진행 단계: 멈춘 마이그레이션은 멈춘 칸을 표시한다", () => {
