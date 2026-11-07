@@ -17,6 +17,7 @@ import { gcpAwsRelayPrecheck } from "../relay/gcp-aws.js";
 import { gcpOnpremRelayPrecheck } from "../relay/gcp-relay.js";
 import { chooseEnvLayerSource, readInventoryFacts, type InventoryFacts } from "../env-layer.js";
 import { permissionPrecheck } from "../permission-gate.js";
+import { completedMovesFor, targetOccupancyItems } from "./target-occupancy.js";
 
 // 사전 점검: 이전해도 되는지 본다. block(FAIL)이 하나라도 있으면 명세 검토로 되돌린다
 // Z97: STUB(고정 "확인됨")을 실조회로 바꿨다 — 자격(STS·tokeninfo·kubectl)·도착 API·결제·할당량·DB 버전·TCP·디스크.
@@ -212,14 +213,17 @@ export async function replSourcePrecheck(env: NodeJS.ProcessEnv = process.env,
 export async function v2PrecheckFor(tenantId: string, m: MigrationRow, _env: NodeJS.ProcessEnv = process.env): Promise<PrecheckItem[]> {
   return withTenant(tenantId, async (tx) => {
     const row = await latestAcceptedSpecV2(tx, m.id);
-    const e = await tx.query(`SELECT provider FROM environments WHERE id=$1`, [m.targetEnvId]);
+    const e = await tx.query(`SELECT provider, name FROM environments WHERE id=$1`, [m.targetEnvId]);
     if (!row || !e.rows[0]) return [];   // 명세·도착이 없으면 계획 단계 재확인이 막는다
     // SG-1: IR 워크로드 보안(privileged·root·호스트 공유가 출발 그대로 도착에 감)은 SEC_PRECHECK 와 상관없이 승인 줄로.
     //   위험한 설정이 있을 때만 줄이 생긴다. 이 규칙들은 환경 사실을 안 읽어 출발 쪽은 도착과 같은 제공자로 채운다
     const spec = resolveSpecV2(row);
     const t: EnvSide = { envId: m.targetEnvId, provider: e.rows[0].provider as Provider, region: null };
     const wl = spec.ok ? securityPrecheckItems({ spec: spec.spec, source: { ...t, envId: m.sourceEnvId }, target: t, rules: "workload" }) : [];
-    return [...v2PrecheckItems(e.rows[0].provider, row), ...wl];
+    // 도착에 같은 앱을 옮겨 놓은 끝난 이전이 있으면 덮어쓰기·롤백 때 지우기를 승인 줄로 (target-occupancy.ts)
+    const occupied = spec.ok ? targetOccupancyItems({ appName: spec.spec.app.name, targetEnvId: m.targetEnvId, targetName: String(e.rows[0].name ?? m.targetEnvId),
+      moves: await completedMovesFor(tx, m.id, spec.spec.app.name, m.targetEnvId) }) : [];
+    return [...v2PrecheckItems(e.rows[0].provider, row), ...wl, ...occupied];
   });
 }
 
