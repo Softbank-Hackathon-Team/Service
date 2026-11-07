@@ -2,6 +2,7 @@ import type { EnvEstimate, MigrationCostView, PlanCostSummary, PriceSourceSummar
 import { t } from '../../lib/i18n';
 
 // 비용 숫자가 무엇을 근거로 했는지. 숫자만 보이면 이 앱의 확정값처럼 읽히므로, 근거가 약하면 그 이유를 숫자 옆에 둔다.
+// 단서는 경고(노란 글씨)가 아니라 중립 톤으로 둔다. 가격표 기준일은 날짜로만 보이고 "오래됨"이라고 따로 말하지 않는다 (11/07 사용자 요청)
 // 서버 근거: apps/api/src/routes/migration-cost.ts (specFrom: demo = 명세가 없어 예시 앱으로 계산), contracts cost.ts (priceStale, reason, unknown)
 
 const INFEASIBLE: Record<string, string> = {
@@ -18,18 +19,14 @@ const PART: Record<string, string> = {
 export const ORIGIN: Record<PriceSourceSummary['origin'], string> = { live: t('공개 가격 API'), seed: t('저장해 둔 표'), sample: t('예시 값') };
 
 /** 카드 머리줄 오른쪽 한 마디. 근거가 약한 이유가 있으면 그것을 먼저 말한다. */
-export function costSummary(view: Pick<MigrationCostView, 'origin' | 'specFrom' | 'estimate'>): string {
+export function costSummary(view: Pick<MigrationCostView, 'origin' | 'specFrom'>): string {
   if (view.specFrom === 'demo') return t('예시 앱 기준');
-  if (view.estimate.priceStale) return t('오래된 가격');
   return view.origin === 'stored' ? t('승인 때 추정') : t('미리보기');
 }
 
 /** 숫자 옆에 꼭 붙여야 하는 단서. 없으면 빈 목록. */
-export function costCaveats(view: Pick<MigrationCostView, 'specFrom' | 'estimate'>): string[] {
-  return [
-    view.specFrom === 'demo' ? t('이 앱의 명세가 아직 없어 예시 앱으로 계산한 값입니다.') : null,
-    view.estimate.priceStale ? t('가격표가 오래됐습니다. 기준일 {0}.', { 0: view.estimate.priceAsOf.slice(0, 10) }) : null,
-  ].filter((line): line is string => line !== null);
+export function costCaveats(view: Pick<MigrationCostView, 'specFrom'>): string[] {
+  return view.specFrom === 'demo' ? [t('이 앱의 명세가 아직 없어 예시 앱으로 계산한 값입니다.')] : [];
 }
 
 // ---- 계획서에 실린 비용 (PlanDoc.costSummary, 워커 plan.ts estimatePlanCost) ----

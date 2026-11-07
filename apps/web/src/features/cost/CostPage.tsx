@@ -34,7 +34,7 @@ function EnvBars({ envs, cheapest }: { envs: EnvEstimate[]; cheapest: Provider |
             <span className={s.barFill} style={{ width: `${((env.monthlyUsd ?? 0) / max) * 100}%` }} />
           </span>
           {env.nodeSku && <span className="t-caption c-tertiary">{env.nodeSku} × {env.nodes}</span>}
-          {envCaption(env) && <span className={`t-caption ${env.feasible ? 'c-tertiary' : 'c-warning'}`}>{envCaption(env)}</span>}
+          {envCaption(env) && <span className="t-caption c-tertiary">{envCaption(env)}</span>}
         </li>
       ))}
     </ul>
@@ -45,7 +45,7 @@ function EnvBars({ envs, cheapest }: { envs: EnvEstimate[]; cheapest: Provider |
 function PriceSources({ view }: { view: MigrationCostView }) {
   const { estimate, priceSources } = view;
   return (
-    <FoldTile title={t('가격 근거')} summary={estimate.priceStale ? t('오래된 가격') : t('기준일 {0}', { 0: estimate.priceAsOf.slice(0, 10) })} defaultOpen={estimate.priceStale}>
+    <FoldTile title={t('가격 근거')} summary={t('기준일 {0}', { 0: estimate.priceAsOf.slice(0, 10) })} defaultOpen={false}>
       {priceSources.length > 0 ? (
         <ul className={s.rows}>
           {priceSources.map((source) => (
@@ -60,7 +60,6 @@ function PriceSources({ view }: { view: MigrationCostView }) {
       ) : (
         <p className={`${s.note} t-body-sm c-tertiary`}>{t('가격표 출처 기록이 아직 없습니다.')}</p>
       )}
-      {estimate.priceStale && <p className={`${s.note} t-body-sm c-warning`}>{t('7일 넘게 새 가격을 받지 못했습니다. 승인을 막지는 않습니다.')}</p>}
     </FoldTile>
   );
 }
@@ -156,7 +155,7 @@ export function CostPage({ id }: { id: string }) {
           </ul>
         )}
         {view && costCaveats(view).map((line) => (
-          <p key={line} className="t-body-md c-warning">{line}</p>
+          <p key={line} className="t-body-md c-secondary">{line}</p>
         ))}
       </Hero>
       <Stack area="side">

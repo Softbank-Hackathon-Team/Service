@@ -74,8 +74,6 @@ export function figureRows(f: Figures): { name: string; value: string }[] {
   ];
 }
 
-export type Caption = { text: string; warn: boolean };
-
 /**
  * 비용 경로가 없는 옛 서버(404, 501)이거나 닿지 못함(네트워크). 오류가 아니라 "아직 볼 수 없음"으로 짧게 말한다.
  */
@@ -89,12 +87,12 @@ export const costErrorText = (error: unknown) => (costAbsent(error) ? t('비용 
  * 환경 목록 줄 아래 한 마디. 아직 응답이 없으면 null (읽는 동안 줄이 흔들리지 않게 비워 둔다).
  * failed = 404 가 아닌 오류로 못 읽음 (404 = 경로가 없는 서버이거나 지워진 환경이라 아무 말도 하지 않는다)
  */
-export function envCostCaption(view: EnvCostView | null, error: unknown = null): Caption | null {
-  if (!view) return error != null && !costAbsent(error) ? { text: t('월 비용을 읽지 못함'), warn: false } : null;
-  if (view.status === 'unavailable' || !view.projection) return { text: t('비용 모름 · {0}', { 0: view.reason ?? t('계산하지 못했습니다') }), warn: false };
+export function envCostCaption(view: EnvCostView | null, error: unknown = null): string | null {
+  if (!view) return error != null && !costAbsent(error) ? t('월 비용을 읽지 못함') : null;
+  if (view.status === 'unavailable' || !view.projection) return t('비용 모름 · {0}', { 0: view.reason ?? t('계산하지 못했습니다') });
   const month = money(figuresOf(view.projection).monthly);
   // partial = 일부 자원을 못 읽어 실제보다 낮을 수 있음. 이유(못 읽은 명령)는 길어서 "월 비용" 카드에 둔다
-  return view.status === 'partial' ? { text: t('월 {0} 추산 · 일부만 셈', { 0: month }), warn: true } : { text: t('월 {0} 추산', { 0: month }), warn: false };
+  return view.status === 'partial' ? t('월 {0} 추산 · 일부만 셈', { 0: month }) : t('월 {0} 추산', { 0: month });
 }
 
 /** "월 비용" 카드 머리줄 오른쪽 */
@@ -170,6 +168,7 @@ export function lineGroups(lines: readonly CostLine[]): LineGroup[] {
 }
 
 // ---- 근거 표시 ----
+// 가정·조건부 꼬리표는 경고가 아니라 설명이라 중립 톤으로 단다 (11/07 사용자 요청: 비용 쪽 노란 표시 없앰)
 
 type Tag = { label: string; tone: BadgeTone };
 
@@ -178,11 +177,11 @@ export const PRICE_SOURCE: Record<CostPriceRef['sourceKind'], Tag> = {
   official_api: { label: t('공식 API'), tone: 'success' },
   official_page: { label: t('공식 페이지'), tone: 'info' },
   secondary: { label: t('2차 자료'), tone: 'neutral' },
-  assumption: { label: t('단가 가정'), tone: 'warning' },
+  assumption: { label: t('단가 가정'), tone: 'neutral' },
 };
 
 /** 수량 근거 꼬리표. 실자원 조회·출발 대응은 서버 문장이 이미 말하므로, 재지 않고 정한 값(가정)만 꼬리표를 단다 */
-export const basisTag = (kind: CostBasis['kind']): Tag | null => (kind === 'assumption' ? { label: t('수량 가정'), tone: 'warning' } : null);
+export const basisTag = (kind: CostBasis['kind']): Tag | null => (kind === 'assumption' ? { label: t('수량 가정'), tone: 'neutral' } : null);
 
 /** 단가 출처 한 줄. 서버 출처 글에 확인 날짜가 이미 있으면 다시 붙이지 않는다 */
 export function sourceLine(price: Pick<CostPriceRef, 'source' | 'fetchedAt'>): string {
@@ -197,7 +196,7 @@ export const extraRefs = (basis: Pick<CostBasis, 'text' | 'refs'>) => basis.refs
 
 export const PROMO_STATUS: Record<CostPromotion['status'], Tag> = {
   applied: { label: t('적용됨'), tone: 'success' },
-  conditional: { label: t('조건부'), tone: 'warning' },
+  conditional: { label: t('조건부'), tone: 'neutral' },
   not_applicable: { label: t('해당 없음'), tone: 'neutral' },
 };
 

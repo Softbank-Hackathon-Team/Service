@@ -8,13 +8,13 @@ const estimate = (priceStale: boolean) => ({
   envs: [], cheapest: null, savings: null,
 });
 
-test("비용 근거: 예시 앱으로 계산했거나 가격이 오래됐으면 숫자 옆에 그 이유를 둔다", () => {
+test("비용 근거: 예시 앱으로 계산했으면 숫자 옆에 그 이유를 두고, 오래된 가격은 따로 경고하지 않는다", () => {
   assert.equal(costSummary({ origin: "preview", specFrom: "demo", estimate: estimate(true) }), "예시 앱 기준");
-  assert.equal(costSummary({ origin: "stored", specFrom: "stored", estimate: estimate(true) }), "오래된 가격");
+  assert.equal(costSummary({ origin: "stored", specFrom: "stored", estimate: estimate(true) }), "승인 때 추정");
   assert.equal(costSummary({ origin: "stored", specFrom: "stored", estimate: estimate(false) }), "승인 때 추정");
   assert.equal(costSummary({ origin: "preview", specFrom: "spec_versions", estimate: estimate(false) }), "미리보기");
-  assert.equal(costCaveats({ specFrom: "demo", estimate: estimate(true) }).length, 2);
-  assert.match(costCaveats({ specFrom: "spec_versions", estimate: estimate(true) })[0]!, /2026-11-01/);
+  assert.deepEqual(costCaveats({ specFrom: "demo", estimate: estimate(true) }), ["이 앱의 명세가 아직 없어 예시 앱으로 계산한 값입니다."]);
+  assert.deepEqual(costCaveats({ specFrom: "spec_versions", estimate: estimate(true) }), []);
   assert.deepEqual(costCaveats({ specFrom: "stored", estimate: estimate(false) }), []);
 });
 

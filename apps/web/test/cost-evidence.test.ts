@@ -14,6 +14,8 @@ import {
   monthlyChange,
   money,
   moveCostBody,
+  PRICE_SOURCE,
+  PROMO_STATUS,
   promoAmount,
   promoBuckets,
   promoSummary,
@@ -79,14 +81,14 @@ test("지금보다: 화면에 보이는 평소 한 달끼리 뺀다 (서버 delt
   assert.equal(monthlyChange({ projection: null }, { projection: GCP }), null);
 });
 
-test("환경 목록 한 마디: 정상은 월 추산, 일부만 셌으면 주의, 계산 못 하면 짧은 이유, 404 는 말하지 않음", () => {
-  assert.deepEqual(envCostCaption(env({})), { text: "월 $307.40 추산", warn: false });
-  assert.deepEqual(envCostCaption(env({ status: "partial", reason: "일부 자원을 읽지 못해…" })), { text: "월 $307.40 추산 · 일부만 셈", warn: true });
-  assert.deepEqual(envCostCaption(env({ status: "unavailable", reason: "실자원을 아직 읽지 않았습니다", projection: null })), { text: "비용 모름 · 실자원을 아직 읽지 않았습니다", warn: false });
+test("환경 목록 한 마디: 정상은 월 추산, 일부만 셌으면 그렇다고, 계산 못 하면 짧은 이유, 404 는 말하지 않음", () => {
+  assert.equal(envCostCaption(env({})), "월 $307.40 추산");
+  assert.equal(envCostCaption(env({ status: "partial", reason: "일부 자원을 읽지 못해…" })), "월 $307.40 추산 · 일부만 셈");
+  assert.equal(envCostCaption(env({ status: "unavailable", reason: "실자원을 아직 읽지 않았습니다", projection: null })), "비용 모름 · 실자원을 아직 읽지 않았습니다");
   assert.equal(envCostCaption(null), null, "읽는 중");
-  assert.deepEqual(envCostCaption(null, new HttpError(500, { code: "INTERNAL" })), { text: "월 비용을 읽지 못함", warn: false });
+  assert.equal(envCostCaption(null, new HttpError(500, { code: "INTERNAL" })), "월 비용을 읽지 못함");
   // 늘 받는 할인이 있는 환경(GKE 무료 등급)은 할인 뒤 한 달
-  assert.equal(envCostCaption(env({ provider: "gcp", projection: GCP }))?.text, "월 $203.83 추산");
+  assert.equal(envCostCaption(env({ provider: "gcp", projection: GCP })), "월 $203.83 추산");
 });
 
 // main 에는 비용 경로가 아직 없다 (feat/cost-evidence). 404·501·닿지 못함은 오류가 아니라 "아직 볼 수 없음"
@@ -145,6 +147,9 @@ test("프로모션 나누기: 적용 / 조건부(금액 있음) / 신청 필요(
 test("근거 표시: 가정한 수량만 꼬리표, 문장에 이미 있는 자원 이름은 다시 안 씀, 출처 날짜는 한 번만", () => {
   assert.equal(basisTag("inventory"), null);
   assert.equal(basisTag("assumption")?.label, "수량 가정");
+  // 비용 쪽 꼬리표는 경고 색을 쓰지 않는다 (11/07)
+  assert.equal(basisTag("assumption")?.tone, "neutral");
+  assert.deepEqual([PRICE_SOURCE.assumption.tone, PROMO_STATUS.conditional.tone], ["neutral", "neutral"]);
   assert.deepEqual(extraRefs({ text: "실자원 조회에서 클러스터 1개", refs: ["shop-eks"] }), ["shop-eks"]);
   assert.deepEqual(extraRefs({ text: "shop-db 저장 공간", refs: ["shop-db"] }), []);
   assert.equal(sourceLine({ source: "AWS Price List Bulk AmazonEKS", fetchedAt: "2026-11-06T02:36:04.833Z" }), "AWS Price List Bulk AmazonEKS · 2026-11-06 확인");

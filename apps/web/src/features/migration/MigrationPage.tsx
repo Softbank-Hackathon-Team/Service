@@ -466,7 +466,7 @@ function ApproveScreen({ migration, route, onChanged, past }: ScreenProps) {
             <span className="t-metric-lg">{usd(planCost ? planCost.monthlyTarget : pair?.targetMonthlyUsd)}</span>
           </div>
           {(planCost ? planCostCaveats(planCost) : cost.data ? costCaveats(cost.data) : []).map((line) => (
-            <p key={line} className={`${s.note} t-body-sm c-warning`}>{line}</p>
+            <p key={line} className={`${s.note} t-body-sm c-secondary`}>{line}</p>
           ))}
           <p className={`${s.note} t-body-sm c-secondary`}>{costNote(planCost?.priceAsOf)}</p>
           <div className={s.note}>
