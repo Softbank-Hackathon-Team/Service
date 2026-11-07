@@ -18,9 +18,10 @@ import { readEc2 } from "../import/readers/aws-ec2.js";
 import { readGce } from "../import/readers/gcp-gce.js";
 import { readCloudRun } from "../import/readers/gcp-cloudrun.js";
 import { PICK_KIND, UNREAD_KIND, pickItem, unreadItem, unreadOrThrow } from "../common/unread.js";
+import { eksKubeconfig } from "./eks-kubeconfig.js";
 
 // Z88: 출발 환경 진짜 읽기 (데모 원본 STUB 대체). 결과는 normalize 가 아는 원본 모양 + 둘레 자원 목록.
-//   AWS  : sts → eks list/describe-cluster → kubeconfig(임시 파일) → kubectl 앱 읽기 · rds describe-db-instances
+//   AWS  : sts → eks list/describe-cluster → kubeconfig(임시 파일, #373 B4 정적 토큰) → kubectl 앱 읽기 · rds describe-db-instances
 //          + ec2 describe-vpcs · elbv2 describe-load-balancers · ecr describe-repositories · secretsmanager list-secrets(이름만)
 //   GCP  : projects describe → container clusters list → get-credentials(임시 KUBECONFIG) → kubectl 앱 읽기 · sql instances list
 //          + compute networks list · forwarding-rules list · artifacts repositories list · secrets list(이름만)
@@ -92,9 +93,11 @@ function coverage(items: Obj[], extra: Record<string, number> = {}): Record<stri
   return c;
 }
 
-async function withTempKube<T>(f: (path: string) => Promise<T>): Promise<T> {
+// #373 B3: 파일 이름 = 클러스터 신원 (<종류>-<위치>-<이름>.kubeconfig). 가져오기 캐시(import-cache.ts)가 임의 폴더 이름 대신 이 이름을 키에 넣는다.
+//   이름이 다르면 다른 클러스터라 같은 kubectl 명령이어도 기록을 나누지 않는다
+async function withTempKube<T>(label: string, f: (path: string) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(join(tmpdir(), "svc-import-"));
-  try { return await f(join(dir, "kubeconfig")); } finally { await rm(dir, { recursive: true, force: true }); }
+  try { return await f(join(dir, `${label.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 160)}.kubeconfig`)); } finally { await rm(dir, { recursive: true, force: true }); }
 }
 
 // RF-1: GCP API 를 프로젝트에서 안 켬 = 그 종류 자원이 없음 (못 읽음 아님)
@@ -135,10 +138,14 @@ export async function discoverAws(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
   const desc = cl ? get(await runJson(d, "aws", ["eks", "describe-cluster", "--name", cl.name, ...r]).catch((e) => { throw sourceFail(e, `EKS ${cl.name} 읽기 실패 (${cliReason(e, "aws")})`); }), "cluster") as Obj | undefined : undefined;
   const vpcId = str(get(desc, "resourcesVpcConfig", "vpcId"));
 
-  const app = !cl ? { items: [] as Obj[], namespace: "", counts: {} as Record<string, number>, notes: [] as string[] } : await withTempKube(async (kc) => {
-    try { await runText(d, "aws", ["eks", "update-kubeconfig", "--name", cl.name, "--kubeconfig", kc, "--region", region]); }
-    catch (e) { throw sourceFail(e, `EKS ${cl.name} kubeconfig 만들기 실패 (${cliReason(e, "aws")})`); }
-    try { return await readApp(d, ["--kubeconfig", kc], opts); }
+  const app = !cl ? { items: [] as Obj[], namespace: "", counts: {} as Record<string, number>, notes: [] as string[] } : await withTempKube(`eks-${region}-${cl.name}`, async (kc) => {
+    // #373 B4: 토큰을 한 번 받아 정적 토큰 kubeconfig (kubectl 마다 aws eks get-token 이 뜨지 않게). 못 쓰면 예전 exec kubeconfig (eks-kubeconfig.ts)
+    let kd: CliDeps;
+    try {
+      kd = (await eksKubeconfig(d, { cluster: cl.name, region, desc, path: kc,
+        execKubeconfig: async () => { await runText(d, "aws", ["eks", "update-kubeconfig", "--name", cl.name, "--kubeconfig", kc, "--region", region]); } })).deps;
+    } catch (e) { throw sourceFail(e, `EKS ${cl.name} kubeconfig 만들기 실패 (${cliReason(e, "aws")})`); }
+    try { return await readApp(kd, ["--kubeconfig", kc], opts); }
     catch (e) {
       if (e instanceof CliError) throw sourceFail(e, `EKS ${cl.name} 쿠버네티스 API 읽기 실패 (access entry 확인): ${e.message.slice(0, 160)}`);
       if ((hasEcs || hasVm) && noAppInCluster(e)) return EMPTY_APP(`EKS ${cl.name} 에 앱 Deployment 없음 → ${hasEcs ? "ECS" : "VM"} 만 가져옴`);
@@ -302,7 +309,7 @@ export async function discoverGcp(d: CliDeps = {}, opts: DiscoverOpts = {}): Pro
   if (!cl && !hasVm && !hasRun) throw incomplete(env.IMPORT_GCP_GKE_CLUSTER ? `GKE 클러스터 ${env.IMPORT_GCP_GKE_CLUSTER} 없음` : `프로젝트 ${project} 에 GKE 클러스터 없음${vm ? ` (VM 도 없음${vm.notes.length ? `: ${vm.notes[0]}` : ""})` : ""} (Cloud Run 서비스도 없음${runWhy ? `: ${runWhy.slice(0, 200)}` : ""})`);
   const name = cl ? String(cl.name) : "", loc = cl ? String(cl.location ?? cl.zone ?? "") : "";
 
-  const app = !cl ? { items: [] as Obj[], namespace: "", counts: {} as Record<string, number>, notes: [] as string[] } : await withTempKube(async (kc) => {
+  const app = !cl ? { items: [] as Obj[], namespace: "", counts: {} as Record<string, number>, notes: [] as string[] } : await withTempKube(`gke-${project}-${loc}-${name}`, async (kc) => {
     try { await runText(d, "gcloud", ["container", "clusters", "get-credentials", name, "--location", loc, "--project", project], { KUBECONFIG: kc }); }
     catch (e) { throw sourceFail(e, `GKE ${name} kubeconfig 만들기 실패 (${cliReason(e, "gcloud")})`); }
     try { return await readApp(d, ["--kubeconfig", kc], opts); }
