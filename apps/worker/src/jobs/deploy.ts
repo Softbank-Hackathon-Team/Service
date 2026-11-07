@@ -9,7 +9,7 @@ import { latestSealingCert } from "../gitops/sealing-cert.js";
 import { checkSecretValues } from "../gitops/secret-values.js";
 import { dbMetricIssuer, fillIngressSecrets, readTunnelToken, TUNNEL_SECRET, tunnelSourceFromEnv, type MetricIssuer, type SecretFillResult, type TokenSource } from "../gitops/ingress-secrets.js";
 import { realStsEnabled } from "../platform.js";
-import { syncWatcherFor } from "../gitops/agent-watch.js";
+import { agentStopHint, syncWatcherFor } from "../gitops/agent-watch.js";
 import { argoStopHint } from "../gitops/argo-watch.js";
 import { TARGET_ACCOUNT_SQL } from "./target-account.js";
 import { recordSkip, rehearsalGate, type Gate } from "../rehearsal/gate.js";
@@ -160,11 +160,13 @@ export async function handleDeploy(raw: unknown) {
       if (result.status === "failed") {
         // DRAFT(ai) Z59 (TODO(human) "Degraded·SyncFailed → paused 냐 rolling_back 이냐" 기본값): paused.
         // 트래픽 0%·컷오버 전이라 출발이 그대로 주인 → 급할 것 없음. 사람이 고쳐 paused → deploying 으로 재개하거나 롤백을 고른다.
-        // 실패 이유 앞머리(ARGO_DEGRADED / ARGO_SYNC_FAILED / ARGO_TIMEOUT, W4: AGENT_DEPLOY_FAILED / AGENT_DEPLOY_TIMEOUT)를 failureCode 로
+        // 실패 이유 앞머리(ARGO_DEGRADED / ARGO_SYNC_FAILED / ARGO_TIMEOUT, W4: AGENT_DEPLOY_FAILED / AGENT_DEPLOY_TIMEOUT, #373 D2: AGENT_OFFLINE)를 failureCode 로
+        //   #373 D2: Agent 끊김·시간 초과는 멈춤 화면 도움말(missing·hint)을 detail 맨 위에 더한다
         const code = /^((?:ARGO|AGENT)_[A-Z_]+)/.exec(result.reason ?? "")?.[1] ?? "ARGO_SYNC_FAILED";
         // D1 (#373): ARGO_CLUSTER_UNREACHABLE 이면 고칠 곳(허브 클러스터 접근·cluster Secret namespaces)을 deploy 칸에 붙인다 (웹 멈춤 화면이 그대로 그림)
+        //   D2 (#373): AGENT_OFFLINE·AGENT_DEPLOY_TIMEOUT 도움말은 detail 맨 위 (웹 stopHelpOf 는 맨 위와 한 칸 안을 다 본다)
         const help = l.env ? argoStopHint(code, ENV_DIR[l.env.provider]) : null;
-        return { to: "paused", failureCode: code, detail: { deploy: help ? { ...result, ...help } : result, ...(gitops ? { gitops } : {}), rehearsal: gate.detail, ...extra(warnings, delivery) } };
+        return { to: "paused", failureCode: code, detail: { ...agentStopHint(code), deploy: help ? { ...result, ...help } : result, ...(gitops ? { gitops } : {}), rehearsal: gate.detail, ...extra(warnings, delivery) } };
       }
       return {
         to: "syncing", detail: { deploy: result, ...(gitops ? { gitops } : {}), rehearsal: gate.detail, ...extra(warnings, delivery), ...(trafficEntry ? { trafficEntry } : {}) },
@@ -235,7 +237,7 @@ export async function sourceReplicationStep(j: MigrationJob, m: MigrationRow, in
       sealedSecrets: d.sealedSecrets.map((s) => s.name), commit: c.commit, ...(w.observed ? { agent: w.observed } : {}) };
     if (!w.ok) {
       const code = /^((?:ARGO|AGENT)_[A-Z_]+)/.exec(w.reason ?? "")?.[1] ?? "AGENT_DEPLOY_FAILED";
-      return { outcome: { to: "paused", failureCode: code, detail: { deploy: { error: code, reason: w.reason }, ...extra(dec.warnings, detail) } } };
+      return { outcome: { to: "paused", failureCode: code, detail: { ...agentStopHint(code), deploy: { error: code, reason: w.reason }, ...extra(dec.warnings, detail) } } };
     }
     return { warnings: dec.warnings, detail };
   } catch (e) { return { outcome: gitopsPaused(e) }; }
