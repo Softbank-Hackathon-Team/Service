@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { access, cp, mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
+import { descendantUnchanged } from "./revision-check.js";
 
 const run = promisify(execFile);
 
@@ -83,6 +84,13 @@ export class TenantMirror {
         if (i >= this.cfg.maxPushTries) throw e;
       }
     }
+  }
+
+  /** D3 (#373): Agent 가 보고한 회사 레포 리비전이 우리 커밋의 후손이고 묶음 폴더가 그대로인가 (revision-check.ts). 오류면 false.
+   *  호출하는 쪽(GitopsRepo.revisionCovers)이 한 줄로 세운 구역 안에서 부른다 (fetch 가 sync 의 git 과 겹치지 않게) */
+  covers(tenant: string, commit: string, rev: string, path: string): Promise<boolean> {
+    if (!SLUG.test(tenant)) return Promise.resolve(false);
+    return descendantUnchanged({ dir: join(this.cfg.dir, tenant), env: this.gitEnv() }, commit, rev, path);
   }
 
   // 원격에 가지가 있으면 그 상태로 맞춘다. 빈 레포(첫 push 전)면 그대로 둔다
