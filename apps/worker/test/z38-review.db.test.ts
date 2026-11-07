@@ -152,7 +152,7 @@ test("z75-38: shift 가 단계마다 실측 몫을 확인하고 traffic_progress
   assert.deepEqual(p, { target_pct: 100, observed_pct: 100, reached: true, tolerance_pct: 10 });
 });
 
-test("z75-38 R8-43: TRAFFIC_SHARE_CHECK=0 이면 예전 동작 (stepShares·진행 기록 없음)", { skip }, async () => {
+test("z75-38 R8-43: TRAFFIC_SHARE_CHECK=0 이면 몫 확인·stepShares 는 없고, 화면 막대용 진행에는 목표만 남긴다", { skip }, async () => {
   const m = await setup("shifting", { holder: "reserved", leaseSql: "now() + interval '10 minutes'" });
   process.env.TRAFFIC_SHARE_CHECK = "0";
   try {
@@ -161,6 +161,7 @@ test("z75-38 R8-43: TRAFFIC_SHARE_CHECK=0 이면 예전 동작 (stepShares·진�
   const d = (await owner.query(`SELECT detail FROM audit_events WHERE target=$1 AND action='shift.cutover'`, [m.id])).rows[0].detail;
   assert.equal(d.stepShares, undefined);
   assert.equal(d.reachedPct, 100);
-  const n = await core.withTenant(T, async (tx) => (await tx.query("SELECT 1 FROM traffic_progress WHERE migration_id = $1", [m.id])).rowCount);
-  assert.equal(n, 0);
+  const p = await core.withTenant(T, async (tx) => (await tx.query(
+    "SELECT target_pct, observed_pct, reached, tolerance_pct FROM traffic_progress WHERE migration_id = $1", [m.id])).rows[0]);
+  assert.deepEqual(p, { target_pct: 100, observed_pct: null, reached: null, tolerance_pct: 10 });
 });
