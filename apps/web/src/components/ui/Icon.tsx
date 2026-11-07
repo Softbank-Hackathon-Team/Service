@@ -62,6 +62,8 @@ const ICONS = {
     </>
   ),
   chevron: <path d="m9 18 6-6-6-6" />,
+  'chevron-up': <path d="m18 15-6-6-6 6" />,
+  'chevron-down': <path d="m6 9 6 6 6-6" />,
   ban: (
     <>
       <circle cx="12" cy="12" r="10" />

@@ -17,6 +17,8 @@ type RequirementsFoldProps = {
   version: number;
   busy: boolean;
   defaultOpen: boolean;
+  /** 지난 단계로 다시 볼 때: 값만 보이고 정하기·고치기·지우기를 두지 않는다 */
+  readOnly?: boolean;
   /** null = 요구사항 지우기 */
   onSave: (value: SecuritySpecV2 | null) => void;
 };
@@ -25,7 +27,7 @@ type RequirementsFoldProps = {
  * 앱 보안 요구사항 (명세 v2 security). 저장하면 새 판이 하나 생긴다 (PATCH changes "security" 통째).
  * 저장해서 판이 바뀌거나 그 사이 다른 판이 생기면 고치기를 닫고 새 판의 값을 보여 준다 (사람이 본 것과 다른 판을 덮지 않게)
  */
-export function RequirementsFold({ requirements, version, busy, defaultOpen, onSave }: RequirementsFoldProps) {
+export function RequirementsFold({ requirements, version, busy, defaultOpen, readOnly, onSave }: RequirementsFoldProps) {
   const [editing, setEditing] = useState<{ version: number; draft: RequirementsDraft } | null>(null);
   const draft = editing?.version === version ? editing.draft : null;
   const set = (next: Partial<RequirementsDraft>) => draft && setEditing({ version, draft: { ...draft, ...next } });
@@ -108,10 +110,12 @@ export function RequirementsFold({ requirements, version, busy, defaultOpen, onS
           {t('데이터 등급, 허용 국가, 키 소유를 정하지 않으면 위치·키 규칙을 판정하지 못하고 계획 승인 때 고객 확인 항목이 됩니다.')}
         </p>
       )}
-      <div className={`${s.rowAction} ${s.options}`}>
-        <BarPill label={requirements ? t('고치기') : t('정하기')} icon={requirements ? 'list' : 'plus'} onClick={busy ? undefined : () => setEditing({ version, draft: draftOf(requirements) })} />
-        {requirements && <ConfirmPill label={t('지우기')} confirmLabel={t('요구사항 지우기')} icon="x" disabled={busy} onConfirm={() => onSave(null)} />}
-      </div>
+      {!readOnly && (
+        <div className={`${s.rowAction} ${s.options}`}>
+          <BarPill label={requirements ? t('고치기') : t('정하기')} icon={requirements ? 'list' : 'plus'} onClick={busy ? undefined : () => setEditing({ version, draft: draftOf(requirements) })} />
+          {requirements && <ConfirmPill label={t('지우기')} confirmLabel={t('요구사항 지우기')} icon="x" disabled={busy} onConfirm={() => onSave(null)} />}
+        </div>
+      )}
     </FoldTile>
   );
 }

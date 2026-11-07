@@ -1,16 +1,17 @@
-import { Children, isValidElement, useState, type ReactNode } from 'react';
+import { Children, createContext, isValidElement, useContext, useState, type ReactNode } from 'react';
 import type { BentoLayout } from '../../components/layout/ConsoleLayout';
 import { SkeletonTile, Tile, TileHeader } from '../../components/layout/tiles';
 import { Checklist } from '../../components/ui/Checklist';
 import { BarPill } from '../../components/ui/controls';
+import { Icon } from '../../components/ui/Icon';
 import { api } from '../../lib/api';
 import { errorCode, errorText } from '../../lib/errors';
 import { or404 } from '../../lib/http';
 import { isTerminal } from '../../lib/status';
-import type { MigrationView } from '../../lib/types';
+import type { MigrationStatus, MigrationView } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
 import { ShellLayout } from '../shell/ShellLayout';
-import { migrationSteps, needsStepAnchor, stepAnchorFrom } from './model';
+import { migrationSteps, needsStepAnchor, stepAnchorFrom, stepsPhase, type StepEntry, type StepsPhase } from './model';
 import { rehearsalStepDetail } from './rehearsal';
 import { useRehearsal } from './RehearsalFold';
 import s from '../common/page.module.css';
@@ -26,13 +27,38 @@ const HERO_ONLY: BentoLayout = { columns: ['fill', 'narrow'], areas: 'hero steps
 const hasSide = (children: ReactNode) =>
   Children.toArray(children).some((child) => isValidElement<{ area?: string }>(child) && child.props.area === 'side');
 
+/** 지난 단계 다시 보기. at: 다시 보는 칸의 상태, back: 지금 단계로 돌아간다 */
+export type PastView = { at: MigrationStatus; back: () => void };
+
 export type ScreenProps = {
   migration: MigrationView;
   route: string;
   onChanged: () => void;
+  /**
+   * 진행 단계 카드에서 끝난 칸(파란 체크)을 눌러 그 단계 화면을 다시 보는 중.
+   * 화면은 끝낸 말로 쓰고 행동 버튼을 두지 않는다. 값은 지금 서버 값 그대로다 (그때 값을 따로 남기지 않는다)
+   */
+  past?: PastView;
 };
 
-/** 진행 단계 카드. 접지 않고 항상 보인다. */
+/** 진행 단계 카드가 지난 단계 보기를 여닫는 자리 (MigrationPage 가 준다). viewing: 다시 보는 칸, null 이면 지금 단계 */
+export const StepsView = createContext<{ viewing: MigrationStatus | null; open: (at: MigrationStatus | null) => void } | null>(null);
+
+/** 지난 단계 화면의 큰 카드 머리줄. 앞에 "지난 단계"를 붙이고, ← 는 앞 화면이 아니라 지금 단계로 돌아간다 */
+export const pastHero = (past: PastView | undefined, meta: string) =>
+  past ? { meta: t('지난 단계 · {0}', { 0: meta }), back: past.back } : { meta };
+
+const PHASE_FLIP: Record<StepsPhase, { icon: 'chevron-up' | 'chevron-down'; label: string }> = {
+  // 실행 묶음은 아래 묶음이라 위(^)로 실행 전 묶음을, 실행 전 묶음에서는 아래(v)로 실행 묶음을 본다
+  run: { icon: 'chevron-up', label: t('실행 전 단계 보기') },
+  prepare: { icon: 'chevron-down', label: t('실행 단계 보기') },
+};
+
+/**
+ * 진행 단계 카드. 접지 않고 항상 보인다.
+ * 머리줄 꺾쇠로 실행 전·실행 묶음을 오간다. 고른 묶음은 화면이 바뀌면(카드를 새로 그리면) 지금 묶음으로 돌아간다.
+ * 끝난 칸을 누르면 그 단계 화면을 다시 보고, 지금 칸을 누르면 지금 단계로 돌아온다
+ */
 function StepsTile({ migration }: { migration: MigrationView }) {
   const located = needsStepAnchor(migration);
   const timeline = usePoll(
@@ -44,10 +70,35 @@ function StepsTile({ migration }: { migration: MigrationView }) {
   // 앱 배포 칸에 리허설 한 마디 (리허설 중·통과·건너뜀·멈춤). 배포 단계 전에는 읽지 않는다
   const rehearsal = useRehearsal(migration);
   const deploying = rehearsal.loading ? undefined : rehearsalStepDetail(rehearsal.run, rehearsal.stale, migration.status);
+  const view = useContext(StepsView);
+  const viewing = view?.viewing ?? null;
+  const [picked, setPicked] = useState<StepsPhase | null>(null);
+  // 지난 단계를 보는 중이면 그 칸이 있는 묶음을 먼저 보인다
+  const phase = picked ?? (viewing ? stepsPhase({ status: viewing }) : stepsPhase(migration, anchor));
+  const flip = PHASE_FLIP[phase];
+  const select = (step: StepEntry) => {
+    if (!view) return undefined;
+    // 보고 있는 지난 칸을 한 번 더 누르면 지금 단계로 돌아간다
+    if (step.status === 'done') return () => view.open(step.at === viewing ? null : step.at);
+    return viewing && step.status !== 'pending' ? () => view.open(null) : undefined;
+  };
   return (
     <Tile area="steps" compact scroll>
-      <TileHeader title={t('진행 단계')} />
-      <Checklist items={migrationSteps(migration, anchor, deploying ? { deploying } : {})} />
+      <TileHeader
+        title={t('진행 단계')}
+        action={
+          <button type="button" className={s.stepsFlip} aria-label={flip.label} title={flip.label} onClick={() => setPicked(phase === 'run' ? 'prepare' : 'run')}>
+            <Icon name={flip.icon} size={16} />
+          </button>
+        }
+      />
+      <Checklist
+        items={migrationSteps(migration, anchor, deploying ? { deploying } : {}, phase).map((step) => ({
+          ...step,
+          selected: step.at === viewing,
+          onSelect: select(step),
+        }))}
+      />
     </Tile>
   );
 }

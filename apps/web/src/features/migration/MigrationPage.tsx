@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { go } from '../../app/routes';
 import { withTransition } from '../../app/transition';
 import { ActionRow, FoldTile, Hero, Stack } from '../../components/layout/tiles';
@@ -13,13 +13,13 @@ import { is404, or404 } from '../../lib/http';
 import { planResourceRows, runtimeChangeNote, specSubstituteRows } from '../../lib/resourceMap';
 import { LABEL } from '../../lib/status';
 import { lastPrecheckBounce, stopHelp } from '../../lib/timelineDetail';
-import type { MigrationView, PlanAckKind, PrecheckItem } from '../../lib/types';
+import type { MigrationStatus, MigrationView, PlanAckKind, PrecheckItem } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
 import { useAgentReview } from '../agent/AgentResult';
 import { failureAnalysisOf } from '../agent/model';
 import { costCaveats, costNote, costSummary, planCostCaveats, planCostSummary } from '../cost/model';
 import {
-  ackPlaces, ackState, ackSubject, approveLabel, autoStart, canReplan, failureChoices, pollMs, screenOf, signalCovers, specRows, stepGate, stepName, usd, type MigrationScreen, type RetryStage,
+  ackPlaces, ackState, ackSubject, approveLabel, autoStart, canReplan, failureChoices, isPastStep, pollMs, screenOf, signalCovers, specRows, stepGate, stepName, usd, type MigrationScreen, type RetryStage,
 } from './model';
 import { scopeLabel } from './source';
 import { SecurityFold } from './SecurityCard';
@@ -33,7 +33,7 @@ import { DoneScreen, CleanupScreen, PausedScreen, RolledBackScreen, RollingBackS
 import { RequirementsFold, SourceFactsFold, VerdictFold } from './SecurityFolds';
 import { SubstituteMap } from './SubstituteMap';
 import { isSecItem, precheckLine, secAckLabel, type SecuritySpecV2 } from './securityV2';
-import { ConfirmPill, Frame, useAction, useCostConsent, type ScreenProps } from './shared';
+import { ConfirmPill, Frame, pastHero, StepsView, useAction, useCostConsent, type ScreenProps } from './shared';
 import s from '../common/page.module.css';
 import { localeTag, t } from '../../lib/i18n';
 
@@ -43,10 +43,15 @@ const LEVEL: Record<PrecheckItem['level'], { label: string; tone: 'danger' | 'wa
   info: { label: t('참고'), tone: 'neutral' },
 };
 
-function ImportingScreen({ migration, route }: ScreenProps) {
+function ImportingScreen({ migration, route, past }: ScreenProps) {
   return (
     <Frame migration={migration} route={route}>
-      <Hero tone="run" meta={t('구성 읽기')} title={t('운영 중인 앱을\n읽고 있습니다')} foot={t('읽기만 합니다. 아무것도 바꾸지 않습니다')} />
+      <Hero
+        tone="run"
+        {...pastHero(past, t('구성 읽기'))}
+        title={past ? t('운영 중인 앱을\n읽었습니다') : t('운영 중인 앱을\n읽고 있습니다')}
+        foot={past ? t('읽기만 했습니다. 아무것도 바꾸지 않았습니다') : t('읽기만 합니다. 아무것도 바꾸지 않습니다')}
+      />
     </Frame>
   );
 }
@@ -68,9 +73,10 @@ const firewallReason = (row: FirewallRow) =>
       ? t('출발에서 허용하던 {0}은(는) 도착으로 옮길 수 없습니다', { 0: row.sources.join(', ') })
       : t('출발은 공개였지만 허용 주소가 없습니다');
 
-function SpecScreen({ migration, route, onChanged }: ScreenProps) {
+function SpecScreen({ migration, route, onChanged, past }: ScreenProps) {
   const spec = usePoll(() => or404(api.migrationSpec(migration.id)), null, [migration.id, migration.version]);
-  const timeline = usePoll(() => or404(api.timeline(migration.id)), null, [migration.id, migration.version]);
+  // 지난 단계로 다시 볼 때는 사전 점검에서 돌아온 기록을 읽지 않는다 (그 막힘은 이미 풀고 지나왔다)
+  const timeline = usePoll(past ? null : () => or404(api.timeline(migration.id)), null, [migration.id, migration.version, !!past]);
   // 그 사이 다른 판이 생겼으면(409 SPEC_VERSION_CONFLICT) 새 판을 다시 읽는다. 사람이 본 것과 다른 판을 확정하지 않는다
   const { busy, error, run } = useAction(onChanged, (reason) => {
     if (errorCode(reason) === 'SPEC_VERSION_CONFLICT') void spec.reload();
@@ -141,15 +147,23 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
     <Frame migration={migration} route={route}>
       <Hero
         tone={blocks.length > 0 ? 'stop' : 'run'}
-        meta={blocks.length > 0 ? t('사전 점검에서 돌아옴') : t('명세 v{0}', { 0: view?.version ?? '' })}
+        {...pastHero(past, blocks.length > 0 ? t('사전 점검에서 돌아옴') : t('명세 v{0}', { 0: view?.version ?? '' }))}
         title={
-          blocks.length > 0
-            ? t('막힌 항목 {0}개를\n풀어야 합니다', { 0: blocks.length })
-            : reviewCount > 0
-              ? t('{0}칸을 확인하고\n확정해 주세요', { 0: reviewCount })
-              : t('이 명세로\n옮길까요?')
+          past
+            ? t('이 명세로\n확정했습니다')
+            : blocks.length > 0
+              ? t('막힌 항목 {0}개를\n풀어야 합니다', { 0: blocks.length })
+              : reviewCount > 0
+                ? t('{0}칸을 확인하고\n확정해 주세요', { 0: reviewCount })
+                : t('이 명세로\n옮길까요?')
         }
-        foot={view?.source === 'ai_draft' ? t('AI가 추측한 초안입니다. 사람이 확정하기 전에는 계획에 쓰지 않습니다') : t('확정하면 사전 점검을 시작합니다')}
+        foot={
+          past
+            ? t('확정한 명세입니다. 지난 단계라 고칠 수 없습니다')
+            : view?.source === 'ai_draft'
+              ? t('AI가 추측한 초안입니다. 사람이 확정하기 전에는 계획에 쓰지 않습니다')
+              : t('확정하면 사전 점검을 시작합니다')
+        }
       >
         {blocks.map((item) => {
           const line = precheckLine(item);
@@ -220,9 +234,11 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
                     <span className="t-label-md c-warning">{row.subject}</span>
                   </div>
                   <p className={`${s.rowCaption} t-caption c-tertiary`}>{firewallReason(row)}</p>
-                  <div className={s.rowAction}>
-                    <BarPill label={row.kept.length > 0 ? t('허용 주소 {0}만 옮기기', { 0: row.kept.join(', ') }) : t('의존성 연결만 열기')} icon="check" onClick={busy ? undefined : () => void decideFirewall(row.subject)} />
-                  </div>
+                  {!past && (
+                    <div className={s.rowAction}>
+                      <BarPill label={row.kept.length > 0 ? t('허용 주소 {0}만 옮기기', { 0: row.kept.join(', ') }) : t('의존성 연결만 열기')} icon="check" onClick={busy ? undefined : () => void decideFirewall(row.subject)} />
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
@@ -240,7 +256,8 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
             requirements={requirements}
             version={view.version}
             busy={busy}
-            defaultOpen={!requirements || secBlocked}
+            defaultOpen={!past && (!requirements || secBlocked)}
+            readOnly={!!past}
             onSave={(value) => void saveSecurity(value)}
           />
         )}
@@ -276,7 +293,7 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
                         <span className={`${s.rowValue} t-caption c-tertiary`}>{item.kind}</span>
                       </div>
                       <p className={`${s.rowCaption} t-caption c-tertiary`}>{item.reason}</p>
-                      {item.pullable && (
+                      {item.pullable && !past && (
                         <div className={s.rowAction}>
                           <BarPill label={t('이 앱으로 가져오기')} icon="plus" onClick={busy ? undefined : () => void pull(item.resource)} />
                         </div>
@@ -291,29 +308,36 @@ function SpecScreen({ migration, route, onChanged }: ScreenProps) {
             )}
           </FoldTile>
         )}
-        <ActionRow notice={error}>
-          <ConfirmPill label={t('취소')} confirmLabel={t('마이그레이션 취소')} icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
-          <ActionPill
-            label={v2 ? confirmLabel(busy, reviewCount, firewall.length) : busy ? t('보내는 중') : t('명세 확정')}
-            icon="check"
-            disabled={busy || !view || !canConfirmSpec(firewall.length)}
-            onClick={() => void run(confirm)}
-          />
-        </ActionRow>
+        {!past && (
+          <ActionRow notice={error}>
+            <ConfirmPill label={t('취소')} confirmLabel={t('마이그레이션 취소')} icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
+            <ActionPill
+              label={v2 ? confirmLabel(busy, reviewCount, firewall.length) : busy ? t('보내는 중') : t('명세 확정')}
+              icon="check"
+              disabled={busy || !view || !canConfirmSpec(firewall.length)}
+              onClick={() => void run(confirm)}
+            />
+          </ActionRow>
+        )}
       </Stack>
     </Frame>
   );
 }
 
-function PreparingScreen({ migration, route }: ScreenProps) {
-  const checking = migration.status === 'prechecking';
+function PreparingScreen({ migration, route, past }: ScreenProps) {
+  const at = past?.at ?? migration.status;
+  const checking = at === 'prechecking';
   return (
     <Frame migration={migration} route={route}>
       <Hero
         tone="run"
-        meta={LABEL[migration.status]}
-        title={checking ? t('이 앱을\n옮길 수 있는지 봅니다') : t('계획서를\n만들고 있습니다')}
-        foot={t('끝나면 계획서와 승인 버튼이 나옵니다')}
+        {...pastHero(past, LABEL[at])}
+        title={
+          past
+            ? checking ? t('옮길 수 있는지\n점검했습니다') : t('계획서를\n만들었습니다')
+            : checking ? t('이 앱을\n옮길 수 있는지 봅니다') : t('계획서를\n만들고 있습니다')
+        }
+        foot={past ? t('점검 결과와 계획서는 계획 승인 단계에서 봅니다') : t('끝나면 계획서와 승인 버튼이 나옵니다')}
       />
     </Frame>
   );
@@ -339,7 +363,7 @@ const ACK_KIND: Record<PlanAckKind, string> = {
 const PLAN_CHANGED = ['PLAN_HASH_MISMATCH', 'PLAN_SUPERSEDED', 'ACKS_MISSING', 'PLAN_EXPIRED'];
 const NO_TICKS: ReadonlySet<string> = new Set();
 
-function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
+function ApproveScreen({ migration, route, onChanged, past }: ScreenProps) {
   const plan = usePoll(() => api.latestPlan(migration.id), null, [migration.id, migration.version]);
   const cost = usePoll(() => or404(api.migrationCost(migration.id)), null, [migration.id]);
   const resources = usePoll(() => or404(api.planResources(migration.id)), null, [migration.id]);
@@ -357,7 +381,9 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
   const doc = plan.data;
   // 체크는 계획 지문에 묶는다. 계획서가 바뀌면(새 지문) 처음부터 다시 체크한다
   const [ticked, setTicked] = useState<{ hash: string | null; ids: ReadonlySet<string> }>({ hash: null, ids: NO_TICKS });
-  const ticks = doc && ticked.hash === doc.planHash ? ticked.ids : NO_TICKS;
+  // 지난 단계로 다시 보면 승인 때 모두 확인한 것이라 다 체크해 둔다 (고칠 수 없음)
+  const allAcks = useMemo<ReadonlySet<string>>(() => new Set((doc?.acknowledgements ?? []).map((ack) => ack.id)), [doc]);
+  const ticks = past ? allAcks : doc && ticked.hash === doc.planHash ? ticked.ids : NO_TICKS;
   const acks = ackState(doc?.acknowledgements, ticks);
   const tick = (id: string, on: boolean) => {
     if (!doc) return;
@@ -371,7 +397,8 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
   // 보안 판정(SEC:*)은 따로 단계별 카드로 본다. 사전 점검 카드에는 나머지 점검만
   const checks = doc?.precheck.filter((item) => !isSecItem(item)) ?? [];
   const warns = checks.filter((item) => item.level !== 'info').length;
-  const expired = doc ? Date.parse(doc.expiresAt) <= Date.now() : false;
+  // 승인한 뒤에는 유효 시각이 지나도 상관없다
+  const expired = !past && doc ? Date.parse(doc.expiresAt) <= Date.now() : false;
   const mapped = planResourceRows(resources.data);
   // 확인 항목마다 확인하는 자리는 하나다: 상품 대체는 큰 카드의 대응 줄, 나머지는 "승인 전에 확인" 목록. 승인 버튼은 둘을 합쳐 센다(acks)
   const places = ackPlaces(doc?.acknowledgements);
@@ -384,9 +411,17 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
     <Frame migration={migration} route={route}>
       <Hero
         tone={expired ? 'stop' : 'run'}
-        meta={t('계획서')}
-        title={expired ? t('승인 시간이\n지났습니다') : acks.missing.length > 0 ? t('확인할 것 {0}개를 보고\n승인해 주세요', { 0: acks.missing.length }) : t('승인하면 이대로\n바로 실행합니다')}
-        foot={doc ? t('유효 시각 {0}', { 0: new Date(doc.expiresAt).toLocaleString(localeTag(), { hour12: false }) }) : undefined}
+        {...pastHero(past, t('계획서'))}
+        title={
+          past
+            ? t('이 계획서로\n승인했습니다')
+            : expired
+              ? t('승인 시간이\n지났습니다')
+              : acks.missing.length > 0
+                ? t('확인할 것 {0}개를 보고\n승인해 주세요', { 0: acks.missing.length })
+                : t('승인하면 이대로\n바로 실행합니다')
+        }
+        foot={past ? t('이 지문의 계획을 승인하고 실행했습니다') : doc ? t('유효 시각 {0}', { 0: new Date(doc.expiresAt).toLocaleString(localeTag(), { hour12: false }) }) : undefined}
         action={substituting && hash}
       >
         {substituting && (
@@ -394,7 +429,7 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
             rows={places.substitutes}
             source={resources.data?.source.provider ?? null}
             target={resources.data?.target.provider ?? null}
-            confirm={{ checked: ticks, disabled: busy || expired, onToggle: (id) => tick(id, !ticks.has(id)) }}
+            confirm={{ checked: ticks, disabled: busy || expired || !!past, onToggle: (id) => tick(id, !ticks.has(id)) }}
           />
         )}
         {!substituting && hash}
@@ -411,7 +446,7 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
               {places.list.map((ack) => (
                 <li key={ack.id}>
                   <label className={`${s.ack} t-body-sm`}>
-                    <input type="checkbox" checked={ticks.has(ack.id)} disabled={busy || expired} onChange={(event) => tick(ack.id, event.target.checked)} />
+                    <input type="checkbox" checked={ticks.has(ack.id)} disabled={busy || expired || !!past} onChange={(event) => tick(ack.id, event.target.checked)} />
                     <span className={s.ackText}>
                       <span className="t-caption c-tertiary">
                         {[secAckLabel(ack) ?? ACK_KIND[ack.kind] ?? ack.kind, ackSubject(ack)].filter(Boolean).join(' · ')}
@@ -488,35 +523,37 @@ function ApproveScreen({ migration, route, onChanged }: ScreenProps) {
           )}
         </FoldTile>
         <SecurityFold migration={migration} />
-        <ActionRow notice={error ?? (plan.error != null && !doc ? errorText(plan.error) : null)}>
-          <ConfirmPill label={t('취소')} confirmLabel={t('마이그레이션 취소')} icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
-          {doc && <ConfirmPill label={t('거절')} confirmLabel={t('계획 거절')} icon="ban" disabled={busy} onConfirm={() => void run(() => api.decide(doc.planId, 'reject', doc.planHash))} />}
-          <ActionPill
-            label={approveLabel({ busy, expired, missing: acks.missing.length })}
-            icon="check"
-            disabled={busy || !doc || expired || !acks.ready}
-            onClick={() =>
-              doc &&
-              void run(async () => {
-                // 승인하면 바로 실행을 시작한다(버튼 한 번). 시작이 막히면 승인은 그대로 두고 실행 대기 화면이 이유를 이어 받는다
-                autoStart.begin(migration.id);
-                let blockedBy: string | null = null;
-                try {
-                  await api.decide(doc.planId, 'approve', doc.planHash, acks.ids);
+        {!past && (
+          <ActionRow notice={error ?? (plan.error != null && !doc ? errorText(plan.error) : null)}>
+            <ConfirmPill label={t('취소')} confirmLabel={t('마이그레이션 취소')} icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
+            {doc && <ConfirmPill label={t('거절')} confirmLabel={t('계획 거절')} icon="ban" disabled={busy} onConfirm={() => void run(() => api.decide(doc.planId, 'reject', doc.planHash))} />}
+            <ActionPill
+              label={approveLabel({ busy, expired, missing: acks.missing.length })}
+              icon="check"
+              disabled={busy || !doc || expired || !acks.ready}
+              onClick={() =>
+                doc &&
+                void run(async () => {
+                  // 승인하면 바로 실행을 시작한다(버튼 한 번). 시작이 막히면 승인은 그대로 두고 실행 대기 화면이 이유를 이어 받는다
+                  autoStart.begin(migration.id);
+                  let blockedBy: string | null = null;
                   try {
-                    await api.start(migration.id, doc.planHash);
-                  } catch (reason) {
-                    blockedBy = errorCode(reason) ?? 'START_FAILED';
-                    throw reason;
+                    await api.decide(doc.planId, 'approve', doc.planHash, acks.ids);
+                    try {
+                      await api.start(migration.id, doc.planHash);
+                    } catch (reason) {
+                      blockedBy = errorCode(reason) ?? 'START_FAILED';
+                      throw reason;
+                    }
+                  } finally {
+                    autoStart.end(migration.id, blockedBy);
+                    if (blockedBy) onChanged();
                   }
-                } finally {
-                  autoStart.end(migration.id, blockedBy);
-                  if (blockedBy) onChanged();
-                }
-              })
-            }
-          />
-        </ActionRow>
+                })
+              }
+            />
+          </ActionRow>
+        )}
       </Stack>
     </Frame>
   );
@@ -760,6 +797,9 @@ export function MigrationPage({ id }: { id: string }) {
     liveFloor: signalCovers(status),
   });
   const envs = usePoll(api.listEnvironments, null, []);
+  // 진행 단계 카드에서 누른 지난 단계 (null = 지금 단계). 여닫을 때도 화면 전환으로 카드를 움직인다
+  const [viewing, setViewing] = useState<MigrationStatus | null>(null);
+  const steps = useMemo(() => ({ viewing, open: (at: MigrationStatus | null) => withTransition(() => setViewing(at)) }), [viewing]);
 
   // 화면이 바뀔 때만 카드를 움직인다. 같은 화면 안의 갱신은 그대로 둔다.
   const [shown, setShown] = useState<MigrationView | null>(null);
@@ -796,8 +836,18 @@ export function MigrationPage({ id }: { id: string }) {
     route: `${shown.sourceScope && Object.keys(shown.sourceScope).length > 0 ? `${scopeLabel(shown.sourceScope)} · ` : ''}${name(shown.sourceEnvId)} → ${name(shown.targetEnvId)}`,
     onChanged: () => void poll.reload(),
   };
-  const screen = screenFor(shown);
-  if (screen === 'rejected' || screen === 'stale') return <StoppedScreen {...props} kind={screen} />;
-  const Screen = SCREENS[screen];
-  return <Screen {...props} />;
+  // 보던 칸이 다시 지금 칸이 되면(사전 점검에서 명세로 돌아옴 등) 지난 단계 보기를 닫는다
+  if (viewing && !isPastStep(shown, viewing)) setViewing(null);
+  const past = viewing && isPastStep(shown, viewing) ? viewing : null;
+  const screen = past ? screenOf(past) : screenFor(shown);
+  const Screen = screen === 'rejected' || screen === 'stale' ? null : SCREENS[screen];
+  return (
+    <StepsView.Provider value={steps}>
+      {Screen ? (
+        <Screen {...props} past={past ? { at: past, back: () => steps.open(null) } : undefined} />
+      ) : (
+        <StoppedScreen {...props} kind={screen as 'rejected' | 'stale'} />
+      )}
+    </StepsView.Provider>
+  );
 }
