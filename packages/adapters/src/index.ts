@@ -45,6 +45,9 @@ export { AWS_DATA_READ_ACTIONS, GCP_DATA_READ_PERMISSIONS, AWS_DATA_READ_PENDING
 export { readK8sNamespace, type K8sNamespaceRead, type K8sNamespaceOpts } from "./discover/k8s.js";
 // 온프레 출발 가져오기 (pull 모드): Agent 가 모은 인벤토리 스냅숏을 discover 의 kubectl 대신 재생한다
 export { collectInventorySnapshot, snapshotExec, snapshotBytes, parseKubectl, type InventorySnapshotOpts } from "./discover/inventory-snapshot.js";
+// #373 B3·B4: AWS·GCP 출발 가져오기 읽기 CLI 짧은 캐시 (프로세스 메모리) · EKS 정적 토큰 kubeconfig
+export { importCacheExec, importCacheArgs, importCacheSec, newImportCacheStats, clearImportCache, importCacheSize, type ImportCacheStats, type ImportCacheScope, type ImportCacheOpts } from "./discover/import-cache.js";
+export { eksKubeconfig, eksStaticTokenEnabled, EKS_TOKEN_REFRESH_MS, type EksKube, type EksKubeInput } from "./discover/eks-kubeconfig.js";
 // I2: k8s 원본 타입 + 종류 문자열
 export * from "./import/raw-k8s.js";
 export { mockSeed, CliError, classifyCliError, sourceFail, type CliErrorKind, type CliDeps } from "./common/cli.js";
