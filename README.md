@@ -31,25 +31,27 @@ AWS · GCP · 온프레미스(k3s) 사이를 **서비스 중단 없이** 옮기�
 
 ## 🏗️ 아키텍처
 
+### 본선 아키텍처 v0.6
+
 <p align="center"><img src="docs/img/readme/architecture-v0.6.png" alt="본선 아키텍처 v0.6: 컨트롤 플레인, 데이터 플레인, 샌드박스, 관측, 멀티 테넌트 격리" width="100%"></p>
 
-<details>
-<summary><b>플랫폼 인프라 (컨트롤 플레인)</b>: 이전 한 건이 지나가는 순서</summary>
-<br>
-<img src="docs/img/readme/platform-infra.png" alt="플랫폼 EKS 안의 API·워커·AI 워커·샌드박스와 외부 서비스, 고객 환경" width="100%">
-</details>
+### 플랫폼 인프라 (컨트롤 플레인)
 
-<details>
-<summary><b>온프레 DB 이전</b>: 역터널(SSH)과 논리 복제 흐름</summary>
-<br>
-<img src="docs/img/readme/onprem-db-tunnel.png" alt="출발 RDS에서 중계기와 SSH 역터널을 거쳐 온프레 CNPG로 복제" width="100%">
-</details>
+이전 한 건이 지나가는 순서
 
-<details>
-<summary><b>GitOps 배포</b>: 클라우드는 허브가 밀고, 온프레는 안에서 당긴다</summary>
-<br>
-<img src="docs/img/readme/gitops-flow.png" alt="워커가 gitops 레포에 커밋, Argo CD 허브가 EKS·GKE로, 온프레는 회사 전용 레포에서 pull" width="100%">
-</details>
+<p align="center"><img src="docs/img/readme/platform-infra.png" alt="플랫폼 EKS 안의 API·워커·AI 워커·샌드박스와 외부 서비스, 고객 환경" width="100%"></p>
+
+### 온프레 DB 이전
+
+역터널(SSH)과 논리 복제 흐름
+
+<p align="center"><img src="docs/img/readme/onprem-db-tunnel.png" alt="출발 RDS에서 중계기와 SSH 역터널을 거쳐 온프레 CNPG로 복제" width="100%"></p>
+
+### GitOps 배포
+
+클라우드는 허브가 밀고, 온프레는 안에서 당긴다
+
+<p align="center"><img src="docs/img/readme/gitops-flow.png" alt="워커가 gitops 레포에 커밋, Argo CD 허브가 EKS·GKE로, 온프레는 회사 전용 레포에서 pull" width="100%"></p>
 
 ## 🛡️ 보안 다섯 겹
 
@@ -73,42 +75,48 @@ AWS · GCP · 온프레미스(k3s) 사이를 **서비스 중단 없이** 옮기�
 
 ## 🛠️ Tech Stack
 
-**Platform** &nbsp;
-![TypeScript](https://img.shields.io/badge/TypeScript_5.9-3178C6?style=for-the-badge&logo=typescript&logoColor=white)
-![Node.js](https://img.shields.io/badge/Node.js_22-339933?style=for-the-badge&logo=nodedotjs&logoColor=white)
-![Fastify](https://img.shields.io/badge/Fastify_5-000000?style=for-the-badge&logo=fastify&logoColor=white)
-![Zod](https://img.shields.io/badge/Zod_4-3E67B1?style=for-the-badge&logo=zod&logoColor=white)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL_16_·_pg--boss-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
-![React](https://img.shields.io/badge/React_19_·_Vite-61DAFB?style=for-the-badge&logo=react&logoColor=black)
+### ⚙️ Platform
 
-**Infra & Delivery** &nbsp;
-![Terraform](https://img.shields.io/badge/Terraform-844FBA?style=for-the-badge&logo=terraform&logoColor=white)
-![Kubernetes](https://img.shields.io/badge/EKS_·_GKE_·_k3s-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white)
-![Helm](https://img.shields.io/badge/Helm-0F1689?style=for-the-badge&logo=helm&logoColor=white)
-![Argo CD](https://img.shields.io/badge/Argo_CD-EF7B4D?style=for-the-badge&logo=argo&logoColor=white)
-![CloudNativePG](https://img.shields.io/badge/CloudNativePG-336791?style=for-the-badge&logo=postgresql&logoColor=white)
-![Cloudflare](https://img.shields.io/badge/Cloudflare_LB_·_Tunnel-F38020?style=for-the-badge&logo=cloudflare&logoColor=white)
-![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-2088FF?style=for-the-badge&logo=githubactions&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript_5.9-3178C6?style=for-the-badge&logo=typescript&logoColor=white) ![Node.js](https://img.shields.io/badge/Node.js_22-339933?style=for-the-badge&logo=nodedotjs&logoColor=white) ![Fastify](https://img.shields.io/badge/Fastify_5-000000?style=for-the-badge&logo=fastify&logoColor=white) ![Zod](https://img.shields.io/badge/Zod_4-3E67B1?style=for-the-badge&logo=zod&logoColor=white) ![PostgreSQL](https://img.shields.io/badge/PostgreSQL_16_·_pg--boss-4169E1?style=for-the-badge&logo=postgresql&logoColor=white) ![React](https://img.shields.io/badge/React_19_·_Vite-61DAFB?style=for-the-badge&logo=react&logoColor=black)
 
-**Security & Sandbox** &nbsp;
-![AWS STS](https://img.shields.io/badge/AWS_STS_15min-232F3E?style=for-the-badge&logo=amazonwebservices&logoColor=white)
-![GCP WIF](https://img.shields.io/badge/GCP_WIF-4285F4?style=for-the-badge&logo=googlecloud&logoColor=white)
-![External Secrets](https://img.shields.io/badge/External_Secrets_·_Sealed_Secrets-5A4FCF?style=for-the-badge&logo=kubernetes&logoColor=white)
-![vCluster](https://img.shields.io/badge/vCluster_·_gVisor-0F172A?style=for-the-badge&logo=kubernetes&logoColor=white)
-![Kyverno](https://img.shields.io/badge/Kyverno-FF6F00?style=for-the-badge&logo=kubernetes&logoColor=white)
+### ☁️ Infra & Delivery
 
-**Observability & AI** &nbsp;
-![OpenTelemetry](https://img.shields.io/badge/OpenTelemetry-000000?style=for-the-badge&logo=opentelemetry&logoColor=white)
-![Prometheus](https://img.shields.io/badge/Prometheus-E6522C?style=for-the-badge&logo=prometheus&logoColor=white)
-![Grafana](https://img.shields.io/badge/Grafana-F46800?style=for-the-badge&logo=grafana&logoColor=white)
-![k6](https://img.shields.io/badge/k6-7D64FF?style=for-the-badge&logo=k6&logoColor=white)
-![Anthropic Claude](https://img.shields.io/badge/Anthropic_Claude-191919?style=for-the-badge&logo=anthropic&logoColor=white)
+![Terraform](https://img.shields.io/badge/Terraform-844FBA?style=for-the-badge&logo=terraform&logoColor=white) ![Kubernetes](https://img.shields.io/badge/EKS_·_GKE_·_k3s-326CE5?style=for-the-badge&logo=kubernetes&logoColor=white) ![Helm](https://img.shields.io/badge/Helm-0F1689?style=for-the-badge&logo=helm&logoColor=white) ![Argo CD](https://img.shields.io/badge/Argo_CD-EF7B4D?style=for-the-badge&logo=argo&logoColor=white) ![CloudNativePG](https://img.shields.io/badge/CloudNativePG-336791?style=for-the-badge&logo=postgresql&logoColor=white) ![Cloudflare](https://img.shields.io/badge/Cloudflare_LB_·_Tunnel-F38020?style=for-the-badge&logo=cloudflare&logoColor=white) ![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-2088FF?style=for-the-badge&logo=githubactions&logoColor=white)
+
+### 🛡️ Security & Sandbox
+
+![AWS STS](https://img.shields.io/badge/AWS_STS_15min-232F3E?style=for-the-badge&logo=amazonwebservices&logoColor=white) ![GCP WIF](https://img.shields.io/badge/GCP_WIF-4285F4?style=for-the-badge&logo=googlecloud&logoColor=white) ![External Secrets](https://img.shields.io/badge/External_Secrets_·_Sealed_Secrets-5A4FCF?style=for-the-badge&logo=kubernetes&logoColor=white) ![vCluster](https://img.shields.io/badge/vCluster_·_gVisor-0F172A?style=for-the-badge&logo=kubernetes&logoColor=white) ![Kyverno](https://img.shields.io/badge/Kyverno-FF6F00?style=for-the-badge&logo=kubernetes&logoColor=white)
+
+### 📈 Observability & AI
+
+![OpenTelemetry](https://img.shields.io/badge/OpenTelemetry-000000?style=for-the-badge&logo=opentelemetry&logoColor=white) ![Prometheus](https://img.shields.io/badge/Prometheus-E6522C?style=for-the-badge&logo=prometheus&logoColor=white) ![Grafana](https://img.shields.io/badge/Grafana-F46800?style=for-the-badge&logo=grafana&logoColor=white) ![k6](https://img.shields.io/badge/k6-7D64FF?style=for-the-badge&logo=k6&logoColor=white) ![Anthropic Claude](https://img.shields.io/badge/Anthropic_Claude-191919?style=for-the-badge&logo=anthropic&logoColor=white)
 
 ## 🖥️ 이전 콘솔
 
-| 시작 | 명세 확인 | 계획 승인 | 완료 |
-|---|---|---|---|
-| <img src="docs/img/1-start.png" width="220"> | <img src="docs/img/2-spec-review.png" width="220"> | <img src="docs/img/3-plan.png" width="220"> | <img src="docs/img/4-completed.png" width="220"> |
+### 1. 이전 시작
+출발·도착 환경을 고르고 새 이전을 만든다. 왼쪽 목록에서 이전마다 진행 막대와 상태를 본다.
+
+<p align="center"><img src="docs/img/1-start.png" alt="이전 시작 화면" width="100%"></p>
+
+### 2. 명세 확인
+가져오기가 읽은 공통 명세(IR)를 사람이 확인해야 다음 단계로 넘어간다.
+
+<p align="center"><img src="docs/img/2-spec-review.png" alt="명세 확인 화면" width="100%"></p>
+
+### 3. 계획 승인
+계획 번호·지문(planHash)·롤백 기준·단계별 되돌리기를 보고 승인한다. 승인한 지문과 다른 계획은 실행되지 않는다.
+
+<p align="center"><img src="docs/img/3-plan.png" alt="계획 승인 화면" width="100%"></p>
+
+### 4. 이전 완료
+정상 경로 15칸을 모두 지나 completed. 자원 생성부터 정리까지 단계별 결과가 남는다.
+
+<p align="center"><img src="docs/img/4-completed.png" alt="이전 완료 화면" width="100%"></p>
+
+### 트래픽 전환 화면
+출발·도착 가중치와 판정 지표를 실시간으로 본다.
+
+<p align="center"><img src="docs/img/live-traffic-panel.png" alt="트래픽 전환 패널" width="100%"></p>
 
 ## 📁 레포 구조
 
@@ -155,13 +163,35 @@ npm run test:db             # DB 붙은 통합 테스트
 
 ## 👥 Team Iron
 
-| 이름 | 맡은 영역 |
-|---|---|
-| 이정 | 입력층 · API · 가져오기 · IR |
-| 오채건 | 온프레 · IR 보안 · 보안 수집기 |
-| 박승준 | 클라우드 프로비저닝 · agent-worker · 샌드박스 · 콘솔 |
-| 강윤주 | Terraform 모듈 · GKE 자동 생성 · 플랫폼 클러스터 |
-| 박소정 | 플랫폼 인프라 · GitOps · 트래픽 · 관측 · 온프레 프로비저닝 |
+### 이정 · Team Lead · Architecture · Control Plane
+
+전체 아키텍처 설계와 팀 운영, API 서버 · 오케스트레이터, 클라우드 ↔ 클라우드 · 온프레미스 어댑터 계층, DB 무중단 이전, GCP → 온프레미스 실검증
+
+- **팀 리드**: 시스템을 9개 영역으로 나눠 담당자를 정하고, 영역 사이 빈틈을 점검해 인계. 팀 개발 환경 운영 구축
+- **아키텍처 설계**: 본선 아키텍처(v0.5 → v0.6)와 전체 아키텍처 가이드 v4, 보안 다섯 겹 설계, 기능 · API 명세 작성
+- **코드 베이스 구축**: 모노레포 뼈대와 초기 코드(상태 기계 · DB 복제 · 워커 · 웹 콘솔 · 헬름 차트)
+- **입력층**: 고객 키를 받지 않는 연결(AWS AssumeRole + ExternalId 원클릭, GCP WIF, 온프레 Agent 아웃바운드), GitHub 로그인 · CLI 토큰 · 회사별 행 수준 격리
+- **API 서버 · 오케스트레이터**: Fastify + Zod + pg-boss, 22개 상태 전이를 `advance()` 하나로, 계획 지문 · 환경 잠금 · 감사 해시 체인
+- **공통 명세 · 어댑터**: 가져오기 → IR → 어댑터 → Terraform · k8s 계층 설계, 클라우드 → 온프레 대체 규칙(관리형 → 오픈소스, 달라지는 항목은 사람 승인)
+- **DB 무중단 이전**: PostgreSQL 논리 복제 채택, 복제 · 지연 판정 · 컷오버 · 쓰기 차단 · 역방향 복제 롤백
+- **실검증**: GCP 출발 복제 중계기와 무입력 자동화, 이전마다 Cloudflare 입구 자동 생성 · 0 → 10 → 50 → 100 전환, 노트북 k3d와 VM(Rocky + k3s) 두 도착지에서 실요청 도착 · 롤백 확인, 감사 로그로 쓰지 않는 권한 제거
+- **발표**: 중간발표 기획 · 대본 · 발표
+
+### 박승준 · Sandbox Rehearsal · Cloud Provisioning · Web Console
+
+vCluster 배포 리허설 샌드박스와 AI 점검 연결, 클라우드 → 클라우드 프로비저닝(GKE 자동 생성 권한 분리), 웹 콘솔과 디자인 시스템, 비용 예측 POC
+
+### 박소정 · Platform Infra · Traffic
+
+플랫폼 기반 인프라(ECR · RDS · S3 · ESO · Cloudflare Tunnel), Argo CD 허브와 키 없는 GKE · GCP 접근, 트래픽 전환 판정, Prometheus · Grafana · OTel 관측, 인프라 ADR
+
+### 오채건 · Security · Governance · On-premises
+
+보안 판정 엔진과 가드레일, 온프레미스 Agent · 한 줄 설치 · 회사별 gitops 레포, 중계 서버 SSH 터널 양방향 DB 복제, AWS ↔ 온프레미스 양방향 이전 실검증
+
+### 강윤주 · Platform Infra
+
+Terraform bootstrap · 플랫폼 VPC · EKS · 노드 그룹, Pod Identity, ECR 파이프라인과 helm 템플릿, 고객 클러스터 ESO · GKE 자동 생성, 시연용 GCP 출발 환경
 
 ---
 
