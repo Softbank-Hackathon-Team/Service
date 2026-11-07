@@ -1,11 +1,12 @@
 import type { ReactNode } from 'react';
 import { FoldTile } from '../../components/layout/tiles';
 import { CodeValue } from '../../components/ui/CodeValue';
+import { Badge } from '../../components/ui/controls';
 import { api } from '../../lib/api';
 import type { StopReason } from '../../lib/failure';
 import { or404 } from '../../lib/http';
 import { isTerminal } from '../../lib/status';
-import { stopEvidence, stopHelp, type StopHelp } from '../../lib/timelineDetail';
+import { stopEvidence, stopHelp, trafficStubFlag, trafficStubIn, trafficStubLabels, trafficStubNotes, type StopHelp, type TrafficStub } from '../../lib/timelineDetail';
 import type { MigrationStatus, MigrationView } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
 import { analysisCaption, type AnalysisView } from '../agent/model';
@@ -41,6 +42,7 @@ export function StopFold({ migration, reason, into, hint = true, defaultOpen = t
   return (
     <FoldTile title={t('멈춘 이유')} summary={reason.label} defaultOpen={defaultOpen}>
       {hint && <p className={`${s.note} t-body-sm c-secondary`}>{reason.hint}</p>}
+      <TrafficStubMarks stub={evidence?.traffic ?? null} inset explain />
       <ul className={s.rows}>
         {help && <StopHelpRows help={help} />}
         {rows.map((row) => (
@@ -132,10 +134,17 @@ function StopHelpRows({ help }: { help: StopHelp }) {
 /** 트래픽을 옮기는 동안 내린 판정 요약 (증적 리포트의 traffic). 끊김 없이 옮겼는지, 어디서 나빠졌는지의 근거다. */
 export function TrafficReportFold({ migration }: { migration: MigrationView }) {
   const report = usePoll(() => or404(api.report(migration.id)), isTerminal(migration.status) ? null : 10_000, [migration.id]);
+  // 판정 요약은 shift 마다 합친 숫자라, 한 번이라도 가짜 지표·가짜 LB 였으면 표시한다 (워커가 전이 detail 에 남긴 값)
+  const timeline = usePoll(() => or404(api.timeline(migration.id)), isTerminal(migration.status) ? null : 10_000, [migration.id]);
+  const stub = timeline.data ? trafficStubIn(timeline.data.items) : null;
   const traffic = report.data?.traffic ?? null;
   const rows = traffic ? trafficReportRows(traffic) : [];
+  const summary = traffic ? (traffic.bad > 0 ? t('나쁨 {0}번', { 0: traffic.bad }) : t('판정 {0}번 · 나쁨 없음', { 0: traffic.judgements })) : t('아직 없음');
+  const flag = trafficStubFlag(stub);
   return (
-    <FoldTile title={t('전환 판정')} summary={traffic ? (traffic.bad > 0 ? t('나쁨 {0}번', { 0: traffic.bad }) : t('판정 {0}번 · 나쁨 없음', { 0: traffic.judgements })) : t('아직 없음')} defaultOpen={false}>
+    // 접어 둬도 흉내라는 것이 머리줄에 보이게 요약 끝에 경고색으로 붙인다
+    <FoldTile title={t('전환 판정')} summary={flag ? <>{summary} · <span className="c-warning">{flag}</span></> : summary} defaultOpen={false}>
+      <TrafficStubMarks stub={stub} inset explain />
       {rows.length > 0 ? (
         <ul className={s.rows}>
           {rows.map((row) => (
@@ -149,6 +158,27 @@ export function TrafficReportFold({ migration }: { migration: MigrationView }) {
         <p className={`${s.note} t-body-sm c-tertiary`}>{report.loading ? t('리포트를 읽고 있습니다.') : t('트래픽을 옮긴 기록이 없습니다.')}</p>
       )}
     </FoldTile>
+  );
+}
+
+/**
+ * 흉내 지표·가짜 LB 표시. 가짜 숫자·가중치를 실측처럼 보이지 않게 막대·판정 옆에 경고 알약으로 붙인다. 흉내가 아니면 아무것도 그리지 않는다.
+ * inset: 접는 카드 안 (줄과 같은 들여쓰기) / explain: 표시 밑에 무엇이 가짜인지 한 줄씩 푼다
+ */
+export function TrafficStubMarks({ stub, inset = false, explain = false }: { stub: TrafficStub | null; inset?: boolean; explain?: boolean }) {
+  const labels = trafficStubLabels(stub);
+  if (labels.length === 0) return null;
+  return (
+    <>
+      <div className={`${s.stubMarks} ${inset ? s.stubMarksInset : ''}`}>
+        {labels.map((label) => (
+          <Badge key={label} tone="warning">{label}</Badge>
+        ))}
+      </div>
+      {explain && trafficStubNotes(stub).map((line) => (
+        <p key={line} className={`${s.note} t-caption c-tertiary`}>{line}</p>
+      ))}
+    </>
   );
 }
 

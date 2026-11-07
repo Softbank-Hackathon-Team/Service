@@ -19487,6 +19487,29 @@
               "string",
               "null"
             ]
+          },
+          "metricsSource": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "prometheus",
+                  "stub"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "lbStub": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "lbRegistered": {
+            "type": "boolean"
           }
         },
         "required": [

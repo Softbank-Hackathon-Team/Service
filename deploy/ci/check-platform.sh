@@ -151,7 +151,14 @@ DOC=$(helm template platform "$CHART" -n platform "${IMG[@]}" --set envLayer.aut
 has app.yaml Deployment worker '{ name: ENV_LAYER_AUTO, value: "1" }' "envLayer.auto 켬"
 for a in api agent-worker web; do hasnt app.yaml Deployment "$a" ENV_LAYER_AUTO "envLayer.auto 켬"; done
 if ! helm template platform "$CHART" -n platform "${IMG[@]}" --set envLayer=null >/dev/null 2>&1; then echo "FAIL envLayer 칸이 없는 릴리스 값으로 렌더가 안 된다"; fail=1; fi
-[ $fail -eq 0 ] && echo "ok   흉내 트래픽·환경 층 자동 (값 없음·켬·예전 릴리스 값)"
+# 지표 토큰 자동 발급 (values ingressSecretFill.metricToken): 같은 규칙
+DOC=$(helm template platform "$CHART" -n platform "${IMG[@]}")
+for a in api worker agent-worker web; do hasnt app.yaml Deployment "$a" METRIC_TOKEN_AUTOFILL "ingressSecretFill.metricToken 기본"; done
+DOC=$(helm template platform "$CHART" -n platform "${IMG[@]}" --set ingressSecretFill.metricToken=true)
+has app.yaml Deployment worker '{ name: METRIC_TOKEN_AUTOFILL, value: "1" }' "ingressSecretFill.metricToken 켬"
+for a in api agent-worker web; do hasnt app.yaml Deployment "$a" METRIC_TOKEN_AUTOFILL "ingressSecretFill.metricToken 켬"; done
+if ! helm template platform "$CHART" -n platform "${IMG[@]}" --set ingressSecretFill=null >/dev/null 2>&1; then echo "FAIL ingressSecretFill 칸이 없는 릴리스 값으로 렌더가 안 된다"; fail=1; fi
+[ $fail -eq 0 ] && echo "ok   흉내 트래픽·환경 층 자동·지표 토큰 자동 발급 (값 없음·켬·예전 릴리스 값)"
 # worker Terraform 디스크: 값이 없으면 아무것도 안 그린다, 켜면 worker 에만 붙는다, worker 가 2개면 렌더 실패
 if grep -qE 'worker-tf-work|TF_WORK_DIR|type: Recreate' <<<"$(helm template platform "$CHART" -n platform "${IMG[@]}")"; then
   echo "FAIL tfWorkDir 값 없이 디스크가 그려졌다"; fail=1

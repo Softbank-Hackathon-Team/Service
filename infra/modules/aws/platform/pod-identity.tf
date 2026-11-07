@@ -47,6 +47,15 @@ locals {
       ]
       Resource = ["arn:aws:ecr:${var.region}:${var.expected_account_id}:repository/${local.sandbox_image_prefix}/*"]
     },
+    {
+      Sid    = "ReadTargetTunnelToken"
+      Effect = "Allow"
+      # deploy 가 도착 터널 토큰 그릇이 비었을 때 채울 값을 읽는다 (worker gitops/ingress-secrets.ts, env TARGET_TUNNEL_SECRET_ID).
+      # 이 비밀은 Terraform 이 아니라 사람이 만들었다 → 이름 뒤 무작위 6자리는 * . 기본 키(aws/secretsmanager)로 암호화했다고 보고 kms 권한은 안 넣는다
+      # DRAFT(ai): 비밀 하나만. TODO(human) 앱이 여러 개면 비밀 id 를 앱 이름으로 고를지 정한 뒤 범위를 넓힌다
+      Action   = ["secretsmanager:GetSecretValue"]
+      Resource = ["arn:aws:secretsmanager:${var.region}:${var.expected_account_id}:secret:platform/shop-tunnels-*"]
+    },
   ]
 }
 

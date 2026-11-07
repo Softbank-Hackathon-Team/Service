@@ -195,6 +195,15 @@ button.linkPill {
   color: var(--color-fg-primary);
   overflow-wrap: anywhere;
 }
+/* 흉내 표시 (가짜 지표·가짜 LB). 막대·판정 근처에 경고 알약을 줄 바꿈으로 둔다 */
+.stubMarks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-8);
+}
+.stubMarksInset {
+  padding: 0 var(--space-12) var(--space-8);
+}
 .heroPanel {
   display: flex;
   flex-direction: column;

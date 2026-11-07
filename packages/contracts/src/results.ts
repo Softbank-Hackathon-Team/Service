@@ -49,6 +49,13 @@ export const TrafficShiftProgress = z.object({
   reobserve: z.number().int().min(0),
   stepStartedAt: z.string().nullable(),
   observedAt: z.string().nullable(),
+  // 흉내 표시 (pf-d FM-TRF-10·21). 화면이 가짜 숫자·가짜 LB 를 실측처럼 보이지 않게 한다. 옛 서버 응답에는 없을 수 있어 optional
+  //   metricsSource: 워커가 이 이전의 마지막 shift 결과 detail 에 남긴 판정 지표 출처. stub = PROM_URL 없이 흉내 판의 고정 숫자. null = 아직 기록 없음
+  //   lbStub: true = mock 전환기라 진짜 LB 가중치는 안 바뀐다. null = 모름
+  //   lbRegistered: 이 이전에 등록된 LB 자리(migration_traffic_targets)가 있나
+  metricsSource: z.enum(["prometheus", "stub"]).nullable().optional(),
+  lbStub: z.boolean().nullable().optional(),
+  lbRegistered: z.boolean().optional(),
 }).strict();
 export type TrafficShiftProgress = z.infer<typeof TrafficShiftProgress>;
 

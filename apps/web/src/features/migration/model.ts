@@ -1,7 +1,7 @@
 import type { TrafficShiftProgress } from '../../lib/liveTraffic';
 import { substituteRows } from '../../lib/resourceMap';
 import { HUMAN_STEP, isTerminal, LABEL } from '../../lib/status';
-import type { Judgement } from '../../lib/timelineDetail';
+import type { Judgement, TrafficStub } from '../../lib/timelineDetail';
 import {
   VALID,
   type ApprovalRowV2,
@@ -277,15 +277,25 @@ export function isPastStep(migration: Pick<MigrationView, 'status' | 'pausedFrom
 /**
  * 트래픽 막대 밑 한 줄. 실측이 목표에 아직 못 미치면 퍼지는 중이라고 말한다.
  * 전환 기록이 없거나 트래픽 이동 단계가 아니면 쓰지 않는다 (막대가 이미 말한다).
+ * 판정 지표가 흉내(metricsSource stub)면 그 값은 잰 것이 아니라서 "실측"이라고 쓰지 않는다.
  */
 export function shiftNote(
   status: MigrationStatus,
-  shift: Pick<TrafficShiftProgress, 'available' | 'targetWeightPct' | 'observedWeightPct' | 'reached'> | null,
+  shift: Pick<TrafficShiftProgress, 'available' | 'targetWeightPct' | 'observedWeightPct' | 'reached' | 'metricsSource'> | null,
 ): string | null {
   if (status !== 'shifting' || !shift?.available || shift.targetWeightPct === null) return null;
+  if (shift.metricsSource === 'stub')
+    return shift.observedWeightPct === null ? t('목표 {0}%', { 0: shift.targetWeightPct }) : t('목표 {0}% · 흉내 지표 {1}%', { 0: shift.targetWeightPct, 1: shift.observedWeightPct });
   if (shift.observedWeightPct === null) return t('목표 {0}% · 실측 아직 없음', { 0: shift.targetWeightPct });
   if (shift.reached === false) return t('목표 {0}%로 퍼지는 중 · 지금 {1}%', { 0: shift.targetWeightPct, 1: shift.observedWeightPct });
   return t('목표 {0}% · 실측 {1}%', { 0: shift.targetWeightPct, 1: shift.observedWeightPct });
+}
+
+/** 트래픽 전환 진행 응답의 흉내 표시 (서버가 DB 에 남은 사실로 낸 값). 표시할 것이 없거나 옛 서버면 null */
+export function shiftStub(shift: Pick<TrafficShiftProgress, 'metricsSource' | 'lbStub' | 'lbRegistered'> | null): TrafficStub | null {
+  if (!shift) return null;
+  const metrics = shift.metricsSource === 'stub', lb = shift.lbStub === true;
+  return metrics || lb ? { metrics, lb, lbRegistered: shift.lbRegistered ?? null } : null;
 }
 
 const LEFT_STATES: FootprintState[] = ['left', 'unknown', 'running', 'standby', 'creating', 'stopping'];
