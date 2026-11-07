@@ -1,5 +1,5 @@
 import { DeployResult, MigrationJob, QUEUES, type AppSpecV2, type HelmValues, type InfraReady, type PlanDoc, type Provider, type RehearsalEvidence, type ReplicationEndpoint, type ReplicationSealedMaterial } from "@svc/contracts";
-import { asFailureCode, latestAcceptedSpecV2, recordReplicationDelivery, replicationEndpointsFor, replicationSealedMaterialFor, scrubString, withTenant } from "@svc/core";
+import { asFailureCode, latestAcceptedSpecV2, recordReplicationDelivery, replicationEndpointsFor, replicationSealedMaterialFor, scrubString, withTenant, writeAudit, type AuditInput } from "@svc/core";
 import { checkTerraformRuntime, envFor, factsFromEnv, gcpEnvFor, iacMockEnabled, specV2ForPlan, terraformRuntimeOf, type RuntimeHealthDeps, type TerraformRuntime } from "@svc/adapters";
 import { nextJob, runStep, stubWait, stubFailIfAsked, type MigrationRow, type StepOutcome } from "./_step.js";
 import { withStepRoles, type StepRoles } from "./_roles.js";
@@ -7,6 +7,7 @@ import { loadInfraReady, loadPlanById } from "./plan-store.js";
 import { approvedValues, configFromEnv, decideDelivery, deployToGitops, envFacts, filledValues, fillPlaceholders, GitopsError, GitopsRepo, bundlePath, bundleRefFor, tenantSlug, withDelivery, type BundleRef, type DeployInput, type PlanFile, type SyncWatcher } from "../gitops/index.js";
 import { latestSealingCert } from "../gitops/sealing-cert.js";
 import { checkSecretValues } from "../gitops/secret-values.js";
+import { dbMetricIssuer, fillIngressSecrets, readTunnelToken, TUNNEL_SECRET, tunnelSourceFromEnv, type MetricIssuer, type SecretFillResult, type TokenSource } from "../gitops/ingress-secrets.js";
 import { realStsEnabled } from "../platform.js";
 import { syncWatcherFor } from "../gitops/agent-watch.js";
 import { TARGET_ACCOUNT_SQL } from "./target-account.js";
@@ -117,6 +118,9 @@ export async function handleDeploy(raw: unknown) {
         if (te.kind === "ok") { input.trafficEntry = te.sealedSecret; trafficEntry = te.detail; }
         else if (te.kind === "skipped") trafficEntry = { skipped: te.reason };
         try {
+          // 검사 바로 앞: GCP 도착의 빈 입구 비밀(터널·지표 토큰)을 플랫폼이 채운다. 실패면 paused, 성공이면 null
+          const sf = await borrowedSecretFill(j, m, input);
+          if (sf) return sf;
           // APP-20: 커밋 전에 도착 비밀 그릇에 값이 들었나 (흉내 IaC 면 그릇이 없으니 안 본다)
           const sv = await borrowedSecretGate(j, m, input);
           if (sv) return sv;
@@ -271,6 +275,61 @@ async function borrowedSecretGate(j: MigrationJob, m: MigrationRow, i: DeployInp
     return secretValuesGate(i, env);
   });
 }
+// 시험이 입구 비밀 출처(터널 토큰 읽기·지표 토큰 발급)와 감사 쓰기를 가짜로 바꾼다. undefined = 진짜 출처, null = 출처 없음
+type FillAudit = (tenantId: string, a: AuditInput) => Promise<unknown>;
+let fillSources: { tunnel?: TokenSource | null; metric?: MetricIssuer | null; audit?: FillAudit } = {};
+const dbFillAudit: FillAudit = (tenantId, a) => withTenant(tenantId, (tx) => writeAudit(tx, tenantId, a));
+export const setIngressSecretSources = (s: typeof fillSources | undefined) => { fillSources = s ?? {}; };
+/** 검사와 같은 도착 실행 역할을 빌려 빈 입구 비밀을 채운다. 실패면 paused(SECRET_VALUES_UNKNOWN, 이름만), 그 밖은 null → 기존 검사가 그대로 돈다 */
+async function borrowedSecretFill(j: MigrationJob, m: MigrationRow, i: DeployInput): Promise<StepOutcome | null> {
+  if (i.target.provider !== "gcp" || !checksSecrets(i.target.provider)) return null;
+  return withStepRoles("secret_check", j, m, async (roles) => {
+    const env = targetCliEnv(roles, i.target.accountId);
+    // 고객 자격을 못 빌렸으면 채우지 않는다 (뒤 검사가 SECRET_VALUES_UNKNOWN 으로 멈춘다)
+    if (!env && realStsEnabled() && !secretExec) return null;
+    const r = await ingressSecretFill(j, m, i, env);
+    if (!r?.failed.length) return null;
+    return { to: "paused", failureCode: "SECRET_VALUES_UNKNOWN", detail: { deploy: { error: "SECRET_VALUES_UNKNOWN",
+      reason: `입구 비밀을 채우지 못함: ${r.failed.map((f) => f.name).join(", ")} → 출처·권한을 확인하거나 값을 직접 넣고 재개`,
+      secretFill: { filled: r.filled, skipped: r.skipped.map((s) => s.name), failed: r.failed.map((f) => f.name) } } } };
+  });
+}
+/** 지표 토큰 자동 발급은 worker env METRIC_TOKEN_AUTOFILL=1 (차트 ingressSecretFill.metricToken) 일 때만.
+ *  꺼져 있으면 null → 지표 그릇은 no_source 로 건너뛰고 뒤 검사가 SECRET_VALUES_MISSING 으로 멈춘다 (사람이 값을 넣고 재개).
+ *  DRAFT(ai): 기본 끔. 환경당 살아 있는 지표 토큰은 하나라, 같은 도착 환경에 앱이 둘이면 발급이 첫 앱 지표 토큰을 끊는다 */
+export function metricIssuerFor(j: MigrationJob, m: MigrationRow, env: NodeJS.ProcessEnv = process.env,
+  make: typeof dbMetricIssuer = dbMetricIssuer): MetricIssuer | null {
+  return env.METRIC_TOKEN_AUTOFILL?.trim() === "1" ? make(j.tenantId, m.targetEnvId, j.migrationId) : null;
+}
+/** GCP 도착: 입구 비밀(터널·지표 토큰) 중 빈 그릇 채우기. 지표 토큰은 차트 값에 지표가 켜졌을 때만 externalSecrets 에 있다.
+ *  AWS 는 쓰기 권한이 없어 기존 검사에 맡기고(SECRET_VALUES_MISSING → 사람이 넣고 재개), 온프레는 범위 밖 */
+export async function ingressSecretFill(j: MigrationJob, m: MigrationRow, i: DeployInput, env?: NodeJS.ProcessEnv): Promise<SecretFillResult | null> {
+  if (i.target.provider !== "gcp") return null;
+  const named = fillPlaceholders(approvedValues(i), { tf: {}, env: envFacts(i) }).values;
+  const secrets = ((named.externalSecrets as { secrets?: Array<{ name: string; remoteKey: string }> } | undefined)?.secrets ?? []);
+  const src = tunnelSourceFromEnv();
+  // 터널 토큰은 worker 자기 자격(process.env, 플랫폼 계정)으로 읽는다. 빌린 고객 env 를 쓰지 않는다
+  const tunnel = fillSources.tunnel !== undefined ? fillSources.tunnel : src ? () => readTunnelToken(src, secretExec) : null;
+  const metric = fillSources.metric !== undefined ? fillSources.metric : metricIssuerFor(j, m);
+  const r = await fillIngressSecrets({ secrets, projectId: i.target.accountId, ...(env ? { env } : {}), tunnel, metric }, secretExec);
+  if (r.filled.includes(TUNNEL_SECRET)) {
+    // 터널 토큰을 채웠으면 감사 한 줄 (지표 토큰 env.metric_token_issued 와 같은 규칙: 이름만, 토큰 원문·원격 키 없음)
+    // DRAFT(ai): 액션 이름 env.tunnel_token_filled
+    try {
+      await (fillSources.audit ?? dbFillAudit)(j.tenantId, { actor: "worker", action: "env.tunnel_token_filled", target: m.targetEnvId, result: "ok",
+        detail: { by: "deploy", migrationId: j.migrationId, secret: TUNNEL_SECRET } });
+    } catch (e) {
+      // DRAFT(ai): 감사를 못 남기면 채운 것으로 치지 않고 failed → paused(SECRET_VALUES_UNKNOWN). 그릇에는 이미 값이 들어가 있어
+      //   재개하면 has_value 로 건너뛰고 감사는 다시 쓰지 않는다 (재개 전 감사 표·그릇을 사람이 확인)
+      r.filled = r.filled.filter((n) => n !== TUNNEL_SECRET);
+      //   오류 문장은 남기지 않는다 (scrubString 이 못 지우는 모양이 섞일 수 있다). DB 오류 코드만
+      const code = (e as { code?: unknown })?.code;
+      r.failed.push({ name: TUNNEL_SECRET, error: `감사 기록 실패 (env.tunnel_token_filled${typeof code === "string" && /^[0-9A-Z]{5}$/.test(code) ? `, ${code}` : ""})` });
+    }
+  }
+  return r;
+}
+
 export async function secretValuesGate(i: DeployInput, env?: NodeJS.ProcessEnv): Promise<StepOutcome | null> {
   const p = i.target.provider;
   if ((p !== "aws" && p !== "gcp") || !checksSecrets(p)) return null;

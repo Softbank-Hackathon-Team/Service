@@ -17,6 +17,7 @@
 {{- fail "sandbox.rehearsal.enabled 는 sandbox.enabled 와 같이 켠다 (리허설은 sandbox 노드·호스트 가드·agent-worker 권한이 있어야 돈다)" }}
 {{- end }}
 {{- $traffic := default dict .Values.trafficMetrics }}
+{{- $tunnel := default dict .Values.targetTunnel }}
 {{- $hubRoleArn := (default dict .Values.argocd).hubRoleArn | default "" }}
 {{- $argoNs := (default dict .Values.argocd).namespace | default "argocd" }}
 {{- if and $hubRoleArn (not (regexMatch "^arn:aws:iam::[0-9]{12}:role/.+$" $hubRoleArn)) }}
@@ -28,7 +29,7 @@
        2) 그 앱이 이미 비밀(<이름>-env, components.<이름>.secretKeys)로 받는 이름. env 가 envFrom 을 덮어 값이 두 곳이 된다
        3) 비밀처럼 보이는 이름 (*_TOKEN·*_SECRET·*_PASSWORD·*_KEY·*DATABASE_URL). 비밀은 platform/app JSON + secretKeys 로만 넣는다
        DRAFT(ai): 이름은 대문자·숫자·_ 만 받는다 (소문자 jwt_secret 같은 이름이 3) 을 비껴가지 못하게) */}}
-{{- $chartEnv := list "HOME" "ARGO_SOURCE" "ARGOCD_NAMESPACE" "API_PORT" "METRICS_PORT" "WORKER_METRICS_PORT" "TF_WORK_DIR" "API_UPSTREAM" "API_PREFIX" "ARGO_HUB_ROLE_ARN" "GCP_PLATFORM_PROJECT" "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE" "SANDBOX_REHEARSAL" "SANDBOX_IMAGE_REGISTRY" "SANDBOX_RUNTIME_CLASS" "SANDBOX_MODE" "TRAFFIC_METRICS_ENDPOINT" "PROM_URL" "MOCK_TRAFFIC" "ENV_LAYER_AUTO" }}
+{{- $chartEnv := list "HOME" "ARGO_SOURCE" "ARGOCD_NAMESPACE" "API_PORT" "METRICS_PORT" "WORKER_METRICS_PORT" "TF_WORK_DIR" "API_UPSTREAM" "API_PREFIX" "ARGO_HUB_ROLE_ARN" "GCP_PLATFORM_PROJECT" "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE" "SANDBOX_REHEARSAL" "SANDBOX_IMAGE_REGISTRY" "SANDBOX_RUNTIME_CLASS" "SANDBOX_MODE" "TRAFFIC_METRICS_ENDPOINT" "PROM_URL" "MOCK_TRAFFIC" "ENV_LAYER_AUTO" "TARGET_TUNNEL_SECRET_ID" "TARGET_TUNNEL_SECRET_KEY" "METRIC_TOKEN_AUTOFILL" }}
 {{- $extraEnv := dict }}
 {{- range $name := list "api" "worker" "agent-worker" "web" }}
 {{- /* 이 칸이 생기기 전 릴리스 값(--reuse-values)이면 env 가 없다 → 빈 맵 */}}
@@ -193,6 +194,11 @@ spec:
             {{- with $traffic.promUrl }}
             - { name: PROM_URL, value: {{ . | quote }} }
             {{- end }}
+            {{- if and $tunnel.secretId $tunnel.secretKey }}
+            # 배포 단계가 빈 도착 터널 토큰 그릇을 채울 값의 출처 (values targetTunnel, worker gitops/ingress-secrets.ts). worker 자기 자격으로 읽는다
+            - { name: TARGET_TUNNEL_SECRET_ID, value: {{ $tunnel.secretId | quote }} }
+            - { name: TARGET_TUNNEL_SECRET_KEY, value: {{ $tunnel.secretKey | quote }} }
+            {{- end }}
             {{- if (default dict $.Values.traffic).mock }}
             # 흉내 트래픽 (values traffic.mock). 진짜 지표·전환기 없이 shifting 을 넘긴다
             - { name: MOCK_TRAFFIC, value: "1" }
@@ -200,6 +206,10 @@ spec:
             {{- if (default dict $.Values.envLayer).auto }}
             # GCP 도착 환경 층 자동 생성 (values envLayer.auto)
             - { name: ENV_LAYER_AUTO, value: "1" }
+            {{- end }}
+            {{- if (default dict $.Values.ingressSecretFill).metricToken }}
+            # 빈 지표 토큰 그릇 자동 발급 (values ingressSecretFill.metricToken). 같은 도착 환경의 기존 지표 토큰이 끊긴다
+            - { name: METRIC_TOKEN_AUTOFILL, value: "1" }
             {{- end }}
             {{- end }}
             {{- with index $extraEnv $name }}
