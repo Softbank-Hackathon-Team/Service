@@ -149,6 +149,27 @@ test("W4·W5: Agent 자동 deploy 보고(이전 번호 없이 app + 커밋)와 f
   assert.ok(j.items.length >= 1 && j.items.every((i) => i.kind === "facts"));
 });
 
+test("#373 D2: progressing deploy 보고(진행 상태 + 기다리는 자원)를 받고 목록에 그대로 보인다, progress 모양이 틀리면 400", async () => {
+  const sentAt = new Date().toISOString();
+  const prog: AgentReport = { kind: "deploy", agentVersion: "t", sentAt, app: "t-0a1b2c3d-shop-onprem-k3s", bundleHash: "d".repeat(40),
+    status: "progressing", resources: ["Cluster/app-shop/shop-db"], reason: "Synced/Progressing — Cluster/app-shop/shop-db Progressing: Setting up primary",
+    progress: { sync: "Synced", health: "Progressing", waitingOn: { resource: "Cluster/app-shop/shop-db", health: "Progressing", message: "Setting up primary" } } };
+  const res = await sendAgentReport(prog, { baseUrl: base, keyId: KEY, secret: SECRET });
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  const l = await fetch(base + `/api/v1/environments/${E}/agent-reports?kind=deploy`, { headers: { "x-dev-tenant": T } });
+  assert.equal(l.status, 200);
+  const j = await l.json() as { items: Array<{ report: AgentReport }> };
+  const got = j.items.map((i) => i.report).find((r) => r.kind === "deploy" && r.status === "progressing");
+  assert.equal(got?.kind === "deploy" ? got.progress?.waitingOn?.message : undefined, "Setting up primary");
+  // 보내는 쪽 검사를 건너뛴 틀린 progress (모르는 칸) → 받는 쪽 계약이 막는다
+  const { signReport } = await import("@svc/contracts/agent-sig");
+  const body = JSON.stringify({ ...prog, progress: { sync: "Synced", health: "Progressing", eta: 30 } });
+  const ts = Math.floor(Date.now() / 1000);
+  const r = await fetch(base + "/api/v1/agent/reports", { method: "POST", headers: { "content-type": "application/json",
+    "x-agent-key-id": KEY, "x-agent-timestamp": String(ts), "x-agent-signature": signReport(SECRET, ts, body) }, body });
+  assert.equal(r.status, 400);
+});
+
 test("inventory(온프레 출발 가져오기 스냅숏): 1MB 넘는 본문도 계약 상한(4 MiB) 안이면 201, 넘으면 413 · Secret 목록은 400", async () => {
   const { AGENT_INVENTORY_MAX_BYTES } = await import("@svc/contracts");
   const inv = (items: Array<Record<string, unknown>>, resource = "configmaps") => ({ kind: "inventory", agentVersion: "t", sentAt: new Date().toISOString(),

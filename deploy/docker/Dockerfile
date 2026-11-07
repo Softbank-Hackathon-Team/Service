@@ -214,5 +214,5 @@ COPY --from=build-onprem-agent /src/dist/onprem-agent/main.mjs ./
 COPY --from=build-onprem-agent /src/dist/onprem-agent/data ./data
 USER node
 ENTRYPOINT ["node", "main.mjs"]
-# 30초마다 heartbeat, 10번에 1번 security (tools/onprem-agent.ts loop)
-CMD ["loop", "--every", "30"]
+# 10초마다 heartbeat·deploy 보고, security·facts·inventory 는 약 300초마다 (tools/onprem-agent.ts loop, #373 A3). 설치 차트는 agent.every 로 덮는다
+CMD ["loop", "--every", "10"]
