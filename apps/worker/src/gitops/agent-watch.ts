@@ -7,6 +7,7 @@ import { envNumber } from "@svc/contracts";
 import { withTenant } from "@svc/core";
 import { argoAppName, DELIVERY, type BundleRef } from "./bundle.js";
 import { argoWatcherFromEnv, type ArgoDeps } from "./argo-watch.js";
+import { revisionMatcher } from "./revision-check.js";
 import type { SyncWatcher, SyncWatchResult } from "./index.js";
 import type { CommitResult } from "./repo.js";
 
@@ -54,9 +55,47 @@ export function agentPullWatcher(lookup: AgentDeployLookup, env: NodeJS.ProcessE
 }
 
 /** 배포 단계가 쓰는 반영 확인. argocd-push = Argo 폴링(예전 그대로), agent-pull = Agent 보고 기다림 (AGENT_DEPLOY_CONFIRM=0 이면 예전처럼 바로 ok) */
-export function syncWatcherFor(ctx: { tenantId: string; targetEnvId: string }, env: NodeJS.ProcessEnv = process.env, d: ArgoDeps & AgentWatchDeps & { lookup?: AgentDeployLookup } = {}): SyncWatcher {
+//   D3 (#373): d.covers(GitopsRepo.revisionCovers)가 있으면 Agent 보고도 후손 리비전을 받는다 (withDescendantReports). 기다림마다 판정 캐시를 새로 만든다
+export function syncWatcherFor(ctx: { tenantId: string; targetEnvId: string }, env: NodeJS.ProcessEnv = process.env,
+    d: ArgoDeps & AgentWatchDeps & { lookup?: AgentDeployLookup; candidates?: AgentDeployCandidates } = {}): SyncWatcher {
   const argo = argoWatcherFromEnv(env, d);
   if (env.MOCK_ARGO === "1" || env.AGENT_DEPLOY_CONFIRM === "0") return argo;
-  const agent = agentPullWatcher(d.lookup ?? dbAgentDeployLookup(ctx.tenantId, ctx.targetEnvId), env, d);
-  return { wait: (b, c) => (DELIVERY[b.env] === "agent-pull" ? agent.wait(b, c) : argo.wait(b, c)) };
+  const exact = d.lookup ?? dbAgentDeployLookup(ctx.tenantId, ctx.targetEnvId);
+  const candidates = d.candidates ?? (d.lookup ? undefined : dbAgentDeployCandidates(ctx.tenantId, ctx.targetEnvId));
+  const lookupFor = (b: BundleRef): AgentDeployLookup =>
+    candidates && d.covers ? withDescendantReports(exact, candidates, revisionMatcher(b, d.covers)) : exact;
+  return { wait: (b, c) => (DELIVERY[b.env] === "agent-pull" ? agentPullWatcher(lookupFor(b), env, d).wait(b, c) : argo.wait(b, c)) };
+}
+
+// D3 (#373): 같은 커밋 보고가 없을 때 볼 후보 = 이 앱의 다른 리비전마다 가장 최근 보고.
+//   후손 리비전은 우리 커밋 뒤에야 생기므로 우리 커밋 전의 낡은 보고가 후보로 받아질 일은 없다
+// DRAFT(ai): 최근 리비전 5개까지 (판정은 리비전마다 git 한 번, 기다림 안에서 기억)
+export type AgentDeployCandidates = (app: string, commit: string) => Promise<Array<AgentDeployRow & { rev: string }>>;
+
+export function dbAgentDeployCandidates(tenantId: string, envId: string): AgentDeployCandidates {
+  return (app, commit) => withTenant(tenantId, async (tx) => {
+    const r = await tx.query(
+      `SELECT rev, status, reason, received_at FROM (
+         SELECT DISTINCT ON (body->>'bundleHash') body->>'bundleHash' AS rev, body->>'status' AS status, body->>'reason' AS reason, received_at
+           FROM agent_reports
+          WHERE env_id = $1 AND kind = 'deploy' AND body->>'app' = $2 AND body->>'bundleHash' IS DISTINCT FROM $3
+          ORDER BY body->>'bundleHash', received_at DESC) x
+        ORDER BY received_at DESC LIMIT 5`, [envId, app, commit]);
+    return r.rows.flatMap((row) => (row.rev && (row.status === "applied" || row.status === "failed")
+      ? [{ rev: String(row.rev), status: row.status as AgentDeployRow["status"], ...(row.reason ? { reason: String(row.reason) } : {}), receivedAt: new Date(row.received_at).toISOString() }]
+      : []));
+  });
+}
+
+/** D3 (#373): 같은 커밋 보고를 먼저 찾고, 없으면 후보 중 accept(후손 + 묶음 폴더 그대로)가 받는 가장 최근 보고. 판정 오류는 안 받음 (정확히 같은 커밋만) */
+export function withDescendantReports(exact: AgentDeployLookup, candidates: AgentDeployCandidates,
+    accept: (commit: string, rev: string) => Promise<boolean>): AgentDeployLookup {
+  return async (app, commit) => {
+    const row = await exact(app, commit);
+    if (row) return row;
+    for (const { rev, ...cand } of await candidates(app, commit)) {
+      if (await accept(commit, rev).catch(() => false)) return cand;
+    }
+    return null;
+  };
 }

@@ -31,6 +31,7 @@ export const FAILURE_CODES = [
   "ARGO_SYNC_FAILED",            // deploy: Argo가 failed
   "ARGO_DEGRADED", "ARGO_TIMEOUT", "ARGO_APP_MISSING",      // deploy 반영 확인 (Z94 argo-watch): Degraded / 시간 초과 / Application 끝까지 없음
   "ARGO_AUTH_FAILED", "ARGO_UNREACHABLE", "ARGO_NOT_CONFIGURED", //   토큰·RBAC 거부 / 연속 일시 오류 / .env 에 Argo 설정 없음
+  "ARGO_CLUSTER_UNREACHABLE",    //   #373 D1: Argo 허브가 도착 클러스터를 못 읽는 상태(failed to get cluster info 등)가 ARGO_UNREACHABLE_SEC 이어짐 → paused (ARGO_TIMEOUT 과 같은 길)
   "SYNC_FAILED",                 // sync 재시도 소진 또는 영구 실패
   "REPL_ENDPOINT_INCOMPLETE",    // db 0050: 이전의 복제 끝점 줄이 한쪽만 있음 (줄과 env 를 섞지 않는다) → sync paused
   "REPL_SECRET_UNRESOLVED",      // db 0050: password_ref 를 못 풂 (REPL_SECRET_MASTER_KEY 없음·짧음, env:REPL_SECRET_* 없음) → sync paused

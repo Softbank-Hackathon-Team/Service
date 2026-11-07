@@ -4,12 +4,13 @@ import { checkTerraformRuntime, envFor, factsFromEnv, gcpEnvFor, iacMockEnabled,
 import { nextJob, runStep, stubWait, stubFailIfAsked, type MigrationRow, type StepOutcome } from "./_step.js";
 import { withStepRoles, type StepRoles } from "./_roles.js";
 import { loadInfraReady, loadPlanById } from "./plan-store.js";
-import { approvedValues, configFromEnv, decideDelivery, deployToGitops, envFacts, filledValues, fillPlaceholders, GitopsError, GitopsRepo, bundlePath, bundleRefFor, tenantSlug, withDelivery, type BundleRef, type DeployInput, type PlanFile, type SyncWatcher } from "../gitops/index.js";
+import { approvedValues, configFromEnv, decideDelivery, deployToGitops, envFacts, filledValues, fillPlaceholders, GitopsError, GitopsRepo, bundlePath, bundleRefFor, tenantSlug, withDelivery, ENV_DIR, type BundleRef, type DeployInput, type PlanFile, type SyncWatcher } from "../gitops/index.js";
 import { latestSealingCert } from "../gitops/sealing-cert.js";
 import { checkSecretValues } from "../gitops/secret-values.js";
 import { dbMetricIssuer, fillIngressSecrets, readTunnelToken, TUNNEL_SECRET, tunnelSourceFromEnv, type MetricIssuer, type SecretFillResult, type TokenSource } from "../gitops/ingress-secrets.js";
 import { realStsEnabled } from "../platform.js";
 import { syncWatcherFor } from "../gitops/agent-watch.js";
+import { argoStopHint } from "../gitops/argo-watch.js";
 import { TARGET_ACCOUNT_SQL } from "./target-account.js";
 import { recordSkip, rehearsalGate, type Gate } from "../rehearsal/gate.js";
 import { imageCopyStep } from "./image-copy.js";
@@ -141,7 +142,9 @@ export async function handleDeploy(raw: unknown) {
         if ("outcome" in ic) return ic.outcome;
         try {
           // W4: 온프레(agent-pull)는 AGENT_DEPLOY_CONFIRM=1 이면 Agent 배포 보고를 기다린다 (agent-watch.ts). 그 밖은 Argo 폴링 그대로
-          const out = await deployToGitops(repo, input, syncWatcherFor({ tenantId: j.tenantId, targetEnvId: m.targetEnvId }), { expectBundleSha: g.expectBundleSha });
+          //   D3 (#373): covers = 보고 리비전이 우리 커밋의 후손이고 묶음 폴더가 그대로면 같은 커밋으로 본다 (다른 이전이 뒤이어 커밋해도 600초를 안 기다림)
+          const watcher = syncWatcherFor({ tenantId: j.tenantId, targetEnvId: m.targetEnvId }, process.env, { covers: (b, c, rev) => repo.revisionCovers(b, c, rev) });
+          const out = await deployToGitops(repo, input, watcher, { expectBundleSha: g.expectBundleSha });
           result = DeployResult.parse(out.result);
           gitops = { commit: out.commit, argoApp: out.app, ...(out.argo ? { argo: out.argo } : {}), imageCopy: ic.detail };
         } catch (e) { return gitopsPaused(e); }
@@ -159,7 +162,9 @@ export async function handleDeploy(raw: unknown) {
         // 트래픽 0%·컷오버 전이라 출발이 그대로 주인 → 급할 것 없음. 사람이 고쳐 paused → deploying 으로 재개하거나 롤백을 고른다.
         // 실패 이유 앞머리(ARGO_DEGRADED / ARGO_SYNC_FAILED / ARGO_TIMEOUT, W4: AGENT_DEPLOY_FAILED / AGENT_DEPLOY_TIMEOUT)를 failureCode 로
         const code = /^((?:ARGO|AGENT)_[A-Z_]+)/.exec(result.reason ?? "")?.[1] ?? "ARGO_SYNC_FAILED";
-        return { to: "paused", failureCode: code, detail: { deploy: result, ...(gitops ? { gitops } : {}), rehearsal: gate.detail, ...extra(warnings, delivery) } };
+        // D1 (#373): ARGO_CLUSTER_UNREACHABLE 이면 고칠 곳(허브 클러스터 접근·cluster Secret namespaces)을 deploy 칸에 붙인다 (웹 멈춤 화면이 그대로 그림)
+        const help = l.env ? argoStopHint(code, ENV_DIR[l.env.provider]) : null;
+        return { to: "paused", failureCode: code, detail: { deploy: help ? { ...result, ...help } : result, ...(gitops ? { gitops } : {}), rehearsal: gate.detail, ...extra(warnings, delivery) } };
       }
       return {
         to: "syncing", detail: { deploy: result, ...(gitops ? { gitops } : {}), rehearsal: gate.detail, ...extra(warnings, delivery), ...(trafficEntry ? { trafficEntry } : {}) },
@@ -192,7 +197,7 @@ export function withSourceReplication(values: HelmValues): HelmValues | null {
     ? { ...p, replication: { ...((p.replication as Record<string, unknown> | undefined) ?? {}), enabled: true, ensure: "present" } } : p)) };
 }
 
-type SourceRepo = Pick<GitopsRepo, "chartVersion" | "readValues" | "readPlan" | "commitBundle" | "resolve">;
+type SourceRepo = Pick<GitopsRepo, "chartVersion" | "readValues" | "readPlan" | "commitBundle" | "resolve"> & Partial<Pick<GitopsRepo, "revisionCovers">>;
 /** 온프레 → AWS: 출발 온프레 묶음(이 플랫폼이 그린 묶음)에 배달물을 넣어 커밋하고, 출발 환경 Agent 보고를 기다린다.
  *  묶음이 없으면(고객이 직접 올린 앱) 손대지 않고 paused — 출발 클러스터에 우리가 모르는 것을 쓰지 않는다 */
 export async function sourceReplicationStep(j: MigrationJob, m: MigrationRow, input: DeployInput, f: ReplFacts, repo: SourceRepo,
@@ -223,7 +228,9 @@ export async function sourceReplicationStep(j: MigrationJob, m: MigrationRow, in
   const wrote = d.write ? await withTenant(j.tenantId, (tx) => recordReplicationDelivery(tx, d.write!)) : null;
   try {
     const c = await repo.commitBundle("deploy", b, withDelivery(enabled, d), plan, `replication delivery (source) ${j.migrationId.slice(0, 8)}`);
-    const w = await (watcher ?? syncWatcherFor({ tenantId: j.tenantId, targetEnvId: m.sourceEnvId }, env)).wait(b, c);
+    // D3 (#373): 출발 Agent 보고도 후손 리비전(묶음 폴더 그대로)을 받는다
+    const covers = repo.revisionCovers ? { covers: repo.revisionCovers.bind(repo) } : {};
+    const w = await (watcher ?? syncWatcherFor({ tenantId: j.tenantId, targetEnvId: m.sourceEnvId }, env, covers)).wait(b, c);
     const detail = { side: "source", cnpg: d.cnpg.name, reused: d.reused, rowsUpdated: !!wrote, sourcePeerSet: wrote?.sourcePeerSet ?? false,
       sealedSecrets: d.sealedSecrets.map((s) => s.name), commit: c.commit, ...(w.observed ? { agent: w.observed } : {}) };
     if (!w.ok) {
