@@ -105,6 +105,20 @@ test("멈춘 이유: 서버 실패 코드 목록(core failure-codes.ts)의 코�
     assert.notEqual(stopReasonOf(code, "failed")?.label, "알 수 없는 사유", code);
 });
 
+test("멈춘 이유: 온프레 Agent 끊김·보고 없음·배포 실패(#377)와 Argo 가 도착 클러스터를 못 읽음(#375)은 각자 사람 말이 있다", () => {
+  // AGENT_* 는 아직 core FAILURE_CODES 목록에 없다 (워커 agent-watch.ts 주석). 목록에 들어오기 전에도 "알 수 없는 사유"로 떨어지지 않게 여기서 직접 본다
+  for (const code of ["AGENT_OFFLINE", "AGENT_DEPLOY_TIMEOUT", "AGENT_DEPLOY_FAILED", "ARGO_CLUSTER_UNREACHABLE"])
+    assert.notEqual(stopReasonOf(code, "paused")?.label, "알 수 없는 사유", code);
+  const offline = stopReasonOf("AGENT_OFFLINE", "paused")!;
+  assert.equal(offline.label, "온프레 Agent 끊김");
+  assert.match(offline.hint, /Agent 파드·VM·네트워크/);
+  assert.match(offline.hint, /재개/);
+  assert.equal(stopReasonOf("AGENT_DEPLOY_TIMEOUT", "paused")?.label, "Agent 배포 보고 없음");
+  assert.equal(stopReasonOf("AGENT_DEPLOY_FAILED", "paused")?.label, "Agent 배포 실패");
+  assert.equal(stopReasonOf("ARGO_CLUSTER_UNREACHABLE", "paused")?.label, "Argo 가 도착 클러스터를 못 읽음");
+  assert.equal(stopReasonOf("ARGO_TIMEOUT", "paused")?.label, "배포 확인 실패");   // 넓은 ARGO_ 줄은 그대로
+});
+
 test("멈춘 이유: 트래픽 되돌리기 실패는 판정이 아니라 단계 실패, 한도 걸림은 칸이 빈 컨테이너도 말한다", () => {
   const restore = stopReasonOf("TRAFFIC_RESTORE_FAILED", "failed")!;
   assert.equal(restore.kind, "step");

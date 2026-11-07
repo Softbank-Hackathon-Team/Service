@@ -60,7 +60,13 @@ const RULES: Rule[] = [
   // 승인 뒤 바뀜 (워커 gitops approvedValues): 앱을 올리기 전에 멈춘다. 도착 자원(앞 단계)은 이미 만들어져 있다
   { match: /^GITOPS_VALUES_DRIFT$/, kind: "step", label: t('승인 뒤 배포 값 바뀜'), title: t('승인한 뒤 계획이 바뀌어\n앱을 올리지 않았습니다'), hint: t('승인한 배포 값과 지금 만든 값이 달라 앱을 올리기 전에 멈췄습니다. 도착 자원은 앞 단계에서 이미 만들었습니다.') },
   { match: /^GITOPS_/, kind: "step", label: t('배포 저장소 반영 실패'), title: t('배포 저장소에\n반영하지 못했습니다'), hint: t('도착 환경 배포 내용을 GitOps 저장소에 쓰지 못했습니다.') },
+  // #375: Argo 허브가 도착 클러스터를 정해진 시간 넘게 못 읽음 → paused. 고칠 곳(허브 접근·cluster Secret)은 서버가 detail.deploy 의 missing·hint 로 붙인다
+  { match: /^ARGO_CLUSTER_UNREACHABLE$/, kind: "system", label: t('Argo 가 도착 클러스터를 못 읽음'), title: t('Argo CD 가 도착 클러스터를\n읽지 못합니다'), hint: t('Argo CD 허브가 도착 클러스터에 정해진 시간 넘게 닿지 못해 배포 확인을 멈췄습니다. 허브의 클러스터 접근을 고친 뒤 재개해 주세요.') },
   { match: /^(ARGO|DEPLOY)_/, kind: "step", label: t('배포 확인 실패'), title: t('도착 클러스터 배포가\n끝나지 않았습니다'), hint: t('앱이 도착 클러스터에 정상으로 올라왔는지 확인하지 못했습니다.') },
+  // 온프레 도착 배포 확인 (워커 gitops/agent-watch.ts, #377). 셋 다 deploying → paused. 끊김·시간 초과는 서버가 detail 맨 위에 missing·hint 를 붙인다
+  { match: /^AGENT_OFFLINE$/, kind: "system", label: t('온프레 Agent 끊김'), title: t('온프레 Agent 신호가\n끊겼습니다'), hint: t('배포 반영 보고를 기다리는 동안 온프레 Agent 신호가 끊겨 멈췄습니다. 고객 서버에서 Agent 파드·VM·네트워크를 확인한 뒤 재개해 주세요.') },
+  { match: /^AGENT_DEPLOY_TIMEOUT$/, kind: "step", label: t('Agent 배포 보고 없음'), title: t('온프레 배포 보고가\n오지 않았습니다'), hint: t('정해진 시간 안에 온프레 앱이 정상으로 뜨지 않았거나 Agent 의 배포 보고가 오지 않았습니다. 기다리던 자원과 Agent 신호를 확인한 뒤 재개해 주세요.') },
+  { match: /^AGENT_DEPLOY_FAILED$/, kind: "step", label: t('Agent 배포 실패'), title: t('온프레 배포가\n실패했습니다'), hint: t('온프레 Agent 가 도착 클러스터의 배포가 실패했다고 보고했습니다.') },
   // ECS·Cloud Run·VM 도착 배포 확인 (adapters runtime-health). 셋 다 paused 로 멈추고 재개할 수 있다
   { match: /^RUNTIME_OUTPUT_MISSING$/, kind: "step", label: t('배포 결과 빠짐'), title: t('도착 앱을 확인할\n출력이 없습니다'), hint: t('자원 생성 결과에 앱을 확인할 출력(서비스 이름·주소)이 빠져 정상으로 떴는지 보지 못했습니다.') },
   { match: /^RUNTIME_UNHEALTHY$/, kind: "step", label: t('앱이 정상으로 안 뜸'), title: t('도착 앱이\n정상으로 뜨지 않았습니다'), hint: t('ECS·Cloud Run·VM에 올린 앱이 정해진 시간 안에 정상 상태가 되지 않았습니다.') },
