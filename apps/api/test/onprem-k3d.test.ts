@@ -53,7 +53,7 @@ test("up: 클러스터를 만들고 설치 한 줄을 그 클러스터·전용 �
   assert.ok(r.calls.includes(`bootstrap state=${r.home}/.svc-onprem-demo-a kubeconfig=set token=set`), r.calls);
   assert.match(r.applied, /kind: ClusterSecretStore\nmetadata: \{ name: vault \}/);
   assert.match(r.applied, /remoteNamespace: svc-demo-secrets/);
-  assert.match(r.calls, /kubectl .*-n svc-demo-secrets create secret generic api-secrets --from-file=API_TOKEN=/);
+  assert.match(r.calls, /kubectl .*-n svc-demo-secrets create secret generic shop-api-api-secrets --from-file=API_TOKEN=/);
   // 현재 컨텍스트를 바꾸지 않는다 (모든 kubectl 이 임시 kubeconfig)
   for (const l of r.calls.split("\n").filter((x) => x.startsWith("kubectl "))) assert.match(l, /--kubeconfig /);
   assert.ok(!r.calls.includes(TOKEN) && !r.stdout.includes(TOKEN) && !r.stderr.includes(TOKEN));
@@ -74,6 +74,12 @@ test("거부: 등록 전인데 토큰이 없으면 클러스터를 만들기 전
   assert.equal(r.status, 1);
   assert.match(r.stderr, /SVC_ENROLL_TOKEN 이 없다/);
   assert.equal(r.calls, "");
+});
+
+test("up: APP_NAME 을 주면 비밀 이름이 어댑터 규칙(<앱>-<비밀 소문자, _ → ->)을 따른다", () => {
+  const r = run(["up", "demo-d"], { SVC_ENROLL_TOKEN: TOKEN, APP_NAME: "orders", DEMO_SECRETS: "DB_CREDS:PASSWORD" });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.calls, /create secret generic orders-db-creds --from-file=PASSWORD=/);
 });
 
 test("거부: 이름 모양이 틀리면 아무것도 부르지 않는다", () => {
