@@ -33,6 +33,17 @@ const TEST_ENV = /^(load|e2e|test|tmp)-/i;
 
 export const realEnvs = (envs: EnvironmentView[]) => envs.filter((env) => !TEST_ENV.test(env.name));
 
+/**
+ * 숨긴 환경(realEnvs 가 빼는 이름)이 출발이나 도착인 마이그레이션도 목록에서 뺀다.
+ * 환경 목록을 아직 못 읽었으면 null: 숨길 줄을 모르는 채로 전부 보였다가 사라지지 않게 한다.
+ * 목록에 없는 환경 id 는 숨기지 않는다 (지워진 환경의 기록이 통째로 안 보이는 일을 막는다).
+ */
+export function realMigrations(items: MigrationView[], envs: EnvironmentView[] | null | undefined): MigrationView[] | null {
+  if (!envs) return null;
+  const hidden = new Set(envs.filter((env) => TEST_ENV.test(env.name)).map((env) => env.id));
+  return items.filter((item) => !hidden.has(item.sourceEnvId) && !hidden.has(item.targetEnvId));
+}
+
 export const fromStatus = (status: EnvStatus): EnvObservation => ({
   health: status.health,
   mock: status.mock,
