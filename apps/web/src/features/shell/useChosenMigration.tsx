@@ -4,6 +4,7 @@ import { anyMigration } from '../../lib/events';
 import { isTerminal, LABEL } from '../../lib/status';
 import type { MigrationView } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
+import { realMigrations } from '../dashboard/model';
 import s from '../common/page.module.css';
 import { t } from '../../lib/i18n';
 
@@ -20,8 +21,11 @@ export function chooseMigration(items: MigrationView[], id: string | null): Migr
 export function useChosenMigration(page: 'audit' | 'agent', id: string | null) {
   const migrations = usePoll(api.listMigrations, 5_000, [], { signal: anyMigration });
   const envs = usePoll(api.listEnvironments, null, []);
-  const items = migrations.data ?? [];
-  const chosen = chooseMigration(items, id);
+  const all = migrations.data ?? [];
+  // 고르기 칸에는 숨긴 환경이 낀 이전을 빼고 보인다. 주소로 고른 번호는 숨긴 것이라도 그대로 연다
+  const visible = realMigrations(all, envs.data) ?? all;
+  const chosen = chooseMigration(id ? all : visible, id);
+  const items = chosen && !visible.includes(chosen) ? [chosen, ...visible] : visible;
   const envName = (envId: string) => envs.data?.find((env) => env.id === envId)?.name ?? envId.slice(0, 8);
   const routeOf = (item: MigrationView) => `${envName(item.sourceEnvId)} → ${envName(item.targetEnvId)}`;
   const picker = items.length > 0 && (

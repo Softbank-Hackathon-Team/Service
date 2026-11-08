@@ -7,24 +7,27 @@ import { anyMigration } from '../../lib/events';
 import { errorText } from '../../lib/errors';
 import { usePoll } from '../../lib/usePoll';
 import { MigrationRow } from '../dashboard/DashboardPage';
-import { groupMigrations, type MigrationBucket } from '../dashboard/model';
+import { groupMigrations, realMigrations, type MigrationBucket } from '../dashboard/model';
 import { ShellLayout } from '../shell/ShellLayout';
 import s from '../common/page.module.css';
 import { t } from '../../lib/i18n';
 
 const LAYOUT: BentoLayout = { columns: ['fill', 'side'], areas: 'hero list' };
-const BUCKETS: { id: MigrationBucket; label: string }[] = [
-  { id: 'human', label: t('검토 필요') },
-  { id: 'running', label: t('진행 중') },
-  { id: 'done', label: t('히스토리') },
+// 히스토리는 끝난 기록이라 접어 둔다 (대시보드 히스토리 카드와 같음)
+const BUCKETS: { id: MigrationBucket; label: string; defaultOpen: boolean }[] = [
+  { id: 'human', label: t('검토 필요'), defaultOpen: true },
+  { id: 'running', label: t('진행 중'), defaultOpen: true },
+  { id: 'done', label: t('히스토리'), defaultOpen: false },
 ];
 
 export function MigrationsPage() {
   const migrations = usePoll(api.listMigrations, 3_000, [], { signal: anyMigration });
   const envs = usePoll(api.listEnvironments, null, []);
-  const groups = groupMigrations(migrations.data ?? [], Number.POSITIVE_INFINITY);
+  // 숨긴 환경이 낀 마이그레이션은 뺀다. 환경 목록을 읽기 전에는 빈 목록으로 둔다
+  const visible = realMigrations(migrations.data ?? [], envs.data) ?? [];
+  const groups = groupMigrations(visible, Number.POSITIVE_INFINITY);
   const envName = (id: string) => envs.data?.find((env) => env.id === id)?.name ?? id.slice(0, 8);
-  const total = migrations.data?.length ?? 0;
+  const total = visible.length;
   const title = groups.human.length > 0
     ? t('검토가 필요한 마이그레이션이\n{0}건 있습니다', { 0: groups.human.length })
     : groups.running.length > 0
@@ -41,8 +44,8 @@ export function MigrationsPage() {
         )}
       </Hero>
       <Stack area="list">
-        {BUCKETS.map(({ id, label }) => (
-          <FoldTile key={id} title={label} summary={t('{0}건', { 0: groups[id].length })}>
+        {BUCKETS.map(({ id, label, defaultOpen }) => (
+          <FoldTile key={id} title={label} summary={t('{0}건', { 0: groups[id].length })} defaultOpen={defaultOpen}>
             {groups[id].length > 0 ? (
               <ul className={s.rows}>
                 {groups[id].map((migration) => (
