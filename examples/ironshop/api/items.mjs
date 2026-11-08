@@ -19,9 +19,12 @@ export function parseOrder(body) {
 
 /** DB 서버 설정 → 화면에 보일 위치 이름. 주소 모양이 아니라 서버가 가진 설정으로 고른다
  *  (도착 앱이 컷오버 전에 출발 DB 를 IP 로 가리켜도 틀리지 않게)
- *  DRAFT(ai) 【추정】 rds.force_ssl 은 RDS 에만, cloudsql.logical_decoding 은 Cloud SQL 에만 있는 설정. 실계정에서 아직 확인 전 */
+ *  관리형 서비스가 만들어 두는 관리 역할이 있는지로 고른다: rdsadmin 은 RDS 에만, cloudsqlsuperuser 는 Cloud SQL 에만 있다.
+ *  pg_roles 는 아무 계정이나 읽을 수 있어서 앱 계정(shop_app)으로도 보인다.
+ *  예전 규칙(current_setting('rds.force_ssl', true))은 2026-11-08 실제 RDS 에서 앱 계정으로 null 이 나와 RDS 를 CNPG 로 잘못 보였다.
+ *  cloudsqlsuperuser 규칙은 2026-11-08 실제 Cloud SQL(iron-target-gcp)에서 앱 계정으로 "GCP Cloud SQL" 이 나오는 것을 확인했다 */
 export function placeOf(s) {
-  if (s?.rds != null) return "AWS RDS";
-  if (s?.cloudsql != null) return "GCP Cloud SQL";
+  if (s?.rds === true) return "AWS RDS";
+  if (s?.cloudsql === true) return "GCP Cloud SQL";
   return "Postgres (CNPG·자체 운영)";
 }
