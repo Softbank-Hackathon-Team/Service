@@ -32,6 +32,9 @@ import { PermissionGapFold } from '../environments/Permissions';
 import { DoneScreen, CleanupScreen, PausedScreen, RolledBackScreen, RollingBackScreen, RunningScreen, WindowScreen } from './RunScreens';
 import { RequirementsFold, SourceFactsFold, VerdictFold } from './SecurityFolds';
 import { SubstituteMap } from './SubstituteMap';
+import { HeroPager, type HeroPage } from './HeroPager';
+import { PlanFlow, ResourceFlow, SecurityBoard, SpecCards, useSweep } from './HeroVisuals';
+import { specCardsV1, specCardsV2 } from './visuals';
 import { isSecItem, precheckLine, secAckLabel, type SecuritySpecV2 } from './securityV2';
 import { ConfirmPill, Frame, pastHero, StepsView, useAction, useCostConsent, type ScreenProps } from './shared';
 import s from '../common/page.module.css';
@@ -55,9 +58,6 @@ function ImportingScreen({ migration, route, past }: ScreenProps) {
     </Frame>
   );
 }
-
-// DRAFT(ai): 큰 카드에는 확인할 칸을 3칸만 두고 나머지는 "외 N칸"으로 근거 카드에서 본다 (1280×720 에서 큰 카드가 잘리지 않는 수)
-const HERO_REVIEW_ROWS = 3;
 
 /** v2 값 한 칸. 읽지 못한 값(null)은 비워 두고 검토 표시만 한다. 설명 글(점검 문장·환경변수 출처)은 글자로, 값은 고정폭으로 */
 function ValueV2({ row, className, max = 32 }: { row: SpecRowV2; className?: string; max?: number }) {
@@ -142,7 +142,13 @@ function SpecScreen({ migration, route, onChanged, past }: ScreenProps) {
       await spec.reload();
     });
 
-  const heroRows = v2 ? rowsV2.filter((row) => row.review) : [];
+  // 큰 카드: 칸을 요소마다 카드로 묶는다. 확정을 누르면 카드가 차례로 파랗게 차고(useSweep), 다 차고 서버가 받으면 다음 단계로
+  const cards = useMemo(() => (v2 ? specCardsV2(rowsV2, v2.spec) : specCardsV1(rows)), [v2, rowsV2, rows]);
+  const sweep = useSweep(cards.length);
+  const { reset: resetSweep } = sweep;
+  // 새 판이 오면(확인 뒤 새 검토 칸이 생겨 확정하지 않은 경우 등) 채움을 처음으로
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => resetSweep(), [view?.version]);
   return (
     <Frame migration={migration} route={route}>
       <Hero
@@ -175,26 +181,7 @@ function SpecScreen({ migration, route, onChanged, past }: ScreenProps) {
             </div>
           );
         })}
-        {blocks.length === 0 &&
-          !v2 &&
-          rows
-            .filter((row) => row.review)
-            .map((row) => (
-              <div key={row.path} className={s.reviewRow}>
-                <span className="t-label-md">{row.name}</span>
-                <CodeValue value={row.value} size="md" max={32} className={s.rowValue} />
-              </div>
-            ))}
-        {blocks.length === 0 &&
-          heroRows.slice(0, HERO_REVIEW_ROWS).map((row) => (
-            <div key={row.key} className={`${s.reviewRow} ${row.prose ? s.reviewRowStack : ''}`}>
-              <span className="t-label-md">{row.name}</span>
-              <ValueV2 row={row} className={s.rowValue} />
-            </div>
-          ))}
-        {blocks.length === 0 && heroRows.length > HERO_REVIEW_ROWS && (
-          <p className="t-body-md c-secondary">{t('외 {0}칸', { 0: heroRows.length - HERO_REVIEW_ROWS })}</p>
-        )}
+        {blocks.length === 0 && cards.length > 0 && <SpecCards cards={cards} filled={past ? cards.length : sweep.filled} />}
       </Hero>
       <Stack area="side">
         {/* PERM-GATE: 사전 점검이 고객 권한으로 막혔으면 막힌 묶음만 고치는 링크 */}
@@ -315,7 +302,16 @@ function SpecScreen({ migration, route, onChanged, past }: ScreenProps) {
               label={v2 ? confirmLabel(busy, reviewCount, firewall.length) : busy ? t('보내는 중') : t('명세 확정')}
               icon="check"
               disabled={busy || !view || !canConfirmSpec(firewall.length)}
-              onClick={() => void run(confirm)}
+              onClick={() =>
+                void run(async () => {
+                  try {
+                    await Promise.all([confirm(), sweep.play()]);
+                  } catch (reason) {
+                    sweep.reset();
+                    throw reason;
+                  }
+                })
+              }
             />
           </ActionRow>
         )}
@@ -403,9 +399,29 @@ function ApproveScreen({ migration, route, onChanged, past }: ScreenProps) {
   // 확인 항목마다 확인하는 자리는 하나다: 상품 대체는 큰 카드의 대응 줄, 나머지는 "승인 전에 확인" 목록. 승인 버튼은 둘을 합쳐 센다(acks)
   const places = ackPlaces(doc?.acknowledgements);
   const listLeft = places.list.filter((ack) => !ticks.has(ack.id)).length;
-  // 상품 대체가 있으면 큰 카드 본문은 대응 줄이 차지하고, 계획 지문은 머리줄 오른쪽 끝으로 올린다
   const substituting = places.substitutes.length > 0;
-  const hash = doc && <CodeValue value={doc.planHash} chip max={substituting ? 24 : 32} />;
+  const substitutesLeft = places.substitutes.filter((row) => !ticks.has(row.ackId)).length;
+  // 큰 카드 본문은 넘겨 보는 판이다: 계획(실행 순서·되돌리는 조건) · 자원 대응(출발 → 도착 상자) · 상품 대체(확인하는 자리) · 보안.
+  // 계획 지문은 머리줄 오른쪽 끝. 상품 대체 확인이 남았으면 그 판에서 시작한다
+  const hash = doc && <CodeValue value={doc.planHash} chip max={24} />;
+  const pages: HeroPage[] = [
+    { id: 'plan', label: t('계획'), content: doc ? <PlanFlow doc={doc} /> : <p className="t-body-md c-tertiary">{t('계획서를 읽고 있습니다.')}</p> },
+    { id: 'map', label: t('자원 대응'), count: resources.data ? planResourceRows(resources.data).listed.length : null, content: <ResourceFlow view={resources.data ?? null} loading={resources.loading} /> },
+    ...(substituting
+      ? [{
+          id: 'substitute', label: t('상품 대체'), count: past ? null : substitutesLeft,
+          content: (
+            <SubstituteMap
+              rows={places.substitutes}
+              source={resources.data?.source.provider ?? null}
+              target={resources.data?.target.provider ?? null}
+              confirm={{ checked: ticks, disabled: busy || expired || !!past, onToggle: (id) => tick(id, !ticks.has(id)) }}
+            />
+          ),
+        }]
+      : []),
+    { id: 'security', label: t('보안'), content: <SecurityBoard migration={migration} /> },
+  ];
 
   return (
     <Frame migration={migration} route={route}>
@@ -422,22 +438,14 @@ function ApproveScreen({ migration, route, onChanged, past }: ScreenProps) {
                 : t('승인하면 이대로\n바로 실행합니다')
         }
         foot={past ? t('이 지문의 계획을 승인하고 실행했습니다') : doc ? t('유효 시각 {0}', { 0: new Date(doc.expiresAt).toLocaleString(localeTag(), { hour12: false }) }) : undefined}
-        action={substituting && hash}
+        action={hash}
       >
-        {substituting && (
-          <SubstituteMap
-            rows={places.substitutes}
-            source={resources.data?.source.provider ?? null}
-            target={resources.data?.target.provider ?? null}
-            confirm={{ checked: ticks, disabled: busy || expired || !!past, onToggle: (id) => tick(id, !ticks.has(id)) }}
-          />
-        )}
-        {!substituting && hash}
-        {doc && (
-          <p className="t-body-md c-secondary">
-            {t('오류율이 {0}%를 넘거나 응답 시간이 {1}배를 넘으면 자동으로 되돌립니다', { 0: doc.rollbackCriteria.errorRatePct, 1: doc.rollbackCriteria.p95Multiplier })}
-          </p>
-        )}
+        <HeroPager
+          key={doc ? `${doc.planHash}-${substituting}` : 'reading'}
+          label={t('계획서 보기')}
+          pages={pages}
+          initial={substituting && !past && substitutesLeft > 0 ? 'substitute' : 'plan'}
+        />
       </Hero>
       <Stack area="side">
         {doc && places.list.length > 0 && (

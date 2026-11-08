@@ -75,10 +75,12 @@ npm run dev:web                  # http://localhost:5173
 
 | 서버 | 화면 · 칸 | 어떻게 |
 |---|---|---|
-| `GET /migrations/:id/spec` 의 `specV2`·`needsReviewV2`·`fieldMetaV2` | 명세 확정 · 큰 카드 + "읽은 값" | v2 판이면 검토 줄을 `needsReviewV2`로 만든다. 큰 카드에는 3칸까지, 나머지는 "외 N칸". 칸마다 출처·신뢰도·이유는 근거 카드의 그 줄 아래에만 (검토 칸이거나 신뢰도 1 미만일 때). `null` 은 비워 두고 검토 표시만, 환경변수 값은 보이지 않는다 (`features/migration/specV2.ts`) |
+| `GET /migrations/:id/spec` 의 `specV2`·`needsReviewV2`·`fieldMetaV2` | 명세 확정 · 큰 카드 + "읽은 값" | v2 판이면 검토 줄을 `needsReviewV2`로 만든다. 큰 카드는 칸을 요소(구성요소·진입·연결·명세 점검)마다 카드로 묶고(카드마다 5칸, 나머지는 "외 N칸", 확인할 칸이 먼저), 확정을 누르면 카드가 차례로 파랗게 차며 그 카드로 스크롤한 뒤 다음 단계로 간다 (`features/migration/visuals.ts` `specCardsV2`, `HeroVisuals.tsx` `SpecCards`). 칸마다 출처·신뢰도·이유는 근거 카드의 그 줄 아래에만 (검토 칸이거나 신뢰도 1 미만일 때). `null` 은 비워 두고 검토 표시만, 환경변수 값은 보이지 않는다 (`features/migration/specV2.ts`) |
 | `PATCH /migrations/:id/spec` (`confirm`·`include`) | 명세 확정 · 주 행동 | "N칸 확인하고 명세 확정"이 검토 키를 20개씩 그대로 confirm 한 뒤, 남은 칸이 없을 때만 `POST /plan`. 409 `SPEC_VERSION_CONFLICT`면 새 판을 다시 읽는다. v1 판은 지금처럼 `POST /plan` 만 |
 | `outOfBoundary` | 명세 확정 · "이 앱 밖 자원" 접는 카드 | 칸이 있을 때만 (없으면 "없음"이 아니라 그리지 않음). DB·캐시·저장소·큐만 "이 앱으로 가져오기"(`include: [resource]`), 서비스·잡은 버튼 없음 |
 | `accuracy` | 명세 확정 · "가져오기 정확도" 접는 카드 | 비율·비교 기준·비교한 칸 수, 불일치 칸만 줄로. 가져올 때 잰 값이라고 적는다 |
+| 계획서 `steps`·`rollbackCriteria`, `GET /plan/resources`, `GET /security` | 계획 승인 · 큰 카드의 넘기는 판 | 탭·←→·옆으로 밀기로 넘긴다: 계획(실행 순서 상자 → 상자, 비율 단계 막대, 되돌리는 조건 둘 → 출발로 되돌림) · 자원 대응(출발 상자 ─옮기는 법→ 도착 상자) · 상품 대체(있을 때, 확인하는 자리) · 보안(네 칸 숫자·비율 막대·통제마다 출발 → 도착, 나빠지면 빨간 선). 상품 대체 확인이 남았으면 그 판에서 시작한다. 지난 단계로 볼 때도 같다 (`features/migration/HeroPager.tsx`, `HeroVisuals.tsx`) |
+| 타임라인의 `rolling_back` 전이(`lastJudgement`·actor)와 계획서 되돌림 기준 | 롤백 중·롤백 완료 · 큰 카드 | 어디서(그때 상태·도착 비율) → 원인(사유·넘은 지표) → 한 일(자동 롤백·사람 롤백) → 지금, 판정이 있으면 지표마다 출발·도착 막대와 기준 세로선. 판정이 없으면 서버가 남긴 이유 (`visuals.ts` `rollbackCause`) |
 | 계획서 `acknowledgements` | 계획 승인 · "승인 전에 확인" 접는 카드 | 체크 목록 하나. 따로 단계를 두지 않고 승인 버튼이 남은 수를 말한다("확인 2개 남음"). 승인 때 `acks`를 늘 보낸다 (서버는 `PLAN_ACKS=1`일 때만 강제). 체크는 계획 지문에 묶여 계획서가 바뀌면 처음부터 |
 | 계획서 `costSummary` | 계획 승인 · "월 비용" | 계획서에 있으면 미리보기(`GET /cost`) 대신 이 값. 계산 못 한 칸·고정값은 단서로, 가격 기준일은 안내 줄에 |
 | `POST /migrations/:id/start {planHash}` | 실행 시작 | 승인한 계획 지문을 싣는다. 409 `TENANT_BUSY`면 승인 상태 그대로 "다시 시작"(계획이 유효한 동안만) |

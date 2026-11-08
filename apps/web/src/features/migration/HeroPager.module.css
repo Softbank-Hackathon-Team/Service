@@ -1,0 +1,150 @@
+/* 큰 카드 안 넘기는 판. 제목 아래 남은 높이를 다 쓰고, 판 하나가 넘치면 그 판만 스크롤한다 */
+.pager {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--space-16);
+  min-height: 0;
+}
+.bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-12);
+}
+/* 탭: 상단 메뉴와 같은 알약. 고른 판은 엷은 파랑 위 파랑 글자 */
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  padding: var(--space-4);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-subtle);
+}
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+  height: var(--size-control-s);
+  padding: 0 var(--space-16);
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-fg-secondary);
+  cursor: pointer;
+  transition: background-color var(--motion-fade) var(--ease-standard), color var(--motion-fade) var(--ease-standard);
+}
+.tab:hover {
+  color: var(--color-fg-primary);
+}
+.tab[aria-selected='true'] {
+  background: var(--color-bg-surface);
+  color: var(--color-fg-on-accent);
+  box-shadow: 0 0 0 1px var(--color-border-default);
+}
+.tab:focus-visible,
+.arrow:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+.count {
+  display: grid;
+  place-items: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-accent);
+  color: var(--color-fg-on-accent);
+}
+.nav {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-8);
+}
+.dots {
+  display: inline-flex;
+  gap: var(--space-4);
+  margin-right: var(--space-4);
+}
+/* 지금 판 점은 길쭉해진다 (모양으로도 구분) */
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--color-border-strong);
+  transition: width var(--motion-fold) var(--ease-standard), background-color var(--motion-fade) ease;
+}
+.dot[data-on] {
+  width: 18px;
+  background: var(--color-data-target);
+}
+.arrow {
+  display: grid;
+  place-items: center;
+  width: var(--size-control-s);
+  height: var(--size-control-s);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--color-bg-subtle);
+  color: var(--color-fg-primary);
+  cursor: pointer;
+  transition: background-color var(--motion-fade) ease;
+}
+.arrow:hover:not(:disabled) {
+  background: var(--color-bg-selected);
+}
+.arrow:disabled {
+  color: var(--color-fg-disabled);
+  cursor: default;
+  opacity: 0.5;
+}
+.viewport {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  touch-action: pan-y;
+}
+.track {
+  display: flex;
+  height: 100%;
+  transition: transform 420ms var(--ease-standard);
+}
+.page {
+  flex: 0 0 100%;
+  min-width: 0;
+  max-height: 100%;
+  overflow: auto;
+  opacity: 0.35;
+  transition: opacity 420ms var(--ease-standard);
+}
+.page[data-on] {
+  opacity: 1;
+}
+
+/* 좁은 화면: 큰 카드가 내용 높이만 쓴다. 판 높이가 제각각이라 미끄러지지 않고 지금 판만 보인다 (긴 판에 맞춰 짧은 판 아래가 비지 않게) */
+@media (max-width: 1199px) {
+  .viewport,
+  .track,
+  .page {
+    height: auto;
+    max-height: none;
+  }
+  .track {
+    transform: none !important;
+  }
+  .page:not([data-on]) {
+    display: none;
+  }
+  .page[data-on] {
+    animation: page-in var(--motion-fold) var(--ease-standard);
+  }
+}
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+}

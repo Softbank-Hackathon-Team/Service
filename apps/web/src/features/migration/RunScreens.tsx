@@ -17,6 +17,7 @@ import { LeftoverFold, StopFold, TrafficReportFold, TrafficStubMarks } from './E
 import { canRollback, formatClock, pastRunTitle, pastTrafficPercent, runTitle, shiftNote, shiftStub, trafficPercent } from './model';
 import { isRehearsalCode, rehearsalHeroLine } from './rehearsal';
 import { RehearsalFolds, useRehearsal } from './RehearsalFold';
+import { RollbackCauseView } from './HeroVisuals';
 import { SecurityFold } from './SecurityCard';
 import { ConfirmPill, Frame, pastHero, useAction, useCostConsent, type ScreenProps } from './shared';
 import s from '../common/page.module.css';
@@ -290,6 +291,7 @@ export function RollingBackScreen({ migration, route }: ScreenProps) {
         title={t('{0}로\n되돌리고 있습니다', { 0: source })}
         foot={t('되돌린 뒤 이 마이그레이션이 도착에 만든 자원을 지웁니다')}
       >
+        <RollbackCauseView migration={migration} reason={reason} />
         <div className={s.heroPanel}>
           <TrafficBar source={source} target={target} targetPercent={percent} />
           <TrafficStubMarks stub={stub} />
@@ -328,7 +330,10 @@ export function RolledBackScreen({ migration, route }: ScreenProps) {
   const reason = stopReasonOf(migration.failureCode, migration.status);
   return (
     <Frame migration={migration} route={route}>
-      <Hero tone="run" meta={reason ? t('자동 롤백 완료 · {0}', { 0: reason.label }) : t('롤백 완료')} title={t('트래픽을 모두\n{0}로 되돌렸습니다', { 0: source })} foot={t('이 마이그레이션이 도착에 만든 자원은 자동으로 지웁니다. 온프레 도착은 앱과 DB를 지우고 빈 앱 네임스페이스만 남깁니다')} />
+      <Hero tone="run" meta={reason ? t('자동 롤백 완료 · {0}', { 0: reason.label }) : t('롤백 완료')} title={t('트래픽을 모두\n{0}로 되돌렸습니다', { 0: source })} foot={t('이 마이그레이션이 도착에 만든 자원은 자동으로 지웁니다. 온프레 도착은 앱과 DB를 지우고 빈 앱 네임스페이스만 남깁니다')}>
+        {/* 지난 이력으로 볼 때도 왜 되돌렸는지 큰 카드에서 바로 보인다 */}
+        <RollbackCauseView migration={migration} reason={reason} />
+      </Hero>
       <Stack area="side">
         <LeftoverFold migration={migration} title={t('도착에 남은 자원')} />
         {reason && <StopFold migration={migration} reason={reason} into="rolling_back" defaultOpen={false} />}
