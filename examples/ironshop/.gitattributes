@@ -1,0 +1,2 @@
+# 컨테이너 안에서 도는 셸 스크립트는 Windows 에서 받아도 LF (CRLF 면 sh 가 깨진다)
+*.sh text eol=lf
