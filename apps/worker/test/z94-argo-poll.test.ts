@@ -19,7 +19,8 @@ function fakeFetch(seq: R[], seen: string[] = []) {
 }
 // 가짜 시계: sleep 이 시간을 앞으로 민다 → 시험이 실제로 기다리지 않는다
 function clock() { let t = 0; return { now: () => t, sleep: async (ms: number) => { t += ms; }, slept: () => t }; }
-const REST = { ARGOCD_URL: "https://argo.example", ARGOCD_TOKEN: "tok" };
+// 읽기·판정 시험이라 #380 E2·E3 주기 새로고침(fence 앱 읽기가 응답 순서를 먹음)은 끈다. 새 방식은 argo-refresh-loop.test.ts
+const REST = { ARGOCD_URL: "https://argo.example", ARGOCD_TOKEN: "tok", ARGO_REFRESH_SEC: "0" };
 
 test("REST: OutOfSync → 남의 커밋 → 내 커밋 Synced+Healthy 면 ok, 관찰 기록 남김, refresh 는 첫 번만", async () => {
   const seen: string[] = []; const k = clock();
@@ -93,7 +94,7 @@ test("k8s CR: kubectl get applications.argoproj.io 로 읽고, NotFound 는 계�
   ];
   let i = 0;
   const kubectl: KubectlRun = async (args) => { calls.push(args); if (args.includes("annotate")) return { code: 1, stdout: "", stderr: "NotFound" }; return outs[Math.min(i++, outs.length - 1)]!; };
-  const r = await argoWatcherFromEnv({ ARGO_KUBE_CONTEXT: "hub" }, { kubectl, ...clock() }).wait(b, commit);
+  const r = await argoWatcherFromEnv({ ARGO_KUBE_CONTEXT: "hub", ARGO_REFRESH_SEC: "0" }, { kubectl, ...clock() }).wait(b, commit);
   assert.equal(r.ok, true);
   assert.equal(r.observed?.source, "k8s");
   // 첫 읽기 전에 refresh 주석 한 번 (Z103), 그 뒤로는 get 만
@@ -102,12 +103,12 @@ test("k8s CR: kubectl get applications.argoproj.io 로 읽고, NotFound 는 계�
   assert.equal(calls.filter((c) => c.includes("annotate")).length, 1);
 
   const deny: KubectlRun = async () => ({ code: 1, stdout: "", stderr: "Error from server (Forbidden): applications.argoproj.io is forbidden" });
-  assert.match((await argoWatcherFromEnv({ ARGO_KUBE_CONTEXT: "hub" }, { kubectl: deny, ...clock() }).wait(b, commit)).reason!, /^ARGO_AUTH_FAILED/);
+  assert.match((await argoWatcherFromEnv({ ARGO_KUBE_CONTEXT: "hub", ARGO_REFRESH_SEC: "0" }, { kubectl: deny, ...clock() }).wait(b, commit)).reason!, /^ARGO_AUTH_FAILED/);
 });
 
 test("k8s CR: Degraded 면 ARGO_DEGRADED (deploy 가 paused 로)", async () => {
   const kubectl: KubectlRun = async () => ({ code: 0, stdout: JSON.stringify({ status: { sync: { status: "Synced", revision: C }, health: { status: "Degraded", message: "ImagePullBackOff" } } }), stderr: "" });
-  const r = await argoWatcherFromEnv({ ARGO_SOURCE: "k8s" }, { kubectl, ...clock() }).wait(b, commit);
+  const r = await argoWatcherFromEnv({ ARGO_SOURCE: "k8s", ARGO_REFRESH_SEC: "0" }, { kubectl, ...clock() }).wait(b, commit);
   assert.equal(r.reason, "ARGO_DEGRADED: ImagePullBackOff");
 });
 
