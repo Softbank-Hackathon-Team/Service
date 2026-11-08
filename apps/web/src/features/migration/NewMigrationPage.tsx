@@ -7,7 +7,7 @@ import { Checklist, type ChecklistEntry } from '../../components/ui/Checklist';
 import { ActionPill } from '../../components/ui/controls';
 import { Field } from '../../components/ui/Field';
 import { Icon } from '../../components/ui/Icon';
-import { api } from '../../lib/api';
+import { api, auth } from '../../lib/api';
 import { errorText } from '../../lib/errors';
 import { CATEGORY_LABEL } from '../../lib/resourceMap';
 import type { EnvironmentView } from '../../lib/types';
@@ -26,6 +26,7 @@ import {
   scopeSummary,
   softwareOf,
   softwareTitle,
+  demoPicks,
   targetOptions,
   vendorLine,
   type ScopeChoice,
@@ -187,13 +188,15 @@ export function NewMigrationPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const all = realEnvs(envs.data ?? []);
+  // 결선 시연 계정이면 시연 환경만, 출발·도착을 나눠 (source.ts demoPicks). 다른 계정은 null 이라 아래 예전 규칙 그대로
+  const demo = demoPicks(all, auth.get().user?.email);
   // 출발은 연결된 환경만. 끝나지 않은 등록은 기억하지 않는다
-  const connected = all.filter((env) => env.connectionStatus === 'connected');
+  const connected = demo ? demo.sources : all.filter((env) => env.connectionStatus === 'connected');
   const source = connected.find((env) => env.id === sourceId);
   // 실자원은 worker 가 읽어 저장한다 (첫 응답엔 아직 없을 수 있음). 그래서 한 번만 읽지 않고 다시 읽는다
   const inventory = usePoll(sourceId ? () => api.envInventory(sourceId) : null, 5_000, [sourceId]);
   // 도착 고르기가 뜨면 도착 후보 전부의 예상 요금을 한 번 묻는다 (고른 출발 범위로). 화면 단계가 갈려도 훅 순서는 그대로 둔다
-  const targetIds = source && scope ? targetOptions(all, source).options.map((env) => env.id) : [];
+  const targetIds = source && scope ? (demo ? demo.targets(source) : targetOptions(all, source).options).map((env) => env.id) : [];
   const move = useMoveCost(source && scope ? source.id : null, scope?.scope ?? {}, targetIds);
 
   const reset = () =>
@@ -289,7 +292,7 @@ export function NewMigrationPage() {
     );
   }
 
-  const { options, sameVendor } = targetOptions(all, source);
+  const { options, sameVendor } = demo ? { options: demo.targets(source), sameVendor: [] } : targetOptions(all, source);
   const target = options.find((env) => env.id === targetId);
   const create = async () => {
     if (!target) return;
