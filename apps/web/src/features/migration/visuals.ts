@@ -1,5 +1,5 @@
 import type { IconName } from '../../components/ui/Icon';
-import type { ResourceCategory } from '../../lib/resourceMap';
+import type { ResourceCategory, ResourceRow, SubstituteRow } from '../../lib/resourceMap';
 import type { Judgement } from '../../lib/timelineDetail';
 import type { MigrationStatus, PlanDoc, TimelineItem } from '../../lib/types';
 import type { SpecRow } from './model';
@@ -91,6 +91,27 @@ export function specCardsV1(rows: readonly SpecRow[]): SpecCard[] {
 export const sweepStepMs = (cards: number) => Math.round(Math.min(360, Math.max(140, 2200 / Math.max(1, cards))));
 
 // ---- 자원 대응 ----
+
+/** 대응표 한 줄. sub 가 있으면 출발 상품이 도착에서 다른 상품이 되는 줄(대체), 없으면 같은 종류로 옮기는 줄(대응) */
+export type FlowRow = { key: string; row: ResourceRow | null; sub: SubstituteRow | null };
+
+/**
+ * 대응표 줄(GET /plan/resources)과 상품 대체 확인 항목(계획서 substitute, 데이터 구성요소마다 하나)을 한 목록으로.
+ * 짝짓기: 데이터 줄 라벨이 "캐시 · <id>"처럼 구성요소 id 로 끝난다(service-map-v2). DB 가 하나면 라벨이 "DB" 뿐이라
+ * 남은 대체 하나를 그 DB 줄에 붙인다. 그래도 짝이 없는 대체는 맨 끝에 제 줄로 (대체를 숨기지 않는다)
+ */
+export function flowRows(listed: readonly { key: string; row: ResourceRow }[], subs: readonly SubstituteRow[]): FlowRow[] {
+  const out: FlowRow[] = listed.map(({ key, row }) => ({ key, row, sub: null }));
+  const left: SubstituteRow[] = [];
+  for (const sub of subs) {
+    const hit = out.find((item) => !item.sub && item.row!.label.endsWith(` · ${sub.resource}`));
+    if (hit) hit.sub = sub;
+    else left.push(sub);
+  }
+  const dbs = out.filter((item) => item.row!.category === 'database');
+  if (left.length > 0 && dbs.length === 1 && !dbs[0]!.sub && !dbs[0]!.row!.label.includes(' · ')) dbs[0]!.sub = left.shift()!;
+  return [...out, ...left.map((sub) => ({ key: `sub:${sub.ackId}`, row: null, sub }))];
+}
 
 export const CATEGORY_ICON: Record<ResourceCategory, IconName> = {
   cluster: 'server', workload: 'box', database: 'database', ingress: 'globe', registry: 'download', secret: 'lock',

@@ -43,10 +43,17 @@
   color: var(--color-fg-on-accent);
   box-shadow: 0 0 0 1px var(--color-border-default);
 }
-.tab:focus-visible,
-.arrow:focus-visible {
+.tab:focus-visible {
   outline: 2px solid var(--color-border-focus);
   outline-offset: 2px;
+}
+/* 확인을 마친 판: 탭 앞에 체크 */
+.tabTick {
+  fill: none;
+  stroke: var(--color-fg-on-accent);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .count {
   display: grid;
@@ -58,15 +65,9 @@
   background: var(--color-bg-accent);
   color: var(--color-fg-on-accent);
 }
-.nav {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-8);
-}
 .dots {
   display: inline-flex;
   gap: var(--space-4);
-  margin-right: var(--space-4);
 }
 /* 지금 판 점은 길쭉해진다 (모양으로도 구분) */
 .dot {
@@ -79,27 +80,6 @@
 .dot[data-on] {
   width: 18px;
   background: var(--color-data-target);
-}
-.arrow {
-  display: grid;
-  place-items: center;
-  width: var(--size-control-s);
-  height: var(--size-control-s);
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-full);
-  background: var(--color-bg-subtle);
-  color: var(--color-fg-primary);
-  cursor: pointer;
-  transition: background-color var(--motion-fade) ease;
-}
-.arrow:hover:not(:disabled) {
-  background: var(--color-bg-selected);
-}
-.arrow:disabled {
-  color: var(--color-fg-disabled);
-  cursor: default;
-  opacity: 0.5;
 }
 .viewport {
   flex: 1 1 auto;

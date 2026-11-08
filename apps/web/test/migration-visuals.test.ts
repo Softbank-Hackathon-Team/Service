@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { SpecRowV2 } from "../src/features/migration/specV2";
-import { metricScale, rollbackCause, specCardsV1, specCardsV2, sweepStepMs } from "../src/features/migration/visuals";
+import { flowRows, metricScale, rollbackCause, specCardsV1, specCardsV2, sweepStepMs } from "../src/features/migration/visuals";
+import type { ResourceRow } from "../src/lib/resourceMap";
 import type { TimelineItem } from "../src/lib/types";
 
 const row = (key: string, name: string, over: Partial<SpecRowV2> = {}): SpecRowV2 => ({ key, name, value: "v", unread: false, review: false, prose: false, provenance: null, ...over });
@@ -68,4 +69,24 @@ test("롤백 원인: 응답 시간을 재지 못한 판정은 오류율만, 사�
   assert.equal(human.from, "rollback_window");
   assert.deepEqual(human.metrics, []);
   assert.equal(rollbackCause([], null, null, null).from, null, "기록이 없으면 모름");
+});
+
+const res = (category: ResourceRow["category"], label: string): { key: string; row: ResourceRow } => ({
+  key: label, row: { category, label, source: { service: "s", detail: null }, target: { service: "t", detail: null }, method: "create_new", methodLabel: "새로 만듦", step: null, stepState: "todo", afterSource: null },
+});
+
+test("자원 대응: 상품 대체는 라벨 끝 구성요소 id 로 그 줄에 붙고, DB 가 하나면 남은 대체를 DB 줄에, 그래도 없으면 끝에 제 줄", () => {
+  const listed = [res("cluster", "컨테이너 클러스터"), res("database", "DB"), res("cache", "캐시 · session")];
+  const rows = flowRows(listed, [
+    { ackId: "substitute:session", resource: "session", from: "ElastiCache (redis)", to: "Memorystore (redis)" },
+    { ackId: "substitute:db", resource: "db", from: "RDS for PostgreSQL", to: "Cloud SQL for PostgreSQL" },
+    { ackId: "substitute:files", resource: "files", from: "S3", to: "GCS" },
+  ]);
+  assert.deepEqual(rows.map((r) => [r.key, r.sub?.resource ?? null]), [
+    ["컨테이너 클러스터", null], ["DB", "db"], ["캐시 · session", "session"], ["sub:substitute:files", "files"],
+  ]);
+  assert.equal(rows[3]!.row, null, "짝 없는 대체도 숨기지 않는다");
+  // DB 가 여럿이면 라벨에 id 가 붙어 그대로 짝짓는다
+  const two = flowRows([res("database", "DB · orders"), res("database", "DB · users")], [{ ackId: "substitute:users", resource: "users" }]);
+  assert.deepEqual(two.map((r) => r.sub?.resource ?? null), [null, "users"]);
 });

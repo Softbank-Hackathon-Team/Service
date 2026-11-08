@@ -6,7 +6,8 @@ import { t } from '../../lib/i18n';
 type ActionPillProps = {
   label: string;
   icon?: IconName;
-  tone?: 'tile' | 'danger';
+  /** tile = 파란 주 버튼, neutral = 아직 확인하는 단계의 흰 버튼(확인을 마치면 같은 자리에서 파랑으로 바뀐다) */
+  tone?: 'tile' | 'neutral' | 'danger';
   disabled?: boolean;
   type?: 'button' | 'submit';
   onClick?: () => void;

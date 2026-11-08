@@ -1,89 +1,61 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { Badge } from '../../components/ui/controls';
 import { Icon } from '../../components/ui/Icon';
 import { SecurityDot, SecurityLegend, type SecurityStatus } from '../../components/ui/Security';
 import { api } from '../../lib/api';
 import type { StopReason } from '../../lib/failure';
 import { or404 } from '../../lib/http';
-import { planResourceRows, runtimeChangeNote, type PlanResourcesView, type ResourceSide } from '../../lib/resourceMap';
+import { runtimeChangeNote, type PlanResourcesView, type ResourceSide } from '../../lib/resourceMap';
+import type { SecurityView } from '../../lib/security-types';
 import { isTerminal, LABEL, PROVIDER_SHORT } from '../../lib/status';
 import { stopEvidence, stopHelp } from '../../lib/timelineDetail';
-import type { MigrationView, PlanDoc, PlanStep } from '../../lib/types';
+import type { MigrationView } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
 import { controlRows, securityHeadline } from '../security/model';
-import { stepName } from './model';
-import { CATEGORY_ICON, metricScale, rollbackCause, sweepStepMs, type CauseMetric, type SpecCard } from './visuals';
+import { CATEGORY_ICON, metricScale, rollbackCause, sweepStepMs, type CauseMetric, type FlowRow, type SpecCard } from './visuals';
 import v from './HeroVisuals.module.css';
 import { localeTag, t } from '../../lib/i18n';
 
 // 큰 카드 그림. 글로 줄줄이 쓰지 않고 상자·화살표·색으로 보인다. 색은 토큰만 쓴다:
 //   출발 = 회색(data-source), 도착 = 파랑(data-target), 성공·주의·위험 = 엷은 바탕 위 글자색, 막대만 신호색(signal-*)
+// 확인(채움): filled 개까지 차례로 엷은 파랑이 왼쪽부터 번지고 체크가 그려진다. 채우는 줄이 보이도록 그 칸만 스크롤한다
 
-const OWNER: Record<PlanStep['owner'], string> = { terraform: 'Terraform', argocd: 'Argo CD', agent: 'Agent', worker: t('워커') };
-
-/** 비율 단계(10 → 50 → 100%)를 키가 다른 막대로 */
-function WeightBars({ weights }: { weights: number[] }) {
-  return (
-    <span className={v.weights} aria-label={`${weights.join(' → ')}%`} role="img">
-      {weights.map((weight, index) => (
-        <span key={`${weight}-${index}`} className={v.weight}>
-          <span className={v.weightBar} style={{ height: `${Math.max(12, weight)}%` }} />
-          <span className="t-caption c-tertiary">{weight}</span>
-        </span>
-      ))}
-    </span>
-  );
+/** 가장 가까운 세로 스크롤 칸 안에서만 el 이 보이게 스크롤한다 (페이지·옆으로 넘기는 판은 건드리지 않는다) */
+function revealInScroller(el: HTMLElement | null) {
+  let box = el?.parentElement ?? null;
+  while (box && !/(auto|scroll)/.test(getComputedStyle(box).overflowY)) box = box.parentElement;
+  if (!el || !box) return;
+  const top = el.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
+  const bottom = top + el.offsetHeight;
+  // 위아래 흐림(32px)에 걸리지 않게 조금 더 내린다
+  const target = bottom > box.scrollTop + box.clientHeight - 32 ? bottom - box.clientHeight + 40 : top < box.scrollTop + 32 ? top - 40 : null;
+  if (target === null) return;
+  box.scrollTo({ top: Math.max(0, target), behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
 }
 
-/** 계획 판: 실행 순서(상자 → 상자)와 자동으로 되돌리는 조건(조건 둘 → 되돌림) */
-export function PlanFlow({ doc }: { doc: PlanDoc }) {
-  const criteria = doc.rollbackCriteria;
+/**
+ * 채움이 한 칸 늘 때마다(확인 애니메이션) 방금 채운 줄(filled - 1번째 자식)이 보이게.
+ * 처음부터 다 찬 채로 그리거나(지난 단계 보기) 데이터가 늦게 와서 한꺼번에 늘 때는 스크롤하지 않는다
+ */
+function useReveal(filled: number) {
+  const list = useRef<HTMLElement | null>(null);
+  const last = useRef(filled);
+  useEffect(() => {
+    const step = filled - last.current === 1;
+    last.current = filled;
+    if (step) revealInScroller((list.current?.children[filled - 1] as HTMLElement | undefined) ?? null);
+  }, [filled]);
+  return list;
+}
+
+/** 확인 동그라미: 빈 고리 → 파랗게 차며 체크가 그려진다 */
+function Tick({ on }: { on: boolean }) {
   return (
-    <div className={`${v.stack} ${v.plan}`}>
-      <p className="t-label-sm c-tertiary">{t('실행 순서')}</p>
-      <ol className={v.flow}>
-        {doc.steps.map((step, index) => (
-          <li key={step.id} className={v.flowItem}>
-            <div className={v.stepBox}>
-              <span className={v.stepHead}>
-                <span className={`${v.stepNo} t-caption`}>{index + 1}</span>
-                <span className="t-label-md">{stepName(step.id)}</span>
-              </span>
-              {step.weights?.length ? <WeightBars weights={step.weights} /> : null}
-              <span className="t-caption c-tertiary">
-                {[OWNER[step.owner] ?? step.owner, step.holdSec ? t('단계마다 {0}초', { 0: step.holdSec }) : null].filter(Boolean).join(' · ')}
-              </span>
-            </div>
-            {index < doc.steps.length - 1 && (
-              <span className={v.flowArrow} aria-hidden="true">
-                <Icon name="arrow-right" />
-              </span>
-            )}
-          </li>
-        ))}
-      </ol>
-      <p className="t-label-sm c-tertiary">{t('자동으로 되돌리는 조건')}</p>
-      <div className={v.trigger}>
-        <div className={v.triggerIn}>
-          <div className={v.condBox}>
-            <span className="t-caption c-tertiary">{t('도착 오류율')}</span>
-            <span className="t-h3">&gt; {criteria.errorRatePct}%</span>
-          </div>
-          <span className={`${v.or} t-caption c-tertiary`}>{t('또는')}</span>
-          <div className={v.condBox}>
-            <span className="t-caption c-tertiary">{t('도착 응답 p95')}</span>
-            <span className="t-h3">&gt; {t('출발 × {0}', { 0: criteria.p95Multiplier })}</span>
-          </div>
-        </div>
-        <span className={v.join} aria-hidden="true" />
-        <div className={v.outcome}>
-          <span className={v.outcomeIcon}>
-            <Icon name="rollback" size={20} />
-          </span>
-          <span className="t-label-md">{t('출발로 되돌림')}</span>
-          <span className="t-caption c-secondary">{t('트래픽을 모두 출발로 돌리고 DB 쓰기도 출발에 둡니다')}</span>
-        </div>
-      </div>
-    </div>
+    <span className={v.tick} data-on={on || undefined} aria-label={on ? t('확인함') : undefined}>
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+        <path d="M20 6 9 17l-5-5" />
+      </svg>
+    </span>
   );
 }
 
@@ -98,40 +70,70 @@ function SideBox({ side, end, empty }: { side: ResourceSide | null; end: 'source
   );
 }
 
-/** 자원 대응 판: 줄마다 출발 상자 ─(옮기는 법)→ 도착 상자. 맨 위는 두 환경 */
-export function ResourceFlow({ view, loading }: { view: PlanResourcesView | null; loading: boolean }) {
-  if (!view) return <p className="t-body-md c-tertiary">{loading ? t('대응표를 읽고 있습니다.') : t('아직 대응표가 없습니다.')}</p>;
-  const { listed, boundary } = planResourceRows(view);
+/**
+ * 자원 대응 판: 맨 위 두 환경, 그 아래 줄마다 출발 상자 ─[대응|대체]→ 도착 상자.
+ * 대체 = 출발 상품이 도착에서 다른 상품이 되는 줄(계획서 substitute 확인 항목). 그 줄 밑에 옮기지 못하는 것·앱 코드 변경을 둔다
+ */
+export function ResourceFlow({ view, loading, rows, boundary, filled }: {
+  view: PlanResourcesView | null; loading: boolean; rows: FlowRow[]; boundary: { label: string; afterSource: string | null } | null; filled: number;
+}) {
+  const list = useReveal(filled);
+  if (!view && rows.length === 0) return <p className="t-body-md c-tertiary">{loading ? t('대응표를 읽고 있습니다.') : t('아직 대응표가 없습니다.')}</p>;
   return (
     <div className={v.map}>
-      <div className={v.mapRow}>
-        <div className={v.endBox} data-end="source">
-          <span className="t-caption c-secondary">{t('출발')}</span>
-          <span className="t-label-md">{PROVIDER_SHORT[view.source.provider]} · {view.source.name}</span>
+      {view && (
+        <div className={v.ends}>
+          <div className={v.endBox} data-end="source">
+            <span className="t-caption c-secondary">{t('출발')}</span>
+            <span className="t-label-md">{PROVIDER_SHORT[view.source.provider]} · {view.source.name}</span>
+          </div>
+          <span className={v.wire} data-strong aria-hidden="true" />
+          <div className={v.endBox} data-end="target">
+            <span className="t-caption c-secondary">{t('도착')}</span>
+            <span className="t-label-md">{PROVIDER_SHORT[view.target.provider]} · {view.target.name}</span>
+          </div>
         </div>
-        <span className={v.wire} data-strong aria-hidden="true" />
-        <div className={v.endBox} data-end="target">
-          <span className="t-caption c-secondary">{t('도착')}</span>
-          <span className="t-label-md">{PROVIDER_SHORT[view.target.provider]} · {view.target.name}</span>
-        </div>
-      </div>
-      {listed.map(({ key, row }) => (
-        <div key={key} className={v.mapRow}>
-          <span className={`${v.mapHead} t-caption c-secondary`}>
-            <Icon name={CATEGORY_ICON[row.category] ?? 'list'} size={14} />
-            {row.label}
-          </span>
-          <SideBox side={row.source} end="source" empty={t('출발에 없음')} />
-          <span className={v.link}>
-            <span className={`${v.method} t-caption`}>{row.methodLabel}</span>
-            <span className={v.wire} aria-hidden="true" />
-          </span>
-          <SideBox side={row.target} end="target" empty={t('만들지 않음')} />
-          {runtimeChangeNote(row) && <span className={`${v.mapNote} t-caption c-warning`}>{runtimeChangeNote(row)}</span>}
-        </div>
-      ))}
+      )}
+      <ol ref={(el) => { list.current = el; }} className={v.mapRows}>
+        {rows.map(({ key, row, sub }, index) => {
+          const done = index < filled;
+          const lost = sub?.lost ?? [];
+          return (
+            <li key={key} className={v.mapRow} data-done={done || undefined} style={{ '--i': index } as CSSProperties}>
+              <span className={v.fill} aria-hidden="true" />
+              <span className={v.mapHead}>
+                <span className="t-caption c-secondary">
+                  <Icon name={row ? (CATEGORY_ICON[row.category] ?? 'list') : 'database'} size={14} />
+                  {row?.label ?? sub?.resource}
+                </span>
+                <Tick on={done} />
+              </span>
+              <SideBox side={row?.source ?? (sub?.from ? { service: sub.from, detail: null } : null)} end="source" empty={t('출발에 없음')} />
+              <span className={v.link}>
+                <span className={`${v.kindBadge} t-caption`} data-kind={sub ? 'substitute' : 'map'}>{sub ? t('대체') : t('대응')}</span>
+                <span className={v.wire} aria-hidden="true" />
+                {row?.methodLabel && <span className="t-caption c-tertiary">{row.methodLabel}</span>}
+              </span>
+              <SideBox side={row?.target ?? (sub?.to ? { service: sub.to, detail: null } : null)} end="target" empty={t('만들지 않음')} />
+              {sub && (sub.from || sub.to) && row && (
+                <span className={`${v.mapNote} t-caption c-secondary`}>{[sub.from, sub.to].filter(Boolean).join(' → ')}</span>
+              )}
+              {sub && (lost.length > 0 || sub.appChange !== undefined || sub.detail) && (
+                <span className={v.subNote}>
+                  {sub.appChange !== undefined && (
+                    <Badge tone={sub.appChange ? 'warning' : 'neutral'}>{sub.appChange ? t('앱 코드 변경 필요') : t('그대로 연결')}</Badge>
+                  )}
+                  {lost.length > 0 && <span className="t-caption c-secondary">{t('옮기지 못하는 것 · {0}', { 0: lost.join(', ') })}</span>}
+                  {sub.detail && <span className="t-caption c-secondary">{sub.detail}</span>}
+                </span>
+              )}
+              {row && runtimeChangeNote(row) && <span className={`${v.mapNote} t-caption c-warning`}>{runtimeChangeNote(row)}</span>}
+            </li>
+          );
+        })}
+      </ol>
       {boundary && (
-        <p className={`${v.mapFoot} t-caption c-tertiary`}>
+        <p className="t-caption c-tertiary">
           {boundary.label} · {boundary.afterSource ?? t('옮기지 않음')}
         </p>
       )}
@@ -150,14 +152,15 @@ const KEPT: ReadonlySet<SecurityStatus> = new Set(['pass', 'attested']);
 const changeOf = (source: SecurityStatus, target: SecurityStatus) =>
   KEPT.has(source) && target === 'fail' ? 'worse' : source === 'fail' && KEPT.has(target) ? 'better' : 'same';
 
+/** 보안 판의 통제 줄 (확인 채움이 세는 단위) */
+export const securityControls = (view: SecurityView | null) => (view?.controlMatrix ? controlRows(view.controlMatrix) : []);
+
 /** 보안 판: 판정 한 줄, 네 칸 숫자 상자와 비율 막대, 통제마다 출발 ● → ● 도착 (나빠지면 빨간 선) */
-export function SecurityBoard({ migration }: { migration: MigrationView }) {
-  const live = !isTerminal(migration.status);
-  const security = usePoll(() => or404(api.security(migration.id)), live ? 10_000 : null, [migration.id]);
-  const view = security.data;
-  if (!view) return <p className="t-body-md c-tertiary">{security.loading ? t('보안 표를 읽고 있습니다.') : t('아직 보안 표가 없습니다.')}</p>;
+export function SecurityBoard({ view, loading, filled }: { view: SecurityView | null; loading: boolean; filled: number }) {
+  const list = useReveal(filled);
+  if (!view) return <p className="t-body-md c-tertiary">{loading ? t('보안 표를 읽고 있습니다.') : t('아직 보안 표가 없습니다.')}</p>;
   const headline = securityHeadline(view, null);
-  const controls = view.controlMatrix ? controlRows(view.controlMatrix) : [];
+  const controls = securityControls(view);
   const total = TALLY.reduce((sum, item) => sum + view.summary[item.key], 0);
   return (
     <div className={v.stack}>
@@ -181,10 +184,12 @@ export function SecurityBoard({ migration }: { migration: MigrationView }) {
             <span>{t('통제')}</span>
             <span>{t('출발 → 도착')}</span>
           </p>
-          <ul className={v.controls}>
-            {controls.map((control) => (
-              <li key={control.id} className={v.control} data-change={changeOf(control.source, control.target)}>
-                <span className="t-body-sm" title={control.reason || undefined}>{control.title}</span>
+          <ul ref={(el) => { list.current = el; }} className={v.controls}>
+            {controls.map((control, index) => (
+              <li key={control.id} className={v.control} data-change={changeOf(control.source, control.target)} data-done={index < filled || undefined}>
+                <span className={v.fill} aria-hidden="true" />
+                <Tick on={index < filled} />
+                <span className={`${v.controlTitle} t-body-sm`} title={control.reason || undefined}>{control.title}</span>
                 <span className={v.pair}>
                   <SecurityDot status={control.source} />
                   <span className={v.pairWire} aria-hidden="true" />
@@ -300,19 +305,15 @@ const CARD_ROWS = 5;
  * 채우는 장이 바뀌면 그 카드가 보이도록 큰 카드 안을 스크롤한다
  */
 export function SpecCards({ cards, filled }: { cards: SpecCard[]; filled: number }) {
-  const list = useRef<HTMLOListElement>(null);
-  useEffect(() => {
-    if (filled <= 0 || filled > cards.length) return;
-    const card = list.current?.children[filled - 1] as HTMLElement | undefined;
-    card?.scrollIntoView({ block: 'nearest', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
-  }, [filled, cards.length]);
+  const list = useReveal(filled);
   return (
-    <ol ref={list} className={`${v.specCards} scroll-fade`}>
+    <ol ref={(el) => { list.current = el; }} className={`${v.specCards} scroll-fade`}>
       {cards.map((card, index) => {
         const more = card.rows.length - CARD_ROWS;
+        const done = index < filled;
         return (
-          <li key={card.id} className={v.specCard} data-done={index < filled || undefined} style={{ '--i': index } as CSSProperties}>
-            <span className={v.specFill} aria-hidden="true" />
+          <li key={card.id} className={v.specCard} data-done={done || undefined} style={{ '--i': index } as CSSProperties}>
+            <span className={v.fill} aria-hidden="true" />
             <span className={v.specHead}>
               <span className={v.specIcon}>
                 <Icon name={card.icon} />
@@ -321,11 +322,7 @@ export function SpecCards({ cards, filled }: { cards: SpecCard[]; filled: number
                 <span className="t-label-md">{card.title}</span>
                 <span className="t-caption c-tertiary">{[card.kind, card.review > 0 ? t('확인 {0}칸', { 0: card.review }) : null].filter(Boolean).join(' · ')}</span>
               </span>
-              <span className={v.tick} aria-label={index < filled ? t('확인함') : undefined}>
-                <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-                  <path d="M20 6 9 17l-5-5" />
-                </svg>
-              </span>
+              <Tick on={done} />
             </span>
             <ul className={v.specRows}>
               {card.rows.slice(0, CARD_ROWS).map((row) => (

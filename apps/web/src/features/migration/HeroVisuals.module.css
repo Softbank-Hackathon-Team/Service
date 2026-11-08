@@ -6,195 +6,121 @@
   padding-bottom: var(--space-8);
 }
 
-/* ---- 계획: 실행 순서 ---- */
-/* 칸 너비가 넉넉하면 한 줄 6칸, 아니면 3칸씩 두 줄. 화살표는 칸 사이 틈에, 줄 끝 칸에는 두지 않는다 */
-.plan {
-  container-type: inline-size;
-}
-.flow {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-8) var(--space-24);
-}
-.flowItem {
-  position: relative;
-  display: flex;
-}
-.flowItem:last-child .flowArrow,
-.flowItem:nth-child(3n) .flowArrow {
-  display: none;
-}
-@container (min-width: 860px) {
-  .flow {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
-    gap: var(--space-8) var(--space-20);
-  }
-  .flowItem:nth-child(3n) .flowArrow {
-    display: grid;
-  }
-  .flowItem:last-child .flowArrow {
-    display: none;
-  }
-}
-.stepBox {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: var(--space-8);
-  min-width: 0;
-  padding: var(--space-12);
-  border: 1px solid var(--color-border-default);
-  border-radius: var(--radius-inner);
-  background: var(--color-bg-surface);
-  overflow-wrap: anywhere;
-}
-.stepHead {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-8);
-}
-.stepNo {
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: var(--radius-full);
+/* ---- 확인 채움 (자원 대응 줄·보안 통제·명세 카드 공통) ---- */
+/* 채움: 왼쪽에서 오른쪽으로 번지는 엷은 파랑. 부모는 position: relative · overflow: hidden */
+.fill {
+  position: absolute;
+  inset: 0;
   background: var(--color-bg-accent);
-  color: var(--color-fg-on-accent);
+  transform: scaleX(0);
+  transform-origin: left center;
+  transition: transform 520ms var(--ease-standard);
+  pointer-events: none;
 }
-.flowArrow {
-  position: absolute;
-  top: 50%;
-  left: 100%;
+[data-done] > .fill {
+  transform: scaleX(1);
+}
+/* 체크 동그라미: 빈 고리 → 파랑으로 차면서 체크가 그려진다 */
+.tick {
   display: grid;
+  flex: none;
   place-items: center;
-  width: var(--space-20);
-  transform: translateY(-50%);
-  color: var(--color-fg-tertiary);
-}
-.weights {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--space-4);
-  height: 40px;
-}
-.weight {
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 24px;
-  height: 100%;
-  white-space: nowrap;
-}
-.weightBar {
-  width: 100%;
-  min-height: 3px;
-  max-height: 24px;
-  border-radius: 3px 3px 0 0;
-  background: var(--color-data-target);
-}
-
-/* ---- 계획: 되돌리는 조건 → 되돌림 ---- */
-.trigger {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 40px minmax(0, 1fr);
-  align-items: center;
-}
-.triggerIn {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-}
-.condBox {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--space-12);
-  padding: var(--space-8) var(--space-16);
-  border: 1px solid var(--color-border-default);
-  border-radius: var(--radius-inner);
-  background: var(--color-bg-surface);
-}
-.or {
-  align-self: center;
-}
-/* 두 조건을 묶는 꺾쇠 ] 와 화살촉 */
-.join {
-  position: relative;
-  height: calc(100% - 48px);
-  margin-left: 0;
+  width: 24px;
+  height: 24px;
   border: 2px solid var(--color-border-strong);
-  border-left: 0;
-  border-radius: 0 var(--radius-inner) var(--radius-inner) 0;
-  width: 18px;
-}
-.join::after {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 100%;
-  width: 18px;
-  height: 2px;
-  background: var(--color-border-strong);
-}
-.join::before {
-  content: '';
-  position: absolute;
-  top: calc(50% - 5px);
-  left: calc(100% + 16px);
-  border-top: 6px solid transparent;
-  border-bottom: 6px solid transparent;
-  border-left: 8px solid var(--color-border-strong);
-}
-.outcome {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-16);
-  border-radius: var(--radius-inner);
-  background: var(--color-bg-tone-target);
-}
-.outcomeIcon {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 36px;
-  margin-bottom: var(--space-4);
   border-radius: var(--radius-full);
-  background: var(--color-bg-surface);
-  color: var(--color-fg-on-accent);
+  color: var(--color-fg-on-action);
+  transition: background-color 280ms var(--ease-standard) 120ms, border-color 280ms var(--ease-standard) 120ms, transform 280ms var(--ease-standard) 120ms;
+}
+.tick svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 24;
+  stroke-dashoffset: 24;
+  transition: stroke-dashoffset 320ms var(--ease-standard) 260ms;
+}
+.tick[data-on] {
+  border-color: var(--color-bg-action-primary);
+  background: var(--color-bg-action-primary);
+  transform: scale(1.08);
+}
+.tick[data-on] svg {
+  stroke-dashoffset: 0;
+}
+/* 파랑 판 위에서는 옅은 회색 대신 한 단계 진한 회색 (글자 대비 4.5:1) */
+[data-done] :global(.c-tertiary) {
+  color: var(--color-fg-secondary);
+}
+@keyframes pop {
+  40% {
+    transform: scale(1.02);
+  }
 }
 
-/* ---- 자원 대응: 출발 상자 ─(옮기는 법)→ 도착 상자 ---- */
+/* ---- 자원 대응: 출발 상자 ─[대응|대체]→ 도착 상자 ---- */
 .map {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(96px, 0.55fr) minmax(0, 1fr);
-  gap: var(--space-12) 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-12);
   padding-bottom: var(--space-8);
 }
+/* 맨 위 두 환경, 줄마다 세 칸(출발 · 가운데 · 도착)이 아래 줄과 세로로 맞는다 */
+.ends,
+.mapRows {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(104px, 0.5fr) minmax(0, 1fr);
+}
+.ends {
+  align-items: center;
+  padding: 0 var(--space-12);
+}
+.mapRows {
+  gap: var(--space-8) 0;
+}
 .mapRow {
+  position: relative;
   display: grid;
   grid-column: 1 / -1;
   grid-template-columns: subgrid;
   align-items: center;
-  row-gap: var(--space-4);
+  row-gap: var(--space-8);
+  padding: var(--space-12);
+  overflow: hidden;
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-inner);
+  transition: border-color 360ms var(--ease-standard);
 }
-.mapRow + .mapRow {
-  padding-top: var(--space-12);
-  border-top: 1px solid var(--color-border-default);
+.mapRow > :not(.fill) {
+  position: relative;
+}
+.mapRow[data-done] {
+  border-color: var(--color-border-focus);
+  animation: pop 420ms var(--ease-standard);
 }
 .mapHead {
-  display: inline-flex;
+  display: flex;
   grid-column: 1 / -1;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-8);
+}
+.mapHead > :first-child {
+  display: inline-flex;
   align-items: center;
   gap: var(--space-4);
 }
 .mapNote,
-.mapFoot {
+.subNote {
   grid-column: 1 / -1;
+}
+.subNote {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4) var(--space-8);
 }
 .endBox {
   display: flex;
@@ -237,6 +163,11 @@
 .side[data-end='target']::before {
   background: var(--color-data-target);
 }
+/* 채운 줄: 도착 상자는 흰 바탕으로 바꿔 파랑 판 위에서도 상자로 보이게 */
+.mapRow[data-done] .side[data-end='target'] {
+  border-color: var(--color-border-focus);
+  background: var(--color-bg-surface);
+}
 .sideEmpty {
   padding-left: var(--space-12);
   border-style: dashed;
@@ -251,13 +182,22 @@
   align-items: center;
   gap: var(--space-4);
   padding: 0 var(--space-8);
+  text-align: center;
 }
-.method {
-  padding: var(--space-2) var(--space-8);
+/* 가운데 배지: 대응 = 회색(같은 종류로 옮김), 대체 = 파랑 테두리(도착에서 다른 상품이 됨) */
+.kindBadge {
+  padding: var(--space-2) var(--space-12);
   border-radius: var(--radius-full);
   background: var(--color-bg-subtle);
   color: var(--color-fg-secondary);
-  text-align: center;
+}
+.kindBadge[data-kind='substitute'] {
+  background: var(--color-bg-surface);
+  color: var(--color-fg-on-accent);
+  box-shadow: inset 0 0 0 1px var(--color-border-focus);
+}
+.mapRow[data-done] .kindBadge[data-kind='map'] {
+  background: var(--color-bg-surface);
 }
 /* 선 + 화살촉 */
 .wire {
@@ -281,6 +221,12 @@
   background: var(--color-data-target);
 }
 .wire[data-strong]::after {
+  border-left-color: var(--color-data-target);
+}
+.mapRow[data-done] .wire {
+  background: var(--color-data-target);
+}
+.mapRow[data-done] .wire::after {
   border-left-color: var(--color-data-target);
 }
 
@@ -348,13 +294,30 @@
   gap: var(--space-8);
 }
 .control {
+  position: relative;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--space-12);
-  padding: var(--space-8) var(--space-12);
+  gap: var(--space-8);
+  padding: var(--space-8) var(--space-12) var(--space-8) var(--space-8);
+  overflow: hidden;
   border: 1px solid var(--color-border-default);
   border-radius: var(--radius-inner);
+  transition: border-color 360ms var(--ease-standard);
+}
+.control > :not(.fill) {
+  position: relative;
+}
+.control .tick {
+  width: 20px;
+  height: 20px;
+}
+.controlTitle {
+  flex: 1;
+  min-width: 0;
+}
+.control[data-done] {
+  border-color: var(--color-border-focus);
+  animation: pop 420ms var(--ease-standard);
 }
 .control[data-change='worse'] {
   border-color: var(--color-fg-tone-danger);
@@ -551,30 +514,13 @@
   background: var(--color-bg-surface);
   transition: border-color 360ms var(--ease-standard), transform 360ms var(--ease-standard), border-radius 360ms var(--ease-standard);
 }
-.specCard > :not(.specFill) {
+.specCard > :not(.fill) {
   position: relative;
-}
-/* 채움: 왼쪽에서 오른쪽으로 번지는 엷은 파랑 */
-.specFill {
-  position: absolute;
-  inset: 0;
-  background: var(--color-bg-accent);
-  transform: scaleX(0);
-  transform-origin: left center;
-  transition: transform 520ms var(--ease-standard);
 }
 .specCard[data-done] {
   border-color: var(--color-border-focus);
   border-radius: calc(var(--radius-inner) + 4px);
   animation: pop 420ms var(--ease-standard);
-}
-.specCard[data-done] .specFill {
-  transform: scaleX(1);
-}
-@keyframes pop {
-  40% {
-    transform: scale(1.025);
-  }
 }
 .specHead {
   display: flex;
@@ -603,36 +549,6 @@
   flex-direction: column;
   min-width: 0;
   overflow-wrap: anywhere;
-}
-/* 체크 동그라미: 빈 고리 → 파랑으로 차면서 체크가 그려진다 */
-.tick {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border: 2px solid var(--color-border-strong);
-  border-radius: var(--radius-full);
-  color: var(--color-fg-on-action);
-  transition: background-color 280ms var(--ease-standard) 120ms, border-color 280ms var(--ease-standard) 120ms, transform 280ms var(--ease-standard) 120ms;
-}
-.tick svg {
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 3;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-dasharray: 24;
-  stroke-dashoffset: 24;
-  transition: stroke-dashoffset 320ms var(--ease-standard) 260ms;
-}
-.specCard[data-done] .tick {
-  border-color: var(--color-bg-action-primary);
-  background: var(--color-bg-action-primary);
-  transform: scale(1.08);
-}
-.specCard[data-done] .tick svg {
-  stroke-dashoffset: 0;
 }
 .specRows {
   display: flex;
@@ -681,10 +597,8 @@
 .specRow[data-review] > :first-child {
   color: var(--color-fg-tone-warning);
 }
-/* 파랑 판 위에서는 옅은 회색 대신 한 단계 진한 회색 (글자 대비 4.5:1) */
-.specCard[data-done] .specRow > :first-child,
-.specCard[data-done] .specTitle > :last-child,
-.specCard[data-done] .specMore {
+/* 파랑 판 위 칸 이름은 한 단계 진한 회색 (글자 대비 4.5:1) */
+.specCard[data-done] .specRow > :first-child {
   color: var(--color-fg-secondary);
 }
 .specCard[data-done] .specRow[data-review] {
@@ -700,13 +614,6 @@
 @media (max-width: 1199px) {
   .cause {
     overflow: visible;
-  }
-  .trigger {
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-12);
-  }
-  .join {
-    display: none;
   }
   .tally {
     grid-template-columns: repeat(2, minmax(0, 1fr));

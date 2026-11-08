@@ -1,23 +1,21 @@
-import { useRef, useState, type ReactNode } from 'react';
-import { Icon } from '../../components/ui/Icon';
-import { t } from '../../lib/i18n';
+import { useRef, type ReactNode } from 'react';
 import s from './HeroPager.module.css';
 
-export type HeroPage = { id: string; label: string; /** 탭 옆 작은 숫자 (남은 확인 수 등) */ count?: number | null; content: ReactNode };
+export type HeroPage = { id: string; label: string; /** 탭 옆 작은 숫자 (줄 수 등) */ count?: number | null; /** 확인을 마친 판 (탭에 체크) */ done?: boolean; content: ReactNode };
 
 // 손가락·트랙패드로 이만큼 옆으로 밀면 넘긴다
 const SWIPE_PX = 56;
 
 /**
- * 큰 카드 안에서 같은 높이의 판을 옆으로 넘긴다. 위는 탭(어느 판인지)과 ← → 버튼, 아래는 판이 옆으로 미끄러지는 칸.
- * 판마다 남은 높이만큼만 쓰고 넘치면 그 판만 스크롤한다. 키보드 ←·→, 옆으로 밀기도 넘긴다
+ * 큰 카드 안에서 같은 높이의 판을 옆으로 넘긴다. 위는 탭(어느 판인지)과 지금 판 점, 아래는 판이 옆으로 미끄러지는 칸.
+ * 어느 판을 볼지는 화면이 정한다(at·onPick): 행동 버튼(확인·뒤로)도 판을 옮기기 때문이다.
+ * 판마다 남은 높이만큼만 쓰고 넘치면 그 판만 스크롤한다. 탭·키보드 ←→·옆으로 밀기로도 넘긴다
  */
-export function HeroPager({ pages, initial, label }: { pages: HeroPage[]; initial?: string; label: string }) {
-  const [picked, setPicked] = useState(() => Math.max(0, pages.findIndex((page) => page.id === initial)));
-  const at = Math.min(picked, pages.length - 1);
+export function HeroPager({ pages, at: picked, onPick, label }: { pages: HeroPage[]; at: number; onPick: (index: number) => void; label: string }) {
   const start = useRef<number | null>(null);
-  const go = (index: number) => setPicked(Math.max(0, Math.min(pages.length - 1, index)));
   if (pages.length === 0) return null;
+  const at = Math.max(0, Math.min(picked, pages.length - 1));
+  const go = (index: number) => onPick(Math.max(0, Math.min(pages.length - 1, index)));
   return (
     <div className={s.pager}>
       <div className={s.bar}>
@@ -31,28 +29,26 @@ export function HeroPager({ pages, initial, label }: { pages: HeroPage[]; initia
               aria-selected={index === at}
               aria-controls={`hero-page-${page.id}`}
               className={`${s.tab} t-label-md`}
+              data-done={page.done || undefined}
               onClick={() => go(index)}
               onKeyDown={(event) => {
                 if (event.key === 'ArrowRight') go(at + 1);
                 if (event.key === 'ArrowLeft') go(at - 1);
               }}
             >
+              {page.done && (
+                <svg className={s.tabTick} viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                  <path d="M20 6 9 17l-5-5" />
+                </svg>
+              )}
               {page.label}
               {page.count ? <span className={`${s.count} t-caption`}>{page.count}</span> : null}
             </button>
           ))}
         </div>
-        <div className={s.nav}>
-          <span className={`${s.dots}`} aria-hidden="true">
-            {pages.map((page, index) => <span key={page.id} className={s.dot} data-on={index === at || undefined} />)}
-          </span>
-          <button type="button" className={s.arrow} aria-label={t('이전 판')} disabled={at === 0} onClick={() => go(at - 1)}>
-            <Icon name="arrow-left" />
-          </button>
-          <button type="button" className={s.arrow} aria-label={t('다음 판')} disabled={at === pages.length - 1} onClick={() => go(at + 1)}>
-            <Icon name="arrow-right" />
-          </button>
-        </div>
+        <span className={s.dots} aria-hidden="true">
+          {pages.map((page, index) => <span key={page.id} className={s.dot} data-on={index === at || undefined} />)}
+        </span>
       </div>
       <div
         className={s.viewport}

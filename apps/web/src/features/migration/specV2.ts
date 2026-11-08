@@ -307,17 +307,11 @@ export function boundaryRows(list: OutOfBoundaryV2[] | undefined) {
 }
 
 /**
- * 명세 확정 버튼 글자. 확인할 칸이 있으면 그 칸을 확인하고 확정한다는 것까지 말한다.
+ * 파란 "명세 확정" 버튼 글자. 확인할 칸은 그 앞의 흰 "확인"이 카드를 채우며 이미 확인했으므로 다시 세지 않는다.
  * 정하지 않은 출발 방화벽 줄이 있으면 확정을 막으므로(canConfirmSpec) 막힌 이유를 버튼에 쓴다
  */
-export const confirmLabel = (busy: boolean, reviews: number, undecidedFirewall = 0) =>
-  busy
-    ? t('보내는 중')
-    : undecidedFirewall > 0
-      ? t('출발 방화벽 {0}개를 정해 주세요', { 0: undecidedFirewall })
-      : reviews > 0
-        ? t('{0}칸 확인하고 명세 확정', { 0: reviews })
-        : t('명세 확정');
+export const confirmLabel = (busy: boolean, undecidedFirewall = 0) =>
+  busy ? t('보내는 중') : undecidedFirewall > 0 ? t('출발 방화벽 {0}개를 정해 주세요', { 0: undecidedFirewall }) : t('명세 확정');
 
 /**
  * 명세를 확정해도 되는가. 서버 POST /plan(T04)은 검토 칸만 세고 출발 방화벽 줄은 보지 않아서 그대로 받아 준다.

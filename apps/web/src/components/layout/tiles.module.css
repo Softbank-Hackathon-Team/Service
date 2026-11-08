@@ -195,18 +195,9 @@
 .heroBack:hover {
   background: var(--color-bg-selected);
 }
-.stop .heroBack {
-  background: var(--color-bg-surface);
+/* 멈춤·실패·롤백: 카드를 빨갛게 칠하지 않고 큰 제목만 위험 색으로 쓴다 (11/08 사용자 결정). 나머지는 보통 카드와 같다 */
+.stop .heroTitle {
   color: var(--color-fg-tone-danger);
-}
-.stop {
-  background: var(--color-bg-alert);
-  color: var(--color-fg-on-alert);
-}
-.stop .heroMeta,
-.stop .heroFoot {
-  border-color: var(--color-fg-on-alert-muted);
-  color: var(--color-fg-on-alert-muted);
 }
 .done .heroMeta {
   color: var(--color-fg-tone-success);
@@ -221,7 +212,7 @@
   color: var(--color-fg-primary);
 }
 .stop .heroStep {
-  background: var(--color-bg-surface);
+  background: var(--color-bg-tone-danger);
   color: var(--color-fg-tone-danger);
 }
 .done .heroStep {

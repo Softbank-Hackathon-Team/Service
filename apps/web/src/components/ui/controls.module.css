@@ -49,6 +49,18 @@
   background: var(--color-bg-accent);
   color: var(--color-fg-on-accent);
 }
+.neutral {
+  background: var(--color-bg-surface);
+  color: var(--color-fg-primary);
+  box-shadow: inset 0 0 0 1px var(--color-border-default);
+}
+.neutral:not(:disabled):hover {
+  background: var(--color-bg-hover);
+}
+.neutral .disc {
+  background: var(--color-bg-subtle);
+  color: var(--color-fg-primary);
+}
 .danger {
   background: var(--color-bg-action-danger);
   color: var(--color-fg-tone-danger);

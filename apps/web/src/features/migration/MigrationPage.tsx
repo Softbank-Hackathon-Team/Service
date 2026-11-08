@@ -33,8 +33,8 @@ import { DoneScreen, CleanupScreen, PausedScreen, RolledBackScreen, RollingBackS
 import { RequirementsFold, SourceFactsFold, VerdictFold } from './SecurityFolds';
 import { SubstituteMap } from './SubstituteMap';
 import { HeroPager, type HeroPage } from './HeroPager';
-import { PlanFlow, ResourceFlow, SecurityBoard, SpecCards, useSweep } from './HeroVisuals';
-import { specCardsV1, specCardsV2 } from './visuals';
+import { ResourceFlow, SecurityBoard, securityControls, SpecCards, useSweep } from './HeroVisuals';
+import { flowRows, specCardsV1, specCardsV2 } from './visuals';
 import { isSecItem, precheckLine, secAckLabel, type SecuritySpecV2 } from './securityV2';
 import { ConfirmPill, Frame, pastHero, StepsView, useAction, useCostConsent, type ScreenProps } from './shared';
 import s from '../common/page.module.css';
@@ -142,13 +142,25 @@ function SpecScreen({ migration, route, onChanged, past }: ScreenProps) {
       await spec.reload();
     });
 
-  // 큰 카드: 칸을 요소마다 카드로 묶는다. 확정을 누르면 카드가 차례로 파랗게 차고(useSweep), 다 차고 서버가 받으면 다음 단계로
+  // 큰 카드: 칸을 요소마다 카드로 묶는다. 오른쪽 아래 흰 "확인"을 누르면 카드가 1번부터 차례로 파랗게 차고(useSweep, 스크롤도 따라감),
+  // 다 차면 같은 자리에 파란 "명세 확정"이 나온다. 그 버튼이 서버에 확인·확정을 보낸다
   const cards = useMemo(() => (v2 ? specCardsV2(rowsV2, v2.spec) : specCardsV1(rows)), [v2, rowsV2, rows]);
   const sweep = useSweep(cards.length);
   const { reset: resetSweep } = sweep;
-  // 새 판이 오면(확인 뒤 새 검토 칸이 생겨 확정하지 않은 경우 등) 채움을 처음으로
+  const [sweeping, setSweeping] = useState(false);
+  // 새 판이 오면(확인 뒤 새 검토 칸이 생기거나 다른 사람이 고침) 채움을 처음으로
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => resetSweep(), [view?.version]);
+  // 막힌 항목을 보이는 동안은 카드가 없으니 확인할 것도 없다
+  const checked = blocks.length > 0 || cards.length === 0 || sweep.filled >= cards.length;
+  const check = async () => {
+    setSweeping(true);
+    try {
+      await sweep.play();
+    } finally {
+      setSweeping(false);
+    }
+  };
   return (
     <Frame migration={migration} route={route}>
       <Hero
@@ -298,21 +310,16 @@ function SpecScreen({ migration, route, onChanged, past }: ScreenProps) {
         {!past && (
           <ActionRow notice={error}>
             <ConfirmPill label={t('취소')} confirmLabel={t('마이그레이션 취소')} icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
-            <ActionPill
-              label={v2 ? confirmLabel(busy, reviewCount, firewall.length) : busy ? t('보내는 중') : t('명세 확정')}
-              icon="check"
-              disabled={busy || !view || !canConfirmSpec(firewall.length)}
-              onClick={() =>
-                void run(async () => {
-                  try {
-                    await Promise.all([confirm(), sweep.play()]);
-                  } catch (reason) {
-                    sweep.reset();
-                    throw reason;
-                  }
-                })
-              }
-            />
+            {checked ? (
+              <ActionPill
+                label={confirmLabel(busy, firewall.length)}
+                icon="check"
+                disabled={busy || !view || !canConfirmSpec(firewall.length)}
+                onClick={() => void run(confirm)}
+              />
+            ) : (
+              <ActionPill tone="neutral" label={sweeping ? t('확인하는 중') : t('확인')} icon="check" disabled={busy || sweeping || !view} onClick={() => void check()} />
+            )}
           </ActionRow>
         )}
       </Stack>
@@ -358,6 +365,11 @@ const ACK_KIND: Record<PlanAckKind, string> = {
 // 승인·시작이 이 코드로 막히면 계획서가 바뀌었거나 시간이 지난 것이다 → 계획서를 다시 읽고 체크는 새 지문에서 처음부터
 const PLAN_CHANGED = ['PLAN_HASH_MISMATCH', 'PLAN_SUPERSEDED', 'ACKS_MISSING', 'PLAN_EXPIRED'];
 const NO_TICKS: ReadonlySet<string> = new Set();
+// 계획 승인 큰 카드의 판 (확인하는 순서)
+type ApprovePage = 'map' | 'security';
+const APPROVE_PAGES: ApprovePage[] = ['map', 'security'];
+const NO_PAGES: ReadonlySet<ApprovePage> = new Set();
+const ALL_PAGES: ReadonlySet<ApprovePage> = new Set(APPROVE_PAGES);
 
 function ApproveScreen({ migration, route, onChanged, past }: ScreenProps) {
   const plan = usePoll(() => api.latestPlan(migration.id), null, [migration.id, migration.version]);
@@ -399,28 +411,55 @@ function ApproveScreen({ migration, route, onChanged, past }: ScreenProps) {
   // 확인 항목마다 확인하는 자리는 하나다: 상품 대체는 큰 카드의 대응 줄, 나머지는 "승인 전에 확인" 목록. 승인 버튼은 둘을 합쳐 센다(acks)
   const places = ackPlaces(doc?.acknowledgements);
   const listLeft = places.list.filter((ack) => !ticks.has(ack.id)).length;
-  const substituting = places.substitutes.length > 0;
-  const substitutesLeft = places.substitutes.filter((row) => !ticks.has(row.ackId)).length;
-  // 큰 카드 본문은 넘겨 보는 판이다: 계획(실행 순서·되돌리는 조건) · 자원 대응(출발 → 도착 상자) · 상품 대체(확인하는 자리) · 보안.
-  // 계획 지문은 머리줄 오른쪽 끝. 상품 대체 확인이 남았으면 그 판에서 시작한다
+  // 큰 카드 본문은 넘겨 보는 판 둘: 자원 대응(출발 상자 ─[대응|대체]→ 도착 상자) · 보안. 실행 순서는 진행 단계 카드가 보인다.
+  // 확인 흐름: 오른쪽 아래 흰 "확인"을 누르면 지금 확인할 판의 줄을 1번부터 차례로 칠하며(스크롤도 따라감) 그 판을 확인한다.
+  //   자원 대응을 확인하면 상품 대체 확인 항목(substitute)을, 보안을 확인하면 보안 주의 항목(precheck_warn:SEC:*)을 체크하고 다음 판으로 간다.
+  //   두 판을 다 확인하면 같은 자리 버튼이 파란 승인 버튼이 된다. 비용 등 나머지 확인 항목은 근거 칸 "승인 전에 확인"에서 사람이 체크한다
   const hash = doc && <CodeValue value={doc.planHash} chip max={24} />;
+  const flow = flowRows(mapped.listed, places.substitutes);
+  const security = usePoll(() => or404(api.security(migration.id)), 10_000, [migration.id]);
+  const controls = securityControls(security.data ?? null);
+  const [reviewed, setReviewed] = useState<{ hash: string | null; pages: ReadonlySet<ApprovePage> }>({ hash: null, pages: NO_PAGES });
+  const done = past ? ALL_PAGES : doc && reviewed.hash === doc.planHash ? reviewed.pages : NO_PAGES;
+  const [pageAt, setPageAt] = useState(0);
+  const mapSweep = useSweep(flow.length);
+  const secSweep = useSweep(controls.length);
+  const { reset: resetMap } = mapSweep;
+  const { reset: resetSecurity } = secSweep;
+  // 계획서가 바뀌면(새 지문) 확인도 처음부터: 채움을 비우고 첫 판으로
+  useEffect(() => {
+    resetMap();
+    resetSecurity();
+    setPageAt(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc?.planHash]);
+  const [sweeping, setSweeping] = useState(false);
+  const pending = APPROVE_PAGES.find((page) => !done.has(page)) ?? null;
+  const review = async () => {
+    if (!doc || !pending) return;
+    const planHash = doc.planHash;
+    setSweeping(true);
+    setPageAt(APPROVE_PAGES.indexOf(pending));
+    try {
+      await (pending === 'map' ? mapSweep : secSweep).play();
+    } finally {
+      setSweeping(false);
+    }
+    const ids = pending === 'map' ? places.substitutes.map((row) => row.ackId) : (doc.acknowledgements ?? []).filter((ack) => secAckLabel(ack)).map((ack) => ack.id);
+    setTicked((prev) => ({ hash: planHash, ids: new Set([...(prev.hash === planHash ? prev.ids : []), ...ids]) }));
+    setReviewed((prev) => ({ hash: planHash, pages: new Set([...(prev.hash === planHash ? prev.pages : []), pending]) }));
+    const next = APPROVE_PAGES.find((page) => page !== pending && !done.has(page));
+    if (next) setPageAt(APPROVE_PAGES.indexOf(next));
+  };
   const pages: HeroPage[] = [
-    { id: 'plan', label: t('계획'), content: doc ? <PlanFlow doc={doc} /> : <p className="t-body-md c-tertiary">{t('계획서를 읽고 있습니다.')}</p> },
-    { id: 'map', label: t('자원 대응'), count: resources.data ? planResourceRows(resources.data).listed.length : null, content: <ResourceFlow view={resources.data ?? null} loading={resources.loading} /> },
-    ...(substituting
-      ? [{
-          id: 'substitute', label: t('상품 대체'), count: past ? null : substitutesLeft,
-          content: (
-            <SubstituteMap
-              rows={places.substitutes}
-              source={resources.data?.source.provider ?? null}
-              target={resources.data?.target.provider ?? null}
-              confirm={{ checked: ticks, disabled: busy || expired || !!past, onToggle: (id) => tick(id, !ticks.has(id)) }}
-            />
-          ),
-        }]
-      : []),
-    { id: 'security', label: t('보안'), content: <SecurityBoard migration={migration} /> },
+    {
+      id: 'map', label: t('자원 대응'), count: flow.length || null, done: done.has('map'),
+      content: <ResourceFlow view={resources.data ?? null} loading={resources.loading} rows={flow} boundary={mapped.boundary} filled={done.has('map') ? flow.length : mapSweep.filled} />,
+    },
+    {
+      id: 'security', label: t('보안'), done: done.has('security'),
+      content: <SecurityBoard view={security.data ?? null} loading={security.loading} filled={done.has('security') ? controls.length : secSweep.filled} />,
+    },
   ];
 
   return (
@@ -440,12 +479,7 @@ function ApproveScreen({ migration, route, onChanged, past }: ScreenProps) {
         foot={past ? t('이 지문의 계획을 승인하고 실행했습니다') : doc ? t('유효 시각 {0}', { 0: new Date(doc.expiresAt).toLocaleString(localeTag(), { hour12: false }) }) : undefined}
         action={hash}
       >
-        <HeroPager
-          key={doc ? `${doc.planHash}-${substituting}` : 'reading'}
-          label={t('계획서 보기')}
-          pages={pages}
-          initial={substituting && !past && substitutesLeft > 0 ? 'substitute' : 'plan'}
-        />
+        <HeroPager label={t('계획서 보기')} pages={pages} at={pageAt} onPick={setPageAt} />
       </Hero>
       <Stack area="side">
         {doc && places.list.length > 0 && (
@@ -505,7 +539,7 @@ function ApproveScreen({ migration, route, onChanged, past }: ScreenProps) {
         <FoldTile
           title={t('자원 대응')}
           summary={resources.data ? t('{0}개{1}', { 0: mapped.listed.length, 1: [
-            substituting ? t(' · 상품 대체 {0}', { 0: places.substitutes.length }) : '',
+            places.substitutes.length > 0 ? t(' · 상품 대체 {0}', { 0: places.substitutes.length }) : '',
             mapped.runtimeChanges > 0 ? t(' · 실행 방식 바뀜 {0}', { 0: mapped.runtimeChanges }) : '',
           ].join('') }) : ''}
           defaultOpen={false}
@@ -533,8 +567,22 @@ function ApproveScreen({ migration, route, onChanged, past }: ScreenProps) {
         <SecurityFold migration={migration} />
         {!past && (
           <ActionRow notice={error ?? (plan.error != null && !doc ? errorText(plan.error) : null)}>
-            <ConfirmPill label={t('취소')} confirmLabel={t('마이그레이션 취소')} icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
-            {doc && <ConfirmPill label={t('거절')} confirmLabel={t('계획 거절')} icon="ban" disabled={busy} onConfirm={() => void run(() => api.decide(doc.planId, 'reject', doc.planHash))} />}
+            {/* 첫 판에서는 취소, 그 뒤 판에서는 앞 판으로 */}
+            {pageAt === 0 ? (
+              <ConfirmPill label={t('취소')} confirmLabel={t('마이그레이션 취소')} icon="x" disabled={busy || sweeping} onConfirm={() => void run(() => api.cancel(migration.id))} />
+            ) : (
+              <BarPill label={t('뒤로')} icon="arrow-left" onClick={sweeping ? undefined : () => setPageAt(pageAt - 1)} />
+            )}
+            {doc && <ConfirmPill label={t('거절')} confirmLabel={t('계획 거절')} icon="ban" disabled={busy || sweeping} onConfirm={() => void run(() => api.decide(doc.planId, 'reject', doc.planHash))} />}
+            {pending ? (
+              <ActionPill
+                tone="neutral"
+                label={sweeping ? t('확인하는 중') : t('확인')}
+                icon="check"
+                disabled={busy || sweeping || !doc || expired}
+                onClick={() => void review()}
+              />
+            ) : (
             <ActionPill
               label={approveLabel({ busy, expired, missing: acks.missing.length })}
               icon="check"
@@ -560,6 +608,7 @@ function ApproveScreen({ migration, route, onChanged, past }: ScreenProps) {
                 })
               }
             />
+            )}
           </ActionRow>
         )}
       </Stack>
