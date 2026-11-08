@@ -1,0 +1,9 @@
+# 미러만 쓰는 terraform CLI 설정. 레지스트리에 전혀 안 닿는다 (#373 B1)
+#   쓰는 곳: selfcheck.sh (이미지 빌드·CI 에서 네트워크 없이 미러가 루트 모듈을 다 덮는지 확인)
+#   비상용: registry.terraform.io 가 안 될 때 worker env 에 TF_CLI_CONFIG_FILE=/opt/terraform/offline.tfrc 를 주면 새 이전은 네트워크 없이 init 된다
+#     단, 미러와 다른 판으로 잠긴 예전 작업 폴더(이 이미지 전에 만든 이전)는 init 이 실패한다
+provider_installation {
+  filesystem_mirror {
+    path = "/opt/terraform/providers"
+  }
+}

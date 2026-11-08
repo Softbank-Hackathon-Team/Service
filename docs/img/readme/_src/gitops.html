@@ -1,0 +1,60 @@
+<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="base.css">
+<style>
+#canvas{width:1800px}
+.row{display:grid;grid-template-columns:330px 50px 470px 50px 1fr;align-items:center}
+.lane{display:grid;grid-template-rows:1fr 1fr;gap:18px}
+.path{border:2px dashed;border-radius:18px;padding:14px 16px;display:grid;grid-template-columns:240px 40px 1fr;align-items:center}
+.path .pt{grid-column:1/-1;font-size:15px;font-weight:700;margin-bottom:10px}
+.push{border-color:var(--blue-line);background:rgba(238,243,253,.6)}.push .pt{color:var(--blue)}
+.pull{border-color:var(--amber-line);background:rgba(253,246,231,.7)}.pull .pt{color:var(--amber)}
+.stack{display:flex;flex-direction:column;gap:10px}
+.c-purple{background:var(--purple-bg);border-color:var(--purple-line)}
+.c-green{background:var(--green-bg);border-color:var(--green-line)}
+.tree{font-family:"DejaVu Sans Mono",monospace;font-size:13px;line-height:1.7;color:#374151;background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:8px;white-space:pre}
+.lbl{font-size:12.5px;color:var(--sub);text-align:center;font-weight:600}
+.bottom{display:grid;grid-template-columns:1.25fr 1fr;gap:20px;margin-top:26px}
+.tl{display:flex;align-items:center;gap:10px;margin-top:10px}
+.st{border-radius:10px;padding:8px 12px;font-weight:700;font-size:15px;background:#fff;border:1.5px solid var(--green-line);color:var(--green);text-align:center;min-width:86px}
+.st small{display:block;font-weight:500;font-size:11.5px;color:var(--sub)}
+.st.r{border-color:#eeb3ae;color:var(--red)}
+</style>
+<div id="canvas">
+<h1>GitOps 배포 흐름</h1>
+<div class="subt">플랫폼 워커가 승인된 계획을 매니페스트로 찍어 이 레포에 커밋하고, 클라우드는 Argo CD 허브가 밀어 넣고 온프레는 회사 전용 레포로 복사해 고객 클러스터가 안에서 당겨 간다. 비밀값은 레포에 없다.</div>
+<div class="row">
+ <div class="stack">
+  <div class="card c-purple"><h3><span class="n" style="background:var(--purple)">1</span>플랫폼 워커 (봇)</h3><p>사람이 승인한 이전 계획을<br>Helm 차트로 렌더 → 리소스당 파일 하나<br>검증(validate) 통과 후 <b>main 커밋</b></p></div>
+  <div class="card"><h3><span class="n" style="background:var(--gray)">AI</span>AI 점검 (agent-worker)</h3><p><span class="mono">agent/remediate-&lt;번호&gt;</span> 브랜치로<br>수정안만 올림 → <b>사람이 PR 승인</b></p></div>
+ </div>
+ <div class="arrow">→</div>
+ <div class="card c-green"><h3><span class="n" style="background:var(--green)">2</span>gitops 레포 (이 레포)</h3><p>회사·앱·환경마다 묶음 폴더 하나. 지문이 맞아야 적용된다</p>
+<div class="tree">tenants/&lt;t-회사&gt;/
+  argocd/appproject.yaml   회사 울타리
+  apps/&lt;앱&gt;/&lt;환경&gt;/
+    plan.json      계획 번호·승인 단계·지문
+    values.yaml    승인된 Helm 값
+    manifests/     찍어낸 결과
+    bundle.sha256  manifests 지문
+platform/appsets/  환경별 ApplicationSet
+charts/app/        세 환경 공통 차트</div></div>
+ <div class="arrow">→</div>
+ <div class="lane">
+  <div class="path push"><div class="pt">클라우드: 허브가 밀어 넣는다 (push)</div>
+   <div class="card"><h3>Argo CD 허브</h3><p>플랫폼 EKS 안<br>plan.json 마다 Application</p></div>
+   <div class="arrow">→</div>
+   <div class="stack"><div class="card"><h3><span class="bd" style="font-size:11px;background:#e07a1f;color:#fff;border-radius:6px;padding:2px 7px">AWS</span>고객 EKS</h3><p>ApplicationSet aws-eks</p></div>
+   <div class="card"><h3><span class="bd" style="font-size:11px;background:#2563eb;color:#fff;border-radius:6px;padding:2px 7px">GCP</span>고객 GKE</h3><p>ApplicationSet gcp-gke · 토큰은 그때그때 WIF</p></div></div>
+  </div>
+  <div class="path pull"><div class="pt">온프레: Agent가 당겨 간다 (pull · 들어오는 포트 0)</div>
+   <div class="card"><h3>회사 전용 레포</h3><p><span class="mono">gitops-t-&lt;회사&gt;</span> 로 복사<br>그 레포에만 걸린 읽기 전용 배포 키</p></div>
+   <div class="arrow">→</div>
+   <div class="card"><h3><span class="bd" style="font-size:11px;background:#b7791f;color:#fff;border-radius:6px;padding:2px 7px">ON-PREM</span>고객 k3s</h3><p>Agent + Argo CD core 가 안에서 당겨 감, 지문 같을 때만 적용<br>환경마다 폴더 <span class="mono">onprem-k3s-&lt;환경 8자&gt;</span>, 롤백하면 자동 삭제</p></div>
+  </div>
+ </div>
+</div>
+<div class="bottom">
+ <div class="card"><h3>커밋 기록이 곧 트래픽 전환 시간표</h3><p>도착 환경 values.yaml 의 <span class="mono">traffic.weightPct</span> 만 바꿔 다시 찍고 커밋한다. 실제 분배는 Cloudflare LB 가중치.</p>
+  <div class="tl"><div class="st">0<small>배포 직후</small></div><span class="arrow">→</span><div class="st">10<small>판정 통과</small></div><span class="arrow">→</span><div class="st">50<small>판정 통과</small></div><span class="arrow">→</span><div class="st">100<small>컷오버</small></div><span style="width:24px"></span><div class="st r">0<small>롤백: CF 먼저</small></div></div></div>
+ <div class="card"><h3>커밋 전에 막는 것</h3><p>• 승인 안 한 가중치(예: 30%)는 검증에서 거부<br>• 울타리 이름은 파일 내용이 아니라 <b>폴더 경로</b>에서 → 다른 회사 클러스터로 못 감<br>• 비밀값 0: ExternalSecret·SealedSecret 이름만 둔다<br>• <span class="mono">tools/negative.sh</span> 로 10가지 깨뜨려 보고 매번 잡는지 확인</p></div>
+</div>
+</div>

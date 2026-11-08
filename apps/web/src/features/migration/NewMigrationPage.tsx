@@ -96,17 +96,17 @@ function PickRow({ icon, title, caption, warn, selected, label, onPick, transiti
 
 const envIcon = (env: EnvironmentView) => (env.provider === 'onprem' ? 'server' : 'cloud');
 
-/** 출발 줄: 이 환경에서 서비스 중인 소프트웨어 + 벤더. 줄마다 자기 인벤토리를 읽는다(서버가 30초 캐시). */
+/** 출발 줄: 제목은 환경 이름(도착 줄과 같음), 보조 줄은 벤더 + 이 환경에서 서비스 중인 소프트웨어. 줄마다 자기 인벤토리를 읽는다(서버가 30초 캐시). */
 function SourceRow({ env, onPick }: { env: EnvironmentView; onPick: () => void }) {
   const inventory = usePoll(() => api.envInventory(env.id), 30_000, [env.id]);
-  const title = softwareTitle(softwareOf(env.provider, inventory.data));
-  const where = `${vendorLine(env.provider)} · ${env.name}`;
+  const software = softwareTitle(softwareOf(env.provider, inventory.data));
+  const caption = `${vendorLine(env.provider)} · ${software ?? (inventory.loading ? t('서비스를 읽는 중') : t('서비스를 아직 읽지 못함'))}`;
   return (
     <PickRow
       icon={envIcon(env)}
-      title={title ?? env.name}
-      caption={title ? where : `${vendorLine(env.provider)} · ${inventory.loading ? t('서비스를 읽는 중') : t('서비스를 아직 읽지 못함')}`}
-      label={`${title ?? env.name} · ${where}`}
+      title={env.name}
+      caption={caption}
+      label={`${env.name} · ${caption}`}
       onPick={onPick}
       transitionName={`env-${env.id}`}
     />
@@ -227,9 +227,8 @@ export function NewMigrationPage() {
     );
   }
 
-  const software = softwareTitle(softwareOf(source.provider, inventory.data));
-  // 서비스 이름을 모르면 환경 이름만 (같은 이름을 두 번 쓰지 않는다)
-  const departure = software ? t('{0} · {1}에서 출발', { 0: software, 1: source.name }) : t('{0}에서 출발', { 0: source.name });
+  // 출발은 환경 이름으로 부른다 (출발 줄 제목과 같음). 서비스 이름은 출발 줄 보조 줄과 찾은 자원에서 본다
+  const departure = t('{0}에서 출발', { 0: source.name });
   const found = inventory.loading ? (
     <FoldTile title={t('찾은 자원')} summary={t('읽는 중')}>
       <p className={`${s.note} t-body-sm c-secondary`}>{t('{0}의 자원을 읽고 있습니다.', { 0: source.name })}</p>

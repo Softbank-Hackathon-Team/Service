@@ -37,19 +37,40 @@ export const AgentInventorySnapshot = z.object({
 }).strict();
 export type AgentInventorySnapshot = z.infer<typeof AgentInventorySnapshot>;
 
+// #373 D2: 진행 중(progressing) deploy 보고의 Argo 상태. 예전엔 끝난 것(applied·failed)만 보내서 플랫폼이
+//   "앱이 아직 뜨는 중"(예: CNPG Cluster 준비 대기)과 "Agent·온프레 Argo 가 멈춤"을 가르지 못하고 600초를 다 기다렸다
+//   waitingOn = Application status.resources 중 Healthy 가 아닌 첫 자원 (없으면 OutOfSync 인 첫 자원). resource 는 resources 칸과 같은 "종류/네임스페이스/이름"
+// DRAFT(ai): 글자 상한 (Argo 상태 이름은 짧다. 메시지는 사람이 읽는 한두 문장)
+export const AgentDeployProgress = z.object({
+  sync: z.string().max(40),
+  health: z.string().max(40),
+  message: z.string().max(500).optional(),
+  waitingOn: z.object({
+    resource: z.string().max(300),
+    health: z.string().max(40).optional(),
+    sync: z.string().max(40).optional(),
+    message: z.string().max(500).optional(),
+  }).strict().optional(),
+}).strict();
+export type AgentDeployProgress = z.infer<typeof AgentDeployProgress>;
+
 export const AgentReport = z.discriminatedUnion("kind", [
   // Kyverno 정책 보고서(PolicyReport)·Falco 경보·점검 스크립트 결과를 Finding 모양으로
   z.object({ kind: z.literal("security"), ...Common, findings: z.array(Finding).max(500) }).strict(),
   // GitOps: 온프레의 "배포 끝" 기준은 Agent 의 "넣었음" 보고다
   //   W4 자동 보고: Agent 가 클러스터 안 Argo Application 을 읽어 app(= 워커 argoAppName) + bundleHash(= Argo 가 적용한 커밋)로 보낸다.
   //   Agent 는 이전 번호를 모른다 → migrationId 는 손으로 보내는 CLI 보고(deploy --migration)에만 있다. 워커는 app + 커밋으로 짝짓는다
+  //   #373 D2: progressing = 아직 끝나지 않음 (progress 칸에 Argo 상태). 워커는 이걸 끝으로 보지 않고, 멈출 때 이유에만 싣는다.
+  //   더하기만 한 칸이라 예전 Agent(applied·failed 만) 보고는 그대로 받는다. 거꾸로 새 Agent 를 예전 API 에 붙이면 progressing 이 400 이다
+  //   → 플랫폼 API 를 먼저 올리고 Agent 를 올린다 (Agent 는 400 을 받으면 progressing 을 한동안 안 보낸다, packages/agent deploys.ts)
   z.object({
     kind: z.literal("deploy"), ...Common,
     migrationId: z.uuid().optional(), bundleHash: z.string().max(200),
     app: z.string().max(253).optional(),
-    status: z.enum(["applied", "failed"]),
+    status: z.enum(["applied", "failed", "progressing"]),
     resources: z.array(z.string().max(300)).max(200),
     reason: z.string().max(2000).optional(),
+    progress: AgentDeployProgress.optional(),
   }).strict(),
   // 살아 있음 + CloudNativePG 상태 (컷오버 전 복제 지연 확인용)
   z.object({

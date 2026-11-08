@@ -1,7 +1,9 @@
 import { execFile } from "node:child_process";
-import { DELIVERY, argoAppName, type BundleRef } from "./bundle.js";
+import { DELIVERY, argoAppName, clusterSecretFile, type BundleRef, type GitopsEnv } from "./bundle.js";
 import type { CommitResult } from "./repo.js";
 import type { SyncWatcher, SyncWatchResult } from "./index.js";
+import { revisionMatcher, type RevisionCovers } from "./revision-check.js";
+import type { StopHint } from "../jobs/_stop-hint.js";
 import { envNumber } from "@svc/contracts";
 
 // Z94: 앱 배포 뒤 Argo CD 반영 확인 (T20 deploying → syncing 의 argoHealthy 증거).
@@ -54,11 +56,14 @@ export function degradedDetail(s: ArgoAppStatus): string {
   return "";
 }
 
-/** 한 번 읽은 상태 → 끝/계속. 순수 함수 (시험 대상) */
-export function judgeArgo(s: ArgoAppStatus, commit: string): { done: boolean; ok: boolean; reason?: string; emptyDetail?: boolean } {
-  const mine = s.sync?.revision === commit;
+/** 한 번 읽은 상태 → 끝/계속. 순수 함수 (시험 대상)
+ *  alsoMine: 커밋과 글자가 다른 리비전 중 우리 것으로 볼 것 (D3 #373: 후손이면서 묶음 폴더가 그대로인 리비전. 미리 git 으로 판정해 넘긴다) */
+export function judgeArgo(s: ArgoAppStatus, commit: string, alsoMine: (rev: string) => boolean = () => false):
+    { done: boolean; ok: boolean; reason?: string; emptyDetail?: boolean } {
+  const isMine = (rev: string | undefined) => rev === commit || (!!rev && alsoMine(rev));
+  const mine = isMine(s.sync?.revision);
   const op = s.operationState;
-  if (op && (op.phase === "Failed" || op.phase === "Error") && (op.syncResult?.revision ?? commit) === commit) {
+  if (op && (op.phase === "Failed" || op.phase === "Error") && isMine(op.syncResult?.revision ?? commit)) {
     return { done: true, ok: false, reason: `ARGO_SYNC_FAILED: ${(op.message ?? "").slice(0, 200)}` };
   }
   if (mine && s.health?.status === "Degraded") {
@@ -69,6 +74,42 @@ export function judgeArgo(s: ArgoAppStatus, commit: string): { done: boolean; ok
   return { done: false, ok: false };
 }
 
+// D1 (#373): Argo 허브가 도착 클러스터 자체를 못 읽는 상태 (자원 하나의 오류가 아님). 기다려도 사람이 고치기 전엔 안 풀리는 일이 많다.
+//   실측: EKS "Failed to load live state: failed to get cluster info for "https://<EKS 주소>"" 로 600초를 다 기다림 (허브가 클러스터를 10분 동안 못 읽음),
+//         GKE "failed to sync cluster … backendconfigs.cloud.google.com is forbidden … in the namespace "app-shop3"" (지운 네임스페이스가 cluster Secret namespaces 에 남음)
+//   Application conditions 의 메시지만 본다. 자원별 health·sync 오류·operationState(→ ARGO_SYNC_FAILED)는 안 본다
+// DRAFT(ai): 클러스터 수준 문구 = Argo 클러스터 캐시가 내는 세 가지 (조건 종류 상관없음).
+//   접속·자격 문구(Unauthorized·dial tcp …)는 "live state"(Argo 가 클러스터에서 읽는 쪽)가 같이 있고 git 쪽(target state·manifest·repo) 문구가 없을 때만.
+//   SyncError 는 안 본다: 적용 중 웹훅 연결 실패("…-cluster?timeout=10s": dial tcp … i/o timeout) 같은 자원 하나의 오류다
+const CLUSTER_LEVEL = /failed to get cluster info|failed to sync cluster|error synchronizing cache state/i;
+const CLUSTER_ACCESS = /Unauthorized|provide credentials|dial tcp|i\/o timeout|no such host/i;
+const LIVE_STATE = /live state/i;
+const REPO_SIDE = /target state|generate manifest|repo-server|repository/i;
+
+/** 도착 클러스터를 못 읽는다는 조건 메시지(가린 200자). 없으면 null. 순수 함수 (시험 대상) */
+export function clusterFailure(s: ArgoAppStatus): string | null {
+  for (const c of s.conditions ?? []) {
+    const m = c.message?.trim();
+    if (!m) continue;
+    const access = c.type !== "SyncError" && CLUSTER_ACCESS.test(m) && LIVE_STATE.test(m) && !REPO_SIDE.test(m);
+    if (CLUSTER_LEVEL.test(m) || access) return clip(`${c.type ?? "Condition"}: ${m}`);
+  }
+  return null;
+}
+
+/** ARGO_CLUSTER_UNREACHABLE 로 멈출 때 웹 멈춤 화면이 그리는 빠진 것·고치는 법 (deploy 가 detail.deploy 칸에 붙인다. jobs/_stop-hint.ts 모양) */
+export function argoStopHint(code: string, env: GitopsEnv): StopHint | null {
+  if (code !== "ARGO_CLUSTER_UNREACHABLE") return null;
+  const access = env === "aws-eks"
+    ? ["aws: 도착 EKS 접근 항목(access entry)과 정책 연결 — 배포 역할 svc-deploy*", "aws: Argo 허브 역할(ARGO_HUB_ROLE_ARN)이 배포 역할을 맡을 수 있는지 (신뢰 정책)"]
+    : env === "gcp-gke" ? ["gcp: Argo 허브 서비스 계정의 도착 GKE 읽기 권한 (네임스페이스별 RoleBinding)"] : [];
+  return {
+    missing: [...access, `argocd: tenants/<회사>/argocd/${env === "aws-eks" || env === "gcp-gke" ? clusterSecretFile(env) : "cluster-<env>.yaml"} 의 namespaces`],
+    hint: "Argo CD 허브가 도착 클러스터를 읽지 못합니다. ① 허브 역할의 클러스터 접근(EKS 는 접근 항목·정책 연결, 방금 만든 클러스터면 1~2분 더 기다림, GKE 는 RoleBinding)을 확인하고 " +
+      "② 허브 cluster Secret 의 namespaces 에 지워진 네임스페이스가 남아 있으면 빼서 커밋한 뒤 ③ 재개합니다.",
+  };
+}
+
 /** 한 번 읽기 결과. kind: ok=상태 받음, missing=Application 아직 없음, auth=권한 없음(다시 해도 같음), error=일시 오류 */
 export type ArgoRead =
   | { kind: "ok"; status: ArgoAppStatus }
@@ -76,16 +117,20 @@ export type ArgoRead =
   | { kind: "auth"; detail: string }
   | { kind: "error"; detail: string };
 
+/** 읽기 전에 Argo 에 거는 새로고침. normal = git 다시 보기, hard = 매니페스트 캐시까지 버리고 다시 (D1 #373) */
+export type ArgoRefresh = "normal" | "hard";
+
 /** diagnose: Application 만으로 사유를 못 얻었을 때 한 번 더 읽는 길(k8s 길만). 못 읽으면 빈 문자열 */
-export interface ArgoReader { source: "rest" | "k8s"; read(name: string, first: boolean): Promise<ArgoRead>; diagnose?(status: ArgoAppStatus): Promise<string> }
+export interface ArgoReader { source: "rest" | "k8s"; read(name: string, refresh?: ArgoRefresh): Promise<ArgoRead>; diagnose?(status: ArgoAppStatus): Promise<string> }
 
 export function restReader(url: string, token: string, fetchImpl: typeof fetch, reqTimeoutMs: number): ArgoReader {
   const base = url.replace(/\/+$/, "");
   return {
     source: "rest",
-    async read(name, first) {
-      // refresh=normal 은 첫 번 한 번만: 매 틱마다 붙이면 Argo 가 매번 git 을 다시 본다 (repo-server 부하)
-      const q = first ? "?refresh=normal" : "";
+    async read(name, refresh) {
+      // 새로고침은 기다림이 고른 때만 (첫 읽기 normal, 없던 앱이 처음 보일 때 normal, 오래 안 끝나면 hard 한 번):
+      //   매 틱마다 붙이면 Argo 가 매번 git 을 다시 본다 (repo-server 부하)
+      const q = refresh ? `?refresh=${refresh}` : "";
       try {
         const r = await fetchImpl(`${base}/api/v1/applications/${encodeURIComponent(name)}${q}`, {
           headers: { Authorization: `Bearer ${token}`, Accept: "application/json" },
@@ -145,11 +190,11 @@ export function k8sReader(namespace: string, context: string | undefined, run: K
       }
       return parts.length ? clip(`Deployment/${dep.name}: ${parts.join("; ")}`) : "";
     },
-    async read(name, first) {
+    async read(name, refresh) {
       const ctx = context ? ["--context", context] : [];
       // Z94b (Z103 지적): CR 읽기만으로는 refresh 가 안 걸려 새 커밋이 Argo git 주기(기본 약 180초) 뒤에야 보일 수 있다.
-      // 첫 읽기 전에 REST 의 refresh=normal 과 같은 주석을 한 번 건다. 실패(아직 NotFound 등)해도 읽기는 계속
-      if (first) await run([...ctx, "annotate", "applications.argoproj.io", name, "-n", namespace, "argocd.argoproj.io/refresh=normal", "--overwrite"], reqTimeoutMs);
+      // 기다림이 고른 때 읽기 전에 REST 의 refresh=normal|hard 와 같은 주석을 건다. 실패(아직 NotFound 등)해도 읽기는 계속
+      if (refresh) await run([...ctx, "annotate", "applications.argoproj.io", name, "-n", namespace, `argocd.argoproj.io/refresh=${refresh}`, "--overwrite"], reqTimeoutMs);
       const args = [...ctx, "get", "applications.argoproj.io", name, "-n", namespace, "-o", "json"];
       const r = await run(args, reqTimeoutMs);
       if (r.code === 0) {
@@ -173,7 +218,8 @@ const notConfigured: SyncWatcher = {
   },
 };
 
-export interface ArgoDeps { fetchImpl?: typeof fetch; kubectl?: KubectlRun; sleep?: (ms: number) => Promise<void>; now?: () => number }
+// covers: D3 (#373) 후손 리비전 판정 (GitopsRepo.revisionCovers). 없으면 정확히 같은 커밋만
+export interface ArgoDeps { fetchImpl?: typeof fetch; kubectl?: KubectlRun; sleep?: (ms: number) => Promise<void>; now?: () => number; covers?: RevisionCovers }
 
 export function argoReaderFromEnv(env: NodeJS.ProcessEnv, d: ArgoDeps = {}): ArgoReader | null {
   const url = env.ARGOCD_URL || env.ARGOCD_SERVER;
@@ -199,26 +245,46 @@ export function argoWatcherFromEnv(env: NodeJS.ProcessEnv = process.env, d: Argo
   // DRAFT(ai): 틱 기본 2초, 데모 모드 1초 (Synced+Healthy 를 빨리 잡아 화면 단계가 덜 멈춰 보이게)
   const tickMs = envNumber(env.ARGO_TICK_MS, demo ? 1000 : 2000);
   const maxErrors = envNumber(env.ARGO_MAX_ERRORS, 10);
+  // D1 (#373) DRAFT(ai): 60초 안에 안 끝나면 hard 새로고침 한 번 (매니페스트 캐시가 낡아 새 커밋을 못 보는 경우). 0 = 끔
+  const hardMs = envNumber(env.ARGO_HARD_REFRESH_SEC, 60) * 1000;
+  // D1 (#373) DRAFT(ai): 도착 클러스터를 못 읽는 상태가 120초 이어지면 ARGO_CLUSTER_UNREACHABLE 로 멈춘다. 0 = 끔.
+  //   120초는 여유: 방금 만든 EKS 의 접근 항목은 1~2분 뒤에야 먹는다 (그 사이 Argo 가 Unauthorized 를 낸다)
+  const unreachableMs = envNumber(env.ARGO_UNREACHABLE_SEC, 120) * 1000;
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const now = deps.now ?? Date.now;
   return {
     async wait(b: BundleRef, c: CommitResult): Promise<SyncWatchResult> {
       if (DELIVERY[b.env] !== "argocd-push") return { ok: true };   // 온프레 Agent(Z92)·Azure Mock 은 여기서 안 기다림
       const name = argoAppName(b);
+      const accept = revisionMatcher(b, deps.covers);   // D3: 이 기다림 동안만 (커밋, 리비전) 판정을 기억한다
       const t0 = now();
       const end = t0 + waitMs;
       let last = "no response";
       let polls = 0;
       let errs = 0;           // 연속 일시 오류 수
       let missing = true;     // 지금까지 Application 을 한 번도 못 봤는지
+      let refresh: ArgoRefresh | undefined = "normal";   // 다음 읽기에 걸 새로고침 (첫 읽기는 normal)
+      let hardSent = false;
+      let clusterBadSince: number | null = null;          // 도착 클러스터를 못 읽는 상태가 처음 보인 때 (깨끗한 읽기가 오면 지움)
       const obs = (extra: Partial<NonNullable<SyncWatchResult["observed"]>> = {}) =>
         ({ source: reader.source, app: name, polls, ms: now() - t0, last, ...extra });
       while (true) {
-        const r = await reader.read(name, polls === 0);
+        // D1 (a): 앱이 보이는데 hardMs 지나도록 안 끝나면 hard 새로고침 한 번 (REST·k8s 둘 다)
+        if (!refresh && !hardSent && hardMs > 0 && !missing && now() - t0 >= hardMs) refresh = "hard";
+        if (refresh === "hard") hardSent = true;
+        const r = await reader.read(name, refresh);
+        refresh = undefined;
         polls++;
         if (r.kind === "ok") {
+          // D1 (b): 없던(또는 못 읽던) Application 이 처음 보이면 다음 읽기에 normal 새로고침 한 번 (첫 읽기의 새로고침은 앱이 없어 안 먹었다)
+          if (missing && polls > 1) refresh = "normal";
           errs = 0; missing = false;
-          const j = judgeArgo(r.status, c.commit);
+          // D3: 글자가 다른 리비전(가지 끝으로 앞선 리비전)이 후손이고 묶음 폴더가 그대로면 우리 커밋으로 본다
+          const okRevs = new Set<string>();
+          for (const rev of [r.status.sync?.revision, r.status.operationState?.syncResult?.revision]) {
+            if (rev && rev !== c.commit && await accept(c.commit, rev)) okRevs.add(rev);
+          }
+          const j = judgeArgo(r.status, c.commit, (rev) => okRevs.has(rev));
           if (j.done && !j.ok && j.emptyDetail && reader.diagnose) {
             // ARGODEG ④: Application 에 사유가 없으면 Deployment·Pod 를 한 번 더 읽는다. 실패하면 고정 문구 그대로
             const extra = await reader.diagnose(r.status).catch(() => "");
@@ -227,7 +293,18 @@ export function argoWatcherFromEnv(env: NodeJS.ProcessEnv = process.env, d: Argo
           last = `${r.status.sync?.status ?? "?"}/${r.status.health?.status ?? "?"} @${(r.status.sync?.revision ?? "").slice(0, 8)}`;
           const cond = r.status.conditions?.find((x) => /Error$/.test(x.type ?? ""));
           if (cond) last += ` ${cond.type}: ${(cond.message ?? "").slice(0, 80)}`;
-          if (j.done) return { ok: j.ok, ...(j.reason ? { reason: j.reason } : {}), observed: obs({ sync: r.status.sync?.status, health: r.status.health?.status, revision: r.status.sync?.revision }) };
+          const seen = { sync: r.status.sync?.status, health: r.status.health?.status, revision: r.status.sync?.revision };
+          if (j.done) return { ok: j.ok, ...(j.reason ? { reason: j.reason } : {}), observed: obs(seen) };
+          // D1 (c): 도착 클러스터를 못 읽는 상태가 unreachableMs 동안 끊김 없이 이어지면 600초를 다 기다리지 않고 멈춘다 (deploy 는 paused)
+          const bad = clusterFailure(r.status);
+          if (!bad) clusterBadSince = null;
+          else {
+            clusterBadSince ??= now();
+            const lasted = now() - clusterBadSince;
+            if (unreachableMs > 0 && lasted >= unreachableMs) {
+              return { ok: false, reason: `ARGO_CLUSTER_UNREACHABLE: ${Math.round(lasted / 1000)}s 동안 Argo 허브가 도착 클러스터를 못 읽음, last ${bad}`, observed: obs(seen) };
+            }
+          }
         } else if (r.kind === "auth") {
           // 토큰·RBAC 문제는 기다려도 안 풀린다 → 바로 끝
           last = r.detail;

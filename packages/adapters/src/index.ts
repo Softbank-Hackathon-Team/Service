@@ -26,7 +26,7 @@ export { registryOf, isPublicImage } from "./common/base.js";
 // 리허설: 샌드박스 Postgres 가 도착과 같은 DB 이름·앱 계정을 쓰게 (worker rehearsal)
 export { dbIdentityFor } from "./target/data-fit.js";
 export { realTerraformEnabled, iacMockEnabled, findWorkDir, readImported, type ImportedInfra, TENANT_DIR_RE, createRealTerraformRunner, fillTfVars, factsFromEnv, factEnvName, parseOutputs, childEnv,
-  workRootOf, workDirOf, PLAN_ONLY_ID, planOnlyId, spawnExec, REAL_MODULE_BASE, ROOT_DIR, layoutOf, type TfLayout, DEFAULT_MODULE_ROOT, type Exec, type ExecResult, type RealApplyResult, type RealTerraformRunner } from "./terraform/real-runner.js";
+  workRootOf, workDirOf, PLAN_ONLY_ID, planOnlyId, spawnExec, REAL_MODULE_BASE, ROOT_DIR, layoutOf, LOCK_FILE, seedLockFile, pruneStaleProviderLinks, type TfLayout, DEFAULT_MODULE_ROOT, type Exec, type ExecResult, type RealApplyResult, type RealTerraformRunner } from "./terraform/real-runner.js";
 // 환경 층 (도착 GCP 프로젝트의 VPC·GKE·AR·ESO). worker env-layer.ts 가 apply 맨 앞에서 부른다
 export { createEnvLayerRunner, envLayerVars, envLayerVarsHash, envLayerFactsOf, factsOfLayer, mergeFacts, envLayerBackend, envLayerDirOf, envLayerBudgetSec,
   ENV_LAYER_KEYS, ENV_LAYER_MODULE, ENV_LAYER_MODULE_DIGEST, ENV_LAYER_NAME, type EnvLayerFacts, type EnvLayerVars, type EnvLayerResult, type EnvLayerRunner, type EnvLayerRunnerOpts } from "./terraform/env-layer.js";
@@ -45,6 +45,9 @@ export { AWS_DATA_READ_ACTIONS, GCP_DATA_READ_PERMISSIONS, AWS_DATA_READ_PENDING
 export { readK8sNamespace, type K8sNamespaceRead, type K8sNamespaceOpts } from "./discover/k8s.js";
 // 온프레 출발 가져오기 (pull 모드): Agent 가 모은 인벤토리 스냅숏을 discover 의 kubectl 대신 재생한다
 export { collectInventorySnapshot, snapshotExec, snapshotBytes, parseKubectl, type InventorySnapshotOpts } from "./discover/inventory-snapshot.js";
+// #373 B3·B4: AWS·GCP 출발 가져오기 읽기 CLI 짧은 캐시 (프로세스 메모리) · EKS 정적 토큰 kubeconfig
+export { importCacheExec, importCacheArgs, importCacheSec, newImportCacheStats, clearImportCache, importCacheSize, type ImportCacheStats, type ImportCacheScope, type ImportCacheOpts } from "./discover/import-cache.js";
+export { eksKubeconfig, eksStaticTokenEnabled, EKS_TOKEN_REFRESH_MS, type EksKube, type EksKubeInput } from "./discover/eks-kubeconfig.js";
 // I2: k8s 원본 타입 + 종류 문자열
 export * from "./import/raw-k8s.js";
 export { mockSeed, CliError, classifyCliError, sourceFail, type CliErrorKind, type CliDeps } from "./common/cli.js";

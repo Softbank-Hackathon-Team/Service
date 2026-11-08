@@ -23,6 +23,7 @@ import {
   humanAction,
   listNote,
   realEnvs,
+  realMigrations,
   statusBadge,
   type EnvObservation,
   type Health,
@@ -135,14 +136,14 @@ export function DashboardPage() {
   const [shown, setShown] = useState<MigrationView[]>([]);
   const shownSignature = useRef('');
   useEffect(() => {
-    const next = migrations.data;
+    const next = migrations.data && realMigrations(migrations.data, envs.data);
     if (!next) return;
     const signature = bucketSignature(next);
     const moved = shownSignature.current !== '' && shownSignature.current !== signature;
     shownSignature.current = signature;
     if (moved) withTransition(() => setShown(next));
     else setShown(next);
-  }, [migrations.data]);
+  }, [migrations.data, envs.data]);
 
   const groups = groupMigrations(shown);
   const note = listNote(groups);

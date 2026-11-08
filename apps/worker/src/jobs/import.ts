@@ -7,7 +7,7 @@ import { failedAttempts, recordAttemptFailure, isLastAttempt } from "./_step.js"
 import { envNumber } from "@svc/contracts";
 import { log } from "../instrument.js";
 import { onpremPullSource, onpremSnapshotDeps } from "./_onprem-snapshot.js";
-import { CLOUDRUN_RAW_KINDS, VM_RAW_KIND } from "@svc/adapters";
+import { CLOUDRUN_RAW_KINDS, VM_RAW_KIND, importCacheExec, importCacheSec, newImportCacheStats, type ImportCacheStats } from "@svc/adapters";
 
 // 가져오기가 옮길 원본 워크로드 종류. 하나도 없으면 옮길 앱이 없다 → SOURCE_INCOMPLETE (영구 실패)
 const WORKLOAD_KINDS = new Set<string>(["k8s.deployment", "k8s.cronjob", "ecs.service", VM_RAW_KIND, CLOUDRUN_RAW_KINDS.service, CLOUDRUN_RAW_KINDS.job]);
@@ -91,9 +91,13 @@ async function importOnce(job: MigrationJob): Promise<boolean> {
   try {
     // PREVIDS: 같은 이전의 직전 판의 ids(벤더 키 → id)를 넘겨, 다시 가져와도 같은 자원 = 같은 id. 첫 가져오기는 빈 값
     // PREVIDS2: 같은 이전의 앞 판들(가장 새 것부터)에서 id 와, 사람이 손댄 칸을 읽는다
-    const cli: CliDeps = sess.session.cliEnv ? { env: observeEnv(sess.session.cliEnv) } : {};
+    // #373 B3: 읽기 CLI 출력 짧은 캐시. 키 = 회사 + 출발 환경 + 빌린 역할 신원(roleRef, 자격 값 아님) + 명령 인자. IMPORT_CACHE_SEC=0 이면 끔
+    const stats = newImportCacheStats(importCacheSec());
+    const exec = importCacheExec(undefined, { scope: { tenantId: job.tenantId, envId: row.source_env_id, role: sess.roleRef }, ttlSec: stats.ttlSec, stats });
+    const cli: CliDeps = { ...(sess.session.cliEnv ? { env: observeEnv(sess.session.cliEnv) } : {}), exec };
     const imp = await importSpec(row.provider as Provider, cli, await previousImports(job), scope.data);
-    return await saveImport(job, imp);
+    // 캐시를 거친 명령이 있을 때만 감사에 남긴다 (끔·MOCK_SEED 데모 원본이면 없음)
+    return await saveImport(job, { ...imp, ...(stats.hits + stats.misses + stats.bypass > 0 ? { cache: stats } : {}) });
   } finally {
     await sess.release();
   }
@@ -130,10 +134,12 @@ async function borrowObserve(job: MigrationJob, row: { source_env_id: string; pr
   const release = (credentialRef: string) => roles.revoke(credentialRef, job.tenantId, "import_done").then(() => undefined, (e) => console.error("import revoke", scrubString((e as Error).message)));
   let ref: string;
   let session: ObserveSession;
+  let roleRef: string;
   try {
     const cred = await roles.issue({ tenantId: job.tenantId, envId: row.source_env_id, provider: row.provider as Provider,
       purpose: "observe", migrationId: job.migrationId, actions: importObserveActions(row.provider), ttlSec: IMPORT_OBSERVE_TTL_SEC }, { step: "import" });
     ref = cred.credentialRef;
+    roleRef = cred.roleRef;
     if (refuseMockCredentials(cred, row.provider)) {
       await release(ref);
       throw new AdapterError("SOURCE_UNAVAILABLE", `출발 관찰 역할이 가짜 자격 (${MOCK_CREDENTIALS}) — 콘솔 연결 링크로 만든 환경인지 확인`);
@@ -161,6 +167,7 @@ async function borrowObserve(job: MigrationJob, row: { source_env_id: string; pr
   }
   return {
     session,
+    roleRef,   // #373 B3: 캐시 키의 역할 신원 (ARN·SA 이메일. 자격 값이 아니다)
     release: () => release(ref),
   };
 }
@@ -203,7 +210,8 @@ async function saveImport(job: MigrationJob, imp: SpecImport): Promise<boolean> 
       mode: "ifStill",
       // Z88: 읽은 출발 자원 목록(종류·이름·버전만, 환경변수는 이름만)을 감사에 남긴다 → provisioning(Z89)이 "이미 있음" 판단에 쓴다
       audit: { actor: "worker", action: "migration.spec_review", target: job.migrationId, result: "ok",
-               detail: { sourceInventory: inventoryForAudit(imp.inv), ...(imp.note ? { note: imp.note } : {}), ...(imp.carry ? { carry: imp.carry } : {}), ...(accuracy ? { accuracy } : {}) } },
+               detail: { sourceInventory: inventoryForAudit(imp.inv), ...(imp.note ? { note: imp.note } : {}), ...(imp.carry ? { carry: imp.carry } : {}), ...(accuracy ? { accuracy } : {}),
+                         ...(imp.cache ? { cache: imp.cache } : {}) } },   // #373 B3: 캐시 쓰임 {ttlSec, hits, misses, bypass, maxAgeSec} → 타임라인 detail
     });
   });
 }
@@ -230,7 +238,7 @@ async function accuracyOf(tx: { query: (sql: string, p?: unknown[]) => Promise<{
 //   checkV2 errors(구조 오류)만 막는다. reviews(벤더 주소·사설 IP 남음)는 fieldMeta 검토 표시만
 // 시험이 바깥 읽기(discover)를 느리게·중간 취소로 흉내 낼 수 있게 한 곳에서 부른다 (기본 = discoverForImport)
 export const importDeps = { discover: discoverForImport };
-type SpecImport = { inv: RawInventory; result: ImportResultV2; note?: string; carry?: { kept: string[]; flagged: string[]; dropped: string[] } };
+type SpecImport = { inv: RawInventory; result: ImportResultV2; note?: string; carry?: { kept: string[]; flagged: string[]; dropped: string[] }; cache?: ImportCacheStats };
 // #241: 자식 CLI 환경. 워커 자기 AWS 자격을 지우고(envFor), GCP 토큰이면 워커 자기 gcloud 자격(서비스 계정 파일·대리 설정 등)까지 지운다(gcpEnvFor)
 const observeEnv = (c: Record<string, string>): NodeJS.ProcessEnv => c.CLOUDSDK_AUTH_ACCESS_TOKEN && c.CLOUDSDK_CORE_PROJECT
   ? gcpEnvFor(c.CLOUDSDK_AUTH_ACCESS_TOKEN, c.CLOUDSDK_CORE_PROJECT, envFor(c)) : envFor(c);

@@ -2,11 +2,11 @@
 //   npm run agent:onprem -- heartbeat                한 번 보내기
 //   npm run agent:onprem -- security
 //   npm run agent:onprem -- facts                    W5: 보안 사실 (TLS 강제·DB 버전·바깥 노출·권한 단계)
-//   npm run agent:onprem -- deploys                  W4: 클러스터 안 Argo Application 이 끝났으면 deploy 보고 (app + 적용 커밋)
+//   npm run agent:onprem -- deploys                  W4: 클러스터 안 Argo Application 상태를 deploy 보고 (app + Argo 커밋). 끝났으면 applied·failed, 아니면 progressing
 //   npm run agent:onprem -- deploy --migration <uuid> --bundle <해시>
 //   npm run agent:onprem -- inventory                온프레 출발 가져오기 재료 (클러스터 범위 읽기 전용 목록 스냅숏, Secret 제외)
-//   npm run agent:onprem -- loop [--every 30]         heartbeat·deploys 30초마다 + security·facts·inventory 10번에 1번 (Ctrl+C 로 멈춤)
-//     deploys 는 앱마다 (커밋, 결과)가 바뀔 때만 보낸다
+//   npm run agent:onprem -- loop [--every 10]         heartbeat·deploys 10초마다 + security·facts·inventory 약 300초마다 뒤에서 (Ctrl+C 로 멈춤)
+//     deploys 는 앱마다 (커밋, 결과)가 바뀔 때만 보낸다. progressing 은 상태가 바뀔 때만, 앱마다 1분에 한 번까지 (DeployReportGate)
 //   SVC_ENROLL_TOKEN=<토큰> AGENT_REPORT_URL=<API> npm run agent:onprem -- --enroll [--out .agent-key.env]
 //     L6: 화면에서 받은 10분 일회용 토큰으로 Agent 키를 받아 --out 파일(권한 600)에 쓰고 heartbeat 한 번 보낸다
 //     토큰은 argv 대신 환경변수로 받는다 (ps·셸 기록에 덜 남는다)
@@ -15,11 +15,12 @@
 //         SEALING_CERT_URL(facts 에 실을 sealed-secrets 공개 인증서 주소, 기본 클러스터 안 sealed-secrets-controller.kube-system:8080)
 //         EGRESS_IP_URL(facts 에 실을 나가는 공인 IP 를 물을 주소, 기본 https://checkip.amazonaws.com, off = 안 물음)
 //         AGENT_INVENTORY(0 = loop 에서 inventory 를 안 보냄. 설치 차트 grants.inventory=false 와 같이 쓴다)
+//         AGENT_PROGRESS(0 = progressing deploy 보고를 안 보냄. 예전 API 에 붙일 때. 기본 켬, #373 D2)
 // 출력: 보낼 때마다 JSON 한 줄 {kind, status, ok, body}
 import { chmodSync, writeFileSync } from "node:fs";
 import {
-  collectArgoDeploys, collectDeploy, collectFacts, collectHeartbeat, collectInventory, collectSecurity, DEFAULT_EGRESS_IP_URL, DEFAULT_SEALING_CERT_URL, fetchEgressIp, fetchSealingCert, kubectlExec,
-  sendAgentReport, type AgentReport,
+  collectArgoDeploys, collectDeploy, collectFacts, collectHeartbeat, collectInventory, collectSecurity, DEFAULT_EGRESS_IP_URL, DEFAULT_SEALING_CERT_URL, DeployReportGate, fetchEgressIp, fetchSealingCert, kubectlExec,
+  periodic, sendAgentReport, SLOW_REPORT_PERIOD_MS, type AgentReport,
 } from "@svc/agent";
 
 const VERSION = "onprem-agent/0.1.0";
@@ -30,11 +31,12 @@ const need = (k: string) => { const v = process.env[k]; if (!v) throw new Error(
 const kubectl = kubectlExec({ context: process.env.AGENT_KUBE_CONTEXT || undefined });
 const ns = process.env.AGENT_NAMESPACE || "app";
 const base = { kubectl, agentVersion: VERSION };
-const send = async (r: AgentReport) => {
+const sendRes = async (r: AgentReport) => {
   const res = await sendAgentReport(r, { baseUrl: need("AGENT_REPORT_URL"), keyId: need("AGENT_KEY_ID"), secret: need("AGENT_KEY_SECRET") });
   console.log(JSON.stringify({ kind: r.kind, status: res.status, ok: res.ok, body: res.body }));
-  return res.ok;
+  return res;
 };
+const send = async (r: AgentReport) => (await sendRes(r)).ok;
 const heartbeat = async () => send(await collectHeartbeat({ ...base, namespace: ns, cnpgCluster: process.env.AGENT_CNPG_CLUSTER || "app-db" }));
 const security = async () => send(await collectSecurity(base));
 const sealingCert = () => fetchSealingCert(process.env.SEALING_CERT_URL || DEFAULT_SEALING_CERT_URL);
@@ -45,15 +47,20 @@ const facts = async () => send(await collectFacts({ ...base, sealingCert, ...(eg
 // 온프레 출발 가져오기 재료. 워커는 이 스냅숏이 600초(IMPORT_INVENTORY_MAX_AGE_SEC)보다 오래되면 가져오기를 멈춘다
 const inventory = async () => send(await collectInventory({ agentVersion: VERSION, context: process.env.AGENT_KUBE_CONTEXT || undefined }));
 const inventoryOn = process.env.AGENT_INVENTORY !== "0";
-// W4: 앱마다 마지막으로 보낸 (커밋, 결과). 같은 상태를 30초마다 다시 보내지 않는다 (재시작하면 한 번 다시 보낸다 = 해롭지 않음)
-const lastDeploy = new Map<string, string>();
+// W4: 앱마다 마지막으로 보낸 보고를 기억해 같은 상태를 매 차례 다시 보내지 않는다 (재시작하면 한 번 다시 보낸다 = 해롭지 않음)
+//   #373 D2: 진행 중(progressing)도 보낸다. 고르는 규칙은 DeployReportGate (packages/agent deploys.ts)
+const gate = new DeployReportGate();
+const progressOn = process.env.AGENT_PROGRESS !== "0";
 const deploys = async () => {
-  const reps = await collectArgoDeploys({ ...base, argocdNamespace: process.env.AGENT_ARGOCD_NAMESPACE || "argocd", tenant: process.env.AGENT_TENANT || undefined });
+  const reps = await collectArgoDeploys({ ...base, argocdNamespace: process.env.AGENT_ARGOCD_NAMESPACE || "argocd", tenant: process.env.AGENT_TENANT || undefined, progress: progressOn });
   let ok = true;
   for (const r of reps) {
-    const k = `${r.bundleHash}:${r.status}`;
-    if (lastDeploy.get(r.app!) === k) continue;
-    if (await send(r)) lastDeploy.set(r.app!, k); else ok = false;
+    if (!gate.due(r)) continue;
+    const res = await sendRes(r);
+    if (res.ok) { gate.sent(r); continue; }
+    ok = false;
+    if (gate.rejected(r, res.status))
+      console.error(JSON.stringify({ kind: "deploy", ok: false, error: "플랫폼 API 가 progressing 보고를 받지 않는다 (예전 판). 10분 동안 progressing 을 끈다 — 플랫폼 API 를 먼저 올린다" }));
   }
   return ok;
 };
@@ -97,20 +104,25 @@ async function main(): Promise<boolean> {
       return send(await collectDeploy({ ...base, namespace: ns, migrationId, bundleHash }));
     }
     case "loop": {
-      const every = Math.max(5, Number(opt("every") ?? 30)) * 1000;
-      let n = 0, stop = false;
+      // DRAFT(ai) #373 A3: 기본 10초 (예전 30). 커밋 → applied 보고 13~101초(11/07 실측) 대부분이 온프레 Argo git 확인 주기와 이 주기를 기다린 시간이다
+      const every = Math.max(5, Number(opt("every") ?? 10)) * 1000;
+      const slowDue = periodic(SLOW_REPORT_PERIOD_MS);
+      const fail = (kind: string) => (e: unknown) => console.error(JSON.stringify({ kind, ok: false, error: (e as Error).message }));
+      // 무거운 보고 (security·facts·inventory). 시간 기준 약 300초마다, 기다리지 않고 뒤에서 한 번에 하나만 돈다
+      //   inventory 는 클러스터 범위 목록을 다 읽어 오래 걸릴 수 있다 → heartbeat 간격이 그만큼 늘면 워커가 Agent 가 끊겼다고(AGENT_OFFLINE) 오판한다
+      const slowReports = async () => {
+        await security().catch(fail("security"));
+        await facts().catch(fail("facts"));
+        if (inventoryOn) await inventory().catch(fail("inventory"));
+      };
+      let slow: Promise<void> | null = null, stop = false;
       process.on("SIGINT", () => { stop = true; });
       process.on("SIGTERM", () => { stop = true; });
       while (!stop) {
         // 한 번 실패해도 멈추지 않는다 (API 재시작·네트워크 끊김). 다음 차례에 다시 보낸다
-        await heartbeat().catch((e) => console.error(JSON.stringify({ kind: "heartbeat", ok: false, error: (e as Error).message })));
-        await deploys().catch((e) => console.error(JSON.stringify({ kind: "deploy", ok: false, error: (e as Error).message })));
-        if (n++ % 10 === 0) {
-          await security().catch((e) => console.error(JSON.stringify({ kind: "security", ok: false, error: (e as Error).message })));
-          await facts().catch((e) => console.error(JSON.stringify({ kind: "facts", ok: false, error: (e as Error).message })));
-          // DRAFT(ai): facts 와 같은 주기 (기본 30초 × 10 = 5분). 워커 신선도 상한 600초 안에 두 번 보낸다
-          if (inventoryOn) await inventory().catch((e) => console.error(JSON.stringify({ kind: "inventory", ok: false, error: (e as Error).message })));
-        }
+        await heartbeat().catch(fail("heartbeat"));
+        await deploys().catch(fail("deploy"));
+        if (!slow && slowDue(Date.now())) slow = slowReports().finally(() => { slow = null; });
         for (let w = 0; w < every && !stop; w += 500) await new Promise((r) => setTimeout(r, 500));
       }
       return true;

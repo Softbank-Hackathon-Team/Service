@@ -94,6 +94,19 @@ RUN set -e; mkdir -p /out; \
 FROM ${CRANE_IMAGE} AS crane
 FROM ${HELM_IMAGE} AS helm
 FROM ${TERRAFORM_IMAGE} AS terraform
+# #373 B1: worker 가 이전마다 돌리는 terraform init 의 provider 를 빌드 때 한 번만 받아 둔다
+#   (진짜 플랫폼 실측 onprem→AWS: init 10.6초. 이전마다 aws provider(풀면 약 800MB)를 받아 풀고, 작업 폴더마다 그 복사본이 남았다)
+#   루트 모듈 잠금 파일(infra/modules/*/root, gcp/env 의 .terraform.lock.hcl)에 적힌 판·해시 그대로 받는다. 잠금 파일만 복사 → 모듈 *.tf 를 고쳐도 이 층은 캐시
+#   DRAFT(ai): 미러 자리 /opt/terraform/providers, 잠금 파일 해시는 linux_amd64(이미지)·linux_arm64(arm 노드·로컬 도커)·darwin_arm64(개발 맥) 몫
+#   잠금 파일 다시 만들기: 실행기 모양으로 펼친 폴더에서 terraform providers lock -platform=linux_amd64 -platform=linux_arm64 -platform=darwin_arm64
+#     (packages/adapters/test/b1-provider-mirror.test.ts 가 모듈 제약과 잠금 파일이 어긋나면 알려 준다)
+FROM ${TERRAFORM_IMAGE} AS tf-providers
+COPY deploy/docker/terraform/fetch-providers.sh /tf/fetch-providers.sh
+COPY infra/modules/aws/root/.terraform.lock.hcl /tf/locks/aws-root.lock.hcl
+COPY infra/modules/gcp/root/.terraform.lock.hcl /tf/locks/gcp-root.lock.hcl
+COPY infra/modules/onprem/root/.terraform.lock.hcl /tf/locks/onprem-root.lock.hcl
+COPY infra/modules/gcp/env/.terraform.lock.hcl /tf/locks/gcp-env.lock.hcl
+RUN sh /tf/fetch-providers.sh /out/providers /tf/locks/*.lock.hcl
 FROM ${KUBECTL_IMAGE} AS kubectl
 FROM ${ONPREM_KUBECTL_IMAGE} AS onprem-kubectl
 # GKE 클러스터 kubeconfig(get-credentials)는 gke-gcloud-auth-plugin 을 부른다. 기본 묶음에 없어 여기서 더한다.
@@ -177,9 +190,17 @@ RUN apk add --no-cache "$AWS_CLI_APK" openssl \
 # 최소 권한 파일(J2): 묶음 파일 하나에는 안 들어가서 따로 복사. 없으면 실행 역할 발급이 전부 거부된다
 COPY infra/permissions /app/infra/permissions
 ENV PERMISSIONS_DIR=/app/infra/permissions
+# #373 B1: 구운 provider 미러 + CLI 설정 (잘 안 바뀌는 gcloud·aws CLI 층 뒤에 둔다). 미러에 있으면 작업 폴더에 링크만 걸고(복사 0), 없는 provider·판만 레지스트리에서 받는다 (terraformrc 주석)
+#   실행기 childEnv 가 TF_CLI_CONFIG_FILE 을 terraform 에 넘긴다 (packages/adapters/src/terraform/real-runner.ts PASS_ENV)
+COPY deploy/docker/terraform/terraformrc deploy/docker/terraform/offline.tfrc deploy/docker/terraform/selfcheck.sh /opt/terraform/
+COPY --from=tf-providers /out/providers /opt/terraform/providers
+ENV TF_CLI_CONFIG_FILE=/opt/terraform/terraformrc
 # terraform 모듈 (infra/modules/<환경>/{root,kinds,app}). 실행기가 이전마다 TF_WORK_DIR 로 복사해서 돈다.
 #   묶음(dist/worker)은 레포 뿌리를 import.meta.url 로 못 찾으므로 경로를 env 로 준다. state·tfvars·.terraform 은 .dockerignore 가 뺀다
 COPY infra/modules /app/infra/modules
+# #373 B1: 네트워크 없이 미러만으로 루트 모듈 전부 init 되는지 빌드에서 확인 (잠금 파일 판·해시나 모듈 제약이 미러와 어긋나면 여기서 멈춘다)
+#   임시 폴더는 tmpfs 라 층에 아무것도 안 남는다
+RUN --network=none --mount=type=tmpfs,target=/tmp sh /opt/terraform/selfcheck.sh
 # 환경 층(gcp/env)이 ${path.module}/../../../charts/cluster-secret-store 를 쓴다 → 모듈과 같은 깊이에 차트도 (worker env-layer.ts 가 작업 폴더로 복사)
 COPY infra/charts /app/infra/charts
 ENV TF_MODULE_ROOT=/app/infra/modules
@@ -214,5 +235,5 @@ COPY --from=build-onprem-agent /src/dist/onprem-agent/main.mjs ./
 COPY --from=build-onprem-agent /src/dist/onprem-agent/data ./data
 USER node
 ENTRYPOINT ["node", "main.mjs"]
-# 30초마다 heartbeat, 10번에 1번 security (tools/onprem-agent.ts loop)
-CMD ["loop", "--every", "30"]
+# 10초마다 heartbeat·deploy 보고, security·facts·inventory 는 약 300초마다 (tools/onprem-agent.ts loop, #373 A3). 설치 차트는 agent.every 로 덮는다
+CMD ["loop", "--every", "10"]

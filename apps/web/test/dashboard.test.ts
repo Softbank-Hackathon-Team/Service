@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  bucketSignature, envHeadline, fromInventory, groupMigrations, humanAction, listNote, realEnvs,
+  bucketSignature, envHeadline, fromInventory, groupMigrations, humanAction, listNote, realEnvs, realMigrations,
 } from "../src/features/dashboard/model";
 import type { EnvironmentView, MigrationStatus, MigrationView } from "../src/lib/types";
 
@@ -20,6 +20,17 @@ test("환경 머리말: 모두 정상, 확인이 필요한 환경, 환경 없음
 
 test("시험용 환경은 대시보드에서 뺀다", () => {
   assert.deepEqual(realEnvs([env("a"), env("b", "connected", "load-1")]).map((e) => e.id), ["a"]);
+});
+
+test("숨긴 환경이 출발이나 도착인 마이그레이션은 목록에서 뺀다", () => {
+  const between = (id: string, sourceEnvId: string, targetEnvId: string): MigrationView => ({ ...mig(id, "completed"), sourceEnvId, targetEnvId });
+  const envs = [env("a"), env("b"), env("h", "connected", "tmp-old")];
+  const items = [between("keep", "a", "b"), between("src", "h", "b"), between("tgt", "a", "h"), between("gone", "a", "x")];
+  // 숨긴 환경 h 가 낀 두 줄만 빠진다. 목록에 없는 환경 x 는 숨기지 않는다
+  assert.deepEqual(realMigrations(items, envs)?.map((m) => m.id), ["keep", "gone"]);
+  // 환경 목록을 아직 못 읽었으면 null (전부 보였다가 사라지지 않게)
+  assert.equal(realMigrations(items, undefined), null);
+  assert.deepEqual(realMigrations(items, [])?.map((m) => m.id), ["keep", "src", "tgt", "gone"]);
 });
 
 test("인벤토리: 못 읽으면 확인 불가와 이유, 나쁜 자원이 있으면 불안정", () => {
