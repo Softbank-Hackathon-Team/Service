@@ -2,8 +2,8 @@ import logo from '../../assets/logo.png';
 import s from './Logo.module.css';
 import { t } from '../../lib/i18n';
 
-// 가칭이다 (팀 합의 전). 제품 이름이 정해지면 이 값과 index.html 의 <title> 을 바꾼다.
-export const PRODUCT_NAME = 'Iron platform';
+// 제품 이름 (11/08 팀 결정: Kross AI). 바꾸면 이 값과 index.html 의 <title> 을 같이 바꾼다.
+export const PRODUCT_NAME = 'Kross AI';
 
 /**
  * 팀 로고 (11/08 사용자 제공 그림). 앱 아이콘처럼 둥근 사각형으로 자른다 (모서리 = 한 변의 27.5%, 예전 I빔 아이콘과 같은 비율).
