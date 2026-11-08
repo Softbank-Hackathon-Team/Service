@@ -3,6 +3,7 @@
 #
 #   bash tools/demo/reset-roundtrip.sh check      7가지를 점검만 한다 (출발 DB 점검에만 real-app 에 임시 파드를 1개 띄웠다 지운다)
 #   bash tools/demo/reset-roundtrip.sh run src    출발 RDS sample-shop-db 울타리 해제 (앱 계정 쓰기 복구, read_only 해제)
+#   SRC_DB=jun-shop-db TCTX=src-shop-jun KUBECONFIG=<src-shop-jun kubeconfig> bash tools/demo/reset-roundtrip.sh run src   demo1 출발 RDS 울타리 해제
 #   bash tools/demo/reset-roundtrip.sh run vm     VM CNPG shop DB 비우기 (구독·슬롯·임시 계정 삭제 후 DB 다시 만들기)
 #   bash tools/demo/reset-roundtrip.sh run cf     Cloudflare: shop 호스트를 잡고 있는 이전 LB·풀·모니터 삭제 → DNS(출발 터널)로 돌아감
 #   bash tools/demo/reset-roundtrip.sh run aws    도착 EKS Pod Identity 연결 삭제 + 고정 이름 비밀 그릇 즉시 삭제 (되돌릴 수 없음)
@@ -15,8 +16,8 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"; SVC="$HERE/../Service"
 export AWS_PROFILE=${AWS_PROFILE:-softbank} AWS_REGION=${AWS_REGION:-ap-northeast-2}
-APP=shop-api; NS=app-shop-api; SRC_NS=real-app; SRC_DB=sample-shop-db; SRC_DBNAME=shop
-CLUSTER=platform-target; TCTX=eks-platform-target; PCTX=softbank-platform; VM=onprem-vm
+APP=shop-api; NS=app-shop-api; SRC_NS=real-app; SRC_DB=${SRC_DB:-sample-shop-db}; SRC_DBNAME=shop
+CLUSTER=platform-target; TCTX=${TCTX:-eks-platform-target}; PCTX=softbank-platform; VM=onprem-vm
 HOST=shop.softbank-team-iron.com; SRC_TUNNEL=9c151818
 PREFIX=platform/t-11111111/shop-api; FIXED_SECRETS="api-secrets shop-api-sample-shop-db-app"; HUB_APP=t-11111111-shop-api-aws-eks
 ADMIN_POLICY=arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy
