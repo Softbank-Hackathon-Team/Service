@@ -525,7 +525,7 @@ function ApproveScreen({ migration, route, onChanged, past }: ScreenProps) {
             ))}
           </ul>
         </FoldTile>
-        <SecurityFold migration={migration} />
+        {/* 보안 카드는 두지 않는다: 큰 카드의 보안 판이 같은 내용을 보인다 (11/08) */}
         {doc && <VerdictFold items={doc.precheck} />}
         {!past && (
           <ActionRow notice={error ?? (plan.error != null && !doc ? errorText(plan.error) : null)}>
