@@ -72,9 +72,9 @@ const NETWORK_ECHO = /^Failed to load resource: the server responded with a stat
 const flat = (text: string | null | undefined) => (text ?? "").replace(/\s+/g, " ").trim();
 const heroTitle = (page: Page) => page.getByRole("heading", { level: 2 });
 const envButton = (page: Page, name: string) => page.getByRole("button").filter({ has: page.getByText(name, { exact: true }) });
-// 새 이전의 출발 줄은 제목이 그 환경에서 서비스 중인 소프트웨어라, 환경 이름은 줄 이름(aria-label) 끝 " · <환경>" 에 있다
+// 새 이전의 출발 줄 이름(aria-label)은 "<환경> · <벤더> · <서비스>" 다 (#386 부터 제목이 환경 이름. 예전에는 끝에 " · <환경>")
 const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const sourceButton = (page: Page, name: string) => page.getByRole("button", { name: new RegExp(` · ${escapeRe(name)}$`) });
+const sourceButton = (page: Page, name: string) => page.getByRole("button", { name: new RegExp(`^${escapeRe(name)} · `) });
 // 이전 화면의 근거 카드 (격자 안 고정 타일, 머리줄 제목이 h3)
 const card = (page: Page, title: string) => page.locator("section").filter({ has: page.getByRole("heading", { name: title, exact: true }) });
 const progress = (page: Page) => page.locator("section").filter({ has: page.getByRole("heading", { name: "진행 단계", exact: true }) });
