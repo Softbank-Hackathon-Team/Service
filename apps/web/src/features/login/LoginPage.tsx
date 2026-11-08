@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ConsoleLayout, type BentoLayout } from '../../components/layout/ConsoleLayout';
 import { Hero, Tile, TileHeader } from '../../components/layout/tiles';
 import { ActionPill, BarPill } from '../../components/ui/controls';
+import { Icon, type IconName } from '../../components/ui/Icon';
 import { PRODUCT_NAME } from '../../components/ui/Logo';
 import { API_BASE, auth } from '../../lib/api';
 import { AuthError, githubErrorText, githubStartUrl, takeGithubError } from '../../lib/auth';
@@ -10,6 +11,13 @@ import { SignupForm } from './SignupForm';
 import { t } from '../../lib/i18n';
 
 const LOGIN: BentoLayout = { columns: ['fill', 'side'], areas: 'hero form' };
+
+// 팀이 정한 세 원칙 (11/08). 이름은 영어 그대로, 설명은 화면 언어로
+const PRINCIPLES: { icon: IconName; name: string; text: string }[] = [
+  { icon: 'key', name: 'Zero Trust Migration', text: t('고객의 장기 유효 API 키를 보관하지 않고, 필요한 순간에만 단기 권한을 획득하며 작업 종료 후 폐기한다.') },
+  { icon: 'matrix', name: 'Deterministic Migration', text: t('AI의 추론에 이전 작업을 의존시키지 않고, 공통 명세와 환경별 어댑터를 통해 예측 가능하고 재현 가능한 마이그레이션을 수행한다.') },
+  { icon: 'shield', name: 'Verified Execution', text: t('AI 에이전트를 gVisor와 vCluster로 격리하고, 사람의 승인을 받은 변경이라도 실제 적용 전 리허설로 검증한다.') },
+];
 
 export function LoginPage({ notice }: { notice: string | null }) {
   const [email, setEmail] = useState('');
@@ -79,7 +87,19 @@ export function LoginPage({ notice }: { notice: string | null }) {
 
   return (
     <ConsoleLayout layout={LOGIN}>
-      <Hero tone="run" back={false} meta={t('{0} 콘솔', { 0: PRODUCT_NAME })} title={t('돌고 있는 앱을\n멈추지 않고 옮깁니다')} />
+      <Hero tone="run" back={false} meta={t('{0} 콘솔', { 0: PRODUCT_NAME })} title={t('돌고 있는 앱을\n멈추지 않고 옮깁니다')}>
+        <ul className={s.principles}>
+          {PRINCIPLES.map((item) => (
+            <li key={item.name} className={s.principle}>
+              <span className={s.principleIcon}>
+                <Icon name={item.icon} size={20} />
+              </span>
+              <span className="t-h3">{item.name}</span>
+              <span className="t-body-sm c-secondary">{item.text}</span>
+            </li>
+          ))}
+        </ul>
+      </Hero>
       <Tile area="form" scroll={mode === 'signup'}>
         {mode === 'signup' ? (
           <SignupForm onBack={() => setMode('login')} />

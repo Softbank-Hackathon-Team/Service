@@ -54,3 +54,29 @@
   justify-content: flex-end;
   gap: var(--space-12);
 }
+
+/* 세 원칙: 큰 카드 제목 아래 상자 셋 (넓으면 가로 셋, 좁으면 세로) */
+.principles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-12);
+}
+.principle {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  padding: var(--space-20);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-inner);
+  background: var(--color-bg-surface);
+}
+.principleIcon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  margin-bottom: var(--space-4);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-accent);
+  color: var(--color-fg-on-accent);
+}
