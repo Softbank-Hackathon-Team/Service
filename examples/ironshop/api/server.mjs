@@ -23,7 +23,8 @@ pool.on("error", (e) => console.error(JSON.stringify({ level: "warn", msg: "db i
 async function summary() {
   const [db, stats, recent] = await Promise.all([
     pool.query(`SELECT current_setting('server_version') AS version,
-                       current_setting('rds.force_ssl', true) AS rds, current_setting('cloudsql.logical_decoding', true) AS cloudsql`),
+                       EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'rdsadmin') AS rds,
+                       EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'cloudsqlsuperuser') AS cloudsql`),
     // 데이터 지문: 모든 주문을 번호 순으로 이어 붙인 md5 앞 8자. 출발과 도착에서 같으면 같은 데이터다
     pool.query(`SELECT count(*)::int AS count, coalesce(max(id), 0)::bigint AS last_id,
                        left(md5(coalesce(string_agg(id || ':' || item || ':' || qty, ',' ORDER BY id), '')), 8) AS fingerprint

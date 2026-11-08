@@ -19,7 +19,10 @@ test("주문 입력: 목록에 있는 상품·1~99개만 받는다", () => {
 });
 
 test("DB 서버 설정으로 위치 이름을 고른다", () => {
-  assert.equal(placeOf({ rds: "1", cloudsql: null }), "AWS RDS");
-  assert.equal(placeOf({ rds: null, cloudsql: "on" }), "GCP Cloud SQL");
-  assert.equal(placeOf({ rds: null, cloudsql: null }), "Postgres (CNPG·자체 운영)");
+  assert.equal(placeOf({ rds: true, cloudsql: false }), "AWS RDS");
+  assert.equal(placeOf({ rds: false, cloudsql: true }), "GCP Cloud SQL");
+  assert.equal(placeOf({ rds: false, cloudsql: false }), "Postgres (CNPG·자체 운영)");
+  // 예전 규칙의 값 모양(문자열, null)은 관리형으로 보지 않는다
+  assert.equal(placeOf({ rds: "1", cloudsql: null }), "Postgres (CNPG·자체 운영)");
+  assert.equal(placeOf(undefined), "Postgres (CNPG·자체 운영)");
 });
