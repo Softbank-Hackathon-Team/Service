@@ -45,6 +45,63 @@
   place-items: center;
   text-align: center;
 }
+/* 근거 카드 격자: 두 칸, 첫 카드와 홀로 남은 마지막 카드는 가로 전체. 칸이 좁으면 한 칸 */
+.cardGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1.35fr);
+  grid-auto-rows: minmax(0, 1fr);
+  gap: var(--gap-bento);
+  min-width: 0;
+  min-height: 0;
+  container-type: inline-size;
+}
+.cardGrid > :first-child,
+.cardGrid > :nth-child(even):last-child {
+  grid-column: 1 / -1;
+}
+@container (max-width: 440px) {
+  .cardGrid > * {
+    grid-column: 1 / -1;
+  }
+}
+/* 격자 칸을 채우는 고정 카드: 머리줄은 누르지 않고, 내용만 스크롤 */
+.foldTile {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.foldTile > .foldHead {
+  flex: none;
+  cursor: default;
+}
+.foldTileBody {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 0 var(--space-8) var(--space-8);
+  overflow: auto;
+}
+/* 행동 버튼 칸: 오른쪽 아래 모퉁이 (진행 단계 아래, 좁은 열).
+   작은 버튼과 주 버튼을 한 줄에: 주 버튼이 남은 폭을 다 쓰고 글이 길면 끝을 줄인다.
+   작은 버튼이 여럿이라 주 버튼 자리가 160px 보다 좁아지면 주 버튼만 다음 줄로 내려가 그 줄을 다 쓴다 */
+.dock {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-width: 0;
+}
+.dock .actionRow {
+  flex-wrap: wrap;
+}
+.dock .actionRow > [data-primary] {
+  flex: 1 1 0;
+  min-width: 160px;
+  margin-inline-start: 0;
+}
+/* 되묻는 동안(ConfirmPill 의 "마이그레이션 취소 · 그만두기")은 좁은 열이라 주 버튼도 비킨다 */
+.dock .actionRow:has(> [data-asking]) > [data-primary] {
+  display: none;
+}
 .actionDock {
   display: flex;
   flex-direction: column;
@@ -195,18 +252,9 @@
 .heroBack:hover {
   background: var(--color-bg-selected);
 }
-.stop .heroBack {
-  background: var(--color-bg-surface);
+/* 멈춤·실패·롤백: 카드를 빨갛게 칠하지 않고 큰 제목만 위험 색으로 쓴다 (11/08 사용자 결정). 나머지는 보통 카드와 같다 */
+.stop .heroTitle {
   color: var(--color-fg-tone-danger);
-}
-.stop {
-  background: var(--color-bg-alert);
-  color: var(--color-fg-on-alert);
-}
-.stop .heroMeta,
-.stop .heroFoot {
-  border-color: var(--color-fg-on-alert-muted);
-  color: var(--color-fg-on-alert-muted);
 }
 .done .heroMeta {
   color: var(--color-fg-tone-success);
@@ -221,7 +269,7 @@
   color: var(--color-fg-primary);
 }
 .stop .heroStep {
-  background: var(--color-bg-surface);
+  background: var(--color-bg-tone-danger);
   color: var(--color-fg-tone-danger);
 }
 .done .heroStep {
@@ -304,6 +352,21 @@
     overflow: visible;
     mask-image: none;
   }
+  .cardGrid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    grid-auto-rows: auto;
+  }
+  .cardGrid > * {
+    grid-column: auto;
+  }
+  .foldTile {
+    height: auto;
+  }
+  .foldTileBody {
+    overflow: visible;
+  }
+  .dock,
   .stack > .actionDock {
     position: sticky;
     bottom: 0;

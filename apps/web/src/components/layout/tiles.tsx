@@ -1,4 +1,4 @@
-import { Children, isValidElement, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { Children, createContext, isValidElement, useContext, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { backAction } from '../../app/nav';
 import { t } from '../../lib/i18n';
 import { Icon, type IconName } from '../ui/Icon';
@@ -40,6 +40,33 @@ export function Stack({ area, children }: { area: string; children: ReactNode })
         {items.filter((item) => !isDock(item))}
       </div>
       {items.filter(isDock)}
+    </div>
+  );
+}
+
+/** 접는 카드를 어떻게 그릴지. tile = 격자 칸을 채우는 고정 카드 (늘 펼침, 머리줄은 누르지 않음, 넘치면 카드 안만 스크롤) */
+const FoldMode = createContext<'fold' | 'tile'>('fold');
+
+/**
+ * 근거 카드 격자 (11/08 사용자 결정: 접지 않는 벤토 타일). 두 칸 너비에 첫 카드는 가로 전체, 그다음은 두 장씩 나란히,
+ * 마지막에 한 장이 남으면 가로 전체. 줄 높이는 칸을 나눠 갖고(첫 줄이 조금 크다) 카드 안만 스크롤한다.
+ * 카드는 접는 카드(FoldTile)를 그대로 넣으면 고정 타일로 그린다
+ */
+export function CardGrid({ area, children }: { area: string; children: ReactNode }) {
+  return (
+    <FoldMode.Provider value="tile">
+      <div className={s.cardGrid} style={areaStyle(area)}>
+        {children}
+      </div>
+    </FoldMode.Provider>
+  );
+}
+
+/** 행동 버튼 칸. 벤토 오른쪽 아래 모퉁이에 붙는다 */
+export function Dock({ area, children }: { area: string; children: ReactNode }) {
+  return (
+    <div className={s.dock} style={areaStyle(area)}>
+      {children}
     </div>
   );
 }
@@ -97,6 +124,7 @@ function revealInScroller(el: HTMLElement) {
  * 열고 닫을 때 높이가 미끄러지듯 바뀐다. 내용은 처음 열 때 그리고, 닫아도 남겨 두어 닫히는 동안에도 보인다.
  */
 export function FoldTile({ title, summary, defaultOpen = true, children }: FoldTileProps) {
+  const tile = useContext(FoldMode) === 'tile';
   const [open, setOpen] = useState(defaultOpen);
   const [drawn, setDrawn] = useState(defaultOpen);
   const ref = useRef<HTMLElement>(null);
@@ -106,6 +134,16 @@ export function FoldTile({ title, summary, defaultOpen = true, children }: FoldT
     // 칸 아래쪽에서 연 카드는 열린 내용이 보이도록 칸을 조금 올린다 (펼침이 끝난 뒤)
     if (!open) window.setTimeout(() => ref.current && revealInScroller(ref.current), FOLD_MS);
   };
+  if (tile)
+    return (
+      <section className={`${s.fold} ${s.foldTile}`} data-open="true">
+        <div className={s.foldHead}>
+          <h3 className="t-label-md">{title}</h3>
+          {summary && <span className="t-caption c-tertiary">{summary}</span>}
+        </div>
+        <div className={`${s.foldTileBody} scroll-fade`}>{children}</div>
+      </section>
+    );
   return (
     <section ref={ref} className={s.fold} data-open={open}>
       <button type="button" className={s.foldHead} aria-expanded={open} onClick={toggle}>

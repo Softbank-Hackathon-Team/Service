@@ -1,9 +1,8 @@
 import { Children, createContext, isValidElement, useContext, useState, type ReactNode } from 'react';
 import type { BentoLayout } from '../../components/layout/ConsoleLayout';
-import { SkeletonTile, Tile, TileHeader } from '../../components/layout/tiles';
+import { ActionRow, CardGrid, Dock, SkeletonTile, Stack, Tile, TileHeader } from '../../components/layout/tiles';
 import { Checklist } from '../../components/ui/Checklist';
 import { BarPill } from '../../components/ui/controls';
-import { Icon } from '../../components/ui/Icon';
 import { api } from '../../lib/api';
 import { errorCode, errorText } from '../../lib/errors';
 import { or404 } from '../../lib/http';
@@ -11,21 +10,31 @@ import { isTerminal } from '../../lib/status';
 import type { MigrationStatus, MigrationView } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
 import { ShellLayout } from '../shell/ShellLayout';
-import { migrationSteps, needsStepAnchor, stepAnchorFrom, stepsPhase, type StepEntry, type StepsPhase } from './model';
+import { migrationSteps, needsStepAnchor, stepAnchorFrom, type StepEntry } from './model';
 import { rehearsalStepDetail } from './rehearsal';
 import { useRehearsal } from './RehearsalFold';
 import s from '../common/page.module.css';
 import { t } from '../../lib/i18n';
 
-// 큰 카드 다음으로 중요한 것이 진행 단계라서, 어느 화면이든 큰 카드 바로 옆 칸을 차지한다.
-// 근거 칸(side)에 놓을 것이 없는 단계(구성 읽기·점검·계획)는 빈 칸을 두지 않고 큰 카드가 그 너비를 채운다.
-// 근거 칸이 생기는 단계로 넘어가면 화면 전환(view transition)이 큰 카드를 줄이고 근거 칸을 오른쪽에서 들인다 (base.css)
-const WITH_SIDE: BentoLayout = { columns: ['fill', 'narrow', 'side'], areas: 'hero steps side' };
-const HERO_ONLY: BentoLayout = { columns: ['fill', 'narrow'], areas: 'hero steps' };
+// 이전 한 건 화면의 벤토 (11/08 사용자 결정, 화면 묶음마다 "오른쪽 격자"를 고름). 모퉁이는 늘 같다:
+//   큰 카드 = 왼쪽 열 전체(왼쪽 위 모퉁이), 진행 단계 = 오른쪽 위, 행동 버튼 = 오른쪽 아래(진행 단계 밑).
+//   그 사이 가운데 열은 근거 카드 격자: 첫 카드는 가로 전체, 그다음은 두 장씩, 홀로 남은 마지막 카드는 가로 전체 (tiles CardGrid).
+//   ┌ hero ┬ grid ┬ steps ┐
+//   └ hero ┴ grid ┴ dock  ┘
+// 카드는 접지 않는 고정 타일이고 넘치면 카드 안만 스크롤한다. 화면 전체는 스크롤하지 않는다.
+// 화면(Screen)은 예전처럼 Hero 와 <Stack area="side"> 하나(근거 카드들 + ActionRow)만 그리고, 나누는 것은 Frame 이 한다
+const STACK_ORDER = ['hero', 'steps', 'grid', 'dock'];
+const WITH_GRID: BentoLayout = { columns: ['major', 'fill', 'rail'], areas: ['hero grid steps', 'hero grid dock'], rows: 'minmax(0, 1fr) auto', stack: STACK_ORDER };
+const HERO_ONLY: BentoLayout = { columns: ['fill', 'rail'], areas: ['hero steps', 'hero dock'], rows: 'minmax(0, 1fr) auto', stack: STACK_ORDER };
 
-/** 화면이 근거 칸(area="side")을 그리는지. 칸 수는 화면마다 정해져 있어 자식에서 바로 읽는다. */
-const hasSide = (children: ReactNode) =>
-  Children.toArray(children).some((child) => isValidElement<{ area?: string }>(child) && child.props.area === 'side');
+/** 화면의 자식을 벤토 칸으로 나눈다: 근거 카드 묶음(Stack area="side")의 카드는 격자로, ActionRow 는 dock 으로 */
+function splitScreen(children: ReactNode) {
+  const items = Children.toArray(children);
+  const side = items.find((item) => isValidElement<{ area?: string }>(item) && item.type === Stack && item.props.area === 'side');
+  const inner = isValidElement<{ children?: ReactNode }>(side) ? Children.toArray(side.props.children) : [];
+  const isDock = (item: ReactNode) => isValidElement(item) && item.type === ActionRow;
+  return { rest: items.filter((item) => item !== side), cards: inner.filter((item) => !isDock(item)), dock: inner.filter(isDock) };
+}
 
 /** 지난 단계 다시 보기. at: 다시 보는 칸의 상태, back: 지금 단계로 돌아간다 */
 export type PastView = { at: MigrationStatus; back: () => void };
@@ -48,15 +57,14 @@ export const StepsView = createContext<{ viewing: MigrationStatus | null; open: 
 export const pastHero = (past: PastView | undefined, meta: string) =>
   past ? { meta: t('지난 단계 · {0}', { 0: meta }), back: past.back } : { meta };
 
-const PHASE_FLIP: Record<StepsPhase, { icon: 'chevron-up' | 'chevron-down'; label: string }> = {
-  // 실행 묶음은 아래 묶음이라 위(^)로 실행 전 묶음을, 실행 전 묶음에서는 아래(v)로 실행 묶음을 본다
-  run: { icon: 'chevron-up', label: t('실행 전 단계 보기') },
-  prepare: { icon: 'chevron-down', label: t('실행 단계 보기') },
-};
+/** 실행 전·실행 두 묶음을 한 목록으로. 지금 묶음이 아닌 쪽은 모두 끝남(앞 묶음) 또는 모두 대기(뒤 묶음)로 온다 */
+const allSteps = (migration: MigrationView, anchor: MigrationStatus | null, notes: Parameters<typeof migrationSteps>[2]) => [
+  ...migrationSteps(migration, anchor, notes, 'prepare'),
+  ...migrationSteps(migration, anchor, notes, 'run'),
+];
 
 /**
- * 진행 단계 카드. 접지 않고 항상 보인다.
- * 머리줄 꺾쇠로 실행 전·실행 묶음을 오간다. 고른 묶음은 화면이 바뀌면(카드를 새로 그리면) 지금 묶음으로 돌아간다.
+ * 진행 단계 카드. 접지 않고 항상 오른쪽 위에 보인다. 실행 전(구성 읽기~계획 승인)과 실행(자원 생성~정리)을 나누지 않고 한 목록으로.
  * 끝난 칸을 누르면 그 단계 화면을 다시 보고, 지금 칸을 누르면 지금 단계로 돌아온다
  */
 function StepsTile({ migration }: { migration: MigrationView }) {
@@ -72,10 +80,6 @@ function StepsTile({ migration }: { migration: MigrationView }) {
   const deploying = rehearsal.loading ? undefined : rehearsalStepDetail(rehearsal.run, rehearsal.stale, migration.status);
   const view = useContext(StepsView);
   const viewing = view?.viewing ?? null;
-  const [picked, setPicked] = useState<StepsPhase | null>(null);
-  // 지난 단계를 보는 중이면 그 칸이 있는 묶음을 먼저 보인다
-  const phase = picked ?? (viewing ? stepsPhase({ status: viewing }) : stepsPhase(migration, anchor));
-  const flip = PHASE_FLIP[phase];
   const select = (step: StepEntry) => {
     if (!view) return undefined;
     // 보고 있는 지난 칸을 한 번 더 누르면 지금 단계로 돌아간다
@@ -84,16 +88,9 @@ function StepsTile({ migration }: { migration: MigrationView }) {
   };
   return (
     <Tile area="steps" compact scroll>
-      <TileHeader
-        title={t('진행 단계')}
-        action={
-          <button type="button" className={s.stepsFlip} aria-label={flip.label} title={flip.label} onClick={() => setPicked(phase === 'run' ? 'prepare' : 'run')}>
-            <Icon name={flip.icon} size={16} />
-          </button>
-        }
-      />
+      <TileHeader title={t('진행 단계')} />
       <Checklist
-        items={migrationSteps(migration, anchor, deploying ? { deploying } : {}, phase).map((step) => ({
+        items={allSteps(migration, anchor, deploying ? { deploying } : {}).map((step) => ({
           ...step,
           selected: step.at === viewing,
           onSelect: select(step),
@@ -110,9 +107,12 @@ type FrameProps = {
 };
 
 export function Frame({ route, migration, children }: FrameProps) {
+  const { rest, cards, dock } = splitScreen(children);
   return (
-    <ShellLayout layout={hasSide(children) ? WITH_SIDE : HERO_ONLY} barLeft={<BarPill label={route} />}>
-      {children}
+    <ShellLayout layout={cards.length > 0 ? WITH_GRID : HERO_ONLY} barLeft={<BarPill label={route} />}>
+      {rest}
+      {cards.length > 0 && <CardGrid area="grid">{cards}</CardGrid>}
+      {dock.length > 0 && <Dock area="dock">{dock}</Dock>}
       {migration ? (
         <StepsTile migration={migration} />
       ) : (

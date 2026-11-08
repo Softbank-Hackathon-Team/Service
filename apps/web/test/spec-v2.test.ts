@@ -128,9 +128,10 @@ test("확인 키는 서버 상한(20개)씩 나눠 보낸다", () => {
   assert.deepEqual(chunks.map((chunk) => chunk.length), [20, 20, 5]);
   assert.deepEqual(chunks.flat(), keys);
   assert.deepEqual(confirmChunks([]), []);
-  assert.equal(confirmLabel(false, 3), "3칸 확인하고 명세 확정");
-  assert.equal(confirmLabel(false, 0), "명세 확정");
-  assert.equal(confirmLabel(true, 3), "보내는 중");
+  // 확인할 칸은 흰 "확인"이 카드를 채우며 먼저 확인한다 → 파란 버튼은 확정만 말한다
+  assert.equal(confirmLabel(false), "명세 확정");
+  assert.equal(confirmLabel(false, 2), "출발 방화벽 2개를 정해 주세요");
+  assert.equal(confirmLabel(true, 2), "보내는 중");
 });
 
 test("PATCH 본문: AI 초안 판이면 확인·끌어오기·보안·방화벽 어느 것이든 그 판을 받아들인다(acceptDraft)", () => {
@@ -148,9 +149,9 @@ test("PATCH 본문: AI 초안 판이면 확인·끌어오기·보안·방화벽 
 test("명세 확정: 정하지 않은 출발 방화벽 줄이 있으면 막고 이유를 버튼에 쓴다 (확정해도 사전 점검이 되돌려 보냄)", () => {
   assert.equal(canConfirmSpec(0), true);
   assert.equal(canConfirmSpec(2), false);
-  assert.equal(confirmLabel(false, 3, 2), "출발 방화벽 2개를 정해 주세요");
-  assert.equal(confirmLabel(false, 0, 0), "명세 확정");
-  assert.equal(confirmLabel(true, 3, 2), "보내는 중");
+  assert.equal(confirmLabel(false, 2), "출발 방화벽 2개를 정해 주세요");
+  assert.equal(confirmLabel(false, 0), "명세 확정");
+  assert.equal(confirmLabel(true, 2), "보내는 중");
 });
 
 test("경계 밖: 칸이 없으면 모름(null), 빈 목록은 없음. 데이터 자원만 끌어올 수 있다", () => {

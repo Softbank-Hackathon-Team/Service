@@ -1,0 +1,107 @@
+/* 월 비용 (추정) 카드 한 장: 위 읽은 값 · 가운데 그래프(남은 높이) · 아래 조건 한 줄 */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-8);
+  height: 100%;
+  min-height: 0;
+  padding: 0 var(--space-12);
+}
+.readout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-8) var(--space-16);
+  color: var(--color-fg-tertiary);
+}
+.end {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  color: var(--color-fg-primary);
+}
+/* 이름 앞 점: 출발 회색, 도착 파랑 (곡선과 같은 색) */
+.end > :first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+.end > :first-child::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--color-data-source);
+}
+.end[data-end='target'] > :first-child::before {
+  background: var(--color-data-target);
+}
+.delta {
+  margin-left: auto;
+  padding: var(--space-4) var(--space-12);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-subtle);
+  color: var(--color-fg-secondary);
+}
+.delta[data-save] {
+  background: var(--color-bg-tone-info);
+  color: var(--color-fg-tone-info);
+}
+.plot {
+  flex: 1 1 auto;
+  min-height: 140px;
+}
+.svg {
+  display: block;
+  cursor: ew-resize;
+  touch-action: none;
+  outline: none;
+}
+.svg:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-inner);
+}
+.grid {
+  stroke: var(--color-border-default);
+  stroke-width: 1;
+}
+.axis {
+  fill: var(--color-fg-tertiary);
+}
+.curve {
+  fill: none;
+  stroke: var(--color-data-source);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.curve[data-end='target'] {
+  stroke: var(--color-data-target);
+  stroke-width: 3;
+}
+.plan {
+  stroke: var(--color-border-strong);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+}
+.cursor {
+  stroke: var(--color-fg-primary);
+  stroke-width: 1.5;
+}
+.handle {
+  fill: var(--color-fg-primary);
+}
+.dot {
+  fill: var(--color-bg-surface);
+  stroke: var(--color-data-source);
+  stroke-width: 2.5;
+}
+.dot[data-end='target'] {
+  stroke: var(--color-data-target);
+}
+.foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4) var(--space-12);
+}

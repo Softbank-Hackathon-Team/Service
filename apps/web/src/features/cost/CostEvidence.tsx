@@ -269,14 +269,14 @@ function CostFoot({ breakdown, checkedAt }: { breakdown: CostBreakdown | null; c
 }
 
 /**
- * 환경 목록 줄 아래 "월 $X 추산". 일부만 셌으면 주의 색, 계산할 수 없으면 짧은 이유.
+ * 환경 목록 줄 아래 "월 $X 추산". 일부만 셌으면 "일부만 셈", 계산할 수 없으면 짧은 이유. 색은 늘 중립
  * DRAFT(ai): 비용 경로가 없는 서버(costAbsent)면 아무 말도 하지 않는다. 줄마다 같은 말로 목록을 덮지 않게
  */
 export function EnvCostCaption({ envId }: { envId: string }) {
   const cost = useEnvCost(envId);
   const caption = envCostCaption(cost.data, cost.error);
   if (!caption) return null;
-  return <span className={`t-caption ${caption.warn ? 'c-warning' : 'c-tertiary'}`}>{caption.text}</span>;
+  return <span className="t-caption c-tertiary">{caption}</span>;
 }
 
 /**
@@ -298,7 +298,7 @@ export function EnvCostFold({ envId }: { envId: string }) {
             <span className="t-body-md c-secondary">{t('/월')}</span>
           </p>
           <FigureRows rows={figureRows(f)} />
-          {view.status === 'partial' && view.reason && <p className={`${s.note} t-body-sm c-warning`}>{view.reason}</p>}
+          {view.status === 'partial' && view.reason && <p className={`${s.note} t-body-sm c-secondary`}>{view.reason}</p>}
           {projection.promotions.length > 0 && <Promotions promotions={projection.promotions} />}
           <CostLines breakdown={breakdown} />
           <CostGaps gaps={breakdown.gaps} />
@@ -386,10 +386,10 @@ export function MoveCostFold({ move, loading, error, targetId }: MoveCostFoldPro
             </span>
           </div>
           {tf && <FigureRows rows={[...figureRows(tf), ...(delta !== null ? [{ name: t('지금보다'), value: changeText(delta) }] : [])]} />}
-          {!target.feasible && <p className={`${s.note} t-body-sm c-warning`}>{t('옮긴 뒤 요금을 계산하지 못했습니다: {0}', { 0: target.reason ?? t('이유 없음') })}</p>}
+          {!target.feasible && <p className={`${s.note} t-body-sm c-secondary`}>{t('옮긴 뒤 요금을 계산하지 못했습니다: {0}', { 0: target.reason ?? t('이유 없음') })}</p>}
           {/* 출발 실자원이 없으면 도착도 같은 이유로 못 센다 → 같은 문장을 두 번 쓰지 않는다 */}
           {source.status !== 'ok' && source.reason && (target.feasible || source.reason !== target.reason) && (
-            <p className={`${s.note} t-body-sm c-warning`}>{t('지금 요금 · {0}', { 0: source.reason })}</p>
+            <p className={`${s.note} t-body-sm c-secondary`}>{t('지금 요금 · {0}', { 0: source.reason })}</p>
           )}
           {move.scopeNote && <p className={`${s.note} t-caption c-secondary`}>{t('범위 · {0}', { 0: move.scopeNote })}</p>}
           {target.projection && target.projection.promotions.length > 0 && (

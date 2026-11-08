@@ -286,9 +286,14 @@ export interface Finding {
   status: "pass" | "fail" | "unknown"; severity: "info" | "low" | "medium" | "high" | "critical";
   kind: "posture" | "threat"; observedAt: string; evidence: string;
 }
+export interface AgentDeployProgress {
+  sync: string; health: string; message?: string;
+  waitingOn?: { resource: string; health?: string; sync?: string; message?: string };
+}
 export type AgentReportBody =
   | { kind: "security"; findings: Finding[] }
-  | { kind: "deploy"; status: "applied" | "failed"; resources: string[]; reason?: string }
+  // #377: progressing = 아직 끝나지 않음. progress 에 Argo 상태 (contracts agent.ts AgentDeployProgress). waitingOn = Healthy 가 아닌 첫 자원
+  | { kind: "deploy"; status: "applied" | "failed" | "progressing"; resources: string[]; reason?: string; progress?: AgentDeployProgress }
   | { kind: "heartbeat"; k3sVersion: string; cnpg: { cluster: string; ready: boolean; replicationLagBytes: number | null } | null }
   // W5: 온프레 보안 사실 (contracts agent.ts facts). null = Agent 가 못 읽음
   | { kind: "facts"; grants: { level: "L0" | "L1" }; dbs: { namespace: string; cluster: string; majorVersion: number | null; tlsEnforced: boolean | null; authMethods: string[] | null; exposed: boolean | null }[] };

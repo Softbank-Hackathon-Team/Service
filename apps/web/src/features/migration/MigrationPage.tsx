@@ -10,14 +10,15 @@ import { aboutMigration } from '../../lib/events';
 import { errorCode, errorText } from '../../lib/errors';
 import { stopReasonOf } from '../../lib/failure';
 import { is404, or404 } from '../../lib/http';
-import { planResourceRows, runtimeChangeNote, specSubstituteRows } from '../../lib/resourceMap';
+import { planResourceRows, specSubstituteRows } from '../../lib/resourceMap';
 import { LABEL } from '../../lib/status';
 import { lastPrecheckBounce, stopHelp } from '../../lib/timelineDetail';
 import type { MigrationStatus, MigrationView, PlanAckKind, PrecheckItem } from '../../lib/types';
 import { usePoll } from '../../lib/usePoll';
 import { useAgentReview } from '../agent/AgentResult';
 import { failureAnalysisOf } from '../agent/model';
-import { costCaveats, costNote, costSummary, planCostCaveats, planCostSummary } from '../cost/model';
+import { CostCurve } from '../cost/CostCurve';
+import { planCostSummary } from '../cost/model';
 import {
   ackPlaces, ackState, ackSubject, approveLabel, autoStart, canReplan, failureChoices, isPastStep, pollMs, screenOf, signalCovers, specRows, stepGate, stepName, usd, type MigrationScreen, type RetryStage,
 } from './model';
@@ -32,7 +33,10 @@ import { PermissionGapFold } from '../environments/Permissions';
 import { DoneScreen, CleanupScreen, PausedScreen, RolledBackScreen, RollingBackScreen, RunningScreen, WindowScreen } from './RunScreens';
 import { RequirementsFold, SourceFactsFold, VerdictFold } from './SecurityFolds';
 import { SubstituteMap } from './SubstituteMap';
-import { isSecItem, precheckLine, secAckLabel, type SecuritySpecV2 } from './securityV2';
+import { HeroPager, type HeroPage } from './HeroPager';
+import { ResourceFlow, SecurityBoard, securityControls, SpecCards, useSweep } from './HeroVisuals';
+import { flowRows, specCardsV1, specCardsV2 } from './visuals';
+import { isSecItem, precheckLine, type SecuritySpecV2 } from './securityV2';
 import { ConfirmPill, Frame, pastHero, StepsView, useAction, useCostConsent, type ScreenProps } from './shared';
 import s from '../common/page.module.css';
 import { localeTag, t } from '../../lib/i18n';
@@ -55,9 +59,6 @@ function ImportingScreen({ migration, route, past }: ScreenProps) {
     </Frame>
   );
 }
-
-// DRAFT(ai): 큰 카드에는 확인할 칸을 3칸만 두고 나머지는 "외 N칸"으로 근거 카드에서 본다 (1280×720 에서 큰 카드가 잘리지 않는 수)
-const HERO_REVIEW_ROWS = 3;
 
 /** v2 값 한 칸. 읽지 못한 값(null)은 비워 두고 검토 표시만 한다. 설명 글(점검 문장·환경변수 출처)은 글자로, 값은 고정폭으로 */
 function ValueV2({ row, className, max = 32 }: { row: SpecRowV2; className?: string; max?: number }) {
@@ -142,7 +143,25 @@ function SpecScreen({ migration, route, onChanged, past }: ScreenProps) {
       await spec.reload();
     });
 
-  const heroRows = v2 ? rowsV2.filter((row) => row.review) : [];
+  // 큰 카드: 칸을 요소마다 카드로 묶는다. 오른쪽 아래 흰 "확인"을 누르면 카드가 1번부터 차례로 파랗게 차고(useSweep, 스크롤도 따라감),
+  // 다 차면 같은 자리에 파란 "명세 확정"이 나온다. 그 버튼이 서버에 확인·확정을 보낸다
+  const cards = useMemo(() => (v2 ? specCardsV2(rowsV2, v2.spec) : specCardsV1(rows)), [v2, rowsV2, rows]);
+  const sweep = useSweep(cards.length);
+  const { reset: resetSweep } = sweep;
+  const [sweeping, setSweeping] = useState(false);
+  // 새 판이 오면(확인 뒤 새 검토 칸이 생기거나 다른 사람이 고침) 채움을 처음으로
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => resetSweep(), [view?.version]);
+  // 막힌 항목을 보이는 동안은 카드가 없으니 확인할 것도 없다
+  const checked = blocks.length > 0 || cards.length === 0 || sweep.filled >= cards.length;
+  const check = async () => {
+    setSweeping(true);
+    try {
+      await sweep.play();
+    } finally {
+      setSweeping(false);
+    }
+  };
   return (
     <Frame migration={migration} route={route}>
       <Hero
@@ -175,26 +194,7 @@ function SpecScreen({ migration, route, onChanged, past }: ScreenProps) {
             </div>
           );
         })}
-        {blocks.length === 0 &&
-          !v2 &&
-          rows
-            .filter((row) => row.review)
-            .map((row) => (
-              <div key={row.path} className={s.reviewRow}>
-                <span className="t-label-md">{row.name}</span>
-                <CodeValue value={row.value} size="md" max={32} className={s.rowValue} />
-              </div>
-            ))}
-        {blocks.length === 0 &&
-          heroRows.slice(0, HERO_REVIEW_ROWS).map((row) => (
-            <div key={row.key} className={`${s.reviewRow} ${row.prose ? s.reviewRowStack : ''}`}>
-              <span className="t-label-md">{row.name}</span>
-              <ValueV2 row={row} className={s.rowValue} />
-            </div>
-          ))}
-        {blocks.length === 0 && heroRows.length > HERO_REVIEW_ROWS && (
-          <p className="t-body-md c-secondary">{t('외 {0}칸', { 0: heroRows.length - HERO_REVIEW_ROWS })}</p>
-        )}
+        {blocks.length === 0 && cards.length > 0 && <SpecCards cards={cards} filled={past ? cards.length : sweep.filled} />}
       </Hero>
       <Stack area="side">
         {/* PERM-GATE: 사전 점검이 고객 권한으로 막혔으면 막힌 묶음만 고치는 링크 */}
@@ -311,12 +311,16 @@ function SpecScreen({ migration, route, onChanged, past }: ScreenProps) {
         {!past && (
           <ActionRow notice={error}>
             <ConfirmPill label={t('취소')} confirmLabel={t('마이그레이션 취소')} icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
-            <ActionPill
-              label={v2 ? confirmLabel(busy, reviewCount, firewall.length) : busy ? t('보내는 중') : t('명세 확정')}
-              icon="check"
-              disabled={busy || !view || !canConfirmSpec(firewall.length)}
-              onClick={() => void run(confirm)}
-            />
+            {checked ? (
+              <ActionPill
+                label={confirmLabel(busy, firewall.length)}
+                icon="check"
+                disabled={busy || !view || !canConfirmSpec(firewall.length)}
+                onClick={() => void run(confirm)}
+              />
+            ) : (
+              <ActionPill tone="neutral" label={sweeping ? t('확인하는 중') : t('확인')} icon="check" disabled={busy || sweeping || !view} onClick={() => void check()} />
+            )}
           </ActionRow>
         )}
       </Stack>
@@ -362,6 +366,11 @@ const ACK_KIND: Record<PlanAckKind, string> = {
 // 승인·시작이 이 코드로 막히면 계획서가 바뀌었거나 시간이 지난 것이다 → 계획서를 다시 읽고 체크는 새 지문에서 처음부터
 const PLAN_CHANGED = ['PLAN_HASH_MISMATCH', 'PLAN_SUPERSEDED', 'ACKS_MISSING', 'PLAN_EXPIRED'];
 const NO_TICKS: ReadonlySet<string> = new Set();
+// 계획 승인 큰 카드의 판 (확인하는 순서)
+type ApprovePage = 'map' | 'security';
+const APPROVE_PAGES: ApprovePage[] = ['map', 'security'];
+const NO_PAGES: ReadonlySet<ApprovePage> = new Set();
+const ALL_PAGES: ReadonlySet<ApprovePage> = new Set(APPROVE_PAGES);
 
 function ApproveScreen({ migration, route, onChanged, past }: ScreenProps) {
   const plan = usePoll(() => api.latestPlan(migration.id), null, [migration.id, migration.version]);
@@ -385,15 +394,7 @@ function ApproveScreen({ migration, route, onChanged, past }: ScreenProps) {
   const allAcks = useMemo<ReadonlySet<string>>(() => new Set((doc?.acknowledgements ?? []).map((ack) => ack.id)), [doc]);
   const ticks = past ? allAcks : doc && ticked.hash === doc.planHash ? ticked.ids : NO_TICKS;
   const acks = ackState(doc?.acknowledgements, ticks);
-  const tick = (id: string, on: boolean) => {
-    if (!doc) return;
-    const next = new Set(ticks);
-    if (on) next.add(id);
-    else next.delete(id);
-    setTicked({ hash: doc.planHash, ids: next });
-  };
   const planCost = doc?.costSummary;
-  const pair = cost.data?.pair;
   // 보안 판정(SEC:*)은 따로 단계별 카드로 본다. 사전 점검 카드에는 나머지 점검만
   const checks = doc?.precheck.filter((item) => !isSecItem(item)) ?? [];
   const warns = checks.filter((item) => item.level !== 'info').length;
@@ -402,10 +403,59 @@ function ApproveScreen({ migration, route, onChanged, past }: ScreenProps) {
   const mapped = planResourceRows(resources.data);
   // 확인 항목마다 확인하는 자리는 하나다: 상품 대체는 큰 카드의 대응 줄, 나머지는 "승인 전에 확인" 목록. 승인 버튼은 둘을 합쳐 센다(acks)
   const places = ackPlaces(doc?.acknowledgements);
-  const listLeft = places.list.filter((ack) => !ticks.has(ack.id)).length;
-  // 상품 대체가 있으면 큰 카드 본문은 대응 줄이 차지하고, 계획 지문은 머리줄 오른쪽 끝으로 올린다
-  const substituting = places.substitutes.length > 0;
-  const hash = doc && <CodeValue value={doc.planHash} chip max={substituting ? 24 : 32} />;
+  // 다른 카드에 보이지 않는 확인 항목(비용·실패했을 때 비용·실행 방식 등). 사전 점검 주의·보안 주의는 각 카드에 이미 보인다
+  const alsoAcks = places.list.filter((ack) => ack.kind !== 'precheck_warn');
+  // 큰 카드 본문은 넘겨 보는 판 둘: 자원 대응(출발 상자 ─[대응|대체]→ 도착 상자) · 보안. 실행 순서는 진행 단계 카드가 보인다.
+  // 확인 흐름: 오른쪽 아래 흰 "확인"을 누르면 지금 확인할 판의 줄을 1번부터 차례로 칠하며(스크롤도 따라감) 그 판을 확인한다.
+  //   자원 대응을 확인하면 상품 대체 확인 항목(substitute)을, 보안을 확인하면 보안 주의 항목(precheck_warn:SEC:*)을 체크하고 다음 판으로 간다.
+  //   두 판을 다 확인하면 같은 자리 버튼이 파란 승인 버튼이 된다. 비용 등 나머지 확인 항목은 근거 칸 "승인 전에 확인"에서 사람이 체크한다
+  const hash = doc && <CodeValue value={doc.planHash} chip max={24} />;
+  const flow = flowRows(mapped.listed, places.substitutes);
+  const security = usePoll(() => or404(api.security(migration.id)), 10_000, [migration.id]);
+  const controls = securityControls(security.data ?? null);
+  const [reviewed, setReviewed] = useState<{ hash: string | null; pages: ReadonlySet<ApprovePage> }>({ hash: null, pages: NO_PAGES });
+  const done = past ? ALL_PAGES : doc && reviewed.hash === doc.planHash ? reviewed.pages : NO_PAGES;
+  const [pageAt, setPageAt] = useState(0);
+  const mapSweep = useSweep(flow.length);
+  const secSweep = useSweep(controls.length);
+  const { reset: resetMap } = mapSweep;
+  const { reset: resetSecurity } = secSweep;
+  // 계획서가 바뀌면(새 지문) 확인도 처음부터: 채움을 비우고 첫 판으로
+  useEffect(() => {
+    resetMap();
+    resetSecurity();
+    setPageAt(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc?.planHash]);
+  const [sweeping, setSweeping] = useState(false);
+  const pending = APPROVE_PAGES.find((page) => !done.has(page)) ?? null;
+  const review = async () => {
+    if (!doc || !pending) return;
+    const planHash = doc.planHash;
+    setSweeping(true);
+    setPageAt(APPROVE_PAGES.indexOf(pending));
+    try {
+      await (pending === 'map' ? mapSweep : secSweep).play();
+    } finally {
+      setSweeping(false);
+    }
+    // 자원 대응 확인 = 상품 대체 항목. 보안 확인(마지막 판) = 남은 확인 항목 모두 (보안 주의, 그리고 사전 점검 카드에 보이는 비용·주의 등)
+    const ids = pending === 'map' ? places.substitutes.map((row) => row.ackId) : (doc.acknowledgements ?? []).map((ack) => ack.id);
+    setTicked((prev) => ({ hash: planHash, ids: new Set([...(prev.hash === planHash ? prev.ids : []), ...ids]) }));
+    setReviewed((prev) => ({ hash: planHash, pages: new Set([...(prev.hash === planHash ? prev.pages : []), pending]) }));
+    const next = APPROVE_PAGES.find((page) => page !== pending && !done.has(page));
+    if (next) setPageAt(APPROVE_PAGES.indexOf(next));
+  };
+  const pages: HeroPage[] = [
+    {
+      id: 'map', label: t('자원 대응'), count: flow.length || null, done: done.has('map'),
+      content: <ResourceFlow view={resources.data ?? null} loading={resources.loading} rows={flow} boundary={mapped.boundary} filled={done.has('map') ? flow.length : mapSweep.filled} />,
+    },
+    {
+      id: 'security', label: t('보안'), done: done.has('security'),
+      content: <SecurityBoard view={security.data ?? null} loading={security.loading} filled={done.has('security') ? controls.length : secSweep.filled} />,
+    },
+  ];
 
   return (
     <Frame migration={migration} route={route}>
@@ -422,56 +472,38 @@ function ApproveScreen({ migration, route, onChanged, past }: ScreenProps) {
                 : t('승인하면 이대로\n바로 실행합니다')
         }
         foot={past ? t('이 지문의 계획을 승인하고 실행했습니다') : doc ? t('유효 시각 {0}', { 0: new Date(doc.expiresAt).toLocaleString(localeTag(), { hour12: false }) }) : undefined}
-        action={substituting && hash}
+        action={hash}
       >
-        {substituting && (
-          <SubstituteMap
-            rows={places.substitutes}
-            source={resources.data?.source.provider ?? null}
-            target={resources.data?.target.provider ?? null}
-            confirm={{ checked: ticks, disabled: busy || expired || !!past, onToggle: (id) => tick(id, !ticks.has(id)) }}
-          />
-        )}
-        {!substituting && hash}
-        {doc && (
-          <p className="t-body-md c-secondary">
-            {t('오류율이 {0}%를 넘거나 응답 시간이 {1}배를 넘으면 자동으로 되돌립니다', { 0: doc.rollbackCriteria.errorRatePct, 1: doc.rollbackCriteria.p95Multiplier })}
-          </p>
-        )}
+        <HeroPager label={t('계획서 보기')} pages={pages} at={pageAt} onPick={setPageAt} />
       </Hero>
       <Stack area="side">
-        {doc && places.list.length > 0 && (
-          <FoldTile title={t('승인 전에 확인')} summary={listLeft > 0 ? t('{0}개 남음', { 0: listLeft }) : t('모두 확인함')}>
-            <ul className={s.rows}>
-              {places.list.map((ack) => (
-                <li key={ack.id}>
-                  <label className={`${s.ack} t-body-sm`}>
-                    <input type="checkbox" checked={ticks.has(ack.id)} disabled={busy || expired || !!past} onChange={(event) => tick(ack.id, event.target.checked)} />
-                    <span className={s.ackText}>
-                      <span className="t-caption c-tertiary">
-                        {[secAckLabel(ack) ?? ACK_KIND[ack.kind] ?? ack.kind, ackSubject(ack)].filter(Boolean).join(' · ')}
-                      </span>
-                      <span>{ack.text}</span>
-                    </span>
-                  </label>
-                </li>
-              ))}
-            </ul>
-          </FoldTile>
-        )}
-        <FoldTile title={t('월 비용')} summary={planCost ? planCostSummary(planCost) : cost.data ? costSummary(cost.data) : t('읽는 중')}>
-          <div className={s.costLine}>
-            <span className="t-metric-lg">{usd(planCost ? planCost.monthlySource : pair?.sourceMonthlyUsd)}</span>
-            <Icon name="arrow-right" />
-            <span className="t-metric-lg">{usd(planCost ? planCost.monthlyTarget : pair?.targetMonthlyUsd)}</span>
-          </div>
-          {(planCost ? planCostCaveats(planCost) : cost.data ? costCaveats(cost.data) : []).map((line) => (
-            <p key={line} className={`${s.note} t-body-sm c-warning`}>{line}</p>
-          ))}
-          <p className={`${s.note} t-body-sm c-secondary`}>{costNote(planCost?.priceAsOf)}</p>
-          <div className={s.note}>
-            <BarPill label={t('비용 자세히')} icon="chevron" onClick={() => go(`migrations/${migration.id}/cost`)} />
-          </div>
+        {/* 카드 한 장으로 설명한다 (11/08): 비용 화면으로 옮기거나 펼치지 않는다. 안내 문구 대신 트래픽별 두 환경 비용 곡선 */}
+        <FoldTile title={t('월 비용 (추정)')} summary={planCost ? planCostSummary(planCost) : undefined}>
+          <CostCurve migrationId={migration.id} view={cost.data ?? null} />
+        </FoldTile>
+        <FoldTile key={`precheck-${warns > 0}`} title={t('사전 점검')} summary={warns > 0 ? t('확인 {0}건', { 0: warns }) : t('{0}건', { 0: checks.length })} defaultOpen={warns > 0}>
+          <ul className={s.rows}>
+            {checks.map((item) => (
+              <li key={item.id} className={s.row}>
+                <span className="t-body-sm">{item.message}</span>
+                <Badge tone={LEVEL[item.level].tone}>{LEVEL[item.level].label}</Badge>
+              </li>
+            ))}
+          </ul>
+          {/* "승인 전에 확인" 카드를 없앤 뒤(11/08) 다른 곳에 보이지 않는 확인 항목은 여기 둔다. 보안 판의 "확인"이 함께 체크한다 */}
+          {alsoAcks.length > 0 && (
+            <>
+              <p className={`${s.note} t-label-sm c-tertiary`}>{t('승인하면 함께 확인하는 것')}</p>
+              <ul className={s.rows}>
+                {alsoAcks.map((ack) => (
+                  <li key={ack.id} className={s.stackRow}>
+                    <span className="t-caption c-tertiary">{[ACK_KIND[ack.kind] ?? ack.kind, ackSubject(ack)].filter(Boolean).join(' · ')}</span>
+                    <span className="t-body-sm">{ack.text}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </FoldTile>
         <FoldTile title={t('실행 단계')} summary={doc ? t('{0}단계', { 0: doc.steps.length }) : t('읽는 중')}>
           <ul className={s.rows}>
@@ -483,50 +515,26 @@ function ApproveScreen({ migration, route, onChanged, past }: ScreenProps) {
             ))}
           </ul>
         </FoldTile>
-        <FoldTile key={`precheck-${warns > 0}`} title={t('사전 점검')} summary={warns > 0 ? t('확인 {0}건', { 0: warns }) : t('{0}건', { 0: checks.length })} defaultOpen={warns > 0}>
-          <ul className={s.rows}>
-            {checks.map((item) => (
-              <li key={item.id} className={s.row}>
-                <span className="t-body-sm">{item.message}</span>
-                <Badge tone={LEVEL[item.level].tone}>{LEVEL[item.level].label}</Badge>
-              </li>
-            ))}
-          </ul>
-        </FoldTile>
+        {/* 보안 카드는 두지 않는다: 큰 카드의 보안 판이 같은 내용을 보인다 (11/08) */}
         {doc && <VerdictFold items={doc.precheck} />}
-        <FoldTile
-          title={t('자원 대응')}
-          summary={resources.data ? t('{0}개{1}', { 0: mapped.listed.length, 1: [
-            substituting ? t(' · 상품 대체 {0}', { 0: places.substitutes.length }) : '',
-            mapped.runtimeChanges > 0 ? t(' · 실행 방식 바뀜 {0}', { 0: mapped.runtimeChanges }) : '',
-          ].join('') }) : ''}
-          defaultOpen={false}
-        >
-          <ul className={s.rows}>
-            {mapped.listed.map(({ key, row }) => (
-              <li key={key}>
-                <div className={s.row}>
-                  <span className="t-label-md">{row.label}</span>
-                  <span className={`${s.rowValue} t-caption c-tertiary`}>
-                    {row.source?.service ?? t('없음')} → {row.target?.service ?? t('없음')}
-                  </span>
-                </div>
-                {runtimeChangeNote(row) && <p className={`${s.rowCaption} t-caption c-warning`}>{runtimeChangeNote(row)}</p>}
-              </li>
-            ))}
-          </ul>
-          {/* 경계 밖 자원은 옮기는 자원이 아니라 "건드리지 않는 것" 안내라 표 밖에 한 줄로 둔다 */}
-          {mapped.boundary && (
-            <p className={`${s.note} t-caption c-tertiary`}>
-              {mapped.boundary.label} · {mapped.boundary.afterSource ?? t('옮기지 않음')}
-            </p>
-          )}
-        </FoldTile>
-        <SecurityFold migration={migration} />
         {!past && (
           <ActionRow notice={error ?? (plan.error != null && !doc ? errorText(plan.error) : null)}>
-            <ConfirmPill label={t('취소')} confirmLabel={t('마이그레이션 취소')} icon="x" disabled={busy} onConfirm={() => void run(() => api.cancel(migration.id))} />
-            {doc && <ConfirmPill label={t('거절')} confirmLabel={t('계획 거절')} icon="ban" disabled={busy} onConfirm={() => void run(() => api.decide(doc.planId, 'reject', doc.planHash))} />}
+            {/* 버튼은 둘뿐 (11/08 사용자 결정): 왼쪽 작은 버튼은 첫 판에서 마이그레이션 취소, 둘째 판에서 첫 판으로. 오른쪽은 확인 → 승인.
+                계획 거절은 이 화면에 두지 않는다 (그만두려면 취소) */}
+            {pageAt === 0 ? (
+              <ConfirmPill label={t('취소')} confirmLabel={t('마이그레이션 취소')} icon="x" disabled={busy || sweeping} onConfirm={() => void run(() => api.cancel(migration.id))} />
+            ) : (
+              <BarPill label={t('이전')} icon="arrow-left" onClick={sweeping ? undefined : () => setPageAt(0)} />
+            )}
+            {pending ? (
+              <ActionPill
+                tone="neutral"
+                label={sweeping ? t('확인하는 중') : t('확인')}
+                icon="check"
+                disabled={busy || sweeping || !doc || expired}
+                onClick={() => void review()}
+              />
+            ) : (
             <ActionPill
               label={approveLabel({ busy, expired, missing: acks.missing.length })}
               icon="check"
@@ -552,6 +560,7 @@ function ApproveScreen({ migration, route, onChanged, past }: ScreenProps) {
                 })
               }
             />
+            )}
           </ActionRow>
         )}
       </Stack>

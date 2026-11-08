@@ -536,20 +536,3 @@ button.linkPill {
 }
 
 /* 진행 단계 카드 머리줄의 꺾쇠: 실행 전·실행 묶음을 오간다 */
-.stepsFlip {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--radius-full);
-  background: var(--color-bg-subtle);
-  color: var(--color-fg-secondary);
-  cursor: pointer;
-}
-.stepsFlip:hover {
-  background: var(--color-bg-selected);
-  color: var(--color-fg-primary);
-}

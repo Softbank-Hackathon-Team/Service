@@ -207,9 +207,11 @@ select {
 /* 근거 칸이 새로 생기거나 사라질 때(구성 읽기 → 명세 확정 등)는 오른쪽에서 들어오고 오른쪽으로 나간다.
    큰 카드와 진행 단계는 위 그룹 전환으로 줄고 옮겨 가서, 칸이 열리는 것처럼 보인다. */
 @media (prefers-reduced-motion: no-preference) {
+  ::view-transition-new(tile-grid):only-child,
   ::view-transition-new(tile-side):only-child {
     animation: tile-enter 420ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
   }
+  ::view-transition-old(tile-grid):only-child,
   ::view-transition-old(tile-side):only-child {
     animation: tile-exit 260ms ease both;
   }

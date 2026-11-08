@@ -72,9 +72,11 @@ const NETWORK_ECHO = /^Failed to load resource: the server responded with a stat
 const flat = (text: string | null | undefined) => (text ?? "").replace(/\s+/g, " ").trim();
 const heroTitle = (page: Page) => page.getByRole("heading", { level: 2 });
 const envButton = (page: Page, name: string) => page.getByRole("button").filter({ has: page.getByText(name, { exact: true }) });
-// 새 이전의 출발 줄은 제목이 그 환경에서 서비스 중인 소프트웨어라, 환경 이름은 줄 이름(aria-label) 끝 " · <환경>" 에 있다
+// 새 이전의 출발 줄 이름(aria-label)은 "<환경> · <벤더> · <서비스>" 다 (#386 부터 제목이 환경 이름. 예전에는 끝에 " · <환경>")
 const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-const sourceButton = (page: Page, name: string) => page.getByRole("button", { name: new RegExp(` · ${escapeRe(name)}$`) });
+const sourceButton = (page: Page, name: string) => page.getByRole("button", { name: new RegExp(`^${escapeRe(name)} · `) });
+// 이전 화면의 근거 카드 (격자 안 고정 타일, 머리줄 제목이 h3)
+const card = (page: Page, title: string) => page.locator("section").filter({ has: page.getByRole("heading", { name: title, exact: true }) });
 const progress = (page: Page) => page.locator("section").filter({ has: page.getByRole("heading", { name: "진행 단계", exact: true }) });
 const stepMark = (page: Page, label: string) => progress(page).getByRole("listitem").filter({ hasText: label }).getByRole("img");
 const trafficBar = (page: Page) => page.getByRole("img", { name: /^트래픽 / });
@@ -292,7 +294,7 @@ const flow = (ending: "회수" | "롤백") => async ({ page }: { page: Page }, i
     await step("가져오기", () => waitForScreen(page, ev, SCREEN.spec, WORKER_MS, SCREEN.specBlocked));
 
     await step("명세 확정", async () => {
-      await expect(page.getByRole("button", { name: /^읽은 값/ })).toContainText(/\d+칸/);
+      await expect(card(page, "읽은 값")).toContainText(/\d+칸/);
       // 출발 방화벽을 못 읽은 자원은 사람이 정하기 전에는 사전 점검을 못 넘는다. 개발 seed 의 DB 가 그렇다
       const decide = page.getByRole("button", { name: "의존성 연결만 열기", exact: true });
       const undecided = await decide.count();
@@ -301,24 +303,30 @@ const flow = (ending: "회수" | "롤백") => async ({ page }: { page: Page }, i
         await decide.first().click();
         await expect(decide).toHaveCount(left - 1);
       }
+      // 흰 "확인"이 명세 카드를 차례로 채운 뒤에야 같은 자리에 파란 "명세 확정"이 나온다
+      const check = page.getByRole("button", { name: "확인", exact: true });
+      if (await check.count()) await check.click();
       await page.getByRole("button", { name: /명세 확정$/ }).click();
     });
 
     await step("사전 점검 · 계획 만들기", async () => {
       await waitForScreen(page, ev, SCREEN.approve, WORKER_MS, SCREEN.specBlocked);
-      // 진행 단계 카드의 꺾쇠 "실행 단계 보기" 와 구별한다 (계획서 접이 카드 "실행 단계 N단계" 만)
-      await expect(page.getByRole("button", { name: /^실행 단계(?! 보기)/ }), "계획서를 읽음").toContainText(/\d+단계/);
-      await expect(page.getByRole("button", { name: /^사전 점검/ })).toContainText(/\d+건/);
-      ev.notes["사전 점검"] = flat(await page.getByRole("button", { name: /^사전 점검/ }).textContent());
+      // 계획서 근거 카드 "실행 단계 N단계" 만 (진행 단계 카드와 구별)
+      await expect(card(page, "실행 단계"), "계획서를 읽음").toContainText(/\d+단계/);
+      await expect(card(page, "사전 점검")).toContainText(/\d+건/);
+      ev.notes["사전 점검"] = flat(await card(page, "사전 점검").textContent());
     });
 
     await step("계획 승인", async () => {
-      const acks = page.locator("label").filter({ has: page.getByRole("checkbox") });
-      ev.notes["승인 전에 확인"] = (await acks.allTextContents()).map(flat).join(" / ") || "없음";
-      const boxes = await page.getByRole("checkbox").all();
-      expect(boxes.length, "계획서에 확인 항목이 있음 (비용·실패 비용은 늘 있다)").toBeGreaterThan(0);
-      await expect(page.getByRole("button", { name: `확인 ${boxes.length}개 남음`, exact: true }), "다 체크하기 전에는 승인할 수 없음").toBeDisabled();
-      for (const box of boxes) await box.check();
+      // 확인 항목(비용·실패 비용 등)은 "사전 점검" 카드의 "승인하면 함께 확인하는 것"에 보인다 (승인 전에 확인 카드는 11/08 에 없앰)
+      ev.notes["사전 점검 · 함께 확인"] = flat(await card(page, "사전 점검").textContent());
+      await expect(page.getByRole("button", { name: "승인하고 실행 시작", exact: true }), "두 판을 확인하기 전에는 승인 버튼이 없음").toHaveCount(0);
+      // 큰 카드의 두 판(자원 대응 · 보안)을 오른쪽 아래 흰 "확인"으로 차례로 확인한다. 판마다 줄을 칠하며 확인하고,
+      // 자원 대응은 상품 대체 항목을, 보안(마지막 판)은 남은 확인 항목 모두를 체크한다. 그 뒤 같은 자리가 승인 버튼이 된다
+      for (const tab of [/^자원 대응/, /^보안/]) {
+        await page.getByRole("button", { name: "확인", exact: true }).click();
+        await expect(page.getByRole("tab", { name: tab }), "판을 확인함").toHaveAttribute("data-done", "true", { timeout: 15_000 });
+      }
       // 승인하면 바로 실행을 시작한다(버튼 한 번). 시작이 막혀 승인 상태에 남으면 실행 화면이 오지 않아 이 단계가 실패한다
       const approve = page.getByRole("button", { name: "승인하고 실행 시작", exact: true });
       await expect(approve).toBeEnabled();
@@ -393,7 +401,7 @@ const flow = (ending: "회수" | "롤백") => async ({ page }: { page: Page }, i
       await expect.poll(() => ev.report !== null, { message: "완료 화면이 증적 리포트(GET report)를 읽음", timeout: HUMAN_MS }).toBe(true);
       ev.notes["리포트 traffic"] = JSON.stringify(ev.report?.traffic);
       await expect
-        .soft(page.getByRole("button", { name: /^전환 판정/ }), "트래픽을 옮기고 끝난 마이그레이션이면 전환 판정 요약이 보여야 함 (#174)")
+        .soft(card(page, "전환 판정"), "트래픽을 옮기고 끝난 마이그레이션이면 전환 판정 요약이 보여야 함 (#174)")
         .not.toContainText("아직 없음");
       const opened = page.context().waitForEvent("page");
       await page.getByRole("button", { name: "증적 리포트", exact: true }).click();
