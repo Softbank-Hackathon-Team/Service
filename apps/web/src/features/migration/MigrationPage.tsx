@@ -17,7 +17,8 @@ import type { MigrationStatus, MigrationView, PlanAckKind, PrecheckItem } from '
 import { usePoll } from '../../lib/usePoll';
 import { useAgentReview } from '../agent/AgentResult';
 import { failureAnalysisOf } from '../agent/model';
-import { costCaveats, costNote, costSummary, planCostCaveats, planCostSummary } from '../cost/model';
+import { CostCurve } from '../cost/CostCurve';
+import { planCostSummary } from '../cost/model';
 import {
   ackPlaces, ackState, ackSubject, approveLabel, autoStart, canReplan, failureChoices, isPastStep, pollMs, screenOf, signalCovers, specRows, stepGate, stepName, usd, type MigrationScreen, type RetryStage,
 } from './model';
@@ -394,7 +395,6 @@ function ApproveScreen({ migration, route, onChanged, past }: ScreenProps) {
   const ticks = past ? allAcks : doc && ticked.hash === doc.planHash ? ticked.ids : NO_TICKS;
   const acks = ackState(doc?.acknowledgements, ticks);
   const planCost = doc?.costSummary;
-  const pair = cost.data?.pair;
   // 보안 판정(SEC:*)은 따로 단계별 카드로 본다. 사전 점검 카드에는 나머지 점검만
   const checks = doc?.precheck.filter((item) => !isSecItem(item)) ?? [];
   const warns = checks.filter((item) => item.level !== 'info').length;
@@ -477,19 +477,9 @@ function ApproveScreen({ migration, route, onChanged, past }: ScreenProps) {
         <HeroPager label={t('계획서 보기')} pages={pages} at={pageAt} onPick={setPageAt} />
       </Hero>
       <Stack area="side">
-        <FoldTile title={t('월 비용')} summary={planCost ? planCostSummary(planCost) : cost.data ? costSummary(cost.data) : t('읽는 중')}>
-          <div className={s.costLine}>
-            <span className="t-metric-lg">{usd(planCost ? planCost.monthlySource : pair?.sourceMonthlyUsd)}</span>
-            <Icon name="arrow-right" />
-            <span className="t-metric-lg">{usd(planCost ? planCost.monthlyTarget : pair?.targetMonthlyUsd)}</span>
-          </div>
-          {(planCost ? planCostCaveats(planCost) : cost.data ? costCaveats(cost.data) : []).map((line) => (
-            <p key={line} className={`${s.note} t-body-sm c-secondary`}>{line}</p>
-          ))}
-          <p className={`${s.note} t-body-sm c-secondary`}>{costNote(planCost?.priceAsOf)}</p>
-          <div className={s.note}>
-            <BarPill label={t('비용 자세히')} icon="chevron" onClick={() => go(`migrations/${migration.id}/cost`)} />
-          </div>
+        {/* 카드 한 장으로 설명한다 (11/08): 비용 화면으로 옮기거나 펼치지 않는다. 안내 문구 대신 트래픽별 두 환경 비용 곡선 */}
+        <FoldTile title={t('월 비용 (추정)')} summary={planCost ? planCostSummary(planCost) : undefined}>
+          <CostCurve migrationId={migration.id} view={cost.data ?? null} />
         </FoldTile>
         <FoldTile key={`precheck-${warns > 0}`} title={t('사전 점검')} summary={warns > 0 ? t('확인 {0}건', { 0: warns }) : t('{0}건', { 0: checks.length })} defaultOpen={warns > 0}>
           <ul className={s.rows}>
