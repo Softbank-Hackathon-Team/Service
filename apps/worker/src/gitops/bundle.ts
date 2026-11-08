@@ -39,6 +39,9 @@ export const appNamespace = (b: BundleRef) => `${APP_NS_PREFIX}${b.app}`;
 export const clusterName = (b: BundleRef) => (DELIVERY[b.env] === "agent-pull" ? null : `${b.tenant}-${b.env}`);
 // 온프레는 설치 차트 ApplicationSet 이 같은 이름을 만든다 (<회사>-<앱>-<폴더 이름>, deploy/helm/onprem-agent/templates/argocd.yaml)
 export const argoAppName = (b: BundleRef) => `${b.tenant}-${b.app}-${envDir(b)}`;
+// 허브의 회사 울타리 앱 (gitops platform/appsets/tenant-projects.yaml 이 tenants/<회사>/argocd 폴더마다 만든다).
+//   AppProject 와 도착 클러스터 Secret(argocd/cluster-<env>.yaml 의 namespaces)이 이 앱으로 허브에 들어간다
+export const fenceAppName = (b: BundleRef) => `${b.tenant}-fence`;
 
 // 자리표시 채우기. 승인 때 만든 값의 "<tf-output:키>", "<env:키>"만 바꾼다. 어댑터는 다시 부르지 않는다
 // TA3: 키에 . 과 - 도 받는다 (v2 link.<IR id>.<출력>, 예: link.shop-db.host). 예전 키([A-Za-z0-9_]+)는 그대로 맞는다

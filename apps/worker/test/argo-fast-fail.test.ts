@@ -9,6 +9,8 @@ const D = "d".repeat(40);   // 다른 이전이 뒤이어 올린 커밋 (후손)
 const b = { tenant: "t-1a2b3c4d", app: "shop", env: "aws-eks" as const };
 const commit = { commit: C, bundleSha256: "x", resources: [], changed: true };
 const REST = { ARGOCD_URL: "https://argo.example", ARGOCD_TOKEN: "tok" };
+// #380 E2·E3 의 주기 새로고침을 끈 예전 방식 (첫 읽기·처음 보일 때 normal, hard 한 번). 새 방식은 argo-refresh-loop.test.ts
+const OLD_REFRESH = { ARGO_REFRESH_SEC: "0" };
 const clock = () => { let t = 0; return { now: () => t, sleep: async (ms: number) => { t += ms; }, at: () => t }; };
 
 // 실측 문구 (2026-11-07 온프레→AWS, GKE)
@@ -95,7 +97,7 @@ test("거부 D1(c): 자원 수준 오류가 계속돼도 클러스터 실패로 
 test("D1(a): REST 는 60초 지나도 안 끝나면 refresh=hard 한 번, ARGO_HARD_REFRESH_SEC=0 이면 안 건다", async () => {
   const run = async (extra: Record<string, string>) => {
     const k = clock(); const seen: Array<{ t: number; url: string }> = [];
-    const r = await argoWatcherFromEnv({ ...REST, ...extra }, { fetchImpl: timedFetch(k.at, (t) => ok(t >= 90_000 ? healthy() : progressing()), seen), sleep: k.sleep, now: k.now }).wait(b, commit);
+    const r = await argoWatcherFromEnv({ ...REST, ...OLD_REFRESH, ...extra }, { fetchImpl: timedFetch(k.at, (t) => ok(t >= 90_000 ? healthy() : progressing()), seen), sleep: k.sleep, now: k.now }).wait(b, commit);
     assert.equal(r.ok, true);
     return seen;
   };
@@ -116,7 +118,7 @@ test("D1(a)(b): k8s 길도 hard 주석 한 번, 없던 Application 이 처음 �
     if (k.at() < 10_000) return { code: 1, stdout: "", stderr: 'Error from server (NotFound): applications.argoproj.io "x" not found' };
     return { code: 0, stdout: JSON.stringify({ status: k.at() >= 90_000 ? healthy() : progressing() }), stderr: "" };
   };
-  const r = await argoWatcherFromEnv({ ARGO_KUBE_CONTEXT: "hub" }, { kubectl, sleep: k.sleep, now: k.now }).wait(b, commit);
+  const r = await argoWatcherFromEnv({ ARGO_KUBE_CONTEXT: "hub", ...OLD_REFRESH }, { kubectl, sleep: k.sleep, now: k.now }).wait(b, commit);
   assert.equal(r.ok, true);
   const ann = calls.filter((c) => c.args.includes("annotate")).map((c) => ({ t: c.t, v: c.args.find((a) => a.startsWith("argocd.argoproj.io/refresh="))! }));
   // 0초 첫 읽기 normal(앱 없음), 10초에 처음 보임 → 12초 normal, 60초 hard
@@ -130,7 +132,7 @@ test("D1(a)(b): k8s 길도 hard 주석 한 번, 없던 Application 이 처음 �
 test("D1(a)(b): REST 도 404 뒤 처음 보이면 normal 한 번, 앱이 안 보이는 동안은 hard 를 미룬다", async () => {
   const k = clock(); const seen: Array<{ t: number; url: string }> = [];
   // 70초까지 404, 그 뒤 Progressing, 100초부터 Healthy
-  const r = await argoWatcherFromEnv(REST, { fetchImpl: timedFetch(k.at, (t) => (t < 70_000 ? { status: 404 } : ok(t >= 100_000 ? healthy() : progressing())), seen), sleep: k.sleep, now: k.now }).wait(b, commit);
+  const r = await argoWatcherFromEnv({ ...REST, ...OLD_REFRESH }, { fetchImpl: timedFetch(k.at, (t) => (t < 70_000 ? { status: 404 } : ok(t >= 100_000 ? healthy() : progressing())), seen), sleep: k.sleep, now: k.now }).wait(b, commit);
   assert.equal(r.ok, true);
   const refreshes = seen.filter((s) => s.url.includes("?refresh=")).map((s) => `${s.t}:${s.url.split("?refresh=")[1]}`);
   assert.deepEqual(refreshes, ["0:normal", "72000:normal", "74000:hard"]);

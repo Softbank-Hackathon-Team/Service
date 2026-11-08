@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { DELIVERY, argoAppName, clusterSecretFile, type BundleRef, type GitopsEnv } from "./bundle.js";
+import { DELIVERY, argoAppName, clusterSecretFile, fenceAppName, type BundleRef, type GitopsEnv } from "./bundle.js";
 import type { CommitResult } from "./repo.js";
 import type { SyncWatcher, SyncWatchResult } from "./index.js";
 import { revisionMatcher, type RevisionCovers } from "./revision-check.js";
@@ -250,6 +250,10 @@ export function argoWatcherFromEnv(env: NodeJS.ProcessEnv = process.env, d: Argo
   // D1 (#373) DRAFT(ai): 도착 클러스터를 못 읽는 상태가 120초 이어지면 ARGO_CLUSTER_UNREACHABLE 로 멈춘다. 0 = 끔.
   //   120초는 여유: 방금 만든 EKS 의 접근 항목은 1~2분 뒤에야 먹는다 (그 사이 Argo 가 Unauthorized 를 낸다)
   const unreachableMs = envNumber(env.ARGO_UNREACHABLE_SEC, 120) * 1000;
+  // #380 E2·E3 DRAFT(ai): 끝날 때까지 refreshMs 마다 normal 새로고침. 도착 앱(보이는 동안)과 회사 fence 앱(처음부터) 둘 다.
+  //   11/07 AWS→GCP 실측: 새 앱의 첫 동기화가 fence 앱의 클러스터 Secret 반영(+42초)과 앱 정기 reconcile(+91초)을 기다렸다.
+  //   15초 = repo-server 가 git 을 다시 보는 간격 (틱 2초마다 걸면 부하). 0 = 끔 (예전: 첫 읽기·처음 보일 때 normal, hardMs 에 hard 한 번)
+  const refreshMs = envNumber(env.ARGO_REFRESH_SEC, 15) * 1000;
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const now = deps.now ?? Date.now;
   return {
@@ -266,13 +270,25 @@ export function argoWatcherFromEnv(env: NodeJS.ProcessEnv = process.env, d: Argo
       let refresh: ArgoRefresh | undefined = "normal";   // 다음 읽기에 걸 새로고침 (첫 읽기는 normal)
       let hardSent = false;
       let clusterBadSince: number | null = null;          // 도착 클러스터를 못 읽는 상태가 처음 보인 때 (깨끗한 읽기가 오면 지움)
+      const fence = fenceAppName(b);
+      let appRefreshAt = t0;                              // 도착 앱에 마지막으로 새로고침을 건 때 (첫 읽기가 건다)
+      let fenceRefreshAt: number | null = null;           // fence 앱에 마지막으로 새로고침을 건 때
       const obs = (extra: Partial<NonNullable<SyncWatchResult["observed"]>> = {}) =>
         ({ source: reader.source, app: name, polls, ms: now() - t0, last, ...extra });
       while (true) {
         // D1 (a): 앱이 보이는데 hardMs 지나도록 안 끝나면 hard 새로고침 한 번 (REST·k8s 둘 다)
         if (!refresh && !hardSent && hardMs > 0 && !missing && now() - t0 >= hardMs) refresh = "hard";
+        // #380 E3: 앱이 보이는데 안 끝났으면 refreshMs 마다 normal (막힘이 풀린 뒤 정기 reconcile 을 기다리지 않게)
+        if (!refresh && refreshMs > 0 && !missing && now() - appRefreshAt >= refreshMs) refresh = "normal";
         if (refresh === "hard") hardSent = true;
+        if (refresh) appRefreshAt = now();
         const r = await reader.read(name, refresh);
+        // #380 E2: fence 앱도 첫 읽기 바로 뒤와 refreshMs 마다. 커밋이 바꾼 클러스터 Secret 네임스페이스 목록을
+        //   도착 앱이 생기기 전에 허브에 넣는다. 결과는 보지 않는다 (없거나 못 읽어도 도착 앱 판정과 상관없음)
+        if (refreshMs > 0 && (fenceRefreshAt === null || now() - fenceRefreshAt >= refreshMs)) {
+          fenceRefreshAt = now();
+          await reader.read(fence, "normal");
+        }
         refresh = undefined;
         polls++;
         if (r.kind === "ok") {
