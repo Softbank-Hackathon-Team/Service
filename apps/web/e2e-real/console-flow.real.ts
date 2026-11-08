@@ -318,19 +318,15 @@ const flow = (ending: "회수" | "롤백") => async ({ page }: { page: Page }, i
     });
 
     await step("계획 승인", async () => {
-      const acks = page.locator("label").filter({ has: page.getByRole("checkbox") });
-      ev.notes["승인 전에 확인"] = (await acks.allTextContents()).map(flat).join(" / ") || "없음";
+      // 확인 항목(비용·실패 비용 등)은 "사전 점검" 카드의 "승인하면 함께 확인하는 것"에 보인다 (승인 전에 확인 카드는 11/08 에 없앰)
+      ev.notes["사전 점검 · 함께 확인"] = flat(await card(page, "사전 점검").textContent());
+      await expect(page.getByRole("button", { name: "승인하고 실행 시작", exact: true }), "두 판을 확인하기 전에는 승인 버튼이 없음").toHaveCount(0);
       // 큰 카드의 두 판(자원 대응 · 보안)을 오른쪽 아래 흰 "확인"으로 차례로 확인한다. 판마다 줄을 칠하며 확인하고,
-      // 그때 상품 대체(자원 대응)·보안 주의(보안) 확인 항목이 체크된다. 두 판을 다 확인해야 승인 버튼이 나온다
+      // 자원 대응은 상품 대체 항목을, 보안(마지막 판)은 남은 확인 항목 모두를 체크한다. 그 뒤 같은 자리가 승인 버튼이 된다
       for (const tab of [/^자원 대응/, /^보안/]) {
         await page.getByRole("button", { name: "확인", exact: true }).click();
         await expect(page.getByRole("tab", { name: tab }), "판을 확인함").toHaveAttribute("data-done", "true", { timeout: 15_000 });
       }
-      const boxes = await page.getByRole("checkbox").all();
-      expect(boxes.length, "계획서에 확인 항목이 있음 (비용·실패 비용은 늘 있다)").toBeGreaterThan(0);
-      const left = (await Promise.all(boxes.map((box) => box.isChecked()))).filter((on) => !on).length;
-      if (left > 0) await expect(page.getByRole("button", { name: `확인 ${left}개 남음`, exact: true }), "다 체크하기 전에는 승인할 수 없음").toBeDisabled();
-      for (const box of boxes) await box.check();
       // 승인하면 바로 실행을 시작한다(버튼 한 번). 시작이 막혀 승인 상태에 남으면 실행 화면이 오지 않아 이 단계가 실패한다
       const approve = page.getByRole("button", { name: "승인하고 실행 시작", exact: true });
       await expect(approve).toBeEnabled();

@@ -35,7 +35,7 @@ import { SubstituteMap } from './SubstituteMap';
 import { HeroPager, type HeroPage } from './HeroPager';
 import { ResourceFlow, SecurityBoard, securityControls, SpecCards, useSweep } from './HeroVisuals';
 import { flowRows, specCardsV1, specCardsV2 } from './visuals';
-import { isSecItem, precheckLine, secAckLabel, type SecuritySpecV2 } from './securityV2';
+import { isSecItem, precheckLine, type SecuritySpecV2 } from './securityV2';
 import { ConfirmPill, Frame, pastHero, StepsView, useAction, useCostConsent, type ScreenProps } from './shared';
 import s from '../common/page.module.css';
 import { localeTag, t } from '../../lib/i18n';
@@ -393,13 +393,6 @@ function ApproveScreen({ migration, route, onChanged, past }: ScreenProps) {
   const allAcks = useMemo<ReadonlySet<string>>(() => new Set((doc?.acknowledgements ?? []).map((ack) => ack.id)), [doc]);
   const ticks = past ? allAcks : doc && ticked.hash === doc.planHash ? ticked.ids : NO_TICKS;
   const acks = ackState(doc?.acknowledgements, ticks);
-  const tick = (id: string, on: boolean) => {
-    if (!doc) return;
-    const next = new Set(ticks);
-    if (on) next.add(id);
-    else next.delete(id);
-    setTicked({ hash: doc.planHash, ids: next });
-  };
   const planCost = doc?.costSummary;
   const pair = cost.data?.pair;
   // 보안 판정(SEC:*)은 따로 단계별 카드로 본다. 사전 점검 카드에는 나머지 점검만
@@ -410,7 +403,8 @@ function ApproveScreen({ migration, route, onChanged, past }: ScreenProps) {
   const mapped = planResourceRows(resources.data);
   // 확인 항목마다 확인하는 자리는 하나다: 상품 대체는 큰 카드의 대응 줄, 나머지는 "승인 전에 확인" 목록. 승인 버튼은 둘을 합쳐 센다(acks)
   const places = ackPlaces(doc?.acknowledgements);
-  const listLeft = places.list.filter((ack) => !ticks.has(ack.id)).length;
+  // 다른 카드에 보이지 않는 확인 항목(비용·실패했을 때 비용·실행 방식 등). 사전 점검 주의·보안 주의는 각 카드에 이미 보인다
+  const alsoAcks = places.list.filter((ack) => ack.kind !== 'precheck_warn');
   // 큰 카드 본문은 넘겨 보는 판 둘: 자원 대응(출발 상자 ─[대응|대체]→ 도착 상자) · 보안. 실행 순서는 진행 단계 카드가 보인다.
   // 확인 흐름: 오른쪽 아래 흰 "확인"을 누르면 지금 확인할 판의 줄을 1번부터 차례로 칠하며(스크롤도 따라감) 그 판을 확인한다.
   //   자원 대응을 확인하면 상품 대체 확인 항목(substitute)을, 보안을 확인하면 보안 주의 항목(precheck_warn:SEC:*)을 체크하고 다음 판으로 간다.
@@ -445,7 +439,8 @@ function ApproveScreen({ migration, route, onChanged, past }: ScreenProps) {
     } finally {
       setSweeping(false);
     }
-    const ids = pending === 'map' ? places.substitutes.map((row) => row.ackId) : (doc.acknowledgements ?? []).filter((ack) => secAckLabel(ack)).map((ack) => ack.id);
+    // 자원 대응 확인 = 상품 대체 항목. 보안 확인(마지막 판) = 남은 확인 항목 모두 (보안 주의, 그리고 사전 점검 카드에 보이는 비용·주의 등)
+    const ids = pending === 'map' ? places.substitutes.map((row) => row.ackId) : (doc.acknowledgements ?? []).map((ack) => ack.id);
     setTicked((prev) => ({ hash: planHash, ids: new Set([...(prev.hash === planHash ? prev.ids : []), ...ids]) }));
     setReviewed((prev) => ({ hash: planHash, pages: new Set([...(prev.hash === planHash ? prev.pages : []), pending]) }));
     const next = APPROVE_PAGES.find((page) => page !== pending && !done.has(page));
@@ -482,25 +477,6 @@ function ApproveScreen({ migration, route, onChanged, past }: ScreenProps) {
         <HeroPager label={t('계획서 보기')} pages={pages} at={pageAt} onPick={setPageAt} />
       </Hero>
       <Stack area="side">
-        {doc && places.list.length > 0 && (
-          <FoldTile title={t('승인 전에 확인')} summary={listLeft > 0 ? t('{0}개 남음', { 0: listLeft }) : t('모두 확인함')}>
-            <ul className={s.rows}>
-              {places.list.map((ack) => (
-                <li key={ack.id}>
-                  <label className={`${s.ack} t-body-sm`}>
-                    <input type="checkbox" checked={ticks.has(ack.id)} disabled={busy || expired || !!past} onChange={(event) => tick(ack.id, event.target.checked)} />
-                    <span className={s.ackText}>
-                      <span className="t-caption c-tertiary">
-                        {[secAckLabel(ack) ?? ACK_KIND[ack.kind] ?? ack.kind, ackSubject(ack)].filter(Boolean).join(' · ')}
-                      </span>
-                      <span>{ack.text}</span>
-                    </span>
-                  </label>
-                </li>
-              ))}
-            </ul>
-          </FoldTile>
-        )}
         <FoldTile title={t('월 비용')} summary={planCost ? planCostSummary(planCost) : cost.data ? costSummary(cost.data) : t('읽는 중')}>
           <div className={s.costLine}>
             <span className="t-metric-lg">{usd(planCost ? planCost.monthlySource : pair?.sourceMonthlyUsd)}</span>
@@ -524,6 +500,20 @@ function ApproveScreen({ migration, route, onChanged, past }: ScreenProps) {
               </li>
             ))}
           </ul>
+          {/* "승인 전에 확인" 카드를 없앤 뒤(11/08) 다른 곳에 보이지 않는 확인 항목은 여기 둔다. 보안 판의 "확인"이 함께 체크한다 */}
+          {alsoAcks.length > 0 && (
+            <>
+              <p className={`${s.note} t-label-sm c-tertiary`}>{t('승인하면 함께 확인하는 것')}</p>
+              <ul className={s.rows}>
+                {alsoAcks.map((ack) => (
+                  <li key={ack.id} className={s.stackRow}>
+                    <span className="t-caption c-tertiary">{[ACK_KIND[ack.kind] ?? ack.kind, ackSubject(ack)].filter(Boolean).join(' · ')}</span>
+                    <span className="t-body-sm">{ack.text}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </FoldTile>
         <FoldTile title={t('실행 단계')} summary={doc ? t('{0}단계', { 0: doc.steps.length }) : t('읽는 중')}>
           <ul className={s.rows}>
