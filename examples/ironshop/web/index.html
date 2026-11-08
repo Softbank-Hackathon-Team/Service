@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>아이언 철물점</title>
+<style>
+  /* 색·글꼴은 웹 콘솔(apps/web/src/design/tokens.css)과 같은 값 */
+  :root {
+    --canvas: #f6f7f9; --surface: #ffffff; --subtle: #f0f2f5; --line: #e3e7ed;
+    --ink: #202631; --secondary: #616b7a; --muted: #68717f;
+    --accent: #365fce; --accent-hover: #294dab; --accent-soft: #edf2ff;
+    --success: #287455; --success-soft: #edf7f1; --danger: #b34646; --danger-soft: #fcf0ef;
+    --sans: 'Pretendard JP Variable', Pretendard, -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--canvas); color: var(--ink); font: 14px/1.5 var(--sans); }
+  header { background: var(--surface); border-bottom: 1px solid var(--line); padding: 14px 24px; display: flex; align-items: center; gap: 10px; }
+  header b { font-size: 16px; }
+  header span { color: var(--muted); font-size: 13px; }
+  main { max-width: 880px; margin: 24px auto; padding: 0 16px; display: grid; gap: 16px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; }
+  .card h2 { margin: 0 0 12px; font-size: 13px; font-weight: 600; color: var(--secondary); }
+  .where { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .badge { background: var(--accent-soft); color: var(--accent); border-radius: 999px; padding: 3px 10px; font-weight: 600; font-size: 13px; }
+  .mono { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .stat { background: var(--subtle); border-radius: 6px; padding: 10px 12px; }
+  .stat div:first-child { color: var(--muted); font-size: 12px; }
+  .stat div:last-child { font-size: 20px; font-weight: 700; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 8px 4px; border-top: 1px solid var(--line); }
+  td.num { text-align: right; color: var(--secondary); }
+  .items { display: flex; flex-wrap: wrap; gap: 8px; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 6px; padding: 7px 12px; cursor: pointer; }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  #msg { min-height: 20px; margin-top: 10px; font-size: 13px; }
+  .ok { color: var(--success); } .err { color: var(--danger); }
+  @media (max-width: 560px) { .stats { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header><b>🔩 아이언 철물점</b><span>못 하나부터 공구까지</span></header>
+<main>
+  <section class="card">
+    <h2>지금 연결된 데이터베이스</h2>
+    <div class="where"><span class="badge" id="place">확인 중</span><span class="mono" id="host"></span></div>
+  </section>
+  <section class="card">
+    <h2>주문 데이터 (이전 전후로 같아야 합니다)</h2>
+    <div class="stats">
+      <div class="stat"><div>주문 수</div><div id="count">-</div></div>
+      <div class="stat"><div>마지막 주문</div><div id="last">-</div></div>
+      <div class="stat"><div>데이터 지문</div><div id="fp" style="font-family:var(--mono)">-</div></div>
+    </div>
+  </section>
+  <section class="card">
+    <h2>주문하기</h2>
+    <div class="items" id="items"></div>
+    <div id="msg"></div>
+  </section>
+  <section class="card">
+    <h2>최근 주문</h2>
+    <table><tbody id="orders"></tbody></table>
+  </section>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  let itemsDrawn = false;
+
+  async function load() {
+    try {
+      const r = await fetch("/api/summary", { cache: "no-store" });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
+      const s = await r.json();
+      $("place").textContent = s.db.place;
+      $("host").textContent = `${s.db.host} · Postgres ${s.db.version}`;
+      $("count").textContent = s.count.toLocaleString("ko-KR") + "건";
+      $("last").textContent = "#" + s.lastId;
+      $("fp").textContent = s.fingerprint;
+      $("orders").innerHTML = s.orders.map((o) =>
+        `<tr><td>#${o.id}</td><td>${esc(o.name)}</td><td class="num">${o.qty}개</td><td class="num">${new Date(o.at).toLocaleTimeString("ko-KR")}</td></tr>`).join("");
+      if (!itemsDrawn) {
+        $("items").innerHTML = s.items.map((n) => `<button data-item="${esc(n)}">${esc(n)}</button>`).join("");
+        itemsDrawn = true;
+      }
+    } catch (e) {
+      $("place").textContent = "연결 확인 중";
+    }
+  }
+
+  $("items").addEventListener("click", async (ev) => {
+    const item = ev.target.dataset?.item;
+    if (!item) return;
+    const r = await fetch("/api/orders", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ item, qty: 1 }) });
+    const body = await r.json().catch(() => ({}));
+    $("msg").className = r.ok ? "ok" : "err";
+    $("msg").textContent = r.ok ? `${item} 주문 완료 (#${body.id})` : (body.error || "주문하지 못했습니다");
+    load();
+  });
+
+  load();
+  setInterval(load, 2000);
+</script>
+</body>
+</html>

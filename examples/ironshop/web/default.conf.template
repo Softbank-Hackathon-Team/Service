@@ -1,0 +1,15 @@
+# 아이언 철물점 web (shop-web 자리, 80번 포트). 화면은 그대로 내보내고 /api/ 는 shop-api 로 넘긴다.
+# API_URL 은 출발 템플릿이 주는 값(http://shop-api.<네임스페이스>.svc)이고, 이전하면 플랫폼이 도착 주소로 다시 쓴다.
+# nginx 이미지가 시작할 때 ${API_URL} 만 채운다 (nginx 자기 변수 $host 등은 env 가 아니라서 그대로 남는다).
+server {
+  listen 80;
+  root /usr/share/nginx/html;
+
+  location = / { try_files /index.html =404; add_header Cache-Control "no-store"; }
+  location /api/ {
+    proxy_pass ${API_URL};
+    proxy_set_header Host $host;
+    proxy_connect_timeout 3s;
+    proxy_read_timeout 10s;
+  }
+}
