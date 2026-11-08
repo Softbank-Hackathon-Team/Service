@@ -26,7 +26,7 @@
 .bento {
   display: grid;
   grid-template-columns: var(--bento-columns);
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: var(--bento-rows, minmax(0, 1fr));
   grid-template-areas: var(--bento-areas);
   gap: var(--gap-bento);
   min-height: 0;

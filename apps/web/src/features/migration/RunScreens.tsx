@@ -154,8 +154,8 @@ export function RunningScreen({ migration, route, onChanged, past }: ScreenProps
         <RehearsalFolds migration={migration} run={rehearsal.run} stale={rehearsal.stale} defaultOpen={deploying} />
         <LiveFold migration={migration} />
         <MeasureFold migration={migration} />
-        <TimelineFold migration={migration} />
         <SecurityFold migration={migration} />
+        <TimelineFold migration={migration} />
         {!past && (
           <ActionRow notice={error}>
             <RollbackPill migration={migration} busy={busy} onConfirm={() => void run(() => api.rollback(migration.id))} />
@@ -194,8 +194,8 @@ export function WindowScreen({ migration, route, onChanged, past }: ScreenProps)
       <Stack area="side">
         <LiveFold migration={migration} />
         <MeasureFold migration={migration} />
-        <TimelineFold migration={migration} />
         <SecurityFold migration={migration} />
+        <TimelineFold migration={migration} />
         {!over && (
           <ActionRow notice={error}>
             {/* 회수를 되묻는 동안은 롤백을 비켜 둔다. 되돌릴 수 없다는 글이 줄지 않고 한 줄에 다 보인다 */}
@@ -251,8 +251,8 @@ export function PausedScreen({ migration, route, onChanged }: ScreenProps) {
         <RehearsalFolds migration={migration} run={rehearsal.run} stale={rehearsal.stale} defaultOpen={isRehearsalCode(migration.failureCode)} />
         <AgentFold migrationId={migration.id} review={review} />
         <LiveFold migration={migration} />
-        <TimelineFold migration={migration} />
         <SecurityFold migration={migration} />
+        <TimelineFold migration={migration} />
         <ActionRow
           notice={consent.notice(error)}
           before={
@@ -301,8 +301,8 @@ export function RollingBackScreen({ migration, route }: ScreenProps) {
         {reason && <StopFold migration={migration} reason={reason} into="rolling_back" />}
         <LiveFold migration={migration} />
         <MeasureFold migration={migration} />
-        <TimelineFold migration={migration} />
         <SecurityFold migration={migration} />
+        <TimelineFold migration={migration} />
       </Stack>
     </Frame>
   );
@@ -338,8 +338,8 @@ export function RolledBackScreen({ migration, route }: ScreenProps) {
         <LeftoverFold migration={migration} title={t('도착에 남은 자원')} />
         {reason && <StopFold migration={migration} reason={reason} into="rolling_back" defaultOpen={false} />}
         <TrafficReportFold migration={migration} />
-        <TimelineFold migration={migration} />
         <SecurityFold migration={migration} />
+        <TimelineFold migration={migration} />
         <ActionRow notice={report.error}>
           <ActionPill label={t('증적 리포트')} icon="download" onClick={() => void report.open()} />
         </ActionRow>
@@ -378,8 +378,8 @@ export function DoneScreen({ migration, route }: ScreenProps) {
         <TrafficReportFold migration={migration} />
         <RehearsalFolds migration={migration} run={rehearsal.run} stale={rehearsal.stale} defaultOpen={false} />
         <MeasureFold migration={migration} />
-        <TimelineFold migration={migration} />
         <SecurityFold migration={migration} />
+        <TimelineFold migration={migration} />
         <ActionRow notice={report.error}>
           <ActionPill label={t('증적 리포트')} icon="download" onClick={() => void report.open()} />
         </ActionRow>

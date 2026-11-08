@@ -75,6 +75,8 @@ const envButton = (page: Page, name: string) => page.getByRole("button").filter(
 // 새 이전의 출발 줄은 제목이 그 환경에서 서비스 중인 소프트웨어라, 환경 이름은 줄 이름(aria-label) 끝 " · <환경>" 에 있다
 const escapeRe = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const sourceButton = (page: Page, name: string) => page.getByRole("button", { name: new RegExp(` · ${escapeRe(name)}$`) });
+// 이전 화면의 근거 카드 (격자 안 고정 타일, 머리줄 제목이 h3)
+const card = (page: Page, title: string) => page.locator("section").filter({ has: page.getByRole("heading", { name: title, exact: true }) });
 const progress = (page: Page) => page.locator("section").filter({ has: page.getByRole("heading", { name: "진행 단계", exact: true }) });
 const stepMark = (page: Page, label: string) => progress(page).getByRole("listitem").filter({ hasText: label }).getByRole("img");
 const trafficBar = (page: Page) => page.getByRole("img", { name: /^트래픽 / });
@@ -292,7 +294,7 @@ const flow = (ending: "회수" | "롤백") => async ({ page }: { page: Page }, i
     await step("가져오기", () => waitForScreen(page, ev, SCREEN.spec, WORKER_MS, SCREEN.specBlocked));
 
     await step("명세 확정", async () => {
-      await expect(page.getByRole("button", { name: /^읽은 값/ })).toContainText(/\d+칸/);
+      await expect(card(page, "읽은 값")).toContainText(/\d+칸/);
       // 출발 방화벽을 못 읽은 자원은 사람이 정하기 전에는 사전 점검을 못 넘는다. 개발 seed 의 DB 가 그렇다
       const decide = page.getByRole("button", { name: "의존성 연결만 열기", exact: true });
       const undecided = await decide.count();
@@ -309,10 +311,10 @@ const flow = (ending: "회수" | "롤백") => async ({ page }: { page: Page }, i
 
     await step("사전 점검 · 계획 만들기", async () => {
       await waitForScreen(page, ev, SCREEN.approve, WORKER_MS, SCREEN.specBlocked);
-      // 진행 단계 카드의 꺾쇠 "실행 단계 보기" 와 구별한다 (계획서 접이 카드 "실행 단계 N단계" 만)
-      await expect(page.getByRole("button", { name: /^실행 단계(?! 보기)/ }), "계획서를 읽음").toContainText(/\d+단계/);
-      await expect(page.getByRole("button", { name: /^사전 점검/ })).toContainText(/\d+건/);
-      ev.notes["사전 점검"] = flat(await page.getByRole("button", { name: /^사전 점검/ }).textContent());
+      // 계획서 근거 카드 "실행 단계 N단계" 만 (진행 단계 카드와 구별)
+      await expect(card(page, "실행 단계"), "계획서를 읽음").toContainText(/\d+단계/);
+      await expect(card(page, "사전 점검")).toContainText(/\d+건/);
+      ev.notes["사전 점검"] = flat(await card(page, "사전 점검").textContent());
     });
 
     await step("계획 승인", async () => {
@@ -403,7 +405,7 @@ const flow = (ending: "회수" | "롤백") => async ({ page }: { page: Page }, i
       await expect.poll(() => ev.report !== null, { message: "완료 화면이 증적 리포트(GET report)를 읽음", timeout: HUMAN_MS }).toBe(true);
       ev.notes["리포트 traffic"] = JSON.stringify(ev.report?.traffic);
       await expect
-        .soft(page.getByRole("button", { name: /^전환 판정/ }), "트래픽을 옮기고 끝난 마이그레이션이면 전환 판정 요약이 보여야 함 (#174)")
+        .soft(card(page, "전환 판정"), "트래픽을 옮기고 끝난 마이그레이션이면 전환 판정 요약이 보여야 함 (#174)")
         .not.toContainText("아직 없음");
       const opened = page.context().waitForEvent("page");
       await page.getByRole("button", { name: "증적 리포트", exact: true }).click();

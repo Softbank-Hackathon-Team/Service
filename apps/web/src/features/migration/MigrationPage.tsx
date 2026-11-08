@@ -10,7 +10,7 @@ import { aboutMigration } from '../../lib/events';
 import { errorCode, errorText } from '../../lib/errors';
 import { stopReasonOf } from '../../lib/failure';
 import { is404, or404 } from '../../lib/http';
-import { planResourceRows, runtimeChangeNote, specSubstituteRows } from '../../lib/resourceMap';
+import { planResourceRows, specSubstituteRows } from '../../lib/resourceMap';
 import { LABEL } from '../../lib/status';
 import { lastPrecheckBounce, stopHelp } from '../../lib/timelineDetail';
 import type { MigrationStatus, MigrationView, PlanAckKind, PrecheckItem } from '../../lib/types';
@@ -515,16 +515,6 @@ function ApproveScreen({ migration, route, onChanged, past }: ScreenProps) {
             <BarPill label={t('비용 자세히')} icon="chevron" onClick={() => go(`migrations/${migration.id}/cost`)} />
           </div>
         </FoldTile>
-        <FoldTile title={t('실행 단계')} summary={doc ? t('{0}단계', { 0: doc.steps.length }) : t('읽는 중')}>
-          <ul className={s.rows}>
-            {doc?.steps.map((step) => (
-              <li key={step.id} className={s.row}>
-                <span className="t-label-md">{stepName(step.id)}</span>
-                <span className={`${s.rowValue} t-caption c-tertiary`}>{stepGate(step)}</span>
-              </li>
-            ))}
-          </ul>
-        </FoldTile>
         <FoldTile key={`precheck-${warns > 0}`} title={t('사전 점검')} summary={warns > 0 ? t('확인 {0}건', { 0: warns }) : t('{0}건', { 0: checks.length })} defaultOpen={warns > 0}>
           <ul className={s.rows}>
             {checks.map((item) => (
@@ -535,45 +525,27 @@ function ApproveScreen({ migration, route, onChanged, past }: ScreenProps) {
             ))}
           </ul>
         </FoldTile>
-        {doc && <VerdictFold items={doc.precheck} />}
-        <FoldTile
-          title={t('자원 대응')}
-          summary={resources.data ? t('{0}개{1}', { 0: mapped.listed.length, 1: [
-            places.substitutes.length > 0 ? t(' · 상품 대체 {0}', { 0: places.substitutes.length }) : '',
-            mapped.runtimeChanges > 0 ? t(' · 실행 방식 바뀜 {0}', { 0: mapped.runtimeChanges }) : '',
-          ].join('') }) : ''}
-          defaultOpen={false}
-        >
+        <FoldTile title={t('실행 단계')} summary={doc ? t('{0}단계', { 0: doc.steps.length }) : t('읽는 중')}>
           <ul className={s.rows}>
-            {mapped.listed.map(({ key, row }) => (
-              <li key={key}>
-                <div className={s.row}>
-                  <span className="t-label-md">{row.label}</span>
-                  <span className={`${s.rowValue} t-caption c-tertiary`}>
-                    {row.source?.service ?? t('없음')} → {row.target?.service ?? t('없음')}
-                  </span>
-                </div>
-                {runtimeChangeNote(row) && <p className={`${s.rowCaption} t-caption c-warning`}>{runtimeChangeNote(row)}</p>}
+            {doc?.steps.map((step) => (
+              <li key={step.id} className={s.row}>
+                <span className="t-label-md">{stepName(step.id)}</span>
+                <span className={`${s.rowValue} t-caption c-tertiary`}>{stepGate(step)}</span>
               </li>
             ))}
           </ul>
-          {/* 경계 밖 자원은 옮기는 자원이 아니라 "건드리지 않는 것" 안내라 표 밖에 한 줄로 둔다 */}
-          {mapped.boundary && (
-            <p className={`${s.note} t-caption c-tertiary`}>
-              {mapped.boundary.label} · {mapped.boundary.afterSource ?? t('옮기지 않음')}
-            </p>
-          )}
         </FoldTile>
         <SecurityFold migration={migration} />
+        {doc && <VerdictFold items={doc.precheck} />}
         {!past && (
           <ActionRow notice={error ?? (plan.error != null && !doc ? errorText(plan.error) : null)}>
-            {/* 첫 판에서는 취소, 그 뒤 판에서는 앞 판으로 */}
+            {/* 버튼은 둘뿐 (11/08 사용자 결정): 왼쪽 작은 버튼은 첫 판에서 마이그레이션 취소, 둘째 판에서 첫 판으로. 오른쪽은 확인 → 승인.
+                계획 거절은 이 화면에 두지 않는다 (그만두려면 취소) */}
             {pageAt === 0 ? (
               <ConfirmPill label={t('취소')} confirmLabel={t('마이그레이션 취소')} icon="x" disabled={busy || sweeping} onConfirm={() => void run(() => api.cancel(migration.id))} />
             ) : (
-              <BarPill label={t('뒤로')} icon="arrow-left" onClick={sweeping ? undefined : () => setPageAt(pageAt - 1)} />
+              <BarPill label={t('이전')} icon="arrow-left" onClick={sweeping ? undefined : () => setPageAt(0)} />
             )}
-            {doc && <ConfirmPill label={t('거절')} confirmLabel={t('계획 거절')} icon="ban" disabled={busy || sweeping} onConfirm={() => void run(() => api.decide(doc.planId, 'reject', doc.planHash))} />}
             {pending ? (
               <ActionPill
                 tone="neutral"
