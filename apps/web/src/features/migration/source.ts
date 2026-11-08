@@ -161,6 +161,35 @@ export function targetOptions(envs: EnvironmentView[], source: EnvironmentView) 
   };
 }
 
+// ---- 결선 시연 계정 (11/08 사용자 요청) ----
+// 시연 계정으로 로그인하면 새 마이그레이션 고르기에 시연 환경(이름이 demo 로 시작)만, 출발과 도착을 나눠 보인다.
+// 다른 계정은 그대로다. 시연 환경이 하나도 없으면 이 규칙을 끄고 예전처럼 보인다 (목록이 비지 않게).
+// TODO(human): 결선 뒤 지운다. 계정별 보이기 설정은 서버에 없다
+const DEMO_ACCOUNTS: ReadonlySet<string> = new Set(['dhcorjs063@gmail.com']);
+const DEMO_ENV = /^demo/i;
+export const isDemoAccount = (email: string | null | undefined) => !!email && DEMO_ACCOUNTS.has(email.trim().toLowerCase());
+
+/** 시연 환경의 쓰임. 이름에 source·target 이 있으면 그것, 없으면 AWS = 출발, 나머지(GCP·온프레) = 도착. 시연 환경이 아니면 null */
+export function demoRole(env: Pick<EnvironmentView, 'name' | 'provider'>): 'source' | 'target' | null {
+  if (!DEMO_ENV.test(env.name)) return null;
+  if (/source|src/i.test(env.name)) return 'source';
+  if (/target|tgt|dst/i.test(env.name)) return 'target';
+  return env.provider === 'aws' ? 'source' : 'target';
+}
+
+/**
+ * 시연 계정의 고르기 후보. null = 규칙을 쓰지 않음(시연 계정이 아니거나 시연 환경이 없음).
+ * 도착은 연결됨·불안정 둘 다 (온프레 Agent 신호가 잠깐 늦어도 목록에서 빠지지 않게)
+ */
+export function demoPicks(envs: EnvironmentView[], email: string | null | undefined) {
+  if (!isDemoAccount(email) || !envs.some((env) => demoRole(env))) return null;
+  return {
+    sources: envs.filter((env) => demoRole(env) === 'source' && env.connectionStatus === 'connected'),
+    targets: (source: EnvironmentView) =>
+      envs.filter((env) => demoRole(env) === 'target' && env.id !== source.id && (env.connectionStatus === 'connected' || env.connectionStatus === 'unstable')),
+  };
+}
+
 /** 도착 환경 줄의 한 줄 설명: 실행 권한을 빌릴 수 있는지. warn 이면 실행 단계에서 막힐 수 있다. */
 export function borrowNote(env: EnvironmentView, now = Date.now()): { text: string; warn: boolean } {
   if (env.provider === 'gcp' && !env.targetProjectId && !env.mock)
