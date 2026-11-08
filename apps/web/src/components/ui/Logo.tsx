@@ -1,3 +1,4 @@
+import logo from '../../assets/logo.png';
 import s from './Logo.module.css';
 import { t } from '../../lib/i18n';
 
@@ -5,16 +6,13 @@ import { t } from '../../lib/i18n';
 export const PRODUCT_NAME = 'Iron platform';
 
 /**
- * 철골 I빔의 단면. 글자 I 로도 읽힌다.
- * DRAFT(ai): 가칭에 맞춘 임시 로고다. public/favicon.svg 가 같은 모양이라 바꾸면 둘 다 바꾼다.
+ * 팀 로고 (11/08 사용자 제공 그림). 앱 아이콘처럼 둥근 사각형으로 자른다 (모서리 = 한 변의 27.5%, 예전 I빔 아이콘과 같은 비율).
+ * public/favicon.svg 는 같은 그림을 같은 모서리로 자른 것이라 바꾸면 둘 다 바꾼다 (src/assets/logo.png 256px)
  */
 export function Logo() {
   return (
     <span className={s.root}>
-      <svg className={s.mark} viewBox="0 0 40 40" role="img" aria-label={t('{0} 로고', { 0: PRODUCT_NAME })}>
-        <rect width="40" height="40" rx="11" fill="#365FCE" />
-        <path d="M11 10h18v5h-6.5v10H29v5H11v-5h6.5V15H11z" fill="#fff" stroke="#fff" strokeWidth="1.5" strokeLinejoin="round" />
-      </svg>
+      <img className={s.mark} src={logo} width={40} height={40} alt={t('{0} 로고', { 0: PRODUCT_NAME })} />
       <span className={s.name}>{PRODUCT_NAME}</span>
     </span>
   );

@@ -8,6 +8,8 @@
 .mark {
   width: 40px;
   height: 40px;
+  border-radius: 11px;
+  object-fit: cover;
 }
 .name {
   font-size: 20px;
