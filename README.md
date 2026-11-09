@@ -93,13 +93,15 @@ AWS · GCP · 온프레미스(k3s) 사이를 **서비스 중단 없이** 옮기�
 
 ## 🖥️ 이전 콘솔
 
+> 아래 화면은 로컬에서 실제 API·워커·DB로 돌린 콘솔이다. 클라우드 쪽(Terraform, Argo CD, 사전 점검, 트래픽 지표, LLM)만 시험 스위치로 흉내 냈다 (`apps/web/README.md`의 "실제 서버로 돌리기"). 환경 이름과 숫자는 시험 데이터다.
+
 ### 1. 이전 시작
-출발·도착 환경을 고르고 새 이전을 만든다. 왼쪽 목록에서 이전마다 진행 막대와 상태를 본다.
+출발 환경, 옮길 서비스, 도착 환경을 차례로 고른다. 오른쪽에서 지금 몇 번째 단계인지 본다.
 
 <p align="center"><img src="docs/img/1-start.png" alt="이전 시작 화면" width="100%"></p>
 
 ### 2. 명세 확인
-가져오기가 읽은 공통 명세(IR)를 사람이 확인해야 다음 단계로 넘어간다.
+가져오기가 읽은 공통 명세(IR)를 사람이 확인해야 다음 단계로 넘어간다. 값마다 어디서 읽었는지와 신뢰도가 붙고, 도착에서 다른 상품이 되는 자원(예: RDS → CloudNativePG)도 여기서 보인다.
 
 <p align="center"><img src="docs/img/2-spec-review.png" alt="명세 확인 화면" width="100%"></p>
 
@@ -109,14 +111,14 @@ AWS · GCP · 온프레미스(k3s) 사이를 **서비스 중단 없이** 옮기�
 <p align="center"><img src="docs/img/3-plan.png" alt="계획 승인 화면" width="100%"></p>
 
 ### 4. 이전 완료
-정상 경로 15칸을 모두 지나 completed. 자원 생성부터 정리까지 단계별 결과가 남는다.
+진행 단계를 모두 지나 완료. 전환 판정, 측정값, 보안 통제 표, 타임라인이 남고, 증적 리포트로 내려받는다.
 
 <p align="center"><img src="docs/img/4-completed.png" alt="이전 완료 화면" width="100%"></p>
 
 ### 트래픽 전환 화면
-출발·도착 가중치와 판정 지표를 실시간으로 본다.
+트래픽을 옮기는 동안 출발·도착 비율(목표와 실측)을 보고, 문제가 있으면 바로 롤백한다.
 
-<p align="center"><img src="docs/img/live-traffic-panel.png" alt="트래픽 전환 패널" width="100%"></p>
+<p align="center"><img src="docs/img/live-traffic-panel.png" alt="트래픽 전환 화면" width="100%"></p>
 
 ## 📁 레포 구조
 
