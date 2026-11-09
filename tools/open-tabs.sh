@@ -9,7 +9,7 @@ cd "$(dirname "$0")/.." || exit 1
 WEB=${WEB_URL:-http://localhost:8080}
 GRAF=${GRAFANA_URL:-http://localhost:3001}
 PRINT=0; [ "${1:-}" = --print ] && PRINT=1
-TABS="1|S0·S8 설계 문서 (1절 그림, 2-3절 숫자 표)|$(pwd)/docs/DESIGN-FINALS.md
+TABS="1|S0·S8 설계 문서 (1절 그림, 2-3절 숫자 표)|$(pwd)/docs/archive/DESIGN-FINALS.md
 2|S0 한눈에 보기|$WEB/#/dashboard
 3|S1·S4 이전 만들고 진행하기|$WEB/#/
 4|S5 비용 비교하기 (질문 대비)|$WEB/#/cost

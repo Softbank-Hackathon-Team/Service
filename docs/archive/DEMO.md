@@ -106,7 +106,7 @@ curl -s localhost:3000/readyz
 
 ### 장면 1. 환경과 새 이전
 
-![시작 화면](img/1-start.png)
+![시작 화면](../img/1-start.png)
 
 할 일:
 
@@ -121,7 +121,7 @@ curl -s localhost:3000/readyz
 
 ### 장면 2. 가져오기 → 명세 검토
 
-![명세 검토](img/2-spec-review.png)
+![명세 검토](../img/2-spec-review.png)
 
 무슨 일이 일어나나:
 
@@ -171,7 +171,7 @@ onprem  k3s-vm-2c8g 2대 월 $250  미확인=['fixed', 'node']
 
 ### 장면 4. 점검·계획 → 계획서
 
-![계획서](img/3-plan.png)
+![계획서](../img/3-plan.png)
 
 할 일:
 
@@ -207,7 +207,7 @@ curl -s -X POST localhost:3000/api/v1/plans/PLAN_ID/approvals -H 'content-type: 
 
 ### 장면 6. 승인 → 실행 → 완료
 
-![완료](img/4-completed.png)
+![완료](../img/4-completed.png)
 
 할 일:
 

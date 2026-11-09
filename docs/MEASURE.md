@@ -127,7 +127,7 @@ bash tools/measure/collect.sh <롤백한 이전번호> --label "AWS RDS → GCP 
 차이만 본다 (기본, 파일 안 건드림).
 
 ```
-node tools/measure/apply-numbers.mjs tools/measure/out/measure-*.json --docs docs/TALK-SCRIPT.md docs/JUDGE-QA.md
+node tools/measure/apply-numbers.mjs tools/measure/out/measure-*.json --docs docs/archive/TALK-SCRIPT.md docs/archive/JUDGE-QA.md
 ```
 
 무대 대표 숫자(41ms·44ms·4,338건·"같은 호스트 Postgres 두 대")까지 클라우드 값으로 바꾼다.
@@ -153,7 +153,7 @@ node tools/measure/apply-numbers.mjs tools/measure/out/measure-*.json --headline
 ### 출력 읽는 법
 
 ```
-=== docs/JUDGE-QA.md  (바뀌는 줄 8)
+=== docs/archive/JUDGE-QA.md  (바뀌는 줄 8)
 @@ 77줄  [cloud:unmeasured-qa]
 - 【미확인】 실제 RDS → Cloud SQL(리전 간 네트워크)에서는 아직 안 쟀다. …
 + 【사실, 실측 2026-11-01 AWS EKS → GCP GKE, 서울】 실제 클라우드(…)에서 잰 컷오버 쓰기 멈춤은 …

@@ -218,7 +218,7 @@ let docs = listAfter("--docs");
 if (optAfter("--parallel")) docs = docs.concat(parallelDocs(optAfter("--parallel")));
 if (!docs.length) {
   const repoDocs = resolve(HERE, "../../docs");
-  docs = ["TALK-SCRIPT.md", "JUDGE-QA.md", "DEMO-STORYBOARD-5MIN.md", "DEMO-STORYBOARD.md", "GLOSSARY.md", "RUNBOOK-FINALS.md"]
+  docs = ["archive/TALK-SCRIPT.md", "archive/JUDGE-QA.md", "archive/DEMO-STORYBOARD-5MIN.md", "archive/DEMO-STORYBOARD.md", "GLOSSARY.md", "archive/RUNBOOK-FINALS.md"]
     .map((f) => join(repoDocs, f)).filter(existsSync);
 }
 if (!docs.length) { console.error("대상 문서가 없음 (--docs 또는 --parallel)"); process.exit(2); }

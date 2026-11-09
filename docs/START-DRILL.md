@@ -7,7 +7,7 @@
 이 문서는 레포를 처음 받은 팀원이 **한 번에 따라 하는 순서표**다.
 받기부터 시험, 데모 리허설까지 단계마다 걸린 시간을 적는다.
 각 단계의 자세한 설명과 오류 표는 `docs/QUICKSTART.md`에 있다.
-맥에서 전체 초기화부터 끄기까지 반복하는 드릴은 `docs/STARTUP-DRILL.md`다.
+맥에서 전체 초기화부터 끄기까지 반복하는 드릴은 `docs/archive/STARTUP-DRILL.md`다.
 
 기준 코드는 Service 레포 main이다.
 
@@ -296,7 +296,7 @@ bash tools/rehearse.sh
 
 | 문서·도구 | 내용 |
 |---|---|
-| `docs/RUNBOOK-FINALS.md` | 본선 당일 순서 |
+| `docs/archive/RUNBOOK-FINALS.md` | 본선 당일 순서 |
 | `docs/INFRA-INTERFACE.md` | 인프라와 코드가 주고받는 값 |
 | `infra/README.md` | Terraform 모듈과 검증 명령 |
 | `tools/cloud-precheck.sh` | 회차 전 계정·권한 점검 |
