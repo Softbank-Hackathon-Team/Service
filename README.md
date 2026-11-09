@@ -154,12 +154,12 @@ npm run test:db             # DB 붙은 통합 테스트
 
 | 문서 | 내용 |
 |---|---|
-| [DESIGN-FINALS.md](docs/DESIGN-FINALS.md) | 결선 설계 문서 |
+| [tools/demo/RUNBOOK.md](tools/demo/RUNBOOK.md) | 결선 시연 런북 (최신) |
 | [contracts/](docs/contracts/README.md) | API · 상태 머신 · 데이터 모델 · 작업 큐 계약 |
 | [SECURITY-VIEW.md](docs/SECURITY-VIEW.md) · [THREAT-MODEL.md](docs/THREAT-MODEL.md) | 보안 표와 위협 모델 |
 | [INFRA-INTERFACE.md](docs/INFRA-INTERFACE.md) | 코드와 인프라가 주고받는 값 |
 | [GLOSSARY.md](docs/GLOSSARY.md) | 화면·문서 용어 표 |
-| [RUNBOOK-FINALS.md](docs/RUNBOOK-FINALS.md) | 결선 당일 런북 |
+| [archive/](docs/archive/README.md) | 10/31~11/01 초기 발표·데모 문서 (지금 구현과 다른 곳이 있음) |
 
 ## 👥 Team Iron
 

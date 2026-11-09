@@ -11,7 +11,7 @@
 #   S5 숫자           demo.sh numbers, "stub(가짜)였나" 줄을 읽는다
 #   S6 보안 시각화     GET security 요약 칩, demo.sh wall(401·빈 목록·404), demo.sh audit(줄마다 해시 12자)
 #   S7 AI 샌드박스    demo.sh agent → "# pass N", "# fail 0"
-#   S8 마무리         docs/DESIGN-FINALS.md 에 "2-3. 숫자로 본 지금 상태" 절이 있음
+#   S8 마무리         docs/archive/DESIGN-FINALS.md 에 "2-3. 숫자로 본 지금 상태" 절이 있음
 #   화면(z75-38)      회차 끝에 playwright 헤드리스 1개(apps/web/e2e/scene-timing.timing.ts)로 발표 화면 장면마다
 #                     이동·누름 → 주요 요소 보임까지 ms: 목록 → 이전 상세 → 감사 → 숫자 → 에이전트. 기준 주소 운영 빌드 8080
 #
@@ -33,7 +33,7 @@
 #                    차이 <5% → 발표 때 관측(Grafana·Prometheus) 켜 둠, ≥10% → 끔, 그 사이 → 켜 둠·다시 잼. 판정에는 안 넣는다
 #   - 대본-실측 표 (z75-41): 회차마다 tools/measure/talk-timing.py 로 문단별 글자·읽기 초(÷5.5)·기계 초·큰 값·누적 표를
 #                    TALK_OUT_DIR(기본 LOG_DIR)/talk-timing-run<N>.md 로 쓴다. 기준 누적 ≤300초, 기계 초 > 읽기 초 문단 0개
-#                    대본은 TALK_FILE(기본 docs/TALK-5MIN-v2.md, 없으면 공유 폴더 Z60 본). 대본이 없으면 SKIP 하고 판정에서 뺀다
+#                    대본은 TALK_FILE(기본 docs/archive/TALK-5MIN-v2.md, 없으면 공유 폴더 Z60 본). 대본이 없으면 SKIP 하고 판정에서 뺀다
 #
 # 쓰는 법 (서비스 폴더 맨 위에서, API·워커·DB 를 먼저 띄운다)
 #   bash tools/rehearse.sh                    2회, 회차 앞마다 tools/demo-reset.sh
@@ -131,7 +131,7 @@ RES_IDLE_MIN=${RES_IDLE_MIN:-25}
 RES_DOCKER_MAX_MB=${RES_DOCKER_MAX_MB:-10240}
 COMPARE_WITH=${COMPARE_WITH:-}
 if [ -z "${TALK_FILE:-}" ]; then
-  for f in docs/TALK-5MIN-v2.md /mnt/project-files/notes/skeleton/parallel/Z60/TALK-5MIN-v2.md; do [ -f "$f" ] && { TALK_FILE=$f; break; }; done
+  for f in docs/archive/TALK-5MIN-v2.md /mnt/project-files/notes/skeleton/parallel/Z60/TALK-5MIN-v2.md; do [ -f "$f" ] && { TALK_FILE=$f; break; }; done
 fi
 TALK_FILE=${TALK_FILE:-}
 case "$TALK_FILE" in ""|/*) ;; *) [ -f "$TALK_FILE" ] || TALK_FILE="$CALLER_PWD/$TALK_FILE" ;; esac
@@ -275,7 +275,7 @@ scene_S7() {
 }
 scene_S8() {
   local n
-  n=$(timed grep -c '^### 2-3\. 숫자로 본 지금 상태' docs/DESIGN-FINALS.md)
+  n=$(timed grep -c '^### 2-3\. 숫자로 본 지금 상태' docs/archive/DESIGN-FINALS.md)
   fp S8 "doc$n"
   [ "$n" = 1 ]
 }
